@@ -1124,6 +1124,12 @@ local function CreateCustomTrackersPage(parent)
         durSizeSlider:SetPoint("RIGHT", lowerContainer, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
+        local durFontList = GetFontList()
+        local durFontDropdown = GUI:CreateFormDropdown(lowerContainer, "Font", durFontList, "durationFont", barConfig, RefreshThisBar)
+        durFontDropdown:SetPoint("TOPLEFT", 0, y)
+        durFontDropdown:SetPoint("RIGHT", lowerContainer, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
         local durColorPicker = GUI:CreateFormColorPicker(lowerContainer, "Text Color", "durationColor", barConfig, RefreshThisBar)
         durColorPicker:SetPoint("TOPLEFT", 0, y)
         durColorPicker:SetPoint("RIGHT", lowerContainer, "RIGHT", -PAD, 0)
@@ -1171,6 +1177,12 @@ local function CreateCustomTrackersPage(parent)
         local stackSizeSlider = GUI:CreateFormSlider(lowerContainer, "Size", 8, 24, 1, "stackSize", barConfig, RefreshThisBar)
         stackSizeSlider:SetPoint("TOPLEFT", 0, y)
         stackSizeSlider:SetPoint("RIGHT", lowerContainer, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local stackFontList = GetFontList()
+        local stackFontDropdown = GUI:CreateFormDropdown(lowerContainer, "Font", stackFontList, "stackFont", barConfig, RefreshThisBar)
+        stackFontDropdown:SetPoint("TOPLEFT", 0, y)
+        stackFontDropdown:SetPoint("RIGHT", lowerContainer, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
         local stackColorPicker = GUI:CreateFormColorPicker(lowerContainer, "Text Color", "stackColor", barConfig, RefreshThisBar)
@@ -1260,6 +1272,16 @@ local function CreateCustomTrackersPage(parent)
         showOnlyOnCooldownCheck:SetPoint("RIGHT", lowerContainer, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
+        local noDesatWithChargesCheck  -- Forward declare
+        noDesatWithChargesCheck = GUI:CreateFormCheckbox(lowerContainer, "Don't Desaturate With Charges", "noDesaturateWithCharges", barConfig, RefreshThisBar)
+        noDesatWithChargesCheck:SetPoint("TOPLEFT", 15, y)  -- Indent to show it's a sub-option
+        noDesatWithChargesCheck:SetPoint("RIGHT", lowerContainer, "RIGHT", -PAD, 0)
+        -- Only enable when showOnlyOnCooldown is checked
+        if noDesatWithChargesCheck.SetEnabled then
+            noDesatWithChargesCheck:SetEnabled(barConfig.showOnlyOnCooldown == true)
+        end
+        y = y - FORM_ROW
+
         local showOnlyWhenActiveCheck = GUI:CreateFormCheckbox(lowerContainer, "Show Only When Active", "showOnlyWhenActive", barConfig, nil)
         showOnlyWhenActiveCheck:SetPoint("TOPLEFT", 0, y)
         showOnlyWhenActiveCheck:SetPoint("RIGHT", lowerContainer, "RIGHT", -PAD, 0)
@@ -1281,6 +1303,10 @@ local function CreateCustomTrackersPage(parent)
                     showOnlyWhenActiveCheck.SetValue(false, true)
                     showOnlyWhenOffCooldownCheck.SetValue(false, true)
                 end
+                -- Enable/disable sub-option
+                if noDesatWithChargesCheck and noDesatWithChargesCheck.SetEnabled then
+                    noDesatWithChargesCheck:SetEnabled(newVal)
+                end
                 RefreshThisBar()
             end)
         end
@@ -1291,6 +1317,10 @@ local function CreateCustomTrackersPage(parent)
                 if newVal then
                     showOnlyOnCooldownCheck.SetValue(false, true)
                     showOnlyWhenOffCooldownCheck.SetValue(false, true)
+                    -- Disable sub-option when switching away from showOnlyOnCooldown
+                    if noDesatWithChargesCheck and noDesatWithChargesCheck.SetEnabled then
+                        noDesatWithChargesCheck:SetEnabled(false)
+                    end
                 end
                 RefreshThisBar()
             end)
@@ -1302,6 +1332,10 @@ local function CreateCustomTrackersPage(parent)
                 if newVal then
                     showOnlyOnCooldownCheck.SetValue(false, true)
                     showOnlyWhenActiveCheck.SetValue(false, true)
+                    -- Disable sub-option when switching away from showOnlyOnCooldown
+                    if noDesatWithChargesCheck and noDesatWithChargesCheck.SetEnabled then
+                        noDesatWithChargesCheck:SetEnabled(false)
+                    end
                 end
                 RefreshThisBar()
             end)
