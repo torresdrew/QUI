@@ -428,30 +428,50 @@ local function GetItemStackCount(itemID, includeCharges)
     return count
 end
 
+-- Cache for known charge spells (spellID -> maxCharges)
+-- Populated when we can safely read maxCharges (outside combat/untainted)
+local knownChargeSpells = {}
+
 local function GetSpellChargeCount(spellID)
     if not spellID then return 0, 1, 0, 0 end
     local chargeInfo = C_Spell.GetSpellCharges(spellID)
 
-    if not chargeInfo or not chargeInfo.maxCharges then
+    if not chargeInfo then
         return 0, 1, 0, 0  -- Not a charge-based spell
     end
 
+    local maxCharges = chargeInfo.maxCharges
+
+    -- Check if maxCharges exists
+    if not maxCharges then
+        return 0, 1, 0, 0
+    end
+
     -- Handle secret values (protected in combat)
-    -- If maxCharges is secret, spell definitely has charges - use safe default
-    if IsSecretValue(chargeInfo.maxCharges) then
-        -- Return secret currentCharges (SetText handles it) + charge cooldown values
-        return chargeInfo.currentCharges, 2,
+    if IsSecretValue(maxCharges) then
+        -- Can't read maxCharges directly - check our cache
+        local cachedMax = knownChargeSpells[spellID]
+        if cachedMax and cachedMax > 1 then
+            -- Known charge spell - return charge cooldown values with cached maxCharges
+            return chargeInfo.currentCharges, cachedMax,
+                   chargeInfo.cooldownStartTime or 0,
+                   chargeInfo.cooldownDuration or 0
+        end
+        -- Unknown or single-charge spell - treat as non-charge (safe default)
+        return 0, 1, 0, 0
+    end
+
+    -- Normal case: safe to compare - also cache the result
+    if maxCharges > 1 then
+        knownChargeSpells[spellID] = maxCharges  -- Cache for future secret-value situations
+        return chargeInfo.currentCharges or 0, maxCharges,
                chargeInfo.cooldownStartTime or 0,
                chargeInfo.cooldownDuration or 0
     end
 
-    -- Normal case: safe to compare
-    if chargeInfo.maxCharges > 1 then
-        return chargeInfo.currentCharges or 0, chargeInfo.maxCharges,
-               chargeInfo.cooldownStartTime or 0,
-               chargeInfo.cooldownDuration or 0
-    end
-    return 0, 1, 0, 0  -- Single charge spell (not multi-charge)
+    -- Single charge spell - cache that too
+    knownChargeSpells[spellID] = 1
+    return 0, 1, 0, 0
 end
 
 -- Helper to check if cooldown frame is actively showing a cooldown
@@ -1361,6 +1381,7 @@ function CustomTrackers:StartCooldownPolling(bar)
                 -- Determine if on cooldown using API values directly
                 -- Avoids frame-delay issues with IsVisible() on cooldown frames
                 local isOnCD = false
+                local rechargeActive = false  -- Track charge recharge separately (for visibility logic)
 
                 -- If active, show active state progress instead of cooldown
                 if isActive and activeStartTime and activeDuration and activeDuration > 0 then
@@ -1373,7 +1394,6 @@ function CustomTrackers:StartCooldownPolling(bar)
                 else
                     -- Normal cooldown display
                     local isChargeSpell = maxCharges > 1
-                    local rechargeActive = false
 
                     icon.cooldown:SetReverse(false)
 
@@ -1451,6 +1471,41 @@ function CustomTrackers:StartCooldownPolling(bar)
 
                         isOnCD = mainCDActive
 
+                        -- Exclude GCD from rechargeActive for visibility purposes
+                        -- A charge spell is truly recharging only if we're missing charges
+                        -- If we have all charges, any cooldown showing is just GCD
+                        if hideGCD and rechargeActive then
+                            local isDefinitelyGCD = false
+
+                            -- Method 1: Check if we have ALL charges (count >= maxCharges means GCD)
+                            local chargeCheckOk, chargeCheckResult = pcall(function()
+                                return count >= maxCharges
+                            end)
+                            if chargeCheckOk then
+                                isDefinitelyGCD = chargeCheckResult
+                            else
+                                -- Method 2: Query the cooldown frame's duration directly
+                                -- GCD is ~1.5s, real recharge is longer. If duration <= 2s, it's GCD.
+                                local frameCheckOk, frameDuration = pcall(function()
+                                    return icon.cooldown:GetCooldownDuration()
+                                end)
+                                if frameCheckOk and frameDuration then
+                                    -- Duration might also be secret, wrap comparison
+                                    local compareOk, compareResult = pcall(function()
+                                        return frameDuration <= 2.0
+                                    end)
+                                    if compareOk then
+                                        isDefinitelyGCD = compareResult
+                                    end
+                                end
+                                -- If frame duration check fails, default to NOT GCD (show the icon)
+                            end
+
+                            if isDefinitelyGCD then
+                                rechargeActive = false
+                            end
+                        end
+
                     else
                         -- Normal spell/item cooldown
                         if startTime and duration then
@@ -1527,7 +1582,8 @@ function CustomTrackers:StartCooldownPolling(bar)
                         layoutVisible = isActive
                     elseif showOnlyOnCooldown then
                         -- Show during cooldown OR while active (active overrides cooldown visuals)
-                        layoutVisible = isActive or isOnCD
+                        -- For charge spells: also show when recharge is active (any charge on cooldown)
+                        layoutVisible = isActive or isOnCD or rechargeActive
                     elseif showOnlyWhenOffCooldown then
                         -- Show only when ready (not on cooldown)
                         -- For charge spells with remaining charges, stay visible even during active state
@@ -1597,7 +1653,8 @@ function CustomTrackers:StartCooldownPolling(bar)
                             icon.tex:SetDesaturated(true)
                         else
                             -- Static layout: alpha-based visibility (preserves position)
-                            if isOnCD then
+                            -- For charge spells: show when recharge is active (any charge on cooldown)
+                            if isOnCD or rechargeActive then
                                 icon:SetAlpha(1)
                                 icon.tex:SetDesaturated(true)
                             else
