@@ -12,14 +12,42 @@ if not openRaidLib then
     return
 end
 
+local LSM = LibStub("LibSharedMedia-3.0", true)
+
 ---------------------------------------------------------------------------
 -- SETTINGS ACCESS
 ---------------------------------------------------------------------------
 
-local function IsEnabled()
+local function GetSettings()
     local QUICore = _G.QUI and _G.QUI.QUICore
-    local settings = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general
-    return settings and settings.keyTrackerEnabled ~= false
+    return QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general
+end
+
+local function IsEnabled()
+    local s = GetSettings()
+    return s and s.keyTrackerEnabled ~= false
+end
+
+local function GetFont()
+    local s = GetSettings()
+    local fontName = s and s.keyTrackerFont or "Quazii"
+    if LSM then
+        return LSM:Fetch("font", fontName) or STANDARD_TEXT_FONT
+    end
+    return STANDARD_TEXT_FONT
+end
+
+local function GetFrameWidth()
+    local s = GetSettings()
+    return s and s.keyTrackerWidth or 170
+end
+
+local function GetTextColor()
+    local s = GetSettings()
+    if s and s.keyTrackerTextColor then
+        return unpack(s.keyTrackerTextColor)
+    end
+    return 1, 1, 1, 1
 end
 
 ---------------------------------------------------------------------------
@@ -32,13 +60,11 @@ local ENTRY_PADDING_Y = 4
 local ENTRY_SPACING = 6
 local HEADER_HEIGHT = BUTTON_SIZE + (ENTRY_PADDING_Y * 2)
 local ENTRY_HEIGHT = BUTTON_SIZE + ENTRY_SPACING
-local FRAME_WIDTH = 170
 
 -- Font size setting access
 local function GetFontSize()
-    local QUICore = _G.QUI and _G.QUI.QUICore
-    local settings = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general
-    return settings and settings.keyTrackerFontSize or 9
+    local s = GetSettings()
+    return s and s.keyTrackerFontSize or 9
 end
 
 -- Timer delays (seconds)
@@ -137,7 +163,7 @@ end
 -- Create frame parented to UIParent initially, will reparent when PVEFrame loads
 local KeyTrackerFrame = CreateFrame("Frame", "QUIKeyTrackerFrame", UIParent, "BackdropTemplate")
 KeyTrackerFrame:SetFrameStrata("HIGH")
-KeyTrackerFrame:SetSize(FRAME_WIDTH, HEADER_HEIGHT)
+KeyTrackerFrame:SetSize(GetFrameWidth(), HEADER_HEIGHT)
 KeyTrackerFrame:SetBackdrop({
     bgFile = "Interface\\Buttons\\WHITE8X8",
     edgeFile = "Interface\\Buttons\\WHITE8X8",
@@ -171,12 +197,16 @@ end
 -- Expose refresh function for live color updates
 _G.QUI_RefreshKeyTrackerColors = ApplySkinColors
 
--- Function to position frame (attached to PVEFrame bottom right)
+-- Function to position frame (attached to PVEFrame)
 local function PositionKeyTracker()
     KeyTrackerFrame:ClearAllPoints()
     if PVEFrame then
-        -- Position attached to bottom right corner (like the tabs)
-        KeyTrackerFrame:SetPoint("TOPRIGHT", PVEFrame, "BOTTOMRIGHT", 0, 0)
+        local s = GetSettings()
+        local point = s and s.keyTrackerPoint or "TOPRIGHT"
+        local relPoint = s and s.keyTrackerRelPoint or "BOTTOMRIGHT"
+        local offsetX = s and s.keyTrackerOffsetX or 0
+        local offsetY = s and s.keyTrackerOffsetY or 0
+        KeyTrackerFrame:SetPoint(point, PVEFrame, relPoint, offsetX, offsetY)
     end
 end
 
@@ -206,11 +236,13 @@ end)
 -- KEYSTONE BUTTON CREATION
 ---------------------------------------------------------------------------
 
-local ROW_WIDTH = FRAME_WIDTH - (ENTRY_PADDING_X * 2)
+local function GetRowWidth()
+    return GetFrameWidth() - (ENTRY_PADDING_X * 2)
+end
 
 local function CreateKeystoneButton(parent, yOffset)
     local button = CreateFrame("Button", nil, parent, "SecureActionButtonTemplate")
-    button:SetSize(ROW_WIDTH, BUTTON_SIZE)
+    button:SetSize(GetRowWidth(), BUTTON_SIZE)
     button:SetPoint("TOPLEFT", parent, "TOPLEFT", ENTRY_PADDING_X, yOffset)
     button:RegisterForClicks("AnyDown", "AnyUp")
 
@@ -232,29 +264,30 @@ local function CreateKeystoneButton(parent, yOffset)
     button.highlight:SetColorTexture(1, 1, 1, 0.06)
 
     local fontSize = GetFontSize()
+    local fontPath = GetFont()
 
     -- Key level text (centered on icon)
     button.keyLevel = button:CreateFontString(nil, "OVERLAY")
     button.keyLevel:SetPoint("CENTER", button.icon, "CENTER", 0, 0)
-    button.keyLevel:SetFont(STANDARD_TEXT_FONT, fontSize + 1, "OUTLINE")
+    button.keyLevel:SetFont(fontPath, fontSize + 1, "OUTLINE")
 
     -- Dungeon short name (right of icon, parented to button)
     button.dungeonName = button:CreateFontString(nil, "OVERLAY")
     button.dungeonName:SetPoint("LEFT", button.icon, "RIGHT", 4, 0)
-    button.dungeonName:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+    button.dungeonName:SetFont(fontPath, fontSize, "OUTLINE")
     button.dungeonName:SetJustifyH("LEFT")
     button.dungeonName:SetWidth(40)  -- Fixed width for alignment
 
     -- Player name (right of dungeon name, parented to button)
     button.playerName = button:CreateFontString(nil, "OVERLAY")
     button.playerName:SetPoint("LEFT", button.dungeonName, "RIGHT", 4, 0)
-    button.playerName:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+    button.playerName:SetFont(fontPath, fontSize, "OUTLINE")
     button.playerName:SetJustifyH("LEFT")
 
     -- Score (right side, parented to button)
     button.score = button:CreateFontString(nil, "OVERLAY")
     button.score:SetPoint("RIGHT", button, "RIGHT", 0, 0)
-    button.score:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+    button.score:SetFont(fontPath, fontSize, "OUTLINE")
     button.score:SetJustifyH("RIGHT")
     button.score:SetJustifyV("MIDDLE")
 
@@ -294,13 +327,16 @@ end
 -- Update all button fonts (called when settings change or on refresh)
 local function UpdateAllButtonFonts()
     local fontSize = GetFontSize()
+    local fontPath = GetFont()
+    local tr, tg, tb = GetTextColor()
     for i = 0, 4 do
         local button = keystoneButtons[i]
         if button then
-            button.keyLevel:SetFont(STANDARD_TEXT_FONT, fontSize + 1, "OUTLINE")
-            button.dungeonName:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
-            button.playerName:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
-            button.score:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+            button.keyLevel:SetFont(fontPath, fontSize + 1, "OUTLINE")
+            button.dungeonName:SetFont(fontPath, fontSize, "OUTLINE")
+            button.dungeonName:SetTextColor(tr, tg, tb)
+            button.playerName:SetFont(fontPath, fontSize, "OUTLINE")
+            button.score:SetFont(fontPath, fontSize, "OUTLINE")
         end
     end
 end
@@ -345,8 +381,8 @@ local function UpdateButton(button, keystoneInfo, unitName, unit, isLeader)
         button.keyLevel:SetText("+" .. keystoneInfo.level)
         button.keyLevel:SetTextColor(kr, kg, kb)
         button.dungeonName:SetText(shortName)
-        local sr, sg, sb = GetSkinColors()
-        button.dungeonName:SetTextColor(sr, sg, sb)
+        local tr, tg, tb = GetTextColor()
+        button.dungeonName:SetTextColor(tr, tg, tb)
         button.playerName:SetText("|c" .. classColor .. displayName .. "|r")
 
         -- Score
@@ -455,6 +491,40 @@ local function UpdateAll()
     end
     UpdateAllKeystones()
 end
+
+---------------------------------------------------------------------------
+-- REFRESH (consolidates all live-update logic for options panel)
+---------------------------------------------------------------------------
+
+local function RefreshKeyTracker()
+    if InCombatLockdown() then return end
+    -- Reposition
+    PositionKeyTracker()
+    -- Resize frame width
+    local w = GetFrameWidth()
+    KeyTrackerFrame:SetWidth(w)
+    -- Resize all buttons to new row width
+    local rowW = w - (ENTRY_PADDING_X * 2)
+    for i = 0, 4 do
+        local button = keystoneButtons[i]
+        if button then
+            button:SetWidth(rowW)
+        end
+    end
+    -- Update fonts and text color
+    UpdateAllButtonFonts()
+    -- Reapply skin colors
+    ApplySkinColors()
+    -- Refresh keystone data display
+    if IsEnabled() then
+        UpdateAllKeystones()
+    else
+        KeyTrackerFrame:Hide()
+    end
+end
+
+-- Expose consolidated refresh for options panel
+_G.QUI_RefreshKeyTracker = RefreshKeyTracker
 
 ---------------------------------------------------------------------------
 -- REQUEST FUNCTIONS

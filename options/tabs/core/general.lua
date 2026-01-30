@@ -21,6 +21,7 @@ local function CreateGeneralQoLPage(parent)
         {name = "Character Pane", builder = ns.QUI_CharacterOptions.BuildCharacterPaneTab},
         {name = "Dragonriding", builder = ns.QUI_SkyridingOptions.BuildDragonridingTab},
         {name = "Missing Raid Buffs", builder = ns.QUI_RaidBuffsOptions.BuildRaidBuffsTab},
+        {name = "Party Keystones", builder = ns.QUI_PartyKeystonesOptions.BuildPartyKeystonesTab},
     })
     subTabs:SetPoint("TOPLEFT", 5, -5)
     subTabs:SetPoint("TOPRIGHT", -5, -5)

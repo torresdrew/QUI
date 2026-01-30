@@ -419,6 +419,13 @@ local defaults = {
             mplusTeleportEnabled = true,  -- Click-to-teleport on M+ tab icons
             keyTrackerEnabled = true,     -- Show party keys on M+ tab
             keyTrackerFontSize = 9,       -- Font size for key tracker (7-12)
+            keyTrackerFont = nil,         -- Font name from LSM (nil = global QUI font "Quazii")
+            keyTrackerTextColor = {1, 1, 1, 1},  -- RGBA text color for dungeon/player text
+            keyTrackerPoint = "TOPRIGHT",         -- Anchor point on KeyTracker frame
+            keyTrackerRelPoint = "BOTTOMRIGHT",   -- Relative point on PVEFrame
+            keyTrackerOffsetX = 0,                -- X offset from anchor
+            keyTrackerOffsetY = 0,                -- Y offset from anchor
+            keyTrackerWidth = 170,                -- Frame width in pixels
         },
 
         -- Alert & Toast Skinning Settings (enabled via general.skinAlerts)

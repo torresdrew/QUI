@@ -24,6 +24,7 @@
     <Script file="frames/unitframes.lua"/>
     <Script file="frames/actionbars.lua"/>
     <Script file="utility/anchoring.lua"/>
+    <Script file="qol/party_keystones.lua"/>
     <!-- Page coordinators (load after subtab files) -->
     <Script file="core/general.lua"/>
     <Script file="ui/autohides.lua"/>
