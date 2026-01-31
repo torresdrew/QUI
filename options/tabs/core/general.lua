@@ -11,7 +11,7 @@ local CreateScrollableContent = Shared.CreateScrollableContent
 local function CreateGeneralQoLPage(parent)
     local scroll, content = CreateScrollableContent(parent)
 
-    local subTabs = GUI:CreateSubTabs(content, {
+    GUI:CreateSubTabs(content, {
         {name = "General", builder = ns.QUI_QoLOptions.BuildGeneralTab},
         {name = "HUD Visibility", builder = ns.QUI_HUDVisibilityOptions.BuildHUDVisibilityTab},
         {name = "Cursor & Crosshair", builder = ns.QUI_CrosshairOptions.BuildCrosshairTab},
@@ -23,11 +23,8 @@ local function CreateGeneralQoLPage(parent)
         {name = "Missing Raid Buffs", builder = ns.QUI_RaidBuffsOptions.BuildRaidBuffsTab},
         {name = "Party Keystones", builder = ns.QUI_PartyKeystonesOptions.BuildPartyKeystonesTab},
     })
-    subTabs:SetPoint("TOPLEFT", 5, -5)
-    subTabs:SetPoint("TOPRIGHT", -5, -5)
-    subTabs:SetHeight(600)
 
-    content:SetHeight(650)
+    content:SetHeight(600)
 end
 
 --------------------------------------------------------------------------------

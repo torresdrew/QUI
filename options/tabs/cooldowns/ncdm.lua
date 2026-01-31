@@ -310,7 +310,7 @@ local function CreateCDMSetupPage(parent)
         local y = tabContent._currentY
 
         -- Set search context for auto-registration
-        GUI:SetSearchContext({tabIndex = 6, tabName = "CDM Setup & Class Bars", subTabIndex = 1, subTabName = "Essential"})
+        GUI:SetSearchContext({tabIndex = 2, tabName = "CDM Setup", subTabIndex = 1, subTabName = "Essential"})
 
         if db and db.ncdm and db.ncdm.essential then
             local ess = db.ncdm.essential
@@ -385,7 +385,7 @@ local function CreateCDMSetupPage(parent)
         local y = tabContent._currentY
 
         -- Set search context for auto-registration
-        GUI:SetSearchContext({tabIndex = 6, tabName = "CDM Setup & Class Bars", subTabIndex = 2, subTabName = "Utility"})
+        GUI:SetSearchContext({tabIndex = 2, tabName = "CDM Setup", subTabIndex = 2, subTabName = "Utility"})
 
         if db and db.ncdm and db.ncdm.utility then
             local util = db.ncdm.utility
@@ -483,7 +483,7 @@ local function CreateCDMSetupPage(parent)
         local y = -10
 
         -- Set search context for widget auto-registration
-        GUI:SetSearchContext({tabIndex = 6, tabName = "CDM Setup & Class Bars", subTabIndex = 3, subTabName = "Buff"})
+        GUI:SetSearchContext({tabIndex = 2, tabName = "CDM Setup", subTabIndex = 3, subTabName = "Buff"})
 
         -- Ensure buff settings exist with all required fields
         if not db.ncdm then db.ncdm = {} end
@@ -864,7 +864,7 @@ local function CreateCDMSetupPage(parent)
         local y = -10
 
         -- Set search context for widget auto-registration
-        GUI:SetSearchContext({tabIndex = 6, tabName = "CDM Setup & Class Bars", subTabIndex = 4, subTabName = "Class Resource Bar"})
+        GUI:SetSearchContext({tabIndex = 2, tabName = "CDM Setup", subTabIndex = 4, subTabName = "Class Resource Bar"})
 
         -- Ensure powerBar settings exist
         if not db.powerBar then db.powerBar = {} end
@@ -2727,17 +2727,14 @@ local function CreateCDMSetupPage(parent)
     end
 
     -- Create sub-tabs
-    local subTabs = GUI:CreateSubTabs(content, {
+    GUI:CreateSubTabs(content, {
         {name = "Essential", builder = BuildEssentialTab},
         {name = "Utility", builder = BuildUtilityTab},
         {name = "Buff", builder = BuildBuffTab},
         {name = "Class Resource Bar", builder = BuildPowerbarTab},
     })
-    subTabs:SetPoint("TOPLEFT", 5, -5)
-    subTabs:SetPoint("TOPRIGHT", -5, -5)
-    subTabs:SetHeight(700)
 
-    content:SetHeight(750)
+    content:SetHeight(700)
 end
 
 --------------------------------------------------------------------------------

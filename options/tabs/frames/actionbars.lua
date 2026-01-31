@@ -51,7 +51,7 @@ local function CreateActionBarsPage(parent)
         local FORM_ROW = 32
 
         -- Set search context for widget auto-registration
-        GUI:SetSearchContext({tabIndex = 4, tabName = "Action Bars", subTabIndex = 2, subTabName = "Mouseover Hide"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 2, subTabName = "Mouseover Hide"})
 
         ---------------------------------------------------------
         -- Warning: Enable Blizzard Action Bars
@@ -189,7 +189,7 @@ local function CreateActionBarsPage(parent)
         local FORM_ROW = 32
 
         -- Set search context for auto-registration
-        GUI:SetSearchContext({tabIndex = 4, tabName = "Action Bars", subTabIndex = 1, subTabName = "Master Settings"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 1, subTabName = "Master Settings"})
 
         -- 9-point anchor options for text positioning
         local anchorOptions = {
@@ -544,7 +544,7 @@ local function CreateActionBarsPage(parent)
     ---------------------------------------------------------
     local function BuildPerBarOverridesTab(tabContent)
         -- Set search context for widget auto-registration
-        GUI:SetSearchContext({tabIndex = 4, tabName = "Action Bars", subTabIndex = 3, subTabName = "Per-Bar Overrides"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 3, subTabName = "Per-Bar Overrides"})
 
         -- Use tabContent directly - parent Action Bars page already has scroll
         local content = tabContent
@@ -966,7 +966,7 @@ local function CreateActionBarsPage(parent)
         local FORM_ROW = 32
 
         -- Set search context
-        GUI:SetSearchContext({tabIndex = 4, tabName = "Action Bars", subTabIndex = 4, subTabName = "Extra Buttons"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 4, subTabName = "Extra Buttons"})
 
         -- Refresh callback
         local function RefreshExtraButtons()
@@ -1124,18 +1124,15 @@ local function CreateActionBarsPage(parent)
     ---------------------------------------------------------
     -- Create Sub-Tabs
     ---------------------------------------------------------
-    local subTabs = GUI:CreateSubTabs(content, {
+    GUI:CreateSubTabs(content, {
         {name = "Master Settings", builder = BuildMasterSettingsTab},
         {name = "Mouseover Hide", builder = BuildMouseoverHideTab},
         {name = "Per-Bar Overrides", builder = BuildPerBarOverridesTab},
         {name = "Extra Buttons", builder = BuildExtraButtonsTab},
         {name = "Totem Bar", builder = BuildTotemBarTab},
     })
-    subTabs:SetPoint("TOPLEFT", 5, -5)
-    subTabs:SetPoint("TOPRIGHT", -5, -5)
-    subTabs:SetHeight(700)
 
-    content:SetHeight(750)
+    content:SetHeight(700)
     return scroll, content
 end
 

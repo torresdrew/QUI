@@ -20,7 +20,7 @@ local function CreateCDKeybindsPage(parent)
     local ROW_GAP = Shared.ROW_GAP
 
     -- Set search context for auto-registration
-    GUI:SetSearchContext({tabIndex = 8, tabName = "CDM Keybind & Rotation"})
+    GUI:SetSearchContext({tabIndex = 4, tabName = "CDM Keybinds"})
 
     -- Refresh function for keybinds
     local function RefreshKeybinds()

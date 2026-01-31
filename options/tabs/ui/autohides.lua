@@ -11,15 +11,12 @@ local CreateScrollableContent = Shared.CreateScrollableContent
 local function CreateAutohidesPage(parent)
     local scroll, content = CreateScrollableContent(parent)
 
-    local subTabs = GUI:CreateSubTabs(content, {
+    GUI:CreateSubTabs(content, {
         {name = "Autohide", builder = ns.QUI_AutohideOptions.BuildAutohideTab},
         {name = "Skinning", builder = ns.QUI_SkinningOptions.BuildSkinningTab},
     })
-    subTabs:SetPoint("TOPLEFT", 5, -5)
-    subTabs:SetPoint("TOPRIGHT", -5, -5)
-    subTabs:SetHeight(600)
 
-    content:SetHeight(650)
+    content:SetHeight(600)
 end
 
 --------------------------------------------------------------------------------

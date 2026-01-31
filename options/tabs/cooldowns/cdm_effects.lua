@@ -19,7 +19,7 @@ local function CreateCDEffectsPage(parent)
     local PADDING = Shared.PADDING
 
     -- Set search context for auto-registration
-    GUI:SetSearchContext({tabIndex = 7, tabName = "CDM GCD & Effects"})
+    GUI:SetSearchContext({tabIndex = 3, tabName = "CDM Effects"})
 
     -- Refresh functions
     local function RefreshSwipe()

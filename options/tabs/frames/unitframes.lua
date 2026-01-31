@@ -46,7 +46,7 @@ local function CreateUnitFramesPage(parent)
         local ufdb = GetUFDB()
 
         -- Set search context for auto-registration
-        GUI:SetSearchContext({tabIndex = 2, tabName = "Single Frames & Castbars", subTabIndex = 1, subTabName = "General"})
+        GUI:SetSearchContext({tabIndex = 5, tabName = "Unit Frames", subTabIndex = 1, subTabName = "General"})
 
         if not ufdb then
             local info = GUI:CreateLabel(tabContent, "Unit frame settings not available - database not loaded", 12, C.textMuted)
@@ -351,7 +351,7 @@ local function CreateUnitFramesPage(parent)
             boss = {index = 7, name = "Boss"},
         }
         local subTabInfo = unitSubTabs[unitKey] or {index = 2, name = unitKey}
-        GUI:SetSearchContext({tabIndex = 2, tabName = "Single Frames & Castbars", subTabIndex = subTabInfo.index, subTabName = subTabInfo.name})
+        GUI:SetSearchContext({tabIndex = 5, tabName = "Unit Frames", subTabIndex = subTabInfo.index, subTabName = subTabInfo.name})
 
         if not ufdb or not ufdb[unitKey] then
             local info = GUI:CreateLabel(tabContent, "Unit frame settings not available for " .. unitKey, 12, C.textMuted)
@@ -1753,7 +1753,7 @@ local function CreateUnitFramesPage(parent)
     end
 
     -- Create sub-tabs
-    local subTabs = GUI:CreateSubTabs(content, {
+    GUI:CreateSubTabs(content, {
         {name = "General", builder = BuildGeneralTab},
         {name = "Player", builder = function(c) BuildUnitTab(c, "player") end},
         {name = "Target", builder = function(c) BuildUnitTab(c, "target") end},
@@ -1762,11 +1762,8 @@ local function CreateUnitFramesPage(parent)
         {name = "Focus", builder = function(c) BuildUnitTab(c, "focus") end},
         {name = "Boss", builder = function(c) BuildUnitTab(c, "boss") end},
     })
-    subTabs:SetPoint("TOPLEFT", 5, -5)
-    subTabs:SetPoint("TOPRIGHT", -5, -5)
-    subTabs:SetHeight(600)
 
-    content:SetHeight(650)
+    content:SetHeight(600)
 end
 
 ---------------------------------------------------------------------------

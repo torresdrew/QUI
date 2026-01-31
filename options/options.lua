@@ -13,7 +13,6 @@ local C = GUI.Colors
 ---------------------------------------------------------------------------
 -- CONSTANTS - Match panel width (750px panel)
 ---------------------------------------------------------------------------
--- local CONTENT_WIDTH = 670  -- No longer used - scroll content now dynamically sizes
 local ROW_GAP = 28
 local SECTION_GAP = 38
 local SECTION_HEADER_GAP = 46  -- Section header height + spacing below underline
@@ -406,27 +405,32 @@ end
 function GUI:InitializeOptions()
     local frame = self:CreateMainFrame()
 
-    -- Row 1: Core UI Elements
+    -- Sidebar tabs (short names for vertical layout)
     GUI:AddTab(frame, "General & QoL", ns.QUI_GeneralOptions.CreateGeneralQoLPage)
-    GUI:AddTab(frame, "Single Frames & Castbars", ns.QUI_UnitFramesOptions.CreateUnitFramesPage)
-    GUI:AddTab(frame, "Minimap & Datatext", ns.QUI_MinimapPageOptions.CreateMinimapPage)
+    GUI:AddTab(frame, "CDM Setup", ns.QUI_NCDMOptions.CreateCDMSetupPage)
+    GUI:AddTab(frame, "CDM Effects", ns.QUI_CDMEffectsOptions.CreateCDEffectsPage)
+    GUI:AddTab(frame, "CDM Keybinds", ns.QUI_KeybindsOptions.CreateCDKeybindsPage)
+    GUI:AddTab(frame, "Unit Frames", ns.QUI_UnitFramesOptions.CreateUnitFramesPage)
     GUI:AddTab(frame, "Action Bars", ns.QUI_ActionBarsOptions.CreateActionBarsPage)
-    GUI:AddTab(frame, "Autohide & Skinning", ns.QUI_AutohidesOptions.CreateAutohidesPage)
+    GUI:AddTab(frame, "Minimap", ns.QUI_MinimapPageOptions.CreateMinimapPage)
+    GUI:AddTab(frame, "Skinning & Autohide", ns.QUI_AutohidesOptions.CreateAutohidesPage)
+    GUI:AddTab(frame, "Custom Trackers", ns.QUI_CustomTrackersOptions.CreateCustomTrackersPage)
+    GUI:AddTab(frame, "Frame Levels", ns.QUI_HUDLayeringOptions.CreateHUDLayeringPage)
+    GUI:AddTab(frame, "Profiles", ns.QUI_ProfilesOptions.CreateSpecProfilesPage)
+    GUI:AddTab(frame, "Import", ns.QUI_ImportOptions.CreateImportExportPage)
+    -- Bottom sidebar items (Search tab + action buttons)
+    -- Add separator line between normal tabs and bottom items
+    local sepLine = frame.sidebar:CreateTexture(nil, "ARTWORK")
+    sepLine:SetHeight(1)
+    sepLine:SetColorTexture(C.border[1], C.border[2], C.border[3], 0.6)
+    -- Position separator above the bottom items (will sit above 3 items * 28px + some padding)
+    sepLine:SetPoint("BOTTOMLEFT", frame.sidebar, "BOTTOMLEFT", 8, 3 * 28 + 8)
+    sepLine:SetPoint("BOTTOMRIGHT", frame.sidebar, "BOTTOMRIGHT", -8, 3 * 28 + 8)
 
-    -- Row 2: Cooldown System (CDM cluster)
-    GUI:AddTab(frame, "CDM Setup & Class Bars", ns.QUI_NCDMOptions.CreateCDMSetupPage)
-    GUI:AddTab(frame, "CDM GCD & Effects", ns.QUI_CDMEffectsOptions.CreateCDEffectsPage)
-    GUI:AddTab(frame, "CDM Keybind & Rotation", ns.QUI_KeybindsOptions.CreateCDKeybindsPage)
-    GUI:AddTab(frame, "Custom Items/Spells/Buffs", ns.QUI_CustomTrackersOptions.CreateCustomTrackersPage)
+    GUI:AddTab(frame, "Search", CreateSearchPage, true)  -- isBottomItem = true
+    GUI._searchTabIndex = #frame.tabs
 
-    -- Row 3: Utilities + Action Buttons
-    GUI:AddTab(frame, "HUD Layering", ns.QUI_HUDLayeringOptions.CreateHUDLayeringPage)
-    GUI:AddTab(frame, "Spec Profiles", ns.QUI_ProfilesOptions.CreateSpecProfilesPage)
-    GUI:AddTab(frame, "QUI Import/Export", ns.QUI_ImportOptions.CreateImportExportPage)
-    GUI:AddTab(frame, "Search", CreateSearchPage)
-    GUI._searchTabIndex = #frame.tabs  -- Store Search tab index for ForceLoadAllTabs trigger
-
-    GUI:AddActionButton(frame, "Cooldown Settings", function()
+    GUI:AddActionButton(frame, "CDM Settings", function()
         if CooldownViewerSettings then
             CooldownViewerSettings:SetShown(not CooldownViewerSettings:IsShown())
         else

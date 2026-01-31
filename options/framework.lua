@@ -1,6 +1,6 @@
 --[[
     QUI Custom GUI Framework
-    Style: Horizontal tab grid at top
+    Style: Vertical sidebar + sticky sub-tab bar
     Accent Color: #56D1FF
 ]]
 
@@ -63,8 +63,9 @@ GUI.Colors = {
 local C = GUI.Colors
 
 -- Panel dimensions (used for widget sizing)
-GUI.PANEL_WIDTH = 750
-GUI.CONTENT_WIDTH = 710  -- Panel width minus padding (20 each side)
+GUI.PANEL_WIDTH = 1000
+GUI.SIDEBAR_WIDTH = 150
+GUI.CONTENT_WIDTH = 800  -- Panel width minus sidebar and padding
 
 -- Settings Registry for search functionality
 GUI.SettingsRegistry = {}
@@ -187,6 +188,12 @@ function GUI:ForceLoadAllTabs()
                 -- Run the builder to register widgets (only once)
                 page.createFunc(page.frame)
                 page.built = true  -- Prevent duplicate widget creation
+
+                -- Capture sub-tab group created during page build
+                if GUI._lastSubTabGroup then
+                    page._subTabGroup = GUI._lastSubTabGroup
+                    GUI._lastSubTabGroup = nil
+                end
             end
         end
     end
@@ -803,22 +810,30 @@ function GUI:CreateColorPicker(parent, label, dbKey, dbTable, onChange)
 end
 
 ---------------------------------------------------------------------------
--- WIDGET: SUB-TABS (Horizontal tabs within a page)
+-- WIDGET: SUB-TABS (Buttons in sticky bar, content frames in page)
 ---------------------------------------------------------------------------
 function GUI:CreateSubTabs(parent, tabs)
+    -- Content container stays in the page (parent = scroll content)
     local container = CreateFrame("Frame", nil, parent)
-    container:SetHeight(28)
-    
+    container:SetPoint("TOPLEFT", 0, 0)
+    container:SetPoint("TOPRIGHT", 0, 0)
+    container:SetHeight(28)  -- Minimal height - content frames anchor below
+
+    -- Button group goes in the sticky sub-tab bar
+    local mainFrame = self.MainFrame
+    local buttonGroup = CreateFrame("Frame", nil, mainFrame.subTabBar)
+    buttonGroup:SetAllPoints()
+    buttonGroup:Hide()  -- Hidden until this page is selected
+
     local tabButtons = {}
     local tabContents = {}
-    local buttonWidth = 90
     local spacing = 2
-    
+
     for i, tabInfo in ipairs(tabs) do
-        -- Tab button
-        local btn = CreateFrame("Button", nil, container, "BackdropTemplate")
-        btn:SetSize(buttonWidth, 24)
-        btn:SetPoint("TOPLEFT", 10 + (i-1) * (buttonWidth + spacing), 0)
+        -- Tab button (parented to buttonGroup in sticky bar)
+        local btn = CreateFrame("Button", nil, buttonGroup, "BackdropTemplate")
+        btn:SetSize(90, 24)
+        btn:SetPoint("TOPLEFT", 10 + (i-1) * (90 + spacing), -3)
         btn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -826,24 +841,24 @@ function GUI:CreateSubTabs(parent, tabs)
         })
         btn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         btn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-        
+
         btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         SetFont(btn.text, 10, "", C.text)
         btn.text:SetText(tabInfo.name)
         btn.text:SetPoint("CENTER", 0, 0)
-        
+
         btn.index = i
         tabButtons[i] = btn
-        
-        -- Content frame for this tab
+
+        -- Content frame for this tab (parented to page container)
         local content = CreateFrame("Frame", nil, container)
-        content:SetPoint("TOPLEFT", 0, -30)
+        content:SetPoint("TOPLEFT", 0, 0)
         content:SetPoint("BOTTOMRIGHT", 0, 0)
         content:Hide()
-        content:EnableMouse(false)  -- Container frame - let children handle clicks
-        content._hasContent = false  -- Track if any content added (for auto-spacing)
+        content:EnableMouse(false)
+        content._hasContent = false
         tabContents[i] = content
-        
+
         -- Create content if builder function provided
         if tabInfo.builder then
             tabInfo.builder(content)
@@ -852,13 +867,12 @@ function GUI:CreateSubTabs(parent, tabs)
 
     -- Dynamic relayout function for responsive sub-tabs
     local function RelayoutSubTabs()
-        local containerWidth = container:GetWidth()
-        if containerWidth < 1 then return end  -- Not sized yet
+        local barWidth = buttonGroup:GetWidth()
+        if barWidth < 1 then return end
 
-        local separatorSpacing = 15  -- Extra spacing after tabs with isSeparator
-        local availableWidth = containerWidth - 20  -- 10px padding each side
+        local separatorSpacing = 15
+        local availableWidth = barWidth - 20
 
-        -- Count separators to account for extra spacing
         local separatorCount = 0
         for _, tabInfo in ipairs(tabs) do
             if tabInfo.isSeparator then separatorCount = separatorCount + 1 end
@@ -866,37 +880,33 @@ function GUI:CreateSubTabs(parent, tabs)
 
         local totalSpacing = (#tabButtons - 1) * spacing + (separatorCount * separatorSpacing)
         local newButtonWidth = math.floor((availableWidth - totalSpacing) / #tabButtons)
-        newButtonWidth = math.max(newButtonWidth, 50)  -- minimum 50px
+        newButtonWidth = math.max(newButtonWidth, 50)
 
         local xOffset = 10
         for i, btn in ipairs(tabButtons) do
             btn:SetWidth(newButtonWidth)
             btn:ClearAllPoints()
-            btn:SetPoint("TOPLEFT", xOffset, 0)
+            btn:SetPoint("TOPLEFT", xOffset, -3)
             xOffset = xOffset + newButtonWidth + spacing
 
-            -- Add extra spacing after separator tabs
             if tabs[i] and tabs[i].isSeparator then
                 xOffset = xOffset + separatorSpacing
             end
         end
     end
 
-    -- Hook resize to relayout sub-tabs dynamically
-    container:SetScript("OnSizeChanged", RelayoutSubTabs)
+    buttonGroup:SetScript("OnSizeChanged", RelayoutSubTabs)
 
     -- Tab selection function
     local function SelectSubTab(index)
         for i, btn in ipairs(tabButtons) do
             if i == index then
-                -- ACTIVE: Dark background with thick mint border highlight + mint text
-                pcall(btn.SetBackdropColor, btn, 0.12, 0.18, 0.18, 1)  -- Slightly tinted dark bg
+                pcall(btn.SetBackdropColor, btn, 0.12, 0.18, 0.18, 1)
                 pcall(btn.SetBackdropBorderColor, btn, unpack(C.accent))
                 btn.text:SetFont(GetFontPath(), 10, "")
-                btn.text:SetTextColor(unpack(C.accent))  -- Mint colored text - easy to read
+                btn.text:SetTextColor(unpack(C.accent))
                 tabContents[i]:Show()
             else
-                -- INACTIVE: Standard dark look
                 pcall(btn.SetBackdropColor, btn, 0.15, 0.15, 0.15, 1)
                 pcall(btn.SetBackdropBorderColor, btn, 0.3, 0.3, 0.3, 1)
                 btn.text:SetFont(GetFontPath(), 10, "")
@@ -904,34 +914,43 @@ function GUI:CreateSubTabs(parent, tabs)
                 tabContents[i]:Hide()
             end
         end
+        buttonGroup.selectedTab = index
         container.selectedTab = index
     end
-    
+
     -- Button click handlers
     for i, btn in ipairs(tabButtons) do
         btn:SetScript("OnClick", function() SelectSubTab(i) end)
         btn:SetScript("OnEnter", function(self)
-            if container.selectedTab ~= i then
+            if buttonGroup.selectedTab ~= i then
                 pcall(self.SetBackdropBorderColor, self, unpack(C.accentHover))
             end
         end)
         btn:SetScript("OnLeave", function(self)
-            if container.selectedTab ~= i then
+            if buttonGroup.selectedTab ~= i then
                 pcall(self.SetBackdropBorderColor, self, 0.3, 0.3, 0.3, 1)
             end
         end)
     end
-    
+
+    -- Expose on both container and buttonGroup for compatibility
+    buttonGroup.tabButtons = tabButtons
+    buttonGroup.tabContents = tabContents
+    buttonGroup.SelectTab = SelectSubTab
+    buttonGroup.RelayoutSubTabs = RelayoutSubTabs
     container.tabButtons = tabButtons
     container.tabContents = tabContents
     container.SelectTab = SelectSubTab
-    container.RelayoutSubTabs = RelayoutSubTabs  -- Expose for external use if needed
+    container.RelayoutSubTabs = RelayoutSubTabs
 
     -- Select first tab by default
     SelectSubTab(1)
 
-    -- Initial layout (deferred to ensure container has width from parent anchoring)
+    -- Initial layout (deferred to ensure bar has width)
     C_Timer.After(0, RelayoutSubTabs)
+
+    -- Store as last sub-tab group so SelectTab can capture it
+    GUI._lastSubTabGroup = buttonGroup
 
     return container
 end
@@ -3289,35 +3308,6 @@ function GUI:RenderSearchResults(content, results, searchTerm)
                 if not frame then return end
                 GUI:SelectTab(frame, targetTabIndex)
 
-                -- Recursive helper to find subtab container at any depth
-                local function FindSubTabContainer(parentFrame, depth)
-                    if depth > 5 then return nil end  -- Prevent infinite recursion
-
-                    -- Check if this frame is a subtab container
-                    if parentFrame.SelectTab and parentFrame.tabButtons then
-                        return parentFrame
-                    end
-
-                    -- Check scroll child if this is a scroll frame
-                    if parentFrame.GetScrollChild then
-                        local scrollChild = parentFrame:GetScrollChild()
-                        if scrollChild then
-                            local found = FindSubTabContainer(scrollChild, depth + 1)
-                            if found then return found end
-                        end
-                    end
-
-                    -- Check regular children
-                    if parentFrame.GetChildren then
-                        for _, child in ipairs({parentFrame:GetChildren()}) do
-                            local found = FindSubTabContainer(child, depth + 1)
-                            if found then return found end
-                        end
-                    end
-
-                    return nil
-                end
-
                 -- Helper to scroll to a section
                 local function ScrollToSection()
                     local subTabIdx = targetSubTabIndex or 0
@@ -3329,17 +3319,13 @@ function GUI:RenderSearchResults(content, results, searchTerm)
                         local sectionFrame = sectionInfo.frame
                         local contentParent = sectionInfo.contentParent
 
-                        -- Calculate the section's position relative to the scroll content
                         if contentParent and sectionFrame:IsVisible() then
                             local sectionTop = sectionFrame:GetTop()
                             local contentTop = contentParent:GetTop()
 
                             if sectionTop and contentTop then
-                                -- Get section's offset from top of content
                                 local sectionOffset = contentTop - sectionTop
-                                -- Add some padding above the section (20px)
                                 local scrollPos = math.max(0, sectionOffset - 20)
-                                -- Clamp to valid scroll range
                                 local maxScroll = scrollFrame:GetVerticalScrollRange() or 0
                                 scrollPos = math.min(scrollPos, maxScroll)
                                 scrollFrame:SetVerticalScroll(scrollPos)
@@ -3348,23 +3334,18 @@ function GUI:RenderSearchResults(content, results, searchTerm)
                     end
                 end
 
-                -- Navigate to subtab if specified, then scroll to section
+                -- Navigate to subtab using direct page._subTabGroup lookup
                 if targetSubTabIndex then
                     C_Timer.After(0, function()
                         local page = frame.pages and frame.pages[targetTabIndex]
-                        if page and page.frame then
-                            local subTabContainer = FindSubTabContainer(page.frame, 0)
-                            if subTabContainer then
-                                subTabContainer.SelectTab(targetSubTabIndex)  -- Use dot, not colon - SelectTab expects index as first arg
-                            end
+                        if page and page._subTabGroup then
+                            page._subTabGroup.SelectTab(targetSubTabIndex)
                         end
-                        -- Scroll to section after subtab selection (with small delay for layout)
                         if targetSectionName then
                             C_Timer.After(0.05, ScrollToSection)
                         end
                     end)
                 elseif targetSectionName then
-                    -- No subtab, just scroll to section
                     C_Timer.After(0.05, ScrollToSection)
                 end
             end)
@@ -3423,21 +3404,17 @@ function GUI:CreateMainFrame()
     if self.MainFrame then
         return self.MainFrame
     end
-    
+
     local FRAME_WIDTH = GUI.PANEL_WIDTH
     local FRAME_HEIGHT = 850
-    local TAB_BUTTON_HEIGHT = 22
-    local TAB_START_X = 10   -- Start tabs from the left edge
-    local TAB_SPACING = 2
-    local TABS_PER_ROW = 5   -- 5 tabs per row (for 4 rows = 20 tabs max)
-    local PADDING = 20       -- Left + right padding (10 each side)
+    local SIDEBAR_W = GUI.SIDEBAR_WIDTH
+    local SIDEBAR_ITEM_H = 26
+    local SIDEBAR_ITEM_SPACING = 2
 
-    -- Load saved width first (so tab width calculation uses actual panel width)
+    -- Load saved width first (clamp to new minimum)
     local savedWidth = QUI.QUICore and QUI.QUICore.db and QUI.QUICore.db.profile.configPanelWidth or FRAME_WIDTH
+    if savedWidth < 750 then savedWidth = 750 end  -- Migration: clamp old narrow panels
 
-    -- Calculate button width to fit exactly in frame (use savedWidth, not default)
-    local availableWidth = savedWidth - PADDING - (TAB_SPACING * (TABS_PER_ROW - 1))
-    local TAB_BUTTON_WIDTH = math.floor(availableWidth / TABS_PER_ROW)
     local frame = CreateFrame("Frame", "QUI_Options", UIParent, "BackdropTemplate")
     frame:SetSize(savedWidth, FRAME_HEIGHT)
     frame:SetPoint("CENTER")
@@ -3445,8 +3422,8 @@ function GUI:CreateMainFrame()
     frame:SetFrameLevel(100)
     frame:SetMovable(true)
     frame:SetClampedToScreen(true)
-    frame:SetToplevel(true)  -- Keep panel responsive when clicking elsewhere
-    frame:EnableMouse(true)  -- Block mouse events from passing through to frames behind
+    frame:SetToplevel(true)
+    frame:EnableMouse(true)
     CreateBackdrop(frame, C.bg, C.border)
 
     -- Apply saved panel alpha
@@ -3454,11 +3431,6 @@ function GUI:CreateMainFrame()
     frame:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], savedAlpha)
 
     self.MainFrame = frame
-
-    -- Handle resize events (relayout tabs when width changes)
-    frame:SetScript("OnSizeChanged", function(self, width, height)
-        GUI:RelayoutTabs(self)
-    end)
 
     -- Note: Registry is NOT cleared on show - deduplication keys prevent duplicates
     -- when tabs are re-clicked. Registry persists to allow searching across all visited tabs.
@@ -3472,22 +3444,21 @@ function GUI:CreateMainFrame()
     titleBar:RegisterForDrag("LeftButton")
     titleBar:SetScript("OnDragStart", function() frame:StartMoving() end)
     titleBar:SetScript("OnDragStop", function() frame:StopMovingOrSizing() end)
-    
+
     -- Title bar with title on left, version/close on right (single line)
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    SetFont(title, 14, "OUTLINE", C.accentLight)  -- Lighter mint for title
+    SetFont(title, 14, "OUTLINE", C.accentLight)
     title:SetText("QUI")
     title:SetPoint("TOPLEFT", 12, -10)
-    
+
     -- Version text (mint green, to the left of close button)
     local version = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    SetFont(version, 11, "", C.accentLight)  -- Same mint as title
+    SetFont(version, 11, "", C.accentLight)
     local versionText = (QUI and QUI.versionString) or C_AddOns.GetAddOnMetadata("QUI", "Version") or "2.00"
     version:SetText("v" .. versionText)
     version:SetPoint("TOPRIGHT", -30, -10)
 
     -- Panel Scale (compact inline: label + editbox + slider)
-    -- Uses OnMouseUp pattern to avoid jittery scaling during drag
     local scaleContainer = CreateFrame("Frame", nil, frame)
     scaleContainer:SetSize(160, 20)
     scaleContainer:SetPoint("CENTER", frame, "TOP", 0, -15)
@@ -3497,7 +3468,6 @@ function GUI:CreateMainFrame()
     scaleLabel:SetText("Panel Scale:")
     scaleLabel:SetPoint("LEFT", scaleContainer, "LEFT", 0, 0)
 
-    -- Editable input field for manual entry
     local scaleEditBox = CreateFrame("EditBox", nil, scaleContainer, "BackdropTemplate")
     scaleEditBox:SetSize(38, 16)
     scaleEditBox:SetPoint("LEFT", scaleLabel, "RIGHT", 5, 0)
@@ -3529,10 +3499,9 @@ function GUI:CreateMainFrame()
     thumb:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
     scaleSlider:SetThumbTexture(thumb)
 
-    -- Helper to apply scale (used on release and manual entry)
     local function ApplyScale(value)
         value = math.max(0.8, math.min(1.5, value))
-        value = math.floor(value * 20 + 0.5) / 20  -- Round to 0.05
+        value = math.floor(value * 20 + 0.5) / 20
         frame:SetScale(value)
         if QUI.QUICore and QUI.QUICore.db then
             QUI.QUICore.db.profile.configPanelScale = value
@@ -3540,33 +3509,27 @@ function GUI:CreateMainFrame()
         return value
     end
 
-    -- Initialize scale from saved value
     local savedScale = QUI.QUICore and QUI.QUICore.db and QUI.QUICore.db.profile.configPanelScale or 1.0
     scaleSlider:SetValue(savedScale)
     scaleEditBox:SetText(string.format("%.2f", savedScale))
     frame:SetScale(savedScale)
 
-    -- Track if we're dragging to defer SetScale until release
     local isDragging = false
 
-    -- OnValueChanged: Update editbox text only, defer SetScale during drag
     scaleSlider:SetScript("OnValueChanged", function(self, value)
-        value = math.floor(value * 20 + 0.5) / 20  -- Round to 0.05
+        value = math.floor(value * 20 + 0.5) / 20
         scaleEditBox:SetText(string.format("%.2f", value))
-        -- Only apply immediately if NOT dragging (e.g., clicking on track)
         if not isDragging then
             ApplyScale(value)
         end
     end)
 
-    -- OnMouseDown: Start tracking drag
     scaleSlider:SetScript("OnMouseDown", function(self, button)
         if button == "LeftButton" then
             isDragging = true
         end
     end)
 
-    -- OnMouseUp: Apply scale smoothly when user releases
     scaleSlider:SetScript("OnMouseUp", function(self, button)
         if button == "LeftButton" and isDragging then
             isDragging = false
@@ -3575,7 +3538,6 @@ function GUI:CreateMainFrame()
         end
     end)
 
-    -- EditBox: Manual entry support
     scaleEditBox:SetScript("OnEnterPressed", function(self)
         local val = tonumber(self:GetText())
         if val then
@@ -3591,14 +3553,12 @@ function GUI:CreateMainFrame()
         self:ClearFocus()
     end)
 
-    -- Hover effect for editbox
     scaleEditBox:SetScript("OnEditFocusGained", function(self)
         pcall(self.SetBackdropBorderColor, self, unpack(C.accent))
     end)
 
     scaleEditBox:SetScript("OnEditFocusLost", function(self)
         pcall(self.SetBackdropBorderColor, self, 0.25, 0.25, 0.25, 1)
-        -- Validate and revert if invalid
         local val = tonumber(self:GetText())
         if not val then
             self:SetText(string.format("%.2f", scaleSlider:GetValue()))
@@ -3609,94 +3569,123 @@ function GUI:CreateMainFrame()
     local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
     close:SetPoint("TOPRIGHT", -3, -3)
     close:SetScript("OnClick", function() frame:Hide() end)
-    
+
     -- Separator line below title
     local titleSep = frame:CreateTexture(nil, "ARTWORK")
     titleSep:SetPoint("TOPLEFT", 10, -30)
     titleSep:SetPoint("TOPRIGHT", -10, -30)
     titleSep:SetHeight(1)
     titleSep:SetColorTexture(unpack(C.border))
-    
-    -- Tab button container (starts right below title line)
-    local tabContainer = CreateFrame("Frame", nil, frame)
-    tabContainer:SetPoint("TOPLEFT", TAB_START_X, -35)
-    tabContainer:SetPoint("TOPRIGHT", -10, -35)
-    tabContainer:SetHeight(100)  -- Height for 4 rows of tabs (22px each + spacing)
-    frame.tabContainer = tabContainer
-    
-    -- Content area (below tabs) - starts after 4 rows of tabs
-    local contentArea = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    contentArea:SetPoint("TOPLEFT", 10, -140)  -- 35 (title) + 100 (tabs) + 5 (gap)
-    contentArea:SetPoint("BOTTOMRIGHT", -10, 10)
-    contentArea:EnableMouse(false)  -- Container frame - let children handle clicks
 
-    -- Content background (Dark Slate with transparency)
+    ---------------------------------------------------------------------------
+    -- SIDEBAR (vertical tab list on the left)
+    ---------------------------------------------------------------------------
+    local sidebar = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    sidebar:SetPoint("TOPLEFT", 10, -35)
+    sidebar:SetPoint("BOTTOMLEFT", 10, 10)
+    sidebar:SetWidth(SIDEBAR_W)
+
+    -- Sidebar background
+    local sidebarBg = sidebar:CreateTexture(nil, "BACKGROUND")
+    sidebarBg:SetAllPoints()
+    sidebarBg:SetColorTexture(unpack(C.bgContent))
+
+    -- Right border on sidebar
+    local sidebarBorder = sidebar:CreateTexture(nil, "ARTWORK")
+    sidebarBorder:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", 0, 0)
+    sidebarBorder:SetPoint("BOTTOMRIGHT", sidebar, "BOTTOMRIGHT", 0, 0)
+    sidebarBorder:SetWidth(1)
+    sidebarBorder:SetColorTexture(unpack(C.border))
+
+    frame.sidebar = sidebar
+    frame._sidebarItems = {}       -- All sidebar items (tabs + bottom items)
+    frame._sidebarNormalCount = 0  -- Count of regular tab items (top section)
+    frame._sidebarBottomItems = {} -- Bottom section items (search, action buttons)
+
+    ---------------------------------------------------------------------------
+    -- SUB-TAB BAR (sticky bar above scroll content, hidden by default)
+    ---------------------------------------------------------------------------
+    local subTabBar = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    subTabBar:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 5, 0)
+    subTabBar:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -35)
+    subTabBar:SetHeight(30)
+    subTabBar:SetFrameLevel(frame:GetFrameLevel() + 5)  -- Above content area
+    subTabBar:EnableMouse(true)  -- Block clicks from passing through
+    subTabBar:Hide()
+
+    -- Sub-tab bar background
+    local subTabBarBg = subTabBar:CreateTexture(nil, "BACKGROUND")
+    subTabBarBg:SetAllPoints()
+    subTabBarBg:SetColorTexture(unpack(C.bgContent))
+
+    -- Bottom border on sub-tab bar
+    local subTabBarBorder = subTabBar:CreateTexture(nil, "ARTWORK")
+    subTabBarBorder:SetPoint("BOTTOMLEFT", subTabBar, "BOTTOMLEFT", 0, 0)
+    subTabBarBorder:SetPoint("BOTTOMRIGHT", subTabBar, "BOTTOMRIGHT", 0, 0)
+    subTabBarBorder:SetHeight(1)
+    subTabBarBorder:SetColorTexture(unpack(C.border))
+
+    frame.subTabBar = subTabBar
+
+    ---------------------------------------------------------------------------
+    -- CONTENT AREA (right of sidebar, below sub-tab bar when visible)
+    ---------------------------------------------------------------------------
+    local contentArea = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    contentArea:SetPoint("TOPLEFT", sidebar, "TOPRIGHT", 5, 0)
+    contentArea:SetPoint("BOTTOMRIGHT", -10, 10)
+    contentArea:EnableMouse(false)
+
+    -- Content background
     local contentBg = contentArea:CreateTexture(nil, "BACKGROUND")
     contentBg:SetAllPoints()
     contentBg:SetColorTexture(unpack(C.bgContent))
-    
-    -- Top line above content (subtle mint hint)
-    local topLine = contentArea:CreateTexture(nil, "ARTWORK")
-    topLine:SetPoint("BOTTOMLEFT", contentArea, "TOPLEFT", 0, 0)
-    topLine:SetPoint("BOTTOMRIGHT", contentArea, "TOPRIGHT", 0, 0)
-    topLine:SetHeight(1)
-    topLine:SetColorTexture(unpack(C.border))
-    
+
     frame.contentArea = contentArea
-    
+
     -- Store tabs and pages
     frame.tabs = {}
     frame.pages = {}
     frame.activeTab = nil
-    frame.TAB_BUTTON_WIDTH = TAB_BUTTON_WIDTH
-    frame.TAB_BUTTON_HEIGHT = TAB_BUTTON_HEIGHT
-    frame.TAB_SPACING = TAB_SPACING
-    frame.TABS_PER_ROW = TABS_PER_ROW
-    
+
     ---------------------------------------------------------------------------
     -- RESIZE HANDLE (Bottom-right corner, horizontal and vertical)
     ---------------------------------------------------------------------------
     local MIN_HEIGHT = 400
     local MAX_HEIGHT = 1200
-    local MIN_WIDTH = 600
-    local MAX_WIDTH = 1000
-    
+    local MIN_WIDTH = 750
+    local MAX_WIDTH = 1200
+
     local resizeHandle = CreateFrame("Button", nil, frame)
     resizeHandle:SetSize(20, 20)
     resizeHandle:SetPoint("BOTTOMRIGHT", -4, 4)
     resizeHandle:SetFrameLevel(frame:GetFrameLevel() + 10)
-    
-    -- Diagonal grip texture
+
     local gripTexture = resizeHandle:CreateTexture(nil, "OVERLAY")
     gripTexture:SetAllPoints()
     gripTexture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-    gripTexture:SetVertexColor(0.6, 0.8, 0.7, 0.8)  -- Subtle mint tint
+    gripTexture:SetVertexColor(0.6, 0.8, 0.7, 0.8)
 
-    -- Highlight texture on hover
     local gripHighlight = resizeHandle:CreateTexture(nil, "HIGHLIGHT")
     gripHighlight:SetAllPoints()
     gripHighlight:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
-    gripHighlight:SetVertexColor(0.2, 0.82, 0.6, 1)  -- Mint highlight
+    gripHighlight:SetVertexColor(0.2, 0.82, 0.6, 1)
 
-    -- Pushed texture when dragging
     local gripPushed = resizeHandle:CreateTexture(nil, "ARTWORK")
     gripPushed:SetAllPoints()
     gripPushed:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
     gripPushed:SetVertexColor(0.2, 0.82, 0.6, 1)
     gripPushed:Hide()
-    
+
     resizeHandle:SetScript("OnMouseDown", function(self, button)
         if button == "LeftButton" then
             gripPushed:Show()
             gripTexture:Hide()
 
-            -- Re-anchor to TOPLEFT so resizing only moves right/bottom edges
             local left = frame:GetLeft()
             local top = frame:GetTop()
             frame:ClearAllPoints()
             frame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
 
-            -- Store initial values for both axes
             local cursorX, cursorY = GetCursorPosition()
             local scale = frame:GetEffectiveScale()
             self.startX = cursorX / scale
@@ -3705,12 +3694,11 @@ function GUI:CreateMainFrame()
             self.startHeight = frame:GetHeight()
             self.isResizing = true
 
-            -- Start resizing (both horizontal and vertical)
             self._resizeElapsed = 0
             self:SetScript("OnUpdate", function(self, elapsed)
                 if not self.isResizing then return end
                 self._resizeElapsed = (self._resizeElapsed or 0) + elapsed
-                if self._resizeElapsed < 0.016 then return end -- ~60 FPS cap
+                if self._resizeElapsed < 0.016 then return end
                 self._resizeElapsed = 0
 
                 local cursorX, cursorY = GetCursorPosition()
@@ -3718,11 +3706,9 @@ function GUI:CreateMainFrame()
                 local currentX = cursorX / scale
                 local currentY = cursorY / scale
 
-                -- Calculate deltas
-                local deltaX = currentX - self.startX  -- Drag right = increase width
-                local deltaY = self.startY - currentY  -- Inverted: drag down = increase height
+                local deltaX = currentX - self.startX
+                local deltaY = self.startY - currentY
 
-                -- Apply clamped values
                 local newWidth = math.max(MIN_WIDTH, math.min(MAX_WIDTH, self.startWidth + deltaX))
                 local newHeight = math.max(MIN_HEIGHT, math.min(MAX_HEIGHT, self.startHeight + deltaY))
 
@@ -3730,7 +3716,7 @@ function GUI:CreateMainFrame()
             end)
         end
     end)
-    
+
     resizeHandle:SetScript("OnMouseUp", function(self, button)
         if button == "LeftButton" then
             gripPushed:Hide()
@@ -3738,14 +3724,12 @@ function GUI:CreateMainFrame()
             self.isResizing = false
             self:SetScript("OnUpdate", nil)
 
-            -- Save dimensions to DB
             if QUI.QUICore and QUI.QUICore.db then
                 QUI.QUICore.db.profile.configPanelWidth = frame:GetWidth()
             end
         end
     end)
 
-    -- Tooltip on hover
     resizeHandle:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
         GameTooltip:SetText("Drag to resize", 1, 1, 1)
@@ -3755,171 +3739,153 @@ function GUI:CreateMainFrame()
     resizeHandle:SetScript("OnLeave", function(self)
         GameTooltip:Hide()
     end)
-    
+
     frame.resizeHandle = resizeHandle
-
-    ---------------------------------------------------------------------------
-    -- TAB RELAYOUT (called on resize to adjust tab widths)
-    ---------------------------------------------------------------------------
-    function GUI:RelayoutTabs(targetFrame)
-        if not targetFrame.tabs or #targetFrame.tabs == 0 then return end
-
-        local PADDING = 20
-        local TAB_SPACING = targetFrame.TAB_SPACING
-        local TABS_PER_ROW = targetFrame.TABS_PER_ROW
-        local TAB_BUTTON_HEIGHT = targetFrame.TAB_BUTTON_HEIGHT
-
-        local availableWidth = targetFrame:GetWidth() - PADDING - (TAB_SPACING * (TABS_PER_ROW - 1))
-        local tabWidth = math.floor(availableWidth / TABS_PER_ROW)
-
-        for i, tab in ipairs(targetFrame.tabs) do
-            local row = math.floor((i - 1) / TABS_PER_ROW)
-            local col = (i - 1) % TABS_PER_ROW
-            local x = col * (tabWidth + TAB_SPACING)
-            local y = -row * (TAB_BUTTON_HEIGHT + TAB_SPACING) - 5
-
-            tab:SetWidth(tabWidth)
-            tab:ClearAllPoints()
-            tab:SetPoint("TOPLEFT", targetFrame.tabContainer, "TOPLEFT", x, y)
-        end
-
-        targetFrame.TAB_BUTTON_WIDTH = tabWidth
-    end
 
     return frame
 end
 
 ---------------------------------------------------------------------------
--- ADD TAB (Clean style - no left bar, mint text when active)
+-- ADD TAB (Sidebar item style - vertical list on left)
 ---------------------------------------------------------------------------
-function GUI:AddTab(frame, name, pageCreateFunc)
+function GUI:AddTab(frame, name, pageCreateFunc, isBottomItem)
     local index = #frame.tabs + 1
-    
-    local row = math.floor((index - 1) / frame.TABS_PER_ROW)
-    local col = (index - 1) % frame.TABS_PER_ROW
-    
-    local x = col * (frame.TAB_BUTTON_WIDTH + frame.TAB_SPACING)
-    local y = -row * (frame.TAB_BUTTON_HEIGHT + frame.TAB_SPACING) - 5  -- Small top padding
-    
-    -- Create tab button
-    local tab = CreateFrame("Button", nil, frame.tabContainer, "BackdropTemplate")
-    tab:SetSize(frame.TAB_BUTTON_WIDTH, frame.TAB_BUTTON_HEIGHT)
-    tab:SetPoint("TOPLEFT", frame.tabContainer, "TOPLEFT", x, y)
-    tab:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
-    })
-    tab:SetBackdropColor(unpack(C.bgLight))  -- Dark Slate inactive
-    tab:SetBackdropBorderColor(unpack(C.border))
+
+    -- Create sidebar item button
+    local tab = CreateFrame("Button", nil, frame.sidebar)
+    tab:SetHeight(26)
     tab.index = index
     tab.name = name
-    
-    -- Tab text - centered
+    tab.isBottomItem = isBottomItem
+
+    -- Left active indicator bar (3px wide, hidden by default)
+    tab.indicator = tab:CreateTexture(nil, "OVERLAY")
+    tab.indicator:SetPoint("TOPLEFT", 0, 0)
+    tab.indicator:SetPoint("BOTTOMLEFT", 0, 0)
+    tab.indicator:SetWidth(3)
+    tab.indicator:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
+    tab.indicator:Hide()
+
+    -- Hover/active background
+    tab.hoverBg = tab:CreateTexture(nil, "BACKGROUND")
+    tab.hoverBg:SetAllPoints()
+    tab.hoverBg:SetColorTexture(1, 1, 1, 0.05)
+    tab.hoverBg:Hide()
+
+    -- Tab text - left-aligned with padding after indicator
     tab.text = tab:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(tab.text, 11, "", C.tabNormal)
     tab.text:SetText(name)
-    tab.text:SetPoint("CENTER", tab, "CENTER", 0, 0)
-    tab.text:SetJustifyH("CENTER")
-    
+    tab.text:SetPoint("LEFT", tab, "LEFT", 15, 0)
+    tab.text:SetJustifyH("LEFT")
+
+    -- Position in sidebar
+    if isBottomItem then
+        -- Bottom items are anchored from BOTTOMLEFT, upward
+        local bottomCount = #frame._sidebarBottomItems
+        tab:SetPoint("BOTTOMLEFT", frame.sidebar, "BOTTOMLEFT", 0, bottomCount * 28)
+        tab:SetPoint("BOTTOMRIGHT", frame.sidebar, "BOTTOMRIGHT", -1, bottomCount * 28)
+        table.insert(frame._sidebarBottomItems, tab)
+    else
+        -- Normal items anchored from TOPLEFT, downward
+        local normalIndex = frame._sidebarNormalCount
+        tab:SetPoint("TOPLEFT", frame.sidebar, "TOPLEFT", 0, -(normalIndex * 28) - 5)
+        tab:SetPoint("TOPRIGHT", frame.sidebar, "TOPRIGHT", -1, -(normalIndex * 28) - 5)
+        frame._sidebarNormalCount = normalIndex + 1
+    end
+
     frame.tabs[index] = tab
     frame.pages[index] = {
         createFunc = pageCreateFunc,
         frame = nil
     }
-    
+    frame._sidebarItems[index] = tab
+
     -- Click handler
     tab:SetScript("OnClick", function()
         GUI:SelectTab(frame, index)
     end)
-    
+
     tab:SetScript("OnEnter", function(self)
         if frame.activeTab ~= self.index then
             self.text:SetTextColor(unpack(C.tabHover))
-            pcall(self.SetBackdropBorderColor, self, unpack(C.borderLight))
+            self.hoverBg:Show()
         end
     end)
-    
+
     tab:SetScript("OnLeave", function(self)
         if frame.activeTab ~= self.index then
             self.text:SetTextColor(unpack(C.tabNormal))
-            pcall(self.SetBackdropBorderColor, self, unpack(C.border))
+            self.hoverBg:Hide()
         end
     end)
-    
+
     -- Select first tab by default
     if index == 1 then
         GUI:SelectTab(frame, 1)
     end
-    
+
     return tab
 end
 
 ---------------------------------------------------------------------------
--- ADD ACTION BUTTON (Special button that executes action instead of opening page)
--- Styled like "CREATE" button - dark bg with thick mint border, centered text
+-- ADD ACTION BUTTON (Sidebar bottom item - executes action, no page)
 ---------------------------------------------------------------------------
 function GUI:AddActionButton(frame, name, onClick, accentColor)
     local index = #frame.tabs + 1
-    
-    local row = math.floor((index - 1) / frame.TABS_PER_ROW)
-    local col = (index - 1) % frame.TABS_PER_ROW
-    
-    local x = col * (frame.TAB_BUTTON_WIDTH + frame.TAB_SPACING)
-    local y = -row * (frame.TAB_BUTTON_HEIGHT + frame.TAB_SPACING) - 5
-    
-    -- Create action button (styled like CREATE button)
-    local btn = CreateFrame("Button", nil, frame.tabContainer, "BackdropTemplate")
-    btn:SetSize(frame.TAB_BUTTON_WIDTH, frame.TAB_BUTTON_HEIGHT)
-    btn:SetPoint("TOPLEFT", frame.tabContainer, "TOPLEFT", x, y)
-    
-    -- Dark background with thick mint border (like CREATE button)
-    local bgColor = {0.05, 0.08, 0.12, 1}  -- Very dark
-    local borderColor = {0.2, 0.82, 0.6, 1}  -- Mint/teal accent
-    
-    btn:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 2,  -- Thicker border
-    })
-    btn:SetBackdropColor(unpack(bgColor))
-    btn:SetBackdropBorderColor(unpack(borderColor))
+
+    -- Create sidebar item in bottom section
+    local btn = CreateFrame("Button", nil, frame.sidebar)
+    btn:SetHeight(26)
     btn.index = index
     btn.name = name
     btn.isActionButton = true
-    btn.bgColor = bgColor
+
+    local borderColor = {0.2, 0.82, 0.6, 1}  -- Mint/teal accent
     btn.borderColor = borderColor
-    
-    -- Button text - CENTERED, mint colored
+    btn.bgColor = {0.05, 0.08, 0.12, 1}
+
+    -- Hover background
+    btn.hoverBg = btn:CreateTexture(nil, "BACKGROUND")
+    btn.hoverBg:SetAllPoints()
+    btn.hoverBg:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.08)
+    btn.hoverBg:Hide()
+
+    -- Button text - left-aligned, mint colored
     btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    SetFont(btn.text, 11, "", borderColor)  -- Mint text color
+    SetFont(btn.text, 11, "", borderColor)
     btn.text:SetText(name)
-    btn.text:SetPoint("CENTER", btn, "CENTER", 0, 0)
-    btn.text:SetJustifyH("CENTER")
-    
+    btn.text:SetPoint("LEFT", btn, "LEFT", 15, 0)
+    btn.text:SetJustifyH("LEFT")
+
+    -- Position at bottom of sidebar, anchored upward
+    local bottomCount = #frame._sidebarBottomItems
+    btn:SetPoint("BOTTOMLEFT", frame.sidebar, "BOTTOMLEFT", 0, bottomCount * 28)
+    btn:SetPoint("BOTTOMRIGHT", frame.sidebar, "BOTTOMRIGHT", -1, bottomCount * 28)
+    table.insert(frame._sidebarBottomItems, btn)
+
     -- Store in tabs array but mark as action button
     frame.tabs[index] = btn
-    frame.pages[index] = nil  -- No page for action buttons
-    
+    frame.pages[index] = nil
+    frame._sidebarItems[index] = btn
+
     -- Click handler - execute action
     btn:SetScript("OnClick", function()
         if onClick then
             onClick()
         end
     end)
-    
+
     btn:SetScript("OnEnter", function(self)
-        self:SetBackdropColor(0.1, 0.15, 0.2, 1)  -- Slightly lighter on hover
-        self:SetBackdropBorderColor(0.4, 1, 0.8, 1)  -- Brighter mint on hover
-        self.text:SetTextColor(0.4, 1, 0.8, 1)  -- Brighter text
+        self.hoverBg:Show()
+        self.text:SetTextColor(0.4, 1, 0.8, 1)
     end)
-    
+
     btn:SetScript("OnLeave", function(self)
-        self:SetBackdropColor(unpack(self.bgColor))
-        self:SetBackdropBorderColor(unpack(self.borderColor))
+        self.hoverBg:Hide()
         self.text:SetTextColor(unpack(self.borderColor))
     end)
-    
+
     return btn
 end
 
@@ -3934,7 +3900,6 @@ function GUI:SelectTab(frame, index)
     end
 
     -- Force-load all tabs when Search tab is selected
-    -- Only if all tabs have been added (avoid running during initial setup)
     if index == self._searchTabIndex and self._allTabsAdded and not self._searchIndexBuilt then
         self:ForceLoadAllTabs()
         self._searchIndexBuilt = true
@@ -3948,51 +3913,77 @@ function GUI:SelectTab(frame, index)
         self:ClearSearchResults()
     end
 
-    -- Deselect previous
+    -- Deselect previous sidebar item
     if frame.activeTab then
         local prevTab = frame.tabs[frame.activeTab]
         if prevTab and not prevTab.isActionButton then
-            prevTab.text:SetTextColor(unpack(C.tabNormal))  -- Normal grey text
-            pcall(prevTab.SetBackdropColor, prevTab, unpack(C.bgLight))
-            pcall(prevTab.SetBackdropBorderColor, prevTab, unpack(C.border))
+            prevTab.text:SetTextColor(unpack(C.tabNormal))
+            if prevTab.indicator then prevTab.indicator:Hide() end
+            if prevTab.hoverBg then prevTab.hoverBg:Hide() end
         end
-        
+
         if frame.pages[frame.activeTab] and frame.pages[frame.activeTab].frame then
             frame.pages[frame.activeTab].frame:Hide()
         end
     end
-    
-    -- Select new
+
+    -- Select new sidebar item
     frame.activeTab = index
     local tab = frame.tabs[index]
     if tab and not tab.isActionButton then
-        tab.text:SetTextColor(unpack(C.accent))  -- Mint text when active
-        pcall(tab.SetBackdropColor, tab, unpack(C.bgLight))
-        pcall(tab.SetBackdropBorderColor, tab, unpack(C.accent))  -- Mint border
+        tab.text:SetTextColor(unpack(C.accent))
+        if tab.indicator then tab.indicator:Show() end
+        if tab.hoverBg then tab.hoverBg:Show() end
     end
-    
+
     -- Create/show page
     local page = frame.pages[index]
     if page then
         if not page.frame then
             page.frame = CreateFrame("Frame", nil, frame.contentArea)
             page.frame:SetAllPoints()
-            page.frame:EnableMouse(false)  -- Container frame - let children handle clicks
+            page.frame:EnableMouse(false)
             if page.createFunc then
                 page.createFunc(page.frame)
-                page.built = true  -- Prevent duplicate widget creation
+                page.built = true
             end
         end
+
+        -- Capture sub-tab group created during page build
+        if GUI._lastSubTabGroup then
+            page._subTabGroup = GUI._lastSubTabGroup
+            GUI._lastSubTabGroup = nil
+        end
+
         page.frame:Show()
-        
+
+        -- Manage sub-tab bar visibility
+        if frame._activeSubTabGroup then
+            frame._activeSubTabGroup:Hide()
+        end
+
+        if page._subTabGroup then
+            frame._activeSubTabGroup = page._subTabGroup
+            page._subTabGroup:Show()
+            frame.subTabBar:Show()
+            frame.contentArea:ClearAllPoints()
+            frame.contentArea:SetPoint("TOPLEFT", frame.subTabBar, "BOTTOMLEFT", 0, -2)
+            frame.contentArea:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 10)
+        else
+            frame._activeSubTabGroup = nil
+            frame.subTabBar:Hide()
+            frame.contentArea:ClearAllPoints()
+            frame.contentArea:SetPoint("TOPLEFT", frame.sidebar, "TOPRIGHT", 5, 0)
+            frame.contentArea:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -10, 10)
+        end
+
         -- Force OnShow scripts to fire on all children (for refresh purposes)
-        -- This ensures dynamic content like profile dropdowns update
-        local function TriggerOnShow(frame)
-            if frame.GetScript and frame:GetScript("OnShow") then
-                frame:GetScript("OnShow")(frame)
+        local function TriggerOnShow(f)
+            if f.GetScript and f:GetScript("OnShow") then
+                f:GetScript("OnShow")(f)
             end
-            if frame.GetChildren then
-                for _, child in ipairs({frame:GetChildren()}) do
+            if f.GetChildren then
+                for _, child in ipairs({f:GetChildren()}) do
                     TriggerOnShow(child)
                 end
             end

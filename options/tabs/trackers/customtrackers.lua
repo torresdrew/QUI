@@ -31,7 +31,7 @@ local function CreateCustomTrackersPage(parent)
     local db = GetDB()
 
     -- Set search context for auto-registration
-    GUI:SetSearchContext({tabIndex = 9, tabName = "Custom Items/Spells/Buffs"})
+    GUI:SetSearchContext({tabIndex = 9, tabName = "Custom Trackers"})
 
     -- Ensure customTrackers.bars exists
     if not db.customTrackers then
@@ -194,7 +194,7 @@ local function CreateCustomTrackersPage(parent)
     -- Build tab content for a single tracker bar
     ---------------------------------------------------------------------------
     local function BuildTrackerBarTab(tabContent, barConfig, barIndex, subTabsRef)
-        GUI:SetSearchContext({tabIndex = 9, tabName = "Custom Items/Spells/Buffs", subTabIndex = barIndex + 1, subTabName = barConfig.name or ("Bar " .. barIndex)})
+        GUI:SetSearchContext({tabIndex = 9, tabName = "Custom Trackers", subTabIndex = barIndex + 1, subTabName = barConfig.name or ("Bar " .. barIndex)})
         local y = -10
         local entryListFrame  -- Forward declaration for refresh callback
 
@@ -1506,7 +1506,7 @@ local function CreateCustomTrackersPage(parent)
     table.insert(tabDefs, {
         name = "Setup Custom Buff Tracking",
         builder = function(tabContent)
-            GUI:SetSearchContext({tabIndex = 9, tabName = "Custom Items/Spells/Buffs", subTabIndex = 1, subTabName = "Spell Scanner"})
+            GUI:SetSearchContext({tabIndex = 9, tabName = "Custom Trackers", subTabIndex = 1, subTabName = "Spell Scanner"})
             local y = -10
             local scanner = QUI.SpellScanner
             local scannedListFrame  -- Forward declaration for refresh
@@ -1987,12 +1987,10 @@ local function CreateCustomTrackersPage(parent)
 
         -- Create sub-tabs
         local subTabs = GUI:CreateSubTabs(content, tabDefs)
-        subTabsRef.tabButtons = subTabs.tabButtons  -- Populate reference for live tab text updates
-        subTabs:SetPoint("TOPLEFT", 5, -5)
-        subTabs:SetPoint("TOPRIGHT", -5, -5)
-        subTabs:SetHeight(750)
+        -- Get tabButtons from the sticky bar group for live tab text updates
+        subTabsRef.tabButtons = GUI._lastSubTabGroup and GUI._lastSubTabGroup.tabButtons or subTabs.tabButtons
 
-        content:SetHeight(800)
+        content:SetHeight(750)
     end
 end
 
