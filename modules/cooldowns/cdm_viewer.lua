@@ -245,12 +245,21 @@ local function SkinIcon(icon, size, aspectRatioCrop, zoom, borderSize, borderCol
     local width = size
     local height = size / aspectRatio
 
+    -- Pixel-snap icon dimensions to prevent sub-pixel edge rounding
+    if QUICore and QUICore.PixelRound then
+        width = QUICore:PixelRound(width, icon)
+        height = QUICore:PixelRound(height, icon)
+    end
+
     -- Set icon frame size
     icon:SetSize(width, height)
 
     -- Border (BACKGROUND texture approach)
     borderSize = borderSize or 0
     if borderSize > 0 then
+        -- Convert border pixel count to exact virtual coordinates
+        local bs = (QUICore and QUICore.Pixels) and QUICore:Pixels(borderSize, icon) or borderSize
+
         if not icon._ncdmBorder then
             icon._ncdmBorder = icon:CreateTexture(nil, "BACKGROUND", nil, -8)
         end
@@ -258,12 +267,12 @@ local function SkinIcon(icon, size, aspectRatioCrop, zoom, borderSize, borderCol
         icon._ncdmBorder:SetColorTexture(bc[1], bc[2], bc[3], bc[4])
 
         icon._ncdmBorder:ClearAllPoints()
-        icon._ncdmBorder:SetPoint("TOPLEFT", icon, "TOPLEFT", -borderSize, borderSize)
-        icon._ncdmBorder:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", borderSize, -borderSize)
+        icon._ncdmBorder:SetPoint("TOPLEFT", icon, "TOPLEFT", -bs, bs)
+        icon._ncdmBorder:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", bs, -bs)
         icon._ncdmBorder:Show()
 
         -- Expand hit area to include border for mouseover detection
-        icon:SetHitRectInsets(-borderSize, -borderSize, -borderSize, -borderSize)
+        icon:SetHitRectInsets(-bs, -bs, -bs, -bs)
     else
         if icon._ncdmBorder then
             icon._ncdmBorder:Hide()
@@ -859,6 +868,11 @@ local function LayoutViewer(viewerName, trackerKey)
             end
 
             -- Position using CENTER anchor (more stable than TOPLEFT)
+            -- Pixel-snap position so icon/border edges land on pixel boundaries
+            if QUICore and QUICore.PixelRound then
+                x = QUICore:PixelRound(x, viewer)
+                y = QUICore:PixelRound(y, viewer)
+            end
             icon:ClearAllPoints()
             icon:SetPoint("CENTER", viewer, "CENTER", x, y)
             icon:Show()

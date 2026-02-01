@@ -4,6 +4,12 @@ local GUI = QUI.GUI
 local C = GUI.Colors
 local Shared = ns.QUI_Options
 
+local function GetCore()
+    return (_G.QUI and _G.QUI.QUICore) or ns.Addon
+end
+
+local QUICore = GetCore()
+
 -- Local references for shared infrastructure
 local CreateScrollableContent = Shared.CreateScrollableContent
 local GetDB = Shared.GetDB
@@ -1857,10 +1863,11 @@ local function CreateCDMSetupPage(parent)
         local snapPrimaryBtn = CreateFrame("Button", nil, snapPrimaryContainer, "BackdropTemplate")
         snapPrimaryBtn:SetSize(115, 24)
         snapPrimaryBtn:SetPoint("LEFT", snapPrimaryContainer, "LEFT", 180, 0)
+        local pxSnapPrimary = (core and core.GetPixelSize and core:GetPixelSize(snapPrimaryBtn)) or 1
         snapPrimaryBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = pxSnapPrimary,
         })
         snapPrimaryBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         snapPrimaryBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -1906,10 +1913,11 @@ local function CreateCDMSetupPage(parent)
         local snapUtilityBtn = CreateFrame("Button", nil, snapPrimaryContainer, "BackdropTemplate")
         snapUtilityBtn:SetSize(115, 24)
         snapUtilityBtn:SetPoint("LEFT", snapPrimaryBtn, "RIGHT", 5, 0)
+        local pxSnapUtil = (core and core.GetPixelSize and core:GetPixelSize(snapUtilityBtn)) or 1
         snapUtilityBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = pxSnapUtil,
         })
         snapUtilityBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         snapUtilityBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -1967,10 +1975,11 @@ local function CreateCDMSetupPage(parent)
         local lockEssentialBtn = CreateFrame("Button", nil, lockContainer, "BackdropTemplate")
         lockEssentialBtn:SetSize(115, 24)
         lockEssentialBtn:SetPoint("LEFT", lockContainer, "LEFT", 180, 0)
+        local pxLockEss = (core and core.GetPixelSize and core:GetPixelSize(lockEssentialBtn)) or 1
         lockEssentialBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = pxLockEss,
         })
         lockEssentialBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
 
@@ -1982,10 +1991,11 @@ local function CreateCDMSetupPage(parent)
         local lockUtilityBtn = CreateFrame("Button", nil, lockContainer, "BackdropTemplate")
         lockUtilityBtn:SetSize(115, 24)
         lockUtilityBtn:SetPoint("LEFT", lockEssentialBtn, "RIGHT", 5, 0)
+        local pxLockUtil = (core and core.GetPixelSize and core:GetPixelSize(lockUtilityBtn)) or 1
         lockUtilityBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = pxLockUtil,
         })
         lockUtilityBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
 
@@ -2249,8 +2259,8 @@ local function CreateCDMSetupPage(parent)
         y = y - FORM_ROW
 
         -- Register sliders for real-time sync during Edit Mode
-        if _G.QUI and _G.QUI.QUICore and _G.QUI.QUICore.RegisterPowerBarEditModeSliders then
-            _G.QUI.QUICore:RegisterPowerBarEditModeSliders("primary", xOffsetPrimarySlider, yOffsetPrimarySlider)
+        if core and core.RegisterPowerBarEditModeSliders then
+            core:RegisterPowerBarEditModeSliders("primary", xOffsetPrimarySlider, yOffsetPrimarySlider)
         end
 
         -- Text sliders
@@ -2352,10 +2362,11 @@ local function CreateCDMSetupPage(parent)
         local snapSecEssentialBtn = CreateFrame("Button", nil, snapSecondaryContainer, "BackdropTemplate")
         snapSecEssentialBtn:SetSize(100, 24)
         snapSecEssentialBtn:SetPoint("LEFT", snapSecondaryContainer, "LEFT", 180, 0)
+        local pxSnapSecEss = (core and core.GetPixelSize and core:GetPixelSize(snapSecEssentialBtn)) or 1
         snapSecEssentialBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = pxSnapSecEss,
         })
         snapSecEssentialBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         snapSecEssentialBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -2395,10 +2406,11 @@ local function CreateCDMSetupPage(parent)
         local snapSecUtilityBtn = CreateFrame("Button", nil, snapSecondaryContainer, "BackdropTemplate")
         snapSecUtilityBtn:SetSize(100, 24)
         snapSecUtilityBtn:SetPoint("LEFT", snapSecEssentialBtn, "RIGHT", 5, 0)
+        local pxSnapSecUtil = (core and core.GetPixelSize and core:GetPixelSize(snapSecUtilityBtn)) or 1
         snapSecUtilityBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = pxSnapSecUtil,
         })
         snapSecUtilityBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         snapSecUtilityBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -2438,10 +2450,11 @@ local function CreateCDMSetupPage(parent)
         local snapSecPrimaryBtn = CreateFrame("Button", nil, snapSecondaryContainer, "BackdropTemplate")
         snapSecPrimaryBtn:SetSize(100, 24)
         snapSecPrimaryBtn:SetPoint("LEFT", snapSecUtilityBtn, "RIGHT", 5, 0)
+        local pxSnapSecPri = (core and core.GetPixelSize and core:GetPixelSize(snapSecPrimaryBtn)) or 1
         snapSecPrimaryBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = pxSnapSecPri,
         })
         snapSecPrimaryBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         snapSecPrimaryBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -2458,9 +2471,8 @@ local function CreateCDMSetupPage(parent)
             self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
         end)
         snapSecPrimaryBtn:SetScript("OnClick", function()
-            local QUICore = _G.QUI and _G.QUI.QUICore
-            local primaryBar = QUICore and QUICore.powerBar
-            local primaryCfg = QUICore and QUICore.db and QUICore.db.profile.powerBar
+            local primaryBar = core and core.powerBar
+            local primaryCfg = core and core.db and core.db.profile.powerBar
             if primaryBar and primaryBar:IsShown() and primaryCfg then
                 local primaryCenterX, primaryCenterY = primaryBar:GetCenter()
                 local screenCenterX, screenCenterY = UIParent:GetCenter()
@@ -2526,10 +2538,11 @@ local function CreateCDMSetupPage(parent)
         local lockSecEssentialBtn = CreateFrame("Button", nil, lockSecContainer, "BackdropTemplate")
         lockSecEssentialBtn:SetSize(100, 24)
         lockSecEssentialBtn:SetPoint("LEFT", lockSecContainer, "LEFT", 180, 0)
+        local pxLockSecEss = (core and core.GetPixelSize and core:GetPixelSize(lockSecEssentialBtn)) or 1
         lockSecEssentialBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = pxLockSecEss,
         })
         lockSecEssentialBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         lockSecEssentialBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -2542,10 +2555,11 @@ local function CreateCDMSetupPage(parent)
         local lockSecUtilityBtn = CreateFrame("Button", nil, lockSecContainer, "BackdropTemplate")
         lockSecUtilityBtn:SetSize(100, 24)
         lockSecUtilityBtn:SetPoint("LEFT", lockSecEssentialBtn, "RIGHT", 5, 0)
+        local pxLockSecUtil = (core and core.GetPixelSize and core:GetPixelSize(lockSecUtilityBtn)) or 1
         lockSecUtilityBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = pxLockSecUtil,
         })
         lockSecUtilityBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         lockSecUtilityBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -2558,10 +2572,11 @@ local function CreateCDMSetupPage(parent)
         local lockSecPrimaryBtn = CreateFrame("Button", nil, lockSecContainer, "BackdropTemplate")
         lockSecPrimaryBtn:SetSize(100, 24)
         lockSecPrimaryBtn:SetPoint("LEFT", lockSecUtilityBtn, "RIGHT", 5, 0)
+        local pxLockSecPri = (core and core.GetPixelSize and core:GetPixelSize(lockSecPrimaryBtn)) or 1
         lockSecPrimaryBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = pxLockSecPri,
         })
         lockSecPrimaryBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         lockSecPrimaryBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -2694,9 +2709,8 @@ local function CreateCDMSetupPage(parent)
                 secondary.lockedToPrimary = false
                 UpdateSecLockButtonStates()
             else
-                local QUICore = _G.QUI and _G.QUI.QUICore
-                local primaryBar = QUICore and QUICore.powerBar
-                local primaryCfg = QUICore and QUICore.db and QUICore.db.profile.powerBar
+                local primaryBar = core and core.powerBar
+                local primaryCfg = core and core.db and core.db.profile.powerBar
                 if primaryBar and primaryBar:IsShown() and primaryCfg then
                     local primaryCenterX, primaryCenterY = primaryBar:GetCenter()
                     local screenCenterX, screenCenterY = UIParent:GetCenter()
@@ -2879,8 +2893,8 @@ local function CreateCDMSetupPage(parent)
         y = y - FORM_ROW
 
         -- Register sliders for real-time sync during Edit Mode
-        if _G.QUI and _G.QUI.QUICore and _G.QUI.QUICore.RegisterPowerBarEditModeSliders then
-            _G.QUI.QUICore:RegisterPowerBarEditModeSliders("secondary", xOffsetSecondarySlider, yOffsetSecondarySlider)
+        if core and core.RegisterPowerBarEditModeSliders then
+            core:RegisterPowerBarEditModeSliders("secondary", xOffsetSecondarySlider, yOffsetSecondarySlider)
         end
 
         -- Text sliders
@@ -2996,10 +3010,11 @@ local function CreateCDMSetupPage(parent)
         local resetPowerColorsBtn = CreateFrame("Button", nil, resetPowerColorsContainer, "BackdropTemplate")
         resetPowerColorsBtn:SetSize(140, 24)
         resetPowerColorsBtn:SetPoint("LEFT", resetPowerColorsContainer, "LEFT", 180, 0)
+        local pxResetPower = (core and core.GetPixelSize and core:GetPixelSize(resetPowerColorsBtn)) or 1
         resetPowerColorsBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = pxResetPower,
         })
         resetPowerColorsBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         resetPowerColorsBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)

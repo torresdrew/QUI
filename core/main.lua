@@ -3966,11 +3966,12 @@ local function CreateBorder(frame)
     if frame.border then return frame.border end
 
     local bord = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    bord:SetPoint("TOPLEFT", frame, -1, 1)
-    bord:SetPoint("BOTTOMRIGHT", frame, 1, -1)
+    local px = (QUICore and QUICore.GetPixelSize and QUICore:GetPixelSize(bord)) or 1
+    bord:SetPoint("TOPLEFT", frame, -px, px)
+    bord:SetPoint("BOTTOMRIGHT", frame, px, -px)
     bord:SetBackdrop({
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = px,
     })
     bord:SetBackdropBorderColor(0, 0, 0, 1)
 
