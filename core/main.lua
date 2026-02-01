@@ -5093,7 +5093,7 @@ function QUICore:ApplyGlobalFont()
             hooksecurefunc("FCF_SetChatWindowFontSize", function(chatFrame, fontSize)
                 if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
                 local fp = GetGlobalFontPath()
-                if chatFrame and chatFrame.SetFont then
+                if chatFrame and type(chatFrame.GetFont) == "function" and type(chatFrame.SetFont) == "function" then
                     -- Apply global font directly to ScrollingMessageFrame (not just children)
                     local _, size, flags = chatFrame:GetFont()
                     chatFrame:SetFont(fp, fontSize or size or 14, flags or "")
