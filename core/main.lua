@@ -3275,6 +3275,8 @@ local defaults = {
                     showOnlyWhenActive = false,
                     showOnlyWhenOffCooldown = false,
                     showOnlyInCombat = false,
+                    -- Click behavior
+                    clickableIcons = false,  -- Allow clicking icons to use items/cast spells
                     -- Active state (buff/cast/channel display)
                     showActiveState = true,
                     activeGlowEnabled = true,
