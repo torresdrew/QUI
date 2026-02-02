@@ -121,10 +121,44 @@ local function BuildTooltipTab(tabContent)
     borderColorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
     y = y - FORM_ROW
 
-    local classColorBorderCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Border", "borderUseClassColor", tooltip, RefreshTooltipSkin)
+    -- Normalize mutually exclusive flags on load (prefer class color)
+    if tooltip.borderUseClassColor and tooltip.borderUseAccentColor then
+        tooltip.borderUseAccentColor = false
+    end
+
+    local accentColorBorderCheck
+    local classColorBorderCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Border", "borderUseClassColor", tooltip, function(val)
+        if val then
+            tooltip.borderUseAccentColor = false
+            if accentColorBorderCheck and accentColorBorderCheck.SetChecked then accentColorBorderCheck:SetChecked(false) end
+        end
+        if borderColorPicker and borderColorPicker.SetEnabled then
+            borderColorPicker:SetEnabled(not val and not tooltip.borderUseAccentColor)
+        end
+        RefreshTooltipSkin()
+    end)
     classColorBorderCheck:SetPoint("TOPLEFT", PADDING, y)
     classColorBorderCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
     y = y - FORM_ROW
+
+    accentColorBorderCheck = GUI:CreateFormCheckbox(tabContent, "Use Accent Color for Border", "borderUseAccentColor", tooltip, function(val)
+        if val then
+            tooltip.borderUseClassColor = false
+            if classColorBorderCheck and classColorBorderCheck.SetChecked then classColorBorderCheck:SetChecked(false) end
+        end
+        if borderColorPicker and borderColorPicker.SetEnabled then
+            borderColorPicker:SetEnabled(not val and not tooltip.borderUseClassColor)
+        end
+        RefreshTooltipSkin()
+    end)
+    accentColorBorderCheck:SetPoint("TOPLEFT", PADDING, y)
+    accentColorBorderCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    y = y - FORM_ROW
+
+    -- Sync color picker enabled state on load
+    if borderColorPicker and borderColorPicker.SetEnabled then
+        borderColorPicker:SetEnabled(not tooltip.borderUseClassColor and not tooltip.borderUseAccentColor)
+    end
 
     local hideHealthCheck = GUI:CreateFormCheckbox(tabContent, "Hide Health Bar", "hideHealthBar", tooltip, RefreshTooltips)
     hideHealthCheck:SetPoint("TOPLEFT", PADDING, y)

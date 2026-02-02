@@ -1502,6 +1502,7 @@ local defaults = {
             borderThickness = 1,               -- Border thickness (1-10)
             borderColor = {0.2, 1.0, 0.6, 1}, -- Border color (default = mint accent)
             borderUseClassColor = false,       -- Use player class color for border
+            borderUseAccentColor = false,      -- Use addon accent color for border
             hideHealthBar = false,             -- Hide health bar on unit tooltips
             showSpellIDs = false,              -- Show spell ID and icon ID on buff/debuff tooltips
             -- Per-Context Visibility (SHOW/HIDE/SHIFT/CTRL/ALT)
@@ -2940,6 +2941,7 @@ local defaults = {
             hideBorder = false,
             borderColor = { 0, 0, 0, 1 },
             useClassColorBorder = false,
+            useAccentColorBorder = false,
             borderTexture = "None",
             useCustomFont = false,
             font = nil,
@@ -2964,6 +2966,7 @@ local defaults = {
             borderSize = 1,
             borderTexture = "None", -- Border texture from LibSharedMedia (or "None" for solid)
             useClassColorBorder = false,  -- If true, use player class color
+            useAccentColorBorder = false,  -- If true, use addon accent color
             borderColor = {0, 0, 0, 1},  -- Black border
             hideBorder = false,  -- If true, hide border completely (overrides other border settings)
             onlyShowInEncounters = false,  -- If true, only show during boss encounters (not general combat)
@@ -3070,6 +3073,7 @@ local defaults = {
             borderSize = 2,
             borderColor = {0, 0, 0, 1},  -- Black border
             useClassColorBorder = false,
+            useAccentColorBorder = false,
             buttonRadius = 2,  -- LibDBIcon button radius for square minimap
             
             -- Position

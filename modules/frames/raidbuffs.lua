@@ -542,6 +542,11 @@ local function ApplyIconBorderSettings()
             local classColor = RAID_CLASS_COLORS[class]
             br, bg, bb = classColor.r, classColor.g, classColor.b
         end
+    elseif borderSettings.useAccentColor then
+        local QUI = _G.QUI
+        if QUI and QUI.GetAddonAccentColor then
+            br, bg, bb, ba = QUI:GetAddonAccentColor()
+        end
     elseif borderSettings.color then
         br = borderSettings.color[1] or 0.2
         bg = borderSettings.color[2] or 1.0

@@ -453,6 +453,14 @@ local function UpdateAppearance()
     local borderColor
     if settings.useClassColorBorder then
         borderColor = GetClassColor()
+    elseif settings.useAccentColorBorder then
+        local QUI = _G.QUI
+        if QUI and QUI.GetAddonAccentColor then
+            local ar, ag, ab, aa = QUI:GetAddonAccentColor()
+            borderColor = { ar, ag, ab, aa }
+        else
+            borderColor = settings.borderColor or { 0, 0, 0, 1 }
+        end
     else
         borderColor = settings.borderColor or { 0, 0, 0, 1 }
     end

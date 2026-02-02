@@ -527,14 +527,20 @@ local function BuildGeneralTab(tabContent)
         y = y - FORM_ROW
 
         -- Border settings
-        local brzBorderSizeSlider, brzBorderTextureDropdown, brzUseClassBorderCheck, brzBorderColorPicker
+        -- Normalize mutually exclusive flags on load (prefer class color)
+        if brzDB.useClassColorBorder and brzDB.useAccentColorBorder then
+            brzDB.useAccentColorBorder = false
+        end
+
+        local brzBorderSizeSlider, brzBorderTextureDropdown, brzUseClassBorderCheck, brzUseAccentBorderCheck, brzBorderColorPicker
 
         local function UpdateBrzBorderControlsEnabled(enabled)
             if brzBorderSizeSlider and brzBorderSizeSlider.SetEnabled then brzBorderSizeSlider:SetEnabled(enabled) end
             if brzBorderTextureDropdown and brzBorderTextureDropdown.SetEnabled then brzBorderTextureDropdown:SetEnabled(enabled) end
             if brzUseClassBorderCheck and brzUseClassBorderCheck.SetEnabled then brzUseClassBorderCheck:SetEnabled(enabled) end
+            if brzUseAccentBorderCheck and brzUseAccentBorderCheck.SetEnabled then brzUseAccentBorderCheck:SetEnabled(enabled) end
             if brzBorderColorPicker and brzBorderColorPicker.SetEnabled then
-                brzBorderColorPicker:SetEnabled(enabled and not brzDB.useClassColorBorder)
+                brzBorderColorPicker:SetEnabled(enabled and not brzDB.useClassColorBorder and not brzDB.useAccentColorBorder)
             end
         end
 
@@ -562,13 +568,31 @@ local function BuildGeneralTab(tabContent)
         y = y - FORM_ROW
 
         brzUseClassBorderCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Border", "useClassColorBorder", brzDB, function(val)
+            if val then
+                brzDB.useAccentColorBorder = false
+                if brzUseAccentBorderCheck and brzUseAccentBorderCheck.SetChecked then brzUseAccentBorderCheck:SetChecked(false) end
+            end
             if _G.QUI_RefreshBrezCounter then _G.QUI_RefreshBrezCounter() end
             if brzBorderColorPicker and brzBorderColorPicker.SetEnabled then
-                brzBorderColorPicker:SetEnabled(not val and not brzDB.hideBorder)
+                brzBorderColorPicker:SetEnabled(not val and not brzDB.useAccentColorBorder and not brzDB.hideBorder)
             end
         end)
         brzUseClassBorderCheck:SetPoint("TOPLEFT", PADDING, y)
         brzUseClassBorderCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        brzUseAccentBorderCheck = GUI:CreateFormCheckbox(tabContent, "Use Accent Color for Border", "useAccentColorBorder", brzDB, function(val)
+            if val then
+                brzDB.useClassColorBorder = false
+                if brzUseClassBorderCheck and brzUseClassBorderCheck.SetChecked then brzUseClassBorderCheck:SetChecked(false) end
+            end
+            if _G.QUI_RefreshBrezCounter then _G.QUI_RefreshBrezCounter() end
+            if brzBorderColorPicker and brzBorderColorPicker.SetEnabled then
+                brzBorderColorPicker:SetEnabled(not val and not brzDB.useClassColorBorder and not brzDB.hideBorder)
+            end
+        end)
+        brzUseAccentBorderCheck:SetPoint("TOPLEFT", PADDING, y)
+        brzUseAccentBorderCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
 
         brzBorderColorPicker = GUI:CreateFormColorPicker(tabContent, "Border Color", "borderColor", brzDB, function()
@@ -730,14 +754,20 @@ local function BuildGeneralTab(tabContent)
         y = y - FORM_ROW
 
         -- Border settings
-        local borderSizeSlider, borderTextureDropdown, useClassColorCheck, borderColorPicker
+        -- Normalize mutually exclusive flags on load (prefer class color)
+        if combatTimerDB.useClassColorBorder and combatTimerDB.useAccentColorBorder then
+            combatTimerDB.useAccentColorBorder = false
+        end
+
+        local borderSizeSlider, borderTextureDropdown, useClassColorCheck, useAccentColorCheck, borderColorPicker
 
         local function UpdateBorderControlsEnabled(enabled)
             if borderSizeSlider and borderSizeSlider.SetEnabled then borderSizeSlider:SetEnabled(enabled) end
             if borderTextureDropdown and borderTextureDropdown.SetEnabled then borderTextureDropdown:SetEnabled(enabled) end
             if useClassColorCheck and useClassColorCheck.SetEnabled then useClassColorCheck:SetEnabled(enabled) end
+            if useAccentColorCheck and useAccentColorCheck.SetEnabled then useAccentColorCheck:SetEnabled(enabled) end
             if borderColorPicker and borderColorPicker.SetEnabled then
-                borderColorPicker:SetEnabled(enabled and not combatTimerDB.useClassColorBorder)
+                borderColorPicker:SetEnabled(enabled and not combatTimerDB.useClassColorBorder and not combatTimerDB.useAccentColorBorder)
             end
         end
 
@@ -765,13 +795,31 @@ local function BuildGeneralTab(tabContent)
         y = y - FORM_ROW
 
         useClassColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Border", "useClassColorBorder", combatTimerDB, function(val)
+            if val then
+                combatTimerDB.useAccentColorBorder = false
+                if useAccentColorCheck and useAccentColorCheck.SetChecked then useAccentColorCheck:SetChecked(false) end
+            end
             if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
             if borderColorPicker and borderColorPicker.SetEnabled then
-                borderColorPicker:SetEnabled(not val and not combatTimerDB.hideBorder)
+                borderColorPicker:SetEnabled(not val and not combatTimerDB.useAccentColorBorder and not combatTimerDB.hideBorder)
             end
         end)
         useClassColorCheck:SetPoint("TOPLEFT", PADDING, y)
         useClassColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        useAccentColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Accent Color for Border", "useAccentColorBorder", combatTimerDB, function(val)
+            if val then
+                combatTimerDB.useClassColorBorder = false
+                if useClassColorCheck and useClassColorCheck.SetChecked then useClassColorCheck:SetChecked(false) end
+            end
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+            if borderColorPicker and borderColorPicker.SetEnabled then
+                borderColorPicker:SetEnabled(not val and not combatTimerDB.useClassColorBorder and not combatTimerDB.hideBorder)
+            end
+        end)
+        useAccentColorCheck:SetPoint("TOPLEFT", PADDING, y)
+        useAccentColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
 
         borderColorPicker = GUI:CreateFormColorPicker(tabContent, "Border Color", "borderColor", combatTimerDB, function()

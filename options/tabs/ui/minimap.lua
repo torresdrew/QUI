@@ -97,10 +97,44 @@ local function BuildMinimapTab(tabContent)
         borderColor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
-        local classBorderCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Edge", "useClassColorBorder", mm, RefreshMinimap)
+        -- Normalize mutually exclusive flags on load (prefer class color)
+        if mm.useClassColorBorder and mm.useAccentColorBorder then
+            mm.useAccentColorBorder = false
+        end
+
+        local accentBorderCheck
+        local classBorderCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Edge", "useClassColorBorder", mm, function(val)
+            if val then
+                mm.useAccentColorBorder = false
+                if accentBorderCheck and accentBorderCheck.SetChecked then accentBorderCheck:SetChecked(false) end
+            end
+            if borderColor and borderColor.SetEnabled then
+                borderColor:SetEnabled(not val and not mm.useAccentColorBorder)
+            end
+            RefreshMinimap()
+        end)
         classBorderCheck:SetPoint("TOPLEFT", PAD, y)
         classBorderCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
+
+        accentBorderCheck = GUI:CreateFormCheckbox(tabContent, "Use Accent Color for Edge", "useAccentColorBorder", mm, function(val)
+            if val then
+                mm.useClassColorBorder = false
+                if classBorderCheck and classBorderCheck.SetChecked then classBorderCheck:SetChecked(false) end
+            end
+            if borderColor and borderColor.SetEnabled then
+                borderColor:SetEnabled(not val and not mm.useClassColorBorder)
+            end
+            RefreshMinimap()
+        end)
+        accentBorderCheck:SetPoint("TOPLEFT", PAD, y)
+        accentBorderCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Sync color picker enabled state on load
+        if borderColor and borderColor.SetEnabled then
+            borderColor:SetEnabled(not mm.useClassColorBorder and not mm.useAccentColorBorder)
+        end
 
         y = y - 10
 

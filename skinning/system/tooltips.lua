@@ -70,6 +70,11 @@ local function GetEffectiveColors()
         -- Border color
         if settings.borderUseClassColor then
             sr, sg, sb, sa = GetPlayerClassColor()
+        elseif settings.borderUseAccentColor then
+            local QUI = _G.QUI
+            if QUI and QUI.GetAddonAccentColor then
+                sr, sg, sb, sa = QUI:GetAddonAccentColor()
+            end
         elseif settings.borderColor then
             sr = settings.borderColor[1] or sr
             sg = settings.borderColor[2] or sg

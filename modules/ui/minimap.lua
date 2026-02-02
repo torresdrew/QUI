@@ -169,6 +169,11 @@ local function UpdateBackdrop()
         if color then
             r, g, b = color.r, color.g, color.b
         end
+    elseif settings.useAccentColorBorder then
+        local QUI = _G.QUI
+        if QUI and QUI.GetAddonAccentColor then
+            r, g, b, a = QUI:GetAddonAccentColor()
+        end
     end
     backdrop:SetColorTexture(r, g, b, a)
     

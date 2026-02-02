@@ -150,9 +150,17 @@ local function BuildRaidBuffsTab(tabContent)
 
         -- Initialize iconBorder settings if not present
         if not settings.iconBorder then
-            settings.iconBorder = { show = true, width = 1, useClassColor = false, color = { 0.2, 1.0, 0.6, 1 } }
+            settings.iconBorder = { show = true, width = 1, useClassColor = false, useAccentColor = false, color = { 0.2, 1.0, 0.6, 1 } }
+        end
+        if settings.iconBorder.useAccentColor == nil then
+            settings.iconBorder.useAccentColor = false
         end
         local borderSettings = settings.iconBorder
+
+        -- Normalize mutually exclusive flags on load (prefer class color)
+        if borderSettings.useClassColor and borderSettings.useAccentColor then
+            borderSettings.useAccentColor = false
+        end
 
         -- Show Border checkbox
         local showBorderCheck = GUI:CreateFormCheckbox(tabContent, "Show Icon Border",
@@ -162,10 +170,36 @@ local function BuildRaidBuffsTab(tabContent)
         y = y - FORM_ROW
 
         -- Use Class Color checkbox
+        local accentColorCheck
         local classColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color",
-            "useClassColor", borderSettings, RefreshRaidBuffs)
+            "useClassColor", borderSettings, function(val)
+                if val then
+                    borderSettings.useAccentColor = false
+                    if accentColorCheck and accentColorCheck.SetChecked then accentColorCheck:SetChecked(false) end
+                end
+                if borderColorPicker and borderColorPicker.SetEnabled then
+                    borderColorPicker:SetEnabled(not val and not borderSettings.useAccentColor)
+                end
+                RefreshRaidBuffs()
+            end)
         classColorCheck:SetPoint("TOPLEFT", PADDING, y)
         classColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Use Accent Color checkbox
+        accentColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Accent Color",
+            "useAccentColor", borderSettings, function(val)
+                if val then
+                    borderSettings.useClassColor = false
+                    if classColorCheck and classColorCheck.SetChecked then classColorCheck:SetChecked(false) end
+                end
+                if borderColorPicker and borderColorPicker.SetEnabled then
+                    borderColorPicker:SetEnabled(not val and not borderSettings.useClassColor)
+                end
+                RefreshRaidBuffs()
+            end)
+        accentColorCheck:SetPoint("TOPLEFT", PADDING, y)
+        accentColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
 
         -- Border Color picker
@@ -174,6 +208,11 @@ local function BuildRaidBuffsTab(tabContent)
         borderColorPicker:SetPoint("TOPLEFT", PADDING, y)
         borderColorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
+
+        -- Sync color picker enabled state on load
+        if borderColorPicker and borderColorPicker.SetEnabled then
+            borderColorPicker:SetEnabled(not borderSettings.useClassColor and not borderSettings.useAccentColor)
+        end
 
         -- Border Width slider
         local borderWidthSlider = GUI:CreateFormSlider(tabContent, "Border Width", 1, 4, 1,
