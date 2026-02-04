@@ -3507,9 +3507,9 @@ function GUI:CreateMainFrame()
     -- Version text (accent colored, to the left of close button)
     local version = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(version, 11, "", C.accentLight)
-    local versionText = (QUI and QUI.versionString) or C_AddOns.GetAddOnMetadata("QUI", "Version") or "2.00"
+    local versionText = (QUI and QUI.versionString) or C_AddOns.GetAddOnMetadata("QUI", "Version") or "2.xx"
     version:SetText("v" .. versionText)
-    version:SetPoint("TOPRIGHT", -30, -10)
+    version:SetPoint("TOPRIGHT", -40, -10)
 
     -- Forward-declare thumb (created with scale slider below, but referenced in accent callbacks)
     local thumb
@@ -3792,10 +3792,45 @@ function GUI:CreateMainFrame()
         end
     end)
 
-    -- Close button (X)
-    local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
-    close:SetPoint("TOPRIGHT", -3, -3)
+    -- Close button [x]
+    local close = CreateFrame("Button", nil, titleBar, "BackdropTemplate")
+    close:SetSize(22, 22)
+    close:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -5)
+    close:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    close:SetBackdropColor(0.08, 0.08, 0.08, 0.6)
+    close:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
+
+    -- X drawn with two rotated lines
+    local LINE_LEN, LINE_W = 10, 1.5
+    local xLine1 = close:CreateTexture(nil, "OVERLAY")
+    xLine1:SetSize(LINE_LEN, LINE_W)
+    xLine1:SetPoint("CENTER")
+    xLine1:SetColorTexture(C.text[1], C.text[2], C.text[3], 0.8)
+    xLine1:SetRotation(math.rad(45))
+
+    local xLine2 = close:CreateTexture(nil, "OVERLAY")
+    xLine2:SetSize(LINE_LEN, LINE_W)
+    xLine2:SetPoint("CENTER")
+    xLine2:SetColorTexture(C.text[1], C.text[2], C.text[3], 0.8)
+    xLine2:SetRotation(math.rad(-45))
+
     close:SetScript("OnClick", function() frame:Hide() end)
+    close:SetScript("OnEnter", function(self)
+        pcall(self.SetBackdropBorderColor, self, C.accent[1], C.accent[2], C.accent[3], 1)
+        self:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], 0.15)
+        xLine1:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
+        xLine2:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
+    end)
+    close:SetScript("OnLeave", function(self)
+        pcall(self.SetBackdropBorderColor, self, C.border[1], C.border[2], C.border[3], 1)
+        self:SetBackdropColor(0.08, 0.08, 0.08, 0.6)
+        xLine1:SetColorTexture(C.text[1], C.text[2], C.text[3], 0.8)
+        xLine2:SetColorTexture(C.text[1], C.text[2], C.text[3], 0.8)
+    end)
 
     -- Separator line below title
     local titleSep = frame:CreateTexture(nil, "ARTWORK")
