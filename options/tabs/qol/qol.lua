@@ -370,6 +370,332 @@ local function BuildGeneralTab(tabContent)
 
     y = y - 10
 
+    -- Combat Timer Section
+    local combatTimerHeader = GUI:CreateSectionHeader(tabContent, "Combat Timer")
+    combatTimerHeader:SetPoint("TOPLEFT", PADDING, y)
+    y = y - combatTimerHeader.gap
+
+    local combatTimerDesc = GUI:CreateLabel(tabContent,
+        "Displays elapsed combat time. Timer resets each time you leave combat.",
+        11, C.textMuted)
+    combatTimerDesc:SetPoint("TOPLEFT", PADDING, y)
+    combatTimerDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    combatTimerDesc:SetJustifyH("LEFT")
+    combatTimerDesc:SetWordWrap(true)
+    combatTimerDesc:SetHeight(15)
+    y = y - 25
+
+    local combatTimerDB = db and db.combatTimer
+    if combatTimerDB then
+        local combatTimerCheck = GUI:CreateFormCheckbox(tabContent, "Enable Combat Timer", "enabled", combatTimerDB, function(val)
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        combatTimerCheck:SetPoint("TOPLEFT", PADDING, y)
+        combatTimerCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Encounters-only mode toggle
+        local encountersOnlyCheck = GUI:CreateFormCheckbox(tabContent, "Only Show In Encounters", "onlyShowInEncounters", combatTimerDB, function(val)
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        encountersOnlyCheck:SetPoint("TOPLEFT", PADDING, y)
+        encountersOnlyCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Preview toggle
+        local previewState = { enabled = _G.QUI_IsCombatTimerPreviewMode and _G.QUI_IsCombatTimerPreviewMode() or false }
+        local previewCheck = GUI:CreateFormCheckbox(tabContent, "Preview Combat Timer", "enabled", previewState, function(val)
+            if _G.QUI_ToggleCombatTimerPreview then
+                _G.QUI_ToggleCombatTimerPreview(val)
+            end
+        end)
+        previewCheck:SetPoint("TOPLEFT", PADDING, y)
+        previewCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Frame size settings
+        local timerWidthSlider = GUI:CreateFormSlider(tabContent, "Frame Width", 40, 200, 1, "width", combatTimerDB, function()
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        timerWidthSlider:SetPoint("TOPLEFT", PADDING, y)
+        timerWidthSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local timerHeightSlider = GUI:CreateFormSlider(tabContent, "Frame Height", 20, 100, 1, "height", combatTimerDB, function()
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        timerHeightSlider:SetPoint("TOPLEFT", PADDING, y)
+        timerHeightSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local timerFontSizeSlider = GUI:CreateFormSlider(tabContent, "Font Size", 12, 32, 1, "fontSize", combatTimerDB, function()
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        timerFontSizeSlider:SetPoint("TOPLEFT", PADDING, y)
+        timerFontSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local timerXOffsetSlider = GUI:CreateFormSlider(tabContent, "X Position Offset", -2000, 2000, 1, "xOffset", combatTimerDB, function()
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        timerXOffsetSlider:SetPoint("TOPLEFT", PADDING, y)
+        timerXOffsetSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local timerYOffsetSlider = GUI:CreateFormSlider(tabContent, "Y Position Offset", -2000, 2000, 1, "yOffset", combatTimerDB, function()
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        timerYOffsetSlider:SetPoint("TOPLEFT", PADDING, y)
+        timerYOffsetSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Text color with class color toggle
+        local timerColorPicker  -- Forward declare
+
+        local useClassColorTextCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Text", "useClassColorText", combatTimerDB, function(val)
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+            -- Enable/disable text color picker based on toggle
+            if timerColorPicker and timerColorPicker.SetEnabled then
+                timerColorPicker:SetEnabled(not val)
+            end
+        end)
+        useClassColorTextCheck:SetPoint("TOPLEFT", PADDING, y)
+        useClassColorTextCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        timerColorPicker = GUI:CreateFormColorPicker(tabContent, "Timer Text Color", "textColor", combatTimerDB, function()
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        timerColorPicker:SetPoint("TOPLEFT", PADDING, y)
+        timerColorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        -- Initial state based on setting
+        if timerColorPicker.SetEnabled then
+            timerColorPicker:SetEnabled(not combatTimerDB.useClassColorText)
+        end
+        y = y - FORM_ROW
+
+        -- Font selection with custom toggle
+        local fontList = Shared.GetFontList()
+        local timerFontDropdown  -- Forward declare
+
+        local useCustomFontCheck = GUI:CreateFormCheckbox(tabContent, "Use Custom Font", "useCustomFont", combatTimerDB, function(val)
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+            -- Enable/disable font dropdown based on toggle
+            if timerFontDropdown and timerFontDropdown.SetEnabled then
+                timerFontDropdown:SetEnabled(val)
+            end
+        end)
+        useCustomFontCheck:SetPoint("TOPLEFT", PADDING, y)
+        useCustomFontCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        timerFontDropdown = GUI:CreateFormDropdown(tabContent, "Font", fontList, "font", combatTimerDB, function()
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        timerFontDropdown:SetPoint("TOPLEFT", PADDING, y)
+        timerFontDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        -- Initial state based on setting
+        if timerFontDropdown.SetEnabled then
+            timerFontDropdown:SetEnabled(combatTimerDB.useCustomFont == true)
+        end
+        y = y - FORM_ROW
+
+        -- Backdrop settings
+        local backdropCheck = GUI:CreateFormCheckbox(tabContent, "Show Backdrop", "showBackdrop", combatTimerDB, function(val)
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        backdropCheck:SetPoint("TOPLEFT", PADDING, y)
+        backdropCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local backdropColorPicker = GUI:CreateFormColorPicker(tabContent, "Backdrop Color", "backdropColor", combatTimerDB, function()
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        backdropColorPicker:SetPoint("TOPLEFT", PADDING, y)
+        backdropColorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Border settings
+        -- Normalize mutually exclusive flags on load (prefer class color)
+        if combatTimerDB.useClassColorBorder and combatTimerDB.useAccentColorBorder then
+            combatTimerDB.useAccentColorBorder = false
+        end
+
+        local borderSizeSlider, borderTextureDropdown, useClassColorCheck, useAccentColorCheck, borderColorPicker
+
+        local function UpdateBorderControlsEnabled(enabled)
+            if borderSizeSlider and borderSizeSlider.SetEnabled then borderSizeSlider:SetEnabled(enabled) end
+            if borderTextureDropdown and borderTextureDropdown.SetEnabled then borderTextureDropdown:SetEnabled(enabled) end
+            if useClassColorCheck and useClassColorCheck.SetEnabled then useClassColorCheck:SetEnabled(enabled) end
+            if useAccentColorCheck and useAccentColorCheck.SetEnabled then useAccentColorCheck:SetEnabled(enabled) end
+            if borderColorPicker and borderColorPicker.SetEnabled then
+                borderColorPicker:SetEnabled(enabled and not combatTimerDB.useClassColorBorder and not combatTimerDB.useAccentColorBorder)
+            end
+        end
+
+        local hideBorderCheck = GUI:CreateFormCheckbox(tabContent, "Hide Border", "hideBorder", combatTimerDB, function(val)
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+            UpdateBorderControlsEnabled(not val)
+        end)
+        hideBorderCheck:SetPoint("TOPLEFT", PADDING, y)
+        hideBorderCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        borderSizeSlider = GUI:CreateFormSlider(tabContent, "Border Size", 1, 5, 0.5, "borderSize", combatTimerDB, function()
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        borderSizeSlider:SetPoint("TOPLEFT", PADDING, y)
+        borderSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local borderList = Shared.GetBorderList()
+        borderTextureDropdown = GUI:CreateFormDropdown(tabContent, "Border Texture", borderList, "borderTexture", combatTimerDB, function()
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        borderTextureDropdown:SetPoint("TOPLEFT", PADDING, y)
+        borderTextureDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        useClassColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Border", "useClassColorBorder", combatTimerDB, function(val)
+            if val then
+                combatTimerDB.useAccentColorBorder = false
+                if useAccentColorCheck and useAccentColorCheck.SetChecked then useAccentColorCheck:SetChecked(false) end
+            end
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+            if borderColorPicker and borderColorPicker.SetEnabled then
+                borderColorPicker:SetEnabled(not val and not combatTimerDB.useAccentColorBorder and not combatTimerDB.hideBorder)
+            end
+        end)
+        useClassColorCheck:SetPoint("TOPLEFT", PADDING, y)
+        useClassColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        useAccentColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Accent Color for Border", "useAccentColorBorder", combatTimerDB, function(val)
+            if val then
+                combatTimerDB.useClassColorBorder = false
+                if useClassColorCheck and useClassColorCheck.SetChecked then useClassColorCheck:SetChecked(false) end
+            end
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+            if borderColorPicker and borderColorPicker.SetEnabled then
+                borderColorPicker:SetEnabled(not val and not combatTimerDB.useClassColorBorder and not combatTimerDB.hideBorder)
+            end
+        end)
+        useAccentColorCheck:SetPoint("TOPLEFT", PADDING, y)
+        useAccentColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        borderColorPicker = GUI:CreateFormColorPicker(tabContent, "Border Color", "borderColor", combatTimerDB, function()
+            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
+        end)
+        borderColorPicker:SetPoint("TOPLEFT", PADDING, y)
+        borderColorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Apply initial border control states
+        UpdateBorderControlsEnabled(not combatTimerDB.hideBorder)
+    end
+
+    y = y - 10
+
+    -- QoL Automation Section
+    GUI:SetSearchSection("Automation")
+    local autoHeader = GUI:CreateSectionHeader(tabContent, "Automation")
+    autoHeader:SetPoint("TOPLEFT", PADDING, y)
+    y = y - autoHeader.gap
+
+    local autoDesc = GUI:CreateLabel(tabContent,
+        "Toggle quality-of-life automation features. These run silently in the background.",
+        11, C.textMuted)
+    autoDesc:SetPoint("TOPLEFT", PADDING, y)
+    autoDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    autoDesc:SetJustifyH("LEFT")
+    autoDesc:SetWordWrap(true)
+    autoDesc:SetHeight(15)
+    y = y - 25
+
+    local generalDB = db and db.general
+    if generalDB then
+        -- Sell Junk
+        local sellJunkCheck = GUI:CreateFormCheckbox(tabContent, "Sell Junk Items at Vendors", "sellJunk", generalDB)
+        sellJunkCheck:SetPoint("TOPLEFT", PADDING, y)
+        sellJunkCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Auto Repair
+        local repairOptions = {
+            {value = "off", text = "Off"},
+            {value = "personal", text = "Personal Gold"},
+            {value = "guild", text = "Guild Bank (fallback to personal)"},
+        }
+        local autoRepairDropdown = GUI:CreateFormDropdown(tabContent, "Auto Repair at Vendors", repairOptions, "autoRepair", generalDB)
+        autoRepairDropdown:SetPoint("TOPLEFT", PADDING, y)
+        autoRepairDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Fast Auto Loot
+        local fastLootCheck = GUI:CreateFormCheckbox(tabContent, "Fast Auto Loot", "fastAutoLoot", generalDB)
+        fastLootCheck:SetPoint("TOPLEFT", PADDING, y)
+        fastLootCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Auto Accept Party Invites
+        local inviteOptions = {
+            {value = "off", text = "Off"},
+            {value = "all", text = "Everyone"},
+            {value = "friends", text = "Friends & BNet Only"},
+            {value = "guild", text = "Guild Members Only"},
+            {value = "both", text = "Friends & Guild"},
+        }
+        local autoInviteDropdown = GUI:CreateFormDropdown(tabContent, "Auto Accept Party Invites", inviteOptions, "autoAcceptInvites", generalDB)
+        autoInviteDropdown:SetPoint("TOPLEFT", PADDING, y)
+        autoInviteDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Auto Role Accept
+        local autoRoleCheck = GUI:CreateFormCheckbox(tabContent, "Auto Accept Role Check", "autoRoleAccept", generalDB)
+        autoRoleCheck:SetPoint("TOPLEFT", PADDING, y)
+        autoRoleCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Auto Accept Quests
+        local autoQuestCheck = GUI:CreateFormCheckbox(tabContent, "Auto Accept Quests", "autoAcceptQuest", generalDB)
+        autoQuestCheck:SetPoint("TOPLEFT", PADDING, y)
+        autoQuestCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Auto Turn-In Quests
+        local autoTurnInCheck = GUI:CreateFormCheckbox(tabContent, "Auto Turn-In Quests", "autoTurnInQuest", generalDB)
+        autoTurnInCheck:SetPoint("TOPLEFT", PADDING, y)
+        autoTurnInCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Auto Select Gossip
+        local autoGossipCheck = GUI:CreateFormCheckbox(tabContent, "Auto Select Single Gossip Option", "autoSelectGossip", generalDB)
+        autoGossipCheck:SetPoint("TOPLEFT", PADDING, y)
+        autoGossipCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Hold Shift to Pause
+        local shiftPauseCheck = GUI:CreateFormCheckbox(tabContent, "Hold Shift to Pause Quest/Gossip Automation", "questHoldShift", generalDB)
+        shiftPauseCheck:SetPoint("TOPLEFT", PADDING, y)
+        shiftPauseCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Auto Combat Log in M+
+        local autoCombatLogCheck = GUI:CreateFormCheckbox(tabContent, "Auto Combat Log in M+", "autoCombatLog", generalDB)
+        autoCombatLogCheck:SetPoint("TOPLEFT", PADDING, y)
+        autoCombatLogCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Auto Delete Confirmation
+        local autoDeleteCheck = GUI:CreateFormCheckbox(tabContent, "Auto-Fill DELETE Confirmation Text", "autoDeleteConfirm", generalDB)
+        autoDeleteCheck:SetPoint("TOPLEFT", PADDING, y)
+        autoDeleteCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+    end
+
+    y = y - 10
+
     -- Battle Res Counter Section
     GUI:SetSearchSection("Battle Res Counter")
     local brzHeader = GUI:CreateSectionHeader(tabContent, "Battle Res Counter")
@@ -604,233 +930,6 @@ local function BuildGeneralTab(tabContent)
 
         -- Apply initial border control states
         UpdateBrzBorderControlsEnabled(not brzDB.hideBorder)
-    end
-
-    y = y - 10
-
-    -- Combat Timer Section
-    local combatTimerHeader = GUI:CreateSectionHeader(tabContent, "Combat Timer")
-    combatTimerHeader:SetPoint("TOPLEFT", PADDING, y)
-    y = y - combatTimerHeader.gap
-
-    local combatTimerDesc = GUI:CreateLabel(tabContent,
-        "Displays elapsed combat time. Timer resets each time you leave combat.",
-        11, C.textMuted)
-    combatTimerDesc:SetPoint("TOPLEFT", PADDING, y)
-    combatTimerDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-    combatTimerDesc:SetJustifyH("LEFT")
-    combatTimerDesc:SetWordWrap(true)
-    combatTimerDesc:SetHeight(15)
-    y = y - 25
-
-    local combatTimerDB = db and db.combatTimer
-    if combatTimerDB then
-        local combatTimerCheck = GUI:CreateFormCheckbox(tabContent, "Enable Combat Timer", "enabled", combatTimerDB, function(val)
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        combatTimerCheck:SetPoint("TOPLEFT", PADDING, y)
-        combatTimerCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        -- Encounters-only mode toggle
-        local encountersOnlyCheck = GUI:CreateFormCheckbox(tabContent, "Only Show In Encounters", "onlyShowInEncounters", combatTimerDB, function(val)
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        encountersOnlyCheck:SetPoint("TOPLEFT", PADDING, y)
-        encountersOnlyCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        -- Preview toggle
-        local previewState = { enabled = _G.QUI_IsCombatTimerPreviewMode and _G.QUI_IsCombatTimerPreviewMode() or false }
-        local previewCheck = GUI:CreateFormCheckbox(tabContent, "Preview Combat Timer", "enabled", previewState, function(val)
-            if _G.QUI_ToggleCombatTimerPreview then
-                _G.QUI_ToggleCombatTimerPreview(val)
-            end
-        end)
-        previewCheck:SetPoint("TOPLEFT", PADDING, y)
-        previewCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        -- Frame size settings
-        local timerWidthSlider = GUI:CreateFormSlider(tabContent, "Frame Width", 40, 200, 1, "width", combatTimerDB, function()
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        timerWidthSlider:SetPoint("TOPLEFT", PADDING, y)
-        timerWidthSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        local timerHeightSlider = GUI:CreateFormSlider(tabContent, "Frame Height", 20, 100, 1, "height", combatTimerDB, function()
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        timerHeightSlider:SetPoint("TOPLEFT", PADDING, y)
-        timerHeightSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        local timerFontSizeSlider = GUI:CreateFormSlider(tabContent, "Font Size", 12, 32, 1, "fontSize", combatTimerDB, function()
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        timerFontSizeSlider:SetPoint("TOPLEFT", PADDING, y)
-        timerFontSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        local timerXOffsetSlider = GUI:CreateFormSlider(tabContent, "X Position Offset", -2000, 2000, 1, "xOffset", combatTimerDB, function()
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        timerXOffsetSlider:SetPoint("TOPLEFT", PADDING, y)
-        timerXOffsetSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        local timerYOffsetSlider = GUI:CreateFormSlider(tabContent, "Y Position Offset", -2000, 2000, 1, "yOffset", combatTimerDB, function()
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        timerYOffsetSlider:SetPoint("TOPLEFT", PADDING, y)
-        timerYOffsetSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        -- Text color with class color toggle
-        local timerColorPicker  -- Forward declare
-
-        local useClassColorTextCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Text", "useClassColorText", combatTimerDB, function(val)
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-            -- Enable/disable text color picker based on toggle
-            if timerColorPicker and timerColorPicker.SetEnabled then
-                timerColorPicker:SetEnabled(not val)
-            end
-        end)
-        useClassColorTextCheck:SetPoint("TOPLEFT", PADDING, y)
-        useClassColorTextCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        timerColorPicker = GUI:CreateFormColorPicker(tabContent, "Timer Text Color", "textColor", combatTimerDB, function()
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        timerColorPicker:SetPoint("TOPLEFT", PADDING, y)
-        timerColorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        -- Initial state based on setting
-        if timerColorPicker.SetEnabled then
-            timerColorPicker:SetEnabled(not combatTimerDB.useClassColorText)
-        end
-        y = y - FORM_ROW
-
-        -- Font selection with custom toggle
-        local fontList = Shared.GetFontList()
-        local timerFontDropdown  -- Forward declare
-
-        local useCustomFontCheck = GUI:CreateFormCheckbox(tabContent, "Use Custom Font", "useCustomFont", combatTimerDB, function(val)
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-            -- Enable/disable font dropdown based on toggle
-            if timerFontDropdown and timerFontDropdown.SetEnabled then
-                timerFontDropdown:SetEnabled(val)
-            end
-        end)
-        useCustomFontCheck:SetPoint("TOPLEFT", PADDING, y)
-        useCustomFontCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        timerFontDropdown = GUI:CreateFormDropdown(tabContent, "Font", fontList, "font", combatTimerDB, function()
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        timerFontDropdown:SetPoint("TOPLEFT", PADDING, y)
-        timerFontDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        -- Initial state based on setting
-        if timerFontDropdown.SetEnabled then
-            timerFontDropdown:SetEnabled(combatTimerDB.useCustomFont == true)
-        end
-        y = y - FORM_ROW
-
-        -- Backdrop settings
-        local backdropCheck = GUI:CreateFormCheckbox(tabContent, "Show Backdrop", "showBackdrop", combatTimerDB, function(val)
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        backdropCheck:SetPoint("TOPLEFT", PADDING, y)
-        backdropCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        local backdropColorPicker = GUI:CreateFormColorPicker(tabContent, "Backdrop Color", "backdropColor", combatTimerDB, function()
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        backdropColorPicker:SetPoint("TOPLEFT", PADDING, y)
-        backdropColorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        -- Border settings
-        -- Normalize mutually exclusive flags on load (prefer class color)
-        if combatTimerDB.useClassColorBorder and combatTimerDB.useAccentColorBorder then
-            combatTimerDB.useAccentColorBorder = false
-        end
-
-        local borderSizeSlider, borderTextureDropdown, useClassColorCheck, useAccentColorCheck, borderColorPicker
-
-        local function UpdateBorderControlsEnabled(enabled)
-            if borderSizeSlider and borderSizeSlider.SetEnabled then borderSizeSlider:SetEnabled(enabled) end
-            if borderTextureDropdown and borderTextureDropdown.SetEnabled then borderTextureDropdown:SetEnabled(enabled) end
-            if useClassColorCheck and useClassColorCheck.SetEnabled then useClassColorCheck:SetEnabled(enabled) end
-            if useAccentColorCheck and useAccentColorCheck.SetEnabled then useAccentColorCheck:SetEnabled(enabled) end
-            if borderColorPicker and borderColorPicker.SetEnabled then
-                borderColorPicker:SetEnabled(enabled and not combatTimerDB.useClassColorBorder and not combatTimerDB.useAccentColorBorder)
-            end
-        end
-
-        local hideBorderCheck = GUI:CreateFormCheckbox(tabContent, "Hide Border", "hideBorder", combatTimerDB, function(val)
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-            UpdateBorderControlsEnabled(not val)
-        end)
-        hideBorderCheck:SetPoint("TOPLEFT", PADDING, y)
-        hideBorderCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        borderSizeSlider = GUI:CreateFormSlider(tabContent, "Border Size", 1, 5, 0.5, "borderSize", combatTimerDB, function()
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        borderSizeSlider:SetPoint("TOPLEFT", PADDING, y)
-        borderSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        local borderList = Shared.GetBorderList()
-        borderTextureDropdown = GUI:CreateFormDropdown(tabContent, "Border Texture", borderList, "borderTexture", combatTimerDB, function()
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        borderTextureDropdown:SetPoint("TOPLEFT", PADDING, y)
-        borderTextureDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        useClassColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Border", "useClassColorBorder", combatTimerDB, function(val)
-            if val then
-                combatTimerDB.useAccentColorBorder = false
-                if useAccentColorCheck and useAccentColorCheck.SetChecked then useAccentColorCheck:SetChecked(false) end
-            end
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-            if borderColorPicker and borderColorPicker.SetEnabled then
-                borderColorPicker:SetEnabled(not val and not combatTimerDB.useAccentColorBorder and not combatTimerDB.hideBorder)
-            end
-        end)
-        useClassColorCheck:SetPoint("TOPLEFT", PADDING, y)
-        useClassColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        useAccentColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Accent Color for Border", "useAccentColorBorder", combatTimerDB, function(val)
-            if val then
-                combatTimerDB.useClassColorBorder = false
-                if useClassColorCheck and useClassColorCheck.SetChecked then useClassColorCheck:SetChecked(false) end
-            end
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-            if borderColorPicker and borderColorPicker.SetEnabled then
-                borderColorPicker:SetEnabled(not val and not combatTimerDB.useClassColorBorder and not combatTimerDB.hideBorder)
-            end
-        end)
-        useAccentColorCheck:SetPoint("TOPLEFT", PADDING, y)
-        useAccentColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        borderColorPicker = GUI:CreateFormColorPicker(tabContent, "Border Color", "borderColor", combatTimerDB, function()
-            if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
-        end)
-        borderColorPicker:SetPoint("TOPLEFT", PADDING, y)
-        borderColorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        -- Apply initial border control states
-        UpdateBorderControlsEnabled(not combatTimerDB.hideBorder)
     end
 
     y = y - 10
