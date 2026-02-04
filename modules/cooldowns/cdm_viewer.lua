@@ -109,7 +109,11 @@ local function HasValidTexture(icon)
     local tex = icon.Icon or icon.icon
     if tex and tex.GetTexture then
         local texID = tex:GetTexture()
-        return texID ~= nil and texID ~= 0 and texID ~= ""
+        if texID == nil then return false end
+        if type(issecretvalue) == "function" and issecretvalue(texID) then
+            return true -- secret texture values imply a real texture exists
+        end
+        return texID ~= 0 and texID ~= ""
     end
     return false
 end
