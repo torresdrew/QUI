@@ -358,11 +358,9 @@ function QUICore:ImportAllTrackerBars(str, replaceExisting)
         -- Replace all bars
         self.db.profile.customTrackers.bars = data.bars
 
-        -- Replace spec entries
-        if data.specEntries then
-            if not self.db.global then self.db.global = {} end
-            self.db.global.specTrackerSpells = data.specEntries
-        end
+        -- Replace spec entries (or clear if none provided)
+        if not self.db.global then self.db.global = {} end
+        self.db.global.specTrackerSpells = data.specEntries or {}
     else
         -- Merge: append bars with new IDs
         if not self.db.profile.customTrackers.bars then
@@ -4937,20 +4935,22 @@ end
 
 function QUI:GetAddonAccentColor()
     local db = QUI.db and QUI.db.profile
-    if not db or not db.general then
+    if not db then
         return 0.204, 0.827, 0.6, 1  -- Fallback to mint
     end
-    local c = db.general.addonAccentColor or {0.204, 0.827, 0.6, 1}
+    local c = (db.general and db.general.addonAccentColor)
+        or db.addonAccentColor
+        or {0.204, 0.827, 0.6, 1}
     return c[1], c[2], c[3], c[4] or 1
 end
 
 function QUI:GetSkinColor()
     local db = QUI.db and QUI.db.profile
-    if not db or not db.general then
+    if not db then
         return 0.2, 1.0, 0.6, 1  -- Fallback to mint
     end
 
-    if db.general.skinUseClassColor then
+    if db.general and db.general.skinUseClassColor then
         local _, class = UnitClass("player")
         local color = RAID_CLASS_COLORS[class]
         if color then
@@ -4958,7 +4958,9 @@ function QUI:GetSkinColor()
         end
     end
 
-    local c = db.general.addonAccentColor or {0.204, 0.827, 0.6, 1}
+    local c = (db.general and db.general.addonAccentColor)
+        or db.addonAccentColor
+        or {0.204, 0.827, 0.6, 1}
     return c[1], c[2], c[3], c[4] or 1
 end
 

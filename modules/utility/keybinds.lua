@@ -85,11 +85,12 @@ local function GetOverrideKeybind(spellID, baseSpellID, spellName)
     if not overrides then return nil end
 
     -- Prefer explicit base spell override, then direct spellID
-    if baseSpellID and overrides[baseSpellID] and overrides[baseSpellID] ~= "" then
+    -- Allow "" to mean "explicitly hide keybind"
+    if baseSpellID and overrides[baseSpellID] ~= nil then
         return overrides[baseSpellID]
     end
 
-    if spellID and overrides[spellID] and overrides[spellID] ~= "" then
+    if spellID and overrides[spellID] ~= nil then
         return overrides[spellID]
     end
 
@@ -105,10 +106,10 @@ local function GetOverrideKeybindForItem(itemID)
     
     -- Use negative itemID as key to avoid conflicts with spellIDs
     local key = -tonumber(itemID)
-    if overrides[key] and overrides[key] ~= "" then
+    if overrides[key] ~= nil then
         return overrides[key]
     end
-    
+
     return nil
 end
 
@@ -934,6 +935,14 @@ local function ApplyKeybindToIcon(icon, viewerName)
         overrideKeybind = GetOverrideKeybind(spellID, nil, spellName)
     end
     if overrideKeybind then
+        if overrideKeybind == "" then
+            -- Explicit clear: hide keybind text and return
+            if icon.keybindText then
+                icon.keybindText:SetText("")
+                icon.keybindText:Hide()
+            end
+            return
+        end
         keybind = overrideKeybind
     end
 
@@ -957,6 +966,13 @@ local function ApplyKeybindToIcon(icon, viewerName)
                     overrideKeybind = GetOverrideKeybind(spellID, baseSpellID, spellName)
                 end
                 if overrideKeybind then
+                    if overrideKeybind == "" then
+                        if icon.keybindText then
+                            icon.keybindText:SetText("")
+                            icon.keybindText:Hide()
+                        end
+                        return
+                    end
                     keybind = overrideKeybind
                 else
                     keybind = GetKeybindForSpell(baseSpellID)
@@ -979,6 +995,13 @@ local function ApplyKeybindToIcon(icon, viewerName)
                     overrideKeybind = GetOverrideKeybind(spellID, baseSpellID, spellName)
                 end
                 if overrideKeybind then
+                    if overrideKeybind == "" then
+                        if icon.keybindText then
+                            icon.keybindText:SetText("")
+                            icon.keybindText:Hide()
+                        end
+                        return
+                    end
                     keybind = overrideKeybind
                 else
                     keybind = GetKeybindForSpell(baseSpellID)
@@ -1873,7 +1896,9 @@ local function ApplyRotationHelperToIcon(icon, viewerName, nextSpellID)
     local core = GetCore()
     if not core or not core.db or not core.db.profile then return end
     
-    local settings = core.db.profile.viewers[viewerName]
+    local viewers = core.db.profile.viewers
+    if not viewers then return end
+    local settings = viewers[viewerName]
     if not settings or not settings.showRotationHelper then
         -- Hide overlay if disabled
         if icon._rotationHelperOverlay then

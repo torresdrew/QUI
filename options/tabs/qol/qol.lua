@@ -559,7 +559,7 @@ local function BuildGeneralTab(tabContent)
         useClassColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Border", "useClassColorBorder", combatTimerDB, function(val)
             if val then
                 combatTimerDB.useAccentColorBorder = false
-                if useAccentColorCheck and useAccentColorCheck.SetChecked then useAccentColorCheck:SetChecked(false) end
+                if useAccentColorCheck and useAccentColorCheck.SetValue then useAccentColorCheck:SetValue(false, true) end
             end
             if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
             if borderColorPicker and borderColorPicker.SetEnabled then
@@ -573,7 +573,7 @@ local function BuildGeneralTab(tabContent)
         useAccentColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Accent Color for Border", "useAccentColorBorder", combatTimerDB, function(val)
             if val then
                 combatTimerDB.useClassColorBorder = false
-                if useClassColorCheck and useClassColorCheck.SetChecked then useClassColorCheck:SetChecked(false) end
+                if useClassColorCheck and useClassColorCheck.SetValue then useClassColorCheck:SetValue(false, true) end
             end
             if _G.QUI_RefreshCombatTimer then _G.QUI_RefreshCombatTimer() end
             if borderColorPicker and borderColorPicker.SetEnabled then
@@ -1209,7 +1209,7 @@ local function BuildGeneralTab(tabContent)
         brzUseClassBorderCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Border", "useClassColorBorder", brzDB, function(val)
             if val then
                 brzDB.useAccentColorBorder = false
-                if brzUseAccentBorderCheck and brzUseAccentBorderCheck.SetChecked then brzUseAccentBorderCheck:SetChecked(false) end
+                if brzUseAccentBorderCheck and brzUseAccentBorderCheck.SetValue then brzUseAccentBorderCheck:SetValue(false, true) end
             end
             if _G.QUI_RefreshBrezCounter then _G.QUI_RefreshBrezCounter() end
             if brzBorderColorPicker and brzBorderColorPicker.SetEnabled then
@@ -1223,7 +1223,7 @@ local function BuildGeneralTab(tabContent)
         brzUseAccentBorderCheck = GUI:CreateFormCheckbox(tabContent, "Use Accent Color for Border", "useAccentColorBorder", brzDB, function(val)
             if val then
                 brzDB.useClassColorBorder = false
-                if brzUseClassBorderCheck and brzUseClassBorderCheck.SetChecked then brzUseClassBorderCheck:SetChecked(false) end
+                if brzUseClassBorderCheck and brzUseClassBorderCheck.SetValue then brzUseClassBorderCheck:SetValue(false, true) end
             end
             if _G.QUI_RefreshBrezCounter then _G.QUI_RefreshBrezCounter() end
             if brzBorderColorPicker and brzBorderColorPicker.SetEnabled then

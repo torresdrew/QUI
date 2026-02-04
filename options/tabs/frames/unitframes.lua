@@ -11,6 +11,11 @@ local C = GUI.Colors
 local Shared = ns.QUI_Options
 local QUICore = ns.Addon
 
+local function SafeGetPixelSize(frame)
+    local core = ns.Addon
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
 -- Local references
 local PADDING = Shared.PADDING
 local CreateScrollableContent = Shared.CreateScrollableContent
@@ -94,7 +99,7 @@ local function CreateUnitFramesPage(parent)
         local editModeBtn = CreateFrame("Button", nil, editContainer, "BackdropTemplate")
         editModeBtn:SetSize(120, 24)
         editModeBtn:SetPoint("LEFT", editContainer, "LEFT", 180, 0)
-        local px = QUICore:GetPixelSize(editModeBtn)
+        local px = SafeGetPixelSize(editModeBtn)
         editModeBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -404,13 +409,13 @@ local function CreateUnitFramesPage(parent)
         local previewTrack = CreateFrame("Button", nil, previewContainer, "BackdropTemplate")
         previewTrack:SetSize(40, 20)
         previewTrack:SetPoint("LEFT", previewContainer, "LEFT", 180, 0)
-        local pxTrack = QUICore:GetPixelSize(previewTrack)
+        local pxTrack = SafeGetPixelSize(previewTrack)
         previewTrack:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxTrack})
 
         -- Thumb (sliding circle)
         local previewThumb = CreateFrame("Frame", nil, previewTrack, "BackdropTemplate")
         previewThumb:SetSize(16, 16)
-        local pxThumb = QUICore:GetPixelSize(previewThumb)
+        local pxThumb = SafeGetPixelSize(previewThumb)
         previewThumb:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxThumb})
         previewThumb:SetBackdropColor(0.95, 0.95, 0.95, 1)
         previewThumb:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)
@@ -1070,12 +1075,12 @@ local function CreateUnitFramesPage(parent)
             local debuffPreviewTrack = CreateFrame("Button", nil, debuffPreviewContainer, "BackdropTemplate")
             debuffPreviewTrack:SetSize(40, 20)
             debuffPreviewTrack:SetPoint("LEFT", debuffPreviewContainer, "LEFT", 180, 0)
-            local pxDebuffTrack = QUICore:GetPixelSize(debuffPreviewTrack)
+            local pxDebuffTrack = SafeGetPixelSize(debuffPreviewTrack)
             debuffPreviewTrack:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxDebuffTrack})
 
             local debuffPreviewThumb = CreateFrame("Frame", nil, debuffPreviewTrack, "BackdropTemplate")
             debuffPreviewThumb:SetSize(16, 16)
-            local pxDebuffThumb = QUICore:GetPixelSize(debuffPreviewThumb)
+            local pxDebuffThumb = SafeGetPixelSize(debuffPreviewThumb)
             debuffPreviewThumb:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxDebuffThumb})
             debuffPreviewThumb:SetBackdropColor(0.95, 0.95, 0.95, 1)
             debuffPreviewThumb:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)
@@ -1256,12 +1261,12 @@ local function CreateUnitFramesPage(parent)
             local buffPreviewTrack = CreateFrame("Button", nil, buffPreviewContainer, "BackdropTemplate")
             buffPreviewTrack:SetSize(40, 20)
             buffPreviewTrack:SetPoint("LEFT", buffPreviewContainer, "LEFT", 180, 0)
-            local pxBuffTrack = QUICore:GetPixelSize(buffPreviewTrack)
+            local pxBuffTrack = SafeGetPixelSize(buffPreviewTrack)
             buffPreviewTrack:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxBuffTrack})
 
             local buffPreviewThumb = CreateFrame("Frame", nil, buffPreviewTrack, "BackdropTemplate")
             buffPreviewThumb:SetSize(16, 16)
-            local pxBuffThumb = QUICore:GetPixelSize(buffPreviewThumb)
+            local pxBuffThumb = SafeGetPixelSize(buffPreviewThumb)
             buffPreviewThumb:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxBuffThumb})
             buffPreviewThumb:SetBackdropColor(0.95, 0.95, 0.95, 1)
             buffPreviewThumb:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)

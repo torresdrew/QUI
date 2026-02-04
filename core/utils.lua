@@ -284,6 +284,7 @@ end
 --- Get the addon-wide accent color (from options panel color picker)
 --- @return number, number, number, number r, g, b, a
 function Helpers.GetAddonAccentColor()
+    local QUI = _G.QUI
     if QUI and QUI.GetAddonAccentColor then
         return QUI:GetAddonAccentColor()
     end

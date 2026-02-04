@@ -551,7 +551,7 @@ local function StylePreviewFrame()
 
         -- Border
         if bs > 0 then
-            local bpx = QUICore:Pixels(bs, icon)
+            local bpx = (QUICore and QUICore.Pixels) and QUICore:Pixels(bs, icon) or bs
             icon.border:Show()
             icon.border:ClearAllPoints()
             icon.border:SetPoint("TOPLEFT", -bpx, bpx)

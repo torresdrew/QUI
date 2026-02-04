@@ -193,6 +193,7 @@ local function BuildEffectsTab(tabContent)
         local glowTypeOptions = {
             {value = "Pixel Glow", text = "Pixel Glow"},
             {value = "Autocast Shine", text = "Autocast Shine"},
+            {value = "Button Glow", text = "Button Glow"},
         }
 
         -- Store references to conditional widgets for visibility updates

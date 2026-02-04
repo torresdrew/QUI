@@ -13,6 +13,11 @@ local C = GUI.Colors
 local mainOptions = ns.QUI_Options or {}
 local QUICore = ns.Addon
 
+local function SafeGetPixelSize(frame)
+    local core = ns.Addon
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
 ---------------------------------------------------------------------------
 -- BUILD CASTBAR OPTIONS SECTION
 -- Parameters:
@@ -287,13 +292,13 @@ local function BuildCastbarOptions(tabContent, unitKey, y, PAD, FORM_ROW, Refres
         local castPreviewTrack = CreateFrame("Button", nil, castPreviewContainer, "BackdropTemplate")
         castPreviewTrack:SetSize(40, 20)
         castPreviewTrack:SetPoint("LEFT", castPreviewContainer, "LEFT", 180, 0)
-        local pxCastTrack = QUICore:GetPixelSize(castPreviewTrack)
+        local pxCastTrack = SafeGetPixelSize(castPreviewTrack)
         castPreviewTrack:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxCastTrack})
 
         -- Thumb (sliding circle)
         local castPreviewThumb = CreateFrame("Frame", nil, castPreviewTrack, "BackdropTemplate")
         castPreviewThumb:SetSize(16, 16)
-        local pxCastThumb = QUICore:GetPixelSize(castPreviewThumb)
+        local pxCastThumb = SafeGetPixelSize(castPreviewThumb)
         castPreviewThumb:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxCastThumb})
         castPreviewThumb:SetBackdropColor(0.95, 0.95, 0.95, 1)
         castPreviewThumb:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)
@@ -342,7 +347,7 @@ local function BuildCastbarOptions(tabContent, unitKey, y, PAD, FORM_ROW, Refres
         local snapFrameBtn = CreateFrame("Button", nil, snapContainer, "BackdropTemplate")
         snapFrameBtn:SetSize(100, 24)
         snapFrameBtn:SetPoint("LEFT", snapContainer, "LEFT", 180, 0)
-        local pxSnapFrame = QUICore:GetPixelSize(snapFrameBtn)
+        local pxSnapFrame = SafeGetPixelSize(snapFrameBtn)
         snapFrameBtn:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxSnapFrame})
         snapFrameBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         snapFrameBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -359,7 +364,7 @@ local function BuildCastbarOptions(tabContent, unitKey, y, PAD, FORM_ROW, Refres
             snapEssentialBtn = CreateFrame("Button", nil, snapContainer, "BackdropTemplate")
             snapEssentialBtn:SetSize(100, 24)
             snapEssentialBtn:SetPoint("LEFT", snapFrameBtn, "RIGHT", 8, 0)
-            local pxSnapEss = QUICore:GetPixelSize(snapEssentialBtn)
+            local pxSnapEss = SafeGetPixelSize(snapEssentialBtn)
             snapEssentialBtn:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxSnapEss})
             snapEssentialBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
             snapEssentialBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -374,7 +379,7 @@ local function BuildCastbarOptions(tabContent, unitKey, y, PAD, FORM_ROW, Refres
             snapUtilityBtn = CreateFrame("Button", nil, snapContainer, "BackdropTemplate")
             snapUtilityBtn:SetSize(100, 24)
             snapUtilityBtn:SetPoint("LEFT", snapEssentialBtn, "RIGHT", 8, 0)
-            local pxSnapUtil = QUICore:GetPixelSize(snapUtilityBtn)
+            local pxSnapUtil = SafeGetPixelSize(snapUtilityBtn)
             snapUtilityBtn:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxSnapUtil})
             snapUtilityBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
             snapUtilityBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -767,7 +772,7 @@ local function BuildCastbarOptions(tabContent, unitKey, y, PAD, FORM_ROW, Refres
             local resetBtn = CreateFrame("Button", nil, resetContainer, "BackdropTemplate")
             resetBtn:SetSize(140, 24)
             resetBtn:SetPoint("LEFT", resetContainer, "LEFT", 180, 0)
-            local px = QUICore:GetPixelSize(resetBtn)
+            local px = SafeGetPixelSize(resetBtn)
             resetBtn:SetBackdrop({
                 bgFile = "Interface\\Buttons\\WHITE8x8",
                 edgeFile = "Interface\\Buttons\\WHITE8x8",

@@ -28,8 +28,6 @@ local PET_SPEC_IDS = {
     [267] = true,
     -- Death Knight: Unholy (252)
     [252] = true,
-    -- Mage: Frost (64) - Water Elemental
-    [64] = true,
 }
 
 local function IsPetSpec()

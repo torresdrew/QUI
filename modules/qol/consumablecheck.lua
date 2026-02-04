@@ -476,9 +476,10 @@ local function UpdateConsumables()
 
     -- Healthstone count
     if settings.consumableHealthstone ~= false and HasWarlockInGroup() then
-        local hsCount = C_Item.GetItemCount(5512, false, true)
-        local hsLockCount = C_Item.GetItemCount(224464, false, true)
-        local totalHS = (hsCount or 0) + (hsLockCount or 0)
+        local hsCount = C_Item.GetItemCount(5512, false, true) or 0
+        local hsLockCount = C_Item.GetItemCount(224464, false, true) or 0
+        local ok, totalHS = pcall(function() return hsCount + hsLockCount end)
+        if not ok then totalHS = 0 end
         if totalHS > 0 then
             buttons.healthstone.status:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
             buttons.healthstone.icon:SetDesaturated(false)

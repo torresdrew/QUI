@@ -343,13 +343,13 @@ end
 local function UpdateAllButtonFonts()
     local fontSize = GetFontSize()
     local fontPath = GetFont()
-    local tr, tg, tb = GetTextColor()
+    local tr, tg, tb, ta = GetTextColor()
     for i = 0, 4 do
         local button = keystoneButtons[i]
         if button then
             button.keyLevel:SetFont(fontPath, fontSize + 1, "OUTLINE")
             button.dungeonName:SetFont(fontPath, fontSize, "OUTLINE")
-            button.dungeonName:SetTextColor(tr, tg, tb)
+            button.dungeonName:SetTextColor(tr, tg, tb, ta)
             button.playerName:SetFont(fontPath, fontSize, "OUTLINE")
             button.score:SetFont(fontPath, fontSize, "OUTLINE")
         end
@@ -396,8 +396,8 @@ local function UpdateButton(button, keystoneInfo, unitName, unit, isLeader)
         button.keyLevel:SetText("+" .. keystoneInfo.level)
         button.keyLevel:SetTextColor(kr, kg, kb)
         button.dungeonName:SetText(shortName)
-        local tr, tg, tb = GetTextColor()
-        button.dungeonName:SetTextColor(tr, tg, tb)
+        local tr, tg, tb, ta = GetTextColor()
+        button.dungeonName:SetTextColor(tr, tg, tb, ta)
         button.playerName:SetText("|c" .. classColor .. displayName .. "|r")
 
         -- Score

@@ -411,8 +411,8 @@ function QUI_Anchoring:PositionFrame(frame, anchorTarget, anchorPoint, offsetX, 
         local netAdjX = targetAdjX - sourceAdjX
         local netAdjY = targetAdjY - sourceAdjY
         
-        local scaledOffsetX = PixelRound(frame, Scale(offsetX, frame)) + netAdjX
-        local scaledOffsetY = PixelRound(frame, Scale(offsetY, frame)) + netAdjY
+        local scaledOffsetX = PixelRound(frame, Scale(offsetX, frame) + netAdjX)
+        local scaledOffsetY = PixelRound(frame, Scale(offsetY, frame) + netAdjY)
 
         -- Use explicit dual anchors if provided
         if useExplicitDualAnchors then
@@ -421,8 +421,8 @@ function QUI_Anchoring:PositionFrame(frame, anchorTarget, anchorPoint, offsetX, 
             local netAdjX2 = targetAdjX2 - sourceAdjX2
             local netAdjY2 = targetAdjY2 - sourceAdjY2
 
-            local scaledOffsetX2 = PixelRound(frame, Scale(offsetX, frame)) + netAdjX2
-            local scaledOffsetY2 = PixelRound(frame, Scale(offsetY, frame)) + netAdjY2
+            local scaledOffsetX2 = PixelRound(frame, Scale(offsetX, frame) + netAdjX2)
+            local scaledOffsetY2 = PixelRound(frame, Scale(offsetY, frame) + netAdjY2)
 
             frame:SetPoint(anchorPoint, parentFrame, targetAnchorPoint, scaledOffsetX, scaledOffsetY)
             frame:SetPoint(sourceAnchorPoint2, parentFrame, targetAnchorPoint2, scaledOffsetX2, scaledOffsetY2)
@@ -456,8 +456,8 @@ function QUI_Anchoring:PositionFrame(frame, anchorTarget, anchorPoint, offsetX, 
     
     -- offsetX and offsetY already provide the gap/padding functionality
     -- When the anchor target changes size, the offset maintains that gap
-    local scaledOffsetX = PixelRound(frame, Scale(offsetX, frame)) + netAdjX
-    local scaledOffsetY = PixelRound(frame, Scale(offsetY, frame)) + netAdjY
+    local scaledOffsetX = PixelRound(frame, Scale(offsetX, frame) + netAdjX)
+    local scaledOffsetY = PixelRound(frame, Scale(offsetY, frame) + netAdjY)
 
     -- Use explicit dual anchors if provided
     if useExplicitDualAnchors then
@@ -467,8 +467,8 @@ function QUI_Anchoring:PositionFrame(frame, anchorTarget, anchorPoint, offsetX, 
         local netAdjY2 = targetAdjY2 - sourceAdjY2
 
         -- offsetX and offsetY already provide the gap/padding for both anchor points
-        local scaledOffsetX2 = PixelRound(frame, Scale(offsetX, frame)) + netAdjX2
-        local scaledOffsetY2 = PixelRound(frame, Scale(offsetY, frame)) + netAdjY2
+        local scaledOffsetX2 = PixelRound(frame, Scale(offsetX, frame) + netAdjX2)
+        local scaledOffsetY2 = PixelRound(frame, Scale(offsetY, frame) + netAdjY2)
 
         frame:SetPoint(anchorPoint, anchorFrame, targetAnchorPoint, scaledOffsetX, scaledOffsetY)
         frame:SetPoint(sourceAnchorPoint2, anchorFrame, targetAnchorPoint2, scaledOffsetX2, scaledOffsetY2)

@@ -15,10 +15,15 @@ end
 --------------------------------------------------------------------------------
 -- Helper: Create a scrollable text box container
 --------------------------------------------------------------------------------
+local function SafeGetPixelSize(frame)
+    local core = ns.Addon
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
 local function CreateScrollableTextBox(parent, height, text)
     local container = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     container:SetHeight(height)
-    local px = QUICore:GetPixelSize(container)
+    local px = SafeGetPixelSize(container)
     container:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -112,7 +117,7 @@ local function BuildImportExportTab(tabContent)
     local exportBorder = CreateFrame("Frame", nil, tabContent, "BackdropTemplate")
     exportBorder:SetPoint("TOPLEFT", exportScroll, -6, 6)
     exportBorder:SetPoint("BOTTOMRIGHT", exportScroll, 26, -6)
-    local pxExport = QUICore:GetPixelSize(exportBorder)
+    local pxExport = SafeGetPixelSize(exportBorder)
     exportBorder:SetBackdrop({
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = pxExport,
@@ -191,7 +196,7 @@ local function BuildImportExportTab(tabContent)
     local importBorder = CreateFrame("Frame", nil, tabContent, "BackdropTemplate")
     importBorder:SetPoint("TOPLEFT", importScroll, -6, 6)
     importBorder:SetPoint("BOTTOMRIGHT", importScroll, 26, -6)
-    local pxImport = QUICore:GetPixelSize(importBorder)
+    local pxImport = SafeGetPixelSize(importBorder)
     importBorder:SetBackdrop({
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = pxImport,

@@ -688,8 +688,8 @@ local function SimulateCast(castbar, castSettings, unitKey, bossIndex)
             local castbarX, castbarY = self:GetCenter()
 
             if screenX and screenY and castbarX and castbarY then
-                local offsetX = QUICore:PixelRound(castbarX - screenX)
-                local offsetY = QUICore:PixelRound(castbarY - screenY)
+                local offsetX = QUICore:PixelRound(castbarX - screenX, self)
+                local offsetY = QUICore:PixelRound(castbarY - screenY, self)
                 castSettings.offsetX = offsetX
                 castSettings.offsetY = offsetY
                 -- Also save to freeOffset for mode switching (drag only works in "none" mode)
