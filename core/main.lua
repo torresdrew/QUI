@@ -754,6 +754,27 @@ local defaults = {
             autoSelectGossip = false,  -- Auto-select single gossip options
             autoCombatLog = false,  -- Auto start/stop combat logging in M+ (opt-in)
             autoDeleteConfirm = true,  -- Auto-fill DELETE confirmation text
+            -- Pet Warning (pet-spec classes: Hunter, Warlock, DK, Mage)
+            petCombatWarning = true,    -- Show combat warning in instances when pet missing/passive
+            petWarningOffsetX = 0,      -- Warning frame X offset from center
+            petWarningOffsetY = -200,   -- Warning frame Y offset from center
+            -- Consumable Check (disabled by default)
+            consumableCheckEnabled = false,       -- Master toggle
+            consumableOnReadyCheck = true,        -- Show on ready check
+            consumableOnDungeon = false,          -- Show on dungeon entrance
+            consumableOnRaid = false,             -- Show on raid entrance
+            consumableOnResurrect = false,        -- Show on instanced resurrect
+            consumableFood = true,                -- Track food buff
+            consumableFlask = true,               -- Track flask buff
+            consumableOilMH = true,               -- Track main hand weapon enchant
+            consumableOilOH = true,               -- Track off hand weapon enchant
+            consumableRune = true,                -- Track augment rune
+            consumableHealthstone = true,         -- Track healthstones (warlock in group)
+            consumableExpirationWarning = false,  -- Warn when buffs expiring
+            consumableExpirationThreshold = 300,  -- Seconds before expiration warning
+            consumableAnchorMode = true,          -- Anchor to ready check frame
+            consumableIconOffset = 5,             -- Icon offset from anchor
+            consumableIconSize = 40,              -- Icon size in pixels
             -- Quick Salvage settings
             quickSalvage = {
                 enabled = false,  -- Opt-in, OFF by default

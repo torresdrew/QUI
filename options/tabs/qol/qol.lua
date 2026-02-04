@@ -681,10 +681,22 @@ local function BuildGeneralTab(tabContent)
         shiftPauseCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
 
+        -- Auto Insert M+ Keys
+        local autoInsertKeyCheck = GUI:CreateFormCheckbox(tabContent, "Auto Insert M+ Keys", "autoInsertKey", generalDB)
+        autoInsertKeyCheck:SetPoint("TOPLEFT", PADDING, y)
+        autoInsertKeyCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
         -- Auto Combat Log in M+
         local autoCombatLogCheck = GUI:CreateFormCheckbox(tabContent, "Auto Combat Log in M+", "autoCombatLog", generalDB)
         autoCombatLogCheck:SetPoint("TOPLEFT", PADDING, y)
         autoCombatLogCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- M+ Dungeon Teleport
+        local mplusTeleportCheck = GUI:CreateFormCheckbox(tabContent, "Click-to-Teleport on M+ Tab", "mplusTeleportEnabled", generalDB)
+        mplusTeleportCheck:SetPoint("TOPLEFT", PADDING, y)
+        mplusTeleportCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
 
         -- Auto Delete Confirmation
@@ -692,6 +704,307 @@ local function BuildGeneralTab(tabContent)
         autoDeleteCheck:SetPoint("TOPLEFT", PADDING, y)
         autoDeleteCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
+    end
+
+    y = y - 10
+
+    -- Quick Salvage Section
+    GUI:SetSearchSection("Quick Salvage")
+    local quickSalvageHeader = GUI:CreateSectionHeader(tabContent, "Quick Salvage")
+    quickSalvageHeader:SetPoint("TOPLEFT", PADDING, y)
+    y = y - quickSalvageHeader.gap
+
+    local quickSalvageDesc = GUI:CreateLabel(tabContent,
+        "Mill, prospect, or disenchant items with a single click using a modifier key. Requires the corresponding profession.",
+        11, C.textMuted)
+    quickSalvageDesc:SetPoint("TOPLEFT", PADDING, y)
+    quickSalvageDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    quickSalvageDesc:SetJustifyH("LEFT")
+    quickSalvageDesc:SetWordWrap(true)
+    quickSalvageDesc:SetHeight(20)
+    y = y - 30
+
+    local qsDB = db and db.general and db.general.quickSalvage
+    if qsDB then
+        local qsEnableCheck = GUI:CreateFormCheckbox(tabContent, "Enable Quick Salvage", "enabled", qsDB, function()
+            if _G.QUI_RefreshQuickSalvage then _G.QUI_RefreshQuickSalvage() end
+        end)
+        qsEnableCheck:SetPoint("TOPLEFT", PADDING, y)
+        qsEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local modifierOptions = {
+            {value = "ALT", text = "Alt"},
+            {value = "ALTCTRL", text = "Alt + Ctrl"},
+            {value = "ALTSHIFT", text = "Alt + Shift"},
+        }
+        local qsModifierDropdown = GUI:CreateFormDropdown(tabContent, "Modifier Key", modifierOptions, "modifier", qsDB, function()
+            if _G.QUI_RefreshQuickSalvage then _G.QUI_RefreshQuickSalvage() end
+        end)
+        qsModifierDropdown:SetPoint("TOPLEFT", PADDING, y)
+        qsModifierDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local qsActionsDesc = GUI:CreateLabel(tabContent,
+            "Milling: Herbs (5+ stack)  |  Prospecting: Ores (5+ stack)  |  Disenchanting: Green+ gear",
+            11, C.textMuted)
+        qsActionsDesc:SetPoint("TOPLEFT", PADDING, y)
+        qsActionsDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        qsActionsDesc:SetJustifyH("LEFT")
+        qsActionsDesc:SetWordWrap(true)
+        qsActionsDesc:SetHeight(20)
+        y = y - 30
+    end
+
+    y = y - 10
+
+    -- Pet Warning Section
+    GUI:SetSearchSection("Pet Warning")
+    local petWarningHeader = GUI:CreateSectionHeader(tabContent, "Pet Warning")
+    petWarningHeader:SetPoint("TOPLEFT", PADDING, y)
+    y = y - petWarningHeader.gap
+
+    local petWarningIntro = GUI:CreateLabel(tabContent, "Warn pet class players (Hunter, Warlock, DK, Frost Mage) when pet is missing or on passive during combat in instances.", 11, C.textMuted)
+    petWarningIntro:SetPoint("TOPLEFT", PADDING, y)
+    petWarningIntro:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    petWarningIntro:SetJustifyH("LEFT")
+    petWarningIntro:SetWordWrap(true)
+    petWarningIntro:SetHeight(20)
+    y = y - 30
+
+    if generalDB then
+        local petCombatCheck = GUI:CreateFormCheckbox(tabContent, "Show Combat Warning in Instances", "petCombatWarning", generalDB)
+        petCombatCheck:SetPoint("TOPLEFT", PADDING, y)
+        petCombatCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local petOffsetXSlider = GUI:CreateFormSlider(tabContent, "Horizontal Offset", -500, 500, 10, "petWarningOffsetX", generalDB, function()
+            if _G.QUI_RepositionPetWarning then _G.QUI_RepositionPetWarning() end
+        end)
+        petOffsetXSlider:SetPoint("TOPLEFT", PADDING, y)
+        petOffsetXSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local petOffsetYSlider = GUI:CreateFormSlider(tabContent, "Vertical Offset", -500, 500, 10, "petWarningOffsetY", generalDB, function()
+            if _G.QUI_RepositionPetWarning then _G.QUI_RepositionPetWarning() end
+        end)
+        petOffsetYSlider:SetPoint("TOPLEFT", PADDING, y)
+        petOffsetYSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Preview toggle button
+        local petPreviewActive = false
+        local petPreviewBtn = GUI:CreateButton(tabContent, "Show Preview", 140, 24)
+        petPreviewBtn:SetPoint("TOPLEFT", PADDING, y)
+        petPreviewBtn:SetScript("OnClick", function(self)
+            petPreviewActive = not petPreviewActive
+            if _G.QUI_TogglePetWarningPreview then
+                _G.QUI_TogglePetWarningPreview(petPreviewActive)
+            end
+            self:SetText(petPreviewActive and "Hide Preview" or "Show Preview")
+        end)
+
+        -- Hide preview when leaving this tab
+        local existingOnHide = tabContent:GetScript("OnHide")
+        tabContent:SetScript("OnHide", function(self)
+            if petPreviewActive and _G.QUI_TogglePetWarningPreview then
+                _G.QUI_TogglePetWarningPreview(false)
+                petPreviewActive = false
+                petPreviewBtn:SetText("Show Preview")
+            end
+            if existingOnHide then existingOnHide(self) end
+        end)
+        y = y - 32
+    end
+
+    y = y - 10
+
+    -- Consumable Check Section
+    GUI:SetSearchSection("Consumable Check")
+    local consumableHeader = GUI:CreateSectionHeader(tabContent, "Consumable Check")
+    consumableHeader:SetPoint("TOPLEFT", PADDING, y)
+    y = y - consumableHeader.gap
+
+    local consumableDesc = GUI:CreateLabel(tabContent,
+        "Display consumable status icons when triggered by events below. Click missing consumable icons to use them.",
+        11, C.textMuted)
+    consumableDesc:SetPoint("TOPLEFT", PADDING, y)
+    consumableDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    consumableDesc:SetJustifyH("LEFT")
+    consumableDesc:SetWordWrap(true)
+    consumableDesc:SetHeight(20)
+    y = y - 30
+
+    if generalDB then
+        local consumableEnableCheck = GUI:CreateFormCheckbox(tabContent, "Enable Consumable Check", "consumableCheckEnabled", generalDB)
+        consumableEnableCheck:SetPoint("TOPLEFT", PADDING, y)
+        consumableEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Triggers sub-header
+        local triggersLabel = GUI:CreateLabel(tabContent, "Triggers", 12, C.accent)
+        triggersLabel:SetPoint("TOPLEFT", PADDING, y)
+        y = y - 20
+
+        local triggerReadyCheck = GUI:CreateFormCheckbox(tabContent, "Ready Check", "consumableOnReadyCheck", generalDB)
+        triggerReadyCheck:SetPoint("TOPLEFT", PADDING + 20, y)
+        triggerReadyCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local triggerDungeon = GUI:CreateFormCheckbox(tabContent, "Dungeon Entrance", "consumableOnDungeon", generalDB)
+        triggerDungeon:SetPoint("TOPLEFT", PADDING + 20, y)
+        triggerDungeon:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local triggerRaid = GUI:CreateFormCheckbox(tabContent, "Raid Entrance", "consumableOnRaid", generalDB)
+        triggerRaid:SetPoint("TOPLEFT", PADDING + 20, y)
+        triggerRaid:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local triggerResurrect = GUI:CreateFormCheckbox(tabContent, "Instanced Resurrect", "consumableOnResurrect", generalDB)
+        triggerResurrect:SetPoint("TOPLEFT", PADDING + 20, y)
+        triggerResurrect:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Buff Checks sub-header
+        local buffsLabel = GUI:CreateLabel(tabContent, "Buff Checks", 12, C.accent)
+        buffsLabel:SetPoint("TOPLEFT", PADDING, y)
+        y = y - 20
+
+        local consumableFoodCheck = GUI:CreateFormCheckbox(tabContent, "Food Buff", "consumableFood", generalDB)
+        consumableFoodCheck:SetPoint("TOPLEFT", PADDING + 20, y)
+        consumableFoodCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local consumableFlaskCheck = GUI:CreateFormCheckbox(tabContent, "Flask Buff", "consumableFlask", generalDB)
+        consumableFlaskCheck:SetPoint("TOPLEFT", PADDING + 20, y)
+        consumableFlaskCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local consumableOilMHCheck = GUI:CreateFormCheckbox(tabContent, "Weapon Oil (Main Hand)", "consumableOilMH", generalDB)
+        consumableOilMHCheck:SetPoint("TOPLEFT", PADDING + 20, y)
+        consumableOilMHCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local consumableOilOHCheck = GUI:CreateFormCheckbox(tabContent, "Weapon Oil (Off Hand)", "consumableOilOH", generalDB)
+        consumableOilOHCheck:SetPoint("TOPLEFT", PADDING + 20, y)
+        consumableOilOHCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local consumableRuneCheck = GUI:CreateFormCheckbox(tabContent, "Augment Rune", "consumableRune", generalDB)
+        consumableRuneCheck:SetPoint("TOPLEFT", PADDING + 20, y)
+        consumableRuneCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local consumableHSCheck = GUI:CreateFormCheckbox(tabContent, "Healthstones", "consumableHealthstone", generalDB)
+        consumableHSCheck:SetPoint("TOPLEFT", PADDING + 20, y)
+        consumableHSCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local consumableHSDesc = GUI:CreateLabel(tabContent, "Only shows when a Warlock is in the group.", 11, C.textMuted)
+        consumableHSDesc:SetPoint("TOPLEFT", PADDING, y + 4)
+        consumableHSDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        consumableHSDesc:SetJustifyH("LEFT")
+        y = y - 20
+
+        -- Expiration Warning sub-header
+        local expirationLabel = GUI:CreateLabel(tabContent, "Expiration Warning", 12, C.accent)
+        expirationLabel:SetPoint("TOPLEFT", PADDING, y)
+        y = y - 20
+
+        local expirationCheck = GUI:CreateFormCheckbox(tabContent, "Warn When Buffs Expiring", "consumableExpirationWarning", generalDB)
+        expirationCheck:SetPoint("TOPLEFT", PADDING, y)
+        expirationCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local expirationDesc = GUI:CreateLabel(tabContent, "Show consumables window when food/flask/rune is about to expire (instanced content only).", 11, C.textMuted)
+        expirationDesc:SetPoint("TOPLEFT", PADDING, y + 4)
+        expirationDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        expirationDesc:SetJustifyH("LEFT")
+        expirationDesc:SetWordWrap(true)
+        expirationDesc:SetHeight(20)
+        y = y - 30
+
+        local thresholdSlider = GUI:CreateFormSlider(tabContent, "Warning Threshold (seconds)", 60, 600, 30, "consumableExpirationThreshold", generalDB)
+        thresholdSlider:SetPoint("TOPLEFT", PADDING, y)
+        thresholdSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Positioning sub-header
+        local positionLabel = GUI:CreateLabel(tabContent, "Positioning", 12, C.accent)
+        positionLabel:SetPoint("TOPLEFT", PADDING, y)
+        y = y - 20
+
+        local function RefreshConsumables()
+            if _G.QUI_RefreshConsumables then _G.QUI_RefreshConsumables() end
+        end
+
+        local function RepositionConsumables()
+            if _G.QUI_RepositionConsumables then _G.QUI_RepositionConsumables() end
+        end
+
+        -- Forward declare for callback reference
+        local iconOffsetSlider
+
+        local anchorModeCheck = GUI:CreateFormCheckbox(tabContent, "Anchor to Ready Check", "consumableAnchorMode", generalDB, function()
+            if iconOffsetSlider then
+                iconOffsetSlider:SetEnabled(generalDB.consumableAnchorMode)
+            end
+            RepositionConsumables()
+        end)
+        anchorModeCheck:SetPoint("TOPLEFT", PADDING, y)
+        anchorModeCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        local anchorDesc = GUI:CreateLabel(tabContent, "When off, use 'Toggle Mover' to freely position the frame.", 11, C.textMuted)
+        anchorDesc:SetPoint("TOPLEFT", PADDING, y + 4)
+        anchorDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        anchorDesc:SetJustifyH("LEFT")
+        y = y - 20
+
+        local moverButton = GUI:CreateButton(tabContent, "Toggle Mover", 140, 24)
+        moverButton:SetPoint("TOPLEFT", PADDING, y)
+        moverButton:SetScript("OnClick", function()
+            if _G.QUI_ToggleConsumablesMover then _G.QUI_ToggleConsumablesMover() end
+        end)
+        y = y - 32
+
+        iconOffsetSlider = GUI:CreateFormSlider(tabContent, "Icon Offset", -10, 30, 1, "consumableIconOffset", generalDB, RepositionConsumables)
+        iconOffsetSlider:SetPoint("TOPLEFT", PADDING, y)
+        iconOffsetSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        iconOffsetSlider:SetEnabled(generalDB.consumableAnchorMode)
+        y = y - FORM_ROW
+
+        local iconSizeSlider = GUI:CreateFormSlider(tabContent, "Icon Size", 24, 64, 2, "consumableIconSize", generalDB, RefreshConsumables)
+        iconSizeSlider:SetPoint("TOPLEFT", PADDING, y)
+        iconSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Show/hide preview buttons
+        local consumablePreviewActive = false
+        local consumablePreviewBtn = GUI:CreateButton(tabContent, "Show Preview", 140, 24)
+        consumablePreviewBtn:SetPoint("TOPLEFT", PADDING, y)
+        consumablePreviewBtn:SetScript("OnClick", function(self)
+            consumablePreviewActive = not consumablePreviewActive
+            if consumablePreviewActive then
+                if _G.QUI_ShowConsumables then _G.QUI_ShowConsumables() end
+            else
+                if _G.QUI_HideConsumables then _G.QUI_HideConsumables() end
+            end
+            self:SetText(consumablePreviewActive and "Hide Preview" or "Show Preview")
+        end)
+
+        -- Clean up preview when leaving tab
+        local existingOnHideConsumable = tabContent:GetScript("OnHide")
+        tabContent:SetScript("OnHide", function(self)
+            if consumablePreviewActive and _G.QUI_HideConsumables then
+                _G.QUI_HideConsumables()
+                consumablePreviewActive = false
+                consumablePreviewBtn:SetText("Show Preview")
+            end
+            if existingOnHideConsumable then existingOnHideConsumable(self) end
+        end)
+        y = y - 32
     end
 
     y = y - 10
