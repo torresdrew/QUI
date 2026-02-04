@@ -1575,3 +1575,8 @@ petBattleFrame:SetScript("OnEvent", function(self, event)
     end
 end)
 
+-- Expose refresh globals for options panel (matches pattern used by all other modules)
+_G.QUI_RefreshMinimap = function()
+    Minimap_Module:Refresh()
+end
+
