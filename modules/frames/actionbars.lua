@@ -1886,7 +1886,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end)
 
     elseif event == "ACTIONBAR_SLOT_CHANGED" then
-        -- Re-apply text styling when actions change
+        -- Re-apply text styling and empty slot visibility when actions change
         C_Timer.After(0.1, function()
             for barKey, _ in pairs(BUTTON_PATTERNS) do
                 local effectiveSettings = GetEffectiveSettings(barKey)
@@ -1894,6 +1894,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     local buttons = GetBarButtons(barKey)
                     for _, button in ipairs(buttons) do
                         UpdateButtonText(button, effectiveSettings)
+                        UpdateEmptySlotVisibility(button, effectiveSettings)
                     end
                 end
             end
