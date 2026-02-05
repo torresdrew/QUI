@@ -384,16 +384,16 @@ local function CreateSearchPage(tabContent)
     end
 
     -- Initial empty state
-    GUI:RenderSearchResults(resultsContent, nil, nil)
+    GUI:RenderSearchResults(resultsContent, nil, nil, nil)
 
     -- Wire up search callbacks
     searchBox.onSearch = function(text)
-        local results = GUI:ExecuteSearch(text)
-        GUI:RenderSearchResults(resultsContent, results, text)
+        local results, navResults = GUI:ExecuteSearch(text)
+        GUI:RenderSearchResults(resultsContent, results, text, navResults)
     end
 
     searchBox.onClear = function()
-        GUI:RenderSearchResults(resultsContent, nil, nil)
+        GUI:RenderSearchResults(resultsContent, nil, nil, nil)
     end
 
     tabContent.searchBox = searchBox
@@ -410,7 +410,7 @@ function GUI:InitializeOptions()
     GUI:AddTab(frame, "Cooldown Manager", ns.QUI_NCDMOptions.CreateCDMSetupPage)
     GUI:AddTab(frame, "Unit Frames", ns.QUI_UnitFramesOptions.CreateUnitFramesPage)
     GUI:AddTab(frame, "Action Bars", ns.QUI_ActionBarsOptions.CreateActionBarsPage)
-    GUI:AddTab(frame, "Minimap", ns.QUI_MinimapPageOptions.CreateMinimapPage)
+    GUI:AddTab(frame, "Minimap & Datatext", ns.QUI_MinimapPageOptions.CreateMinimapPage)
     GUI:AddTab(frame, "Skinning & Autohide", ns.QUI_AutohidesOptions.CreateAutohidesPage)
     GUI:AddTab(frame, "Custom Trackers", ns.QUI_CustomTrackersOptions.CreateCustomTrackersPage)
     GUI:AddTab(frame, "Frame Levels", ns.QUI_HUDLayeringOptions.CreateHUDLayeringPage)

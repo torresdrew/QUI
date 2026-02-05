@@ -92,6 +92,11 @@ GUI.CONTENT_WIDTH = 800  -- Panel width minus sidebar and padding
 -- Settings Registry for search functionality
 GUI.SettingsRegistry = {}
 
+-- Navigation Registry for searchable categories, subtabs, and sections
+-- Allows users to search for tab names, subtab names, and section names directly
+GUI.NavigationRegistry = {}
+GUI.NavigationRegistryKeys = {}  -- Deduplication keys
+
 -- Search context (auto-populated by page builders)
 GUI._searchContext = {
     tabIndex = nil,
@@ -161,11 +166,30 @@ function GUI:SetSearchContext(info)
     self._searchContext.subTabIndex = info.subTabIndex or nil
     self._searchContext.subTabName = info.subTabName or nil
     self._searchContext.sectionName = info.sectionName or nil
+
+    -- Auto-register navigation items for tabs and subtabs
+    if info.tabIndex and info.tabName then
+        self:RegisterNavigationItem("tab", info)
+        if info.subTabIndex and info.subTabName then
+            self:RegisterNavigationItem("subtab", info)
+        end
+    end
 end
 
 -- Set current section (call when entering a new section within a page)
 function GUI:SetSearchSection(sectionName)
     self._searchContext.sectionName = sectionName
+
+    -- Auto-register section as navigation item
+    if sectionName and sectionName ~= "" and self._searchContext.tabIndex then
+        self:RegisterNavigationItem("section", {
+            tabIndex = self._searchContext.tabIndex,
+            tabName = self._searchContext.tabName,
+            subTabIndex = self._searchContext.subTabIndex,
+            subTabName = self._searchContext.subTabName,
+            sectionName = sectionName,
+        })
+    end
 end
 
 -- Clear search context (optional, for safety)
@@ -177,6 +201,60 @@ function GUI:ClearSearchContext()
         subTabName = nil,
         sectionName = nil,
     }
+end
+
+-- Register a navigation item (tab, subtab, or section) for search
+-- type: "tab", "subtab", or "section"
+function GUI:RegisterNavigationItem(navType, info)
+    if self._suppressSearchRegistration then return end
+    if not info.tabIndex then return end
+
+    -- Build unique key based on type and navigation path
+    local regKey
+    if navType == "tab" then
+        regKey = "nav_tab_" .. info.tabIndex
+    elseif navType == "subtab" then
+        regKey = "nav_subtab_" .. info.tabIndex .. "_" .. (info.subTabIndex or 0)
+    elseif navType == "section" then
+        regKey = "nav_section_" .. info.tabIndex .. "_" .. (info.subTabIndex or 0) .. "_" .. (info.sectionName or "")
+    else
+        return
+    end
+
+    -- Deduplicate
+    if self.NavigationRegistryKeys[regKey] then return end
+    self.NavigationRegistryKeys[regKey] = true
+
+    -- Build display label based on type
+    local label, keywords
+    if navType == "tab" then
+        label = info.tabName or ""
+        keywords = {info.tabName or ""}
+    elseif navType == "subtab" then
+        label = (info.tabName or "") .. " > " .. (info.subTabName or "")
+        keywords = {info.tabName or "", info.subTabName or ""}
+    elseif navType == "section" then
+        local parts = {info.tabName or ""}
+        if info.subTabName and info.subTabName ~= "" then
+            table.insert(parts, info.subTabName)
+        end
+        table.insert(parts, info.sectionName or "")
+        label = table.concat(parts, " > ")
+        keywords = {info.tabName or "", info.subTabName or "", info.sectionName or ""}
+    end
+
+    local entry = {
+        navType = navType,
+        label = label,
+        tabIndex = info.tabIndex,
+        tabName = info.tabName,
+        subTabIndex = info.subTabIndex,
+        subTabName = info.subTabName,
+        sectionName = info.sectionName,
+        keywords = keywords,
+    }
+
+    table.insert(self.NavigationRegistry, entry)
 end
 
 -- Flag to track if search index has been built
@@ -484,8 +562,9 @@ end
 function GUI:CreateSectionHeader(parent, text)
     -- Automatically set search section so widgets created after this header
     -- are associated with this section (no need for manual SetSearchSection calls)
+    -- This also registers the section as a navigation item for search
     if text and not self._suppressSearchRegistration then
-        self._searchContext.sectionName = text
+        self:SetSearchSection(text)
     end
 
     -- Auto-detect if this is the first element (for compact spacing at top of panels)
@@ -3153,12 +3232,55 @@ end
 -- Execute search against the settings registry (returns filtered results)
 function GUI:ExecuteSearch(searchTerm)
     if not searchTerm or searchTerm:len() < SEARCH_MIN_CHARS then
-        return {}
+        return {}, {}
     end
 
     local results = {}
+    local navResults = {}
     local lowerSearch = searchTerm:lower()
 
+    -- Search navigation items (tabs, subtabs, sections)
+    for _, entry in ipairs(self.NavigationRegistry or {}) do
+        local score = 0
+
+        -- Check keywords (tab name, subtab name, section name)
+        if entry.keywords then
+            for _, keyword in ipairs(entry.keywords) do
+                local lowerKeyword = (keyword or ""):lower()
+                if lowerKeyword ~= "" and lowerKeyword:find(lowerSearch, 1, true) then
+                    -- Higher score for exact/starts-with matches
+                    if lowerKeyword == lowerSearch then
+                        score = math.max(score, 200)
+                    elseif lowerKeyword:sub(1, lowerSearch:len()) == lowerSearch then
+                        score = math.max(score, 180)
+                    else
+                        score = math.max(score, 150)
+                    end
+                end
+            end
+        end
+
+        if score > 0 then
+            table.insert(navResults, {data = entry, score = score, isNavigation = true})
+        end
+    end
+
+    -- Sort navigation results by specificity (sections > subtabs > tabs), then score
+    table.sort(navResults, function(a, b)
+        -- Navigation type priority: section (most specific) > subtab > tab
+        local typeOrder = {section = 1, subtab = 2, tab = 3}
+        local aOrder = typeOrder[a.data.navType] or 4
+        local bOrder = typeOrder[b.data.navType] or 4
+        if aOrder ~= bOrder then
+            return aOrder < bOrder
+        end
+        if a.score ~= b.score then
+            return a.score > b.score
+        end
+        return (a.data.label or "") < (b.data.label or "")
+    end)
+
+    -- Search settings registry
     for _, entry in ipairs(self.SettingsRegistry) do
         local score = 0
 
@@ -3182,14 +3304,12 @@ function GUI:ExecuteSearch(searchTerm)
             end
         end
 
-        -- Section name matching removed - causes too many false positives
-
         if score > 0 then
             table.insert(results, {data = entry, score = score})
         end
     end
 
-    -- Sort by score (highest first), then alphabetically
+    -- Sort settings results by score (highest first), then alphabetically
     table.sort(results, function(a, b)
         if a.score ~= b.score then
             return a.score > b.score
@@ -3197,18 +3317,26 @@ function GUI:ExecuteSearch(searchTerm)
         return (a.data.label or "") < (b.data.label or "")
     end)
 
-    -- Limit results
+    -- Limit settings results
     if #results > SEARCH_MAX_RESULTS then
         for i = SEARCH_MAX_RESULTS + 1, #results do
             results[i] = nil
         end
     end
 
-    return results
+    -- Limit navigation results (keep fewer since they're shown prominently)
+    local NAV_MAX_RESULTS = 10
+    if #navResults > NAV_MAX_RESULTS then
+        for i = NAV_MAX_RESULTS + 1, #navResults do
+            navResults[i] = nil
+        end
+    end
+
+    return results, navResults
 end
 
 -- Render search results into a content frame (for Search tab)
-function GUI:RenderSearchResults(content, results, searchTerm)
+function GUI:RenderSearchResults(content, results, searchTerm, navResults)
     if not content then return end
 
     -- Clear previous child frames (unregister from widget sync first)
@@ -3239,8 +3367,11 @@ function GUI:RenderSearchResults(content, results, searchTerm)
     local PADDING = 15
     local FORM_ROW = 32
 
+    -- Check if we have any results at all (either settings or navigation)
+    local hasResults = (results and #results > 0) or (navResults and #navResults > 0)
+
     -- No results message
-    if not results or #results == 0 then
+    if not hasResults then
         if searchTerm and searchTerm ~= "" then
             local noResults = content:CreateFontString(nil, "OVERLAY")
             SetFont(noResults, 12, "", C.textMuted)
@@ -3272,6 +3403,136 @@ function GUI:RenderSearchResults(content, results, searchTerm)
             y = y - 20
         end
 
+        content:SetHeight(math.abs(y) + 20)
+        return
+    end
+
+    -- Render navigation results first (tabs, subtabs, sections)
+    if navResults and #navResults > 0 then
+        local navHeader = content:CreateFontString(nil, "OVERLAY")
+        SetFont(navHeader, 11, "", C.textMuted)
+        navHeader:SetText("Categories & Sections")
+        navHeader:SetPoint("TOPLEFT", PADDING, y)
+        table.insert(content._fontStrings, navHeader)
+        y = y - 20
+
+        for _, navResult in ipairs(navResults) do
+            local entry = navResult.data
+
+            -- Create navigation row container
+            local navRow = CreateFrame("Button", nil, content, "BackdropTemplate")
+            navRow:SetSize(content:GetWidth() - (PADDING * 2), 26)
+            navRow:SetPoint("TOPLEFT", PADDING, y)
+            local navPx = QUICore:GetPixelSize(navRow)
+            navRow:SetBackdrop({
+                bgFile = "Interface\\BUTTONS\\WHITE8X8",
+                edgeFile = "Interface\\BUTTONS\\WHITE8X8",
+                edgeSize = navPx,
+            })
+            navRow:SetBackdropColor(0.12, 0.14, 0.17, 0.8)
+            navRow:SetBackdropBorderColor(0.2, 0.22, 0.25, 0.6)
+
+            -- Type icon/badge
+            local typeBadge = navRow:CreateFontString(nil, "OVERLAY")
+            SetFont(typeBadge, 9, "", C.textMuted)
+            local typeLabels = {tab = "TAB", subtab = "SUBTAB", section = "SECTION"}
+            typeBadge:SetText(typeLabels[entry.navType] or "NAV")
+            typeBadge:SetPoint("LEFT", 8, 0)
+
+            -- Navigation label
+            local navLabel = navRow:CreateFontString(nil, "OVERLAY")
+            SetFont(navLabel, 11, "", C.text)
+            navLabel:SetText(entry.label or "")
+            navLabel:SetPoint("LEFT", typeBadge, "RIGHT", 10, 0)
+            navLabel:SetPoint("RIGHT", navRow, "RIGHT", -50, 0)
+            navLabel:SetJustifyH("LEFT")
+            navLabel:SetWordWrap(false)
+
+            -- Go button
+            local goText = navRow:CreateFontString(nil, "OVERLAY")
+            SetFont(goText, 10, "", C.accent)
+            goText:SetText("Go >")
+            goText:SetPoint("RIGHT", -10, 0)
+
+            -- Hover effects
+            navRow:SetScript("OnEnter", function(self)
+                self:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], 0.15)
+                self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.5)
+            end)
+            navRow:SetScript("OnLeave", function(self)
+                self:SetBackdropColor(0.12, 0.14, 0.17, 0.8)
+                self:SetBackdropBorderColor(0.2, 0.22, 0.25, 0.6)
+            end)
+
+            -- Click to navigate
+            local targetTabIndex = entry.tabIndex
+            local targetSubTabIndex = entry.subTabIndex
+            local targetSectionName = entry.sectionName
+            navRow:SetScript("OnClick", function()
+                local frame = GUI.MainFrame
+                if not frame then return end
+                GUI:SelectTab(frame, targetTabIndex)
+
+                -- Helper to scroll to a section
+                local function ScrollToSection()
+                    local subTabIdx = targetSubTabIndex or 0
+                    local regKey = targetTabIndex .. "_" .. subTabIdx .. "_" .. (targetSectionName or "")
+                    local sectionInfo = GUI.SectionRegistry[regKey]
+
+                    if sectionInfo and sectionInfo.scrollParent and sectionInfo.frame then
+                        local scrollFrame = sectionInfo.scrollParent
+                        local sectionFrame = sectionInfo.frame
+                        local contentParent = sectionInfo.contentParent
+
+                        if contentParent and sectionFrame:IsVisible() then
+                            local sectionTop = sectionFrame:GetTop()
+                            local contentTop = contentParent:GetTop()
+
+                            if sectionTop and contentTop then
+                                local sectionOffset = contentTop - sectionTop
+                                local scrollPos = math.max(0, sectionOffset - 20)
+                                local maxScroll = scrollFrame:GetVerticalScrollRange() or 0
+                                scrollPos = math.min(scrollPos, maxScroll)
+                                scrollFrame:SetVerticalScroll(scrollPos)
+                            end
+                        end
+                    end
+                end
+
+                -- Navigate to subtab if specified
+                if targetSubTabIndex then
+                    C_Timer.After(0, function()
+                        local page = frame.pages and frame.pages[targetTabIndex]
+                        if page and page._subTabGroup then
+                            page._subTabGroup.SelectTab(targetSubTabIndex)
+                        end
+                        if targetSectionName then
+                            C_Timer.After(0.05, ScrollToSection)
+                        end
+                    end)
+                elseif targetSectionName then
+                    C_Timer.After(0.05, ScrollToSection)
+                end
+            end)
+
+            y = y - 30
+        end
+
+        y = y - 10  -- Gap before settings results
+
+        -- Separator between navigation and settings
+        if results and #results > 0 then
+            local sep = content:CreateTexture(nil, "ARTWORK")
+            sep:SetPoint("TOPLEFT", PADDING, y + 5)
+            sep:SetSize(content:GetWidth() - (PADDING * 2), 1)
+            sep:SetColorTexture(0.3, 0.32, 0.35, 0.5)
+            table.insert(content._textures, sep)
+            y = y - 15
+        end
+    end
+
+    -- Skip settings rendering if no settings results
+    if not results or #results == 0 then
         content:SetHeight(math.abs(y) + 20)
         return
     end
@@ -3438,7 +3699,7 @@ end
 
 -- Clear search results display
 function GUI:ClearSearchInTab(content)
-    self:RenderSearchResults(content, nil, nil)
+    self:RenderSearchResults(content, nil, nil, nil)
 end
 
 ---------------------------------------------------------------------------
