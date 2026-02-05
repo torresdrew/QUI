@@ -94,8 +94,7 @@ local function ApplyBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga, showBord
     end
 
     local core = GetCore()
-    if not core then return end
-    local px = core:GetPixelSize(frame.quiBackdrop)
+    local px = (core and core.GetPixelSize) and core:GetPixelSize(frame.quiBackdrop) or 1
     frame.quiBackdrop:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -120,8 +119,7 @@ local function ApplyBarSkin(bar, sr, sg, sb, colors, isTimerBar, barIndex, showB
 
     -- Bar container backdrop - use contrast-aware background
     local core = GetCore()
-    if not core then return end
-    local barPx = core:GetPixelSize(bar.frame)
+    local barPx = (core and core.GetPixelSize) and core:GetPixelSize(bar.frame) or 1
     bar.frame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",

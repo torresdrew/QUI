@@ -80,7 +80,7 @@ local function GetSharedOverrides()
 end
 
 -- Helper: get an override keybind, if any, for a given spell/baseSpell (shared across viewers)
-local function GetOverrideKeybind(spellID, baseSpellID, spellName)
+local function GetOverrideKeybind(spellID, baseSpellID)
     local overrides = GetSharedOverrides()
     if not overrides then return nil end
 
@@ -932,7 +932,7 @@ local function ApplyKeybindToIcon(icon, viewerName)
         cdmOverridesEnabled = QUICore_ref.db.profile.keybindOverridesEnabledCDM ~= false
     end
     if cdmOverridesEnabled then
-        overrideKeybind = GetOverrideKeybind(spellID, nil, spellName)
+        overrideKeybind = GetOverrideKeybind(spellID, nil)
     end
     if overrideKeybind then
         if overrideKeybind == "" then
@@ -963,7 +963,7 @@ local function ApplyKeybindToIcon(icon, viewerName)
                 baseSpellID = baseFromInfo
                 -- Re-check for explicit override on base spell
                 if cdmOverridesEnabled then
-                    overrideKeybind = GetOverrideKeybind(spellID, baseSpellID, spellName)
+                    overrideKeybind = GetOverrideKeybind(spellID, baseSpellID)
                 end
                 if overrideKeybind then
                     if overrideKeybind == "" then
@@ -992,7 +992,7 @@ local function ApplyKeybindToIcon(icon, viewerName)
                 baseSpellID = resultBase
                 -- Re-check override for this base spell
                 if cdmOverridesEnabled then
-                    overrideKeybind = GetOverrideKeybind(spellID, baseSpellID, spellName)
+                    overrideKeybind = GetOverrideKeybind(spellID, baseSpellID)
                 end
                 if overrideKeybind then
                     if overrideKeybind == "" then
@@ -1107,11 +1107,8 @@ local function SetKeybindOverride(spellID, keybindText)
     -- Immediately refresh CDM keybinds to reflect changes
     if _G.QUI_RefreshKeybinds then
         _G.QUI_RefreshKeybinds()
-    else
-        -- Fallback: direct update if global refresh not yet defined
-        UpdateAllKeybinds()
     end
-    
+
     -- Also refresh custom tracker keybinds (in case spell is also tracked there)
     if _G.QUI_RefreshCustomTrackerKeybinds then
         _G.QUI_RefreshCustomTrackerKeybinds()
@@ -1126,8 +1123,6 @@ local function ClearAllKeybindOverrides()
 
     if _G.QUI_RefreshKeybinds then
         _G.QUI_RefreshKeybinds()
-    else
-        UpdateAllKeybinds()
     end
     
     -- Also refresh custom tracker keybinds

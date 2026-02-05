@@ -34,6 +34,7 @@ local function BuildKeybindsTab(tabContent)
     local y = -10
     local FORM_ROW = 32
     local PAD = 10
+    local overrideListActive = false
 
     -- Set search context for auto-registration
     GUI:SetSearchContext({tabIndex = 2, tabName = "Cooldown Manager", subTabIndex = 7, subTabName = "Keybinds"})
@@ -397,6 +398,7 @@ local function BuildKeybindsTab(tabContent)
                             if QUI and QUI.Keybinds and QUI.Keybinds.SetOverrideForItem then
                                 QUI.Keybinds.SetOverrideForItem(entry.id, newKeybindText)
                                 saved = true
+                                RefreshAllKeybindDisplays()
                             else
                                 -- Direct DB access fallback
                                 QUICore.db.profile.keybindOverrides = QUICore.db.profile.keybindOverrides or {}
@@ -449,6 +451,7 @@ local function BuildKeybindsTab(tabContent)
                             if QUI and QUI.Keybinds and QUI.Keybinds.SetOverrideForItem then
                                 QUI.Keybinds.SetOverrideForItem(entry.id, nil)
                                 removed = true
+                                RefreshAllKeybindDisplays()
                             else
                                 -- Direct DB access fallback
                                 QUICore.db.profile.keybindOverrides = QUICore.db.profile.keybindOverrides or {}
@@ -508,7 +511,7 @@ local function BuildKeybindsTab(tabContent)
                     if cursorType == "spell" then
                         local slotIndex = id1
                         local bookType = id2 or "spell"
-                        local spellID = id4
+                        local spellID = id3 or id4
 
                         if not spellID and slotIndex then
                             local spellBank = (bookType == "pet") and Enum.SpellBookSpellBank.Pet or Enum.SpellBookSpellBank.Player
@@ -615,6 +618,7 @@ local function BuildKeybindsTab(tabContent)
             end
             
             RefreshOverrideList()
+            overrideListActive = true
 
             y = y - 50 -- Space for header and initial list
         end
@@ -625,7 +629,10 @@ local function BuildKeybindsTab(tabContent)
         noDataLabel:SetPoint("TOPLEFT", PAD, y)
     end
 
-    tabContent:SetHeight(math.abs(y) + 60)
+    -- Only set fixed height when RefreshOverrideList isn't managing it dynamically
+    if not overrideListActive then
+        tabContent:SetHeight(math.abs(y) + 60)
+    end
 end
 
 local function BuildRotationAssistTab(tabContent)

@@ -4,8 +4,6 @@ local function GetCore()
     return (_G.QUI and _G.QUI.QUICore) or ns.Addon
 end
 
-local QUICore = GetCore()
-
 ---------------------------------------------------------------------------
 -- INSTANCE FRAMES SKINNING (PVE, Dungeons & Raids, PVP, M+ Dungeons)
 ---------------------------------------------------------------------------
@@ -35,7 +33,8 @@ local function CreateQUIBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         frame.quiBackdrop:EnableMouse(false)
     end
 
-    local px = QUICore:GetPixelSize(frame.quiBackdrop)
+    local core = GetCore()
+    local px = core and core:GetPixelSize(frame.quiBackdrop) or 1
     frame.quiBackdrop:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",

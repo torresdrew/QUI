@@ -239,6 +239,17 @@ function Datapanels:UpdateSlots(panel)
             if point then
                 panel.config.position = {point, relPoint, x, y}
             end
+
+            -- Persist to saved variables
+            local db = QUICore.db.profile.quiDatatexts
+            if db and db.panels then
+                for i, panelConfig in ipairs(db.panels) do
+                    if panelConfig.id == panel.panelID then
+                        db.panels[i].position = panel.config.position
+                        break
+                    end
+                end
+            end
         end)
         
         -- Attach datatext if configured

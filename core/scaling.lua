@@ -29,12 +29,6 @@ if not QUICore then
     return
 end
 
-local LibPP = LibStub and LibStub("LibPixelPerfect-1.0", true)
-if not LibPP then
-    print("|cFFFF0000[QUI] ERROR: LibPixelPerfect-1.0 not found!|r")
-    return
-end
-
 local format = string.format
 local floor = math.floor
 local ceil = math.ceil
@@ -122,41 +116,43 @@ end
 --------------------------------------------------------------------------------
 
 --- Scale a pixel count to virtual coordinates, snapped to the pixel grid.
---- Without a frame argument, uses UIParent's effective scale (legacy behavior).
---- With a frame argument, uses that frame's effective scale for precise alignment.
+--- Uses the given frame's effective scale (or UIParent if omitted).
 ---
 --- @param x number Number of physical pixels desired
---- @param frame? Frame Optional frame for frame-aware scaling
+--- @param frame? Frame Optional frame for frame-aware scaling (defaults to UIParent)
 --- @return number Virtual coordinate value representing exactly x physical pixels
 function QUICore:Scale(x, frame)
     if x == 0 then return 0 end
-    if frame then
-        return self:Pixels(x, frame)
-    end
-    return LibPP.PScale(x)
+    return self:Pixels(x, frame)
 end
 
---- Set pixel-perfect size on a frame using UIParent's scale (legacy).
+--- Set pixel-perfect size on a frame using UIParent's scale.
 --- For frame-aware sizing, use SetPixelPerfectSize instead.
 --- @param frame Frame The frame to size
 --- @param width number Width in physical pixels
 --- @param height number Height in physical pixels
 function QUICore:SetSize(frame, width, height)
-    LibPP.PSize(frame, width, height)
+    if not frame then return end
+    local px = self:GetPixelSize()
+    frame:SetSize(Round(width) * px, Round(height) * px)
 end
 
---- Set pixel-perfect width on a frame using UIParent's scale (legacy).
+--- Set pixel-perfect width on a frame using UIParent's scale.
 --- @param frame Frame The frame to size
 --- @param width number Width in physical pixels
 function QUICore:SetWidth(frame, width)
-    LibPP.PWidth(frame, width)
+    if not frame then return end
+    local px = self:GetPixelSize()
+    frame:SetWidth(Round(width) * px)
 end
 
---- Set pixel-perfect height on a frame using UIParent's scale (legacy).
+--- Set pixel-perfect height on a frame using UIParent's scale.
 --- @param frame Frame The frame to size
 --- @param height number Height in physical pixels
 function QUICore:SetHeight(frame, height)
-    LibPP.PHeight(frame, height)
+    if not frame then return end
+    local px = self:GetPixelSize()
+    frame:SetHeight(Round(height) * px)
 end
 
 --------------------------------------------------------------------------------

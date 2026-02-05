@@ -93,7 +93,7 @@ local function CreateSpecProfilesPage(parent)
     local resetBtn = CreateFrame("Button", nil, resetContainer, "BackdropTemplate")
     resetBtn:SetSize(120, 24)
     resetBtn:SetPoint("LEFT", resetContainer, "LEFT", 180, 0)
-    local pxReset = GetCore():GetPixelSize(resetBtn)
+    local pxReset = GetCore() and GetCore():GetPixelSize(resetBtn) or 1
     resetBtn:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxReset})
     resetBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
     resetBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
@@ -191,7 +191,7 @@ local function CreateSpecProfilesPage(parent)
     profileDropdown:SetHeight(24)
     profileDropdown:SetPoint("LEFT", profileDropdownContainer, "LEFT", 180, 0)
     profileDropdown:SetPoint("RIGHT", profileDropdownContainer, "RIGHT", 0, 0)
-    local px = GetCore():GetPixelSize(profileDropdown)
+    local px = GetCore() and GetCore():GetPixelSize(profileDropdown) or 1
     profileDropdown:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -256,7 +256,7 @@ local function CreateSpecProfilesPage(parent)
     local profileMenu = CreateFrame("Frame", nil, profileDropdown, "BackdropTemplate")
     profileMenu:SetPoint("TOPLEFT", profileDropdown, "BOTTOMLEFT", 0, -2)
     profileMenu:SetPoint("TOPRIGHT", profileDropdown, "BOTTOMRIGHT", 0, -2)
-    local pxMenu = GetCore():GetPixelSize(profileMenu)
+    local pxMenu = GetCore() and GetCore():GetPixelSize(profileMenu) or 1
     profileMenu:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -384,7 +384,7 @@ local function CreateSpecProfilesPage(parent)
     local newProfileBoxBg = CreateFrame("Frame", nil, newProfileContainer, "BackdropTemplate")
     newProfileBoxBg:SetPoint("LEFT", newProfileContainer, "LEFT", 180, 0)
     newProfileBoxBg:SetSize(200, 24)
-    local pxBox = GetCore():GetPixelSize(newProfileBoxBg)
+    local pxBox = GetCore() and GetCore():GetPixelSize(newProfileBoxBg) or 1
     newProfileBoxBg:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -413,7 +413,7 @@ local function CreateSpecProfilesPage(parent)
     local createBtn = CreateFrame("Button", nil, newProfileContainer, "BackdropTemplate")
     createBtn:SetSize(80, 24)
     createBtn:SetPoint("LEFT", newProfileBoxBg, "RIGHT", 10, 0)
-    local pxCreate = GetCore():GetPixelSize(createBtn)
+    local pxCreate = GetCore() and GetCore():GetPixelSize(createBtn) or 1
     createBtn:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxCreate})
     createBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
     createBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)

@@ -311,7 +311,6 @@ local function CreateBrezFrame()
                 else
                     local tr, tg, tb = GetClassColorByClass(entry.targetClass)
                     -- Two-part colored line: source >> target
-                    local line = string.format("[%s] %s >> %s", timeStr, entry.source, entry.target)
                     GameTooltip:AddDoubleLine(
                         string.format("[%s] %s >>", timeStr, entry.source),
                         entry.target,
@@ -703,10 +702,13 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if BrezState.frame then
             BrezState.frame:SetMovable(true)
         end
+
     end
 end)
 
--- COMBAT_LOG_EVENT_UNFILTERED is restricted in 12.0; use EventRegistry callback instead
+-- COMBAT_LOG_EVENT_UNFILTERED is protected in 12.0; RegisterEvent/RegisterFrameEventAndCallback
+-- both trigger ADDON_ACTION_FORBIDDEN. Use RegisterCallback which subscribes to Blizzard's
+-- own internal dispatch without calling RegisterEvent.
 EventRegistry:RegisterCallback("COMBAT_LOG_EVENT_UNFILTERED", OnCombatLogEvent, eventFrame)
 
 ---------------------------------------------------------------------------

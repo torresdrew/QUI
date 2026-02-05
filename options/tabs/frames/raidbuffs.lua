@@ -170,6 +170,7 @@ local function BuildRaidBuffsTab(tabContent)
         y = y - FORM_ROW
 
         -- Use Class Color checkbox
+        local borderColorPicker
         local accentColorCheck
         local classColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color",
             "useClassColor", borderSettings, function(val)
@@ -203,7 +204,7 @@ local function BuildRaidBuffsTab(tabContent)
         y = y - FORM_ROW
 
         -- Border Color picker
-        local borderColorPicker = GUI:CreateFormColorPicker(tabContent, "Border Color",
+        borderColorPicker = GUI:CreateFormColorPicker(tabContent, "Border Color",
             "color", borderSettings, RefreshRaidBuffs)
         borderColorPicker:SetPoint("TOPLEFT", PADDING, y)
         borderColorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
