@@ -922,8 +922,11 @@ function QUICore:UpdatePowerBar()
     end
 
     -- Visibility mode check (always/combat/hostile)
-    if not PowerBarEditMode.active and not ShouldShowBar(cfg) then
-        bar:Hide()
+    -- Use alpha instead of Hide so anchored frames keep their reference
+    local visibilityHidden = not PowerBarEditMode.active and not ShouldShowBar(cfg)
+    if visibilityHidden then
+        bar:SetAlpha(0)
+        bar:Show()
         return
     end
 
@@ -1114,6 +1117,7 @@ function QUICore:UpdatePowerBar()
     -- Update ticks if this is a ticked power type
     self:UpdatePowerBarTicks(bar, resource, max)
 
+    bar:SetAlpha(1)
     bar:Show()
 
     -- Propagate to Secondary bar if it's locked to Primary
@@ -1991,8 +1995,11 @@ function QUICore:UpdateSecondaryPowerBar()
     end
 
     -- Visibility mode check (always/combat/hostile)
-    if not PowerBarEditMode.active and not ShouldShowBar(cfg) then
-        bar:Hide()
+    -- Use alpha instead of Hide so anchored frames keep their reference
+    local visibilityHidden = not PowerBarEditMode.active and not ShouldShowBar(cfg)
+    if visibilityHidden then
+        bar:SetAlpha(0)
+        bar:Show()
         return
     end
 
@@ -2484,6 +2491,7 @@ end
     end
 
 
+    bar:SetAlpha(1)
     bar:Show()
 end
 
