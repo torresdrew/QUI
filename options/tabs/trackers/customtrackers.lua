@@ -294,7 +294,7 @@ local function CreateCustomTrackersPage(parent)
         local exportBarBtn = GUI:CreateButton(tabContent, "Export This Bar", 130, 26, function()
             local exportStr, err = QUICore:ExportSingleTrackerBar(actualBarIndex)
             if not exportStr then
-                print("|cffff0000QuaziiUI:|r " .. (err or "Export failed"))
+                print("|cffff0000QUI:|r " .. (err or "Export failed"))
                 return
             end
             GUI:ShowExportPopup("Export Tracker Bar", exportStr)
@@ -1762,7 +1762,7 @@ local function CreateCustomTrackersPage(parent)
             local exportBtn = GUI:CreateButton(lowerContainer, "Export Learned Spells", 160, 24, function()
                 local exportStr, err = QUICore:ExportSpellScanner()
                 if not exportStr then
-                    print("|cffff0000QuaziiUI:|r " .. (err or "Export failed"))
+                    print("|cffff0000QUI:|r " .. (err or "Export failed"))
                     return
                 end
                 GUI:ShowExportPopup("Export Learned Spells", exportStr)
@@ -1941,7 +1941,7 @@ local function CreateCustomTrackersPage(parent)
                 local exportAllBtn = GUI:CreateButton(tabContent, "Export All Bars", 140, 26, function()
                     local exportStr, err = QUICore:ExportAllTrackerBars()
                     if not exportStr then
-                        print("|cffff0000QuaziiUI:|r " .. (err or "Export failed"))
+                        print("|cffff0000QUI:|r " .. (err or "Export failed"))
                         return
                     end
                     GUI:ShowExportPopup("Export All Tracker Bars", exportStr)

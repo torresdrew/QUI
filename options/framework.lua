@@ -4872,7 +4872,7 @@ function GUI:ShowImportPopup(config)
     local function DoImport(replaceAll)
         local str = ImportPopup.editBox:GetText()
         if not str or str == "" then
-            print("|cffff0000QuaziiUI:|r No import string provided")
+            print("|cffff0000QUI:|r No import string provided")
             return
         end
 
@@ -4884,13 +4884,13 @@ function GUI:ShowImportPopup(config)
         end
 
         if ok then
-            print("|cff34D399QuaziiUI:|r " .. (msg or "Import successful"))
+            print("|cff34D399QUI:|r " .. (msg or "Import successful"))
             ImportPopup:Hide()
             if config.onSuccess then
                 config.onSuccess()
             end
         else
-            print("|cffff0000QuaziiUI:|r " .. (msg or "Import failed"))
+            print("|cffff0000QUI:|r " .. (msg or "Import failed"))
         end
     end
 
