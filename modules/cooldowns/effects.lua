@@ -78,8 +78,10 @@ local function HideBlizzardGlows(button)
         button.OverlayGlow:SetAlpha(0)
     end
     
-    -- Hide _ButtonGlow (Blizzard's button glow frame, NOT our LibCustomGlow frames)
-    if button._ButtonGlow then
+    -- Hide _ButtonGlow only when it's Blizzard's frame, not LibCustomGlow's.
+    -- LibCustomGlow's ButtonGlow_Start uses the same _ButtonGlow property,
+    -- so skip hiding when our custom glow is active on this icon.
+    if button._ButtonGlow and not button._QUICustomGlowActive then
         button._ButtonGlow:Hide()
     end
 end

@@ -187,6 +187,11 @@ local function ApplyLibCustomGlow(icon, viewerSettings)
             glowFrame:SetPoint("TOPLEFT", icon, "TOPLEFT", -xOffset, xOffset)
             glowFrame:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", xOffset, -xOffset)
         end
+
+    elseif glowType == "Button Glow" then
+        -- Button Glow: classic Blizzard-style action button glow
+        -- Parameters: frame, color, frequency, frameLevel
+        LCG.ButtonGlow_Start(icon, color, frequency)
     end
 
     -- Flag already set by StartGlow, just ensure it's there
@@ -223,10 +228,11 @@ end
 function StopGlow(icon)
     if not icon then return end
 
-    -- Stop LibCustomGlow effects
+    -- Stop all LibCustomGlow effect types
     if LCG then
         pcall(LCG.PixelGlow_Stop, icon, "_QUICustomGlow")
         pcall(LCG.AutoCastGlow_Stop, icon, "_QUICustomGlow")
+        pcall(LCG.ButtonGlow_Stop, icon)
     end
 
     icon._QUICustomGlowActive = nil
