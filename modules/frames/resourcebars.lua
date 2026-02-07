@@ -14,8 +14,20 @@ local function Scale(x, frame)
     return x
 end
 
+-- Check if CDM visibility says we should be hidden (e.g. hideWhenMounted)
+local function IsCDMVisibilityHidden()
+    if not QUICore or not QUICore.db or not QUICore.db.profile then return false end
+    local vis = QUICore.db.profile.cdmVisibility
+    if not vis then return false end
+    if vis.hideWhenMounted and (IsMounted() or GetShapeshiftFormID() == 27) then return true end
+    return false
+end
+
 -- Visibility check for resource bars ("always", "combat", "hostile")
 local function ShouldShowBar(cfg)
+    -- CDM visibility overrides (e.g. hide when mounted) take priority
+    if IsCDMVisibilityHidden() then return false end
+
     local vis = cfg.visibility or "always"
     if vis == "always" then return true end
     if vis == "combat" then return InCombatLockdown() end
