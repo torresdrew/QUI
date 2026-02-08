@@ -1916,6 +1916,7 @@ _G.QUI_RefreshCDMVisibility = UpdateCDMVisibility
 _G.QUI_RefreshUnitframesVisibility = UpdateUnitframesVisibility
 _G.QUI_RefreshCDMMouseover = SetupCDMMouseoverDetector
 _G.QUI_RefreshUnitframesMouseover = SetupUnitframesMouseoverDetector
+_G.QUI_ShouldCDMBeVisible = ShouldCDMBeVisible
 
 ---------------------------------------------------------------------------
 -- EXPOSE MODULE

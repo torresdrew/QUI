@@ -14,12 +14,11 @@ local function Scale(x, frame)
     return x
 end
 
--- Check if CDM visibility says we should be hidden (e.g. hideWhenMounted)
+-- Check if CDM visibility says we should be hidden
 local function IsCDMVisibilityHidden()
-    if not QUICore or not QUICore.db or not QUICore.db.profile then return false end
-    local vis = QUICore.db.profile.cdmVisibility
-    if not vis then return false end
-    if vis.hideWhenMounted and (IsMounted() or GetShapeshiftFormID() == 27) then return true end
+    if _G.QUI_ShouldCDMBeVisible then
+        return not _G.QUI_ShouldCDMBeVisible()
+    end
     return false
 end
 
@@ -2649,6 +2648,9 @@ local function InitializeResourceBars(self)
 
     -- Target change - needed for visibility modes (hostile target, etc.)
     self:RegisterEvent("PLAYER_TARGET_CHANGED", "OnUnitPower")
+
+    -- Mount state - needed so CDM visibility (hideWhenMounted, etc.) hides resource bars
+    self:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED", "OnShapeshiftChanged")
 
     -- Ensure Demon Hunter soul bar is spawned
     EnsureDemonHunterSoulBar()
