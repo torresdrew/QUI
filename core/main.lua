@@ -4142,6 +4142,8 @@ function QUICore:OnEnable()
             self:ForceReskinAllViewers()
         end
     end)
+
+    self:SetupEncounterWarningsSecretValuePatch()
 end
 
 function QUICore:OpenConfig()
@@ -5071,6 +5073,97 @@ function QUICore:HookEditMode()
             end
         end)
     end
+
+-- Patch Blizzard EncounterWarnings to avoid secret value compare errors in Edit Mode
+function QUICore:SetupEncounterWarningsSecretValuePatch()
+    if self.__encounterWarningsPatchSetup then return end
+    self.__encounterWarningsPatchSetup = true
+
+    local function TryPatch()
+        if self.__encounterWarningsPatched then return true end
+        if not EncounterWarningsTextElementMixin
+            or type(EncounterWarningsTextElementMixin.Init) ~= "function"
+            or not EncounterWarningsViewElementMixin
+            or not EncounterWarningsUtil then
+            return false
+        end
+
+        local originalInit = EncounterWarningsTextElementMixin.Init
+        EncounterWarningsTextElementMixin.Init = function(textElement, encounterWarningInfo, parentView)
+            local ok, err = pcall(originalInit, textElement, encounterWarningInfo, parentView)
+            if ok then
+                return
+            end
+
+            if type(err) == "string" and err:find("secret value") then
+                pcall(EncounterWarningsViewElementMixin.Init, textElement, encounterWarningInfo, parentView)
+
+                local maximumTextSize = EncounterWarningsUtil.GetMaximumTextSizeForSeverity(encounterWarningInfo.severity)
+                if type(maximumTextSize) ~= "table" then
+                    maximumTextSize = { width = 0, height = 0 }
+                end
+                local textFontObject = EncounterWarningsUtil.GetFontObjectForSeverity(encounterWarningInfo.severity)
+                local textColor = EncounterWarningsUtil.GetTextColorForSeverity(encounterWarningInfo.severity)
+
+                if textFontObject then
+                    textElement:SetFontObject(textFontObject)
+                end
+                if textColor and textColor.GetRGB then
+                    textElement:SetTextColor(textColor:GetRGB())
+                end
+                textElement:SetTextScale(1)
+
+                local setOk = pcall(textElement.SetTextToFit, textElement, encounterWarningInfo.text)
+                if not setOk then
+                    pcall(textElement.SetText, textElement, "")
+                end
+
+                local maxHeight = maximumTextSize.height or 0
+                local maxWidth = maximumTextSize.width or 0
+                textElement:SetHeight(maxHeight)
+
+                local widthOk, tooWide = pcall(function()
+                    return textElement:GetStringWidth() > maxWidth
+                end)
+                if widthOk and tooWide then
+                    textElement:SetWidth(maxWidth)
+                    pcall(textElement.ScaleTextToFit, textElement)
+                end
+                return
+            end
+
+            error(err, 0)
+        end
+
+        self.__encounterWarningsPatched = true
+        return true
+    end
+
+    if TryPatch() then
+        return
+    end
+
+    local patchFrame = CreateFrame("Frame")
+    patchFrame:RegisterEvent("ADDON_LOADED")
+    patchFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    patchFrame:SetScript("OnEvent", function(_, event, addonName)
+        if event == "ADDON_LOADED" and addonName == "Blizzard_EncounterWarnings" then
+            if TryPatch() then
+                patchFrame:UnregisterAllEvents()
+            end
+        elseif event == "PLAYER_ENTERING_WORLD" then
+            patchFrame:UnregisterEvent("PLAYER_ENTERING_WORLD")
+            if not self.__encounterWarningsPatched then
+                TryPatch()
+            end
+            if self.__encounterWarningsPatched then
+                patchFrame:UnregisterAllEvents()
+            end
+        end
+    end)
+
+    self.__encounterWarningsPatchFrame = patchFrame
+end
 
 -- Process pending backdrops that were deferred due to secret values
 function QUICore:ProcessPendingBackdrops()
