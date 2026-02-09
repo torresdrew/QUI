@@ -3719,6 +3719,25 @@ function QUICore:OnProfileChanged(event, db, profileKey)
         end)
     end
     
+    -- Reset castbar previewMode flags before refreshing unit frames.
+    -- previewMode is a transient UI state (options panel toggle) that should not
+    -- persist across profile changes, but it lives in the DB and gets copied along.
+    if self.db.profile.quiUnitFrames then
+        for _, unitKey in ipairs({"player", "target", "focus"}) do
+            local unitDB = self.db.profile.quiUnitFrames[unitKey]
+            if unitDB and unitDB.castbar then
+                unitDB.castbar.previewMode = false
+            end
+        end
+        -- Also clear boss castbar previews
+        for i = 1, 8 do
+            local bossDB = self.db.profile.quiUnitFrames["boss" .. i]
+            if bossDB and bossDB.castbar then
+                bossDB.castbar.previewMode = false
+            end
+        end
+    end
+
     -- Refresh Unit Frames (including castbars) on profile change
     C_Timer.After(0.2, function()
         if _G.QUI_RefreshUnitFrames then
