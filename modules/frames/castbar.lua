@@ -287,6 +287,7 @@ local function CreateTextElement(statusBar, fontSize, layer)
     local text = statusBar:CreateFontString(nil, layer or "OVERLAY")
     text:SetFont(GetFontPath(), fontSize, GetFontOutline())
     text:SetTextColor(1, 1, 1, 1)
+    text:SetWordWrap(false)
     return text
 end
 
@@ -543,6 +544,24 @@ local function UpdateCastbarElements(anchorFrame, unitKey, castSettings)
         currentCastSettings.timeTextOffsetY or 0,
         showTimeText
     )
+
+    -- Constrain spell text width so it doesn't overflow the status bar
+    if anchorFrame.spellText and anchorFrame.statusBar then
+        local barWidth = anchorFrame.statusBar:GetWidth()
+        if barWidth and barWidth > 0 then
+            local spellPad = math.abs(currentCastSettings.spellTextOffsetX or 4)
+            local timePad = math.abs(currentCastSettings.timeTextOffsetX or -4)
+            local timeWidth = 0
+            if showTimeText and anchorFrame.timeText then
+                timeWidth = anchorFrame.timeText:GetStringWidth()
+                -- If no active cast, estimate from font size (covers "00.0" style text)
+                if timeWidth == 0 then
+                    timeWidth = (currentCastSettings.fontSize or 10) * 3.5
+                end
+            end
+            anchorFrame.spellText:SetWidth(math.max(1, barWidth - spellPad - timePad - timeWidth - 2))
+        end
+    end
 
     -- Empowered level text (player only)
     if unitKey == "player" and anchorFrame.empoweredLevelText then
