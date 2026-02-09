@@ -1293,9 +1293,37 @@ local function ApplyUtilityAnchor()
     local utilityTopBorder = utilSettings.row1 and utilSettings.row1.borderSize or 0
     local totalOffset = (utilSettings.anchorGap or 0) - utilityTopBorder
 
+    -- Save current anchor points so we can restore on failure
+    local numPoints = utilViewer:GetNumPoints()
+    local savedPoints = {}
+    for i = 1, numPoints do
+        savedPoints[i] = { utilViewer:GetPoint(i) }
+    end
+
     utilViewer:ClearAllPoints()
-    utilViewer:SetPoint("TOP", essViewer, "BOTTOM", 0, -totalOffset)
-    utilViewer.__cdmAnchoredToEssential = true
+    local ok = pcall(utilViewer.SetPoint, utilViewer, "TOP", essViewer, "BOTTOM", 0, -totalOffset)
+    if ok then
+        utilViewer.__cdmAnchoredToEssential = true
+    else
+        -- SetPoint failed (circular anchor dependency) - restore previous position
+        -- Saved points may also reference essViewer, so protect the restore too
+        local restored = false
+        if #savedPoints > 0 then
+            restored = pcall(function()
+                for _, pt in ipairs(savedPoints) do
+                    utilViewer:SetPoint(pt[1], pt[2], pt[3], pt[4], pt[5])
+                end
+            end)
+        end
+        if not restored then
+            utilViewer:ClearAllPoints()
+            utilViewer:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+        end
+        utilViewer.__cdmAnchoredToEssential = nil
+        -- Disable the setting so this doesn't repeat on every reload
+        utilSettings.anchorBelowEssential = false
+        print("|cff34D399QUI:|r Anchor Utility below Essential failed (circular dependency). Setting has been disabled. Reposition via Edit Mode.")
+    end
 end
 
 _G.QUI_RefreshNCDM = RefreshAll
