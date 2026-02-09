@@ -816,6 +816,7 @@ local defaults = {
             enabled = true,
             alertPosition = { point = "TOP", relPoint = "TOP", x = 1.667, y = -293.333 },
             toastPosition = { point = "CENTER", relPoint = "CENTER", x = -5.833, y = 268.333 },
+            bnetToastPosition = nil, -- nil = default Blizzard positioning
         },
 
         -- Missing Raid Buffs Display Settings

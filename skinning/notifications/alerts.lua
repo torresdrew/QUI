@@ -1103,21 +1103,124 @@ local function CreateEventToastMover()
 end
 
 ---------------------------------------------------------------------------
+-- BATTLE.NET TOAST MOVER
+---------------------------------------------------------------------------
+
+local bnetToastHolder = nil
+local bnetToastMover = nil
+local bnetToastHooked = false
+
+local function CreateBNetToastMover()
+    local db = GetAlertSettings()
+    if not db.enabled then return end
+    if not BNToastFrame then return end
+
+    if not bnetToastHolder then
+        bnetToastHolder = CreateFrame("Frame", "QUI_BNetToastHolder", UIParent)
+        bnetToastHolder:SetSize(300, 50)
+
+        local pos = db.bnetToastPosition
+        if pos and pos.point then
+            bnetToastHolder:SetPoint(pos.point, UIParent, pos.relPoint or "TOPRIGHT", pos.x or -200, pos.y or -80)
+        else
+            -- Default: let Blizzard handle positioning until user moves it
+            bnetToastHolder:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -200, -80)
+        end
+        bnetToastHolder:SetMovable(true)
+        bnetToastHolder:SetClampedToScreen(true)
+
+        -- Create mover overlay
+        bnetToastMover = CreateFrame("Frame", "QUI_BNetToastMover", bnetToastHolder, "BackdropTemplate")
+        bnetToastMover:SetAllPoints(bnetToastHolder)
+        local px = SafeGetPixelSize(bnetToastMover)
+        bnetToastMover:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8x8",
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = px,
+        })
+        bnetToastMover:SetBackdropColor(0.2, 0.6, 1.0, 0.5)
+        bnetToastMover:SetBackdropBorderColor(0.2, 0.6, 1.0, 1)
+        bnetToastMover:EnableMouse(true)
+        bnetToastMover:SetMovable(true)
+        bnetToastMover:RegisterForDrag("LeftButton")
+        bnetToastMover:SetFrameStrata("FULLSCREEN_DIALOG")
+        bnetToastMover:Hide()
+
+        -- Mover text
+        local text = bnetToastMover:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        text:SetPoint("CENTER")
+        text:SetText("Battle.Net Toasts")
+        bnetToastMover.text = text
+
+        -- Drag handlers
+        bnetToastMover:SetScript("OnDragStart", function(self)
+            bnetToastHolder:StartMoving()
+        end)
+
+        bnetToastMover:SetScript("OnDragStop", function(self)
+            bnetToastHolder:StopMovingOrSizing()
+            local point, _, relPoint, x, y = QUICore:SnapFramePosition(bnetToastHolder)
+            if point then
+                local alertDB = GetAlertSettings()
+                alertDB.bnetToastPosition = { point = point, relPoint = relPoint, x = x, y = y }
+            end
+            -- Reposition BNet toast frame to follow holder
+            pcall(function()
+                BNToastFrame:ClearAllPoints()
+                BNToastFrame:SetPoint("TOP", bnetToastHolder, "TOP")
+            end)
+        end)
+    end
+
+    -- Hook BNToastFrame anchor updates to redirect positioning when user has set a custom position
+    -- Try global function first (legacy), then frame method (12.0+)
+    if not bnetToastHooked then
+        local function BNetAnchorOverride()
+            local alertDB = GetAlertSettings()
+            if alertDB and alertDB.bnetToastPosition then
+                pcall(function()
+                    BNToastFrame:ClearAllPoints()
+                    BNToastFrame:SetPoint("TOP", bnetToastHolder, "TOP")
+                end)
+            end
+        end
+
+        if type(BNToastFrame_UpdateAnchor) == "function" then
+            hooksecurefunc("BNToastFrame_UpdateAnchor", BNetAnchorOverride)
+            bnetToastHooked = true
+        elseif BNToastFrame.UpdateAnchor then
+            hooksecurefunc(BNToastFrame, "UpdateAnchor", BNetAnchorOverride)
+            bnetToastHooked = true
+        end
+    end
+
+    -- Apply initial positioning if user has a saved position
+    if db.bnetToastPosition then
+        pcall(function()
+            BNToastFrame:ClearAllPoints()
+            BNToastFrame:SetPoint("TOP", bnetToastHolder, "TOP")
+        end)
+    end
+end
+
+---------------------------------------------------------------------------
 -- MOVER TOGGLE (called from options)
 ---------------------------------------------------------------------------
 
 function Alerts:ShowMovers()
     if alertMover then alertMover:Show() end
     if toastMover then toastMover:Show() end
+    if bnetToastMover then bnetToastMover:Show() end
 end
 
 function Alerts:HideMovers()
     if alertMover then alertMover:Hide() end
     if toastMover then toastMover:Hide() end
+    if bnetToastMover then bnetToastMover:Hide() end
 end
 
 function Alerts:ToggleMovers()
-    local isShown = (alertMover and alertMover:IsShown()) or (toastMover and toastMover:IsShown())
+    local isShown = (alertMover and alertMover:IsShown()) or (toastMover and toastMover:IsShown()) or (bnetToastMover and bnetToastMover:IsShown())
     if isShown then
         self:HideMovers()
     else
@@ -1289,4 +1392,5 @@ function Alerts:Initialize()
     -- Create movers for custom alert positioning
     CreateAlertMover()
     CreateEventToastMover()
+    CreateBNetToastMover()
 end
