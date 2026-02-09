@@ -3,4 +3,5 @@
     <Script file="nudge.lua"/>
     <Script file="keybinds.lua"/>
     <Script file="anchoring.lua"/>
+    <Script file="dandersframes.lua"/>
 </Ui>

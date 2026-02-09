@@ -3381,6 +3381,42 @@ local defaults = {
             swipeColor = {0, 0, 0, 0.6},
         },
 
+        -- DandersFrames Integration: Anchor DF containers to QUI elements
+        dandersFrames = {
+            party = {
+                enabled = false,
+                anchorTo = "disabled",
+                sourcePoint = "TOP",
+                targetPoint = "BOTTOM",
+                offsetX = 0,
+                offsetY = -5,
+            },
+            raid = {
+                enabled = false,
+                anchorTo = "disabled",
+                sourcePoint = "TOP",
+                targetPoint = "BOTTOM",
+                offsetX = 0,
+                offsetY = -5,
+            },
+            pinned1 = {
+                enabled = false,
+                anchorTo = "disabled",
+                sourcePoint = "TOP",
+                targetPoint = "BOTTOM",
+                offsetX = 0,
+                offsetY = -5,
+            },
+            pinned2 = {
+                enabled = false,
+                anchorTo = "disabled",
+                sourcePoint = "TOP",
+                targetPoint = "BOTTOM",
+                offsetX = 0,
+                offsetY = -5,
+            },
+        },
+
         -- HUD Layering: Control frame level ordering for HUD elements
         -- Higher values appear above lower values (range 0-10)
         hudLayering = {

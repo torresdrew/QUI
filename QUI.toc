@@ -10,6 +10,7 @@
 ## DefaultState: Enabled
 ## LoadOnDemand: 0
 ## SavedVariables: QUI_DB, QUIDB
+## OptionalDeps: DandersFrames
 
 ## X-Contributors: Quazii (original creator), LiQiuDGG, Mondo, Zol
 ## X-License: GPLv3
