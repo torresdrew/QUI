@@ -1,9 +1,7 @@
 local addonName, ns = ...
 local Addon = ns.Addon
 
-local function GetCore()
-    return (_G.QUI and _G.QUI.QUICore) or ns.Addon
-end
+local GetCore = ns.Helpers.GetCore
 
 local function GetPixelSize(frame, default)
     if Addon and type(Addon.GetPixelSize) == "function" then

@@ -18,9 +18,7 @@ local LSM = LibStub("LibSharedMedia-3.0", true)
 -- SETTINGS ACCESS
 ---------------------------------------------------------------------------
 
-local function GetCore()
-    return (_G.QUI and _G.QUI.QUICore) or ns.Addon
-end
+local GetCore = ns.Helpers.GetCore
 
 local function GetSettings()
     local guiQUICore = GetCore()

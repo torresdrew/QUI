@@ -4,9 +4,7 @@
 -- Frame created in utils/qui_mplus_timer.lua
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
-local function GetCore()
-    return (_G.QUI and _G.QUI.QUICore) or ns.Addon
-end
+local GetCore = ns.Helpers.GetCore
 
 ---------------------------------------------------------------------------
 -- Utility: Calculate luminance to determine if color is "dark"

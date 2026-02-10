@@ -12,9 +12,7 @@ local IsSecretValue = Helpers.IsSecretValue
 local SafeValue = Helpers.SafeValue
 local GetDB = Helpers.CreateDBGetter("quiUnitFrames")
 
-local function GetCore()
-    return (_G.QUI and _G.QUI.QUICore) or ns.Addon
-end
+local GetCore = ns.Helpers.GetCore
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
