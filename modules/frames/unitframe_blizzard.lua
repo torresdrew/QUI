@@ -146,6 +146,51 @@ end
 -- HIDE BLIZZARD DEFAULT FRAMES
 ---------------------------------------------------------------------------
 
+---------------------------------------------------------------------------
+-- Hide Blizzard castbars (player + pet).
+-- Safe to call repeatedly (e.g. on every zone transition) — the Show hook
+-- is guarded so it's only installed once.
+---------------------------------------------------------------------------
+function QUI_UF:HideBlizzardCastbars()
+    local db = GetDB()
+    if not db or not db.enabled then return end
+    if not (db.player and db.player.castbar and db.player.castbar.enabled) then return end
+
+    -- NOTE: As of 12.0.x beta, CastingBarFrame can be a forbidden/restricted frame.
+    -- All interactions are wrapped in pcall to prevent errors from blocking initialization.
+    if PlayerCastingBarFrame then
+        local ok, err = pcall(function()
+            PlayerCastingBarFrame:SetAlpha(0)
+            PlayerCastingBarFrame:SetScale(0.0001)
+            PlayerCastingBarFrame:SetPoint("BOTTOMLEFT", UIParent, "TOPLEFT", -10000, 10000)
+            PlayerCastingBarFrame:UnregisterAllEvents()
+        end)
+        if not ok then QUI:DebugPrint("Could not hide PlayerCastingBarFrame: " .. tostring(err)) end
+        local ok2, err2 = pcall(function()
+            PlayerCastingBarFrame:SetUnit(nil)
+        end)
+        if not ok2 then QUI:DebugPrint("Could not detach PlayerCastingBarFrame unit: " .. tostring(err2)) end
+        local ok3, err3 = pcall(function()
+            if not PlayerCastingBarFrame._quiShowHooked then
+                PlayerCastingBarFrame._quiShowHooked = true
+                hooksecurefunc(PlayerCastingBarFrame, "Show", function(self)
+                    pcall(function() self:Hide() end)
+                end)
+            end
+        end)
+        if not ok3 then QUI:DebugPrint("Could not hook PlayerCastingBarFrame:Show: " .. tostring(err3)) end
+    end
+    -- Also hide the pet castbar if it exists
+    if PetCastingBarFrame then
+        local ok, err = pcall(function()
+            PetCastingBarFrame:SetAlpha(0)
+            PetCastingBarFrame:SetScale(0.0001)
+            PetCastingBarFrame:UnregisterAllEvents()
+        end)
+        if not ok then QUI:DebugPrint("Could not hide PetCastingBarFrame: " .. tostring(err)) end
+    end
+end
+
 function QUI_UF:HideBlizzardFrames()
     local db = GetDB()
     if not db or not db.enabled then return end
@@ -155,42 +200,8 @@ function QUI_UF:HideBlizzardFrames()
         KillBlizzardFrame(PlayerFrame)
     end
 
-    -- Hide Blizzard Player Castbar if our QUI player castbar is enabled
-    -- NOTE: As of 12.0.x beta, CastingBarFrame can be a forbidden/restricted frame.
-    -- All interactions are wrapped in pcall to prevent errors from blocking initialization.
-    if db.player and db.player.castbar and db.player.castbar.enabled then
-        if PlayerCastingBarFrame then
-            local ok, err = pcall(function()
-                PlayerCastingBarFrame:SetAlpha(0)
-                PlayerCastingBarFrame:SetScale(0.0001)
-                PlayerCastingBarFrame:SetPoint("BOTTOMLEFT", UIParent, "TOPLEFT", -10000, 10000)
-                PlayerCastingBarFrame:UnregisterAllEvents()
-            end)
-            if not ok then QUI:DebugPrint("Could not hide PlayerCastingBarFrame: " .. tostring(err)) end
-            local ok2, err2 = pcall(function()
-                PlayerCastingBarFrame:SetUnit(nil)
-            end)
-            if not ok2 then QUI:DebugPrint("Could not detach PlayerCastingBarFrame unit: " .. tostring(err2)) end
-            local ok3, err3 = pcall(function()
-                if not PlayerCastingBarFrame._quiShowHooked then
-                    PlayerCastingBarFrame._quiShowHooked = true
-                    hooksecurefunc(PlayerCastingBarFrame, "Show", function(self)
-                        pcall(function() self:Hide() end)
-                    end)
-                end
-            end)
-            if not ok3 then QUI:DebugPrint("Could not hook PlayerCastingBarFrame:Show: " .. tostring(err3)) end
-        end
-        -- Also hide the pet castbar if it exists
-        if PetCastingBarFrame then
-            local ok, err = pcall(function()
-                PetCastingBarFrame:SetAlpha(0)
-                PetCastingBarFrame:SetScale(0.0001)
-                PetCastingBarFrame:UnregisterAllEvents()
-            end)
-            if not ok then QUI:DebugPrint("Could not hide PetCastingBarFrame: " .. tostring(err)) end
-        end
-    end
+    -- Hide Blizzard castbars
+    self:HideBlizzardCastbars()
 
     -- Hide Target frame visuals (keep frame for auras/tooltips)
     if db.target and db.target.enabled then

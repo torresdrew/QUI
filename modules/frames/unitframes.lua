@@ -3293,6 +3293,9 @@ initFrame:SetScript("OnEvent", function(self, event)
             end)
         end)
     elseif event == "PLAYER_ENTERING_WORLD" then
+        -- Re-hide Blizzard castbars immediately — Blizzard can re-register
+        -- events and re-attach the unit on the casting bar during zone transitions.
+        QUI_UF:HideBlizzardCastbars()
         -- Refresh after loading screens
         C_Timer.After(1.0, function()
             QUI_UF:RefreshAll()
