@@ -1168,6 +1168,8 @@ local function UpdateEmpoweredState(castbar, isPlayer, isEmpowered, numStages)
     end
 end
 
+local TryApplyDeferredCastbarRefresh
+
 -- Handle case when no cast is active
 local function HandleNoCast(castbar, castSettings, isPlayer, onUpdateHandler)
     C_Timer.After(0.1, function()
@@ -1192,6 +1194,7 @@ local function HandleNoCast(castbar, castSettings, isPlayer, onUpdateHandler)
                 end
                 castbar:SetScript("OnUpdate", nil)
                 castbar:Hide()
+                TryApplyDeferredCastbarRefresh(castbar)
             end
         end
     end)
@@ -1285,6 +1288,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
                 if not self.castStartTime or not self.castEndTime then
                     self:SetScript("OnUpdate", nil)
                     self:Hide()
+                    TryApplyDeferredCastbarRefresh(self)
                     return
                 end
                 startTime = self.castStartTime / 1000
@@ -1294,6 +1298,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             if not startTime or not endTime then
                 self:SetScript("OnUpdate", nil)
                 self:Hide()
+                TryApplyDeferredCastbarRefresh(self)
                 return
             end
 
@@ -1304,6 +1309,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
                 end
                 self:SetScript("OnUpdate", nil)
                 self:Hide()
+                TryApplyDeferredCastbarRefresh(self)
                 return
             end
 
@@ -1537,6 +1543,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             self.durationObj = nil
             self:SetScript("OnUpdate", nil)
             self:Hide()
+            TryApplyDeferredCastbarRefresh(self)
         end,
         UNIT_SPELLCAST_CHANNEL_STOP = function(self, spellID)
             if isPlayer then ClearEmpoweredState(self) end
@@ -1544,6 +1551,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             self.durationObj = nil
             self:SetScript("OnUpdate", nil)
             self:Hide()
+            TryApplyDeferredCastbarRefresh(self)
         end,
         UNIT_SPELLCAST_FAILED = function(self, spellID)
             -- Don't hide if a channel is still active (e.g., pressing spell key again during channel)
@@ -1555,6 +1563,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             self.durationObj = nil
             self:SetScript("OnUpdate", nil)
             self:Hide()
+            TryApplyDeferredCastbarRefresh(self)
         end,
         UNIT_SPELLCAST_INTERRUPTED = function(self, spellID)
             if isPlayer then ClearEmpoweredState(self) end
@@ -1562,6 +1571,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             self.durationObj = nil
             self:SetScript("OnUpdate", nil)
             self:Hide()
+            TryApplyDeferredCastbarRefresh(self)
         end,
         
         -- Interruptible state changes
@@ -1594,6 +1604,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
                 ClearEmpoweredState(self)
                 self:SetScript("OnUpdate", nil)
                 self:Hide()
+                TryApplyDeferredCastbarRefresh(self)
             end
         end
     end
@@ -1662,6 +1673,7 @@ function QUI_Castbar:SetupBossCastbar(castbar, unit, bossIndex, castSettings)
                 ClearEmpoweredState(self)
                 self:SetScript("OnUpdate", nil)
                 self:Hide()
+                TryApplyDeferredCastbarRefresh(self)
                 return
             end
             
@@ -1835,6 +1847,7 @@ function QUI_Castbar:SetupBossCastbar(castbar, unit, bossIndex, castSettings)
                         end
                         self:SetScript("OnUpdate", nil)
                         self:Hide()
+                        TryApplyDeferredCastbarRefresh(self)
                     end
                 end
             end)
@@ -1980,6 +1993,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
             if now >= self.endTime then
                 self:SetScript("OnUpdate", nil)
                 self:Hide()
+                TryApplyDeferredCastbarRefresh(self)
                 return
             end
             
@@ -2031,6 +2045,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
             -- No cast and no preview - hide
             self:SetScript("OnUpdate", nil)
             self:Hide()
+            TryApplyDeferredCastbarRefresh(self)
         end
     end
     
@@ -2123,6 +2138,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
                         end
                         self:SetScript("OnUpdate", nil)
                         self:Hide()
+                        TryApplyDeferredCastbarRefresh(self)
                     end
                 end
             end)
@@ -2147,6 +2163,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
             or event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED"
             or event == "UNIT_SPELLCAST_SUCCEEDED" then
             self:Cast()
+            TryApplyDeferredCastbarRefresh(self)
         elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE" then
             self.notInterruptible = false
             ApplyCastColor(self.statusBar, false, self.customColor)
@@ -2227,14 +2244,99 @@ local function DestroyCastbar(castbar)
     castbar:ClearAllPoints()
 end
 
+local function IsRealCastActive(unit)
+    if not unit then return false end
+    return UnitCastingInfo(unit) ~= nil or UnitChannelInfo(unit) ~= nil
+end
+
+local function IsBossPreviewModeActive(bossKey)
+    local QUI_UF = QUI_Castbar and QUI_Castbar.unitFramesModule
+    return QUI_UF and QUI_UF.previewMode and bossKey and QUI_UF.previewMode[bossKey]
+end
+
+local function IsPreviewRefreshRequested(castbar, refreshKey, castSettings)
+    if castbar and castbar.isPreviewSimulation then
+        return true
+    end
+    if not (castSettings and castSettings.previewMode) then
+        return false
+    end
+    if refreshKey and refreshKey:match("^boss%d+$") then
+        return IsBossPreviewModeActive(refreshKey)
+    end
+    return true
+end
+
+local function ApplyLiveCastbarSettings(castbar, unitKey, castSettings)
+    if not castbar or not castSettings then return end
+
+    if castbar.UpdateCastbarElements then
+        castbar:UpdateCastbarElements()
+    end
+
+    if castbar.statusBar then
+        castbar.statusBar:SetStatusBarTexture(GetTexturePath(castSettings.texture))
+        ApplyBackgroundColor(castbar.bgBar, castSettings.bgColor)
+    end
+
+    if unitKey and unitKey:match("^boss%d+$") then
+        castbar.customColor = castSettings.color or castbar.customColor
+    else
+        castbar.customColor = GetBarColor(unitKey, castSettings)
+    end
+
+    if castbar.statusBar then
+        ApplyCastColor(castbar.statusBar, castbar.notInterruptible, castbar.customColor)
+    end
+
+    if castbar.icon then
+        if ShouldShowIcon(castbar, castSettings) then
+            castbar.icon:Show()
+        else
+            castbar.icon:Hide()
+        end
+    end
+end
+
+local function QueueDeferredCastbarRefresh(castbar, refreshKey)
+    if not castbar or not refreshKey then return end
+    castbar._deferredRefreshPending = true
+    castbar._deferredRefreshKey = refreshKey
+end
+
+TryApplyDeferredCastbarRefresh = function(castbar)
+    if not castbar or not castbar._deferredRefreshPending then return end
+    if IsRealCastActive(castbar.unit) then return end
+
+    local refreshKey = castbar._deferredRefreshKey
+    castbar._deferredRefreshPending = nil
+    castbar._deferredRefreshKey = nil
+
+    if type(_G.QUI_RefreshCastbar) == "function" and refreshKey then
+        C_Timer.After(0, function()
+            _G.QUI_RefreshCastbar(refreshKey)
+        end)
+    end
+end
+
 ---------------------------------------------------------------------------
 -- REFRESH: Update castbar in place (preserves active casts)
 ---------------------------------------------------------------------------
 function QUI_Castbar:RefreshCastbar(castbar, unitKey, castSettings, unitFrame)
     if not castSettings or not unitFrame then return end
-    
-    -- Simple: always recreate the castbar when settings change
+
     local unit = (castbar and castbar.unit) or unitKey
+    if castbar then
+        ApplyLiveCastbarSettings(castbar, unitKey, castSettings)
+    end
+
+    local previewRefresh = IsPreviewRefreshRequested(castbar, unitKey, castSettings)
+    local hasRealCast = IsRealCastActive(unit)
+    if castbar and hasRealCast and not previewRefresh then
+        QueueDeferredCastbarRefresh(castbar, unitKey)
+        return
+    end
+
     if castbar then
         DestroyCastbar(castbar)
     end
@@ -2254,8 +2356,18 @@ function QUI_Castbar:RefreshBossCastbar(castbar, bossKey, castSettings, unitFram
     local bossIndex = (castbar and castbar.bossIndex) or (bossKey and tonumber(bossKey:match("boss(%d+)")))
     if not bossIndex then return end
     
-    -- Simple: always recreate the castbar when settings change
     local unit = (castbar and castbar.unit) or ("boss" .. bossIndex)
+    if castbar then
+        ApplyLiveCastbarSettings(castbar, bossKey, castSettings)
+    end
+
+    local previewRefresh = IsPreviewRefreshRequested(castbar, bossKey, castSettings)
+    local hasRealCast = IsRealCastActive(unit)
+    if castbar and hasRealCast and not previewRefresh then
+        QueueDeferredCastbarRefresh(castbar, bossKey)
+        return
+    end
+
     if castbar then
         DestroyCastbar(castbar)
     end
