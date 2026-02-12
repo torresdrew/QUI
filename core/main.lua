@@ -2872,6 +2872,10 @@ local defaults = {
                 controlType = "master",    -- Which volume to control: "master", "music", "sfx", "ambience", "dialog"
                 showIcon = false,          -- Show speaker icon instead of "Vol:" label
             },
+
+            -- Currencies datatext settings
+            currencyOrder = {},  -- Ordered currency IDs selected by user (up to 6)
+            currencyEnabled = {}, -- Per-currency toggle map (id -> true/false)
         },
         
         -- Additional Datapanels (user-created, independent of minimap)

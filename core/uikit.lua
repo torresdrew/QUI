@@ -214,6 +214,115 @@ function UIKit.CreateBackdropBorder(parent, borderSizePixels, r, g, b, a)
 end
 
 ---------------------------------------------------------------------------
+-- CHECKBOX
+---------------------------------------------------------------------------
+
+--- Create a QUI accent-style checkbox button.
+--- options:
+---   size number|nil               Checkbox size in pixels (default 16)
+---   checked boolean|nil           Initial checked state (default false)
+---   colors table|nil              Optional color table (GUI.Colors-style)
+---   onChange fun(checked:boolean) Optional change callback
+--- @param parent Frame             Parent frame
+--- @param options table|nil        Checkbox options
+--- @return Button                  Checkbox with helpers: GetChecked/SetChecked/Toggle/SetHovered
+function UIKit.CreateAccentCheckbox(parent, options)
+    options = options or {}
+    local size = options.size or 16
+    local checked = options.checked and true or false
+    local onChange = options.onChange
+
+    local colors = options.colors
+    if not colors and QUI and QUI.GUI and QUI.GUI.Colors then
+        colors = QUI.GUI.Colors
+    end
+    colors = colors or {
+        accent = {0.204, 0.827, 0.600},
+        accentHover = {0.431, 0.906, 0.718},
+        toggleOff = {0.18, 0.18, 0.20},
+    }
+
+    local checkbox = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    checkbox:SetSize(size, size)
+    local QUICore = GetCore()
+    local px = (QUICore and QUICore.GetPixelSize and QUICore:GetPixelSize(checkbox)) or 1
+    checkbox:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = px,
+    })
+
+    checkbox.checkLeft = checkbox:CreateTexture(nil, "OVERLAY")
+    checkbox.checkLeft:SetColorTexture(colors.accent[1], colors.accent[2], colors.accent[3], 0.7)
+    checkbox.checkLeft:SetSize(math.max(4, math.floor(size * 0.31)), 2)
+    checkbox.checkLeft:SetPoint("CENTER", checkbox, "CENTER", -2, -1)
+    checkbox.checkLeft:SetRotation(math.rad(-45))
+
+    checkbox.checkRight = checkbox:CreateTexture(nil, "OVERLAY")
+    checkbox.checkRight:SetColorTexture(colors.accent[1], colors.accent[2], colors.accent[3], 0.7)
+    checkbox.checkRight:SetSize(math.max(6, math.floor(size * 0.5)), 2)
+    checkbox.checkRight:SetPoint("CENTER", checkbox, "CENTER", 2, 0)
+    checkbox.checkRight:SetRotation(math.rad(45))
+
+    local hovered = false
+    local function UpdateVisual()
+        if checked then
+            checkbox:SetBackdropColor(colors.accent[1], colors.accent[2], colors.accent[3], 0.15)
+            if hovered then
+                checkbox:SetBackdropBorderColor(colors.accentHover[1], colors.accentHover[2], colors.accentHover[3], 1)
+            else
+                checkbox:SetBackdropBorderColor(colors.accent[1] * 0.8, colors.accent[2] * 0.8, colors.accent[3] * 0.8, 1)
+            end
+            checkbox.checkLeft:Show()
+            checkbox.checkRight:Show()
+        else
+            checkbox:SetBackdropColor(colors.toggleOff[1], colors.toggleOff[2], colors.toggleOff[3], 1)
+            if hovered then
+                checkbox:SetBackdropBorderColor(0.25, 0.28, 0.35, 1)
+            else
+                checkbox:SetBackdropBorderColor(0.12, 0.14, 0.18, 1)
+            end
+            checkbox.checkLeft:Hide()
+            checkbox.checkRight:Hide()
+        end
+    end
+
+    function checkbox:GetChecked()
+        return checked
+    end
+
+    function checkbox:SetChecked(val, skipOnChange)
+        checked = val and true or false
+        UpdateVisual()
+        if not skipOnChange and onChange then
+            onChange(checked)
+        end
+    end
+
+    function checkbox:Toggle(skipOnChange)
+        self:SetChecked(not checked, skipOnChange)
+    end
+
+    function checkbox:SetHovered(val)
+        hovered = val and true or false
+        UpdateVisual()
+    end
+
+    checkbox:SetScript("OnClick", function(self)
+        self:Toggle()
+    end)
+    checkbox:SetScript("OnEnter", function(self)
+        self:SetHovered(true)
+    end)
+    checkbox:SetScript("OnLeave", function(self)
+        self:SetHovered(false)
+    end)
+
+    checkbox:SetChecked(checked, true)
+    return checkbox
+end
+
+---------------------------------------------------------------------------
 -- ICON
 ---------------------------------------------------------------------------
 

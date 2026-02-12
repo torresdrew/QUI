@@ -1134,6 +1134,20 @@ end
 ---------------------------------------------------------------------------
 -- WIDGET: CHECKBOX
 ---------------------------------------------------------------------------
+function GUI:CreateAccentCheckbox(parent, options)
+    options = options or {}
+    if not options.colors then
+        options.colors = C
+    end
+
+    local UIKit = ns.UIKit
+    if UIKit and UIKit.CreateAccentCheckbox then
+        return UIKit.CreateAccentCheckbox(parent, options)
+    end
+
+    return nil
+end
+
 function GUI:CreateCheckbox(parent, label, dbKey, dbTable, onChange)
     local container = CreateFrame("Frame", nil, parent)
     container:SetSize(300, 20)

@@ -3,6 +3,7 @@ local QUI = QUI
 local GUI = QUI.GUI
 local C = GUI.Colors
 local Shared = ns.QUI_Options
+local UIKit = ns.UIKit
 
 local GetCore = ns.Helpers.GetCore
 
@@ -1901,7 +1902,6 @@ local function CreateCDMSetupPage(parent)
         -- Helper: create a self-sizing container of QUI-styled spec checkboxes that reflows on resize
         local specList = ns.SwapCandidateSpecs or {}
         local FONT_PATH = GUI.FONT_PATH or [[Interface\AddOns\QUI\assets\Quazii.ttf]]
-        local QUICore = GetCore()
         local function CreateSpecCheckboxRow(parent, dbTable, onChange)
             local BOX_SIZE = 16
             local ITEM_GAP = 10
@@ -1917,52 +1917,22 @@ local function CreateCDMSetupPage(parent)
                 local btn = CreateFrame("Button", nil, container, "BackdropTemplate")
                 btn:SetHeight(BOX_SIZE + 4)
 
-                -- The checkbox square
-                local box = CreateFrame("Frame", nil, btn, "BackdropTemplate")
-                box:SetSize(BOX_SIZE, BOX_SIZE)
-                box:SetPoint("LEFT", btn, "LEFT", 0, 0)
-                local px = (QUICore and QUICore.GetPixelSize and QUICore:GetPixelSize(box)) or 1
-                box:SetBackdrop({
-                    bgFile = "Interface\\Buttons\\WHITE8x8",
-                    edgeFile = "Interface\\Buttons\\WHITE8x8",
-                    edgeSize = px,
+                local checkbox = UIKit.CreateAccentCheckbox(btn, {
+                    size = BOX_SIZE,
+                    checked = dbTable[info.specID] and true or false,
+                    colors = C,
+                    onChange = function(checked)
+                        dbTable[info.specID] = checked
+                        if onChange then onChange() end
+                    end,
                 })
-
-                -- Checkmark: two rotated lines forming a ✓ (same style as dropdown chevrons)
-                local checkLeft = box:CreateTexture(nil, "OVERLAY")
-                checkLeft:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.7)
-                checkLeft:SetSize(5, 2)
-                checkLeft:SetPoint("CENTER", box, "CENTER", -2, -1)
-                checkLeft:SetRotation(math.rad(-45))
-
-                local checkRight = box:CreateTexture(nil, "OVERLAY")
-                checkRight:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.7)
-                checkRight:SetSize(8, 2)
-                checkRight:SetPoint("CENTER", box, "CENTER", 2, 0)
-                checkRight:SetRotation(math.rad(45))
+                checkbox:SetPoint("LEFT", btn, "LEFT", 0, 0)
 
                 -- Spec name label
                 local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
                 label:SetFont(FONT_PATH, 11, "")
                 label:SetText("|cFF" .. info.classColor .. info.name .. "|r")
-                label:SetPoint("LEFT", box, "RIGHT", 5, 0)
-
-                -- Visual update
-                local isChecked = dbTable[info.specID] and true or false
-                local function UpdateVisual(val)
-                    if val then
-                        box:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], 0.15)
-                        box:SetBackdropBorderColor(C.accent[1] * 0.8, C.accent[2] * 0.8, C.accent[3] * 0.8, 1)
-                        checkLeft:Show()
-                        checkRight:Show()
-                    else
-                        box:SetBackdropColor(C.toggleOff[1], C.toggleOff[2], C.toggleOff[3], 1)
-                        box:SetBackdropBorderColor(0.12, 0.14, 0.18, 1)
-                        checkLeft:Hide()
-                        checkRight:Hide()
-                    end
-                end
-                UpdateVisual(isChecked)
+                label:SetPoint("LEFT", checkbox, "RIGHT", 5, 0)
 
                 -- Measure item width and size the button
                 local textWidth = label:GetStringWidth() or 100
@@ -1973,26 +1943,15 @@ local function CreateCDMSetupPage(parent)
 
                 -- Click handler
                 btn:SetScript("OnClick", function()
-                    isChecked = not isChecked
-                    dbTable[info.specID] = isChecked
-                    UpdateVisual(isChecked)
-                    if onChange then onChange() end
+                    checkbox:Toggle()
                 end)
 
                 -- Hover effects
                 btn:SetScript("OnEnter", function()
-                    if isChecked then
-                        box:SetBackdropBorderColor(C.accentHover[1], C.accentHover[2], C.accentHover[3], 1)
-                    else
-                        box:SetBackdropBorderColor(0.25, 0.28, 0.35, 1)
-                    end
+                    checkbox:SetHovered(true)
                 end)
                 btn:SetScript("OnLeave", function()
-                    if isChecked then
-                        box:SetBackdropBorderColor(C.accent[1] * 0.8, C.accent[2] * 0.8, C.accent[3] * 0.8, 1)
-                    else
-                        box:SetBackdropBorderColor(0.12, 0.14, 0.18, 1)
-                    end
+                    checkbox:SetHovered(false)
                 end)
             end
 

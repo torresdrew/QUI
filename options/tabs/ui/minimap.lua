@@ -7,6 +7,7 @@ local ADDON_NAME, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
 local C = GUI.Colors
+local UIKit = ns.UIKit
 
 -- Import shared utilities
 local Shared = ns.QUI_Options
@@ -50,6 +51,54 @@ local function RebuildDatatextTab()
     end
     -- Rebuild the tab contents
     BuildDatatextTab(datatextTabContent)
+end
+
+local function GetTrackedBackpackCurrencies()
+    local currencies = {}
+    local seen = {}
+
+    if not _G.C_CurrencyInfo or not C_CurrencyInfo.GetBackpackCurrencyInfo then
+        return currencies
+    end
+
+    local i = 1
+    while true do
+        local info = C_CurrencyInfo.GetBackpackCurrencyInfo(i)
+        if not info then break end
+
+        local currencyID = info.currencyTypesID or info.currencyID
+        if currencyID and info.name and info.quantity ~= nil and not seen[currencyID] then
+            seen[currencyID] = true
+            currencies[#currencies + 1] = {
+                value = tostring(currencyID),
+                text = info.name,
+            }
+        end
+        i = i + 1
+    end
+
+    return currencies
+end
+
+local function BuildTrackedCurrencySignature()
+    local currencies = GetTrackedBackpackCurrencies()
+    local values = {}
+    for i = 1, #currencies do
+        values[i] = currencies[i].value
+    end
+    return table.concat(values, ",")
+end
+
+local function CheckAndRebuildCurrencyOptions()
+    if not datatextTabContent or not datatextTabContent:IsShown() then
+        return
+    end
+
+    local currentSignature = BuildTrackedCurrencySignature()
+    if currentSignature ~= (datatextTabContent._lastTrackedCurrencySignature or "") then
+        datatextTabContent._lastTrackedCurrencySignature = currentSignature
+        RebuildDatatextTab()
+    end
 end
 
 -- Singleton edit popup for custom datapanels
@@ -537,6 +586,26 @@ BuildDatatextTab = function(tabContent)
         return
     end
 
+    if not tabContent._currencyWatcher then
+        local watcher = CreateFrame("Frame")
+        watcher:RegisterEvent("CURRENCY_DISPLAY_UPDATE")
+        watcher:SetScript("OnEvent", function()
+            CheckAndRebuildCurrencyOptions()
+        end)
+        if BackpackTokenFrame and BackpackTokenFrame.Update then
+            hooksecurefunc(BackpackTokenFrame, "Update", function()
+                CheckAndRebuildCurrencyOptions()
+            end)
+        end
+        tabContent._currencyWatcher = watcher
+    end
+    if not tabContent._currencyTicker and C_Timer and C_Timer.NewTicker then
+        tabContent._currencyTicker = C_Timer.NewTicker(0.5, function()
+            CheckAndRebuildCurrencyOptions()
+        end)
+    end
+    tabContent._lastTrackedCurrencySignature = BuildTrackedCurrencySignature()
+
     -- Ensure datatext table exists (for fresh installs where AceDB defaults may not initialize)
     if not db.datatext then
         db.datatext = {}
@@ -838,6 +907,387 @@ BuildDatatextTab = function(tabContent)
         lockoutNote:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         lockoutNote:SetJustifyH("LEFT")
         y = y - 20
+
+        y = y - 10
+
+        -- SECTION 5c: Currencies Datatext Settings
+        GUI:SetSearchSection("Currencies Datatext")
+        local currenciesHeader = GUI:CreateSectionHeader(tabContent, "Currencies Datatext")
+        currenciesHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - currenciesHeader.gap
+
+        local currenciesNote = GUI:CreateLabel(tabContent, "Choose up to 6 tracked currencies. Drag rows to reorder. Changes to tracked backpack currencies update this list automatically.", 11, C.textMuted)
+        currenciesNote:SetPoint("TOPLEFT", PAD, y)
+        currenciesNote:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        currenciesNote:SetJustifyH("LEFT")
+        y = y - 38
+
+        if type(dt.currencyOrder) ~= "table" then
+            dt.currencyOrder = {}
+        end
+        if type(dt.currencyEnabled) ~= "table" then
+            dt.currencyEnabled = {}
+        end
+
+        local trackedCurrencies = GetTrackedBackpackCurrencies()
+        local trackedById = {}
+        local trackedByName = {}
+        for _, currency in ipairs(trackedCurrencies) do
+            trackedById[currency.value] = currency
+            trackedByName[currency.text] = currency.value
+        end
+
+        local function SyncCurrencySettings()
+            local ordered = {}
+            local seen = {}
+
+            for _, rawValue in ipairs(dt.currencyOrder) do
+                local value = rawValue
+                if type(value) == "number" then
+                    value = tostring(value)
+                end
+
+                if type(value) == "string" and value ~= "" and value ~= "none" then
+                    local resolved = value
+                    if not trackedById[resolved] then
+                        local numericValue = tonumber(resolved)
+                        if numericValue and trackedById[tostring(numericValue)] then
+                            resolved = tostring(numericValue)
+                        else
+                            resolved = trackedByName[resolved]
+                        end
+                    end
+
+                    if resolved and trackedById[resolved] and not seen[resolved] then
+                        seen[resolved] = true
+                        ordered[#ordered + 1] = resolved
+                    end
+                end
+            end
+
+            for _, currency in ipairs(trackedCurrencies) do
+                if not seen[currency.value] then
+                    seen[currency.value] = true
+                    ordered[#ordered + 1] = currency.value
+                end
+            end
+
+            local enabled = {}
+            for _, currencyId in ipairs(ordered) do
+                local currentValue = dt.currencyEnabled[currencyId]
+                if currentValue == nil then
+                    enabled[currencyId] = true
+                else
+                    enabled[currencyId] = currentValue and true or false
+                end
+            end
+
+            dt.currencyOrder = ordered
+            dt.currencyEnabled = enabled
+        end
+
+        local function RefreshCurrenciesDatatext()
+            if QUICore and QUICore.Datatexts then
+                QUICore.Datatexts:UpdateAll()
+            end
+        end
+
+        SyncCurrencySettings()
+
+        local selectedCount = 0
+        for _, currencyId in ipairs(dt.currencyOrder) do
+            if dt.currencyEnabled[currencyId] ~= false then
+                selectedCount = selectedCount + 1
+            end
+        end
+
+        local rowHeader = GUI:CreateLabel(tabContent, "Tracked currencies: reorder list and check Show (first 6 checked are displayed). Checked: " .. tostring(selectedCount), 11, C.textMuted)
+        rowHeader:SetPoint("TOPLEFT", PAD, y + 6)
+        y = y - 18
+
+        local currencyRows = {}
+        local ROW_HEIGHT = 26
+        local ROW_GAP = 4
+        local ROW_STEP = ROW_HEIGHT + ROW_GAP
+        local listStartY = y
+
+        local dragState = {
+            active = false,
+            fromIndex = nil,
+            toIndex = nil,
+            row = nil,
+            rowBaseStrata = nil,
+            rowBaseLevel = nil,
+            rowBaseAlpha = nil,
+        }
+
+        local placeholder = CreateFrame("Frame", nil, tabContent, "BackdropTemplate")
+        placeholder:SetHeight(ROW_HEIGHT)
+        placeholder:SetPoint("LEFT", tabContent, "LEFT", PAD, 0)
+        placeholder:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        local placeholderPx = (QUICore and QUICore.GetPixelSize and QUICore:GetPixelSize(placeholder)) or 1
+        placeholder:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8x8",
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = placeholderPx,
+        })
+        placeholder:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], 0.08)
+        placeholder:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.7)
+        placeholder:Hide()
+
+        local function LayoutCurrencyRows(skipRow, insertIndex)
+            local nextY = listStartY
+            local placedPlaceholder = false
+            local rowCount = #currencyRows
+
+            for i = 1, rowCount do
+                local row = currencyRows[i]
+
+                if skipRow and insertIndex == i and not placedPlaceholder then
+                    placeholder:ClearAllPoints()
+                    placeholder:SetPoint("TOPLEFT", tabContent, "TOPLEFT", PAD, nextY)
+                    placeholder:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+                    placeholder:Show()
+                    nextY = nextY - ROW_STEP
+                    placedPlaceholder = true
+                end
+
+                if row ~= skipRow then
+                    row:ClearAllPoints()
+                    row:SetPoint("TOPLEFT", tabContent, "TOPLEFT", PAD, nextY)
+                    row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+                    if dragState.active then
+                        row:SetAlpha(0.94)
+                    else
+                        row:SetAlpha(1)
+                    end
+                    nextY = nextY - ROW_STEP
+                end
+            end
+
+            if skipRow and not placedPlaceholder then
+                placeholder:ClearAllPoints()
+                placeholder:SetPoint("TOPLEFT", tabContent, "TOPLEFT", PAD, nextY)
+                placeholder:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+                placeholder:Show()
+            elseif not skipRow then
+                placeholder:Hide()
+            end
+        end
+
+        local function ComputeDropIndex()
+            local rowCount = #currencyRows
+            if rowCount <= 1 then
+                return 1
+            end
+
+            local scale = UIParent:GetEffectiveScale() or 1
+            local _, cursorY = GetCursorPosition()
+            cursorY = cursorY / scale
+
+            -- Map cursor to insertion slot in [1, rowCount + 1].
+            local topY = tabContent:GetTop() + listStartY
+            local relative = topY - cursorY
+            local slot = math.floor((relative + (ROW_STEP * 0.5)) / ROW_STEP) + 1
+            if slot < 1 then slot = 1 end
+            if slot > (rowCount + 1) then slot = rowCount + 1 end
+            return slot
+        end
+
+        local function CommitDragOrder()
+            if not dragState.fromIndex or not dragState.toIndex then
+                return false
+            end
+
+            local moving = dt.currencyOrder[dragState.fromIndex]
+            if not moving then
+                return false
+            end
+
+            local targetIndex = dragState.toIndex
+            if targetIndex > dragState.fromIndex then
+                targetIndex = targetIndex - 1
+            end
+
+            if targetIndex < 1 then targetIndex = 1 end
+            if targetIndex > #dt.currencyOrder then targetIndex = #dt.currencyOrder end
+            if targetIndex == dragState.fromIndex then
+                return false
+            end
+
+            table.remove(dt.currencyOrder, dragState.fromIndex)
+            table.insert(dt.currencyOrder, targetIndex, moving)
+            return true
+        end
+
+        for idx, currencyId in ipairs(dt.currencyOrder) do
+            local row = CreateFrame("Button", nil, tabContent, "BackdropTemplate")
+            row:SetHeight(ROW_HEIGHT)
+            row:SetPoint("TOPLEFT", PAD, y)
+            row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            local px = (QUICore and QUICore.GetPixelSize and QUICore:GetPixelSize(row)) or 1
+            row:SetBackdrop({
+                bgFile = "Interface\\Buttons\\WHITE8x8",
+                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                edgeSize = px,
+            })
+            row:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 0.8)
+            row:SetBackdropBorderColor(0.28, 0.28, 0.28, 1)
+            row:EnableMouse(true)
+            row:SetMovable(true)
+            row:RegisterForDrag("LeftButton")
+
+            local dragHandleZone = CreateFrame("Frame", nil, row, "BackdropTemplate")
+            dragHandleZone:SetPoint("TOPLEFT", row, "TOPLEFT", 2, -2)
+            dragHandleZone:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 2, 2)
+            dragHandleZone:SetWidth(26)
+            local handlePx = (QUICore and QUICore.GetPixelSize and QUICore:GetPixelSize(dragHandleZone)) or 1
+            dragHandleZone:SetBackdrop({
+                bgFile = "Interface\\Buttons\\WHITE8x8",
+                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                edgeSize = handlePx,
+            })
+            dragHandleZone:SetBackdropColor(C.bgLight[1], C.bgLight[2], C.bgLight[3], 0.45)
+            dragHandleZone:SetBackdropBorderColor(0.22, 0.24, 0.28, 1)
+
+            local dragHint = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            dragHint:SetPoint("CENTER", dragHandleZone, "CENTER", 0, 0)
+            dragHint:SetText("::")
+            dragHint:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+
+            local displayName = trackedById[currencyId] and trackedById[currencyId].text or ("Unknown (" .. tostring(currencyId) .. ")")
+            local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            nameText:SetPoint("LEFT", dragHandleZone, "RIGHT", 8, 0)
+            nameText:SetPoint("RIGHT", -120, 0)
+            nameText:SetJustifyH("LEFT")
+            nameText:SetText(displayName)
+            nameText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+
+            local showCheck
+            local function SetShowValue(val, skipRefresh)
+                local finalValue = val and true or false
+                dt.currencyEnabled[currencyId] = finalValue
+                if showCheck then showCheck:SetChecked(finalValue, true) end
+
+                if not skipRefresh then
+                    RefreshCurrenciesDatatext()
+                    RebuildDatatextTab()
+                end
+            end
+
+            showCheck = UIKit.CreateAccentCheckbox(row, {
+                size = 16,
+                checked = dt.currencyEnabled[currencyId] ~= false,
+                colors = C,
+                onChange = function(checked)
+                    SetShowValue(checked)
+                end,
+            })
+            showCheck:SetPoint("RIGHT", -40, 0)
+
+            local showLabel = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            showLabel:SetPoint("LEFT", showCheck, "RIGHT", 4, 0)
+            showLabel:SetText("Show")
+            showLabel:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+
+            local initialShow = dt.currencyEnabled[currencyId] ~= false
+            SetShowValue(initialShow, true)
+
+            local function IsCursorOnHandle()
+                local scale = UIParent:GetEffectiveScale() or 1
+                local cursorX = (GetCursorPosition() or 0) / scale
+                local left = dragHandleZone:GetLeft()
+                local right = dragHandleZone:GetRight()
+                return left and right and cursorX >= left and cursorX <= right
+            end
+
+            row:SetScript("OnDragStart", function(self)
+                if not IsCursorOnHandle() then
+                    return
+                end
+                dragState.active = true
+                dragState.row = self
+                dragState.fromIndex = idx
+                dragState.toIndex = idx
+                dragState.rowBaseStrata = self:GetFrameStrata()
+                dragState.rowBaseLevel = self:GetFrameLevel()
+                dragState.rowBaseAlpha = self:GetAlpha()
+                self:StartMoving()
+                self:SetFrameStrata("TOOLTIP")
+                self:SetFrameLevel(400)
+                self:SetAlpha(0.92)
+                self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                dragHandleZone:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                LayoutCurrencyRows(self, dragState.toIndex)
+
+                self:SetScript("OnUpdate", function()
+                    if not dragState.active then return end
+                    local nextIndex = ComputeDropIndex()
+                    if nextIndex ~= dragState.toIndex then
+                        dragState.toIndex = nextIndex
+                        LayoutCurrencyRows(dragState.row, dragState.toIndex)
+                    end
+                end)
+            end)
+            row:SetScript("OnEnter", function(self)
+                if dragState.active and dragState.row ~= self then
+                    self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                elseif not dragState.active then
+                    dragHandleZone:SetBackdropBorderColor(0.30, 0.34, 0.40, 1)
+                end
+            end)
+            row:SetScript("OnLeave", function(self)
+                if not (dragState.active and dragState.row == self) then
+                    self:SetBackdropBorderColor(0.28, 0.28, 0.28, 1)
+                end
+                if not (dragState.active and dragState.row == self) then
+                    dragHandleZone:SetBackdropBorderColor(0.22, 0.24, 0.28, 1)
+                end
+            end)
+            row:SetScript("OnDragStop", function(self)
+                if not dragState.active then
+                    return
+                end
+                self:StopMovingOrSizing()
+                self:SetScript("OnUpdate", nil)
+                self:SetAlpha(dragState.rowBaseAlpha or 1)
+                self:SetBackdropBorderColor(0.28, 0.28, 0.28, 1)
+                dragHandleZone:SetBackdropBorderColor(0.22, 0.24, 0.28, 1)
+                self:SetFrameStrata(dragState.rowBaseStrata or "MEDIUM")
+                if dragState.rowBaseLevel then
+                    self:SetFrameLevel(dragState.rowBaseLevel)
+                end
+                dragState.active = false
+
+                local changed = CommitDragOrder()
+                dragState.row = nil
+                dragState.fromIndex = nil
+                dragState.toIndex = nil
+                dragState.rowBaseStrata = nil
+                dragState.rowBaseLevel = nil
+                dragState.rowBaseAlpha = nil
+                placeholder:Hide()
+                LayoutCurrencyRows(nil, nil)
+
+                if changed then
+                    RefreshCurrenciesDatatext()
+                    RebuildDatatextTab()
+                end
+            end)
+
+            currencyRows[#currencyRows + 1] = row
+            y = y - ROW_STEP
+        end
+
+        LayoutCurrencyRows(nil, nil)
+
+        if #dt.currencyOrder == 0 then
+            local emptyNote = GUI:CreateLabel(tabContent, "No tracked currencies yet. Track currencies in the Currency Panel and this list will update immediately.", 11, C.textMuted)
+            emptyNote:SetPoint("TOPLEFT", PAD, y + 6)
+            emptyNote:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            emptyNote:SetJustifyH("LEFT")
+            y = y - 20
+        end
 
         y = y - 10
 
