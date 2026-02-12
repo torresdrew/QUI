@@ -2819,14 +2819,14 @@ local function DisableCastbarEditMode()
     for unitKey, showed in pairs(EditModeState.showedPreviews) do
         if showed then
             HideCastbarEditOverlay(unitKey)
-            -- Only disable preview mode for free-floating castbars (showed == true, not "anchored")
-            if showed == true then
-                local settings = GetUnitSettings(unitKey)
-                if settings and settings.castbar then
-                    settings.castbar.previewMode = false
-                    if QUI_UF then
-                        QUI_UF:RefreshFrame(unitKey)
-                    end
+            -- Disable preview mode for any castbar that Edit Mode turned on.
+            -- showedPreviews only tracks units we explicitly enabled, so this won't
+            -- override user-enabled preview states from outside Edit Mode.
+            local settings = GetUnitSettings(unitKey)
+            if settings and settings.castbar then
+                settings.castbar.previewMode = false
+                if QUI_UF then
+                    QUI_UF:RefreshFrame(unitKey)
                 end
             end
         end
