@@ -23,6 +23,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.31.0 - 2026-02-12
+
+### Added
+- added options to order currencies in datatexts
+
+### Fixed
+- fixed taint issues with cdm swipes
+- properly place swapped resource bars
 ## v2.30.2 - 2026-02-12
 
 ### Fixed
