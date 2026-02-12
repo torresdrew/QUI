@@ -34,6 +34,8 @@ local DEFAULTS = {
     hideWorldMapBlackout = false,
 }
 
+local pendingObjectiveTrackerHide = false
+
 -- Get settings from AceDB via shared helper
 local function GetSettings()
     local uiHider = Helpers.GetModuleSettings("uiHider", DEFAULTS)
@@ -176,31 +178,49 @@ local function ApplyHideSettings()
         end
 
         if shouldHide then
-            ObjectiveTrackerFrame:Hide()
-            ObjectiveTrackerFrame:EnableMouse(false)  -- Prevent hidden frame from blocking clicks
+            if InCombatLockdown() then
+                pendingObjectiveTrackerHide = true
+            else
+                ObjectiveTrackerFrame:Hide()
+                ObjectiveTrackerFrame:EnableMouse(false)  -- Prevent hidden frame from blocking clicks
+                pendingObjectiveTrackerHide = false
+            end
+
             -- Hook Show() to prevent Blizzard from showing it again (quest updates, boss fights, etc.)
             if not ObjectiveTrackerFrame._QUI_ShowHooked then
                 ObjectiveTrackerFrame._QUI_ShowHooked = true
                 hooksecurefunc(ObjectiveTrackerFrame, "Show", function(self)
-                    local s = GetSettings()
-                    if s then
-                        local shouldHideNow = false
-                        if s.hideObjectiveTrackerAlways then
-                            shouldHideNow = true
-                        elseif ShouldHideInCurrentInstance(s.hideObjectiveTrackerInstanceTypes) then
-                            shouldHideNow = true
-                        end
+                    -- Break secure call chains before enforcing hidden state
+                    C_Timer.After(0, function()
+                        local s = GetSettings()
+                        if s then
+                            local shouldHideNow = false
+                            if s.hideObjectiveTrackerAlways then
+                                shouldHideNow = true
+                            elseif ShouldHideInCurrentInstance(s.hideObjectiveTrackerInstanceTypes) then
+                                shouldHideNow = true
+                            end
 
-                        if shouldHideNow then
-                            self:Hide()
-                            self:EnableMouse(false)  -- Prevent hidden frame from blocking clicks
+                            if shouldHideNow then
+                                if type(InCombatLockdown) == "function" and InCombatLockdown() then
+                                    pendingObjectiveTrackerHide = true
+                                    return
+                                end
+
+                                self:Hide()
+                                self:EnableMouse(false)  -- Prevent hidden frame from blocking clicks
+                                pendingObjectiveTrackerHide = false
+                            end
                         end
-                    end
+                    end)
                 end)
             end
         else
-            ObjectiveTrackerFrame:Show()
-            ObjectiveTrackerFrame:EnableMouse(true)  -- Restore mouse when shown
+            pendingObjectiveTrackerHide = false
+            if not (type(InCombatLockdown) == "function" and InCombatLockdown()) then
+                ObjectiveTrackerFrame:Show()
+                ObjectiveTrackerFrame:EnableMouse(true)  -- Restore mouse when shown
+            end
         end
     end
     
@@ -583,6 +603,7 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 eventFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
 eventFrame:RegisterEvent("ADDON_LOADED")
@@ -597,6 +618,16 @@ eventFrame:SetScript("OnEvent", function(self, event, addon)
         -- Re-apply settings now that TalkingHeadFrame exists
         if settings then
             _G.QUI_RefreshUIHider()
+        end
+        return
+    end
+
+    if event == "PLAYER_REGEN_ENABLED" then
+        if pendingObjectiveTrackerHide then
+            pendingObjectiveTrackerHide = false
+        end
+        if settings then
+            ApplyHideSettings()
         end
         return
     end

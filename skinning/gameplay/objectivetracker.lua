@@ -421,6 +421,33 @@ local function ScheduleBackdropUpdate()
     end)
 end
 
+-- Combat-safe gate for ObjectiveTracker layout mutations (width/height/size)
+local pendingProtectedLayoutUpdate = false
+local protectedLayoutEventFrame = CreateFrame("Frame")
+protectedLayoutEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+protectedLayoutEventFrame:SetScript("OnEvent", function()
+    if not pendingProtectedLayoutUpdate then return end
+    pendingProtectedLayoutUpdate = false
+
+    local settings = GetSettings()
+    if not settings or not settings.skinObjectiveTracker then return end
+
+    SyncBlizzardHeight()
+    ApplyMaxWidth(settings)
+    ScheduleBackdropUpdate()
+end)
+
+local function ApplyLayoutSettingsSafely(settings)
+    if type(InCombatLockdown) == "function" and InCombatLockdown() then
+        pendingProtectedLayoutUpdate = true
+        return false
+    end
+
+    SyncBlizzardHeight()
+    ApplyMaxWidth(settings)
+    return true
+end
+
 -- Reposition all lines within a block based on their actual heights
 -- This fixes overlap caused by font changes affecting text wrapping
 local function RepositionBlockLines(block)
@@ -674,11 +701,8 @@ local function SkinObjectiveTracker()
 
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
 
-    -- Sync Blizzard's height with our max height setting
-    SyncBlizzardHeight()
-
-    -- Apply max width setting
-    ApplyMaxWidth(settings)
+    -- Sync Blizzard height/width with combat-safe deferral
+    ApplyLayoutSettingsSafely(settings)
 
     -- Apply QUI backdrop with our colors/opacity
     ApplyQUIBackdrop(TrackerFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
@@ -785,11 +809,8 @@ local function RefreshObjectiveTracker()
 
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
 
-    -- Sync Blizzard's height with our max height setting
-    SyncBlizzardHeight()
-
-    -- Update max width setting
-    ApplyMaxWidth(settings)
+    -- Sync Blizzard height/width with combat-safe deferral
+    ApplyLayoutSettingsSafely(settings)
 
     -- Update backdrop colors (SetBackdrop resets colors, so must re-apply both)
     if TrackerFrame.quiBackdrop then
@@ -913,7 +934,7 @@ frame:SetScript("OnEvent", function(self, event)
         C_Timer.After(0.2, function()
             local settings = GetSettings()
             if settings and settings.skinObjectiveTracker then
-                ApplyMaxWidth(settings)
+                ApplyLayoutSettingsSafely(settings)
             end
         end)
         ScheduleBackdropUpdate()
