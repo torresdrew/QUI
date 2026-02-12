@@ -1487,6 +1487,7 @@ local function Initialize()
     -- CRITICAL: OnSizeChanged hook - immediate response when Blizzard resizes viewer
     if BuffIconCooldownViewer then
         BuffIconCooldownViewer:HookScript("OnSizeChanged", function(self)
+            if InCombatLockdown() then return end
             if IsLayoutSuppressed() then return end
             if isIconLayoutRunning then return end  -- Re-entry guard
             LayoutBuffIcons()  -- Direct call
@@ -1496,6 +1497,7 @@ local function Initialize()
     -- OnShow hook - refresh when viewer becomes visible
     if BuffIconCooldownViewer then
         BuffIconCooldownViewer:HookScript("OnShow", function(self)
+            if InCombatLockdown() then return end
             if IsLayoutSuppressed() then return end
             if isIconLayoutRunning then return end
             LayoutBuffIcons()  -- Direct call
@@ -1506,6 +1508,7 @@ local function Initialize()
     -- hooksecurefunc runs AFTER original function returns, so Blizzard is already done
     if BuffIconCooldownViewer and BuffIconCooldownViewer.Layout then
         hooksecurefunc(BuffIconCooldownViewer, "Layout", function()
+            if InCombatLockdown() then return end
             if IsLayoutSuppressed() then return end
             if isIconLayoutRunning then return end
             LayoutBuffIcons()  -- Immediate - no defer needed
@@ -1514,6 +1517,7 @@ local function Initialize()
 
     if BuffBarCooldownViewer and BuffBarCooldownViewer.Layout then
         hooksecurefunc(BuffBarCooldownViewer, "Layout", function()
+            if InCombatLockdown() then return end
             if IsLayoutSuppressed() then return end
             if isBarLayoutRunning then return end
             LayoutBuffBars()
@@ -1526,6 +1530,7 @@ local function Initialize()
     -- Using hooksecurefunc is safer than replacing methods - avoids breaking Blizzard's code paths.
     if BuffBarCooldownViewer and BuffBarCooldownViewer.RefreshLayout then
         hooksecurefunc(BuffBarCooldownViewer, "RefreshLayout", function(self)
+            if InCombatLockdown() then return end
             local settings = GetTrackedBarSettings()
             if settings.enabled and settings.orientation == "vertical" then
                 -- Blizzard just set isHorizontal=true, we need to fix it

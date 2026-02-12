@@ -145,6 +145,7 @@ local function StripBlizzardOverlay(icon)
                 region:SetTexture("")
                 region:Hide()
                 hooksecurefunc(region, "Show", function(self)
+                    if InCombatLockdown() then return end
                     self:Hide()
                 end)
             end
@@ -162,6 +163,7 @@ local function PreventAtlasBorder(texture)
     -- Hook future SetAtlas calls to block border re-application
     if texture.SetAtlas then
         hooksecurefunc(texture, "SetAtlas", function(self)
+            if InCombatLockdown() then return end
             if self.SetTexture then self:SetTexture(nil) end
             if self.SetAlpha then self:SetAlpha(0) end
         end)
@@ -318,6 +320,7 @@ local function SkinIcon(icon, size, aspectRatioCrop, zoom, borderSize, borderCol
             if not icon.CooldownFlash._ncdmHooked then
                 icon.CooldownFlash._ncdmHooked = true
                 hooksecurefunc(icon.CooldownFlash, "Show", function(self)
+                    if InCombatLockdown() then return end
                     self:SetAlpha(0)
                 end)
             end
@@ -650,6 +653,7 @@ local function LayoutViewer(viewerName, trackerKey)
 
     local settings = GetTrackerSettings(trackerKey)
     if not settings or not settings.enabled then return end
+    if InCombatLockdown() then return end
 
     -- Prevent re-entry during layout
     if NCDM.applying[trackerKey] then return end
@@ -1025,6 +1029,7 @@ local function HookViewer(viewerName, trackerKey)
 
     -- Step 1 & 3: OnShow hook - enable polling and single deferred layout
     viewer:HookScript("OnShow", function(self)
+        if InCombatLockdown() then return end
         -- Enable polling when viewer becomes visible
         if self.__ncdmUpdateFrame then
             self.__ncdmUpdateFrame:Show()
@@ -1052,6 +1057,7 @@ local function HookViewer(viewerName, trackerKey)
     viewer:HookScript("OnSizeChanged", function(self)
         -- Increment layout counter so OnUpdate knows Blizzard changed something
         self.__ncdmBlizzardLayoutCount = (self.__ncdmBlizzardLayoutCount or 0) + 1
+        if InCombatLockdown() then return end
         if self.__cdmLayoutSuppressed or self.__cdmLayoutRunning then
             return
         end

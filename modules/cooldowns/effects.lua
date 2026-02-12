@@ -36,6 +36,7 @@ local function HideCooldownEffects(child)
                 -- Hook Show to prevent it from showing
                 if frame.Show then
                     hooksecurefunc(frame, "Show", function(self)
+                        if InCombatLockdown() then return end
                         self:Hide()
                         self:SetAlpha(0)
                     end)
@@ -44,6 +45,7 @@ local function HideCooldownEffects(child)
                 -- Also hook parent OnShow
                 if child.HookScript then
                     child:HookScript("OnShow", function(self)
+                        if InCombatLockdown() then return end
                         local f = self[frameName]
                         if f then
                             f:Hide()
@@ -144,6 +146,7 @@ local function ProcessViewer(viewerName)
     if not viewer._QUI_EffectsShowHooked then
         viewer._QUI_EffectsShowHooked = true
         viewer:HookScript("OnShow", function()
+            if InCombatLockdown() then return end
             C_Timer.After(0.15, ProcessIcons)  -- 150ms debounce for CPU efficiency
         end)
     end
