@@ -32,6 +32,81 @@ local function ShouldHideHealthBar()
     return settings and settings.hideHealthBar
 end
 
+local DEFAULT_TOOLTIP_FONT_SIZE = 12
+local MIN_TOOLTIP_FONT_SIZE = 8
+local MAX_TOOLTIP_FONT_SIZE = 24
+
+local function GetEffectiveFontSize()
+    local settings = GetSettings()
+    local size = (settings and settings.fontSize) or DEFAULT_TOOLTIP_FONT_SIZE
+    size = tonumber(size) or DEFAULT_TOOLTIP_FONT_SIZE
+    size = math.floor(size + 0.5)
+    if size < MIN_TOOLTIP_FONT_SIZE then
+        size = MIN_TOOLTIP_FONT_SIZE
+    elseif size > MAX_TOOLTIP_FONT_SIZE then
+        size = MAX_TOOLTIP_FONT_SIZE
+    end
+    return size
+end
+
+local function SetTooltipFontObjectSize(fontObject, size)
+    if not fontObject or not fontObject.GetFont or not fontObject.SetFont then return end
+    local fontPath, _, flags = fontObject:GetFont()
+    if not fontPath then
+        fontPath = Helpers.GetGeneralFont and Helpers.GetGeneralFont() or STANDARD_TEXT_FONT
+        flags = Helpers.GetGeneralFontOutline and Helpers.GetGeneralFontOutline() or ""
+    end
+    fontObject:SetFont(fontPath, size, flags or "")
+end
+
+local function ApplyTooltipFontSize()
+    local baseSize = GetEffectiveFontSize()
+    SetTooltipFontObjectSize(_G.GameTooltipText, baseSize)
+    SetTooltipFontObjectSize(_G.GameTooltipTextSmall, math.max(baseSize - 1, MIN_TOOLTIP_FONT_SIZE))
+    SetTooltipFontObjectSize(_G.GameTooltipHeaderText, baseSize + 2)
+end
+
+local function SetFontStringSize(fontString, size)
+    if not fontString or not fontString.GetFont or not fontString.SetFont then return end
+    local fontPath, _, flags = fontString:GetFont()
+    if not fontPath then
+        fontPath = Helpers.GetGeneralFont and Helpers.GetGeneralFont() or STANDARD_TEXT_FONT
+        flags = Helpers.GetGeneralFontOutline and Helpers.GetGeneralFontOutline() or ""
+    end
+    fontString:SetFont(fontPath, size, flags or "")
+end
+
+local function ApplyTooltipFontSizeToFrame(tooltip)
+    if not tooltip then return end
+    local baseSize = GetEffectiveFontSize()
+    local headerSize = baseSize + 2
+    local tooltipName = tooltip.GetName and tooltip:GetName()
+
+    if tooltipName and tooltip.NumLines then
+        local lineCount = tooltip:NumLines() or 0
+        if lineCount > 0 then
+            for i = 1, lineCount do
+                local left = _G[tooltipName .. "TextLeft" .. i]
+                local right = _G[tooltipName .. "TextRight" .. i]
+                local size = (i == 1) and headerSize or baseSize
+                SetFontStringSize(left, size)
+                SetFontStringSize(right, size)
+            end
+            return
+        end
+    end
+
+    -- Fallback for unnamed tooltips and named-but-empty tooltips
+    local regions = { tooltip:GetRegions() }
+    local isFirst = true
+    for _, region in ipairs(regions) do
+        if region and region.IsObjectType and region:IsObjectType("FontString") then
+            SetFontStringSize(region, isFirst and headerSize or baseSize)
+            isFirst = false
+        end
+    end
+end
+
 -- Get player class color from RAID_CLASS_COLORS
 local function GetPlayerClassColor()
     local _, classToken = UnitClass("player")
@@ -233,11 +308,23 @@ local function RefreshAllTooltipColors()
     end
 end
 
+local function RefreshAllTooltipFonts()
+    ApplyTooltipFontSize()
+    for _, name in ipairs(tooltipsToSkin) do
+        local tooltip = _G[name]
+        if tooltip then
+            ApplyTooltipFontSizeToFrame(tooltip)
+        end
+    end
+end
+
 -- Hook OnShow to ensure colors stay applied (some tooltips reset on show)
 local function HookTooltipOnShow(tooltip)
     if not tooltip or tooltip.quiOnShowHooked then return end
 
     tooltip:HookScript("OnShow", function(self)
+        ApplyTooltipFontSize()
+        ApplyTooltipFontSizeToFrame(self)
         if not IsEnabled() then return end
         if not self.quiSkinned then
             SkinTooltip(self)
@@ -288,25 +375,29 @@ local function SetupTooltipPostProcessor()
 
     -- This fires after any tooltip is populated with data
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tooltip)
-        if not IsEnabled() then return end
-        if tooltip and not tooltip.quiSkinned then
+        if not tooltip then return end
+        HookTooltipOnShow(tooltip)
+        ApplyTooltipFontSizeToFrame(tooltip)
+        if IsEnabled() and not tooltip.quiSkinned then
             SkinTooltip(tooltip)
-            HookTooltipOnShow(tooltip)
         end
     end)
 
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Spell, function(tooltip)
-        if not IsEnabled() then return end
-        if tooltip and not tooltip.quiSkinned then
+        if not tooltip then return end
+        HookTooltipOnShow(tooltip)
+        ApplyTooltipFontSizeToFrame(tooltip)
+        if IsEnabled() and not tooltip.quiSkinned then
             SkinTooltip(tooltip)
-            HookTooltipOnShow(tooltip)
         end
     end)
 
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip)
-        if IsEnabled() and tooltip and not tooltip.quiSkinned then
+        if not tooltip then return end
+        HookTooltipOnShow(tooltip)
+        ApplyTooltipFontSizeToFrame(tooltip)
+        if IsEnabled() and not tooltip.quiSkinned then
             SkinTooltip(tooltip)
-            HookTooltipOnShow(tooltip)
         end
         -- Health bar hiding works independently of skinning
         UpdateHealthBarVisibility(tooltip)
@@ -338,10 +429,13 @@ eventFrame:SetScript("OnEvent", function(self, event)
     if event == "PLAYER_LOGIN" then
         -- Defer slightly to ensure all tooltips are created
         C_Timer.After(0.5, function()
+            -- Font size is independent from skinning and applies globally to tooltips
+            RefreshAllTooltipFonts()
+            HookAllTooltips()
+
             -- Skinning (only if enabled)
             if IsEnabled() then
                 SkinAllTooltips()
-                HookAllTooltips()
             end
 
             -- Post processor handles both skinning and health bar
@@ -356,3 +450,4 @@ end)
 -- Expose refresh function globally for live color updates
 -- This rebuilds backdrops (for thickness changes) and recolors
 _G.QUI_RefreshTooltipSkinColors = RefreshAllTooltipColors
+_G.QUI_RefreshTooltipFontSize = RefreshAllTooltipFonts

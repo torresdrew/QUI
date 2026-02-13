@@ -1121,6 +1121,7 @@ local defaults = {
             anchorToCursor = true,             -- Follow cursor vs default anchor
             hideInCombat = true,               -- Suppress tooltips during combat
             classColorName = false,            -- Color player names by class
+            fontSize = 12,                     -- Tooltip text font size
             skinTooltips = true,               -- Apply QUI theme to tooltips
             bgColor = {0.05, 0.05, 0.05, 1},  -- Custom background color
             bgOpacity = 0.95,                  -- Background opacity (0-1)
@@ -1129,7 +1130,6 @@ local defaults = {
             borderColor = {0.2, 1.0, 0.6, 1}, -- Border color (default = mint accent)
             borderUseClassColor = false,       -- Use player class color for border
             borderUseAccentColor = false,      -- Use addon accent color for border
-            hideHealthBar = false,             -- Hide health bar on unit tooltips
             showSpellIDs = false,              -- Show spell ID and icon ID on buff/debuff tooltips
             -- Per-Context Visibility (SHOW/HIDE/SHIFT/CTRL/ALT)
             visibility = {

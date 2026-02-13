@@ -10,6 +10,8 @@ local C = GUI.Colors
 
 -- Import shared utilities
 local Shared = ns.QUI_Options
+local TOOLTIP_FONT_SIZE_MIN = 8
+local TOOLTIP_FONT_SIZE_MAX = 24
 
 local function BuildTooltipTab(tabContent)
     local y = -10
@@ -24,6 +26,15 @@ local function BuildTooltipTab(tabContent)
     local function RefreshTooltips()
         if _G.QUI_RefreshTooltips then
             _G.QUI_RefreshTooltips()
+        end
+    end
+
+    local function RefreshTooltipFontSize()
+        if _G.QUI_RefreshTooltipFontSize then
+            _G.QUI_RefreshTooltipFontSize()
+        else
+            -- Fallback path if skinning module has not initialized yet.
+            RefreshTooltips()
         end
     end
 
@@ -169,6 +180,17 @@ local function BuildTooltipTab(tabContent)
     hideHealthInfo:SetPoint("TOPLEFT", PADDING, y)
     hideHealthInfo:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
     hideHealthInfo:SetJustifyH("LEFT")
+    y = y - FORM_ROW
+
+    local fontSizeSlider = GUI:CreateFormSlider(tabContent, "Tooltip Font Size", TOOLTIP_FONT_SIZE_MIN, TOOLTIP_FONT_SIZE_MAX, 1, "fontSize", tooltip, RefreshTooltipFontSize)
+    fontSizeSlider:SetPoint("TOPLEFT", PADDING, y)
+    fontSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    y = y - FORM_ROW
+
+    local fontSizeInfo = GUI:CreateLabel(tabContent, "Adjust tooltip text size (" .. TOOLTIP_FONT_SIZE_MIN .. "-" .. TOOLTIP_FONT_SIZE_MAX .. ").", 10, C.textMuted)
+    fontSizeInfo:SetPoint("TOPLEFT", PADDING, y)
+    fontSizeInfo:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    fontSizeInfo:SetJustifyH("LEFT")
     y = y - FORM_ROW
 
     local spellIDCheck = GUI:CreateFormCheckbox(tabContent, "Show Spell/Icon IDs", "showSpellIDs", tooltip, RefreshTooltips)
