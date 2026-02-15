@@ -19,6 +19,9 @@ local pendingUpdate = false
 -- Debounce timer handle for GROUP_ROSTER_UPDATE
 local rosterTimer = nil
 
+-- Hook install guard for Danders test mode callbacks
+local previewHooksInstalled = false
+
 ---------------------------------------------------------------------------
 -- DATABASE ACCESS
 ---------------------------------------------------------------------------
@@ -39,20 +42,78 @@ end
 ---------------------------------------------------------------------------
 -- CONTAINER FRAME RESOLUTION
 ---------------------------------------------------------------------------
-function QUI_DandersFrames:GetContainerFrame(containerKey)
+local function AddUniqueFrame(frames, seen, frame)
+    if not frame or seen[frame] then
+        return
+    end
+    seen[frame] = true
+    table.insert(frames, frame)
+end
+
+local function IsFrameProtected(frame)
+    if not frame then return false end
+    if type(frame.IsProtected) ~= "function" then return false end
+
+    local ok, isProtected = pcall(frame.IsProtected, frame)
+    return ok and isProtected or false
+end
+
+local function GetDandersAddon()
+    return _G["DandersFrames"]
+end
+
+local function GetPartyLiveContainer()
+    local danders = GetDandersAddon()
+    -- Header mode roots party layout in DF.container; partyContainer is SetAllPoints.
+    if danders and danders.container then
+        return danders.container
+    end
+    -- Fallback to known root container global.
+    if _G["DandersFramesContainer"] then
+        return _G["DandersFramesContainer"]
+    end
+    -- Intentionally do not fall back to DandersFrames_GetPartyContainer():
+    -- that API can point at partyContainer, which should remain SetAllPoints
+    -- to the root container and must not be independently re-anchored.
+    return nil
+end
+
+function QUI_DandersFrames:GetContainerFrames(containerKey)
     if not self:IsAvailable() then return nil end
 
-    if containerKey == "party" and type(DandersFrames_GetPartyContainer) == "function" then
-        return DandersFrames_GetPartyContainer()
-    elseif containerKey == "raid" and type(DandersFrames_GetRaidContainer) == "function" then
-        return DandersFrames_GetRaidContainer()
+    local frames = {}
+    local seen = {}
+    local danders = GetDandersAddon()
+
+    if containerKey == "party" then
+        -- Anchor the live party root container (not partyContainer) so we don't
+        -- break Danders' internal SetAllPoints relationship.
+        AddUniqueFrame(frames, seen, GetPartyLiveContainer())
+        -- Danders test mode party preview container (non-secure)
+        AddUniqueFrame(frames, seen, _G["DandersTestPartyContainer"])
+        if danders and danders.testPartyContainer then
+            AddUniqueFrame(frames, seen, danders.testPartyContainer)
+        end
+    elseif containerKey == "raid" then
+        if type(DandersFrames_GetRaidContainer) == "function" then
+            AddUniqueFrame(frames, seen, DandersFrames_GetRaidContainer())
+        end
+        -- Danders test mode raid preview container (non-secure)
+        AddUniqueFrame(frames, seen, _G["DandersTestRaidContainer"])
+        if danders and danders.testRaidContainer then
+            AddUniqueFrame(frames, seen, danders.testRaidContainer)
+        end
     elseif containerKey == "pinned1" and type(DandersFrames_GetPinnedContainer) == "function" then
-        return DandersFrames_GetPinnedContainer(1)
+        AddUniqueFrame(frames, seen, DandersFrames_GetPinnedContainer(1))
     elseif containerKey == "pinned2" and type(DandersFrames_GetPinnedContainer) == "function" then
-        return DandersFrames_GetPinnedContainer(2)
+        AddUniqueFrame(frames, seen, DandersFrames_GetPinnedContainer(2))
     end
 
-    return nil
+    if #frames == 0 then
+        return nil
+    end
+
+    return frames
 end
 
 ---------------------------------------------------------------------------
@@ -128,30 +189,38 @@ function QUI_DandersFrames:ApplyPosition(containerKey)
     local cfg = db[containerKey]
     if not cfg.enabled or cfg.anchorTo == "disabled" then return end
 
-    -- Defer during combat (DF containers parent secure headers)
-    if InCombatLockdown() then
-        pendingUpdate = true
-        return
-    end
-
-    local container = self:GetContainerFrame(containerKey)
-    if not container then return end
+    local containers = self:GetContainerFrames(containerKey)
+    if not containers then return end
 
     local anchorFrame = self:GetAnchorFrame(cfg.anchorTo)
     if not anchorFrame then return end
 
-    local ok = pcall(function()
-        container:ClearAllPoints()
-        container:SetPoint(
-            cfg.sourcePoint or "TOP",
-            anchorFrame,
-            cfg.targetPoint or "BOTTOM",
-            cfg.offsetX or 0,
-            cfg.offsetY or -5
-        )
-    end)
+    local inCombat = InCombatLockdown()
+    local shouldRetryAfterCombat = false
 
-    if not ok then
+    for _, container in ipairs(containers) do
+        -- Live DF containers are protected in combat; preview containers are not.
+        if inCombat and IsFrameProtected(container) then
+            shouldRetryAfterCombat = true
+        else
+            local ok = pcall(function()
+                container:ClearAllPoints()
+                container:SetPoint(
+                    cfg.sourcePoint or "TOP",
+                    anchorFrame,
+                    cfg.targetPoint or "BOTTOM",
+                    cfg.offsetX or 0,
+                    cfg.offsetY or -5
+                )
+            end)
+
+            if not ok then
+                shouldRetryAfterCombat = true
+            end
+        end
+    end
+
+    if shouldRetryAfterCombat then
         pendingUpdate = true
     end
 end
@@ -210,6 +279,12 @@ eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 ---------------------------------------------------------------------------
 local initialized = false
 
+local function QueueApplyPosition(containerKey, delay)
+    C_Timer.After(delay or 0, function()
+        QUI_DandersFrames:ApplyPosition(containerKey)
+    end)
+end
+
 function QUI_DandersFrames:Initialize()
     if initialized then return end
     if not self:IsAvailable() then return end
@@ -224,5 +299,27 @@ function QUI_DandersFrames:Initialize()
             previousUpdateAnchoredFrames(...)
             QUI_DandersFrames:ApplyAllPositions()
         end
+    end
+
+    -- Re-apply QUI anchors right after Danders test mode shows preview containers.
+    -- Danders positions preview containers from its own anchor values on activation.
+    if not previewHooksInstalled then
+        local danders = _G["DandersFrames"]
+        if danders and type(danders.ShowTestFrames) == "function" then
+            hooksecurefunc(danders, "ShowTestFrames", function()
+                -- Danders can do a late layout pass while showing previews.
+                -- Apply immediately and once more shortly after.
+                QueueApplyPosition("party", 0)
+                QueueApplyPosition("party", 0.05)
+            end)
+        end
+        if danders and type(danders.ShowRaidTestFrames) == "function" then
+            hooksecurefunc(danders, "ShowRaidTestFrames", function()
+                -- Mirror party behavior for raid preview containers.
+                QueueApplyPosition("raid", 0)
+                QueueApplyPosition("raid", 0.05)
+            end)
+        end
+        previewHooksInstalled = true
     end
 end
