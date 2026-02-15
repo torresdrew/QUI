@@ -348,6 +348,25 @@ local function SkinIcon(icon, size, aspectRatioCrop, zoom, borderSize, borderCol
 end
 
 ---------------------------------------------------------------------------
+-- HELPER: Apply only frame size (combat-safe lightweight path)
+---------------------------------------------------------------------------
+local function ApplyIconSizeOnly(icon, size, aspectRatioCrop)
+    if not icon or not size or size <= 0 then return end
+
+    local aspectRatio = aspectRatioCrop or 1.0
+    local width = size
+    local height = size / aspectRatio
+
+    -- Pixel-snap icon dimensions to prevent sub-pixel edge rounding
+    if QUICore and QUICore.PixelRound then
+        width = QUICore:PixelRound(width, icon)
+        height = QUICore:PixelRound(height, icon)
+    end
+
+    pcall(icon.SetSize, icon, width, height)
+end
+
+---------------------------------------------------------------------------
 -- HELPER: Process pending icons after combat ends
 ---------------------------------------------------------------------------
 local function ProcessPendingIcons()
@@ -362,6 +381,7 @@ local function ProcessPendingIcons()
     end
 
     for icon, data in pairs(NCDM.pendingIcons) do
+        local processed = false
         if icon and icon:IsShown() then
             local success = pcall(SkinIcon, icon, data.size, data.aspectRatioCrop, data.zoom, data.borderSize, data.borderColorTable)
             if success then
@@ -370,7 +390,13 @@ local function ProcessPendingIcons()
                     data.durationTextColor, data.durationAnchor, data.stackTextColor, data.stackAnchor)
                 icon.__cdmSkinned = true
                 icon.__cdmSkinPending = nil
+                processed = true
             end
+        end
+        -- If icon was hidden or skinning failed, clear pending flag so
+        -- LayoutViewer can queue/skin it again on the next pass.
+        if icon and not processed then
+            icon.__cdmSkinPending = nil
         end
         NCDM.pendingIcons[icon] = nil
     end
@@ -881,8 +907,11 @@ local function LayoutViewer(viewerName, trackerKey)
             end
 
             -- Only skin if not already skinned with these settings
-            if not icon.__cdmSkinned and not icon.__cdmSkinPending then
+            if not icon.__cdmSkinned then
                 if InCombatLockdown() then
+                    -- Combat-safe immediate size inheritance so custom icons do not
+                    -- temporarily display at their creation size.
+                    ApplyIconSizeOnly(icon, rowConfig.size, rowConfig.aspectRatioCrop)
                     -- Queue for after combat
                     QueueIconForSkinning(icon, rowConfig.size, rowConfig.aspectRatioCrop, rowConfig.zoom,
                         rowConfig.borderSize, rowConfig.borderColorTable, rowConfig.durationSize, rowConfig.stackSize,
@@ -1272,6 +1301,10 @@ local function RefreshAll()
         -- Unit frames anchored to CDM
         if _G.QUI_UpdateCDMAnchoredUnitFrames then
             _G.QUI_UpdateCDMAnchoredUnitFrames()
+        end
+        -- Re-hook icons for mouseover visibility (covers newly rebuilt custom icons).
+        if _G.QUI_RefreshCDMMouseover then
+            _G.QUI_RefreshCDMMouseover()
         end
     end)
 end
@@ -1683,11 +1716,15 @@ local function SetupCDMMouseoverDetector()
     end
 
     -- Hook existing icons from each viewer
+    local viewerToTracker = {
+        EssentialCooldownViewer = "essential",
+        UtilityCooldownViewer = "utility",
+    }
     local viewers = {"EssentialCooldownViewer", "UtilityCooldownViewer", "BuffIconCooldownViewer", "BuffBarCooldownViewer"}
     for _, viewerName in ipairs(viewers) do
         local viewer = _G[viewerName]
         if viewer then
-            local icons = CollectIcons(viewer)
+            local icons = CollectIcons(viewer, viewerToTracker[viewerName])
             for _, icon in ipairs(icons) do
                 HookFrameForMouseover(icon)
             end
@@ -1712,6 +1749,7 @@ local UnitframesVisibility = {
     fadeFrame = nil,
     mouseOver = false,
     mouseoverDetector = nil,
+    leaveTimer = nil,
 }
 
 -- Get unitframesVisibility settings from profile
@@ -1871,6 +1909,11 @@ local function SetupUnitframesMouseoverDetector()
         UnitframesVisibility.mouseoverDetector:Hide()
         UnitframesVisibility.mouseoverDetector = nil
     end
+
+    if UnitframesVisibility.leaveTimer then
+        UnitframesVisibility.leaveTimer:Cancel()
+        UnitframesVisibility.leaveTimer = nil
+    end
     UnitframesVisibility.mouseOver = false
 
     -- Only create if mouseover is enabled and showAlways is disabled
@@ -1889,6 +1932,10 @@ local function SetupUnitframesMouseoverDetector()
 
             -- Hook OnEnter
             frame:HookScript("OnEnter", function()
+                if UnitframesVisibility.leaveTimer then
+                    UnitframesVisibility.leaveTimer:Cancel()
+                    UnitframesVisibility.leaveTimer = nil
+                end
                 hoverCount = hoverCount + 1
                 if hoverCount == 1 then
                     UnitframesVisibility.mouseOver = true
@@ -1900,8 +1947,16 @@ local function SetupUnitframesMouseoverDetector()
             frame:HookScript("OnLeave", function()
                 hoverCount = math.max(0, hoverCount - 1)
                 if hoverCount == 0 then
-                    UnitframesVisibility.mouseOver = false
-                    UpdateUnitframesVisibility()
+                    if UnitframesVisibility.leaveTimer then
+                        UnitframesVisibility.leaveTimer:Cancel()
+                    end
+                    UnitframesVisibility.leaveTimer = C_Timer.After(0.5, function()
+                        UnitframesVisibility.leaveTimer = nil
+                        if hoverCount == 0 then
+                            UnitframesVisibility.mouseOver = false
+                            UpdateUnitframesVisibility()
+                        end
+                    end)
                 end
             end)
         end
