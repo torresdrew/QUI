@@ -137,6 +137,18 @@ local function GetUnitSettings(unit)
     return db and db[unit]
 end
 
+local function IsTargetHealthDirectionInverted(unitKey, settings)
+    return unitKey == "target" and settings and settings.invertHealthDirection == true
+end
+
+local function ApplyHealthFillDirection(frame, settings)
+    if not frame or not frame.healthBar then return false end
+    settings = settings or (frame.unitKey and GetUnitSettings(frame.unitKey))
+    local reverseFill = IsTargetHealthDirectionInverted(frame.unitKey, settings)
+    frame.healthBar:SetReverseFill(reverseFill)
+    return reverseFill
+end
+
 ---------------------------------------------------------------------------
 -- HELPER: Pixel-perfect scaling (uses QUICore:Scale if available)
 ---------------------------------------------------------------------------
@@ -566,11 +578,14 @@ end
 local function UpdateHealth(frame)
     if not frame or not frame.unit or not frame.healthBar then return end
     local unit = frame.unit
+    local settings = GetUnitSettings(frame.unitKey)
     
     -- Don't update if unit doesn't exist
     if not UnitExists(unit) then
         return
     end
+
+    ApplyHealthFillDirection(frame, settings)
     
     -- Get health values directly - StatusBar can handle secret values
     -- The key is to NOT do any comparisons or arithmetic on these values
@@ -583,8 +598,6 @@ local function UpdateHealth(frame)
     
     -- Update health text using new display style system
     if frame.healthText then
-        local settings = GetUnitSettings(frame.unitKey)
-
         -- Check if health text is disabled
         if settings and settings.showHealth == false then
             frame.healthText:Hide()
@@ -623,7 +636,6 @@ local function UpdateHealth(frame)
     
     -- Update health bar color using unit-specific settings
     local general = GetGeneralSettings()
-    local settings = GetUnitSettings(frame.unitKey)
 
     if general and general.darkMode then
         local c = general.darkModeHealthColor or { 0.15, 0.15, 0.15, 1 }
@@ -644,6 +656,7 @@ local function UpdateAbsorbs(frame)
 
     local unit = frame.unit
     local settings = GetUnitSettings(frame.unitKey)
+    local healthReversed = ApplyHealthFillDirection(frame, settings)
 
     -- Check if enabled
     if not settings or not settings.absorbs or settings.absorbs.enabled == false then
@@ -768,12 +781,16 @@ local function UpdateAbsorbs(frame)
         -- No branching based on secret values - just pass alpha directly
 
         -- ATTACHED BAR: Starts where health ENDS, grows RIGHTWARD into empty space
-        -- Anchor LEFT edge of absorb bar to RIGHT edge of health fill texture
+        -- Anchor to the empty side of the health fill (normal: right side, reversed: left side).
         frame.absorbBar:ClearAllPoints()
-        frame.absorbBar:SetPoint("LEFT", healthTexture, "RIGHT", 0, 0)
+        if healthReversed then
+            frame.absorbBar:SetPoint("RIGHT", healthTexture, "LEFT", 0, 0)
+        else
+            frame.absorbBar:SetPoint("LEFT", healthTexture, "RIGHT", 0, 0)
+        end
         frame.absorbBar:SetHeight(frame.healthBar:GetHeight())
         frame.absorbBar:SetWidth(frame.healthBar:GetWidth())  -- Full width available for absorb to fill
-        frame.absorbBar:SetReverseFill(false)  -- Grows LEFT to RIGHT (rightward into empty space)
+        frame.absorbBar:SetReverseFill(healthReversed)
         frame.absorbBar:SetMinMaxValues(0, maxHealth or 1)
         frame.absorbBar:SetValue(clampedAbsorbs)  -- Clamped value (secret-safe via StatusBar)
         frame.absorbBar:SetStatusBarTexture(absorbTexturePath)  -- Apply texture from settings
@@ -786,7 +803,7 @@ local function UpdateAbsorbs(frame)
         frame.absorbOverflowBar:ClearAllPoints()
         frame.absorbOverflowBar:SetPoint("TOPLEFT", frame.healthBar, "TOPLEFT", 0, 0)
         frame.absorbOverflowBar:SetPoint("BOTTOMRIGHT", frame.healthBar, "BOTTOMRIGHT", 0, 0)
-        frame.absorbOverflowBar:SetReverseFill(true)  -- CRITICAL: Fill from RIGHT to LEFT
+        frame.absorbOverflowBar:SetReverseFill(not healthReversed)
         frame.absorbOverflowBar:SetMinMaxValues(0, maxHealth or 1)
         frame.absorbOverflowBar:SetValue(absorbAmount)  -- Full unclamped absorb value
         frame.absorbOverflowBar:SetStatusBarColor(c[1], c[2], c[3], a)  -- Apply color directly to StatusBar
@@ -832,6 +849,7 @@ local function UpdateHealPrediction(frame)
     local unit = frame.unit
     local settings = GetUnitSettings(frame.unitKey)
     local predictionSettings = settings and settings.healPrediction
+    local healthReversed = ApplyHealthFillDirection(frame, settings)
 
     if not predictionSettings or predictionSettings.enabled == false then
         frame.healPredictionBar:Hide()
@@ -891,10 +909,14 @@ local function UpdateHealPrediction(frame)
 
     local healthTexture = frame.healthBar:GetStatusBarTexture()
     frame.healPredictionBar:ClearAllPoints()
-    frame.healPredictionBar:SetPoint("LEFT", healthTexture, "RIGHT", 0, 0)
+    if healthReversed then
+        frame.healPredictionBar:SetPoint("RIGHT", healthTexture, "LEFT", 0, 0)
+    else
+        frame.healPredictionBar:SetPoint("LEFT", healthTexture, "RIGHT", 0, 0)
+    end
     frame.healPredictionBar:SetHeight(frame.healthBar:GetHeight())
     frame.healPredictionBar:SetWidth(frame.healthBar:GetWidth())
-    frame.healPredictionBar:SetReverseFill(false)
+    frame.healPredictionBar:SetReverseFill(healthReversed)
     frame.healPredictionBar:SetMinMaxValues(0, maxHealth or 1)
     frame.healPredictionBar:SetValue(incomingHeals)
     frame.healPredictionBar:SetStatusBarTexture(GetTexturePath(settings.texture))
@@ -1325,6 +1347,7 @@ local function UpdateFrame(frame)
     if frame.healthBar then
         local general = GetGeneralSettings()
         local settings = GetUnitSettings(frame.unitKey)
+        ApplyHealthFillDirection(frame, settings)
 
         if general and general.darkMode then
             local c = general.darkModeHealthColor or { 0.15, 0.15, 0.15, 1 }
@@ -1449,6 +1472,7 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
     healthBar:SetValue(100)
     healthBar:EnableMouse(false)
     frame.healthBar = healthBar
+    ApplyHealthFillDirection(frame, settings)
     -- Absorb bar (StatusBar handles secret values via SetValue)
     -- Use stripe texture directly on StatusBar (no overlay) to avoid 1px sliver at 0 width
     local absorbSettings = settings.absorbs or {}
@@ -1752,6 +1776,7 @@ local function CreateUnitFrame(unit, unitKey)
     healthBar:SetValue(100)
     healthBar:EnableMouse(false)
     frame.healthBar = healthBar
+    ApplyHealthFillDirection(frame, settings)
 
     -- Heal prediction bar (player/target only)
     if unitKey == "player" or unitKey == "target" then
@@ -2329,8 +2354,10 @@ function QUI_UF:ShowPreview(unitKey)
     
     -- Show frame with fake data
     frame:Show()
+    local settings = GetUnitSettings(unitKey)
     
     -- Set fake health
+    ApplyHealthFillDirection(frame, settings)
     frame.healthBar:SetMinMaxValues(0, 100)
     frame.healthBar:SetValue(75)
     
@@ -2359,7 +2386,6 @@ function QUI_UF:ShowPreview(unitKey)
     end
 
     -- Set fake power text
-    local settings = GetUnitSettings(unitKey)
     if frame.powerText then
         if settings and settings.showPowerText then
             frame.powerText:SetText("60%")
@@ -2387,11 +2413,16 @@ function QUI_UF:ShowPreview(unitKey)
             local missing = hpMax - 75
             local clamped = incoming > missing and missing or incoming
             local healthTexture = frame.healthBar:GetStatusBarTexture()
+            local healthReversed = IsTargetHealthDirectionInverted(unitKey, settings)
             frame.healPredictionBar:ClearAllPoints()
-            frame.healPredictionBar:SetPoint("LEFT", healthTexture, "RIGHT", 0, 0)
+            if healthReversed then
+                frame.healPredictionBar:SetPoint("RIGHT", healthTexture, "LEFT", 0, 0)
+            else
+                frame.healPredictionBar:SetPoint("LEFT", healthTexture, "RIGHT", 0, 0)
+            end
             frame.healPredictionBar:SetHeight(frame.healthBar:GetHeight())
             frame.healPredictionBar:SetWidth(frame.healthBar:GetWidth())
-            frame.healPredictionBar:SetReverseFill(false)
+            frame.healPredictionBar:SetReverseFill(healthReversed)
             frame.healPredictionBar:SetMinMaxValues(0, hpMax)
             frame.healPredictionBar:SetValue(clamped)
             frame.healPredictionBar:SetStatusBarTexture(GetTexturePath(settings.texture))

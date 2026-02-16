@@ -1614,6 +1614,7 @@ local defaults = {
                 anchorGap = 10,
                 anchorYOffset = 0,
                 texture = "Quazii v5 Inverse",
+                invertHealthDirection = false,   -- false = default right-to-left depletion, true = left-to-right
                 useClassColor = true,
                 useHostilityColor = true,  -- Use red/yellow/green based on unit hostility
                 customHealthColor = { 0.2, 0.6, 0.2, 1 },
