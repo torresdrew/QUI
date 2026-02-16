@@ -398,10 +398,10 @@ local function GetTrackedBarSettings()
         spacing = 2,
         growUp = true,
         hideText = false,
-        inactiveMode = "fade",
+        inactiveMode = "hide",
         inactiveAlpha = 0.3,
-        desaturateInactive = true,
-        reserveSlotWhenInactive = true,
+        desaturateInactive = false,
+        reserveSlotWhenInactive = false,
         autoWidth = false,
         autoWidthOffset = 0,
         anchorTo = "disabled",
@@ -543,11 +543,11 @@ local function GetBuffBarFrames()
     -- Resolve inactivity behavior once for this pass
     local settings = GetTrackedBarSettings()
     local stylingEnabled = settings.enabled
-    local inactiveMode = stylingEnabled and (settings.inactiveMode or "fade") or "always"
+    local inactiveMode = stylingEnabled and (settings.inactiveMode or "hide") or "always"
     if inactiveMode ~= "always" and inactiveMode ~= "fade" and inactiveMode ~= "hide" then
         inactiveMode = "always"
     end
-    local reserveSlotWhenInactive = (settings.reserveSlotWhenInactive ~= false)
+    local reserveSlotWhenInactive = (settings.reserveSlotWhenInactive == true)
 
     local function IsTrackedBarActive(frame)
         if not frame then return false end
@@ -1059,12 +1059,12 @@ local function ApplyBarStyle(frame, settings, overrideBarWidth)
     local hideText = settings.hideText
 
     -- Inactive visual settings
-    local inactiveMode = settings.inactiveMode or "fade"
+    local inactiveMode = settings.inactiveMode or "hide"
     if inactiveMode ~= "always" and inactiveMode ~= "fade" and inactiveMode ~= "hide" then
         inactiveMode = "always"
     end
     local inactiveAlpha = Clamp01(settings.inactiveAlpha, 0.3)
-    local desaturateInactive = (settings.desaturateInactive ~= false)
+    local desaturateInactive = (settings.desaturateInactive == true)
 
     -- Vertical bar settings
     local orientation = settings.orientation or "horizontal"

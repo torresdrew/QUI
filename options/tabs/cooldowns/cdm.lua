@@ -195,10 +195,10 @@ local function EnsureNCDMDefaults(db)
     if trackedData.spacing == nil then trackedData.spacing = 2 end
     if trackedData.growUp == nil then trackedData.growUp = true end
     if trackedData.hideText == nil then trackedData.hideText = false end
-    if trackedData.inactiveMode == nil then trackedData.inactiveMode = "fade" end
+    if trackedData.inactiveMode == nil then trackedData.inactiveMode = "hide" end
     if trackedData.inactiveAlpha == nil then trackedData.inactiveAlpha = 0.3 end
-    if trackedData.desaturateInactive == nil then trackedData.desaturateInactive = true end
-    if trackedData.reserveSlotWhenInactive == nil then trackedData.reserveSlotWhenInactive = true end
+    if trackedData.desaturateInactive == nil then trackedData.desaturateInactive = false end
+    if trackedData.reserveSlotWhenInactive == nil then trackedData.reserveSlotWhenInactive = false end
     if trackedData.autoWidth == nil then trackedData.autoWidth = false end
     if trackedData.autoWidthOffset == nil then trackedData.autoWidthOffset = 0 end
     if trackedData.anchorTo == nil then trackedData.anchorTo = "disabled" end
@@ -1758,10 +1758,10 @@ local function CreateCDMSetupPage(parent)
         if trackedData.spacing == nil then trackedData.spacing = 2 end
         if trackedData.growUp == nil then trackedData.growUp = true end
         if trackedData.hideText == nil then trackedData.hideText = false end
-        if trackedData.inactiveMode == nil then trackedData.inactiveMode = "fade" end
+        if trackedData.inactiveMode == nil then trackedData.inactiveMode = "hide" end
         if trackedData.inactiveAlpha == nil then trackedData.inactiveAlpha = 0.3 end
-        if trackedData.desaturateInactive == nil then trackedData.desaturateInactive = true end
-        if trackedData.reserveSlotWhenInactive == nil then trackedData.reserveSlotWhenInactive = true end
+        if trackedData.desaturateInactive == nil then trackedData.desaturateInactive = false end
+        if trackedData.reserveSlotWhenInactive == nil then trackedData.reserveSlotWhenInactive = false end
         if trackedData.autoWidth == nil then trackedData.autoWidth = false end
         if trackedData.autoWidthOffset == nil then trackedData.autoWidthOffset = 0 end
         if trackedData.anchorTo == nil then trackedData.anchorTo = "disabled" end
@@ -2100,7 +2100,7 @@ local function CreateCDMSetupPage(parent)
         updateVerticalStates()  -- Initial state
 
         updateInactiveStates = function()
-            local mode = trackedData.inactiveMode or "fade"
+            local mode = trackedData.inactiveMode or "hide"
             local showInactiveStyling = mode ~= "always"
             inactiveAlphaSlider:SetAlpha(mode == "fade" and 1.0 or 0.4)
             desaturateInactiveCheck:SetAlpha(showInactiveStyling and 1.0 or 0.4)

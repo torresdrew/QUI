@@ -680,10 +680,10 @@ local defaults = {
                 spacing = 2,
                 growUp = true,  -- true = grow upward, false = grow downward
                 -- Inactive tracked-buff display behavior
-                inactiveMode = "fade",  -- always, fade, hide
+                inactiveMode = "hide",  -- always, fade, hide
                 inactiveAlpha = 0.3,
-                desaturateInactive = true,
-                reserveSlotWhenInactive = true,
+                desaturateInactive = false,
+                reserveSlotWhenInactive = false,
                 autoWidth = false,
                 autoWidthOffset = 0,
                 anchorTo = "disabled",
