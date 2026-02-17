@@ -719,21 +719,20 @@ function QUI_Anchoring:SnapTo(frame, anchorTarget, anchorPoint, offsetX, offsetY
     offsetY = offsetY or 0
     
     -- Get anchor target frame
-    local targetData = self:GetAnchorTarget(anchorTarget)
-    if not targetData then
+    local targetFrame = self:GetAnchorTarget(anchorTarget)
+    if not targetFrame then
         if options.onFailure then
             options.onFailure("Anchor target not found: " .. tostring(anchorTarget))
         end
         return false
     end
-    
-    local targetFrame = targetData.frame
-    
+
     -- Check if target is visible (if requested)
     if options.checkVisible ~= false then
         if not targetFrame:IsShown() then
             if options.onFailure then
-                local displayName = targetData.options and targetData.options.displayName or anchorTarget
+                local registered = self.anchorTargets and self.anchorTargets[anchorTarget]
+                local displayName = registered and registered.options and registered.options.displayName or anchorTarget
                 options.onFailure(displayName .. " not visible.")
             end
             return false
@@ -1078,10 +1077,108 @@ local FRAME_ANCHOR_INFO = {
     dandersRaid     = { displayName = "DandersFrames Raid",    category = "External",          order = 2 },
 }
 
+-- Virtual CDM anchor parents.
+-- These are lightweight proxy frames we can safely resize in combat so frame
+-- anchoring can still respect configured min-width even when Blizzard's CDM
+-- viewer frame is protected.
+local CDM_PROXY_VIEWER_BY_KEY = {
+    cdmEssential = "EssentialCooldownViewer",
+    cdmUtility = "UtilityCooldownViewer",
+}
+local cdmAnchorProxies = {}
+local cdmAnchorProxyPendingAfterCombat = {}
+local HUD_MIN_WIDTH_DEFAULT = (ns.Helpers and ns.Helpers.HUD_MIN_WIDTH_DEFAULT) or 200
+
+local function GetHUDMinWidthSettings()
+    local profile = QUICore and QUICore.db and QUICore.db.profile
+    local coreHelpers = ns and ns.Helpers
+    if coreHelpers and coreHelpers.GetHUDMinWidthSettingsFromProfile then
+        return coreHelpers.GetHUDMinWidthSettingsFromProfile(profile)
+    end
+    return false, HUD_MIN_WIDTH_DEFAULT
+end
+
+local function IsHUDAnchoredToCDM()
+    local profile = QUICore and QUICore.db and QUICore.db.profile
+    local coreHelpers = ns and ns.Helpers
+    if not (coreHelpers and coreHelpers.IsHUDAnchoredToCDM) then
+        return false
+    end
+    return coreHelpers.IsHUDAnchoredToCDM(profile)
+end
+
+local function GetCDMAnchorProxy(parentKey)
+    if parentKey == "essential" then
+        parentKey = "cdmEssential"
+    elseif parentKey == "utility" then
+        parentKey = "cdmUtility"
+    end
+
+    local viewerName = CDM_PROXY_VIEWER_BY_KEY[parentKey]
+    if not viewerName then return nil end
+
+    local viewer = _G[viewerName]
+    if not viewer then return nil end
+
+    local proxy = cdmAnchorProxies[parentKey]
+    if not proxy then
+        proxy = CreateFrame("Frame", nil, UIParent)
+        proxy:SetClampedToScreen(false)
+        proxy:Show()
+        cdmAnchorProxies[parentKey] = proxy
+    end
+
+    -- Combat-stable behavior:
+    -- Keep the proxy frozen during combat once initialized, then refresh after
+    -- combat ends. This prevents children anchored to edge points (TOP/BOTTOM)
+    -- from drifting when Blizzard mutates protected CDM frame size in combat.
+    local inCombat = InCombatLockdown()
+    if inCombat and proxy.__quiCDMProxyInitialized then
+        cdmAnchorProxyPendingAfterCombat[parentKey] = true
+        return proxy
+    end
+
+    local width = viewer.__cdmIconWidth or viewer:GetWidth() or 0
+    local height = viewer.__cdmTotalHeight or viewer:GetHeight() or 0
+    local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
+    if minWidthEnabled and IsHUDAnchoredToCDM() then
+        width = math.max(width, minWidth)
+    end
+    width = math.max(1, width)
+    height = math.max(1, height)
+
+    local viewerX, viewerY = viewer:GetCenter()
+    local screenX, screenY = UIParent:GetCenter()
+    if viewerX and viewerY and screenX and screenY then
+        proxy:ClearAllPoints()
+        proxy:SetPoint("CENTER", UIParent, "CENTER", viewerX - screenX, viewerY - screenY)
+    end
+    proxy:SetSize(width, height)
+    proxy.__quiCDMProxyInitialized = true
+    if inCombat then
+        cdmAnchorProxyPendingAfterCombat[parentKey] = true
+    end
+
+    return proxy
+end
+
+-- Refresh both CDM proxy parents (safe in combat).
+local function UpdateCDMAnchorProxies()
+    GetCDMAnchorProxy("cdmEssential")
+    GetCDMAnchorProxy("cdmUtility")
+end
+
 -- Resolve an anchor parent key to a frame
 local function ResolveParentFrame(parentKey)
     if not parentKey or parentKey == "screen" or parentKey == "disabled" then
         return UIParent
+    end
+    -- For CDM viewers, use combat-safe proxy frames so width constraints (like
+    -- HUD minimum width) remain stable even while Blizzard's protected frame
+    -- resizes during combat.
+    local cdmProxy = GetCDMAnchorProxy(parentKey)
+    if cdmProxy then
+        return cdmProxy
     end
     -- Try frame resolvers first
     local resolver = FRAME_RESOLVERS[parentKey]
@@ -1099,6 +1196,35 @@ local function ResolveParentFrame(parentKey)
     end
     return UIParent
 end
+
+-- Expose proxy refresh for CDM layout module.
+_G.QUI_UpdateCDMAnchorProxyFrames = UpdateCDMAnchorProxies
+_G.QUI_GetCDMAnchorProxyFrame = GetCDMAnchorProxy
+
+-- Re-sync frozen proxy anchors after combat ends.
+local cdmProxyCombatFrame = CreateFrame("Frame")
+cdmProxyCombatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+cdmProxyCombatFrame:SetScript("OnEvent", function()
+    local needsRefresh = false
+    for key, pending in pairs(cdmAnchorProxyPendingAfterCombat) do
+        if pending then
+            needsRefresh = true
+            cdmAnchorProxyPendingAfterCombat[key] = nil
+        end
+    end
+    if not needsRefresh then
+        return
+    end
+    C_Timer.After(0.05, function()
+        if InCombatLockdown() then
+            cdmAnchorProxyPendingAfterCombat.cdmEssential = true
+            cdmAnchorProxyPendingAfterCombat.cdmUtility = true
+            return
+        end
+        UpdateCDMAnchorProxies()
+        DebouncedReapplyOverrides()
+    end)
+end)
 
 -- Register all controllable frames as anchor targets (for dropdown lists)
 function QUI_Anchoring:RegisterAllFrameTargets()
@@ -1189,7 +1315,7 @@ end
 
 -- Apply a single frame anchor override
 function QUI_Anchoring:ApplyFrameAnchor(key, settings)
-    if not settings then return end
+    if type(settings) ~= "table" then return end
 
     local resolver = FRAME_RESOLVERS[key]
     if not resolver then return end
@@ -1257,7 +1383,7 @@ function QUI_Anchoring:ApplyAllFrameAnchors()
     if not anchoringDB then return end
 
     for key, settings in pairs(anchoringDB) do
-        if settings.enabled then
+        if type(settings) == "table" and FRAME_RESOLVERS[key] and settings.enabled then
             self:ApplyFrameAnchor(key, settings)
         end
     end
@@ -1281,8 +1407,9 @@ end
 _G.QUI_ApplyFrameAnchor = function(key)
     if not QUI_Anchoring or not QUICore or not QUICore.db or not QUICore.db.profile then return end
     local anchoringDB = QUICore.db.profile.frameAnchoring
-    if anchoringDB and anchoringDB[key] then
-        QUI_Anchoring:ApplyFrameAnchor(key, anchoringDB[key])
+    local settings = anchoringDB and anchoringDB[key]
+    if type(settings) == "table" and FRAME_RESOLVERS[key] then
+        QUI_Anchoring:ApplyFrameAnchor(key, settings)
     end
 end
 

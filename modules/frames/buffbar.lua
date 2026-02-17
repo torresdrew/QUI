@@ -109,6 +109,16 @@ local function ResolveTrackedBarAnchorFrame(anchorTo)
     if not anchorTo or anchorTo == "disabled" then
         return nil
     end
+    if anchorTo == "essential" or anchorTo == "utility" then
+        local getProxy = _G.QUI_GetCDMAnchorProxyFrame
+        if type(getProxy) == "function" then
+            local proxyKey = (anchorTo == "essential") and "cdmEssential" or "cdmUtility"
+            local proxy = getProxy(proxyKey)
+            if proxy then
+                return proxy
+            end
+        end
+    end
     if anchorTo == "screen" then
         return UIParent
     elseif anchorTo == "essential" then
