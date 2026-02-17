@@ -25,9 +25,7 @@ local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
 ---------------------------------------------------------------------------
 local VIEWER_ESSENTIAL = "EssentialCooldownViewer"
 local VIEWER_UTILITY = "UtilityCooldownViewer"
-local HUD_MIN_WIDTH_DEFAULT = 200
-local HUD_MIN_WIDTH_MIN = 100
-local HUD_MIN_WIDTH_MAX = 500
+local HUD_MIN_WIDTH_DEFAULT = Helpers.HUD_MIN_WIDTH_DEFAULT or 200
 
 -- Aspect ratios
 local ASPECT_RATIOS = {
@@ -131,7 +129,7 @@ local function EnsureSessionHooks(session)
             local relName = relativeTo and relativeTo.GetName and relativeTo:GetName() or tostring(relativeTo)
             SessionLog(session, string.format(
                 "SetPoint %s -> %s %s (%.1f, %.1f)",
-                tostring(point), tostring(relName), tostring(relativePoint), tonumber(xOfs) or 0, tonumber(yOfs) or 0
+                tostring(point), tostring(relName), tostring(relativePoint), Helpers.SafeToNumber(xOfs, 0), Helpers.SafeToNumber(yOfs, 0)
             ))
         end)
     end
@@ -147,7 +145,7 @@ local function EnsureSessionHooks(session)
     if frame.HookScript then
         frame:HookScript("OnSizeChanged", function(_, w, h)
             if not session.enabled then return end
-            SessionLog(session, string.format("OnSizeChanged %.1fx%.1f", tonumber(w) or 0, tonumber(h) or 0))
+            SessionLog(session, string.format("OnSizeChanged %.1fx%.1f", Helpers.SafeToNumber(w, 0), Helpers.SafeToNumber(h, 0)))
         end)
     end
 
@@ -171,7 +169,7 @@ local function StartSessionTicker(session)
                 SessionLog(session, string.format(
                     "center moved (dx=%.2f, dy=%.2f) combat=%s p1=%s -> %s %s (%.1f, %.1f)",
                     dx, dy, tostring(InCombatLockdown()), tostring(point), tostring(relName), tostring(relPoint),
-                    tonumber(ox) or 0, tonumber(oy) or 0
+                    Helpers.SafeToNumber(ox, 0), Helpers.SafeToNumber(oy, 0)
                 ))
             end
         end
@@ -376,62 +374,24 @@ end
 
 local function IsHUDAnchoredToCDM()
     local profile = QUICore and QUICore.db and QUICore.db.profile
-    if not profile then
-        return false
+    if Helpers and Helpers.IsHUDAnchoredToCDM then
+        return Helpers.IsHUDAnchoredToCDM(profile)
     end
-
-    local unitframes = profile.unitframes
-    if unitframes then
-        local playerAnchor = unitframes.player and unitframes.player.anchorTo
-        local targetAnchor = unitframes.target and unitframes.target.anchorTo
-        if playerAnchor == "essential" or playerAnchor == "utility" then
-            return true
-        end
-        if targetAnchor == "essential" or targetAnchor == "utility" then
-            return true
-        end
-    end
-
-    local frameAnchoring = profile.frameAnchoring
-    if frameAnchoring then
-        local playerFrame = frameAnchoring.playerFrame
-        local targetFrame = frameAnchoring.targetFrame
-
-        if playerFrame and playerFrame.enabled and (playerFrame.parent == "cdmEssential" or playerFrame.parent == "cdmUtility") then
-            return true
-        end
-        if targetFrame and targetFrame.enabled and (targetFrame.parent == "cdmEssential" or targetFrame.parent == "cdmUtility") then
-            return true
-        end
-    end
-
     return false
 end
 
 local function GetHUDMinWidth()
     local profile = QUICore and QUICore.db and QUICore.db.profile
-    local frameAnchoring = profile and profile.frameAnchoring
-    if not frameAnchoring then
-        return false, HUD_MIN_WIDTH_DEFAULT
+    if Helpers and Helpers.GetHUDMinWidthSettingsFromProfile then
+        return Helpers.GetHUDMinWidthSettingsFromProfile(profile)
     end
-
-    -- Preferred structure:
-    -- frameAnchoring.hudMinWidth = { enabled = bool, width = number }
-    -- Keep legacy scalar fallback for older SavedVariables.
-    local enabled, width
-    local cfg = frameAnchoring.hudMinWidth
-    if type(cfg) == "table" then
-        enabled = cfg.enabled == true
-        width = tonumber(cfg.width) or HUD_MIN_WIDTH_DEFAULT
-    else
-        enabled = frameAnchoring.hudMinWidthEnabled == true
-        width = tonumber(cfg) or HUD_MIN_WIDTH_DEFAULT
-    end
-
-    width = math.floor(width + 0.5)
-    width = math.max(HUD_MIN_WIDTH_MIN, math.min(HUD_MIN_WIDTH_MAX, width))
-    return enabled, width
+    return false, HUD_MIN_WIDTH_DEFAULT
 end
+
+-- Shared helper exports so other modules (anchoring, buffbar) can use the
+-- exact same min-width and HUD-anchor semantics.
+_G.QUI_IsHUDAnchoredToCDM = IsHUDAnchoredToCDM
+_G.QUI_GetHUDMinWidthSettings = GetHUDMinWidth
 
 ---------------------------------------------------------------------------
 -- HELPER: Update Blizzard cooldownViewerEnabled CVar based on settings
@@ -1374,8 +1334,9 @@ local function LayoutViewer(viewerName, trackerKey)
         SyncViewerSelectionSafe(viewer)
     end
 
-    -- Keep frame-anchoring CDM proxy parents in sync even in combat so frames
-    -- anchored to CDM can respect min-width without touching protected frames.
+    -- Keep frame-anchoring CDM proxy parents up to date when safe.
+    -- In combat, the proxy layer now freezes and schedules a post-combat refresh
+    -- to avoid edge-anchor drift on dependent frames.
     if _G.QUI_UpdateCDMAnchorProxyFrames then
         _G.QUI_UpdateCDMAnchorProxyFrames()
     end

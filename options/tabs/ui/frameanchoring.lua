@@ -3,16 +3,17 @@ local QUI = QUI
 local GUI = QUI.GUI
 local C = GUI.Colors
 local Shared = ns.QUI_Options
+local Helpers = ns.Helpers
 
 -- Local references for shared infrastructure
 local PADDING = Shared.PADDING
 local CreateScrollableContent = Shared.CreateScrollableContent
 local FORM_ROW = 32
-local HUD_MIN_WIDTH_DEFAULT = 200
-local HUD_MIN_WIDTH_MIN = 100
-local HUD_MIN_WIDTH_MAX = 500
+local HUD_MIN_WIDTH_DEFAULT = Helpers.HUD_MIN_WIDTH_DEFAULT or 200
+local HUD_MIN_WIDTH_MIN = Helpers.HUD_MIN_WIDTH_MIN or 100
+local HUD_MIN_WIDTH_MAX = Helpers.HUD_MIN_WIDTH_MAX or 500
 
-local GetCore = ns.Helpers.GetCore
+local GetCore = Helpers.GetCore
 
 -- Lazy-load AnchorOpts (utility/anchoring.lua loads after this file in tabs.xml)
 local function GetAnchorOpts()
@@ -52,32 +53,29 @@ local function GetAnchoringDB()
     local core = GetCore()
     local db = core and core.db and core.db.profile
     if not db then return nil end
-    if not db.frameAnchoring then
+    if type(db.frameAnchoring) ~= "table" then
         db.frameAnchoring = {}
     end
-    -- Migrate legacy scalar keys to element-style object:
+
+    -- Migrate and normalize legacy scalar keys to object style:
     -- frameAnchoring.hudMinWidth = { enabled = bool, width = number }
-    local legacyEnabled = db.frameAnchoring.hudMinWidthEnabled
-    local legacyWidth = db.frameAnchoring.hudMinWidth
-    if type(db.frameAnchoring.hudMinWidth) ~= "table" then
-        db.frameAnchoring.hudMinWidth = {
-            enabled = legacyEnabled == true,
-            width = tonumber(legacyWidth) or HUD_MIN_WIDTH_DEFAULT,
+    local hudMinWidth
+    if Helpers.MigrateHUDMinWidthSettings then
+        hudMinWidth = Helpers.MigrateHUDMinWidthSettings(db.frameAnchoring)
+    end
+    if not hudMinWidth then
+        local enabled, width = false, HUD_MIN_WIDTH_DEFAULT
+        if Helpers.ParseHUDMinWidth then
+            enabled, width = Helpers.ParseHUDMinWidth(db.frameAnchoring)
+        end
+        hudMinWidth = {
+            enabled = enabled == true,
+            width = width or HUD_MIN_WIDTH_DEFAULT,
         }
+        db.frameAnchoring.hudMinWidth = hudMinWidth
+        db.frameAnchoring.hudMinWidthEnabled = nil
     end
-    local hudMinWidth = db.frameAnchoring.hudMinWidth
-    if hudMinWidth.enabled == nil then
-        hudMinWidth.enabled = false
-    end
-    if type(hudMinWidth.width) ~= "number" then
-        hudMinWidth.width = HUD_MIN_WIDTH_DEFAULT
-    end
-    hudMinWidth.width = math.max(
-        HUD_MIN_WIDTH_MIN,
-        math.min(HUD_MIN_WIDTH_MAX, hudMinWidth.width)
-    )
-    -- Cleanup migrated legacy keys
-    db.frameAnchoring.hudMinWidthEnabled = nil
+
     return db.frameAnchoring
 end
 
@@ -244,7 +242,7 @@ local function BuildCDMTab(tabContent)
 
         local minWidthHint = GUI:CreateLabel(
             tabContent,
-            "Only affects player/target when anchored to CDM. Keeps HUD spacing from collapsing. Default: 200.",
+            ("Only affects player/target when anchored to CDM. Keeps HUD spacing from collapsing. Default: %d."):format(HUD_MIN_WIDTH_DEFAULT),
             11,
             C.textMuted or C.text
         )
