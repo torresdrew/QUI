@@ -1430,6 +1430,14 @@ local function BuildGeneralTab(tabContent)
         brzPreviewCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
 
+        -- Lock toggle
+        local brzLockCheck = GUI:CreateFormCheckbox(tabContent, "Lock Frame", "locked", brzDB, function(val)
+            if _G.QUI_RefreshBrezCounter then _G.QUI_RefreshBrezCounter() end
+        end)
+        brzLockCheck:SetPoint("TOPLEFT", PADDING, y)
+        brzLockCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
         -- Frame size settings
         local brzWidthSlider = GUI:CreateFormSlider(tabContent, "Frame Width", 30, 100, 1, "width", brzDB, function()
             if _G.QUI_RefreshBrezCounter then _G.QUI_RefreshBrezCounter() end
