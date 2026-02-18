@@ -32,6 +32,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.37.1 - 2026-02-18
+
+### Changed
+- added visual distinction for headers on dropdowns
+
+### Fixed
+- fixed quick keybinding not working anymore
+- fixed not being able to anchor to actionbar 1
+- fixed anchoring to secondary resourcebar
 ## v2.37.0 - 2026-02-17
 
 ### Added
