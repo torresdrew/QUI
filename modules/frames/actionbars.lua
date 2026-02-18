@@ -35,9 +35,9 @@ local ICON_TEXCOORD = {0.07, 0.93, 0.07, 0.93}
 -- Blizzard's range indicator placeholder (to detect and hide)
 local RANGE_INDICATOR = RANGE_INDICATOR or "●"
 
--- Bar frame name mappings
+-- Bar frame name mappings (MainMenuBar was renamed to MainActionBar in Midnight 12.0)
 local BAR_FRAMES = {
-    bar1 = "MainMenuBar",
+    bar1 = "MainActionBar",
     bar2 = "MultiBarBottomLeft",
     bar3 = "MultiBarBottomRight",
     bar4 = "MultiBarRight",
@@ -584,7 +584,12 @@ end
 -- Get the bar container frame
 local function GetBarFrame(barKey)
     local frameName = BAR_FRAMES[barKey]
-    return frameName and _G[frameName]
+    local frame = frameName and _G[frameName]
+    -- Fallback: MainMenuBar (pre-Midnight name for bar1)
+    if not frame and barKey == "bar1" then
+        frame = _G["MainMenuBar"]
+    end
+    return frame
 end
 
 ---------------------------------------------------------------------------

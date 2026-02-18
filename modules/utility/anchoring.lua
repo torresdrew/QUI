@@ -1007,8 +1007,8 @@ local FRAME_RESOLVERS = {
     playerCastbar = function() return ns.QUI_Castbar and ns.QUI_Castbar.castbars and ns.QUI_Castbar.castbars["player"] end,
     targetCastbar = function() return ns.QUI_Castbar and ns.QUI_Castbar.castbars and ns.QUI_Castbar.castbars["target"] end,
     focusCastbar = function() return ns.QUI_Castbar and ns.QUI_Castbar.castbars and ns.QUI_Castbar.castbars["focus"] end,
-    -- Action Bars
-    bar1 = function() return _G["MainMenuBar"] end,
+    -- Action Bars (MainMenuBar was renamed to MainActionBar in Midnight 12.0)
+    bar1 = function() return _G["MainActionBar"] or _G["MainMenuBar"] end,
     bar2 = function() return _G["MultiBarBottomLeft"] end,
     bar3 = function() return _G["MultiBarBottomRight"] end,
     bar4 = function() return _G["MultiBarRight"] end,
