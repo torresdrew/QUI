@@ -3082,6 +3082,27 @@ local defaults = {
             },
         },
 
+        -- BigWigs Integration: Anchor BigWigs normal/emphasized bars to QUI elements
+        bigWigs = {
+            backupPositions = {},
+            normal = {
+                enabled = false,
+                anchorTo = "disabled",
+                sourcePoint = "TOP",
+                targetPoint = "BOTTOM",
+                offsetX = 0,
+                offsetY = -5,
+            },
+            emphasized = {
+                enabled = false,
+                anchorTo = "disabled",
+                sourcePoint = "TOP",
+                targetPoint = "BOTTOM",
+                offsetX = 0,
+                offsetY = -5,
+            },
+        },
+
         -- HUD Layering: Control frame level ordering for HUD elements
         -- Higher values appear above lower values (range 0-10)
         hudLayering = {
