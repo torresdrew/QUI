@@ -111,13 +111,10 @@ local function BuildFrameEntry(tabContent, frameDef, y)
         end
     end
 
-    -- Register frame name as search section (widgets auto-register)
-    GUI:SetSearchSection(frameDef.name)
-
-    -- Frame name sub-header
-    local nameLabel = GUI:CreateLabel(tabContent, frameDef.name, 12, C.textLight or C.text)
-    nameLabel:SetPoint("TOPLEFT", PAD, y)
-    y = y - 22
+    -- Frame section header (blue title + underline)
+    local sectionHeader = GUI:CreateSectionHeader(tabContent, frameDef.name)
+    sectionHeader:SetPoint("TOPLEFT", PAD, y)
+    y = y - sectionHeader.gap
 
     -- Enable toggle
     local toggle = GUI:CreateFormToggle(tabContent, "Enable Override", "enabled", frameDB, OnChange)
@@ -188,7 +185,7 @@ local function BuildFrameEntry(tabContent, frameDef, y)
         y = y - FORM_ROW
     end
 
-    y = y - 8  -- Spacing between frame entries
+    y = y - 2  -- Small spacing between frame entries (header already adds separation)
     return y
 end
 
@@ -286,6 +283,14 @@ local function BuildUnitFramesTab(tabContent)
         { key = "petFrame",    name = "Pet Frame",       autoWidth = true },
         { key = "bossFrames",  name = "Boss Frames",     autoWidth = true },
     }
+
+    -- DandersFrames entries (conditional)
+    local dandersAvailable = ns.QUI_DandersFrames and ns.QUI_DandersFrames:IsAvailable()
+    if dandersAvailable then
+        table.insert(frames, { key = "dandersParty", name = "DandersFrames Party" })
+        table.insert(frames, { key = "dandersRaid",  name = "DandersFrames Raid" })
+    end
+
     for _, frameDef in ipairs(frames) do
         y = BuildFrameEntry(tabContent, frameDef, y)
     end
@@ -349,6 +354,8 @@ local function BuildActionBarsTab(tabContent)
         { key = "stanceBar", name = "Stance Bar" },
         { key = "microMenu", name = "Micro Menu" },
         { key = "bagBar",    name = "Bag Bar" },
+        { key = "extraActionButton", name = "Extra Action Button" },
+        { key = "zoneAbility", name = "Zone Ability Button" },
     }
     for _, frameDef in ipairs(frames) do
         y = BuildFrameEntry(tabContent, frameDef, y)
@@ -364,13 +371,6 @@ local function BuildDisplayTab(tabContent)
         { key = "buffFrame",        name = "Buff Frame" },
         { key = "debuffFrame",      name = "Debuff Frame" },
     }
-
-    -- DandersFrames entries (conditional)
-    local dandersAvailable = ns.QUI_DandersFrames and ns.QUI_DandersFrames:IsAvailable()
-    if dandersAvailable then
-        table.insert(frames, { key = "dandersParty", name = "DandersFrames Party" })
-        table.insert(frames, { key = "dandersRaid",  name = "DandersFrames Raid" })
-    end
 
     for _, frameDef in ipairs(frames) do
         y = BuildFrameEntry(tabContent, frameDef, y)

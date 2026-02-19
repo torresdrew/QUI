@@ -1040,6 +1040,8 @@ local FRAME_RESOLVERS = {
     stanceBar = function() return _G["StanceBar"] end,
     microMenu = function() return _G["MicroMenuContainer"] end,
     bagBar = function() return _G["BagsBar"] end,
+    extraActionButton = function() return _G["ExtraActionBarFrame"] end,
+    zoneAbility = function() return _G["ZoneAbilityFrame"] end,
     -- QoL
     brezCounter = function() return _G["QUI_BrezCounter"] end,
     combatTimer = function() return _G["QUI_CombatTimer"] end,
@@ -1097,6 +1099,8 @@ local FRAME_ANCHOR_INFO = {
     stanceBar       = { displayName = "Stance Bar",            category = "Action Bars",       order = 10 },
     microMenu       = { displayName = "Micro Menu",            category = "Action Bars",       order = 11 },
     bagBar          = { displayName = "Bag Bar",               category = "Action Bars",       order = 12 },
+    extraActionButton = { displayName = "Extra Action Button", category = "Action Bars",       order = 13 },
+    zoneAbility     = { displayName = "Zone Ability Button",   category = "Action Bars",       order = 14 },
     brezCounter     = { displayName = "Brez Counter",          category = "QoL",               order = 1 },
     combatTimer     = { displayName = "Combat Timer",          category = "QoL",               order = 2 },
     skyriding       = { displayName = "Skyriding",             category = "QoL",               order = 3 },
