@@ -6,6 +6,7 @@
 
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
+local LibEditModeOverride = LibStub("LibEditModeOverride-1.0", true)
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -1467,6 +1468,71 @@ local function ApplyAutoSizing(frame, settings, parentFrame, key)
     end
 end
 
+-- Blizzard-managed frame keys that Edit Mode can reposition on /reload.
+-- QUI-created frames (castbars, unit frames, resource bars, CDM viewers) are
+-- excluded because their modules handle positioning directly.
+local BLIZZARD_FRAME_KEYS = {
+    bar1 = true, bar2 = true, bar3 = true, bar4 = true,
+    bar5 = true, bar6 = true, bar7 = true, bar8 = true,
+    petBar = true, stanceBar = true, microMenu = true, bagBar = true,
+    minimap = true, objectiveTracker = true,
+    buffFrame = true, debuffFrame = true,
+}
+
+-- Ensure LibEditModeOverride is ready and layouts are loaded
+local function EnsureEditModeReady()
+    if not LibEditModeOverride then return false end
+    if not LibEditModeOverride:IsReady() then return false end
+    if not LibEditModeOverride:AreLayoutsLoaded() then
+        LibEditModeOverride:LoadLayouts()
+    end
+    return LibEditModeOverride:CanEditActiveLayout()
+end
+
+-- Frames to exclude from Edit Mode DB sync.
+-- petBar/stanceBar: dynamically shown/hidden by class mechanics; syncing
+--   causes offsetY nil errors when Blizzard's snap system processes them.
+-- CDM viewers: managed by QUI's own positioning; syncing writes QUI's
+--   anchor-parent-relative position into Edit Mode DB, which Blizzard can
+--   then re-apply during combat events (e.g. BreakSnappedFrames on pet bar
+--   show/hide), causing the utility bar to visually jump mid-combat.
+local SKIP_EDIT_MODE_SYNC = {
+    petBar = true,
+    stanceBar = true,
+    cdmEssential = true,
+    cdmUtility = true,
+    buffIcon = true,
+    buffBar = true,
+}
+
+-- Sync a frame's position into Blizzard's Edit Mode database.
+-- After this, Blizzard will natively apply this position on load/reload.
+-- Uses the frame's actual GetPoint(1) after SetPoint to guarantee valid
+-- anchor data (same pattern as nudge.lua).
+local function SyncToEditMode(frame, anchorKey)
+    if InCombatLockdown() then return end
+    if not LibEditModeOverride or not EnsureEditModeReady() then return end
+    if not frame or not frame.GetPoint then return end
+    -- Skip frames that toggle visibility dynamically (pet/stance bar)
+    if anchorKey and SKIP_EDIT_MODE_SYNC[anchorKey] then return end
+    -- Skip hidden frames (e.g. StanceBar on Death Knight)
+    if frame.IsShown and not frame:IsShown() then return end
+    if not LibEditModeOverride:HasEditModeSettings(frame) then return end
+    -- Read the frame's actual anchor data after SetPoint has been applied.
+    -- This gives Blizzard back exactly the data it expects, avoiding
+    -- offsetY nil errors in UpdateSystemAnchorInfo.
+    local point, relativeTo, relativePoint, xOfs, yOfs = frame:GetPoint(1)
+    if not point then return end
+    -- Only sync UIParent-relative anchors. Frames anchored to QUI frames
+    -- (e.g. QUISecondaryPowerBar) produce anchor data that Blizzard's
+    -- UpdateSystemAnchorInfo cannot process (offsetY nil error via
+    -- BreakSnappedFrames when PetActionBar hides).
+    if relativeTo and relativeTo ~= UIParent then return end
+    pcall(function()
+        LibEditModeOverride:ReanchorFrame(frame, point, relativeTo, relativePoint, xOfs or 0, yOfs or 0)
+    end)
+end
+
 -- Apply a single frame anchor override
 function QUI_Anchoring:ApplyFrameAnchor(key, settings)
     if type(settings) ~= "table" then return end
@@ -1483,6 +1549,9 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
     end
 
     if not resolved then return end
+
+    -- Clear stale lastPosition from when anchor was disabled
+    settings.lastPosition = nil
 
     -- Mark frame as overridden FIRST — blocks any module positioning from this point on
     SetFrameOverride(resolved, true, key)
@@ -1547,15 +1616,41 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         local centerX, centerY = ComputeCenterOffsetsForAnchor(
             resolved, key, parentFrame, point, relative, offsetX, offsetY
         )
-        pcall(function()
-            resolved:ClearAllPoints()
-            resolved:SetPoint("CENTER", parentFrame, "CENTER", centerX, centerY)
-        end)
+        -- Separate pcall for ClearAllPoints and SetPoint to prevent orphaned frames
+        local clearOk = pcall(function() resolved:ClearAllPoints() end)
+        if clearOk then
+            local setOk = pcall(function()
+                resolved:SetPoint("CENTER", parentFrame, "CENTER", centerX, centerY)
+            end)
+            if setOk then
+                local syncFrame, syncKey = resolved, key
+                C_Timer.After(0, function()
+                    SyncToEditMode(syncFrame, syncKey)
+                end)
+            else
+                pcall(function()
+                    resolved:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+                end)
+            end
+        end
     else
-        pcall(function()
-            resolved:ClearAllPoints()
-            resolved:SetPoint(point, parentFrame, relative, offsetX, offsetY)
-        end)
+        -- Legacy path: separate pcall for ClearAllPoints and SetPoint
+        local clearOk = pcall(function() resolved:ClearAllPoints() end)
+        if clearOk then
+            local setOk = pcall(function()
+                resolved:SetPoint(point, parentFrame, relative, offsetX, offsetY)
+            end)
+            if setOk then
+                local syncFrame, syncKey = resolved, key
+                C_Timer.After(0, function()
+                    SyncToEditMode(syncFrame, syncKey)
+                end)
+            else
+                pcall(function()
+                    resolved:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+                end)
+            end
+        end
         -- Legacy path: auto-size after placement
         ApplyAutoSizing(resolved, settings, parentFrame, key)
     end
@@ -1563,6 +1658,7 @@ end
 
 -- Apply all saved frame anchor overrides
 function QUI_Anchoring:ApplyAllFrameAnchors()
+    if InCombatLockdown() then return end
     if not QUICore or not QUICore.db or not QUICore.db.profile then return end
     local anchoringDB = QUICore.db.profile.frameAnchoring
     if not anchoringDB then return end
@@ -1570,6 +1666,43 @@ function QUI_Anchoring:ApplyAllFrameAnchors()
     for key, settings in pairs(anchoringDB) do
         if type(settings) == "table" and FRAME_RESOLVERS[key] and settings.enabled then
             self:ApplyFrameAnchor(key, settings)
+        end
+    end
+end
+
+-- Restore saved positions for frames with disabled anchors.
+-- Only applies to Blizzard-managed frames that Edit Mode can reposition.
+-- Called during init to counteract Blizzard applying its default layout.
+function QUI_Anchoring:RestoreDisabledAnchorPositions()
+    if not QUICore or not QUICore.db or not QUICore.db.profile then return end
+    if InCombatLockdown() then return end
+    local anchoringDB = QUICore.db.profile.frameAnchoring
+    if not anchoringDB then return end
+
+    for key, settings in pairs(anchoringDB) do
+        if BLIZZARD_FRAME_KEYS[key] and type(settings) == "table"
+            and not settings.enabled and settings.lastPosition then
+            local resolver = FRAME_RESOLVERS[key]
+            if resolver then
+                local resolved = resolver()
+                if resolved then
+                    local lp = settings.lastPosition
+                    local pt = lp.point or "CENTER"
+                    local rp = lp.relativePoint or "CENTER"
+                    local x = lp.xOfs or 0
+                    local y = lp.yOfs or 0
+                    pcall(function()
+                        resolved:ClearAllPoints()
+                        resolved:SetPoint(pt, UIParent, rp, x, y)
+                    end)
+                    -- Sync into Edit Mode DB so Blizzard applies this on next load.
+                    -- Deferred to break taint chain from the pcall'd SetPoint above.
+                    local syncFrame, syncKey = resolved, key
+                    C_Timer.After(0, function()
+                        SyncToEditMode(syncFrame, syncKey)
+                    end)
+                end
+            end
         end
     end
 end
@@ -1586,6 +1719,12 @@ end
 _G.QUI_ApplyAllFrameAnchors = function()
     if QUI_Anchoring then
         QUI_Anchoring:ApplyAllFrameAnchors()
+    end
+end
+
+_G.QUI_RestoreDisabledAnchorPositions = function()
+    if QUI_Anchoring then
+        QUI_Anchoring:RestoreDisabledAnchorPositions()
     end
 end
 
@@ -1606,6 +1745,10 @@ DebouncedReapplyOverrides = function()
     pendingOverrideReapply = true
     C_Timer.After(0.15, function()
         pendingOverrideReapply = nil
+        -- Skip during combat: prevents cascade repositioning when CDM viewers
+        -- resize or show/hide (e.g. buff icon bar appearing). The PLAYER_REGEN_ENABLED
+        -- handler in main.lua already re-applies all anchors after combat.
+        if InCombatLockdown() then return end
         if QUI_Anchoring then
             QUI_Anchoring:ApplyAllFrameAnchors()
         end

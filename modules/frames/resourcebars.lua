@@ -1101,8 +1101,11 @@ function QUICore:UpdatePowerBar()
 
     -- Only reposition when offset actually changed (prevents flicker)
     -- Skip if frame has an active anchoring override
+    -- Freeze position during combat: prevents cascade to frames anchored to
+    -- this bar (e.g. secondary power bar, utility viewer) when Blizzard
+    -- internally shifts CDM viewer positions.
     local swapMode = isSwapped and "swappedToSecondary" or nil
-    if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedX ~= offsetX or bar._cachedY ~= offsetY or bar._cachedAutoMode ~= swapMode) then
+    if not InCombatLockdown() and not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedX ~= offsetX or bar._cachedY ~= offsetY or bar._cachedAutoMode ~= swapMode) then
         bar:ClearAllPoints()
         bar:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
         bar._cachedX = offsetX
@@ -1317,6 +1320,10 @@ end
 
 -- Global callback for NCDM to update locked power bar width and position
 _G.QUI_UpdateLockedPowerBar = function()
+    -- Skip during combat: the viewer's center may have been shifted by Blizzard's
+    -- internal systems (BreakSnappedFrames, etc.). Repositioning the power bar now
+    -- would cascade to anything anchored to it (e.g. utility viewer).
+    if InCombatLockdown() then return end
     local core = GetCore()
     if not core or not core.db then return end
 
@@ -1399,6 +1406,7 @@ end
 
 -- Global callback for NCDM to update power bar locked to Utility
 _G.QUI_UpdateLockedPowerBarToUtility = function()
+    if InCombatLockdown() then return end
     local core = GetCore()
     if not core or not core.db then return end
 
@@ -1490,6 +1498,7 @@ local cachedPrimaryDimensions = {
 
 -- Global callback for NCDM to update SECONDARY power bar locked to Essential
 _G.QUI_UpdateLockedSecondaryPowerBar = function()
+    if InCombatLockdown() then return end
     local core = GetCore()
     if not core or not core.db then return end
 
@@ -1579,6 +1588,7 @@ end
 
 -- Global callback for NCDM to update SECONDARY power bar locked to Utility
 _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
+    if InCombatLockdown() then return end
     local core = GetCore()
     if not core or not core.db then return end
 
@@ -2204,7 +2214,7 @@ function QUICore:UpdateSecondaryPowerBar()
                 offsetY = offsetY + deltaY
             end
 
-            if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedX ~= offsetX or bar._cachedY ~= offsetY or bar._cachedAutoMode ~= "swappedToPrimary") then
+            if not InCombatLockdown() and not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedX ~= offsetX or bar._cachedY ~= offsetY or bar._cachedAutoMode ~= "swappedToPrimary") then
                 bar:ClearAllPoints()
                 bar:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
                 bar._cachedX = offsetX
@@ -2281,7 +2291,7 @@ function QUICore:UpdateSecondaryPowerBar()
                 -- Position the bar (add user adjustment on top of calculated base position)
                 local finalX = offsetX + (cfg.offsetX or 0)
                 local finalY = offsetY + (cfg.offsetY or 0)
-                if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedX ~= finalX or bar._cachedY ~= finalY or bar._cachedAutoMode ~= "lockedToPrimary") then
+                if not InCombatLockdown() and not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedX ~= finalX or bar._cachedY ~= finalY or bar._cachedAutoMode ~= "lockedToPrimary") then
                     bar:ClearAllPoints()
                     bar:SetPoint("CENTER", UIParent, "CENTER", finalX, finalY)
                     bar._cachedX = finalX
@@ -2345,7 +2355,7 @@ function QUICore:UpdateSecondaryPowerBar()
                 -- Add user adjustment on top of calculated base position
                 local finalX = offsetX + (cfg.offsetX or 0)
                 local finalY = offsetY + (cfg.offsetY or 0)
-                if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedX ~= finalX or bar._cachedY ~= finalY or bar._cachedAutoMode ~= "lockedToPrimaryCached") then
+                if not InCombatLockdown() and not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedX ~= finalX or bar._cachedY ~= finalY or bar._cachedAutoMode ~= "lockedToPrimaryCached") then
                     bar:ClearAllPoints()
                     bar:SetPoint("CENTER", UIParent, "CENTER", finalX, finalY)
                     bar._cachedX = finalX
@@ -2431,7 +2441,7 @@ function QUICore:UpdateSecondaryPowerBar()
             if not wantedAnchor then
                 -- Fall through to manual positioning below
             else
-                if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedAnchor ~= wantedAnchor or bar._cachedX ~= wantedOffsetX or bar._cachedAutoMode ~= true) then
+                if not InCombatLockdown() and not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedAnchor ~= wantedAnchor or bar._cachedX ~= wantedOffsetX or bar._cachedAutoMode ~= true) then
                     bar:ClearAllPoints()
                     bar:SetPoint("BOTTOM", wantedAnchor, "TOP", wantedOffsetX, 0)
                     bar._cachedAnchor = wantedAnchor
@@ -2472,7 +2482,7 @@ function QUICore:UpdateSecondaryPowerBar()
             local wantedX, wantedY
             wantedX = QUICore:PixelRound(baseX + (cfg.offsetX or 0), bar)
             wantedY = QUICore:PixelRound(baseY + (cfg.offsetY or 0), bar)
-            if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedX ~= wantedX or bar._cachedY ~= wantedY or bar._cachedAutoMode ~= false) then
+            if not InCombatLockdown() and not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar)) and (bar._cachedX ~= wantedX or bar._cachedY ~= wantedY or bar._cachedAutoMode ~= false) then
                 bar:ClearAllPoints()
                 bar:SetPoint("CENTER", UIParent, "CENTER", wantedX, wantedY)
                 bar._cachedX = wantedX

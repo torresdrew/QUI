@@ -3600,6 +3600,7 @@ _G.QUI_UpdateCDMAnchoredUnitFrames = _G.QUI_UpdateAnchoredUnitFrames
 -- Global callback for NCDM to update castbar anchored to Essential
 -- Width is now controlled by dual anchors, so just refresh the castbar
 _G.QUI_UpdateLockedCastbarToEssential = function(forceUpdate)
+    if InCombatLockdown() and not forceUpdate then return end
     local db = GetDB()
     if not db or not db.player then return end
 
@@ -3615,6 +3616,7 @@ end
 -- Global callback for NCDM to update castbar anchored to Utility
 -- Width is now controlled by dual anchors, so just refresh the castbar
 _G.QUI_UpdateLockedCastbarToUtility = function(forceUpdate)
+    if InCombatLockdown() and not forceUpdate then return end
     local db = GetDB()
     if not db or not db.player then return end
 

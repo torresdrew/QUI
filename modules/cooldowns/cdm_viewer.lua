@@ -727,6 +727,65 @@ local function ProcessPendingIcons()
     end
 end
 
+-- Combat icon host system for CDM viewers.
+-- During combat, Blizzard can call ClearAllPoints on protected CDM viewer frames,
+-- detaching icons from their intended position. Since we can't SetPoint on
+-- protected frames during combat, we instead anchor icons to non-protected
+-- "host" frames that mirror the viewer's pre-combat position. This keeps icons
+-- visually stable regardless of what Blizzard does to the viewer frame.
+local combatHostFrames = {} -- viewerName -> host Frame (non-protected, parented to UIParent)
+local combatHostActive = {} -- viewerName -> true if icons are currently on the host
+
+local function GetCombatHostFrame(viewerName)
+    if not combatHostFrames[viewerName] then
+        local host = CreateFrame("Frame", nil, UIParent)
+        host:SetClampedToScreen(false)
+        host:Hide()
+        combatHostFrames[viewerName] = host
+    end
+    return combatHostFrames[viewerName]
+end
+
+--- Returns the correct anchor target for icon positioning.
+--- During combat, returns the host frame (stable); otherwise returns the viewer.
+local function GetIconAnchorTarget(viewer, viewerName)
+    if combatHostActive[viewerName] then
+        return combatHostFrames[viewerName] or viewer
+    end
+    return viewer
+end
+
+local combatGuardFrame = CreateFrame("Frame")
+combatGuardFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+combatGuardFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatGuardFrame:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_REGEN_DISABLED" then
+        -- Position host frames at each viewer's current center
+        for _, viewerName in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY, "BuffIconCooldownViewer", "BuffBarCooldownViewer"}) do
+            local viewer = _G[viewerName]
+            if viewer and viewer:IsShown() then
+                local cx, cy = viewer:GetCenter()
+                local sx, sy = UIParent:GetCenter()
+                if cx and cy and sx and sy then
+                    local host = GetCombatHostFrame(viewerName)
+                    host:ClearAllPoints()
+                    host:SetPoint("CENTER", UIParent, "CENTER", cx - sx, cy - sy)
+                    host:SetSize(viewer:GetWidth(), viewer:GetHeight())
+                    host:Show()
+                    combatHostActive[viewerName] = true
+                end
+            end
+        end
+    else
+        -- Combat ended — deactivate host frames.
+        -- Icons are still anchored to the host until the next LayoutViewer call
+        -- (triggered by combatEndFrame below) re-anchors them to the viewer.
+        -- Don't hide the host yet — icons are anchored to it and hiding could
+        -- cause them to momentarily disappear.
+        wipe(combatHostActive)
+    end
+end)
+
 -- Register for combat end to process pending icons and refresh layouts
 local combatEndFrame = CreateFrame("Frame")
 combatEndFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -1272,13 +1331,17 @@ local function LayoutViewer(viewerName, trackerKey)
             end
 
             -- Position using CENTER anchor (more stable than TOPLEFT)
+            -- During combat, anchor to the stable host frame instead of the
+            -- viewer to prevent drift when Blizzard calls ClearAllPoints on
+            -- the protected viewer frame.
+            local anchorTarget = GetIconAnchorTarget(viewer, viewerName)
             -- Pixel-snap position so icon/border edges land on pixel boundaries
             if QUICore and QUICore.PixelRound then
-                x = QUICore:PixelRound(x, viewer)
-                y = QUICore:PixelRound(y, viewer)
+                x = QUICore:PixelRound(x, anchorTarget)
+                y = QUICore:PixelRound(y, anchorTarget)
             end
             icon:ClearAllPoints()
-            icon:SetPoint("CENTER", viewer, "CENTER", x, y)
+            icon:SetPoint("CENTER", anchorTarget, "CENTER", x, y)
             icon:Show()
 
             -- Apply row opacity
@@ -1807,15 +1870,24 @@ local function Initialize()
 end
 
 _G.QUI_CDMDriftDebugEnable = function()
-    return _G.QUI_FrameDriftDebugEnable(VIEWER_UTILITY, { label = "UtilityCooldownViewer" })
+    local viewer = _G[VIEWER_UTILITY]
+    if not viewer then
+        print("|cff34D399QUI Drift|r UtilityCooldownViewer frame not found — is CDM loaded?")
+        return false
+    end
+    local ok = _G.QUI_FrameDriftDebugEnable(viewer, { label = "UtilityCooldownViewer" })
+    if ok then
+        print("|cff34D399QUI Drift|r UtilityCooldownViewer tracking ACTIVE. Enter combat to capture drift.")
+    end
+    return ok
 end
 
 _G.QUI_CDMDriftDebugDisable = function()
-    return _G.QUI_FrameDriftDebugDisable(VIEWER_UTILITY)
+    return _G.QUI_FrameDriftDebugDisable("UtilityCooldownViewer")
 end
 
 _G.QUI_CDMDriftDebugDump = function()
-    return _G.QUI_FrameDriftDebugDump(VIEWER_UTILITY)
+    return _G.QUI_FrameDriftDebugDump("UtilityCooldownViewer")
 end
 
 local eventFrame = CreateFrame("Frame")
@@ -1832,6 +1904,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- Skip on initial login/reload (Initialize already schedules RefreshAll at 2.5s)
         -- But DO refresh on zone changes (M+ dungeons, instance portals, etc.)
         if not isLogin and not isReload then
+            -- Zone change: clear any stale combat host state (combat may have
+            -- ended during the loading screen without PLAYER_REGEN_ENABLED firing
+            -- before this event)
+            wipe(combatHostActive)
+
             -- Zone change: enable 2-second grace period for anchor checking
             for _, viewerName in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
                 local viewer = _G[viewerName]
@@ -1848,6 +1925,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 end
             end
             C_Timer.After(0.3, RefreshAll)
+            -- Blizzard re-lays out CDM viewers after zone transitions and may
+            -- ClearAllPoints on the Utility viewer after our RefreshAll completes.
+            -- Apply the utility anchor again with a longer delay to win the race.
+            C_Timer.After(0.8, function()
+                if not InCombatLockdown() and _G.QUI_ApplyUtilityAnchor then
+                    _G.QUI_ApplyUtilityAnchor()
+                end
+            end)
         end
     elseif event == "CHALLENGE_MODE_START" then
         -- M+ keystone: enable grace period to catch scenario-related scrambles

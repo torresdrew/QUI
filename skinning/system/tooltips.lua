@@ -184,7 +184,111 @@ end
 -- Store original backdrops for unskinning
 local originalBackdrops = {}
 
--- Apply QUI skin to a tooltip frame
+-- TAINT SAFETY: Track skinned state in local tables, NOT on Blizzard frames.
+local skinnedTooltips = setmetatable({}, { __mode = "k" })   -- tooltip -> true
+local hookedTooltips = setmetatable({}, { __mode = "k" })    -- tooltip -> true (OnShow hooked)
+
+
+-- NineSlice piece names used by Blizzard tooltips
+local NINE_SLICE_PIECES = {
+    "TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner",
+    "TopEdge", "BottomEdge", "LeftEdge", "RightEdge", "Center",
+}
+
+-- Apply flat QUI textures to all NineSlice pieces
+local function ApplyFlatNineSlice(nineSlice, edgeSize)
+    if not nineSlice then return end
+
+    local core = GetCore()
+    local px = core and core.GetPixelSize and core:GetPixelSize(nineSlice) or 1
+    local edge = (edgeSize or 1) * px
+
+    for _, pieceName in ipairs(NINE_SLICE_PIECES) do
+        local piece = nineSlice[pieceName]
+        if piece and piece.SetTexture then
+            piece:SetTexture(FLAT_TEXTURE)
+            piece:SetTexCoord(0, 1, 0, 1)
+        end
+    end
+
+    -- Size the corners and edges to match our border thickness
+    local tl = nineSlice.TopLeftCorner
+    local tr = nineSlice.TopRightCorner
+    local bl = nineSlice.BottomLeftCorner
+    local br = nineSlice.BottomRightCorner
+
+    if tl then tl:SetSize(edge, edge) end
+    if tr then tr:SetSize(edge, edge) end
+    if bl then bl:SetSize(edge, edge) end
+    if br then br:SetSize(edge, edge) end
+
+    -- Edge thickness
+    local te = nineSlice.TopEdge
+    local be = nineSlice.BottomEdge
+    local le = nineSlice.LeftEdge
+    local re = nineSlice.RightEdge
+
+    if te then te:SetHeight(edge) end
+    if be then be:SetHeight(edge) end
+    if le then le:SetWidth(edge) end
+    if re then re:SetWidth(edge) end
+
+    -- Inset the center piece so the background doesn't bleed past the border.
+    -- By default Blizzard anchors Center to fill between corners, but with thin
+    -- borders the background can extend beyond the visible edge.
+    local center = nineSlice.Center
+    if center then
+        center:ClearAllPoints()
+        center:SetPoint("TOPLEFT", nineSlice, "TOPLEFT", edge, -edge)
+        center:SetPoint("BOTTOMRIGHT", nineSlice, "BOTTOMRIGHT", -edge, edge)
+    end
+end
+
+-- Apply QUI skin colors to a tooltip's NineSlice
+local function ApplyNineSliceColors(nineSlice, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    if not nineSlice then return end
+
+    -- Background (center piece)
+    if nineSlice.SetCenterColor then
+        nineSlice:SetCenterColor(bgr, bgg, bgb, bga)
+    elseif nineSlice.Center then
+        nineSlice.Center:SetVertexColor(bgr, bgg, bgb, bga)
+    end
+
+    -- Border (edge + corner pieces)
+    if nineSlice.SetBorderColor then
+        nineSlice:SetBorderColor(sr, sg, sb, sa)
+    else
+        -- Manual fallback: color each border piece individually
+        for _, pieceName in ipairs(NINE_SLICE_PIECES) do
+            if pieceName ~= "Center" then
+                local piece = nineSlice[pieceName]
+                if piece and piece.SetVertexColor then
+                    piece:SetVertexColor(sr, sg, sb, sa)
+                end
+            end
+        end
+    end
+end
+
+-- Prevent Blizzard from re-applying the default NineSlice layout on Show
+local function ClearNineSliceLayoutInfo(tooltip)
+    if not tooltip then return end
+
+    -- Clear layout info that Blizzard uses to re-apply defaults
+    local ns = tooltip.NineSlice
+    if ns then
+        ns.layoutType = nil
+        ns.layoutTextureKit = nil
+        ns.backdropInfo = nil
+    end
+
+    tooltip.layoutType = nil
+    tooltip.layoutTextureKit = nil
+    tooltip.backdropInfo = nil
+end
+
+-- Full skin application for a tooltip
 local function SkinTooltip(tooltip)
     if not tooltip then return end
     if tooltip.quiSkinned then return end

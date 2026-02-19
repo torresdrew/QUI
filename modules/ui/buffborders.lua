@@ -29,6 +29,14 @@ local BORDER_COLOR_DEBUFF = {0.5, 0, 0, 1}    -- Dark red for debuffs
 -- Track which buttons we've already bordered
 local borderedButtons = {}
 
+-- TAINT SAFETY: OnUpdate watchers to re-hide BuffFrame/DebuffFrame when Blizzard
+-- shows them. Replaces hooksecurefunc(Show) which taints the secure context.
+local _buffHideWatcher = nil
+local _debuffHideWatcher = nil
+local _buffWasShown = false
+local _debuffWasShown = false
+
+
 -- Add border to a single buff/debuff button
 local function AddBorderToButton(button, isBuff)
     if not button or borderedButtons[button] then
@@ -158,45 +166,79 @@ local function ProcessAuraContainer(container, isBuff)
 end
 
 -- Hide/show entire BuffFrame or DebuffFrame based on settings
+-- TAINT SAFETY: Do NOT use hooksecurefunc on BuffFrame.Show / DebuffFrame.Show.
+-- Show() fires inside secure execution contexts (CompactUnitFrame updates),
+-- and the addon callback taints the secure chain even with C_Timer.After deferral.
+-- Use OnUpdate watchers to poll IsShown() and re-hide when Blizzard shows them.
 local function ApplyFrameHiding()
     local settings = GetSettings()
     if not settings then return end
 
-    -- BuffFrame hiding (simple Hide + Show hook, no EnableMouse)
+    -- BuffFrame hiding
     if BuffFrame then
         if settings.hideBuffFrame then
             BuffFrame:Hide()
+            -- Start watcher to re-hide if Blizzard shows it
+            if not _buffHideWatcher then
+                _buffHideWatcher = CreateFrame("Frame", nil, UIParent)
+                _buffWasShown = BuffFrame:IsShown()
+                _buffHideWatcher:SetScript("OnUpdate", function()
+                    local isShown = BuffFrame:IsShown()
+                    if isShown and not _buffWasShown then
+                        _buffWasShown = true
+                        C_Timer.After(0, function()
+                            local s = GetSettings()
+                            if s and s.hideBuffFrame then
+                                BuffFrame:Hide()
+                            end
+                            _buffWasShown = BuffFrame:IsShown()
+                        end)
+                    elseif not isShown then
+                        _buffWasShown = false
+                    end
+                end)
+            end
         else
             BuffFrame:Show()
-        end
-        -- Hook Show() once to prevent Blizzard from re-showing
-        if not BuffFrame._QUI_ShowHooked then
-            BuffFrame._QUI_ShowHooked = true
-            hooksecurefunc(BuffFrame, "Show", function(self)
-                local s = GetSettings()
-                if s and s.hideBuffFrame then
-                    self:Hide()
-                end
-            end)
+            -- Stop watcher when not hiding
+            if _buffHideWatcher then
+                _buffHideWatcher:SetScript("OnUpdate", nil)
+                _buffHideWatcher = nil
+            end
         end
     end
 
-    -- DebuffFrame hiding (simple Hide + Show hook, no EnableMouse)
+    -- DebuffFrame hiding
     if DebuffFrame then
         if settings.hideDebuffFrame then
             DebuffFrame:Hide()
+            -- Start watcher to re-hide if Blizzard shows it
+            if not _debuffHideWatcher then
+                _debuffHideWatcher = CreateFrame("Frame", nil, UIParent)
+                _debuffWasShown = DebuffFrame:IsShown()
+                _debuffHideWatcher:SetScript("OnUpdate", function()
+                    local isShown = DebuffFrame:IsShown()
+                    if isShown and not _debuffWasShown then
+                        _debuffWasShown = true
+                        C_Timer.After(0, function()
+                            local s = GetSettings()
+                            if s and s.hideDebuffFrame then
+                                DebuffFrame:Hide()
+                            end
+                            _debuffWasShown = DebuffFrame:IsShown()
+                        end)
+                    elseif not isShown then
+                        _debuffWasShown = false
+                    end
+                end)
+            end
         else
             DebuffFrame:Show()
-        end
-        -- Hook Show() once to prevent Blizzard from re-showing
-        if not DebuffFrame._QUI_ShowHooked then
-            DebuffFrame._QUI_ShowHooked = true
-            hooksecurefunc(DebuffFrame, "Show", function(self)
-                local s = GetSettings()
-                if s and s.hideDebuffFrame then
-                    self:Hide()
-                end
-            end)
+            -- Stop watcher when not hiding
+            if _debuffHideWatcher then
+                _debuffHideWatcher:SetScript("OnUpdate", nil)
+                _debuffHideWatcher = nil
+            end
         end
     end
 end
@@ -239,38 +281,40 @@ local function ScheduleBuffBorders()
     end)
 end
 
--- Hook into aura update functions
-local function HookAuraUpdates()
-    -- Hook BuffFrame updates
-    if BuffFrame and BuffFrame.Update then
-        hooksecurefunc(BuffFrame, "Update", ScheduleBuffBorders)
+-- TAINT SAFETY: Do NOT use hooksecurefunc on BuffFrame/DebuffFrame or their
+-- children (Update, AuraContainer.Update, AuraButton_Update). These methods
+-- fire inside CompactUnitFrame's secure execution context. Even a no-op addon
+-- callback taints that context, causing "secret number tainted by QUI" errors
+-- in CompactUnitFrame_UpdateHealthColor and ADDON_ACTION_FORBIDDEN for TargetUnit().
+-- Instead, poll aura container child counts from a UIParent-child watcher frame.
+local _auraWatcherLastBuffCount = 0
+local _auraWatcherLastDebuffCount = 0
+
+local auraWatcher = CreateFrame("Frame", nil, UIParent)
+auraWatcher:SetScript("OnUpdate", function(self, elapsed)
+    -- Throttle to ~4 checks per second
+    self._elapsed = (self._elapsed or 0) + elapsed
+    if self._elapsed < 0.25 then return end
+    self._elapsed = 0
+
+    local buffCount = 0
+    local debuffCount = 0
+
+    if BuffFrame and BuffFrame.AuraContainer then
+        buffCount = BuffFrame.AuraContainer:GetNumChildren()
+    end
+    if DebuffFrame and DebuffFrame.AuraContainer then
+        debuffCount = DebuffFrame.AuraContainer:GetNumChildren()
     end
 
-    -- Hook AuraContainer updates if it exists (buffs)
-    if BuffFrame and BuffFrame.AuraContainer and BuffFrame.AuraContainer.Update then
-        hooksecurefunc(BuffFrame.AuraContainer, "Update", ScheduleBuffBorders)
+    if buffCount ~= _auraWatcherLastBuffCount or debuffCount ~= _auraWatcherLastDebuffCount then
+        _auraWatcherLastBuffCount = buffCount
+        _auraWatcherLastDebuffCount = debuffCount
+        ScheduleBuffBorders()
     end
+end)
 
-    -- Hook DebuffFrame updates
-    if DebuffFrame and DebuffFrame.Update then
-        hooksecurefunc(DebuffFrame, "Update", ScheduleBuffBorders)
-    end
-
-    -- Hook DebuffFrame.AuraContainer updates if it exists
-    if DebuffFrame and DebuffFrame.AuraContainer and DebuffFrame.AuraContainer.Update then
-        hooksecurefunc(DebuffFrame.AuraContainer, "Update", ScheduleBuffBorders)
-    end
-
-    -- Hook the global aura update function if available
-    if type(AuraButton_Update) == "function" then
-        hooksecurefunc("AuraButton_Update", ScheduleBuffBorders)
-    end
-end
-
--- Performance: Removed redundant 1-second polling loop
--- UNIT_AURA event and AuraButton_Update hook already handle all buff border updates
-
--- Initialize (UNIT_AURA handles dynamic updates)
+-- Initialize (UNIT_AURA handles dynamic updates, OnUpdate watcher handles layout changes)
 -- Note: Initial application is called from core/main.lua OnEnable() to ensure AceDB is ready
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("UNIT_AURA")
@@ -280,9 +324,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg)
         ScheduleBuffBorders()  -- Use shared debounce
     end
 end)
-
--- Hook aura updates on first load
-C_Timer.After(2, HookAuraUpdates)
 
 -- Export to QUI namespace
 QUI.BuffBorders = {

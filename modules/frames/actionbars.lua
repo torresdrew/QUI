@@ -2038,9 +2038,11 @@ local function SkinBar(barKey)
         -- Binder reads from our external frameState instead.
         AddKeybindMethods(button, barKey)
 
-        -- Hook OnEnter to register with LibKeyBound when in keybind mode.
+        -- Hook OnEnter to register with LibKeyBound when in keybind mode
+        -- and to re-apply usability tint after Blizzard resets it on hover.
         -- HookScript is safe on secure frames (unlike SetScript) because it
         -- appends to the handler chain without replacing the secure handler.
+        -- C_Timer.After(0) defers to next frame, breaking the taint chain.
         local state = GetFrameState(button)
         if not state.onEnterHooked then
             state.onEnterHooked = true
@@ -2048,6 +2050,15 @@ local function SkinBar(barKey)
                 local LibKeyBound = LibStub("LibKeyBound-1.0", true)
                 if LibKeyBound and LibKeyBound:IsShown() then
                     LibKeyBound:Set(self)
+                end
+                -- Re-apply usability tint next frame (Blizzard resets icon color on hover)
+                local gs = GetGlobalSettings()
+                if gs and (gs.usabilityIndicator or gs.rangeIndicator) then
+                    C_Timer.After(0, function()
+                        if self and self.action then
+                            UpdateButtonUsability(self, gs)
+                        end
+                    end)
                 end
             end)
         end

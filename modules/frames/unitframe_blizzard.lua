@@ -30,13 +30,46 @@ local function KillBlizzardFrame(frame, allowInEditMode)
     frame:EnableMouse(false)
 
     -- Move it off-screen as extra measure
-    frame:ClearAllPoints()
-    frame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", -10000, 10000)
+    -- TAINT SAFETY: Wrap in pcall + combat guard. ClearAllPoints/SetPoint on
+    -- secure frames taints their layout properties in Midnight's taint model.
+    if not InCombatLockdown() then
+        pcall(function()
+            frame:ClearAllPoints()
+            frame:SetPoint("TOPLEFT", UIParent, "TOPLEFT", -10000, 10000)
+        end)
+    end
 
     -- Use RegisterStateDriver to keep it hidden (works with secure frames)
     if not InCombatLockdown() then
         RegisterStateDriver(frame, "visibility", "hide")
     end
+end
+
+-- TAINT SAFETY: Track killed child frames for OnUpdate polling.
+-- Do NOT use SetScript("OnShow") on secure frame children — the OnShow handler
+-- fires in the parent's secure execution context, tainting CompactUnitFrame
+-- values and causing ADDON_ACTION_FORBIDDEN when Edit Mode reads them.
+local _killedChildFrames = {}
+local _childFrameWatcher = nil
+
+local function EnsureChildFrameWatcher()
+    if _childFrameWatcher then return end
+    _childFrameWatcher = CreateFrame("Frame", nil, UIParent)
+    _childFrameWatcher:SetScript("OnUpdate", function(self, elapsed)
+        -- Throttle to ~4 checks per second
+        self._elapsed = (self._elapsed or 0) + elapsed
+        if self._elapsed < 0.25 then return end
+        self._elapsed = 0
+
+        for frame in pairs(_killedChildFrames) do
+            if frame:IsShown() or frame:GetAlpha() > 0 then
+                C_Timer.After(0, function()
+                    pcall(function() frame:Hide() end)
+                    frame:SetAlpha(0)
+                end)
+            end
+        end
+    end)
 end
 
 local function KillBlizzardChildFrame(frame)
@@ -55,10 +88,9 @@ local function KillBlizzardChildFrame(frame)
     -- Set alpha to 0 as fallback
     frame:SetAlpha(0)
 
-    frame:SetScript("OnShow", function(f)
-        pcall(function() f:Hide() end)
-        f:SetAlpha(0)
-    end)
+    -- Register for OnUpdate polling instead of SetScript("OnShow")
+    _killedChildFrames[frame] = true
+    EnsureChildFrameWatcher()
 end
 
 local function HideBlizzardTargetVisuals()

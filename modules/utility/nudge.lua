@@ -1085,7 +1085,112 @@ local function SetupEditModeHooks()
         if QUICore.ClearEditModeSelection then
             QUICore:ClearEditModeSelection()
         end
-        
+
+        -- Re-snap all anchored frames after Blizzard finishes reverting positions.
+        -- When exiting Edit Mode without saving, Blizzard reverts frame positions
+        -- asynchronously (ClearAllPoints + SetPoint on each frame). This overrides
+        -- QUI's anchor chain positioning. The timing varies by frame count and
+        -- system load. We counteract this with:
+        -- 1. An OnUpdate watcher that re-applies every ~0.2s for ~2s
+        -- 2. A final definitive re-anchor at 3s (after all Blizzard reverts are done)
+        -- QUI_UpdateAnchoredFrames handles frames with ENABLED anchors.
+        -- Frames with DISABLED anchors need special handling: Blizzard's revert puts
+        -- them at Blizzard's stored position (which may differ from where QUI had them).
+        -- We restore those from the snapshot captured on Edit Mode entry.
+        -- TAINT SAFETY: Uses QUICore._editModeActive flag instead of secure frame reads.
+
+        -- Restore snapshots for frames with disabled anchors.
+        -- These frames are not managed by QUI_UpdateAnchoredFrames (because their
+        -- anchor is disabled), but Blizzard's revert may move them to the wrong position.
+        local snapshots = QUICore._editModeFrameSnapshots
+        local function RestoreDisabledAnchorSnapshots()
+            if not snapshots then return end
+            for key, snap in pairs(snapshots) do
+                -- Only restore frames whose anchor is CURRENTLY disabled.
+                -- Enabled anchors are handled by QUI_UpdateAnchoredFrames.
+                local db = _G.QUI_GetFrameAnchoringDB and _G.QUI_GetFrameAnchoringDB()
+                local settings = db and db[key]
+                if settings and not settings.enabled and snap.frame then
+                    pcall(function()
+                        snap.frame:ClearAllPoints()
+                        snap.frame:SetPoint(
+                            snap.point,
+                            snap.relativeTo or UIParent,
+                            snap.relativePoint,
+                            snap.xOfs or 0,
+                            snap.yOfs or 0
+                        )
+                    end)
+                    -- Persist to DB so /reload can restore this position
+                    settings.lastPosition = {
+                        point = snap.point,
+                        relativePoint = snap.relativePoint,
+                        xOfs = snap.xOfs or 0,
+                        yOfs = snap.yOfs or 0,
+                    }
+                    -- Sync into Blizzard's Edit Mode DB so it applies correctly on next load.
+                    -- Skip pet/stance bars (dynamic show/hide causes offsetY nil errors),
+                    -- skip hidden frames (e.g. StanceBar on DK), skip during combat.
+                    -- Read actual GetPoint(1) after SetPoint for guaranteed valid anchor data.
+                    local skipSync = (key == "petBar" or key == "stanceBar")
+                    if not skipSync and not InCombatLockdown()
+                        and LibEditModeOverride and EnsureEditModeReady()
+                        and snap.frame.IsShown and snap.frame:IsShown()
+                        and LibEditModeOverride:HasEditModeSettings(snap.frame) then
+                        local gp, grt, grp, gx, gy = snap.frame:GetPoint(1)
+                        -- Only sync UIParent-relative anchors to avoid offsetY nil
+                        -- errors when Blizzard processes non-UIParent anchor data
+                        if gp and (not grt or grt == UIParent) then
+                            pcall(function()
+                                LibEditModeOverride:ReanchorFrame(
+                                    snap.frame, gp, grt, grp, gx or 0, gy or 0
+                                )
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+
+        if _G.QUI_UpdateAnchoredFrames then
+            local anchorWatcher = CreateFrame("Frame", nil, UIParent)
+            local totalElapsed = 0
+            local tickElapsed = 0
+            local DURATION = 2.0     -- seconds to keep re-applying via OnUpdate
+            local INTERVAL = 0.2     -- seconds between each re-apply
+            anchorWatcher:SetScript("OnUpdate", function(self, dt)
+                totalElapsed = totalElapsed + dt
+                if totalElapsed >= DURATION then
+                    self:SetScript("OnUpdate", nil)
+                    return
+                end
+                -- If user re-entered Edit Mode, stop immediately
+                if QUICore._editModeActive then
+                    self:SetScript("OnUpdate", nil)
+                    return
+                end
+                -- Throttle: only re-apply every INTERVAL seconds
+                tickElapsed = tickElapsed + dt
+                if tickElapsed < INTERVAL then return end
+                tickElapsed = 0
+                -- Re-apply all anchored frame positions (enabled anchors)
+                _G.QUI_UpdateAnchoredFrames()
+                -- Restore disabled-anchor frames to their pre-Edit-Mode position
+                RestoreDisabledAnchorSnapshots()
+            end)
+
+            -- Final definitive re-anchor well after Blizzard's revert completes.
+            -- This catches any late Blizzard layout passes that fire after the watcher.
+            C_Timer.After(3.0, function()
+                if QUICore._editModeActive then return end
+                _G.QUI_UpdateAnchoredFrames()
+                RestoreDisabledAnchorSnapshots()
+                -- Clean up snapshots
+                QUICore._editModeFrameSnapshots = nil
+            end)
+        end
+
+
         -- Fix for arrow-key positioning bug: Convert TOPLEFT anchoring to CENTER anchoring
         -- Arrow keys in Edit Mode use TOPLEFT anchor, mouse drag uses CENTER anchor
         -- Uses GetCenter() for exact center position directly from WoW

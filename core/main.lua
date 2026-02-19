@@ -4065,11 +4065,15 @@ function QUICore:HookEditMode()
             C_Timer.After(1, function()
                 if not InCombatLockdown() then
                     self:ForceReskinAllViewers()
-            end
-        end)
-            end
-        end)
-    end
+                end
+                -- Re-apply frame anchoring (Blizzard re-layouts on zone change)
+                if _G.QUI_ApplyAllFrameAnchors then
+                    _G.QUI_ApplyAllFrameAnchors()
+                end
+            end)
+        end
+    end)
+end
 
 -- Patch Blizzard EncounterWarnings to avoid secret value compare errors in Edit Mode
 function QUICore:SetupEncounterWarningsSecretValuePatch()
