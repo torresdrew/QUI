@@ -3575,31 +3575,48 @@ function QUICore:ShowSelectionArrows(elementType, elementKey)
         if ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames then
             local frame = ns.QUI_UnitFrames.frames[elementKey]
             if frame and frame.editOverlay then
-                self:ShowNudgeButtons(frame.editOverlay)
+                -- Don't show nudge arrows for locked/anchored unit frames
+                if not (_G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(frame)) then
+                    self:ShowNudgeButtons(frame.editOverlay)
+                end
             end
         end
     elseif elementType == "powerbar" then
         local bar = (elementKey == "primary") and self.powerBar or self.secondaryPowerBar
         if bar and bar.editOverlay then
-            self:ShowNudgeButtons(bar.editOverlay)
+            -- Don't show nudge arrows for locked/anchored power bars
+            if not (_G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(bar)) then
+                self:ShowNudgeButtons(bar.editOverlay)
+            end
         end
     elseif elementType == "cdm" then
         if self.cdmOverlays and self.cdmOverlays[elementKey] then
-            self:ShowNudgeButtons(self.cdmOverlays[elementKey])
+            -- Don't show nudge arrows for locked/anchored CDM viewers
+            local viewer = _G[elementKey]
+            if not (viewer and _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(viewer)) then
+                self:ShowNudgeButtons(self.cdmOverlays[elementKey])
+            end
         end
     elseif elementType == "blizzard" then
         if self.blizzardOverlays and self.blizzardOverlays[elementKey] then
-            self:ShowNudgeButtons(self.blizzardOverlays[elementKey])
+            -- Don't show nudge arrows for locked/anchored Blizzard frames
+            local frame = _G[elementKey]
+            if not (frame and _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(frame)) then
+                self:ShowNudgeButtons(self.blizzardOverlays[elementKey])
+            end
         end
     elseif elementType == "minimap" then
         if self.minimapOverlay then
-            self:ShowNudgeButtons(self.minimapOverlay)
-            -- Update info text with current position
-            local settings = self.db and self.db.profile and self.db.profile.minimap
-            if settings and settings.position and self.minimapOverlay.infoText then
-                self.minimapOverlay.infoText:SetText(string.format("Minimap  X:%d Y:%d",
-                    math.floor(settings.position[3] or 0),
-                    math.floor(settings.position[4] or 0)))
+            -- Don't show nudge arrows for locked/anchored minimap
+            if not (Minimap and _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(Minimap)) then
+                self:ShowNudgeButtons(self.minimapOverlay)
+                -- Update info text with current position
+                local settings = self.db and self.db.profile and self.db.profile.minimap
+                if settings and settings.position and self.minimapOverlay.infoText then
+                    self.minimapOverlay.infoText:SetText(string.format("Minimap  X:%d Y:%d",
+                        math.floor(settings.position[3] or 0),
+                        math.floor(settings.position[4] or 0)))
+                end
             end
         end
     elseif elementType == "castbar" then
@@ -3670,12 +3687,21 @@ function QUICore:NudgeSelectedElement(deltaX, deltaY)
             if isAnchored and (settingsKey == "player" or settingsKey == "target") then
                 return false
             end
+            -- Block nudging for frames with active anchoring overrides or module anchoring
+            if frame and _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(frame) then
+                return false
+            end
 
             if settings and frame then
                 settings.offsetX = (settings.offsetX or 0) + dx
                 settings.offsetY = (settings.offsetY or 0) + dy
-                frame:ClearAllPoints()
-                frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX, settings.offsetY)
+                -- Use AdjustPointsOffset to shift in-place (avoids layout cascade from ClearAllPoints)
+                if frame.AdjustPointsOffset then
+                    frame:AdjustPointsOffset(dx, dy)
+                else
+                    frame:ClearAllPoints()
+                    frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX, settings.offsetY)
+                end
                 -- Update info text
                 if frame.editOverlay and frame.editOverlay.infoText then
                     frame.editOverlay.infoText:SetText(string.format("%s  X:%d Y:%d",
@@ -3685,9 +3711,10 @@ function QUICore:NudgeSelectedElement(deltaX, deltaY)
                 if ns.QUI_UnitFrames and ns.QUI_UnitFrames.NotifyPositionChanged then
                     ns.QUI_UnitFrames:NotifyPositionChanged(settingsKey, settings.offsetX, settings.offsetY)
                 end
-                -- Update anchored frames to follow nudged element
-                if _G.QUI_UpdateAnchoredFrames then
-                    _G.QUI_UpdateAnchoredFrames()
+                -- Update only frames anchored to this unit frame (not all frames)
+                -- to avoid ClearAllPoints/SetPoint layout cascade on unrelated frames
+                if _G.QUI_UpdateFramesAnchoredTo then
+                    _G.QUI_UpdateFramesAnchoredTo(frame)
                 end
                 return true
             end
@@ -3695,13 +3722,22 @@ function QUICore:NudgeSelectedElement(deltaX, deltaY)
     elseif sel.selectedType == "powerbar" then
         local cfg = (sel.selectedKey == "primary") and self.db.profile.powerBar or self.db.profile.secondaryPowerBar
         local bar = (sel.selectedKey == "primary") and self.powerBar or self.secondaryPowerBar
+        -- Block nudging for power bars with active anchoring overrides or module anchoring
+        if bar and _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(bar) then
+            return false
+        end
         if cfg and bar then
             cfg.offsetX = (cfg.offsetX or 0) + dx
             cfg.offsetY = (cfg.offsetY or 0) + dy
             cfg.autoAttach = false
             cfg.useRawPixels = true
-            bar:ClearAllPoints()
-            bar:SetPoint("CENTER", UIParent, "CENTER", cfg.offsetX, cfg.offsetY)
+            -- Use AdjustPointsOffset to shift in-place (avoids layout cascade from ClearAllPoints)
+            if bar.AdjustPointsOffset then
+                bar:AdjustPointsOffset(dx, dy)
+            else
+                bar:ClearAllPoints()
+                bar:SetPoint("CENTER", UIParent, "CENTER", cfg.offsetX, cfg.offsetY)
+            end
             -- Update info text
             if bar.editOverlay and bar.editOverlay.infoText then
                 local label = (sel.selectedKey == "primary") and "Primary" or "Secondary"
@@ -3709,15 +3745,19 @@ function QUICore:NudgeSelectedElement(deltaX, deltaY)
             end
             -- Notify options panel
             self:NotifyPowerBarPositionChanged(sel.selectedKey, cfg.offsetX, cfg.offsetY)
-            -- Update anchored frames to follow nudged element
-            if _G.QUI_UpdateAnchoredFrames then
-                _G.QUI_UpdateAnchoredFrames()
+            -- Update only frames anchored to this power bar
+            if _G.QUI_UpdateFramesAnchoredTo then
+                _G.QUI_UpdateFramesAnchoredTo(bar)
             end
             return true
         end
     elseif sel.selectedType == "castbar" then
         if ns.QUI_Castbar and ns.QUI_Castbar.castbars then
             local castbar = ns.QUI_Castbar.castbars[sel.selectedKey]
+            -- Block nudging for castbars with active anchoring overrides or module anchoring
+            if castbar and _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(castbar) then
+                return false
+            end
             -- Castbar settings are stored within unit frame settings at quiUnitFrames
             local ufdb = self.db and self.db.profile and self.db.profile.quiUnitFrames
             local settings = ufdb and ufdb[sel.selectedKey]
@@ -3728,8 +3768,13 @@ function QUICore:NudgeSelectedElement(deltaX, deltaY)
                 castSettings.offsetY = (castSettings.offsetY or 0) + dy
                 castSettings.freeOffsetX = castSettings.offsetX
                 castSettings.freeOffsetY = castSettings.offsetY
-                castbar:ClearAllPoints()
-                castbar:SetPoint("CENTER", UIParent, "CENTER", castSettings.offsetX, castSettings.offsetY)
+                -- Use AdjustPointsOffset to shift in-place (avoids layout cascade from ClearAllPoints)
+                if castbar.AdjustPointsOffset then
+                    castbar:AdjustPointsOffset(dx, dy)
+                else
+                    castbar:ClearAllPoints()
+                    castbar:SetPoint("CENTER", UIParent, "CENTER", castSettings.offsetX, castSettings.offsetY)
+                end
                 -- Update info text
                 if castbar.editOverlay and castbar.editOverlay.infoText then
                     local displayName = sel.selectedKey == "player" and "Player" or
@@ -3738,9 +3783,9 @@ function QUICore:NudgeSelectedElement(deltaX, deltaY)
                     castbar.editOverlay.infoText:SetText(string.format("%s Castbar  X:%d Y:%d",
                         displayName, castSettings.offsetX, castSettings.offsetY))
                 end
-                -- Update anchored frames to follow nudged element
-                if _G.QUI_UpdateAnchoredFrames then
-                    _G.QUI_UpdateAnchoredFrames()
+                -- Update only frames anchored to this castbar
+                if _G.QUI_UpdateFramesAnchoredTo then
+                    _G.QUI_UpdateFramesAnchoredTo(castbar)
                 end
                 return true
             end
@@ -4000,42 +4045,89 @@ function QUICore:HookViewers()
     end
 end
 
+---------------------------------------------------------------------------
+-- EDIT MODE CENTRAL DISPATCHER
+-- TAINT SAFETY: NEVER use hooksecurefunc on EditModeManagerFrame.
+-- Even callbacks that only call C_Timer.After(0) still taint because the
+-- game engine sees addon-defined functions executing in the secure path.
+-- When Edit Mode is entered from the Esc menu, the taint chain propagates:
+-- GameMenuFrame → EditModeManagerFrame:EnterEditMode → TargetUnit() →
+-- ADDON_ACTION_FORBIDDEN.
+-- Instead, an OnUpdate watcher on a UIParent-child frame polls
+-- IsEditModeActive() — no addon code ever runs in the secure context.
+-- Modules register callbacks via RegisterEditModeEnter/Exit.
+---------------------------------------------------------------------------
+-- Callback registries (populated by modules via RegisterEditModeEnter/Exit)
+QUICore._editModeEnterCallbacks = QUICore._editModeEnterCallbacks or {}
+QUICore._editModeExitCallbacks = QUICore._editModeExitCallbacks or {}
+
+-- Register a callback to run when Edit Mode is entered (deferred via C_Timer.After(0))
+function QUICore:RegisterEditModeEnter(callback)
+    table.insert(self._editModeEnterCallbacks, callback)
+end
+
+-- Register a callback to run when Edit Mode is exited (deferred via C_Timer.After(0))
+function QUICore:RegisterEditModeExit(callback)
+    table.insert(self._editModeExitCallbacks, callback)
+end
+
 -- Hook Edit Mode to force re-skinning when it opens/closes
 function QUICore:HookEditMode()
     if self.__editModeHooked then return end
     self.__editModeHooked = true
-    
-    -- Hook EditModeManagerFrame if it exists
+
+    -- TAINT SAFETY: Do NOT use hooksecurefunc on EditModeManagerFrame.
+    -- Even with C_Timer.After(0) deferral, the addon-defined callback function
+    -- still executes in EditModeManagerFrame's secure context when EnterEditMode
+    -- is called from the GameMenu "Edit Mode" button. This taints the secure
+    -- execution chain: GameMenuFrame → EditModeManagerFrame → EnterEditMode →
+    -- TargetUnit() → ADDON_ACTION_FORBIDDEN.
+    -- Instead, use an OnUpdate watcher to poll IsEditModeActive() from a
+    -- UIParent-child frame — no addon code ever runs in the secure context.
     if EditModeManagerFrame then
-        -- Hook when Edit Mode is entered
-        hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
-            C_Timer.After(0.1, function()
-                self:ForceReskinAllViewers()
-            end)
-
-            -- NOTE: BossTargetFrameContainer.GetScaledSelectionSides crash fix
-            -- is handled in unitframe_blizzard.lua. The previous direct method
-            -- replacement here was removed because it taints the EnterEditMode
-            -- secure execution context, causing ADDON_ACTION_FORBIDDEN errors.
-        end)
-        
-        -- Hook when Edit Mode is exited
-        hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
-            C_Timer.After(0.1, function()
-                self:ForceReskinAllViewers()
-
-                -- Hide power bar edit overlays that persist after edit mode exits
-                C_Timer.After(0.15, function()
-                    for _, barName in ipairs({"QUIPrimaryPowerBar", "QUISecondaryPowerBar"}) do
-                        local bar = _G[barName]
-                        if bar and bar.editOverlay and bar.editOverlay:IsShown() then
-                            bar.editOverlay:Hide()
-                        end
+        local editModeWatcher = CreateFrame("Frame", nil, UIParent)
+        local wasEditModeActive = EditModeManagerFrame.IsEditModeActive and EditModeManagerFrame:IsEditModeActive() or false
+        editModeWatcher:SetScript("OnUpdate", function()
+            local isActive = EditModeManagerFrame.IsEditModeActive and EditModeManagerFrame:IsEditModeActive() or false
+            if isActive and not wasEditModeActive then
+                wasEditModeActive = true
+                QUICore._editModeActive = true  -- Addon-safe flag (avoids secure frame reads)
+                -- Edit Mode just entered — dispatch enter callbacks
+                C_Timer.After(0, function()
+                    for _, cb in ipairs(QUICore._editModeEnterCallbacks) do
+                        pcall(cb)
                     end
                 end)
+            elseif not isActive and wasEditModeActive then
+                wasEditModeActive = false
+                QUICore._editModeActive = false  -- Addon-safe flag (avoids secure frame reads)
+                -- Edit Mode just exited — dispatch exit callbacks
+                C_Timer.After(0, function()
+                    for _, cb in ipairs(QUICore._editModeExitCallbacks) do
+                        pcall(cb)
+                    end
+                end)
+            end
+        end)
+
+        -- Register this module's own callbacks (viewer reskinning)
+        self:RegisterEditModeEnter(function()
+            self:ForceReskinAllViewers()
+        end)
+        self:RegisterEditModeExit(function()
+            self:ForceReskinAllViewers()
+
+            -- Hide power bar edit overlays that persist after edit mode exits
+            C_Timer.After(0.15, function()
+                for _, barName in ipairs({"QUIPrimaryPowerBar", "QUISecondaryPowerBar"}) do
+                    local bar = _G[barName]
+                    if bar and bar.editOverlay and bar.editOverlay:IsShown() then
+                        bar.editOverlay:Hide()
+                    end
+                end
             end)
         end)
-            end
+    end
             
     -- Also hook combat end to retry any failed skinning
     local combatEndFrame = CreateFrame("Frame")
