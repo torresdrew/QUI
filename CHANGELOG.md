@@ -35,6 +35,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.37.4 - 2026-02-19
+
+### Added
+- added consumables picking ui to consumables check
+
+### Fixed
+- fixed jitter behaviour when setting player/target frame to auto-height after zoning/reloading
 ## v2.37.3 - 2026-02-18
 
 ### Added
