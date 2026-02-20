@@ -1669,6 +1669,16 @@ local function ApplyUtilityAnchor()
     local utilViewer = _G[VIEWER_UTILITY]
     if not utilViewer then return end
 
+    -- Respect centralized frame anchoring overrides.
+    -- When cdmUtility is overridden in frame anchoring, this legacy anchor flow
+    -- must not mutate points or it will fight the new anchoring system.
+    if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(utilViewer) then
+        utilViewer.__cdmAnchoredToEssential = nil
+        utilViewer.__cdmAnchorPendingAfterCombat = nil
+        DriftLog("ApplyUtilityAnchor: skipped (frame anchoring override)")
+        return
+    end
+
     if not utilSettings.anchorBelowEssential then
         utilViewer.__cdmAnchoredToEssential = nil
         -- Stabilize unanchored Utility at current CENTER so combat-time

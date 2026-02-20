@@ -40,6 +40,7 @@ local DEFAULTS = {
     relative     = "CENTER",
     offsetX      = 0,
     offsetY      = 0,
+    sizeStable   = true,
     autoWidth    = false,
     widthAdjust  = 0,
     autoHeight   = false,

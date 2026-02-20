@@ -122,8 +122,10 @@ local function UpdateTimerAppearance()
     -- Update position
     local xOffset = settings.xOffset or 0
     local yOffset = settings.yOffset or -150
-    frame:ClearAllPoints()
-    frame:SetPoint("CENTER", UIParent, "CENTER", xOffset, yOffset)
+    if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(frame)) then
+        frame:ClearAllPoints()
+        frame:SetPoint("CENTER", UIParent, "CENTER", xOffset, yOffset)
+    end
 
     -- Update font (using LSM) - check if using custom font or global
     local fontSize = settings.fontSize or 16
