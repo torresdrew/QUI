@@ -1340,6 +1340,83 @@ end
 -- Track which parent frames have been hooked for OnSizeChanged
 local hookedParentFrames = {}
 
+local CDM_LOGICAL_SIZE_KEYS = {
+    cdmEssential = true,
+    cdmUtility = true,
+    buffIcon = true,
+    buffBar = true,
+}
+
+local function GetPointOffsetForRect(point, width, height)
+    local halfW = (width or 0) * 0.5
+    local halfH = (height or 0) * 0.5
+    if point == "TOPLEFT" then
+        return -halfW, halfH
+    elseif point == "TOP" then
+        return 0, halfH
+    elseif point == "TOPRIGHT" then
+        return halfW, halfH
+    elseif point == "LEFT" then
+        return -halfW, 0
+    elseif point == "RIGHT" then
+        return halfW, 0
+    elseif point == "BOTTOMLEFT" then
+        return -halfW, -halfH
+    elseif point == "BOTTOM" then
+        return 0, -halfH
+    elseif point == "BOTTOMRIGHT" then
+        return halfW, -halfH
+    end
+    return 0, 0
+end
+
+local function GetFrameAnchorRect(frame, key)
+    if not frame then return 1, 1 end
+
+    local width, height
+
+    -- CDM viewers can briefly report Blizzard-sized dimensions in combat during
+    -- morph/layout churn. Prefer logical layout dimensions when available.
+    if CDM_LOGICAL_SIZE_KEYS[key] then
+        width = frame.__cdmRow1Width or frame.__cdmIconWidth
+        height = frame.__cdmTotalHeight
+    end
+
+    if not width or width <= 0 then
+        width = frame.GetWidth and frame:GetWidth() or 1
+    end
+    if not height or height <= 0 then
+        height = frame.GetHeight and frame:GetHeight() or 1
+    end
+
+    return math.max(1, width), math.max(1, height)
+end
+
+local function GetParentAnchorRect(frame)
+    if not frame then return 1, 1 end
+    local width = frame.GetWidth and frame:GetWidth() or 1
+    local height = frame.GetHeight and frame:GetHeight() or 1
+    return math.max(1, width), math.max(1, height)
+end
+
+local function ComputeCenterOffsetsForAnchor(frame, key, parentFrame, sourcePoint, targetPoint, offsetX, offsetY)
+    local frameW, frameH = GetFrameAnchorRect(frame, key)
+    local parentW, parentH = GetParentAnchorRect(parentFrame)
+
+    local targetX, targetY = GetPointOffsetForRect(targetPoint or "CENTER", parentW, parentH)
+    local sourceX, sourceY = GetPointOffsetForRect(sourcePoint or "CENTER", frameW, frameH)
+
+    return (targetX + (offsetX or 0) - sourceX), (targetY + (offsetY or 0) - sourceY)
+end
+
+local function IsSizeStableAnchoringEnabled(settings)
+    if type(settings) ~= "table" then
+        return true
+    end
+    -- Default ON for all frame anchoring overrides.
+    return settings.sizeStable ~= false
+end
+
 -- Apply auto-width and auto-height to a frame
 local function ApplyAutoSizing(frame, settings, parentFrame, key)
     if not frame then return end
@@ -1410,8 +1487,11 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
     -- Mark frame as overridden FIRST — blocks any module positioning from this point on
     SetFrameOverride(resolved, true, key)
 
-    -- Defer if in combat
-    if InCombatLockdown() then
+    -- Defer in combat for most frames.
+    -- CDM viewers are allowed to attempt re-anchoring in combat so morph/layout
+    -- churn can be corrected immediately instead of waiting for combat end.
+    local allowCombatApply = (key == "cdmEssential" or key == "cdmUtility" or key == "buffIcon" or key == "buffBar")
+    if InCombatLockdown() and not allowCombatApply then
         C_Timer.After(0.5, function()
             if not InCombatLockdown() then
                 self:ApplyFrameAnchor(key, settings)
@@ -1425,32 +1505,60 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
     local relative = settings.relative or "CENTER"
     local offsetX = settings.offsetX or 0
     local offsetY = settings.offsetY or 0
+    local useSizeStable = IsSizeStableAnchoringEnabled(settings)
 
     -- Boss frames: single setting applied to all with stacking Y offset
     if key == "bossFrames" and type(resolved) == "table" and not resolved.GetObjectType then
         for i, frame in ipairs(resolved) do
             local stackOffsetY = offsetY - ((i - 1) * 50)
+            if useSizeStable then
+                ApplyAutoSizing(frame, settings, parentFrame, key)
+            end
             pcall(function()
                 frame:ClearAllPoints()
-                frame:SetPoint(point, parentFrame, relative, offsetX, stackOffsetY)
+                if useSizeStable then
+                    local centerX, centerY = ComputeCenterOffsetsForAnchor(
+                        frame, key, parentFrame, point, relative, offsetX, stackOffsetY
+                    )
+                    frame:SetPoint("CENTER", parentFrame, "CENTER", centerX, centerY)
+                else
+                    frame:SetPoint(point, parentFrame, relative, offsetX, stackOffsetY)
+                end
             end)
         end
-        -- Apply auto-sizing to each boss frame
-        ApplyAutoSizing(resolved[1], settings, parentFrame, key)
-        for i = 2, #resolved do
-            ApplyAutoSizing(resolved[i], settings, parentFrame, key)
+        -- Legacy path: apply auto-sizing after placement when size-stable mode is off
+        if not useSizeStable then
+            ApplyAutoSizing(resolved[1], settings, parentFrame, key)
+            for i = 2, #resolved do
+                ApplyAutoSizing(resolved[i], settings, parentFrame, key)
+            end
         end
         return
     end
 
     -- Normal single-frame case
-    pcall(function()
-        resolved:ClearAllPoints()
-        resolved:SetPoint(point, parentFrame, relative, offsetX, offsetY)
-    end)
-
-    -- Apply auto-width / auto-height
-    ApplyAutoSizing(resolved, settings, parentFrame, key)
+    if useSizeStable then
+        -- Size-stable anchoring: solve requested point->point relation into a
+        -- center anchor. This prevents visual drift when frame dimensions mutate.
+        --
+        -- For CDM viewers, ComputeCenterOffsetsForAnchor uses logical layout size
+        -- so transient Blizzard combat sizes do not skew the result.
+        ApplyAutoSizing(resolved, settings, parentFrame, key)
+        local centerX, centerY = ComputeCenterOffsetsForAnchor(
+            resolved, key, parentFrame, point, relative, offsetX, offsetY
+        )
+        pcall(function()
+            resolved:ClearAllPoints()
+            resolved:SetPoint("CENTER", parentFrame, "CENTER", centerX, centerY)
+        end)
+    else
+        pcall(function()
+            resolved:ClearAllPoints()
+            resolved:SetPoint(point, parentFrame, relative, offsetX, offsetY)
+        end)
+        -- Legacy path: auto-size after placement
+        ApplyAutoSizing(resolved, settings, parentFrame, key)
+    end
 end
 
 -- Apply all saved frame anchor overrides
