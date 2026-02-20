@@ -2196,6 +2196,20 @@ local function GetUnitframeFrames()
     return frames
 end
 
+local function ApplyUnitframeVisibilityAlpha(frame, alpha)
+    if not frame then return end
+
+    -- Respect castbar runtime visibility state so HUD visibility logic doesn't
+    -- resurrect inactive castbars (especially player castbar alpha-fallback mode).
+    -- Only castbars using alpha-fallback mode should be forced hidden this way.
+    if frame._quiCastbar and frame._quiUseAlphaVisibility and frame._quiDesiredVisible == false then
+        frame:SetAlpha(0)
+        return
+    end
+
+    frame:SetAlpha(alpha)
+end
+
 -- Determine if Unitframes should be visible (SHOW logic)
 local function ShouldUnitframesBeVisible()
     local vis = GetUnitframesVisibilitySettings()
@@ -2238,7 +2252,7 @@ local function OnUnitframesFadeUpdate(self, elapsed)
     -- Apply to unit frames
     local frames = GetUnitframeFrames()
     for _, frame in ipairs(frames) do
-        frame:SetAlpha(alpha)
+        ApplyUnitframeVisibilityAlpha(frame, alpha)
     end
 
     -- Check if fade complete
@@ -2300,7 +2314,7 @@ local function UpdateUnitframesVisibility()
 
         for unitKey, castbar in pairs(_G.QUI_Castbars) do
             if castbar then
-                castbar:SetAlpha(targetAlpha)
+                ApplyUnitframeVisibilityAlpha(castbar, targetAlpha)
             end
         end
     end

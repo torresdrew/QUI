@@ -3143,6 +3143,23 @@ function QUICore:OnInitialize()
     -- hideWhenMounted has no equivalent (can't express "hide when mounted" in SHOW logic)
     local profile = self.db.profile
 
+    -- Castbar preview is a transient options-state and should never persist
+    -- across reload/login. Clear it early before frame modules initialize.
+    if profile and profile.quiUnitFrames then
+        for _, unitKey in ipairs({"player", "target", "focus"}) do
+            local unitDB = profile.quiUnitFrames[unitKey]
+            if unitDB and unitDB.castbar then
+                unitDB.castbar.previewMode = false
+            end
+        end
+        for i = 1, 8 do
+            local bossDB = profile.quiUnitFrames["boss" .. i]
+            if bossDB and bossDB.castbar then
+                bossDB.castbar.previewMode = false
+            end
+        end
+    end
+
     -- Migrate legacy skin accent color into addonAccentColor
     if profile.general and profile.general.skinCustomColor and not profile.general.addonAccentColor then
         if type(profile.general.skinCustomColor) == "table" then
