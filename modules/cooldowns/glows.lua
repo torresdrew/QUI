@@ -6,6 +6,13 @@
 local _, ns = ...
 local Helpers = ns.Helpers
 
+-- TAINT SAFETY: Per-frame state in local weak-keyed table
+local frameState = setmetatable({}, { __mode = "k" })
+local function GetFrameState(f)
+    if not frameState[f] then frameState[f] = {} end
+    return frameState[f]
+end
+
 -- Get LibCustomGlow for custom glow styles
 local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 
@@ -105,19 +112,14 @@ end
 local function SuppressBlizzardGlow(icon)
     if not icon then return end
 
+    -- TAINT SAFETY: Do NOT use hooksecurefunc("Show") on CDM icon sub-frames.
+    -- Any hook on Show (even hooksecurefunc) taints Blizzard's secureexecuterange.
+    -- Instead, HideBlizzardGlow is called from the glow scan which runs periodically.
     pcall(function()
         local alert = icon.SpellActivationAlert
         if alert then
             alert:Hide()
             alert:SetAlpha(0)
-            -- Persistent hook: keep it hidden even if Blizzard re-shows it
-            if not alert._QUI_NoShow then
-                alert._QUI_NoShow = true
-                hooksecurefunc(alert, "Show", function(self)
-                    self:Hide()
-                    self:SetAlpha(0)
-                end)
-            end
         end
     end)
 
@@ -125,13 +127,6 @@ local function SuppressBlizzardGlow(icon)
         if icon.OverlayGlow then
             icon.OverlayGlow:Hide()
             icon.OverlayGlow:SetAlpha(0)
-            if not icon.OverlayGlow._QUI_NoShow then
-                icon.OverlayGlow._QUI_NoShow = true
-                hooksecurefunc(icon.OverlayGlow, "Show", function(self)
-                    self:Hide()
-                    self:SetAlpha(0)
-                end)
-            end
         end
     end)
 end
@@ -212,7 +207,7 @@ local function ApplyLibCustomGlow(icon, viewerSettings)
     end
 
     -- Flag already set by StartGlow, just ensure it's there
-    icon._QUICustomGlowActive = true
+    GetFrameState(icon).customGlowActive = true
     activeGlowIcons[icon] = true
 
     return true
@@ -225,7 +220,7 @@ local function StartGlow(icon)
     if not icon then return end
 
     -- Already has our glow? Skip
-    if icon._QUICustomGlowActive then return end
+    if GetFrameState(icon).customGlowActive then return end
 
     local viewerType = GetViewerType(icon)
     if not viewerType then return end
@@ -237,7 +232,7 @@ local function StartGlow(icon)
     SuppressBlizzardGlow(icon)
 
     -- Set the flag FIRST so cooldowneffects.lua doesn't interfere
-    icon._QUICustomGlowActive = true
+    GetFrameState(icon).customGlowActive = true
     activeGlowIcons[icon] = true
 
     ApplyLibCustomGlow(icon, viewerSettings)
@@ -254,7 +249,7 @@ StopGlow = function(icon)
         pcall(LCG.ButtonGlow_Stop, icon)
     end
 
-    icon._QUICustomGlowActive = nil
+    GetFrameState(icon).customGlowActive = nil
     activeGlowIcons[icon] = nil
 end
 
@@ -341,7 +336,8 @@ local function ScanViewerGlows(viewerName, targetSpellID)
     local children = { viewer:GetChildren() }
     for _, icon in ipairs(children) do
         -- Filter: must be a real shown CDM icon (not custom CDM, not Selection, not non-icon children)
-        if icon and icon ~= viewer.Selection and not icon._isCustomCDMIcon
+        local gis = _G.QUI_GetCDMIconState and _G.QUI_GetCDMIconState(icon) or {}
+        if icon and icon ~= viewer.Selection and not gis.isCustomCDMIcon
             and icon:IsShown() and IsIconFrame(icon) then
             local viewerType = GetViewerType(icon)
             if viewerType then
@@ -392,9 +388,9 @@ local function ScanViewerGlows(viewerName, targetSpellID)
                     -- Only modify glow state when we could reliably determine it.
                     -- Icons with secret or nil spellIDs keep their current glow state.
                     if canDetermine then
-                        if shouldGlow and not icon._QUICustomGlowActive then
+                        if shouldGlow and not GetFrameState(icon).customGlowActive then
                             StartGlow(icon)
-                        elseif not shouldGlow and icon._QUICustomGlowActive then
+                        elseif not shouldGlow and GetFrameState(icon).customGlowActive then
                             StopGlow(icon)
                         end
                     end
@@ -444,17 +440,33 @@ end
 
 local function HookViewerForScan(viewerName)
     local viewer = _G[viewerName]
-    if not viewer or viewer._QUIGlowScanHooked then return end
-    viewer._QUIGlowScanHooked = true
+    local vfs = viewer and GetFrameState(viewer)
+    if not viewer or (vfs and vfs.glowScanHooked) then return end
+    vfs.glowScanHooked = true
 
     -- New icons appear when Blizzard resizes the viewer
+    -- NOTE: OnSizeChanged only fires when the frame's size ACTUALLY changes,
+    -- and does NOT fire during EditModeFrameSetup (frames are shown, not resized).
+    -- Safe to use HookScript here — only OnShow hooks taint the secure chain.
     viewer:HookScript("OnSizeChanged", function()
-        ScheduleGlowScan()
+        C_Timer.After(0, function()
+            ScheduleGlowScan()
+        end)
     end)
 
-    -- Scan when viewer becomes visible
-    viewer:HookScript("OnShow", function()
-        ScheduleGlowScan()
+    -- TAINT SAFETY: Do NOT hook Show on CDM viewers (even hooksecurefunc taints
+    -- Blizzard's secureexecuterange during EditModeFrameSetup). Instead, use a
+    -- standalone polling frame to detect visibility transitions.
+    local glowPollFrame = CreateFrame("Frame")
+    local wasGlowViewerShown = viewer:IsShown()
+    glowPollFrame:SetScript("OnUpdate", function()
+        local isShown = viewer:IsShown()
+        if isShown and not wasGlowViewerShown then
+            wasGlowViewerShown = true
+            ScheduleGlowScan()
+        elseif not isShown and wasGlowViewerShown then
+            wasGlowViewerShown = false
+        end
     end)
 end
 

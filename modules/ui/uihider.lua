@@ -5,6 +5,13 @@
 local _, ns = ...
 local Helpers = ns.Helpers
 
+-- TAINT SAFETY: Per-frame state in local weak-keyed table
+local frameState = setmetatable({}, { __mode = "k" })
+local function GetFrameState(f)
+    if not frameState[f] then frameState[f] = {} end
+    return frameState[f]
+end
+
 -- Default settings
 local DEFAULTS = {
     hideObjectiveTrackerAlways = false,
@@ -186,33 +193,43 @@ local function ApplyHideSettings()
                 pendingObjectiveTrackerHide = false
             end
 
-            -- Hook Show() to prevent Blizzard from showing it again (quest updates, boss fights, etc.)
-            if not ObjectiveTrackerFrame._QUI_ShowHooked then
-                ObjectiveTrackerFrame._QUI_ShowHooked = true
-                hooksecurefunc(ObjectiveTrackerFrame, "Show", function(self)
-                    -- Break secure call chains before enforcing hidden state
-                    C_Timer.After(0, function()
-                        local s = GetSettings()
-                        if s then
-                            local shouldHideNow = false
-                            if s.hideObjectiveTrackerAlways then
-                                shouldHideNow = true
-                            elseif ShouldHideInCurrentInstance(s.hideObjectiveTrackerInstanceTypes) then
-                                shouldHideNow = true
-                            end
-
-                            if shouldHideNow then
-                                if type(InCombatLockdown) == "function" and InCombatLockdown() then
-                                    pendingObjectiveTrackerHide = true
-                                    return
+            -- TAINT SAFETY: Do NOT use hooksecurefunc("Show") on ObjectiveTrackerFrame.
+            -- It is an Edit Mode system frame; any hook on Show taints Blizzard's
+            -- secureexecuterange during EditModeFrameSetup.
+            -- Use a standalone polling frame to detect visibility transitions.
+            if not GetFrameState(ObjectiveTrackerFrame).showPolled then
+                GetFrameState(ObjectiveTrackerFrame).showPolled = true
+                local otHiderPollFrame = CreateFrame("Frame")
+                local wasOTHiderShown = ObjectiveTrackerFrame:IsShown()
+                otHiderPollFrame:SetScript("OnUpdate", function()
+                    local isShown = ObjectiveTrackerFrame:IsShown()
+                    if isShown and not wasOTHiderShown then
+                        wasOTHiderShown = true
+                        C_Timer.After(0, function()
+                            local s = GetSettings()
+                            if s then
+                                local shouldHideNow = false
+                                if s.hideObjectiveTrackerAlways then
+                                    shouldHideNow = true
+                                elseif ShouldHideInCurrentInstance(s.hideObjectiveTrackerInstanceTypes) then
+                                    shouldHideNow = true
                                 end
 
-                                self:Hide()
-                                self:EnableMouse(false)  -- Prevent hidden frame from blocking clicks
-                                pendingObjectiveTrackerHide = false
+                                if shouldHideNow then
+                                    if type(InCombatLockdown) == "function" and InCombatLockdown() then
+                                        pendingObjectiveTrackerHide = true
+                                        return
+                                    end
+
+                                    ObjectiveTrackerFrame:Hide()
+                                    ObjectiveTrackerFrame:EnableMouse(false)
+                                    pendingObjectiveTrackerHide = false
+                                end
                             end
-                        end
-                    end)
+                        end)
+                    elseif not isShown and wasOTHiderShown then
+                        wasOTHiderShown = false
+                    end
                 end)
             end
         else
@@ -250,13 +267,16 @@ local function ApplyHideSettings()
             GameTimeFrame:Show()
         end
         -- Hook Show() to prevent Blizzard from re-showing when hidden
-        if not GameTimeFrame._QUI_ShowHooked then
-            GameTimeFrame._QUI_ShowHooked = true
+        -- TAINT SAFETY: Defer Hide() to break secure execution context chain
+        if not GetFrameState(GameTimeFrame).showHooked then
+            GetFrameState(GameTimeFrame).showHooked = true
             hooksecurefunc(GameTimeFrame, "Show", function(self)
-                local s = GetSettings()
-                if s and s.hideGameTime then
-                    self:Hide()
-                end
+                C_Timer.After(0, function()
+                    local s = GetSettings()
+                    if s and s.hideGameTime then
+                        self:Hide()
+                    end
+                end)
             end)
         end
     end
@@ -270,8 +290,8 @@ local function ApplyHideSettings()
             CompactRaidFrameManager:EnableMouse(false)  -- Prevent hidden frame from blocking clicks
             -- Hook Show() to prevent it from reappearing when joining groups, etc.
             -- BUG-008: Wrap in C_Timer.After(0) to break taint chain from secure Blizzard code
-            if not CompactRaidFrameManager._QUI_ShowHooked then
-                CompactRaidFrameManager._QUI_ShowHooked = true
+            if not GetFrameState(CompactRaidFrameManager).showHooked then
+                GetFrameState(CompactRaidFrameManager).showHooked = true
                 hooksecurefunc(CompactRaidFrameManager, "Show", function(self)
                     C_Timer.After(0, function()
                         if InCombatLockdown() then return end
@@ -285,8 +305,8 @@ local function ApplyHideSettings()
             end
             -- Hook SetShown() to catch permission-change visibility updates
             -- BUG-008: Wrap in C_Timer.After(0) to break taint chain from secure Blizzard code
-            if not CompactRaidFrameManager._QUI_SetShownHooked then
-                CompactRaidFrameManager._QUI_SetShownHooked = true
+            if not GetFrameState(CompactRaidFrameManager).setShownHooked then
+                GetFrameState(CompactRaidFrameManager).setShownHooked = true
                 hooksecurefunc(CompactRaidFrameManager, "SetShown", function(self, shown)
                     C_Timer.After(0, function()
                         if InCombatLockdown() then return end
@@ -327,12 +347,18 @@ end
             btn:EnableMouse(false)
 
             -- Hook SetAlpha on textures to prevent Blizzard from resetting
-            if not btn._QUI_AlphaHooked then
-                btn._QUI_AlphaHooked = true
+            -- TAINT SAFETY: Defer SetAlpha(0) to break secure execution context chain.
+            -- BuffFrame children fire inside CompactUnitFrame's secure context.
+            if not GetFrameState(btn).alphaHooked then
+                GetFrameState(btn).alphaHooked = true
                 local function BlockAlpha(texture, alpha)
-                    local s = GetSettings()
-                    if s and s.hideBuffCollapseButton and alpha > 0 then
-                        texture:SetAlpha(0)
+                    if alpha > 0 then
+                        C_Timer.After(0, function()
+                            local s = GetSettings()
+                            if s and s.hideBuffCollapseButton then
+                                texture:SetAlpha(0)
+                            end
+                        end)
                     end
                 end
                 if btn.NormalTexture then hooksecurefunc(btn.NormalTexture, "SetAlpha", BlockAlpha) end
@@ -410,28 +436,34 @@ end
             DisableTalkingHeadMouse()
 
             -- Hook Show() to keep it hidden
-            if not TalkingHeadFrame._QUI_ShowHooked then
-                TalkingHeadFrame._QUI_ShowHooked = true
+            -- TAINT SAFETY: Defer to break secure execution context chain
+            if not GetFrameState(TalkingHeadFrame).showHooked then
+                GetFrameState(TalkingHeadFrame).showHooked = true
                 hooksecurefunc(TalkingHeadFrame, "Show", function(self)
-                    local s = GetSettings()
-                    if s and s.hideTalkingHead then
-                        self:Hide()
-                        DisableTalkingHeadMouse()
-                    end
+                    C_Timer.After(0, function()
+                        local s = GetSettings()
+                        if s and s.hideTalkingHead then
+                            self:Hide()
+                            DisableTalkingHeadMouse()
+                        end
+                    end)
                 end)
             end
         else
             -- Not hiding, but still manage mouse to prevent blocking
             -- Disable mouse when idle, re-enable when content plays
-            if not TalkingHeadFrame._QUI_MouseManaged then
-                TalkingHeadFrame._QUI_MouseManaged = true
+            if not GetFrameState(TalkingHeadFrame).mouseManaged then
+                GetFrameState(TalkingHeadFrame).mouseManaged = true
 
                 -- Initially disable mouse (no content showing)
                 DisableTalkingHeadMouse()
 
                 -- Re-enable mouse when a talking head starts playing
+                -- TAINT SAFETY: Defer to break secure execution context chain
                 hooksecurefunc(TalkingHeadFrame, "PlayCurrent", function()
-                    EnableTalkingHeadMouse()
+                    C_Timer.After(0, function()
+                        EnableTalkingHeadMouse()
+                    end)
                 end)
 
                 -- Disable mouse when the talking head finishes/hides
@@ -442,14 +474,17 @@ end
         end
 
         -- Talking Head Mute (hook PlayCurrent once)
-        if not TalkingHeadFrame._QUI_MuteHooked then
-            TalkingHeadFrame._QUI_MuteHooked = true
+        -- TAINT SAFETY: Defer to break secure execution context chain
+        if not GetFrameState(TalkingHeadFrame).muteHooked then
+            GetFrameState(TalkingHeadFrame).muteHooked = true
             hooksecurefunc(TalkingHeadFrame, "PlayCurrent", function()
-                local s = GetSettings()
-                if s and s.muteTalkingHead and TalkingHeadFrame.voHandle then
-                    StopSound(TalkingHeadFrame.voHandle, 0)
-                    TalkingHeadFrame.voHandle = nil
-                end
+                C_Timer.After(0, function()
+                    local s = GetSettings()
+                    if s and s.muteTalkingHead and TalkingHeadFrame.voHandle then
+                        StopSound(TalkingHeadFrame.voHandle, 0)
+                        TalkingHeadFrame.voHandle = nil
+                    end
+                end)
             end)
         end
     end
@@ -505,13 +540,16 @@ end
         if hideXP and hideRep then
             StatusTrackingBarManager:Hide()
 
-            if not StatusTrackingBarManager._QUI_ShowHooked then
-                StatusTrackingBarManager._QUI_ShowHooked = true
+            if not GetFrameState(StatusTrackingBarManager).showHooked then
+                GetFrameState(StatusTrackingBarManager).showHooked = true
+                -- TAINT SAFETY: Defer Hide() to break secure execution context chain
                 hooksecurefunc(StatusTrackingBarManager, "Show", function(self)
-                    local s = GetSettings()
-                    if s and s.hideExperienceBar and s.hideReputationBar then
-                        self:Hide()
-                    end
+                    C_Timer.After(0, function()
+                        local s = GetSettings()
+                        if s and s.hideExperienceBar and s.hideReputationBar then
+                            self:Hide()
+                        end
+                    end)
                 end)
             end
         elseif hideXP or hideRep then
@@ -522,8 +560,8 @@ end
             end
 
             -- Hook UpdateBarsShown to re-hide bars after Blizzard updates
-            if not StatusTrackingBarManager._QUI_BarsHooked then
-                StatusTrackingBarManager._QUI_BarsHooked = true
+            if not GetFrameState(StatusTrackingBarManager).barsHooked then
+                GetFrameState(StatusTrackingBarManager).barsHooked = true
                 hooksecurefunc(StatusTrackingBarManager, "UpdateBarsShown", function()
                     C_Timer.After(0.01, HideStatusBars)
                 end)
@@ -567,24 +605,31 @@ end
 
             -- Hook the BlackoutFrame to keep it hidden if Blizzard tries to show it
             -- IMPORTANT: Skip during combat to avoid taint propagation to SetPassThroughButtons
-            if not WorldMapFrame.BlackoutFrame._QUI_BlackoutHooked then
-                WorldMapFrame.BlackoutFrame._QUI_BlackoutHooked = true
+            if not GetFrameState(WorldMapFrame.BlackoutFrame).blackoutHooked then
+                GetFrameState(WorldMapFrame.BlackoutFrame).blackoutHooked = true
+                -- TAINT SAFETY: Defer to break secure execution context chain
                 hooksecurefunc(WorldMapFrame.BlackoutFrame, "Show", function(self)
-                    if InCombatLockdown() then return end  -- Avoid taint during combat
-                    local s = GetSettings()
-                    if s and s.hideWorldMapBlackout then
-                        self:SetAlpha(0)
-                        self:EnableMouse(false)
-                    end
+                    C_Timer.After(0, function()
+                        if InCombatLockdown() then return end
+                        local s = GetSettings()
+                        if s and s.hideWorldMapBlackout then
+                            self:SetAlpha(0)
+                            self:EnableMouse(false)
+                        end
+                    end)
                 end)
 
                 -- Also hook SetAlpha to prevent alpha changes
                 hooksecurefunc(WorldMapFrame.BlackoutFrame, "SetAlpha", function(self, alpha)
-                    if InCombatLockdown() then return end  -- Avoid taint during combat
-                    local s = GetSettings()
-                    if s and s.hideWorldMapBlackout and alpha > 0 then
-                        self:SetAlpha(0)
-                        self:EnableMouse(false)
+                    if alpha > 0 then
+                        C_Timer.After(0, function()
+                            if InCombatLockdown() then return end
+                            local s = GetSettings()
+                            if s and s.hideWorldMapBlackout then
+                                self:SetAlpha(0)
+                                self:EnableMouse(false)
+                            end
+                        end)
                     end
                 end)
             end

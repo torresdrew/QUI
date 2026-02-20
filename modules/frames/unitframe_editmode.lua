@@ -17,6 +17,58 @@ local UpdateFrame = QUI_UF._UpdateFrame
 local GetCore = ns.Helpers.GetCore
 
 ---------------------------------------------------------------------------
+-- UNIT FRAME ANCHORING HELPERS
+-- Player/Target use quiUnitFrames[key].anchorTo (unit frame anchoring).
+-- All other unit frames use profile.frameAnchoring[key] (global anchoring).
+---------------------------------------------------------------------------
+local UNIT_TO_FRAME_ANCHORING_KEY = {
+    focus       = "focusFrame",
+    targettarget = "totFrame",
+    pet         = "petFrame",
+    boss1       = "bossFrames",
+    boss2       = "bossFrames",
+    boss3       = "bossFrames",
+    boss4       = "bossFrames",
+    boss5       = "bossFrames",
+}
+
+-- Returns isAnchored, anchorDisplayName for any unit frame type.
+-- Player/Target: checks quiUnitFrames anchorTo.
+-- Others: checks global frameAnchoring DB.
+local function IsUnitFrameAnchored(unitKey)
+    local settingsKey = unitKey
+    if unitKey:match("^boss%d+$") then settingsKey = "boss" end
+
+    -- Player/Target: use the unit-frame-specific anchorTo system
+    if settingsKey == "player" or settingsKey == "target" then
+        local settings = GetUnitSettings(settingsKey)
+        if settings and settings.anchorTo and settings.anchorTo ~= "disabled" then
+            local anchorNames = {essential = "Essential", utility = "Utility", primary = "Primary", secondary = "Secondary"}
+            return true, anchorNames[settings.anchorTo] or settings.anchorTo
+        end
+        return false, nil
+    end
+
+    -- All other unit frames: use the global frameAnchoring system
+    local anchoringKey = UNIT_TO_FRAME_ANCHORING_KEY[unitKey]
+    if not anchoringKey then return false, nil end
+
+    local db = _G.QUI_GetFrameAnchoringDB and _G.QUI_GetFrameAnchoringDB()
+    if not db then return false, nil end
+    local anchor = db[anchoringKey]
+    if anchor and anchor.enabled then
+        local displayName
+        if anchor.parent == "screen" then
+            displayName = "Screen"
+        else
+            displayName = _G.QUI_GetFrameAnchorDisplayName and _G.QUI_GetFrameAnchorDisplayName(anchor.parent) or anchor.parent
+        end
+        return true, displayName
+    end
+    return false, nil
+end
+
+---------------------------------------------------------------------------
 -- EDIT MODE: Toggle draggable frames with arrow nudge buttons
 ---------------------------------------------------------------------------
 QUI_UF.editModeActive = false
@@ -114,17 +166,17 @@ local function CreateNudgeButton(parent, direction, deltaX, deltaY, unitKey)
 
     btn:SetScript("OnClick", function()
         local frame = parent:GetParent()
+
+        -- Block nudging for anchored frames (any type)
+        if IsUnitFrameAnchored(frame.unitKey) then
+            return
+        end
+
         local settingsKey = frame.unitKey
         if settingsKey and settingsKey:match("^boss%d+$") then
             settingsKey = "boss"
         end
         local settings = GetUnitSettings(settingsKey)
-
-        -- Block nudging for anchored frames
-        local isAnchored = settings and settings.anchorTo and settings.anchorTo ~= "disabled"
-        if isAnchored and (settingsKey == "player" or settingsKey == "target") then
-            return
-        end
 
         if settings then
             local shift = IsShiftKeyDown()
@@ -225,6 +277,22 @@ function QUI_UF:EnableEditMode()
     self.exitEditModeBtn:Show()
 
     for unitKey, frame in pairs(self.frames) do
+        -- Boss frames when anchored: handled as a group via BossTargetFrameContainer
+        -- overlay in nudge.lua. Skip individual movers — the container covers them all.
+        if unitKey:match("^boss%d+$") and IsUnitFrameAnchored(unitKey) then
+            -- Hide any previously created individual overlay
+            if frame.editOverlay then
+                frame.editOverlay:Hide()
+            end
+            -- Disable dragging on individual boss frames
+            frame:RegisterForDrag()
+            frame:SetScript("OnDragStart", nil)
+            frame:SetScript("OnDragStop", nil)
+            frame:SetScript("OnMouseDown", nil)
+            frame:Show()
+            self:ShowPreview(unitKey)
+        else -- Normal path: create overlay, enable drag/nudge
+
         -- Create highlight overlay if not exists
         if not frame.editOverlay then
             local overlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
@@ -285,14 +353,33 @@ function QUI_UF:EnableEditMode()
             settingsKey = "boss"
         end
         local settings = GetUnitSettings(settingsKey)
-        if settings and frame.editOverlay.infoText then
-            local label = frame.editOverlay.unitLabel or unitKey
-            local isAnchored = settings.anchorTo and settings.anchorTo ~= "disabled"
-            if isAnchored and (settingsKey == "player" or settingsKey == "target") then
-                local anchorNames = {essential = "Essential", utility = "Utility", primary = "Primary", secondary = "Secondary"}
-                local anchorName = anchorNames[settings.anchorTo] or settings.anchorTo
-                frame.editOverlay.infoText:SetText(label .. "  (Locked to " .. anchorName .. ")")
-            else
+        local isAnchored, anchorDisplayName = IsUnitFrameAnchored(unitKey)
+
+        if isAnchored then
+            -- Locked/anchored: gray overlay, show lock text, hide nudge buttons
+            frame.editOverlay:SetBackdropColor(0.5, 0.5, 0.5, 0.25)
+            frame.editOverlay:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.9)
+            frame.editOverlay._isAnchored = true
+
+            if frame.editOverlay.infoText then
+                local label = frame.editOverlay.unitLabel or unitKey
+                frame.editOverlay.infoText:SetText(label .. "  |cff888888(Locked to " .. (anchorDisplayName or "Anchor") .. ")|r")
+                frame.editOverlay.infoText:Show()
+            end
+
+            -- Permanently hide nudge buttons for anchored frames
+            frame.editOverlay.nudgeLeft:Hide()
+            frame.editOverlay.nudgeRight:Hide()
+            frame.editOverlay.nudgeUp:Hide()
+            frame.editOverlay.nudgeDown:Hide()
+        else
+            -- Free-floating: normal cyan color, nudge buttons available on selection
+            frame.editOverlay:SetBackdropColor(0.2, 0.8, 1, 0.3)
+            frame.editOverlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+            frame.editOverlay._isAnchored = false
+
+            if settings and frame.editOverlay.infoText then
+                local label = frame.editOverlay.unitLabel or unitKey
                 local x = settings.offsetX or 0
                 local y = settings.offsetY or 0
                 frame.editOverlay.infoText:SetText(string.format("%s  X:%d Y:%d", label, x, y))
@@ -301,7 +388,7 @@ function QUI_UF:EnableEditMode()
 
         frame.editOverlay:Show()
 
-        -- Enable dragging
+        -- Enable dragging (anchored frames block in OnDragStart)
         frame:SetMovable(true)
         frame:EnableMouse(true)
         frame:RegisterForDrag("LeftButton")
@@ -321,12 +408,8 @@ function QUI_UF:EnableEditMode()
 
         frame:SetScript("OnDragStart", function(self)
             if QUI_UF.editModeActive then
-                -- Block dragging for anchored frames
-                local settingsKey = self.unitKey
-                if self.unitKey:match("^boss%d+$") then settingsKey = "boss" end
-                local settings = GetUnitSettings(settingsKey)
-                local isAnchored = settings and settings.anchorTo and settings.anchorTo ~= "disabled"
-                if isAnchored and (settingsKey == "player" or settingsKey == "target") then
+                -- Block dragging for anchored frames (any type)
+                if IsUnitFrameAnchored(self.unitKey) then
                     return -- Locked to anchor, cannot drag
                 end
 
@@ -420,17 +503,16 @@ function QUI_UF:EnableEditMode()
             end
 
             -- Fallback: no selection, nudge this frame (legacy behavior)
+            -- Block nudging for anchored frames (any type)
+            if IsUnitFrameAnchored(self.unitKey) then
+                return
+            end
+
             local settingsKey = self.unitKey
             if settingsKey and settingsKey:match("^boss%d+$") then
                 settingsKey = "boss"
             end
             local settings = GetUnitSettings(settingsKey)
-
-            -- Block nudging for anchored frames
-            local isAnchored = settings and settings.anchorTo and settings.anchorTo ~= "disabled"
-            if isAnchored and (settingsKey == "player" or settingsKey == "target") then
-                return
-            end
 
             local shift = IsShiftKeyDown()
             local step = shift and 10 or 1
@@ -451,6 +533,7 @@ function QUI_UF:EnableEditMode()
 
         -- Show preview data so frames are visible
         self:ShowPreview(unitKey)
+        end -- close else (normal path)
     end
 
     print("|cFF56D1FFQUI|r: Edit Mode |cff00ff00ENABLED|r - Drag frames to reposition.")
@@ -572,18 +655,24 @@ function QUI_UF:HookBlizzardEditMode()
     -- Track if we triggered from Blizzard Edit Mode (vs /qui editmode)
     self.triggeredByBlizzEditMode = false
 
+    -- TAINT SAFETY: Defer ALL addon code out of the secure EnterEditMode/ExitEditMode callbacks.
+    -- Any synchronous addon code taints the secure execution context.
     hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
-        if InCombatLockdown() then return end
-        if self.editModeActive then return end  -- Already active via /qui editmode
-        self.triggeredByBlizzEditMode = true
-        self:EnableEditMode()
+        C_Timer.After(0, function()
+            if InCombatLockdown() then return end
+            if self.editModeActive then return end  -- Already active via /qui editmode
+            self.triggeredByBlizzEditMode = true
+            self:EnableEditMode()
+        end)
     end)
 
     hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
-        if InCombatLockdown() then return end
-        if not self.editModeActive then return end
-        if not self.triggeredByBlizzEditMode then return end  -- Don't exit if user used /qui editmode
-        self.triggeredByBlizzEditMode = false
-        self:DisableEditMode()
+        C_Timer.After(0, function()
+            if InCombatLockdown() then return end
+            if not self.editModeActive then return end
+            if not self.triggeredByBlizzEditMode then return end  -- Don't exit if user used /qui editmode
+            self.triggeredByBlizzEditMode = false
+            self:DisableEditMode()
+        end)
     end)
 end

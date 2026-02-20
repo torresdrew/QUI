@@ -393,20 +393,34 @@ local function HookTotemFrame()
     end)
 
     -- Hook Update to reskin after each pool cycle
-    hooksecurefunc(tf, "Update", PostUpdate)
+    -- TAINT SAFETY: Defer to break secure execution context chain.
+    -- TotemFrame:Update fires from PLAYER_TOTEM_UPDATE which can be in secure contexts.
+    hooksecurefunc(tf, "Update", function()
+        C_Timer.After(0, function()
+            PostUpdate()
+        end)
+    end)
 
     -- Hook Layout to override with our custom layout
+    -- TAINT SAFETY: Defer to break secure execution context chain
     hooksecurefunc(tf, "Layout", function()
-        local db = GetDB()
-        if db and db.enabled then
-            LayoutTotemButtons()
-        end
+        C_Timer.After(0, function()
+            local db = GetDB()
+            if db and db.enabled then
+                LayoutTotemButtons()
+            end
+        end)
     end)
 
     -- Override show/hide behavior based on our enabled setting.
     -- BUG-011: defer Hide() out of secure Show() chain.
+    -- TAINT SAFETY: Defer the entire callback body so NO addon code runs
+    -- inside TotemFrame's secure Show() execution context. Even the
+    -- QueueShowEnforcement guard check taints the secure chain.
     hooksecurefunc(tf, "Show", function(self)
-        QueueShowEnforcement(self)
+        C_Timer.After(0, function()
+            QueueShowEnforcement(self)
+        end)
     end)
 end
 

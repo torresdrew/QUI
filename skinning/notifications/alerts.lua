@@ -1002,12 +1002,20 @@ local function CreateAlertMover()
     end
 
     -- Hook for any new subsystems added later
+    -- TAINT SAFETY: Defer to break secure execution context chain.
     hooksecurefunc(AlertFrame, "AddAlertFrameSubSystem", function(_, alertFrameSubSystem)
-        ReplaceSubSystemAnchors(alertFrameSubSystem)
+        C_Timer.After(0, function()
+            ReplaceSubSystemAnchors(alertFrameSubSystem)
+        end)
     end)
 
     -- Hook UpdateAnchors to reposition after Blizzard updates
-    hooksecurefunc(AlertFrame, "UpdateAnchors", PostAlertMove)
+    -- TAINT SAFETY: Defer to break secure execution context chain.
+    hooksecurefunc(AlertFrame, "UpdateAnchors", function()
+        C_Timer.After(0, function()
+            PostAlertMove()
+        end)
+    end)
 
     -- Disable mouse on GroupLootContainer for cleaner interaction
     if GroupLootContainer then
@@ -1092,9 +1100,13 @@ local function CreateEventToastMover()
     end
 
     -- Hook EventToastManagerFrame:UpdateAnchor instead of SetPoint (avoids recursion)
+    -- TAINT SAFETY: Defer to break secure execution context chain.
     hooksecurefunc(EventToastManagerFrame, "UpdateAnchor", function(self)
-        self:ClearAllPoints()
-        self:SetPoint("TOP", toastHolder, "TOP")
+        C_Timer.After(0, function()
+            if InCombatLockdown() then return end
+            self:ClearAllPoints()
+            self:SetPoint("TOP", toastHolder, "TOP")
+        end)
     end)
 
     -- Initial positioning

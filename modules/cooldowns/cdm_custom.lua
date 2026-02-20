@@ -222,8 +222,13 @@ local function CreateCustomIcon(parent, entry, initialSize)
     icon.Cooldown:SetDrawSwipe(true)
     icon.Cooldown:SetHideCountdownNumbers(false)
 
-    -- Custom marker flags
-    icon._isCustomCDMIcon = true
+    -- Custom marker flags — stored in CDM icon state table to avoid tainting secure frames
+    local cis = _G.QUI_GetCDMIconState and _G.QUI_GetCDMIconState(icon)
+    if cis then
+        cis.isCustomCDMIcon = true
+        cis.customCDMEntry = entry
+    end
+    -- Keep _customCDMEntry on icon for tooltip OnEnter compatibility
     icon._customCDMEntry = entry
 
     -- High layoutIndex so custom icons sort after Blizzard ones
@@ -355,12 +360,17 @@ function CustomCDM:AcquireIcon(parent, entry, initialSize)
         local size = initialSize or DEFAULT_CUSTOM_ICON_SIZE
         icon:SetParent(parent)
         icon:SetSize(size, size)
-        icon._isCustomCDMIcon = true
-        icon._customCDMEntry = entry
-        icon._ncdmSetup = nil      -- Reset skin state so SkinIcon re-processes
-        icon.__cdmSkinned = nil
-        icon.__cdmSkinPending = nil
-        icon._ncdmPositioned = nil
+        -- TAINT SAFETY: Store flags in CDM icon state table, not on icon frame
+        local ris = _G.QUI_GetCDMIconState and _G.QUI_GetCDMIconState(icon)
+        if ris then
+            ris.isCustomCDMIcon = true
+            ris.customCDMEntry = entry
+            ris.ncdmSetup = nil      -- Reset skin state so SkinIcon re-processes
+            ris.skinned = nil
+            ris.skinPending = nil
+            ris.ncdmPositioned = nil
+        end
+        icon._customCDMEntry = entry  -- Keep for tooltip OnEnter compatibility
         icon.Icon:SetTexture(GetEntryTexture(entry))
         icon.Cooldown:Clear()
         icon:Show()

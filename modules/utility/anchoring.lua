@@ -289,8 +289,9 @@ function QUI_Anchoring:GetAnchorDimensions(anchorFrame, anchorTargetName)
     
     -- Special handling for CDM viewers (backward compatibility)
     if anchorTargetName == "essential" or anchorTargetName == "utility" then
-        width = anchorFrame.__cdmRow1Width or width
-        height = anchorFrame.__cdmTotalHeight or height
+        local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(anchorFrame) or {}
+        width = vs.row1Width or width
+        height = vs.totalHeight or height
     end
     
     local centerX, centerY = anchorFrame:GetCenter()
@@ -1178,8 +1179,9 @@ local function GetCDMAnchorProxy(parentKey)
         return proxy
     end
 
-    local width = viewer.__cdmIconWidth or viewer:GetWidth() or 0
-    local height = viewer.__cdmTotalHeight or viewer:GetHeight() or 0
+    local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+    local width = vs.iconWidth or viewer:GetWidth() or 0
+    local height = vs.totalHeight or viewer:GetHeight() or 0
     local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
     if minWidthEnabled and IsHUDAnchoredToCDM() then
         width = math.max(width, minWidth)
@@ -1324,6 +1326,10 @@ function QUI_Anchoring:RegisterAllFrameTargets()
     end
 end
 
+-- Cache of resolved parent frames for QUI_ReapplyAutoWidth's lightweight path.
+-- Populated by ApplyAutoSizing, cleared when override is removed.
+local autoWidthParentCache = {}
+
 -- Helper: mark a frame as overridden (blocks module positioning via PositionFrame/RegisterAnchoredFrame)
 -- Stores the frame key (e.g. "playerFrame") so callers can do targeted reapply
 local function SetFrameOverride(frame, active, key)
@@ -1332,9 +1338,11 @@ local function SetFrameOverride(frame, active, key)
     if type(frame) == "table" and not frame.GetObjectType then
         for _, f in ipairs(frame) do
             QUI_Anchoring.overriddenFrames[f] = active and key or nil
+            if not active then autoWidthParentCache[f] = nil end
         end
     else
         QUI_Anchoring.overriddenFrames[frame] = active and key or nil
+        if not active then autoWidthParentCache[frame] = nil end
     end
 end
 
@@ -1432,12 +1440,19 @@ local function ApplyAutoSizing(frame, settings, parentFrame, key)
             end
         end
 
+        -- Cache the resolved parent for QUI_ReapplyAutoWidth's lightweight path
+        autoWidthParentCache[frame] = parentFrame
+
         -- Hook parent OnSizeChanged so auto-width stays in sync when parent resizes
+        -- NOTE: OnSizeChanged only fires when the frame's size ACTUALLY changes,
+        -- and does NOT fire during EditModeFrameSetup (frames are shown, not resized).
+        -- Safe to use HookScript here — only OnShow hooks taint the secure chain.
+        -- TAINT SAFETY: Defer to break secure execution context chain.
         if not hookedParentFrames[parentFrame] then
             hookedParentFrames[parentFrame] = true
             pcall(function()
                 parentFrame:HookScript("OnSizeChanged", function()
-                    DebouncedReapplyOverrides()
+                    C_Timer.After(0, DebouncedReapplyOverrides)
                 end)
             end)
         end
@@ -1447,7 +1462,8 @@ local function ApplyAutoSizing(frame, settings, parentFrame, key)
     if settings.autoHeight then
         local viewer = _G["EssentialCooldownViewer"]
         if viewer then
-            local iconHeight = viewer.__cdmRow1IconHeight
+            local avs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+            local iconHeight = avs.row1IconHeight
             if iconHeight and iconHeight > 0 then
                 local adjustedHeight = iconHeight + (settings.heightAdjust or 0)
                 if adjustedHeight > 0 then
@@ -1456,11 +1472,15 @@ local function ApplyAutoSizing(frame, settings, parentFrame, key)
             end
 
             -- Hook viewer OnSizeChanged so auto-height stays in sync when CDM resizes
+            -- NOTE: OnSizeChanged only fires when the frame's size ACTUALLY changes,
+            -- and does NOT fire during EditModeFrameSetup (frames are shown, not resized).
+            -- Safe to use HookScript here — only OnShow hooks taint the secure chain.
+            -- TAINT SAFETY: Defer to break secure execution context chain.
             if not hookedParentFrames[viewer] then
                 hookedParentFrames[viewer] = true
                 pcall(function()
                     viewer:HookScript("OnSizeChanged", function()
-                        DebouncedReapplyOverrides()
+                        C_Timer.After(0, DebouncedReapplyOverrides)
                     end)
                 end)
             end
@@ -1663,10 +1683,41 @@ function QUI_Anchoring:ApplyAllFrameAnchors()
     local anchoringDB = QUICore.db.profile.frameAnchoring
     if not anchoringDB then return end
 
+    -- Collect all enabled keys
+    local enabledKeys = {}
     for key, settings in pairs(anchoringDB) do
         if type(settings) == "table" and FRAME_RESOLVERS[key] and settings.enabled then
-            self:ApplyFrameAnchor(key, settings)
+            enabledKeys[key] = true
         end
+    end
+
+    -- Topological sort: process parents before children so that autoWidth
+    -- reads the parent's anchoring-system-set width, not a stale module width.
+    -- pairs() iterates in non-deterministic order, so without this sort a chain
+    -- like CDM → Primary → Secondary can process Secondary before Primary,
+    -- causing it to read the wrong width.
+    local sorted = {}
+    local visited = {}
+    local function visit(key)
+        if visited[key] then return end
+        visited[key] = true
+        local settings = anchoringDB[key]
+        if settings and type(settings) == "table" then
+            local parent = settings.parent
+            -- If this key's parent is also an enabled anchored key, process parent first
+            if parent and parent ~= "screen" and enabledKeys[parent] then
+                visit(parent)
+            end
+        end
+        sorted[#sorted + 1] = key
+    end
+    for key in pairs(enabledKeys) do
+        visit(key)
+    end
+
+    -- Apply anchors in dependency order (parents first, then children)
+    for _, key in ipairs(sorted) do
+        self:ApplyFrameAnchor(key, anchoringDB[key])
     end
 end
 
@@ -1716,6 +1767,58 @@ _G.QUI_IsFrameOverridden = function(frame)
     return QUI_Anchoring and QUI_Anchoring.overriddenFrames and QUI_Anchoring.overriddenFrames[frame] or false
 end
 
+-- Check if a frame has active autoWidth from the anchoring system
+-- Returns true when the anchoring system is controlling the frame's width
+_G.QUI_IsFrameAutoWidth = function(frame)
+    if not QUI_Anchoring or not QUI_Anchoring.overriddenFrames then return false end
+    local key = QUI_Anchoring.overriddenFrames[frame]
+    if not key then return false end
+    local anchoringDB = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.frameAnchoring
+    if not anchoringDB then return false end
+    local settings = anchoringDB[key]
+    return settings and settings.autoWidth or false
+end
+
+-- Re-verify and correct a frame's autoWidth from its anchor parent.
+-- Called by module update functions when anchoringControlsWidth is true,
+-- so that stale widths from init timing races are corrected on the very
+-- next power event rather than waiting for a debounced reapply.
+-- Uses a lightweight parent resolution path that skips CDM proxy updates
+-- (those are refreshed via OnSizeChanged hooks and ApplyAllFrameAnchors).
+_G.QUI_ReapplyAutoWidth = function(frame)
+    if not QUI_Anchoring or not QUI_Anchoring.overriddenFrames then return end
+    local key = QUI_Anchoring.overriddenFrames[frame]
+    if not key then return end
+    local anchoringDB = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.frameAnchoring
+    if not anchoringDB then return end
+    local settings = anchoringDB[key]
+    if not settings or not settings.autoWidth then return end
+
+    -- Lightweight parent lookup: use cached parent frame when available.
+    -- The cache is populated/refreshed by ApplyFrameAnchor → ApplyAutoSizing.
+    -- For non-CDM parents (power bars), this is just the direct frame reference.
+    -- For CDM parents, this is the proxy frame whose size is maintained by
+    -- OnSizeChanged hooks + ApplyAllFrameAnchors, so reading GetWidth() is safe
+    -- without re-running the full GetCDMAnchorProxy refresh.
+    local parentFrame = autoWidthParentCache[frame]
+    if not parentFrame then
+        -- First call or cache miss — do full resolve and cache
+        parentFrame = ResolveParentFrame(settings.parent)
+        if not parentFrame or parentFrame == UIParent then return end
+        autoWidthParentCache[frame] = parentFrame
+    end
+
+    local parentWidth = parentFrame:GetWidth()
+    if not parentWidth or parentWidth <= 0 then return end
+    local adjustedWidth = parentWidth + (settings.widthAdjust or 0)
+    if adjustedWidth <= 0 then return end
+    -- Only correct if the frame's current width differs (avoid unnecessary SetWidth calls)
+    local currentWidth = frame:GetWidth()
+    if math.abs(currentWidth - adjustedWidth) > 0.5 then
+        pcall(function() frame:SetWidth(adjustedWidth) end)
+    end
+end
+
 _G.QUI_ApplyAllFrameAnchors = function()
     if QUI_Anchoring then
         QUI_Anchoring:ApplyAllFrameAnchors()
@@ -1735,6 +1838,18 @@ _G.QUI_ApplyFrameAnchor = function(key)
     if type(settings) == "table" and FRAME_RESOLVERS[key] then
         QUI_Anchoring:ApplyFrameAnchor(key, settings)
     end
+end
+
+-- Get the frameAnchoring DB table (used by nudge.lua for Edit Mode overlay anchoring checks)
+_G.QUI_GetFrameAnchoringDB = function()
+    return QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.frameAnchoring
+end
+
+-- Get display name for a frame anchoring key (e.g., "cdmEssential" -> "CDM Essential Viewer")
+_G.QUI_GetFrameAnchorDisplayName = function(parentKey)
+    if not parentKey then return nil end
+    local info = FRAME_ANCHOR_INFO[parentKey]
+    return info and info.displayName or parentKey
 end
 
 -- Debounced reapply of frame anchoring overrides after module repositioning

@@ -32,6 +32,10 @@ local cachedSettings = nil
 local clockTicker = nil
 local coordsTicker = nil
 
+-- TAINT SAFETY: Track MinimapCluster.Selection hook state in a local instead
+-- of writing _quiEditModeHooked on the Blizzard frame (taint source).
+local _quiMinimapSelectionHooked = false
+
 ---=================================================================================
 --- BLIZZARD BUG WORKAROUND: Indicator frames need parent with Layout method
 --- When reparenting IndicatorFrame children, the new parent needs Layout method.
@@ -847,25 +851,39 @@ hiddenButtonParent:Hide()
 hiddenButtonParent.Layout = function() end  -- Prevent nil errors when Blizzard code calls Layout on children
 
 -- Hook Show() on zoom buttons to prevent Blizzard from re-showing them
-if Minimap.ZoomIn and not Minimap.ZoomIn._QUI_ShowHooked then
-    Minimap.ZoomIn._QUI_ShowHooked = true
-    hooksecurefunc(Minimap.ZoomIn, "Show", function(self)
-        local s = GetSettings()
-        if s and not s.showZoomButtons then
-            self:Hide()
+-- TAINT SAFETY: Guard flags stored in local table, not on Blizzard frames
+-- TAINT SAFETY: Do NOT use hooksecurefunc("Show") on Minimap zoom buttons.
+-- MinimapCluster is an Edit Mode system frame; hooks on its children's Show
+-- can taint Blizzard's secureexecuterange. Use polling instead.
+local zoomPollFrame = CreateFrame("Frame")
+local wasZoomInShown = Minimap.ZoomIn and Minimap.ZoomIn:IsShown()
+local wasZoomOutShown = Minimap.ZoomOut and Minimap.ZoomOut:IsShown()
+zoomPollFrame:SetScript("OnUpdate", function()
+    if Minimap.ZoomIn then
+        local isShown = Minimap.ZoomIn:IsShown()
+        if isShown and not wasZoomInShown then
+            wasZoomInShown = true
+            local s = GetSettings()
+            if s and not s.showZoomButtons then
+                Minimap.ZoomIn:Hide()
+            end
+        elseif not isShown and wasZoomInShown then
+            wasZoomInShown = false
         end
-    end)
-end
-
-if Minimap.ZoomOut and not Minimap.ZoomOut._QUI_ShowHooked then
-    Minimap.ZoomOut._QUI_ShowHooked = true
-    hooksecurefunc(Minimap.ZoomOut, "Show", function(self)
-        local s = GetSettings()
-        if s and not s.showZoomButtons then
-            self:Hide()
+    end
+    if Minimap.ZoomOut then
+        local isShown = Minimap.ZoomOut:IsShown()
+        if isShown and not wasZoomOutShown then
+            wasZoomOutShown = true
+            local s = GetSettings()
+            if s and not s.showZoomButtons then
+                Minimap.ZoomOut:Hide()
+            end
+        elseif not isShown and wasZoomOutShown then
+            wasZoomOutShown = false
         end
-    end)
-end
+    end
+end)
 
 local function UpdateButtonVisibility()
     local settings = GetSettings()
@@ -1232,8 +1250,58 @@ function QUICore:EnableMinimapEditMode()
     -- Remember lock state
     editModeWasLocked = settings.lock
 
-    -- Temporarily enable movement (ignore lock during Edit Mode)
-    Minimap:SetMovable(true)
+    -- Check if minimap is anchored via the global frame anchoring system.
+    -- Any frame with anchoring enabled is locked — including "screen" (fixed position).
+    local faDB = QUICore.db and QUICore.db.profile and QUICore.db.profile.frameAnchoring
+    local faSettings = faDB and faDB["minimap"]
+    local isAnchored = faSettings and faSettings.enabled
+    if isAnchored then
+        Minimap:SetMovable(false)
+    else
+        -- Temporarily enable movement (ignore lock during Edit Mode)
+        Minimap:SetMovable(true)
+    end
+
+    -- Hide Blizzard's minimap Edit Mode selection when QUI minimap is active.
+    -- MinimapCluster is the registered Edit Mode system frame; its .Selection
+    -- child shows the blue highlight and drag handles. QUI replaces this with
+    -- its own overlay (ShowMinimapOverlay), so the Blizzard one should be hidden.
+    if settings.enabled and MinimapCluster then
+        if MinimapCluster.Selection then
+            MinimapCluster.Selection:Hide()
+            -- Persistently hide if Blizzard tries to re-show during Edit Mode
+            -- TAINT SAFETY: Track hook state in a local variable instead of
+            -- writing a property on MinimapCluster.Selection (a child of
+            -- MinimapCluster, a registered Edit Mode system frame).
+            if not _quiMinimapSelectionHooked then
+                _quiMinimapSelectionHooked = true
+                -- TAINT SAFETY: Do NOT use hooksecurefunc("Show") on MinimapCluster.Selection.
+                -- MinimapCluster is a registered Edit Mode system frame; any hook on
+                -- Show taints Blizzard's secureexecuterange during EditModeFrameSetup.
+                -- Use a standalone polling frame instead.
+                local mmSelPollFrame = CreateFrame("Frame")
+                local wasMMSelShown = MinimapCluster.Selection:IsShown()
+                mmSelPollFrame:SetScript("OnUpdate", function()
+                    local isShown = MinimapCluster.Selection:IsShown()
+                    if isShown and not wasMMSelShown then
+                        wasMMSelShown = true
+                        local s = GetSettings()
+                        if s and s.enabled then
+                            MinimapCluster.Selection:Hide()
+                        end
+                    elseif not isShown and wasMMSelShown then
+                        wasMMSelShown = false
+                    end
+                end)
+            end
+        end
+        -- Also hide the MinimapCluster highlight/border that Edit Mode shows.
+        -- Note: MinimapCluster.HighlightSystem is a METHOD, not a child frame.
+        -- The actual highlight frame is MinimapCluster.SystemHighlight (if it exists).
+        if MinimapCluster.SystemHighlight and MinimapCluster.SystemHighlight.Hide then
+            MinimapCluster.SystemHighlight:Hide()
+        end
+    end
 end
 
 -- Disable minimap Edit Mode (restore lock setting)

@@ -994,9 +994,14 @@ local function DisableBlizzardLoot()
             GroupLootContainer:UnregisterAllEvents()
             GroupLootContainer:Hide()
             -- Hook to keep it hidden when Blizzard tries to show frames
+            -- TAINT SAFETY: Defer Hide() out of secure execution context.
             if not GroupLootContainer._quiHooked then
                 hooksecurefunc(GroupLootContainer, "Show", function(self)
-                    self:Hide()
+                    C_Timer.After(0, function()
+                        if self:IsShown() then
+                            self:Hide()
+                        end
+                    end)
                 end)
                 GroupLootContainer._quiHooked = true
             end
@@ -1010,8 +1015,13 @@ local function DisableBlizzardLoot()
                 frame:UnregisterAllEvents()
                 frame:Hide()
                 if not frame._quiHooked then
+                    -- TAINT SAFETY: Defer Hide() out of secure execution context.
                     hooksecurefunc(frame, "Show", function(self)
-                        self:Hide()
+                        C_Timer.After(0, function()
+                            if self:IsShown() then
+                                self:Hide()
+                            end
+                        end)
                     end)
                     frame._quiHooked = true
                 end
@@ -1601,9 +1611,13 @@ function Loot:HookBlizzardEditMode()
 
     -- Only hook ExitEditMode to auto-hide movers
     -- EnterEditMode intentionally NOT hooked - users toggle movers manually via Skinning options
+    -- TAINT SAFETY: Defer ALL addon code out of the secure ExitEditMode callback.
+    -- Any synchronous addon code (even an if-check) taints the secure execution context.
     hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
-        if InCombatLockdown() then return end
-        self:DisableEditMode()
+        C_Timer.After(0, function()
+            if InCombatLockdown() then return end
+            self:DisableEditMode()
+        end)
     end)
 end
 

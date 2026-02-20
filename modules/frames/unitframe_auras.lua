@@ -232,15 +232,26 @@ local function UpdateAuras(frame)
     local unit = frame.unit
 
     if not UnitExists(unit) then
-        -- Hide all auras
+        -- Hide all auras and clear cooldown animations.
+        -- CooldownFrameTemplate swipe animations render independently of parent
+        -- visibility, so SetCooldown(0,0) is needed to stop the swipe from
+        -- showing on hidden icons (not just Hide()).
         if frame.buffIcons then
             for _, icon in ipairs(frame.buffIcons) do
                 icon:Hide()
+                if icon.cooldown then
+                    pcall(icon.cooldown.SetCooldown, icon.cooldown, 0, 0)
+                    icon.cooldown:Hide()
+                end
             end
         end
         if frame.debuffIcons then
             for _, icon in ipairs(frame.debuffIcons) do
                 icon:Hide()
+                if icon.cooldown then
+                    pcall(icon.cooldown.SetCooldown, icon.cooldown, 0, 0)
+                    icon.cooldown:Hide()
+                end
             end
         end
         return
@@ -295,14 +306,26 @@ local function UpdateAuras(frame)
     frame.debuffIcons = frame.debuffIcons or {}
 
     -- Hide existing icons first (skip if preview is active for that type)
+    -- Clear and hide cooldown frames — CooldownFrameTemplate swipe animations
+    -- can render independently of parent visibility, and SetCooldown with an
+    -- active duration can auto-show the cooldown frame even after Hide().
+    -- SetCooldown(0,0) clears the active animation so it stays hidden.
     if not buffPreviewActive then
         for _, icon in ipairs(frame.buffIcons) do
             icon:Hide()
+            if icon.cooldown then
+                pcall(icon.cooldown.SetCooldown, icon.cooldown, 0, 0)
+                icon.cooldown:Hide()
+            end
         end
     end
     if not debuffPreviewActive then
         for _, icon in ipairs(frame.debuffIcons) do
             icon:Hide()
+            if icon.cooldown then
+                pcall(icon.cooldown.SetCooldown, icon.cooldown, 0, 0)
+                icon.cooldown:Hide()
+            end
         end
     end
 
@@ -535,6 +558,29 @@ local function UpdateAuras(frame)
             buffIndex = buffIndex + 1
         end
     end
+
+    -- Clear cooldowns on unused icons beyond the active count.
+    -- CooldownFrameTemplate swipe animations can render independently of
+    -- parent visibility, so we must clear the animation (SetCooldown(0,0))
+    -- to stop the swipe from showing on hidden/reused icons.
+    if not debuffPreviewActive then
+        for i = debuffCount + 1, #frame.debuffIcons do
+            local icon = frame.debuffIcons[i]
+            if icon and icon.cooldown then
+                pcall(icon.cooldown.SetCooldown, icon.cooldown, 0, 0)
+                icon.cooldown:Hide()
+            end
+        end
+    end
+    if not buffPreviewActive then
+        for i = buffCount + 1, #frame.buffIcons do
+            local icon = frame.buffIcons[i]
+            if icon and icon.cooldown then
+                pcall(icon.cooldown.SetCooldown, icon.cooldown, 0, 0)
+                icon.cooldown:Hide()
+            end
+        end
+    end
 end
 
 -- Expose for unitframes.lua callers
@@ -685,11 +731,15 @@ function QUI_UF:ShowAuraPreviewForFrame(frame, unitKey, auraType)
     frame[containerKey] = frame[containerKey] or {}
     local container = frame[containerKey]
 
-    -- Hide real auras of this type
+    -- Hide real auras of this type (clear cooldown animations to prevent phantom swipes)
     local realContainer = isDebuff and frame.debuffIcons or frame.buffIcons
     if realContainer then
         for _, icon in ipairs(realContainer) do
             icon:Hide()
+            if icon.cooldown then
+                pcall(icon.cooldown.SetCooldown, icon.cooldown, 0, 0)
+                icon.cooldown:Hide()
+            end
         end
     end
 
@@ -697,6 +747,10 @@ function QUI_UF:ShowAuraPreviewForFrame(frame, unitKey, auraType)
     for _, icon in ipairs(container) do
         icon:SetScript("OnUpdate", nil)
         icon:Hide()
+        if icon.cooldown then
+            pcall(icon.cooldown.SetCooldown, icon.cooldown, 0, 0)
+            icon.cooldown:Hide()
+        end
     end
 
     -- Track start time for looping cooldown animation
@@ -879,11 +933,15 @@ function QUI_UF:HideAuraPreviewForFrame(frame, unitKey, auraType)
     local containerKey = isDebuff and "previewDebuffIcons" or "previewBuffIcons"
     local container = frame[containerKey]
 
-    -- Hide and cleanup preview icons
+    -- Hide and cleanup preview icons (clear cooldown animations to prevent phantom swipes)
     if container then
         for _, icon in ipairs(container) do
             icon:SetScript("OnUpdate", nil)
             icon:Hide()
+            if icon.cooldown then
+                pcall(icon.cooldown.SetCooldown, icon.cooldown, 0, 0)
+                icon.cooldown:Hide()
+            end
         end
     end
 

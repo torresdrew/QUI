@@ -513,12 +513,15 @@ local function SetupHealthBarHook()
     if not GameTooltip then return end
 
     -- Hook the status bar's Show method to catch when it tries to display
+    -- TAINT SAFETY: Defer to break secure execution context chain.
     local statusBar = GameTooltip.StatusBar or GameTooltipStatusBar
     if statusBar then
         hooksecurefunc(statusBar, "Show", function(self)
-            if ShouldHideHealthBar() then
-                self:Hide()
-            end
+            C_Timer.After(0, function()
+                if ShouldHideHealthBar() and self:IsShown() then
+                    self:Hide()
+                end
+            end)
         end)
     end
 end

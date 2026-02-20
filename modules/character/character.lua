@@ -901,8 +901,15 @@ local function HideBlizzardDecorations()
         if frame then
             frame:Hide()
             -- Hook to keep hidden (Blizzard may re-show on updates)
+            -- TAINT SAFETY: Defer Hide() out of secure execution context.
             if not frame._quiHideHooked then
-                hooksecurefunc(frame, "Show", function(self) self:Hide() end)
+                hooksecurefunc(frame, "Show", function(self)
+                    C_Timer.After(0, function()
+                        if self:IsShown() then
+                            self:Hide()
+                        end
+                    end)
+                end)
                 frame._quiHideHooked = true
             end
         end
@@ -916,8 +923,10 @@ local function HideBlizzardDecorations()
         if iconBorder.SetTexture then iconBorder:SetTexture(nil) end
         if iconBorder.SetAtlas then
             hooksecurefunc(iconBorder, "SetAtlas", function(self)
-                if self.SetTexture then self:SetTexture(nil) end
-                if self.SetAlpha then self:SetAlpha(0) end
+                C_Timer.After(0, function()
+                    if self.SetTexture then self:SetTexture(nil) end
+                    if self.SetAlpha then self:SetAlpha(0) end
+                end)
             end)
         end
     end

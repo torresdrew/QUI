@@ -126,42 +126,65 @@ function QUICore:ApplyGlobalFont()
         globalFontHooksInitialized = true
 
         -- Hook ObjectiveTracker updates (check if function exists - API varies by expansion)
+        -- TAINT SAFETY: Defer to break secure execution context chain.
+        -- ObjectiveTrackerFrame is a registered Edit Mode system frame.
         if ObjectiveTrackerFrame then
             if type(ObjectiveTracker_Update) == "function" then
                 hooksecurefunc("ObjectiveTracker_Update", function()
-                    if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
-                    local fp = GetGlobalFontPath()
-                    ApplyFontToFrameRecursive(ObjectiveTrackerFrame, fp)
+                    C_Timer.After(0, function()
+                        if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
+                        local fp = GetGlobalFontPath()
+                        ApplyFontToFrameRecursive(ObjectiveTrackerFrame, fp)
+                    end)
                 end)
             else
-                -- Fallback: hook frame's OnShow for expansion versions without ObjectiveTracker_Update
-                ObjectiveTrackerFrame:HookScript("OnShow", function(self)
-                    if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
-                    local fp = GetGlobalFontPath()
-                    ApplyFontToFrameRecursive(self, fp)
+                -- Fallback: polling-based approach for expansion versions without ObjectiveTracker_Update.
+                -- TAINT SAFETY: Do NOT use hooksecurefunc("Show") on ObjectiveTrackerFrame.
+                -- It is an Edit Mode system frame; any hook on Show taints Blizzard's
+                -- secureexecuterange during EditModeFrameSetup.
+                local otFontPollFrame = CreateFrame("Frame")
+                local wasOTShown = ObjectiveTrackerFrame:IsShown()
+                otFontPollFrame:SetScript("OnUpdate", function()
+                    local isShown = ObjectiveTrackerFrame:IsShown()
+                    if isShown and not wasOTShown then
+                        wasOTShown = true
+                        C_Timer.After(0, function()
+                            if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
+                            local fp = GetGlobalFontPath()
+                            ApplyFontToFrameRecursive(ObjectiveTrackerFrame, fp)
+                        end)
+                    elseif not isShown and wasOTShown then
+                        wasOTShown = false
+                    end
                 end)
             end
         end
 
         -- Hook Tooltip display
+        -- TAINT SAFETY: Defer to break secure execution context chain.
         if GameTooltip then
             hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip)
-                if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
-                local fp = GetGlobalFontPath()
-                ApplyFontToFrameRecursive(tooltip, fp)
+                C_Timer.After(0, function()
+                    if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
+                    local fp = GetGlobalFontPath()
+                    ApplyFontToFrameRecursive(tooltip, fp)
+                end)
             end)
         end
 
         -- Hook chat frame font size changes
+        -- TAINT SAFETY: Defer to break secure execution context chain.
         if FCF_SetChatWindowFontSize then
             hooksecurefunc("FCF_SetChatWindowFontSize", function(chatFrame, fontSize)
-                if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
-                local fp = GetGlobalFontPath()
-                if chatFrame and type(chatFrame.GetFont) == "function" and type(chatFrame.SetFont) == "function" then
-                    -- Apply global font directly to ScrollingMessageFrame (not just children)
-                    local _, size, flags = chatFrame:GetFont()
-                    chatFrame:SetFont(fp, fontSize or size or 14, flags or "")
-                end
+                C_Timer.After(0, function()
+                    if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
+                    local fp = GetGlobalFontPath()
+                    if chatFrame and type(chatFrame.GetFont) == "function" and type(chatFrame.SetFont) == "function" then
+                        -- Apply global font directly to ScrollingMessageFrame (not just children)
+                        local _, size, flags = chatFrame:GetFont()
+                        chatFrame:SetFont(fp, fontSize or size or 14, flags or "")
+                    end
+                end)
             end)
         end
 

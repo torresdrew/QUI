@@ -14,6 +14,16 @@ local COLORS = {
 
 local FONT_FLAGS = "OUTLINE"
 
+-- TAINT SAFETY: Use a weak-keyed state table instead of writing custom
+-- properties directly on Blizzard frame tables. GameMenuFrame is a
+-- registered Edit Mode system frame; writing properties like
+-- GameMenuFrame.quiSkinned taints the frame table.
+local frameState = setmetatable({}, { __mode = "k" })
+local function S(f)
+    if not frameState[f] then frameState[f] = {} end
+    return frameState[f]
+end
+
 -- Get game menu font size from settings
 local function GetGameMenuFontSize()
     local core = GetCore()
@@ -25,16 +35,18 @@ end
 local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not button then return end
 
+    local bs = S(button)
+
     -- Create backdrop if needed
-    if not button.quiBackdrop then
-        button.quiBackdrop = CreateFrame("Frame", nil, button, "BackdropTemplate")
-        button.quiBackdrop:SetAllPoints()
-        button.quiBackdrop:SetFrameLevel(button:GetFrameLevel())
-        button.quiBackdrop:EnableMouse(false)
+    if not bs.quiBackdrop then
+        bs.quiBackdrop = CreateFrame("Frame", nil, button, "BackdropTemplate")
+        bs.quiBackdrop:SetAllPoints()
+        bs.quiBackdrop:SetFrameLevel(button:GetFrameLevel())
+        bs.quiBackdrop:EnableMouse(false)
     end
 
-    local btnPx = SkinBase.GetPixelSize(button.quiBackdrop, 1)
-    button.quiBackdrop:SetBackdrop({
+    local btnPx = SkinBase.GetPixelSize(bs.quiBackdrop, 1)
+    bs.quiBackdrop:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = btnPx,
@@ -45,8 +57,8 @@ local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local btnBgR = math.min(bgr + 0.07, 1)
     local btnBgG = math.min(bgg + 0.07, 1)
     local btnBgB = math.min(bgb + 0.07, 1)
-    button.quiBackdrop:SetBackdropColor(btnBgR, btnBgG, btnBgB, 1)
-    button.quiBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
+    bs.quiBackdrop:SetBackdropColor(btnBgR, btnBgG, btnBgB, 1)
+    bs.quiBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
 
     -- Hide default textures
     if button.Left then button.Left:SetAlpha(0) end
@@ -75,52 +87,59 @@ local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end
 
     -- Store colors for hover effects
-    button.quiSkinColor = { sr, sg, sb, sa }
-    button.quiBgColor = { btnBgR, btnBgG, btnBgB, 1 }
+    bs.quiSkinColor = { sr, sg, sb, sa }
+    bs.quiBgColor = { btnBgR, btnBgG, btnBgB, 1 }
 
     -- Set hover scripts without replacing existing handlers
-    button:HookScript("OnEnter", function(self)
-        if self.quiBackdrop then
-            if self.quiBgColor then
-                local r, g, b, a = unpack(self.quiBgColor)
-                self.quiBackdrop:SetBackdropColor(math.min(r + 0.15, 1), math.min(g + 0.15, 1), math.min(b + 0.15, 1), a)
+    -- Only hook once (check via state table)
+    if not bs.quiHooked then
+        button:HookScript("OnEnter", function(self)
+            local s = S(self)
+            if s.quiBackdrop then
+                if s.quiBgColor then
+                    local r, g, b, a = unpack(s.quiBgColor)
+                    s.quiBackdrop:SetBackdropColor(math.min(r + 0.15, 1), math.min(g + 0.15, 1), math.min(b + 0.15, 1), a)
+                end
+                if s.quiSkinColor then
+                    local r, g, b, a = unpack(s.quiSkinColor)
+                    s.quiBackdrop:SetBackdropBorderColor(math.min(r * 1.4, 1), math.min(g * 1.4, 1), math.min(b * 1.4, 1), a)
+                end
             end
-            if self.quiSkinColor then
-                local r, g, b, a = unpack(self.quiSkinColor)
-                self.quiBackdrop:SetBackdropBorderColor(math.min(r * 1.4, 1), math.min(g * 1.4, 1), math.min(b * 1.4, 1), a)
-            end
-        end
-        local txt = self:GetFontString()
-        if txt then txt:SetTextColor(1, 1, 1, 1) end
-    end)
+            local txt = self:GetFontString()
+            if txt then txt:SetTextColor(1, 1, 1, 1) end
+        end)
 
-    button:HookScript("OnLeave", function(self)
-        if self.quiBackdrop then
-            if self.quiBgColor then
-                self.quiBackdrop:SetBackdropColor(unpack(self.quiBgColor))
+        button:HookScript("OnLeave", function(self)
+            local s = S(self)
+            if s.quiBackdrop then
+                if s.quiBgColor then
+                    s.quiBackdrop:SetBackdropColor(unpack(s.quiBgColor))
+                end
+                if s.quiSkinColor then
+                    s.quiBackdrop:SetBackdropBorderColor(unpack(s.quiSkinColor))
+                end
             end
-            if self.quiSkinColor then
-                self.quiBackdrop:SetBackdropBorderColor(unpack(self.quiSkinColor))
-            end
-        end
-        local txt = self:GetFontString()
-        if txt then txt:SetTextColor(unpack(COLORS.text)) end
-    end)
+            local txt = self:GetFontString()
+            if txt then txt:SetTextColor(unpack(COLORS.text)) end
+        end)
+        bs.quiHooked = true
+    end
 
-    button.quiStyled = true
+    bs.quiStyled = true
 end
 
 -- Update button colors (for live refresh)
 local function UpdateButtonColors(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not button or not button.quiBackdrop then return end
+    local bs = S(button)
+    if not button or not bs.quiBackdrop then return end
 
     local btnBgR = math.min(bgr + 0.07, 1)
     local btnBgG = math.min(bgg + 0.07, 1)
     local btnBgB = math.min(bgb + 0.07, 1)
-    button.quiBackdrop:SetBackdropColor(btnBgR, btnBgG, btnBgB, 1)
-    button.quiBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
-    button.quiSkinColor = { sr, sg, sb, sa }
-    button.quiBgColor = { btnBgR, btnBgG, btnBgB, 1 }
+    bs.quiBackdrop:SetBackdropColor(btnBgR, btnBgG, btnBgB, 1)
+    bs.quiBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
+    bs.quiSkinColor = { sr, sg, sb, sa }
+    bs.quiBgColor = { btnBgR, btnBgG, btnBgB, 1 }
 end
 
 -- Hide Blizzard decorative elements
@@ -186,7 +205,7 @@ local function SkinGameMenu()
     if not settings or not settings.skinGameMenu then return end
 
     if not GameMenuFrame then return end
-    if GameMenuFrame.quiSkinned then return end
+    if S(GameMenuFrame).quiSkinned then return end
 
     -- Get colors based on setting
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
@@ -194,8 +213,24 @@ local function SkinGameMenu()
     -- Hide Blizzard decorations
     HideBlizzardDecorations()
 
-    -- Create backdrop
-    SkinBase.CreateBackdrop(GameMenuFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    -- Create backdrop (inline instead of SkinBase.CreateBackdrop to avoid
+    -- writing GameMenuFrame.quiBackdrop on a registered Edit Mode system frame)
+    local gmS = S(GameMenuFrame)
+    if not gmS.quiBackdrop then
+        gmS.quiBackdrop = CreateFrame("Frame", nil, GameMenuFrame, "BackdropTemplate")
+        gmS.quiBackdrop:SetAllPoints()
+        gmS.quiBackdrop:SetFrameLevel(GameMenuFrame:GetFrameLevel())
+        gmS.quiBackdrop:EnableMouse(false)
+    end
+    local gmPx = SkinBase.GetPixelSize(gmS.quiBackdrop, 1)
+    gmS.quiBackdrop:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = gmPx,
+        insets = { left = gmPx, right = gmPx, top = gmPx, bottom = gmPx },
+    })
+    gmS.quiBackdrop:SetBackdropColor(bgr, bgg, bgb, bga)
+    gmS.quiBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
 
     -- Adjust frame padding for cleaner look
     GameMenuFrame.topPadding = 15
@@ -212,20 +247,21 @@ local function SkinGameMenu()
     end
 
     GameMenuFrame:MarkDirty()
-    GameMenuFrame.quiSkinned = true
+    S(GameMenuFrame).quiSkinned = true
 end
 
 -- Refresh colors on already-skinned game menu (for live preview)
 local function RefreshGameMenuColors()
-    if not GameMenuFrame or not GameMenuFrame.quiSkinned then return end
+    if not GameMenuFrame or not S(GameMenuFrame).quiSkinned then return end
 
     -- Get colors based on setting
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
 
-    -- Update main frame backdrop
-    if GameMenuFrame.quiBackdrop then
-        GameMenuFrame.quiBackdrop:SetBackdropColor(bgr, bgg, bgb, bga)
-        GameMenuFrame.quiBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
+    -- Update main frame backdrop (stored in state table, not on frame)
+    local gmS = S(GameMenuFrame)
+    if gmS.quiBackdrop then
+        gmS.quiBackdrop:SetBackdropColor(bgr, bgg, bgb, bga)
+        gmS.quiBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
     end
 
     -- Update all buttons
@@ -313,19 +349,23 @@ end
 -- Hook into GameMenuFrame button initialization (with defensive check)
 if GameMenuFrame and GameMenuFrame.InitButtons then
     hooksecurefunc(GameMenuFrame, "InitButtons", function()
-        -- Inject QUI button (always, regardless of skinning setting)
-        InjectQUIButton()
-
-        -- Skin menu if enabled (defer to ensure buttons are ready)
+        -- TAINT SAFETY: Defer ALL addon code out of secure InitButtons callback.
+        -- GameMenuFrame:InitButtons fires in the same call chain as Edit Mode entry;
+        -- synchronous addon code here taints the secure execution context, causing
+        -- TargetUnit() ADDON_ACTION_FORBIDDEN errors.
         C_Timer.After(0, function()
+            -- Inject QUI button (always, regardless of skinning setting)
+            InjectQUIButton()
+
+            -- Skin menu if enabled
             SkinGameMenu()
 
             -- Style any new buttons that were added
-            if GameMenuFrame.quiSkinned and GameMenuFrame.buttonPool then
+            if S(GameMenuFrame).quiSkinned and GameMenuFrame.buttonPool then
                 local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
 
                 for button in GameMenuFrame.buttonPool:EnumerateActive() do
-                    if not button.quiStyled then
+                    if not S(button).quiStyled then
                         StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
                     end
                 end
@@ -334,23 +374,25 @@ if GameMenuFrame and GameMenuFrame.InitButtons then
     end)
 
     -- Hook Show/Hide for dim effect and button re-styling
+    -- TAINT SAFETY: Defer ALL addon code out of OnShow callback.
+    -- GameMenuFrame is shown in the same secure call chain as Edit Mode entry.
     GameMenuFrame:HookScript("OnShow", function()
-        ShowDimBehindGameMenu()
-
-        -- Defer button styling to ensure InitButtons has completed
         C_Timer.After(0, function()
+            ShowDimBehindGameMenu()
+
+            -- Button styling
             if not GameMenuFrame:IsShown() then return end
-            if not GameMenuFrame.quiSkinned or not GameMenuFrame.buttonPool then return end
+            if not S(GameMenuFrame).quiSkinned or not GameMenuFrame.buttonPool then return end
 
             local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
             for button in GameMenuFrame.buttonPool:EnumerateActive() do
                 -- Force full re-styling every time (hooks may be lost on pool recycle)
-                button.quiStyled = nil
+                S(button).quiStyled = nil
                 StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             end
         end)
     end)
     GameMenuFrame:HookScript("OnHide", function()
-        HideDimBehindGameMenu()
+        C_Timer.After(0, HideDimBehindGameMenu)
     end)
 end

@@ -4,6 +4,13 @@
 local _, ns = ...
 local Helpers = ns.Helpers
 
+-- TAINT SAFETY: Per-frame state in local weak-keyed table
+local frameState = setmetatable({}, { __mode = "k" })
+local function GetFrameState(f)
+    if not frameState[f] then frameState[f] = {} end
+    return frameState[f]
+end
+
 -- Default settings
 local DEFAULTS = {
     showBuffSwipe = true,
@@ -98,9 +105,10 @@ local function ApplySettingsToIcon(icon, settings)
 
     -- Stabilize behavior when Blizzard data is temporarily unavailable.
     if not mode then
-        mode = icon._QUI_LastSwipeMode or "cooldown"
+        local ifs = GetFrameState(icon)
+        mode = ifs.lastSwipeMode or "cooldown"
     end
-    icon._QUI_LastSwipeMode = mode
+    GetFrameState(icon).lastSwipeMode = mode
 
     if mode == "aura" then
         if parent == _G.BuffIconCooldownViewer then
@@ -116,8 +124,9 @@ local function ApplySettingsToIcon(icon, settings)
 
     -- Avoid reapplying unchanged values every pulse; frequent redundant writes can
     -- produce subtle visual jitter on the radial edge animation.
-    if icon._QUI_LastDrawSwipe ~= showSwipe then
-        icon._QUI_LastDrawSwipe = showSwipe
+    local ifs2 = GetFrameState(icon)
+    if ifs2.lastDrawSwipe ~= showSwipe then
+        ifs2.lastDrawSwipe = showSwipe
         icon.Cooldown:SetDrawSwipe(showSwipe)
     end
 
@@ -127,8 +136,8 @@ local function ApplySettingsToIcon(icon, settings)
     else
         drawEdge = settings.showRechargeEdge
     end
-    if icon._QUI_LastDrawEdge ~= drawEdge then
-        icon._QUI_LastDrawEdge = drawEdge
+    if ifs2.lastDrawEdge ~= drawEdge then
+        ifs2.lastDrawEdge = drawEdge
         icon.Cooldown:SetDrawEdge(drawEdge)
     end
 end
@@ -160,11 +169,16 @@ local function ApplyAllSettings()
         ProcessViewer(viewer, settings)
 
         -- Hook Layout to catch new icons
-        if viewer and viewer.Layout and not viewer._QUI_LayoutHooked then
-            viewer._QUI_LayoutHooked = true
+        local vfs = viewer and GetFrameState(viewer)
+        if viewer and viewer.Layout and not (vfs and vfs.layoutHooked) then
+            vfs.layoutHooked = true
             hooksecurefunc(viewer, "Layout", function()
-                C_Timer.After(0.15, function()  -- 150ms debounce for CPU efficiency
-                    ProcessViewer(viewer, GetSettings())
+                -- TAINT SAFETY: Defer ALL addon code out of Layout callback.
+                -- CDM viewers are registered Edit Mode system frames.
+                C_Timer.After(0, function()
+                    C_Timer.After(0.15, function()  -- 150ms debounce for CPU efficiency
+                        ProcessViewer(viewer, GetSettings())
+                    end)
                 end)
             end)
         end
@@ -216,10 +230,11 @@ end)
 
 -- Keep swipe state responsive while viewers are visible.
 local pulseFrame = CreateFrame("Frame")
+local pulseElapsed = 0
 pulseFrame:SetScript("OnUpdate", function(self, elapsed)
-    self._quiElapsed = (self._quiElapsed or 0) + elapsed
-    if self._quiElapsed < 0.12 then return end
-    self._quiElapsed = 0
+    pulseElapsed = pulseElapsed + elapsed
+    if pulseElapsed < 0.12 then return end
+    pulseElapsed = 0
 
     local essential = _G.EssentialCooldownViewer
     local utility = _G.UtilityCooldownViewer

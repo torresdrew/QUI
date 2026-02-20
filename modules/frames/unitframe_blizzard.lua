@@ -7,6 +7,13 @@ local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local GetDB = Helpers.CreateDBGetter("quiUnitFrames")
 
+-- TAINT SAFETY: Per-frame state in local weak-keyed table
+local frameState = setmetatable({}, { __mode = "k" })
+local function GetFrameState(f)
+    if not frameState[f] then frameState[f] = {} end
+    return frameState[f]
+end
+
 local QUI = _G.QuaziiUI or _G.QUI
 
 -- QUI_UF is created in unitframes.lua and exported to ns.QUI_UnitFrames.
@@ -202,15 +209,22 @@ function QUI_UF:HideBlizzardCastbars()
             PlayerCastingBarFrame:SetUnit(nil)
         end)
         if not ok2 then QUI:DebugPrint("Could not detach PlayerCastingBarFrame unit: " .. tostring(err2)) end
+        -- TAINT SAFETY: Do NOT use hooksecurefunc("Show") on PlayerCastingBarFrame.
+        -- It is an Edit Mode system frame; any hook on Show taints Blizzard's
+        -- secureexecuterange during EditModeFrameSetup.
+        -- Use a standalone polling frame to keep it hidden.
         local ok3, err3 = pcall(function()
-            if not PlayerCastingBarFrame._quiShowHooked then
-                PlayerCastingBarFrame._quiShowHooked = true
-                hooksecurefunc(PlayerCastingBarFrame, "Show", function(self)
-                    pcall(function() self:Hide() end)
+            if not GetFrameState(PlayerCastingBarFrame).showPolled then
+                GetFrameState(PlayerCastingBarFrame).showPolled = true
+                local castbarHidePollFrame = CreateFrame("Frame")
+                castbarHidePollFrame:SetScript("OnUpdate", function()
+                    if PlayerCastingBarFrame:IsShown() then
+                        pcall(function() PlayerCastingBarFrame:Hide() end)
+                    end
                 end)
             end
         end)
-        if not ok3 then QUI:DebugPrint("Could not hook PlayerCastingBarFrame:Show: " .. tostring(err3)) end
+        if not ok3 then QUI:DebugPrint("Could not setup PlayerCastingBarFrame polling: " .. tostring(err3)) end
     end
     -- Also hide the pet castbar if it exists
     if PetCastingBarFrame then
@@ -263,27 +277,19 @@ function QUI_UF:HideBlizzardFrames()
         -- Fix Edit Mode crash: BossTargetFrameContainer.GetScaledSelectionSides() crashes
         -- when GetRect() returns nil (children moved off-screen).
         -- Hook the crashing function directly to return safe fallback values.
-        if BossTargetFrameContainer and not BossTargetFrameContainer._quiEditModeFixed then
-            -- Hook GetScaledSelectionSides to handle nil GetRect case
-            if BossTargetFrameContainer.GetScaledSelectionSides then
-                local originalGetScaledSelectionSides = BossTargetFrameContainer.GetScaledSelectionSides
-                BossTargetFrameContainer.GetScaledSelectionSides = function(self)
-                    local left, bottom, width, height = self:GetRect()
-                    if left == nil then
-                        -- Return off-screen fallback sides (left, right, bottom, top)
-                        return -10000, -9999, 10000, 10001
-                    end
-                    return originalGetScaledSelectionSides(self)
+        -- Ensure BossTargetFrameContainer has valid bounds to prevent
+        -- GetScaledSelectionSides crash when GetRect returns nil.
+        -- NOTE: We do NOT replace GetScaledSelectionSides — method replacement
+        -- on registered Edit Mode system frames causes taint that cascades
+        -- through the entire secure execution context.
+        if BossTargetFrameContainer and not GetFrameState(BossTargetFrameContainer).editModeFixed then
+            pcall(function()
+                BossTargetFrameContainer:SetSize(1, 1)
+                if not BossTargetFrameContainer:GetPoint() then
+                    BossTargetFrameContainer:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
                 end
-            end
-
-            -- Also try to give container valid bounds as backup
-            BossTargetFrameContainer:SetSize(1, 1)
-            if not BossTargetFrameContainer:GetPoint() then
-                BossTargetFrameContainer:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-            end
-
-            BossTargetFrameContainer._quiEditModeFixed = true
+            end)
+            GetFrameState(BossTargetFrameContainer).editModeFixed = true
         end
     end
 end
@@ -303,13 +309,23 @@ function QUI_UF:HideBlizzardSelectionFrames()
 
         parent.Selection:Hide()
 
-        -- Hook OnShow to persistently hide while QUI frames are enabled
-        if not parent.Selection._quiHooked then
-            parent.Selection._quiHooked = true
-            parent.Selection:HookScript("OnShow", function(self)
-                local db = GetDB()
-                if db and db[unitKey] and db[unitKey].enabled then
-                    self:Hide()
+        -- TAINT SAFETY: Do NOT use hooksecurefunc("Show") on .Selection frames.
+        -- They are shown by Blizzard during EditModeFrameSetup's secureexecuterange;
+        -- any hook on Show taints the secure chain. Use polling instead.
+        if not GetFrameState(parent.Selection).polled then
+            GetFrameState(parent.Selection).polled = true
+            local selPollFrame = CreateFrame("Frame")
+            local wasSel = parent.Selection:IsShown()
+            selPollFrame:SetScript("OnUpdate", function()
+                local isShown = parent.Selection:IsShown()
+                if isShown and not wasSel then
+                    wasSel = true
+                    local dbc = GetDB()
+                    if dbc and dbc[unitKey] and dbc[unitKey].enabled then
+                        parent.Selection:Hide()
+                    end
+                elseif not isShown and wasSel then
+                    wasSel = false
                 end
             end)
         end

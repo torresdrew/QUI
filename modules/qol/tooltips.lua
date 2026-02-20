@@ -91,14 +91,16 @@ local function GetTooltipContext(owner)
     if not owner then return "npcs" end
 
     -- CDM: Check for skinned CDM icons (Essential, Utility, Buff views)
-    if owner.__cdmSkinned then
+    local ois = _G.QUI_GetCDMIconState and _G.QUI_GetCDMIconState(owner) or {}
+    if ois.skinned then
         return "cdm"
     end
 
     -- Check parent for CDM (tooltip owner might be child of CDM icon)
     local parent = owner:GetParent()
     if parent then
-        if parent.__cdmSkinned then
+        local pis = _G.QUI_GetCDMIconState and _G.QUI_GetCDMIconState(parent) or {}
+        if pis.skinned then
             return "cdm"
         end
         -- Check if parent is a CDM viewer frame

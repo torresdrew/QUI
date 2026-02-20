@@ -687,6 +687,43 @@ local function CreatePowerBarNudgeButton(parent, direction, deltaX, deltaY, barK
     return btn
 end
 
+-- ============================================================================
+-- POWER BAR ANCHORING HELPERS FOR EDIT MODE
+-- Called at runtime (Edit Mode entry) when anchoring.lua is already loaded.
+-- ============================================================================
+
+local POWERBAR_ANCHORING_KEYS = {
+    primary   = "primaryPower",
+    secondary = "secondaryPower",
+}
+
+local function IsPowerBarAnchored(barKey)
+    local anchoringKey = POWERBAR_ANCHORING_KEYS[barKey]
+    if not anchoringKey then return false end
+    local db = _G.QUI_GetFrameAnchoringDB and _G.QUI_GetFrameAnchoringDB()
+    if not db then return false end
+    local settings = db[anchoringKey]
+    return settings and settings.enabled and true or false
+end
+
+local function GetPowerBarAnchorTargetName(barKey)
+    local anchoringKey = POWERBAR_ANCHORING_KEYS[barKey]
+    if not anchoringKey then return nil end
+    local db = _G.QUI_GetFrameAnchoringDB and _G.QUI_GetFrameAnchoringDB()
+    if not db then return nil end
+    local settings = db[anchoringKey]
+    if not settings or not settings.enabled then
+        return nil
+    end
+    if settings.parent == "screen" then
+        return "Screen"
+    end
+    if _G.QUI_GetFrameAnchorDisplayName then
+        return _G.QUI_GetFrameAnchorDisplayName(settings.parent)
+    end
+    return settings.parent
+end
+
 -- Create edit mode overlay for a power bar
 local function CreatePowerBarEditOverlay(bar, barKey)
     if bar.editOverlay then return bar.editOverlay end
@@ -764,23 +801,48 @@ function QUICore:EnablePowerBarEditMode()
             CreatePowerBarEditOverlay(bar, barKey)
             bar.editOverlay:Show()
 
-            -- Update info text with current position
-            if bar.editOverlay.infoText then
-                local label = (barKey == "primary") and "Primary" or "Secondary"
-                local x = cfg.offsetX or 0
-                local y = cfg.offsetY or 0
-                bar.editOverlay.infoText:SetText(string.format("%s  X:%d Y:%d", label, x, y))
-            end
+            -- Check anchoring state
+            local isAnchored = IsPowerBarAnchored(barKey)
+            bar.editOverlay._isAnchored = isAnchored
 
-            -- Enable dragging
-            bar:SetMovable(true)
-            bar:EnableMouse(true)
-            bar:RegisterForDrag("LeftButton")
+            if isAnchored then
+                -- Gray overlay for locked power bars
+                bar.editOverlay:SetBackdropColor(0.5, 0.5, 0.5, 0.25)
+                bar.editOverlay:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.9)
+
+                -- Show lock info in info text
+                local targetName = GetPowerBarAnchorTargetName(barKey)
+                local label = (barKey == "primary") and "Primary" or "Secondary"
+                local lockText = targetName and ("Locked to " .. targetName) or "Anchored"
+                if bar.editOverlay.infoText then
+                    bar.editOverlay.infoText:SetText(label .. "  |cff888888(" .. lockText .. ")|r")
+                    bar.editOverlay.infoText:Show()
+                end
+
+                -- Hide nudge buttons for anchored power bars
+                bar.editOverlay.nudgeLeft:Hide()
+                bar.editOverlay.nudgeRight:Hide()
+                bar.editOverlay.nudgeUp:Hide()
+                bar.editOverlay.nudgeDown:Hide()
+            else
+                -- Normal cyan overlay for free power bars
+                bar.editOverlay:SetBackdropColor(0.2, 0.8, 1, 0.3)
+                bar.editOverlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+
+                -- Update info text with current position
+                if bar.editOverlay.infoText then
+                    local label = (barKey == "primary") and "Primary" or "Secondary"
+                    local x = cfg.offsetX or 0
+                    local y = cfg.offsetY or 0
+                    bar.editOverlay.infoText:SetText(string.format("%s  X:%d Y:%d", label, x, y))
+                end
+            end
 
             -- Store barKey on bar for click handler
             bar._editModeBarKey = barKey
 
-            -- Click handler to select this element and show its arrows
+            -- Always allow click-to-select
+            bar:EnableMouse(true)
             bar:SetScript("OnMouseDown", function(self, button)
                 if button == "LeftButton" and PowerBarEditMode.active then
                     if QUICore and QUICore.SelectEditModeElement then
@@ -788,6 +850,11 @@ function QUICore:EnablePowerBarEditMode()
                     end
                 end
             end)
+
+            if not isAnchored then
+            -- Enable dragging (only for free power bars)
+            bar:SetMovable(true)
+            bar:RegisterForDrag("LeftButton")
 
             bar:SetScript("OnDragStart", function(self)
                 if PowerBarEditMode.active then
@@ -859,6 +926,7 @@ function QUICore:EnablePowerBarEditMode()
                     QUICore:NudgeSelectedElement(deltaX, deltaY)
                 end
             end)
+            end -- if not isAnchored (drag + keyboard)
         end
     end
 end
@@ -928,7 +996,8 @@ function QUICore:GetPowerBar()
         -- Try to get Essential Cooldowns width if available
         local essentialViewer = _G["EssentialCooldownViewer"]
         if essentialViewer then
-            width = essentialViewer.__cdmIconWidth or essentialViewer:GetWidth() or 0
+            local evs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(essentialViewer) or {}
+            width = evs.iconWidth or essentialViewer:GetWidth() or 0
         end
         if width <= 0 then
             width = 200  -- Fallback width
@@ -1034,10 +1103,12 @@ function QUICore:UpdatePowerBar()
     if orientation == "AUTO" then
         if cfg.lockedToEssential then
             local viewer = _G.EssentialCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+            isVertical = viewer and vs.layoutDir == "VERTICAL"
         elseif cfg.lockedToUtility then
             local viewer = _G.UtilityCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+            isVertical = viewer and vs.layoutDir == "VERTICAL"
         end
     end
 
@@ -1050,7 +1121,8 @@ function QUICore:UpdatePowerBar()
         -- Try to get Essential Cooldowns width
         local essentialViewer = _G["EssentialCooldownViewer"]
         if essentialViewer then
-            width = essentialViewer.__cdmIconWidth
+            local evs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(essentialViewer) or {}
+            width = evs.iconWidth
         end
         if not width or width <= 0 then
             width = self.db.profile.ncdm and self.db.profile.ncdm._lastEssentialWidth
@@ -1130,11 +1202,19 @@ function QUICore:UpdatePowerBar()
     end
 
     -- Only resize when dimensions actually changed (prevents flicker)
+    -- Skip width when anchoring system controls it (autoWidth)
+    local anchoringControlsWidth = _G.QUI_IsFrameAutoWidth and _G.QUI_IsFrameAutoWidth(bar)
     if bar._cachedH ~= wantedH then
         bar:SetHeight(wantedH)
         bar._cachedH = wantedH
     end
-    if bar._cachedW ~= wantedW then
+    if anchoringControlsWidth then
+        -- Anchoring system owns the width. Re-verify the bar matches its
+        -- anchor parent so stale widths from init races are corrected.
+        if _G.QUI_ReapplyAutoWidth then
+            _G.QUI_ReapplyAutoWidth(bar)
+        end
+    elseif bar._cachedW ~= wantedW then
         bar:SetWidth(wantedW)
         bar._cachedW = wantedW
     end
@@ -1277,10 +1357,12 @@ function QUICore:UpdatePowerBarTicks(bar, resource, max)
     if orientation == "AUTO" then
         if cfg.lockedToEssential then
             local viewer = _G.EssentialCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+            isVertical = viewer and vs.layoutDir == "VERTICAL"
         elseif cfg.lockedToUtility then
             local viewer = _G.UtilityCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+            isVertical = viewer and vs.layoutDir == "VERTICAL"
         end
     end
 
@@ -1333,30 +1415,31 @@ _G.QUI_UpdateLockedPowerBar = function()
     local essentialViewer = _G.EssentialCooldownViewer
     if not essentialViewer or not essentialViewer:IsShown() then return end
 
-    local isVerticalCDM = essentialViewer.__cdmLayoutDirection == "VERTICAL"
+    local evs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(essentialViewer) or {}
+    local isVerticalCDM = evs.layoutDir == "VERTICAL"
 
     local newWidth, newOffsetX, newOffsetY
     local barBorderSize = cfg.borderSize or 1
 
     if isVerticalCDM then
         -- Vertical CDM: bar goes to the RIGHT, length matches total height
-        local totalHeight = essentialViewer.__cdmTotalHeight or essentialViewer:GetHeight()
+        local totalHeight = evs.totalHeight or essentialViewer:GetHeight()
         if not totalHeight or totalHeight <= 0 then return end
 
         -- Width (bar length) = total CDM height + borders
-        local topBottomBorderSize = essentialViewer.__cdmRow1BorderSize or 0
+        local topBottomBorderSize = evs.row1BorderSize or 0
         local targetWidth = totalHeight + (2 * topBottomBorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
         -- Position to the right of Essential
         local essentialCenterX, essentialCenterY = essentialViewer:GetCenter()
         local screenCenterX, screenCenterY = UIParent:GetCenter()
-        local totalWidth = essentialViewer.__cdmIconWidth or essentialViewer:GetWidth()
+        local totalWidth = evs.iconWidth or essentialViewer:GetWidth()
         local barThickness = cfg.height or 6
 
         if essentialCenterX and essentialCenterY and screenCenterX and screenCenterY then
             -- CDM's visual right edge (GetWidth includes visual bounds)
-            local rightColBorderSize = essentialViewer.__cdmBottomRowBorderSize or 0
+            local rightColBorderSize = evs.bottomRowBorderSize or 0
             local cdmVisualRight = essentialCenterX + (totalWidth / 2) + rightColBorderSize
 
             -- Power bar center X = visual right + bar thickness/2 + border
@@ -1367,10 +1450,10 @@ _G.QUI_UpdateLockedPowerBar = function()
         end
     else
         -- Horizontal CDM: bar below, width matches row width (current behavior)
-        local rowWidth = essentialViewer.__cdmRow1Width or essentialViewer.__cdmIconWidth
+        local rowWidth = evs.row1Width or evs.iconWidth
         if not rowWidth or rowWidth <= 0 then return end
 
-        local row1BorderSize = essentialViewer.__cdmRow1BorderSize or 0
+        local row1BorderSize = evs.row1BorderSize or 0
         local targetWidth = rowWidth + (2 * row1BorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
@@ -1416,30 +1499,31 @@ _G.QUI_UpdateLockedPowerBarToUtility = function()
     local utilityViewer = _G.UtilityCooldownViewer
     if not utilityViewer or not utilityViewer:IsShown() then return end
 
-    local isVerticalCDM = utilityViewer.__cdmLayoutDirection == "VERTICAL"
+    local uvs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(utilityViewer) or {}
+    local isVerticalCDM = uvs.layoutDir == "VERTICAL"
 
     local newWidth, newOffsetX, newOffsetY
     local barBorderSize = cfg.borderSize or 1
 
     if isVerticalCDM then
         -- Vertical CDM: bar goes to the LEFT (Utility is typically on right side of screen)
-        local totalHeight = utilityViewer.__cdmTotalHeight or utilityViewer:GetHeight()
+        local totalHeight = uvs.totalHeight or utilityViewer:GetHeight()
         if not totalHeight or totalHeight <= 0 then return end
 
         -- Width (bar length) = total CDM height
-        local row1BorderSize = utilityViewer.__cdmRow1BorderSize or 0
+        local row1BorderSize = uvs.row1BorderSize or 0
         local targetWidth = totalHeight + (2 * row1BorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
         -- Position to the LEFT of Utility
         local utilityCenterX, utilityCenterY = utilityViewer:GetCenter()
         local screenCenterX, screenCenterY = UIParent:GetCenter()
-        local totalWidth = utilityViewer.__cdmIconWidth or utilityViewer:GetWidth()
+        local totalWidth = uvs.iconWidth or utilityViewer:GetWidth()
         local barThickness = cfg.height or 6
 
         if utilityCenterX and utilityCenterY and screenCenterX and screenCenterY then
             -- CDM's visual left edge (GetWidth includes visual bounds)
-            local row1BorderSizePos = utilityViewer.__cdmRow1BorderSize or 0
+            local row1BorderSizePos = uvs.row1BorderSize or 0
             local cdmVisualLeft = utilityCenterX - (totalWidth / 2) - row1BorderSizePos
 
             -- Power bar center X = visual left - bar thickness/2 - border
@@ -1450,10 +1534,10 @@ _G.QUI_UpdateLockedPowerBarToUtility = function()
         end
     else
         -- Horizontal CDM: bar below, width matches row width (current behavior)
-        local rowWidth = utilityViewer.__cdmBottomRowWidth or utilityViewer.__cdmIconWidth
+        local rowWidth = uvs.bottomRowWidth or uvs.iconWidth
         if not rowWidth or rowWidth <= 0 then return end
 
-        local bottomRowBorderSize = utilityViewer.__cdmBottomRowBorderSize or 0
+        local bottomRowBorderSize = uvs.bottomRowBorderSize or 0
         local targetWidth = rowWidth + (2 * bottomRowBorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
@@ -1508,7 +1592,8 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
     local essentialViewer = _G.EssentialCooldownViewer
     if not essentialViewer or not essentialViewer:IsShown() then return end
 
-    local isVerticalCDM = essentialViewer.__cdmLayoutDirection == "VERTICAL"
+    local evs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(essentialViewer) or {}
+    local isVerticalCDM = evs.layoutDir == "VERTICAL"
 
     local newWidth, newOffsetX, newOffsetY
     local barBorderSize = cfg.borderSize or 1
@@ -1516,22 +1601,22 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
 
     if isVerticalCDM then
         -- Vertical CDM: bar goes to the RIGHT, length matches total height
-        local totalHeight = essentialViewer.__cdmTotalHeight or essentialViewer:GetHeight()
+        local totalHeight = evs.totalHeight or essentialViewer:GetHeight()
         if not totalHeight or totalHeight <= 0 then return end
 
         -- Width (bar length) = total CDM height + borders
-        local topBottomBorderSize = essentialViewer.__cdmRow1BorderSize or 0
+        local topBottomBorderSize = evs.row1BorderSize or 0
         local targetWidth = totalHeight + (2 * topBottomBorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
         -- Position to the right of Essential
         local essentialCenterX, essentialCenterY = essentialViewer:GetCenter()
         local screenCenterX, screenCenterY = UIParent:GetCenter()
-        local totalWidth = essentialViewer.__cdmIconWidth or essentialViewer:GetWidth()
+        local totalWidth = evs.iconWidth or essentialViewer:GetWidth()
 
         if essentialCenterX and essentialCenterY and screenCenterX and screenCenterY then
             -- CDM's visual right edge (GetWidth includes visual bounds)
-            local rightColBorderSize = essentialViewer.__cdmBottomRowBorderSize or 0
+            local rightColBorderSize = evs.bottomRowBorderSize or 0
             local cdmVisualRight = essentialCenterX + (totalWidth / 2) + rightColBorderSize
 
             -- Power bar center X = visual right + bar thickness/2 + border
@@ -1542,10 +1627,10 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
         end
     else
         -- Horizontal CDM: bar above, width matches row width (current behavior)
-        local rowWidth = essentialViewer.__cdmRow1Width or essentialViewer.__cdmIconWidth
+        local rowWidth = evs.row1Width or evs.iconWidth
         if not rowWidth or rowWidth <= 0 then return end
 
-        local row1BorderSize = essentialViewer.__cdmRow1BorderSize or 0
+        local row1BorderSize = evs.row1BorderSize or 0
         local targetWidth = rowWidth + (2 * row1BorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
@@ -1559,7 +1644,7 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
             local screenCenterY = math.floor(rawScreenY + 0.5)
             newOffsetX = essentialCenterX - screenCenterX
             -- Y offset (position above Essential CDM)
-            local totalHeight = essentialViewer.__cdmTotalHeight or essentialViewer:GetHeight() or 100
+            local totalHeight = evs.totalHeight or essentialViewer:GetHeight() or 100
             local cdmVisualTop = essentialCenterY + (totalHeight / 2) + row1BorderSize
             local powerBarCenterY = cdmVisualTop + (barThickness / 2) + barBorderSize
             newOffsetY = math.floor(powerBarCenterY - screenCenterY + 0.5) - 1
@@ -1598,7 +1683,8 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
     local utilityViewer = _G.UtilityCooldownViewer
     if not utilityViewer or not utilityViewer:IsShown() then return end
 
-    local isVerticalCDM = utilityViewer.__cdmLayoutDirection == "VERTICAL"
+    local uvs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(utilityViewer) or {}
+    local isVerticalCDM = uvs.layoutDir == "VERTICAL"
 
     local newWidth, newOffsetX, newOffsetY
     local barBorderSize = cfg.borderSize or 1
@@ -1606,18 +1692,18 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
 
     if isVerticalCDM then
         -- Vertical CDM: bar goes to the LEFT (Utility is typically on right side of screen)
-        local totalHeight = utilityViewer.__cdmTotalHeight or utilityViewer:GetHeight()
+        local totalHeight = uvs.totalHeight or utilityViewer:GetHeight()
         if not totalHeight or totalHeight <= 0 then return end
 
         -- Width (bar length) = total CDM height
-        local row1BorderSize = utilityViewer.__cdmRow1BorderSize or 0
+        local row1BorderSize = uvs.row1BorderSize or 0
         local targetWidth = totalHeight + (2 * row1BorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
         -- Position to the LEFT of Utility
         local utilityCenterX, utilityCenterY = utilityViewer:GetCenter()
         local screenCenterX, screenCenterY = UIParent:GetCenter()
-        local totalWidth = utilityViewer.__cdmIconWidth or utilityViewer:GetWidth()
+        local totalWidth = uvs.iconWidth or utilityViewer:GetWidth()
 
         if utilityCenterX and utilityCenterY and screenCenterX and screenCenterY then
             -- CDM's visual left edge (GetWidth includes visual bounds)
@@ -1631,10 +1717,10 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
         end
     else
         -- Horizontal CDM: bar below, width matches row width (current behavior)
-        local rowWidth = utilityViewer.__cdmBottomRowWidth or utilityViewer.__cdmIconWidth
+        local rowWidth = uvs.bottomRowWidth or uvs.iconWidth
         if not rowWidth or rowWidth <= 0 then return end
 
-        local bottomRowBorderSize = utilityViewer.__cdmBottomRowBorderSize or 0
+        local bottomRowBorderSize = uvs.bottomRowBorderSize or 0
         local targetWidth = rowWidth + (2 * bottomRowBorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
@@ -1648,7 +1734,7 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
             local screenCenterY = math.floor(rawScreenY + 0.5)
             newOffsetX = utilityCenterX - screenCenterX
             -- Y offset (position below Utility CDM)
-            local totalHeight = utilityViewer.__cdmTotalHeight or utilityViewer:GetHeight() or 100
+            local totalHeight = uvs.totalHeight or utilityViewer:GetHeight() or 100
             local cdmVisualBottom = utilityCenterY - (totalHeight / 2) - bottomRowBorderSize
             local powerBarCenterY = cdmVisualBottom - (barThickness / 2) - barBorderSize
             newOffsetY = math.floor(powerBarCenterY - screenCenterY + 0.5) + 1
@@ -1698,7 +1784,8 @@ function QUICore:GetSecondaryPowerBar()
         -- Try to get Essential Cooldowns width if available
         local essentialViewer = _G["EssentialCooldownViewer"]
         if essentialViewer then
-            width = essentialViewer.__cdmIconWidth or essentialViewer:GetWidth() or 0
+            local evs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(essentialViewer) or {}
+            width = evs.iconWidth or essentialViewer:GetWidth() or 0
         end
         if width <= 0 then
             width = 200  -- Fallback width
@@ -1746,6 +1833,22 @@ function QUICore:GetSecondaryPowerBar()
     bar.FragmentedPowerBars = {}
     bar.FragmentedPowerBarTexts = {}
 
+    -- Re-layout fragmented power segments (runes) when the anchoring system
+    -- resizes this bar.  UpdateSecondaryPowerBar may not run again after the
+    -- anchoring width change (early returns for CDM visibility / bar visibility
+    -- mode), so we react directly to the size change.
+    bar:SetScript("OnSizeChanged", function(self, w)
+        if not self._fragResource then return end
+        if not fragmentedPowerTypes[self._fragResource] then return end
+        -- Only re-layout when anchoring controls width
+        if not (_G.QUI_IsFrameAutoWidth and _G.QUI_IsFrameAutoWidth(self)) then return end
+        -- Only act when width actually changed from the last fragment layout
+        if self._lastFragLayoutWidth and math.abs(self._lastFragLayoutWidth - w) < 0.5 then return end
+        self._lastFragLayoutWidth = w
+        QUICore:CreateFragmentedPowerBars(self, self._fragResource, self._fragIsVertical)
+        QUICore:UpdateFragmentedPowerDisplay(self, self._fragResource, self._fragIsVertical)
+    end)
+
     -- TICKS
     bar.ticks = {}
 
@@ -1788,7 +1891,6 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
 
     local barWidth = bar:GetWidth()
     local barHeight = bar:GetHeight()
-
     -- Calculate fragment dimensions based on orientation
     local fragmentedBarWidth, fragmentedBarHeight
     if isVertical then
@@ -2043,19 +2145,23 @@ function QUICore:UpdateSecondaryPowerBarTicks(bar, resource, max)
     if orientation == "AUTO" then
         if cfg.lockedToEssential then
             local viewer = _G.EssentialCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+            isVertical = viewer and vs.layoutDir == "VERTICAL"
         elseif cfg.lockedToUtility then
             local viewer = _G.UtilityCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+            isVertical = viewer and vs.layoutDir == "VERTICAL"
         elseif cfg.lockedToPrimary then
             local primaryCfg = self.db.profile.powerBar
             if primaryCfg then
                 if primaryCfg.lockedToEssential then
                     local viewer = _G.EssentialCooldownViewer
-                    isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+                    local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+                    isVertical = viewer and vs.layoutDir == "VERTICAL"
                 elseif primaryCfg.lockedToUtility then
                     local viewer = _G.UtilityCooldownViewer
-                    isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+                    local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+                    isVertical = viewer and vs.layoutDir == "VERTICAL"
                 end
             end
         end
@@ -2119,6 +2225,40 @@ function QUICore:UpdateSecondaryPowerBar()
     local bar = self:GetSecondaryPowerBar()
     local resource = GetSecondaryResource()
 
+    -- Cache resource + orientation for the OnSizeChanged hook (fragment re-layout
+    -- when the anchoring system resizes the bar after early returns below).
+    if resource and fragmentedPowerTypes[resource] then
+        bar._fragResource = resource
+        -- Determine orientation for fragment layout (mirrors logic in main body)
+        local ori = cfg.orientation or "AUTO"
+        local fv = (ori == "VERTICAL")
+        if ori == "AUTO" then
+            if cfg.lockedToEssential then
+                local viewer = _G.EssentialCooldownViewer
+                local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+                fv = viewer and vs.layoutDir == "VERTICAL"
+            elseif cfg.lockedToUtility then
+                local viewer = _G.UtilityCooldownViewer
+                local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+                fv = viewer and vs.layoutDir == "VERTICAL"
+            elseif cfg.lockedToPrimary then
+                local primaryCfg = self.db.profile.powerBar
+                if primaryCfg then
+                    if primaryCfg.lockedToEssential then
+                        local viewer = _G.EssentialCooldownViewer
+                        local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+                        fv = viewer and vs.layoutDir == "VERTICAL"
+                    elseif primaryCfg.lockedToUtility then
+                        local viewer = _G.UtilityCooldownViewer
+                        local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+                        fv = viewer and vs.layoutDir == "VERTICAL"
+                    end
+                end
+            end
+        end
+        bar._fragIsVertical = fv
+    end
+
     if not resource then
         local wasShown = bar:IsShown()
         bar:Hide()
@@ -2165,20 +2305,24 @@ function QUICore:UpdateSecondaryPowerBar()
     if orientation == "AUTO" then
         if cfg.lockedToEssential then
             local viewer = _G.EssentialCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+            isVertical = viewer and vs.layoutDir == "VERTICAL"
         elseif cfg.lockedToUtility then
             local viewer = _G.UtilityCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+            isVertical = viewer and vs.layoutDir == "VERTICAL"
         elseif cfg.lockedToPrimary then
             -- Inherit from Primary bar's locked CDM
             local primaryCfg = self.db.profile.powerBar
             if primaryCfg then
                 if primaryCfg.lockedToEssential then
                     local viewer = _G.EssentialCooldownViewer
-                    isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+                    local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+                    isVertical = viewer and vs.layoutDir == "VERTICAL"
                 elseif primaryCfg.lockedToUtility then
                     local viewer = _G.UtilityCooldownViewer
-                    isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+                    local vs = viewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+                    isVertical = viewer and vs.layoutDir == "VERTICAL"
                 end
             end
         end
@@ -2422,7 +2566,8 @@ function QUICore:UpdateSecondaryPowerBar()
                 if self.powerBar and self.powerBar:IsShown() then
                     width = self.powerBar:GetWidth()
                 elseif anchor then
-                    width = anchor.__cdmIconWidth
+                    local avs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(anchor) or {}
+                    width = avs.iconWidth
                 end
                 if not width or width <= 0 then
                     -- Use saved width from last NCDM layout (persists across reloads)
@@ -2465,7 +2610,8 @@ function QUICore:UpdateSecondaryPowerBar()
                 -- Try to get Essential Cooldowns width
                 local essentialViewer = _G["EssentialCooldownViewer"]
                 if essentialViewer then
-                    width = essentialViewer.__cdmIconWidth
+                    local sevs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(essentialViewer) or {}
+                    width = sevs.iconWidth
                 end
                 if not width or width <= 0 then
                     width = self.db.profile.ncdm and self.db.profile.ncdm._lastEssentialWidth
@@ -2510,11 +2656,19 @@ function QUICore:UpdateSecondaryPowerBar()
     end
 
     -- Only resize when dimensions actually changed (prevents flicker)
+    -- Skip width when anchoring system controls it (autoWidth)
+    local anchoringControlsWidth = _G.QUI_IsFrameAutoWidth and _G.QUI_IsFrameAutoWidth(bar)
     if bar._cachedH ~= wantedH then
         bar:SetHeight(wantedH)
         bar._cachedH = wantedH
     end
-    if bar._cachedW ~= wantedW then
+    if anchoringControlsWidth then
+        -- Anchoring system owns the width. Re-verify the bar matches its
+        -- anchor parent so stale widths from init races are corrected.
+        if _G.QUI_ReapplyAutoWidth then
+            _G.QUI_ReapplyAutoWidth(bar)
+        end
+    elseif bar._cachedW ~= wantedW then
         bar:SetWidth(wantedW)
         bar._cachedW = wantedW
     end
@@ -2556,6 +2710,10 @@ function QUICore:UpdateSecondaryPowerBar()
 
     -- Handle fragmented power types (Runes)
     if fragmentedPowerTypes[resource] then
+        -- Cache for OnSizeChanged hook (re-layout when anchoring resizes the bar)
+        bar._fragResource = resource
+        bar._fragIsVertical = isVertical
+        bar._lastFragLayoutWidth = bar:GetWidth()
         self:CreateFragmentedPowerBars(bar, resource, isVertical)
         self:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
 
@@ -2851,15 +3009,21 @@ local function InitializeResourceBars(self)
     C_Timer.After(0.6, function()
         if EditModeManagerFrame and not QUICore._powerBarEditModeHooked then
             QUICore._powerBarEditModeHooked = true
+            -- TAINT SAFETY: Defer ALL addon code out of the secure EnterEditMode/ExitEditMode callbacks.
+            -- Any synchronous addon code (even an if-check) taints the secure execution context.
             hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
-                if not InCombatLockdown() then
-                    QUICore:EnablePowerBarEditMode()
-                end
+                C_Timer.After(0, function()
+                    if not InCombatLockdown() then
+                        QUICore:EnablePowerBarEditMode()
+                    end
+                end)
             end)
             hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
-                if not InCombatLockdown() then
-                    QUICore:DisablePowerBarEditMode()
-                end
+                C_Timer.After(0, function()
+                    if not InCombatLockdown() then
+                        QUICore:DisablePowerBarEditMode()
+                    end
+                end)
             end)
         end
     end)

@@ -444,9 +444,10 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
             -- Keep castbar spacing visually consistent with the active bottom CDM row.
             -- In horizontal CDM layouts, row yOffset can move the visible bottom row
             -- without changing the viewer frame bounds.
+            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
             local bottomRowYOffset = 0
-            if viewer.__cdmLayoutDirection ~= "VERTICAL" then
-                bottomRowYOffset = QUICore:PixelRound(viewer.__cdmBottomRowYOffset or 0, anchorFrame)
+            if vs.layoutDir ~= "VERTICAL" then
+                bottomRowYOffset = QUICore:PixelRound(vs.bottomRowYOffset or 0, anchorFrame)
             end
             anchorFrame:SetPoint("TOPLEFT", viewer, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
             anchorFrame:SetPoint("TOPRIGHT", viewer, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
@@ -460,9 +461,10 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
         local viewer = _G["UtilityCooldownViewer"]
         if viewer then
             -- Mirror Essential logic so Utility-anchored castbars behave consistently.
+            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
             local bottomRowYOffset = 0
-            if viewer.__cdmLayoutDirection ~= "VERTICAL" then
-                bottomRowYOffset = QUICore:PixelRound(viewer.__cdmBottomRowYOffset or 0, anchorFrame)
+            if vs.layoutDir ~= "VERTICAL" then
+                bottomRowYOffset = QUICore:PixelRound(vs.bottomRowYOffset or 0, anchorFrame)
             end
             anchorFrame:SetPoint("TOPLEFT", viewer, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
             anchorFrame:SetPoint("TOPRIGHT", viewer, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
@@ -3788,38 +3790,43 @@ end
 C_Timer.After(0.5, function()
     if EditModeManagerFrame and not QUICore._castbarEditModeHooked then
         QUICore._castbarEditModeHooked = true
+        -- TAINT SAFETY: Defer ALL addon code out of the secure EnterEditMode/ExitEditMode callbacks.
+        -- Any synchronous addon code (even an if-check) taints the secure execution context.
         hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
-            if not InCombatLockdown() then
-                EnableCastbarEditMode()
-            end
+            C_Timer.After(0, function()
+                if not InCombatLockdown() then
+                    EnableCastbarEditMode()
+                end
+            end)
         end)
         hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
-            if not InCombatLockdown() then
-                DisableCastbarEditMode()
-            end
+            C_Timer.After(0, function()
+                if not InCombatLockdown() then
+                    DisableCastbarEditMode()
+                end
+            end)
         end)
 
         -- Hook PlayerCastingBarFrame visibility changes to sync with QUI castbar
         -- When the "Cast Bar" checkbox is toggled in Edit Mode, Blizzard changes visibility
         -- Wrapped in pcall — frame can be forbidden in 12.0.x beta
         if PlayerCastingBarFrame then
+            -- TAINT SAFETY: Defer all callbacks to break secure execution context chain.
+            -- PlayerCastingBarFrame is a secure frame; addon code in hooks taints the context.
             local ok, err = pcall(function()
-                hooksecurefunc(PlayerCastingBarFrame, "SetShown", function(_, shown)
-                    if EditModeState.active then
-                        EditModeState.castBarCheckboxEnabled = shown
-                        UpdateCastbarVisibilityForEditMode()
-                    end
-                end)
-                hooksecurefunc(PlayerCastingBarFrame, "Show", function()
-                    if EditModeState.active then
-                        EditModeState.castBarCheckboxEnabled = true
-                        UpdateCastbarVisibilityForEditMode()
-                    end
-                end)
-                hooksecurefunc(PlayerCastingBarFrame, "Hide", function()
-                    if EditModeState.active then
-                        EditModeState.castBarCheckboxEnabled = false
-                        UpdateCastbarVisibilityForEditMode()
+                -- TAINT SAFETY: Do NOT use hooksecurefunc("Show"/"Hide"/"SetShown")
+                -- on PlayerCastingBarFrame. It is an Edit Mode system frame; any hook
+                -- on Show/Hide taints Blizzard's secureexecuterange during
+                -- EditModeFrameSetup. Use a standalone polling frame instead.
+                local castbarPollFrame = CreateFrame("Frame")
+                local wasCastBarShown = PlayerCastingBarFrame:IsShown()
+                castbarPollFrame:SetScript("OnUpdate", function()
+                    if not EditModeState.active then return end
+                    local isShown = PlayerCastingBarFrame:IsShown()
+                    if isShown ~= wasCastBarShown then
+                        wasCastBarShown = isShown
+                        EditModeState.castBarCheckboxEnabled = isShown
+                        C_Timer.After(0, UpdateCastbarVisibilityForEditMode)
                     end
                 end)
             end)

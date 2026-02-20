@@ -3494,9 +3494,10 @@ local function GetAnchorDimensions(anchorFrame, anchorType)
 
     local width, height
     if anchorType == "essential" or anchorType == "utility" then
-        -- CDM viewers store width in custom property
-        width = anchorFrame.__cdmRow1Width or anchorFrame:GetWidth()
-        height = anchorFrame.__cdmTotalHeight or anchorFrame:GetHeight()
+        -- CDM viewers store width in state table
+        local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(anchorFrame) or {}
+        width = vs.row1Width or anchorFrame:GetWidth()
+        height = vs.totalHeight or anchorFrame:GetHeight()
     else
         -- Power bars use standard methods
         width = anchorFrame:GetWidth()

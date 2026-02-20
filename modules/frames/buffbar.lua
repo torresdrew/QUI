@@ -21,6 +21,18 @@ local GetGeneralFont = Helpers.GetGeneralFont
 local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
 
 ---------------------------------------------------------------------------
+-- TAINT SAFETY: Per-frame state stored in local weak-keyed tables
+-- instead of custom properties on Blizzard CDM viewer/icon frames.
+-- Writing addon properties onto registered Edit Mode system frames
+-- taints them, causing "secret number" errors in secureexecuterange.
+---------------------------------------------------------------------------
+local frameState = setmetatable({}, { __mode = "k" })
+local function GetFrameState(f)
+    if not frameState[f] then frameState[f] = {} end
+    return frameState[f]
+end
+
+---------------------------------------------------------------------------
 -- UTILITY FUNCTIONS
 ---------------------------------------------------------------------------
 
@@ -142,7 +154,8 @@ local function GetTrackedBarAnchorWidth(anchorTo, anchorFrame)
 
     local width
     if anchorTo == "essential" or anchorTo == "utility" then
-        width = anchorFrame.__cdmIconWidth or anchorFrame.__cdmRow1Width or anchorFrame:GetWidth()
+        local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(anchorFrame) or {}
+        width = vs.iconWidth or vs.row1Width or anchorFrame:GetWidth()
     else
         width = anchorFrame:GetWidth()
     end
@@ -195,7 +208,7 @@ local function ApplyTrackedBarAnchor(settings)
     if not VALID_ANCHOR_POINTS[targetPoint] then targetPoint = sourcePoint end
 
     if anchorTo == "disabled" and not useTopResourceBars then
-        BuffBarCooldownViewer._quiTrackedBarAnchorCache = nil
+        GetFrameState(BuffBarCooldownViewer).trackedBarAnchorCache = nil
         return
     end
 
@@ -207,7 +220,7 @@ local function ApplyTrackedBarAnchor(settings)
     if not anchorFrame then return end
     if anchorFrame ~= UIParent and not anchorFrame:IsShown() then return end
 
-    local cache = BuffBarCooldownViewer._quiTrackedBarAnchorCache
+    local cache = GetFrameState(BuffBarCooldownViewer).trackedBarAnchorCache
     if cache
         and cache.anchorTo == anchorTo
         and cache.placement == placement
@@ -225,7 +238,7 @@ local function ApplyTrackedBarAnchor(settings)
         BuffBarCooldownViewer:SetPoint(sourcePoint, anchorFrame, targetPoint, offsetX, offsetY)
     end)
 
-    BuffBarCooldownViewer._quiTrackedBarAnchorCache = {
+    GetFrameState(BuffBarCooldownViewer).trackedBarAnchorCache = {
         anchorTo = anchorTo,
         placement = placement,
         anchorFrame = anchorFrame,
@@ -276,8 +289,9 @@ local function ApplyBuffIconAnchor(settings)
     if not VALID_ANCHOR_POINTS[targetPoint] then targetPoint = sourcePoint end
 
     if anchorTo == "disabled" then
-        local hadAnchor = BuffIconCooldownViewer._quiBuffIconAnchorCache ~= nil
-        local originalPoints = BuffIconCooldownViewer._quiBuffIconAnchorOriginalPoints
+        local bifs = GetFrameState(BuffIconCooldownViewer)
+        local hadAnchor = bifs.buffIconAnchorCache ~= nil
+        local originalPoints = bifs.buffIconAnchorOriginalPoints
         if hadAnchor and originalPoints and #originalPoints > 0 then
             pcall(function()
                 BuffIconCooldownViewer:ClearAllPoints()
@@ -292,7 +306,7 @@ local function ApplyBuffIconAnchor(settings)
                 end
             end)
         end
-        BuffIconCooldownViewer._quiBuffIconAnchorCache = nil
+        GetFrameState(BuffIconCooldownViewer).buffIconAnchorCache = nil
         return
     end
 
@@ -300,7 +314,8 @@ local function ApplyBuffIconAnchor(settings)
     if not anchorFrame then return end
     if anchorFrame ~= UIParent and not anchorFrame:IsShown() then return end
 
-    local cache = BuffIconCooldownViewer._quiBuffIconAnchorCache
+    local bifs2 = GetFrameState(BuffIconCooldownViewer)
+    local cache = bifs2.buffIconAnchorCache
     if cache
         and cache.anchorTo == anchorTo
         and cache.placement == placement
@@ -313,7 +328,7 @@ local function ApplyBuffIconAnchor(settings)
         return
     end
 
-    if not BuffIconCooldownViewer._quiBuffIconAnchorOriginalPoints then
+    if not bifs2.buffIconAnchorOriginalPoints then
         local originalPoints = {}
         local numPoints = BuffIconCooldownViewer:GetNumPoints() or 0
         for i = 1, numPoints do
@@ -328,7 +343,7 @@ local function ApplyBuffIconAnchor(settings)
                 }
             end
         end
-        BuffIconCooldownViewer._quiBuffIconAnchorOriginalPoints = originalPoints
+        bifs2.buffIconAnchorOriginalPoints = originalPoints
     end
 
     pcall(function()
@@ -336,7 +351,7 @@ local function ApplyBuffIconAnchor(settings)
         BuffIconCooldownViewer:SetPoint(sourcePoint, anchorFrame, targetPoint, offsetX, offsetY)
     end)
 
-    BuffIconCooldownViewer._quiBuffIconAnchorCache = {
+    bifs2.buffIconAnchorCache = {
         anchorTo = anchorTo,
         placement = placement,
         anchorFrame = anchorFrame,
@@ -699,7 +714,7 @@ local function GetBuffBarFrames()
 
                 if inCombat then
                     -- In combat, trust Blizzard visibility state and avoid forcing Show/Hide.
-                    frame._quiTrackedBarIsActive = blizzShown
+                    GetFrameState(frame).trackedBarIsActive = blizzShown
                     if blizzShown then
                         table.insert(active, frame)
                     end
@@ -708,7 +723,7 @@ local function GetBuffBarFrames()
                     if isActive == nil then
                         isActive = blizzShown
                     end
-                    frame._quiTrackedBarIsActive = isActive
+                    GetFrameState(frame).trackedBarIsActive = isActive
 
                     if inactiveMode == "hide" and not reserveSlotWhenInactive and not isActive then
                         pcall(function()
@@ -739,18 +754,22 @@ end
 -- HELPER: Strip Blizzard's overlay texture (the square artifact)
 ---------------------------------------------------------------------------
 
+-- TAINT SAFETY: Do NOT use hooksecurefunc("Show") on CDM icon overlay regions.
+-- Any hook on Show (even hooksecurefunc) taints Blizzard's secureexecuterange
+-- during EditModeFrameSetup. Instead, StripBlizzardOverlay is called from the
+-- layout functions which run periodically, keeping overlays stripped.
 local function StripBlizzardOverlay(icon)
     if not icon or not icon.GetRegions then return end
 
     for _, region in ipairs({ icon:GetRegions() }) do
         if region:IsObjectType("Texture") then
-            -- Check for the specific overlay atlas
             if region.GetAtlas then
                 local atlas = region:GetAtlas()
                 if atlas == "UI-HUD-CoolDownManager-IconOverlay" then
-                    region:SetTexture("")
-                    region:Hide()
-                    region.Show = function() end  -- Prevent it from showing again
+                    if not InCombatLockdown() then
+                        region:SetTexture("")
+                        region:Hide()
+                    end
                 end
             end
         end
@@ -772,8 +791,8 @@ local function DisableAtlasBorder(tex)
     if tex.Hide then tex:Hide() end
 
     -- Hook to re-clear on future SetAtlas calls (Blizzard re-applies on buff updates)
-    if tex.SetAtlas and not tex._quiAtlasDisabled then
-        tex._quiAtlasDisabled = true
+    if tex.SetAtlas and not GetFrameState(tex).atlasDisabled then
+        GetFrameState(tex).atlasDisabled = true
         hooksecurefunc(tex, "SetAtlas", function(self)
             C_Timer.After(0, function()
                 -- Safety check in case texture was released before timer fires
@@ -797,7 +816,9 @@ end
 ---------------------------------------------------------------------------
 
 local function SetupIconOnce(icon)
-    if icon._buffSetup then return end
+    -- TAINT SAFETY: Use state table for guard flag, not direct property on icon frame
+    local ifs = GetFrameState(icon)
+    if ifs.buffSetup then return end
 
     -- Remove ALL of Blizzard's masks (they may have multiple)
     local textures = { icon.Icon, icon.icon, icon.texture, icon.Texture }
@@ -827,7 +848,7 @@ local function SetupIconOnce(icon)
     DisableAtlasBorder(icon.BuffBorder)
     DisableAtlasBorder(icon.TempEnchantBorder)
 
-    icon._buffSetup = true
+    ifs.buffSetup = true
 end
 
 ---------------------------------------------------------------------------
@@ -858,22 +879,24 @@ local function ApplyIconStyle(icon, settings)
 
     -- Create or update border (using BACKGROUND texture to avoid secret value errors during combat)
     -- BackdropTemplate causes "arithmetic on secret value" crashes when frame is resized during combat
+    -- TAINT SAFETY: Store border ref and size in state table, not on icon frame
+    local bfs = GetFrameState(icon)
     if borderSize > 0 then
-        if not icon._buffBorder then
-            icon._buffBorder = icon:CreateTexture(nil, "BACKGROUND", nil, -8)
-            icon._buffBorder:SetColorTexture(0, 0, 0, 1)
+        if not bfs.buffBorder then
+            bfs.buffBorder = icon:CreateTexture(nil, "BACKGROUND", nil, -8)
+            bfs.buffBorder:SetColorTexture(0, 0, 0, 1)
         end
 
-        icon._buffBorder:ClearAllPoints()
-        icon._buffBorder:SetPoint("TOPLEFT", icon, "TOPLEFT", -borderSize, borderSize)
-        icon._buffBorder:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", borderSize, -borderSize)
-        icon._buffBorder:Show()
-        icon._buffBorderSize = borderSize
+        bfs.buffBorder:ClearAllPoints()
+        bfs.buffBorder:SetPoint("TOPLEFT", icon, "TOPLEFT", -borderSize, borderSize)
+        bfs.buffBorder:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", borderSize, -borderSize)
+        bfs.buffBorder:Show()
+        bfs.buffBorderSize = borderSize
     else
-        if icon._buffBorder then
-            icon._buffBorder:Hide()
+        if bfs.buffBorder then
+            bfs.buffBorder:Hide()
         end
-        icon._buffBorderSize = 0
+        bfs.buffBorderSize = 0
     end
 
     -- Calculate texture coordinates (crop-based, no stretching)
@@ -1082,7 +1105,7 @@ local function ApplyBarStyle(frame, settings, overrideBarWidth)
     local fillDirection = settings.fillDirection or "up"
     local iconPosition = settings.iconPosition or "top"
     local showTextOnVertical = settings.showTextOnVertical or false
-    local isActive = (frame._quiTrackedBarIsActive ~= false)
+    local isActive = (GetFrameState(frame).trackedBarIsActive ~= false)
 
     -- For vertical bars: swap width/height conceptually
     -- "Bar Height" setting becomes bar width, "Bar Width" becomes bar height
@@ -1247,11 +1270,14 @@ local function ApplyBarStyle(frame, settings, overrideBarWidth)
             end
 
             -- Step F: Hook SetAtlas on icon texture to prevent Blizzard re-applying borders (one-time hook)
-            if iconTexture and iconTexture.SetAtlas and not iconTexture._quiAtlasHooked then
-                iconTexture._quiAtlasHooked = true
+            -- TAINT SAFETY: Defer to break secure execution context chain
+            if iconTexture and iconTexture.SetAtlas and not GetFrameState(iconTexture).atlasHooked then
+                GetFrameState(iconTexture).atlasHooked = true
                 hooksecurefunc(iconTexture, "SetAtlas", function(self)
-                    -- Restore TexCoord after any atlas change
-                    self:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+                    C_Timer.After(0, function()
+                        -- Restore TexCoord after any atlas change
+                        self:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+                    end)
                 end)
             end
         end)
@@ -1334,24 +1360,25 @@ local function ApplyBarStyle(frame, settings, overrideBarWidth)
     end
 
     -- 6. Apply clean backdrop (solid background BEHIND the statusBar fill)
-    -- Create on the frame itself, positioned behind statusBar
-    if not frame._trackedBg then
-        frame._trackedBg = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
+    -- TAINT SAFETY: Store references in state table, not on Blizzard bar frame
+    local bfs = GetFrameState(frame)
+    if not bfs.trackedBg then
+        bfs.trackedBg = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
     end
     -- Apply background color from settings
     local bgR, bgG, bgB = bgColor[1] or 0, bgColor[2] or 0, bgColor[3] or 0
-    frame._trackedBg:SetColorTexture(bgR, bgG, bgB, 1)
+    bfs.trackedBg:SetColorTexture(bgR, bgG, bgB, 1)
     if statusBar then
-        frame._trackedBg:ClearAllPoints()
-        frame._trackedBg:SetAllPoints(statusBar)
+        bfs.trackedBg:ClearAllPoints()
+        bfs.trackedBg:SetAllPoints(statusBar)
     end
-    frame._trackedBg:SetAlpha(bgOpacity)
-    frame._trackedBg:Show()
+    bfs.trackedBg:SetAlpha(bgOpacity)
+    bfs.trackedBg:Show()
 
     -- 7. Apply crisp border using 4-edge technique
     -- Parent to the bar frame itself (not viewer) so it hides when bar hides
     if borderSize > 0 then
-        if not frame._trackedBorderContainer then
+        if not bfs.trackedBorderContainer then
             local container = CreateFrame("Frame", nil, frame)
             container:SetFrameLevel((frame.GetFrameLevel and frame:GetFrameLevel() or 1) + 5)
 
@@ -1365,10 +1392,10 @@ local function ApplyBarStyle(frame, settings, overrideBarWidth)
             container._right = container:CreateTexture(nil, "OVERLAY", nil, 7)
             container._right:SetColorTexture(0, 0, 0, 1)
 
-            frame._trackedBorderContainer = container
+            bfs.trackedBorderContainer = container
         end
 
-        local container = frame._trackedBorderContainer
+        local container = bfs.trackedBorderContainer
         -- Position container to wrap around the bar (extends OUTSIDE by borderSize)
         container:ClearAllPoints()
         container:SetPoint("TOPLEFT", frame, "TOPLEFT", -borderSize, borderSize)
@@ -1400,8 +1427,8 @@ local function ApplyBarStyle(frame, settings, overrideBarWidth)
 
         container:Show()
     else
-        if frame._trackedBorderContainer then
-            frame._trackedBorderContainer:Hide()
+        if bfs.trackedBorderContainer then
+            bfs.trackedBorderContainer:Hide()
         end
     end
 
@@ -1453,7 +1480,7 @@ local function ApplyBarStyle(frame, settings, overrideBarWidth)
         frame:SetAlpha(targetAlpha)
     end)
 
-    frame._trackedBarStyled = true
+    bfs.trackedBarStyled = true
 end
 
 ---------------------------------------------------------------------------
@@ -1487,7 +1514,7 @@ LayoutBuffIcons = function()
     local layerPriority = hudLayering and hudLayering.buffIcon or 5
     if core and core.GetHUDFrameLevel then
         local frameLevel = core:GetHUDFrameLevel(layerPriority)
-        BuffIconCooldownViewer:SetFrameLevel(frameLevel)
+        pcall(BuffIconCooldownViewer.SetFrameLevel, BuffIconCooldownViewer, frameLevel)
     end
 
     local icons = GetBuffIconFrames()
@@ -1616,15 +1643,17 @@ LayoutBuffIcons = function()
     -- Wrap with suppression to prevent OnSizeChanged from triggering recursive layouts
     if not InCombatLockdown() then
         SuppressLayout()
-        BuffIconCooldownViewer:SetSize(QUICore:PixelRound(totalWidth), QUICore:PixelRound(totalHeight))
+        pcall(BuffIconCooldownViewer.SetSize, BuffIconCooldownViewer, QUICore:PixelRound(totalWidth), QUICore:PixelRound(totalHeight))
         UnsuppressLayout()
 
         -- Also resize Selection child if it exists
         if BuffIconCooldownViewer.Selection then
-            BuffIconCooldownViewer.Selection:ClearAllPoints()
-            BuffIconCooldownViewer.Selection:SetPoint("TOPLEFT", BuffIconCooldownViewer, "TOPLEFT", 0, 0)
-            BuffIconCooldownViewer.Selection:SetPoint("BOTTOMRIGHT", BuffIconCooldownViewer, "BOTTOMRIGHT", 0, 0)
-            BuffIconCooldownViewer.Selection:SetFrameLevel(BuffIconCooldownViewer:GetFrameLevel())
+            pcall(function()
+                BuffIconCooldownViewer.Selection:ClearAllPoints()
+                BuffIconCooldownViewer.Selection:SetPoint("TOPLEFT", BuffIconCooldownViewer, "TOPLEFT", 0, 0)
+                BuffIconCooldownViewer.Selection:SetPoint("BOTTOMRIGHT", BuffIconCooldownViewer, "BOTTOMRIGHT", 0, 0)
+                BuffIconCooldownViewer.Selection:SetFrameLevel(BuffIconCooldownViewer:GetFrameLevel())
+            end)
         end
     end
 
@@ -1658,8 +1687,8 @@ LayoutBuffBars = function()
         frameLevel = core:GetHUDFrameLevel(layerPriority)
     end
     -- Set strata to MEDIUM to match power bars, then apply frame level
-    BuffBarCooldownViewer:SetFrameStrata("MEDIUM")
-    BuffBarCooldownViewer:SetFrameLevel(frameLevel)
+    pcall(BuffBarCooldownViewer.SetFrameStrata, BuffBarCooldownViewer, "MEDIUM")
+    pcall(BuffBarCooldownViewer.SetFrameLevel, BuffBarCooldownViewer, frameLevel)
 
     -- Get tracked bar settings
     local settings = GetTrackedBarSettings()
@@ -1734,20 +1763,11 @@ LayoutBuffBars = function()
         end
     end
 
-    -- CRITICAL: Tell Blizzard's GridLayoutFrameMixin which layout direction to use
-    -- When isHorizontal=true, Blizzard positions bars up/down (Y-axis)
-    -- When isHorizontal=false, Blizzard positions bars left/right (X-axis)
-    -- This prevents Blizzard's Layout() from overriding QUI's positioning with wrong axis
-    -- FEAT-007: Remove combat lockdown check - setting frame properties is safe during combat
-    BuffBarCooldownViewer.isHorizontal = not isVertical
-    -- Also update direction flags to match QUI's growth direction
-    if isVertical then
-        BuffBarCooldownViewer.layoutFramesGoingRight = growFromBottom  -- growUp becomes growRight
-        BuffBarCooldownViewer.layoutFramesGoingUp = false
-    else
-        BuffBarCooldownViewer.layoutFramesGoingRight = true
-        BuffBarCooldownViewer.layoutFramesGoingUp = growFromBottom
-    end
+    -- TAINT SAFETY: Do NOT write isHorizontal/layoutFramesGoingRight/layoutFramesGoingUp
+    -- directly on BuffBarCooldownViewer. It is a registered Edit Mode system frame, and
+    -- addon-written values taint the frame, causing secureexecuterange errors in Edit Mode.
+    -- QUI's own layout (below) positions bars manually and the deferred Layout hook corrects
+    -- any Blizzard-initiated layout on the next frame.
 
     -- For vertical bars, swap dimensions (height setting becomes width)
     local effectiveBarWidth, effectiveBarHeight
@@ -1891,10 +1911,9 @@ LayoutBuffBars = function()
 
         -- Only set HEIGHT, leave width alone so bars overflow horizontally
         local currentWidth = BuffBarCooldownViewer:GetWidth()
-        BuffBarCooldownViewer:SetSize(currentWidth, QUICore:PixelRound(effectiveBarHeight))
+        pcall(BuffBarCooldownViewer.SetSize, BuffBarCooldownViewer, currentWidth, QUICore:PixelRound(effectiveBarHeight))
 
-        -- Ensure isHorizontal flag stays correct for subsequent Layout() calls
-        BuffBarCooldownViewer.isHorizontal = false
+        -- TAINT SAFETY: Do NOT write isHorizontal here. See comment at top of function.
 
         UnsuppressLayout()
     else
@@ -1904,11 +1923,9 @@ LayoutBuffBars = function()
         SuppressLayout()
 
         -- Set both dimensions to single bar size - bars overflow, edges stay fixed
-        BuffBarCooldownViewer:SetSize(QUICore:PixelRound(effectiveBarWidth), QUICore:PixelRound(effectiveBarHeight))
+        pcall(BuffBarCooldownViewer.SetSize, BuffBarCooldownViewer, QUICore:PixelRound(effectiveBarWidth), QUICore:PixelRound(effectiveBarHeight))
 
-        -- Ensure Blizzard's Layout() uses correct flags
-        BuffBarCooldownViewer.isHorizontal = true
-        BuffBarCooldownViewer.layoutFramesGoingUp = growFromBottom
+        -- TAINT SAFETY: Do NOT write isHorizontal/layoutFramesGoingUp here. See comment at top of function.
 
         UnsuppressLayout()
     end
@@ -2042,113 +2059,125 @@ local function Initialize()
     if initialized then return end
     initialized = true
 
-    -- CRITICAL: Set isHorizontal IMMEDIATELY at login, before combat can start
-    -- This prevents Blizzard's Layout() from using wrong axis if first buff appears during combat
-    if BuffBarCooldownViewer and not InCombatLockdown() then
-        local settings = GetTrackedBarSettings()
-        local isVertical = (settings.orientation == "vertical")
-        local growFromBottom = (settings.growUp ~= false)
-
-        BuffBarCooldownViewer.isHorizontal = not isVertical
-        if isVertical then
-            BuffBarCooldownViewer.layoutFramesGoingRight = growFromBottom
-            BuffBarCooldownViewer.layoutFramesGoingUp = false
-        else
-            BuffBarCooldownViewer.layoutFramesGoingRight = true
-            BuffBarCooldownViewer.layoutFramesGoingUp = growFromBottom
-        end
-    end
+    -- TAINT SAFETY: Do NOT write isHorizontal/layoutFramesGoingRight/layoutFramesGoingUp
+    -- directly on BuffBarCooldownViewer. It is a registered Edit Mode system frame, and
+    -- addon-written values taint the frame. QUI's deferred Layout hook handles positioning.
 
     -- Force populate buff icons first (teaches the viewer what spells to show)
     ForcePopulateBuffIcons()
 
     -- OnUpdate polling at 0.05s (20 FPS) - works alongside UNIT_AURA event detection
-    if BuffIconCooldownViewer and not BuffIconCooldownViewer.__quiOnUpdateHooked then
-        BuffIconCooldownViewer.__quiOnUpdateHooked = true
-        BuffIconCooldownViewer.__quiElapsed = 0
-        BuffIconCooldownViewer:HookScript("OnUpdate", function(self, elapsed)
-            self.__quiElapsed = (self.__quiElapsed or 0) + elapsed
-            if self.__quiElapsed > 0.05 then  -- 20 FPS polling - hash prevents over-layout
-                self.__quiElapsed = 0
-                if self:IsShown() then
-                    CheckIconChanges()
-                end
+    local bicvState = BuffIconCooldownViewer and GetFrameState(BuffIconCooldownViewer)
+    -- TAINT SAFETY: Use standalone update frames instead of HookScript("OnUpdate")
+    -- on CDM viewers. CDM viewers are registered Edit Mode system frames;
+    -- OnUpdate hooks fire every frame including during EnterEditMode, and ANY
+    -- addon code in the callback taints the secure execution context.
+    if BuffIconCooldownViewer and not (bicvState and bicvState.onUpdateHooked) then
+        bicvState.onUpdateHooked = true
+        bicvState.elapsed = 0
+        local iconUpdateFrame = CreateFrame("Frame")
+        iconUpdateFrame:SetScript("OnUpdate", function(_, elapsed)
+            if not BuffIconCooldownViewer:IsShown() then return end
+            local fs = GetFrameState(BuffIconCooldownViewer)
+            fs.elapsed = (fs.elapsed or 0) + elapsed
+            if fs.elapsed > 0.05 then  -- 20 FPS polling - hash prevents over-layout
+                fs.elapsed = 0
+                CheckIconChanges()
             end
         end)
     end
 
-    if BuffBarCooldownViewer and not BuffBarCooldownViewer.__quiOnUpdateHooked then
-        BuffBarCooldownViewer.__quiOnUpdateHooked = true
-        BuffBarCooldownViewer.__quiElapsed = 0
-        BuffBarCooldownViewer:HookScript("OnUpdate", function(self, elapsed)
-            self.__quiElapsed = (self.__quiElapsed or 0) + elapsed
-            if self.__quiElapsed > 0.05 then  -- 20 FPS for bars
-                self.__quiElapsed = 0
-                if self:IsShown() then
-                    CheckBarChanges()
-                end
+    local bbcvState = BuffBarCooldownViewer and GetFrameState(BuffBarCooldownViewer)
+    if BuffBarCooldownViewer and not (bbcvState and bbcvState.onUpdateHooked) then
+        bbcvState.onUpdateHooked = true
+        bbcvState.elapsed = 0
+        local barUpdateFrame = CreateFrame("Frame")
+        barUpdateFrame:SetScript("OnUpdate", function(_, elapsed)
+            if not BuffBarCooldownViewer:IsShown() then return end
+            local fs = GetFrameState(BuffBarCooldownViewer)
+            fs.elapsed = (fs.elapsed or 0) + elapsed
+            if fs.elapsed > 0.05 then  -- 20 FPS for bars
+                fs.elapsed = 0
+                CheckBarChanges()
             end
         end)
     end
 
-    -- CRITICAL: OnSizeChanged hook - immediate response when Blizzard resizes viewer
+    -- CRITICAL: OnSizeChanged hook - respond when Blizzard resizes viewer
+    -- NOTE: OnSizeChanged only fires when the frame's size ACTUALLY changes,
+    -- and does NOT fire during EditModeFrameSetup (frames are shown, not resized).
+    -- Safe to use HookScript here — only OnShow hooks taint the secure chain.
     if BuffIconCooldownViewer then
         BuffIconCooldownViewer:HookScript("OnSizeChanged", function(self)
-            if InCombatLockdown() then return end
-            if IsLayoutSuppressed() then return end
-            if isIconLayoutRunning then return end  -- Re-entry guard
-            LayoutBuffIcons()  -- Direct call
+            C_Timer.After(0, function()
+                if InCombatLockdown() then return end
+                if IsLayoutSuppressed() then return end
+                if isIconLayoutRunning then return end  -- Re-entry guard
+                LayoutBuffIcons()
+            end)
         end)
     end
 
-    -- OnShow hook - refresh when viewer becomes visible
+    -- TAINT SAFETY: Do NOT use hooksecurefunc("Show") or hooksecurefunc("Layout")
+    -- on CDM viewers. Any hook on these methods (even hooksecurefunc which runs in
+    -- insecure context) taints Blizzard's secureexecuterange during
+    -- EditModeFrameSetup, causing "oldR tainted by QUI" and
+    -- ADDON_ACTION_FORBIDDEN for TargetUnit().
+    --
+    -- Instead, use standalone polling frames to detect visibility transitions
+    -- and OnSizeChanged (which is safe — doesn't fire during EditModeFrameSetup).
     if BuffIconCooldownViewer then
-        BuffIconCooldownViewer:HookScript("OnShow", function(self)
-            if InCombatLockdown() then return end
-            if IsLayoutSuppressed() then return end
-            if isIconLayoutRunning then return end
-            LayoutBuffIcons()  -- Direct call
-        end)
-    end
-
-    -- Hook Layout - immediate call after Blizzard's layout completes
-    -- hooksecurefunc runs AFTER original function returns, so Blizzard is already done
-    if BuffIconCooldownViewer and BuffIconCooldownViewer.Layout then
-        hooksecurefunc(BuffIconCooldownViewer, "Layout", function()
-            if InCombatLockdown() then return end
-            if IsLayoutSuppressed() then return end
-            if isIconLayoutRunning then return end
-            LayoutBuffIcons()  -- Immediate - no defer needed
-        end)
-    end
-
-    if BuffBarCooldownViewer and BuffBarCooldownViewer.Layout then
-        hooksecurefunc(BuffBarCooldownViewer, "Layout", function()
-            if InCombatLockdown() then return end
-            if IsLayoutSuppressed() then return end
-            if isBarLayoutRunning then return end
-            LayoutBuffBars()
-        end)
-    end
-
-    -- FEAT-007: Hook RefreshLayout to correct isHorizontal after Blizzard sets it
-    -- Blizzard's RefreshLayout() sets isHorizontal based on IsHorizontal() (always true for BuffBar)
-    -- then calls Layout(). We hook RefreshLayout to fix isHorizontal right before Layout() runs.
-    -- Using hooksecurefunc is safer than replacing methods - avoids breaking Blizzard's code paths.
-    if BuffBarCooldownViewer and BuffBarCooldownViewer.RefreshLayout then
-        hooksecurefunc(BuffBarCooldownViewer, "RefreshLayout", function(self)
-            -- Keep RefreshLayout passive in combat to avoid mutating protected viewer state
-            -- while Blizzard is actively running secure layout updates.
-            if InCombatLockdown() then return end
-            local settings = GetTrackedBarSettings()
-            if settings.enabled and settings.orientation == "vertical" then
-                -- Blizzard just set isHorizontal=true, we need to fix it
-                -- But RefreshLayout already called Layout(), so we just ensure
-                -- the flag is correct for any subsequent Layout() calls
-                self.isHorizontal = false
-                self.layoutFramesGoingRight = settings.growUp ~= false  -- growUp becomes growRight
-                self.layoutFramesGoingUp = false
+        local buffIconPollFrame = CreateFrame("Frame")
+        local wasBuffIconViewerShown = BuffIconCooldownViewer:IsShown()
+        buffIconPollFrame:SetScript("OnUpdate", function()
+            local isShown = BuffIconCooldownViewer:IsShown()
+            if isShown and not wasBuffIconViewerShown then
+                wasBuffIconViewerShown = true
+                C_Timer.After(0, function()
+                    if InCombatLockdown() then return end
+                    if IsLayoutSuppressed() then return end
+                    if isIconLayoutRunning then return end
+                    LayoutBuffIcons()
+                end)
+            elseif not isShown and wasBuffIconViewerShown then
+                wasBuffIconViewerShown = false
             end
+        end)
+
+        -- OnSizeChanged is safe (doesn't fire during EditModeFrameSetup)
+        -- and serves as a proxy for Layout completion.
+        BuffIconCooldownViewer:HookScript("OnSizeChanged", function()
+            C_Timer.After(0, function()
+                if InCombatLockdown() then return end
+                if IsLayoutSuppressed() then return end
+                if isIconLayoutRunning then return end
+                LayoutBuffIcons()
+            end)
+        end)
+    end
+
+    if BuffBarCooldownViewer then
+        -- OnSizeChanged is safe (doesn't fire during EditModeFrameSetup)
+        BuffBarCooldownViewer:HookScript("OnSizeChanged", function()
+            C_Timer.After(0, function()
+                if InCombatLockdown() then return end
+                if IsLayoutSuppressed() then return end
+                if isBarLayoutRunning then return end
+                LayoutBuffBars()
+            end)
+        end)
+    end
+
+    -- TAINT SAFETY: Do NOT hook RefreshLayout to write isHorizontal on the viewer frame.
+    -- BuffBarCooldownViewer is a registered Edit Mode system frame and addon-written values
+    -- taint it. QUI's deferred Layout hook handles repositioning after Blizzard's layout.
+    if BuffBarCooldownViewer and BuffBarCooldownViewer.RefreshLayout then
+        hooksecurefunc(BuffBarCooldownViewer, "RefreshLayout", function()
+            C_Timer.After(0, function()
+                if InCombatLockdown() then return end
+                if isBarLayoutRunning then return end
+                LayoutBuffBars()
+            end)
         end)
     end
 
@@ -2157,16 +2186,18 @@ local function Initialize()
     -- (Replaces polling as primary detection - polling becomes fallback only)
     ---------------------------------------------------------------------------
 
-    if BuffIconCooldownViewer and not BuffIconCooldownViewer.__quiAuraHook then
-        BuffIconCooldownViewer.__quiAuraHook = CreateFrame("Frame")
-        BuffIconCooldownViewer.__quiAuraHook:RegisterEvent("UNIT_AURA")
-        BuffIconCooldownViewer.__quiAuraHook:SetScript("OnEvent", function(_, event, unit)
+    local bicvAuraState = BuffIconCooldownViewer and GetFrameState(BuffIconCooldownViewer)
+    if BuffIconCooldownViewer and not (bicvAuraState and bicvAuraState.auraHook) then
+        bicvAuraState.auraHook = CreateFrame("Frame")
+        bicvAuraState.auraHook:RegisterEvent("UNIT_AURA")
+        bicvAuraState.auraHook:SetScript("OnEvent", function(_, event, unit)
             if unit == "player" and BuffIconCooldownViewer:IsShown() then
                 -- Debounce: only queue one rescan per 0.1s window
-                if not BuffIconCooldownViewer.__quiRescanPending then
-                    BuffIconCooldownViewer.__quiRescanPending = true
+                local afs = GetFrameState(BuffIconCooldownViewer)
+                if not afs.rescanPending then
+                    afs.rescanPending = true
                     C_Timer.After(0.1, function()
-                        BuffIconCooldownViewer.__quiRescanPending = nil
+                        afs.rescanPending = nil
                         -- Re-check visibility after timer (viewer may have hidden)
                         if BuffIconCooldownViewer:IsShown() then
                             if isIconLayoutRunning then return end
@@ -2244,22 +2275,9 @@ function QUI_BuffBar.Refresh()
     barState.lastCount = 0
     lastIconHash = ""  -- Force hash recalculation for icons
 
-    -- Update isHorizontal when settings change (e.g., orientation toggle)
-    -- Must be done outside combat to take effect
-    if BuffBarCooldownViewer and not InCombatLockdown() then
-        local settings = GetTrackedBarSettings()
-        local isVertical = (settings.orientation == "vertical")
-        local growFromBottom = (settings.growUp ~= false)
-
-        BuffBarCooldownViewer.isHorizontal = not isVertical
-        if isVertical then
-            BuffBarCooldownViewer.layoutFramesGoingRight = growFromBottom
-            BuffBarCooldownViewer.layoutFramesGoingUp = false
-        else
-            BuffBarCooldownViewer.layoutFramesGoingRight = true
-            BuffBarCooldownViewer.layoutFramesGoingUp = growFromBottom
-        end
-    end
+    -- TAINT SAFETY: Do NOT write isHorizontal/layoutFramesGoingRight/layoutFramesGoingUp
+    -- directly on BuffBarCooldownViewer. It is a registered Edit Mode system frame.
+    -- QUI's LayoutBuffBars() handles positioning via its own layout logic.
 
     LayoutBuffIcons()
     LayoutBuffBars()

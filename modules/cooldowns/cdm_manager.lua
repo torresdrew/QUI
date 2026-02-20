@@ -24,36 +24,39 @@ local function RemovePadding(viewer)
     local children = {viewer:GetChildren()}
     
     -- Get the visible icons (because they're fully dynamic)
+    -- TAINT SAFETY: Store original positions in local table, not on icon frames.
+    -- Icon frames are children of registered Edit Mode system frames.
     local visibleChildren = {}
+    local origPos = {}
     for _, child in ipairs(children) do
         if child:IsShown() then
-            -- Store original position for sorting
             local point, relativeTo, relativePoint, x, y = child:GetPoint(1)
-            child.originalX = x or 0
-            child.originalY = y or 0
+            origPos[child] = { x = x or 0, y = y or 0 }
             table.insert(visibleChildren, child)
         end
     end
-    
+
     if #visibleChildren == 0 then return end
-    
+
     -- Sort by original position to maintain Blizzard's order
     local isHorizontal = viewer.isHorizontal
     if isHorizontal then
         -- Sort left to right, then top to bottom
         table.sort(visibleChildren, function(a, b)
-            if math.abs(a.originalY - b.originalY) < 1 then
-                return a.originalX < b.originalX
+            local pa, pb = origPos[a], origPos[b]
+            if math.abs(pa.y - pb.y) < 1 then
+                return pa.x < pb.x
             end
-            return a.originalY > b.originalY
+            return pa.y > pb.y
         end)
     else
         -- Sort top to bottom, then left to right
         table.sort(visibleChildren, function(a, b)
-            if math.abs(a.originalX - b.originalX) < 1 then
-                return a.originalY > b.originalY
+            local pa, pb = origPos[a], origPos[b]
+            if math.abs(pa.x - pb.x) < 1 then
+                return pa.y > pb.y
             end
-            return a.originalX < b.originalX
+            return pa.x < pb.x
         end)
     end
     

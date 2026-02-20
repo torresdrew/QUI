@@ -17,6 +17,24 @@ local BLIZZARD_FRAME_LABELS = {
     DebuffFrame = "Debuff Frame",
     DamageMeterSessionWindow1 = "Damage Meter",
     BuffBarCooldownViewer = "Tracked Bars",
+    -- Action Bars
+    MainActionBar = "Action Bar 1",
+    MainMenuBar = "Action Bar 1",  -- Fallback name for pre-Midnight clients
+    MultiBarBottomLeft = "Action Bar 2",
+    MultiBarBottomRight = "Action Bar 3",
+    MultiBarRight = "Action Bar 4",
+    MultiBarLeft = "Action Bar 5",
+    MultiBar5 = "Action Bar 6",
+    MultiBar6 = "Action Bar 7",
+    MultiBar7 = "Action Bar 8",
+    PetActionBar = "Pet Action Bar",
+    StanceBar = "Stance Bar",
+    MicroMenuContainer = "Micro Menu",
+    BagsBar = "Bag Bar",
+    -- Display
+    ObjectiveTrackerFrame = "Objective Tracker",
+    -- Boss Frames
+    BossTargetFrameContainer = "Boss Frames",
 }
 
 local function IsNudgeTargetFrameName(frameName)
@@ -42,6 +60,249 @@ local function IsNudgeTargetFrameName(frameName)
     end
 
     return false
+end
+
+-- ============================================================================
+-- FRAME ANCHORING HELPERS FOR EDIT MODE OVERLAYS
+-- Called at runtime (Edit Mode entry) when anchoring.lua is already loaded.
+-- ============================================================================
+
+-- Map overlay element identifiers to frameAnchoring DB keys
+local OVERLAY_ANCHORING_KEYS = {
+    -- CDM viewers
+    EssentialCooldownViewer = "cdmEssential",
+    UtilityCooldownViewer   = "cdmUtility",
+    BuffIconCooldownViewer  = "buffIcon",
+    -- Blizzard Edit Mode frames
+    BuffFrame               = "buffFrame",
+    DebuffFrame             = "debuffFrame",
+    BuffBarCooldownViewer   = "buffBar",
+    -- Action Bars
+    MainActionBar           = "bar1",
+    MainMenuBar             = "bar1",  -- Fallback name for pre-Midnight clients
+    MultiBarBottomLeft      = "bar2",
+    MultiBarBottomRight     = "bar3",
+    MultiBarRight           = "bar4",
+    MultiBarLeft            = "bar5",
+    MultiBar5               = "bar6",
+    MultiBar6               = "bar7",
+    MultiBar7               = "bar8",
+    PetActionBar            = "petBar",
+    StanceBar               = "stanceBar",
+    MicroMenuContainer      = "microMenu",
+    BagsBar                 = "bagBar",
+    -- Display
+    minimap                 = "minimap",
+    ObjectiveTrackerFrame   = "objectiveTracker",
+    -- Boss Frames
+    BossTargetFrameContainer = "bossFrames",
+}
+
+-- Get the frameAnchoring DB table, using global callback or direct local reference
+local function GetFrameAnchoringDB()
+    local db = _G.QUI_GetFrameAnchoringDB and _G.QUI_GetFrameAnchoringDB()
+    if db then return db end
+    -- Fallback: use local QUICore reference directly
+    return QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.frameAnchoring
+end
+
+-- Check if a frame is anchored in the global frameAnchoring system.
+-- Any frame with anchoring enabled is considered "locked" in Edit Mode,
+-- including frames anchored to "screen" (fixed screen position).
+local function IsFrameAnchored(anchoringKey)
+    if not anchoringKey then return false end
+    local db = GetFrameAnchoringDB()
+    if not db then return false end
+    local settings = db[anchoringKey]
+    if not settings then return false end
+    return settings.enabled and true or false
+end
+
+-- Get the display name of the anchor target for a given frame
+local function GetFrameAnchorTargetName(anchoringKey)
+    if not anchoringKey then return nil end
+    local db = GetFrameAnchoringDB()
+    if not db then return nil end
+    local settings = db[anchoringKey]
+    if not settings or not settings.enabled then
+        return nil
+    end
+    if settings.parent == "screen" then
+        return "Screen"
+    end
+    if _G.QUI_GetFrameAnchorDisplayName then
+        return _G.QUI_GetFrameAnchorDisplayName(settings.parent)
+    end
+    return settings.parent
+end
+
+-- Apply locked/anchored visual treatment to an overlay.
+-- Sets gray/cyan colors, updates label text, hides/shows nudge buttons, sets _isAnchored flag.
+-- Returns true if the frame is anchored, false if free.
+local function ApplyAnchoredOverlayState(overlay, anchoringKey, displayName)
+    if not overlay then return false end
+
+    local isAnchored = IsFrameAnchored(anchoringKey)
+    overlay._isAnchored = isAnchored
+
+    if isAnchored then
+        -- Gray overlay for locked frames
+        overlay:SetBackdropColor(0.5, 0.5, 0.5, 0.25)
+        overlay:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.9)
+
+        -- Update label with lock info
+        local targetName = GetFrameAnchorTargetName(anchoringKey)
+        local lockText = targetName and ("Locked to " .. targetName) or "Anchored"
+        if overlay.label then
+            overlay.label:SetText(displayName .. "\n|cff888888" .. lockText .. "|r")
+            overlay.label:SetTextColor(0.6, 0.6, 0.6, 1)
+        end
+
+        -- Show info text with lock message (for overlays that have separate infoText)
+        if overlay.infoText then
+            overlay.infoText:SetText(displayName .. "  |cff888888(" .. lockText .. ")|r")
+            overlay.infoText:Show()
+        end
+
+        -- Hide nudge buttons
+        if overlay.nudgeUp then overlay.nudgeUp:Hide() end
+        if overlay.nudgeDown then overlay.nudgeDown:Hide() end
+        if overlay.nudgeLeft then overlay.nudgeLeft:Hide() end
+        if overlay.nudgeRight then overlay.nudgeRight:Hide() end
+    else
+        -- Normal cyan overlay for free frames
+        overlay:SetBackdropColor(0.2, 0.8, 1, 0.3)
+        overlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+
+        if overlay.label then
+            overlay.label:SetText(displayName)
+            overlay.label:SetTextColor(0.2, 0.8, 1, 1)
+        end
+    end
+
+    return isAnchored
+end
+
+-- .Selection management:
+-- _selectionState[frame] = "hidden"    → fully hidden (free frames, QUI overlay handles drag)
+-- _selectionState[frame] = "anchored"  → alpha 0, clickable, drag blocked via StartMoving hook
+-- _selectionState[frame] = nil         → no override (Edit Mode not active)
+local _selectionState = {}
+local _selectionHooked = {}
+local _startMovingHooked = {}
+
+-- Install a polling frame on .Selection that enforces _selectionState.
+-- TAINT SAFETY: Do NOT use hooksecurefunc("Show") or HookScript("OnShow") on
+-- .Selection frames. They are shown by Blizzard during EditModeFrameSetup's
+-- secureexecuterange; any hook on Show taints the secure chain, causing
+-- "oldR tainted by QUI" and ADDON_ACTION_FORBIDDEN for TargetUnit().
+-- Instead, use a standalone OnUpdate polling frame to detect and enforce state.
+local function EnsureSelectionHook(frame)
+    if _selectionHooked[frame] then return end
+    _selectionHooked[frame] = true
+    local selection = frame.Selection
+    local selPollFrame = CreateFrame("Frame")
+    local wasSelShown = selection:IsShown()
+    selPollFrame:SetScript("OnUpdate", function()
+        local isShown = selection:IsShown()
+        if isShown and not wasSelShown then
+            wasSelShown = true
+            local state = _selectionState[frame]
+            if state == "hidden" then
+                selection:Hide()
+            elseif state == "anchored" then
+                selection:SetAlpha(0)
+            end
+        elseif not isShown and wasSelShown then
+            wasSelShown = false
+        end
+    end)
+end
+
+-- Position snapshot taken on edit mode entry for anchored frames.
+-- The StartMoving hook snaps back to this position to prevent any jitter.
+local _anchoredPositions = {}
+
+-- Restore an anchored frame to its saved position.
+-- pcall guards against circular anchor dependencies (e.g. Blizzard's Edit Mode
+-- snap system can create mutual dependencies like MultiBarLeft ↔ MultiBar5).
+local function RestoreAnchoredPosition(frame)
+    local pos = _anchoredPositions[frame]
+    if not pos then return end
+    pcall(function()
+        frame:ClearAllPoints()
+        frame:SetPoint(pos.point, pos.relativeTo, pos.relativePoint, pos.x, pos.y)
+    end)
+end
+
+-- Install one-time hooks that prevent anchored frames from moving.
+-- StartMoving: immediately stop the move.
+-- ClearAllPoints: immediately re-apply saved position (Blizzard clears points
+--   before repositioning during drag — this prevents the frame from ever
+--   sitting at Blizzard's internally stored drag position).
+-- All hooks are permanent but only act when _selectionState == "anchored".
+local function EnsureStartMovingHook(frame)
+    if _startMovingHooked[frame] then return end
+    if not frame.StartMoving then return end
+    _startMovingHooked[frame] = true
+
+    hooksecurefunc(frame, "StartMoving", function(self)
+        if _selectionState[self] == "anchored" then
+            self:StopMovingOrSizing()
+            RestoreAnchoredPosition(self)
+        end
+    end)
+
+    hooksecurefunc(frame, "ClearAllPoints", function(self)
+        if _selectionState[self] == "anchored" then
+            -- Blizzard cleared our points (pre-drag or post-drag reanchor).
+            -- Defer restore to next frame so our SetPoint isn't immediately
+            -- cleared by the same ClearAllPoints call chain.
+            C_Timer.After(0, function()
+                if _selectionState[self] == "anchored" then
+                    RestoreAnchoredPosition(self)
+                end
+            end)
+        end
+    end)
+end
+
+-- Hide Blizzard's Edit Mode ".Selection" overlay on a registered system frame.
+-- Used for FREE frames where QUI's overlay handles all interaction (drag + click).
+local function HideBlizzardEditModeSelection(frame)
+    if not frame or not frame.Selection then return end
+    _selectionState[frame] = "hidden"
+    frame.Selection:Hide()
+    EnsureSelectionHook(frame)
+end
+
+-- For anchored frames: make .Selection invisible (alpha 0) so clicks still reach it
+-- (opens Edit Mode options panel), but block dragging via a StartMoving hook.
+-- QUI's gray overlay sits on top with EnableMouse(false) = click-through.
+local function MakeSelectionClickableNoDrag(frame)
+    if not frame or not frame.Selection then return end
+    _selectionState[frame] = "anchored"
+    frame.Selection:Show()
+    frame.Selection:SetAlpha(0)
+    EnsureSelectionHook(frame)
+    EnsureStartMovingHook(frame)
+    -- Snapshot position on edit mode entry — before any interaction can occur
+    local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
+    if point then
+        _anchoredPositions[frame] = {
+            point = point,
+            relativeTo = relativeTo,
+            relativePoint = relativePoint,
+            x = x,
+            y = y,
+        }
+    end
+end
+
+-- Restore frame to normal free state: .Selection hidden, QUI overlay handles drag.
+local function RestoreFrameFreeState(frame)
+    if not frame then return end
+    HideBlizzardEditModeSelection(frame)
 end
 
 local function GetNudgeDisplayName(frameName)
@@ -345,6 +606,76 @@ end
 
 local viewerOverlays = {}
 
+-- Check whether a QUI feature is enabled in the user's profile.
+-- Frames whose feature is disabled should not show Edit Mode overlays.
+
+-- Map Blizzard action bar frame names to QUI db.profile.actionBars.bars keys
+local ACTION_BAR_DB_KEYS = {
+    MainActionBar       = "bar1",
+    MainMenuBar         = "bar1",
+    MultiBarBottomLeft  = "bar2",
+    MultiBarBottomRight = "bar3",
+    MultiBarRight       = "bar4",
+    MultiBarLeft        = "bar5",
+    MultiBar5           = "bar6",
+    MultiBar6           = "bar7",
+    MultiBar7           = "bar8",
+    PetActionBar        = "pet",
+    StanceBar           = "stance",
+    MicroMenuContainer  = "microbar",
+    BagsBar             = "bags",
+}
+
+local function IsFeatureEnabled(featureName)
+    local db = QUICore and QUICore.db and QUICore.db.profile
+    if not db then return true end  -- If no DB yet, assume enabled
+
+    -- CDM Viewers (use ncdm DB paths — these control whether the viewer frame is created/shown)
+    if featureName == "EssentialCooldownViewer" then
+        return db.ncdm and db.ncdm.essential and db.ncdm.essential.enabled
+    elseif featureName == "UtilityCooldownViewer" then
+        return db.ncdm and db.ncdm.utility and db.ncdm.utility.enabled
+    elseif featureName == "BuffIconCooldownViewer" then
+        return db.ncdm and db.ncdm.buff and db.ncdm.buff.enabled
+
+    -- Blizzard Edit Mode frames with QUI feature gating
+    elseif featureName == "BuffBarCooldownViewer" then
+        return db.ncdm and db.ncdm.trackedBar and db.ncdm.trackedBar.enabled
+    elseif featureName == "minimap" then
+        return db.minimap and db.minimap.enabled
+    elseif featureName == "BuffFrame" then
+        -- Only hide mover if QUI is actively hiding the entire Blizzard frame
+        if db.buffBorders and db.buffBorders.hideBuffFrame then return false end
+    elseif featureName == "DebuffFrame" then
+        if db.buffBorders and db.buffBorders.hideDebuffFrame then return false end
+
+    -- Objective Tracker: hide mover if QUI is always hiding the tracker
+    elseif featureName == "ObjectiveTrackerFrame" then
+        if db.uiHider and db.uiHider.hideObjectiveTrackerAlways then return false end
+
+    -- Damage Meter: check Blizzard CVar (QUI replaces the Blizzard damage meter window)
+    elseif featureName == "DamageMeterSessionWindow1" then
+        local enabled = C_CVar and C_CVar.GetCVar and C_CVar.GetCVar("damageMeterEnabled")
+        return enabled == "1"
+
+    -- Action Bars: check QUI setting AND whether frame is actually visible
+    elseif ACTION_BAR_DB_KEYS[featureName] then
+        local barKey = ACTION_BAR_DB_KEYS[featureName]
+        local barDB = db.actionBars and db.actionBars.bars and db.actionBars.bars[barKey]
+        if barDB and not barDB.enabled then return false end
+        -- Also check if the Blizzard frame is actually shown (user may have hidden via Edit Mode)
+        local frame = _G[featureName]
+        if frame and not frame:IsShown() then return false end
+
+    -- Boss Frames: QUI replaces the default Blizzard boss frames
+    elseif featureName == "BossTargetFrameContainer" then
+        return db.quiUnitFrames and db.quiUnitFrames.boss and db.quiUnitFrames.boss.enabled
+    end
+
+    -- Blizzard-native frames without QUI feature toggle (objective tracker, etc.) always show
+    return true
+end
+
 -- All CDM viewers that should get nudge overlays
 local CDM_VIEWERS = {
     "EssentialCooldownViewer",
@@ -358,6 +689,23 @@ local BLIZZARD_EDITMODE_FRAMES = {
     { name = "DebuffFrame", label = "Debuff Frame" },
     { name = "DamageMeterSessionWindow1", label = "Damage Meter" },
     { name = "BuffBarCooldownViewer", label = "Tracked Bars" },
+    -- Action Bars
+    { name = "MainActionBar", label = "Action Bar 1" },
+    { name = "MultiBarBottomLeft", label = "Action Bar 2" },
+    { name = "MultiBarBottomRight", label = "Action Bar 3" },
+    { name = "MultiBarRight", label = "Action Bar 4" },
+    { name = "MultiBarLeft", label = "Action Bar 5" },
+    { name = "MultiBar5", label = "Action Bar 6" },
+    { name = "MultiBar6", label = "Action Bar 7" },
+    { name = "MultiBar7", label = "Action Bar 8" },
+    { name = "PetActionBar", label = "Pet Action Bar" },
+    { name = "StanceBar", label = "Stance Bar" },
+    { name = "MicroMenuContainer", label = "Micro Menu" },
+    { name = "BagsBar", label = "Bag Bar" },
+    -- Display
+    { name = "ObjectiveTrackerFrame", label = "Objective Tracker" },
+    -- Boss Frames
+    { name = "BossTargetFrameContainer", label = "Boss Frames" },
 }
 
 local blizzardOverlays = {}
@@ -508,8 +856,12 @@ local function CreateViewerOverlay(viewerName)
     local viewer = _G[viewerName]
     if not viewer then return nil end
 
-    local overlay = CreateFrame("Frame", nil, viewer, "BackdropTemplate")
-    overlay:SetAllPoints()
+    -- TAINT SAFETY: Parent to UIParent instead of the viewer frame.
+    -- CDM viewers are registered Edit Mode system frames. Parenting addon
+    -- frames (especially BackdropTemplate) to them causes those child frames
+    -- to participate in the secure EnterEditMode iteration, tainting the context.
+    local overlay = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    overlay:SetAllPoints(viewer)
     overlay:SetFrameStrata("TOOLTIP")
     local px = QUICore:GetPixelSize(overlay)
     overlay:SetBackdrop({
@@ -527,6 +879,7 @@ local function CreateViewerOverlay(viewerName)
     label:SetPoint("TOP", overlay, "TOP", 0, -4)
     label:SetText(displayName)
     label:SetTextColor(0.2, 0.8, 1, 1)
+    overlay.label = label
 
     -- Nudge buttons around the overlay (same positioning as unit frames)
     local nudgeUp = CreateViewerNudgeButton(overlay, "UP", viewerName)
@@ -566,8 +919,12 @@ local function CreateBlizzardFrameOverlay(frameInfo)
     local frame = _G[frameName]
     if not frame then return nil end
 
-    local overlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    overlay:SetAllPoints()
+    -- TAINT SAFETY: Parent to UIParent instead of the Blizzard frame.
+    -- Action bars, ObjectiveTrackerFrame, etc. are registered Edit Mode system
+    -- frames. Parenting addon frames (BackdropTemplate) to them causes those
+    -- child frames to participate in the secure EnterEditMode iteration.
+    local overlay = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    overlay:SetAllPoints(frame)
     overlay:SetFrameStrata("TOOLTIP")
     local px = QUICore:GetPixelSize(overlay)
     overlay:SetBackdrop({
@@ -584,6 +941,7 @@ local function CreateBlizzardFrameOverlay(frameInfo)
     labelText:SetPoint("TOP", overlay, "TOP", 0, -4)
     labelText:SetText(label)
     labelText:SetTextColor(0.2, 0.8, 1, 1)
+    overlay.label = labelText
 
     -- Nudge buttons around the overlay (same positioning as CDM viewers)
     local nudgeUp = CreateViewerNudgeButton(overlay, "UP", frameName)
@@ -620,8 +978,9 @@ end
 local function CreateMinimapOverlay()
     if not Minimap then return nil end
 
-    local overlay = CreateFrame("Frame", nil, Minimap, "BackdropTemplate")
-    overlay:SetAllPoints()
+    -- TAINT SAFETY: Parent to UIParent instead of Minimap.
+    local overlay = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    overlay:SetAllPoints(Minimap)
     overlay:SetFrameStrata("TOOLTIP")
     local px = QUICore:GetPixelSize(overlay)
     overlay:SetBackdrop({
@@ -638,6 +997,7 @@ local function CreateMinimapOverlay()
     labelText:SetPoint("TOP", overlay, "TOP", 0, -4)
     labelText:SetText("Minimap")
     labelText:SetTextColor(0.2, 0.8, 1, 1)
+    overlay.label = labelText
 
     -- Info text showing X/Y position (above UP arrow)
     local infoText = overlay:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -682,6 +1042,11 @@ end
 -- Show overlays on all CDM viewers
 function QUICore:ShowViewerOverlays()
     for _, viewerName in ipairs(CDM_VIEWERS) do
+        -- Skip overlays for disabled features
+        if not IsFeatureEnabled(viewerName) then
+            local existing = viewerOverlays[viewerName]
+            if existing then existing:Hide() end
+        else
         if not viewerOverlays[viewerName] then
             viewerOverlays[viewerName] = CreateViewerOverlay(viewerName)
         end
@@ -689,34 +1054,48 @@ function QUICore:ShowViewerOverlays()
         if overlay then
             overlay:Show()
 
-            -- Enable mouse on OVERLAY and handle clicks there
-            -- (Icons inside viewer intercept clicks to the viewer frame itself)
-            overlay:EnableMouse(true)
-            overlay:SetScript("OnMouseDown", function(self, button)
-                if button == "LeftButton" then
-                    QUICore:SelectViewer(viewerName)
-                    -- Start drag on the viewer
+            -- Check anchoring state and apply locked/free visual treatment
+            local anchoringKey = OVERLAY_ANCHORING_KEYS[viewerName]
+            local displayName = GetNudgeDisplayName(viewerName)
+            local isAnchored = ApplyAnchoredOverlayState(overlay, anchoringKey, displayName)
+
+            local viewer = _G[viewerName]
+            if isAnchored then
+                -- Anchored: .Selection at alpha 0 (clickable for Edit Mode menu),
+                -- drag blocked by StartMoving hook. QUI overlay is click-through.
+                if viewer then MakeSelectionClickableNoDrag(viewer) end
+                overlay:EnableMouse(false)
+                overlay:SetScript("OnMouseDown", nil)
+                overlay:SetScript("OnMouseUp", nil)
+            else
+                -- Free: fully hide Blizzard .Selection, QUI overlay handles all interaction
+                if viewer then RestoreFrameFreeState(viewer) end
+                overlay:EnableMouse(true)
+                overlay:SetScript("OnMouseDown", function(self, button)
+                    if button == "LeftButton" then
+                        QUICore:SelectViewer(viewerName)
+                        local v = _G[viewerName]
+                        if v then
+                            v:SetMovable(true)
+                            v:StartMoving()
+                        end
+                    end
+                end)
+                overlay:SetScript("OnMouseUp", function(self, button)
                     local viewer = _G[viewerName]
                     if viewer then
-                        viewer:SetMovable(true)  -- Enable movable for Blizzard CDM viewers
-                        viewer:StartMoving()
+                        viewer:StopMovingOrSizing()
+                        if LibEditModeOverride and EnsureEditModeReady() and LibEditModeOverride:HasEditModeSettings(viewer) then
+                            local point, relativeTo, relativePoint, x, y = viewer:GetPoint(1)
+                            pcall(function()
+                                LibEditModeOverride:ReanchorFrame(viewer, point, relativeTo, relativePoint, x, y)
+                            end)
+                        end
                     end
-                end
-            end)
-            overlay:SetScript("OnMouseUp", function(self, button)
-                local viewer = _G[viewerName]
-                if viewer then
-                    viewer:StopMovingOrSizing()
-                    -- Save position via LibEditModeOverride
-                    if LibEditModeOverride and EnsureEditModeReady() and LibEditModeOverride:HasEditModeSettings(viewer) then
-                        local point, relativeTo, relativePoint, x, y = viewer:GetPoint(1)
-                        pcall(function()
-                            LibEditModeOverride:ReanchorFrame(viewer, point, relativeTo, relativePoint, x, y)
-                        end)
-                    end
-                end
-            end)
+                end)
+            end
         end
+        end -- close if/else IsFeatureEnabled
     end
     -- Store reference for selection manager access
     self.cdmOverlays = viewerOverlays
@@ -732,13 +1111,80 @@ function QUICore:HideViewerOverlays()
             overlay:SetScript("OnMouseDown", nil)
             overlay:SetScript("OnMouseUp", nil)
         end
+        -- Clear .Selection mode so hooks stop intervening after Edit Mode exits
+        local viewer = _G[viewerName]
+        if viewer then
+            _selectionState[viewer] = nil
+            if viewer.SetMovable then
+                pcall(viewer.SetMovable, viewer, true)
+            end
+        end
+    end
+end
+
+-- Resize BossTargetFrameContainer to cover QUI boss frames so the Edit Mode
+-- .Selection overlay properly represents the grouped boss area.
+local function SizeBossContainerToQUIFrames()
+    if not BossTargetFrameContainer then return end
+    local db = QUICore and QUICore.db and QUICore.db.profile
+    if not db or not db.quiUnitFrames or not db.quiUnitFrames.boss or not db.quiUnitFrames.boss.enabled then return end
+
+    -- Find the first QUI boss frame as anchor reference
+    local quiUF = _G.QUI_UF
+    local boss1 = quiUF and quiUF.frames and quiUF.frames.boss1
+    if not boss1 then return end
+
+    -- Calculate bounds from all visible QUI boss frames
+    local minX, minY, maxX, maxY
+    for i = 1, 5 do
+        local f = quiUF.frames["boss" .. i]
+        if f and f:IsShown() then
+            local left, bottom, width, height = f:GetRect()
+            if left then
+                local right = left + width
+                local top = bottom + height
+                if not minX or left < minX then minX = left end
+                if not minY or bottom < minY then minY = bottom end
+                if not maxX or right > maxX then maxX = right end
+                if not maxY or top > maxY then maxY = top end
+            end
+        end
+    end
+
+    -- If no boss frames are visible, use boss1's position with default size
+    if not minX then
+        local left, bottom, width, height = boss1:GetRect()
+        if left then
+            minX, minY = left, bottom
+            maxX, maxY = left + width, bottom + height
+        end
+    end
+
+    if minX and minY and maxX and maxY then
+        local scale = BossTargetFrameContainer:GetEffectiveScale()
+        local uiScale = UIParent:GetEffectiveScale()
+        local ratio = uiScale / scale
+        pcall(function()
+            BossTargetFrameContainer:ClearAllPoints()
+            BossTargetFrameContainer:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT",
+                minX * ratio, minY * ratio)
+            BossTargetFrameContainer:SetSize((maxX - minX) * ratio, (maxY - minY) * ratio)
+        end)
     end
 end
 
 -- Show overlays on all Blizzard Edit Mode frames
 function QUICore:ShowBlizzardFrameOverlays()
+    -- Resize BossTargetFrameContainer to cover QUI boss frames
+    SizeBossContainerToQUIFrames()
     for _, frameInfo in ipairs(BLIZZARD_EDITMODE_FRAMES) do
         local frameName = frameInfo.name
+
+        -- Skip overlays for disabled features
+        if not IsFeatureEnabled(frameName) then
+            local existing = blizzardOverlays[frameName]
+            if existing then existing:Hide() end
+        else
         local frame = _G[frameName]
 
         -- Skip if frame doesn't exist (e.g., DamageMeter not in combat)
@@ -750,30 +1196,43 @@ function QUICore:ShowBlizzardFrameOverlays()
             if overlay then
                 overlay:Show()
 
-                -- Enable mouse on OVERLAY and handle clicks there
-                overlay:EnableMouse(true)
-                overlay:SetScript("OnMouseDown", function(self, button)
-                    if button == "LeftButton" then
-                        QUICore:SelectViewer(frameName)
-                        -- Start drag on the frame
-                        frame:SetMovable(true)  -- Enable movable for Blizzard Edit Mode frames
-                        frame:StartMoving()
-                    end
-                end)
-                overlay:SetScript("OnMouseUp", function(self, button)
-                    if frame then
-                        frame:StopMovingOrSizing()
-                        -- Save position via LibEditModeOverride
-                        if LibEditModeOverride and EnsureEditModeReady() and LibEditModeOverride:HasEditModeSettings(frame) then
-                            local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
-                            pcall(function()
-                                LibEditModeOverride:ReanchorFrame(frame, point, relativeTo, relativePoint, x, y)
-                            end)
+                -- Check anchoring state and apply locked/free visual treatment
+                local anchoringKey = OVERLAY_ANCHORING_KEYS[frameName]
+                local isAnchored = ApplyAnchoredOverlayState(overlay, anchoringKey, frameInfo.label)
+
+                if isAnchored then
+                    -- Anchored: .Selection at alpha 0 (clickable for Edit Mode menu),
+                    -- drag blocked by StartMoving hook. QUI overlay is click-through.
+                    MakeSelectionClickableNoDrag(frame)
+                    overlay:EnableMouse(false)
+                    overlay:SetScript("OnMouseDown", nil)
+                    overlay:SetScript("OnMouseUp", nil)
+                else
+                    -- Free: fully hide Blizzard .Selection, QUI overlay handles all interaction
+                    RestoreFrameFreeState(frame)
+                    overlay:EnableMouse(true)
+                    overlay:SetScript("OnMouseDown", function(self, button)
+                        if button == "LeftButton" then
+                            QUICore:SelectViewer(frameName)
+                            frame:SetMovable(true)
+                            frame:StartMoving()
                         end
-                    end
-                end)
+                    end)
+                    overlay:SetScript("OnMouseUp", function(self, button)
+                        if frame then
+                            frame:StopMovingOrSizing()
+                            if LibEditModeOverride and EnsureEditModeReady() and LibEditModeOverride:HasEditModeSettings(frame) then
+                                local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
+                                pcall(function()
+                                    LibEditModeOverride:ReanchorFrame(frame, point, relativeTo, relativePoint, x, y)
+                                end)
+                            end
+                        end
+                    end)
+                end
             end
         end
+        end -- close if/else IsFeatureEnabled
     end
     -- Store reference for selection manager access
     self.blizzardOverlays = blizzardOverlays
@@ -789,45 +1248,73 @@ function QUICore:HideBlizzardFrameOverlays()
             overlay:SetScript("OnMouseDown", nil)
             overlay:SetScript("OnMouseUp", nil)
         end
+        -- Clear .Selection mode so hooks stop intervening after Edit Mode exits
+        local frame = _G[frameInfo.name]
+        if frame then
+            _selectionState[frame] = nil
+            -- Restore .Selection visibility for normal Blizzard behavior outside Edit Mode
+            if frame.SetMovable then
+                pcall(frame.SetMovable, frame, true)
+            end
+        end
     end
 end
 
 -- Show minimap overlay
 function QUICore:ShowMinimapOverlay()
+    -- Skip overlay if minimap feature is disabled
+    if not IsFeatureEnabled("minimap") then
+        if minimapOverlay then minimapOverlay:Hide() end
+        return
+    end
+
     if not minimapOverlay then
         minimapOverlay = CreateMinimapOverlay()
     end
     if minimapOverlay then
         minimapOverlay:Show()
 
-        -- Enable mouse for click detection, pass drag to Minimap
-        minimapOverlay:EnableMouse(true)
-        minimapOverlay:SetScript("OnMouseDown", function(self, button)
-            if button == "LeftButton" then
-                QUICore:SelectEditModeElement("minimap", "minimap")
-                -- Start drag on the Minimap
-                if Minimap:IsMovable() then
-                    Minimap:StartMoving()
+        -- Check anchoring state and apply locked/free visual treatment
+        local anchoringKey = OVERLAY_ANCHORING_KEYS["minimap"]
+        local isAnchored = ApplyAnchoredOverlayState(minimapOverlay, anchoringKey, "Minimap")
+
+        if isAnchored then
+            -- Anchored: .Selection at alpha 0 (clickable for Edit Mode menu),
+            -- drag blocked by StartMoving hook. QUI overlay is click-through.
+            if MinimapCluster then MakeSelectionClickableNoDrag(MinimapCluster) end
+            minimapOverlay:EnableMouse(false)
+            minimapOverlay:SetScript("OnMouseDown", nil)
+            minimapOverlay:SetScript("OnMouseUp", nil)
+        else
+            -- Free: fully hide Blizzard .Selection, QUI overlay handles all interaction
+            if MinimapCluster then RestoreFrameFreeState(MinimapCluster) end
+            minimapOverlay:EnableMouse(true)
+            minimapOverlay:SetScript("OnMouseDown", function(self, button)
+                if button == "LeftButton" then
+                    QUICore:SelectEditModeElement("minimap", "minimap")
+                    if Minimap:IsMovable() then
+                        Minimap:StartMoving()
+                    end
                 end
-            end
-        end)
-        minimapOverlay:SetScript("OnMouseUp", function(self, button)
-            Minimap:StopMovingOrSizing()
-            -- Save position to DB (snapped to pixel grid)
-            local settings = QUICore.db and QUICore.db.profile and QUICore.db.profile.minimap
-            if settings then
-                local point, _, relPoint, x, y = QUICore:SnapFramePosition(Minimap)
-                if point then
-                    settings.position = {point, relPoint, x, y}
+            end)
+            minimapOverlay:SetScript("OnMouseUp", function(self, button)
+                Minimap:StopMovingOrSizing()
+                -- Save position to DB (snapped to pixel grid)
+                local settings = QUICore.db and QUICore.db.profile and QUICore.db.profile.minimap
+                if settings then
+                    local point, _, relPoint, x, y = QUICore:SnapFramePosition(Minimap)
+                    if point then
+                        settings.position = {point, relPoint, x, y}
+                    end
                 end
-            end
-            -- Update info text
-            if minimapOverlay and minimapOverlay.infoText and settings and settings.position then
-                minimapOverlay.infoText:SetText(string.format("Minimap  X:%d Y:%d",
-                    math.floor(settings.position[3] or 0),
-                    math.floor(settings.position[4] or 0)))
-            end
-        end)
+                -- Update info text
+                if minimapOverlay and minimapOverlay.infoText and settings and settings.position then
+                    minimapOverlay.infoText:SetText(string.format("Minimap  X:%d Y:%d",
+                        math.floor(settings.position[3] or 0),
+                        math.floor(settings.position[4] or 0)))
+                end
+            end)
+        end
 
         -- Store reference for selection manager access
         self.minimapOverlay = minimapOverlay
@@ -841,6 +1328,13 @@ function QUICore:HideMinimapOverlay()
         minimapOverlay:EnableMouse(false)
         minimapOverlay:SetScript("OnMouseDown", nil)
         minimapOverlay:SetScript("OnMouseUp", nil)
+    end
+    -- Clear .Selection mode so hooks stop intervening after Edit Mode exits
+    if MinimapCluster then
+        _selectionState[MinimapCluster] = nil
+        if MinimapCluster.SetMovable then
+            pcall(MinimapCluster.SetMovable, MinimapCluster, true)
+        end
     end
 end
 
@@ -950,6 +1444,10 @@ end
 function QUICore:NudgeSelectedViewer(direction)
     if not self.selectedViewer then return false end
 
+    -- Block nudging for anchored viewers/frames
+    local anchoringKey = OVERLAY_ANCHORING_KEYS[self.selectedViewer]
+    if IsFrameAnchored(anchoringKey) then return false end
+
     local viewer = _G[self.selectedViewer]
     if not viewer then return false end
 
@@ -989,8 +1487,10 @@ function QUICore:NudgeSelectedViewer(direction)
     end
 
     -- Fallback to manual method if library isn't available or frame isn't registered
-    viewer:ClearAllPoints()
-    viewer:SetPoint(point, relativeTo, relativePoint, newX, newY)
+    pcall(function()
+        viewer:ClearAllPoints()
+        viewer:SetPoint(point, relativeTo, relativePoint, newX, newY)
+    end)
 
     -- Tell Edit Mode that THIS system's position changed
     if EditModeManagerFrame and EditModeManagerFrame.editModeActive then
@@ -1013,6 +1513,9 @@ end
 
 -- Nudge the minimap
 function QUICore:NudgeMinimap(direction)
+    -- Block nudging for anchored minimap
+    if IsFrameAnchored("minimap") then return end
+
     local db = self.db and self.db.profile and self.db.profile.minimap
     if not db or not db.position then return end
 
@@ -1050,34 +1553,39 @@ end
 local function SetupEditModeHooks()
     if not EditModeManagerFrame then return end
     
+    -- TAINT SAFETY: Defer ALL addon code out of the secure EnterEditMode/ExitEditMode callbacks.
+    -- Any synchronous addon code (even an if-check) taints the secure execution context,
+    -- which causes TargetUnit() ADDON_ACTION_FORBIDDEN and CompactUnitFrame oldR taint errors.
     hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
-        -- Ensure LibEditModeOverride layouts are loaded when entering Edit Mode
-        if LibEditModeOverride and LibEditModeOverride:IsReady() then
-            if not LibEditModeOverride:AreLayoutsLoaded() then
-                LibEditModeOverride:LoadLayouts()
+        C_Timer.After(0, function()
+            -- Ensure LibEditModeOverride layouts are loaded when entering Edit Mode
+            if LibEditModeOverride and LibEditModeOverride:IsReady() then
+                if not LibEditModeOverride:AreLayoutsLoaded() then
+                    LibEditModeOverride:LoadLayouts()
+                end
             end
-        end
 
-        -- NudgeFrame is lazy-loaded, only update if it exists
-        if QUICore.nudgeFrame then
-            QUICore.nudgeFrame:UpdateVisibility()
-        end
-        QUICore:EnableClickDetection()
-        -- Let Blizzard's native Edit Mode handle CDM viewers and standard Edit Mode frames
-        -- QUICore:ShowViewerOverlays()
-        -- QUICore:ShowBlizzardFrameOverlays()
-        QUICore:ShowMinimapOverlay()  -- Show nudge overlay on QUI minimap
-        QUICore:EnableMinimapEditMode()  -- Temporarily allow minimap movement
+            -- NudgeFrame is lazy-loaded, only update if it exists
+            if QUICore.nudgeFrame then
+                QUICore.nudgeFrame:UpdateVisibility()
+            end
+            QUICore:EnableClickDetection()
+            QUICore:ShowViewerOverlays()       -- CDM viewer overlays (anchoring + nudge)
+            QUICore:ShowBlizzardFrameOverlays() -- Buff/Debuff frame overlays (anchoring + nudge)
+            QUICore:ShowMinimapOverlay()  -- Show nudge overlay on QUI minimap
+            QUICore:EnableMinimapEditMode()  -- Temporarily allow minimap movement
+        end)
     end)
 
     hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
+        C_Timer.After(0, function()
         -- NudgeFrame is lazy-loaded, only hide if it exists
         if QUICore.nudgeFrame then
             QUICore.nudgeFrame:Hide()
         end
         QUICore:DisableClickDetection()
-        -- QUICore:HideViewerOverlays()
-        -- QUICore:HideBlizzardFrameOverlays()
+        QUICore:HideViewerOverlays()
+        QUICore:HideBlizzardFrameOverlays()
         QUICore:HideMinimapOverlay()  -- Hide minimap overlay
         QUICore:DisableMinimapEditMode()  -- Restore minimap lock setting
         QUICore.selectedViewer = nil
@@ -1251,6 +1759,7 @@ local function SetupEditModeHooks()
                 end
             end
         end)
+        end) -- C_Timer.After(0) deferral
     end)
 end
 

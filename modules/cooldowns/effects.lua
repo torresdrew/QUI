@@ -7,6 +7,13 @@
 local _, ns = ...
 local Helpers = ns.Helpers
 
+-- TAINT SAFETY: Per-frame state in local weak-keyed table
+local frameState = setmetatable({}, { __mode = "k" })
+local function GetFrameState(f)
+    if not frameState[f] then frameState[f] = {} end
+    return frameState[f]
+end
+
 -- Default settings
 local DEFAULTS = { hideEssential = true, hideUtility = true }
 
@@ -20,39 +27,22 @@ end
 -- ======================================================
 local function HideCooldownEffects(child)
     if not child then return end
-    
+
     local effectFrames = {"PandemicIcon", "ProcStartFlipbook", "Finish"}
-    
+
     for _, frameName in ipairs(effectFrames) do
         local frame = child[frameName]
         if frame then
-            frame:Hide()
-            frame:SetAlpha(0)
-            
-            -- Hook to keep it hidden
-            if not frame._QUI_NoShow then
-                frame._QUI_NoShow = true
-                
-                -- Hook Show to prevent it from showing
-                if frame.Show then
-                    hooksecurefunc(frame, "Show", function(self)
-                        if InCombatLockdown() then return end
-                        self:Hide()
-                        self:SetAlpha(0)
-                    end)
-                end
-                
-                -- Also hook parent OnShow
-                if child.HookScript then
-                    child:HookScript("OnShow", function(self)
-                        if InCombatLockdown() then return end
-                        local f = self[frameName]
-                        if f then
-                            f:Hide()
-                            f:SetAlpha(0)
-                        end
-                    end)
-                end
+            -- TAINT SAFETY: Do NOT use hooksecurefunc("Show") on CDM icon children
+            -- or their sub-frames. Any hook on Show (even hooksecurefunc) taints
+            -- Blizzard's secureexecuterange during EditModeFrameSetup.
+            -- Instead, ProcessIcons() runs periodically via polling and re-hides
+            -- these frames each time.
+            if not InCombatLockdown() then
+                pcall(function()
+                    frame:Hide()
+                    frame:SetAlpha(0)
+                end)
             end
         end
     end
@@ -83,7 +73,7 @@ local function HideBlizzardGlows(button)
     -- Hide _ButtonGlow only when it's Blizzard's frame, not LibCustomGlow's.
     -- LibCustomGlow's ButtonGlow_Start uses the same _ButtonGlow property,
     -- so skip hiding when our custom glow is active on this icon.
-    if button._ButtonGlow and not button._QUICustomGlowActive then
+    if button._ButtonGlow and not GetFrameState(button).customGlowActive then
         button._ButtonGlow:Hide()
     end
 end
@@ -126,7 +116,7 @@ local function ProcessViewer(viewerName)
                 pcall(HideAllGlows, child)
                 
                 -- Mark as processed (no OnUpdate hook needed - we handle glows via hooksecurefunc)
-                    child._QUI_EffectsHidden = true
+                    GetFrameState(child).effectsHidden = true
             end
         end
     end
@@ -134,20 +124,43 @@ local function ProcessViewer(viewerName)
     -- Process immediately
     ProcessIcons()
     
-    -- Hook Layout to reprocess when viewer updates
-    if viewer.Layout and not viewer._QUI_EffectsHooked then
-        viewer._QUI_EffectsHooked = true
-        hooksecurefunc(viewer, "Layout", function()
-            C_Timer.After(0.15, ProcessIcons)  -- 150ms debounce for CPU efficiency
-        end)
-    end
-    
-    -- Hook OnShow
-    if not viewer._QUI_EffectsShowHooked then
-        viewer._QUI_EffectsShowHooked = true
-        viewer:HookScript("OnShow", function()
-            if InCombatLockdown() then return end
-            C_Timer.After(0.15, ProcessIcons)  -- 150ms debounce for CPU efficiency
+    -- TAINT SAFETY: Do NOT use hooksecurefunc("Show") or hooksecurefunc("Layout")
+    -- on CDM viewers. Any hook on these methods (even hooksecurefunc which runs in
+    -- insecure context) taints Blizzard's secureexecuterange during
+    -- EditModeFrameSetup, causing "oldR tainted by QUI" and
+    -- ADDON_ACTION_FORBIDDEN for TargetUnit().
+    --
+    -- Instead, use a standalone polling frame to detect visibility transitions
+    -- and periodically re-hide effects.
+    local vfs = GetFrameState(viewer)
+    if not vfs.effectsPollHooked then
+        vfs.effectsPollHooked = true
+        local effectsPollFrame = CreateFrame("Frame")
+        local wasEffectsViewerShown = viewer:IsShown()
+        local effectsPollElapsed = 0
+        effectsPollFrame:SetScript("OnUpdate", function(_, elapsed)
+            local isShown = viewer:IsShown()
+            -- Detect visibility transition (hidden → shown)
+            if isShown and not wasEffectsViewerShown then
+                wasEffectsViewerShown = true
+                if not InCombatLockdown() then
+                    C_Timer.After(0.15, ProcessIcons)
+                end
+            elseif not isShown and wasEffectsViewerShown then
+                wasEffectsViewerShown = false
+            end
+
+            if not isShown then return end
+
+            -- Periodic re-hide check (replaces per-frame Show hooks).
+            -- Effects can re-appear when Blizzard shows/hides icons.
+            effectsPollElapsed = effectsPollElapsed + elapsed
+            if effectsPollElapsed > 1.0 then
+                effectsPollElapsed = 0
+                if not InCombatLockdown() then
+                    ProcessIcons()
+                end
+            end
         end)
     end
 end
@@ -180,27 +193,31 @@ local function HookAllGlows()
     -- Hook the standard ActionButton_ShowOverlayGlow
     -- When Blizzard tries to show a glow, we ALWAYS hide Blizzard's glow
     -- Our custom glow (via LibCustomGlow) is completely separate and won't be affected
+    -- TAINT SAFETY: Defer entire callback to break secure execution context chain.
+    -- CDM viewer icons are children of registered Edit Mode system frames.
     if type(ActionButton_ShowOverlayGlow) == "function" then
         hooksecurefunc("ActionButton_ShowOverlayGlow", function(button)
-            -- Only hide glows on Essential/Utility cooldown viewers, NOT BuffIcon
-            if button and button:GetParent() then
-                local parent = button:GetParent()
-                local parentName = parent:GetName()
-                if parentName and (
-                    parentName:find("EssentialCooldown") or 
-                    parentName:find("UtilityCooldown")
-                    -- BuffIconCooldown is NOT included - we want glows on buff icons
-                ) then
-                    -- Hide Blizzard's glow immediately
-                    -- customglows.lua runs first (load order) and applies LibCustomGlow
-                    -- which is NOT affected by HideBlizzardGlows
-                    C_Timer.After(0.01, function()
-                        if button then
-                            pcall(HideBlizzardGlows, button)
-                        end
-                    end)
+            C_Timer.After(0, function()
+                -- Only hide glows on Essential/Utility cooldown viewers, NOT BuffIcon
+                if button and button:GetParent() then
+                    local parent = button:GetParent()
+                    local parentName = parent:GetName()
+                    if parentName and (
+                        parentName:find("EssentialCooldown") or
+                        parentName:find("UtilityCooldown")
+                        -- BuffIconCooldown is NOT included - we want glows on buff icons
+                    ) then
+                        -- Hide Blizzard's glow
+                        -- customglows.lua runs first (load order) and applies LibCustomGlow
+                        -- which is NOT affected by HideBlizzardGlows
+                        C_Timer.After(0.01, function()
+                            if button then
+                                pcall(HideBlizzardGlows, button)
+                            end
+                        end)
+                    end
                 end
-            end
+            end)
         end)
     end
     

@@ -778,26 +778,34 @@ end
 -- Hook Blizzard frames to prevent them from repositioning
 local function HookExtraButtonPositioning()
     -- Hook ExtraActionBarFrame
+    -- TAINT SAFETY: Defer entire callback body so NO addon code runs
+    -- inside ExtraActionBarFrame's secure SetPoint execution context.
     if ExtraActionBarFrame and not extraActionSetPointHooked then
         extraActionSetPointHooked = true
         hooksecurefunc(ExtraActionBarFrame, "SetPoint", function(self)
-            if hookingSetPoint or InCombatLockdown() then return end
-            local settings = GetExtraButtonDB("extraActionButton")
-            if extraActionHolder and settings and settings.enabled then
-                QueueExtraButtonReanchor("extraActionButton")
-            end
+            C_Timer.After(0, function()
+                if hookingSetPoint or InCombatLockdown() then return end
+                local settings = GetExtraButtonDB("extraActionButton")
+                if extraActionHolder and settings and settings.enabled then
+                    QueueExtraButtonReanchor("extraActionButton")
+                end
+            end)
         end)
     end
 
     -- Hook ZoneAbilityFrame
+    -- TAINT SAFETY: Defer entire callback body so NO addon code runs
+    -- inside ZoneAbilityFrame's secure SetPoint execution context.
     if ZoneAbilityFrame and not zoneAbilitySetPointHooked then
         zoneAbilitySetPointHooked = true
         hooksecurefunc(ZoneAbilityFrame, "SetPoint", function(self)
-            if hookingSetPoint or InCombatLockdown() then return end
-            local settings = GetExtraButtonDB("zoneAbility")
-            if zoneAbilityHolder and settings and settings.enabled then
-                QueueExtraButtonReanchor("zoneAbility")
-            end
+            C_Timer.After(0, function()
+                if hookingSetPoint or InCombatLockdown() then return end
+                local settings = GetExtraButtonDB("zoneAbility")
+                if zoneAbilityHolder and settings and settings.enabled then
+                    QueueExtraButtonReanchor("zoneAbility")
+                end
+            end)
         end)
     end
 
@@ -2093,11 +2101,14 @@ local function ApplyPageArrowVisibility(hide)
         pageNum:Hide()
         if not pageArrowShowHooked then
             pageArrowShowHooked = true
+            -- TAINT SAFETY: Defer Hide() to break secure execution context chain
             hooksecurefunc(pageNum, "Show", function(self)
-                local db = GetDB()
-                if db and db.bars and db.bars.bar1 and db.bars.bar1.hidePageArrow then
-                    self:Hide()
-                end
+                C_Timer.After(0, function()
+                    local db = GetDB()
+                    if db and db.bars and db.bars.bar1 and db.bars.bar1.hidePageArrow then
+                        self:Hide()
+                    end
+                end)
             end)
         end
     else
@@ -2352,18 +2363,23 @@ local function SetupEditModeHooks()
     if not EditModeManagerFrame then return end
 
     -- Show movers when entering Edit Mode
+    -- TAINT SAFETY: Defer to break secure execution context chain
     hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
-        local extraSettings = GetExtraButtonDB("extraActionButton")
-        local zoneSettings = GetExtraButtonDB("zoneAbility")
-        -- Only show movers if at least one extra button feature is enabled
-        if (extraSettings and extraSettings.enabled) or (zoneSettings and zoneSettings.enabled) then
-            ShowExtraButtonMovers()
-        end
+        C_Timer.After(0, function()
+            local extraSettings = GetExtraButtonDB("extraActionButton")
+            local zoneSettings = GetExtraButtonDB("zoneAbility")
+            -- Only show movers if at least one extra button feature is enabled
+            if (extraSettings and extraSettings.enabled) or (zoneSettings and zoneSettings.enabled) then
+                ShowExtraButtonMovers()
+            end
+        end)
     end)
 
     -- Hide movers when exiting Edit Mode
     hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
-        HideExtraButtonMovers()
+        C_Timer.After(0, function()
+            HideExtraButtonMovers()
+        end)
     end)
 end
 

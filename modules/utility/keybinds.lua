@@ -5,6 +5,13 @@
 local _, QUI = ...
 local LSM = LibStub("LibSharedMedia-3.0")
 
+-- TAINT SAFETY: Per-frame state in local weak-keyed table
+local frameState = setmetatable({}, { __mode = "k" })
+local function GetFrameState(f)
+    if not frameState[f] then frameState[f] = {} end
+    return frameState[f]
+end
+
 local function GetCore()
     return (QUI and QUI.QUICore) or (_G.QUI and _G.QUI.QUICore)
 end
@@ -1219,8 +1226,9 @@ local function ClearStoredKeybinds(viewerName)
     local children = { container:GetChildren() }
     
     for _, child in ipairs(children) do
-        child._quiKeybind = nil
-        child._quiKeybindSpellID = nil
+        local cfs = GetFrameState(child)
+        cfs.keybind = nil
+        cfs.keybindSpellID = nil
     end
 end
 
@@ -1307,15 +1315,20 @@ local function HookViewerLayout(viewerName)
     local viewer = _G[viewerName]
     if not viewer then return end
 
-    if viewer.Layout and not viewer._QUI_KeybindHooked then
-        viewer._QUI_KeybindHooked = true
+    local vfs = GetFrameState(viewer)
+    if viewer.Layout and not vfs.keybindHooked then
+        vfs.keybindHooked = true
         hooksecurefunc(viewer, "Layout", function()
-            -- PERFORMANCE: Skip if no keybind features are enabled
-            if not IsAnyKeybindFeatureEnabled() then return end
-            C_Timer.After(0.25, function()  -- 250ms debounce for CPU efficiency
-                -- Double-check after timer (settings may have changed)
+            -- TAINT SAFETY: Defer ALL addon code out of Layout callback.
+            -- CDM viewers are registered Edit Mode system frames.
+            C_Timer.After(0, function()
+                -- PERFORMANCE: Skip if no keybind features are enabled
                 if not IsAnyKeybindFeatureEnabled() then return end
-                UpdateViewerKeybinds(viewerName)
+                C_Timer.After(0.25, function()  -- 250ms debounce for CPU efficiency
+                    -- Double-check after timer (settings may have changed)
+                    if not IsAnyKeybindFeatureEnabled() then return end
+                    UpdateViewerKeybinds(viewerName)
+                end)
             end)
         end)
     end
@@ -1846,9 +1859,11 @@ end
 -- Uses simple textures instead of BackdropTemplate to avoid "arithmetic on secret value" errors
 -- when icons are resized during combat (GetWidth/GetHeight return secret values)
 -- Border renders INSIDE the icon frame, above glow effects (frame level +15)
+-- TAINT SAFETY: Store overlay reference in local state table, not on CDM icon frame
 local function GetRotationHelperOverlay(icon)
-    if icon._rotationHelperOverlay then
-        return icon._rotationHelperOverlay
+    local ifs = GetFrameState(icon)
+    if ifs.rotationHelperOverlay then
+        return ifs.rotationHelperOverlay
     end
 
     -- Create a simple frame for the overlay (no BackdropTemplate)
@@ -1906,7 +1921,7 @@ local function GetRotationHelperOverlay(icon)
     end
 
     overlay:Hide()
-    icon._rotationHelperOverlay = overlay
+    ifs.rotationHelperOverlay = overlay
     return overlay
 end
 
@@ -1920,8 +1935,8 @@ local function ApplyRotationHelperToIcon(icon, viewerName, nextSpellID)
     local settings = viewers[viewerName]
     if not settings or not settings.showRotationHelper then
         -- Hide overlay if disabled
-        if icon._rotationHelperOverlay then
-            icon._rotationHelperOverlay:Hide()
+        if GetFrameState(icon).rotationHelperOverlay then
+            GetFrameState(icon).rotationHelperOverlay:Hide()
         end
         return
     end
@@ -1953,8 +1968,8 @@ local function ApplyRotationHelperToIcon(icon, viewerName, nextSpellID)
     end
 
     if not iconSpellID then
-        if icon._rotationHelperOverlay then
-            icon._rotationHelperOverlay:Hide()
+        if GetFrameState(icon).rotationHelperOverlay then
+            GetFrameState(icon).rotationHelperOverlay:Hide()
         end
         return
     end

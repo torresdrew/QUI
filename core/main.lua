@@ -23,6 +23,14 @@ function ns.Utils.IsInInstancedContent()
     return inInstance and (instanceType == "party" or instanceType == "raid")
 end
 
+-- TAINT SAFETY: Per-frame backdrop state in local weak-keyed table
+-- instead of __quiBackdrop* properties on Blizzard frames
+local backdropState = setmetatable({}, { __mode = "k" })
+local function GetBackdropState(f)
+    if not backdropState[f] then backdropState[f] = {} end
+    return backdropState[f]
+end
+
 -- Global pending reload system
 QUICore.__pendingReload = false
 QUICore.__reloadEventFrame = nil
@@ -139,8 +147,9 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
 
     -- If dimensions are secret/invalid, defer the backdrop setup
     if not hasValidSize then
-        frame.__quiBackdropPending = backdropInfo
-        frame.__quiBackdropBorderColor = borderColor
+        local bds = GetBackdropState(frame)
+        bds.pending = backdropInfo
+        bds.borderColor = borderColor
         QUICore.__pendingBackdrops = QUICore.__pendingBackdrops or {}
         QUICore.__pendingBackdrops[frame] = true
 
@@ -155,7 +164,8 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
 
                 local processed = {}
                 for pendingFrame in pairs(QUICore.__pendingBackdrops or {}) do
-                    if pendingFrame and pendingFrame.__quiBackdropPending ~= nil then
+                    local pbs = GetBackdropState(pendingFrame)
+                    if pendingFrame and pbs.pending ~= nil then
                         -- Re-check if dimensions are now valid
                         local checkOk, checkResult = pcall(function()
                             local w = pendingFrame:GetWidth()
@@ -168,13 +178,13 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                         end)
 
                         if checkOk and checkResult and not InCombatLockdown() then
-                            local setOk = pcall(pendingFrame.SetBackdrop, pendingFrame, pendingFrame.__quiBackdropPending)
-                            if setOk and pendingFrame.__quiBackdropPending and pendingFrame.__quiBackdropBorderColor then
-                                local c = pendingFrame.__quiBackdropBorderColor
+                            local setOk = pcall(pendingFrame.SetBackdrop, pendingFrame, pbs.pending)
+                            if setOk and pbs.pending and pbs.borderColor then
+                                local c = pbs.borderColor
                                 pendingFrame:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1)
                             end
-                            pendingFrame.__quiBackdropPending = nil
-                            pendingFrame.__quiBackdropBorderColor = nil
+                            pbs.pending = nil
+                            pbs.borderColor = nil
                             table.insert(processed, pendingFrame)
                         end
                     else
@@ -206,8 +216,9 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
     if InCombatLockdown() then
         local alreadyPending = QUICore.__pendingBackdrops and QUICore.__pendingBackdrops[frame]
         if not alreadyPending then
-            frame.__quiBackdropPending = backdropInfo
-            frame.__quiBackdropBorderColor = borderColor
+            local bds2 = GetBackdropState(frame)
+            bds2.pending = backdropInfo
+            bds2.borderColor = borderColor
 
             if not QUICore.__backdropEventFrame then
                 local eventFrame = CreateFrame("Frame")
@@ -215,16 +226,17 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                 eventFrame:SetScript("OnEvent", function(self)
                     self:UnregisterEvent("PLAYER_REGEN_ENABLED")
                     for pendingFrame in pairs(QUICore.__pendingBackdrops or {}) do
-                        if pendingFrame and pendingFrame.__quiBackdropPending ~= nil then
+                        local pbs = GetBackdropState(pendingFrame)
+                        if pendingFrame and pbs.pending ~= nil then
                             if not InCombatLockdown() then
-                                local setOk = pcall(pendingFrame.SetBackdrop, pendingFrame, pendingFrame.__quiBackdropPending)
-                                if setOk and pendingFrame.__quiBackdropPending and pendingFrame.__quiBackdropBorderColor then
-                                    local c = pendingFrame.__quiBackdropBorderColor
+                                local setOk = pcall(pendingFrame.SetBackdrop, pendingFrame, pbs.pending)
+                                if setOk and pbs.pending and pbs.borderColor then
+                                    local c = pbs.borderColor
                                     pendingFrame:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1)
                                 end
                             end
-                            pendingFrame.__quiBackdropPending = nil
-                            pendingFrame.__quiBackdropBorderColor = nil
+                            pbs.pending = nil
+                            pbs.borderColor = nil
                         end
                     end
                     QUICore.__pendingBackdrops = {}
@@ -3565,31 +3577,61 @@ function QUICore:ShowSelectionArrows(elementType, elementKey)
         if ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames then
             local frame = ns.QUI_UnitFrames.frames[elementKey]
             if frame and frame.editOverlay then
-                self:ShowNudgeButtons(frame.editOverlay)
+                -- Only show nudge buttons if not anchored/locked
+                if not frame.editOverlay._isAnchored then
+                    self:ShowNudgeButtons(frame.editOverlay)
+                else
+                    -- Still show the info text for locked frames
+                    if frame.editOverlay.infoText then
+                        frame.editOverlay.infoText:Show()
+                    end
+                end
             end
         end
     elseif elementType == "powerbar" then
         local bar = (elementKey == "primary") and self.powerBar or self.secondaryPowerBar
         if bar and bar.editOverlay then
-            self:ShowNudgeButtons(bar.editOverlay)
+            if not bar.editOverlay._isAnchored then
+                self:ShowNudgeButtons(bar.editOverlay)
+            else
+                if bar.editOverlay.infoText then
+                    bar.editOverlay.infoText:Show()
+                end
+            end
         end
     elseif elementType == "cdm" then
         if self.cdmOverlays and self.cdmOverlays[elementKey] then
-            self:ShowNudgeButtons(self.cdmOverlays[elementKey])
+            local overlay = self.cdmOverlays[elementKey]
+            if not overlay._isAnchored then
+                self:ShowNudgeButtons(overlay)
+            else
+                if overlay.infoText then overlay.infoText:Show() end
+            end
         end
     elseif elementType == "blizzard" then
         if self.blizzardOverlays and self.blizzardOverlays[elementKey] then
-            self:ShowNudgeButtons(self.blizzardOverlays[elementKey])
+            local overlay = self.blizzardOverlays[elementKey]
+            if not overlay._isAnchored then
+                self:ShowNudgeButtons(overlay)
+            else
+                if overlay.infoText then overlay.infoText:Show() end
+            end
         end
     elseif elementType == "minimap" then
         if self.minimapOverlay then
-            self:ShowNudgeButtons(self.minimapOverlay)
-            -- Update info text with current position
-            local settings = self.db and self.db.profile and self.db.profile.minimap
-            if settings and settings.position and self.minimapOverlay.infoText then
-                self.minimapOverlay.infoText:SetText(string.format("Minimap  X:%d Y:%d",
-                    math.floor(settings.position[3] or 0),
-                    math.floor(settings.position[4] or 0)))
+            if not self.minimapOverlay._isAnchored then
+                self:ShowNudgeButtons(self.minimapOverlay)
+                -- Update info text with current position
+                local settings = self.db and self.db.profile and self.db.profile.minimap
+                if settings and settings.position and self.minimapOverlay.infoText then
+                    self.minimapOverlay.infoText:SetText(string.format("Minimap  X:%d Y:%d",
+                        math.floor(settings.position[3] or 0),
+                        math.floor(settings.position[4] or 0)))
+                end
+            else
+                if self.minimapOverlay.infoText then
+                    self.minimapOverlay.infoText:Show()
+                end
             end
         end
     elseif elementType == "castbar" then
@@ -3655,10 +3697,25 @@ function QUICore:NudgeSelectedElement(deltaX, deltaY)
             local ufdb = self.db and self.db.profile and self.db.profile.quiUnitFrames
             local settings = ufdb and ufdb[settingsKey]
 
-            -- Block nudging for anchored frames
-            local isAnchored = settings and settings.anchorTo and settings.anchorTo ~= "disabled"
-            if isAnchored and (settingsKey == "player" or settingsKey == "target") then
-                return false
+            -- Block nudging for anchored frames (player/target use anchorTo system)
+            if settingsKey == "player" or settingsKey == "target" then
+                local isAnchored = settings and settings.anchorTo and settings.anchorTo ~= "disabled"
+                if isAnchored then return false end
+            else
+                -- Other unit frames use the global frameAnchoring system
+                local UNIT_ANCHOR_KEYS = {
+                    focus = "focusFrame", targettarget = "totFrame", pet = "petFrame",
+                    boss = "bossFrames", boss1 = "bossFrames", boss2 = "bossFrames",
+                    boss3 = "bossFrames", boss4 = "bossFrames", boss5 = "bossFrames",
+                }
+                local anchoringKey = UNIT_ANCHOR_KEYS[sel.selectedKey] or UNIT_ANCHOR_KEYS[settingsKey]
+                if anchoringKey then
+                    local faDB = self.db and self.db.profile and self.db.profile.frameAnchoring
+                    local faSettings = faDB and faDB[anchoringKey]
+                    if faSettings and faSettings.enabled then
+                        return false
+                    end
+                end
             end
 
             if settings and frame then
@@ -3679,6 +3736,14 @@ function QUICore:NudgeSelectedElement(deltaX, deltaY)
             end
         end
     elseif sel.selectedType == "powerbar" then
+        -- Block nudging for anchored power bars
+        local anchoringKey = (sel.selectedKey == "primary") and "primaryPower" or "secondaryPower"
+        local faDB = self.db and self.db.profile and self.db.profile.frameAnchoring
+        local faSettings = faDB and faDB[anchoringKey]
+        if faSettings and faSettings.enabled then
+            return false
+        end
+
         local cfg = (sel.selectedKey == "primary") and self.db.profile.powerBar or self.db.profile.secondaryPowerBar
         local bar = (sel.selectedKey == "primary") and self.powerBar or self.secondaryPowerBar
         if cfg and bar then
@@ -3938,35 +4003,59 @@ end
 function QUICore:HookViewers()
     for _, name in ipairs(self.viewers) do
         local viewer = _G[name]
-        if viewer and not viewer.__cdmHooked then
-            viewer.__cdmHooked = true
+        local vhs = viewer and (_G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {})
+        if viewer and not (vhs and vhs.hooked) then
+            if vhs then vhs.hooked = true end
 
-            viewer:HookScript("OnShow", function(f)
-                self:ApplyViewerSkin(f)
-            end)
-
+            -- NOTE: OnSizeChanged only fires when the frame's size ACTUALLY changes,
+            -- and does NOT fire during EditModeFrameSetup (frames are shown, not resized).
+            -- Safe to use HookScript here — only Show hooks taint the secure chain.
             viewer:HookScript("OnSizeChanged", function(f)
-                self:ApplyViewerLayout(f)
+                C_Timer.After(0, function()
+                    if f then
+                        self:ApplyViewerLayout(f)
+                    end
+                end)
             end)
 
-            -- Reduced update rate - layout operations don't need high frequency
-            -- 1 FPS fallback polling (primary updates via events/hooks)
+            -- TAINT SAFETY: Use a standalone update frame instead of any hooks on the
+            -- CDM viewer itself. CDM viewers are registered Edit Mode system frames;
+            -- hooksecurefunc("Show") and HookScript("OnShow"/"OnUpdate") all taint
+            -- Blizzard's secureexecuterange during EditModeFrameSetup, causing
+            -- "oldR tainted by QUI" and ADDON_ACTION_FORBIDDEN for TargetUnit().
+            --
+            -- This single OnUpdate frame handles BOTH:
+            --   1) Visibility change detection (replaces hooksecurefunc Show hook)
+            --   2) Periodic rescan (replaces HookScript OnUpdate)
             local updateInterval = 1.0
+            local updateFrame = CreateFrame("Frame")
+            local wasShown = viewer:IsShown()
+            updateFrame:SetScript("OnUpdate", function(_, elapsed)
+                local isShown = viewer:IsShown()
 
-            viewer:HookScript("OnUpdate", function(f, elapsed)
-                f.__cdmElapsed = (f.__cdmElapsed or 0) + elapsed
-                if f.__cdmElapsed > updateInterval then
-                    f.__cdmElapsed = 0
-                    if f:IsShown() then
-                        self:RescanViewer(f)
-                        -- Only process pending if there actually are pending items
-                        if not InCombatLockdown() then
-                            if self.__cdmPendingIcons then
+                -- Detect visibility transition (hidden → shown)
+                if isShown and not wasShown then
+                    wasShown = true
+                    self:ApplyViewerSkin(viewer)
+                elseif not isShown and wasShown then
+                    wasShown = false
+                end
+
+                if not isShown then return end
+
+                -- Periodic rescan
+                local fvs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer) or {}
+                fvs.elapsed = (fvs.elapsed or 0) + elapsed
+                if fvs.elapsed > updateInterval then
+                    fvs.elapsed = 0
+                    self:RescanViewer(viewer)
+                    -- Only process pending if there actually are pending items
+                    if not InCombatLockdown() then
+                        if self._pendingIcons then
                             self:ProcessPendingIcons()
-                            end
-                            if self.__cdmPendingBackdrops then
-                                self:ProcessPendingBackdrops()
-                            end
+                        end
+                        if self._pendingBackdrops then
+                            self:ProcessPendingBackdrops()
                         end
                     end
                 end
@@ -3985,42 +4074,51 @@ function QUICore:HookEditMode()
     -- Hook EditModeManagerFrame if it exists
     if EditModeManagerFrame then
         -- Hook when Edit Mode is entered
+        -- TAINT SAFETY: Defer ALL addon code out of the secure EnterEditMode callback.
+        -- Any synchronous addon code here taints the secure execution context.
+        -- TAINT SAFETY: Defer ALL addon code (including the C_Timer.After call itself)
+        -- out of the secure EnterEditMode/ExitEditMode callbacks. Even calling C_Timer.After
+        -- synchronously is addon code that taints the secure execution context.
         hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
-            C_Timer.After(0.1, function()
-                self:ForceReskinAllViewers()
-            end)
+            C_Timer.After(0, function()
+                C_Timer.After(0.1, function()
+                    self:ForceReskinAllViewers()
 
-            -- Fix BossTargetFrameContainer crash: GetScaledSelectionSides fails when GetRect returns nil
-            -- Apply hook here because the method may not exist at addon init time
-            if BossTargetFrameContainer and not BossTargetFrameContainer._quiScaledSidesHooked then
-                if BossTargetFrameContainer.GetScaledSelectionSides then
-                    local original = BossTargetFrameContainer.GetScaledSelectionSides
-                    BossTargetFrameContainer.GetScaledSelectionSides = function(frame)
-                        local left = frame:GetLeft()
-                        if left == nil then
-                            -- Return off-screen fallback sides (left, right, bottom, top)
-                            return -10000, -9999, 10000, 10001
-                        end
-                        return original(frame)
+                    -- Ensure BossTargetFrameContainer has valid bounds to prevent
+                    -- GetScaledSelectionSides crash when GetRect returns nil.
+                    -- NOTE: We do NOT replace GetScaledSelectionSides — method replacement
+                    -- on registered Edit Mode system frames causes taint that cascades
+                    -- through the entire secure execution context.
+                    if BossTargetFrameContainer then
+                        pcall(function()
+                            if not BossTargetFrameContainer:GetPoint() then
+                                BossTargetFrameContainer:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+                            end
+                            local w = BossTargetFrameContainer:GetWidth()
+                            if not w or w == 0 then
+                                BossTargetFrameContainer:SetSize(1, 1)
+                            end
+                        end)
                     end
-                    BossTargetFrameContainer._quiScaledSidesHooked = true
-                end
-            end
+                end)
+            end)
         end)
-        
+
         -- Hook when Edit Mode is exited
         hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
-            C_Timer.After(0.1, function()
-                self:ForceReskinAllViewers()
+            C_Timer.After(0, function()
+                C_Timer.After(0.1, function()
+                    self:ForceReskinAllViewers()
 
-                -- Hide power bar edit overlays that persist after edit mode exits
-                C_Timer.After(0.15, function()
-                    for _, barName in ipairs({"QUIPrimaryPowerBar", "QUISecondaryPowerBar"}) do
-                        local bar = _G[barName]
-                        if bar and bar.editOverlay and bar.editOverlay:IsShown() then
-                            bar.editOverlay:Hide()
+                    -- Hide power bar edit overlays that persist after edit mode exits
+                    C_Timer.After(0.15, function()
+                        for _, barName in ipairs({"QUIPrimaryPowerBar", "QUISecondaryPowerBar"}) do
+                            local bar = _G[barName]
+                            if bar and bar.editOverlay and bar.editOverlay:IsShown() then
+                                bar.editOverlay:Hide()
+                            end
                         end
-                    end
+                    end)
                 end)
             end)
         end)
@@ -4047,7 +4145,8 @@ function QUICore:HookEditMode()
                     if viewer then
                         local container = viewer.viewerFrame or viewer
                         for _, child in ipairs({ container:GetChildren() }) do
-                            if child.__cdmSkinFailed then
+                            local cis = _G.QUI_GetCDMIconState and _G.QUI_GetCDMIconState(child) or {}
+                            if cis.skinFailed then
                                 needsReskin = true
                                 break
                             end
@@ -4136,24 +4235,12 @@ function QUICore:SetupEncounterWarningsSecretValuePatch()
             error(err, 0)
         end
 
-        -- Also patch the global EncounterWarnings instance directly.
-        -- When the addon loads, XML templates create frame instances via Mixin()
-        -- which copies the ORIGINAL Init onto them before our mixin patch runs.
-        -- Wrapping SetIsEditing on the instance catches the entire call chain:
-        -- SetIsEditing → OnEditingChanged → ShowWarning → view:ShowWarning → Text:Init
-        local ew = _G.EncounterWarnings
-        if ew and type(ew.SetIsEditing) == "function" then
-            local origSetIsEditing = ew.SetIsEditing
-            ew.SetIsEditing = function(ewSelf, ...)
-                local ok2, err2 = pcall(origSetIsEditing, ewSelf, ...)
-                if not ok2 then
-                    if type(err2) == "string" and err2:find("secret value") then
-                        return
-                    end
-                    error(err2, 0)
-                end
-            end
-        end
+        -- TAINT SAFETY: Do NOT replace SetIsEditing on EncounterWarnings.
+        -- EncounterWarnings is accessed during Edit Mode's secure execution chain.
+        -- Method replacement causes addon code to run in the secure context, tainting
+        -- the entire secureexecuterange chain. The mixin patch on
+        -- EncounterWarningsTextElementMixin.Init (above) catches the secret value
+        -- errors at the Init level instead.
 
         self.__encounterWarningsPatched = true
         return true
@@ -4187,10 +4274,10 @@ end
 
 -- Process pending backdrops that were deferred due to secret values
 function QUICore:ProcessPendingBackdrops()
-    if not self.__cdmPendingBackdrops then return end
+    if not self._pendingBackdrops then return end
 
     local processed = {}
-    for frame, _ in pairs(self.__cdmPendingBackdrops) do
+    for frame, _ in pairs(self._pendingBackdrops) do
         if frame then
             -- Check if dimensions are now valid (must be able to do arithmetic)
             local ok, isValid = pcall(function()
@@ -4202,12 +4289,13 @@ function QUICore:ProcessPendingBackdrops()
                 end
                 return false
             end)
-            
+
             if ok and isValid then
                 -- Dimensions are valid, try to set backdrop
-                local pendingInfo = frame.__cdmBackdropPending
-                local pendingSettings = frame.__cdmBackdropSettings
-                
+                local fis = _G.QUI_GetCDMIconState and _G.QUI_GetCDMIconState(frame) or {}
+                local pendingInfo = fis.backdropPending
+                local pendingSettings = fis.backdropSettings
+
                 if pendingSettings then
                     if pendingSettings.backdropInfo then
                         local setOk = pcall(frame.SetBackdrop, frame, pendingSettings.backdropInfo)
@@ -4220,17 +4308,17 @@ end
                 elseif pendingInfo then
                     pcall(frame.SetBackdrop, frame, pendingInfo)
                 end
-                
-                frame.__cdmBackdropPending = nil
-                frame.__cdmBackdropSettings = nil
+
+                fis.backdropPending = nil
+                fis.backdropSettings = nil
                 table.insert(processed, frame)
                 end
             end
         end
-        
+
     -- Remove processed frames
     for _, frame in ipairs(processed) do
-        self.__cdmPendingBackdrops[frame] = nil
+        self._pendingBackdrops[frame] = nil
             end
         end
         
