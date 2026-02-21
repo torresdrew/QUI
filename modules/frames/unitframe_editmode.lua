@@ -16,6 +16,10 @@ local GetUnitSettings = QUI_UF._GetUnitSettings
 local UpdateFrame = QUI_UF._UpdateFrame
 local GetCore = ns.Helpers.GetCore
 
+-- Weak-keyed table for edit mode state on SecureUnitButtonTemplate frames
+-- Avoids writing custom properties directly onto protected frames.
+local _editModeState = setmetatable({}, { __mode = "k" })
+
 ---------------------------------------------------------------------------
 -- EDIT MODE: Toggle draggable frames with arrow nudge buttons
 ---------------------------------------------------------------------------
@@ -347,15 +351,18 @@ function QUI_UF:EnableEditMode()
         frame:EnableMouse(true)
         frame:RegisterForDrag("LeftButton")
 
-        -- Store unitKey on frame for click handler
-        frame._editModeUnitKey = unitKey
+        -- Store unitKey for click handler (in weak table to avoid tainting secure frames)
+        _editModeState[frame] = _editModeState[frame] or {}
+        _editModeState[frame].unitKey = unitKey
 
         -- Click handler to select this element and show its arrows
         frame:SetScript("OnMouseDown", function(self, button)
             if button == "LeftButton" and QUI_UF.editModeActive then
                 local core = GetCore()
                 if core and core.SelectEditModeElement then
-                    core:SelectEditModeElement("unitframe", self._editModeUnitKey)
+                    local state = _editModeState[self]
+                    local key = state and state.unitKey
+                    core:SelectEditModeElement("unitframe", key)
                 end
             end
         end)

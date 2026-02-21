@@ -270,6 +270,8 @@ local function ApplyNineSliceColors(nineSlice, sr, sg, sb, sa, bgr, bgg, bgb, bg
 end
 
 -- Prevent Blizzard from re-applying the default NineSlice layout on Show
+-- NOTE: Nil'ing these properties on Blizzard tooltip frames is safe — tooltips are not
+-- protected frames and don't participate in secure execution paths.
 local function ClearNineSliceLayoutInfo(tooltip)
     if not tooltip then return end
 

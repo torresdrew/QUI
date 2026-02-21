@@ -35,6 +35,7 @@ local DEFAULTS = {
 }
 
 local pendingObjectiveTrackerHide = false
+local pendingApplyHideSettings = false
 
 -- CompactRaidFrameManager visibility watcher (replaces hooksecurefunc to avoid taint)
 local _crfWatcher = nil
@@ -173,7 +174,16 @@ local function ApplyHideSettings()
     if not settings then
         return
     end
-    
+
+    -- TAINT SAFETY: Many Blizzard frames below are protected. Manipulating them
+    -- during combat causes ADDON_ACTION_FORBIDDEN errors. Defer the entire
+    -- function to PLAYER_REGEN_ENABLED when in combat.
+    if InCombatLockdown() then
+        pendingApplyHideSettings = true
+        return
+    end
+    pendingApplyHideSettings = false
+
     -- Objective Tracker (Quest Tracker)
     if ObjectiveTrackerFrame then
         local shouldHide = false
@@ -683,10 +693,9 @@ eventFrame:SetScript("OnEvent", function(self, event, addon)
     end
 
     if event == "PLAYER_REGEN_ENABLED" then
-        if pendingObjectiveTrackerHide then
-            pendingObjectiveTrackerHide = false
-        end
-        if settings then
+        local needsApply = pendingApplyHideSettings or pendingObjectiveTrackerHide
+        pendingObjectiveTrackerHide = false
+        if settings and needsApply then
             ApplyHideSettings()
         end
         return

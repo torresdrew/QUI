@@ -39,6 +39,10 @@ local BLIZZARD_FRAME_LABELS = {
 -- CDM viewer names for click detection (populated when CDM_VIEWERS is defined)
 local CDM_VIEWER_LOOKUP = {}
 
+-- Weak-keyed table to track frames we force-showed in Edit Mode
+-- (avoids writing custom properties directly onto protected Blizzard frames)
+local _forceShownFrames = setmetatable({}, { __mode = "k" })
+
 local function IsNudgeTargetFrameName(frameName)
     if not frameName then return false end
 
@@ -1040,8 +1044,10 @@ function QUICore:ShowBlizzardFrameOverlays()
         -- Force-show alwaysShow frames so the bar and .Selection are visible
         -- in Edit Mode (e.g., PetActionBar when pet is dismissed).
         if frame and frameInfo.alwaysShow and not frame:IsShown() then
-            frame:Show()
-            frame.__quiForceShown = true
+            if not InCombatLockdown() then
+                frame:Show()
+                _forceShownFrames[frame] = true
+            end
         end
         if frame and (frame:IsShown() or frameInfo.alwaysShow) then
             if not blizzardOverlays[frameName] then
@@ -1063,7 +1069,7 @@ function QUICore:ShowBlizzardFrameOverlays()
                     end
                     -- For force-shown frames, bar buttons eat click-throughs
                     -- so we handle the menu directly on the overlay.
-                    if frame.__quiForceShown then
+                    if _forceShownFrames[frame] then
                         overlay:EnableMouse(true)
                         overlay:SetScript("OnEnter", function(self)
                             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -1098,7 +1104,7 @@ function QUICore:ShowBlizzardFrameOverlays()
                     BlockFrameMovement(frame)
                     -- Hide Blizzard's blue .Selection indicator
                     HideSelectionIndicator(frame)
-                elseif frameInfo.passthrough and not frame.__quiForceShown then
+                elseif frameInfo.passthrough and not _forceShownFrames[frame] then
                     -- Free passthrough: visual-only QUI overlay, clicks pass
                     -- through to Blizzard's .Selection for Edit Mode menu + drag.
                     overlay:Show()
@@ -1128,7 +1134,7 @@ function QUICore:ShowBlizzardFrameOverlays()
                     UnblockFrameMovement(frame)
                     ShowSelectionIndicator(frame)
                     overlay:EnableMouse(true)
-                    if frame.__quiForceShown then
+                    if _forceShownFrames[frame] then
                         overlay:SetScript("OnEnter", function(self)
                             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                             GameTooltip:SetText(overlay.displayName or frameName)
@@ -1146,7 +1152,7 @@ function QUICore:ShowBlizzardFrameOverlays()
                             QUICore:SelectViewer(frameName)
                             -- Open Blizzard Edit Mode menu on mouse down
                             -- (matches stance bar behavior).
-                            if frame.__quiForceShown and frame.SelectSystem then
+                            if _forceShownFrames[frame] and frame.SelectSystem then
                                 pcall(function()
                                     if EditModeManagerFrame and EditModeManagerFrame.ClearSelectedSystem then
                                         EditModeManagerFrame:ClearSelectedSystem()
@@ -1208,9 +1214,11 @@ function QUICore:HideBlizzardFrameOverlays()
             overlay:SetScript("OnDragStop", nil)
         end
         -- Hide frames we force-showed on Edit Mode enter
-        if frame and frame.__quiForceShown then
-            frame:Hide()
-            frame.__quiForceShown = nil
+        if frame and _forceShownFrames[frame] then
+            if not InCombatLockdown() then
+                frame:Hide()
+            end
+            _forceShownFrames[frame] = nil
         end
     end
 end
@@ -1338,6 +1346,7 @@ function QUICore:ShowMinimapOverlay()
                 local tracker = self._minimapDragTracker
                 tracker._yShift = yShift
                 tracker:SetScript("OnUpdate", function(tf)
+                    if InCombatLockdown() then return end
                     if not MinimapCluster then
                         tf:SetScript("OnUpdate", nil)
                         return
@@ -1619,6 +1628,8 @@ function QUICore:NudgeMinimap(direction)
     if _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(Minimap) then
         return
     end
+
+    if InCombatLockdown() then return end
 
     local db = self.db and self.db.profile and self.db.profile.minimap
     if not db or not db.position then return end

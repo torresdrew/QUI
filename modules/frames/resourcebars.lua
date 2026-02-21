@@ -13,6 +13,10 @@ local function Scale(x, frame)
     return x
 end
 
+-- TAINT SAFETY: Weak-keyed table to track hook guards on Blizzard frames
+-- instead of writing custom properties directly onto them.
+local _resourceBarGuards = setmetatable({}, { __mode = "k" })
+
 -- Check if CDM visibility says we should be hidden
 local function IsCDMVisibilityHidden()
     if _G.QUI_ShouldCDMBeVisible then
@@ -479,19 +483,23 @@ local function EnsureDemonHunterSoulBar()
             end
         end
         -- Ensure it's shown (even if PlayerFrame is hidden)
-        if not soulBar:IsShown() then
-            soulBar:Show()
-        end
-        soulBar:SetAlpha(0)  -- ALWAYS hide visually (fixes Devourer spec)
-        -- Unhook any hide scripts that might prevent it from showing
         if not InCombatLockdown() then
-            soulBar:SetScript("OnShow", nil)
-            -- Set OnHide to immediately show it again
-            soulBar:SetScript("OnHide", function(self)
-                if not InCombatLockdown() then
-                    self:Show()
-                    self:SetAlpha(0)
-                end
+            if not soulBar:IsShown() then
+                soulBar:Show()
+            end
+            soulBar:SetAlpha(0)  -- ALWAYS hide visually (fixes Devourer spec)
+        end
+        -- Hook Hide so the bar is immediately re-shown (invisible) when Blizzard hides it.
+        -- Using hooksecurefunc instead of SetScript to avoid replacing secure handlers.
+        if not _resourceBarGuards[soulBar] then
+            _resourceBarGuards[soulBar] = true
+            hooksecurefunc(soulBar, "Hide", function(self)
+                C_Timer.After(0, function()
+                    if not InCombatLockdown() and self and self.Show then
+                        self:Show()
+                        self:SetAlpha(0)
+                    end
+                end)
             end)
         end
     end
@@ -534,7 +542,7 @@ local function GetSecondaryResourceValue(resource)
         if not soulBar then return nil, nil, nil, nil end
 
         -- Ensure the bar is shown (even if PlayerFrame is hidden)
-        if not soulBar:IsShown() then
+        if not soulBar:IsShown() and not InCombatLockdown() then
             soulBar:Show()
             soulBar:SetAlpha(0)
         end
