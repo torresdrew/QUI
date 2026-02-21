@@ -29,6 +29,10 @@ local BORDER_COLOR_DEBUFF = {0.5, 0, 0, 1}    -- Dark red for debuffs
 -- Track which buttons we've already bordered
 local borderedButtons = {}
 
+-- Hook guards stored locally (NOT on Blizzard frames) to avoid taint
+local buffFrameShowHooked = false
+local debuffFrameShowHooked = false
+
 -- Add border to a single buff/debuff button
 local function AddBorderToButton(button, isBuff)
     if not button or borderedButtons[button] then
@@ -170,13 +174,17 @@ local function ApplyFrameHiding()
             BuffFrame:Show()
         end
         -- Hook Show() once to prevent Blizzard from re-showing
-        if not BuffFrame._QUI_ShowHooked then
-            BuffFrame._QUI_ShowHooked = true
+        if not buffFrameShowHooked then
+            buffFrameShowHooked = true
+            -- TAINT SAFETY: Defer to break taint chain — BuffFrame.Show() can fire
+            -- inside secure execution contexts (compact unit frame updates).
             hooksecurefunc(BuffFrame, "Show", function(self)
-                local s = GetSettings()
-                if s and s.hideBuffFrame then
-                    self:Hide()
-                end
+                C_Timer.After(0, function()
+                    local s = GetSettings()
+                    if s and s.hideBuffFrame then
+                        self:Hide()
+                    end
+                end)
             end)
         end
     end
@@ -189,13 +197,17 @@ local function ApplyFrameHiding()
             DebuffFrame:Show()
         end
         -- Hook Show() once to prevent Blizzard from re-showing
-        if not DebuffFrame._QUI_ShowHooked then
-            DebuffFrame._QUI_ShowHooked = true
+        if not debuffFrameShowHooked then
+            debuffFrameShowHooked = true
+            -- TAINT SAFETY: Defer to break taint chain — DebuffFrame.Show() can fire
+            -- inside secure execution contexts (compact unit frame updates).
             hooksecurefunc(DebuffFrame, "Show", function(self)
-                local s = GetSettings()
-                if s and s.hideDebuffFrame then
-                    self:Hide()
-                end
+                C_Timer.After(0, function()
+                    local s = GetSettings()
+                    if s and s.hideDebuffFrame then
+                        self:Hide()
+                    end
+                end)
             end)
         end
     end
@@ -240,30 +252,43 @@ local function ScheduleBuffBorders()
 end
 
 -- Hook into aura update functions
+-- TAINT SAFETY: All hooks defer via C_Timer.After(0) to break taint chain from secure context.
+-- Even a simple boolean check + C_Timer.After call inside a synchronous hooksecurefunc callback
+-- contaminates the secure execution context in the Midnight (12.0+) taint model.
 local function HookAuraUpdates()
     -- Hook BuffFrame updates
     if BuffFrame and BuffFrame.Update then
-        hooksecurefunc(BuffFrame, "Update", ScheduleBuffBorders)
+        hooksecurefunc(BuffFrame, "Update", function()
+            C_Timer.After(0, ScheduleBuffBorders)
+        end)
     end
 
     -- Hook AuraContainer updates if it exists (buffs)
     if BuffFrame and BuffFrame.AuraContainer and BuffFrame.AuraContainer.Update then
-        hooksecurefunc(BuffFrame.AuraContainer, "Update", ScheduleBuffBorders)
+        hooksecurefunc(BuffFrame.AuraContainer, "Update", function()
+            C_Timer.After(0, ScheduleBuffBorders)
+        end)
     end
 
     -- Hook DebuffFrame updates
     if DebuffFrame and DebuffFrame.Update then
-        hooksecurefunc(DebuffFrame, "Update", ScheduleBuffBorders)
+        hooksecurefunc(DebuffFrame, "Update", function()
+            C_Timer.After(0, ScheduleBuffBorders)
+        end)
     end
 
     -- Hook DebuffFrame.AuraContainer updates if it exists
     if DebuffFrame and DebuffFrame.AuraContainer and DebuffFrame.AuraContainer.Update then
-        hooksecurefunc(DebuffFrame.AuraContainer, "Update", ScheduleBuffBorders)
+        hooksecurefunc(DebuffFrame.AuraContainer, "Update", function()
+            C_Timer.After(0, ScheduleBuffBorders)
+        end)
     end
 
     -- Hook the global aura update function if available
     if type(AuraButton_Update) == "function" then
-        hooksecurefunc("AuraButton_Update", ScheduleBuffBorders)
+        hooksecurefunc("AuraButton_Update", function()
+            C_Timer.After(0, ScheduleBuffBorders)
+        end)
     end
 end
 

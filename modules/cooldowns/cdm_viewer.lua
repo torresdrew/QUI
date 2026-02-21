@@ -342,6 +342,14 @@ local function SyncViewerSelectionSafe(viewer)
         return false
     end
 
+    -- Skip during Edit Mode: manipulating .Selection on protected CDM viewers
+    -- in Edit Mode taints Blizzard's execution path, causing CompactUnitFrame
+    -- "secret number value tainted by 'QUI'" errors on Edit Mode exit.
+    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then
+        viewer.__cdmPendingSelectionSync = true
+        return false
+    end
+
     local ok = pcall(function()
         viewer.Selection:ClearAllPoints()
         viewer.Selection:SetPoint("TOPLEFT", viewer, "TOPLEFT", 0, 0)
@@ -1763,6 +1771,26 @@ end
 _G.QUI_RefreshNCDM = RefreshAll
 _G.QUI_IncrementNCDMVersion = IncrementSettingsVersion
 _G.QUI_ApplyUtilityAnchor = ApplyUtilityAnchor
+
+-- Expose viewer layout state for resource bars, castbars, anchoring, etc.
+-- Reads the __cdm* properties stored by LayoutViewer and returns a structured table.
+_G.QUI_GetCDMViewerState = function(viewer)
+    if not viewer then return nil end
+    if not viewer.__cdmIconWidth then return nil end
+    return {
+        iconWidth              = viewer.__cdmIconWidth,
+        totalHeight            = viewer.__cdmTotalHeight,
+        row1Width              = viewer.__cdmRow1Width,
+        bottomRowWidth         = viewer.__cdmBottomRowWidth,
+        potentialRow1Width     = viewer.__cdmPotentialRow1Width,
+        potentialBottomRowWidth = viewer.__cdmPotentialBottomRowWidth,
+        row1IconHeight         = viewer.__cdmRow1IconHeight,
+        row1BorderSize         = viewer.__cdmRow1BorderSize,
+        bottomRowBorderSize    = viewer.__cdmBottomRowBorderSize,
+        bottomRowYOffset       = viewer.__cdmBottomRowYOffset,
+        layoutDir              = viewer.__cdmLayoutDirection,
+    }
+end
 
 ---------------------------------------------------------------------------
 -- FORCE LOAD CDM: Open settings panel invisibly to force Blizzard init
