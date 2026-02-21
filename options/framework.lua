@@ -4925,14 +4925,23 @@ function GUI:ShowImportPopup(config)
             ok, msg = config.onImport(str)
         end
 
+        local printFeedback = ns.PrintImportFeedback
         if ok then
-            print("|cff34D399QUI:|r " .. (msg or "Import successful"))
+            if printFeedback then
+                printFeedback(true, msg, false)
+            else
+                print("|cff34D399QUI:|r " .. (msg or "Import successful"))
+            end
             ImportPopup:Hide()
             if config.onSuccess then
                 config.onSuccess()
             end
         else
-            print("|cffff0000QUI:|r " .. (msg or "Import failed"))
+            if printFeedback then
+                printFeedback(false, msg, false)
+            else
+                print("|cffff0000QUI:|r " .. (msg or "Import failed"))
+            end
         end
     end
 

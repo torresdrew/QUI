@@ -939,7 +939,13 @@ local function BuildGeneralTab(tabContent)
     y = y - 30
 
     if generalDB then
-        local petCombatCheck = GUI:CreateFormCheckbox(tabContent, "Show Combat Warning in Instances", "petCombatWarning", generalDB)
+        local petCombatCheck = GUI:CreateFormCheckbox(tabContent, "Show Combat Warning in Instances", "petCombatWarning", generalDB, function()
+            if _G.QUI_RefreshPetWarning then
+                _G.QUI_RefreshPetWarning()
+            elseif _G.QUI_RepositionPetWarning then
+                _G.QUI_RepositionPetWarning()
+            end
+        end)
         petCombatCheck:SetPoint("TOPLEFT", PADDING, y)
         petCombatCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
