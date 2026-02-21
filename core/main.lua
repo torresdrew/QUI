@@ -197,7 +197,11 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                     self:Hide()
                 end
             end)
+            QUICore.__backdropUpdateHandler = updateFrame:GetScript("OnUpdate")
             QUICore.__backdropUpdateFrame = updateFrame
+        end
+        if QUICore.__backdropUpdateHandler then
+            QUICore.__backdropUpdateFrame:SetScript("OnUpdate", QUICore.__backdropUpdateHandler)
         end
         QUICore.__backdropUpdateFrame:Show()
         return false
