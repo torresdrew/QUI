@@ -46,6 +46,13 @@ local _crfWatcherShown = false
 -- taint model, causing ADDON_ACTION_FORBIDDEN and secret-value errors.
 local hookedSecureFrames = setmetatable({}, { __mode = "k" })
 
+-- Check if Blizzard's Edit Mode is currently active.
+-- During Edit Mode, all hide rules are suspended so frames remain visible
+-- for positioning. Re-applied automatically when Edit Mode exits.
+local function IsInEditMode()
+    return EditModeManagerFrame and EditModeManagerFrame:IsShown()
+end
+
 -- Get settings from AceDB via shared helper
 local function GetSettings()
     local uiHider = Helpers.GetModuleSettings("uiHider", DEFAULTS)
@@ -175,6 +182,12 @@ local function ApplyHideSettings()
         return
     end
 
+    -- Suspend hide rules during Edit Mode so all frames remain visible for
+    -- positioning. Settings are re-applied when Edit Mode exits via callback.
+    if IsInEditMode() then
+        return
+    end
+
     -- TAINT SAFETY: Many Blizzard frames below are protected. Manipulating them
     -- during combat causes ADDON_ACTION_FORBIDDEN errors. Defer the entire
     -- function to PLAYER_REGEN_ENABLED when in combat.
@@ -211,6 +224,9 @@ local function ApplyHideSettings()
             if not otState.showHooked then
                 otState.showHooked = true
                 hooksecurefunc(ObjectiveTrackerFrame, "Show", function(self)
+                    -- Don't fight Edit Mode — let frames stay visible for positioning
+                    if IsInEditMode() then return end
+
                     -- Immediately hide the frame visually to prevent a 1-frame flash.
                     -- The deferred C_Timer.After(0) is still needed to safely call
                     -- Hide() without tainting secure Blizzard code, but setting alpha
@@ -230,6 +246,8 @@ local function ApplyHideSettings()
 
                     -- Break secure call chains before enforcing hidden state
                     C_Timer.After(0, function()
+                        if IsInEditMode() then return end
+
                         local s2 = GetSettings()
                         if s2 then
                             local shouldHideNow = false
@@ -296,6 +314,7 @@ local function ApplyHideSettings()
             -- TAINT SAFETY: Defer to break taint chain from secure context.
             hooksecurefunc(GameTimeFrame, "Show", function(self)
                 C_Timer.After(0, function()
+                    if IsInEditMode() then return end
                     local s = GetSettings()
                     if s and s.hideGameTime then
                         self:Hide()
@@ -331,11 +350,13 @@ local function ApplyHideSettings()
                 _crfWatcherShown = false
             end
             _crfWatcher:SetScript("OnUpdate", function()
+                if IsInEditMode() then return end
                 local alpha = CompactRaidFrameManager:GetAlpha()
                 if alpha > 0 and not _crfWatcherShown then
                     _crfWatcherShown = true
                     -- Blizzard restored alpha — re-hide if setting is still on
                     C_Timer.After(0, function()
+                        if IsInEditMode() then _crfWatcherShown = false return end
                         if InCombatLockdown() then return end
                         local s = GetSettings()
                         if s and s.hideRaidFrameManager then
@@ -393,6 +414,7 @@ end
                 local function BlockAlpha(texture)
                     C_Timer.After(0, function()
                         if not texture then return end
+                        if IsInEditMode() then return end
                         local s = GetSettings()
                         if s and s.hideBuffCollapseButton and texture.GetAlpha and texture:GetAlpha() > 0 then
                             texture:SetAlpha(0)
@@ -480,6 +502,7 @@ end
                 -- TAINT SAFETY: Defer to break taint chain from secure context.
                 hooksecurefunc(TalkingHeadFrame, "Show", function(self)
                     C_Timer.After(0, function()
+                        if IsInEditMode() then return end
                         local s = GetSettings()
                         if s and s.hideTalkingHead then
                             self:Hide()
@@ -543,6 +566,7 @@ end
 
         -- Helper function to hide individual bars based on type
         local function HideStatusBars()
+            if IsInEditMode() then return end
             local s = GetSettings()
             if not s then return end
 
@@ -590,6 +614,7 @@ end
                 -- TAINT SAFETY: Defer to break taint chain from secure context.
                 hooksecurefunc(StatusTrackingBarManager, "Show", function(self)
                     C_Timer.After(0, function()
+                        if IsInEditMode() then return end
                         local s = GetSettings()
                         if s and s.hideExperienceBar and s.hideReputationBar then
                             self:Hide()
@@ -657,6 +682,7 @@ end
                 -- TAINT SAFETY: Defer to break taint chain from secure context.
                 hooksecurefunc(WorldMapFrame.BlackoutFrame, "Show", function(self)
                     C_Timer.After(0, function()
+                        if IsInEditMode() then return end
                         if InCombatLockdown() then return end  -- Avoid taint during combat
                         local s = GetSettings()
                         if s and s.hideWorldMapBlackout then
@@ -670,6 +696,7 @@ end
                 -- TAINT SAFETY: Defer to break taint chain from secure context.
                 hooksecurefunc(WorldMapFrame.BlackoutFrame, "SetAlpha", function(self)
                     C_Timer.After(0, function()
+                        if IsInEditMode() then return end
                         if InCombatLockdown() then return end  -- Avoid taint during combat
                         local s = GetSettings()
                         if s and s.hideWorldMapBlackout and self.GetAlpha and self:GetAlpha() > 0 then
@@ -727,6 +754,7 @@ eventFrame:SetScript("OnEvent", function(self, event, addon)
     if event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ROLES_ASSIGNED" then
         if settings and settings.hideRaidFrameManager and CompactRaidFrameManager then
             C_Timer.After(0, function()
+                if IsInEditMode() then return end
                 if not InCombatLockdown() then
                     CompactRaidFrameManager:Hide()
                     CompactRaidFrameManager:EnableMouse(false)
@@ -752,4 +780,123 @@ QUI.UIHider = {
 _G.QUI_RefreshUIHider = function()
     ApplyHideSettings()
 end
+
+---------------------------------------------------------------------------
+-- EDIT MODE INTEGRATION
+-- Temporarily restore hidden frames during Edit Mode so they remain visible
+-- for positioning. Re-apply hide settings when Edit Mode exits.
+---------------------------------------------------------------------------
+
+-- Show all frames that QUI's hider has hidden (called on Edit Mode enter)
+local function ShowAllHiddenForEditMode()
+    if InCombatLockdown() then return end
+    local settings = GetSettings()
+    if not settings then return end
+
+    -- ObjectiveTracker
+    if ObjectiveTrackerFrame then
+        local wasHidden = settings.hideObjectiveTrackerAlways
+            or ShouldHideInCurrentInstance(settings.hideObjectiveTrackerInstanceTypes)
+        if wasHidden then
+            ObjectiveTrackerFrame:SetAlpha(1)
+            ObjectiveTrackerFrame:Show()
+            ObjectiveTrackerFrame:EnableMouse(true)
+        end
+    end
+
+    -- Minimap Border
+    if MinimapCluster and MinimapCluster.BorderTop and settings.hideMinimapBorder then
+        MinimapCluster.BorderTop:Show()
+    end
+
+    -- Time Manager Clock
+    if TimeManagerClockButton and settings.hideTimeManager then
+        TimeManagerClockButton:Show()
+    end
+
+    -- Game Time (Calendar)
+    if GameTimeFrame and settings.hideGameTime then
+        GameTimeFrame:Show()
+    end
+
+    -- Compact Raid Frame Manager
+    if CompactRaidFrameManager and settings.hideRaidFrameManager then
+        CompactRaidFrameManager:SetAlpha(1)
+        CompactRaidFrameManager:EnableMouse(true)
+    end
+
+    -- Minimap Zone Text
+    if MinimapZoneText and settings.hideMinimapZoneText then
+        MinimapZoneText:Show()
+    end
+
+    -- Buff Frame Collapse Button
+    if BuffFrame and BuffFrame.CollapseAndExpandButton and settings.hideBuffCollapseButton then
+        local btn = BuffFrame.CollapseAndExpandButton
+        if btn.NormalTexture then btn.NormalTexture:SetAlpha(1) end
+        if btn.PushedTexture then btn.PushedTexture:SetAlpha(1) end
+        if btn.HighlightTexture then btn.HighlightTexture:SetAlpha(1) end
+        btn:EnableMouse(true)
+    end
+
+    -- Talking Head
+    -- Only show during edit mode if Blizzard's .Selection is active (i.e., user
+    -- has Talking Head enabled in edit mode settings).  When disabled, showing
+    -- the frame would create an invisible mouse-blocking area over action bars.
+    -- Keep EnableMouse(false) — Blizzard's .Selection handles edit mode clicks.
+    if TalkingHeadFrame and settings.hideTalkingHead then
+        local sel = TalkingHeadFrame.Selection
+        if sel and sel:IsShown() then
+            TalkingHeadFrame:Show()
+        end
+    end
+
+    -- Status Tracking Bars (XP / Reputation)
+    if StatusTrackingBarManager then
+        if settings.hideExperienceBar and settings.hideReputationBar then
+            StatusTrackingBarManager:Show()
+        end
+        if StatusTrackingBarManager.barContainers then
+            for _, container in ipairs(StatusTrackingBarManager.barContainers) do
+                container:SetAlpha(1)
+                container:EnableMouse(true)
+            end
+        end
+    end
+
+    -- World Map Blackout
+    if WorldMapFrame and WorldMapFrame.BlackoutFrame and settings.hideWorldMapBlackout then
+        WorldMapFrame.BlackoutFrame:SetAlpha(1)
+        WorldMapFrame.BlackoutFrame:EnableMouse(true)
+    end
+
+    -- UIErrors (restore event registration temporarily)
+    if UIErrorsFrame then
+        if settings.hideErrorMessages and settings.hideInfoMessages then
+            UIErrorsFrame:Show()
+        end
+        if settings.hideErrorMessages then
+            UIErrorsFrame:RegisterEvent("UI_ERROR_MESSAGE")
+        end
+        if settings.hideInfoMessages then
+            UIErrorsFrame:RegisterEvent("UI_INFO_MESSAGE")
+        end
+    end
+end
+
+-- Register Edit Mode enter/exit callbacks (deferred to ensure core is ready)
+C_Timer.After(1.5, function()
+    local core = Helpers.GetCore and Helpers.GetCore()
+    if not core or not core.RegisterEditModeEnter then return end
+
+    core:RegisterEditModeEnter(function()
+        if InCombatLockdown() then return end
+        ShowAllHiddenForEditMode()
+    end)
+
+    core:RegisterEditModeExit(function()
+        if InCombatLockdown() then return end
+        ApplyHideSettings()
+    end)
+end)
 

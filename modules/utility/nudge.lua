@@ -35,6 +35,8 @@ local BLIZZARD_FRAME_LABELS = {
     -- Display
     ObjectiveTrackerFrame = "Objective Tracker",
     GameTooltipDefaultContainer = "HUD Tooltip",
+    TalkingHeadFrame = "Talking Head",
+    ExtraAbilityContainer = "Extra Abilities",
 }
 
 -- CDM viewer names for click detection (populated when CDM_VIEWERS is defined)
@@ -403,16 +405,24 @@ local BLIZZARD_EDITMODE_FRAMES = {
     { name = "MultiBar5", label = "Action Bar 6", passthrough = true },
     { name = "MultiBar6", label = "Action Bar 7", passthrough = true },
     { name = "MultiBar7", label = "Action Bar 8", passthrough = true },
-    { name = "PetActionBar", label = "Pet Bar", passthrough = true, alwaysShow = true },
-    { name = "StanceBar", label = "Stance Bar", passthrough = true, alwaysShow = true },
+    { name = "PetActionBar", label = "Pet Bar", passthrough = true, requireSelection = true },
+    { name = "StanceBar", label = "Stance Bar", passthrough = true, requireSelection = true },
     { name = "MicroMenuContainer", label = "Micro Menu", passthrough = true },
     { name = "BagsBar", label = "Bag Bar", passthrough = true },
     -- Display
     { name = "ObjectiveTrackerFrame", label = "Objective Tracker", passthrough = true },
     { name = "GameTooltipDefaultContainer", label = "HUD Tooltip", passthrough = true },
+    -- Talking Head: only show overlay when Blizzard's .Selection is active
+    -- (user has it enabled in edit mode settings).  requireSelection gates this.
+    { name = "TalkingHeadFrame", label = "Talking Head", passthrough = true, requireSelection = true },
+    -- Extra Abilities: gated on .Selection like Talking Head.
+    -- resolver needed because ExtraAbilitiesContainer may not be a global;
+    -- find it via ExtraActionBarFrame's parent chain.
+    { name = "ExtraAbilityContainer", label = "Extra Abilities", passthrough = true, requireSelection = true },
 }
 
 local blizzardOverlays = {}
+local _selectionHooked = {}  -- track which .Selection frames we've hooked for requireSelection
 
 ---------------------------------------------------------------------------
 -- MOVEMENT BLOCKING FOR LOCKED FRAMES
@@ -1052,6 +1062,37 @@ function QUICore:ShowBlizzardFrameOverlays()
                 _forceShownFrames[frame] = true
             end
         end
+
+        -- Skip frames gated on Selection visibility (e.g., TalkingHead disabled
+        -- in Blizzard's edit mode settings).  If the user hasn't enabled this
+        -- system in edit mode, don't create an overlay — it would be invisible
+        -- but could block clicks on underlying frames.
+        if frame and frameInfo.requireSelection then
+            local sel = frame.Selection
+            -- Hook Selection show/hide so toggling mid-edit-mode refreshes overlays
+            if sel and not _selectionHooked[sel] then
+                _selectionHooked[sel] = true
+                sel:HookScript("OnShow", function()
+                    if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
+                        QUICore:ShowBlizzardFrameOverlays()
+                    end
+                end)
+                sel:HookScript("OnHide", function()
+                    if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
+                        QUICore:ShowBlizzardFrameOverlays()
+                    end
+                end)
+            end
+            if not sel or not sel:IsShown() then
+                -- System is disabled in edit mode settings — hide any existing overlay
+                if blizzardOverlays[frameName] then
+                    blizzardOverlays[frameName]:Hide()
+                    blizzardOverlays[frameName]:EnableMouse(false)
+                end
+                frame = nil  -- skip overlay creation below
+            end
+        end
+
         if frame and (frame:IsShown() or frameInfo.alwaysShow or frameInfo.passthrough) then
             if not blizzardOverlays[frameName] then
                 blizzardOverlays[frameName] = CreateBlizzardFrameOverlay(frameInfo)
