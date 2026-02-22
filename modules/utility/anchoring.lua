@@ -1114,6 +1114,8 @@ local FRAME_RESOLVERS = {
     -- QoL
     brezCounter = function() return _G["QUI_BrezCounter"] end,
     combatTimer = function() return _G["QUI_CombatTimer"] end,
+    rangeCheck = function() return _G["QUI_RangeCheckFrame"] end,
+    actionTracker = function() return _G["QUI_ActionTracker"] end,
     skyriding = function() return _G["QUI_Skyriding"] end,
     petWarning = function() return _G["QUI_PetWarningFrame"] end,
     focusCastAlert = function() return _G["QUI_FocusCastAlertFrame"] end,
@@ -1172,11 +1174,13 @@ local FRAME_ANCHOR_INFO = {
     zoneAbility     = { displayName = "Zone Ability Button",   category = "Action Bars",       order = 14 },
     brezCounter     = { displayName = "Brez Counter",          category = "QoL",               order = 1 },
     combatTimer     = { displayName = "Combat Timer",          category = "QoL",               order = 2 },
-    skyriding       = { displayName = "Skyriding",             category = "QoL",               order = 3 },
-    petWarning      = { displayName = "Pet Warning",           category = "QoL",               order = 4 },
-    focusCastAlert  = { displayName = "Focus Cast Alert",      category = "QoL",               order = 5 },
-    missingRaidBuffs = { displayName = "Missing Raid Buffs",   category = "QoL",               order = 6 },
-    mplusTimer      = { displayName = "M+ Timer",              category = "QoL",               order = 7 },
+    rangeCheck      = { displayName = "Target Distance Bracket Display", category = "QoL",      order = 3 },
+    actionTracker   = { displayName = "Action Tracker",        category = "QoL",               order = 4 },
+    skyriding       = { displayName = "Skyriding",             category = "QoL",               order = 5 },
+    petWarning      = { displayName = "Pet Warning",           category = "QoL",               order = 6 },
+    focusCastAlert  = { displayName = "Focus Cast Alert",      category = "QoL",               order = 7 },
+    missingRaidBuffs = { displayName = "Missing Raid Buffs",   category = "QoL",               order = 8 },
+    mplusTimer      = { displayName = "M+ Timer",              category = "QoL",               order = 9 },
     minimap         = { displayName = "Minimap",               category = "Display",           order = 1 },
     objectiveTracker = { displayName = "Objective Tracker",    category = "Display",           order = 2 },
     buffFrame       = { displayName = "Buff Frame",            category = "Display",           order = 3 },
@@ -1640,6 +1644,20 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
     end
 
     local parentFrame = ResolveParentFrame(settings.parent)
+
+    -- Skip repositioning when the parent is a hidden Blizzard Edit Mode system
+    -- frame (e.g. StanceBar anchored to PetActionBar when there is no pet).
+    -- Anchoring a secure frame to a hidden secure frame via SetPoint from addon
+    -- code taints the anchor chain; when Edit Mode reads it in the secure context
+    -- the taint propagates and causes "secret number tainted by QUI" errors.
+    -- Leave the frame at Blizzard's default position instead.
+    if parentFrame and parentFrame ~= UIParent then
+        local parentIsBlizzSystem = parentFrame.system ~= nil or parentFrame.systemIndex ~= nil
+        if parentIsBlizzSystem and parentFrame.IsShown and not parentFrame:IsShown() then
+            return
+        end
+    end
+
     local point = settings.point or "CENTER"
     local relative = settings.relative or "CENTER"
     local offsetX = settings.offsetX or 0
