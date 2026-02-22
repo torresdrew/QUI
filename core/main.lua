@@ -3824,10 +3824,33 @@ EditModeKeyHandler:SetScript("OnKeyUp", function(self, key)
     SetKeyPropagationSafe(self, true)
 end)
 
+local function IsAnyEditModeActive()
+    local blizzardActive = false
+    if EditModeManagerFrame then
+        if type(EditModeManagerFrame.IsEditModeActive) == "function" then
+            blizzardActive = EditModeManagerFrame:IsEditModeActive()
+        else
+            blizzardActive = not not EditModeManagerFrame.editModeActive
+        end
+    end
+
+    local unitFrameEditActive = ns
+        and ns.QUI_UnitFrames
+        and ns.QUI_UnitFrames.editModeActive
+
+    return blizzardActive or unitFrameEditActive
+end
+
 -- Enable/disable keyboard handling based on selection
 function QUICore:UpdateEditModeKeyHandler()
     if InCombatLockdown() then
         EditModeKeyHandler:EnableKeyboard(false)
+        return
+    end
+
+    -- If edit mode is not actually active anymore, clear stale selection state.
+    if self.EditModeSelection and self.EditModeSelection.selectedType and not IsAnyEditModeActive() then
+        self:ClearEditModeSelection()
         return
     end
 
