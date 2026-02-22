@@ -43,6 +43,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+
+
+## v2.40.3 - 2026-02-22
+
+### Changed
+- detatch skinning border colors from global QUI accent color and give skinning modules per-module override options
+## v2.40.2 - 2026-02-22
+
+### Added
+- added curseforge upload to release workflow
+## v2.40.1 - 2026-02-21
+
+### Fixed
+- fixed action tracker taint
 ## v2.40.0 - 2026-02-21
 
 ### Added

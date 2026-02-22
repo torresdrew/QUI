@@ -274,7 +274,7 @@ local function SkinGameMenu()
     if not GameMenuFrame then return end
     if skinState.skinned then return end
 
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "gameMenu")
 
     HideBlizzardDecorations()
     UpdateMenuBackdrop(sr, sg, sb, sa, bgr, bgg, bgb, bga)
@@ -293,7 +293,9 @@ end
 local function RefreshGameMenuColors()
     if not GameMenuFrame or not skinState.skinned then return end
 
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    local core = GetCore()
+    local settings = core and core.db and core.db.profile and core.db.profile.general
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "gameMenu")
 
     if menuBackdrop then
         menuBackdrop:SetBackdropColor(bgr, bgg, bgb, bga)
@@ -412,7 +414,7 @@ local function PositionStandaloneButton()
     local core2 = GetCore()
     local stg2 = core2 and core2.db and core2.db.profile and core2.db.profile.general
     if stg2 and stg2.skinGameMenu then
-        local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+        local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(stg2, "gameMenu")
         StyleButton(btn, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
         -- Ensure the "QUI" text renders above the overlay backdrop.
@@ -506,7 +508,9 @@ if GameMenuFrame then
 
             if skinState.skinned and GameMenuFrame.buttonPool then
                 local count = 0
-                local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+                local core = GetCore()
+                local stg = core and core.db and core.db.profile and core.db.profile.general
+                local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(stg, "gameMenu")
                 for button in GameMenuFrame.buttonPool:EnumerateActive() do
                     count = count + 1
                     if not buttonOverlays[button] then
@@ -528,7 +532,9 @@ if GameMenuFrame then
                 SkinGameMenu()
                 PositionStandaloneButton()
                 if skinState.skinned and GameMenuFrame.buttonPool then
-                    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+                    local core3 = GetCore()
+                    local stg3 = core3 and core3.db and core3.db.profile and core3.db.profile.general
+                    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(stg3, "gameMenu")
                     for button in GameMenuFrame.buttonPool:EnumerateActive() do
                         if not buttonOverlays[button] then
                             StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)

@@ -311,7 +311,7 @@ local function SkinReadyCheckFrame()
     if not frame or SkinBase.IsSkinned(frame) then return end
 
     -- Get colors
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "readyCheck")
 
     -- Hide Blizzard decorations
     HideBlizzardDecorations()
@@ -413,7 +413,8 @@ local function RefreshReadyCheckColors()
     local frame = _G.ReadyCheckFrame
     if not frame or not SkinBase.IsSkinned(frame) then return end
 
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    local settings = GetSettings()
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "readyCheck")
 
     -- Update main frame backdrop
     local backdrop = SkinBase.GetFrameData(frame, "backdrop")

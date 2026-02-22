@@ -133,20 +133,7 @@ local function SkinKeystoneFrame()
     local keystoneFrame = _G.ChallengesKeystoneFrame
     if not keystoneFrame or SkinBase.IsSkinned(keystoneFrame) then return end
 
-    -- Get skin colors from QUI system
-    local QUI = _G.QUI
-    local sr, sg, sb, sa
-    local bgr, bgg, bgb, bga
-    if QUI and QUI.GetSkinColor then
-        sr, sg, sb, sa = QUI:GetSkinColor()
-    else
-        sr, sg, sb, sa = 0.2, 1.0, 0.6, 1  -- Fallback mint
-    end
-    if QUI and QUI.GetSkinBgColor then
-        bgr, bgg, bgb, bga = QUI:GetSkinBgColor()
-    else
-        bgr, bgg, bgb, bga = 0.05, 0.05, 0.05, 0.95  -- Fallback dark
-    end
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "keystone")
 
     -- Create backdrop
     SkinBase.CreateBackdrop(keystoneFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
@@ -208,17 +195,9 @@ local function RefreshKeystoneColors()
     local keystoneFrame = _G.ChallengesKeystoneFrame
     if not keystoneFrame or not SkinBase.IsSkinned(keystoneFrame) then return end
 
-    -- Get current colors
-    local QUI = _G.QUI
-    local sr, sg, sb, sa = 0.2, 1.0, 0.6, 1
-    local bgr, bgg, bgb, bga = 0.05, 0.05, 0.05, 0.95
-
-    if QUI and QUI.GetSkinColor then
-        sr, sg, sb, sa = QUI:GetSkinColor()
-    end
-    if QUI and QUI.GetSkinBgColor then
-        bgr, bgg, bgb, bga = QUI:GetSkinBgColor()
-    end
+    local core = GetCore()
+    local settings = core and core.db and core.db.profile and core.db.profile.general
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "keystone")
 
     -- Update main frame backdrop
     local ksBd = SkinBase.GetBackdrop(keystoneFrame)
