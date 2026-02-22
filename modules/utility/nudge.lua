@@ -565,8 +565,8 @@ end
 local function CreateViewerNudgeButton(parent, direction, viewerName)
     local btn = CreateFrame("Button", nil, parent)
     btn:SetSize(18, 18)
-    -- Use TOOLTIP strata so nudge buttons appear above all other frames
-    btn:SetFrameStrata("TOOLTIP")
+    -- Use HIGH strata so nudge buttons appear above all other frames
+    btn:SetFrameStrata("HIGH")
     btn:SetFrameLevel(100)
 
     -- Background - dark grey at 70% for visibility over any game content
@@ -637,8 +637,8 @@ local minimapOverlay = nil
 local function CreateMinimapNudgeButton(parent, direction)
     local btn = CreateFrame("Button", nil, parent)
     btn:SetSize(18, 18)
-    -- Use TOOLTIP strata so nudge buttons appear above all other frames
-    btn:SetFrameStrata("TOOLTIP")
+    -- Use HIGH strata so nudge buttons appear above all other frames
+    btn:SetFrameStrata("HIGH")
     btn:SetFrameLevel(100)
 
     -- Background - dark grey at 70% for visibility
@@ -709,7 +709,7 @@ local function CreateViewerOverlay(viewerName)
 
     local overlay = CreateFrame("Frame", nil, viewer, "BackdropTemplate")
     overlay:SetAllPoints()
-    overlay:SetFrameStrata("TOOLTIP")
+    overlay:SetFrameStrata("HIGH")
     local px = QUICore:GetPixelSize(overlay)
     overlay:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -781,7 +781,7 @@ local function CreateBlizzardFrameOverlay(frameInfo)
     else
         overlay:SetAllPoints()
     end
-    overlay:SetFrameStrata("TOOLTIP")
+    overlay:SetFrameStrata("HIGH")
     local px = QUICore:GetPixelSize(overlay)
     overlay:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -837,7 +837,7 @@ local function CreateMinimapOverlay()
 
     local overlay = CreateFrame("Frame", nil, Minimap, "BackdropTemplate")
     overlay:SetAllPoints()
-    overlay:SetFrameStrata("TOOLTIP")
+    overlay:SetFrameStrata("HIGH")
     local px = QUICore:GetPixelSize(overlay)
     overlay:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -957,7 +957,7 @@ function QUICore:ShowViewerOverlays()
                         overlay:ClearAllPoints()
                         overlay:SetSize(fw, fh)
                         overlay:SetPoint("CENTER", UIParent, "CENTER", cx - usx, cy - usy)
-                        overlay:SetFrameStrata("TOOLTIP")
+                        overlay:SetFrameStrata("HIGH")
                         overlay:SetFrameLevel(100)
                     end
                     -- Visual-only: clicks pass through to .Selection underneath

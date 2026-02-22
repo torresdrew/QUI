@@ -61,8 +61,8 @@ end
 local function CreateNudgeButton(parent, direction, deltaX, deltaY, unitKey)
     local btn = CreateFrame("Button", nil, parent)
     btn:SetSize(18, 18)
-    -- Use TOOLTIP strata so nudge buttons appear above all other frames
-    btn:SetFrameStrata("TOOLTIP")
+    -- Use HIGH strata so nudge buttons appear above all other frames
+    btn:SetFrameStrata("HIGH")
     btn:SetFrameLevel(100)
 
     -- Background - dark grey at 70% for visibility over any game content
@@ -167,7 +167,7 @@ function QUI_UF:EnableEditMode()
         local exitBtn = CreateFrame("Button", "QUI_ExitEditModeBtn", UIParent, "BackdropTemplate")
         exitBtn:SetSize(180, 40)
         exitBtn:SetPoint("TOP", UIParent, "TOP", 0, -100)
-        exitBtn:SetFrameStrata("TOOLTIP")
+        exitBtn:SetFrameStrata("HIGH")
         local exitBtnPx = QUICore:GetPixelSize(exitBtn)
         exitBtn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -331,7 +331,7 @@ function QUI_UF:EnableEditMode()
                         frame.editOverlay.infoText:Show()
                     end
                     -- Raise overlay strata so it appears above Blizzard's Edit Mode overlays
-                    frame.editOverlay:SetFrameStrata("TOOLTIP")
+                    frame.editOverlay:SetFrameStrata("HIGH")
                 else
                     frame.editOverlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
                     frame.editOverlay:SetBackdropColor(0.2, 0.8, 1, 0.15)
@@ -342,7 +342,7 @@ function QUI_UF:EnableEditMode()
                         frame.editOverlay.infoText:SetPoint("BOTTOM", frame.editOverlay.nudgeUp, "TOP", 0, 2)
                         frame.editOverlay.infoText:Hide()  -- Hidden until selected
                     end
-                    -- Restore normal frame level (was raised to TOOLTIP for locked state)
+                    -- Restore normal frame level (was raised to HIGH for locked state)
                     frame.editOverlay:SetFrameStrata("MEDIUM")
                     frame.editOverlay:SetFrameLevel(frame:GetFrameLevel() + 10)
                 end
