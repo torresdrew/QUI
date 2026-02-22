@@ -37,6 +37,71 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+
+
+
+
+
+
+
+
+## v2.40.3 - 2026-02-22
+
+### Changed
+- detatch skinning border colors from global QUI accent color and give skinning modules per-module override options
+## v2.40.2 - 2026-02-22
+
+### Added
+- added curseforge upload to release workflow
+## v2.40.1 - 2026-02-21
+
+### Fixed
+- fixed action tracker taint
+## v2.40.0 - 2026-02-21
+
+### Added
+- added action tracker feature
+- added target distance range bracket display
+- added profile import validation
+
+### Changed
+- improved callback throttling
+
+### Fixed
+- enforce globally set font in all options menus
+## v2.39.1 - 2026-02-21
+
+### Changed
+- updated QUI base edit mode string (now includes all action bars, blizz party and raid frames)
+- updated Discord link to a non-expiring one
+
+### Fixed
+- fixed HUD min width regression
+## v2.39.0 - 2026-02-21
+
+### Added
+- added anchoring integration with BigWigs bars, if addon is detected
+- added discord notification for new releases
+- added player castbar standalone mode (if you don't want to use QUI Unit Frames, but the player castbar)
+
+### Fixed
+- fixed / optimized OnUpdate handling across multiple modules to reduce CPU load
+## v2.38.3 - 2026-02-20
+
+### Changed
+- reverted last hardening commit
+
+### Fixed
+- fixed castbar not showing in combat in some edge cases
+## v2.38.2 - 2026-02-20
+
+### Changed
+- hardened in-combat re-anchoring for cmd frames
+## v2.38.1 - 2026-02-20
+
+### Fixed
+- fixed anchoring susceptible to drifts when spell morphs resize frames, fix combat timer anchoring
 ## v2.38.0 - 2026-02-19
 
 ### Added

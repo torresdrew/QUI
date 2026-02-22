@@ -186,17 +186,22 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                     QUICore.__pendingBackdrops[pf] = nil
                 end
 
-                -- Stop OnUpdate if no more pending
+                -- Stop OnUpdate if no more pending (SetScript nil to avoid per-frame CPU cost)
                 local hasAny = false
                 for _ in pairs(QUICore.__pendingBackdrops or {}) do
                     hasAny = true
                     break
                 end
                 if not hasAny then
+                    self:SetScript("OnUpdate", nil)
                     self:Hide()
                 end
             end)
+            QUICore.__backdropUpdateHandler = updateFrame:GetScript("OnUpdate")
             QUICore.__backdropUpdateFrame = updateFrame
+        end
+        if QUICore.__backdropUpdateHandler then
+            QUICore.__backdropUpdateFrame:SetScript("OnUpdate", QUICore.__backdropUpdateHandler)
         end
         QUICore.__backdropUpdateFrame:Show()
         return false
@@ -1092,6 +1097,23 @@ local defaults = {
             midRangeColor = { 1, 0.6, 0.2, 1 },   -- Orange color for 25-yard range (when both checks enabled)
             rangeColorInCombatOnly = false,       -- Only change color in combat
             hideUntilOutOfRange = false,          -- Only show crosshair when in combat AND out of range
+        },
+
+        -- Target Distance Bracket Display
+        rangeCheck = {
+            enabled = false,
+            combatOnly = false,
+            showOnlyWithTarget = true,
+            updateRate = 0.1, -- seconds
+            shortenText = false,
+            dynamicColor = false,
+            font = "Quazii",
+            fontSize = 22,
+            useClassColor = false,
+            textColor = { 0.2, 0.95, 0.55, 1 },
+            strata = "MEDIUM",
+            offsetX = 0,
+            offsetY = -190,
         },
 
         -- Skyriding Vigor Bar
@@ -3082,6 +3104,27 @@ local defaults = {
             },
         },
 
+        -- BigWigs Integration: Anchor BigWigs normal/emphasized bars to QUI elements
+        bigWigs = {
+            backupPositions = {},
+            normal = {
+                enabled = false,
+                anchorTo = "disabled",
+                sourcePoint = "TOP",
+                targetPoint = "BOTTOM",
+                offsetX = 0,
+                offsetY = -5,
+            },
+            emphasized = {
+                enabled = false,
+                anchorTo = "disabled",
+                sourcePoint = "TOP",
+                targetPoint = "BOTTOM",
+                offsetX = 0,
+                offsetY = -5,
+            },
+        },
+
         -- HUD Layering: Control frame level ordering for HUD elements
         -- Higher values appear above lower values (range 0-10)
         hudLayering = {
@@ -3142,6 +3185,23 @@ function QUICore:OnInitialize()
     -- hideWhenNotInInstance=true → showInInstance=true (user wants instance-only)
     -- hideWhenMounted has no equivalent (can't express "hide when mounted" in SHOW logic)
     local profile = self.db.profile
+
+    -- Castbar preview is a transient options-state and should never persist
+    -- across reload/login. Clear it early before frame modules initialize.
+    if profile and profile.quiUnitFrames then
+        for _, unitKey in ipairs({"player", "target", "focus"}) do
+            local unitDB = profile.quiUnitFrames[unitKey]
+            if unitDB and unitDB.castbar then
+                unitDB.castbar.previewMode = false
+            end
+        end
+        for i = 1, 8 do
+            local bossDB = profile.quiUnitFrames["boss" .. i]
+            if bossDB and bossDB.castbar then
+                bossDB.castbar.previewMode = false
+            end
+        end
+    end
 
     -- Migrate legacy skin accent color into addonAccentColor
     if profile.general and profile.general.skinCustomColor and not profile.general.addonAccentColor then

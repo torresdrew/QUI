@@ -27,6 +27,12 @@ local function BuildSkinningTab(tabContent)
         -- Initialize defaults
         if general.skinUseClassColor == nil then general.skinUseClassColor = true end
         if general.addonAccentColor == nil then general.addonAccentColor = {0.204, 0.827, 0.6, 1} end
+        if general.hideSkinBorders == nil then general.hideSkinBorders = false end
+        if general.skinBorderUseClassColor == nil then general.skinBorderUseClassColor = false end
+        if general.skinBorderColor == nil then
+            local accent = general.addonAccentColor or {0.204, 0.827, 0.6, 1}
+            general.skinBorderColor = { accent[1], accent[2], accent[3], accent[4] or 1 }
+        end
         if general.skinKeystoneFrame == nil then general.skinKeystoneFrame = true end
 
         -- ═══════════════════════════════════════════════════════════════
@@ -78,6 +84,74 @@ local function BuildSkinningTab(tabContent)
             if _G.QUI_RefreshReadyCheckColors then
                 _G.QUI_RefreshReadyCheckColors()
             end
+        end
+
+        local function EnsureBorderOverrideDefaults(settings, prefix)
+            if type(settings) ~= "table" then return end
+            local keyPrefix = type(prefix) == "string" and prefix or ""
+            local overrideKey = keyPrefix ~= "" and (keyPrefix .. "BorderOverride") or "borderOverride"
+            local hideKey = keyPrefix ~= "" and (keyPrefix .. "HideBorder") or "hideBorder"
+            local useClassKey = keyPrefix ~= "" and (keyPrefix .. "BorderUseClassColor") or "borderUseClassColor"
+            local colorKey = keyPrefix ~= "" and (keyPrefix .. "BorderColor") or "borderColor"
+
+            if settings[overrideKey] == nil then settings[overrideKey] = false end
+            if settings[hideKey] == nil then settings[hideKey] = false end
+            if settings[useClassKey] == nil then settings[useClassKey] = false end
+            if settings[colorKey] == nil then
+                local fallback = general.skinBorderColor or general.addonAccentColor or { 0.204, 0.827, 0.6, 1 }
+                settings[colorKey] = { fallback[1], fallback[2], fallback[3], fallback[4] or 1 }
+            end
+        end
+
+        local function AddModuleBorderOverrideControls(title, settings, prefix)
+            EnsureBorderOverrideDefaults(settings, prefix)
+
+            local keyPrefix = type(prefix) == "string" and prefix or ""
+            local overrideKey = keyPrefix ~= "" and (keyPrefix .. "BorderOverride") or "borderOverride"
+            local hideKey = keyPrefix ~= "" and (keyPrefix .. "HideBorder") or "hideBorder"
+            local useClassKey = keyPrefix ~= "" and (keyPrefix .. "BorderUseClassColor") or "borderUseClassColor"
+            local colorKey = keyPrefix ~= "" and (keyPrefix .. "BorderColor") or "borderColor"
+
+            local colorPicker
+            local hideCheck
+            local classCheck
+
+            local function UpdateBorderControlState()
+                local enabled = settings[overrideKey]
+                if hideCheck then hideCheck:SetEnabled(enabled) end
+                if classCheck then classCheck:SetEnabled(enabled) end
+                if colorPicker then
+                    colorPicker:SetEnabled(enabled and (not settings[useClassKey]))
+                end
+            end
+
+            local overrideCheck = GUI:CreateFormCheckbox(tabContent, "Override Global Border Settings", overrideKey, settings, function()
+                UpdateBorderControlState()
+                RefreshAllSkinning()
+            end)
+            overrideCheck:SetPoint("TOPLEFT", PAD, y)
+            overrideCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            hideCheck = GUI:CreateFormCheckbox(tabContent, "Hide Border", hideKey, settings, RefreshAllSkinning)
+            hideCheck:SetPoint("TOPLEFT", PAD, y)
+            hideCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            classCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Border", useClassKey, settings, function()
+                UpdateBorderControlState()
+                RefreshAllSkinning()
+            end)
+            classCheck:SetPoint("TOPLEFT", PAD, y)
+            classCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            colorPicker = GUI:CreateFormColorPicker(tabContent, "Border Color", colorKey, settings, RefreshAllSkinning, { noAlpha = true })
+            colorPicker:SetPoint("TOPLEFT", PAD, y)
+            colorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            UpdateBorderControlState()
         end
 
         local useClassColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Colors", "skinUseClassColor", general, function()
@@ -140,6 +214,29 @@ local function BuildSkinningTab(tabContent)
         local bgColorPicker = GUI:CreateFormColorPicker(tabContent, "Background Color", "skinBgColor", general, RefreshAllSkinning, { hasAlpha = true })
         bgColorPicker:SetPoint("TOPLEFT", PAD, y)
         bgColorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local hideSkinBordersCheck = GUI:CreateFormCheckbox(tabContent, "Hide Borders", "hideSkinBorders", general, RefreshAllSkinning)
+        hideSkinBordersCheck:SetPoint("TOPLEFT", PAD, y)
+        hideSkinBordersCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local skinBorderColorPicker
+
+        local borderUseClassColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Class Color for Borders", "skinBorderUseClassColor", general, function()
+            if skinBorderColorPicker then
+                skinBorderColorPicker:SetEnabled(not general.skinBorderUseClassColor)
+            end
+            RefreshAllSkinning()
+        end)
+        borderUseClassColorCheck:SetPoint("TOPLEFT", PAD, y)
+        borderUseClassColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        skinBorderColorPicker = GUI:CreateFormColorPicker(tabContent, "Border Color", "skinBorderColor", general, RefreshAllSkinning, { noAlpha = true })
+        skinBorderColorPicker:SetPoint("TOPLEFT", PAD, y)
+        skinBorderColorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        skinBorderColorPicker:SetEnabled(not general.skinBorderUseClassColor)
         y = y - FORM_ROW
 
         y = y - 10  -- Extra padding before next section
@@ -210,6 +307,8 @@ local function BuildSkinningTab(tabContent)
         gameMenuDimCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
+        AddModuleBorderOverrideControls("Game Menu", general, "gameMenu")
+
         y = y - 10  -- Extra padding before next section
 
         -- ═══════════════════════════════════════════════════════════════
@@ -243,6 +342,8 @@ local function BuildSkinningTab(tabContent)
         skinReadyCheckCheck:SetPoint("TOPLEFT", PAD, y)
         skinReadyCheckCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
+
+        AddModuleBorderOverrideControls("Ready Check", general, "readyCheck")
 
         -- Move/Reset buttons for Ready Check frame position
         local rcMoveBtn = GUI:CreateButton(tabContent, "Toggle Mover", 140, 28, function()
@@ -293,6 +394,8 @@ local function BuildSkinningTab(tabContent)
         skinCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
+        AddModuleBorderOverrideControls("Keystone", general, "keystone")
+
         y = y - 10  -- Extra padding before next section
 
         -- ═══════════════════════════════════════════════════════════════
@@ -326,6 +429,8 @@ local function BuildSkinningTab(tabContent)
         powerBarAltCheck:SetPoint("TOPLEFT", PAD, y)
         powerBarAltCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
+
+        AddModuleBorderOverrideControls("Encounter Power Bar", general, "powerBarAlt")
 
         local powerBarMoverBtn = GUI:CreateButton(tabContent, "Toggle Position Mover", 160, 28, function()
             if _G.QUI_TogglePowerBarAltMover then
@@ -368,6 +473,8 @@ local function BuildSkinningTab(tabContent)
         alertCheck:SetPoint("TOPLEFT", PAD, y)
         alertCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
+
+        AddModuleBorderOverrideControls("Alert Frames", general, "alerts")
 
         -- Toggle movers button
         local moverBtn = GUI:CreateButton(tabContent, "Toggle Position Movers", 200, 28, function()
@@ -436,6 +543,8 @@ local function BuildSkinningTab(tabContent)
         lootCheck:SetPoint("TOPLEFT", PAD, y)
         lootCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
+
+        AddModuleBorderOverrideControls("Loot Module", lootDB)
 
         local lootUnderMouseCheck = GUI:CreateFormCheckbox(tabContent, "Loot Under Mouse", "lootUnderMouse", lootDB)
         lootUnderMouseCheck:SetPoint("TOPLEFT", PAD, y)
@@ -581,6 +690,13 @@ local function BuildSkinningTab(tabContent)
         if mplusTimer.showTimer == nil then mplusTimer.showTimer = true end
         if mplusTimer.showBorder == nil then mplusTimer.showBorder = true end
         if mplusTimer.scale == nil then mplusTimer.scale = 1.0 end
+        if mplusTimer.borderOverride == nil then mplusTimer.borderOverride = false end
+        if mplusTimer.hideBorder == nil then mplusTimer.hideBorder = false end
+        if mplusTimer.borderUseClassColor == nil then mplusTimer.borderUseClassColor = false end
+        if mplusTimer.borderColor == nil then
+            local fallbackBorder = general.skinBorderColor or general.addonAccentColor or { 0.204, 0.827, 0.6, 1 }
+            mplusTimer.borderColor = { fallbackBorder[1], fallbackBorder[2], fallbackBorder[3], fallbackBorder[4] or 1 }
+        end
 
         local quiMplusHeader = GUI:CreateSectionHeader(tabContent, "QUI M+ Timer")
         quiMplusHeader:SetPoint("TOPLEFT", PAD, y)
@@ -666,6 +782,8 @@ local function BuildSkinningTab(tabContent)
         quiMplusBorderCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
+        AddModuleBorderOverrideControls("QUI M+ Timer", mplusTimer)
+
         local quiMplusDeathsCheck = GUI:CreateFormCheckbox(tabContent, "Show Deaths", "showDeaths", mplusTimer, function()
             local MPlusTimer = _G.QUI_MPlusTimer
             if MPlusTimer and MPlusTimer.UpdateLayout then
@@ -744,6 +862,8 @@ local function BuildSkinningTab(tabContent)
         charFrameCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
+        AddModuleBorderOverrideControls("Reputation/Currency", general, "characterFrame")
+
         y = y - 10  -- Extra padding before next section
 
         -- ═══════════════════════════════════════════════════════════════
@@ -778,6 +898,8 @@ local function BuildSkinningTab(tabContent)
         inspectFrameCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
+        AddModuleBorderOverrideControls("Inspect Frame", general, "inspectFrame")
+
         y = y - 10  -- Extra padding before next section
 
         -- ═══════════════════════════════════════════════════════════════
@@ -811,6 +933,8 @@ local function BuildSkinningTab(tabContent)
         overrideBarCheck:SetPoint("TOPLEFT", PAD, y)
         overrideBarCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
+
+        AddModuleBorderOverrideControls("Override Action Bar", general, "overrideActionBar")
 
         y = y - 10  -- Extra padding before next section
 

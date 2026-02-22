@@ -40,6 +40,15 @@ local function GetDB()
     return core and core.db and core.db.profile or {}
 end
 
+local function GetGeneralSettings()
+    local db = GetDB()
+    return db.general or {}
+end
+
+local function GetModuleSkinColors()
+    return SkinBase.GetSkinColors(GetGeneralSettings(), "powerBarAlt")
+end
+
 local function GetBarPosition()
     local db = GetDB()
     return db.powerBarAltPosition
@@ -144,17 +153,7 @@ end
 ---------------------------------------------------------------------------
 
 local function CreateQUIAltPowerBar()
-    -- Get skin colors
-    local QUI = _G.QUI
-    local sr, sg, sb, sa = 0.2, 1.0, 0.6, 1
-    local bgr, bgg, bgb, bga = 0.05, 0.05, 0.05, 0.95
-
-    if QUI and QUI.GetSkinColor then
-        sr, sg, sb, sa = QUI:GetSkinColor()
-    end
-    if QUI and QUI.GetSkinBgColor then
-        bgr, bgg, bgb, bga = QUI:GetSkinBgColor()
-    end
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetModuleSkinColors()
 
     -- Create the status bar
     local bar = CreateFrame("StatusBar", "QUI_AltPowerBar", UIParent)
@@ -260,16 +259,7 @@ end
 local function RefreshPowerBarAltColors()
     if not QUIAltPowerBar then return end
 
-    local QUI = _G.QUI
-    local sr, sg, sb, sa = 0.2, 1.0, 0.6, 1
-    local bgr, bgg, bgb, bga = 0.05, 0.05, 0.05, 0.95
-
-    if QUI and QUI.GetSkinColor then
-        sr, sg, sb, sa = QUI:GetSkinColor()
-    end
-    if QUI and QUI.GetSkinBgColor then
-        bgr, bgg, bgb, bga = QUI:GetSkinBgColor()
-    end
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetModuleSkinColors()
 
     QUIAltPowerBar:SetStatusBarColor(sr, sg, sb)
     QUIAltPowerBar.backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
@@ -296,11 +286,7 @@ local function CreateMover()
     if not QUIAltPowerBar then return end
 
     -- Get skin colors for mover
-    local QUI = _G.QUI
-    local sr, sg, sb, sa = 0.2, 1.0, 0.6, 1
-    if QUI and QUI.GetSkinColor then
-        sr, sg, sb, sa = QUI:GetSkinColor()
-    end
+    local sr, sg, sb = SkinBase.GetSkinColors(GetGeneralSettings(), "powerBarAlt")
 
     -- Create mover overlay
     powerBarMover = CreateFrame("Frame", "QUI_AltPowerBarMover", UIParent, "BackdropTemplate")

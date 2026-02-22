@@ -160,9 +160,9 @@ local function ApplyMPlusTimerSkin()
         return
     end
 
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
-    local colors = GetContrastColors(bgr, bgg, bgb)
     local settings = GetMPlusTimerSettings()
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings)
+    local colors = GetContrastColors(bgr, bgg, bgb)
     local showBorder = settings.showBorder ~= false  -- Default true
 
     -- Root frame backdrop

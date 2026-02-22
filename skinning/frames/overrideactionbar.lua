@@ -124,7 +124,7 @@ local function SkinOverrideActionBar()
         return
     end
 
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "overrideActionBar")
 
     -- Hide all Blizzard decorations
     HideBlizzardElements(bar)
@@ -274,7 +274,8 @@ local function RefreshOverrideActionBarColors()
     local bar = _G.OverrideActionBar
     if not bar or not bar.quiSkinned then return end
 
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    local settings = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "overrideActionBar")
 
     -- Update main backdrop
     if bar.quiBackdrop then

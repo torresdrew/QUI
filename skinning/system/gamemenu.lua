@@ -189,7 +189,7 @@ local function SkinGameMenu()
     if GameMenuFrame.quiSkinned then return end
 
     -- Get colors based on setting
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "gameMenu")
 
     -- Hide Blizzard decorations
     HideBlizzardDecorations()
@@ -220,7 +220,9 @@ local function RefreshGameMenuColors()
     if not GameMenuFrame or not GameMenuFrame.quiSkinned then return end
 
     -- Get colors based on setting
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    local core = GetCore()
+    local settings = core and core.db and core.db.profile and core.db.profile.general
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "gameMenu")
 
     -- Update main frame backdrop
     if GameMenuFrame.quiBackdrop then
@@ -322,7 +324,9 @@ if GameMenuFrame and GameMenuFrame.InitButtons then
 
             -- Style any new buttons that were added
             if GameMenuFrame.quiSkinned and GameMenuFrame.buttonPool then
-                local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+                local core = GetCore()
+                local settings = core and core.db and core.db.profile and core.db.profile.general
+                local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "gameMenu")
 
                 for button in GameMenuFrame.buttonPool:EnumerateActive() do
                     if not button.quiStyled then
@@ -342,7 +346,9 @@ if GameMenuFrame and GameMenuFrame.InitButtons then
             if not GameMenuFrame:IsShown() then return end
             if not GameMenuFrame.quiSkinned or not GameMenuFrame.buttonPool then return end
 
-            local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+            local core = GetCore()
+            local settings = core and core.db and core.db.profile and core.db.profile.general
+            local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings, "gameMenu")
             for button in GameMenuFrame.buttonPool:EnumerateActive() do
                 -- Force full re-styling every time (hooks may be lost on pool recycle)
                 button.quiStyled = nil

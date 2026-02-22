@@ -31,7 +31,11 @@ local customBg = nil
 -- Helper: Get skin colors from QUI system
 ---------------------------------------------------------------------------
 local function GetSkinColors()
-    return Helpers.GetSkinColors()
+    local core = GetCore()
+    local settings = core and core.db and core.db.profile and core.db.profile.general
+    local sr, sg, sb, sa = Helpers.GetSkinBorderColor(settings, "characterFrame")
+    local bgr, bgg, bgb, bga = Helpers.GetSkinBgColor()
+    return sr, sg, sb, sa, bgr, bgg, bgb, bga
 end
 
 ---------------------------------------------------------------------------

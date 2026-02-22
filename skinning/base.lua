@@ -28,8 +28,10 @@ end
 -- GetSkinColors()
 -- Returns accent + background colors: sr, sg, sb, sa, bgr, bgg, bgb, bga
 ---------------------------------------------------------------------------
-function SkinBase.GetSkinColors()
-    return Helpers.GetSkinColors()
+function SkinBase.GetSkinColors(moduleSettings, prefix)
+    local sr, sg, sb, sa = Helpers.GetSkinBorderColor(moduleSettings, prefix)
+    local bgr, bgg, bgb, bga = Helpers.GetSkinBgColor()
+    return sr, sg, sb, sa, bgr, bgg, bgb, bga
 end
 
 ---------------------------------------------------------------------------

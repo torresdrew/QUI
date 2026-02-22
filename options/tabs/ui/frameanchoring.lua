@@ -40,6 +40,7 @@ local DEFAULTS = {
     relative     = "CENTER",
     offsetX      = 0,
     offsetY      = 0,
+    sizeStable   = true,
     autoWidth    = false,
     widthAdjust  = 0,
     autoHeight   = false,
@@ -383,6 +384,8 @@ local function BuildQoLTab(tabContent)
     local frames = {
         { key = "brezCounter", name = "Brez Counter" },
         { key = "combatTimer", name = "Combat Timer" },
+        { key = "rangeCheck", name = "Target Distance Bracket Display" },
+        { key = "actionTracker", name = "Action Tracker" },
         { key = "skyriding", name = "Skyriding" },
         { key = "petWarning", name = "Pet Warning" },
         { key = "focusCastAlert", name = "Focus Cast Alert" },
@@ -408,6 +411,15 @@ local function CreateFrameAnchoringPage(parent)
         { name = "Action Bars",   builder = BuildActionBarsTab },
         { name = "Display",       builder = BuildDisplayTab },
         { name = "QoL",           builder = BuildQoLTab },
+        { name = "3rd Party Addons", builder = function(tabContent)
+            if ns.QUI_ThirdPartyAnchoringOptions and ns.QUI_ThirdPartyAnchoringOptions.BuildThirdPartyTab then
+                ns.QUI_ThirdPartyAnchoringOptions.BuildThirdPartyTab(tabContent)
+            else
+                local label = GUI:CreateLabel(tabContent, "3rd Party Addons options failed to load. Please reload UI.", 12, {1, 0.3, 0.3, 1})
+                label:SetPoint("TOPLEFT", PADDING, -10)
+                tabContent:SetHeight(120)
+            end
+        end },
     })
 
     content:SetHeight(600)

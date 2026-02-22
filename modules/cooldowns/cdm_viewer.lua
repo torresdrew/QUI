@@ -1408,8 +1408,11 @@ local function HookViewer(viewerName, trackerKey)
 
     -- Step 1 & 3: OnShow hook - enable polling and single deferred layout
     viewer:HookScript("OnShow", function(self)
-        -- Enable polling when viewer becomes visible
+        -- Enable polling when viewer becomes visible (restore handler if we cleared it on Hide)
         if self.__ncdmUpdateFrame then
+            if self.__ncdmUpdateHandler then
+                self.__ncdmUpdateFrame:SetScript("OnUpdate", self.__ncdmUpdateHandler)
+            end
             self.__ncdmUpdateFrame:Show()
         end
         -- Single deferred layout
@@ -1424,9 +1427,10 @@ local function HookViewer(viewerName, trackerKey)
         end)
     end)
 
-    -- Step 1: OnHide hook - disable polling to save CPU
+    -- Step 1: OnHide hook - disable polling to save CPU (SetScript nil stops OnUpdate entirely)
     viewer:HookScript("OnHide", function(self)
         if self.__ncdmUpdateFrame then
+            self.__ncdmUpdateFrame:SetScript("OnUpdate", nil)
             self.__ncdmUpdateFrame:Hide()
         end
     end)
@@ -1540,6 +1544,7 @@ local function HookViewer(viewerName, trackerKey)
             LayoutViewer(viewerName, trackerKey)
         end
     end)
+    viewer.__ncdmUpdateHandler = updateFrame:GetScript("OnUpdate")
 
     -- Step 1: Initially show update frame only if viewer is visible
     if viewer:IsShown() then
@@ -1668,6 +1673,16 @@ local function ApplyUtilityAnchor()
     local utilSettings = db.utility
     local utilViewer = _G[VIEWER_UTILITY]
     if not utilViewer then return end
+
+    -- Respect centralized frame anchoring overrides.
+    -- When cdmUtility is overridden in frame anchoring, this legacy anchor flow
+    -- must not mutate points or it will fight the new anchoring system.
+    if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(utilViewer) then
+        utilViewer.__cdmAnchoredToEssential = nil
+        utilViewer.__cdmAnchorPendingAfterCombat = nil
+        DriftLog("ApplyUtilityAnchor: skipped (frame anchoring override)")
+        return
+    end
 
     if not utilSettings.anchorBelowEssential then
         utilViewer.__cdmAnchoredToEssential = nil
@@ -2186,6 +2201,20 @@ local function GetUnitframeFrames()
     return frames
 end
 
+local function ApplyUnitframeVisibilityAlpha(frame, alpha)
+    if not frame then return end
+
+    -- Respect castbar runtime visibility state so HUD visibility logic doesn't
+    -- resurrect inactive castbars (especially player castbar alpha-fallback mode).
+    -- Only castbars using alpha-fallback mode should be forced hidden this way.
+    if frame._quiCastbar and frame._quiUseAlphaVisibility and frame._quiDesiredVisible == false then
+        frame:SetAlpha(0)
+        return
+    end
+
+    frame:SetAlpha(alpha)
+end
+
 -- Determine if Unitframes should be visible (SHOW logic)
 local function ShouldUnitframesBeVisible()
     local vis = GetUnitframesVisibilitySettings()
@@ -2228,7 +2257,7 @@ local function OnUnitframesFadeUpdate(self, elapsed)
     -- Apply to unit frames
     local frames = GetUnitframeFrames()
     for _, frame in ipairs(frames) do
-        frame:SetAlpha(alpha)
+        ApplyUnitframeVisibilityAlpha(frame, alpha)
     end
 
     -- Check if fade complete
@@ -2290,7 +2319,7 @@ local function UpdateUnitframesVisibility()
 
         for unitKey, castbar in pairs(_G.QUI_Castbars) do
             if castbar then
-                castbar:SetAlpha(targetAlpha)
+                ApplyUnitframeVisibilityAlpha(castbar, targetAlpha)
             end
         end
     end

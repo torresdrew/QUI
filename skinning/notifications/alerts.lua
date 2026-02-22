@@ -48,7 +48,10 @@ end
 
 --- Get theme colors from QUI skinning system
 local function GetThemeColors()
-    return Helpers.GetSkinColors()
+    local general = GetGeneralSettings()
+    local sr, sg, sb, sa = Helpers.GetSkinBorderColor(general, "alerts")
+    local bgr, bgg, bgb, bga = Helpers.GetSkinBgColor()
+    return sr, sg, sb, sa, bgr, bgg, bgb, bga
 end
 
 --- Force alpha to 1 (prevents Blizzard fade animations)

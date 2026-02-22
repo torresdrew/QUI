@@ -15,7 +15,9 @@ QUICore.Loot = Loot
 
 -- Helper to get theme colors from QUI skin system
 local function GetThemeColors()
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = Helpers.GetSkinColors()
+    local db = QUICore.db and QUICore.db.profile or {}
+    local sr, sg, sb, sa = Helpers.GetSkinBorderColor(db.loot or {})
+    local bgr, bgg, bgb, bga = Helpers.GetSkinBgColor()
     return {bgr, bgg, bgb, bga}, {sr, sg, sb, sa}, {0.95, 0.96, 0.97, 1}
 end
 

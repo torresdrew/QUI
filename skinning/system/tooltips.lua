@@ -11,7 +11,9 @@ local GetCore = ns.Helpers.GetCore
 
 -- Get skinning colors (uses unified color system)
 local function GetTooltipColors()
-    return Helpers.GetSkinColors()
+    local sr, sg, sb, sa = Helpers.GetSkinBorderColor()
+    local bgr, bgg, bgb, bga = Helpers.GetSkinBgColor()
+    return sr, sg, sb, sa, bgr, bgg, bgb, bga
 end
 
 -- Get tooltip settings

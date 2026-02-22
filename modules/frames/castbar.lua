@@ -311,6 +311,35 @@ local function CreateAnchorFrame(name, parent)
     return anchorFrame
 end
 
+local function ShouldUseProtectedVisibilityFallback(frame)
+    return frame and frame._quiUseAlphaVisibility == true
+end
+
+local function SetCastbarFrameVisible(frame, shouldShow)
+    if not frame then return end
+    frame._quiDesiredVisible = shouldShow == true
+
+    if shouldShow then
+        frame:SetAlpha(1)
+        if not frame:IsShown() then
+            frame:Show()
+        end
+        return
+    end
+
+    if ShouldUseProtectedVisibilityFallback(frame) then
+        -- Keep protected frames shown and hide via alpha to avoid blocked Hide() in combat.
+        if not frame:IsShown() and not InCombatLockdown() then
+            frame:Show()
+        end
+        frame:SetAlpha(0)
+        return
+    end
+
+    frame:SetAlpha(1)
+    frame:Hide()
+end
+
 local function CreateCastbarFrame(name, parent)
     return CreateAnchorFrame(name, parent)
 end
@@ -451,7 +480,11 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
             anchorFrame:SetPoint("TOPLEFT", viewer, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
             anchorFrame:SetPoint("TOPRIGHT", viewer, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
         else
-            anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX, offsetY)
+            if unitFrame then
+                anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX, offsetY)
+            else
+                anchorFrame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+            end
         end
     elseif anchor == "utility" then
         local offsetX = QUICore:PixelRound(castSettings.offsetX or 0, anchorFrame)
@@ -467,14 +500,22 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
             anchorFrame:SetPoint("TOPLEFT", viewer, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
             anchorFrame:SetPoint("TOPRIGHT", viewer, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
         else
-            anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX, offsetY)
+            if unitFrame then
+                anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX, offsetY)
+            else
+                anchorFrame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+            end
         end
     elseif anchor == "unitframe" then
         local offsetX = QUICore:PixelRound(castSettings.offsetX or 0, anchorFrame)
         local offsetY = QUICore:PixelRound(castSettings.offsetY or -25, anchorFrame)
         local widthAdj = QUICore:PixelRound(castSettings.widthAdjustment or 0, anchorFrame)
-        anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX - widthAdj, offsetY)
-        anchorFrame:SetPoint("TOPRIGHT", unitFrame, "BOTTOMRIGHT", offsetX + widthAdj, offsetY)
+        if unitFrame then
+            anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX - widthAdj, offsetY)
+            anchorFrame:SetPoint("TOPRIGHT", unitFrame, "BOTTOMRIGHT", offsetX + widthAdj, offsetY)
+        else
+            anchorFrame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+        end
     else
         -- None: positioned independently on screen
         local offsetX = castSettings.offsetX or 0
@@ -488,13 +529,8 @@ local function SetCastbarSize(anchorFrame, castSettings, unitFrame, barHeight)
     
     if anchor == "essential" or anchor == "utility" then
         anchorFrame:SetSize(1, barHeight)
-    elseif anchor == "none" then
-        local frameWidth = unitFrame:GetWidth() or 250
-        local widthValue = (type(castSettings.width) == "number" and castSettings.width > 0) and castSettings.width or frameWidth
-        local castWidth = QUICore:PixelRound(widthValue, anchorFrame)
-        anchorFrame:SetSize(castWidth, barHeight)
     else
-        local frameWidth = unitFrame:GetWidth() or 250
+        local frameWidth = (unitFrame and unitFrame:GetWidth()) or 250
         local widthValue = (type(castSettings.width) == "number" and castSettings.width > 0) and castSettings.width or frameWidth
         local castWidth = QUICore:PixelRound(widthValue, anchorFrame)
         anchorFrame:SetSize(castWidth, barHeight)
@@ -1498,7 +1534,7 @@ local function SimulateCast(castbar, castSettings, unitKey, bossIndex)
         castbar:SetScript("OnDragStop", nil)
     end
     
-    castbar:Show()
+    SetCastbarFrameVisible(castbar, true)
 end
 
 -- Clear preview simulation
@@ -1521,7 +1557,7 @@ local function ClearPreviewSimulation(castbar)
     ClearChannelTickState(castbar)
     
     if not UnitCastingInfo(castbar.unit) and not UnitChannelInfo(castbar.unit) then
-        castbar:Hide()
+        SetCastbarFrameVisible(castbar, false)
     end
 end
 
@@ -1820,6 +1856,8 @@ function QUI_Castbar:CreateCastbar(unitFrame, unit, unitKey)
     -- Store unit info
     anchorFrame.unit = unit
     anchorFrame.unitKey = unitKey
+    anchorFrame._quiCastbar = true
+    anchorFrame._quiDesiredVisible = false
     anchorFrame.isChanneled = false
     
     anchorFrame.isEmpowered = false
@@ -1828,6 +1866,18 @@ function QUI_Castbar:CreateCastbar(unitFrame, unit, unitKey)
     anchorFrame.stageOverlays = {}
     anchorFrame.channelTickMarkers = {}
     anchorFrame.channelTickPositions = nil
+
+    -- Player castbar can become protected by secure anchoring chains in combat.
+    -- Keep it shown and toggle visibility through alpha to avoid blocked Show/Hide.
+    if unit == "player" then
+        anchorFrame._quiUseAlphaVisibility = true
+        anchorFrame:SetAlpha(0)
+        anchorFrame:Show()
+    else
+        anchorFrame._quiUseAlphaVisibility = false
+        anchorFrame:SetAlpha(1)
+        anchorFrame:Hide()
+    end
     
     self:SetupCastbar(anchorFrame, unit, unitKey, castSettings)
     
@@ -2068,7 +2118,7 @@ local function HandleNoCast(castbar, castSettings, isPlayer, onUpdateHandler)
                     ClearPreviewSimulation(castbar)
                 end
                 castbar:SetScript("OnUpdate", nil)
-                castbar:Hide()
+                SetCastbarFrameVisible(castbar, false)
                 TryApplyDeferredCastbarRefresh(castbar)
             end
         end
@@ -2081,6 +2131,28 @@ end
 function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
     local isPlayer = (unit == "player")
     castbar.channelTickMarkers = castbar.channelTickMarkers or {}
+
+    local function HideCastbarIfIdle(self)
+        if not self then return false end
+        if UnitCastingInfo(self.unit) or UnitChannelInfo(self.unit) then
+            return false
+        end
+
+        local settings = GetUnitSettings(self.unitKey)
+        if settings and settings.castbar and settings.castbar.previewMode then
+            return false
+        end
+
+        if isPlayer then
+            ClearEmpoweredState(self)
+        end
+        ClearChannelTickState(self)
+        self.timerDriven = false
+        self.durationObj = nil
+        self:SetScript("OnUpdate", nil)
+        SetCastbarFrameVisible(self, false)
+        return true
+    end
     
     -- Unified OnUpdate handler - handles both real casts and preview
     local function CastBar_OnUpdate(self, elapsed)
@@ -2175,7 +2247,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
                 if not self.castStartTime or not self.castEndTime then
                     ClearChannelTickState(self)
                     self:SetScript("OnUpdate", nil)
-                    self:Hide()
+                    SetCastbarFrameVisible(self, false)
                     TryApplyDeferredCastbarRefresh(self)
                     return
                 end
@@ -2186,7 +2258,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             if not startTime or not endTime then
                 ClearChannelTickState(self)
                 self:SetScript("OnUpdate", nil)
-                self:Hide()
+                SetCastbarFrameVisible(self, false)
                 TryApplyDeferredCastbarRefresh(self)
                 return
             end
@@ -2198,7 +2270,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
                 end
                 ClearChannelTickState(self)
                 self:SetScript("OnUpdate", nil)
-                self:Hide()
+                SetCastbarFrameVisible(self, false)
                 TryApplyDeferredCastbarRefresh(self)
                 return
             end
@@ -2307,7 +2379,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             -- No cast and no preview - hide
             ClearChannelTickState(self)
             self:SetScript("OnUpdate", nil)
-            self:Hide()
+            SetCastbarFrameVisible(self, false)
         end
     end
 
@@ -2436,7 +2508,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
 
             -- Start OnUpdate handler and show
             self:SetScript("OnUpdate", CastBar_OnUpdate)
-            self:Show()
+            SetCastbarFrameVisible(self, true)
         else
             -- No real cast - handle preview mode
             ClearChannelTickState(self)
@@ -2462,7 +2534,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             self.timerDriven = false
             self.durationObj = nil
             self:SetScript("OnUpdate", nil)
-            self:Hide()
+            SetCastbarFrameVisible(self, false)
             TryApplyDeferredCastbarRefresh(self)
         end,
         UNIT_SPELLCAST_CHANNEL_STOP = function(self, spellID)
@@ -2471,7 +2543,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             self.timerDriven = false
             self.durationObj = nil
             self:SetScript("OnUpdate", nil)
-            self:Hide()
+            SetCastbarFrameVisible(self, false)
             TryApplyDeferredCastbarRefresh(self)
         end,
         UNIT_SPELLCAST_FAILED = function(self, spellID)
@@ -2484,7 +2556,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             self.timerDriven = false
             self.durationObj = nil
             self:SetScript("OnUpdate", nil)
-            self:Hide()
+            SetCastbarFrameVisible(self, false)
             TryApplyDeferredCastbarRefresh(self)
         end,
         UNIT_SPELLCAST_INTERRUPTED = function(self, spellID)
@@ -2493,7 +2565,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             self.timerDriven = false
             self.durationObj = nil
             self:SetScript("OnUpdate", nil)
-            self:Hide()
+            SetCastbarFrameVisible(self, false)
             TryApplyDeferredCastbarRefresh(self)
         end,
         
@@ -2510,6 +2582,19 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
     
     -- Player-only empowered cast handlers
     if isPlayer then
+        eventHandlers.PLAYER_REGEN_ENABLED = function(self)
+            HideCastbarIfIdle(self)
+        end
+        eventHandlers.PLAYER_ENTERING_WORLD = function(self)
+            C_Timer.After(0, function()
+                HideCastbarIfIdle(self)
+            end)
+        end
+        eventHandlers.UNIT_SPELLCAST_SUCCEEDED = function(self)
+            C_Timer.After(0, function()
+                HideCastbarIfIdle(self)
+            end)
+        end
         eventHandlers.UNIT_SPELLCAST_EMPOWER_START = function(self, spellID)
             self:Cast(spellID, true)
         end
@@ -2527,7 +2612,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
                 ClearEmpoweredState(self)
                 ClearChannelTickState(self)
                 self:SetScript("OnUpdate", nil)
-                self:Hide()
+                SetCastbarFrameVisible(self, false)
                 TryApplyDeferredCastbarRefresh(self)
             end
         end
@@ -2548,6 +2633,9 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
         castbar:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_START", unit)
         castbar:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_UPDATE", unit)
         castbar:RegisterUnitEvent("UNIT_SPELLCAST_EMPOWER_STOP", unit)
+        castbar:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", unit)
+        castbar:RegisterEvent("PLAYER_REGEN_ENABLED")
+        castbar:RegisterEvent("PLAYER_ENTERING_WORLD")
     end
     
     -- Target/focus-specific events
@@ -2901,6 +2989,8 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
     -- Store unit info
     anchorFrame.unit = unit
     anchorFrame.unitKey = "boss"
+    anchorFrame._quiCastbar = true
+    anchorFrame._quiDesiredVisible = false
     anchorFrame.bossIndex = bossIndex
     anchorFrame.isChanneled = false
     
@@ -3267,7 +3357,7 @@ end
 -- REFRESH: Update castbar in place (preserves active casts)
 ---------------------------------------------------------------------------
 function QUI_Castbar:RefreshCastbar(castbar, unitKey, castSettings, unitFrame)
-    if not castSettings or not unitFrame then return end
+    if not castSettings then return end
 
     local unit = (castbar and castbar.unit) or unitKey
     if castbar then
@@ -3296,7 +3386,7 @@ end
 
 function QUI_Castbar:RefreshBossCastbar(castbar, bossKey, castSettings, unitFrame)
     if not castSettings or not unitFrame then return end
-    
+
     local bossIndex = (castbar and castbar.bossIndex) or (bossKey and tonumber(bossKey:match("boss(%d+)")))
     if not bossIndex then return end
     

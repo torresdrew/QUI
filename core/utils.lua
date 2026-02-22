@@ -263,11 +263,18 @@ function Helpers.MigrateHUDMinWidthSettings(frameAnchoring)
     if type(frameAnchoring) ~= "table" then
         return nil
     end
+
+    local cfg = frameAnchoring.hudMinWidth
+    if type(cfg) == "table" then
+        -- Normalize in place so existing widget/db references stay valid.
+        cfg.enabled = (cfg.enabled == true)
+        cfg.width = Helpers.ClampHUDMinWidth(cfg.width)
+        frameAnchoring.hudMinWidthEnabled = nil
+        return cfg
+    end
+
     local enabled, width = Helpers.ParseHUDMinWidth(frameAnchoring)
-    frameAnchoring.hudMinWidth = {
-        enabled = enabled,
-        width = width,
-    }
+    frameAnchoring.hudMinWidth = { enabled = enabled, width = width }
     frameAnchoring.hudMinWidthEnabled = nil
     return frameAnchoring.hudMinWidth
 end
@@ -397,6 +404,63 @@ end
 function Helpers.GetSkinAccentColor()
     local sr, sg, sb, sa = Helpers.GetSkinColors()
     return sr, sg, sb, sa
+end
+
+--- Get skin border color from dedicated border settings.
+--- Falls back to skin accent color so existing profiles keep current visuals.
+--- Supports optional per-module override settings tables.
+--- @param moduleSettings table|nil Optional module settings table
+--- @param prefix string|nil Optional key prefix for module settings in camelCase
+--- @return number, number, number, number r, g, b, a
+function Helpers.GetSkinBorderColor(moduleSettings, prefix)
+    local profile = Helpers.GetProfile()
+    local general = profile and profile.general
+
+    local fallbackR, fallbackG, fallbackB, fallbackA = Helpers.GetSkinAccentColor()
+    local r, g, b, a = fallbackR, fallbackG, fallbackB, fallbackA
+
+    if general then
+        if general.skinBorderUseClassColor then
+            r, g, b = Helpers.GetPlayerClassColor()
+            a = 1
+        elseif type(general.skinBorderColor) == "table" then
+            r = general.skinBorderColor[1] or r
+            g = general.skinBorderColor[2] or g
+            b = general.skinBorderColor[3] or b
+            a = general.skinBorderColor[4] or a
+        end
+
+        if general.hideSkinBorders then
+            a = 0
+        end
+    end
+
+    if type(moduleSettings) == "table" then
+        local keyPrefix = type(prefix) == "string" and prefix or ""
+        local overrideKey = keyPrefix ~= "" and (keyPrefix .. "BorderOverride") or "borderOverride"
+        local hideKey = keyPrefix ~= "" and (keyPrefix .. "HideBorder") or "hideBorder"
+        local useClassKey = keyPrefix ~= "" and (keyPrefix .. "BorderUseClassColor") or "borderUseClassColor"
+        local colorKey = keyPrefix ~= "" and (keyPrefix .. "BorderColor") or "borderColor"
+
+        if moduleSettings[overrideKey] then
+            if moduleSettings[useClassKey] then
+                r, g, b = Helpers.GetPlayerClassColor()
+                a = 1
+            elseif type(moduleSettings[colorKey]) == "table" then
+                local moduleColor = moduleSettings[colorKey]
+                r = moduleColor[1] or r
+                g = moduleColor[2] or g
+                b = moduleColor[3] or b
+                a = moduleColor[4] or a
+            end
+
+            if moduleSettings[hideKey] then
+                a = 0
+            end
+        end
+    end
+
+    return r, g, b, a
 end
 
 --- Get the addon-wide accent color (from options panel color picker)
@@ -567,6 +631,7 @@ ns.GetModuleDB = Helpers.GetModuleDB
 ns.GetModuleSettings = Helpers.GetModuleSettings
 ns.CreateDBGetter = Helpers.CreateDBGetter
 ns.GetSkinColors = Helpers.GetSkinColors
+ns.GetSkinBorderColor = Helpers.GetSkinBorderColor
 ns.GetClassColor = Helpers.GetClassColor
 ns.GetPlayerClassColor = Helpers.GetPlayerClassColor
 ns.GetItemQualityColor = Helpers.GetItemQualityColor
@@ -577,3 +642,5 @@ ns.IsPlayerMounted = Helpers.IsPlayerMounted
 ns.IsPlayerFlying = Helpers.IsPlayerFlying
 ns.IsPlayerSkyriding = Helpers.IsPlayerSkyriding
 ns.IsPlayerInDungeonOrRaid = Helpers.IsPlayerInDungeonOrRaid
+ns.CreateOnUpdateThrottle = Helpers.CreateOnUpdateThrottle
+ns.CreateTimeThrottle = Helpers.CreateTimeThrottle
