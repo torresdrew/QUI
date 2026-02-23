@@ -596,32 +596,19 @@ end
     end
 
     -- Player Frame: Hide when in a party/raid group
-    if PlayerFrame then
-        local inGroup = IsInGroup() or IsInRaid()
-        if settings.hidePlayerFrameInParty and inGroup then
-            if InCombatLockdown() then
-                -- Defer until combat ends (handled by PLAYER_REGEN_ENABLED re-apply)
-            else
-                PlayerFrame:Hide()
-                -- Hook Show() to prevent Blizzard from re-showing it while in group
-                if not PlayerFrame._QUI_ShowHooked then
-                    PlayerFrame._QUI_ShowHooked = true
-                    hooksecurefunc(PlayerFrame, "Show", function(self)
-                        C_Timer.After(0, function()
-                            if InCombatLockdown() then return end
-                            local s = GetSettings()
-                            if s and s.hidePlayerFrameInParty and (IsInGroup() or IsInRaid()) then
-                                self:Hide()
-                            end
-                        end)
-                    end)
-                end
-            end
-        else
-            if not InCombatLockdown() then
-                PlayerFrame:Show()
-            end
+    -- Try QUI's custom player frame first, fall back to Blizzard's PlayerFrame
+    local QUI_UF = ns and ns.QUI_UnitFrames
+    local playerFrame = (QUI_UF and QUI_UF.frames and QUI_UF.frames.player) or PlayerFrame
+    if playerFrame and not InCombatLockdown() then
+        if settings.hidePlayerFrameInParty then
+            -- [group] matches party or raid
+            RegisterStateDriver(playerFrame, "visibility", "[group] hide; show")
+        elseif playerFrame._QUI_PartyHideActive then
+            -- Remove our state driver and restore default visibility
+            UnregisterStateDriver(playerFrame, "visibility")
+            playerFrame:Show()
         end
+        playerFrame._QUI_PartyHideActive = settings.hidePlayerFrameInParty
     end
 end
 
@@ -662,14 +649,20 @@ eventFrame:SetScript("OnEvent", function(self, event, addon)
         return
     end
 
-    -- Handle raid permission/role changes - re-hide CompactRaidFrameManager
+    -- Handle raid permission/role changes - re-hide CompactRaidFrameManager & player frame
     -- BUG-008: Wrap in C_Timer.After(0) to break taint chain from secure event context
     if event == "GROUP_ROSTER_UPDATE" or event == "PLAYER_ROLES_ASSIGNED" then
-        if settings and settings.hideRaidFrameManager and CompactRaidFrameManager then
+        if settings then
             C_Timer.After(0, function()
-                if not InCombatLockdown() then
+                if InCombatLockdown() then return end
+                -- Re-hide CompactRaidFrameManager if needed
+                if settings.hideRaidFrameManager and CompactRaidFrameManager then
                     CompactRaidFrameManager:Hide()
                     CompactRaidFrameManager:EnableMouse(false)
+                end
+                -- Re-evaluate player frame visibility on group changes
+                if settings.hidePlayerFrameInParty then
+                    ApplyHideSettings()
                 end
             end)
         end
