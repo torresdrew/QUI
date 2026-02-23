@@ -577,6 +577,28 @@ function Helpers.CreateTimeThrottle(interval, callback)
     end
 end
 
+-- if QUI Player or Target Frames don't exist, find a 3rd party UF
+-- eg Elv, Unhalted, or Blizzard UF for anchoring purposes
+-- @param type string eg player or target
+-- @return frame
+function Helpers.FindAnchorFrame(type)
+    local frameHighestWidth, highestWidth = nil, 0
+    local f = EnumerateFrames()
+    while f do
+        local unit = f.unit or (f.GetAttribute and f:GetAttribute("unit"))
+        if unit == type then
+            if f:IsVisible() and f:IsObjectType("Button") and f:GetName() then
+                local w = f:GetWidth()
+                if w > 20 and w > highestWidth then
+                    frameHighestWidth, highestWidth = f, w
+                end
+            end
+        end
+        f = EnumerateFrames(f)
+    end
+    return frameHighestWidth
+end
+
 ---------------------------------------------------------------------------
 -- HUD VISIBILITY HELPERS
 -- Shared checks for CDM, Unitframes, and Custom Trackers visibility
