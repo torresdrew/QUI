@@ -2063,6 +2063,14 @@ local function HookViewer(viewerName, trackerKey)
         -- During combat: lightweight icon count to keep proxy dimensions fresh.
         -- No layout, no skinning — just count visible icons and recalc dimensions.
         if InCombatLockdown() then
+            -- Blizzard fires transient 1x1 resets on CDM viewers during combat.
+            -- When the viewer is at 1x1, icon children may report wrong visibility.
+            -- Skip entirely and keep previous state — the real layout will follow.
+            local vw, vh = viewer:GetWidth(), viewer:GetHeight()
+            if not vw or not vh or vw < 2 or vh < 2 then
+                return
+            end
+
             local combatIconCount = 0
             local sel = viewer.Selection
             for i = 1, viewer:GetNumChildren() do
@@ -2085,7 +2093,16 @@ local function HookViewer(viewerName, trackerKey)
                     end
                 end
             end
-            if combatIconCount ~= (uvs.cdmCombatIconCount or -1) then
+
+            -- Guard against transient zero counts: if we previously had icons
+            -- and now see zero, it's likely a Blizzard viewer mutation — skip
+            -- and wait for the real update on the next tick.
+            local prevCount = uvs.cdmCombatIconCount or -1
+            if combatIconCount == 0 and prevCount > 0 then
+                return
+            end
+
+            if combatIconCount ~= prevCount then
                 uvs.cdmCombatIconCount = combatIconCount
                 RecalcCombatDimensions(viewer, trackerKey, combatIconCount)
             end
