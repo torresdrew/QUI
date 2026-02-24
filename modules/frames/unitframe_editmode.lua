@@ -572,14 +572,20 @@ function QUI_UF:EnableEditMode()
             end
         end
 
-        -- Show nudge buttons on the QUI overlay when boss frames are free (not locked).
-        -- Locked styling (grey overlay, drag blocking) is handled by nudge.lua passthrough
-        -- system via QUI_IsFrameLocked(BossTargetFrameContainer).
-        if not (_G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(boss1)) then
-            local core = GetCore()
-            if core and core.blizzardOverlays then
-                local overlay = core.blizzardOverlays["BossTargetFrameContainer"]
-                if overlay then
+        -- Re-anchor the boss overlay to boss1 so it tracks the unit frames
+        -- instead of relying on the container (which may be stale/mis-sized).
+        local core = GetCore()
+        if core and core.blizzardOverlays then
+            local overlay = core.blizzardOverlays["BossTargetFrameContainer"]
+            if overlay then
+                overlay:ClearAllPoints()
+                overlay:SetPoint("TOPLEFT", boss1, "TOPLEFT", 0, 0)
+                overlay:SetSize(width, totalHeight)
+
+                -- Show nudge buttons when boss frames are free (not locked).
+                -- Locked styling (grey overlay, drag blocking) is handled by
+                -- nudge.lua passthrough system via QUI_IsFrameLocked.
+                if not (_G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(boss1)) then
                     if overlay.nudgeUp then overlay.nudgeUp:Show() end
                     if overlay.nudgeDown then overlay.nudgeDown:Show() end
                     if overlay.nudgeLeft then overlay.nudgeLeft:Show() end
