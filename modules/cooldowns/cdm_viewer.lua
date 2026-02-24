@@ -1426,8 +1426,11 @@ local function LayoutViewer(viewerName, trackerKey)
     end
 
     -- Update locked power bars, castbars, and unit frames after layout completes
-    -- Debounced to prevent spam during rapid layout changes
-    if not vs.cdmUpdatePending then
+    -- Debounced to prevent spam during rapid layout changes.
+    -- Skip entirely during combat: Blizzard mutates viewer sizes so
+    -- GetCenter()-based position math drifts.  Post-combat RefreshAll
+    -- will trigger a full update with correct frame geometry.
+    if not vs.cdmUpdatePending and not InCombatLockdown() then
         vs.cdmUpdatePending = true
         C_Timer.After(0.05, function()
             vs.cdmUpdatePending = nil
@@ -1822,6 +1825,17 @@ local function HookViewer(viewerName, trackerKey)
             end
             svs._captureJustCompleted = true
             -- Fall through to LayoutViewer which uses the updated iconSize
+        end
+
+        -- During combat, Blizzard fires transient 1x1 resets on CDM viewers.
+        -- These can't be corrected (SetSizeSafe defers) and trigger wasteful
+        -- LayoutViewer calls whose debounced callbacks read incorrect
+        -- GetCenter() positions, causing power bar / anchor drift.
+        if InCombatLockdown() then
+            local cw, ch = self:GetWidth(), self:GetHeight()
+            if not cw or not ch or cw < 2 or ch < 2 then
+                return
+            end
         end
 
         -- Increment layout counter so OnUpdate polling knows Blizzard changed
