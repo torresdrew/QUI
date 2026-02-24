@@ -1585,7 +1585,7 @@ function MPlusTimer:EnableDemoMode()
 
     -- Set demo data
     self:SetTimeLimit(32 * 60)  -- 32 minutes
-    self:SetKeyDetails(11, {"Tyrannical", "Storming", "Fortified"}, {9, 124, 10}, 1, "The Dawnbreaker")
+    self:SetKeyDetails(11, {"Tyrannical", "Storming", "Fortified"}, {9, 124, 10}, 1, "Jade Serpent")
     self:SetDeathCount(3, 15)
     self:SetForces(285, 289)
 
