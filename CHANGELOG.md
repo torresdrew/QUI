@@ -50,6 +50,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.41.1 - 2026-02-24
+
+### Fixed
+- fixed devourer DH secondary resource bar
 ## v2.41.0 - 2026-02-23
 
 ### Added
