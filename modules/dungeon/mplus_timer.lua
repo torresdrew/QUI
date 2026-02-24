@@ -75,6 +75,8 @@ local SLEEK_AFFIX_ICON_SPACING = 2
 
 local FONT_FLAGS = "OUTLINE"
 
+local MIN_SPACING = 8
+
 ---------------------------------------------------------------------------
 -- Module State
 ---------------------------------------------------------------------------
@@ -532,6 +534,89 @@ function MPlusTimer:CreateProgressBar(parent, barType)
 end
 
 ---------------------------------------------------------------------------
+-- Dynamic Width Calculation
+---------------------------------------------------------------------------
+function MPlusTimer:CalculateRequiredWidth()
+    if not self.frames.root then return nil end
+
+    local settings = GetSettings()
+    local sleek = IsSleekMode()
+    local compact = IsCompactMode()
+
+    local baseWidth, pad, iconSize, iconSpacing, headerFontSize, deathFontSize
+
+    if sleek then
+        baseWidth = SLEEK_FRAME_WIDTH
+        pad = SLEEK_FRAME_PADDING
+        iconSize = SLEEK_AFFIX_ICON_SIZE
+        iconSpacing = SLEEK_AFFIX_ICON_SPACING
+        headerFontSize = SLEEK_FONT_SIZE_HEADER
+        deathFontSize = SLEEK_FONT_SIZE_DEATHS
+    elseif compact then
+        baseWidth = COMPACT_FRAME_WIDTH
+        pad = COMPACT_FRAME_PADDING
+        iconSize = COMPACT_AFFIX_ICON_SIZE
+        iconSpacing = COMPACT_AFFIX_ICON_SPACING
+        headerFontSize = COMPACT_FONT_SIZE_HEADER
+        deathFontSize = COMPACT_FONT_SIZE_DEATHS
+    else
+        baseWidth = FRAME_WIDTH
+        pad = FRAME_PADDING
+        iconSize = AFFIX_ICON_SIZE
+        iconSpacing = AFFIX_ICON_SPACING
+        headerFontSize = FONT_SIZE_KEY
+        deathFontSize = FONT_SIZE_DEATHS
+    end
+
+    local dungeonWidth = self.frames.dungeonText:GetStringWidth() or 0
+    local deathWidth = 0
+
+    if settings.showDeaths and self.state.deathCount > 0 and self.frames.deathsText then
+        deathWidth = self.frames.deathsText:GetStringWidth() or 0
+    end
+
+    local affixWidth = 0
+    if settings.showAffixes then
+        affixWidth = iconSize * 4 + iconSpacing * 3
+    end
+
+    local headerRowWidth = dungeonWidth + MIN_SPACING
+
+    if deathWidth > 0 then
+        headerRowWidth = headerRowWidth + deathWidth + MIN_SPACING
+    end
+
+    if sleek and affixWidth > 0 then
+        headerRowWidth = headerRowWidth + affixWidth + MIN_SPACING
+    end
+
+    local requiredWidth = headerRowWidth + pad * 2
+
+    local barWidth
+    if sleek then
+        barWidth = SLEEK_BAR_WIDTH
+    elseif compact then
+        barWidth = COMPACT_BAR_WIDTH
+    else
+        barWidth = BAR_WIDTH
+    end
+
+    requiredWidth = math.max(requiredWidth, barWidth + pad * 2)
+    requiredWidth = math.max(requiredWidth, baseWidth)
+
+    return math.ceil(requiredWidth)
+end
+
+function MPlusTimer:UpdateFrameWidth()
+    if not self.frames.root then return end
+
+    local requiredWidth = self:CalculateRequiredWidth()
+    if not requiredWidth then return end
+
+    self.frames.root:SetWidth(requiredWidth)
+end
+
+---------------------------------------------------------------------------
 -- Layout
 ---------------------------------------------------------------------------
 function MPlusTimer:UpdateLayout()
@@ -552,15 +637,16 @@ end
 function MPlusTimer:UpdateLayoutCompact(font, settings)
     local pad = COMPACT_FRAME_PADDING
     local vSpace = COMPACT_VERTICAL_SPACING
-    local barWidth = COMPACT_BAR_WIDTH
     local barHeight = COMPACT_BAR_HEIGHT
     local barPad = COMPACT_BAR_PADDING
     local objSpace = COMPACT_OBJECTIVES_SPACING
     local iconSize = COMPACT_AFFIX_ICON_SIZE
     local iconSpacing = COMPACT_AFFIX_ICON_SPACING
 
-    -- Update root frame width
-    self.frames.root:SetWidth(COMPACT_FRAME_WIDTH)
+    local frameWidth = self:CalculateRequiredWidth() or COMPACT_FRAME_WIDTH
+    local barWidth = frameWidth - pad * 2
+
+    self.frames.root:SetWidth(frameWidth)
 
     -- Hide Sleek-only elements
     if self.frames.sleekBar then self.frames.sleekBar:Hide() end
@@ -697,14 +783,15 @@ end
 function MPlusTimer:UpdateLayoutSleek(font, settings)
     local pad = SLEEK_FRAME_PADDING
     local vSpace = SLEEK_VERTICAL_SPACING
-    local barWidth = SLEEK_BAR_WIDTH
     local barHeight = SLEEK_BAR_HEIGHT
     local objSpace = SLEEK_OBJECTIVES_SPACING
     local iconSize = SLEEK_AFFIX_ICON_SIZE
     local iconSpacing = SLEEK_AFFIX_ICON_SPACING
 
-    -- Update root frame width
-    self.frames.root:SetWidth(SLEEK_FRAME_WIDTH)
+    local frameWidth = self:CalculateRequiredWidth() or SLEEK_FRAME_WIDTH
+    local barWidth = frameWidth - pad * 2
+
+    self.frames.root:SetWidth(frameWidth)
 
     local yOffset = pad
 
@@ -823,44 +910,38 @@ function MPlusTimer:UpdateLayoutSleek(font, settings)
     self.frames.root:SetHeight(yOffset)
 end
 
--- Update sleek bar segment positions based on time fractions
 function MPlusTimer:UpdateSleekBarSegments()
     if not self.frames.sleekBar or not self.sleekSegments then return end
 
-    local barWidth = SLEEK_BAR_WIDTH - 2  -- Account for border
+    local barWidth = (self:CalculateRequiredWidth() or SLEEK_FRAME_WIDTH) - SLEEK_FRAME_PADDING * 2 - 2
     local bar1Frac, bar2Frac, bar3Frac = self:GetTimerBarFractions()
 
     local xOffset = 1
 
-    -- +3 segment (leftmost, green)
     local seg3Width = barWidth * bar3Frac
     self.sleekSegments[3]:ClearAllPoints()
     self.sleekSegments[3]:SetPoint("TOPLEFT", self.frames.sleekBar, "TOPLEFT", xOffset, -1)
     self.sleekSegments[3]:SetWidth(seg3Width)
     xOffset = xOffset + seg3Width
 
-    -- +2 segment (middle, yellow)
     local seg2Width = barWidth * bar2Frac
     self.sleekSegments[2]:ClearAllPoints()
     self.sleekSegments[2]:SetPoint("TOPLEFT", self.frames.sleekBar, "TOPLEFT", xOffset, -1)
     self.sleekSegments[2]:SetWidth(seg2Width)
     xOffset = xOffset + seg2Width
 
-    -- +1 segment (rightmost, blue/accent)
     local seg1Width = barWidth * bar1Frac
     self.sleekSegments[1]:ClearAllPoints()
     self.sleekSegments[1]:SetPoint("TOPLEFT", self.frames.sleekBar, "TOPLEFT", xOffset, -1)
     self.sleekSegments[1]:SetWidth(seg1Width)
 
-    -- Update position marker
     self:UpdateSleekPositionMarker()
 end
 
--- Update the position marker on the sleek bar
 function MPlusTimer:UpdateSleekPositionMarker()
     if not self.frames.sleekPosMarker or not self.frames.sleekBar then return end
 
-    local barWidth = SLEEK_BAR_WIDTH - 2
+    local barWidth = (self:CalculateRequiredWidth() or SLEEK_FRAME_WIDTH) - SLEEK_FRAME_PADDING * 2 - 2
     local timeLimit = self.state.timeLimit
     local elapsed = self.state.timer
 
@@ -880,15 +961,16 @@ end
 function MPlusTimer:UpdateLayoutFull(font, settings)
     local pad = FRAME_PADDING
     local vSpace = VERTICAL_SPACING
-    local barWidth = BAR_WIDTH
     local barHeight = BAR_HEIGHT
     local barPad = BAR_PADDING
     local objSpace = OBJECTIVES_SPACING
     local iconSize = AFFIX_ICON_SIZE
     local iconSpacing = AFFIX_ICON_SPACING
 
-    -- Update root frame width
-    self.frames.root:SetWidth(FRAME_WIDTH)
+    local frameWidth = self:CalculateRequiredWidth() or FRAME_WIDTH
+    local barWidth = frameWidth - pad * 2
+
+    self.frames.root:SetWidth(frameWidth)
 
     -- Hide Sleek-only elements
     if self.frames.sleekBar then self.frames.sleekBar:Hide() end
@@ -1138,12 +1220,10 @@ function MPlusTimer:RenderDeaths()
     if self.state.deathCount > 0 then
         local deathStr
         if sleek then
-            -- Sleek mode: compact format "3 -15s"
             deathStr = string.format("%d -%ds",
                 self.state.deathCount,
                 self.state.deathTimeLost)
         else
-            -- Full/Compact mode: verbose format
             deathStr = string.format("Deaths: %d (-%s)",
                 self.state.deathCount,
                 FormatTime(self.state.deathTimeLost))
@@ -1152,6 +1232,8 @@ function MPlusTimer:RenderDeaths()
     else
         self.frames.deathsText:SetText("")
     end
+
+    self:UpdateFrameWidth()
 end
 
 function MPlusTimer:RenderKeyDetails()
@@ -1162,21 +1244,19 @@ function MPlusTimer:RenderKeyDetails()
     local sleek = IsSleekMode()
 
     if compact or sleek then
-        -- Compact/Sleek mode: "+15 Dungeon Name" in dungeonText
         if self.frames.dungeonText then
             local headerText = string.format("+%d %s", self.state.level, self.state.dungeonName or "")
             self.frames.dungeonText:SetText(headerText)
         end
     else
-        -- Full mode: separate dungeon name and key level
         if self.frames.dungeonText then
             self.frames.dungeonText:SetText(self.state.dungeonName or "")
         end
         self.frames.keyText:SetText(string.format("[%d]", self.state.level))
     end
 
-    -- Render affix icons (all modes)
     self:RenderAffixIcons()
+    self:UpdateFrameWidth()
 end
 
 function MPlusTimer:RenderAffixIcons()
@@ -1505,7 +1585,7 @@ function MPlusTimer:EnableDemoMode()
 
     -- Set demo data
     self:SetTimeLimit(32 * 60)  -- 32 minutes
-    self:SetKeyDetails(11, {"Tyrannical", "Storming", "Fortified"}, {9, 124, 10}, 1, "Jade Serpent")
+    self:SetKeyDetails(11, {"Tyrannical", "Storming", "Fortified"}, {9, 124, 10}, 1, "The Dawnbreaker")
     self:SetDeathCount(3, 15)
     self:SetForces(285, 289)
 
