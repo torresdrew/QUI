@@ -1093,9 +1093,7 @@ local function LayoutViewer(viewerName, trackerKey)
         local icon = allIcons[i]
         iconsToLayout[i] = icon
         getIconState(icon).ncdmHidden = nil
-        if not InCombatLockdown() then
-            icon:Show()
-        end
+        icon:Show()
     end
 
     -- Hide overflow
@@ -1103,10 +1101,8 @@ local function LayoutViewer(viewerName, trackerKey)
         local icon = allIcons[i]
         if icon then
             getIconState(icon).ncdmHidden = true
-            if not InCombatLockdown() then
-                icon:Hide()
-                icon:ClearAllPoints()
-            end
+            icon:Hide()
+            icon:ClearAllPoints()
         end
     end
     
@@ -1334,17 +1330,13 @@ local function LayoutViewer(viewerName, trackerKey)
                 x = QUICore:PixelRound(x, viewer)
                 y = QUICore:PixelRound(y, viewer)
             end
-            if not InCombatLockdown() or icon._isCustomCDMIcon then
-                icon:ClearAllPoints()
-                icon:SetPoint("CENTER", viewer, "CENTER", x, y)
-                icon:Show()
-            end
+            icon:ClearAllPoints()
+            icon:SetPoint("CENTER", viewer, "CENTER", x, y)
+            icon:Show()
 
-            -- Apply row opacity (skip Blizzard icons in combat to avoid taint)
+            -- Apply row opacity
             local opacity = rowConfig.opacity or 1.0
-            if not InCombatLockdown() or icon._isCustomCDMIcon then
-                icon:SetAlpha(opacity)
-            end
+            icon:SetAlpha(opacity)
         end
 
         if isVertical then
