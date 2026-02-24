@@ -379,6 +379,11 @@ local viewerOverlays = {}
 local viewersForceShown = {}  -- Viewers we force-showed during edit mode
 local _viewerSelectionHooked = {}  -- guard: hook CDM viewer .Selection once each
 
+-- Expose overlay lookup for cdm_viewer Edit Mode resize handler.
+_G.QUI_GetCDMViewerOverlay = function(viewerName)
+    return viewerOverlays[viewerName]
+end
+
 -- All CDM viewers that should get nudge overlays
 local CDM_VIEWERS = {
     "EssentialCooldownViewer",
@@ -533,11 +538,12 @@ local _hiddenSelections = {}  -- frame -> true
 
 local function HideSelectionIndicator(frame)
     if not frame or not frame.Selection then return end
+    if frame.Selection._quiKeepVisible then return end
     if _hiddenSelections[frame] then return end
     _hiddenSelections[frame] = true
     frame.Selection:SetAlpha(0)
     C_Timer.After(0, function()
-        if frame.Selection then
+        if frame.Selection and not frame.Selection._quiKeepVisible then
             frame.Selection:SetAlpha(0)
             -- Ensure .Selection has valid bounds so GetScaledSelectionSides()
             -- doesn't crash when Blizzard iterates magnetic snap candidates.
@@ -969,7 +975,11 @@ function QUICore:ShowViewerOverlays()
                         ov:Show()
                     end
                     -- Keep Blizzard's .Selection visually hidden; QUI overlay is the indicator.
-                    self:SetAlpha(0)
+                    -- Skip for BuffIcon/BuffBar when flagged to keep Selection visible
+                    -- (cdm_viewer Edit Mode resize needs Selection shown to read MOH size).
+                    if not self._quiKeepVisible then
+                        self:SetAlpha(0)
+                    end
                 end)
             end
             -- Skip overlay when .Selection is hidden (viewer disabled in edit mode settings).
@@ -1367,6 +1377,17 @@ function QUICore:HideBlizzardFrameOverlays()
     end
 end
 
+-- Forward declarations — these must be visible to ShowMinimapOverlay's drag
+-- handlers (closures capture locals by lexical scope; locals declared later in
+-- the file would be invisible and resolve to nil globals).
+-- The actual frame creation and OnUpdate wiring happens after SyncMinimapClusterToMinimap.
+local _clusterSizeWatcher   -- CreateFrame assigned later
+local _lastClusterW, _lastClusterH = 0, 0
+local _lastClusterScale = 1
+local _origMinimapSize = 0
+local _origMinimapScale = 1
+local _resizeContainer = nil  -- lazily created in StartClusterSizeWatcher
+
 -- Show minimap overlay
 function QUICore:ShowMinimapOverlay()
     if not minimapOverlay then
@@ -1376,9 +1397,22 @@ function QUICore:ShowMinimapOverlay()
         -- Check if the minimap is locked by any anchoring system
         local isLocked = Minimap and _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(Minimap)
 
+        -- Do not modify MinimapCluster anchors directly during Edit Mode.
+        -- Blizzard's Edit Mode tracks a dependency graph for all systems.
+        -- Touching MinimapCluster's anchors from addon code during the
+        -- secure execution context corrupts that graph. MinimapCluster is
+        -- kept in sync with Minimap via QUICore.SyncMinimapClusterToMinimap()
+        -- which uses a SecureHandlerAttributeTemplate to update anchors
+        -- through secure code. Drag is handled through the Minimap frame.
+
+        -- Helper: anchor the overlay to cover the minimap (+ datatext panel)
+        local function AnchorOverlayToMinimap()
+            minimapOverlay:ClearAllPoints()
+            minimapOverlay:SetAllPoints(Minimap)
+        end
+
         if isLocked then
-            -- Locked: grey overlay, drag disabled on selection children
-            -- to prevent movement (menus/tooltips still work)
+            -- Locked: grey overlay, block movement
             minimapOverlay:Show()
             minimapOverlay:SetBackdropColor(0.5, 0.5, 0.5, 0.3)
             minimapOverlay:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8)
@@ -1386,49 +1420,25 @@ function QUICore:ShowMinimapOverlay()
                 minimapOverlay.label:SetTextColor(0.5, 0.5, 0.5, 0.8)
                 minimapOverlay.label:SetText("Minimap  (Locked)")
             end
-            -- Extend overlay to cover the datatext panel below the minimap
-            local dtPanelLk = _G["QUI_DatatextPanel"]
-            minimapOverlay:ClearAllPoints()
-            if dtPanelLk and dtPanelLk:IsShown() then
-                minimapOverlay:SetPoint("TOPLEFT", Minimap, "TOPLEFT", 0, 0)
-                minimapOverlay:SetPoint("BOTTOMRIGHT", dtPanelLk, "BOTTOMRIGHT", 0, 0)
-            else
-                minimapOverlay:SetAllPoints(Minimap)
-            end
+            AnchorOverlayToMinimap()
             minimapOverlay:EnableMouse(false)
             minimapOverlay:SetScript("OnMouseDown", nil)
             minimapOverlay:SetScript("OnMouseUp", nil)
-            -- Block movement on both Minimap and MinimapCluster
+            minimapOverlay:SetScript("OnDragStart", nil)
+            minimapOverlay:SetScript("OnDragStop", nil)
+            minimapOverlay:RegisterForDrag()
             BlockFrameMovement(Minimap)
             if MinimapCluster then
                 BlockFrameMovement(MinimapCluster)
-                -- Position MinimapCluster on top of Minimap so .Selection
-                -- is clickable at the correct screen location (opens Blizzard
-                -- Edit Mode menu).  Drag is blocked above via BlockFrameMovement.
-                local mw, mh = Minimap:GetWidth(), Minimap:GetHeight()
-                local dtPanelL = _G["QUI_DatatextPanel"]
-                local totalH = mh
-                local yShift = 0
-                if dtPanelL and dtPanelL:IsShown() then
-                    local _, mtop = Minimap:GetCenter()
-                    local dtbot = dtPanelL:GetBottom()
-                    if mtop and dtbot then
-                        local mtopEdge = mtop + mh / 2
-                        totalH = mtopEdge - dtbot
-                        yShift = (totalH - mh) / 2
-                    end
-                end
-                pcall(function()
-                    MinimapCluster:ClearAllPoints()
-                    MinimapCluster:SetPoint("CENTER", Minimap, "CENTER", 0, -yShift)
-                    MinimapCluster:SetSize(mw, totalH)
-                    MinimapCluster:SetFrameStrata("MEDIUM")
-                end)
                 HideSelectionIndicator(MinimapCluster)
             end
         else
-            -- Free: visual-only QUI overlay, clicks pass through to
-            -- MinimapCluster's .Selection for Edit Mode menu + drag.
+            -- Free: taint-safe proxy drag.
+            -- The overlay itself becomes the mover — on drag start it
+            -- detaches from Minimap and moves freely. On drag stop the
+            -- final position is applied to Minimap and the overlay
+            -- re-anchors. No protected-frame methods (StartMoving) are
+            -- called, avoiding taint propagation.
             minimapOverlay:Show()
             minimapOverlay:SetBackdropColor(0.2, 0.8, 1, 0.3)
             minimapOverlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
@@ -1436,84 +1446,131 @@ function QUICore:ShowMinimapOverlay()
                 minimapOverlay.label:SetTextColor(0.2, 0.8, 1, 1)
                 minimapOverlay.label:SetText("Minimap")
             end
-            -- Extend overlay to cover the datatext panel below the minimap
-            local dtPanel = _G["QUI_DatatextPanel"]
-            minimapOverlay:ClearAllPoints()
-            if dtPanel and dtPanel:IsShown() then
-                minimapOverlay:SetPoint("TOPLEFT", Minimap, "TOPLEFT", 0, 0)
-                minimapOverlay:SetPoint("BOTTOMRIGHT", dtPanel, "BOTTOMRIGHT", 0, 0)
-            else
-                minimapOverlay:SetAllPoints(Minimap)
-            end
-            minimapOverlay:EnableMouse(false)
-            minimapOverlay:SetScript("OnMouseDown", nil)
+            AnchorOverlayToMinimap()
+            minimapOverlay:SetMovable(true)
+            minimapOverlay:SetClampedToScreen(true)
+            minimapOverlay:EnableMouse(true)
+            minimapOverlay:RegisterForDrag("LeftButton")
+            minimapOverlay:SetScript("OnDragStart", function(self)
+                -- Detach from Minimap so the overlay can move freely
+                self:ClearAllPoints()
+                if _resizeContainer and _clusterSizeWatcher:IsShown() then
+                    -- Minimap is anchored to container; use screen center coords.
+                    -- GetCenter returns coords / scale, so multiply by scale.
+                    local cx, cy = Minimap:GetCenter()
+                    local mmScale = Minimap:GetScale() or 1
+                    local px, py = UIParent:GetCenter()
+                    if cx and px then
+                        self:SetPoint("CENTER", UIParent, "CENTER",
+                            cx * mmScale - px, cy * mmScale - py)
+                    end
+                else
+                    local mmPt, _, mmRp, mmX, mmY = Minimap:GetPoint()
+                    if mmPt then
+                        self:SetPoint(mmPt, UIParent, mmRp, mmX, mmY)
+                    end
+                end
+                self:SetSize(Minimap:GetWidth(), Minimap:GetHeight())
+                self:StartMoving()
+                -- Sync Minimap + MinimapCluster position to overlay every frame during drag
+                self:SetScript("OnUpdate", function(ov)
+                    local cx, cy = ov:GetCenter()
+                    if not cx or not cy then return end
+                    local sx, sy = UIParent:GetCenter()
+                    if not sx or not sy then return end
+                    local newOx, newOy = cx - sx, cy - sy
+                    if _resizeContainer and _clusterSizeWatcher:IsShown() then
+                        -- Move container; Minimap follows via (0,0) anchor
+                        _resizeContainer:ClearAllPoints()
+                        _resizeContainer:SetPoint("CENTER", UIParent, "CENTER", newOx, newOy)
+                    else
+                        Minimap:ClearAllPoints()
+                        Minimap:SetPoint("CENTER", UIParent, "CENTER", newOx, newOy)
+                    end
+                    -- Keep MinimapCluster in lockstep so they don't desync
+                    QUICore.SyncMinimapClusterToMinimap()
+                    -- Update frames anchored to the minimap so they follow in real-time
+                    if _G.QUI_UpdateFramesAnchoredTo then
+                        _G.QUI_UpdateFramesAnchoredTo("minimap")
+                    end
+                end)
+            end)
+            minimapOverlay:SetScript("OnDragStop", function(self)
+                self:StopMovingOrSizing()
+                self:SetScript("OnUpdate", nil)
+                -- Read the overlay's final position and apply to Minimap
+                if not InCombatLockdown() then
+                    local pt, _, rp, ox, oy = QUICore:SnapFramePosition(self)
+                    if pt then
+                        if _resizeContainer and _clusterSizeWatcher:IsShown() then
+                            -- Move container to snapped position (convert to CENTER)
+                            local cx, cy = self:GetCenter()
+                            local px, py = UIParent:GetCenter()
+                            if cx and px then
+                                _resizeContainer:ClearAllPoints()
+                                _resizeContainer:SetPoint("CENTER", UIParent, "CENTER", cx - px, cy - py)
+                            end
+                        else
+                            Minimap:ClearAllPoints()
+                            Minimap:SetPoint(pt, UIParent, rp, ox, oy)
+                        end
+                        local mmSettings = QUICore.db and QUICore.db.profile
+                            and QUICore.db.profile.minimap
+                        if mmSettings then
+                            mmSettings.position = {pt, rp, ox, oy}
+                        end
+                    end
+                end
+                -- Re-anchor overlay back on top of the (now-moved) Minimap
+                AnchorOverlayToMinimap()
+                -- Sync MinimapCluster to follow Minimap's new position
+                QUICore.SyncMinimapClusterToMinimap("drag-stop")
+                -- Update frames anchored to the minimap
+                if _G.QUI_UpdateFramesAnchoredTo then
+                    _G.QUI_UpdateFramesAnchoredTo("minimap")
+                end
+            end)
+            -- Left-click: select minimap (shows nudge buttons).
+            -- Open the Blizzard Edit Mode settings panel for the minimap
+            -- on left-click. SelectSystem() must be DEFERRED to a separate
+            -- execution frame (C_Timer.After(0)) so the addon-code taint
+            -- is isolated and does not propagate into Blizzard's secure
+            -- EditMode execution context (which would taint CompactUnitFrame
+            -- health bar values via ResetPartyFrames on exit).
+            -- ClearSelectedSystem() is NOT called — it's unnecessary when
+            -- selecting and was a taint vector.
+            minimapOverlay:SetScript("OnMouseDown", function(_, button)
+                if button == "LeftButton" then
+                    QUICore:SelectEditModeElement("minimap", "minimap")
+                    QUICore.SyncMinimapClusterToMinimap("click-select")
+                    -- Deferred: open Blizzard settings panel for minimap
+                    C_Timer.After(0, function()
+                        if MinimapCluster and MinimapCluster.SelectSystem then
+                            pcall(function()
+                                MinimapCluster.isSelected = false
+                                MinimapCluster:SelectSystem()
+                                if MinimapCluster.Selection then
+                                    MinimapCluster.Selection:SetAlpha(0)
+                                end
+                            end)
+                        end
+                    end)
+                end
+            end)
             minimapOverlay:SetScript("OnMouseUp", nil)
-            -- Ensure movement is unblocked for free minimap
+            -- Tooltip on hover
+            minimapOverlay:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+                GameTooltip:SetText("Minimap")
+                GameTooltip:Show()
+            end)
+            minimapOverlay:SetScript("OnLeave", function()
+                GameTooltip:Hide()
+            end)
             UnblockFrameMovement(Minimap)
             if MinimapCluster then
                 UnblockFrameMovement(MinimapCluster)
                 HideSelectionIndicator(MinimapCluster)
-                -- Position the cluster on top of the minimap so Blizzard's
-                -- .Selection mover aligns with the QUI overlay.
-                -- One-way anchor: cluster follows minimap. Do NOT anchor
-                -- minimap to cluster (circular dependency breaks positioning).
-                -- Size the cluster to cover both Minimap and the
-                -- datatext panel below it (if visible).
-                local mw, mh = Minimap:GetWidth(), Minimap:GetHeight()
-                local dtPanelC = _G["QUI_DatatextPanel"]
-                local totalH = mh
-                local yShift = 0  -- how far to shift cluster center down
-                if dtPanelC and dtPanelC:IsShown() then
-                    local _, mtop = Minimap:GetCenter()
-                    local dtbot = dtPanelC:GetBottom()
-                    if mtop and dtbot then
-                        local mtopEdge = mtop + mh / 2
-                        totalH = mtopEdge - dtbot
-                        yShift = (totalH - mh) / 2
-                    end
-                end
-                pcall(function()
-                    MinimapCluster:ClearAllPoints()
-                    MinimapCluster:SetPoint("CENTER", Minimap, "CENTER", 0, -yShift)
-                    MinimapCluster:SetSize(mw, totalH)
-                    -- Raise the cluster above Minimap so its .Selection
-                    -- receives clicks (Minimap is at LOW strata, fixed).
-                    MinimapCluster:SetFrameStrata("MEDIUM")
-                end)
-                -- Track cluster drag via OnUpdate: when the cluster is being
-                -- dragged by Blizzard's Edit Mode, sync minimap to follow it.
-                -- The cluster center is offset below the minimap center by
-                -- yShift, so we add yShift back when computing minimap pos.
-                if not self._minimapDragTracker then
-                    self._minimapDragTracker = CreateFrame("Frame", nil, UIParent)
-                end
-                local tracker = self._minimapDragTracker
-                tracker._yShift = yShift
-                tracker:SetScript("OnUpdate", function(tf)
-                    if InCombatLockdown() then return end
-                    if not MinimapCluster then
-                        tf:SetScript("OnUpdate", nil)
-                        return
-                    end
-                    -- Only sync while mouse is held (i.e., during drag)
-                    if not IsMouseButtonDown("LeftButton") then return end
-                    local cx, cy = MinimapCluster:GetCenter()
-                    if not cx or not cy then return end
-                    -- Cluster center is yShift below minimap center
-                    local targetY = cy + (tf._yShift or 0)
-                    local mx, my = Minimap:GetCenter()
-                    if not mx or not my then return end
-                    local dx = cx - mx
-                    local dy = targetY - my
-                    -- Only move if the cluster has actually shifted
-                    if math.abs(dx) > 0.5 or math.abs(dy) > 0.5 then
-                        local sx, sy = UIParent:GetCenter()
-                        if sx and sy then
-                            Minimap:ClearAllPoints()
-                            Minimap:SetPoint("CENTER", UIParent, "CENTER", cx - sx, targetY - sy)
-                        end
-                    end
-                end)
             end
         end
 
@@ -1529,17 +1586,14 @@ function QUICore:HideMinimapOverlay()
         minimapOverlay:EnableMouse(false)
         minimapOverlay:SetScript("OnMouseDown", nil)
         minimapOverlay:SetScript("OnMouseUp", nil)
+        minimapOverlay:SetScript("OnDragStart", nil)
+        minimapOverlay:SetScript("OnDragStop", nil)
+        minimapOverlay:SetScript("OnEnter", nil)
+        minimapOverlay:SetScript("OnLeave", nil)
+        minimapOverlay:SetScript("OnUpdate", nil)
+        minimapOverlay:RegisterForDrag()
     end
-    -- Stop the drag tracker
-    if self._minimapDragTracker then
-        self._minimapDragTracker:SetScript("OnUpdate", nil)
-    end
-    -- Restore cluster strata (was raised to MEDIUM for click passthrough)
-    if MinimapCluster then
-        pcall(function() MinimapCluster:SetFrameStrata("LOW") end)
-    end
-    -- Save the minimap's current position (may have moved via cluster drag).
-    -- Minimap stays anchored to UIParent — just save its current offset.
+    -- Save the minimap's current position (may have moved via overlay drag).
     if Minimap then
         local settings = QUICore.db and QUICore.db.profile and QUICore.db.profile.minimap
         if settings then
@@ -1664,6 +1718,306 @@ local function EnsureEditModeReady()
     return LibEditModeOverride:CanEditActiveLayout()
 end
 
+---------------------------------------------------------------------------
+-- MINIMAPCLUSTER ↔ MINIMAP SYNC (Secure Proxy)
+-- QUI reparents Minimap from MinimapCluster to UIParent, making
+-- MinimapCluster vestigial. However, MinimapCluster remains a registered
+-- Edit Mode system. If its position/size desync from Minimap:
+--   1. The layout DB may reference another system → circular anchor
+--      dependency (DebuffFrame ↔ MinimapCluster) during UpdateSystems.
+--   2. Exiting Edit Mode without saving triggers ResetPartyFrames in a
+--      context where the desync propagates taint → CompactUnitFrame
+--      "secret number tainted by QUI" errors.
+--
+-- Fix: Keep MinimapCluster synced to Minimap's position and size via a
+-- SecureHandlerAttributeTemplate proxy. Position data is passed through
+-- attributes (set from addon code), and the snippet applies them from
+-- SECURE CODE so MinimapCluster's anchor data stays untainted.
+--
+-- Sync points: login, Edit Mode enter (after UpdateSystems), and after
+-- each minimap drag-stop.
+--
+-- IMPORTANT: Do NOT use hooksecurefunc on MinimapCluster:SetPoint or
+-- any other widget method — post-hooks inject addon code execution into
+-- Blizzard's secureexecuterange (UpdateSystems), tainting the entire
+-- scope. Do NOT use LibEditModeOverride:ReanchorFrame() either — it
+-- triggers OnSystemPositionChange → ResetPartyFrames → same taint
+-- (documented for BuffBarCooldownViewer at line ~1762).
+---------------------------------------------------------------------------
+
+-- Secure proxy: attribute-driven handler that syncs MinimapCluster's
+-- position and size to Minimap through secure code.
+-- Position data is passed via attributes (sync-x, sync-y, sync-w, sync-h)
+-- set from addon code before triggering "sync-cluster".
+local secureClusterProxy = CreateFrame("Frame", nil, UIParent, "SecureHandlerAttributeTemplate")
+if MinimapCluster then
+    secureClusterProxy:SetFrameRef("cluster", MinimapCluster)
+    secureClusterProxy:SetFrameRef("uiparent", UIParent)
+    if MinimapCluster.BorderTop then
+        secureClusterProxy:SetFrameRef("borderTop", MinimapCluster.BorderTop)
+    end
+    if MinimapCluster.Selection then
+        secureClusterProxy:SetFrameRef("selection", MinimapCluster.Selection)
+    end
+    secureClusterProxy:SetAttribute("_onattributechanged", [[
+        local cluster = self:GetFrameRef("cluster")
+        if not cluster then return end
+
+        -- Lightweight: just hide the cluster (used every frame during Edit Mode
+        -- to counteract Blizzard resetting alpha on selection/resize)
+        if name == "hide-cluster" then
+            cluster:SetAlpha(0)
+            return
+        end
+
+        if name ~= "sync-cluster" then return end
+        local parent = self:GetFrameRef("uiparent")
+        if not parent then return end
+        local x = self:GetAttribute("sync-x") or 0
+        local y = self:GetAttribute("sync-y") or 0
+        local w = self:GetAttribute("sync-w") or 1
+        local h = self:GetAttribute("sync-h") or 1
+        cluster:ClearAllPoints()
+        cluster:SetPoint("CENTER", parent, "CENTER", x, y)
+        cluster:SetWidth(w)
+        cluster:SetHeight(h)
+        -- Make entire cluster invisible — it's a vestigial frame that
+        -- Blizzard's Edit Mode tracks, but QUI manages the Minimap
+        -- independently. Without this, the cluster's dark background
+        -- shows through when it's larger than the Minimap.
+        cluster:SetAlpha(0)
+        -- Also explicitly hide children through secure code
+        local border = self:GetFrameRef("borderTop")
+        if border then border:SetAlpha(0) end
+        local sel = self:GetFrameRef("selection")
+        if sel then sel:SetAlpha(0) end
+    ]])
+    -- Immediately make MinimapCluster invisible through secure code
+    -- (covers the gap before the first full sync triggers)
+    secureClusterProxy:SetAttribute("hide-cluster", 0)
+end
+
+-- Sync MinimapCluster's position and size to match Minimap through
+-- secure code. Reads Minimap's current center and size, passes them
+-- via attributes, then triggers the secure snippet.
+local _syncDebugThrottle = 0
+function QUICore.SyncMinimapClusterToMinimap(source)
+    if not MinimapCluster or not Minimap then return end
+    if InCombatLockdown() then return end
+    local cx, cy = Minimap:GetCenter()
+    local px, py = UIParent:GetCenter()
+    if not cx or not cy or not px or not py then return end
+    local w, h = Minimap:GetSize()
+    -- GetCenter returns coords in the frame's own scale (screen / mmScale).
+    -- Multiply by mmScale to get actual screen coordinates.
+    local mmScale = Minimap:GetScale() or 1
+    local screenCx = cx * mmScale
+    local screenCy = cy * mmScale
+    -- Convert Minimap frame size to Cluster frame size accounting for
+    -- potential scale differences (e.g. Minimap scale=1.2, Cluster scale=1.0)
+    local cScale = MinimapCluster:GetScale() or 1
+    if cScale == 0 then cScale = 1 end
+    local syncW = w * mmScale / cScale
+    local syncH = h * mmScale / cScale
+    -- Cluster anchor offset: screen_offset / cluster_scale
+    local syncX = (screenCx - px) / cScale
+    local syncY = (screenCy - py) / cScale
+    -- Set position/size data as attributes (these trigger _onattributechanged
+    -- but the snippet returns immediately for names other than "sync-cluster")
+    secureClusterProxy:SetAttribute("sync-x", syncX)
+    secureClusterProxy:SetAttribute("sync-y", syncY)
+    secureClusterProxy:SetAttribute("sync-w", syncW)
+    secureClusterProxy:SetAttribute("sync-h", syncH)
+    -- Trigger the actual sync
+    secureClusterProxy:SetAttribute("sync-cluster", GetTime())
+
+    -- DEBUG: Log sync (throttled for drag OnUpdate, always for named sources)
+    if QUI and QUI.DEBUG_MODE then
+        local now = GetTime()
+        if source or (now - _syncDebugThrottle > 2) then
+            _syncDebugThrottle = now
+            local cCx, cCy = MinimapCluster:GetCenter()
+            local cW, cH = MinimapCluster:GetSize()
+            local cPt, cRel, cRelPt, cX, cY = MinimapCluster:GetPoint(1)
+            local cRelName = cRel and (cRel.GetName and cRel:GetName() or tostring(cRel)) or "nil"
+            QUI:DebugPrint(string.format("|cff00ccff[Anchor] SyncCluster(%s)|r Minimap screen(%.1f,%.1f) size(%.0fx%.0f) scale=%.2f → Cluster center(%.1f,%.1f) size(%.0fx%.0f) scale=%.2f anchor(%s,%s,%s,%.1f,%.1f)",
+                source or "drag",
+                screenCx, screenCy, w, h, mmScale,
+                cCx or 0, cCy or 0, cW or 0, cH or 0, cScale,
+                cPt or "?", cRelName, cRelPt or "?", cX or 0, cY or 0))
+        end
+    end
+end
+
+-- Reverse sync: during Edit Mode, watch MinimapCluster for size changes
+-- (from Blizzard's resize slider) and apply them to Minimap.
+-- This is a polling watcher because hooksecurefunc on SetSize/SetWidth/SetHeight
+-- would taint the secure execution context.
+-- (Variables forward-declared before ShowMinimapOverlay — only assign here.)
+_clusterSizeWatcher = CreateFrame("Frame")
+_clusterSizeWatcher:Hide()
+_lastClusterW, _lastClusterH = 0, 0
+_lastClusterScale = 1
+_origMinimapSize = 0
+_origMinimapScale = 1
+
+_clusterSizeWatcher:SetScript("OnUpdate", function(self)
+    if not MinimapCluster or not Minimap then return end
+    -- TAINT PREVENTION: If Edit Mode just closed (e.g. exit-without-saving),
+    -- Blizzard's revert may change MinimapCluster's size in the same frame.
+    -- Reacting to that change (SetScale, SetAttribute) while Blizzard's secure
+    -- context is still settling spreads taint. Just hide the watcher and bail.
+    -- StopClusterSizeWatcher (deferred to next frame) handles the full detach
+    -- from _resizeContainer with correct scale-to-screen conversion.
+    if EditModeManagerFrame and not EditModeManagerFrame:IsShown() then
+        self:Hide()
+        return
+    end
+    -- Keep cluster invisible every frame through secure code — Blizzard
+    -- resets alpha during Edit Mode selection/resize. Direct SetAlpha from
+    -- addon code taints the frame; routing through the secure proxy avoids this.
+    secureClusterProxy:SetAttribute("hide-cluster", GetTime())
+    local cW, cH = MinimapCluster:GetSize()
+    local cScale = MinimapCluster:GetScale() or 1
+    if not cW or cW == 0 then return end
+    -- Only act when cluster size or scale actually changed
+    local sizeChanged = math.abs(cW - _lastClusterW) >= 0.5 or math.abs(cH - _lastClusterH) >= 0.5
+    local scaleChanged = math.abs(cScale - _lastClusterScale) >= 0.001
+    if not sizeChanged and not scaleChanged then return end
+    _lastClusterW, _lastClusterH = cW, cH
+    _lastClusterScale = cScale
+    if InCombatLockdown() then return end
+    if _origMinimapSize == 0 then return end
+    -- Compute the visual (effective) size of the cluster
+    local visualW = cW * cScale
+    local visualH = cH * cScale
+    -- Minimap must always be square — use the smaller visual dimension
+    local visualSize = math.min(visualW, visualH)
+    -- Compute scale ratio relative to the original minimap dimensions.
+    -- SetScale is an instant GPU transform — no 1-frame render lag like SetSize.
+    local ratio = visualSize / (_origMinimapSize * _origMinimapScale)
+    local newScale = _origMinimapScale * ratio
+    if newScale <= 0 then return end
+    -- Check if scale actually changed
+    local curScale = Minimap:GetScale() or 1
+    if math.abs(newScale - curScale) < 0.001 then return end
+    -- Apply new scale — no position correction needed because Minimap is
+    -- anchored to _resizeContainer at offset (0,0). 0 * any_scale = 0.
+    Minimap:SetScale(newScale)
+    -- Do NOT update settings.size or refresh minimap layout here.
+    -- The backdrop and overlay are children of Minimap, so they inherit its scale
+    -- and resize automatically. Updating settings.size during SetScale resize would
+    -- cause UpdateBackdrop() to set the backdrop to the wrong size in Minimap's
+    -- coordinate space (where the frame is still _origMinimapSize). Final size
+    -- update + full refresh happens in StopClusterSizeWatcher on Edit Mode exit.
+    -- Sync cluster back to exact Minimap position
+    QUICore.SyncMinimapClusterToMinimap("resize-sync")
+    -- Update frames anchored to the minimap so they follow the resize
+    if _G.QUI_UpdateFramesAnchoredTo then
+        _G.QUI_UpdateFramesAnchoredTo("minimap")
+    end
+    -- The datatext panel is anchored to Minimap:BOTTOM so position follows
+    -- automatically, but its own scale (set from saved settings) doesn't
+    -- match the live scale. Sync it here; full refresh on exit restores it.
+    local dtPanel = _G["QUI_DatatextPanel"]
+    if dtPanel and dtPanel:IsShown() then
+        dtPanel:SetScale(newScale)
+    end
+end)
+
+-- Start/stop the cluster size watcher for Edit Mode
+function QUICore.StartClusterSizeWatcher()
+    if MinimapCluster then
+        _lastClusterW, _lastClusterH = MinimapCluster:GetSize()
+        _lastClusterScale = MinimapCluster:GetScale() or 1
+    end
+    -- Record original Minimap dimensions so we can use scale-based resizing
+    if Minimap then
+        _origMinimapSize = Minimap:GetWidth()
+        _origMinimapScale = Minimap:GetScale() or 1
+
+        -- Create the resize container once (lazy). Invisible 1x1 frame
+        -- on UIParent that serves purely as a position anchor.
+        if not _resizeContainer then
+            _resizeContainer = CreateFrame("Frame", nil, UIParent)
+            _resizeContainer:SetSize(1, 1)
+            _resizeContainer:SetAlpha(0)
+            _resizeContainer:Show()
+        end
+
+        -- Position container at Minimap's current screen center
+        local mCx, mCy = Minimap:GetCenter()
+        local px, py = UIParent:GetCenter()
+        if mCx and px then
+            _resizeContainer:ClearAllPoints()
+            _resizeContainer:SetPoint("CENTER", UIParent, "CENTER", mCx - px, mCy - py)
+
+            -- Anchor Minimap to container at CENTER (0,0).
+            -- No SetParent — only the anchor changes.
+            Minimap:ClearAllPoints()
+            Minimap:SetPoint("CENTER", _resizeContainer, "CENTER", 0, 0)
+        end
+
+        -- Disable screen clamping during resize — clamping silently modifies
+        -- the frame's position each frame, creating drift when combined with
+        -- scale changes. Re-enabled in StopClusterSizeWatcher.
+        Minimap:SetClampedToScreen(false)
+    end
+    _clusterSizeWatcher:Show()
+end
+
+function QUICore.StopClusterSizeWatcher()
+    _clusterSizeWatcher:Hide()
+    -- Finalize: convert from SetScale-only resize back to proper SetSize + original scale.
+    -- During Edit Mode we only changed scale (instant GPU transform, no black border).
+    -- Now we compute the target frame size from the scale ratio and apply it with SetSize,
+    -- then restore the original scale. The zoom toggle on exit forces a render refresh.
+    if Minimap and _origMinimapSize > 0 then
+        local curScale = Minimap:GetScale() or 1
+        local ratio = (_origMinimapScale > 0) and (curScale / _origMinimapScale) or 1
+        local finalSize = _origMinimapSize * ratio
+
+        -- Persist the final size to profile
+        local settings = QUICore.db and QUICore.db.profile and QUICore.db.profile.minimap
+        if settings then
+            settings.size = finalSize
+        end
+
+        -- GetCenter() returns coords in the frame's own scale (screen / scale).
+        -- Multiply by scale to get actual screen coordinates.
+        local mCx, mCy = Minimap:GetCenter()
+        local screenCx = mCx and (mCx * curScale) or nil
+        local screenCy = mCy and (mCy * curScale) or nil
+        local pCx, pCy = UIParent:GetCenter()
+
+        -- Apply actual SetSize and restore original scale
+        Minimap:SetSize(finalSize, finalSize)
+        Minimap:SetScale(_origMinimapScale)
+
+        -- Compute anchor offset for the restored scale.
+        -- screen_position = UIParent_center + anchor_offset * scale
+        -- => anchor_offset = (screen_position - UIParent_center) / scale
+        local finalScale = _origMinimapScale
+        if finalScale == 0 then finalScale = 1 end
+        local ox = (screenCx and pCx) and ((screenCx - pCx) / finalScale) or 0
+        local oy = (screenCy and pCy) and ((screenCy - pCy) / finalScale) or 0
+
+        -- Detach from container, re-anchor to UIParent
+        Minimap:ClearAllPoints()
+        Minimap:SetPoint("CENTER", UIParent, "CENTER", ox, oy)
+
+        -- Re-enable screen clamping (disabled in StartClusterSizeWatcher)
+        Minimap:SetClampedToScreen(true)
+
+        -- Save the new CENTER-based position to profile
+        if settings then
+            settings.position = {"CENTER", "CENTER", ox, oy}
+        end
+    end
+    _origMinimapSize = 0
+    _origMinimapScale = 1
+end
+
 -- Sync a detached overlay (e.g. BuffBarCooldownViewer) to its viewer position.
 -- Called after nudging moves the viewer so the overlay follows.
 function QUICore:SyncDetachedOverlay(viewerName)
@@ -1781,9 +2135,12 @@ function QUICore:NudgeMinimap(direction)
     local amount = self.nudgeAmount or 1
     if IsShiftKeyDown() then amount = amount * 10 end
 
-    -- position = {point, relativePoint, xOffset, yOffset}
-    local xOfs = db.position[3] or 0
-    local yOfs = db.position[4] or 0
+    -- Normalize position format (handles both keyed defaults and array from drag)
+    local pos = db.position
+    local point = pos[1] or pos.point or "CENTER"
+    local relPoint = pos[2] or pos.relPoint or "CENTER"
+    local xOfs = pos[3] or pos.x or 0
+    local yOfs = pos[4] or pos.y or 0
 
     if direction == "UP" then
         yOfs = yOfs + amount
@@ -1795,12 +2152,27 @@ function QUICore:NudgeMinimap(direction)
         xOfs = xOfs + amount
     end
 
-    db.position[3] = xOfs
-    db.position[4] = yOfs
+    -- Save back in array format (canonical after first nudge)
+    db.position = {point, relPoint, xOfs, yOfs}
 
     -- Apply position
-    Minimap:ClearAllPoints()
-    Minimap:SetPoint(db.position[1], UIParent, db.position[2], xOfs, yOfs)
+    if _resizeContainer and _clusterSizeWatcher:IsShown() then
+        -- Move container by the nudge delta; Minimap follows via (0,0) anchor
+        local _, _, _, cOx, cOy = _resizeContainer:GetPoint(1)
+        local dx = (direction == "RIGHT" and amount or direction == "LEFT" and -amount or 0)
+        local dy = (direction == "UP" and amount or direction == "DOWN" and -amount or 0)
+        _resizeContainer:ClearAllPoints()
+        _resizeContainer:SetPoint("CENTER", UIParent, "CENTER", (cOx or 0) + dx, (cOy or 0) + dy)
+    else
+        Minimap:ClearAllPoints()
+        Minimap:SetPoint(point, UIParent, relPoint, xOfs, yOfs)
+    end
+
+    -- Sync MinimapCluster and update anchored frames
+    QUICore.SyncMinimapClusterToMinimap("nudge")
+    if _G.QUI_UpdateFramesAnchoredTo then
+        _G.QUI_UpdateFramesAnchoredTo("minimap")
+    end
 
     -- Update info text
     if minimapOverlay and minimapOverlay.infoText then
@@ -1817,6 +2189,47 @@ local function RegisterEditModeCallbacks()
         if LibEditModeOverride and LibEditModeOverride:IsReady() then
             if not LibEditModeOverride:AreLayoutsLoaded() then
                 LibEditModeOverride:LoadLayouts()
+            end
+        end
+
+        -- Sync MinimapCluster to Minimap's current position after
+        -- UpdateSystems has run. This overrides whatever anchor
+        -- UpdateSystems applied (from the layout DB) with Minimap's
+        -- actual position, preventing circular dependency chains.
+        QUICore.SyncMinimapClusterToMinimap("editmode-enter")
+
+        -- Start watching for Blizzard resize handle changing MinimapCluster size
+        QUICore.StartClusterSizeWatcher()
+
+        -- DEBUG: Log Minimap vs MinimapCluster state on Edit Mode enter
+        if QUI and QUI.DEBUG_MODE and MinimapCluster and Minimap then
+            local mCx, mCy = Minimap:GetCenter()
+            local cCx, cCy = MinimapCluster:GetCenter()
+            local pCx, pCy = UIParent:GetCenter()
+            local mW, mH = Minimap:GetSize()
+            local cW, cH = MinimapCluster:GetSize()
+            local mPt, mRel, mRelPt, mX, mY = Minimap:GetPoint(1)
+            local cPt, cRel, cRelPt, cX, cY = MinimapCluster:GetPoint(1)
+            local mRelName = mRel and (mRel.GetName and mRel:GetName() or tostring(mRel)) or "nil"
+            local cRelName = cRel and (cRel.GetName and cRel:GetName() or tostring(cRel)) or "nil"
+            QUI:DebugPrint("|cff00ccff[Anchor] Edit Mode Enter — Minimap vs MinimapCluster|r")
+            QUI:DebugPrint(string.format("  Minimap: center(%.1f, %.1f) size(%.1f x %.1f) anchor(%s, %s, %s, %.1f, %.1f)",
+                mCx or 0, mCy or 0, mW or 0, mH or 0,
+                mPt or "?", mRelName, mRelPt or "?", mX or 0, mY or 0))
+            QUI:DebugPrint(string.format("  Cluster: center(%.1f, %.1f) size(%.1f x %.1f) anchor(%s, %s, %s, %.1f, %.1f)",
+                cCx or 0, cCy or 0, cW or 0, cH or 0,
+                cPt or "?", cRelName, cRelPt or "?", cX or 0, cY or 0))
+            if MinimapCluster.BorderTop then
+                local btA = MinimapCluster.BorderTop:GetAlpha()
+                local btV = MinimapCluster.BorderTop:IsShown()
+                local btP = MinimapCluster.BorderTop:GetParent()
+                local btPName = btP and (btP.GetName and btP:GetName() or tostring(btP)) or "nil"
+                QUI:DebugPrint(string.format("  BorderTop: alpha=%.2f shown=%s parent=%s", btA, tostring(btV), btPName))
+            end
+            if MinimapCluster.Selection then
+                local selA = MinimapCluster.Selection:GetAlpha()
+                local selV = MinimapCluster.Selection:IsShown()
+                QUI:DebugPrint(string.format("  Selection: alpha=%.2f shown=%s", selA, tostring(selV)))
             end
         end
 
@@ -1868,6 +2281,54 @@ local function RegisterEditModeCallbacks()
 
     -- Exit callback
     QUICore:RegisterEditModeExit(function()
+        -- DEBUG: Log Minimap vs MinimapCluster state on Edit Mode exit
+        if QUI and QUI.DEBUG_MODE and MinimapCluster and Minimap then
+            local mCx, mCy = Minimap:GetCenter()
+            local cCx, cCy = MinimapCluster:GetCenter()
+            local mW, mH = Minimap:GetSize()
+            local cW, cH = MinimapCluster:GetSize()
+            local cPt, cRel, cRelPt, cX, cY = MinimapCluster:GetPoint(1)
+            local cRelName = cRel and (cRel.GetName and cRel:GetName() or tostring(cRel)) or "nil"
+            QUI:DebugPrint("|cffff8800[Anchor] Edit Mode Exit — Minimap vs MinimapCluster|r")
+            QUI:DebugPrint(string.format("  Minimap: center(%.1f, %.1f) size(%.1f x %.1f)",
+                mCx or 0, mCy or 0, mW or 0, mH or 0))
+            QUI:DebugPrint(string.format("  Cluster: center(%.1f, %.1f) size(%.1f x %.1f) anchor(%s, %s, %s, %.1f, %.1f)",
+                cCx or 0, cCy or 0, cW or 0, cH or 0,
+                cPt or "?", cRelName, cRelPt or "?", cX or 0, cY or 0))
+        end
+
+        -- Stop watching for Blizzard resize handle
+        QUICore.StopClusterSizeWatcher()
+
+        -- Re-sync MinimapCluster after Blizzard's revert moves it away
+        -- from Minimap's position (Minimap stays put since it's parented
+        -- to UIParent, but Blizzard reverts MinimapCluster to its stored
+        -- Edit Mode position).
+        QUICore.SyncMinimapClusterToMinimap("editmode-exit")
+
+        -- Force minimap render refresh after any Edit Mode resize.
+        -- Use SetZoom API instead of ZoomIn/ZoomOut:Click() — clicking
+        -- protected Blizzard buttons from addon code during the exit-
+        -- without-saving flow spreads taint into Blizzard's secure context.
+        -- Deferred slightly to avoid racing with Blizzard's revert operations.
+        C_Timer.After(0.2, function()
+            if not Minimap then return end
+            local z = Minimap:GetZoom()
+            if z < 5 then
+                Minimap:SetZoom(z + 1)
+                Minimap:SetZoom(z)
+            else
+                Minimap:SetZoom(z - 1)
+                Minimap:SetZoom(z)
+            end
+        end)
+
+        -- Definitive minimap layout refresh (backdrop, border, data text, etc.)
+        -- to ensure everything matches the final size after Edit Mode resizing.
+        if _G.QUI_RefreshMinimap then
+            _G.QUI_RefreshMinimap()
+        end
+
         -- Restore drag scripts and .Selection alpha on all locked frames
         UnblockAllFrameMovement()
         RestoreAllSelectionIndicators()
@@ -2047,6 +2508,22 @@ local function RegisterEditModeCallbacks()
 end
 
 RegisterEditModeCallbacks()
+
+-- Sync MinimapCluster to Minimap as early as possible via secure proxy.
+-- EDIT_MODE_LAYOUTS_UPDATED fires when the game client receives layout data
+-- from the server (typically during fresh login). PLAYER_LOGIN covers /reload
+-- where layouts are already cached and the event may not re-fire.
+local minimapClusterSyncFrame = CreateFrame("Frame")
+minimapClusterSyncFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
+minimapClusterSyncFrame:RegisterEvent("PLAYER_LOGIN")
+minimapClusterSyncFrame:SetScript("OnEvent", function(self)
+    -- Defer slightly to ensure Minimap is positioned and layouts are processed
+    C_Timer.After(0.5, function()
+        QUICore.SyncMinimapClusterToMinimap("login")
+    end)
+    -- Only need to sync once on startup; unregister after first fire
+    self:UnregisterAllEvents()
+end)
 
 -- Fix anchor mismatch on startup (for /reload scenarios)
 -- Uses GetCenter() for exact center position directly from WoW

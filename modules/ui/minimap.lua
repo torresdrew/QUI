@@ -1184,7 +1184,10 @@ local function SetupMinimapDragging()
     Minimap:SetFixedFrameStrata(true)
     Minimap:SetFixedFrameLevel(true)
     
-    -- Disable MinimapCluster mouse
+    -- Disable MinimapCluster mouse interaction — QUI manages the minimap
+    -- independently. Do NOT modify MinimapCluster anchors here; anchor
+    -- changes are handled through secure code in nudge.lua
+    -- (SecureFixMinimapClusterAnchor) to avoid tainting the frame.
     if MinimapCluster then
         MinimapCluster:EnableMouse(false)
     end

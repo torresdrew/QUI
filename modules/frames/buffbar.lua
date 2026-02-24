@@ -1521,6 +1521,9 @@ LayoutBuffIcons = function()
     if not BuffIconCooldownViewer then return end
     if isIconLayoutRunning then return end  -- Re-entry guard
     if IsLayoutSuppressed() then return end
+    -- Skip during Edit Mode — Blizzard controls icon layout/padding.
+    -- QUI re-layouts on Edit Mode exit with saved settings.
+    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
 
     isIconLayoutRunning = true
 
@@ -1700,6 +1703,8 @@ LayoutBuffBars = function()
     if not BuffBarCooldownViewer then return end
     if isBarLayoutRunning then return end  -- Re-entry guard
     if IsLayoutSuppressed() then return end
+    -- Skip during Edit Mode — Blizzard controls bar layout/padding.
+    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
 
     isBarLayoutRunning = true
 
@@ -2172,6 +2177,8 @@ local function CheckIconChanges()
     if not BuffIconCooldownViewer then return end
     if isIconLayoutRunning then return end
     if IsLayoutSuppressed() then return end
+    -- Skip during Edit Mode — Blizzard controls icon layout/padding.
+    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
 
     -- Count visible icons
     local visibleCount = 0
@@ -2200,6 +2207,8 @@ end
 local function CheckBarChanges()
     if not BuffBarCooldownViewer then return end
     if isBarLayoutRunning then return end  -- Skip if already laying out
+    -- Skip during Edit Mode — Blizzard controls bar layout/padding.
+    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
 
     -- Always call LayoutBuffBars - it now has internal position verification
     -- that will skip repositioning if all bars are already in correct positions.

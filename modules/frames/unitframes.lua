@@ -3605,6 +3605,17 @@ local function GetAnchorDimensions(anchorFrame, anchorType)
     local centerX, centerY = anchorFrame:GetCenter()
     if not centerX or not centerY then return nil end
 
+    -- Debug: log anchor dimensions during Edit Mode
+    local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    if isEditMode and QUI and QUI.DebugPrint then
+        local afScale = anchorFrame.GetScale and anchorFrame:GetScale() or 1
+        local afLogW = anchorFrame:GetWidth() or 0
+        local afL, afR = anchorFrame:GetLeft(), anchorFrame:GetRight()
+        local afBoundsW = (afL and afR) and (afR - afL) or 0
+        QUI:DebugPrint(format("|cff88CCFF GetAnchorDim|r type=%s: w=%.0f h=%.0f logW=%.0f boundsW=%.0f scale=%.3f cx=%.0f cy=%.0f",
+            anchorType or "?", width, height, afLogW, afBoundsW, afScale, centerX, centerY))
+    end
+
     return {
         width = width,
         height = height,
@@ -3663,6 +3674,16 @@ _G.QUI_UpdateAnchoredUnitFrames = function()
                 local gap = QUICore:PixelRound(playerSettings.anchorGap or 10, frame)
                 local yOffset = QUICore:PixelRound(playerSettings.anchorYOffset or 0, frame)
 
+                -- Debug: log anchor dimensions during Edit Mode
+                local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+                if isEditMode and QUI and QUI.DebugPrint then
+                    local afScale = anchorFrame.GetScale and anchorFrame:GetScale() or 1
+                    local afL, afR = anchorFrame:GetLeft(), anchorFrame:GetRight()
+                    local afBoundsW = (afL and afR) and (afR - afL) or 0
+                    QUI:DebugPrint(format("|cff88CCFF UF Anchor|r player→%s: anchorW=%.0f anchorH=%.0f anchorBoundsW=%.0f anchorScale=%.3f gap=%.0f yOff=%.0f",
+                        playerAnchorType, anchor.width, anchor.height, afBoundsW, afScale, gap, yOffset))
+                end
+
                 -- Relative anchor: player RIGHT edge → anchor LEFT edge, with gap.
                 -- Y offset aligns unit frame TOP with anchor TOP, then applies user offset.
                 -- anchorHeight/2 - frameHeight/2 shifts from CENTER alignment to TOP alignment.
@@ -3694,6 +3715,16 @@ _G.QUI_UpdateAnchoredUnitFrames = function()
                 local frameHeight = frame:GetHeight()
                 local gap = QUICore:PixelRound(targetSettings.anchorGap or 10, frame)
                 local yOffset = QUICore:PixelRound(targetSettings.anchorYOffset or 0, frame)
+
+                -- Debug: log anchor dimensions during Edit Mode
+                local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+                if isEditMode and QUI and QUI.DebugPrint then
+                    local afScale = anchorFrame.GetScale and anchorFrame:GetScale() or 1
+                    local afL, afR = anchorFrame:GetLeft(), anchorFrame:GetRight()
+                    local afBoundsW = (afL and afR) and (afR - afL) or 0
+                    QUI:DebugPrint(format("|cff88CCFF UF Anchor|r target→%s: anchorW=%.0f anchorH=%.0f anchorBoundsW=%.0f anchorScale=%.3f gap=%.0f yOff=%.0f",
+                        targetAnchorType, anchor.width, anchor.height, afBoundsW, afScale, gap, yOffset))
+                end
 
                 -- Relative anchor: target LEFT edge → anchor RIGHT edge, with gap.
                 local yShift = (anchor.height / 2) - (frameHeight / 2) + yOffset

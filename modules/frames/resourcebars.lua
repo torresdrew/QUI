@@ -67,6 +67,16 @@ local PowerBarEditMode = {
     }
 }
 
+-- Helper: Read CDM viewer state (taint-safe, avoids reading __cdm* frame properties).
+-- Returns a table with iconWidth, totalHeight, row1Width, etc., or nil if unavailable.
+local function GetViewerState(viewer)
+    if not viewer then return nil end
+    if _G.QUI_GetCDMViewerState then
+        return _G.QUI_GetCDMViewerState(viewer)
+    end
+    return nil
+end
+
 -- Helper to get texture from general settings (falls back to default)
 local function GetDefaultTexture()
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general then
@@ -922,7 +932,8 @@ function QUICore:GetPowerBar()
         -- Try to get Essential Cooldowns width if available
         local essentialViewer = _G["EssentialCooldownViewer"]
         if essentialViewer then
-            width = essentialViewer.__cdmIconWidth or essentialViewer:GetWidth() or 0
+            local evs = GetViewerState(essentialViewer)
+            width = (evs and evs.iconWidth) or essentialViewer:GetWidth() or 0
         end
         if width <= 0 then
             width = 200  -- Fallback width
@@ -1028,10 +1039,12 @@ function QUICore:UpdatePowerBar()
     if orientation == "AUTO" then
         if cfg.lockedToEssential then
             local viewer = _G.EssentialCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = GetViewerState(viewer)
+            isVertical = (vs and vs.layoutDir) == "VERTICAL"
         elseif cfg.lockedToUtility then
             local viewer = _G.UtilityCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = GetViewerState(viewer)
+            isVertical = (vs and vs.layoutDir) == "VERTICAL"
         end
     end
 
@@ -1044,7 +1057,8 @@ function QUICore:UpdatePowerBar()
         -- Try to get Essential Cooldowns width
         local essentialViewer = _G["EssentialCooldownViewer"]
         if essentialViewer then
-            width = essentialViewer.__cdmIconWidth
+            local evs = GetViewerState(essentialViewer)
+            width = evs and evs.iconWidth
         end
         if not width or width <= 0 then
             width = self.db.profile.ncdm and self.db.profile.ncdm._lastEssentialWidth
@@ -1052,6 +1066,21 @@ function QUICore:UpdatePowerBar()
         if not width or width <= 0 then
             width = 200 -- absolute fallback
         end
+    end
+
+    -- Debug: log power bar width calculation during Edit Mode
+    local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    if isEditMode and QUI and QUI.DebugPrint then
+        local essViewer = _G["EssentialCooldownViewer"]
+        local essLogW = essViewer and essViewer:GetWidth() or 0
+        local essScale = essViewer and essViewer.GetScale and essViewer:GetScale() or 1
+        local essL, essR = essViewer and essViewer:GetLeft(), essViewer and essViewer:GetRight()
+        local essBoundsW = (essL and essR) and (essR - essL) or 0
+        local essVS = GetViewerState(essViewer)
+        local essCdmW = (essVS and essVS.iconWidth) or 0
+        QUI:DebugPrint(format("|cffFF9900PowerBar|r UpdatePowerBar: cfgW=%s finalW=%.0f essLogical=%.0f essBounds=%.0f essCdmIconW=%.0f essScale=%.3f locked=%s",
+            tostring(cfg.width or "nil"), width, essLogW, essBoundsW, essCdmW, essScale,
+            cfg.lockedToEssential and "ess" or (cfg.lockedToUtility and "util" or "no")))
     end
 
     -- Calculate desired position and size (pixel-snapped for crisp borders)
@@ -1268,10 +1297,12 @@ function QUICore:UpdatePowerBarTicks(bar, resource, max)
     if orientation == "AUTO" then
         if cfg.lockedToEssential then
             local viewer = _G.EssentialCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = GetViewerState(viewer)
+            isVertical = (vs and vs.layoutDir) == "VERTICAL"
         elseif cfg.lockedToUtility then
             local viewer = _G.UtilityCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = GetViewerState(viewer)
+            isVertical = (vs and vs.layoutDir) == "VERTICAL"
         end
     end
 
@@ -1320,30 +1351,31 @@ _G.QUI_UpdateLockedPowerBar = function()
     local essentialViewer = _G.EssentialCooldownViewer
     if not essentialViewer or not essentialViewer:IsShown() then return end
 
-    local isVerticalCDM = essentialViewer.__cdmLayoutDirection == "VERTICAL"
+    local evs = GetViewerState(essentialViewer)
+    local isVerticalCDM = (evs and evs.layoutDir) == "VERTICAL"
 
     local newWidth, newOffsetX, newOffsetY
     local barBorderSize = cfg.borderSize or 1
 
     if isVerticalCDM then
         -- Vertical CDM: bar goes to the RIGHT, length matches total height
-        local totalHeight = essentialViewer.__cdmTotalHeight or essentialViewer:GetHeight()
+        local totalHeight = (evs and evs.totalHeight) or essentialViewer:GetHeight()
         if not totalHeight or totalHeight <= 0 then return end
 
         -- Width (bar length) = total CDM height + borders
-        local topBottomBorderSize = essentialViewer.__cdmRow1BorderSize or 0
+        local topBottomBorderSize = (evs and evs.row1BorderSize) or 0
         local targetWidth = totalHeight + (2 * topBottomBorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
         -- Position to the right of Essential
         local essentialCenterX, essentialCenterY = essentialViewer:GetCenter()
         local screenCenterX, screenCenterY = UIParent:GetCenter()
-        local totalWidth = essentialViewer.__cdmIconWidth or essentialViewer:GetWidth()
+        local totalWidth = (evs and evs.iconWidth) or essentialViewer:GetWidth()
         local barThickness = cfg.height or 6
 
         if essentialCenterX and essentialCenterY and screenCenterX and screenCenterY then
             -- CDM's visual right edge (GetWidth includes visual bounds)
-            local rightColBorderSize = essentialViewer.__cdmBottomRowBorderSize or 0
+            local rightColBorderSize = (evs and evs.bottomRowBorderSize) or 0
             local cdmVisualRight = essentialCenterX + (totalWidth / 2) + rightColBorderSize
 
             -- Power bar center X = visual right + bar thickness/2 + border
@@ -1354,10 +1386,10 @@ _G.QUI_UpdateLockedPowerBar = function()
         end
     else
         -- Horizontal CDM: bar below, width matches row width (current behavior)
-        local rowWidth = essentialViewer.__cdmRow1Width or essentialViewer.__cdmIconWidth
+        local rowWidth = (evs and evs.row1Width) or (evs and evs.iconWidth)
         if not rowWidth or rowWidth <= 0 then return end
 
-        local row1BorderSize = essentialViewer.__cdmRow1BorderSize or 0
+        local row1BorderSize = (evs and evs.row1BorderSize) or 0
         local targetWidth = rowWidth + (2 * row1BorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
@@ -1369,6 +1401,16 @@ _G.QUI_UpdateLockedPowerBar = function()
             local screenCenterX = math.floor(rawScreenX + 0.5)
             newOffsetX = essentialCenterX - screenCenterX
         end
+    end
+
+    -- Debug: log locked power bar calculation during Edit Mode
+    local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    if isEditMode and QUI and QUI.DebugPrint then
+        QUI:DebugPrint(format("|cffFF9900PowerBar|r UpdateLockedPowerBar: newW=%s vsIconW=%s vsRow1W=%s logicalW=%.0f",
+            tostring(newWidth or "nil"),
+            tostring(evs and evs.iconWidth or "nil"),
+            tostring(evs and evs.row1Width or "nil"),
+            essentialViewer:GetWidth() or 0))
     end
 
     -- Update if values changed
@@ -1402,30 +1444,31 @@ _G.QUI_UpdateLockedPowerBarToUtility = function()
     local utilityViewer = _G.UtilityCooldownViewer
     if not utilityViewer or not utilityViewer:IsShown() then return end
 
-    local isVerticalCDM = utilityViewer.__cdmLayoutDirection == "VERTICAL"
+    local uvs = GetViewerState(utilityViewer)
+    local isVerticalCDM = (uvs and uvs.layoutDir) == "VERTICAL"
 
     local newWidth, newOffsetX, newOffsetY
     local barBorderSize = cfg.borderSize or 1
 
     if isVerticalCDM then
         -- Vertical CDM: bar goes to the LEFT (Utility is typically on right side of screen)
-        local totalHeight = utilityViewer.__cdmTotalHeight or utilityViewer:GetHeight()
+        local totalHeight = (uvs and uvs.totalHeight) or utilityViewer:GetHeight()
         if not totalHeight or totalHeight <= 0 then return end
 
         -- Width (bar length) = total CDM height
-        local row1BorderSize = utilityViewer.__cdmRow1BorderSize or 0
+        local row1BorderSize = (uvs and uvs.row1BorderSize) or 0
         local targetWidth = totalHeight + (2 * row1BorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
         -- Position to the LEFT of Utility
         local utilityCenterX, utilityCenterY = utilityViewer:GetCenter()
         local screenCenterX, screenCenterY = UIParent:GetCenter()
-        local totalWidth = utilityViewer.__cdmIconWidth or utilityViewer:GetWidth()
+        local totalWidth = (uvs and uvs.iconWidth) or utilityViewer:GetWidth()
         local barThickness = cfg.height or 6
 
         if utilityCenterX and utilityCenterY and screenCenterX and screenCenterY then
             -- CDM's visual left edge (GetWidth includes visual bounds)
-            local row1BorderSizePos = utilityViewer.__cdmRow1BorderSize or 0
+            local row1BorderSizePos = (uvs and uvs.row1BorderSize) or 0
             local cdmVisualLeft = utilityCenterX - (totalWidth / 2) - row1BorderSizePos
 
             -- Power bar center X = visual left - bar thickness/2 - border
@@ -1436,10 +1479,10 @@ _G.QUI_UpdateLockedPowerBarToUtility = function()
         end
     else
         -- Horizontal CDM: bar below, width matches row width (current behavior)
-        local rowWidth = utilityViewer.__cdmBottomRowWidth or utilityViewer.__cdmIconWidth
+        local rowWidth = (uvs and uvs.bottomRowWidth) or (uvs and uvs.iconWidth)
         if not rowWidth or rowWidth <= 0 then return end
 
-        local bottomRowBorderSize = utilityViewer.__cdmBottomRowBorderSize or 0
+        local bottomRowBorderSize = (uvs and uvs.bottomRowBorderSize) or 0
         local targetWidth = rowWidth + (2 * bottomRowBorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
@@ -1493,7 +1536,8 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
     local essentialViewer = _G.EssentialCooldownViewer
     if not essentialViewer or not essentialViewer:IsShown() then return end
 
-    local isVerticalCDM = essentialViewer.__cdmLayoutDirection == "VERTICAL"
+    local evs = GetViewerState(essentialViewer)
+    local isVerticalCDM = (evs and evs.layoutDir) == "VERTICAL"
 
     local newWidth, newOffsetX, newOffsetY
     local barBorderSize = cfg.borderSize or 1
@@ -1501,22 +1545,22 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
 
     if isVerticalCDM then
         -- Vertical CDM: bar goes to the RIGHT, length matches total height
-        local totalHeight = essentialViewer.__cdmTotalHeight or essentialViewer:GetHeight()
+        local totalHeight = (evs and evs.totalHeight) or essentialViewer:GetHeight()
         if not totalHeight or totalHeight <= 0 then return end
 
         -- Width (bar length) = total CDM height + borders
-        local topBottomBorderSize = essentialViewer.__cdmRow1BorderSize or 0
+        local topBottomBorderSize = (evs and evs.row1BorderSize) or 0
         local targetWidth = totalHeight + (2 * topBottomBorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
         -- Position to the right of Essential
         local essentialCenterX, essentialCenterY = essentialViewer:GetCenter()
         local screenCenterX, screenCenterY = UIParent:GetCenter()
-        local totalWidth = essentialViewer.__cdmIconWidth or essentialViewer:GetWidth()
+        local totalWidth = (evs and evs.iconWidth) or essentialViewer:GetWidth()
 
         if essentialCenterX and essentialCenterY and screenCenterX and screenCenterY then
             -- CDM's visual right edge (GetWidth includes visual bounds)
-            local rightColBorderSize = essentialViewer.__cdmBottomRowBorderSize or 0
+            local rightColBorderSize = (evs and evs.bottomRowBorderSize) or 0
             local cdmVisualRight = essentialCenterX + (totalWidth / 2) + rightColBorderSize
 
             -- Power bar center X = visual right + bar thickness/2 + border
@@ -1527,10 +1571,10 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
         end
     else
         -- Horizontal CDM: bar above, width matches row width (current behavior)
-        local rowWidth = essentialViewer.__cdmRow1Width or essentialViewer.__cdmIconWidth
+        local rowWidth = (evs and evs.row1Width) or (evs and evs.iconWidth)
         if not rowWidth or rowWidth <= 0 then return end
 
-        local row1BorderSize = essentialViewer.__cdmRow1BorderSize or 0
+        local row1BorderSize = (evs and evs.row1BorderSize) or 0
         local targetWidth = rowWidth + (2 * row1BorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
@@ -1544,7 +1588,7 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
             local screenCenterY = math.floor(rawScreenY + 0.5)
             newOffsetX = essentialCenterX - screenCenterX
             -- Y offset (position above Essential CDM)
-            local totalHeight = essentialViewer.__cdmTotalHeight or essentialViewer:GetHeight() or 100
+            local totalHeight = (evs and evs.totalHeight) or essentialViewer:GetHeight() or 100
             local cdmVisualTop = essentialCenterY + (totalHeight / 2) + row1BorderSize
             local powerBarCenterY = cdmVisualTop + (barThickness / 2) + barBorderSize
             newOffsetY = math.floor(powerBarCenterY - screenCenterY + 0.5) - 1
@@ -1582,7 +1626,8 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
     local utilityViewer = _G.UtilityCooldownViewer
     if not utilityViewer or not utilityViewer:IsShown() then return end
 
-    local isVerticalCDM = utilityViewer.__cdmLayoutDirection == "VERTICAL"
+    local uvs = GetViewerState(utilityViewer)
+    local isVerticalCDM = (uvs and uvs.layoutDir) == "VERTICAL"
 
     local newWidth, newOffsetX, newOffsetY
     local barBorderSize = cfg.borderSize or 1
@@ -1590,18 +1635,18 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
 
     if isVerticalCDM then
         -- Vertical CDM: bar goes to the LEFT (Utility is typically on right side of screen)
-        local totalHeight = utilityViewer.__cdmTotalHeight or utilityViewer:GetHeight()
+        local totalHeight = (uvs and uvs.totalHeight) or utilityViewer:GetHeight()
         if not totalHeight or totalHeight <= 0 then return end
 
         -- Width (bar length) = total CDM height
-        local row1BorderSize = utilityViewer.__cdmRow1BorderSize or 0
+        local row1BorderSize = (uvs and uvs.row1BorderSize) or 0
         local targetWidth = totalHeight + (2 * row1BorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
         -- Position to the LEFT of Utility
         local utilityCenterX, utilityCenterY = utilityViewer:GetCenter()
         local screenCenterX, screenCenterY = UIParent:GetCenter()
-        local totalWidth = utilityViewer.__cdmIconWidth or utilityViewer:GetWidth()
+        local totalWidth = (uvs and uvs.iconWidth) or utilityViewer:GetWidth()
 
         if utilityCenterX and utilityCenterY and screenCenterX and screenCenterY then
             -- CDM's visual left edge (GetWidth includes visual bounds)
@@ -1615,10 +1660,10 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
         end
     else
         -- Horizontal CDM: bar below, width matches row width (current behavior)
-        local rowWidth = utilityViewer.__cdmBottomRowWidth or utilityViewer.__cdmIconWidth
+        local rowWidth = (uvs and uvs.bottomRowWidth) or (uvs and uvs.iconWidth)
         if not rowWidth or rowWidth <= 0 then return end
 
-        local bottomRowBorderSize = utilityViewer.__cdmBottomRowBorderSize or 0
+        local bottomRowBorderSize = (uvs and uvs.bottomRowBorderSize) or 0
         local targetWidth = rowWidth + (2 * bottomRowBorderSize) - (2 * barBorderSize)
         newWidth = math.floor(targetWidth + 0.5)
 
@@ -1632,7 +1677,7 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
             local screenCenterY = math.floor(rawScreenY + 0.5)
             newOffsetX = utilityCenterX - screenCenterX
             -- Y offset (position below Utility CDM)
-            local totalHeight = utilityViewer.__cdmTotalHeight or utilityViewer:GetHeight() or 100
+            local totalHeight = (uvs and uvs.totalHeight) or utilityViewer:GetHeight() or 100
             local cdmVisualBottom = utilityCenterY - (totalHeight / 2) - bottomRowBorderSize
             local powerBarCenterY = cdmVisualBottom - (barThickness / 2) - barBorderSize
             newOffsetY = math.floor(powerBarCenterY - screenCenterY + 0.5) + 1
@@ -1682,7 +1727,8 @@ function QUICore:GetSecondaryPowerBar()
         -- Try to get Essential Cooldowns width if available
         local essentialViewer = _G["EssentialCooldownViewer"]
         if essentialViewer then
-            width = essentialViewer.__cdmIconWidth or essentialViewer:GetWidth() or 0
+            local evs = GetViewerState(essentialViewer)
+            width = (evs and evs.iconWidth) or essentialViewer:GetWidth() or 0
         end
         if width <= 0 then
             width = 200  -- Fallback width
@@ -2027,19 +2073,23 @@ function QUICore:UpdateSecondaryPowerBarTicks(bar, resource, max)
     if orientation == "AUTO" then
         if cfg.lockedToEssential then
             local viewer = _G.EssentialCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = GetViewerState(viewer)
+            isVertical = (vs and vs.layoutDir) == "VERTICAL"
         elseif cfg.lockedToUtility then
             local viewer = _G.UtilityCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = GetViewerState(viewer)
+            isVertical = (vs and vs.layoutDir) == "VERTICAL"
         elseif cfg.lockedToPrimary then
             local primaryCfg = self.db.profile.powerBar
             if primaryCfg then
                 if primaryCfg.lockedToEssential then
                     local viewer = _G.EssentialCooldownViewer
-                    isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+                    local vs = GetViewerState(viewer)
+                    isVertical = (vs and vs.layoutDir) == "VERTICAL"
                 elseif primaryCfg.lockedToUtility then
                     local viewer = _G.UtilityCooldownViewer
-                    isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+                    local vs = GetViewerState(viewer)
+                    isVertical = (vs and vs.layoutDir) == "VERTICAL"
                 end
             end
         end
@@ -2149,20 +2199,24 @@ function QUICore:UpdateSecondaryPowerBar()
     if orientation == "AUTO" then
         if cfg.lockedToEssential then
             local viewer = _G.EssentialCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = GetViewerState(viewer)
+            isVertical = (vs and vs.layoutDir) == "VERTICAL"
         elseif cfg.lockedToUtility then
             local viewer = _G.UtilityCooldownViewer
-            isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+            local vs = GetViewerState(viewer)
+            isVertical = (vs and vs.layoutDir) == "VERTICAL"
         elseif cfg.lockedToPrimary then
             -- Inherit from Primary bar's locked CDM
             local primaryCfg = self.db.profile.powerBar
             if primaryCfg then
                 if primaryCfg.lockedToEssential then
                     local viewer = _G.EssentialCooldownViewer
-                    isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+                    local vs = GetViewerState(viewer)
+                    isVertical = (vs and vs.layoutDir) == "VERTICAL"
                 elseif primaryCfg.lockedToUtility then
                     local viewer = _G.UtilityCooldownViewer
-                    isVertical = viewer and viewer.__cdmLayoutDirection == "VERTICAL"
+                    local vs = GetViewerState(viewer)
+                    isVertical = (vs and vs.layoutDir) == "VERTICAL"
                 end
             end
         end
@@ -2406,7 +2460,8 @@ function QUICore:UpdateSecondaryPowerBar()
                 if self.powerBar and self.powerBar:IsShown() then
                     width = self.powerBar:GetWidth()
                 elseif anchor then
-                    width = anchor.__cdmIconWidth
+                    local avs = GetViewerState(anchor)
+                    width = avs and avs.iconWidth
                 end
                 if not width or width <= 0 then
                     -- Use saved width from last NCDM layout (persists across reloads)
@@ -2449,7 +2504,8 @@ function QUICore:UpdateSecondaryPowerBar()
                 -- Try to get Essential Cooldowns width
                 local essentialViewer = _G["EssentialCooldownViewer"]
                 if essentialViewer then
-                    width = essentialViewer.__cdmIconWidth
+                    local evs = GetViewerState(essentialViewer)
+                    width = evs and evs.iconWidth
                 end
                 if not width or width <= 0 then
                     width = self.db.profile.ncdm and self.db.profile.ncdm._lastEssentialWidth

@@ -547,28 +547,42 @@ function QUI_UF:EnableEditMode()
         if numBosses == 0 then return end
         local totalHeight = numBosses * height + (numBosses - 1) * spacing
 
-        -- Get Boss1's absolute position before re-anchoring
-        local boss1Left = boss1:GetLeft()
-        local boss1Top = boss1:GetTop()
-        if not boss1Left or not boss1Top then return end
+        local isLocked = _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(boss1)
 
-        -- Position and size container to cover the boss group
-        BossTargetFrameContainer:ClearAllPoints()
-        BossTargetFrameContainer:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", boss1Left, boss1Top)
-        BossTargetFrameContainer:SetSize(width, totalHeight)
-        BossTargetFrameContainer:Show()
+        if isLocked then
+            -- LOCKED: Anchor container to boss1 so it tracks wherever the
+            -- anchoring system places the boss frames.  The anchoring system
+            -- repositions boss frames via DebouncedReapplyOverrides; if we
+            -- anchored boss1 to the container instead, that re-anchor would
+            -- move boss1 away from the container, leaving the container's
+            -- .Selection frame stranded at a stale position.
+            BossTargetFrameContainer:ClearAllPoints()
+            BossTargetFrameContainer:SetPoint("TOPLEFT", boss1, "TOPLEFT", 0, 0)
+            BossTargetFrameContainer:SetSize(width, totalHeight)
+            BossTargetFrameContainer:Show()
+        else
+            -- FREE: Anchor boss1 to the container so dragging the container
+            -- (via Blizzard's .Selection) moves all boss frames together.
+            local boss1Left = boss1:GetLeft()
+            local boss1Top = boss1:GetTop()
+            if not boss1Left or not boss1Top then return end
 
-        -- Anchor Boss1 to the container so it follows when the container is dragged
-        boss1:ClearAllPoints()
-        boss1:SetPoint("TOPLEFT", BossTargetFrameContainer, "TOPLEFT", 0, 0)
+            BossTargetFrameContainer:ClearAllPoints()
+            BossTargetFrameContainer:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", boss1Left, boss1Top)
+            BossTargetFrameContainer:SetSize(width, totalHeight)
+            BossTargetFrameContainer:Show()
 
-        -- Re-anchor Boss2-5 stacking below Boss1
-        for i = 2, numBosses do
-            local bf = self.frames["boss" .. i]
-            local prev = self.frames["boss" .. (i - 1)]
-            if bf and prev then
-                bf:ClearAllPoints()
-                bf:SetPoint("TOP", prev, "BOTTOM", 0, -spacing)
+            boss1:ClearAllPoints()
+            boss1:SetPoint("TOPLEFT", BossTargetFrameContainer, "TOPLEFT", 0, 0)
+
+            -- Re-anchor Boss2-5 stacking below Boss1
+            for i = 2, numBosses do
+                local bf = self.frames["boss" .. i]
+                local prev = self.frames["boss" .. (i - 1)]
+                if bf and prev then
+                    bf:ClearAllPoints()
+                    bf:SetPoint("TOP", prev, "BOTTOM", 0, -spacing)
+                end
             end
         end
 
@@ -693,13 +707,18 @@ function QUI_UF:DisableEditMode()
     end
 
     -- Save boss group position from container and restore normal anchoring.
-    -- During Edit Mode, Boss1 was anchored to BossTargetFrameContainer.
+    -- During Edit Mode, Boss1 was anchored to BossTargetFrameContainer (free)
+    -- or the container was anchored to Boss1 (locked).
     -- Now save the final position and re-anchor to UIParent.
     local boss1 = self.frames["boss1"]
     if boss1 and BossTargetFrameContainer then
         local bossSettings = GetUnitSettings("boss")
-        if bossSettings then
-            -- Calculate offset from UIParent center (same formula as drag stop)
+        local isLocked = _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(boss1)
+
+        if bossSettings and not isLocked then
+            -- Only save position when FREE — locked frames are positioned by
+            -- the anchoring system and saving would overwrite the user's
+            -- free-position offset with the anchored position.
             local selfX, selfY = boss1:GetCenter()
             local parentX, parentY = UIParent:GetCenter()
             if selfX and selfY and parentX and parentY then

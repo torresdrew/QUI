@@ -470,6 +470,12 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
         local widthAdj = QUICore:PixelRound(castSettings.widthAdjustment or 0, anchorFrame)
         local viewer = _G["EssentialCooldownViewer"]
         if viewer then
+            -- Use the CDM anchor proxy for edge-based dual anchoring. The proxy has
+            -- frozen dimensions during combat so the castbar width stays stable when
+            -- Blizzard resizes the actual viewer (icon count changes). The proxy tracks
+            -- the viewer's CENTER position, so its edges represent QUI's expected bounds.
+            local anchorTarget = (_G.QUI_GetCDMAnchorProxyFrame and _G.QUI_GetCDMAnchorProxyFrame("cdmEssential")) or viewer
+
             -- Keep castbar spacing visually consistent with the active bottom CDM row.
             -- In horizontal CDM layouts, row yOffset can move the visible bottom row
             -- without changing the viewer frame bounds.
@@ -478,8 +484,8 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
             if (vs and vs.layoutDir) ~= "VERTICAL" then
                 bottomRowYOffset = QUICore:PixelRound((vs and vs.bottomRowYOffset) or 0, anchorFrame)
             end
-            anchorFrame:SetPoint("TOPLEFT", viewer, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
-            anchorFrame:SetPoint("TOPRIGHT", viewer, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPLEFT", anchorTarget, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPRIGHT", anchorTarget, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
         else
             if unitFrame then
                 anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX, offsetY)
@@ -493,14 +499,17 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
         local widthAdj = QUICore:PixelRound(castSettings.widthAdjustment or 0, anchorFrame)
         local viewer = _G["UtilityCooldownViewer"]
         if viewer then
+            -- Use the CDM anchor proxy (same reasoning as Essential above).
+            local anchorTarget = (_G.QUI_GetCDMAnchorProxyFrame and _G.QUI_GetCDMAnchorProxyFrame("cdmUtility")) or viewer
+
             -- Mirror Essential logic so Utility-anchored castbars behave consistently.
             local bottomRowYOffset = 0
             local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer)
             if (vs and vs.layoutDir) ~= "VERTICAL" then
                 bottomRowYOffset = QUICore:PixelRound((vs and vs.bottomRowYOffset) or 0, anchorFrame)
             end
-            anchorFrame:SetPoint("TOPLEFT", viewer, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
-            anchorFrame:SetPoint("TOPRIGHT", viewer, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPLEFT", anchorTarget, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPRIGHT", anchorTarget, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
         else
             if unitFrame then
                 anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX, offsetY)
