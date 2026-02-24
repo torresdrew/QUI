@@ -1417,6 +1417,10 @@ end
 
 -- Global callback for NCDM to update locked power bar width and position
 _G.QUI_UpdateLockedPowerBar = function()
+    -- During combat, Blizzard mutates CDM viewer sizes so GetCenter()
+    -- returns incorrect positions.  Defer to post-combat RefreshAll.
+    if InCombatLockdown() then return end
+
     local core = GetCore()
     if not core or not core.db then return end
 
@@ -1510,6 +1514,8 @@ end
 
 -- Global callback for NCDM to update power bar locked to Utility
 _G.QUI_UpdateLockedPowerBarToUtility = function()
+    if InCombatLockdown() then return end
+
     local core = GetCore()
     if not core or not core.db then return end
 
@@ -1602,6 +1608,8 @@ local cachedPrimaryDimensions = {
 
 -- Global callback for NCDM to update SECONDARY power bar locked to Essential
 _G.QUI_UpdateLockedSecondaryPowerBar = function()
+    if InCombatLockdown() then return end
+
     local core = GetCore()
     if not core or not core.db then return end
 
@@ -1692,6 +1700,8 @@ end
 
 -- Global callback for NCDM to update SECONDARY power bar locked to Utility
 _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
+    if InCombatLockdown() then return end
+
     local core = GetCore()
     if not core or not core.db then return end
 
