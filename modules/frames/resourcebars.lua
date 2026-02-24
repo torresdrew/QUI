@@ -122,8 +122,10 @@ end
 
 --TABLES
 
--- Custom power type ID for Enhancement Shaman Maelstrom Weapon (aura-based, not a Blizzard PowerType)
+-- Custom power type ID for Enhancement Shaman Maelstrom Weapon and Vengeance Demon Hunter Soul Fragments (aura-based, not a Blizzard PowerType)
 Enum.PowerType.MaelstromWeapon = 100
+Enum.PowerType.VengSoulFragments = 101
+local VDH_SOUL_FRAGMENTS_POWER = (Enum.PowerType and type(Enum.PowerType.SoulFragments) == "number") and Enum.PowerType.SoulFragments or nil
 
 local tocVersion = select(4, GetBuildInfo())
 local HAS_UNIT_POWER_PERCENT = type(UnitPowerPercent) == "function"
@@ -163,7 +165,11 @@ local tickedPowerTypes = {
     [Enum.PowerType.Runes] = true,
     [Enum.PowerType.SoulShards] = true,
     [Enum.PowerType.MaelstromWeapon] = true,
+    [Enum.PowerType.VengSoulFragments] = true,
 }
+if VDH_SOUL_FRAGMENTS_POWER then
+    tickedPowerTypes[VDH_SOUL_FRAGMENTS_POWER] = true
+end
 
 local fragmentedPowerTypes = {
     [Enum.PowerType.Runes] = true,
@@ -189,7 +195,11 @@ local instantFeedbackTypes = {
     [Enum.PowerType.Essence] = true,
     [Enum.PowerType.SoulShards] = true,
     [Enum.PowerType.MaelstromWeapon] = true,
+    [Enum.PowerType.VengSoulFragments] = true,
 }
+if VDH_SOUL_FRAGMENTS_POWER then
+    instantFeedbackTypes[VDH_SOUL_FRAGMENTS_POWER] = true
+end
 
 -- Druid utility forms (show spec resource instead of form resource)
 local druidUtilityForms = {
@@ -324,7 +334,8 @@ local function GetSecondaryResource()
     local secondaryResources = {
         ["DEATHKNIGHT"] = Enum.PowerType.Runes,
         ["DEMONHUNTER"] = {
-            [1480] = "SOUL", -- Aldrachi Reaver
+            [581] = VDH_SOUL_FRAGMENTS_POWER or Enum.PowerType.VengSoulFragments, -- Vengeance
+            [1480] = "SOUL", -- Devourer / Aldrachi Reaver
         },
         ["DRUID"]       = {
             [1]    = Enum.PowerType.ComboPoints, -- Cat
@@ -403,7 +414,7 @@ local function GetResourceColor(resource)
             else
                 customColor = pc.stagger
             end
-        elseif resource == "SOUL" then
+        elseif resource == "SOUL" or resource == Enum.PowerType.VengSoulFragments or (VDH_SOUL_FRAGMENTS_POWER and resource == VDH_SOUL_FRAGMENTS_POWER) then
             customColor = pc.soulFragments
         elseif resource == Enum.PowerType.SoulShards then
             customColor = pc.soulShards
@@ -472,45 +483,51 @@ local function GetResourceColor(resource)
         or GetPowerBarColor("MANA")
 end
 
--- DEMON HUNTER SOUL FRAGMENTS BAR HANDLING
+-- GET RESOURCE VALUES
+
+local cachedDHSoulBarParent = nil
+local cachedDHSoulBarAlpha = nil
 
 local function EnsureDemonHunterSoulBar()
-    -- Ensure the Demon Hunter soul fragments bar is always shown and functional
-    -- This is needed even when custom unit frames are enabled
-    local _, class = UnitClass("player")
-    if class ~= "DEMONHUNTER" then return end
-    
-    local spec = GetSpecialization()
-    if spec ~= 3 then return end -- Devourer (spec 3, ID 1480)
-    
     local soulBar = _G["DemonHunterSoulFragmentsBar"]
-    if soulBar then
-        -- Reparent to UIParent if not already (so it's not affected by PlayerFrame)
-        if soulBar:GetParent() ~= UIParent then
-            if not InCombatLockdown() then
-                soulBar:SetParent(UIParent)
+    if not soulBar then return nil end
+
+    local isSoulResource = (GetSecondaryResource() == "SOUL")
+
+    -- Restore original Blizzard ownership/state when no longer using SOUL as secondary.
+    if not isSoulResource then
+        if not InCombatLockdown() then
+            if cachedDHSoulBarParent and soulBar.GetParent and soulBar:GetParent() ~= cachedDHSoulBarParent then
+                soulBar:SetParent(cachedDHSoulBarParent)
+            end
+            if cachedDHSoulBarAlpha ~= nil and soulBar.SetAlpha then
+                soulBar:SetAlpha(cachedDHSoulBarAlpha)
             end
         end
-        -- Ensure it's shown (even if PlayerFrame is hidden)
-        if not soulBar:IsShown() then
+        return soulBar
+    end
+
+    -- Keep Blizzard's soul fragment driver alive even when PlayerFrame is hidden.
+    if not InCombatLockdown() then
+        if cachedDHSoulBarParent == nil and soulBar.GetParent then
+            cachedDHSoulBarParent = soulBar:GetParent()
+        end
+        if cachedDHSoulBarAlpha == nil and soulBar.GetAlpha then
+            cachedDHSoulBarAlpha = soulBar:GetAlpha()
+        end
+        if soulBar.GetParent and soulBar:GetParent() ~= UIParent then
+            soulBar:SetParent(UIParent)
+        end
+        if soulBar.IsShown and not soulBar:IsShown() then
             soulBar:Show()
         end
-        soulBar:SetAlpha(0)  -- ALWAYS hide visually (fixes Devourer spec)
-        -- Unhook any hide scripts that might prevent it from showing
-        if not InCombatLockdown() then
-            soulBar:SetScript("OnShow", nil)
-            -- Set OnHide to immediately show it again
-            soulBar:SetScript("OnHide", function(self)
-                if not InCombatLockdown() then
-                    self:Show()
-                    self:SetAlpha(0)
-                end
-            end)
+        if soulBar.SetAlpha then
+            soulBar:SetAlpha(0)
         end
     end
-end
 
--- GET RESOURCE VALUES
+    return soulBar
+end
 
 local function GetPrimaryResourceValue(resource, cfg)
     if not resource then return nil, nil, nil, nil end
@@ -542,18 +559,27 @@ local function GetSecondaryResourceValue(resource)
     end
 
     if resource == "SOUL" then
-        -- DH souls – get from default Blizzard bar
-        local soulBar = _G["DemonHunterSoulFragmentsBar"]
-        if not soulBar then return nil, nil, nil, nil end
-
-        -- Ensure the bar is shown (even if PlayerFrame is hidden)
-        if not soulBar:IsShown() then
-            soulBar:Show()
-            soulBar:SetAlpha(0)
+        local soulBar = EnsureDemonHunterSoulBar() or _G["DemonHunterSoulFragmentsBar"]
+        if soulBar and soulBar.GetValue and soulBar.GetMinMaxValues then
+            local current = soulBar:GetValue()
+            local _, max = soulBar:GetMinMaxValues()
+            if max and max > 0 then
+                return max, current, current, "number"
+            end
         end
+    end
 
-        local current = soulBar:GetValue()
-        local _, max = soulBar:GetMinMaxValues()
+    if VDH_SOUL_FRAGMENTS_POWER and resource == VDH_SOUL_FRAGMENTS_POWER then
+        local current = UnitPower("player", resource) or 0
+        local max = UnitPowerMax("player", resource) or 0
+        if max > 0 then
+            return max, current, current, "number"
+        end
+    end
+
+    if resource == Enum.PowerType.VengSoulFragments then
+        local current = C_Spell.GetSpellCastCount(228477) or 0
+        local max = 6
 
         return max, current, current, "number"
     end
@@ -2734,7 +2760,10 @@ end
 function QUICore:OnUnitAura(_, unit)
     if unit and unit ~= "player" then return end
     local resource = GetSecondaryResource()
-    if resource == Enum.PowerType.MaelstromWeapon then
+    if resource == Enum.PowerType.MaelstromWeapon
+        or resource == Enum.PowerType.VengSoulFragments
+        or (VDH_SOUL_FRAGMENTS_POWER and resource == VDH_SOUL_FRAGMENTS_POWER)
+        or resource == "SOUL" then
         self:UpdateSecondaryPowerBar()
     end
 end
@@ -2853,7 +2882,6 @@ local function InitializeResourceBars(self)
     -- Mount state - needed so CDM visibility (hideWhenMounted, etc.) hides resource bars
     self:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED", "OnShapeshiftChanged")
 
-    -- Ensure Demon Hunter soul bar is spawned
     EnsureDemonHunterSoulBar()
 
     -- Initial update
@@ -2880,7 +2908,6 @@ end
 
 
 function QUICore:OnSpecChanged()
-    -- Ensure Demon Hunter soul bar is spawned when spec changes
     EnsureDemonHunterSoulBar()
 
     self:UpdatePowerBar()
