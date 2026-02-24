@@ -1294,11 +1294,31 @@ local function GetCDMAnchorProxy(parentKey)
     end
 
     -- Combat-stable behavior:
-    -- Keep the proxy frozen during combat once initialized, then refresh after
-    -- combat ends. This prevents children anchored to edge points (TOP/BOTTOM)
-    -- from drifting when Blizzard mutates protected frame size in combat.
+    -- Anchor point stays frozen during combat (Blizzard may mutate viewer position).
+    -- BUT allow proxy SIZE updates from viewer state so dependent frames can track
+    -- real-time icon count changes via RecalcCombatDimensions.
     local inCombat = InCombatLockdown()
     if inCombat and proxy.__quiCDMProxyInitialized then
+        if source.cdm then
+            -- Read self-calculated dimensions from viewer state
+            -- (RecalcCombatDimensions keeps these fresh during combat)
+            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(sourceFrame)
+            local cw = (vs and vs.iconWidth) or 0
+            local ch = (vs and vs.totalHeight) or 0
+            if cw >= 2 and ch >= 2 then
+                local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
+                if minWidthEnabled and IsHUDAnchoredToCDM() then
+                    cw = math.max(cw, minWidth)
+                end
+                cw = math.max(1, cw)
+                ch = math.max(1, ch)
+                -- Update size but keep anchor point frozen
+                local curW, curH = proxy:GetWidth(), proxy:GetHeight()
+                if curW ~= cw or curH ~= ch then
+                    proxy:SetSize(cw, ch)
+                end
+            end
+        end
         cdmAnchorProxyPendingAfterCombat[parentKey] = true
         return proxy
     end

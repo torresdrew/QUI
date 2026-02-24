@@ -1789,6 +1789,152 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
     end
 end
 
+---------------------------------------------------------------------------
+-- COMBAT-SAFE power bar width updaters (width only, no GetCenter)
+-- Called by QUI_UpdateCombatDependentFrames when icon count changes
+-- during combat. Position stays at last-known-good value.
+---------------------------------------------------------------------------
+
+_G.QUI_UpdateLockedPowerBarCombatSafe = function()
+    local core = GetCore()
+    if not core or not core.db then return end
+
+    local cfg = core.db.profile.powerBar
+    if not cfg.enabled or not cfg.lockedToEssential then return end
+
+    local essentialViewer = _G.EssentialCooldownViewer
+    if not essentialViewer then return end
+
+    local evs = GetViewerState(essentialViewer)
+    if not evs then return end
+
+    local isVerticalCDM = (evs.layoutDir) == "VERTICAL"
+    local barBorderSize = cfg.borderSize or 1
+    local newWidth
+
+    if isVerticalCDM then
+        local totalHeight = evs.totalHeight or 0
+        if totalHeight <= 0 then return end
+        local topBottomBorderSize = evs.row1BorderSize or 0
+        newWidth = math.floor(totalHeight + (2 * topBottomBorderSize) - (2 * barBorderSize) + 0.5)
+    else
+        local rowWidth = evs.row1Width or evs.iconWidth
+        if not rowWidth or rowWidth <= 0 then return end
+        local row1BorderSize = evs.row1BorderSize or 0
+        newWidth = math.floor(rowWidth + (2 * row1BorderSize) - (2 * barBorderSize) + 0.5)
+    end
+
+    if newWidth and newWidth > 0 and cfg.width ~= newWidth then
+        cfg.width = newWidth
+        core:UpdatePowerBar()
+    end
+end
+
+_G.QUI_UpdateLockedPowerBarToUtilityCombatSafe = function()
+    local core = GetCore()
+    if not core or not core.db then return end
+
+    local cfg = core.db.profile.powerBar
+    if not cfg.enabled or not cfg.lockedToUtility then return end
+
+    local utilityViewer = _G.UtilityCooldownViewer
+    if not utilityViewer then return end
+
+    local uvs = GetViewerState(utilityViewer)
+    if not uvs then return end
+
+    local isVerticalCDM = (uvs.layoutDir) == "VERTICAL"
+    local barBorderSize = cfg.borderSize or 1
+    local newWidth
+
+    if isVerticalCDM then
+        local totalHeight = uvs.totalHeight or 0
+        if totalHeight <= 0 then return end
+        local row1BorderSize = uvs.row1BorderSize or 0
+        newWidth = math.floor(totalHeight + (2 * row1BorderSize) - (2 * barBorderSize) + 0.5)
+    else
+        local rowWidth = uvs.bottomRowWidth or uvs.iconWidth
+        if not rowWidth or rowWidth <= 0 then return end
+        local bottomRowBorderSize = uvs.bottomRowBorderSize or 0
+        newWidth = math.floor(rowWidth + (2 * bottomRowBorderSize) - (2 * barBorderSize) + 0.5)
+    end
+
+    if newWidth and newWidth > 0 and cfg.width ~= newWidth then
+        cfg.width = newWidth
+        core:UpdatePowerBar()
+    end
+end
+
+_G.QUI_UpdateLockedSecondaryPowerBarCombatSafe = function()
+    local core = GetCore()
+    if not core or not core.db then return end
+
+    local cfg = core.db.profile.secondaryPowerBar
+    if not cfg.enabled or not cfg.lockedToEssential then return end
+
+    local essentialViewer = _G.EssentialCooldownViewer
+    if not essentialViewer then return end
+
+    local evs = GetViewerState(essentialViewer)
+    if not evs then return end
+
+    local isVerticalCDM = (evs.layoutDir) == "VERTICAL"
+    local barBorderSize = cfg.borderSize or 1
+    local newWidth
+
+    if isVerticalCDM then
+        local totalHeight = evs.totalHeight or 0
+        if totalHeight <= 0 then return end
+        local topBottomBorderSize = evs.row1BorderSize or 0
+        newWidth = math.floor(totalHeight + (2 * topBottomBorderSize) - (2 * barBorderSize) + 0.5)
+    else
+        local rowWidth = evs.row1Width or evs.iconWidth
+        if not rowWidth or rowWidth <= 0 then return end
+        local row1BorderSize = evs.row1BorderSize or 0
+        newWidth = math.floor(rowWidth + (2 * row1BorderSize) - (2 * barBorderSize) + 0.5)
+    end
+
+    if newWidth and newWidth > 0 and cfg.width ~= newWidth then
+        cfg.width = newWidth
+        core:UpdateSecondaryPowerBar()
+    end
+end
+
+_G.QUI_UpdateLockedSecondaryPowerBarToUtilityCombatSafe = function()
+    local core = GetCore()
+    if not core or not core.db then return end
+
+    local cfg = core.db.profile.secondaryPowerBar
+    if not cfg.enabled or not cfg.lockedToUtility then return end
+
+    local utilityViewer = _G.UtilityCooldownViewer
+    if not utilityViewer then return end
+
+    local uvs = GetViewerState(utilityViewer)
+    if not uvs then return end
+
+    local isVerticalCDM = (uvs.layoutDir) == "VERTICAL"
+    local barBorderSize = cfg.borderSize or 1
+    local newWidth
+
+    if isVerticalCDM then
+        local totalHeight = uvs.totalHeight or 0
+        if totalHeight <= 0 then return end
+        local row1BorderSize = uvs.row1BorderSize or 0
+        newWidth = math.floor(totalHeight + (2 * row1BorderSize) - (2 * barBorderSize) + 0.5)
+    else
+        local rowWidth = uvs.bottomRowWidth or uvs.iconWidth
+        if not rowWidth or rowWidth <= 0 then return end
+        local bottomRowBorderSize = uvs.bottomRowBorderSize or 0
+        newWidth = math.floor(rowWidth + (2 * bottomRowBorderSize) - (2 * barBorderSize) + 0.5)
+    end
+
+    if newWidth and newWidth > 0 and cfg.width ~= newWidth then
+        cfg.width = newWidth
+        QUICore:UpdateSecondaryPowerBar()
+    end
+end
+
 -- SECONDARY POWER BAR
 
 function QUICore:GetSecondaryPowerBar()
