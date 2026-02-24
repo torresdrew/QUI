@@ -17,9 +17,9 @@ local activeGlowIcons = {}  -- [icon] = true
 
 -- TAINT SAFETY: Store per-icon glow state in weak-keyed tables instead of
 -- writing custom properties to Blizzard CDM icon frames.
-local glowIconState   = setmetatable({}, { __mode = "k" })  -- icon → { active, ... }
-local hookedFrames    = setmetatable({}, { __mode = "k" })  -- frame → true (Show hook applied)
-local hookedViewers   = setmetatable({}, { __mode = "k" })  -- viewer → true (scan hooks applied)
+local glowIconState   = Helpers.CreateStateTable()  -- icon → { active, ... }
+local hookedFrames    = Helpers.CreateStateTable()  -- frame → true (Show hook applied)
+local hookedViewers   = Helpers.CreateStateTable()  -- viewer → true (scan hooks applied)
 
 -- Expose glow state for cross-module reads (e.g., effects.lua checking _QUICustomGlowActive)
 _G.QUI_GetGlowState = function(icon)

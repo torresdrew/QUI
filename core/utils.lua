@@ -682,3 +682,69 @@ ns.IsPlayerSkyriding = Helpers.IsPlayerSkyriding
 ns.IsPlayerInDungeonOrRaid = Helpers.IsPlayerInDungeonOrRaid
 ns.CreateOnUpdateThrottle = Helpers.CreateOnUpdateThrottle
 ns.CreateTimeThrottle = Helpers.CreateTimeThrottle
+
+---------------------------------------------------------------------------
+-- TAINT-SAFETY UTILITIES
+-- Shared patterns for WoW 12.0 taint-safe frame property management.
+---------------------------------------------------------------------------
+
+--- Create a weak-keyed state table (and optional lazy-init getter).
+-- @return table  The weak-keyed table.
+-- @return function  getter(key) — returns tbl[key], auto-creating {} if missing.
+function Helpers.CreateStateTable()
+    local tbl = setmetatable({}, { __mode = "k" })
+    local function get(key)
+        local s = tbl[key]
+        if not s then s = {}; tbl[key] = s end
+        return s
+    end
+    return tbl, get
+end
+
+--- Check whether Blizzard Edit Mode is currently active.
+-- Nil-safe for EditModeManagerFrame; uses IsEditModeActive() (not IsShown()).
+-- @return boolean
+function Helpers.IsEditModeActive()
+    return EditModeManagerFrame and EditModeManagerFrame.IsEditModeActive
+       and EditModeManagerFrame:IsEditModeActive() or false
+end
+
+--- Hook a frame's Show method to defer-hide it on the next frame.
+-- @param frame  The frame to hook.
+-- @param opts   Optional table: { clearAlpha = bool, combatCheck = bool }
+--               clearAlpha (default false): also call SetAlpha(0) after Hide.
+--               combatCheck (default true): skip hide if InCombatLockdown().
+function Helpers.DeferredHideOnShow(frame, opts)
+    if not frame or not frame.Show then return end
+    local clearAlpha = opts and opts.clearAlpha or false
+    local combatCheck = not opts or opts.combatCheck ~= false
+    hooksecurefunc(frame, "Show", function(self)
+        C_Timer.After(0, function()
+            if combatCheck and InCombatLockdown() then return end
+            if not self then return end
+            pcall(self.Hide, self)
+            if clearAlpha and self.SetAlpha then self:SetAlpha(0) end
+        end)
+    end)
+end
+
+--- Hook a texture's SetAtlas method to defer-clear it on the next frame.
+-- @param texture     The texture to hook.
+-- @param combatCheck Optional boolean (default true): skip clear if InCombatLockdown().
+function Helpers.DeferredSetAtlasBlock(texture, combatCheck)
+    if not texture or not texture.SetAtlas then return end
+    if combatCheck == nil then combatCheck = true end
+    hooksecurefunc(texture, "SetAtlas", function(self)
+        C_Timer.After(0, function()
+            if combatCheck and InCombatLockdown() then return end
+            if not self then return end
+            if self.SetTexture then self:SetTexture(nil) end
+            if self.SetAlpha then self:SetAlpha(0) end
+        end)
+    end)
+end
+
+ns.CreateStateTable = Helpers.CreateStateTable
+ns.IsEditModeActive = Helpers.IsEditModeActive
+ns.DeferredHideOnShow = Helpers.DeferredHideOnShow
+ns.DeferredSetAtlasBlock = Helpers.DeferredSetAtlasBlock

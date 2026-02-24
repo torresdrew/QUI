@@ -30,7 +30,7 @@ local BORDER_COLOR_DEBUFF = {0.5, 0, 0, 1}    -- Dark red for debuffs
 local borderedButtons = {}
 
 -- Store border textures in a weak-keyed table to avoid writing properties to Blizzard aura frames
-local _buttonBorders = setmetatable({}, { __mode = "k" })
+local _buttonBorders = Helpers.CreateStateTable()
 
 -- Hook guards stored locally (NOT on Blizzard frames) to avoid taint
 local buffFrameShowHooked = false

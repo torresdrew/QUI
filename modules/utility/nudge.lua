@@ -42,9 +42,11 @@ local BLIZZARD_FRAME_LABELS = {
 -- CDM viewer names for click detection (populated when CDM_VIEWERS is defined)
 local CDM_VIEWER_LOOKUP = {}
 
+local Helpers = ns.Helpers
+
 -- Weak-keyed table to track frames we force-showed in Edit Mode
 -- (avoids writing custom properties directly onto protected Blizzard frames)
-local _forceShownFrames = setmetatable({}, { __mode = "k" })
+local _forceShownFrames = Helpers.CreateStateTable()
 
 local function IsNudgeTargetFrameName(frameName)
     if not frameName then return false end

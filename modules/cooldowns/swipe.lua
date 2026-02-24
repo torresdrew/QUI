@@ -25,9 +25,9 @@ local function GetSettings()
 end
 
 -- TAINT SAFETY: Weak-keyed tables for per-icon/viewer state instead of writing to Blizzard frames
-local iconSwipeState   = setmetatable({}, { __mode = "k" })
-local hookedViewers    = setmetatable({}, { __mode = "k" })
-local swipePulseHooked = setmetatable({}, { __mode = "k" })
+local iconSwipeState   = Helpers.CreateStateTable()
+local hookedViewers    = Helpers.CreateStateTable()
+local swipePulseHooked = Helpers.CreateStateTable()
 
 local function IsSecret(value)
     return Helpers.IsSecretValue and Helpers.IsSecretValue(value)

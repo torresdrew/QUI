@@ -340,7 +340,7 @@ end
 --------------------------------------------------------------------------------
 
 --- Weak-keyed registry of FontStrings for scale-change refresh.
-local fontRegistry = setmetatable({}, { __mode = "k" })
+local fontRegistry = ns.Helpers.CreateStateTable()
 
 --- Internal: resolve font parameters and apply a pixel-snapped font to a FontString.
 --- Does NOT write to the registry — callers handle registration separately.

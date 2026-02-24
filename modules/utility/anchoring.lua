@@ -7,6 +7,7 @@
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local UIKit = ns.UIKit
+local nsHelpers = ns.Helpers
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -1259,7 +1260,7 @@ end
 -- CDM viewers use viewer-state sizing with min-width enforcement;
 -- non-CDM sources use the factory default (mirror GetWidth/GetHeight).
 local function CDMSizeResolver(source)
-    local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    local isEditMode = nsHelpers.IsEditModeActive()
     local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(source)
     local width, height
     if isEditMode then
@@ -1682,7 +1683,7 @@ end
 
 -- Apply a single frame anchor override
 function QUI_Anchoring:ApplyFrameAnchor(key, settings)
-    local inEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    local inEditMode = nsHelpers.IsEditModeActive()
     local editDbg = inEditMode and not _editModeTickerSilent
     if type(settings) ~= "table" then return end
 
@@ -1984,7 +1985,7 @@ function QUI_Anchoring:ApplyAllFrameAnchors()
     end
 
     local sorted = ComputeAnchorApplyOrder(anchoringDB)
-    local inEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    local inEditMode = nsHelpers.IsEditModeActive()
     if inEditMode and not _editModeTickerSilent then
         AnchorDebug(format("ApplyAllFrameAnchors: %d keys in order: %s", #sorted, table.concat(sorted, ", ")))
     end
@@ -2109,7 +2110,7 @@ DebouncedReapplyOverrides = function()
         -- During Edit Mode this still runs — ApplyFrameAnchor now skips
         -- CDM viewer keys (Blizzard controls those) but repositions all
         -- other overridden frames so the anchor chain stays correct.
-        local inEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+        local inEditMode = nsHelpers.IsEditModeActive()
         if inEditMode and not _editModeTickerSilent then
             AnchorDebug("DebouncedReapplyOverrides: firing ApplyAllFrameAnchors in EditMode")
         end
@@ -2369,7 +2370,7 @@ local function StartEditModeTicker()
     end
 
     _editModeTicker = C_Timer.NewTicker(0.05, function()
-        if not EditModeManagerFrame or not EditModeManagerFrame:IsEditModeActive() then
+        if not nsHelpers.IsEditModeActive() then
             StopEditModeTicker()
             return
         end

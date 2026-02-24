@@ -57,11 +57,11 @@ local waitingRolls = {}  -- Queue for rolls when all frames are busy
 
 -- TAINT SAFETY: Store per-frame hook guards in weak-keyed tables instead of writing
 -- properties directly to Blizzard frames, which taints them in Midnight (12.0)
-local hookedBorders = setmetatable({}, { __mode = "k" })
-local hookedContainers = setmetatable({}, { __mode = "k" })
-local hookedLootFrames = setmetatable({}, { __mode = "k" })
-local itemBorders = setmetatable({}, { __mode = "k" })  -- item → border frame
-local frameParts = setmetatable({}, { __mode = "k" })  -- frame → { bg, text, etc. }
+local hookedBorders = Helpers.CreateStateTable()
+local hookedContainers = Helpers.CreateStateTable()
+local hookedLootFrames = Helpers.CreateStateTable()
+local itemBorders = Helpers.CreateStateTable()   -- item → border frame
+local frameParts = Helpers.CreateStateTable()     -- frame → { bg, text, etc. }
 
 -- Forward declarations (needed for mutual references)
 local ProcessRollQueue
@@ -1077,11 +1077,7 @@ DisableBlizzardLoot = function()
             -- Hook to keep it hidden when Blizzard tries to show frames
             -- TAINT SAFETY: Defer to break taint chain from secure context.
             if not hookedContainers[GroupLootContainer] then
-                hooksecurefunc(GroupLootContainer, "Show", function(self)
-                    C_Timer.After(0, function()
-                        if self and self.Hide then self:Hide() end
-                    end)
-                end)
+                Helpers.DeferredHideOnShow(GroupLootContainer, { combatCheck = false })
                 hookedContainers[GroupLootContainer] = true
             end
         end
@@ -1097,11 +1093,7 @@ DisableBlizzardLoot = function()
                 end
                 -- TAINT SAFETY: Defer to break taint chain from secure context.
                 if not hookedLootFrames[frame] then
-                    hooksecurefunc(frame, "Show", function(self)
-                        C_Timer.After(0, function()
-                            if self and self.Hide then self:Hide() end
-                        end)
-                    end)
+                    Helpers.DeferredHideOnShow(frame, { combatCheck = false })
                     hookedLootFrames[frame] = true
                 end
             end

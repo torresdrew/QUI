@@ -18,12 +18,12 @@ local copyButtons = {}          -- Track copy buttons per chat frame
 
 -- Weak-keyed tables to store per-frame state WITHOUT writing properties to Blizzard frames
 -- This avoids taint from `chatFrame.__quiXxx = value` writes
-local chatBackdrops = setmetatable({}, { __mode = "k" })      -- chatFrame -> backdrop frame
-local editBoxBackdrops = setmetatable({}, { __mode = "k" })    -- chatFrame -> editbox backdrop frame
-local editBoxState = setmetatable({}, { __mode = "k" })        -- editBox -> { styled, topModeHooked, historyInitialized, historyPosition, savedMessage, backdropRef }
-local tabBackdrops = setmetatable({}, { __mode = "k" })        -- tab -> backdrop frame
-local copyButtonHookState = setmetatable({}, { __mode = "k" }) -- chatFrame -> true (hover mode hooked)
-local _chatButtonsHidden = setmetatable({}, { __mode = "k" })  -- frame -> true/false (flag for hide-on-show hooks)
+local chatBackdrops = Helpers.CreateStateTable()       -- chatFrame -> backdrop frame
+local editBoxBackdrops = Helpers.CreateStateTable()    -- chatFrame -> editbox backdrop frame
+local editBoxState = Helpers.CreateStateTable()        -- editBox -> { styled, topModeHooked, historyInitialized, historyPosition, savedMessage, backdropRef }
+local tabBackdrops = Helpers.CreateStateTable()        -- tab -> backdrop frame
+local copyButtonHookState = Helpers.CreateStateTable() -- chatFrame -> true (hover mode hooked)
+local _chatButtonsHidden = Helpers.CreateStateTable()  -- frame -> true/false (flag for hide-on-show hooks)
 
 -- Localized table functions for performance
 local tinsert = table.insert
@@ -201,7 +201,7 @@ end
 -- instead of direct method replacement, which would taint the method permanently.
 ---------------------------------------------------------------------------
 -- Track hooked chat frames in a local table (NOT on the frame itself)
-local hookedChatFrames = setmetatable({}, { __mode = "k" })
+local hookedChatFrames = Helpers.CreateStateTable()
 
 local function HookChatMessages(chatFrame)
     if hookedChatFrames[chatFrame] then return end

@@ -14,11 +14,12 @@ if not QUI_UF then return end
 -- Internal helpers exposed by unitframes.lua
 local GetUnitSettings = QUI_UF._GetUnitSettings
 local UpdateFrame = QUI_UF._UpdateFrame
-local GetCore = ns.Helpers.GetCore
+local Helpers = ns.Helpers
+local GetCore = Helpers.GetCore
 
 -- Weak-keyed table for edit mode state on SecureUnitButtonTemplate frames
 -- Avoids writing custom properties directly onto protected frames.
-local _editModeState = setmetatable({}, { __mode = "k" })
+local _editModeState = Helpers.CreateStateTable()
 local _bossSelectionHooked = false  -- guard: hook BossTargetFrameContainer.Selection once
 
 ---------------------------------------------------------------------------

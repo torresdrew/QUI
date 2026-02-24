@@ -93,13 +93,8 @@ local updatingStatsPanel = false  -- Guard to prevent multiple simultaneous upda
 
 -- TAINT SAFETY: Store per-frame state in weak-keyed table instead of writing properties
 -- to Blizzard frames, which taints them in Midnight (12.0)
-local frameState = setmetatable({}, { __mode = "k" })
+local frameState, GetState = Helpers.CreateStateTable()
 local EMPTY = {}
-local function GetState(f)
-    local s = frameState[f]
-    if not s then s = {}; frameState[f] = s end
-    return s
-end
 
 -- Forward declarations (for functions called before definition)
 local CreateStatsPanel
@@ -928,14 +923,7 @@ local function HideBlizzardDecorations()
         GetState(iconBorder).blocked = true
         iconBorder:SetAlpha(0)
         if iconBorder.SetTexture then iconBorder:SetTexture(nil) end
-        if iconBorder.SetAtlas then
-            hooksecurefunc(iconBorder, "SetAtlas", function(self)
-                C_Timer.After(0, function()
-                    if self and self.SetTexture then self:SetTexture(nil) end
-                    if self and self.SetAlpha then self:SetAlpha(0) end
-                end)
-            end)
-        end
+        Helpers.DeferredSetAtlasBlock(iconBorder, false)
     end
 
     -- Skin equipment slot icons (same pattern as CDM/buff bar)

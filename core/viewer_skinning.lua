@@ -11,19 +11,9 @@ local QUICore = ns.Addon
 -- Previously stored as icon.__cdmSkinned, viewer.__cdmIconCount, etc.
 -- which taints Blizzard frames in the Midnight (12.0) taint model.
 ---------------------------------------------------------------------------
-local skinIconState   = setmetatable({}, { __mode = "k" })
-local skinViewerState = setmetatable({}, { __mode = "k" })
-
-local function GetSkinIconState(icon)
-    local s = skinIconState[icon]
-    if not s then s = {}; skinIconState[icon] = s end
-    return s
-end
-local function GetSkinViewerState(viewer)
-    local s = skinViewerState[viewer]
-    if not s then s = {}; skinViewerState[viewer] = s end
-    return s
-end
+local Helpers = ns.Helpers
+local skinIconState, GetSkinIconState     = Helpers.CreateStateTable()
+local skinViewerState, GetSkinViewerState = Helpers.CreateStateTable()
 local EMPTY = {}
 
 -- Expose skin state for cross-module reads (e.g. main.lua, qol/tooltips.lua)
@@ -60,12 +50,7 @@ local function StripBlizzardOverlay(icon)
         if region:IsObjectType("Texture") and region.GetAtlas and region:GetAtlas() == "UI-HUD-CoolDownManager-IconOverlay" then
             region:SetTexture("")
             region:Hide()
-            hooksecurefunc(region, "Show", function(self)
-                C_Timer.After(0, function()
-                    if InCombatLockdown() then return end
-                    if self and self.Hide then self:Hide() end
-                end)
-            end)
+            Helpers.DeferredHideOnShow(region)
         end
     end
 end

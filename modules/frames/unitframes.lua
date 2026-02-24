@@ -3253,7 +3253,7 @@ function QUI_UF:RefreshFrame(unitKey)
     end
 
     -- Restore castbar edit overlay if in Blizzard's Edit Mode
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then
+    if Helpers.IsEditModeActive() then
         if QUI_Castbar and QUI_Castbar.RestoreEditOverlaysIfNeeded then
             QUI_Castbar:RestoreEditOverlaysIfNeeded(unitKey)
         end
@@ -3606,7 +3606,7 @@ local function GetAnchorDimensions(anchorFrame, anchorType)
     if not centerX or not centerY then return nil end
 
     -- Debug: log anchor dimensions during Edit Mode
-    local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    local isEditMode = Helpers.IsEditModeActive()
     if isEditMode and QUI and QUI.DebugPrint then
         local afScale = anchorFrame.GetScale and anchorFrame:GetScale() or 1
         local afLogW = anchorFrame:GetWidth() or 0
@@ -3675,7 +3675,7 @@ _G.QUI_UpdateAnchoredUnitFrames = function()
                 local yOffset = QUICore:PixelRound(playerSettings.anchorYOffset or 0, frame)
 
                 -- Debug: log anchor dimensions during Edit Mode
-                local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+                local isEditMode = Helpers.IsEditModeActive()
                 if isEditMode and QUI and QUI.DebugPrint then
                     local afScale = anchorFrame.GetScale and anchorFrame:GetScale() or 1
                     local afL, afR = anchorFrame:GetLeft(), anchorFrame:GetRight()
@@ -3717,7 +3717,7 @@ _G.QUI_UpdateAnchoredUnitFrames = function()
                 local yOffset = QUICore:PixelRound(targetSettings.anchorYOffset or 0, frame)
 
                 -- Debug: log anchor dimensions during Edit Mode
-                local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+                local isEditMode = Helpers.IsEditModeActive()
                 if isEditMode and QUI and QUI.DebugPrint then
                     local afScale = anchorFrame.GetScale and anchorFrame:GetScale() or 1
                     local afL, afR = anchorFrame:GetLeft(), anchorFrame:GetRight()

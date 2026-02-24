@@ -9,9 +9,9 @@ local Helpers = ns.Helpers
 
 -- TAINT SAFETY: Store per-frame state in local weak-keyed tables instead of
 -- writing custom properties to Blizzard frames (CDM viewer icons/subframes).
-local hookedFrames   = setmetatable({}, { __mode = "k" })  -- frame → true (Show hook applied)
-local processedIcons = setmetatable({}, { __mode = "k" })  -- icon  → true (effects hidden)
-local hookedViewers  = setmetatable({}, { __mode = "k" })  -- viewer → { layout, show }
+local hookedFrames   = Helpers.CreateStateTable()  -- frame → true (Show hook applied)
+local processedIcons = Helpers.CreateStateTable()  -- icon  → true (effects hidden)
+local hookedViewers  = Helpers.CreateStateTable()  -- viewer → { layout, show }
 
 -- Default settings
 local DEFAULTS = { hideEssential = true, hideUtility = true }
@@ -41,18 +41,7 @@ local function HideCooldownEffects(child)
                 hookedFrames[frame] = true
                 
                 -- TAINT SAFETY: Defer to break taint chain from secure CDM context.
-                -- Hook Show to prevent it from showing
-                if frame.Show then
-                    hooksecurefunc(frame, "Show", function(self)
-                        C_Timer.After(0, function()
-                            if InCombatLockdown() then return end
-                            if self and self.Hide then
-                                self:Hide()
-                                self:SetAlpha(0)
-                            end
-                        end)
-                    end)
-                end
+                Helpers.DeferredHideOnShow(frame, { clearAlpha = true })
 
                 -- Also hook parent OnShow
                 if child.HookScript then

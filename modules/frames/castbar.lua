@@ -7,12 +7,12 @@
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local LSM = LibStub("LibSharedMedia-3.0")
-local Helpers = ns.Helpers
+local nsHelpers = ns.Helpers
 local UIKit = ns.UIKit
-local IsSecretValue = Helpers.IsSecretValue
-local SafeValue = Helpers.SafeValue
+local IsSecretValue = nsHelpers.IsSecretValue
+local SafeValue = nsHelpers.SafeValue
 
-local GetCore = ns.Helpers.GetCore
+local GetCore = nsHelpers.GetCore
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -3932,7 +3932,7 @@ C_Timer.After(0.5, function()
         end
 
         -- Check if Edit Mode is already active (e.g., /reload while in Edit Mode)
-        if EditModeManagerFrame:IsEditModeActive() and not InCombatLockdown() then
+        if nsHelpers.IsEditModeActive() and not InCombatLockdown() then
             EnableCastbarEditMode()
         end
     end

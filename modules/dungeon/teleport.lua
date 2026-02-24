@@ -6,11 +6,12 @@ local addonName, ns = ...
 -- Uses shared dungeon data from qui_dungeon_data.lua
 ---------------------------------------------------------------------------
 
-local GetCore = ns.Helpers.GetCore
+local Helpers = ns.Helpers
+local GetCore = Helpers.GetCore
 
 -- TAINT SAFETY: Store per-icon state in local weak-keyed tables instead of
 -- writing custom properties to Blizzard dungeon icon frames.
-local iconOverlays = setmetatable({}, { __mode = "k" })  -- dungeonIcon → overlay
+local iconOverlays = Helpers.CreateStateTable()  -- dungeonIcon → overlay
 
 ---------------------------------------------------------------------------
 -- SETTINGS ACCESS

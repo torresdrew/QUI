@@ -1,6 +1,7 @@
 local addonName, ns = ...
 
-local GetCore = ns.Helpers.GetCore
+local Helpers = ns.Helpers
+local GetCore = Helpers.GetCore
 local SkinBase = ns.SkinBase
 
 ---------------------------------------------------------------------------
@@ -29,7 +30,7 @@ local FONT_FLAGS = "OUTLINE"
 
 -- Local state (NEVER write to GameMenuFrame or its buttons)
 local skinState = { skinned = false }
-local buttonOverlays = setmetatable({}, { __mode = "k" }) -- weak-keyed: overlay info per button
+local buttonOverlays = Helpers.CreateStateTable() -- weak-keyed: overlay info per button
 local overlayContainer = nil   -- UIParent-child container for all overlays
 local menuBackdrop = nil       -- backdrop overlay for GameMenuFrame itself
 local quiStandaloneButton = nil -- standalone QUI button (parented to UIParent)

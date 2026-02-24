@@ -4,16 +4,17 @@
 -- Note: Swipe visibility is handled by cooldownswipe.lua
 
 local _, QUI = ...
+local Helpers = QUI.Helpers
 
 -- Local variables
 local viewerPending = {}
 local updateBucket = {}
-local _iconPositions = setmetatable({}, { __mode = "k" })
+local _iconPositions = Helpers.CreateStateTable()
 
 -- Core function to remove padding and apply modifications
 local function RemovePadding(viewer)
     -- Don't apply modifications in edit mode
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then
+    if Helpers.IsEditModeActive() then
         return
     end
 

@@ -43,8 +43,8 @@ local KEYBIND_DEBUG = false
 
 -- TAINT SAFETY: Store per-icon state in local weak-keyed tables instead of
 -- writing custom properties to Blizzard CDM icon frames.
-local iconKeybindState = setmetatable({}, { __mode = "k" })  -- icon → { text (FontString), keybind, spellID, overlay }
-local hookedKeybindViewers = setmetatable({}, { __mode = "k" })  -- viewer → true (hook guard for Layout)
+local iconKeybindState = QUI.Helpers.CreateStateTable()      -- icon → { text (FontString), keybind, spellID, overlay }
+local hookedKeybindViewers = QUI.Helpers.CreateStateTable()  -- viewer → true (hook guard for Layout)
 
 -- Performance: Check if ANY keybind display feature is enabled across all viewers
 -- This gates expensive operations to prevent CPU spikes when features are disabled

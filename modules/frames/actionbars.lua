@@ -102,16 +102,7 @@ local ActionBars = {
 
 -- Store QUI state outside secure Blizzard frame tables.
 -- Writing custom keys directly on action buttons can taint secret values.
-local frameState = setmetatable({}, { __mode = "k" })
-
-local function GetFrameState(frame)
-    local state = frameState[frame]
-    if not state then
-        state = {}
-        frameState[frame] = state
-    end
-    return state
-end
+local frameState, GetFrameState = ns.Helpers.CreateStateTable()
 
 ---------------------------------------------------------------------------
 -- HELPER FUNCTIONS

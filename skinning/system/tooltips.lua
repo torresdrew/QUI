@@ -207,8 +207,8 @@ end
 ---------------------------------------------------------------------------
 
 -- TAINT SAFETY: Track skinned state in local tables, NOT on Blizzard frames.
-local skinnedTooltips = setmetatable({}, { __mode = "k" })   -- tooltip → true
-local hookedTooltips = setmetatable({}, { __mode = "k" })    -- tooltip → true (OnShow hooked)
+local skinnedTooltips = Helpers.CreateStateTable()   -- tooltip → true
+local hookedTooltips = Helpers.CreateStateTable()    -- tooltip → true (OnShow hooked)
 
 -- NineSlice piece names used by Blizzard tooltips
 local NINE_SLICE_PIECES = {

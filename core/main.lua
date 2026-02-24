@@ -108,7 +108,7 @@ end
 
 -- Weak-keyed table to store pending backdrop data per frame (avoids writing properties
 -- directly onto Blizzard secure frames, which can cause taint).
-local _pendingBackdropData = setmetatable({}, { __mode = "k" })
+local _pendingBackdropData = ns.Helpers.CreateStateTable()
 
 -- Global SafeSetBackdrop function that defers SetBackdrop calls when frame dimensions
 -- are secret values (Midnight 12.0 protection) or when in combat lockdown.
@@ -4079,7 +4079,7 @@ end
 -- Viewer skinning, layout, and icon processing functions are in core/viewer_skinning.lua
 
 -- Weak-keyed table to track which CDM viewers have been hooked (avoids tainting Blizzard frames)
-local hookedViewers = setmetatable({}, { __mode = "k" })
+local hookedViewers = ns.Helpers.CreateStateTable()
 
 function QUICore:HookViewers()
     for _, name in ipairs(self.viewers) do

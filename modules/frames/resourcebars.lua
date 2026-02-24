@@ -1124,7 +1124,7 @@ function QUICore:UpdatePowerBar()
     end
 
     -- Debug: log power bar width calculation during Edit Mode
-    local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    local isEditMode = Helpers.IsEditModeActive()
     if isEditMode and QUI and QUI.DebugPrint then
         local essViewer = _G["EssentialCooldownViewer"]
         local essLogW = essViewer and essViewer:GetWidth() or 0
@@ -1459,7 +1459,7 @@ _G.QUI_UpdateLockedPowerBar = function()
     end
 
     -- Debug: log locked power bar calculation during Edit Mode
-    local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    local isEditMode = Helpers.IsEditModeActive()
     if isEditMode and QUI and QUI.DebugPrint then
         QUI:DebugPrint(format("|cffFF9900PowerBar|r UpdateLockedPowerBar: newW=%s vsIconW=%s vsRow1W=%s logicalW=%.0f",
             tostring(newWidth or "nil"),

@@ -66,26 +66,16 @@ local NCDM = {
 -- Previously stored as viewer.__cdm*, icon._ncdm*, etc. which taints
 -- Blizzard frames in the Midnight (12.0) taint model.
 ---------------------------------------------------------------------------
-local _viewerState = setmetatable({}, { __mode = "k" })
-local _iconState   = setmetatable({}, { __mode = "k" })
-local _mouseoverHooked = setmetatable({}, { __mode = "k" })
-
-local function getViewerState(viewer)
-    if not _viewerState[viewer] then _viewerState[viewer] = {} end
-    return _viewerState[viewer]
-end
-
-local function getIconState(icon)
-    if not _iconState[icon] then _iconState[icon] = {} end
-    return _iconState[icon]
-end
+local _viewerState, getViewerState = Helpers.CreateStateTable()
+local _iconState, getIconState     = Helpers.CreateStateTable()
+local _mouseoverHooked             = Helpers.CreateStateTable()
 
 -- Combat-stable parent used for "Utility below Essential" anchoring.
 -- Out of combat this proxy follows Essential; in combat it stays fixed.
 local UtilityAnchorProxy = nil
 local FrameDriftDebug = {
     sessions = {}, -- key -> session
-    frameToKey = setmetatable({}, { __mode = "k" }),
+    frameToKey = Helpers.CreateStateTable(),
     defaultInterval = 0.10,
     defaultThreshold = 0.5,
     defaultMaxEntries = 120,
@@ -360,7 +350,7 @@ local function SyncViewerSelectionSafe(viewer)
     -- Skip during Edit Mode: manipulating .Selection on protected CDM viewers
     -- in Edit Mode taints Blizzard's execution path, causing CompactUnitFrame
     -- "secret number value tainted by 'QUI'" errors on Edit Mode exit.
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then
+    if Helpers.IsEditModeActive() then
         vs.cdmPendingSelectionSync = true
         return false
     end
@@ -486,12 +476,7 @@ local function StripBlizzardOverlay(icon)
             if ok and atlas == "UI-HUD-CoolDownManager-IconOverlay" then
                 region:SetTexture("")
                 region:Hide()
-                hooksecurefunc(region, "Show", function(self)
-                    C_Timer.After(0, function()
-                        if InCombatLockdown() then return end
-                        self:Hide()
-                    end)
-                end)
+                Helpers.DeferredHideOnShow(region)
             end
         end
     end
@@ -500,22 +485,14 @@ end
 ---------------------------------------------------------------------------
 -- HELPER: Proactively block atlas borders (CPU attribution shifts to Blizzard)
 ---------------------------------------------------------------------------
-local blockedAtlasTextures = setmetatable({}, { __mode = "k" })
+local blockedAtlasTextures = Helpers.CreateStateTable()
 
 local function PreventAtlasBorder(texture)
     if not texture or blockedAtlasTextures[texture] then return end
     blockedAtlasTextures[texture] = true
 
     -- Hook future SetAtlas calls to block border re-application
-    if texture.SetAtlas then
-        hooksecurefunc(texture, "SetAtlas", function(self)
-            C_Timer.After(0, function()
-                if InCombatLockdown() then return end
-                if self.SetTexture then self:SetTexture(nil) end
-                if self.SetAlpha then self:SetAlpha(0) end
-            end)
-        end)
-    end
+    Helpers.DeferredSetAtlasBlock(texture)
     -- Clear current state (only outside combat)
     if not InCombatLockdown() then
         if texture.SetTexture then texture:SetTexture(nil) end
@@ -601,7 +578,7 @@ local function SetupIconOnce(icon)
 end
 
 -- Weak-keyed table to track which CooldownFlash frames have been hooked
-local hookedCooldownFlash = setmetatable({}, { __mode = "k" })
+local hookedCooldownFlash = Helpers.CreateStateTable()
 
 ---------------------------------------------------------------------------
 -- HELPER: Apply icon styling
@@ -1050,7 +1027,7 @@ local function LayoutViewer(viewerName, trackerKey)
     -- Never layout during Edit Mode — user is manually resizing/positioning.
     -- LayoutViewer recalculates icon positions and viewer size, which would
     -- fight the user's manual resize and snap the viewer back.
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
+    if Helpers.IsEditModeActive() then return end
 
     local settings = GetTrackerSettings(trackerKey)
     if not settings or not settings.enabled then return end
@@ -1494,7 +1471,7 @@ local function HookViewer(viewerName, trackerKey)
 
     -- Debug: hook SetScale to detect Blizzard's Edit Mode slider changing scale
     hooksecurefunc(viewer, "SetScale", function(self, newScale)
-        if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then
+        if Helpers.IsEditModeActive() then
             local w, h = self:GetWidth(), self:GetHeight()
             local effScale = self:GetEffectiveScale()
             local parentEffScale = UIParent:GetEffectiveScale()
@@ -1538,7 +1515,7 @@ local function HookViewer(viewerName, trackerKey)
         local svs = getViewerState(self)
 
         -- Debug: log every OnSizeChanged call (before any guards)
-        local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+        local isEditMode = Helpers.IsEditModeActive()
         if QUI and QUI.DebugPrint then
             local w, h = self:GetWidth(), self:GetHeight()
             local suppressed = svs.cdmLayoutSuppressed
@@ -1558,7 +1535,7 @@ local function HookViewer(viewerName, trackerKey)
         -- anchor proxies AND size-stable center offset math pick up the new size.
         -- Selection overlay is managed by Blizzard's AnchorSelectionFrame during
         -- Edit Mode — addon manipulation of .Selection causes taint.
-        if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then
+        if Helpers.IsEditModeActive() then
             -- Blizzard resets viewers to ~1x1 between each Edit Mode layout
             -- pass.  Detect transient resets using the LOGICAL viewer size
             -- (before icon measurement) so we don't corrupt state.
@@ -1734,7 +1711,7 @@ local function HookViewer(viewerName, trackerKey)
 
         -- Skip layout during Edit Mode — user is manually resizing; LayoutViewer
         -- would fight their resize and snap the viewer back to calculated size.
-        if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
+        if Helpers.IsEditModeActive() then return end
 
         -- Step 5: Check if Blizzard layout changed or settings changed
         local currentBlizzardCount = uvs.ncdmBlizzardLayoutCount or 0
@@ -2219,7 +2196,7 @@ local function Initialize()
                 end)
             end
             bv:HookScript("OnSizeChanged", function(self)
-                if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then
+                if Helpers.IsEditModeActive() then
                     local w = Helpers.SafeValue(self:GetWidth(), 0)
                     local h = Helpers.SafeValue(self:GetHeight(), 0)
                     if w < 2 or h < 2 then return end
@@ -2235,8 +2212,7 @@ local function Initialize()
                     -- Proxy and overlay both use scale-corrected icon dimensions.
                     local viewerRef = self
                     C_Timer.After(0, function()
-                        if not viewerRef or not EditModeManagerFrame
-                            or not EditModeManagerFrame:IsEditModeActive() then return end
+                        if not viewerRef or not Helpers.IsEditModeActive() then return end
                         local overlay = _G.QUI_GetCDMViewerOverlay and _G.QUI_GetCDMViewerOverlay(bvName)
 
                         -- Measure actual visual bounds of icon children (includes padding).
@@ -2647,7 +2623,7 @@ end
 local function UpdateCDMVisibility()
     -- During Edit Mode, force CDM frames fully visible so overlays (which are
     -- children and inherit parent alpha) remain visible for repositioning.
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then
+    if Helpers.IsEditModeActive() then
         StartCDMFade(1)
         return
     end

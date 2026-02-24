@@ -28,10 +28,10 @@ local floor = math.floor
 
 -- TAINT SAFETY: Store per-frame state in local weak-keyed tables instead of
 -- writing custom properties to Blizzard CDM viewer frames and their children.
-local iconBuffState   = setmetatable({}, { __mode = "k" })  -- icon → { setup, border, borderSize, aspectRatioCrop, atlasHooked, atlasDisabled }
-local barFrameState   = setmetatable({}, { __mode = "k" })  -- bar frame → { bg, borderContainer, styled, isActive }
-local viewerBuffState = setmetatable({}, { __mode = "k" })  -- viewer → { anchorCache, originalPoints, onUpdateHooked, isHorizontal, goingRight, goingUp }
-local disabledRegions = setmetatable({}, { __mode = "k" })  -- region → true (guard for Show hook)
+local iconBuffState   = Helpers.CreateStateTable()  -- icon → { setup, border, borderSize, aspectRatioCrop, atlasHooked, atlasDisabled }
+local barFrameState   = Helpers.CreateStateTable()  -- bar frame → { bg, borderContainer, styled, isActive }
+local viewerBuffState = Helpers.CreateStateTable()  -- viewer → { anchorCache, originalPoints, onUpdateHooked, isHorizontal, goingRight, goingUp }
+local disabledRegions = Helpers.CreateStateTable()  -- region → true (guard for Show hook)
 
 -- Tolerance-based position check: skip repositioning if within tolerance
 -- Prevents jitter from floating-point drift
@@ -167,7 +167,7 @@ local function ApplyTrackedBarAnchor(settings)
     if InCombatLockdown() then return end
     -- Don't reposition during Edit Mode — let the user drag/nudge freely.
     -- Blizzard's Edit Mode system handles position save/restore.
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
+    if Helpers.IsEditModeActive() then return end
 
     local anchorTo = settings.anchorTo or "disabled"
     local sourcePoint = settings.anchorSourcePoint or "CENTER"
@@ -1523,7 +1523,7 @@ LayoutBuffIcons = function()
     if IsLayoutSuppressed() then return end
     -- Skip during Edit Mode — Blizzard controls icon layout/padding.
     -- QUI re-layouts on Edit Mode exit with saved settings.
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
+    if Helpers.IsEditModeActive() then return end
 
     isIconLayoutRunning = true
 
@@ -1677,7 +1677,7 @@ LayoutBuffIcons = function()
         -- Also resize Selection child if it exists
         -- Skip during Edit Mode to avoid tainting Blizzard's execution path
         if BuffIconCooldownViewer.Selection
-            and not (EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()) then
+            and not Helpers.IsEditModeActive() then
             BuffIconCooldownViewer.Selection:ClearAllPoints()
             BuffIconCooldownViewer.Selection:SetPoint("TOPLEFT", BuffIconCooldownViewer, "TOPLEFT", 0, 0)
             BuffIconCooldownViewer.Selection:SetPoint("BOTTOMRIGHT", BuffIconCooldownViewer, "BOTTOMRIGHT", 0, 0)
@@ -1704,7 +1704,7 @@ LayoutBuffBars = function()
     if isBarLayoutRunning then return end  -- Re-entry guard
     if IsLayoutSuppressed() then return end
     -- Skip during Edit Mode — Blizzard controls bar layout/padding.
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
+    if Helpers.IsEditModeActive() then return end
 
     isBarLayoutRunning = true
 
@@ -2178,7 +2178,7 @@ local function CheckIconChanges()
     if isIconLayoutRunning then return end
     if IsLayoutSuppressed() then return end
     -- Skip during Edit Mode — Blizzard controls icon layout/padding.
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
+    if Helpers.IsEditModeActive() then return end
 
     -- Count visible icons
     local visibleCount = 0
@@ -2208,7 +2208,7 @@ local function CheckBarChanges()
     if not BuffBarCooldownViewer then return end
     if isBarLayoutRunning then return end  -- Skip if already laying out
     -- Skip during Edit Mode — Blizzard controls bar layout/padding.
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
+    if Helpers.IsEditModeActive() then return end
 
     -- Always call LayoutBuffBars - it now has internal position verification
     -- that will skip repositioning if all bars are already in correct positions.
