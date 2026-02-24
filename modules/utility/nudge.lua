@@ -15,14 +15,46 @@ local UNIT_ANCHOR_FRAMES = {
 local BLIZZARD_FRAME_LABELS = {
     BuffFrame = "Buff Frame",
     DebuffFrame = "Debuff Frame",
-    DamageMeterSessionWindow1 = "Damage Meter",
+    DamageMeter = "Damage Meter",
+    BossTargetFrameContainer = "Boss Frames",
     BuffBarCooldownViewer = "Tracked Bars",
+    -- Action Bars (MainMenuBar renamed to MainActionBar in Midnight 12.0)
+    MainActionBar = "Action Bar 1",
+    MainMenuBar = "Action Bar 1",
+    MultiBarBottomLeft = "Action Bar 2",
+    MultiBarBottomRight = "Action Bar 3",
+    MultiBarRight = "Action Bar 4",
+    MultiBarLeft = "Action Bar 5",
+    MultiBar5 = "Action Bar 6",
+    MultiBar6 = "Action Bar 7",
+    MultiBar7 = "Action Bar 8",
+    PetActionBar = "Pet Bar",
+    StanceBar = "Stance Bar",
+    MicroMenuContainer = "Micro Menu",
+    BagsBar = "Bag Bar",
+    -- Display
+    ObjectiveTrackerFrame = "Objective Tracker",
+    GameTooltipDefaultContainer = "HUD Tooltip",
+    TalkingHeadFrame = "Talking Head",
+    ExtraAbilityContainer = "Extra Abilities",
 }
+
+-- CDM viewer names for click detection (populated when CDM_VIEWERS is defined)
+local CDM_VIEWER_LOOKUP = {}
+
+-- Weak-keyed table to track frames we force-showed in Edit Mode
+-- (avoids writing custom properties directly onto protected Blizzard frames)
+local _forceShownFrames = setmetatable({}, { __mode = "k" })
 
 local function IsNudgeTargetFrameName(frameName)
     if not frameName then return false end
 
-    -- Our cooldown viewers
+    -- CDM cooldown viewers (Essential, Utility, BuffIcon)
+    if CDM_VIEWER_LOOKUP[frameName] then
+        return true
+    end
+
+    -- Our cooldown viewers (legacy)
     if QUICore.viewers then
         for _, viewerName in ipairs(QUICore.viewers) do
             if frameName == viewerName then
@@ -344,30 +376,215 @@ end
 ---------------------------------------------------------------------------
 
 local viewerOverlays = {}
+local viewersForceShown = {}  -- Viewers we force-showed during edit mode
+local _viewerSelectionHooked = {}  -- guard: hook CDM viewer .Selection once each
+
+-- Expose overlay lookup for cdm_viewer Edit Mode resize handler.
+_G.QUI_GetCDMViewerOverlay = function(viewerName)
+    return viewerOverlays[viewerName]
+end
 
 -- All CDM viewers that should get nudge overlays
 local CDM_VIEWERS = {
     "EssentialCooldownViewer",
     "UtilityCooldownViewer",
     "BuffIconCooldownViewer",
+    "BuffBarCooldownViewer",
 }
+for _, name in ipairs(CDM_VIEWERS) do
+    CDM_VIEWER_LOOKUP[name] = true
+end
 
 -- Blizzard Edit Mode frames that should get nudge overlays
 local BLIZZARD_EDITMODE_FRAMES = {
-    { name = "BuffFrame", label = "Buff Frame" },
-    { name = "DebuffFrame", label = "Debuff Frame" },
-    { name = "DamageMeterSessionWindow1", label = "Damage Meter" },
-    { name = "BuffBarCooldownViewer", label = "Tracked Bars" },
+    { name = "BuffFrame", label = "Buff Frame", passthrough = true, requireSelection = true },
+    { name = "DebuffFrame", label = "Debuff Frame", passthrough = true, requireSelection = true },
+    { name = "DamageMeter", label = "Damage Meter", passthrough = true },
+    { name = "BossTargetFrameContainer", label = "Boss Frames", passthrough = true, requireSelection = true },
+    -- Action Bars (MainMenuBar renamed to MainActionBar in Midnight 12.0)
+    -- passthrough = true: free movers use click-passthrough like CDM viewers
+    -- (EnableMouse false, hide Blizzard .Selection, let Blizzard menu open)
+    { name = "MainActionBar", label = "Action Bar 1", fallback = "MainMenuBar", passthrough = true },
+    { name = "MultiBarBottomLeft", label = "Action Bar 2", passthrough = true },
+    { name = "MultiBarBottomRight", label = "Action Bar 3", passthrough = true },
+    { name = "MultiBarRight", label = "Action Bar 4", passthrough = true },
+    { name = "MultiBarLeft", label = "Action Bar 5", passthrough = true },
+    { name = "MultiBar5", label = "Action Bar 6", passthrough = true },
+    { name = "MultiBar6", label = "Action Bar 7", passthrough = true },
+    { name = "MultiBar7", label = "Action Bar 8", passthrough = true },
+    { name = "PetActionBar", label = "Pet Bar", passthrough = true, requireSelection = true },
+    { name = "StanceBar", label = "Stance Bar", passthrough = true, requireSelection = true },
+    { name = "MicroMenuContainer", label = "Micro Menu", passthrough = true },
+    { name = "BagsBar", label = "Bag Bar", passthrough = true },
+    -- Display
+    { name = "ObjectiveTrackerFrame", label = "Objective Tracker", passthrough = true, requireSelection = true },
+    { name = "GameTooltipDefaultContainer", label = "HUD Tooltip", passthrough = true },
+    -- Talking Head: only show overlay when Blizzard's .Selection is active
+    -- (user has it enabled in edit mode settings).  requireSelection gates this.
+    { name = "TalkingHeadFrame", label = "Talking Head", passthrough = true, requireSelection = true },
+    -- Extra Abilities: gated on .Selection like Talking Head.
+    -- resolver needed because ExtraAbilitiesContainer may not be a global;
+    -- find it via ExtraActionBarFrame's parent chain.
+    { name = "ExtraAbilityContainer", label = "Extra Abilities", passthrough = true, requireSelection = true },
 }
 
 local blizzardOverlays = {}
+local _selectionHooked = {}  -- track which .Selection frames we've hooked for requireSelection
+
+---------------------------------------------------------------------------
+-- MOVEMENT BLOCKING FOR LOCKED FRAMES
+-- Override OnDragStart AND OnDragStop to no-op on selection child frames
+-- that handle Edit Mode dragging (both Blizzard's .Selection and LibEditMode).
+-- Must disable both: OnDragStart prevents the drag from initiating, and
+-- OnDragStop prevents updatePosition() from calling ClearAllPoints/SetPoint
+-- which would normalize (and visibly shift) the frame's anchor on mouse-up.
+-- Mouse remains enabled so tooltips, click-to-select, and right-click
+-- menus still work.  No position watcher needed → no relayout flicker.
+---------------------------------------------------------------------------
+
+local _blockedFrames = {}        -- frame -> true
+local _savedDragScripts = {}     -- child frame -> {start, stop} original scripts
+
+-- Replace OnDragStart + OnDragStop with no-ops (saves originals for restore)
+local function DisableChildDrag(child)
+    if not child then return end
+    if _savedDragScripts[child] ~= nil then return end  -- already disabled
+    _savedDragScripts[child] = {
+        start = child:GetScript("OnDragStart") or false,
+        stop  = child:GetScript("OnDragStop") or false,
+    }
+    child:SetScript("OnDragStart", function() end)  -- no-op
+    child:SetScript("OnDragStop", function() end)    -- no-op
+end
+
+-- Restore original OnDragStart + OnDragStop on a child frame
+local function RestoreChildDrag(child)
+    if not child then return end
+    local saved = _savedDragScripts[child]
+    if saved == nil then return end  -- wasn't disabled by us
+    _savedDragScripts[child] = nil
+    child:SetScript("OnDragStart", saved.start or nil)
+    child:SetScript("OnDragStop", saved.stop or nil)
+end
+
+local function BlockFrameMovement(frame)
+    if not frame then return end
+    if _blockedFrames[frame] then return end  -- already blocked
+    _blockedFrames[frame] = true
+
+    -- Disable drag on Blizzard's native .Selection (if present)
+    if frame.Selection then
+        DisableChildDrag(frame.Selection)
+    end
+
+    -- Disable drag on LibEditMode's selection frame.
+    -- LibEditMode creates a child frame using EditModeSystemSelectionTemplate.
+    -- Find it by iterating children — identified by .system table + OnDragStart.
+    local children = { frame:GetChildren() }
+    for _, child in ipairs(children) do
+        if child.system and child:GetScript("OnDragStart") then
+            DisableChildDrag(child)
+        end
+    end
+end
+
+local function UnblockFrameMovement(frame)
+    if not frame then return end
+    if not _blockedFrames[frame] then return end
+    _blockedFrames[frame] = nil
+
+    -- Restore drag on Blizzard's native .Selection
+    if frame.Selection then
+        RestoreChildDrag(frame.Selection)
+    end
+
+    -- Restore drag on LibEditMode selections
+    local children = { frame:GetChildren() }
+    for _, child in ipairs(children) do
+        if child.system then
+            RestoreChildDrag(child)
+        end
+    end
+end
+
+-- Restore all blocked frames (called on Edit Mode exit)
+local function UnblockAllFrameMovement()
+    for frame in pairs(_blockedFrames) do
+        if frame.Selection then
+            RestoreChildDrag(frame.Selection)
+        end
+        local ok, children = pcall(function() return { frame:GetChildren() } end)
+        if ok and children then
+            for _, child in ipairs(children) do
+                if child.system then
+                    RestoreChildDrag(child)
+                end
+            end
+        end
+    end
+    wipe(_blockedFrames)
+    wipe(_savedDragScripts)
+end
+
+---------------------------------------------------------------------------
+-- SELECTION FRAME ALPHA FOR LOCKED FRAMES
+-- Make Blizzard's blue .Selection indicator transparent on locked frames.
+-- Uses SetAlpha(0) instead of Hide() so GetRect() still returns valid
+-- bounds for Blizzard's magnetic snap system (GetScaledSelectionSides).
+-- Deferred via C_Timer.After(0) to avoid tainting the secure context.
+---------------------------------------------------------------------------
+
+local _hiddenSelections = {}  -- frame -> true
+
+local function HideSelectionIndicator(frame)
+    if not frame or not frame.Selection then return end
+    if frame.Selection._quiKeepVisible then return end
+    if _hiddenSelections[frame] then return end
+    _hiddenSelections[frame] = true
+    frame.Selection:SetAlpha(0)
+    C_Timer.After(0, function()
+        if frame.Selection and not frame.Selection._quiKeepVisible then
+            frame.Selection:SetAlpha(0)
+            -- Ensure .Selection has valid bounds so GetScaledSelectionSides()
+            -- doesn't crash when Blizzard iterates magnetic snap candidates.
+            -- GetRect() returns nil if the frame has no size or anchors.
+            if not frame.Selection:GetRect() then
+                frame.Selection:SetAllPoints(frame)
+            end
+        end
+    end)
+end
+
+local function ShowSelectionIndicator(frame)
+    if not frame or not frame.Selection then return end
+    if not _hiddenSelections[frame] then return end
+    _hiddenSelections[frame] = nil
+    C_Timer.After(0, function()
+        if frame.Selection then
+            frame.Selection:SetAlpha(1)
+        end
+    end)
+end
+
+local function RestoreAllSelectionIndicators()
+    for frame in pairs(_hiddenSelections) do
+        if frame.Selection then
+            C_Timer.After(0, function()
+                if frame.Selection then
+                    frame.Selection:SetAlpha(1)
+                end
+            end)
+        end
+    end
+    wipe(_hiddenSelections)
+end
 
 -- Create a nudge button with chevron arrows (same style as unit frames)
 local function CreateViewerNudgeButton(parent, direction, viewerName)
     local btn = CreateFrame("Button", nil, parent)
     btn:SetSize(18, 18)
-    -- Use TOOLTIP strata so nudge buttons appear above all other frames
-    btn:SetFrameStrata("TOOLTIP")
+    -- Use HIGH strata so nudge buttons appear above all other frames
+    btn:SetFrameStrata("HIGH")
     btn:SetFrameLevel(100)
 
     -- Background - dark grey at 70% for visibility over any game content
@@ -438,8 +655,8 @@ local minimapOverlay = nil
 local function CreateMinimapNudgeButton(parent, direction)
     local btn = CreateFrame("Button", nil, parent)
     btn:SetSize(18, 18)
-    -- Use TOOLTIP strata so nudge buttons appear above all other frames
-    btn:SetFrameStrata("TOOLTIP")
+    -- Use HIGH strata so nudge buttons appear above all other frames
+    btn:SetFrameStrata("HIGH")
     btn:SetFrameLevel(100)
 
     -- Background - dark grey at 70% for visibility
@@ -510,7 +727,7 @@ local function CreateViewerOverlay(viewerName)
 
     local overlay = CreateFrame("Frame", nil, viewer, "BackdropTemplate")
     overlay:SetAllPoints()
-    overlay:SetFrameStrata("TOOLTIP")
+    overlay:SetFrameStrata("HIGH")
     local px = QUICore:GetPixelSize(overlay)
     overlay:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -527,6 +744,8 @@ local function CreateViewerOverlay(viewerName)
     label:SetPoint("TOP", overlay, "TOP", 0, -4)
     label:SetText(displayName)
     label:SetTextColor(0.2, 0.8, 1, 1)
+    overlay.label = label
+    overlay.displayName = displayName
 
     -- Nudge buttons around the overlay (same positioning as unit frames)
     local nudgeUp = CreateViewerNudgeButton(overlay, "UP", viewerName)
@@ -564,11 +783,23 @@ local function CreateBlizzardFrameOverlay(frameInfo)
     local frameName = frameInfo.name
     local label = frameInfo.label
     local frame = _G[frameName]
+    -- Support fallback names (e.g., MainActionBar -> MainMenuBar)
+    if not frame and frameInfo.fallback then
+        frame = _G[frameInfo.fallback]
+    end
     if not frame then return nil end
 
-    local overlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    overlay:SetAllPoints()
-    overlay:SetFrameStrata("TOOLTIP")
+    -- Parent to UIParent for alwaysShow frames so the overlay remains visible
+    -- even when the source frame is hidden (e.g. PetActionBar with no pet).
+    local parent = frameInfo.alwaysShow and UIParent or frame
+    local overlay = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    if frameInfo.alwaysShow then
+        overlay:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+        overlay:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    else
+        overlay:SetAllPoints()
+    end
+    overlay:SetFrameStrata("HIGH")
     local px = QUICore:GetPixelSize(overlay)
     overlay:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -584,6 +815,8 @@ local function CreateBlizzardFrameOverlay(frameInfo)
     labelText:SetPoint("TOP", overlay, "TOP", 0, -4)
     labelText:SetText(label)
     labelText:SetTextColor(0.2, 0.8, 1, 1)
+    overlay.label = labelText
+    overlay.displayName = label
 
     -- Nudge buttons around the overlay (same positioning as CDM viewers)
     local nudgeUp = CreateViewerNudgeButton(overlay, "UP", frameName)
@@ -622,7 +855,7 @@ local function CreateMinimapOverlay()
 
     local overlay = CreateFrame("Frame", nil, Minimap, "BackdropTemplate")
     overlay:SetAllPoints()
-    overlay:SetFrameStrata("TOOLTIP")
+    overlay:SetFrameStrata("HIGH")
     local px = QUICore:GetPixelSize(overlay)
     overlay:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -638,6 +871,7 @@ local function CreateMinimapOverlay()
     labelText:SetPoint("TOP", overlay, "TOP", 0, -4)
     labelText:SetText("Minimap")
     labelText:SetTextColor(0.2, 0.8, 1, 1)
+    overlay.label = labelText
 
     -- Info text showing X/Y position (above UP arrow)
     local infoText = overlay:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -681,41 +915,190 @@ end
 
 -- Show overlays on all CDM viewers
 function QUICore:ShowViewerOverlays()
+    -- Force CDM frames to full alpha so overlays (children) are visible.
+    -- HUD visibility may have faded them to 0; we restore on edit mode exit.
+    if _G.QUI_RefreshCDMVisibility then
+        _G.QUI_RefreshCDMVisibility()
+    end
+
+    -- Force-show hidden CDM viewers so overlays (children) become visible.
+    -- Blizzard may :Hide() viewers with no active content (e.g. BuffIcon with
+    -- no tracked cooldowns).  Alpha alone can't make a hidden frame visible.
+    wipe(viewersForceShown)
+    for _, viewerName in ipairs(CDM_VIEWERS) do
+        local viewer = _G[viewerName]
+        if viewer and not viewer:IsShown() then
+            pcall(function() viewer:Show() end)
+            viewersForceShown[viewerName] = true
+        end
+    end
+
     for _, viewerName in ipairs(CDM_VIEWERS) do
         if not viewerOverlays[viewerName] then
             viewerOverlays[viewerName] = CreateViewerOverlay(viewerName)
         end
         local overlay = viewerOverlays[viewerName]
-        if overlay then
-            overlay:Show()
+        local viewer = _G[viewerName]
 
-            -- Enable mouse on OVERLAY and handle clicks there
-            -- (Icons inside viewer intercept clicks to the viewer frame itself)
-            overlay:EnableMouse(true)
-            overlay:SetScript("OnMouseDown", function(self, button)
-                if button == "LeftButton" then
-                    QUICore:SelectViewer(viewerName)
-                    -- Start drag on the viewer
-                    local viewer = _G[viewerName]
-                    if viewer then
-                        viewer:SetMovable(true)  -- Enable movable for Blizzard CDM viewers
-                        viewer:StartMoving()
+        -- Hook .Selection show/hide so toggling a CDM viewer on/off in
+        -- Blizzard's edit mode menu hides/shows THIS viewer's overlay only.
+        -- Per-viewer hooks avoid re-processing all viewers (which can cause
+        -- unrelated overlays to flicker or disappear during Blizzard re-layout).
+        if viewer then
+            local sel = viewer.Selection
+            if sel and not _viewerSelectionHooked[sel] then
+                _viewerSelectionHooked[sel] = true
+                local hookedName = viewerName  -- capture for closure
+                sel:HookScript("OnHide", function()
+                    if not EditModeManagerFrame or not EditModeManagerFrame:IsShown() then return end
+                    local ov = viewerOverlays[hookedName]
+                    if ov then
+                        ov:Hide()
+                        ov:EnableMouse(false)
                     end
+                    if viewersForceShown[hookedName] then
+                        local v = _G[hookedName]
+                        if v then pcall(function() v:Hide() end) end
+                        viewersForceShown[hookedName] = nil
+                    end
+                end)
+                sel:HookScript("OnShow", function(self)
+                    if not EditModeManagerFrame or not EditModeManagerFrame:IsShown() then return end
+                    local v = _G[hookedName]
+                    -- Re-show viewer if it was hidden (same logic as force-show on enter)
+                    if v and not v:IsShown() then
+                        pcall(function() v:Show() end)
+                        viewersForceShown[hookedName] = true
+                    end
+                    local ov = viewerOverlays[hookedName]
+                    if ov then
+                        ov:Show()
+                    end
+                    -- Keep Blizzard's .Selection visually hidden; QUI overlay is the indicator.
+                    -- Skip for BuffIcon/BuffBar when flagged to keep Selection visible
+                    -- (cdm_viewer Edit Mode resize needs Selection shown to read MOH size).
+                    if not self._quiKeepVisible then
+                        self:SetAlpha(0)
+                    end
+                end)
+            end
+            -- Skip overlay when .Selection is hidden (viewer disabled in edit mode settings).
+            -- Also re-hide the viewer if we force-showed it on edit mode enter.
+            if sel and not sel:IsShown() then
+                if overlay then
+                    overlay:Hide()
+                    overlay:EnableMouse(false)
                 end
-            end)
-            overlay:SetScript("OnMouseUp", function(self, button)
-                local viewer = _G[viewerName]
+                if viewersForceShown[viewerName] then
+                    pcall(function() viewer:Hide() end)
+                    viewersForceShown[viewerName] = nil
+                end
+                overlay = nil  -- skip locked/free logic below
+            end
+        end
+
+        if overlay then
+            -- Check if this viewer is locked by any anchoring system
+            local isLocked = viewer and _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(viewer)
+
+            if isLocked then
+                -- Locked: grey overlay, drag disabled on selection children
+                -- to prevent drag initiation
+                overlay:Show()
+                overlay:SetBackdropColor(0.5, 0.5, 0.5, 0.3)
+                overlay:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8)
+                if overlay.label then
+                    overlay.label:SetTextColor(0.5, 0.5, 0.5, 0.8)
+                    overlay.label:SetText((overlay.displayName or viewerName) .. "  (Locked)")
+                end
+                overlay:EnableMouse(false)
+                overlay:SetScript("OnMouseDown", nil)
+                overlay:SetScript("OnMouseUp", nil)
+                -- Block drag by overriding OnDragStart on selection children
                 if viewer then
-                    viewer:StopMovingOrSizing()
-                    -- Save position via LibEditModeOverride
-                    if LibEditModeOverride and EnsureEditModeReady() and LibEditModeOverride:HasEditModeSettings(viewer) then
-                        local point, relativeTo, relativePoint, x, y = viewer:GetPoint(1)
-                        pcall(function()
-                            LibEditModeOverride:ReanchorFrame(viewer, point, relativeTo, relativePoint, x, y)
-                        end)
+                    BlockFrameMovement(viewer)
+                    -- Hide Blizzard's blue .Selection indicator
+                    HideSelectionIndicator(viewer)
+                end
+            else
+                -- Free: show blue QUI overlay as visual-only indicator.
+                -- EnableMouse(false) lets clicks pass through to Blizzard's
+                -- .Selection underneath, which handles Edit Mode menu + drag.
+                -- .Selection is made invisible so only the QUI overlay shows.
+                overlay:SetBackdropColor(0.2, 0.8, 1, 0.3)
+                overlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+                if overlay.label then
+                    overlay.label:SetTextColor(0.2, 0.8, 1, 1)
+                    overlay.label:SetText(overlay.displayName or viewerName)
+                end
+                overlay:EnableMouse(false)
+                overlay:SetScript("OnMouseDown", nil)
+                overlay:SetScript("OnMouseUp", nil)
+                -- BuffBarCooldownViewer repositions dynamically (LayoutBuffBars).
+                -- ApplyTrackedBarAnchor is guarded during Edit Mode so QUI won't
+                -- move it, but Blizzard's own Edit Mode may reposition to saved coords.
+                --
+                -- Strategy: detach overlay to UIParent as visual-only (EnableMouse false).
+                -- Let .Selection stay visible and handle all clicks/drag natively — zero
+                -- addon code touching .Selection = zero taint.  After .Selection drag
+                -- moves the viewer, an OnUpdate syncs the overlay to follow.
+                if viewerName == "BuffBarCooldownViewer" and viewer then
+                    local cx, cy = viewer:GetCenter()
+                    local fw, fh = viewer:GetWidth(), viewer:GetHeight()
+                    if cx and cy and fw > 0 and fh > 0 then
+                        local usx, usy = UIParent:GetCenter()
+                        overlay:SetParent(UIParent)
+                        overlay:ClearAllPoints()
+                        overlay:SetSize(fw, fh)
+                        overlay:SetPoint("CENTER", UIParent, "CENTER", cx - usx, cy - usy)
+                        overlay:SetFrameStrata("HIGH")
+                        overlay:SetFrameLevel(100)
+                    end
+                    -- Visual-only: clicks pass through to .Selection underneath
+                    overlay:EnableMouse(false)
+                    overlay:SetScript("OnMouseDown", nil)
+                    overlay:SetScript("OnMouseUp", nil)
+                    -- Continuously sync overlay position and size to viewer frame
+                    overlay:SetScript("OnUpdate", function(self)
+                        local vcx, vcy = viewer:GetCenter()
+                        if not vcx or not vcy then return end
+                        local vw, vh = viewer:GetWidth(), viewer:GetHeight()
+                        local usx2, usy2 = UIParent:GetCenter()
+                        if not usx2 or not usy2 then return end
+                        -- Sync size
+                        local curW, curH = self:GetWidth(), self:GetHeight()
+                        if math.abs(curW - vw) > 0.5 or math.abs(curH - vh) > 0.5 then
+                            self:SetSize(vw, vh)
+                        end
+                        -- Sync position
+                        local curCx, curCy = self:GetCenter()
+                        if curCx and curCy then
+                            local dx = math.abs((vcx - usx2) - (curCx - usx2))
+                            local dy = math.abs((vcy - usy2) - (curCy - usy2))
+                            if dx < 0.5 and dy < 0.5 then return end
+                        end
+                        self:ClearAllPoints()
+                        self:SetPoint("CENTER", UIParent, "CENTER", vcx - usx2, vcy - usy2)
+                    end)
+                    -- Do NOT hide .Selection — it must be clickable for Blizzard menu + drag.
+                    -- .Selection is NOT made invisible for this viewer.
+                    overlay:Show()
+                else
+                    overlay:Show()
+                end
+                -- Ensure movement is unblocked for free frames
+                if viewer then
+                    UnblockFrameMovement(viewer)
+                    -- Hide Blizzard's .Selection visually (alpha 0) but keep
+                    -- it clickable for Edit Mode menu and drag-to-move.
+                    HideSelectionIndicator(viewer)
+                    -- Switch all proxies to direct-anchor mode so the
+                    -- full anchor chain follows viewer drag in realtime.
+                    if _G.QUI_UpdateCDMAnchorProxyFrames then
+                        _G.QUI_UpdateCDMAnchorProxyFrames()
                     end
                 end
-            end)
+            end
         end
     end
     -- Store reference for selection manager access
@@ -731,8 +1114,27 @@ function QUICore:HideViewerOverlays()
             overlay:EnableMouse(false)
             overlay:SetScript("OnMouseDown", nil)
             overlay:SetScript("OnMouseUp", nil)
+            overlay:SetScript("OnUpdate", nil)
+            -- Re-parent BuffBarCooldownViewer overlay back to viewer
+            -- (was detached to UIParent during Edit Mode)
+            if viewerName == "BuffBarCooldownViewer" then
+                local viewer = _G[viewerName]
+                if viewer then
+                    overlay:SetParent(viewer)
+                    overlay:ClearAllPoints()
+                    overlay:SetAllPoints()
+                end
+            end
+        end
+        -- Re-hide viewers we force-showed on edit mode enter.
+        if viewersForceShown[viewerName] then
+            local viewer = _G[viewerName]
+            if viewer then
+                pcall(function() viewer:Hide() end)
+            end
         end
     end
+    wipe(viewersForceShown)
 end
 
 -- Show overlays on all Blizzard Edit Mode frames
@@ -741,37 +1143,195 @@ function QUICore:ShowBlizzardFrameOverlays()
         local frameName = frameInfo.name
         local frame = _G[frameName]
 
-        -- Skip if frame doesn't exist (e.g., DamageMeter not in combat)
-        if frame then
+        -- Support fallback names (e.g., MainActionBar -> MainMenuBar for pre-Midnight)
+        if not frame and frameInfo.fallback then
+            frame = _G[frameInfo.fallback]
+            if frame then
+                frameName = frameInfo.fallback
+            end
+        end
+
+        -- Skip if frame doesn't exist, or is hidden unless alwaysShow
+        -- (e.g., hidden action bars/damage meters skip, but PetActionBar/StanceBar always show)
+        -- Force-show alwaysShow frames so the bar and .Selection are visible
+        -- in Edit Mode (e.g., PetActionBar when pet is dismissed).
+        if frame and frameInfo.alwaysShow and not frame:IsShown() then
+            if not InCombatLockdown() then
+                frame:Show()
+                _forceShownFrames[frame] = true
+            end
+        end
+
+        -- Skip frames gated on Selection visibility (e.g., TalkingHead disabled
+        -- in Blizzard's edit mode settings).  If the user hasn't enabled this
+        -- system in edit mode, don't create an overlay — it would be invisible
+        -- but could block clicks on underlying frames.
+        if frame and frameInfo.requireSelection then
+            local sel = frame.Selection
+            -- Hook Selection show/hide so toggling mid-edit-mode refreshes overlays
+            if sel and not _selectionHooked[sel] then
+                _selectionHooked[sel] = true
+                sel:HookScript("OnShow", function()
+                    if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
+                        QUICore:ShowBlizzardFrameOverlays()
+                    end
+                end)
+                sel:HookScript("OnHide", function()
+                    if EditModeManagerFrame and EditModeManagerFrame:IsShown() then
+                        QUICore:ShowBlizzardFrameOverlays()
+                    end
+                end)
+            end
+            if not sel or not sel:IsShown() then
+                -- System is disabled in edit mode settings — hide any existing overlay
+                if blizzardOverlays[frameName] then
+                    blizzardOverlays[frameName]:Hide()
+                    blizzardOverlays[frameName]:EnableMouse(false)
+                end
+                frame = nil  -- skip overlay creation below
+            end
+        end
+
+        if frame and (frame:IsShown() or frameInfo.alwaysShow or frameInfo.passthrough) then
             if not blizzardOverlays[frameName] then
+                blizzardOverlays[frameName] = CreateBlizzardFrameOverlay(frameInfo)
+            elseif not frameInfo.alwaysShow and blizzardOverlays[frameName]:GetParent() ~= frame then
+                -- Frame was recreated by its addon (e.g., Details! damage meter).
+                -- The old overlay is orphaned; rebuild for the new frame.
                 blizzardOverlays[frameName] = CreateBlizzardFrameOverlay(frameInfo)
             end
             local overlay = blizzardOverlays[frameName]
             if overlay then
-                overlay:Show()
+                -- Check if this frame is locked by any anchoring system
+                local isLocked = _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(frame)
 
-                -- Enable mouse on OVERLAY and handle clicks there
-                overlay:EnableMouse(true)
-                overlay:SetScript("OnMouseDown", function(self, button)
-                    if button == "LeftButton" then
-                        QUICore:SelectViewer(frameName)
-                        -- Start drag on the frame
-                        frame:SetMovable(true)  -- Enable movable for Blizzard Edit Mode frames
-                        frame:StartMoving()
+                if isLocked then
+                    -- Locked: grey overlay, no drag allowed.
+                    overlay:Show()
+                    overlay:SetBackdropColor(0.5, 0.5, 0.5, 0.3)
+                    overlay:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8)
+                    if overlay.label then
+                        overlay.label:SetTextColor(0.5, 0.5, 0.5, 0.8)
+                        overlay.label:SetText((overlay.displayName or frameName) .. "  (Locked)")
                     end
-                end)
-                overlay:SetScript("OnMouseUp", function(self, button)
-                    if frame then
-                        frame:StopMovingOrSizing()
-                        -- Save position via LibEditModeOverride
+                    -- For force-shown frames, bar buttons eat click-throughs
+                    -- so we handle the menu directly on the overlay.
+                    if _forceShownFrames[frame] then
+                        overlay:EnableMouse(true)
+                        overlay:SetScript("OnEnter", function(self)
+                            GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+                            GameTooltip:SetText(overlay.displayName or frameName)
+                            GameTooltip:Show()
+                        end)
+                        overlay:SetScript("OnLeave", function(self)
+                            GameTooltip:Hide()
+                        end)
+                        overlay:SetScript("OnMouseDown", function(self, button)
+                            if button == "LeftButton" and frame.SelectSystem then
+                                pcall(function()
+                                    if EditModeManagerFrame and EditModeManagerFrame.ClearSelectedSystem then
+                                        EditModeManagerFrame:ClearSelectedSystem()
+                                    end
+                                    frame.isSelected = false
+                                    frame:SelectSystem()
+                                    if frame.Selection then
+                                        frame.Selection:SetAlpha(0)
+                                    end
+                                end)
+                            end
+                        end)
+                        overlay:SetScript("OnMouseUp", nil)
+                    else
+                        -- Normal locked: click-through to .Selection for menu
+                        overlay:EnableMouse(false)
+                        overlay:SetScript("OnMouseDown", nil)
+                        overlay:SetScript("OnMouseUp", nil)
+                    end
+                    -- Block drag by overriding OnDragStart on selection children
+                    BlockFrameMovement(frame)
+                    -- Hide Blizzard's blue .Selection indicator
+                    HideSelectionIndicator(frame)
+                elseif frameInfo.passthrough and not _forceShownFrames[frame] then
+                    -- Free passthrough: visual-only QUI overlay, clicks pass
+                    -- through to Blizzard's .Selection for Edit Mode menu + drag.
+                    overlay:Show()
+                    overlay:SetBackdropColor(0.2, 0.8, 1, 0.3)
+                    overlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+                    if overlay.label then
+                        overlay.label:SetTextColor(0.2, 0.8, 1, 1)
+                        overlay.label:SetText(overlay.displayName or frameName)
+                    end
+                    overlay:EnableMouse(false)
+                    overlay:SetScript("OnMouseDown", nil)
+                    overlay:SetScript("OnMouseUp", nil)
+                    UnblockFrameMovement(frame)
+                    HideSelectionIndicator(frame)
+                else
+                    -- Free: show blue QUI overlay with drag handling.
+                    -- For force-shown frames (alwaysShow), also open the
+                    -- Blizzard Edit Mode menu on clean left-click.
+                    overlay:Show()
+                    overlay:SetBackdropColor(0.2, 0.8, 1, 0.3)
+                    overlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+                    if overlay.label then
+                        overlay.label:SetTextColor(0.2, 0.8, 1, 1)
+                        overlay.label:SetText(overlay.displayName or frameName)
+                    end
+                    -- Ensure movement is unblocked for free frames
+                    UnblockFrameMovement(frame)
+                    ShowSelectionIndicator(frame)
+                    overlay:EnableMouse(true)
+                    if _forceShownFrames[frame] then
+                        overlay:SetScript("OnEnter", function(self)
+                            GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+                            GameTooltip:SetText(overlay.displayName or frameName)
+                            GameTooltip:Show()
+                        end)
+                        overlay:SetScript("OnLeave", function(self)
+                            GameTooltip:Hide()
+                        end)
+                    end
+                    overlay:SetMovable(true)
+                    overlay:RegisterForDrag("LeftButton")
+                    overlay:SetScript("OnMouseDown", function(self, button)
+                        if button == "LeftButton" then
+                            self.__dragging = false
+                            QUICore:SelectViewer(frameName)
+                            -- Open Blizzard Edit Mode menu on mouse down
+                            -- (matches stance bar behavior).
+                            if _forceShownFrames[frame] and frame.SelectSystem then
+                                pcall(function()
+                                    if EditModeManagerFrame and EditModeManagerFrame.ClearSelectedSystem then
+                                        EditModeManagerFrame:ClearSelectedSystem()
+                                    end
+                                    frame.isSelected = false
+                                    frame:SelectSystem()
+                                    if frame.Selection then
+                                        frame.Selection:SetAlpha(0)
+                                    end
+                                end)
+                            end
+                        end
+                    end)
+                    overlay:SetScript("OnDragStart", function(self)
+                        self.__dragging = true
+                        pcall(function()
+                            frame:SetMovable(true)
+                            frame:StartMoving()
+                        end)
+                    end)
+                    overlay:SetScript("OnDragStop", function(self)
+                        self.__dragging = false
+                        pcall(function() frame:StopMovingOrSizing() end)
                         if LibEditModeOverride and EnsureEditModeReady() and LibEditModeOverride:HasEditModeSettings(frame) then
                             local point, relativeTo, relativePoint, x, y = frame:GetPoint(1)
                             pcall(function()
                                 LibEditModeOverride:ReanchorFrame(frame, point, relativeTo, relativePoint, x, y)
                             end)
                         end
-                    end
-                end)
+                    end)
+                    overlay:SetScript("OnMouseUp", nil)
+                end
             end
         end
     end
@@ -782,15 +1342,51 @@ end
 -- Hide all Blizzard frame overlays
 function QUICore:HideBlizzardFrameOverlays()
     for _, frameInfo in ipairs(BLIZZARD_EDITMODE_FRAMES) do
-        local overlay = blizzardOverlays[frameInfo.name]
+        local frameName = frameInfo.name
+        local frame = _G[frameName]
+        if not frame and frameInfo.fallback then
+            frame = _G[frameInfo.fallback]
+        end
+        local overlay = blizzardOverlays[frameName]
+        -- Check fallback name too (e.g., MainActionBar -> MainMenuBar)
+        if not overlay and frameInfo.fallback then
+            overlay = blizzardOverlays[frameInfo.fallback]
+        end
         if overlay then
             overlay:Hide()
             overlay:EnableMouse(false)
             overlay:SetScript("OnMouseDown", nil)
             overlay:SetScript("OnMouseUp", nil)
+            overlay:SetScript("OnDragStart", nil)
+            overlay:SetScript("OnDragStop", nil)
+            -- Stop watchers when leaving Edit Mode
+            if overlay._passthroughWatcher then
+                overlay._passthroughWatcher:Hide()
+            end
+            if overlay._selectionAlphaWatcher then
+                overlay._selectionAlphaWatcher:Hide()
+            end
+        end
+        -- Hide frames we force-showed on Edit Mode enter
+        if frame and _forceShownFrames[frame] then
+            if not InCombatLockdown() then
+                frame:Hide()
+            end
+            _forceShownFrames[frame] = nil
         end
     end
 end
+
+-- Forward declarations — these must be visible to ShowMinimapOverlay's drag
+-- handlers (closures capture locals by lexical scope; locals declared later in
+-- the file would be invisible and resolve to nil globals).
+-- The actual frame creation and OnUpdate wiring happens after SyncMinimapClusterToMinimap.
+local _clusterSizeWatcher   -- CreateFrame assigned later
+local _lastClusterW, _lastClusterH = 0, 0
+local _lastClusterScale = 1
+local _origMinimapSize = 0
+local _origMinimapScale = 1
+local _resizeContainer = nil  -- lazily created in StartClusterSizeWatcher
 
 -- Show minimap overlay
 function QUICore:ShowMinimapOverlay()
@@ -798,36 +1394,185 @@ function QUICore:ShowMinimapOverlay()
         minimapOverlay = CreateMinimapOverlay()
     end
     if minimapOverlay then
-        minimapOverlay:Show()
+        -- Check if the minimap is locked by any anchoring system
+        local isLocked = Minimap and _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(Minimap)
 
-        -- Enable mouse for click detection, pass drag to Minimap
-        minimapOverlay:EnableMouse(true)
-        minimapOverlay:SetScript("OnMouseDown", function(self, button)
-            if button == "LeftButton" then
-                QUICore:SelectEditModeElement("minimap", "minimap")
-                -- Start drag on the Minimap
-                if Minimap:IsMovable() then
-                    Minimap:StartMoving()
+        -- Do not modify MinimapCluster anchors directly during Edit Mode.
+        -- Blizzard's Edit Mode tracks a dependency graph for all systems.
+        -- Touching MinimapCluster's anchors from addon code during the
+        -- secure execution context corrupts that graph. MinimapCluster is
+        -- kept in sync with Minimap via QUICore.SyncMinimapClusterToMinimap()
+        -- which uses a SecureHandlerAttributeTemplate to update anchors
+        -- through secure code. Drag is handled through the Minimap frame.
+
+        -- Helper: anchor the overlay to cover the minimap (+ datatext panel)
+        local function AnchorOverlayToMinimap()
+            minimapOverlay:ClearAllPoints()
+            minimapOverlay:SetAllPoints(Minimap)
+        end
+
+        if isLocked then
+            -- Locked: grey overlay, block movement
+            minimapOverlay:Show()
+            minimapOverlay:SetBackdropColor(0.5, 0.5, 0.5, 0.3)
+            minimapOverlay:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8)
+            if minimapOverlay.label then
+                minimapOverlay.label:SetTextColor(0.5, 0.5, 0.5, 0.8)
+                minimapOverlay.label:SetText("Minimap  (Locked)")
+            end
+            AnchorOverlayToMinimap()
+            minimapOverlay:EnableMouse(false)
+            minimapOverlay:SetScript("OnMouseDown", nil)
+            minimapOverlay:SetScript("OnMouseUp", nil)
+            minimapOverlay:SetScript("OnDragStart", nil)
+            minimapOverlay:SetScript("OnDragStop", nil)
+            minimapOverlay:RegisterForDrag()
+            BlockFrameMovement(Minimap)
+            if MinimapCluster then
+                BlockFrameMovement(MinimapCluster)
+                HideSelectionIndicator(MinimapCluster)
+            end
+        else
+            -- Free: taint-safe proxy drag.
+            -- The overlay itself becomes the mover — on drag start it
+            -- detaches from Minimap and moves freely. On drag stop the
+            -- final position is applied to Minimap and the overlay
+            -- re-anchors. No protected-frame methods (StartMoving) are
+            -- called, avoiding taint propagation.
+            minimapOverlay:Show()
+            minimapOverlay:SetBackdropColor(0.2, 0.8, 1, 0.3)
+            minimapOverlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+            if minimapOverlay.label then
+                minimapOverlay.label:SetTextColor(0.2, 0.8, 1, 1)
+                minimapOverlay.label:SetText("Minimap")
+            end
+            AnchorOverlayToMinimap()
+            minimapOverlay:SetMovable(true)
+            minimapOverlay:SetClampedToScreen(true)
+            minimapOverlay:EnableMouse(true)
+            minimapOverlay:RegisterForDrag("LeftButton")
+            minimapOverlay:SetScript("OnDragStart", function(self)
+                -- Detach from Minimap so the overlay can move freely
+                self:ClearAllPoints()
+                if _resizeContainer and _clusterSizeWatcher:IsShown() then
+                    -- Minimap is anchored to container; use screen center coords.
+                    -- GetCenter returns coords / scale, so multiply by scale.
+                    local cx, cy = Minimap:GetCenter()
+                    local mmScale = Minimap:GetScale() or 1
+                    local px, py = UIParent:GetCenter()
+                    if cx and px then
+                        self:SetPoint("CENTER", UIParent, "CENTER",
+                            cx * mmScale - px, cy * mmScale - py)
+                    end
+                else
+                    local mmPt, _, mmRp, mmX, mmY = Minimap:GetPoint()
+                    if mmPt then
+                        self:SetPoint(mmPt, UIParent, mmRp, mmX, mmY)
+                    end
                 end
-            end
-        end)
-        minimapOverlay:SetScript("OnMouseUp", function(self, button)
-            Minimap:StopMovingOrSizing()
-            -- Save position to DB (snapped to pixel grid)
-            local settings = QUICore.db and QUICore.db.profile and QUICore.db.profile.minimap
-            if settings then
-                local point, _, relPoint, x, y = QUICore:SnapFramePosition(Minimap)
-                if point then
-                    settings.position = {point, relPoint, x, y}
+                self:SetSize(Minimap:GetWidth(), Minimap:GetHeight())
+                self:StartMoving()
+                -- Sync Minimap + MinimapCluster position to overlay every frame during drag
+                self:SetScript("OnUpdate", function(ov)
+                    local cx, cy = ov:GetCenter()
+                    if not cx or not cy then return end
+                    local sx, sy = UIParent:GetCenter()
+                    if not sx or not sy then return end
+                    local newOx, newOy = cx - sx, cy - sy
+                    if _resizeContainer and _clusterSizeWatcher:IsShown() then
+                        -- Move container; Minimap follows via (0,0) anchor
+                        _resizeContainer:ClearAllPoints()
+                        _resizeContainer:SetPoint("CENTER", UIParent, "CENTER", newOx, newOy)
+                    else
+                        Minimap:ClearAllPoints()
+                        Minimap:SetPoint("CENTER", UIParent, "CENTER", newOx, newOy)
+                    end
+                    -- Keep MinimapCluster in lockstep so they don't desync
+                    QUICore.SyncMinimapClusterToMinimap()
+                    -- Update frames anchored to the minimap so they follow in real-time
+                    if _G.QUI_UpdateFramesAnchoredTo then
+                        _G.QUI_UpdateFramesAnchoredTo("minimap")
+                    end
+                end)
+            end)
+            minimapOverlay:SetScript("OnDragStop", function(self)
+                self:StopMovingOrSizing()
+                self:SetScript("OnUpdate", nil)
+                -- Read the overlay's final position and apply to Minimap
+                if not InCombatLockdown() then
+                    local pt, _, rp, ox, oy = QUICore:SnapFramePosition(self)
+                    if pt then
+                        if _resizeContainer and _clusterSizeWatcher:IsShown() then
+                            -- Move container to snapped position (convert to CENTER)
+                            local cx, cy = self:GetCenter()
+                            local px, py = UIParent:GetCenter()
+                            if cx and px then
+                                _resizeContainer:ClearAllPoints()
+                                _resizeContainer:SetPoint("CENTER", UIParent, "CENTER", cx - px, cy - py)
+                            end
+                        else
+                            Minimap:ClearAllPoints()
+                            Minimap:SetPoint(pt, UIParent, rp, ox, oy)
+                        end
+                        local mmSettings = QUICore.db and QUICore.db.profile
+                            and QUICore.db.profile.minimap
+                        if mmSettings then
+                            mmSettings.position = {pt, rp, ox, oy}
+                        end
+                    end
                 end
+                -- Re-anchor overlay back on top of the (now-moved) Minimap
+                AnchorOverlayToMinimap()
+                -- Sync MinimapCluster to follow Minimap's new position
+                QUICore.SyncMinimapClusterToMinimap("drag-stop")
+                -- Update frames anchored to the minimap
+                if _G.QUI_UpdateFramesAnchoredTo then
+                    _G.QUI_UpdateFramesAnchoredTo("minimap")
+                end
+            end)
+            -- Left-click: select minimap (shows nudge buttons).
+            -- Open the Blizzard Edit Mode settings panel for the minimap
+            -- on left-click. SelectSystem() must be DEFERRED to a separate
+            -- execution frame (C_Timer.After(0)) so the addon-code taint
+            -- is isolated and does not propagate into Blizzard's secure
+            -- EditMode execution context (which would taint CompactUnitFrame
+            -- health bar values via ResetPartyFrames on exit).
+            -- ClearSelectedSystem() is NOT called — it's unnecessary when
+            -- selecting and was a taint vector.
+            minimapOverlay:SetScript("OnMouseDown", function(_, button)
+                if button == "LeftButton" then
+                    QUICore:SelectEditModeElement("minimap", "minimap")
+                    QUICore.SyncMinimapClusterToMinimap("click-select")
+                    -- Deferred: open Blizzard settings panel for minimap
+                    C_Timer.After(0, function()
+                        if MinimapCluster and MinimapCluster.SelectSystem then
+                            pcall(function()
+                                MinimapCluster.isSelected = false
+                                MinimapCluster:SelectSystem()
+                                if MinimapCluster.Selection then
+                                    MinimapCluster.Selection:SetAlpha(0)
+                                end
+                            end)
+                        end
+                    end)
+                end
+            end)
+            minimapOverlay:SetScript("OnMouseUp", nil)
+            -- Tooltip on hover
+            minimapOverlay:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+                GameTooltip:SetText("Minimap")
+                GameTooltip:Show()
+            end)
+            minimapOverlay:SetScript("OnLeave", function()
+                GameTooltip:Hide()
+            end)
+            UnblockFrameMovement(Minimap)
+            if MinimapCluster then
+                UnblockFrameMovement(MinimapCluster)
+                HideSelectionIndicator(MinimapCluster)
             end
-            -- Update info text
-            if minimapOverlay and minimapOverlay.infoText and settings and settings.position then
-                minimapOverlay.infoText:SetText(string.format("Minimap  X:%d Y:%d",
-                    math.floor(settings.position[3] or 0),
-                    math.floor(settings.position[4] or 0)))
-            end
-        end)
+        end
 
         -- Store reference for selection manager access
         self.minimapOverlay = minimapOverlay
@@ -841,6 +1586,22 @@ function QUICore:HideMinimapOverlay()
         minimapOverlay:EnableMouse(false)
         minimapOverlay:SetScript("OnMouseDown", nil)
         minimapOverlay:SetScript("OnMouseUp", nil)
+        minimapOverlay:SetScript("OnDragStart", nil)
+        minimapOverlay:SetScript("OnDragStop", nil)
+        minimapOverlay:SetScript("OnEnter", nil)
+        minimapOverlay:SetScript("OnLeave", nil)
+        minimapOverlay:SetScript("OnUpdate", nil)
+        minimapOverlay:RegisterForDrag()
+    end
+    -- Save the minimap's current position (may have moved via overlay drag).
+    if Minimap then
+        local settings = QUICore.db and QUICore.db.profile and QUICore.db.profile.minimap
+        if settings then
+            local point, _, relPoint, x, y = QUICore:SnapFramePosition(Minimap)
+            if point then
+                settings.position = {point, relPoint, x, y}
+            end
+        end
     end
 end
 
@@ -873,17 +1634,21 @@ function QUICore:EnableClickDetection()
                             return
                         end
 
-                        -- Also check parent frame (for overlay clicks that pass through)
-                        -- Overlays have no name but their parent is the viewer
-                        if not frameName and frame:GetParent() then
-                            local parentName = frame:GetParent():GetName()
-                            if IsNudgeTargetFrameName(parentName) then
+                        -- Walk up ancestor chain to find a nudge target.
+                        -- Clicks land on .Selection children (which may be named
+                        -- or unnamed), so check multiple parent levels.
+                        local ancestor = frame:GetParent()
+                        for _ = 1, 5 do
+                            if not ancestor then break end
+                            local ancestorName = ancestor:GetName()
+                            if IsNudgeTargetFrameName(ancestorName) then
                                 if lastClickedFrame ~= frame then
                                     lastClickedFrame = frame
-                                    QUICore:SelectViewer(parentName)
+                                    QUICore:SelectViewer(ancestorName)
                                 end
                                 return
                             end
+                            ancestor = ancestor:GetParent()
                         end
                     end
                 end
@@ -915,9 +1680,16 @@ function QUICore:SelectViewer(viewerName)
     self.selectedViewer = viewerName
 
     -- Use central selection manager for click-to-select arrows
-    -- Determine element type: "blizzard" for Blizzard Edit Mode frames, "cdm" for CDM viewers
+    -- Determine element type: CDM viewers first, then "blizzard" for Blizzard Edit Mode frames
     if self.SelectEditModeElement then
-        local elementType = BLIZZARD_FRAME_LABELS[viewerName] and "blizzard" or "cdm"
+        local elementType
+        if CDM_VIEWER_LOOKUP[viewerName] then
+            elementType = "cdm"
+        elseif BLIZZARD_FRAME_LABELS[viewerName] then
+            elementType = "blizzard"
+        else
+            elementType = "cdm"
+        end
         self:SelectEditModeElement(elementType, viewerName)
     end
 
@@ -934,16 +1706,333 @@ local function EnsureEditModeReady()
     if not LibEditModeOverride then
         return false
     end
-    
+
     if not LibEditModeOverride:IsReady() then
         return false
     end
-    
+
     if not LibEditModeOverride:AreLayoutsLoaded() then
         LibEditModeOverride:LoadLayouts()
     end
-    
+
     return LibEditModeOverride:CanEditActiveLayout()
+end
+
+---------------------------------------------------------------------------
+-- MINIMAPCLUSTER ↔ MINIMAP SYNC (Secure Proxy)
+-- QUI reparents Minimap from MinimapCluster to UIParent, making
+-- MinimapCluster vestigial. However, MinimapCluster remains a registered
+-- Edit Mode system. If its position/size desync from Minimap:
+--   1. The layout DB may reference another system → circular anchor
+--      dependency (DebuffFrame ↔ MinimapCluster) during UpdateSystems.
+--   2. Exiting Edit Mode without saving triggers ResetPartyFrames in a
+--      context where the desync propagates taint → CompactUnitFrame
+--      "secret number tainted by QUI" errors.
+--
+-- Fix: Keep MinimapCluster synced to Minimap's position and size via a
+-- SecureHandlerAttributeTemplate proxy. Position data is passed through
+-- attributes (set from addon code), and the snippet applies them from
+-- SECURE CODE so MinimapCluster's anchor data stays untainted.
+--
+-- Sync points: login, Edit Mode enter (after UpdateSystems), and after
+-- each minimap drag-stop.
+--
+-- IMPORTANT: Do NOT use hooksecurefunc on MinimapCluster:SetPoint or
+-- any other widget method — post-hooks inject addon code execution into
+-- Blizzard's secureexecuterange (UpdateSystems), tainting the entire
+-- scope. Do NOT use LibEditModeOverride:ReanchorFrame() either — it
+-- triggers OnSystemPositionChange → ResetPartyFrames → same taint
+-- (documented for BuffBarCooldownViewer at line ~1762).
+---------------------------------------------------------------------------
+
+-- Secure proxy: attribute-driven handler that syncs MinimapCluster's
+-- position and size to Minimap through secure code.
+-- Position data is passed via attributes (sync-x, sync-y, sync-w, sync-h)
+-- set from addon code before triggering "sync-cluster".
+local secureClusterProxy = CreateFrame("Frame", nil, UIParent, "SecureHandlerAttributeTemplate")
+if MinimapCluster then
+    secureClusterProxy:SetFrameRef("cluster", MinimapCluster)
+    secureClusterProxy:SetFrameRef("uiparent", UIParent)
+    if MinimapCluster.BorderTop then
+        secureClusterProxy:SetFrameRef("borderTop", MinimapCluster.BorderTop)
+    end
+    if MinimapCluster.Selection then
+        secureClusterProxy:SetFrameRef("selection", MinimapCluster.Selection)
+    end
+    secureClusterProxy:SetAttribute("_onattributechanged", [[
+        local cluster = self:GetFrameRef("cluster")
+        if not cluster then return end
+
+        -- Lightweight: just hide the cluster (used every frame during Edit Mode
+        -- to counteract Blizzard resetting alpha on selection/resize)
+        if name == "hide-cluster" then
+            cluster:SetAlpha(0)
+            return
+        end
+
+        if name ~= "sync-cluster" then return end
+        local parent = self:GetFrameRef("uiparent")
+        if not parent then return end
+        local x = self:GetAttribute("sync-x") or 0
+        local y = self:GetAttribute("sync-y") or 0
+        local w = self:GetAttribute("sync-w") or 1
+        local h = self:GetAttribute("sync-h") or 1
+        cluster:ClearAllPoints()
+        cluster:SetPoint("CENTER", parent, "CENTER", x, y)
+        cluster:SetWidth(w)
+        cluster:SetHeight(h)
+        -- Make entire cluster invisible — it's a vestigial frame that
+        -- Blizzard's Edit Mode tracks, but QUI manages the Minimap
+        -- independently. Without this, the cluster's dark background
+        -- shows through when it's larger than the Minimap.
+        cluster:SetAlpha(0)
+        -- Also explicitly hide children through secure code
+        local border = self:GetFrameRef("borderTop")
+        if border then border:SetAlpha(0) end
+        local sel = self:GetFrameRef("selection")
+        if sel then sel:SetAlpha(0) end
+    ]])
+    -- Immediately make MinimapCluster invisible through secure code
+    -- (covers the gap before the first full sync triggers)
+    secureClusterProxy:SetAttribute("hide-cluster", 0)
+end
+
+-- Sync MinimapCluster's position and size to match Minimap through
+-- secure code. Reads Minimap's current center and size, passes them
+-- via attributes, then triggers the secure snippet.
+local _syncDebugThrottle = 0
+function QUICore.SyncMinimapClusterToMinimap(source)
+    if not MinimapCluster or not Minimap then return end
+    if InCombatLockdown() then return end
+    local cx, cy = Minimap:GetCenter()
+    local px, py = UIParent:GetCenter()
+    if not cx or not cy or not px or not py then return end
+    local w, h = Minimap:GetSize()
+    -- GetCenter returns coords in the frame's own scale (screen / mmScale).
+    -- Multiply by mmScale to get actual screen coordinates.
+    local mmScale = Minimap:GetScale() or 1
+    local screenCx = cx * mmScale
+    local screenCy = cy * mmScale
+    -- Convert Minimap frame size to Cluster frame size accounting for
+    -- potential scale differences (e.g. Minimap scale=1.2, Cluster scale=1.0)
+    local cScale = MinimapCluster:GetScale() or 1
+    if cScale == 0 then cScale = 1 end
+    local syncW = w * mmScale / cScale
+    local syncH = h * mmScale / cScale
+    -- Cluster anchor offset: screen_offset / cluster_scale
+    local syncX = (screenCx - px) / cScale
+    local syncY = (screenCy - py) / cScale
+    -- Set position/size data as attributes (these trigger _onattributechanged
+    -- but the snippet returns immediately for names other than "sync-cluster")
+    secureClusterProxy:SetAttribute("sync-x", syncX)
+    secureClusterProxy:SetAttribute("sync-y", syncY)
+    secureClusterProxy:SetAttribute("sync-w", syncW)
+    secureClusterProxy:SetAttribute("sync-h", syncH)
+    -- Trigger the actual sync
+    secureClusterProxy:SetAttribute("sync-cluster", GetTime())
+
+    -- DEBUG: Log sync (throttled for drag OnUpdate, always for named sources)
+    if QUI and QUI.DEBUG_MODE then
+        local now = GetTime()
+        if source or (now - _syncDebugThrottle > 2) then
+            _syncDebugThrottle = now
+            local cCx, cCy = MinimapCluster:GetCenter()
+            local cW, cH = MinimapCluster:GetSize()
+            local cPt, cRel, cRelPt, cX, cY = MinimapCluster:GetPoint(1)
+            local cRelName = cRel and (cRel.GetName and cRel:GetName() or tostring(cRel)) or "nil"
+            QUI:DebugPrint(string.format("|cff00ccff[Anchor] SyncCluster(%s)|r Minimap screen(%.1f,%.1f) size(%.0fx%.0f) scale=%.2f → Cluster center(%.1f,%.1f) size(%.0fx%.0f) scale=%.2f anchor(%s,%s,%s,%.1f,%.1f)",
+                source or "drag",
+                screenCx, screenCy, w, h, mmScale,
+                cCx or 0, cCy or 0, cW or 0, cH or 0, cScale,
+                cPt or "?", cRelName, cRelPt or "?", cX or 0, cY or 0))
+        end
+    end
+end
+
+-- Reverse sync: during Edit Mode, watch MinimapCluster for size changes
+-- (from Blizzard's resize slider) and apply them to Minimap.
+-- This is a polling watcher because hooksecurefunc on SetSize/SetWidth/SetHeight
+-- would taint the secure execution context.
+-- (Variables forward-declared before ShowMinimapOverlay — only assign here.)
+_clusterSizeWatcher = CreateFrame("Frame")
+_clusterSizeWatcher:Hide()
+_lastClusterW, _lastClusterH = 0, 0
+_lastClusterScale = 1
+_origMinimapSize = 0
+_origMinimapScale = 1
+
+_clusterSizeWatcher:SetScript("OnUpdate", function(self)
+    if not MinimapCluster or not Minimap then return end
+    -- TAINT PREVENTION: If Edit Mode just closed (e.g. exit-without-saving),
+    -- Blizzard's revert may change MinimapCluster's size in the same frame.
+    -- Reacting to that change (SetScale, SetAttribute) while Blizzard's secure
+    -- context is still settling spreads taint. Just hide the watcher and bail.
+    -- StopClusterSizeWatcher (deferred to next frame) handles the full detach
+    -- from _resizeContainer with correct scale-to-screen conversion.
+    if EditModeManagerFrame and not EditModeManagerFrame:IsShown() then
+        self:Hide()
+        return
+    end
+    -- Keep cluster invisible every frame through secure code — Blizzard
+    -- resets alpha during Edit Mode selection/resize. Direct SetAlpha from
+    -- addon code taints the frame; routing through the secure proxy avoids this.
+    secureClusterProxy:SetAttribute("hide-cluster", GetTime())
+    local cW, cH = MinimapCluster:GetSize()
+    local cScale = MinimapCluster:GetScale() or 1
+    if not cW or cW == 0 then return end
+    -- Only act when cluster size or scale actually changed
+    local sizeChanged = math.abs(cW - _lastClusterW) >= 0.5 or math.abs(cH - _lastClusterH) >= 0.5
+    local scaleChanged = math.abs(cScale - _lastClusterScale) >= 0.001
+    if not sizeChanged and not scaleChanged then return end
+    _lastClusterW, _lastClusterH = cW, cH
+    _lastClusterScale = cScale
+    if InCombatLockdown() then return end
+    if _origMinimapSize == 0 then return end
+    -- Compute the visual (effective) size of the cluster
+    local visualW = cW * cScale
+    local visualH = cH * cScale
+    -- Minimap must always be square — use the smaller visual dimension
+    local visualSize = math.min(visualW, visualH)
+    -- Compute scale ratio relative to the original minimap dimensions.
+    -- SetScale is an instant GPU transform — no 1-frame render lag like SetSize.
+    local ratio = visualSize / (_origMinimapSize * _origMinimapScale)
+    local newScale = _origMinimapScale * ratio
+    if newScale <= 0 then return end
+    -- Check if scale actually changed
+    local curScale = Minimap:GetScale() or 1
+    if math.abs(newScale - curScale) < 0.001 then return end
+    -- Apply new scale — no position correction needed because Minimap is
+    -- anchored to _resizeContainer at offset (0,0). 0 * any_scale = 0.
+    Minimap:SetScale(newScale)
+    -- Do NOT update settings.size or refresh minimap layout here.
+    -- The backdrop and overlay are children of Minimap, so they inherit its scale
+    -- and resize automatically. Updating settings.size during SetScale resize would
+    -- cause UpdateBackdrop() to set the backdrop to the wrong size in Minimap's
+    -- coordinate space (where the frame is still _origMinimapSize). Final size
+    -- update + full refresh happens in StopClusterSizeWatcher on Edit Mode exit.
+    -- Sync cluster back to exact Minimap position
+    QUICore.SyncMinimapClusterToMinimap("resize-sync")
+    -- Update frames anchored to the minimap so they follow the resize
+    if _G.QUI_UpdateFramesAnchoredTo then
+        _G.QUI_UpdateFramesAnchoredTo("minimap")
+    end
+    -- The datatext panel is anchored to Minimap:BOTTOM so position follows
+    -- automatically, but its own scale (set from saved settings) doesn't
+    -- match the live scale. Sync it here; full refresh on exit restores it.
+    local dtPanel = _G["QUI_DatatextPanel"]
+    if dtPanel and dtPanel:IsShown() then
+        dtPanel:SetScale(newScale)
+    end
+end)
+
+-- Start/stop the cluster size watcher for Edit Mode
+function QUICore.StartClusterSizeWatcher()
+    if MinimapCluster then
+        _lastClusterW, _lastClusterH = MinimapCluster:GetSize()
+        _lastClusterScale = MinimapCluster:GetScale() or 1
+    end
+    -- Record original Minimap dimensions so we can use scale-based resizing
+    if Minimap then
+        _origMinimapSize = Minimap:GetWidth()
+        _origMinimapScale = Minimap:GetScale() or 1
+
+        -- Create the resize container once (lazy). Invisible 1x1 frame
+        -- on UIParent that serves purely as a position anchor.
+        if not _resizeContainer then
+            _resizeContainer = CreateFrame("Frame", nil, UIParent)
+            _resizeContainer:SetSize(1, 1)
+            _resizeContainer:SetAlpha(0)
+            _resizeContainer:Show()
+        end
+
+        -- Position container at Minimap's current screen center
+        local mCx, mCy = Minimap:GetCenter()
+        local px, py = UIParent:GetCenter()
+        if mCx and px then
+            _resizeContainer:ClearAllPoints()
+            _resizeContainer:SetPoint("CENTER", UIParent, "CENTER", mCx - px, mCy - py)
+
+            -- Anchor Minimap to container at CENTER (0,0).
+            -- No SetParent — only the anchor changes.
+            Minimap:ClearAllPoints()
+            Minimap:SetPoint("CENTER", _resizeContainer, "CENTER", 0, 0)
+        end
+
+        -- Disable screen clamping during resize — clamping silently modifies
+        -- the frame's position each frame, creating drift when combined with
+        -- scale changes. Re-enabled in StopClusterSizeWatcher.
+        Minimap:SetClampedToScreen(false)
+    end
+    _clusterSizeWatcher:Show()
+end
+
+function QUICore.StopClusterSizeWatcher()
+    _clusterSizeWatcher:Hide()
+    -- Finalize: convert from SetScale-only resize back to proper SetSize + original scale.
+    -- During Edit Mode we only changed scale (instant GPU transform, no black border).
+    -- Now we compute the target frame size from the scale ratio and apply it with SetSize,
+    -- then restore the original scale. The zoom toggle on exit forces a render refresh.
+    if Minimap and _origMinimapSize > 0 then
+        local curScale = Minimap:GetScale() or 1
+        local ratio = (_origMinimapScale > 0) and (curScale / _origMinimapScale) or 1
+        local finalSize = _origMinimapSize * ratio
+
+        -- Persist the final size to profile
+        local settings = QUICore.db and QUICore.db.profile and QUICore.db.profile.minimap
+        if settings then
+            settings.size = finalSize
+        end
+
+        -- GetCenter() returns coords in the frame's own scale (screen / scale).
+        -- Multiply by scale to get actual screen coordinates.
+        local mCx, mCy = Minimap:GetCenter()
+        local screenCx = mCx and (mCx * curScale) or nil
+        local screenCy = mCy and (mCy * curScale) or nil
+        local pCx, pCy = UIParent:GetCenter()
+
+        -- Apply actual SetSize and restore original scale
+        Minimap:SetSize(finalSize, finalSize)
+        Minimap:SetScale(_origMinimapScale)
+
+        -- Compute anchor offset for the restored scale.
+        -- screen_position = UIParent_center + anchor_offset * scale
+        -- => anchor_offset = (screen_position - UIParent_center) / scale
+        local finalScale = _origMinimapScale
+        if finalScale == 0 then finalScale = 1 end
+        local ox = (screenCx and pCx) and ((screenCx - pCx) / finalScale) or 0
+        local oy = (screenCy and pCy) and ((screenCy - pCy) / finalScale) or 0
+
+        -- Detach from container, re-anchor to UIParent
+        Minimap:ClearAllPoints()
+        Minimap:SetPoint("CENTER", UIParent, "CENTER", ox, oy)
+
+        -- Re-enable screen clamping (disabled in StartClusterSizeWatcher)
+        Minimap:SetClampedToScreen(true)
+
+        -- Save the new CENTER-based position to profile
+        if settings then
+            settings.position = {"CENTER", "CENTER", ox, oy}
+        end
+    end
+    _origMinimapSize = 0
+    _origMinimapScale = 1
+end
+
+-- Sync a detached overlay (e.g. BuffBarCooldownViewer) to its viewer position.
+-- Called after nudging moves the viewer so the overlay follows.
+function QUICore:SyncDetachedOverlay(viewerName)
+    if viewerName ~= "BuffBarCooldownViewer" then return end
+    local overlay = viewerOverlays[viewerName]
+    local viewer = _G[viewerName]
+    if not overlay or not viewer then return end
+    -- Only sync if overlay is parented to UIParent (detached)
+    if overlay:GetParent() ~= UIParent then return end
+    local cx, cy = viewer:GetCenter()
+    if not cx or not cy then return end
+    local usx, usy = UIParent:GetCenter()
+    if not usx or not usy then return end
+    overlay:ClearAllPoints()
+    overlay:SetPoint("CENTER", UIParent, "CENTER", cx - usx, cy - usy)
 end
 
 -- Nudge the selected viewer
@@ -953,59 +2042,79 @@ function QUICore:NudgeSelectedViewer(direction)
     local viewer = _G[self.selectedViewer]
     if not viewer then return false end
 
+    -- Block nudging if frame is locked by any anchoring system
+    if _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(viewer) then
+        return false
+    end
+
     local amount = 1  -- Always 1px nudge
 
-    -- Get current point from the Edit Mode system frame
-    local point, relativeTo, relativePoint, xOfs, yOfs = viewer:GetPoint(1)
-    if not point then return false end
-
-    local newX = xOfs or 0
-    local newY = yOfs or 0
-
+    -- Compute delta
+    local dx, dy = 0, 0
     if direction == "UP" then
-        newY = newY + amount
+        dy = amount
     elseif direction == "DOWN" then
-        newY = newY - amount
+        dy = -amount
     elseif direction == "LEFT" then
-        newX = newX - amount
+        dx = -amount
     elseif direction == "RIGHT" then
-        newX = newX + amount
+        dx = amount
     end
 
     -- Use LibEditModeOverride if available (cleaner, more reliable)
-    if LibEditModeOverride and EnsureEditModeReady() and LibEditModeOverride:HasEditModeSettings(viewer) then
-        -- Use the library's ReanchorFrame method which properly registers with Edit Mode
+    -- SKIP for BuffBarCooldownViewer: ReanchorFrame triggers Blizzard's
+    -- OnSystemPositionChange → ResetPartyFrames → CompactUnitFrame taint.
+    -- Use direct AdjustPointsOffset instead (same as drag handler).
+    if LibEditModeOverride and EnsureEditModeReady()
+        and LibEditModeOverride:HasEditModeSettings(viewer)
+        and self.selectedViewer ~= "BuffBarCooldownViewer" then
+        local point, relativeTo, relativePoint, xOfs, yOfs = viewer:GetPoint(1)
+        if not point then return false end
+        local newX = (xOfs or 0) + dx
+        local newY = (yOfs or 0) + dy
         local success, err = pcall(function()
             LibEditModeOverride:ReanchorFrame(viewer, point, relativeTo, relativePoint, newX, newY)
         end)
-        
+
         if success then
-            -- Update the display in your nudge panel
             if self.nudgeFrame and self.nudgeFrame:IsShown() then
                 self.nudgeFrame:UpdateInfo()
+            end
+            if _G.QUI_UpdateFramesAnchoredTo then
+                _G.QUI_UpdateFramesAnchoredTo(viewer)
             end
             return true
         end
     end
 
-    -- Fallback to manual method if library isn't available or frame isn't registered
-    viewer:ClearAllPoints()
-    viewer:SetPoint(point, relativeTo, relativePoint, newX, newY)
-
-    -- Tell Edit Mode that THIS system's position changed
-    if EditModeManagerFrame and EditModeManagerFrame.editModeActive then
-        if EditModeManagerFrame.OnSystemPositionChange then
-            -- Properly register that this Edit Mode system has a new position
-            EditModeManagerFrame:OnSystemPositionChange(viewer)
-        elseif EditModeManagerFrame.SetHasActiveChanges then
-            -- Fallback: at least mark as dirty
-            EditModeManagerFrame:SetHasActiveChanges(true)
+    -- Fallback: Use AdjustPointsOffset to shift existing anchor offsets IN-PLACE.
+    -- This avoids ClearAllPoints() + SetPoint() which momentarily orphans the frame,
+    -- triggering Blizzard's layout cascade on all dependent frames.
+    -- AdjustPointsOffset(dx, dy) simply adds dx/dy to all existing anchor point offsets.
+    if viewer.AdjustPointsOffset then
+        viewer:AdjustPointsOffset(dx, dy)
+    else
+        local point, relativeTo, relativePoint, xOfs, yOfs = viewer:GetPoint(1)
+        if point then
+            viewer:ClearAllPoints()
+            viewer:SetPoint(point, relativeTo, relativePoint, (xOfs or 0) + dx, (yOfs or 0) + dy)
         end
     end
 
-    -- Update the display in your nudge panel
+    -- Sync detached overlay for BuffBarCooldownViewer
+    self:SyncDetachedOverlay(self.selectedViewer)
+
+    -- TAINT SAFETY: Do NOT call EditModeManagerFrame:SetHasActiveChanges(true) or
+    -- EditModeManagerFrame:OnSystemPositionChange() here.
+    -- SetHasActiveChanges() is a direct method call on a secure frame — taints it.
+    -- OnSystemPositionChange() triggers magnetic snap recalculation (flicker).
+
     if self.nudgeFrame and self.nudgeFrame:IsShown() then
         self.nudgeFrame:UpdateInfo()
+    end
+
+    if _G.QUI_UpdateFramesAnchoredTo then
+        _G.QUI_UpdateFramesAnchoredTo(viewer)
     end
 
     return true
@@ -1013,15 +2122,25 @@ end
 
 -- Nudge the minimap
 function QUICore:NudgeMinimap(direction)
+    -- Block nudging if minimap is locked by any anchoring system
+    if _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(Minimap) then
+        return
+    end
+
+    if InCombatLockdown() then return end
+
     local db = self.db and self.db.profile and self.db.profile.minimap
     if not db or not db.position then return end
 
     local amount = self.nudgeAmount or 1
     if IsShiftKeyDown() then amount = amount * 10 end
 
-    -- position = {point, relativePoint, xOffset, yOffset}
-    local xOfs = db.position[3] or 0
-    local yOfs = db.position[4] or 0
+    -- Normalize position format (handles both keyed defaults and array from drag)
+    local pos = db.position
+    local point = pos[1] or pos.point or "CENTER"
+    local relPoint = pos[2] or pos.relPoint or "CENTER"
+    local xOfs = pos[3] or pos.x or 0
+    local yOfs = pos[4] or pos.y or 0
 
     if direction == "UP" then
         yOfs = yOfs + amount
@@ -1033,12 +2152,27 @@ function QUICore:NudgeMinimap(direction)
         xOfs = xOfs + amount
     end
 
-    db.position[3] = xOfs
-    db.position[4] = yOfs
+    -- Save back in array format (canonical after first nudge)
+    db.position = {point, relPoint, xOfs, yOfs}
 
     -- Apply position
-    Minimap:ClearAllPoints()
-    Minimap:SetPoint(db.position[1], UIParent, db.position[2], xOfs, yOfs)
+    if _resizeContainer and _clusterSizeWatcher:IsShown() then
+        -- Move container by the nudge delta; Minimap follows via (0,0) anchor
+        local _, _, _, cOx, cOy = _resizeContainer:GetPoint(1)
+        local dx = (direction == "RIGHT" and amount or direction == "LEFT" and -amount or 0)
+        local dy = (direction == "UP" and amount or direction == "DOWN" and -amount or 0)
+        _resizeContainer:ClearAllPoints()
+        _resizeContainer:SetPoint("CENTER", UIParent, "CENTER", (cOx or 0) + dx, (cOy or 0) + dy)
+    else
+        Minimap:ClearAllPoints()
+        Minimap:SetPoint(point, UIParent, relPoint, xOfs, yOfs)
+    end
+
+    -- Sync MinimapCluster and update anchored frames
+    QUICore.SyncMinimapClusterToMinimap("nudge")
+    if _G.QUI_UpdateFramesAnchoredTo then
+        _G.QUI_UpdateFramesAnchoredTo("minimap")
+    end
 
     -- Update info text
     if minimapOverlay and minimapOverlay.infoText then
@@ -1046,15 +2180,91 @@ function QUICore:NudgeMinimap(direction)
     end
 end
 
--- Hook Edit Mode enter/exit
-local function SetupEditModeHooks()
-    if not EditModeManagerFrame then return end
-    
-    hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
+-- Register Edit Mode enter/exit callbacks via central dispatcher (avoids taint from
+-- multiple hooksecurefunc calls on EnterEditMode/ExitEditMode).
+local function RegisterEditModeCallbacks()
+    -- Enter callback
+    QUICore:RegisterEditModeEnter(function()
         -- Ensure LibEditModeOverride layouts are loaded when entering Edit Mode
         if LibEditModeOverride and LibEditModeOverride:IsReady() then
             if not LibEditModeOverride:AreLayoutsLoaded() then
                 LibEditModeOverride:LoadLayouts()
+            end
+        end
+
+        -- Sync MinimapCluster to Minimap's current position after
+        -- UpdateSystems has run. This overrides whatever anchor
+        -- UpdateSystems applied (from the layout DB) with Minimap's
+        -- actual position, preventing circular dependency chains.
+        QUICore.SyncMinimapClusterToMinimap("editmode-enter")
+
+        -- Start watching for Blizzard resize handle changing MinimapCluster size
+        QUICore.StartClusterSizeWatcher()
+
+        -- DEBUG: Log Minimap vs MinimapCluster state on Edit Mode enter
+        if QUI and QUI.DEBUG_MODE and MinimapCluster and Minimap then
+            local mCx, mCy = Minimap:GetCenter()
+            local cCx, cCy = MinimapCluster:GetCenter()
+            local pCx, pCy = UIParent:GetCenter()
+            local mW, mH = Minimap:GetSize()
+            local cW, cH = MinimapCluster:GetSize()
+            local mPt, mRel, mRelPt, mX, mY = Minimap:GetPoint(1)
+            local cPt, cRel, cRelPt, cX, cY = MinimapCluster:GetPoint(1)
+            local mRelName = mRel and (mRel.GetName and mRel:GetName() or tostring(mRel)) or "nil"
+            local cRelName = cRel and (cRel.GetName and cRel:GetName() or tostring(cRel)) or "nil"
+            QUI:DebugPrint("|cff00ccff[Anchor] Edit Mode Enter — Minimap vs MinimapCluster|r")
+            QUI:DebugPrint(string.format("  Minimap: center(%.1f, %.1f) size(%.1f x %.1f) anchor(%s, %s, %s, %.1f, %.1f)",
+                mCx or 0, mCy or 0, mW or 0, mH or 0,
+                mPt or "?", mRelName, mRelPt or "?", mX or 0, mY or 0))
+            QUI:DebugPrint(string.format("  Cluster: center(%.1f, %.1f) size(%.1f x %.1f) anchor(%s, %s, %s, %.1f, %.1f)",
+                cCx or 0, cCy or 0, cW or 0, cH or 0,
+                cPt or "?", cRelName, cRelPt or "?", cX or 0, cY or 0))
+            if MinimapCluster.BorderTop then
+                local btA = MinimapCluster.BorderTop:GetAlpha()
+                local btV = MinimapCluster.BorderTop:IsShown()
+                local btP = MinimapCluster.BorderTop:GetParent()
+                local btPName = btP and (btP.GetName and btP:GetName() or tostring(btP)) or "nil"
+                QUI:DebugPrint(string.format("  BorderTop: alpha=%.2f shown=%s parent=%s", btA, tostring(btV), btPName))
+            end
+            if MinimapCluster.Selection then
+                local selA = MinimapCluster.Selection:GetAlpha()
+                local selV = MinimapCluster.Selection:IsShown()
+                QUI:DebugPrint(string.format("  Selection: alpha=%.2f shown=%s", selA, tostring(selV)))
+            end
+        end
+
+        -- Snapshot positions of all QUI-managed frames (including disabled overrides).
+        -- When exiting Edit Mode without saving, Blizzard reverts frames to its own
+        -- stored positions — which may not match where QUI had positioned them.
+        -- We capture the current position so we can restore it after Blizzard's revert.
+        QUICore._editModeFrameSnapshots = {}
+        if _G.QUI_GetFrameAnchoringDB then
+            local db = _G.QUI_GetFrameAnchoringDB()
+            if db then
+                for key, settings in pairs(db) do
+                    if type(settings) == "table" then
+                        local resolver = _G.QUI_GetFrameResolver and _G.QUI_GetFrameResolver(key)
+                        local frame = resolver and resolver()
+                        -- For boss frames (table of frames), snapshot the first
+                        if frame and type(frame) == "table" and not frame.GetObjectType then
+                            frame = frame[1]
+                        end
+                        if frame and frame.GetPoint and frame:GetNumPoints() and frame:GetNumPoints() > 0 then
+                            local point, relativeTo, relativePoint, xOfs, yOfs = frame:GetPoint(1)
+                            if point then
+                                QUICore._editModeFrameSnapshots[key] = {
+                                    frame = frame,
+                                    point = point,
+                                    relativeTo = relativeTo,
+                                    relativePoint = relativePoint,
+                                    xOfs = xOfs,
+                                    yOfs = yOfs,
+                                    enabled = settings.enabled,
+                                }
+                            end
+                        end
+                    end
+                end
             end
         end
 
@@ -1063,29 +2273,177 @@ local function SetupEditModeHooks()
             QUICore.nudgeFrame:UpdateVisibility()
         end
         QUICore:EnableClickDetection()
-        -- Let Blizzard's native Edit Mode handle CDM viewers and standard Edit Mode frames
-        -- QUICore:ShowViewerOverlays()
-        -- QUICore:ShowBlizzardFrameOverlays()
+        QUICore:ShowViewerOverlays()
+        QUICore:ShowBlizzardFrameOverlays()
         QUICore:ShowMinimapOverlay()  -- Show nudge overlay on QUI minimap
         QUICore:EnableMinimapEditMode()  -- Temporarily allow minimap movement
     end)
 
-    hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
+    -- Exit callback
+    QUICore:RegisterEditModeExit(function()
+        -- DEBUG: Log Minimap vs MinimapCluster state on Edit Mode exit
+        if QUI and QUI.DEBUG_MODE and MinimapCluster and Minimap then
+            local mCx, mCy = Minimap:GetCenter()
+            local cCx, cCy = MinimapCluster:GetCenter()
+            local mW, mH = Minimap:GetSize()
+            local cW, cH = MinimapCluster:GetSize()
+            local cPt, cRel, cRelPt, cX, cY = MinimapCluster:GetPoint(1)
+            local cRelName = cRel and (cRel.GetName and cRel:GetName() or tostring(cRel)) or "nil"
+            QUI:DebugPrint("|cffff8800[Anchor] Edit Mode Exit — Minimap vs MinimapCluster|r")
+            QUI:DebugPrint(string.format("  Minimap: center(%.1f, %.1f) size(%.1f x %.1f)",
+                mCx or 0, mCy or 0, mW or 0, mH or 0))
+            QUI:DebugPrint(string.format("  Cluster: center(%.1f, %.1f) size(%.1f x %.1f) anchor(%s, %s, %s, %.1f, %.1f)",
+                cCx or 0, cCy or 0, cW or 0, cH or 0,
+                cPt or "?", cRelName, cRelPt or "?", cX or 0, cY or 0))
+        end
+
+        -- Stop watching for Blizzard resize handle
+        QUICore.StopClusterSizeWatcher()
+
+        -- Re-sync MinimapCluster after Blizzard's revert moves it away
+        -- from Minimap's position (Minimap stays put since it's parented
+        -- to UIParent, but Blizzard reverts MinimapCluster to its stored
+        -- Edit Mode position).
+        QUICore.SyncMinimapClusterToMinimap("editmode-exit")
+
+        -- Force minimap render refresh after any Edit Mode resize.
+        -- Use SetZoom API instead of ZoomIn/ZoomOut:Click() — clicking
+        -- protected Blizzard buttons from addon code during the exit-
+        -- without-saving flow spreads taint into Blizzard's secure context.
+        -- Deferred slightly to avoid racing with Blizzard's revert operations.
+        C_Timer.After(0.2, function()
+            if not Minimap then return end
+            local z = Minimap:GetZoom()
+            if z < 5 then
+                Minimap:SetZoom(z + 1)
+                Minimap:SetZoom(z)
+            else
+                Minimap:SetZoom(z - 1)
+                Minimap:SetZoom(z)
+            end
+        end)
+
+        -- Definitive minimap layout refresh (backdrop, border, data text, etc.)
+        -- to ensure everything matches the final size after Edit Mode resizing.
+        if _G.QUI_RefreshMinimap then
+            _G.QUI_RefreshMinimap()
+        end
+
+        -- Restore drag scripts and .Selection alpha on all locked frames
+        UnblockAllFrameMovement()
+        RestoreAllSelectionIndicators()
+
         -- NudgeFrame is lazy-loaded, only hide if it exists
         if QUICore.nudgeFrame then
             QUICore.nudgeFrame:Hide()
         end
         QUICore:DisableClickDetection()
-        -- QUICore:HideViewerOverlays()
-        -- QUICore:HideBlizzardFrameOverlays()
+        QUICore:HideViewerOverlays()
+        QUICore:HideBlizzardFrameOverlays()
         QUICore:HideMinimapOverlay()  -- Hide minimap overlay
         QUICore:DisableMinimapEditMode()  -- Restore minimap lock setting
+        -- Restore CDM visibility to match HUD visibility settings.
+        -- Edit mode forced alpha 1; now re-evaluate so hidden frames fade back out.
+        if _G.QUI_RefreshCDMVisibility then
+            _G.QUI_RefreshCDMVisibility()
+        end
         QUICore.selectedViewer = nil
         -- Clear central selection (in case a CDM viewer was selected)
         if QUICore.ClearEditModeSelection then
             QUICore:ClearEditModeSelection()
         end
-        
+
+        -- Re-snap all anchored frames after Blizzard finishes reverting positions.
+        -- When exiting Edit Mode without saving, Blizzard reverts frame positions
+        -- asynchronously (ClearAllPoints + SetPoint on each frame). This overrides
+        -- QUI's anchor chain positioning. The timing varies by frame count and
+        -- system load. We counteract this with:
+        -- 1. An OnUpdate watcher that re-applies every ~0.2s for ~2s
+        -- 2. A final definitive re-anchor at 3s (after all Blizzard reverts are done)
+        -- QUI_UpdateAnchoredFrames handles frames with ENABLED anchors.
+        -- Frames with DISABLED anchors need special handling: Blizzard's revert puts
+        -- them at Blizzard's stored position (which may differ from where QUI had them).
+        -- We restore those from the snapshot captured on Edit Mode entry.
+        -- TAINT SAFETY: Uses QUICore._editModeActive flag instead of secure frame reads.
+
+        -- Restore snapshots for frames with disabled anchors.
+        -- These frames are not managed by QUI_UpdateAnchoredFrames (because their
+        -- anchor is disabled), but Blizzard's revert may move them to the wrong position.
+        local snapshots = QUICore._editModeFrameSnapshots
+        local function RestoreDisabledAnchorSnapshots()
+            if not snapshots then return end
+            for key, snap in pairs(snapshots) do
+                -- Only restore frames whose anchor is CURRENTLY disabled.
+                -- Enabled anchors are handled by QUI_UpdateAnchoredFrames.
+                local db = _G.QUI_GetFrameAnchoringDB and _G.QUI_GetFrameAnchoringDB()
+                local settings = db and db[key]
+                if settings and not settings.enabled and snap.frame then
+                    pcall(function()
+                        snap.frame:ClearAllPoints()
+                        snap.frame:SetPoint(
+                            snap.point,
+                            snap.relativeTo or UIParent,
+                            snap.relativePoint,
+                            snap.xOfs or 0,
+                            snap.yOfs or 0
+                        )
+                    end)
+                end
+            end
+        end
+
+        if _G.QUI_UpdateAnchoredFrames then
+            -- Immediate re-apply to minimize the visible jump
+            _G.QUI_UpdateAnchoredFrames()
+            if _G.QUI_ApplyAllFrameAnchors then
+                _G.QUI_ApplyAllFrameAnchors()
+            end
+            RestoreDisabledAnchorSnapshots()
+
+            local anchorWatcher = CreateFrame("Frame", nil, UIParent)
+            local totalElapsed = 0
+            local tickElapsed = 0
+            local DURATION = 2.0     -- seconds to keep re-applying via OnUpdate
+            local INTERVAL = 0.2     -- seconds between each re-apply
+            anchorWatcher:SetScript("OnUpdate", function(self, dt)
+                totalElapsed = totalElapsed + dt
+                if totalElapsed >= DURATION then
+                    self:SetScript("OnUpdate", nil)
+                    return
+                end
+                -- If user re-entered Edit Mode, stop immediately
+                if QUICore._editModeActive then
+                    self:SetScript("OnUpdate", nil)
+                    return
+                end
+                -- Throttle: only re-apply every INTERVAL seconds
+                tickElapsed = tickElapsed + dt
+                if tickElapsed < INTERVAL then return end
+                tickElapsed = 0
+                -- Re-apply all anchored frame positions (enabled anchors)
+                _G.QUI_UpdateAnchoredFrames()
+                -- Re-apply frame anchoring overrides (cdmUtility, power bars, etc.)
+                if _G.QUI_ApplyAllFrameAnchors then
+                    _G.QUI_ApplyAllFrameAnchors()
+                end
+                -- Restore disabled-anchor frames to their pre-Edit-Mode position
+                RestoreDisabledAnchorSnapshots()
+            end)
+
+            -- Final definitive re-anchor well after Blizzard's revert completes.
+            -- This catches any late Blizzard layout passes that fire after the watcher.
+            C_Timer.After(3.0, function()
+                if QUICore._editModeActive then return end
+                _G.QUI_UpdateAnchoredFrames()
+                if _G.QUI_ApplyAllFrameAnchors then
+                    _G.QUI_ApplyAllFrameAnchors()
+                end
+                RestoreDisabledAnchorSnapshots()
+                -- Clean up snapshots
+                QUICore._editModeFrameSnapshots = nil
+            end)
+        end
+
         -- Fix for arrow-key positioning bug: Convert TOPLEFT anchoring to CENTER anchoring
         -- Arrow keys in Edit Mode use TOPLEFT anchor, mouse drag uses CENTER anchor
         -- Uses GetCenter() for exact center position directly from WoW
@@ -1149,19 +2507,23 @@ local function SetupEditModeHooks()
     end)
 end
 
-if EditModeManagerFrame then
-    SetupEditModeHooks()
-else
-    -- Wait for EditModeManagerFrame to load
-    local waitFrame = CreateFrame("Frame")
-    waitFrame:RegisterEvent("ADDON_LOADED")
-    waitFrame:SetScript("OnEvent", function(self, event, addon)
-        if EditModeManagerFrame then
-            SetupEditModeHooks()
-            self:UnregisterAllEvents()
-        end
+RegisterEditModeCallbacks()
+
+-- Sync MinimapCluster to Minimap as early as possible via secure proxy.
+-- EDIT_MODE_LAYOUTS_UPDATED fires when the game client receives layout data
+-- from the server (typically during fresh login). PLAYER_LOGIN covers /reload
+-- where layouts are already cached and the event may not re-fire.
+local minimapClusterSyncFrame = CreateFrame("Frame")
+minimapClusterSyncFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
+minimapClusterSyncFrame:RegisterEvent("PLAYER_LOGIN")
+minimapClusterSyncFrame:SetScript("OnEvent", function(self)
+    -- Defer slightly to ensure Minimap is positioned and layouts are processed
+    C_Timer.After(0.5, function()
+        QUICore.SyncMinimapClusterToMinimap("login")
     end)
-end
+    -- Only need to sync once on startup; unregister after first fire
+    self:UnregisterAllEvents()
+end)
 
 -- Fix anchor mismatch on startup (for /reload scenarios)
 -- Uses GetCenter() for exact center position directly from WoW

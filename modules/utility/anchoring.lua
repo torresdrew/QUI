@@ -27,6 +27,87 @@ QUI_Anchoring.overriddenFrames = {}
 
 local Helpers = {}
 
+-- Edit Mode hook state (declared early so ApplyFrameAnchor can set the guard)
+local _editModeReapplyGuard = false  -- prevents recursive reapply during QUI's own SetPoint
+local _editModeTickerSilent = false  -- suppress per-tick debug after first pass
+
+-- Debug helper — only prints when /qui debug is active
+local function AnchorDebug(msg)
+    if QUI and QUI.DebugPrint then
+        QUI:DebugPrint("|cffFFAA00Anchor|r " .. msg)
+    end
+end
+
+-- Position-match check: returns true if the frame already has exactly one
+-- anchor point matching the desired values.  Used by the Edit Mode ticker
+-- to skip ClearAllPoints+SetPoint when Blizzard hasn't moved the frame,
+-- preventing visual flashing on objective tracker, minimap children, etc.
+local function FrameAlreadyAtPosition(frame, pt, relativeTo, relPt, x, y)
+    if not frame or not frame.GetNumPoints then return false end
+    if frame:GetNumPoints() ~= 1 then return false end
+    local cp, crt, crp, cx, cy = frame:GetPoint(1)
+    if cp ~= pt or crt ~= relativeTo or crp ~= relPt then return false end
+    return math.abs((cx or 0) - (x or 0)) < 0.1 and math.abs((cy or 0) - (y or 0)) < 0.1
+end
+
+---------------------------------------------------------------------------
+-- SECURE TAINT CLEANER for Edit Mode system frames
+-- When addon code calls ClearAllPoints/SetPoint on Blizzard Edit Mode
+-- system frames (action bars, etc.), the frame's position data becomes
+-- tainted.  This taint persists and causes ADDON_ACTION_BLOCKED when
+-- Edit Mode's secureexecuterange calls SetPointBase during combat.
+--
+-- Solution: Track positions of overridden Edit Mode system frames, then
+-- use a SecureHandlerStateTemplate combat state driver to re-stamp those
+-- same positions through secure code when combat starts.  This clears
+-- the taint before Edit Mode could ever encounter it during combat.
+-- Normal (non-combat) positioning still uses the direct pcall(SetPoint)
+-- path — only the taint is cleaned up.
+---------------------------------------------------------------------------
+local secureTaintCleaner = CreateFrame("Frame", "QUI_SecureTaintCleaner", UIParent, "SecureHandlerStateTemplate")
+RegisterStateDriver(secureTaintCleaner, "combat", "[combat]1;0")
+secureTaintCleaner:SetAttribute("_onstate-combat", [[
+    if newstate ~= "1" then return end
+    -- Entering combat: re-stamp all tracked positions through secure code
+    local count = self:GetAttribute("frameCount") or 0
+    for i = 1, count do
+        local bar = self:GetFrameRef("bar" .. i)
+        local parent = self:GetFrameRef("parent" .. i)
+        if bar and parent then
+            local point = self:GetAttribute("point" .. i) or "CENTER"
+            local relPoint = self:GetAttribute("relPoint" .. i) or "CENTER"
+            local offsetX = self:GetAttribute("offsetX" .. i) or 0
+            local offsetY = self:GetAttribute("offsetY" .. i) or 0
+            bar:ClearAllPoints()
+            bar:SetPoint(point, parent, relPoint, offsetX, offsetY)
+        end
+    end
+]])
+
+local _trackedSecureFrames = {}  -- frame -> index
+local _trackedCount = 0
+
+-- Track (or update) an Edit Mode system frame's position for secure
+-- re-stamping on combat enter.  Must be called outside combat.
+local function TrackSecureFramePosition(frame, parentFrame, point, relPoint, offsetX, offsetY)
+    if InCombatLockdown() then return end
+
+    local idx = _trackedSecureFrames[frame]
+    if not idx then
+        _trackedCount = _trackedCount + 1
+        idx = _trackedCount
+        _trackedSecureFrames[frame] = idx
+        secureTaintCleaner:SetAttribute("frameCount", _trackedCount)
+    end
+
+    secureTaintCleaner:SetFrameRef("bar" .. idx, frame)
+    secureTaintCleaner:SetFrameRef("parent" .. idx, parentFrame)
+    secureTaintCleaner:SetAttribute("point" .. idx, point)
+    secureTaintCleaner:SetAttribute("relPoint" .. idx, relPoint)
+    secureTaintCleaner:SetAttribute("offsetX" .. idx, offsetX)
+    secureTaintCleaner:SetAttribute("offsetY" .. idx, offsetY)
+end
+
 ---------------------------------------------------------------------------
 -- SETUP HELPERS
 ---------------------------------------------------------------------------
@@ -288,8 +369,9 @@ function QUI_Anchoring:GetAnchorDimensions(anchorFrame, anchorTargetName)
     
     -- Special handling for CDM viewers (backward compatibility)
     if anchorTargetName == "essential" or anchorTargetName == "utility" then
-        width = anchorFrame.__cdmRow1Width or width
-        height = anchorFrame.__cdmTotalHeight or height
+        local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(anchorFrame)
+        width = (vs and vs.row1Width) or width
+        height = (vs and vs.totalHeight) or height
     end
     
     local centerX, centerY = anchorFrame:GetCenter()
@@ -355,9 +437,7 @@ function QUI_Anchoring:PositionFrame(frame, anchorTarget, anchorPoint, offsetX, 
 
     -- Defer positioning if in combat or secure context to avoid taint
     if InCombatLockdown() then
-        C_Timer.After(0, function()
-            self:PositionFrame(frame, anchorTarget, anchorPoint, offsetX, offsetY, parentFrame, options)
-        end)
+        pendingAnchoredFrameUpdateAfterCombat = true
         return false
     end
     
@@ -391,13 +471,17 @@ function QUI_Anchoring:PositionFrame(frame, anchorTarget, anchorPoint, offsetX, 
     if not success then
         -- Frame is secure/managed - defer the call
         C_Timer.After(0, function()
+            if InCombatLockdown() then
+                pendingAnchoredFrameUpdateAfterCombat = true
+                return
+            end
             if frame and frame.ClearAllPoints then
                 pcall(frame.ClearAllPoints, frame)
             end
         end)
         return false
     end
-    
+
     -- Handle "none", "disabled", or "screen" anchor targets (absolute positioning to screen center)
     -- "none" is kept for backward compatibility with existing castbar settings
     if not anchorTarget or anchorTarget == "none" or anchorTarget == "disabled" or anchorTarget == "screen" then
@@ -611,9 +695,7 @@ function QUI_Anchoring:RegisterAnchoredFrame(frame, config)
     -- Position immediately using multi-anchor system
     -- Defer if in combat or secure context
     if InCombatLockdown() then
-        C_Timer.After(0, function()
-            self:RegisterAnchoredFrame(frame, config)
-        end)
+        pendingAnchoredFrameUpdateAfterCombat = true
         return true
     end
     
@@ -624,6 +706,10 @@ function QUI_Anchoring:RegisterAnchoredFrame(frame, config)
     if not success then
         -- Frame is secure/managed - defer the call
         C_Timer.After(0, function()
+            if InCombatLockdown() then
+                pendingAnchoredFrameUpdateAfterCombat = true
+                return
+            end
             if frame and frame.ClearAllPoints then
                 pcall(frame.ClearAllPoints, frame)
                 -- Retry registration after clearing
@@ -806,6 +892,10 @@ function QUI_Anchoring:UpdateAllAnchoredFrames()
             if not success then
                 -- Frame is secure/managed - skip this frame
                 C_Timer.After(0, function()
+                    if InCombatLockdown() then
+                        pendingAnchoredFrameUpdateAfterCombat = true
+                        return
+                    end
                     if frame and frame:IsShown() then
                         pcall(frame.ClearAllPoints, frame)
                         -- Retry positioning after clearing
@@ -895,12 +985,10 @@ end)
 
 -- Update frames anchored to a specific anchor target
 function QUI_Anchoring:UpdateFramesForTarget(anchorTargetName)
-    if InCombatLockdown() then 
+    if InCombatLockdown() then
         -- Defer update after combat
-        C_Timer.After(0, function()
-            self:UpdateFramesForTarget(anchorTargetName)
-        end)
-        return 
+        pendingAnchoredFrameUpdateAfterCombat = true
+        return
     end
     
     for frame, config in pairs(self.anchoredFrames) do
@@ -922,6 +1010,10 @@ function QUI_Anchoring:UpdateFramesForTarget(anchorTargetName)
             if not success then
                 -- Frame is secure/managed - defer the call
                 C_Timer.After(0, function()
+                    if InCombatLockdown() then
+                        pendingAnchoredFrameUpdateAfterCombat = true
+                        return
+                    end
                     if frame and frame:IsShown() then
                         pcall(frame.ClearAllPoints, frame)
                         -- Retry positioning after clearing
@@ -993,8 +1085,9 @@ end
 
 ---------------------------------------------------------------------------
 -- FRAME ANCHORING SYSTEM (centralized override positioning)
--- Forward declaration (defined below in global callbacks section)
+-- Forward declarations (defined below)
 local DebouncedReapplyOverrides
+local ComputeAnchorApplyOrder
 ---------------------------------------------------------------------------
 -- Lazy resolver functions for all controllable frames
 local FRAME_RESOLVERS = {
@@ -1073,12 +1166,11 @@ local FRAME_RESOLVERS = {
 }
 
 -- Blizzard-managed right-side frames are controlled by UIParentPanelManager.
--- Overriding their anchors from addon code taints managed containers and can
--- cause ADDON_ACTION_BLOCKED errors in combat (e.g. PetActionBar updates).
+-- Previously objectiveTracker, buffFrame, and debuffFrame were blocked here,
+-- but the existing combat deferral and SecureHandlerStateTemplate taint cleaner
+-- already handle taint safety for Edit Mode system frames, so they now use the
+-- normal ApplyFrameAnchor path.
 local UNSAFE_BLIZZARD_MANAGED_OVERRIDES = {
-    objectiveTracker = true,
-    buffFrame = true,
-    debuffFrame = true,
 }
 
 -- Frame display info for anchor target registration
@@ -1129,13 +1221,17 @@ local FRAME_ANCHOR_INFO = {
     dandersRaid     = { displayName = "DandersFrames Raid",    category = "External",          order = 2 },
 }
 
--- Virtual CDM anchor parents.
--- These are lightweight proxy frames we can safely resize in combat so frame
--- anchoring can still respect configured min-width even when Blizzard's CDM
--- viewer frame is protected.
-local CDM_PROXY_VIEWER_BY_KEY = {
-    cdmEssential = "EssentialCooldownViewer",
-    cdmUtility = "UtilityCooldownViewer",
+-- Virtual anchor proxy parents.
+-- Lightweight proxy frames we can safely resize in combat so frame anchoring
+-- can still respect configured min-width even when source frames are protected.
+-- CDM viewers use viewer-state sizing; other frames mirror size directly.
+local ANCHOR_PROXY_SOURCES = {
+    cdmEssential   = { resolver = function() return _G["EssentialCooldownViewer"] end, cdm = true },
+    cdmUtility     = { resolver = function() return _G["UtilityCooldownViewer"] end,   cdm = true },
+    buffIcon       = { resolver = function() return _G["BuffIconCooldownViewer"] end,  cdm = true },
+    buffBar        = { resolver = function() return _G["BuffBarCooldownViewer"] end,   cdm = true },
+    primaryPower   = { resolver = function() return QUICore and QUICore.powerBar end },
+    secondaryPower = { resolver = function() return QUICore and QUICore.secondaryPowerBar end },
 }
 local cdmAnchorProxies = {}
 local cdmAnchorProxyPendingAfterCombat = {}
@@ -1166,46 +1262,94 @@ local function GetCDMAnchorProxy(parentKey)
         parentKey = "cdmUtility"
     end
 
-    local viewerName = CDM_PROXY_VIEWER_BY_KEY[parentKey]
-    if not viewerName then return nil end
+    local source = ANCHOR_PROXY_SOURCES[parentKey]
+    if not source then return nil end
 
-    local viewer = _G[viewerName]
-    if not viewer then return nil end
+    local sourceFrame = source.resolver()
+    if not sourceFrame then return nil end
 
     local proxy = cdmAnchorProxies[parentKey]
     if not proxy then
+        -- Defer first creation until out of combat to avoid tainting
+        -- the anchor to a protected Blizzard CDM viewer frame.
+        if InCombatLockdown() then
+            cdmAnchorProxyPendingAfterCombat[parentKey] = true
+            return nil
+        end
         proxy = CreateFrame("Frame", nil, UIParent)
         proxy:SetClampedToScreen(false)
         proxy:Show()
         cdmAnchorProxies[parentKey] = proxy
     end
 
+    -- Mirror source visibility on the proxy so that ResolveParentFrame's
+    -- IsShown() check naturally falls through to FRAME_ANCHOR_FALLBACKS
+    -- when the source is hidden (e.g. secondary power bar on Hunter).
+    local sourceVisible = sourceFrame.IsShown and sourceFrame:IsShown()
+    if sourceVisible then
+        if not proxy:IsShown() then proxy:Show() end
+    else
+        if proxy:IsShown() then proxy:Hide() end
+        return proxy
+    end
+
     -- Combat-stable behavior:
     -- Keep the proxy frozen during combat once initialized, then refresh after
     -- combat ends. This prevents children anchored to edge points (TOP/BOTTOM)
-    -- from drifting when Blizzard mutates protected CDM frame size in combat.
+    -- from drifting when Blizzard mutates protected frame size in combat.
     local inCombat = InCombatLockdown()
     if inCombat and proxy.__quiCDMProxyInitialized then
         cdmAnchorProxyPendingAfterCombat[parentKey] = true
         return proxy
     end
 
-    local width = viewer.__cdmIconWidth or viewer:GetWidth() or 0
-    local height = viewer.__cdmTotalHeight or viewer:GetHeight() or 0
-    local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
-    if minWidthEnabled and IsHUDAnchoredToCDM() then
-        width = math.max(width, minWidth)
+    local width, height
+    local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+
+    if source.cdm then
+        if isEditMode then
+            -- During Edit Mode, use icon bounds from polling (viewer state is updated
+            -- by CheckCDMViewerBoundsChanged via QUI_SetCDMViewerBounds).
+            -- Viewer state is the canonical source — it's kept fresh by the ticker.
+            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(sourceFrame)
+            width = (vs and vs.iconWidth) or 0
+            height = (vs and vs.totalHeight) or 0
+            -- Fallback to viewer frame size if viewer state is stale
+            if width < 2 or height < 2 then
+                width = sourceFrame:GetWidth() or 0
+                height = sourceFrame:GetHeight() or 0
+            end
+        else
+            -- CDM viewers: use viewer state for accurate sizing
+            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(sourceFrame)
+            width = (vs and vs.iconWidth) or sourceFrame:GetWidth() or 0
+            height = (vs and vs.totalHeight) or sourceFrame:GetHeight() or 0
+        end
+        local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
+        if minWidthEnabled and IsHUDAnchoredToCDM() then
+            width = math.max(width, minWidth)
+        end
+    else
+        -- General frames: mirror size directly
+        width = sourceFrame:GetWidth() or 0
+        height = sourceFrame:GetHeight() or 0
     end
     width = math.max(1, width)
     height = math.max(1, height)
 
-    local viewerX, viewerY = viewer:GetCenter()
-    local screenX, screenY = UIParent:GetCenter()
-    if viewerX and viewerY and screenX and screenY then
+    -- Anchor proxy directly to source frame so it follows automatically
+    -- (no coordinate math, no feedback loops during Edit Mode drag).
+    local _, _, relTo = proxy:GetPoint(1)
+    if relTo ~= sourceFrame then
         proxy:ClearAllPoints()
-        proxy:SetPoint("CENTER", UIParent, "CENTER", viewerX - screenX, viewerY - screenY)
+        proxy:SetPoint("CENTER", sourceFrame, "CENTER", 0, 0)
     end
-    proxy:SetSize(width, height)
+    -- Only update size when it actually changes to avoid triggering
+    -- OnSizeChanged hooks (which fire DebouncedReapplyOverrides).
+    local curW, curH = proxy:GetWidth(), proxy:GetHeight()
+    if curW ~= width or curH ~= height then
+        proxy:SetSize(width, height)
+    end
     proxy.__quiCDMProxyInitialized = true
     if inCombat then
         cdmAnchorProxyPendingAfterCombat[parentKey] = true
@@ -1214,10 +1358,45 @@ local function GetCDMAnchorProxy(parentKey)
     return proxy
 end
 
--- Refresh both CDM proxy parents (safe in combat).
+-- Refresh all anchor proxy parents (safe in combat).
+-- Order follows the anchor dependency graph when available so upstream
+-- proxies are ready before downstream ones regardless of how the user
+-- has configured the anchor chain.
+local ANCHOR_PROXY_DEFAULT_ORDER = {
+    "cdmEssential",
+    "primaryPower",
+    "secondaryPower",
+    "cdmUtility",
+    "buffIcon",
+    "buffBar",
+}
 local function UpdateCDMAnchorProxies()
-    GetCDMAnchorProxy("cdmEssential")
-    GetCDMAnchorProxy("cdmUtility")
+    -- Try to derive order from the anchor configuration so that proxy
+    -- parents used by other proxied frames are refreshed first.
+    local anchoringDB = QUICore and QUICore.db and QUICore.db.profile
+        and QUICore.db.profile.frameAnchoring
+    if anchoringDB then
+        local sorted = ComputeAnchorApplyOrder(anchoringDB)
+        -- Refresh proxied frames in dependency order, then any remaining
+        -- proxy sources not present in the override system.
+        local refreshed = {}
+        for _, key in ipairs(sorted) do
+            if ANCHOR_PROXY_SOURCES[key] then
+                GetCDMAnchorProxy(key)
+                refreshed[key] = true
+            end
+        end
+        for _, key in ipairs(ANCHOR_PROXY_DEFAULT_ORDER) do
+            if not refreshed[key] then
+                GetCDMAnchorProxy(key)
+            end
+        end
+    else
+        -- Early init fallback before profile is loaded
+        for _, key in ipairs(ANCHOR_PROXY_DEFAULT_ORDER) do
+            GetCDMAnchorProxy(key)
+        end
+    end
 end
 
 -- Fallback anchor targets for when a resolved frame is unavailable (nil or hidden).
@@ -1307,8 +1486,9 @@ cdmProxyCombatFrame:SetScript("OnEvent", function()
     end
     C_Timer.After(0.05, function()
         if InCombatLockdown() then
-            cdmAnchorProxyPendingAfterCombat.cdmEssential = true
-            cdmAnchorProxyPendingAfterCombat.cdmUtility = true
+            for key in pairs(ANCHOR_PROXY_SOURCES) do
+                cdmAnchorProxyPendingAfterCombat[key] = true
+            end
             return
         end
         UpdateCDMAnchorProxies()
@@ -1344,6 +1524,11 @@ local function SetFrameOverride(frame, active, key)
     if type(frame) == "table" and not frame.GetObjectType then
         for _, f in ipairs(frame) do
             QUI_Anchoring.overriddenFrames[f] = active and key or nil
+        end
+        -- Also mark BossTargetFrameContainer so QUI_IsFrameLocked checks
+        -- on the container (used by Edit Mode overlay/nudge systems) work
+        if BossTargetFrameContainer then
+            QUI_Anchoring.overriddenFrames[BossTargetFrameContainer] = active and key or nil
         end
     else
         QUI_Anchoring.overriddenFrames[frame] = active and key or nil
@@ -1391,8 +1576,11 @@ local function GetFrameAnchorRect(frame, key)
     -- CDM viewers can briefly report Blizzard-sized dimensions in combat during
     -- morph/layout churn. Prefer logical layout dimensions when available.
     if CDM_LOGICAL_SIZE_KEYS[key] then
-        width = frame.__cdmRow1Width or frame.__cdmIconWidth
-        height = frame.__cdmTotalHeight
+        local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(frame)
+        if vs then
+            width = vs.row1Width or vs.iconWidth
+            height = vs.totalHeight
+        end
     end
 
     if not width or width <= 0 then
@@ -1405,16 +1593,63 @@ local function GetFrameAnchorRect(frame, key)
     return math.max(1, width), math.max(1, height)
 end
 
-local function GetParentAnchorRect(frame)
+local function GetParentAnchorRect(frame, parentKey)
     if not frame then return 1, 1 end
-    local width = frame.GetWidth and frame:GetWidth() or 1
-    local height = frame.GetHeight and frame:GetHeight() or 1
+
+    local width, height
+    local usedLogical = false
+
+    -- CDM parent proxies are frozen during combat, but the source viewer's
+    -- logical layout state is always current.  Read through the proxy to the
+    -- source frame so center-offset math uses live dimensions.
+    if parentKey then
+        -- Normalize aliases (settings.parent may store the short form)
+        if parentKey == "essential" then parentKey = "cdmEssential"
+        elseif parentKey == "utility" then parentKey = "cdmUtility" end
+
+        if CDM_LOGICAL_SIZE_KEYS[parentKey] then
+            local source = ANCHOR_PROXY_SOURCES[parentKey]
+            if source then
+                local sourceFrame = source.resolver()
+                if sourceFrame then
+                    local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(sourceFrame)
+                    if vs then
+                        width = vs.row1Width or vs.iconWidth
+                        height = vs.totalHeight
+                        usedLogical = true
+                    end
+                end
+            end
+        end
+    end
+
+    if not width or width <= 0 then
+        width = frame.GetWidth and frame:GetWidth() or 1
+    end
+    if not height or height <= 0 then
+        height = frame.GetHeight and frame:GetHeight() or 1
+    end
+
+    -- Anchor offsets are computed in screen space (UIParent coordinate system).
+    -- GetWidth/GetHeight return the frame's own dimensions (unscaled).
+    -- Multiply by the frame's scale to get visual (screen-space) dimensions
+    -- so edge positions (TOP, BOTTOM, etc.) are correct during scale-based
+    -- resize (e.g. Minimap during Edit Mode).  CDM logical dimensions are
+    -- already in screen space, so skip for those.
+    if not usedLogical and frame.GetScale then
+        local pScale = frame:GetScale() or 1
+        if pScale > 0 and pScale ~= 1 then
+            width = width * pScale
+            height = height * pScale
+        end
+    end
+
     return math.max(1, width), math.max(1, height)
 end
 
-local function ComputeCenterOffsetsForAnchor(frame, key, parentFrame, sourcePoint, targetPoint, offsetX, offsetY)
+local function ComputeCenterOffsetsForAnchor(frame, key, parentFrame, sourcePoint, targetPoint, offsetX, offsetY, parentKey)
     local frameW, frameH = GetFrameAnchorRect(frame, key)
-    local parentW, parentH = GetParentAnchorRect(parentFrame)
+    local parentW, parentH = GetParentAnchorRect(parentFrame, parentKey)
 
     local targetX, targetY = GetPointOffsetForRect(targetPoint or "CENTER", parentW, parentH)
     local sourceX, sourceY = GetPointOffsetForRect(sourcePoint or "CENTER", frameW, frameH)
@@ -1459,7 +1694,8 @@ local function ApplyAutoSizing(frame, settings, parentFrame, key)
     if settings.autoHeight then
         local viewer = _G["EssentialCooldownViewer"]
         if viewer then
-            local iconHeight = viewer.__cdmRow1IconHeight
+            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer)
+            local iconHeight = vs and vs.row1IconHeight
             if iconHeight and iconHeight > 0 then
                 local adjustedHeight = iconHeight + (settings.heightAdjust or 0)
                 if adjustedHeight > 0 then
@@ -1482,36 +1718,80 @@ end
 
 -- Apply a single frame anchor override
 function QUI_Anchoring:ApplyFrameAnchor(key, settings)
+    local inEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    local editDbg = inEditMode and not _editModeTickerSilent
     if type(settings) ~= "table" then return end
 
     local resolver = FRAME_RESOLVERS[key]
-    if not resolver then return end
+    if not resolver then
+        if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): NO RESOLVER", key)) end
+        return
+    end
 
     local resolved = resolver()
 
     -- If override is disabled, unblock module positioning and let modules reclaim the frame
     if not settings.enabled then
+        if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): DISABLED", key)) end
         SetFrameOverride(resolved, false)
         return
     end
 
-    if not resolved then return end
+    if not resolved then
+        if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): RESOLVED=nil", key)) end
+        return
+    end
 
     -- Never anchor UIParent-managed right-side frames from addon code.
     -- Keep them on Blizzard defaults to avoid protected layout taint.
+    -- Still mark them overridden so QUI_IsFrameLocked returns true and
+    -- the Edit Mode overlay shows "(Locked)" / blocks drag.
     if UNSAFE_BLIZZARD_MANAGED_OVERRIDES[key] then
-        SetFrameOverride(resolved, false)
+        if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): UNSAFE_BLIZZARD_MANAGED", key)) end
+        SetFrameOverride(resolved, true, key)
         return
     end
 
+
     -- Mark frame as overridden FIRST — blocks any module positioning from this point on
     SetFrameOverride(resolved, true, key)
+
+    -- ClearAllPoints on hidden Blizzard Edit Mode system frames triggers
+    -- OnSystemPositionChange which reads GetPoint() and errors on nil offsetY.
+    -- Still mark them overridden (above) so QUI_IsFrameLocked returns true and
+    -- the Edit Mode overlay shows "(Locked)", but skip the actual repositioning.
+    local isBlizzEditModeSystem = resolved.system ~= nil or resolved.systemIndex ~= nil
+    if isBlizzEditModeSystem and resolved.IsShown and not resolved:IsShown() then
+        if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): HIDDEN system frame (system=%s sysIdx=%s)", key, tostring(resolved.system), tostring(resolved.systemIndex))) end
+        return
+    end
+
+    -- During Edit Mode, skip repositioning CDM viewer frames themselves —
+    -- Blizzard actively controls their layout/position during resize and
+    -- ClearAllPoints/SetPoint would fight it.  All OTHER system frames
+    -- with QUI overrides (boss frames, objective tracker, etc.) are "Locked"
+    -- in Edit Mode and should follow the anchor chain in real-time.
+    if isBlizzEditModeSystem and inEditMode
+        and CDM_LOGICAL_SIZE_KEYS[key] then
+        if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): SKIP CDM viewer in EditMode", key)) end
+        return
+    end
 
     -- Defer in combat for most frames.
     -- CDM viewers are allowed to attempt re-anchoring in combat so morph/layout
     -- churn can be corrected immediately instead of waiting for combat end.
     local allowCombatApply = (key == "cdmEssential" or key == "cdmUtility" or key == "buffIcon" or key == "buffBar")
-    if InCombatLockdown() and not allowCombatApply then
+    if InCombatLockdown() and allowCombatApply then
+        -- CDM viewers are normally safe to reposition in combat, but if the
+        -- resolved frame is actually protected (e.g. Blizzard's secure CDM
+        -- container), attempting ClearAllPoints/SetPoint will taint.  Defer
+        -- to PLAYER_REGEN_ENABLED instead.
+        if resolved.IsProtected and resolved:IsProtected() then
+            pendingAnchoredFrameUpdateAfterCombat = true
+            return
+        end
+        -- Frame is not protected — safe to proceed in combat
+    elseif InCombatLockdown() then
         C_Timer.After(0.5, function()
             if not InCombatLockdown() then
                 self:ApplyFrameAnchor(key, settings)
@@ -1522,6 +1802,15 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
 
     local parentFrame = ResolveParentFrame(settings.parent)
 
+    if editDbg then
+        local parentName = settings.parent or "nil"
+        local parentExists = parentFrame and true or false
+        local parentIsSystem = parentFrame and (parentFrame.system ~= nil or parentFrame.systemIndex ~= nil) or false
+        local parentShown = parentFrame and parentFrame.IsShown and parentFrame:IsShown() or false
+        AnchorDebug(format("ApplyFrameAnchor(%s): parent=%s exists=%s isSystem=%s shown=%s isSysFrame=%s",
+            key, parentName, tostring(parentExists), tostring(parentIsSystem), tostring(parentShown), tostring(isBlizzEditModeSystem)))
+    end
+
     -- Skip repositioning when the parent is a hidden Blizzard Edit Mode system
     -- frame (e.g. StanceBar anchored to PetActionBar when there is no pet).
     -- Anchoring a secure frame to a hidden secure frame via SetPoint from addon
@@ -1531,10 +1820,11 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
     if parentFrame and parentFrame ~= UIParent then
         local parentIsBlizzSystem = parentFrame.system ~= nil or parentFrame.systemIndex ~= nil
         if parentIsBlizzSystem and parentFrame.IsShown and not parentFrame:IsShown() then
+            if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): SKIP hidden system parent=%s", key, settings.parent or "nil")) end
             return
         end
     end
-    
+
     local point = settings.point or "CENTER"
     local relative = settings.relative or "CENTER"
     local offsetX = settings.offsetX or 0
@@ -1548,17 +1838,37 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
             if useSizeStable then
                 ApplyAutoSizing(frame, settings, parentFrame, key)
             end
-            pcall(function()
-                frame:ClearAllPoints()
+            -- TAINT SAFETY: Track position for secure re-stamping on combat enter
+            local frameIsEditMode = frame.system ~= nil or frame.systemIndex ~= nil
+            -- Compute target position first so we can skip if already correct
+            local targetPt, targetRelPt, targetX, targetY
+            if useSizeStable then
+                local centerX, centerY = ComputeCenterOffsetsForAnchor(
+                    frame, key, parentFrame, point, relative, offsetX, stackOffsetY, settings.parent
+                )
+                targetPt, targetRelPt, targetX, targetY = "CENTER", "CENTER", centerX, centerY
+            else
+                targetPt, targetRelPt, targetX, targetY = point, relative, offsetX, stackOffsetY
+            end
+            -- Skip ClearAllPoints+SetPoint if frame is already at the right position
+            if not FrameAlreadyAtPosition(frame, targetPt, parentFrame, targetRelPt, targetX, targetY) then
+                _editModeReapplyGuard = true
+                pcall(function()
+                    frame:ClearAllPoints()
+                    frame:SetPoint(targetPt, parentFrame, targetRelPt, targetX, targetY)
+                end)
+                _editModeReapplyGuard = false
+            end
+            if frameIsEditMode then
                 if useSizeStable then
                     local centerX, centerY = ComputeCenterOffsetsForAnchor(
-                        frame, key, parentFrame, point, relative, offsetX, stackOffsetY
+                        frame, key, parentFrame, point, relative, offsetX, stackOffsetY, settings.parent
                     )
-                    frame:SetPoint("CENTER", parentFrame, "CENTER", centerX, centerY)
+                    TrackSecureFramePosition(frame, parentFrame, "CENTER", "CENTER", centerX, centerY)
                 else
-                    frame:SetPoint(point, parentFrame, relative, offsetX, stackOffsetY)
+                    TrackSecureFramePosition(frame, parentFrame, point, relative, offsetX, stackOffsetY)
                 end
-            end)
+            end
         end
         -- Legacy path: apply auto-sizing after placement when size-stable mode is off
         if not useSizeStable then
@@ -1579,32 +1889,143 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         -- so transient Blizzard combat sizes do not skew the result.
         ApplyAutoSizing(resolved, settings, parentFrame, key)
         local centerX, centerY = ComputeCenterOffsetsForAnchor(
-            resolved, key, parentFrame, point, relative, offsetX, offsetY
+            resolved, key, parentFrame, point, relative, offsetX, offsetY, settings.parent
         )
-        pcall(function()
-            resolved:ClearAllPoints()
-            resolved:SetPoint("CENTER", parentFrame, "CENTER", centerX, centerY)
-        end)
+        -- Skip if already at the right position (prevents flash during Edit Mode ticker)
+        if FrameAlreadyAtPosition(resolved, "CENTER", parentFrame, "CENTER", centerX, centerY) then
+            if editDbg then
+                AnchorDebug(format("ApplyFrameAnchor(%s): SKIP (already at position)", key))
+            end
+        else
+            _editModeReapplyGuard = true
+            local ok = pcall(function()
+                resolved:ClearAllPoints()
+                resolved:SetPoint("CENTER", parentFrame, "CENTER", centerX, centerY)
+            end)
+            _editModeReapplyGuard = false
+            if editDbg then
+                AnchorDebug(format("ApplyFrameAnchor(%s): SET CENTER parent=%s cx=%.1f cy=%.1f ok=%s",
+                    key, settings.parent or "nil", centerX, centerY, tostring(ok)))
+            end
+        end
+        -- TAINT SAFETY: Track for secure re-stamping on combat enter so
+        -- Edit Mode's secureexecuterange won't hit tainted SetPointBase.
+        if isBlizzEditModeSystem then
+            TrackSecureFramePosition(resolved, parentFrame, "CENTER", "CENTER", centerX, centerY)
+        end
     else
-        pcall(function()
-            resolved:ClearAllPoints()
-            resolved:SetPoint(point, parentFrame, relative, offsetX, offsetY)
-        end)
+        -- Skip if already at the right position (prevents flash during Edit Mode ticker)
+        if FrameAlreadyAtPosition(resolved, point, parentFrame, relative, offsetX, offsetY) then
+            if editDbg then
+                AnchorDebug(format("ApplyFrameAnchor(%s): SKIP (already at position)", key))
+            end
+        else
+            _editModeReapplyGuard = true
+            local ok = pcall(function()
+                resolved:ClearAllPoints()
+                resolved:SetPoint(point, parentFrame, relative, offsetX, offsetY)
+            end)
+            _editModeReapplyGuard = false
+            if editDbg then
+                AnchorDebug(format("ApplyFrameAnchor(%s): SET %s->%s parent=%s ox=%.1f oy=%.1f ok=%s",
+                    key, point, relative, settings.parent or "nil", offsetX, offsetY, tostring(ok)))
+            end
+        end
+        if isBlizzEditModeSystem then
+            TrackSecureFramePosition(resolved, parentFrame, point, relative, offsetX, offsetY)
+        end
         -- Legacy path: auto-size after placement
         ApplyAutoSizing(resolved, settings, parentFrame, key)
     end
 end
 
--- Apply all saved frame anchor overrides
+-- Compute dependency-ordered apply sequence for frame anchoring overrides.
+-- Uses Kahn's algorithm (topological sort) so that parent frames are
+-- positioned before their children, preventing transient jumps when frames
+-- are anchored in arbitrary chains (e.g. buffIcon → primaryPower → cdmEssential).
+ComputeAnchorApplyOrder = function(anchoringDB)
+    -- 1. Collect all enabled override keys
+    local enabledSet = {}
+    local enabledList = {}
+    for key, settings in pairs(anchoringDB) do
+        if type(settings) == "table" and FRAME_RESOLVERS[key] and settings.enabled then
+            enabledSet[key] = true
+            enabledList[#enabledList + 1] = key
+        end
+    end
+
+    if #enabledList == 0 then return enabledList end
+
+    -- 2. Build dependency edges (key depends on parent when parent is also overridden)
+    local inDegree  = {}
+    local childrenOf = {}
+    for _, key in ipairs(enabledList) do
+        inDegree[key] = 0
+        childrenOf[key] = {}
+    end
+
+    for _, key in ipairs(enabledList) do
+        local parent = anchoringDB[key].parent
+        -- Normalize aliases used by GetCDMAnchorProxy
+        if parent == "essential" then parent = "cdmEssential" end
+        if parent == "utility"  then parent = "cdmUtility"   end
+
+        if parent and enabledSet[parent] then
+            inDegree[key] = inDegree[key] + 1
+            childrenOf[parent][#childrenOf[parent] + 1] = key
+        end
+    end
+
+    -- 3. Kahn's BFS — roots (no in-system parent) first
+    local sorted = {}
+    local queue  = {}
+    for _, key in ipairs(enabledList) do
+        if inDegree[key] == 0 then
+            queue[#queue + 1] = key
+        end
+    end
+
+    local head = 1
+    while head <= #queue do
+        local key = queue[head]
+        head = head + 1
+        sorted[#sorted + 1] = key
+        for _, child in ipairs(childrenOf[key]) do
+            inDegree[child] = inDegree[child] - 1
+            if inDegree[child] == 0 then
+                queue[#queue + 1] = child
+            end
+        end
+    end
+
+    -- 4. Cycle fallback — append any remaining keys so they still get applied
+    if #sorted < #enabledList then
+        for _, key in ipairs(enabledList) do
+            if inDegree[key] > 0 then
+                sorted[#sorted + 1] = key
+            end
+        end
+    end
+
+    return sorted
+end
+
+-- Apply all saved frame anchor overrides (dependency-ordered)
 function QUI_Anchoring:ApplyAllFrameAnchors()
     if not QUICore or not QUICore.db or not QUICore.db.profile then return end
     local anchoringDB = QUICore.db.profile.frameAnchoring
-    if not anchoringDB then return end
+    if not anchoringDB then
+        AnchorDebug("ApplyAllFrameAnchors: NO anchoringDB")
+        return
+    end
 
-    for key, settings in pairs(anchoringDB) do
-        if type(settings) == "table" and FRAME_RESOLVERS[key] and settings.enabled then
-            self:ApplyFrameAnchor(key, settings)
-        end
+    local sorted = ComputeAnchorApplyOrder(anchoringDB)
+    local inEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    if inEditMode and not _editModeTickerSilent then
+        AnchorDebug(format("ApplyAllFrameAnchors: %d keys in order: %s", #sorted, table.concat(sorted, ", ")))
+    end
+    for _, key in ipairs(sorted) do
+        self:ApplyFrameAnchor(key, anchoringDB[key])
     end
 end
 
@@ -1616,6 +2037,10 @@ end
 _G.QUI_IsFrameOverridden = function(frame)
     return QUI_Anchoring and QUI_Anchoring.overriddenFrames and QUI_Anchoring.overriddenFrames[frame] or false
 end
+
+-- Alias used by nudge, Edit Mode, resource bars, etc. to check if a frame
+-- should be locked in place (same underlying check as IsFrameOverridden).
+_G.QUI_IsFrameLocked = _G.QUI_IsFrameOverridden
 
 _G.QUI_ApplyAllFrameAnchors = function()
     if QUI_Anchoring then
@@ -1632,6 +2057,83 @@ _G.QUI_ApplyFrameAnchor = function(key)
     end
 end
 
+-- Position-only re-anchor for Edit Mode: repositions a frame to its configured
+-- parent without calling ApplyAutoSizing (which would fight the user's manual
+-- resize during Edit Mode).
+_G.QUI_ReanchorFramePositionOnly = function(key)
+    if not key or InCombatLockdown() then return end
+    if not QUI_Anchoring or not QUICore or not QUICore.db or not QUICore.db.profile then return end
+    local anchoringDB = QUICore.db.profile.frameAnchoring
+    if not anchoringDB then return end
+    local settings = anchoringDB[key]
+    if type(settings) ~= "table" or not settings.enabled then return end
+
+    local resolver = FRAME_RESOLVERS[key]
+    if not resolver then return end
+    local resolved = resolver()
+    if not resolved then return end
+
+    local parentFrame = ResolveParentFrame(settings.parent)
+    if not parentFrame then return end
+
+    local point = settings.point or "CENTER"
+    local relative = settings.relative or "CENTER"
+    local offsetX = settings.offsetX or 0
+    local offsetY = settings.offsetY or 0
+    local useSizeStable = IsSizeStableAnchoringEnabled(settings)
+
+    pcall(function()
+        resolved:ClearAllPoints()
+        if useSizeStable then
+            local centerX, centerY = ComputeCenterOffsetsForAnchor(
+                resolved, key, parentFrame, point, relative, offsetX, offsetY, settings.parent
+            )
+            resolved:SetPoint("CENTER", parentFrame, "CENTER", centerX, centerY)
+        else
+            resolved:SetPoint(point, parentFrame, relative, offsetX, offsetY)
+        end
+    end)
+end
+
+-- Anchor an arbitrary overlay frame to a key's configured parent.
+-- Used during Edit Mode to position QUI overlays at the correct anchored
+-- location without touching the protected Blizzard system frame itself.
+-- overlayFrame: the QUI overlay to position
+-- key: frame anchoring key (e.g. "buffIcon")
+-- overlayW, overlayH: explicit size for center offset math (icon content area)
+_G.QUI_AnchorOverlayToParent = function(overlayFrame, key, overlayW, overlayH)
+    if not overlayFrame or not key then return end
+    if not QUI_Anchoring or not QUICore or not QUICore.db or not QUICore.db.profile then return end
+    local anchoringDB = QUICore.db.profile.frameAnchoring
+    if not anchoringDB then return end
+    local settings = anchoringDB[key]
+    if type(settings) ~= "table" or not settings.enabled then return end
+
+    local parentFrame = ResolveParentFrame(settings.parent)
+    if not parentFrame then return end
+
+    local point = settings.point or "CENTER"
+    local relative = settings.relative or "CENTER"
+    local offsetX = settings.offsetX or 0
+    local offsetY = settings.offsetY or 0
+    local useSizeStable = IsSizeStableAnchoringEnabled(settings)
+
+    overlayFrame:ClearAllPoints()
+    if overlayW and overlayW > 0 then overlayFrame:SetWidth(overlayW) end
+    if overlayH and overlayH > 0 then overlayFrame:SetHeight(overlayH) end
+    if useSizeStable then
+        -- Compute center offsets using the overlay's dimensions and parent rect
+        local parentW, parentH = GetParentAnchorRect(parentFrame, settings.parent)
+        local targetX, targetY = GetPointOffsetForRect(relative or "CENTER", parentW, parentH)
+        local sourceX, sourceY = GetPointOffsetForRect(point or "CENTER", overlayW or 1, overlayH or 1)
+        local centerX = (targetX + (offsetX or 0) - sourceX)
+        local centerY = (targetY + (offsetY or 0) - sourceY)
+        overlayFrame:SetPoint("CENTER", parentFrame, "CENTER", centerX, centerY)
+    else
+        overlayFrame:SetPoint(point, parentFrame, relative, offsetX, offsetY)
+    end
+end
+
 -- Debounced reapply of frame anchoring overrides after module repositioning
 local pendingOverrideReapply = nil
 
@@ -1640,6 +2142,13 @@ DebouncedReapplyOverrides = function()
     pendingOverrideReapply = true
     C_Timer.After(0.15, function()
         pendingOverrideReapply = nil
+        -- During Edit Mode this still runs — ApplyFrameAnchor now skips
+        -- CDM viewer keys (Blizzard controls those) but repositions all
+        -- other overridden frames so the anchor chain stays correct.
+        local inEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+        if inEditMode and not _editModeTickerSilent then
+            AnchorDebug("DebouncedReapplyOverrides: firing ApplyAllFrameAnchors in EditMode")
+        end
         if QUI_Anchoring then
             QUI_Anchoring:ApplyAllFrameAnchors()
         end
@@ -1692,4 +2201,243 @@ _G.QUI_UpdateCDMAnchoredUnitFrames = function(...)
         previousUpdateCDMAnchoredUnitFrames(...)
     end
     _G.QUI_UpdateAnchoredFrames(...)
+end
+
+-- Targeted anchor update: only update frames anchored to a specific target.
+-- Accepts a string key (e.g. "minimap") or a frame object (resolved via reverse lookup).
+-- Updates both legacy anchored frames and frame anchoring overrides.
+_G.QUI_UpdateFramesAnchoredTo = function(targetKeyOrFrame)
+    if not targetKeyOrFrame then return end
+    if InCombatLockdown() then return end
+
+    -- Resolve frame object to key via reverse lookup
+    local targetKey = targetKeyOrFrame
+    if type(targetKeyOrFrame) ~= "string" then
+        targetKey = nil
+        if QUI_Anchoring and QUI_Anchoring.anchorTargets then
+            for name, entry in pairs(QUI_Anchoring.anchorTargets) do
+                if entry.frame == targetKeyOrFrame then
+                    targetKey = name
+                    break
+                end
+            end
+        end
+        if not targetKey then return end
+    end
+
+    local anchoringDB = QUICore and QUICore.db and QUICore.db.profile
+        and QUICore.db.profile.frameAnchoring
+
+    -- Walk the anchor chain: update direct dependents, then their dependents, etc.
+    -- Use a BFS queue to avoid infinite loops from circular configs.
+    local queue = { targetKey }
+    local visited = { [targetKey] = true }
+
+    while #queue > 0 do
+        local currentTarget = table.remove(queue, 1)
+
+        -- 1. Update legacy anchored frames for this target
+        if QUI_Anchoring then
+            QUI_Anchoring:UpdateFramesForTarget(currentTarget)
+        end
+
+        -- 2. Reapply frame anchoring overrides whose parent matches this target
+        -- and enqueue the updated keys so their dependents are also updated
+        if anchoringDB and QUI_Anchoring then
+            for key, settings in pairs(anchoringDB) do
+                if type(settings) == "table" and settings.enabled and settings.parent == currentTarget then
+                    QUI_Anchoring:ApplyFrameAnchor(key, settings)
+                    -- Enqueue this key so frames anchored to IT also update
+                    if not visited[key] then
+                        visited[key] = true
+                        queue[#queue + 1] = key
+                    end
+                end
+            end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- EDIT MODE: keep non-CDM anchored system frames at QUI positions
+--
+-- During Edit Mode, Blizzard's layout system repositions system frames
+-- to their default positions on layout events (enter, move, resize).
+-- A 50ms C_Timer ticker reapplies QUI's anchor overrides fast enough
+-- that any Blizzard override is corrected within ~3 render frames.
+--
+-- Why not OnUpdate?  Blizzard's C++ layout pass runs AFTER all Lua
+-- OnUpdate handlers in the same render frame, so OnUpdate-based
+-- reapply gets immediately overridden — causing per-frame oscillation.
+-- A timer fires independently at the START of a frame, and since
+-- Blizzard only re-layouts on specific events (not every frame),
+-- QUI's positions persist between layout events.
+--
+-- CDM viewer keys are already skipped by ApplyFrameAnchor.
+---------------------------------------------------------------------------
+
+local _editModeTicker = nil
+-- Track CDM viewer bounds to detect Blizzard's deferred Edit Mode layout changes.
+-- Blizzard's slider (icon size, etc.) triggers internal layout passes that don't
+-- fire SetScale or OnSizeChanged on the viewer, so we must poll for changes.
+local _editModeLastBounds = {}
+
+local function StopEditModeTicker()
+    if _editModeTicker then
+        _editModeTicker:Cancel()
+        _editModeTicker = nil
+    end
+    _editModeLastBounds = {}
+end
+
+-- Helper: check if a child frame looks like a cooldown icon
+local function IsIconChild(child)
+    if not child then return false end
+    return (child.Icon or child.icon) and (child.Cooldown or child.cooldown)
+end
+
+-- Measure the visual bounding box of icon children inside a CDM viewer.
+-- Returns boundsW, boundsH, iconCount (all in screen-space UIParent coords).
+-- Falls back to viewer frame bounds if no icons found.
+local function MeasureCDMIconBounds(viewer)
+    local boundsL, boundsR, boundsT, boundsB
+    local iconCount = 0
+    local sel = viewer.Selection
+
+    for i = 1, viewer:GetNumChildren() do
+        local child = select(i, viewer:GetChildren())
+        if child and child ~= sel and IsIconChild(child) and child:IsShown() then
+            local cl, cr, ct, cb = child:GetLeft(), child:GetRight(), child:GetTop(), child:GetBottom()
+            if cl and cr and ct and cb then
+                iconCount = iconCount + 1
+                boundsL = boundsL and math.min(boundsL, cl) or cl
+                boundsR = boundsR and math.max(boundsR, cr) or cr
+                boundsT = boundsT and math.max(boundsT, ct) or ct
+                boundsB = boundsB and math.min(boundsB, cb) or cb
+            end
+        end
+    end
+
+    if iconCount > 0 and boundsL and boundsR and boundsT and boundsB then
+        return boundsR - boundsL, boundsT - boundsB, iconCount
+    end
+
+    -- Fallback: use viewer frame bounds
+    local l, r, t, b = viewer:GetLeft(), viewer:GetRight(), viewer:GetTop(), viewer:GetBottom()
+    if l and r and t and b then
+        return r - l, t - b, 0
+    end
+
+    return 0, 0, 0
+end
+
+-- Check if a CDM viewer's icon bounds have changed, and if so, update
+-- viewer state, proxies, power bars, and anchored frames.
+local function CheckCDMViewerBoundsChanged(viewer, viewerKey, proxyKey)
+    if not viewer or not viewer:IsShown() then return end
+
+    local iconBoundsW, iconBoundsH, iconCount = MeasureCDMIconBounds(viewer)
+    -- Blizzard's "Icon Size" slider changes viewer frame size immediately
+    -- but doesn't re-lay-out icons until later.  Icons can also extend
+    -- beyond the viewer.  Use the LARGER of icon bounds and viewer logical
+    -- size so we track both cases correctly.
+    local logW, logH = viewer:GetWidth() or 0, viewer:GetHeight() or 0
+    local boundsW = math.max(iconBoundsW or 0, logW)
+    local boundsH = math.max(iconBoundsH or 0, logH)
+    if boundsW < 2 or boundsH < 2 then return end
+
+    -- Also track viewer center for position changes (drag)
+    local cx, cy = viewer:GetCenter()
+
+    local last = _editModeLastBounds[viewerKey]
+    if last and math.abs(last.w - boundsW) < 0.5 and math.abs(last.h - boundsH) < 0.5
+           and math.abs((last.cx or 0) - (cx or 0)) < 0.5
+           and math.abs((last.cy or 0) - (cy or 0)) < 0.5 then
+        return  -- No change
+    end
+
+    -- Bounds changed — update everything
+    _editModeLastBounds[viewerKey] = { w = boundsW, h = boundsH, cx = cx, cy = cy }
+
+    if QUI and QUI.DebugPrint then
+        local scale = viewer.GetScale and viewer:GetScale() or 1
+        QUI:DebugPrint(format("|cffFF8800CDM BoundsChanged|r %s: used=%.0fx%.0f iconBounds=%.0fx%.0f logical=%.0fx%.0f icons=%d scale=%.3f",
+            viewerKey, boundsW, boundsH, iconBoundsW or 0, iconBoundsH or 0, logW, logH, iconCount, scale))
+    end
+
+    -- Update the viewer state so downstream consumers use the correct dimensions.
+    -- cdm_viewer.lua exposes QUI_SetCDMViewerBounds for this purpose.
+    if _G.QUI_SetCDMViewerBounds then
+        _G.QUI_SetCDMViewerBounds(viewer, boundsW, boundsH)
+    end
+
+    -- Update proxies (they read viewer state or frame bounds)
+    UpdateCDMAnchorProxies()
+
+    -- Update power bars locked to this CDM viewer
+    if viewerKey == "essential" then
+        if _G.QUI_UpdateLockedPowerBar then _G.QUI_UpdateLockedPowerBar() end
+        if _G.QUI_UpdateLockedSecondaryPowerBar then _G.QUI_UpdateLockedSecondaryPowerBar() end
+    elseif viewerKey == "utility" then
+        if _G.QUI_UpdateLockedPowerBarToUtility then _G.QUI_UpdateLockedPowerBarToUtility() end
+        if _G.QUI_UpdateLockedSecondaryPowerBarToUtility then _G.QUI_UpdateLockedSecondaryPowerBarToUtility() end
+    end
+
+    -- Update unit frames anchored to CDM
+    if _G.QUI_UpdateAnchoredUnitFrames then
+        _G.QUI_UpdateAnchoredUnitFrames()
+    end
+
+    -- Update frames anchored via the anchoring system
+    if _G.QUI_UpdateFramesAnchoredTo then
+        _G.QUI_UpdateFramesAnchoredTo(proxyKey)
+    end
+end
+
+local function StartEditModeTicker()
+    if _editModeTicker then return end
+    _editModeTickerSilent = false
+    _editModeLastBounds = {}
+
+    -- Immediate reapply on Edit Mode enter
+    if not InCombatLockdown() and QUI_Anchoring then
+        QUI_Anchoring:ApplyAllFrameAnchors()
+    end
+
+    _editModeTicker = C_Timer.NewTicker(0.05, function()
+        if not EditModeManagerFrame or not EditModeManagerFrame:IsEditModeActive() then
+            StopEditModeTicker()
+            return
+        end
+        if InCombatLockdown() then return end
+        if QUI_Anchoring then
+            QUI_Anchoring:ApplyAllFrameAnchors()
+        end
+
+        -- Poll CDM viewer bounds for changes (Blizzard's slider doesn't fire
+        -- SetScale or OnSizeChanged, so we detect changes via bounds polling)
+        CheckCDMViewerBoundsChanged(_G["EssentialCooldownViewer"], "essential", "cdmEssential")
+        CheckCDMViewerBoundsChanged(_G["UtilityCooldownViewer"], "utility", "cdmUtility")
+
+        _editModeTickerSilent = true
+    end)
+end
+
+if QUICore and QUICore.RegisterEditModeEnter then
+    QUICore:RegisterEditModeEnter(function()
+        AnchorDebug("EditMode ENTER — starting 50ms anchor ticker")
+        StartEditModeTicker()
+    end)
+end
+
+if QUICore and QUICore.RegisterEditModeExit then
+    QUICore:RegisterEditModeExit(function()
+        AnchorDebug("EditMode EXIT — stopping ticker, final reapply")
+        StopEditModeTicker()
+        _editModeTickerSilent = false
+        -- Final reapply outside Edit Mode (no guards, all frames including CDM viewers)
+        if not InCombatLockdown() and QUI_Anchoring then
+            QUI_Anchoring:ApplyAllFrameAnchors()
+        end
+    end)
 end

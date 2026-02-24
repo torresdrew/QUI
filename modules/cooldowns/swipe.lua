@@ -24,6 +24,11 @@ local function GetSettings()
     return Helpers.GetModuleSettings("cooldownSwipe", DEFAULTS)
 end
 
+-- TAINT SAFETY: Weak-keyed tables for per-icon/viewer state instead of writing to Blizzard frames
+local iconSwipeState   = setmetatable({}, { __mode = "k" })
+local hookedViewers    = setmetatable({}, { __mode = "k" })
+local swipePulseHooked = setmetatable({}, { __mode = "k" })
+
 local function IsSecret(value)
     return Helpers.IsSecretValue and Helpers.IsSecretValue(value)
 end
@@ -108,6 +113,7 @@ local EnsureViewerVisibilityHooks
 -- Intentionally avoids hooking Cooldown:SetCooldown to prevent tainting
 -- Blizzard's secret cooldown/totem values in combat.
 local function ApplySettingsToIcon(icon, settings)
+    if InCombatLockdown() then return end
     if not icon or not icon.Cooldown then return end
     if icon.IsForbidden and icon:IsForbidden() then return end
 
@@ -175,10 +181,13 @@ local function ApplySettingsToIcon(icon, settings)
     end
 
     -- Stabilize behavior when Blizzard data is temporarily unavailable.
+    -- TAINT SAFETY: Use weak-keyed table instead of writing to Blizzard icon frame
+    local iState = iconSwipeState[icon]
+    if not iState then iState = {}; iconSwipeState[icon] = iState end
     if not mode then
-        mode = icon._QUI_LastSwipeMode or "cooldown"
+        mode = iState.lastSwipeMode or "cooldown"
     end
-    icon._QUI_LastSwipeMode = mode
+    iState.lastSwipeMode = mode
 
     if mode == "aura" then
         if parent == _G.BuffIconCooldownViewer then
@@ -194,8 +203,9 @@ local function ApplySettingsToIcon(icon, settings)
 
     -- Avoid reapplying unchanged values every pulse; frequent redundant writes can
     -- produce subtle visual jitter on the radial edge animation.
-    if icon._QUI_LastDrawSwipe ~= showSwipe then
-        icon._QUI_LastDrawSwipe = showSwipe
+    -- TAINT SAFETY: Read/write cached values from weak-keyed table, not icon frame
+    if iState.lastDrawSwipe ~= showSwipe then
+        iState.lastDrawSwipe = showSwipe
         icon.Cooldown:SetDrawSwipe(showSwipe)
     end
 
@@ -205,8 +215,8 @@ local function ApplySettingsToIcon(icon, settings)
     else
         drawEdge = settings.showRechargeEdge
     end
-    if icon._QUI_LastDrawEdge ~= drawEdge then
-        icon._QUI_LastDrawEdge = drawEdge
+    if iState.lastDrawEdge ~= drawEdge then
+        iState.lastDrawEdge = drawEdge
         icon.Cooldown:SetDrawEdge(drawEdge)
     end
 
@@ -245,8 +255,9 @@ local function ApplyAllSettings()
         ProcessViewer(viewer, settings)
 
         -- Hook Layout to catch new icons
-        if viewer and viewer.Layout and not viewer._QUI_LayoutHooked then
-            viewer._QUI_LayoutHooked = true
+        -- TAINT SAFETY: Use weak-keyed table for hook guard instead of writing to viewer frame
+        if viewer and viewer.Layout and not hookedViewers[viewer] then
+            hookedViewers[viewer] = true
             hooksecurefunc(viewer, "Layout", function()
                 C_Timer.After(0.15, function()  -- 150ms debounce for CPU efficiency
                     ProcessViewer(viewer, GetSettings())
@@ -330,8 +341,8 @@ end
 EnsureViewerVisibilityHooks = function()
     for _, viewerName in ipairs(VIEWER_NAMES) do
         local viewer = _G[viewerName]
-        if viewer and not viewer._QUI_SwipePulseHooked then
-            viewer._QUI_SwipePulseHooked = true
+        if viewer and not swipePulseHooked[viewer] then
+            swipePulseHooked[viewer] = true
 
             viewer:HookScript("OnShow", function()
                 if StartPulseTicker then
