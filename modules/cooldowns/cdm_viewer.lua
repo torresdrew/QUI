@@ -1160,12 +1160,12 @@ local function RecalcCombatDimensions(viewer, trackerKey, iconCount)
         vs.cdmBottomRowWidth = bottomRowWidth
     end
 
-    -- Push new size to the proxy layer
-    if _G.QUI_UpdateCDMAnchorProxyFrames then
-        _G.QUI_UpdateCDMAnchorProxyFrames()
-    end
+    -- NOTE: Do NOT call QUI_UpdateCDMAnchorProxyFrames here.
+    -- The proxy is anchored to the protected CDM viewer and inherits
+    -- protection during combat — SetSize would taint.
+    -- Proxy size is deferred to PLAYER_REGEN_ENABLED.
 
-    -- Update dependent frames (width-only, combat-safe)
+    -- Update dependent frames directly from viewer state (combat-safe)
     if _G.QUI_UpdateCombatDependentFrames then
         _G.QUI_UpdateCombatDependentFrames(trackerKey)
     end
