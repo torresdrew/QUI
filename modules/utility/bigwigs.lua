@@ -5,6 +5,7 @@
 
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
+local UIKit = ns.UIKit
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -68,56 +69,48 @@ function QUI_BigWigs:IsAvailable()
 end
 
 ---------------------------------------------------------------------------
--- PROXY FRAMES
+-- PROXY FRAMES (via UIKit.CreateAnchorProxy)
 ---------------------------------------------------------------------------
-local function EnsureProxyFrame(key)
-    local frameName = PROXY_NAMES[key]
-    if not frameName then
-        return nil
+local function BigWigsAnchorResolver(proxy, source)
+    -- Prefer SetAllPoints for exact mirror; fall back to center-based positioning
+    -- when the source frame restricts SetAllPoints (e.g. protected frames).
+    local ok = pcall(function()
+        proxy:ClearAllPoints()
+        proxy:SetAllPoints(source)
+    end)
+    if not ok then
+        pcall(function()
+            local cx, cy = source:GetCenter()
+            local ux, uy = UIParent:GetCenter()
+            proxy:ClearAllPoints()
+            if cx and cy and ux and uy then
+                proxy:SetPoint("CENTER", UIParent, "CENTER", cx - ux, cy - uy)
+            else
+                proxy:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+            end
+            proxy:SetSize(math.max(1, source:GetWidth() or 1), math.max(1, source:GetHeight() or 1))
+        end)
     end
+end
 
-    local frame = proxies[key] or _G[frameName]
-    if not frame then
-        frame = CreateFrame("Frame", frameName, UIParent)
-        frame:SetSize(1, 1)
-        frame:Show()
+local function EnsureProxy(key, anchorFrame)
+    local proxy = proxies[key]
+    if proxy then
+        proxy:SetSourceFrame(anchorFrame)
+    else
+        proxy = UIKit.CreateAnchorProxy(anchorFrame, {
+            frameName = PROXY_NAMES[key],
+            combatFreeze = false,
+            mirrorVisibility = false,
+            anchorResolver = BigWigsAnchorResolver,
+        })
+        proxies[key] = proxy
     end
-
-    proxies[key] = frame
-    return frame
+    return proxy
 end
 
 function QUI_BigWigs:GetProxyFrame(key)
-    return proxies[key] or _G[PROXY_NAMES[key]]
-end
-
-local function SyncProxyToAnchor(proxy, anchorFrame)
-    if not proxy or not anchorFrame then
-        return false
-    end
-
-    local ok = pcall(function()
-        proxy:ClearAllPoints()
-        proxy:SetAllPoints(anchorFrame)
-    end)
-    if ok then
-        return true
-    end
-
-    -- Fallback for frames that do not permit SetAllPoints linkage.
-    ok = pcall(function()
-        local cx, cy = anchorFrame:GetCenter()
-        local ux, uy = UIParent:GetCenter()
-        proxy:ClearAllPoints()
-        if cx and cy and ux and uy then
-            proxy:SetPoint("CENTER", UIParent, "CENTER", cx - ux, cy - uy)
-        else
-            proxy:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-        end
-        proxy:SetSize(math.max(1, anchorFrame:GetWidth() or 1), math.max(1, anchorFrame:GetHeight() or 1))
-    end)
-
-    return ok
+    return proxies[key]
 end
 
 local function QueueRetry()
@@ -357,16 +350,12 @@ function QUI_BigWigs:ApplyPosition(key)
         return
     end
 
-    local proxy = EnsureProxyFrame(key)
+    local proxy = EnsureProxy(key, anchorFrame)
     if not proxy then
         return
     end
 
-    if not SyncProxyToAnchor(proxy, anchorFrame) then
-        pendingUpdate = true
-        QueueRetry()
-        return
-    end
+    proxy:Sync()
 
     if not ApplyBarsProfilePosition(key, cfg, proxy:GetName()) then
         pendingUpdate = true

@@ -6,6 +6,7 @@
 
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
+local UIKit = ns.UIKit
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -1255,6 +1256,30 @@ local function IsHUDAnchoredToCDM()
     return coreHelpers.IsHUDAnchoredToCDM(profile)
 end
 
+-- CDM viewers use viewer-state sizing with min-width enforcement;
+-- non-CDM sources use the factory default (mirror GetWidth/GetHeight).
+local function CDMSizeResolver(source)
+    local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(source)
+    local width, height
+    if isEditMode then
+        width = (vs and vs.iconWidth) or 0
+        height = (vs and vs.totalHeight) or 0
+        if width < 2 or height < 2 then
+            width = source:GetWidth() or 0
+            height = source:GetHeight() or 0
+        end
+    else
+        width = (vs and vs.iconWidth) or source:GetWidth() or 0
+        height = (vs and vs.totalHeight) or source:GetHeight() or 0
+    end
+    local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
+    if minWidthEnabled and IsHUDAnchoredToCDM() then
+        width = math.max(width, minWidth)
+    end
+    return width, height
+end
+
 local function GetCDMAnchorProxy(parentKey)
     if parentKey == "essential" then
         parentKey = "cdmEssential"
@@ -1262,96 +1287,29 @@ local function GetCDMAnchorProxy(parentKey)
         parentKey = "cdmUtility"
     end
 
-    local source = ANCHOR_PROXY_SOURCES[parentKey]
-    if not source then return nil end
+    local sourceInfo = ANCHOR_PROXY_SOURCES[parentKey]
+    if not sourceInfo then return nil end
 
-    local sourceFrame = source.resolver()
+    local sourceFrame = sourceInfo.resolver()
     if not sourceFrame then return nil end
 
     local proxy = cdmAnchorProxies[parentKey]
-    if not proxy then
-        -- Defer first creation until out of combat to avoid tainting
-        -- the anchor to a protected Blizzard CDM viewer frame.
-        if InCombatLockdown() then
+    if proxy then
+        proxy:SetSourceFrame(sourceFrame)
+    else
+        proxy = UIKit.CreateAnchorProxy(sourceFrame, {
+            deferCreation = true,
+            sizeResolver = sourceInfo.cdm and CDMSizeResolver or nil,
+        })
+        if not proxy then
             cdmAnchorProxyPendingAfterCombat[parentKey] = true
             return nil
         end
-        proxy = CreateFrame("Frame", nil, UIParent)
-        proxy:SetClampedToScreen(false)
-        proxy:Show()
         cdmAnchorProxies[parentKey] = proxy
     end
 
-    -- Mirror source visibility on the proxy so that ResolveParentFrame's
-    -- IsShown() check naturally falls through to FRAME_ANCHOR_FALLBACKS
-    -- when the source is hidden (e.g. secondary power bar on Hunter).
-    local sourceVisible = sourceFrame.IsShown and sourceFrame:IsShown()
-    if sourceVisible then
-        if not proxy:IsShown() then proxy:Show() end
-    else
-        if proxy:IsShown() then proxy:Hide() end
-        return proxy
-    end
-
-    -- Combat-stable behavior:
-    -- Keep the proxy frozen during combat once initialized, then refresh after
-    -- combat ends. This prevents children anchored to edge points (TOP/BOTTOM)
-    -- from drifting when Blizzard mutates protected frame size in combat.
-    local inCombat = InCombatLockdown()
-    if inCombat and proxy.__quiCDMProxyInitialized then
-        cdmAnchorProxyPendingAfterCombat[parentKey] = true
-        return proxy
-    end
-
-    local width, height
-    local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
-
-    if source.cdm then
-        if isEditMode then
-            -- During Edit Mode, use icon bounds from polling (viewer state is updated
-            -- by CheckCDMViewerBoundsChanged via QUI_SetCDMViewerBounds).
-            -- Viewer state is the canonical source — it's kept fresh by the ticker.
-            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(sourceFrame)
-            width = (vs and vs.iconWidth) or 0
-            height = (vs and vs.totalHeight) or 0
-            -- Fallback to viewer frame size if viewer state is stale
-            if width < 2 or height < 2 then
-                width = sourceFrame:GetWidth() or 0
-                height = sourceFrame:GetHeight() or 0
-            end
-        else
-            -- CDM viewers: use viewer state for accurate sizing
-            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(sourceFrame)
-            width = (vs and vs.iconWidth) or sourceFrame:GetWidth() or 0
-            height = (vs and vs.totalHeight) or sourceFrame:GetHeight() or 0
-        end
-        local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
-        if minWidthEnabled and IsHUDAnchoredToCDM() then
-            width = math.max(width, minWidth)
-        end
-    else
-        -- General frames: mirror size directly
-        width = sourceFrame:GetWidth() or 0
-        height = sourceFrame:GetHeight() or 0
-    end
-    width = math.max(1, width)
-    height = math.max(1, height)
-
-    -- Anchor proxy directly to source frame so it follows automatically
-    -- (no coordinate math, no feedback loops during Edit Mode drag).
-    local _, _, relTo = proxy:GetPoint(1)
-    if relTo ~= sourceFrame then
-        proxy:ClearAllPoints()
-        proxy:SetPoint("CENTER", sourceFrame, "CENTER", 0, 0)
-    end
-    -- Only update size when it actually changes to avoid triggering
-    -- OnSizeChanged hooks (which fire DebouncedReapplyOverrides).
-    local curW, curH = proxy:GetWidth(), proxy:GetHeight()
-    if curW ~= width or curH ~= height then
-        proxy:SetSize(width, height)
-    end
-    proxy.__quiCDMProxyInitialized = true
-    if inCombat then
+    proxy:Sync()
+    if proxy:NeedsCombatRefresh() then
         cdmAnchorProxyPendingAfterCombat[parentKey] = true
     end
 
@@ -1479,6 +1437,12 @@ cdmProxyCombatFrame:SetScript("OnEvent", function()
         if pending then
             needsRefresh = true
             cdmAnchorProxyPendingAfterCombat[key] = nil
+        end
+    end
+    -- Clear combat-pending state on all factory proxies
+    for _, proxy in pairs(cdmAnchorProxies) do
+        if proxy.ClearCombatPending then
+            proxy:ClearCombatPending()
         end
     end
     if not needsRefresh then

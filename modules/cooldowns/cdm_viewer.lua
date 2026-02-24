@@ -9,6 +9,7 @@
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local LSM = LibStub("LibSharedMedia-3.0")
+local UIKit = ns.UIKit
 
 -- Enable CDM immediately when file loads (before any events fire)
 pcall(function() SetCVar("cooldownViewerEnabled", 1) end)
@@ -281,36 +282,27 @@ end
 
 local function GetUtilityAnchorProxy()
     if not UtilityAnchorProxy then
-        UtilityAnchorProxy = CreateFrame("Frame", nil, UIParent)
-        UtilityAnchorProxy:Show()
+        UtilityAnchorProxy = UIKit.CreateAnchorProxy(nil, {
+            mirrorVisibility = false,
+            sizeResolver = function(source)
+                local vs = _viewerState[source]
+                local width = (vs and vs.cdmIconWidth) or source:GetWidth() or 0
+                local height = (vs and vs.cdmTotalHeight) or source:GetHeight() or 0
+                return width, height
+            end,
+        })
     end
     return UtilityAnchorProxy
 end
 
 local function UpdateUtilityAnchorProxy()
     local proxy = GetUtilityAnchorProxy()
-    if InCombatLockdown() then
-        return proxy
-    end
-
     local essViewer = _G[VIEWER_ESSENTIAL]
     if not essViewer then
         return proxy
     end
-
-    local viewerX, viewerY = essViewer:GetCenter()
-    local screenX, screenY = UIParent:GetCenter()
-    local vs = _viewerState[essViewer]
-    local width = (vs and vs.cdmIconWidth) or essViewer:GetWidth() or 1
-    local height = (vs and vs.cdmTotalHeight) or essViewer:GetHeight() or 1
-    width = math.max(1, width)
-    height = math.max(1, height)
-
-    if viewerX and viewerY and screenX and screenY then
-        proxy:ClearAllPoints()
-        proxy:SetPoint("CENTER", UIParent, "CENTER", viewerX - screenX, viewerY - screenY)
-    end
-    proxy:SetSize(width, height)
+    proxy:SetSourceFrame(essViewer)
+    proxy:Sync()
     return proxy
 end
 
