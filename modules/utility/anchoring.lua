@@ -1766,14 +1766,18 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         return
     end
 
-    -- During Edit Mode, skip repositioning CDM viewer frames themselves —
-    -- Blizzard actively controls their layout/position during resize and
-    -- ClearAllPoints/SetPoint would fight it.  All OTHER system frames
-    -- with QUI overrides (boss frames, objective tracker, etc.) are "Locked"
-    -- in Edit Mode and should follow the anchor chain in real-time.
+    -- During Edit Mode, skip repositioning CDM viewer frames that have no
+    -- QUI anchor parent — Blizzard actively controls their layout/position
+    -- during resize and ClearAllPoints/SetPoint would fight it.  However,
+    -- CDM viewers that ARE anchored to another frame via QUI's anchoring
+    -- system must follow their parent in real-time (otherwise they overlap
+    -- when the parent is dragged).  All OTHER system frames with QUI
+    -- overrides (boss frames, objective tracker, etc.) are "Locked" in
+    -- Edit Mode and should follow the anchor chain in real-time.
     if isBlizzEditModeSystem and inEditMode
-        and CDM_LOGICAL_SIZE_KEYS[key] then
-        if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): SKIP CDM viewer in EditMode", key)) end
+        and CDM_LOGICAL_SIZE_KEYS[key]
+        and (not settings.parent or settings.parent == "screen" or settings.parent == "disabled") then
+        if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): SKIP CDM viewer in EditMode (no QUI parent)", key)) end
         return
     end
 
@@ -2337,13 +2341,12 @@ local function CheckCDMViewerBoundsChanged(viewer, viewerKey, proxyKey)
     if not viewer or not viewer:IsShown() then return end
 
     local iconBoundsW, iconBoundsH, iconCount = MeasureCDMIconBounds(viewer)
-    -- Blizzard's "Icon Size" slider changes viewer frame size immediately
-    -- but doesn't re-lay-out icons until later.  Icons can also extend
-    -- beyond the viewer.  Use the LARGER of icon bounds and viewer logical
-    -- size so we track both cases correctly.
+    -- Use LOGICAL size (from Blizzard's slider) so the state tracks the
+    -- slider in real-time.  Icon bounds are stale from QUI's previous
+    -- LayoutViewer and create a dead zone when sliding down.
     local logW, logH = viewer:GetWidth() or 0, viewer:GetHeight() or 0
-    local boundsW = math.max(iconBoundsW or 0, logW)
-    local boundsH = math.max(iconBoundsH or 0, logH)
+    local boundsW = logW
+    local boundsH = logH
     if boundsW < 2 or boundsH < 2 then return end
 
     -- Also track viewer center for position changes (drag)
@@ -2418,6 +2421,8 @@ local function StartEditModeTicker()
         -- SetScale or OnSizeChanged, so we detect changes via bounds polling)
         CheckCDMViewerBoundsChanged(_G["EssentialCooldownViewer"], "essential", "cdmEssential")
         CheckCDMViewerBoundsChanged(_G["UtilityCooldownViewer"], "utility", "cdmUtility")
+        CheckCDMViewerBoundsChanged(_G["BuffIconCooldownViewer"], "buffIcon", "buffIcon")
+        CheckCDMViewerBoundsChanged(_G["BuffBarCooldownViewer"], "buffBar", "buffBar")
 
         _editModeTickerSilent = true
     end)
