@@ -89,6 +89,12 @@ local function PositionBar(bar)
     -- LOCKED TO PLAYER: reparent and use relative positioning
     if config.lockedToPlayer then
         local playerFrame = _G["QUI_Player"]
+
+        if not playerFrame then
+            local findPlayer = Helpers.FindAnchorFrame("player")
+            if findPlayer then playerFrame = findPlayer end
+        end
+
         if playerFrame then
             bar:SetParent(playerFrame)
             bar:SetFrameLevel(playerFrame:GetFrameLevel() + 10)
@@ -119,6 +125,12 @@ local function PositionBar(bar)
     -- LOCKED TO TARGET: reparent and use relative positioning
     if config.lockedToTarget then
         local targetFrame = _G["QUI_Target"]
+
+        if not targetFrame then
+            local findTarget = Helpers.FindAnchorFrame("target")
+            if findTarget then targetFrame = findTarget end
+        end
+
         if targetFrame then
             bar:SetParent(targetFrame)
             bar:SetFrameLevel(targetFrame:GetFrameLevel() + 10)

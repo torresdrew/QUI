@@ -49,6 +49,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.41.0 - 2026-02-23
+
+### Added
+- added custom color feature for cdm swipes and overlays
+- added VDH soul fragments as secondary resource bar
+- added ability to snap/lock custom tracker bars to non-QUI player/target frames
 ## v2.40.6 - 2026-02-22
 
 ### Fixed
