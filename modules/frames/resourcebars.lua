@@ -32,6 +32,26 @@ local function GetCDMHiddenAlpha()
 end
 
 -- Avoid protected-frame errors in combat when bars become secure.
+local function SafeShow(frame)
+    if not frame then return false end
+    if frame:IsShown() then return true end
+    if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
+        return false
+    end
+    local ok = pcall(frame.Show, frame)
+    return ok
+end
+
+local function SafeHide(frame)
+    if not frame then return false end
+    if not frame:IsShown() then return true end
+    if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
+        return false
+    end
+    local ok = pcall(frame.Hide, frame)
+    return ok
+end
+
 local function SafeSetFrameLevel(frame, frameLevel)
     if not frame or frameLevel == nil then return false end
     if frame.GetFrameLevel and frame:GetFrameLevel() == frameLevel then
@@ -1037,7 +1057,7 @@ end
 function QUICore:UpdatePowerBar()
     local cfg = self.db.profile.powerBar
     if not cfg.enabled then
-        if self.powerBar then self.powerBar:Hide() end
+        if self.powerBar then SafeHide(self.powerBar) end
         return
     end
 
@@ -1045,7 +1065,7 @@ function QUICore:UpdatePowerBar()
     if ShouldHidePrimaryOnSwap() then
         if self.powerBar then
             self.powerBar:SetAlpha(0)
-            self.powerBar:Show()  -- Keep shown at alpha 0 so anchored frames retain reference
+            SafeShow(self.powerBar)  -- Keep shown at alpha 0 so anchored frames retain reference
         end
         return
     end
@@ -1054,7 +1074,7 @@ function QUICore:UpdatePowerBar()
     local resource = GetPrimaryResource()
 
     if not resource then
-        bar:Hide()
+        SafeHide(bar)
         return
     end
 
@@ -1064,7 +1084,7 @@ function QUICore:UpdatePowerBar()
         local cdmHiddenAlpha = GetCDMHiddenAlpha()
         if cdmHiddenAlpha ~= nil then
             bar:SetAlpha(cdmHiddenAlpha)
-            bar:Show()
+            SafeShow(bar)
             return
         end
     end
@@ -1074,7 +1094,7 @@ function QUICore:UpdatePowerBar()
     local visibilityHidden = not PowerBarEditMode.active and not ShouldShowBar(cfg)
     if visibilityHidden then
         bar:SetAlpha(0)
-        bar:Show()
+        SafeShow(bar)
         return
     end
 
@@ -1246,7 +1266,7 @@ function QUICore:UpdatePowerBar()
     -- Get resource values
     local max, current, displayValue, valueType = GetPrimaryResourceValue(resource, cfg)
     if not max then
-        bar:Hide()
+        SafeHide(bar)
         return
     end
 
@@ -1321,7 +1341,7 @@ function QUICore:UpdatePowerBar()
     self:UpdatePowerBarTicks(bar, resource, max)
 
     bar:SetAlpha(1)
-    bar:Show()
+    SafeShow(bar)
 
     -- Propagate to Secondary bar if it's locked to Primary
     local secondaryCfg = self.db.profile.secondaryPowerBar
@@ -2196,9 +2216,9 @@ function QUICore:UpdateSecondaryPowerBar()
     if not cfg.enabled then
         if self.secondaryPowerBar then
             local wasShown = self.secondaryPowerBar:IsShown()
-            self.secondaryPowerBar:Hide()
+            SafeHide(self.secondaryPowerBar)
             -- Visibility changed — reapply frame anchoring so fallback targets update
-            if wasShown and _G.QUI_UpdateAnchoredFrames then
+            if wasShown and not self.secondaryPowerBar:IsShown() and _G.QUI_UpdateAnchoredFrames then
                 _G.QUI_UpdateAnchoredFrames()
             end
         end
@@ -2210,9 +2230,9 @@ function QUICore:UpdateSecondaryPowerBar()
 
     if not resource then
         local wasShown = bar:IsShown()
-        bar:Hide()
+        SafeHide(bar)
         -- Visibility changed — reapply frame anchoring so fallback targets update
-        if wasShown and _G.QUI_UpdateAnchoredFrames then
+        if wasShown and not bar:IsShown() and _G.QUI_UpdateAnchoredFrames then
             _G.QUI_UpdateAnchoredFrames()
         end
         return
@@ -2224,7 +2244,7 @@ function QUICore:UpdateSecondaryPowerBar()
         local cdmHiddenAlpha = GetCDMHiddenAlpha()
         if cdmHiddenAlpha ~= nil then
             bar:SetAlpha(cdmHiddenAlpha)
-            bar:Show()
+            SafeShow(bar)
             return
         end
     end
@@ -2234,7 +2254,7 @@ function QUICore:UpdateSecondaryPowerBar()
     local visibilityHidden = not PowerBarEditMode.active and not ShouldShowBar(cfg)
     if visibilityHidden then
         bar:SetAlpha(0)
-        bar:Show()
+        SafeShow(bar)
         return
     end
 
@@ -2465,7 +2485,7 @@ function QUICore:UpdateSecondaryPowerBar()
             end
         else
             -- Primary is hidden and Secondary is NOT Standalone - hide Secondary
-            bar:Hide()
+            SafeHide(bar)
             return
         end
     end
@@ -2485,7 +2505,7 @@ function QUICore:UpdateSecondaryPowerBar()
         if not cfg.standaloneMode and not cfg.lockedToEssential and not cfg.lockedToUtility then
             local cdmShouldBeVisible = _G.QUI_ShouldCDMBeVisible and _G.QUI_ShouldCDMBeVisible()
             if not anchor or (not anchor:IsShown() and not cdmShouldBeVisible) then
-                bar:Hide()
+                SafeHide(bar)
                 return
             end
         end
@@ -2496,7 +2516,7 @@ function QUICore:UpdateSecondaryPowerBar()
             local anchorHeight = anchor:GetHeight()
             if not anchorWidth or anchorWidth <= 1 or not anchorHeight or anchorHeight <= 1 then
                 -- Viewer not ready yet, defer update
-                bar:Hide()
+                SafeHide(bar)
                 C_Timer.After(0.5, function() self:UpdateSecondaryPowerBar() end)
                 return
             end
@@ -2645,7 +2665,7 @@ function QUICore:UpdateSecondaryPowerBar()
     -- Get resource values
     local max, current, displayValue, valueType = GetSecondaryResourceValue(resource)
     if not max then
-        bar:Hide()
+        SafeHide(bar)
         return
     end
 
@@ -2779,7 +2799,7 @@ end
 
 
     bar:SetAlpha(1)
-    bar:Show()
+    SafeShow(bar)
 end
 
 -- EVENT HANDLER
