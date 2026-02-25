@@ -1363,19 +1363,22 @@ local function GetCDMAnchorProxy(parentKey)
             proxy._debugBorder = CreateFrame("Frame", nil, proxy, "BackdropTemplate")
             proxy._debugBorder:SetAllPoints(proxy)
             proxy._debugBorder:SetFrameStrata("TOOLTIP")
+            proxy._debugBorder:SetFrameLevel(999)
             proxy._debugBorder:SetBackdrop({
-                edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                bgFile = "Interface\\BUTTONS\\WHITE8X8",
+                edgeFile = "Interface\\BUTTONS\\WHITE8X8",
                 edgeSize = 2,
             })
             -- Color per proxy key for easy identification
             local colors = {
-                cdmEssential    = { 0.2, 1.0, 0.6, 0.8 },  -- mint
-                cdmUtility      = { 1.0, 0.6, 0.2, 0.8 },  -- orange
-                primaryPower    = { 0.2, 0.6, 1.0, 0.8 },  -- blue
-                secondaryPower  = { 1.0, 0.2, 0.6, 0.8 },  -- pink
+                cdmEssential    = { 0.2, 1.0, 0.6 },  -- mint
+                cdmUtility      = { 1.0, 0.6, 0.2 },  -- orange
+                primaryPower    = { 0.2, 0.6, 1.0 },  -- blue
+                secondaryPower  = { 1.0, 0.2, 0.6 },  -- pink
             }
-            local c = colors[parentKey] or { 1, 1, 0, 0.8 }
-            proxy._debugBorder:SetBackdropBorderColor(c[1], c[2], c[3], c[4])
+            local c = colors[parentKey] or { 1, 1, 0 }
+            proxy._debugBorder:SetBackdropBorderColor(c[1], c[2], c[3], 1)
+            proxy._debugBorder:SetBackdropColor(c[1], c[2], c[3], 0.15)
         end
         proxy._debugBorder:Show()
     elseif proxy._debugBorder then
