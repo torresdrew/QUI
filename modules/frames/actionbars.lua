@@ -1650,11 +1650,8 @@ end
 -- MOUSEOVER FADE SYSTEM
 ---------------------------------------------------------------------------
 
--- Check if Blizzard's Edit Mode is currently active.
 -- During Edit Mode, fade-outs are suspended so all bars remain visible.
-local function IsInEditMode()
-    return EditModeManagerFrame and EditModeManagerFrame:IsShown()
-end
+local IsInEditMode = ns.Helpers.IsEditModeShown
 
 -- Get or create fade state for a bar
 local function GetBarFadeState(barKey)

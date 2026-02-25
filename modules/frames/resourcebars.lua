@@ -3,7 +3,8 @@ local QUICore = ns.Addon
 local LSM = LibStub("LibSharedMedia-3.0")
 local UIKit = ns.UIKit
 
-local GetCore = ns.Helpers.GetCore
+local Helpers = ns.Helpers
+local GetCore = Helpers.GetCore
 
 -- Pixel-perfect scaling helper
 local function Scale(x, frame)
@@ -32,25 +33,8 @@ local function GetCDMHiddenAlpha()
 end
 
 -- Avoid protected-frame errors in combat when bars become secure.
-local function SafeShow(frame)
-    if not frame then return false end
-    if frame:IsShown() then return true end
-    if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
-        return false
-    end
-    local ok = pcall(frame.Show, frame)
-    return ok
-end
-
-local function SafeHide(frame)
-    if not frame then return false end
-    if not frame:IsShown() then return true end
-    if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
-        return false
-    end
-    local ok = pcall(frame.Hide, frame)
-    return ok
-end
+local SafeShow = Helpers.SafeShow
+local SafeHide = Helpers.SafeHide
 
 local function SafeSetFrameLevel(frame, frameLevel)
     if not frame or frameLevel == nil then return false end
@@ -114,7 +98,6 @@ local function GetBarTexture(cfg)
 end
 
 -- Helper to get font from general settings (uses shared helpers)
-local Helpers = ns.Helpers
 local GetGeneralFont = Helpers.GetGeneralFont
 local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
 
@@ -2974,16 +2957,16 @@ local function InitializeResourceBars(self)
     self:UpdatePowerBar()
     self:UpdateSecondaryPowerBar()
 
-    -- Hook Blizzard Edit Mode for power bars
+    -- Hook Blizzard Edit Mode for power bars (via centralized dispatcher)
     C_Timer.After(0.6, function()
-        if EditModeManagerFrame and not QUICore._powerBarEditModeHooked then
+        if not QUICore._powerBarEditModeHooked then
             QUICore._powerBarEditModeHooked = true
-            hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
+            QUICore:RegisterEditModeEnter(function()
                 if not InCombatLockdown() then
                     QUICore:EnablePowerBarEditMode()
                 end
             end)
-            hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
+            QUICore:RegisterEditModeExit(function()
                 if not InCombatLockdown() then
                     QUICore:DisablePowerBarEditMode()
                 end

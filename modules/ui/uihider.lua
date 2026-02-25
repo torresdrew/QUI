@@ -46,12 +46,9 @@ local _crfWatcherShown = false
 -- taint model, causing ADDON_ACTION_FORBIDDEN and secret-value errors.
 local hookedSecureFrames = Helpers.CreateStateTable()
 
--- Check if Blizzard's Edit Mode is currently active.
 -- During Edit Mode, all hide rules are suspended so frames remain visible
 -- for positioning. Re-applied automatically when Edit Mode exits.
-local function IsInEditMode()
-    return EditModeManagerFrame and EditModeManagerFrame:IsShown()
-end
+local IsInEditMode = Helpers.IsEditModeShown
 
 -- Get settings from AceDB via shared helper
 local function GetSettings()

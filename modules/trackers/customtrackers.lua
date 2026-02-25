@@ -2658,11 +2658,8 @@ end)
 -- VISIBILITY SYSTEM
 ---------------------------------------------------------------------------
 
--- Check if Blizzard's Edit Mode is currently active.
 -- During Edit Mode, fade-outs are suspended so trackers remain visible.
-local function IsInEditMode()
-    return EditModeManagerFrame and EditModeManagerFrame:IsShown()
-end
+local IsInEditMode = Helpers.IsEditModeShown
 
 local CustomTrackersVisibility = {
     currentlyHidden = false,

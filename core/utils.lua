@@ -744,7 +744,42 @@ function Helpers.DeferredSetAtlasBlock(texture, combatCheck)
     end)
 end
 
+--- Check whether Blizzard's Edit Mode panel is currently shown.
+-- Uses IsShown() (not IsEditModeActive()) — checks panel visibility,
+-- used for UI fade/hide suppression during edit mode.
+-- @return boolean
+function Helpers.IsEditModeShown()
+    return EditModeManagerFrame and EditModeManagerFrame:IsShown() or false
+end
+
+--- Combat-safe Show: skips if already shown or if protected + in combat.
+-- @param frame  The frame to show.
+-- @return boolean  true if shown (or already was), false if skipped/failed.
+function Helpers.SafeShow(frame)
+    if not frame then return false end
+    if frame:IsShown() then return true end
+    if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
+        return false
+    end
+    return pcall(frame.Show, frame)
+end
+
+--- Combat-safe Hide: skips if already hidden or if protected + in combat.
+-- @param frame  The frame to hide.
+-- @return boolean  true if hidden (or already was), false if skipped/failed.
+function Helpers.SafeHide(frame)
+    if not frame then return false end
+    if not frame:IsShown() then return true end
+    if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
+        return false
+    end
+    return pcall(frame.Hide, frame)
+end
+
 ns.CreateStateTable = Helpers.CreateStateTable
 ns.IsEditModeActive = Helpers.IsEditModeActive
+ns.IsEditModeShown = Helpers.IsEditModeShown
+ns.SafeShow = Helpers.SafeShow
+ns.SafeHide = Helpers.SafeHide
 ns.DeferredHideOnShow = Helpers.DeferredHideOnShow
 ns.DeferredSetAtlasBlock = Helpers.DeferredSetAtlasBlock

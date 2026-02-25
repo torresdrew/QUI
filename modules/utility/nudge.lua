@@ -1409,6 +1409,16 @@ local function MarkEditModeLayoutDirty()
     end)
 end
 
+-- One-shot cluster sync during edit mode: move the cluster once so Blizzard
+-- detects a layout change and shows the save/revert dialog on exit.
+-- Per-frame sync is NOT safe — it poisons Blizzard's execution context.
+local function SyncClusterOnceInEditMode()
+    if _clusterDirtied then return end
+    _clusterDirtied = true
+    QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
+    MarkEditModeLayoutDirty()
+end
+
 -- Show minimap overlay
 function QUICore:ShowMinimapOverlay()
     if not minimapOverlay then
@@ -1514,10 +1524,8 @@ function QUICore:ShowMinimapOverlay()
                     -- during edit mode poisons Blizzard's execution context.
                     if not (_resizeContainer and _clusterSizeWatcher:IsShown()) then
                         QUICore.SyncMinimapClusterToMinimap()
-                    elseif not _clusterDirtied then
-                        _clusterDirtied = true
-                        QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
-                        MarkEditModeLayoutDirty()
+                    else
+                        SyncClusterOnceInEditMode()
                     end
                     -- Update frames anchored to the minimap so they follow in real-time
                     if _G.QUI_UpdateFramesAnchoredTo then
@@ -1556,10 +1564,8 @@ function QUICore:ShowMinimapOverlay()
                 -- Sync cluster: outside edit mode → always. During edit mode → one-shot.
                 if not (_resizeContainer and _clusterSizeWatcher:IsShown()) then
                     QUICore.SyncMinimapClusterToMinimap("drag-stop")
-                elseif not _clusterDirtied then
-                    _clusterDirtied = true
-                    QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
-                    MarkEditModeLayoutDirty()
+                else
+                    SyncClusterOnceInEditMode()
                 end
                 -- Update frames anchored to the minimap
                 if _G.QUI_UpdateFramesAnchoredTo then
@@ -1581,10 +1587,8 @@ function QUICore:ShowMinimapOverlay()
                     -- Sync cluster: outside edit mode → always. During edit mode → one-shot.
                     if not (_resizeContainer and _clusterSizeWatcher:IsShown()) then
                         QUICore.SyncMinimapClusterToMinimap("click-select")
-                    elseif not _clusterDirtied then
-                        _clusterDirtied = true
-                        QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
-                        MarkEditModeLayoutDirty()
+                    else
+                        SyncClusterOnceInEditMode()
                     end
                     -- Deferred: open Blizzard settings panel for minimap
                     C_Timer.After(0, function()
@@ -1963,14 +1967,7 @@ _clusterSizeWatcher:SetScript("OnUpdate", function(self)
     -- cause UpdateBackdrop() to set the backdrop to the wrong size in Minimap's
     -- coordinate space (where the frame is still _origMinimapSize). Final size
     -- update + full refresh happens in StopClusterSizeWatcher on Edit Mode exit.
-    -- One-shot cluster sync during edit mode: move the cluster once so Blizzard
-    -- detects a layout change and shows the save/revert dialog on exit.
-    -- Per-frame sync is NOT safe — it poisons Blizzard's execution context.
-    if not _clusterDirtied then
-        _clusterDirtied = true
-        QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
-        MarkEditModeLayoutDirty()
-    end
+    SyncClusterOnceInEditMode()
     -- Update frames anchored to the minimap so they follow the resize
     if _G.QUI_UpdateFramesAnchoredTo then
         _G.QUI_UpdateFramesAnchoredTo("minimap")
@@ -2304,10 +2301,8 @@ function QUICore:NudgeMinimap(direction)
     -- Sync cluster: outside edit mode → always. During edit mode → one-shot.
     if not (_resizeContainer and _clusterSizeWatcher:IsShown()) then
         QUICore.SyncMinimapClusterToMinimap("nudge")
-    elseif not _clusterDirtied then
-        _clusterDirtied = true
-        QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
-        MarkEditModeLayoutDirty()
+    else
+        SyncClusterOnceInEditMode()
     end
     if _G.QUI_UpdateFramesAnchoredTo then
         _G.QUI_UpdateFramesAnchoredTo("minimap")
