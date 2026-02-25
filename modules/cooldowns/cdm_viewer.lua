@@ -1536,6 +1536,7 @@ local function HookViewer(viewerName, trackerKey)
         -- Selection overlay is managed by Blizzard's AnchorSelectionFrame during
         -- Edit Mode — addon manipulation of .Selection causes taint.
         if Helpers.IsEditModeActive() then
+            svs._wasInEditMode = true  -- Track for exit transition detection
             -- Blizzard resets viewers to ~1x1 between each Edit Mode layout
             -- pass.  Detect transient resets using the LOGICAL viewer size
             -- (before icon measurement) so we don't corrupt state.
@@ -1544,14 +1545,14 @@ local function HookViewer(viewerName, trackerKey)
                 return
             end
             -- Blizzard's "Icon Size" slider changes the viewer frame size
-            -- immediately but doesn't re-lay-out icons until later.  Icons
-            -- can also extend beyond the viewer.  Use the LARGER of icon
-            -- bounds and viewer logical size so we track both cases:
-            --   • default state: icons > viewer → icon bounds wins
-            --   • slider moved up: viewer > icons → logical wins
+            -- (logical size) immediately but doesn't re-lay-out icons until
+            -- later.  Icon bounds are STALE from QUI's previous LayoutViewer
+            -- and create a dead zone where the state can't shrink below the
+            -- old icon extent.  Use LOGICAL size so the slider tracks in
+            -- real-time in both directions.  Keep icon bounds for diagnostics.
             local iconW, iconH, iconCount = MeasureViewerIconBounds(self)
-            local w = math.max(iconW or 0, logicalW)
-            local h = math.max(iconH or 0, logicalH)
+            local w = logicalW
+            local h = logicalH
             -- Update ALL viewer state fields that the anchoring system reads.
             -- GetParentAnchorRect / GetFrameAnchorRect prefer row1Width over
             -- iconWidth, so we must update row1Width too or the center offset
@@ -1588,60 +1589,164 @@ local function HookViewer(viewerName, trackerKey)
             if _G.QUI_UpdateFramesAnchoredTo then
                 _G.QUI_UpdateFramesAnchoredTo(anchorKey)
             end
-            -- Diagnostic: show used (max), icon bounds, and logical to verify fix
+            -- Update power bar WIDTH to match viewer (position is handled by
+            -- QUI_UpdateFramesAnchoredTo above, but width is separate).
+            if viewerName == VIEWER_ESSENTIAL then
+                if _G.QUI_UpdateLockedPowerBar then _G.QUI_UpdateLockedPowerBar() end
+                if _G.QUI_UpdateLockedSecondaryPowerBar then _G.QUI_UpdateLockedSecondaryPowerBar() end
+            else
+                if _G.QUI_UpdateLockedPowerBarToUtility then _G.QUI_UpdateLockedPowerBarToUtility() end
+                if _G.QUI_UpdateLockedSecondaryPowerBarToUtility then _G.QUI_UpdateLockedSecondaryPowerBarToUtility() end
+            end
+            -- Anchor chain diagnostic: CDM viewer → viewer state → proxy → power bars
             local proxyFrame = _G.QUI_GetCDMAnchorProxyFrame and _G.QUI_GetCDMAnchorProxyFrame(anchorKey)
             local proxyW, proxyH = proxyFrame and proxyFrame:GetWidth() or 0, proxyFrame and proxyFrame:GetHeight() or 0
-            local diagMsg = format("|cff34D399CDM|r EditMode %s: used=%.0fx%.0f logical=%.0fx%.0f iconBounds=%.0fx%.0f icons=%d proxy=%.0fx%.0f",
-                viewerName == VIEWER_ESSENTIAL and "Ess" or "Util",
-                w, h, logicalW, logicalH, iconW or 0, iconH or 0, iconCount or 0, proxyW, proxyH)
-            -- When Essential resizes, show Utility position so we can verify it followed
+            local shortName = viewerName == VIEWER_ESSENTIAL and "Ess" or "Util"
+            local diagMsg = format("|cff34D399CDM|r EditMode %s chain: viewer=%.0fx%.0f(logical=%.0fx%.0f iconBounds=%.0fx%.0f icons=%d) → state(iconW=%.0f row1W=%.0f) → proxy=%.0fx%.0f",
+                shortName,
+                w, h, logicalW, logicalH, iconW or 0, iconH or 0, iconCount or 0,
+                svs.cdmIconWidth or 0, svs.cdmRow1Width or 0,
+                proxyW, proxyH)
+            if QUICore and QUICore.db then
+                local pCfg = QUICore.db.profile and QUICore.db.profile.powerBar
+                if pCfg then
+                    local pBar = QUICore.powerBar
+                    local pBarW = pBar and pBar:GetWidth() or 0
+                    local lockedTo = pCfg.lockedToEssential and "ess" or (pCfg.lockedToUtility and "util" or "no")
+                    diagMsg = diagMsg .. format(" → |cffFF9900primary pbar|r(cfgW=%.0f frameW=%.0f locked=%s)", pCfg.width or 0, pBarW, lockedTo)
+                end
+                local sCfg = QUICore.db.profile and QUICore.db.profile.secondaryPowerBar
+                if sCfg then
+                    local sBar = QUICore.secondaryPowerBar
+                    local sBarW = sBar and sBar:GetWidth() or 0
+                    local sLockedTo = sCfg.lockedToEssential and "ess" or (sCfg.lockedToUtility and "util" or "no")
+                    diagMsg = diagMsg .. format(" → |cffFF6600secondary pbar|r(cfgW=%.0f frameW=%.0f locked=%s)", sCfg.width or 0, sBarW, sLockedTo)
+                end
+            end
+            -- Show Utility position when Essential resizes (anchored chain)
             if viewerName == VIEWER_ESSENTIAL then
                 local utilViewer = _G[VIEWER_UTILITY]
                 if utilViewer and utilViewer.GetCenter then
                     local ux, uy = utilViewer:GetCenter()
-                    diagMsg = diagMsg .. format(" util-center=%.0f,%.0f", ux or 0, uy or 0)
-                end
-            end
-            -- Show power bar state
-            local core = GetCore and GetCore()
-            if core then
-                local pCfg = core.db and core.db.profile and core.db.profile.powerBar
-                if pCfg then
-                    local pBar = core.powerBar
-                    local pBarW = pBar and pBar:GetWidth() or 0
-                    diagMsg = diagMsg .. format(" |cffFF9900pbar|r: cfgW=%s barW=%.0f locked=%s",
-                        tostring(pCfg.width or "nil"), pBarW,
-                        pCfg.lockedToEssential and "ess" or (pCfg.lockedToUtility and "util" or "no"))
+                    diagMsg = diagMsg .. format(" → util-center=%.0f,%.0f", ux or 0, uy or 0)
                 end
             end
             QUI:DebugPrint(diagMsg)
             return
         end
 
-        -- After Edit Mode exit, Blizzard re-lays-out the CDM viewer with
-        -- the slider's icon size.  Capture it and update QUI's settings so
-        -- LayoutViewer uses the new size instead of overriding it.
+        -- Detect Edit Mode → normal transition.  RegisterEditModeExit fires
+        -- AFTER Blizzard's OnSizeChanged events, so we must detect the
+        -- transition here (first OnSizeChanged with editMode=false after
+        -- it was true) and set the capture flag before LayoutViewer runs.
+        if not isEditMode and svs._wasInEditMode then
+            svs._wasInEditMode = nil
+            svs._captureBlizzardIconSize = true
+        end
+
+        -- After Edit Mode exit, Blizzard fires OnSizeChanged with the
+        -- slider's logical dimensions.  Icon children are STALE (still at
+        -- QUI's previous iconSize from LayoutViewer), so we derive iconSize
+        -- from the viewer's LOGICAL dimensions instead of reading children.
+        --
+        -- For single-row horizontal viewers (Essential): height = iconSize.
+        -- For multi-row viewers (Utility): height >> width/iconCount, so
+        -- fall back to icon child width (correct when slider wasn't touched).
         if svs._captureBlizzardIconSize then
             local w, h = self:GetWidth(), self:GetHeight()
-            if w and w > 2 and h and h > 2 then
-                svs._captureBlizzardIconSize = nil  -- clear only on valid size
-                -- Read icon size from the first visible icon child
-                local capturedSize
-                local sel = self.Selection
-                for i = 1, self:GetNumChildren() do
-                    local child = select(i, self:GetChildren())
-                    if child and child ~= sel and child:IsShown()
-                        and (child.Icon or child.icon)
-                        and (child.Cooldown or child.cooldown) then
-                        local cw = child:GetWidth()
-                        if cw and cw > 1 then
-                            capturedSize = math.floor(cw + 0.5)
-                            break
+            if not w or not h or w < 2 or h < 2 then
+                -- Transient 1x1 reset — wait for Blizzard's real layout.
+                return
+            end
+            svs._captureBlizzardIconSize = nil
+            -- Count visible icon children
+            local iconCount = 0
+            local sel = self.Selection
+            for i = 1, self:GetNumChildren() do
+                local child = select(i, self:GetChildren())
+                if child and child ~= sel and child:IsShown()
+                    and (child.Icon or child.icon)
+                    and (child.Cooldown or child.cooldown) then
+                    iconCount = iconCount + 1
+                end
+            end
+            local capturedSize
+            local measuredPadding
+            local method = "none"
+            if iconCount > 0 then
+                -- First check if the viewer width matches QUI's expected layout
+                -- (i.e., the user did NOT touch Blizzard's Icon Size slider).
+                -- QUI's LayoutViewer sets the viewer to:
+                --   iconCount * iconSize + (iconCount - 1) * padding
+                -- If Blizzard picks up this padded width and feeds it back on
+                -- exit, dividing by iconCount would inflate iconSize by
+                -- ~padding*(iconCount-1)/iconCount each cycle.  Detect the
+                -- "unchanged" case and preserve the current iconSize.
+                local curSettings = GetTrackerSettings(trackerKey)
+                local curRow1 = curSettings and curSettings.row1
+                local curIconSize = curRow1 and curRow1.iconSize
+                local curPadding = curRow1 and curRow1.padding or 0
+                if curIconSize and curIconSize > 1 then
+                    local expectedW = iconCount * curIconSize + math.max(iconCount - 1, 0) * curPadding
+                    if math.abs(w - expectedW) <= math.max(iconCount, 2) then
+                        capturedSize = curIconSize
+                        method = "unchanged"
+                        if iconCount > 1 then
+                            measuredPadding = math.floor(((w - iconCount * capturedSize) / (iconCount - 1)) + 0.5)
                         end
                     end
                 end
-                if capturedSize and capturedSize > 1 then
-                    -- Update QUI's row icon size settings
+
+                if not capturedSize then
+                    local perIconW = w / iconCount
+                    if h <= perIconW * 1.5 then
+                        -- Single-row: derive iconSize from viewer HEIGHT (which
+                        -- equals the icon height) so padding between icons is not
+                        -- conflated with icon size.
+                        local ar = curRow1 and curRow1.aspectRatioCrop or 1.0
+                        capturedSize = math.floor(h * ar + 0.5)
+                        if iconCount > 1 then
+                            measuredPadding = math.floor(((w - iconCount * capturedSize) / (iconCount - 1)) + 0.5)
+                        end
+                        method = "height"
+                    else
+                        -- Multi-row: can't derive iconSize from dimensions alone.
+                        -- Icon children reflect QUI's current iconSize which is
+                        -- correct when the slider wasn't changed for this viewer.
+                        for i = 1, self:GetNumChildren() do
+                            local child = select(i, self:GetChildren())
+                            if child and child ~= sel and child:IsShown()
+                                and (child.Icon or child.icon)
+                                and (child.Cooldown or child.cooldown) then
+                                local cw = child:GetWidth()
+                                if cw and cw > 1 then
+                                    capturedSize = math.floor(cw + 0.5)
+                                    method = "child"
+                                    break
+                                end
+                            end
+                        end
+                        -- Derive padding from the widest row's icon count
+                        if capturedSize and capturedSize > 1 and iconCount > 1 then
+                            local mrSettings = GetTrackerSettings(trackerKey)
+                            local maxRowCount = 0
+                            if mrSettings then
+                                for _, rk in ipairs({"row1", "row2", "row3"}) do
+                                    if mrSettings[rk] and (mrSettings[rk].iconCount or 0) > maxRowCount then
+                                        maxRowCount = mrSettings[rk].iconCount
+                                    end
+                                end
+                            end
+                            if maxRowCount > 1 then
+                                measuredPadding = math.floor(((w - maxRowCount * capturedSize) / (maxRowCount - 1)) + 0.5)
+                            end
+                        end
+                    end
+                end -- if not capturedSize
+            end
+            if capturedSize and capturedSize > 1 then
+                -- Only write settings and re-skin if the icon size actually changed
+                if method ~= "unchanged" then
                     local settings = GetTrackerSettings(trackerKey)
                     if settings then
                         for _, rowKey in ipairs({"row1", "row2", "row3"}) do
@@ -1658,13 +1763,26 @@ local function HookViewer(viewerName, trackerKey)
                             if lis then lis.cdmSkinned = nil end
                         end
                     end
-                    if QUI and QUI.DebugPrint then
-                        QUI:DebugPrint(format("|cff34D399CDM|r CapturedBlizzardIconSize %s: size=%d viewer=%.0fx%.0f",
-                            viewerName == VIEWER_ESSENTIAL and "Ess" or "Util",
-                            capturedSize, w, h))
+                end
+                -- Save measured padding to all rows (applies for both changed and unchanged icon size)
+                if measuredPadding ~= nil then
+                    local padSettings = GetTrackerSettings(trackerKey)
+                    if padSettings then
+                        for _, rowKey in ipairs({"row1", "row2", "row3"}) do
+                            if padSettings[rowKey] then
+                                padSettings[rowKey].padding = measuredPadding
+                            end
+                        end
                     end
                 end
+                if QUI and QUI.DebugPrint then
+                    QUI:DebugPrint(format("|cff34D399CDM|r CapturedBlizzardIconSize %s: size=%d method=%s padding=%s viewer=%.0fx%.0f icons=%d",
+                        viewerName == VIEWER_ESSENTIAL and "Ess" or "Util",
+                        capturedSize, method, measuredPadding and tostring(measuredPadding) or "nil", w, h, iconCount))
+                end
             end
+            svs._captureJustCompleted = true
+            -- Fall through to LayoutViewer which uses the updated iconSize
         end
 
         -- Increment layout counter so OnUpdate polling knows Blizzard changed
@@ -1672,6 +1790,65 @@ local function HookViewer(viewerName, trackerKey)
         -- would call LayoutViewer which fights the user's manual resize.
         svs.ncdmBlizzardLayoutCount = (svs.ncdmBlizzardLayoutCount or 0) + 1
         LayoutViewer(viewerName, trackerKey)
+
+        -- After a capture, LayoutViewer has re-laid-out icons with the new
+        -- iconSize and updated viewer state (cdmIconWidth, cdmRow1Width).
+        -- Update proxies, power bars, and all anchored frames so their
+        -- widths and positions match the new layout.  Call ALL power bar
+        -- update variants unconditionally — each checks its own lock flag
+        -- and returns early if not applicable, so this is safe for any
+        -- anchor chain configuration.
+        if svs._captureJustCompleted then
+            svs._captureJustCompleted = nil
+            -- LayoutViewer has re-laid-out icons and set viewer dimensions
+            -- including QUI's inter-icon padding.  Do NOT override the viewer
+            -- size or state back to Blizzard's raw dimensions — that would
+            -- discard padding, causing power bars to be narrower than the
+            -- actual icon layout.  LayoutViewer's values are the source of
+            -- truth for where icons actually are on screen.
+            if _G.QUI_UpdateCDMAnchorProxyFrames then
+                _G.QUI_UpdateCDMAnchorProxyFrames()
+            end
+            -- Update ALL power bar variants (each checks its own lock flag)
+            if _G.QUI_UpdateLockedPowerBar then _G.QUI_UpdateLockedPowerBar() end
+            if _G.QUI_UpdateLockedSecondaryPowerBar then _G.QUI_UpdateLockedSecondaryPowerBar() end
+            if _G.QUI_UpdateLockedPowerBarToUtility then _G.QUI_UpdateLockedPowerBarToUtility() end
+            if _G.QUI_UpdateLockedSecondaryPowerBarToUtility then _G.QUI_UpdateLockedSecondaryPowerBarToUtility() end
+            -- Snap Utility position relative to Essential (legacy anchor)
+            if _G.QUI_ApplyUtilityAnchor then
+                _G.QUI_ApplyUtilityAnchor()
+            end
+            if _G.QUI_UpdateAnchoredUnitFrames then
+                _G.QUI_UpdateAnchoredUnitFrames()
+            end
+            -- BFS walk from this viewer's anchor key to reposition dependents
+            local anchorKey = viewerName == VIEWER_ESSENTIAL and "cdmEssential" or "cdmUtility"
+            if _G.QUI_UpdateFramesAnchoredTo then
+                _G.QUI_UpdateFramesAnchoredTo(anchorKey)
+            end
+            -- Post-capture diagnostic: confirm the update chain fired
+            if QUI and QUI.DebugPrint then
+                local shortName = viewerName == VIEWER_ESSENTIAL and "Ess" or "Util"
+                local viewerW = self:GetWidth() or 0
+                local proxyFrame = _G.QUI_GetCDMAnchorProxyFrame and _G.QUI_GetCDMAnchorProxyFrame(anchorKey)
+                local proxyW = proxyFrame and proxyFrame:GetWidth() or 0
+                local diagMsg = format("|cff34D399CDM|r PostCapture %s: viewer=%.0f state(iconW=%.0f row1W=%.0f) proxy=%.0f",
+                    shortName, viewerW, svs.cdmIconWidth or 0, svs.cdmRow1Width or 0, proxyW)
+                if QUICore and QUICore.db then
+                    local pCfg = QUICore.db.profile and QUICore.db.profile.powerBar
+                    if pCfg then
+                        local pBar = QUICore.powerBar
+                        diagMsg = diagMsg .. format(" → pbar(cfgW=%.0f frameW=%.0f)", pCfg.width or 0, pBar and pBar:GetWidth() or 0)
+                    end
+                    local sCfg = QUICore.db.profile and QUICore.db.profile.secondaryPowerBar
+                    if sCfg then
+                        local sBar = QUICore.secondaryPowerBar
+                        diagMsg = diagMsg .. format(" → sbar(cfgW=%.0f frameW=%.0f)", sCfg.width or 0, sBar and sBar:GetWidth() or 0)
+                    end
+                end
+                QUI:DebugPrint(diagMsg)
+            end
+        end
     end)
 
     -- Step 2: Layout hook REMOVED (was causing cascade calls)
@@ -2300,18 +2477,12 @@ local function Initialize()
                     SyncViewerSelectionSafe(viewer)
                 end
             end
-            -- Flag viewers to capture Blizzard's icon size from the Edit Mode
-            -- slider when Blizzard re-lays-out (happens AFTER LayoutViewer).
-            for _, vn in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
-                local v = _G[vn]
-                if v then
-                    local vvs = getViewerState(v)
-                    vvs._captureBlizzardIconSize = true
-                end
-            end
-            -- Relayout Essential/Utility icons to match post-Edit-Mode size
-            LayoutViewer(VIEWER_ESSENTIAL, "essential")
-            LayoutViewer(VIEWER_UTILITY, "utility")
+            -- NOTE: LayoutViewer is NOT called here.  The capture mechanism in
+            -- OnSizeChanged detects the Edit Mode → normal transition (via
+            -- _wasInEditMode flag) and captures Blizzard's icon size before
+            -- falling through to LayoutViewer with the updated settings.
+            -- By the time this exit callback fires, OnSizeChanged has already
+            -- handled the transition.
             -- Refresh proxies and re-anchor all dependent frames
             if _G.QUI_UpdateCDMAnchorProxyFrames then
                 _G.QUI_UpdateCDMAnchorProxyFrames()
@@ -2330,9 +2501,58 @@ local function Initialize()
             for _, delay in ipairs({0.15, 0.5, 1.0}) do
                 C_Timer.After(delay, function()
                     if InCombatLockdown() then return end
+                    -- Fallback: clean up transition state and ensure LayoutViewer
+                    -- has run at least once after Edit Mode exit.
+                    for _, vn in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
+                        local v = _G[vn]
+                        if v then
+                            local vvs = getViewerState(v)
+                            vvs._wasInEditMode = nil  -- clean up stale flags
+                            if vvs._captureBlizzardIconSize then
+                                vvs._captureBlizzardIconSize = nil
+                                local tk = vn == VIEWER_ESSENTIAL and "essential" or "utility"
+                                LayoutViewer(vn, tk)
+                                if QUI and QUI.DebugPrint then
+                                    QUI:DebugPrint(format("|cff34D399CDM|r Capture fallback: LayoutViewer for %s (delay=%.2f)", tk, delay))
+                                end
+                            end
+                        end
+                    end
                     if _G.QUI_RefreshCDMViewerFromBounds then
                         _G.QUI_RefreshCDMViewerFromBounds(_G[VIEWER_ESSENTIAL], "essential")
                         _G.QUI_RefreshCDMViewerFromBounds(_G[VIEWER_UTILITY], "utility")
+                    end
+                    -- Re-derive essential/utility padding from viewer dimensions
+                    for _, vn in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
+                        local v = _G[vn]
+                        if v then
+                            local tk = vn == VIEWER_ESSENTIAL and "essential" or "utility"
+                            local settings = GetTrackerSettings(tk)
+                            if settings and settings.row1 then
+                                local vw = v:GetWidth() or 0
+                                local iconSize = settings.row1.iconSize or 39
+                                local maxCount = 0
+                                for _, rk in ipairs({"row1", "row2", "row3"}) do
+                                    if settings[rk] and (settings[rk].iconCount or 0) > maxCount then
+                                        maxCount = settings[rk].iconCount
+                                    end
+                                end
+                                if maxCount > 1 and vw > 2 then
+                                    local expectedW = maxCount * iconSize + (maxCount - 1) * (settings.row1.padding or 0)
+                                    if math.abs(vw - expectedW) > 1 then
+                                        local derivedPad = math.floor(((vw - maxCount * iconSize) / (maxCount - 1)) + 0.5)
+                                        for _, rk in ipairs({"row1", "row2", "row3"}) do
+                                            if settings[rk] then
+                                                settings[rk].padding = derivedPad
+                                            end
+                                        end
+                                        if QUI and QUI.DebugPrint then
+                                            QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: re-derived %s padding = %d (delay=%.2f)", tk, derivedPad, delay))
+                                        end
+                                    end
+                                end
+                            end
+                        end
                     end
                 end)
             end

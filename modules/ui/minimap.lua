@@ -1153,13 +1153,16 @@ local function UpdateMinimapSize()
     -- Apply scale multiplier
     Minimap:SetScale(settings.scale or 1.0)
 
-    -- Force render update by toggling zoom
-    if Minimap:GetZoom() ~= 5 then
-        Minimap.ZoomIn:Click()
-        Minimap.ZoomOut:Click()
+    -- Force render update by toggling zoom.
+    -- Use SetZoom API instead of ZoomIn/ZoomOut:Click() — clicking protected
+    -- Blizzard buttons from addon code spreads taint into the secure context.
+    local z = Minimap:GetZoom()
+    if z < 5 then
+        Minimap:SetZoom(z + 1)
+        Minimap:SetZoom(z)
     else
-        Minimap.ZoomOut:Click()
-        Minimap.ZoomIn:Click()
+        Minimap:SetZoom(z - 1)
+        Minimap:SetZoom(z)
     end
     
     -- Update LibDBIcon button radius for square minimap
