@@ -436,6 +436,20 @@ local function IsIconFrame(child)
 end
 
 ---------------------------------------------------------------------------
+-- HELPER: Iterate visible icon children of a viewer (skips Selection)
+-- Callback receives (child); return true from callback to stop early.
+---------------------------------------------------------------------------
+local function ForEachVisibleIcon(viewer, callback)
+    local sel = viewer.Selection
+    for i = 1, viewer:GetNumChildren() do
+        local child = select(i, viewer:GetChildren())
+        if child and child ~= sel and child:IsShown() and IsIconFrame(child) then
+            if callback(child) then return end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- HELPER: Check if an icon has a valid spell texture (not an empty placeholder)
 ---------------------------------------------------------------------------
 local function HasValidTexture(icon)
@@ -1525,22 +1539,16 @@ local function HookViewer(viewerName, trackerKey)
     local function MeasureViewerIconBounds(v)
         local boundsL, boundsR, boundsT, boundsB
         local iconCount = 0
-        local sel = v.Selection
-        for i = 1, v:GetNumChildren() do
-            local child = select(i, v:GetChildren())
-            if child and child ~= sel and child:IsShown()
-                and (child.Icon or child.icon)
-                and (child.Cooldown or child.cooldown) then
-                local cl, cr, ct, cb = child:GetLeft(), child:GetRight(), child:GetTop(), child:GetBottom()
-                if cl and cr and ct and cb then
-                    iconCount = iconCount + 1
-                    boundsL = boundsL and math.min(boundsL, cl) or cl
-                    boundsR = boundsR and math.max(boundsR, cr) or cr
-                    boundsT = boundsT and math.max(boundsT, ct) or ct
-                    boundsB = boundsB and math.min(boundsB, cb) or cb
-                end
+        ForEachVisibleIcon(v, function(child)
+            local cl, cr, ct, cb = child:GetLeft(), child:GetRight(), child:GetTop(), child:GetBottom()
+            if cl and cr and ct and cb then
+                iconCount = iconCount + 1
+                boundsL = boundsL and math.min(boundsL, cl) or cl
+                boundsR = boundsR and math.max(boundsR, cr) or cr
+                boundsT = boundsT and math.max(boundsT, ct) or ct
+                boundsB = boundsB and math.min(boundsB, cb) or cb
             end
-        end
+        end)
         if iconCount > 0 and boundsL and boundsR and boundsT and boundsB then
             return boundsR - boundsL, boundsT - boundsB, iconCount
         end
@@ -1698,15 +1706,7 @@ local function HookViewer(viewerName, trackerKey)
             svs._captureBlizzardIconSize = nil
             -- Count visible icon children
             local iconCount = 0
-            local sel = self.Selection
-            for i = 1, self:GetNumChildren() do
-                local child = select(i, self:GetChildren())
-                if child and child ~= sel and child:IsShown()
-                    and (child.Icon or child.icon)
-                    and (child.Cooldown or child.cooldown) then
-                    iconCount = iconCount + 1
-                end
-            end
+            ForEachVisibleIcon(self, function() iconCount = iconCount + 1 end)
             local capturedSize
             local measuredPadding
             local method = "none"
@@ -1750,19 +1750,14 @@ local function HookViewer(viewerName, trackerKey)
                         -- Multi-row: can't derive iconSize from dimensions alone.
                         -- Icon children reflect QUI's current iconSize which is
                         -- correct when the slider wasn't changed for this viewer.
-                        for i = 1, self:GetNumChildren() do
-                            local child = select(i, self:GetChildren())
-                            if child and child ~= sel and child:IsShown()
-                                and (child.Icon or child.icon)
-                                and (child.Cooldown or child.cooldown) then
-                                local cw = child:GetWidth()
-                                if cw and cw > 1 then
-                                    capturedSize = math.floor(cw + 0.5)
-                                    method = "child"
-                                    break
-                                end
+                        ForEachVisibleIcon(self, function(child)
+                            local cw = child:GetWidth()
+                            if cw and cw > 1 then
+                                capturedSize = math.floor(cw + 0.5)
+                                method = "child"
+                                return true -- stop early
                             end
-                        end
+                        end)
                         -- Derive padding from the widest row's icon count
                         if capturedSize and capturedSize > 1 and iconCount > 1 then
                             local mrSettings = GetTrackerSettings(trackerKey)
