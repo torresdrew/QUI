@@ -1379,6 +1379,19 @@ local function GetCDMAnchorProxy(parentKey)
             local c = colors[parentKey] or { 1, 1, 0 }
             proxy._debugBorder:SetBackdropBorderColor(c[1], c[2], c[3], 1)
             proxy._debugBorder:SetBackdropColor(c[1], c[2], c[3], 0.15)
+            -- Label in the center
+            local label = proxy._debugBorder:CreateFontString(nil, "OVERLAY")
+            label:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+            label:SetPoint("CENTER")
+            label:SetTextColor(c[1], c[2], c[3], 1)
+            local labels = {
+                cdmEssential    = "Essential Proxy",
+                cdmUtility      = "Utility Proxy",
+                primaryPower    = "Primary Power Proxy",
+                secondaryPower  = "Secondary Power Proxy",
+            }
+            label:SetText(labels[parentKey] or parentKey)
+            proxy._debugLabel = label
         end
         proxy._debugBorder:Show()
     elseif proxy._debugBorder then
