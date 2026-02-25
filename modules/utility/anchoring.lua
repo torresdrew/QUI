@@ -1360,8 +1360,11 @@ local function GetCDMAnchorProxy(parentKey)
     end
     -- Only update size when it actually changes to avoid triggering
     -- OnSizeChanged hooks (which fire DebouncedReapplyOverrides).
+    -- Use epsilon comparison — WoW's GetWidth/GetHeight can return
+    -- slightly different floats than what was passed to SetSize,
+    -- causing infinite SetSize→OnSizeChanged→SetSize loops.
     local curW, curH = proxy:GetWidth(), proxy:GetHeight()
-    if curW ~= width or curH ~= height then
+    if math.abs((curW or 0) - width) > 0.5 or math.abs((curH or 0) - height) > 0.5 then
         proxy:SetSize(width, height)
         if QUI and QUI.DebugPrint then
             local srcScale = sourceFrame and sourceFrame:GetEffectiveScale() or 0
