@@ -1349,6 +1349,39 @@ local function LayoutViewer(viewerName, trackerKey)
         vs.cdmPotentialBottomRowWidth = potentialBottomRowWidth
     end
 
+    -- Verify calculated dimensions against actual icon bounds (out of combat only).
+    -- The formula may disagree with reality due to rounding, aspect ratio crops,
+    -- or stale settings.  Icon positions are the ground truth after positioning.
+    if not InCombatLockdown() and #iconsToLayout >= 2 then
+        local firstIcon = iconsToLayout[1]
+        local lastIcon = iconsToLayout[#iconsToLayout]
+        if firstIcon and lastIcon then
+            local fl, fr, ft, fb = firstIcon:GetLeft(), firstIcon:GetRight(), firstIcon:GetTop(), firstIcon:GetBottom()
+            local ll, lr, lt, lb = lastIcon:GetLeft(), lastIcon:GetRight(), lastIcon:GetTop(), lastIcon:GetBottom()
+            if fl and fr and ft and fb and ll and lr and lt and lb then
+                local measuredW = math.max(fr, lr) - math.min(fl, ll)
+                local measuredH = math.max(ft, lt) - math.min(fb, lb)
+                if measuredW > 1 and measuredH > 1 then
+                    if math.abs(maxRowWidth - measuredW) > 1 then
+                        maxRowWidth = measuredW
+                        vs.cdmIconWidth = maxRowWidth
+                        if isVertical then
+                            vs.cdmRow1Width = maxRowWidth
+                            vs.cdmBottomRowWidth = maxRowWidth
+                        else
+                            vs.cdmRow1Width = rowWidths[1] and math.max(rowWidths[1], measuredW) or measuredW
+                            vs.cdmBottomRowWidth = rowWidths[#rows] and math.max(rowWidths[#rows], measuredW) or measuredW
+                        end
+                    end
+                    if math.abs(totalHeight - measuredH) > 1 then
+                        totalHeight = measuredH
+                        vs.cdmTotalHeight = totalHeight
+                    end
+                end
+            end
+        end
+    end
+
     -- Resize viewer (suppress OnSizeChanged triggering another layout)
     if maxRowWidth > 0 and totalHeight > 0 then
         if InCombatLockdown() then
@@ -2537,38 +2570,64 @@ local function Initialize()
                         _G.QUI_RefreshCDMViewerFromBounds(_G[VIEWER_ESSENTIAL], "essential")
                         _G.QUI_RefreshCDMViewerFromBounds(_G[VIEWER_UTILITY], "utility")
                     end
-                    -- Re-derive essential/utility padding from viewer dimensions.
-                    -- Use viewer state (QUI's own calculated width) instead of
-                    -- v:GetWidth() — the Blizzard frame can be in a transient state
-                    -- after Edit Mode exit, producing garbage values like -20.
+                    -- Measure actual icon gap for essential/utility padding.
+                    -- Instead of deriving from viewer width (which can be transient),
+                    -- read the real gap between adjacent icon edges — ground truth.
                     for _, vn in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
                         local v = _G[vn]
                         if v then
                             local tk = vn == VIEWER_ESSENTIAL and "essential" or "utility"
                             local settings = GetTrackerSettings(tk)
                             if settings and settings.row1 then
-                                local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(v)
-                                local vw = (vs and vs.iconWidth) or 0
-                                if vw < 2 then vw = v:GetWidth() or 0 end  -- fallback only if state is empty
-                                local iconSize = settings.row1.iconSize or 39
-                                local maxCount = 0
-                                for _, rk in ipairs({"row1", "row2", "row3"}) do
-                                    if settings[rk] and (settings[rk].iconCount or 0) > maxCount then
-                                        maxCount = settings[rk].iconCount
+                                -- Collect visible icons and sort by screen position
+                                local icons = {}
+                                local sel = v.Selection
+                                for i = 1, v:GetNumChildren() do
+                                    local child = select(i, v:GetChildren())
+                                    if child and child ~= sel and not child._isCustomCDMIcon
+                                       and IsIconFrame(child) and child:IsShown()
+                                       and HasValidTexture(child) then
+                                        icons[#icons + 1] = child
                                     end
                                 end
-                                if maxCount > 1 and vw > 2 then
-                                    local expectedW = maxCount * iconSize + (maxCount - 1) * (settings.row1.padding or 0)
-                                    if math.abs(vw - expectedW) > 1 then
-                                        local derivedPad = math.floor(((vw - maxCount * iconSize) / (maxCount - 1)) + 0.5)
-                                        if derivedPad >= 0 then
-                                            for _, rk in ipairs({"row1", "row2", "row3"}) do
-                                                if settings[rk] then
-                                                    settings[rk].padding = derivedPad
+                                if #icons >= 2 then
+                                    local isVert = (settings.layoutDirection or "HORIZONTAL") == "VERTICAL"
+                                    if isVert then
+                                        table.sort(icons, function(a, b)
+                                            return (a:GetTop() or 0) > (b:GetTop() or 0)
+                                        end)
+                                        local b1 = icons[1]:GetBottom()
+                                        local t2 = icons[2]:GetTop()
+                                        if b1 and t2 then
+                                            local gap = math.floor(b1 - t2 + 0.5)
+                                            if gap >= 0 then
+                                                for _, rk in ipairs({"row1", "row2", "row3"}) do
+                                                    if settings[rk] then
+                                                        settings[rk].padding = gap
+                                                    end
+                                                end
+                                                if QUI and QUI.DebugPrint then
+                                                    QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: measured %s padding = %d (delay=%.2f)", tk, gap, delay))
                                                 end
                                             end
-                                            if QUI and QUI.DebugPrint then
-                                                QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: re-derived %s padding = %d (delay=%.2f)", tk, derivedPad, delay))
+                                        end
+                                    else
+                                        table.sort(icons, function(a, b)
+                                            return (a:GetLeft() or 0) < (b:GetLeft() or 0)
+                                        end)
+                                        local r1 = icons[1]:GetRight()
+                                        local l2 = icons[2]:GetLeft()
+                                        if r1 and l2 then
+                                            local gap = math.floor(l2 - r1 + 0.5)
+                                            if gap >= 0 then
+                                                for _, rk in ipairs({"row1", "row2", "row3"}) do
+                                                    if settings[rk] then
+                                                        settings[rk].padding = gap
+                                                    end
+                                                end
+                                                if QUI and QUI.DebugPrint then
+                                                    QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: measured %s padding = %d (delay=%.2f)", tk, gap, delay))
+                                                end
                                             end
                                         end
                                     end
