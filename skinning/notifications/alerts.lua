@@ -57,10 +57,16 @@ end
 
 --- Force alpha to 1 (prevents Blizzard fade animations)
 -- TAINT SAFETY: Defer to break taint chain from secure context.
+-- Re-entry guard: SetAlpha(1) re-triggers the hooksecurefunc that calls
+-- ForceAlpha, which would schedule another redundant timer without this.
+local _forceAlphaActive = {}
 local function ForceAlpha(frame)
+    if _forceAlphaActive[frame] then return end
     C_Timer.After(0, function()
         if frame and frame.SetAlpha and frame:GetAlpha() ~= 1 then
+            _forceAlphaActive[frame] = true
             frame:SetAlpha(1)
+            _forceAlphaActive[frame] = nil
         end
     end)
 end
