@@ -1930,7 +1930,8 @@ local function HookViewer(viewerName, trackerKey)
                     end
                 end
                 -- Save measured padding to all rows (applies for both changed and unchanged icon size)
-                if measuredPadding ~= nil then
+                -- Clamp to 0: negative padding means the viewer width was transient/stale.
+                if measuredPadding ~= nil and measuredPadding >= 0 then
                     local padSettings = GetTrackerSettings(trackerKey)
                     if padSettings then
                         for _, rowKey in ipairs({"row1", "row2", "row3"}) do
@@ -2793,13 +2794,16 @@ local function Initialize()
                                     local expectedW = maxCount * iconSize + (maxCount - 1) * (settings.row1.padding or 0)
                                     if math.abs(vw - expectedW) > 1 then
                                         local derivedPad = math.floor(((vw - maxCount * iconSize) / (maxCount - 1)) + 0.5)
-                                        for _, rk in ipairs({"row1", "row2", "row3"}) do
-                                            if settings[rk] then
-                                                settings[rk].padding = derivedPad
+                                        -- Negative padding means viewer width is transient/stale — skip
+                                        if derivedPad >= 0 then
+                                            for _, rk in ipairs({"row1", "row2", "row3"}) do
+                                                if settings[rk] then
+                                                    settings[rk].padding = derivedPad
+                                                end
                                             end
-                                        end
-                                        if QUI and QUI.DebugPrint then
-                                            QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: re-derived %s padding = %d (delay=%.2f)", tk, derivedPad, delay))
+                                            if QUI and QUI.DebugPrint then
+                                                QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: re-derived %s padding = %d (delay=%.2f)", tk, derivedPad, delay))
+                                            end
                                         end
                                     end
                                 end
