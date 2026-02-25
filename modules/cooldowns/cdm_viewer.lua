@@ -1144,6 +1144,14 @@ local function RecalcCombatDimensions(viewer, trackerKey, iconCount)
         maxRowWidth = math.max(maxRowWidth, minWidth)
     end
 
+    -- Prefer bounds-corrected values if they exist for the same icon count
+    if vs._boundsCorrectedIconCount == iconCount
+        and vs._boundsCorrectedW and vs._boundsCorrectedH
+        and math.abs(maxRowWidth - vs._boundsCorrectedW) < 5
+        and math.abs(totalHeight - vs._boundsCorrectedH) < 5 then
+        maxRowWidth = vs._boundsCorrectedW
+        totalHeight = vs._boundsCorrectedH
+    end
     -- Update viewer state (same fields as LayoutViewer)
     vs.cdmIconWidth = maxRowWidth
     vs.cdmTotalHeight = totalHeight
@@ -1486,7 +1494,20 @@ local function LayoutViewer(viewerName, trackerKey)
         end
     end
     
-    -- Store dimensions
+    -- Store dimensions — prefer bounds-corrected values if they exist for the
+    -- same icon count (prevents feedback loop between formula and measurement).
+    if vs._boundsCorrectedIconCount == #iconsToLayout
+        and vs._boundsCorrectedW and vs._boundsCorrectedH
+        and math.abs(maxRowWidth - vs._boundsCorrectedW) < 5
+        and math.abs(totalHeight - vs._boundsCorrectedH) < 5 then
+        maxRowWidth = vs._boundsCorrectedW
+        totalHeight = vs._boundsCorrectedH
+    else
+        -- Icon count changed or formula diverged significantly — clear stale correction
+        vs._boundsCorrectedW = nil
+        vs._boundsCorrectedH = nil
+        vs._boundsCorrectedIconCount = nil
+    end
     vs.cdmIconWidth = maxRowWidth
     vs.cdmTotalHeight = totalHeight
     if QUI and QUI.DebugPrint then
@@ -1568,6 +1589,10 @@ local function LayoutViewer(viewerName, trackerKey)
                         vs.cdmBottomRowWidth = measuredW
                         vs.cdmPotentialRow1Width = measuredW
                         vs.cdmPotentialBottomRowWidth = measuredW
+                        -- Store bounds correction so LayoutViewer won't overwrite
+                        vs._boundsCorrectedW = measuredW
+                        vs._boundsCorrectedH = measuredH
+                        vs._boundsCorrectedIconCount = iconCount
                         if QUI and QUI.DebugPrint then
                             QUI:DebugPrint(format("|cff34D399CDM|r BoundsCorrection %s: formula=%.0fx%.0f actual=%.0fx%.0f icons=%d",
                                 trackerKey, curW, curH, measuredW, measuredH, iconCount))
