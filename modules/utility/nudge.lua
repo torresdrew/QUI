@@ -2649,13 +2649,19 @@ RegisterEditModeCallbacks()
 local minimapClusterSyncFrame = CreateFrame("Frame")
 minimapClusterSyncFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
 minimapClusterSyncFrame:RegisterEvent("PLAYER_LOGIN")
-minimapClusterSyncFrame:SetScript("OnEvent", function(self)
+local _minimapSyncFired = {}
+minimapClusterSyncFrame:SetScript("OnEvent", function(self, event)
+    _minimapSyncFired[event] = true
     -- Defer slightly to ensure Minimap is positioned and layouts are processed
     C_Timer.After(0.5, function()
         QUICore.SyncMinimapClusterToMinimap("login")
     end)
-    -- Only need to sync once on startup; unregister after first fire
-    self:UnregisterAllEvents()
+    -- Only unregister this specific event; keep listening for the other
+    self:UnregisterEvent(event)
+    -- Once both have fired, we're done
+    if _minimapSyncFired["EDIT_MODE_LAYOUTS_UPDATED"] and _minimapSyncFired["PLAYER_LOGIN"] then
+        _minimapSyncFired = nil
+    end
 end)
 
 -- Fix anchor mismatch on startup (for /reload scenarios)
