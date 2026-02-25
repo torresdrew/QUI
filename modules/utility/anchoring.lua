@@ -1314,6 +1314,45 @@ local function GetCDMAnchorProxy(parentKey)
         cdmAnchorProxyPendingAfterCombat[parentKey] = true
     end
 
+    -- Debug overlay: show a colored border on the proxy when debug mode is active
+    local debugActive = QUI and QUI.DEBUG_MODE
+    if debugActive then
+        if not proxy._debugBorder then
+            proxy._debugBorder = CreateFrame("Frame", nil, proxy, "BackdropTemplate")
+            proxy._debugBorder:SetAllPoints(proxy)
+            proxy._debugBorder:SetFrameStrata("TOOLTIP")
+            proxy._debugBorder:SetFrameLevel(999)
+            proxy._debugBorder:SetBackdrop({
+                bgFile = "Interface\\BUTTONS\\WHITE8X8",
+                edgeFile = "Interface\\BUTTONS\\WHITE8X8",
+                edgeSize = 2,
+            })
+            local colors = {
+                cdmEssential    = { 0.2, 1.0, 0.6 },
+                cdmUtility      = { 1.0, 0.6, 0.2 },
+                primaryPower    = { 0.2, 0.6, 1.0 },
+                secondaryPower  = { 1.0, 0.2, 0.6 },
+            }
+            local c = colors[parentKey] or { 1, 1, 0 }
+            proxy._debugBorder:SetBackdropBorderColor(c[1], c[2], c[3], 1)
+            proxy._debugBorder:SetBackdropColor(c[1], c[2], c[3], 0.15)
+            local label = proxy._debugBorder:CreateFontString(nil, "OVERLAY")
+            label:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
+            label:SetPoint("CENTER")
+            label:SetTextColor(c[1], c[2], c[3], 1)
+            local labels = {
+                cdmEssential    = "Essential Proxy",
+                cdmUtility      = "Utility Proxy",
+                primaryPower    = "Primary Power Proxy",
+                secondaryPower  = "Secondary Power Proxy",
+            }
+            label:SetText(labels[parentKey] or parentKey)
+        end
+        proxy._debugBorder:Show()
+    elseif proxy._debugBorder then
+        proxy._debugBorder:Hide()
+    end
+
     return proxy
 end
 

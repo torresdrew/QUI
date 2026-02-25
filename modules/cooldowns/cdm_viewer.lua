@@ -1361,6 +1361,20 @@ local function LayoutViewer(viewerName, trackerKey)
     -- Store dimensions
     vs.cdmIconWidth = maxRowWidth
     vs.cdmTotalHeight = totalHeight
+    if QUI and QUI.DebugPrint then
+        local rowDbg = ""
+        for rn, rc in ipairs(rows) do
+            local actual = math.min(rc.count, #iconsToLayout - (function()
+                local idx = 1
+                for ri = 1, rn - 1 do idx = idx + math.min(rows[ri].count, #iconsToLayout - idx + 1) end
+                return idx
+            end)() + 1)
+            rowDbg = rowDbg .. format(" r%d(%d/%d sz=%d pad=%d w=%d)",
+                rn, actual, rc.count, rc.size, rc.padding or 0, rowWidths[rn] or 0)
+        end
+        QUI:DebugPrint(format("|cff34D399CDM|r LayoutViewer %s: icons=%d maxRowW=%.0f totalH=%.0f%s",
+            trackerKey, #iconsToLayout, maxRowWidth, totalHeight, rowDbg))
+    end
     vs.cdmRow1IconHeight = rows[1] and (rows[1].size / (rows[1].aspectRatioCrop or 1.0)) or 0
     vs.cdmRow1BorderSize = rows[1] and rows[1].borderSize or 0
     vs.cdmBottomRowBorderSize = rows[#rows] and rows[#rows].borderSize or 0
@@ -1384,38 +1398,12 @@ local function LayoutViewer(viewerName, trackerKey)
         vs.cdmPotentialBottomRowWidth = potentialBottomRowWidth
     end
 
-    -- Verify calculated dimensions against actual icon bounds (out of combat only).
-    -- The formula may disagree with reality due to rounding, aspect ratio crops,
-    -- or stale settings.  Icon positions are the ground truth after positioning.
-    if not InCombatLockdown() and #iconsToLayout >= 2 then
-        local firstIcon = iconsToLayout[1]
-        local lastIcon = iconsToLayout[#iconsToLayout]
-        if firstIcon and lastIcon then
-            local fl, fr, ft, fb = firstIcon:GetLeft(), firstIcon:GetRight(), firstIcon:GetTop(), firstIcon:GetBottom()
-            local ll, lr, lt, lb = lastIcon:GetLeft(), lastIcon:GetRight(), lastIcon:GetTop(), lastIcon:GetBottom()
-            if fl and fr and ft and fb and ll and lr and lt and lb then
-                local measuredW = math.max(fr, lr) - math.min(fl, ll)
-                local measuredH = math.max(ft, lt) - math.min(fb, lb)
-                if measuredW > 1 and measuredH > 1 then
-                    if math.abs(maxRowWidth - measuredW) > 1 then
-                        maxRowWidth = measuredW
-                        vs.cdmIconWidth = maxRowWidth
-                        if isVertical then
-                            vs.cdmRow1Width = maxRowWidth
-                            vs.cdmBottomRowWidth = maxRowWidth
-                        else
-                            vs.cdmRow1Width = rowWidths[1] and math.max(rowWidths[1], measuredW) or measuredW
-                            vs.cdmBottomRowWidth = rowWidths[#rows] and math.max(rowWidths[#rows], measuredW) or measuredW
-                        end
-                    end
-                    if math.abs(totalHeight - measuredH) > 1 then
-                        totalHeight = measuredH
-                        vs.cdmTotalHeight = totalHeight
-                    end
-                end
-            end
-        end
-    end
+    -- LayoutViewer's formula is the authoritative source for dimensions.
+    -- It knows the row structure (per-row icon counts, sizes, padding)
+    -- and produces correct maxRowWidth/totalHeight.  A previous bounds
+    -- verification here measured icon positions post-SetPoint, but those
+    -- coordinates can be stale within the same frame and the bounding-box
+    -- approach loses row structure information in multi-row layouts.
 
     -- Resize viewer (suppress OnSizeChanged triggering another layout)
     if maxRowWidth > 0 and totalHeight > 0 then
@@ -1702,7 +1690,6 @@ local function HookViewer(viewerName, trackerKey)
             local iconCount = 0
             ForEachVisibleIcon(self, function() iconCount = iconCount + 1 end)
             local capturedSize
-            local measuredPadding
             local method = "none"
             if iconCount > 0 then
                 -- First check if the viewer width matches QUI's expected layout
@@ -1722,9 +1709,6 @@ local function HookViewer(viewerName, trackerKey)
                     if math.abs(w - expectedW) <= math.max(iconCount, 2) then
                         capturedSize = curIconSize
                         method = "unchanged"
-                        if iconCount > 1 then
-                            measuredPadding = math.floor(((w - iconCount * capturedSize) / (iconCount - 1)) + 0.5)
-                        end
                     end
                 end
 
@@ -1736,9 +1720,6 @@ local function HookViewer(viewerName, trackerKey)
                         -- conflated with icon size.
                         local ar = curRow1 and curRow1.aspectRatioCrop or 1.0
                         capturedSize = math.floor(h * ar + 0.5)
-                        if iconCount > 1 then
-                            measuredPadding = math.floor(((w - iconCount * capturedSize) / (iconCount - 1)) + 0.5)
-                        end
                         method = "height"
                     else
                         -- Multi-row: can't derive iconSize from dimensions alone.
@@ -1752,21 +1733,6 @@ local function HookViewer(viewerName, trackerKey)
                                 return true -- stop early
                             end
                         end)
-                        -- Derive padding from the widest row's icon count
-                        if capturedSize and capturedSize > 1 and iconCount > 1 then
-                            local mrSettings = GetTrackerSettings(trackerKey)
-                            local maxRowCount = 0
-                            if mrSettings then
-                                for _, rk in ipairs({"row1", "row2", "row3"}) do
-                                    if mrSettings[rk] and (mrSettings[rk].iconCount or 0) > maxRowCount then
-                                        maxRowCount = mrSettings[rk].iconCount
-                                    end
-                                end
-                            end
-                            if maxRowCount > 1 then
-                                measuredPadding = math.floor(((w - maxRowCount * capturedSize) / (maxRowCount - 1)) + 0.5)
-                            end
-                        end
                     end
                 end -- if not capturedSize
             end
@@ -1790,22 +1756,10 @@ local function HookViewer(viewerName, trackerKey)
                         end
                     end
                 end
-                -- Save measured padding to all rows (applies for both changed and unchanged icon size)
-                -- Clamp to 0: negative padding means the viewer width was transient/stale.
-                if measuredPadding ~= nil and measuredPadding >= 0 then
-                    local padSettings = GetTrackerSettings(trackerKey)
-                    if padSettings then
-                        for _, rowKey in ipairs({"row1", "row2", "row3"}) do
-                            if padSettings[rowKey] then
-                                padSettings[rowKey].padding = measuredPadding
-                            end
-                        end
-                    end
-                end
                 if QUI and QUI.DebugPrint then
-                    QUI:DebugPrint(format("|cff34D399CDM|r CapturedBlizzardIconSize %s: size=%d method=%s padding=%s viewer=%.0fx%.0f icons=%d",
+                    QUI:DebugPrint(format("|cff34D399CDM|r CapturedBlizzardIconSize %s: size=%d method=%s viewer=%.0fx%.0f icons=%d",
                         viewerName == VIEWER_ESSENTIAL and "Ess" or "Util",
-                        capturedSize, method, measuredPadding and tostring(measuredPadding) or "nil", w, h, iconCount))
+                        capturedSize, method, w, h, iconCount))
                 end
             end
             svs._captureJustCompleted = true
@@ -2249,52 +2203,12 @@ _G.QUI_SetCDMViewerBounds = function(viewer, boundsW, boundsH)
     vs.cdmTotalHeight = boundsH
 end
 
--- Measure actual icon bounds for a viewer and refresh viewer state + dependents.
--- Called after Edit Mode exit with a short delay so Blizzard has applied the new
--- icon size setting before we measure.
+-- Refresh proxies and dependent frames after Edit Mode exit.
+-- LayoutViewer's formula is the authoritative source for viewer state
+-- dimensions — this function just ensures proxies and dependent frames
+-- are re-synced without overriding viewer state from icon bounds.
 _G.QUI_RefreshCDMViewerFromBounds = function(viewer, trackerKey)
     if not viewer then return end
-    -- Measure icon bounding box
-    local boundsL, boundsR, boundsT, boundsB
-    local iconCount = 0
-    local sel = viewer.Selection
-    for i = 1, viewer:GetNumChildren() do
-        local child = select(i, viewer:GetChildren())
-        if child and child ~= sel and child:IsShown()
-            and (child.Icon or child.icon)
-            and (child.Cooldown or child.cooldown) then
-            local cl, cr, ct, cb = child:GetLeft(), child:GetRight(), child:GetTop(), child:GetBottom()
-            if cl and cr and ct and cb then
-                iconCount = iconCount + 1
-                boundsL = boundsL and math.min(boundsL, cl) or cl
-                boundsR = boundsR and math.max(boundsR, cr) or cr
-                boundsT = boundsT and math.max(boundsT, ct) or ct
-                boundsB = boundsB and math.min(boundsB, cb) or cb
-            end
-        end
-    end
-    local iconW = (iconCount > 0 and boundsL and boundsR) and (boundsR - boundsL) or 0
-    local iconH = (iconCount > 0 and boundsT and boundsB) and (boundsT - boundsB) or 0
-    -- Also consider the viewer's logical size (Blizzard may have resized it)
-    local logW, logH = viewer:GetWidth() or 0, viewer:GetHeight() or 0
-    local w = math.max(iconW, logW)
-    local h = math.max(iconH, logH)
-    if w < 2 or h < 2 then return end
-    -- Check if dimensions actually differ from current viewer state
-    local vs = _viewerState[viewer]
-    local curW = vs and vs.cdmIconWidth or 0
-    local curH = vs and vs.cdmTotalHeight or 0
-    if QUI and QUI.DebugPrint then
-        QUI:DebugPrint(format("|cff34D399CDM|r PostExit check %s: iconBounds=%.0fx%.0f logical=%.0fx%.0f max=%.0fx%.0f current=%.0fx%.0f icons=%d",
-            trackerKey, iconW, iconH, logW, logH, w, h, curW, curH, iconCount))
-    end
-    if math.abs(curW - w) < 1 and math.abs(curH - h) < 1 then
-        return  -- No meaningful change
-    end
-    -- Update viewer state
-    if _G.QUI_SetCDMViewerBounds then
-        _G.QUI_SetCDMViewerBounds(viewer, w, h)
-    end
     -- Update proxies
     if _G.QUI_UpdateCDMAnchorProxyFrames then
         _G.QUI_UpdateCDMAnchorProxyFrames()
@@ -2308,10 +2222,6 @@ _G.QUI_RefreshCDMViewerFromBounds = function(viewer, trackerKey)
     local proxyKey = trackerKey == "essential" and "cdmEssential" or "cdmUtility"
     if _G.QUI_UpdateFramesAnchoredTo then
         _G.QUI_UpdateFramesAnchoredTo(proxyKey)
-    end
-    if QUI and QUI.DebugPrint then
-        QUI:DebugPrint(format("|cff34D399CDM|r PostExit refresh %s: iconBounds=%.0fx%.0f logical=%.0fx%.0f used=%.0fx%.0f icons=%d",
-            trackerKey, iconW, iconH, logW, logH, w, h, iconCount))
     end
 end
 
@@ -2539,71 +2449,9 @@ local function Initialize()
                         _G.QUI_RefreshCDMViewerFromBounds(_G[VIEWER_ESSENTIAL], "essential")
                         _G.QUI_RefreshCDMViewerFromBounds(_G[VIEWER_UTILITY], "utility")
                     end
-                    -- Measure actual icon gap for essential/utility padding.
-                    -- Instead of deriving from viewer width (which can be transient),
-                    -- read the real gap between adjacent icon edges — ground truth.
-                    for _, vn in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
-                        local v = _G[vn]
-                        if v then
-                            local tk = vn == VIEWER_ESSENTIAL and "essential" or "utility"
-                            local settings = GetTrackerSettings(tk)
-                            if settings and settings.row1 then
-                                -- Collect visible icons and sort by screen position
-                                local icons = {}
-                                local sel = v.Selection
-                                for i = 1, v:GetNumChildren() do
-                                    local child = select(i, v:GetChildren())
-                                    if child and child ~= sel and not child._isCustomCDMIcon
-                                       and IsIconFrame(child) and child:IsShown()
-                                       and HasValidTexture(child) then
-                                        icons[#icons + 1] = child
-                                    end
-                                end
-                                if #icons >= 2 then
-                                    local isVert = (settings.layoutDirection or "HORIZONTAL") == "VERTICAL"
-                                    if isVert then
-                                        table.sort(icons, function(a, b)
-                                            return (a:GetTop() or 0) > (b:GetTop() or 0)
-                                        end)
-                                        local b1 = icons[1]:GetBottom()
-                                        local t2 = icons[2]:GetTop()
-                                        if b1 and t2 then
-                                            local gap = math.floor(b1 - t2 + 0.5)
-                                            if gap >= 0 then
-                                                for _, rk in ipairs({"row1", "row2", "row3"}) do
-                                                    if settings[rk] then
-                                                        settings[rk].padding = gap
-                                                    end
-                                                end
-                                                if QUI and QUI.DebugPrint then
-                                                    QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: measured %s padding = %d (delay=%.2f)", tk, gap, delay))
-                                                end
-                                            end
-                                        end
-                                    else
-                                        table.sort(icons, function(a, b)
-                                            return (a:GetLeft() or 0) < (b:GetLeft() or 0)
-                                        end)
-                                        local r1 = icons[1]:GetRight()
-                                        local l2 = icons[2]:GetLeft()
-                                        if r1 and l2 then
-                                            local gap = math.floor(l2 - r1 + 0.5)
-                                            if gap >= 0 then
-                                                for _, rk in ipairs({"row1", "row2", "row3"}) do
-                                                    if settings[rk] then
-                                                        settings[rk].padding = gap
-                                                    end
-                                                end
-                                                if QUI and QUI.DebugPrint then
-                                                    QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: measured %s padding = %d (delay=%.2f)", tk, gap, delay))
-                                                end
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
+                    -- Padding is NOT measured or written here — QUI's
+                    -- configured padding setting is the sole source of truth.
+                    -- LayoutViewer applies it when it runs after this timer.
                 end)
             end
             -- Restore BuffIcon/BuffBar overlays to SetAllPoints and clear
@@ -2642,10 +2490,7 @@ local function Initialize()
                             local gap = l2 - r1
                             local ncdmDB = QUI.db and QUI.db.profile and QUI.db.profile.ncdm
                             if ncdmDB then
-                                if bvName == "BuffIconCooldownViewer" and ncdmDB.buff then
-                                    ncdmDB.buff.padding = math.floor(gap + 0.5)
-                                    QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: saved BuffIcon padding = %d", ncdmDB.buff.padding))
-                                elseif bvName == "BuffBarCooldownViewer" and ncdmDB.trackedBar then
+                                if bvName == "BuffBarCooldownViewer" and ncdmDB.trackedBar then
                                     ncdmDB.trackedBar.spacing = math.floor(gap + 0.5)
                                     QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: saved BuffBar spacing = %d", ncdmDB.trackedBar.spacing))
                                 end

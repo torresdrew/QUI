@@ -451,6 +451,16 @@ function UIKit.CreateAnchorProxy(sourceFrame, opts)
         end
         w = math.max(1, w or 0)
         h = math.max(1, h or 0)
+        -- Scale conversion: sizeResolver dimensions are in the source frame's
+        -- coordinate space, but the proxy is parented to UIParent.  Convert
+        -- so the proxy's screen-space size matches the actual source content.
+        local sourceScale = source:GetEffectiveScale()
+        local proxyScale = self:GetEffectiveScale()
+        if sourceScale and proxyScale and proxyScale > 0 and sourceScale ~= proxyScale then
+            local scaleFactor = sourceScale / proxyScale
+            w = w * scaleFactor
+            h = h * scaleFactor
+        end
         if lastWidth ~= w or lastHeight ~= h then
             self:SetSize(w, h)
             lastWidth, lastHeight = w, h
