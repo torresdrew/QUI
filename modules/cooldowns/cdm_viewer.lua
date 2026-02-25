@@ -2775,14 +2775,19 @@ local function Initialize()
                         _G.QUI_RefreshCDMViewerFromBounds(_G[VIEWER_ESSENTIAL], "essential")
                         _G.QUI_RefreshCDMViewerFromBounds(_G[VIEWER_UTILITY], "utility")
                     end
-                    -- Re-derive essential/utility padding from viewer dimensions
+                    -- Re-derive essential/utility padding from viewer dimensions.
+                    -- Use viewer state (QUI's own calculated width) instead of
+                    -- v:GetWidth() — the Blizzard frame can be in a transient state
+                    -- after Edit Mode exit, producing garbage values like -20.
                     for _, vn in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
                         local v = _G[vn]
                         if v then
                             local tk = vn == VIEWER_ESSENTIAL and "essential" or "utility"
                             local settings = GetTrackerSettings(tk)
                             if settings and settings.row1 then
-                                local vw = v:GetWidth() or 0
+                                local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(v)
+                                local vw = (vs and vs.iconWidth) or 0
+                                if vw < 2 then vw = v:GetWidth() or 0 end  -- fallback only if state is empty
                                 local iconSize = settings.row1.iconSize or 39
                                 local maxCount = 0
                                 for _, rk in ipairs({"row1", "row2", "row3"}) do
@@ -2794,7 +2799,6 @@ local function Initialize()
                                     local expectedW = maxCount * iconSize + (maxCount - 1) * (settings.row1.padding or 0)
                                     if math.abs(vw - expectedW) > 1 then
                                         local derivedPad = math.floor(((vw - maxCount * iconSize) / (maxCount - 1)) + 0.5)
-                                        -- Negative padding means viewer width is transient/stale — skip
                                         if derivedPad >= 0 then
                                             for _, rk in ipairs({"row1", "row2", "row3"}) do
                                                 if settings[rk] then
