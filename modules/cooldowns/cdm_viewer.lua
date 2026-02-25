@@ -2437,11 +2437,11 @@ local function Initialize()
                         end
 
                         local vScale = Helpers.SafeValue(viewerRef:GetScale(), 1)
-                        QUI:DebugPrint(format("|cff34D399CDM|r EditMode %s: viewer=%.0fx%.0f(s=%.3f) icons=%d bounds=%.0fx%.0f(s=%.3f) overlay=%s",
+                        if QUI and QUI.DebugPrint then QUI:DebugPrint(format("|cff34D399CDM|r EditMode %s: viewer=%.0fx%.0f(s=%.3f) icons=%d bounds=%.0fx%.0f(s=%.3f) overlay=%s",
                             bvName, Helpers.SafeValue(viewerRef:GetWidth(), 0),
                             Helpers.SafeValue(viewerRef:GetHeight(), 0), vScale,
                             iconCount, totalIconW, maxIconH, iconScale,
-                            overlay and format("%.0fx%.0f", overlay:GetWidth(), overlay:GetHeight()) or "nil"))
+                            overlay and format("%.0fx%.0f", overlay:GetWidth(), overlay:GetHeight()) or "nil")) end
                     end)
                 end
             end)
