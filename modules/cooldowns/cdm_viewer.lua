@@ -1489,6 +1489,20 @@ local function LayoutViewer(viewerName, trackerKey)
     -- Store dimensions
     vs.cdmIconWidth = maxRowWidth
     vs.cdmTotalHeight = totalHeight
+    if QUI and QUI.DebugPrint then
+        local rowDbg = ""
+        for rn, rc in ipairs(rows) do
+            local actual = math.min(rc.count, #iconsToLayout - (function()
+                local idx = 1
+                for ri = 1, rn - 1 do idx = idx + math.min(rows[ri].count, #iconsToLayout - idx + 1) end
+                return idx
+            end)() + 1)
+            rowDbg = rowDbg .. format(" r%d(%d/%d sz=%d pad=%d w=%d)",
+                rn, actual, rc.count, rc.size, rc.padding or 0, rowWidths[rn] or 0)
+        end
+        QUI:DebugPrint(format("|cff34D399CDM|r LayoutViewer %s: icons=%d maxRowW=%.0f totalH=%.0f%s",
+            trackerKey, #iconsToLayout, maxRowWidth, totalHeight, rowDbg))
+    end
     vs.cdmRow1IconHeight = rows[1] and (rows[1].size / (rows[1].aspectRatioCrop or 1.0)) or 0
     vs.cdmRow1BorderSize = rows[1] and rows[1].borderSize or 0
     vs.cdmBottomRowBorderSize = rows[#rows] and rows[#rows].borderSize or 0
