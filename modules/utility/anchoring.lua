@@ -1350,6 +1350,36 @@ local function GetCDMAnchorProxy(parentKey)
     local curW, curH = proxy:GetWidth(), proxy:GetHeight()
     if curW ~= width or curH ~= height then
         proxy:SetSize(width, height)
+        if QUI and QUI.DebugPrint then
+            QUI:DebugPrint(format("|cff34D399Proxy|r %s resized: %.0fx%.0f → %.0fx%.0f (editMode=%s combat=%s)",
+                parentKey, curW or 0, curH or 0, width, height,
+                tostring(isEditMode), tostring(inCombat)))
+        end
+    end
+    -- Debug overlay: show a colored border on the proxy when debug mode is active
+    local debugActive = QUI and QUI.DEBUG_MODE
+    if debugActive then
+        if not proxy._debugBorder then
+            proxy._debugBorder = CreateFrame("Frame", nil, proxy, "BackdropTemplate")
+            proxy._debugBorder:SetAllPoints(proxy)
+            proxy._debugBorder:SetFrameStrata("TOOLTIP")
+            proxy._debugBorder:SetBackdrop({
+                edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                edgeSize = 2,
+            })
+            -- Color per proxy key for easy identification
+            local colors = {
+                cdmEssential    = { 0.2, 1.0, 0.6, 0.8 },  -- mint
+                cdmUtility      = { 1.0, 0.6, 0.2, 0.8 },  -- orange
+                primaryPower    = { 0.2, 0.6, 1.0, 0.8 },  -- blue
+                secondaryPower  = { 1.0, 0.2, 0.6, 0.8 },  -- pink
+            }
+            local c = colors[parentKey] or { 1, 1, 0, 0.8 }
+            proxy._debugBorder:SetBackdropBorderColor(c[1], c[2], c[3], c[4])
+        end
+        proxy._debugBorder:Show()
+    elseif proxy._debugBorder then
+        proxy._debugBorder:Hide()
     end
     proxy.__quiCDMProxyInitialized = true
     if inCombat then
