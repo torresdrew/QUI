@@ -649,20 +649,27 @@ end
 ---------------------------------------------------------------------------
 -- Hide chat buttons (social, channel, scroll)
 ---------------------------------------------------------------------------
+-- Flag + hook + hide pattern used by all chat button frames.
+-- Can't use Helpers.DeferredHideOnShow because the _chatButtonsHidden
+-- guard allows toggling visibility back on at runtime.
+local function HideChatButtonOnShow(frame)
+    _chatButtonsHidden[frame] = true
+    hooksecurefunc(frame, "Show", function(self)
+        C_Timer.After(0, function()
+            if not _chatButtonsHidden[self] then return end
+            if self and self.Hide then self:Hide() end
+        end)
+    end)
+    frame:Hide()
+end
+
 local function HideChatButtons(chatFrame)
     local settings = GetSettings()
     if not settings or not settings.hideButtons then return end
 
     -- Hide button frame and prevent Blizzard from re-showing it
     if chatFrame.buttonFrame then
-        _chatButtonsHidden[chatFrame.buttonFrame] = true
-        hooksecurefunc(chatFrame.buttonFrame, "Show", function(self)
-            C_Timer.After(0, function()
-                if not _chatButtonsHidden[self] then return end
-                if self and self.Hide then self:Hide() end
-            end)
-        end)
-        chatFrame.buttonFrame:Hide()
+        HideChatButtonOnShow(chatFrame.buttonFrame)
         chatFrame.buttonFrame:SetWidth(0.1)  -- Collapse to minimal width
     end
 
@@ -679,14 +686,7 @@ local function HideChatButtons(chatFrame)
     if frameName then
         local buttonFrame = _G[frameName .. "ButtonFrame"]
         if buttonFrame then
-            _chatButtonsHidden[buttonFrame] = true
-            hooksecurefunc(buttonFrame, "Show", function(self)
-                C_Timer.After(0, function()
-                    if not _chatButtonsHidden[self] then return end
-                    if self and self.Hide then self:Hide() end
-                end)
-            end)
-            buttonFrame:Hide()
+            HideChatButtonOnShow(buttonFrame)
             buttonFrame:SetWidth(0.1)
         end
 
@@ -696,14 +696,7 @@ local function HideChatButtons(chatFrame)
 
     -- Hide QuickJoinToastButton (global frame, not per-chat)
     if QuickJoinToastButton then
-        _chatButtonsHidden[QuickJoinToastButton] = true
-        hooksecurefunc(QuickJoinToastButton, "Show", function(self)
-            C_Timer.After(0, function()
-                if not _chatButtonsHidden[self] then return end
-                if self and self.Hide then self:Hide() end
-            end)
-        end)
-        QuickJoinToastButton:Hide()
+        HideChatButtonOnShow(QuickJoinToastButton)
     end
 
     -- Remove screen clamping so chat can move to edges
