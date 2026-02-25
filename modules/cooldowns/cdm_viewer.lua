@@ -483,6 +483,75 @@ local function GetTotalIconCapacity(settings)
 end
 
 ---------------------------------------------------------------------------
+-- HELPER: Measure the gap between adjacent icons within a single row.
+-- Groups icons by row (same Y center for horizontal, same X center for
+-- vertical) so multi-row layouts don't cross-contaminate the measurement.
+-- Returns the rounded gap, or nil if measurement is not possible.
+---------------------------------------------------------------------------
+local function MeasureIconGap(icons, isVertical)
+    if not icons or #icons < 2 then return nil end
+    -- Tolerance for grouping icons into the same row/column (pixels).
+    -- Icons in the same row share a CENTER Y (horizontal) or CENTER X
+    -- (vertical) but may differ by sub-pixel rounding.
+    local TOLERANCE = 2
+    -- Group icons by their row/column coordinate
+    local groups = {}
+    for _, icon in ipairs(icons) do
+        local coord
+        if isVertical then
+            -- Vertical layout: columns share X center
+            local l, r = icon:GetLeft(), icon:GetRight()
+            coord = (l and r) and (l + r) / 2 or nil
+        else
+            -- Horizontal layout: rows share Y center
+            local t, b = icon:GetTop(), icon:GetBottom()
+            coord = (t and b) and (t + b) / 2 or nil
+        end
+        if coord then
+            -- Find existing group within tolerance
+            local found = false
+            for _, g in ipairs(groups) do
+                if math.abs(g.coord - coord) <= TOLERANCE then
+                    g.icons[#g.icons + 1] = icon
+                    found = true
+                    break
+                end
+            end
+            if not found then
+                groups[#groups + 1] = { coord = coord, icons = { icon } }
+            end
+        end
+    end
+    -- Pick the first group with 2+ icons
+    for _, g in ipairs(groups) do
+        if #g.icons >= 2 then
+            if isVertical then
+                -- Sort top-to-bottom (descending GetTop)
+                table.sort(g.icons, function(a, b)
+                    return (a:GetTop() or 0) > (b:GetTop() or 0)
+                end)
+                local b1 = g.icons[1]:GetBottom()
+                local t2 = g.icons[2]:GetTop()
+                if b1 and t2 then
+                    return math.floor(b1 - t2 + 0.5)
+                end
+            else
+                -- Sort left-to-right (ascending GetLeft)
+                table.sort(g.icons, function(a, b)
+                    return (a:GetLeft() or 0) < (b:GetLeft() or 0)
+                end)
+                local r1 = g.icons[1]:GetRight()
+                local l2 = g.icons[2]:GetLeft()
+                if r1 and l2 then
+                    return math.floor(l2 - r1 + 0.5)
+                end
+            end
+        end
+    end
+    return nil
+end
+
+---------------------------------------------------------------------------
 -- HELPER: Strip Blizzard's overlay texture
 ---------------------------------------------------------------------------
 local function StripBlizzardOverlay(icon)
@@ -1869,7 +1938,6 @@ local function HookViewer(viewerName, trackerKey)
                 end
             end
             local capturedSize
-            local measuredPadding
             local method = "none"
             if iconCount > 0 then
                 -- First check if the viewer width matches QUI's expected layout
@@ -1889,9 +1957,6 @@ local function HookViewer(viewerName, trackerKey)
                     if math.abs(w - expectedW) <= math.max(iconCount, 2) then
                         capturedSize = curIconSize
                         method = "unchanged"
-                        if iconCount > 1 then
-                            measuredPadding = math.floor(((w - iconCount * capturedSize) / (iconCount - 1)) + 0.5)
-                        end
                     end
                 end
 
@@ -1903,9 +1968,6 @@ local function HookViewer(viewerName, trackerKey)
                         -- conflated with icon size.
                         local ar = curRow1 and curRow1.aspectRatioCrop or 1.0
                         capturedSize = math.floor(h * ar + 0.5)
-                        if iconCount > 1 then
-                            measuredPadding = math.floor(((w - iconCount * capturedSize) / (iconCount - 1)) + 0.5)
-                        end
                         method = "height"
                     else
                         -- Multi-row: can't derive iconSize from dimensions alone.
@@ -1922,21 +1984,6 @@ local function HookViewer(viewerName, trackerKey)
                                     method = "child"
                                     break
                                 end
-                            end
-                        end
-                        -- Derive padding from the widest row's icon count
-                        if capturedSize and capturedSize > 1 and iconCount > 1 then
-                            local mrSettings = GetTrackerSettings(trackerKey)
-                            local maxRowCount = 0
-                            if mrSettings then
-                                for _, rk in ipairs({"row1", "row2", "row3"}) do
-                                    if mrSettings[rk] and (mrSettings[rk].iconCount or 0) > maxRowCount then
-                                        maxRowCount = mrSettings[rk].iconCount
-                                    end
-                                end
-                            end
-                            if maxRowCount > 1 then
-                                measuredPadding = math.floor(((w - maxRowCount * capturedSize) / (maxRowCount - 1)) + 0.5)
                             end
                         end
                     end
@@ -1962,13 +2009,24 @@ local function HookViewer(viewerName, trackerKey)
                         end
                     end
                 end
-                -- Save measured padding to all rows (applies for both changed and unchanged icon size)
+                -- Measure padding via direct icon gap (groups by row to handle
+                -- multi-row layouts correctly).
+                local gapIcons = {}
+                for i = 1, self:GetNumChildren() do
+                    local child = select(i, self:GetChildren())
+                    if child and child ~= sel and not child._isCustomCDMIcon
+                       and IsIconFrame(child) and child:IsShown() then
+                        gapIcons[#gapIcons + 1] = child
+                    end
+                end
+                local gapSettings = GetTrackerSettings(trackerKey)
+                local isVert = gapSettings and (gapSettings.layoutDirection or "HORIZONTAL") == "VERTICAL"
+                local measuredPadding = MeasureIconGap(gapIcons, isVert)
                 if measuredPadding ~= nil then
-                    local padSettings = GetTrackerSettings(trackerKey)
-                    if padSettings then
+                    if gapSettings then
                         for _, rowKey in ipairs({"row1", "row2", "row3"}) do
-                            if padSettings[rowKey] then
-                                padSettings[rowKey].padding = measuredPadding
+                            if gapSettings[rowKey] then
+                                gapSettings[rowKey].padding = measuredPadding
                             end
                         end
                     end
@@ -2810,13 +2868,14 @@ local function Initialize()
                     -- Measure actual icon gap for essential/utility padding.
                     -- Instead of deriving from viewer width (which can be transient),
                     -- read the real gap between adjacent icon edges — ground truth.
+                    -- Uses MeasureIconGap which groups by row to avoid cross-row
+                    -- contamination in multi-row layouts.
                     for _, vn in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
                         local v = _G[vn]
                         if v then
                             local tk = vn == VIEWER_ESSENTIAL and "essential" or "utility"
                             local settings = GetTrackerSettings(tk)
                             if settings and settings.row1 then
-                                -- Collect visible icons and sort by screen position
                                 local icons = {}
                                 local sel = v.Selection
                                 for i = 1, v:GetNumChildren() do
@@ -2827,42 +2886,16 @@ local function Initialize()
                                         icons[#icons + 1] = child
                                     end
                                 end
-                                if #icons >= 2 then
-                                    local isVert = (settings.layoutDirection or "HORIZONTAL") == "VERTICAL"
-                                    if isVert then
-                                        table.sort(icons, function(a, b)
-                                            return (a:GetTop() or 0) > (b:GetTop() or 0)
-                                        end)
-                                        local b1 = icons[1]:GetBottom()
-                                        local t2 = icons[2]:GetTop()
-                                        if b1 and t2 then
-                                            local gap = math.floor(b1 - t2 + 0.5)
-                                            for _, rk in ipairs({"row1", "row2", "row3"}) do
-                                                if settings[rk] then
-                                                    settings[rk].padding = gap
-                                                end
-                                            end
-                                            if QUI and QUI.DebugPrint then
-                                                QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: measured %s padding = %d (delay=%.2f)", tk, gap, delay))
-                                            end
+                                local isVert = (settings.layoutDirection or "HORIZONTAL") == "VERTICAL"
+                                local gap = MeasureIconGap(icons, isVert)
+                                if gap ~= nil then
+                                    for _, rk in ipairs({"row1", "row2", "row3"}) do
+                                        if settings[rk] then
+                                            settings[rk].padding = gap
                                         end
-                                    else
-                                        table.sort(icons, function(a, b)
-                                            return (a:GetLeft() or 0) < (b:GetLeft() or 0)
-                                        end)
-                                        local r1 = icons[1]:GetRight()
-                                        local l2 = icons[2]:GetLeft()
-                                        if r1 and l2 then
-                                            local gap = math.floor(l2 - r1 + 0.5)
-                                            for _, rk in ipairs({"row1", "row2", "row3"}) do
-                                                if settings[rk] then
-                                                    settings[rk].padding = gap
-                                                end
-                                            end
-                                            if QUI and QUI.DebugPrint then
-                                                QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: measured %s padding = %d (delay=%.2f)", tk, gap, delay))
-                                            end
-                                        end
+                                    end
+                                    if QUI and QUI.DebugPrint then
+                                        QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: measured %s padding = %d (delay=%.2f)", tk, gap, delay))
                                     end
                                 end
                             end
@@ -2906,10 +2939,7 @@ local function Initialize()
                             local gap = l2 - r1
                             local ncdmDB = QUI.db and QUI.db.profile and QUI.db.profile.ncdm
                             if ncdmDB then
-                                if bvName == "BuffIconCooldownViewer" and ncdmDB.buff then
-                                    ncdmDB.buff.padding = math.floor(gap + 0.5)
-                                    QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: saved BuffIcon padding = %d", ncdmDB.buff.padding))
-                                elseif bvName == "BuffBarCooldownViewer" and ncdmDB.trackedBar then
+                                if bvName == "BuffBarCooldownViewer" and ncdmDB.trackedBar then
                                     ncdmDB.trackedBar.spacing = math.floor(gap + 0.5)
                                     QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: saved BuffBar spacing = %d", ncdmDB.trackedBar.spacing))
                                 end
