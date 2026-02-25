@@ -3912,21 +3912,35 @@ end)
 -- TAINT SAFETY: Do NOT use hooksecurefunc on PlayerCastingBarFrame (secure frame).
 -- Even deferred callbacks execute addon code in the secure context, tainting the
 -- execution chain and causing ADDON_ACTION_FORBIDDEN / secret number errors.
--- Instead, use an OnUpdate watcher to poll IsShown() from a UIParent-child frame.
+-- Instead, poll IsShown() via a C_Timer ticker that only runs during Edit Mode.
 C_Timer.After(0.5, function()
     if not QUICore._castbarEditModeHooked then
         QUICore._castbarEditModeHooked = true
 
         if PlayerCastingBarFrame then
-            local castbarWatcher = CreateFrame("Frame", nil, UIParent)
             local wasCastbarShown = PlayerCastingBarFrame:IsShown()
-            castbarWatcher:SetScript("OnUpdate", function()
-                if not EditModeState.active then return end
+            local watcherTicker = nil
+
+            local function CheckCastbarVisibility()
                 local isShown = PlayerCastingBarFrame:IsShown()
                 if isShown ~= wasCastbarShown then
                     wasCastbarShown = isShown
                     EditModeState.castBarCheckboxEnabled = isShown
                     UpdateCastbarVisibilityForEditMode()
+                end
+            end
+
+            QUICore:RegisterEditModeEnter(function()
+                wasCastbarShown = PlayerCastingBarFrame:IsShown()
+                if not watcherTicker then
+                    watcherTicker = C_Timer.NewTicker(0.2, CheckCastbarVisibility)
+                end
+            end)
+
+            QUICore:RegisterEditModeExit(function()
+                if watcherTicker then
+                    watcherTicker:Cancel()
+                    watcherTicker = nil
                 end
             end)
         end

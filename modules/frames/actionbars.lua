@@ -1580,6 +1580,8 @@ local function HookButtonIconsForUsability()
     end
 end
 
+local usabilityTicker
+
 -- Start/stop usability indicator system (event-driven + optional range polling)
 local function UpdateUsabilityPolling()
     local settings = GetGlobalSettings()
@@ -1617,16 +1619,19 @@ local function UpdateUsabilityPolling()
     end
 
     -- Range requires slow polling (no "player moved" event exists)
-    -- Only poll when range indicator is enabled, at 250ms (was 100ms)
+    -- Use C_Timer ticker instead of OnUpdate to avoid per-frame overhead
     if rangeEnabled then
-        usabilityCheckFrame:SetScript("OnUpdate", function(self, elapsed)
-            self.elapsed = self.elapsed + elapsed
-            if self.elapsed < GetUpdateInterval() then return end
-            self.elapsed = 0
-            UpdateAllButtonUsability()
-        end)
+        if usabilityTicker then
+            usabilityTicker:Cancel()
+            usabilityTicker = nil
+        end
+        usabilityTicker = C_Timer.NewTicker(GetUpdateInterval(), UpdateAllButtonUsability)
         usabilityCheckFrame:Show()
     else
+        if usabilityTicker then
+            usabilityTicker:Cancel()
+            usabilityTicker = nil
+        end
         usabilityCheckFrame:SetScript("OnUpdate", nil)
         usabilityCheckFrame.elapsed = 0
         -- Don't hide - events still need to work if usability is enabled
