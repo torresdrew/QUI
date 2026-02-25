@@ -1294,9 +1294,10 @@ local function GetCDMAnchorProxy(parentKey)
     end
 
     -- Combat-stable behavior:
-    -- Keep the proxy frozen during combat once initialized, then refresh after
-    -- combat ends. This prevents children anchored to edge points (TOP/BOTTOM)
-    -- from drifting when Blizzard mutates protected frame size in combat.
+    -- Proxy is anchored to the protected CDM viewer, so it inherits protection
+    -- during combat — SetSize/SetPoint will taint. Keep it fully frozen.
+    -- Dependent frames (power bars, cast bars) are updated directly from viewer
+    -- state by QUI_UpdateCombatDependentFrames, bypassing the proxy entirely.
     local inCombat = InCombatLockdown()
     if inCombat and proxy.__quiCDMProxyInitialized then
         cdmAnchorProxyPendingAfterCombat[parentKey] = true

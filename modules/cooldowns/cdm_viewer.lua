@@ -1049,6 +1049,129 @@ local function CollectIcons(viewer, trackerKey)
 end
 
 ---------------------------------------------------------------------------
+-- COMBAT: Recalculate viewer dimensions from settings + icon count
+-- Mirrors LayoutViewer's dimension math without touching protected frames.
+-- Updates viewer state so the proxy can resize during combat.
+---------------------------------------------------------------------------
+local function RecalcCombatDimensions(viewer, trackerKey, iconCount)
+    local settings = GetTrackerSettings(trackerKey)
+    if not settings then return end
+
+    local vs = getViewerState(viewer)
+    local layoutDirection = settings.layoutDirection or "HORIZONTAL"
+    local isVertical = (layoutDirection == "VERTICAL")
+
+    -- Build row config (same as LayoutViewer)
+    local rows = {}
+    for i = 1, 3 do
+        local rowKey = "row" .. i
+        if settings[rowKey] and settings[rowKey].iconCount and settings[rowKey].iconCount > 0 then
+            table.insert(rows, {
+                count = settings[rowKey].iconCount,
+                size = settings[rowKey].iconSize or 50,
+                aspectRatioCrop = settings[rowKey].aspectRatioCrop or 1.0,
+                padding = settings[rowKey].padding or 0,
+                borderSize = settings[rowKey].borderSize or 2,
+                yOffset = settings[rowKey].yOffset or 0,
+            })
+        end
+    end
+    if #rows == 0 then return end
+
+    local totalCapacity = GetTotalIconCapacity(settings)
+    local remaining = math.min(iconCount, totalCapacity)
+    local rowGap = 5
+
+    -- Pass 1: calculate row widths / column heights
+    local maxRowWidth = 0
+    local maxColHeight = 0
+    local rowWidths = {}
+    local colHeights = {}
+    local tempIdx = 1
+
+    for rowNum, rowConfig in ipairs(rows) do
+        local iconsInRow = math.min(rowConfig.count, remaining - tempIdx + 1)
+        if iconsInRow <= 0 then break end
+        local iconWidth = rowConfig.size
+        local iconHeight = rowConfig.size / (rowConfig.aspectRatioCrop or 1.0)
+
+        if isVertical then
+            local colHeight = (iconsInRow * iconHeight) + ((iconsInRow - 1) * rowConfig.padding)
+            colHeights[rowNum] = colHeight
+            rowWidths[rowNum] = iconWidth
+            if colHeight > maxColHeight then maxColHeight = colHeight end
+        else
+            local rowWidth = (iconsInRow * iconWidth) + ((iconsInRow - 1) * rowConfig.padding)
+            rowWidths[rowNum] = rowWidth
+            if rowWidth > maxRowWidth then maxRowWidth = rowWidth end
+        end
+        tempIdx = tempIdx + iconsInRow
+    end
+
+    -- Pass 2: total width / height
+    local totalHeight = 0
+    local totalWidth = 0
+    local numRowsUsed = 0
+    tempIdx = 1
+
+    for _, rowConfig in ipairs(rows) do
+        local iconsInRow = math.min(rowConfig.count, remaining - tempIdx + 1)
+        if iconsInRow <= 0 then break end
+        local iconHeight = rowConfig.size / (rowConfig.aspectRatioCrop or 1.0)
+        local iconWidth = rowConfig.size
+        numRowsUsed = numRowsUsed + 1
+
+        if isVertical then
+            totalWidth = totalWidth + iconWidth
+            if numRowsUsed > 1 then totalWidth = totalWidth + rowGap end
+        else
+            totalHeight = totalHeight + iconHeight
+            if numRowsUsed > 1 then totalHeight = totalHeight + rowGap end
+        end
+        tempIdx = tempIdx + iconsInRow
+    end
+
+    if isVertical then
+        totalHeight = maxColHeight
+        maxRowWidth = totalWidth
+    end
+
+    -- HUD min width
+    local minWidthEnabled, minWidth = GetHUDMinWidth()
+    local applyHUDMinWidth = minWidthEnabled and IsHUDAnchoredToCDM()
+    if applyHUDMinWidth then
+        maxRowWidth = math.max(maxRowWidth, minWidth)
+    end
+
+    -- Update viewer state (same fields as LayoutViewer)
+    vs.cdmIconWidth = maxRowWidth
+    vs.cdmTotalHeight = totalHeight
+    if isVertical then
+        vs.cdmRow1Width = maxRowWidth
+        vs.cdmBottomRowWidth = maxRowWidth
+    else
+        local row1Width = rowWidths[1] or maxRowWidth
+        local bottomRowWidth = rowWidths[#rows] or maxRowWidth
+        if applyHUDMinWidth then
+            row1Width = math.max(row1Width, minWidth)
+            bottomRowWidth = math.max(bottomRowWidth, minWidth)
+        end
+        vs.cdmRow1Width = row1Width
+        vs.cdmBottomRowWidth = bottomRowWidth
+    end
+
+    -- NOTE: Do NOT call QUI_UpdateCDMAnchorProxyFrames here.
+    -- The proxy is anchored to the protected CDM viewer and inherits
+    -- protection during combat — SetSize would taint.
+    -- Proxy size is deferred to PLAYER_REGEN_ENABLED.
+
+    -- Update dependent frames directly from viewer state (combat-safe)
+    if _G.QUI_UpdateCombatDependentFrames then
+        _G.QUI_UpdateCombatDependentFrames(trackerKey)
+    end
+end
+
+---------------------------------------------------------------------------
 -- CORE: Layout and skin icons for a viewer
 ---------------------------------------------------------------------------
 local function LayoutViewer(viewerName, trackerKey)
@@ -1948,7 +2071,7 @@ local function HookViewer(viewerName, trackerKey)
     local lastSettingsVersion = 0
     local lastBlizzardLayoutCount = 0
     -- Fallback polling intervals (events handle immediate cooldown updates)
-    local combatInterval = 1.0   -- 1000ms in combat (can't do work anyway, events blocked)
+    local combatInterval = 0.25  -- 250ms in combat (lightweight icon count for proxy updates)
     local idleInterval = 0.5     -- 500ms out of combat (events handle immediate needs)
 
     updateFrame:SetScript("OnUpdate", function(self, elapsed)
@@ -1959,8 +2082,9 @@ local function HookViewer(viewerName, trackerKey)
         local updateInterval = UnitAffectingCombat("player") and combatInterval or idleInterval
 
         -- Step 4: Check event flag to skip throttle (immediate response to cooldown changes)
-        if uvs.ncdmEventFired then
+        if uvs.ncdmEventFired or uvs.ncdmCombatEventFired then
             uvs.ncdmEventFired = nil
+            uvs.ncdmCombatEventFired = nil
             uvs.ncdmElapsed = 0
         elseif uvs.ncdmElapsed < updateInterval then
             return
@@ -1970,8 +2094,54 @@ local function HookViewer(viewerName, trackerKey)
 
         if NCDM.applying[trackerKey] then return end
 
-        -- Skip expensive icon collection during combat for CPU efficiency
-        if InCombatLockdown() then return end
+        -- During combat: lightweight icon count to keep proxy dimensions fresh.
+        -- No layout, no skinning — just count visible icons and recalc dimensions.
+        if InCombatLockdown() then
+            -- Blizzard fires transient 1x1 resets on CDM viewers during combat.
+            -- When the viewer is at 1x1, icon children may report wrong visibility.
+            -- Skip entirely and keep previous state — the real layout will follow.
+            local vw, vh = viewer:GetWidth(), viewer:GetHeight()
+            if not vw or not vh or vw < 2 or vh < 2 then
+                return
+            end
+
+            local combatIconCount = 0
+            local sel = viewer.Selection
+            for i = 1, viewer:GetNumChildren() do
+                local child = select(i, viewer:GetChildren())
+                if child and child ~= sel and not child._isCustomCDMIcon
+                   and IsIconFrame(child) and child:IsShown()
+                   and HasValidTexture(child) then
+                    combatIconCount = combatIconCount + 1
+                end
+            end
+            -- Also count visible custom CDM icons
+            if ns.CustomCDM and ns.CustomCDM.GetIcons then
+                local vName = (viewer == _G[VIEWER_ESSENTIAL]) and VIEWER_ESSENTIAL or VIEWER_UTILITY
+                local customIcons = ns.CustomCDM:GetIcons(vName)
+                if customIcons then
+                    for _, ci in ipairs(customIcons) do
+                        if ci:IsShown() then
+                            combatIconCount = combatIconCount + 1
+                        end
+                    end
+                end
+            end
+
+            -- Guard against transient zero counts: if we previously had icons
+            -- and now see zero, it's likely a Blizzard viewer mutation — skip
+            -- and wait for the real update on the next tick.
+            local prevCount = uvs.cdmCombatIconCount or -1
+            if combatIconCount == 0 and prevCount > 0 then
+                return
+            end
+
+            if combatIconCount ~= prevCount then
+                uvs.cdmCombatIconCount = combatIconCount
+                RecalcCombatDimensions(viewer, trackerKey, combatIconCount)
+            end
+            return
+        end
 
         -- Skip layout during Edit Mode — user is manually resizing; LayoutViewer
         -- would fight their resize and snap the viewer back to calculated size.
@@ -2060,12 +2230,14 @@ local function HookViewer(viewerName, trackerKey)
     layoutEventFrame:RegisterEvent("BAG_UPDATE_COOLDOWN")
     layoutEventFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
     layoutEventFrame:SetScript("OnEvent", function()
-        -- Skip during combat - layout will catch up when combat ends
-        if InCombatLockdown() then return end
-        -- Set flag for OnUpdate to check (no timer overhead)
-        if viewer:IsShown() then
-            hvs.ncdmEventFired = true
+        if not viewer:IsShown() then return end
+        if InCombatLockdown() then
+            -- Signal combat OnUpdate to recount on next tick (bypasses 0.25s throttle)
+            hvs.ncdmCombatEventFired = true
+            return
         end
+        -- Set flag for OnUpdate to check (no timer overhead)
+        hvs.ncdmEventFired = true
     end)
 
     -- Pending icon ticker is now global and self-canceling (started in QueueIconForSkinning)
@@ -2269,6 +2441,32 @@ end
 _G.QUI_RefreshNCDM = RefreshAll
 _G.QUI_IncrementNCDMVersion = IncrementSettingsVersion
 _G.QUI_ApplyUtilityAnchor = ApplyUtilityAnchor
+
+-- Combat-safe callback to update dependent frames (width-only, no GetCenter).
+-- Called by RecalcCombatDimensions when icon count changes during combat.
+_G.QUI_UpdateCombatDependentFrames = function(trackerKey)
+    if trackerKey == "essential" then
+        if _G.QUI_UpdateLockedPowerBarCombatSafe then
+            _G.QUI_UpdateLockedPowerBarCombatSafe()
+        end
+        if _G.QUI_UpdateLockedSecondaryPowerBarCombatSafe then
+            _G.QUI_UpdateLockedSecondaryPowerBarCombatSafe()
+        end
+        if _G.QUI_UpdateLockedCastbarToEssential then
+            _G.QUI_UpdateLockedCastbarToEssential()
+        end
+    elseif trackerKey == "utility" then
+        if _G.QUI_UpdateLockedPowerBarToUtilityCombatSafe then
+            _G.QUI_UpdateLockedPowerBarToUtilityCombatSafe()
+        end
+        if _G.QUI_UpdateLockedSecondaryPowerBarToUtilityCombatSafe then
+            _G.QUI_UpdateLockedSecondaryPowerBarToUtilityCombatSafe()
+        end
+        if _G.QUI_UpdateLockedCastbarToUtility then
+            _G.QUI_UpdateLockedCastbarToUtility()
+        end
+    end
+end
 
 -- Expose viewer layout state for resource bars, castbars, anchoring, etc.
 -- Reads from _viewerState weak-keyed table (previously __cdm* properties on frames).
