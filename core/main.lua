@@ -457,6 +457,13 @@ local defaults = {
             showAffixes = true,
             showObjectives = true,
             position = { x = -11.667, y = -204.998 },
+            forcesBarEnabled = true,
+            forcesDisplayMode = "bar",
+            forcesPosition = "after_timer",
+            forcesTextFormat = "both",
+            forcesLabel = "Forces",
+            forcesFont = "Poppins",
+            forcesFontSize = 11,
         },
 
         -- Character Pane Settings

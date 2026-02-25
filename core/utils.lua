@@ -463,6 +463,36 @@ function Helpers.GetSkinBorderColor(moduleSettings, prefix)
     return r, g, b, a
 end
 
+--- Get skin bar color from dedicated bar settings.
+--- Falls back to border color so existing profiles keep current visuals.
+--- Supports optional per-module override settings tables.
+--- @param moduleSettings table|nil Optional module settings table
+--- @param prefix string|nil Optional key prefix for module settings in camelCase
+--- @return number, number, number, number r, g, b, a
+function Helpers.GetSkinBarColor(moduleSettings, prefix)
+    local fallbackR, fallbackG, fallbackB, fallbackA = Helpers.GetSkinBorderColor(moduleSettings, prefix)
+    local r, g, b, a = fallbackR, fallbackG, fallbackB, fallbackA
+
+    if type(moduleSettings) == "table" then
+        local keyPrefix = type(prefix) == "string" and prefix or ""
+        local useClassKey = keyPrefix ~= "" and (keyPrefix .. "BarUseClassColor") or "barUseClassColor"
+        local colorKey = keyPrefix ~= "" and (keyPrefix .. "BarColor") or "barColor"
+
+        if moduleSettings[useClassKey] then
+            r, g, b = Helpers.GetPlayerClassColor()
+            a = 1
+        elseif type(moduleSettings[colorKey]) == "table" then
+            local moduleColor = moduleSettings[colorKey]
+            r = moduleColor[1] or r
+            g = moduleColor[2] or g
+            b = moduleColor[3] or b
+            a = moduleColor[4] or a
+        end
+    end
+
+    return r, g, b, a
+end
+
 --- Get the addon-wide accent color (from options panel color picker)
 --- @return number, number, number, number r, g, b, a
 function Helpers.GetAddonAccentColor()
@@ -706,6 +736,7 @@ ns.GetModuleSettings = Helpers.GetModuleSettings
 ns.CreateDBGetter = Helpers.CreateDBGetter
 ns.GetSkinColors = Helpers.GetSkinColors
 ns.GetSkinBorderColor = Helpers.GetSkinBorderColor
+ns.GetSkinBarColor = Helpers.GetSkinBarColor
 ns.GetClassColor = Helpers.GetClassColor
 ns.GetPlayerClassColor = Helpers.GetPlayerClassColor
 ns.GetItemQualityColor = Helpers.GetItemQualityColor

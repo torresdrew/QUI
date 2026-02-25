@@ -34,6 +34,10 @@ function SkinBase.GetSkinColors(moduleSettings, prefix)
     return sr, sg, sb, sa, bgr, bgg, bgb, bga
 end
 
+function SkinBase.GetSkinBarColor(moduleSettings, prefix)
+    return Helpers.GetSkinBarColor(moduleSettings, prefix)
+end
+
 ---------------------------------------------------------------------------
 -- CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 -- Creates (or updates) a pixel-perfect QUI backdrop on the given frame.
