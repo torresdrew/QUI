@@ -233,7 +233,6 @@ local function RefreshKeystoneColors()
     end
 
     -- Update stored color for future affix borders
-    SkinBase.MarkSkinned(keystoneFrame)
     SkinBase.SetFrameData(keystoneFrame, "skinColor", { sr, sg, sb, sa })
 end
 
