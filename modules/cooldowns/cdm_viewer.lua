@@ -2007,34 +2007,17 @@ local function HookViewer(viewerName, trackerKey)
                     end
                 end -- if not capturedSize
             end
-            if capturedSize and capturedSize > 1 then
-                -- Only write settings and re-skin if the icon size actually changed
-                if method ~= "unchanged" then
-                    local settings = GetTrackerSettings(trackerKey)
-                    if settings then
-                        for _, rowKey in ipairs({"row1", "row2", "row3"}) do
-                            if settings[rowKey] then
-                                settings[rowKey].iconSize = capturedSize
-                            end
-                        end
-                    end
-                    -- Force all icons to re-skin with the new size
-                    for i = 1, self:GetNumChildren() do
-                        local child = select(i, self:GetChildren())
-                        if child then
-                            local lis = getIconState(child)
-                            if lis then lis.cdmSkinned = nil end
-                        end
-                    end
-                end
-                if QUI and QUI.DebugPrint then
-                    QUI:DebugPrint(format("|cff34D399CDM|r CapturedBlizzardIconSize %s: size=%d method=%s viewer=%.0fx%.0f icons=%d",
-                        viewerName == VIEWER_ESSENTIAL and "Ess" or "Util",
-                        capturedSize, method, w, h, iconCount))
-                end
+            -- Do NOT write capturedSize to settings — QUI's configured icon
+            -- size is the sole source of truth.  Blizzard's slider affects the
+            -- viewer scale (handled by SetScale hook + effective-scale conversion
+            -- in the proxy), not QUI's layout formula.
+            if QUI and QUI.DebugPrint and capturedSize and capturedSize > 1 then
+                QUI:DebugPrint(format("|cff34D399CDM|r CapturedBlizzardIconSize %s: size=%d method=%s viewer=%.0fx%.0f icons=%d (not written)",
+                    viewerName == VIEWER_ESSENTIAL and "Ess" or "Util",
+                    capturedSize, method, w, h, iconCount))
             end
             svs._captureJustCompleted = true
-            -- Fall through to LayoutViewer which uses the updated iconSize
+            -- Fall through to LayoutViewer which uses QUI's configured iconSize
         end
 
         -- During combat, Blizzard fires transient 1x1 resets on CDM viewers.
