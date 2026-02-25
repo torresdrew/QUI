@@ -1526,12 +1526,60 @@ local function LayoutViewer(viewerName, trackerKey)
         vs.cdmPotentialBottomRowWidth = potentialBottomRowWidth
     end
 
-    -- LayoutViewer's formula is the authoritative source for dimensions.
-    -- It knows the row structure (per-row icon counts, sizes, padding)
-    -- and produces correct maxRowWidth/totalHeight.  A previous bounds
-    -- verification here measured icon positions post-SetPoint, but those
-    -- coordinates can be stale within the same frame and the bounding-box
-    -- approach loses row structure information in multi-row layouts.
+    -- Schedule a delayed bounds correction: Blizzard's own CDM layout may
+    -- reposition icons after our SetSize, so we measure actual icon bounds
+    -- after a short delay and correct viewer state + proxy if they differ.
+    if not InCombatLockdown() then
+        -- Cancel any pending correction for this viewer
+        if vs._boundsCorrectionTimer then
+            vs._boundsCorrectionTimer:Cancel()
+        end
+        vs._boundsCorrectionTimer = C_Timer.NewTimer(0.15, function()
+            vs._boundsCorrectionTimer = nil
+            if InCombatLockdown() then return end
+            local boundsL, boundsR, boundsT, boundsB
+            local iconCount = 0
+            local sel = viewer.Selection
+            for i = 1, viewer:GetNumChildren() do
+                local child = select(i, viewer:GetChildren())
+                if child and child ~= sel and child:IsShown()
+                    and (child.Icon or child.icon)
+                    and (child.Cooldown or child.cooldown) then
+                    local il, ir, it, ib = child:GetLeft(), child:GetRight(), child:GetTop(), child:GetBottom()
+                    if il and ir and it and ib then
+                        iconCount = iconCount + 1
+                        boundsL = boundsL and math.min(boundsL, il) or il
+                        boundsR = boundsR and math.max(boundsR, ir) or ir
+                        boundsT = boundsT and math.max(boundsT, it) or it
+                        boundsB = boundsB and math.min(boundsB, ib) or ib
+                    end
+                end
+            end
+            if iconCount >= 1 and boundsL and boundsR and boundsT and boundsB then
+                local measuredW = boundsR - boundsL
+                local measuredH = boundsT - boundsB
+                if measuredW > 1 and measuredH > 1 then
+                    local curW = vs.cdmIconWidth or 0
+                    local curH = vs.cdmTotalHeight or 0
+                    if math.abs(curW - measuredW) > 1 or math.abs(curH - measuredH) > 1 then
+                        vs.cdmIconWidth = measuredW
+                        vs.cdmTotalHeight = measuredH
+                        vs.cdmRow1Width = measuredW
+                        vs.cdmBottomRowWidth = measuredW
+                        vs.cdmPotentialRow1Width = measuredW
+                        vs.cdmPotentialBottomRowWidth = measuredW
+                        if QUI and QUI.DebugPrint then
+                            QUI:DebugPrint(format("|cff34D399CDM|r BoundsCorrection %s: formula=%.0fx%.0f actual=%.0fx%.0f icons=%d",
+                                trackerKey, curW, curH, measuredW, measuredH, iconCount))
+                        end
+                        if _G.QUI_UpdateCDMAnchorProxyFrames then
+                            _G.QUI_UpdateCDMAnchorProxyFrames()
+                        end
+                    end
+                end
+            end
+        end)
+    end
 
     -- Resize viewer (suppress OnSizeChanged triggering another layout)
     if maxRowWidth > 0 and totalHeight > 0 then
