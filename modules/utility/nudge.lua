@@ -538,12 +538,14 @@ local _hiddenSelections = {}  -- frame -> true
 
 local function HideSelectionIndicator(frame)
     if not frame or not frame.Selection then return end
-    if frame.Selection._quiKeepVisible then return end
+    local keepVisible = _G.QUI_IsSelectionKeepVisible and _G.QUI_IsSelectionKeepVisible(frame)
+    if keepVisible then return end
     if _hiddenSelections[frame] then return end
     _hiddenSelections[frame] = true
     frame.Selection:SetAlpha(0)
     C_Timer.After(0, function()
-        if frame.Selection and not frame.Selection._quiKeepVisible then
+        local keep = _G.QUI_IsSelectionKeepVisible and _G.QUI_IsSelectionKeepVisible(frame)
+        if frame.Selection and not keep then
             frame.Selection:SetAlpha(0)
             -- Ensure .Selection has valid bounds so GetScaledSelectionSides()
             -- doesn't crash when Blizzard iterates magnetic snap candidates.
@@ -977,7 +979,9 @@ function QUICore:ShowViewerOverlays()
                     -- Keep Blizzard's .Selection visually hidden; QUI overlay is the indicator.
                     -- Skip for BuffIcon/BuffBar when flagged to keep Selection visible
                     -- (cdm_viewer Edit Mode resize needs Selection shown to read MOH size).
-                    if not self._quiKeepVisible then
+                    -- TAINT SAFETY: Read from viewer state table, not from Selection frame.
+                    local keepVis = _G.QUI_IsSelectionKeepVisible and _G.QUI_IsSelectionKeepVisible(v)
+                    if not keepVis then
                         self:SetAlpha(0)
                     end
                 end)

@@ -1308,27 +1308,68 @@ local function GetCDMAnchorProxy(parentKey)
     local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
 
     if source.cdm then
-        if isEditMode then
-            -- During Edit Mode, use icon bounds from polling (viewer state is updated
-            -- by CheckCDMViewerBoundsChanged via QUI_SetCDMViewerBounds).
-            -- Viewer state is the canonical source — it's kept fresh by the ticker.
+        -- Measure actual icon bounds directly.  GetLeft/GetRight return
+        -- UIParent-unit values which is the same coordinate space as the
+        -- proxy (parented to UIParent with no extra scale).  This avoids
+        -- the viewer-state → scale-conversion round-trip and is always
+        -- accurate regardless of how Blizzard's CDM "Icon Size" slider
+        -- applies its scaling (SetScale, SetSize, or direct icon resize).
+        local boundsL, boundsR, boundsT, boundsB
+        local iconCount = 0
+        local sel = sourceFrame.Selection
+        for i = 1, sourceFrame:GetNumChildren() do
+            local child = select(i, sourceFrame:GetChildren())
+            if child and child ~= sel and child:IsShown()
+                and (child.Icon or child.icon)
+                and (child.Cooldown or child.cooldown) then
+                local il, ir, it, ib = child:GetLeft(), child:GetRight(), child:GetTop(), child:GetBottom()
+                if il and ir and it and ib then
+                    iconCount = iconCount + 1
+                    boundsL = boundsL and math.min(boundsL, il) or il
+                    boundsR = boundsR and math.max(boundsR, ir) or ir
+                    boundsT = boundsT and math.max(boundsT, it) or it
+                    boundsB = boundsB and math.min(boundsB, ib) or ib
+                end
+            end
+        end
+
+        if iconCount > 0 and boundsL and boundsR and boundsT and boundsB then
+            -- Direct measurement in UIParent units — no scale conversion needed.
+            width = boundsR - boundsL
+            height = boundsT - boundsB
+        else
+            -- No visible icons: fall back to viewer state + scale conversion
             local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(sourceFrame)
-            width = (vs and vs.iconWidth) or 0
-            height = (vs and vs.totalHeight) or 0
-            -- Fallback to viewer frame size if viewer state is stale
-            if width < 2 or height < 2 then
+            if vs then
+                width = vs.iconWidth or 0
+                height = vs.totalHeight or 0
+            elseif proxy.__quiCDMProxyInitialized then
+                width = proxy:GetWidth() or 1
+                height = proxy:GetHeight() or 1
+            else
                 width = sourceFrame:GetWidth() or 0
                 height = sourceFrame:GetHeight() or 0
             end
-        else
-            -- CDM viewers: use viewer state for accurate sizing
-            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(sourceFrame)
-            width = (vs and vs.iconWidth) or sourceFrame:GetWidth() or 0
-            height = (vs and vs.totalHeight) or sourceFrame:GetHeight() or 0
+            -- Scale conversion for fallback path (viewer state is in viewer-local space)
+            local sourceScale = sourceFrame:GetEffectiveScale()
+            local proxyScale = proxy:GetEffectiveScale()
+            local scaleFactor = 1.0
+            if sourceScale and proxyScale and proxyScale > 0 and sourceScale ~= proxyScale then
+                scaleFactor = sourceScale / proxyScale
+                width = width * scaleFactor
+                height = height * scaleFactor
+            end
         end
-        local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
-        if minWidthEnabled and IsHUDAnchoredToCDM() then
-            width = math.max(width, minWidth)
+
+        -- HUD minimum width only applies to the essential proxy (where the
+        -- HUD power bars / player frame are anchored).  Applying it to all
+        -- CDM proxies inflates the utility proxy beyond its actual icon
+        -- bounds when the multi-row layout is narrower than the minimum.
+        if parentKey == "cdmEssential" then
+            local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
+            if minWidthEnabled and IsHUDAnchoredToCDM() then
+                width = math.max(width, minWidth)
+            end
         end
     else
         -- General frames: mirror size directly
@@ -1337,19 +1378,6 @@ local function GetCDMAnchorProxy(parentKey)
     end
     width = math.max(1, width)
     height = math.max(1, height)
-
-    -- Scale conversion: viewer state dimensions are in the source frame's
-    -- coordinate space, but the proxy is parented to UIParent.  Convert
-    -- so the proxy's screen-space size matches the actual icons.
-    if source.cdm then
-        local sourceScale = sourceFrame:GetEffectiveScale()
-        local proxyScale = proxy:GetEffectiveScale()
-        if sourceScale and proxyScale and proxyScale > 0 and sourceScale ~= proxyScale then
-            local scaleFactor = sourceScale / proxyScale
-            width = width * scaleFactor
-            height = height * scaleFactor
-        end
-    end
 
     -- Anchor proxy directly to source frame so it follows automatically
     -- (no coordinate math, no feedback loops during Edit Mode drag).
@@ -1539,6 +1567,21 @@ end
 -- Expose proxy refresh for CDM layout module.
 _G.QUI_UpdateCDMAnchorProxyFrames = UpdateCDMAnchorProxies
 _G.QUI_GetCDMAnchorProxyFrame = GetCDMAnchorProxy
+
+-- Combat-safe proxy pending marker.
+-- Called from cdm_viewer.lua during combat (OnSizeChanged + RecalcCombatDimensions).
+-- The proxy is anchored to the protected CDM viewer, so it inherits taint
+-- during combat — SetSize is always blocked.  We just mark it for
+-- post-combat refresh (PLAYER_REGEN_ENABLED handler below).
+local function UpdateCDMAnchorProxyCombat(parentKey)
+    local proxy = cdmAnchorProxies[parentKey]
+    if not proxy or not proxy.__quiCDMProxyInitialized then
+        return
+    end
+    cdmAnchorProxyPendingAfterCombat[parentKey] = true
+end
+
+_G.QUI_UpdateCDMAnchorProxyCombat = UpdateCDMAnchorProxyCombat
 
 -- Re-sync frozen proxy anchors after combat ends.
 local cdmProxyCombatFrame = CreateFrame("Frame")
@@ -1744,6 +1787,11 @@ end
 -- Apply auto-width and auto-height to a frame
 local function ApplyAutoSizing(frame, settings, parentFrame, key)
     if not frame then return end
+
+    -- CDM viewers get their dimensions from LayoutViewer — never override
+    -- with autoWidth/autoHeight.  Doing so fights LayoutViewer and causes
+    -- the viewer to inflate during Edit Mode and oscillate on exit.
+    if CDM_LOGICAL_SIZE_KEYS[key] then return end
 
     -- Auto-width: match anchor target width
     if settings.autoWidth and parentFrame and parentFrame ~= UIParent then
