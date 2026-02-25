@@ -1963,8 +1963,7 @@ local function HookViewer(viewerName, trackerKey)
                     end
                 end
                 -- Save measured padding to all rows (applies for both changed and unchanged icon size)
-                -- Clamp to 0: negative padding means the viewer width was transient/stale.
-                if measuredPadding ~= nil and measuredPadding >= 0 then
+                if measuredPadding ~= nil then
                     local padSettings = GetTrackerSettings(trackerKey)
                     if padSettings then
                         for _, rowKey in ipairs({"row1", "row2", "row3"}) do
@@ -2838,15 +2837,13 @@ local function Initialize()
                                         local t2 = icons[2]:GetTop()
                                         if b1 and t2 then
                                             local gap = math.floor(b1 - t2 + 0.5)
-                                            if gap >= 0 then
-                                                for _, rk in ipairs({"row1", "row2", "row3"}) do
-                                                    if settings[rk] then
-                                                        settings[rk].padding = gap
-                                                    end
+                                            for _, rk in ipairs({"row1", "row2", "row3"}) do
+                                                if settings[rk] then
+                                                    settings[rk].padding = gap
                                                 end
-                                                if QUI and QUI.DebugPrint then
-                                                    QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: measured %s padding = %d (delay=%.2f)", tk, gap, delay))
-                                                end
+                                            end
+                                            if QUI and QUI.DebugPrint then
+                                                QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: measured %s padding = %d (delay=%.2f)", tk, gap, delay))
                                             end
                                         end
                                     else
@@ -2857,15 +2854,13 @@ local function Initialize()
                                         local l2 = icons[2]:GetLeft()
                                         if r1 and l2 then
                                             local gap = math.floor(l2 - r1 + 0.5)
-                                            if gap >= 0 then
-                                                for _, rk in ipairs({"row1", "row2", "row3"}) do
-                                                    if settings[rk] then
-                                                        settings[rk].padding = gap
-                                                    end
+                                            for _, rk in ipairs({"row1", "row2", "row3"}) do
+                                                if settings[rk] then
+                                                    settings[rk].padding = gap
                                                 end
-                                                if QUI and QUI.DebugPrint then
-                                                    QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: measured %s padding = %d (delay=%.2f)", tk, gap, delay))
-                                                end
+                                            end
+                                            if QUI and QUI.DebugPrint then
+                                                QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: measured %s padding = %d (delay=%.2f)", tk, gap, delay))
                                             end
                                         end
                                     end
