@@ -814,6 +814,7 @@ local function SkinBonusRollFrames()
 
         local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetThemeColors()
         local moneyIconBorder = SkinBase.GetFrameData(moneyFrame.Icon, "border")
+        if not moneyIconBorder then return end
         local backdrop = CreateFrame("Frame", nil, moneyFrame, "BackdropTemplate")
         backdrop:SetFrameLevel(moneyFrame:GetFrameLevel())
         backdrop:SetPoint("TOPLEFT", moneyIconBorder, "TOPLEFT", -4, 4)
