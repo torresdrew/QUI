@@ -1369,9 +1369,14 @@ local function GetCDMAnchorProxy(parentKey)
         if QUI and QUI.DebugPrint then
             local srcScale = sourceFrame and sourceFrame:GetEffectiveScale() or 0
             local pxyScale = proxy:GetEffectiveScale()
-            QUI:DebugPrint(format("|cff34D399Proxy|r %s resized: %.0fx%.0f → %.1fx%.1f (editMode=%s combat=%s srcScale=%.3f pxyScale=%.3f)",
+            local srcLocalScale = sourceFrame and sourceFrame:GetScale() or 0
+            local srcBoundsW, srcBoundsH = 0, 0
+            local sl, sr, st, sb = sourceFrame:GetLeft(), sourceFrame:GetRight(), sourceFrame:GetTop(), sourceFrame:GetBottom()
+            if sl and sr then srcBoundsW = sr - sl end
+            if st and sb then srcBoundsH = st - sb end
+            QUI:DebugPrint(format("|cff34D399Proxy|r %s resized: %.0fx%.0f → %.1fx%.1f (editMode=%s combat=%s srcLocalScale=%.3f srcEff=%.3f pxyEff=%.3f srcBounds=%.1fx%.1f)",
                 parentKey, curW or 0, curH or 0, width, height,
-                tostring(isEditMode), tostring(inCombat), srcScale, pxyScale))
+                tostring(isEditMode), tostring(inCombat), srcLocalScale, srcScale, pxyScale, srcBoundsW, srcBoundsH))
         end
     end
     -- Debug overlay: show a colored border on the proxy when debug mode is active

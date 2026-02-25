@@ -1579,6 +1579,21 @@ local function LayoutViewer(viewerName, trackerKey)
             if iconCount >= 1 and boundsL and boundsR and boundsT and boundsB then
                 local measuredW = boundsR - boundsL
                 local measuredH = boundsT - boundsB
+                -- Convert screen-space bounds to viewer-local coordinate space.
+                -- GetLeft/GetRight return UIParent-unit values; viewer state stores
+                -- viewer-local values.  When the viewer has a non-1.0 scale (Blizzard
+                -- "Icon Size" slider), screen bounds are larger by that scale factor.
+                -- The proxy's effective-scale comparison converts back to screen space,
+                -- so storing screen-space values here would cause double conversion.
+                local viewerToScreen = viewer:GetEffectiveScale()
+                local uiParentScale = UIParent:GetEffectiveScale()
+                if viewerToScreen and uiParentScale and uiParentScale > 0 then
+                    local scaleRatio = viewerToScreen / uiParentScale
+                    if scaleRatio > 0 and math.abs(scaleRatio - 1.0) > 0.001 then
+                        measuredW = measuredW / scaleRatio
+                        measuredH = measuredH / scaleRatio
+                    end
+                end
                 if measuredW > 1 and measuredH > 1 then
                     local curW = vs.cdmIconWidth or 0
                     local curH = vs.cdmTotalHeight or 0
@@ -1594,8 +1609,11 @@ local function LayoutViewer(viewerName, trackerKey)
                         vs._boundsCorrectedH = measuredH
                         vs._boundsCorrectedIconCount = iconCount
                         if QUI and QUI.DebugPrint then
-                            QUI:DebugPrint(format("|cff34D399CDM|r BoundsCorrection %s: formula=%.0fx%.0f actual=%.0fx%.0f icons=%d",
-                                trackerKey, curW, curH, measuredW, measuredH, iconCount))
+                            local vLocalScale = viewer:GetScale() or 0
+                            local vl, vr = viewer:GetLeft(), viewer:GetRight()
+                            local viewerScreenW = (vl and vr) and (vr - vl) or 0
+                            QUI:DebugPrint(format("|cff34D399CDM|r BoundsCorrection %s: formula=%.0fx%.0f actual=%.0fx%.0f icons=%d viewerScale=%.3f viewerScreenW=%.1f",
+                                trackerKey, curW, curH, measuredW, measuredH, iconCount, vLocalScale, viewerScreenW))
                         end
                         if _G.QUI_UpdateCDMAnchorProxyFrames then
                             _G.QUI_UpdateCDMAnchorProxyFrames()
@@ -1729,9 +1747,12 @@ local function HookViewer(viewerName, trackerKey)
         end
     end)
 
-    -- Debug: hook SetScale to detect Blizzard's Edit Mode slider changing scale
+    -- Hook SetScale: Blizzard's CDM "Icon Size" slider may call SetScale on
+    -- the viewer.  SetScale does NOT fire OnSizeChanged, so the proxy would
+    -- never learn about the scale change.  Trigger a proxy refresh so the
+    -- effective-scale comparison in GetCDMAnchorProxy can adjust dimensions.
     hooksecurefunc(viewer, "SetScale", function(self, newScale)
-        if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then
+        if QUI and QUI.DebugPrint then
             local w, h = self:GetWidth(), self:GetHeight()
             local effScale = self:GetEffectiveScale()
             local parentEffScale = UIParent:GetEffectiveScale()
@@ -1740,6 +1761,10 @@ local function HookViewer(viewerName, trackerKey)
             QUI:DebugPrint(format("|cffFF4444CDM SetScale|r %s: newScale=%.3f effScale=%.3f parentEffScale=%.3f logical=%.0fx%.0f boundsW=%.0f",
                 viewerName == VIEWER_ESSENTIAL and "Ess" or "Util",
                 newScale, effScale, parentEffScale, w, h, boundsW))
+        end
+        -- Refresh proxy dimensions to account for the new scale
+        if not InCombatLockdown() and _G.QUI_UpdateCDMAnchorProxyFrames then
+            _G.QUI_UpdateCDMAnchorProxyFrames()
         end
     end)
 
