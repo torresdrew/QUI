@@ -729,8 +729,10 @@ local function HideChatButtons(chatFrame)
     end
 
     -- Remove screen clamping so chat can move to edges
-    chatFrame:SetClampedToScreen(false)
-    chatFrame:SetClampRectInsets(0, 0, 0, 0)
+    if not InCombatLockdown() then
+        chatFrame:SetClampedToScreen(false)
+        chatFrame:SetClampRectInsets(0, 0, 0, 0)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -769,7 +771,9 @@ local function ShowChatButtons(chatFrame)
     end
 
     -- Restore screen clamping
-    chatFrame:SetClampedToScreen(true)
+    if not InCombatLockdown() then
+        chatFrame:SetClampedToScreen(true)
+    end
 end
 
 ---------------------------------------------------------------------------
