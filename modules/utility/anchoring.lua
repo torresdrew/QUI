@@ -1338,6 +1338,19 @@ local function GetCDMAnchorProxy(parentKey)
     width = math.max(1, width)
     height = math.max(1, height)
 
+    -- Scale conversion: viewer state dimensions are in the source frame's
+    -- coordinate space, but the proxy is parented to UIParent.  Convert
+    -- so the proxy's screen-space size matches the actual icons.
+    if source.cdm then
+        local sourceScale = sourceFrame:GetEffectiveScale()
+        local proxyScale = proxy:GetEffectiveScale()
+        if sourceScale and proxyScale and proxyScale > 0 and sourceScale ~= proxyScale then
+            local scaleFactor = sourceScale / proxyScale
+            width = width * scaleFactor
+            height = height * scaleFactor
+        end
+    end
+
     -- Anchor proxy directly to source frame so it follows automatically
     -- (no coordinate math, no feedback loops during Edit Mode drag).
     local _, _, relTo = proxy:GetPoint(1)
@@ -1351,9 +1364,11 @@ local function GetCDMAnchorProxy(parentKey)
     if curW ~= width or curH ~= height then
         proxy:SetSize(width, height)
         if QUI and QUI.DebugPrint then
-            QUI:DebugPrint(format("|cff34D399Proxy|r %s resized: %.0fx%.0f → %.0fx%.0f (editMode=%s combat=%s)",
+            local srcScale = sourceFrame and sourceFrame:GetEffectiveScale() or 0
+            local pxyScale = proxy:GetEffectiveScale()
+            QUI:DebugPrint(format("|cff34D399Proxy|r %s resized: %.0fx%.0f → %.1fx%.1f (editMode=%s combat=%s srcScale=%.3f pxyScale=%.3f)",
                 parentKey, curW or 0, curH or 0, width, height,
-                tostring(isEditMode), tostring(inCombat)))
+                tostring(isEditMode), tostring(inCombat), srcScale, pxyScale))
         end
     end
     -- Debug overlay: show a colored border on the proxy when debug mode is active
