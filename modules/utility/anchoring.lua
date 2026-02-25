@@ -1555,6 +1555,19 @@ local function GetFrameAnchorRect(frame, key)
         height = frame.GetHeight and frame:GetHeight() or 1
     end
 
+    -- SetPoint offsets are in the parent's coordinate space.  The child frame's
+    -- GetWidth/GetHeight return dimensions in its own coordinate space.  Multiply
+    -- by the child's scale to get the visual extent in the parent's coordinate
+    -- space so center-offset math correctly accounts for scaled frames (e.g.
+    -- Minimap at scale 1.2).  CDM logical dimensions are already in parent space.
+    if not CDM_LOGICAL_SIZE_KEYS[key] and frame.GetScale then
+        local fScale = frame:GetScale() or 1
+        if fScale > 0 and fScale ~= 1 then
+            width = width * fScale
+            height = height * fScale
+        end
+    end
+
     return math.max(1, width), math.max(1, height)
 end
 
@@ -1595,19 +1608,12 @@ local function GetParentAnchorRect(frame, parentKey)
         height = frame.GetHeight and frame:GetHeight() or 1
     end
 
-    -- Anchor offsets are computed in screen space (UIParent coordinate system).
-    -- GetWidth/GetHeight return the frame's own dimensions (unscaled).
-    -- Multiply by the frame's scale to get visual (screen-space) dimensions
-    -- so edge positions (TOP, BOTTOM, etc.) are correct during scale-based
-    -- resize (e.g. Minimap during Edit Mode).  CDM logical dimensions are
-    -- already in screen space, so skip for those.
-    if not usedLogical and frame.GetScale then
-        local pScale = frame:GetScale() or 1
-        if pScale > 0 and pScale ~= 1 then
-            width = width * pScale
-            height = height * pScale
-        end
-    end
+    -- SetPoint offsets are in the parent's coordinate space.  The parent's
+    -- GetWidth/GetHeight already return dimensions in its own coordinate space,
+    -- so no scale multiplication is needed here.  (Previously this multiplied by
+    -- the parent's scale, converting to screen pixels, which caused offsets to
+    -- fall short of the intended edge positions.)
+    -- CDM logical dimensions are already in the correct space — no adjustment.
 
     return math.max(1, width), math.max(1, height)
 end

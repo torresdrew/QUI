@@ -1215,6 +1215,11 @@ local function SetupMinimapDragging()
         end
     end)
 
+    -- Skip position application if the frame anchoring system owns this frame
+    if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(Minimap) then
+        return
+    end
+
     -- Apply saved position (handles both array format from drag and keyed format from defaults)
     local pos = settings.position
     if pos then
@@ -1543,10 +1548,12 @@ function Minimap_Module:Refresh()
         end
     end)
 
-    -- Restore saved position from profile (validate position data exists)
-    if settings.position and settings.position[1] and settings.position[2] then
-        Minimap:ClearAllPoints()
-        Minimap:SetPoint(settings.position[1], UIParent, settings.position[2], settings.position[3] or 0, settings.position[4] or 0)
+    -- Restore saved position from profile — skip if the frame anchoring system owns this frame
+    if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(Minimap)) then
+        if settings.position and settings.position[1] and settings.position[2] then
+            Minimap:ClearAllPoints()
+            Minimap:SetPoint(settings.position[1], UIParent, settings.position[2], settings.position[3] or 0, settings.position[4] or 0)
+        end
     end
 end
 
