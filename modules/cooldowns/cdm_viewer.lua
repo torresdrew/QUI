@@ -2219,7 +2219,8 @@ _G.QUI_IsSelectionKeepVisible = function(sel) return _keepVisibleSelections[sel]
 
 -- Expose viewer layout state for resource bars, castbars, anchoring, etc.
 -- Reads from _viewerState weak-keyed table (previously __cdm* properties on frames).
--- Reuses a per-viewer snapshot table to avoid allocating a new table per call.
+-- IMPORTANT: Returns a reused mutable snapshot table — callers MUST NOT cache
+-- the returned table across frames. Read values immediately or copy them.
 local _stateSnapshots = setmetatable({}, { __mode = "k" })
 _G.QUI_GetCDMViewerState = function(viewer)
     if not viewer then return nil end
