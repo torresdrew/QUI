@@ -652,14 +652,18 @@ end
 -- Flag + hook + hide pattern used by all chat button frames.
 -- Can't use Helpers.DeferredHideOnShow because the _chatButtonsHidden
 -- guard allows toggling visibility back on at runtime.
+local _chatButtonHooked = setmetatable({}, { __mode = "k" })
 local function HideChatButtonOnShow(frame)
     _chatButtonsHidden[frame] = true
-    hooksecurefunc(frame, "Show", function(self)
-        C_Timer.After(0, function()
-            if not _chatButtonsHidden[self] then return end
-            if self and self.Hide then self:Hide() end
+    if not _chatButtonHooked[frame] then
+        _chatButtonHooked[frame] = true
+        hooksecurefunc(frame, "Show", function(self)
+            C_Timer.After(0, function()
+                if not _chatButtonsHidden[self] then return end
+                if self and self.Hide then self:Hide() end
+            end)
         end)
-    end)
+    end
     frame:Hide()
 end
 
