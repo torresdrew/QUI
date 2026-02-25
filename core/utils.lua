@@ -714,8 +714,11 @@ end
 -- @param opts   Optional table: { clearAlpha = bool, combatCheck = bool }
 --               clearAlpha (default false): also call SetAlpha(0) after Hide.
 --               combatCheck (default true): skip hide if InCombatLockdown().
+local _deferredHideHooked = setmetatable({}, { __mode = "k" })
 function Helpers.DeferredHideOnShow(frame, opts)
     if not frame or not frame.Show then return end
+    if _deferredHideHooked[frame] then return end
+    _deferredHideHooked[frame] = true
     local clearAlpha = opts and opts.clearAlpha or false
     local combatCheck = not opts or opts.combatCheck ~= false
     hooksecurefunc(frame, "Show", function(self)
@@ -731,8 +734,11 @@ end
 --- Hook a texture's SetAtlas method to defer-clear it on the next frame.
 -- @param texture     The texture to hook.
 -- @param combatCheck Optional boolean (default true): skip clear if InCombatLockdown().
+local _deferredAtlasHooked = setmetatable({}, { __mode = "k" })
 function Helpers.DeferredSetAtlasBlock(texture, combatCheck)
     if not texture or not texture.SetAtlas then return end
+    if _deferredAtlasHooked[texture] then return end
+    _deferredAtlasHooked[texture] = true
     if combatCheck == nil then combatCheck = true end
     hooksecurefunc(texture, "SetAtlas", function(self)
         C_Timer.After(0, function()
