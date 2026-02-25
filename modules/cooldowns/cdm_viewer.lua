@@ -1527,33 +1527,38 @@ local function LayoutViewer(viewerName, trackerKey)
     end
 
     -- Verify calculated dimensions against actual icon bounds (out of combat only).
-    -- The formula may disagree with reality due to rounding, aspect ratio crops,
-    -- or stale settings.  Icon positions are the ground truth after positioning.
+    -- Scan ALL icons to find the true bounding box — checking only first/last
+    -- misses the widest row in multi-row layouts where the last icon is in a
+    -- narrower centered row.
     if not InCombatLockdown() and #iconsToLayout >= 2 then
-        local firstIcon = iconsToLayout[1]
-        local lastIcon = iconsToLayout[#iconsToLayout]
-        if firstIcon and lastIcon then
-            local fl, fr, ft, fb = firstIcon:GetLeft(), firstIcon:GetRight(), firstIcon:GetTop(), firstIcon:GetBottom()
-            local ll, lr, lt, lb = lastIcon:GetLeft(), lastIcon:GetRight(), lastIcon:GetTop(), lastIcon:GetBottom()
-            if fl and fr and ft and fb and ll and lr and lt and lb then
-                local measuredW = math.max(fr, lr) - math.min(fl, ll)
-                local measuredH = math.max(ft, lt) - math.min(fb, lb)
-                if measuredW > 1 and measuredH > 1 then
-                    if math.abs(maxRowWidth - measuredW) > 1 then
-                        maxRowWidth = measuredW
-                        vs.cdmIconWidth = maxRowWidth
-                        if isVertical then
-                            vs.cdmRow1Width = maxRowWidth
-                            vs.cdmBottomRowWidth = maxRowWidth
-                        else
-                            vs.cdmRow1Width = rowWidths[1] and math.max(rowWidths[1], measuredW) or measuredW
-                            vs.cdmBottomRowWidth = rowWidths[#rows] and math.max(rowWidths[#rows], measuredW) or measuredW
-                        end
+        local boundsL, boundsR, boundsT, boundsB
+        for _, icon in ipairs(iconsToLayout) do
+            local il, ir, it, ib = icon:GetLeft(), icon:GetRight(), icon:GetTop(), icon:GetBottom()
+            if il and ir and it and ib then
+                boundsL = boundsL and math.min(boundsL, il) or il
+                boundsR = boundsR and math.max(boundsR, ir) or ir
+                boundsT = boundsT and math.max(boundsT, it) or it
+                boundsB = boundsB and math.min(boundsB, ib) or ib
+            end
+        end
+        if boundsL and boundsR and boundsT and boundsB then
+            local measuredW = boundsR - boundsL
+            local measuredH = boundsT - boundsB
+            if measuredW > 1 and measuredH > 1 then
+                if math.abs(maxRowWidth - measuredW) > 1 then
+                    maxRowWidth = measuredW
+                    vs.cdmIconWidth = maxRowWidth
+                    if isVertical then
+                        vs.cdmRow1Width = maxRowWidth
+                        vs.cdmBottomRowWidth = maxRowWidth
+                    else
+                        vs.cdmRow1Width = rowWidths[1] and math.max(rowWidths[1], measuredW) or measuredW
+                        vs.cdmBottomRowWidth = rowWidths[#rows] and math.max(rowWidths[#rows], measuredW) or measuredW
                     end
-                    if math.abs(totalHeight - measuredH) > 1 then
-                        totalHeight = measuredH
-                        vs.cdmTotalHeight = totalHeight
-                    end
+                end
+                if math.abs(totalHeight - measuredH) > 1 then
+                    totalHeight = measuredH
+                    vs.cdmTotalHeight = totalHeight
                 end
             end
         end
