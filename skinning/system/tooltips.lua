@@ -421,11 +421,16 @@ end
 
 -- Refresh colors on all skinned tooltips (rebuilds textures for thickness changes)
 local function RefreshAllTooltipColors()
+    -- Refresh named tooltips from the static list
     for _, name in ipairs(tooltipsToSkin) do
         local tooltip = _G[name]
         if tooltip and skinnedTooltips[tooltip] then
             ReapplySkin(tooltip)
         end
+    end
+    -- Also refresh dynamically skinned tooltips (via TooltipDataProcessor)
+    for tooltip in pairs(skinnedTooltips) do
+        ReapplySkin(tooltip)
     end
 end
 
