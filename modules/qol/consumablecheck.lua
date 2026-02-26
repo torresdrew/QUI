@@ -1315,6 +1315,8 @@ local function OnReadyCheck(starter, timer)
     ConsumablesFrame:Show()
 end
 
+local consumableCombatDeferFrame  -- reused for combat-deferred hides
+
 local function OnReadyCheckFinished()
     HideConsumablePicker()
     if not InCombatLockdown() then
@@ -1324,17 +1326,19 @@ local function OnReadyCheckFinished()
         end
     else
         -- Defer hide until combat ends to avoid ADDON_ACTION_BLOCKED
-        local combatFrame = CreateFrame("Frame")
-        combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-        combatFrame:SetScript("OnEvent", function(f)
-            f:UnregisterAllEvents()
-            if ConsumablesFrame then
-                ConsumablesFrame:Hide()
-                for _, button in pairs(ConsumablesFrame.buttons) do
-                    if type(button) == "table" and button.click then button.click:Hide() end
+        if not consumableCombatDeferFrame then
+            consumableCombatDeferFrame = CreateFrame("Frame")
+            consumableCombatDeferFrame:SetScript("OnEvent", function(f)
+                f:UnregisterAllEvents()
+                if ConsumablesFrame then
+                    ConsumablesFrame:Hide()
+                    for _, btn in pairs(ConsumablesFrame.buttons) do
+                        if type(btn) == "table" and btn.click then btn.click:Hide() end
+                    end
                 end
-            end
-        end)
+            end)
+        end
+        consumableCombatDeferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     end
 end
 
