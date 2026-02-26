@@ -1592,7 +1592,7 @@ local function HookViewer(viewerName, trackerKey)
             local w, h = self:GetWidth(), self:GetHeight()
             local effScale = self:GetEffectiveScale()
             local parentEffScale = UIParent:GetEffectiveScale()
-            local boundsL, boundsR = self:GetLeft(), self:GetRight()
+            local boundsL, boundsR = Helpers.SafeValue(self:GetLeft(), nil), Helpers.SafeValue(self:GetRight(), nil)
             local boundsW = (boundsL and boundsR) and (boundsR - boundsL) or 0
             QUI:DebugPrint(format("|cffFF4444CDM SetScale|r %s: newScale=%.3f effScale=%.3f parentEffScale=%.3f logical=%.0fx%.0f boundsW=%.0f",
                 viewerName == VIEWER_ESSENTIAL and "Ess" or "Util",
@@ -1610,7 +1610,10 @@ local function HookViewer(viewerName, trackerKey)
         local boundsL, boundsR, boundsT, boundsB
         local iconCount = 0
         ForEachVisibleIcon(v, function(child)
-            local cl, cr, ct, cb = child:GetLeft(), child:GetRight(), child:GetTop(), child:GetBottom()
+            local cl = Helpers.SafeValue(child:GetLeft(), nil)
+            local cr = Helpers.SafeValue(child:GetRight(), nil)
+            local ct = Helpers.SafeValue(child:GetTop(), nil)
+            local cb = Helpers.SafeValue(child:GetBottom(), nil)
             if cl and cr and ct and cb then
                 iconCount = iconCount + 1
                 boundsL = boundsL and math.min(boundsL, cl) or cl
@@ -1631,7 +1634,8 @@ local function HookViewer(viewerName, trackerKey)
 
         -- Blizzard resets viewers to ~1x1 between layout passes; ignore these
         -- transient sizes to avoid unnecessary work and noisy debug logs.
-        local rawW, rawH = self:GetWidth(), self:GetHeight()
+        local rawW = Helpers.SafeValue(self:GetWidth(), nil)
+        local rawH = Helpers.SafeValue(self:GetHeight(), nil)
         if not rawW or not rawH or rawW < 2 or rawH < 2 then
             return
         end
@@ -2112,10 +2116,10 @@ local function Initialize()
                             if child and child ~= viewerRef.Selection and IsIconFrame(child)
                                 and child:IsShown() then
                                 iconCount = iconCount + 1
-                                local cl = child:GetLeft()
-                                local cr = child:GetRight()
-                                local ct = child:GetTop()
-                                local cb = child:GetBottom()
+                                local cl = Helpers.SafeValue(child:GetLeft(), nil)
+                                local cr = Helpers.SafeValue(child:GetRight(), nil)
+                                local ct = Helpers.SafeValue(child:GetTop(), nil)
+                                local cb = Helpers.SafeValue(child:GetBottom(), nil)
                                 if cl and cr and ct and cb then
                                     boundsL = boundsL and math.min(boundsL, cl) or cl
                                     boundsR = boundsR and math.max(boundsR, cr) or cr

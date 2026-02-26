@@ -1045,10 +1045,15 @@ function QUICore:ShowViewerOverlays()
                 -- addon code touching .Selection = zero taint.  After .Selection drag
                 -- moves the viewer, an OnUpdate syncs the overlay to follow.
                 if viewerName == "BuffBarCooldownViewer" and viewer then
-                    local cx, cy = viewer:GetCenter()
-                    local fw, fh = viewer:GetWidth(), viewer:GetHeight()
+                    local cx = Helpers.SafeValue(viewer:GetCenter(), nil)
+                    local _, cy = viewer:GetCenter()
+                    cy = Helpers.SafeValue(cy, nil)
+                    local fw = Helpers.SafeValue(viewer:GetWidth(), 0)
+                    local fh = Helpers.SafeValue(viewer:GetHeight(), 0)
                     if cx and cy and fw > 0 and fh > 0 then
-                        local usx, usy = UIParent:GetCenter()
+                        local usx = Helpers.SafeValue(UIParent:GetCenter(), 0)
+                        local _, usy = UIParent:GetCenter()
+                        usy = Helpers.SafeValue(usy, 0)
                         overlay:SetParent(UIParent)
                         overlay:ClearAllPoints()
                         overlay:SetSize(fw, fh)
@@ -1062,18 +1067,28 @@ function QUICore:ShowViewerOverlays()
                     overlay:SetScript("OnMouseUp", nil)
                     -- Continuously sync overlay position and size to viewer frame
                     overlay:SetScript("OnUpdate", function(self)
-                        local vcx, vcy = viewer:GetCenter()
+                        if InCombatLockdown() then return end
+                        local vcx = Helpers.SafeValue(viewer:GetCenter(), nil)
+                        local _, vcy = viewer:GetCenter()
+                        vcy = Helpers.SafeValue(vcy, nil)
                         if not vcx or not vcy then return end
-                        local vw, vh = viewer:GetWidth(), viewer:GetHeight()
-                        local usx2, usy2 = UIParent:GetCenter()
+                        local vw = Helpers.SafeValue(viewer:GetWidth(), nil)
+                        local vh = Helpers.SafeValue(viewer:GetHeight(), nil)
+                        if not vw or not vh then return end
+                        local usx2 = Helpers.SafeValue(UIParent:GetCenter(), nil)
+                        local _, usy2 = UIParent:GetCenter()
+                        usy2 = Helpers.SafeValue(usy2, nil)
                         if not usx2 or not usy2 then return end
                         -- Sync size
-                        local curW, curH = self:GetWidth(), self:GetHeight()
+                        local curW = Helpers.SafeValue(self:GetWidth(), 0)
+                        local curH = Helpers.SafeValue(self:GetHeight(), 0)
                         if math.abs(curW - vw) > 0.5 or math.abs(curH - vh) > 0.5 then
                             self:SetSize(vw, vh)
                         end
                         -- Sync position
-                        local curCx, curCy = self:GetCenter()
+                        local curCx = Helpers.SafeValue(self:GetCenter(), nil)
+                        local _, curCy = self:GetCenter()
+                        curCy = Helpers.SafeValue(curCy, nil)
                         if curCx and curCy then
                             local dx = math.abs((vcx - usx2) - (curCx - usx2))
                             local dy = math.abs((vcy - usy2) - (curCy - usy2))

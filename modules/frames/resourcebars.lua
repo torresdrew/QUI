@@ -755,19 +755,27 @@ end
 -- Create edit mode overlay for a power bar
 local function CreatePowerBarEditOverlay(bar, barKey)
     if bar.editOverlay then return bar.editOverlay end
+    if InCombatLockdown() then return nil end
 
     local overlay = CreateFrame("Frame", nil, bar, "BackdropTemplate")
     overlay:SetAllPoints()
     overlay:SetFrameLevel(bar:GetFrameLevel() + 10)
     local overlayPx = QUICore:GetPixelSize(overlay)
-    overlay:SetBackdrop({
+    local backdropInfo = {
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = 2 * overlayPx,
         insets = { left = 2 * overlayPx, right = 2 * overlayPx, top = 2 * overlayPx, bottom = 2 * overlayPx },
-    })
+    }
+    local core = GetCore()
+    local SSB = core and core.SafeSetBackdrop
+    if SSB then
+        SSB(overlay, backdropInfo, { 0.2, 0.8, 1, 1 })
+    else
+        overlay:SetBackdrop(backdropInfo)
+        overlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+    end
     overlay:SetBackdropColor(0.2, 0.8, 1, 0.3)
-    overlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
 
     -- Nudge buttons
     overlay.nudgeLeft = CreatePowerBarNudgeButton(overlay, "LEFT", -1, 0, barKey)
@@ -866,8 +874,12 @@ function QUICore:EnablePowerBarEditMode()
                             return
                         end
 
-                        local selfX, selfY = frame:GetCenter()
-                        local parentX, parentY = UIParent:GetCenter()
+                        local selfX = Helpers.SafeValue(frame:GetCenter(), nil)
+                        local _, selfY = frame:GetCenter()
+                        selfY = Helpers.SafeValue(selfY, nil)
+                        local parentX = Helpers.SafeValue(UIParent:GetCenter(), nil)
+                        local _, parentY = UIParent:GetCenter()
+                        parentY = Helpers.SafeValue(parentY, nil)
                         if selfX and selfY and parentX and parentY then
                             local offsetX = QUICore:PixelRound(selfX - parentX)
                             local offsetY = QUICore:PixelRound(selfY - parentY)
@@ -891,8 +903,12 @@ function QUICore:EnablePowerBarEditMode()
                 self:SetScript("OnUpdate", nil)
 
                 -- Final position save
-                local selfX, selfY = self:GetCenter()
-                local parentX, parentY = UIParent:GetCenter()
+                local selfX = Helpers.SafeValue(self:GetCenter(), nil)
+                local _, selfY = self:GetCenter()
+                selfY = Helpers.SafeValue(selfY, nil)
+                local parentX = Helpers.SafeValue(UIParent:GetCenter(), nil)
+                local _, parentY = UIParent:GetCenter()
+                parentY = Helpers.SafeValue(parentY, nil)
                 if selfX and selfY and parentX and parentY then
                     local offsetX = QUICore:PixelRound(selfX - parentX)
                     local offsetY = QUICore:PixelRound(selfY - parentY)
@@ -1460,8 +1476,12 @@ _G.QUI_UpdateLockedPowerBar = function()
         newWidth = math.floor(targetWidth + 0.5)
 
         -- Position to the right of Essential
-        local essentialCenterX, essentialCenterY = essentialViewer:GetCenter()
-        local screenCenterX, screenCenterY = UIParent:GetCenter()
+        local essentialCenterX = Helpers.SafeValue(essentialViewer:GetCenter(), nil)
+        local _, essentialCenterY = essentialViewer:GetCenter()
+        essentialCenterY = Helpers.SafeValue(essentialCenterY, nil)
+        local screenCenterX = Helpers.SafeValue(UIParent:GetCenter(), nil)
+        local _, screenCenterY = UIParent:GetCenter()
+        screenCenterY = Helpers.SafeValue(screenCenterY, nil)
         local totalWidth = (evs and evs.iconWidth) or savedW
         if totalWidth <= 0 then return end
         local barThickness = cfg.height or 6
@@ -1487,8 +1507,8 @@ _G.QUI_UpdateLockedPowerBar = function()
         newWidth = math.floor(targetWidth + 0.5)
 
         -- Center horizontally with Essential
-        local rawCenterX = essentialViewer:GetCenter()
-        local rawScreenX = UIParent:GetCenter()
+        local rawCenterX = Helpers.SafeValue(essentialViewer:GetCenter(), nil)
+        local rawScreenX = Helpers.SafeValue(UIParent:GetCenter(), nil)
         if rawCenterX and rawScreenX then
             local essentialCenterX = math.floor(rawCenterX + 0.5)
             local screenCenterX = math.floor(rawScreenX + 0.5)
@@ -1503,7 +1523,7 @@ _G.QUI_UpdateLockedPowerBar = function()
             tostring(newWidth or "nil"),
             tostring(evs and evs.iconWidth or "nil"),
             tostring(evs and evs.row1Width or "nil"),
-            essentialViewer:GetWidth() or 0))
+            Helpers.SafeValue(essentialViewer:GetWidth(), 0)))
     end
 
     -- Update if values changed
