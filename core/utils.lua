@@ -37,7 +37,7 @@ end
 --- @param tbl table The table to check
 --- @return boolean True if table can be accessed safely
 function Helpers.CanAccessTable(tbl)
-    return canaccesstable and canaccesstable(tbl) or true
+    return not canaccesstable or canaccesstable(tbl)
 end
 
 --- Safely get a value, returning fallback if it's a secret
