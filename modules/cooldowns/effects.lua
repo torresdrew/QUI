@@ -122,40 +122,55 @@ local function ProcessViewer(viewerName)
     if not shouldHide then return end -- Don't process if effects should be shown
     
     local function ProcessIcons()
-        local children = {viewer:GetChildren()}
-        for _, child in ipairs(children) do
-            if child:IsShown() then
+        -- Performance: iterate via select() to avoid table allocation
+        local numChildren = viewer:GetNumChildren()
+        for i = 1, numChildren do
+            local child = select(i, viewer:GetChildren())
+            if child and child:IsShown() then
                 -- Hide red/flash effects
                 HideCooldownEffects(child)
-                
+
                 -- Hide ALL glows (not just Epidemic)
                 pcall(HideAllGlows, child)
-                
+
                 -- Mark as processed (no OnUpdate hook needed - we handle glows via hooksecurefunc)
                 processedIcons[child] = true
             end
         end
     end
-    
+
     -- Process immediately
     ProcessIcons()
-    
+
     -- TAINT SAFETY: Defer to break taint chain from secure CDM context.
     -- Hook Layout to reprocess when viewer updates
+    -- Performance: coalesce rapid Layout calls into a single deferred ProcessIcons
     local hvState = hookedViewers[viewer]
     if not hvState then hvState = {}; hookedViewers[viewer] = hvState end
     if viewer.Layout and not hvState.layout then
         hvState.layout = true
+        local processPending = false
         hooksecurefunc(viewer, "Layout", function()
-            C_Timer.After(0.15, ProcessIcons)
+            if processPending then return end
+            processPending = true
+            C_Timer.After(0.15, function()
+                processPending = false
+                ProcessIcons()
+            end)
         end)
     end
 
     -- Hook OnShow
     if not hvState.show then
         hvState.show = true
+        local showPending = false
         viewer:HookScript("OnShow", function()
-            C_Timer.After(0.15, ProcessIcons)
+            if showPending then return end
+            showPending = true
+            C_Timer.After(0.15, function()
+                showPending = false
+                ProcessIcons()
+            end)
         end)
     end
 end
@@ -176,9 +191,13 @@ local function HideExistingBlizzardGlows()
     for _, viewerName in ipairs(viewerNames) do
         local viewer = _G[viewerName]
         if viewer then
-            local children = {viewer:GetChildren()}
-            for _, child in ipairs(children) do
-                pcall(HideBlizzardGlows, child)
+            -- Performance: iterate via select() to avoid table allocation
+            local numChildren = viewer:GetNumChildren()
+            for i = 1, numChildren do
+                local child = select(i, viewer:GetChildren())
+                if child then
+                    pcall(HideBlizzardGlows, child)
+                end
             end
         end
     end

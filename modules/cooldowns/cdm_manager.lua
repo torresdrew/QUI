@@ -12,6 +12,8 @@ local viewerPending = {}
 local updateBucket = {}
 local _iconPositions = Helpers.CreateStateTable()
 local _pendingCombatViewers
+-- Performance: reusable scratch table for visible children (avoids per-call allocation)
+local cdm_visibleScratch = {}
 
 -- Core function to remove padding and apply modifications
 local function RemovePadding(viewer)
@@ -27,18 +29,26 @@ local function RemovePadding(viewer)
         return
     end
 
-    local children = {viewer:GetChildren()}
+    -- Don't interfere if layout is currently being applied
+    if viewer._layoutApplying then
+        return
+    end
     
+    -- Performance: iterate children via select() to avoid table allocation
+    local numChildren = viewer:GetNumChildren()
     -- Get the visible icons (because they're fully dynamic)
-    local visibleChildren = {}
-    for _, child in ipairs(children) do
-        if child:IsShown() then
+    -- Performance: reuse module-level scratch table instead of allocating per call
+    local visibleChildren = cdm_visibleScratch
+    wipe(visibleChildren)
+    for i = 1, numChildren do
+        local child = select(i, viewer:GetChildren())
+        if child and child:IsShown() then
             -- Store original position for sorting
             local point, relativeTo, relativePoint, x, y = child:GetPoint(1)
             _iconPositions[child] = _iconPositions[child] or {}
             _iconPositions[child].originalX = x or 0
             _iconPositions[child].originalY = y or 0
-            table.insert(visibleChildren, child)
+            visibleChildren[#visibleChildren + 1] = child
         end
     end
     

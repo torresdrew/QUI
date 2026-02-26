@@ -52,9 +52,11 @@ end
 ---------------------------------------------------------------------------
 -- OnUpdate handler for fade animation
 ---------------------------------------------------------------------------
+-- Performance: cache fade duration at fade start to avoid DB walk every frame
+local _cachedFadeDuration = 0.3
+
 local function OnFadeUpdate(self, elapsed)
-    local settings = GetSettings()
-    local duration = (settings and settings.fadeTime) or 0.3
+    local duration = _cachedFadeDuration
 
     local now = GetTime()
     local progress = math.min((now - CombatTextState.fadeStart) / duration, 1)
@@ -87,6 +89,10 @@ local function StartFade()
     CombatTextState.fadeStart = GetTime()
     CombatTextState.fadeStartAlpha = currentAlpha
     CombatTextState.fadeTargetAlpha = 0
+
+    -- Performance: cache fade duration once at fade start (avoids DB walk every frame)
+    local settings = GetSettings()
+    _cachedFadeDuration = (settings and settings.fadeTime) or 0.3
 
     -- Create fade frame if needed
     if not CombatTextState.fadeFrame then

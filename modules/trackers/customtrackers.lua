@@ -15,6 +15,18 @@ local GetDB = Helpers.CreateDBGetter("customTrackers")
 
 local GetCore = ns.Helpers.GetCore
 
+-- Performance: cache frequently-called WoW API globals as locals
+local GetTime = GetTime
+local InCombatLockdown = InCombatLockdown
+local UnitAffectingCombat = UnitAffectingCombat
+local math_min = math.min
+local math_max = math.max
+local table_insert = table.insert
+local wipe = wipe
+local pairs = pairs
+local ipairs = ipairs
+local pcall = pcall
+
 ---------------------------------------------------------------------------
 -- MODULE NAMESPACE
 ---------------------------------------------------------------------------
@@ -43,6 +55,26 @@ local function MigrateBarAspect(config)
 end
 
 local BASE_CROP = 0.08  -- Standard WoW icon crop
+
+-- Performance: reusable scratch table for LayoutVisibleIcons (avoids per-call allocation)
+local _visibleIconsScratch = {}
+
+-- Performance: event-driven DoUpdate throttle state
+-- Prevents multiple DoUpdate calls per frame from stacked events
+-- (SPELL_UPDATE_COOLDOWN + UNIT_AURA + ACTIONBAR_UPDATE_COOLDOWN can all fire in the same frame)
+local _eventUpdatePending = false
+local _eventUpdateThrottle = 0.1  -- Minimum interval between event-driven DoUpdate bursts (seconds)
+local _lastEventUpdate = 0
+
+-- Performance: hoisted pcall wrapper functions (avoids anonymous closure allocation per call)
+local function SafeSetCooldown(cd, start, dur) cd:SetCooldown(start, dur) end
+local function SafeSetReverse(cd, val) cd:SetReverse(val) end
+local function SafeSetSwipeColor(cd, r, g, b, a) cd:SetSwipeColor(r, g, b, a) end
+local function SafeSetDrawSwipe(cd, val) cd:SetDrawSwipe(val) end
+local function SafeSetDrawEdge(cd, val) cd:SetDrawEdge(val) end
+local function SafeCheckDuration(dur) return dur and dur > 0 and dur <= 1.5 end
+local function SafeCheckCooldownActive(start, dur) return start and start > 0 and dur and dur > 0 end
+local function SafeCheckCharges(count, maxCharges) return count < maxCharges end
 
 -- Housing instance types - excluded from "Show in Instance" detection
 local HOUSING_INSTANCE_TYPES = {
@@ -1301,11 +1333,12 @@ local function LayoutVisibleIcons(bar)
     local iconWidth = config.iconSize or 36
     local iconHeight = iconWidth / aspectRatio
 
-    -- Collect only visible icons
-    local visibleIcons = {}
+    -- Collect only visible icons (reuse scratch table to avoid per-call allocation)
+    local visibleIcons = _visibleIconsScratch
+    wipe(visibleIcons)
     for _, icon in ipairs(bar.icons) do
         if icon.isVisible ~= false then
-            table.insert(visibleIcons, icon)
+            visibleIcons[#visibleIcons + 1] = icon
         end
     end
 
@@ -1471,11 +1504,15 @@ local function RebuildActiveSet(bar)
     local config = bar.config
     local hideNonUsable = config.hideNonUsable
 
+    -- Performance: Track whether this bar has any spell entries (for lazy event registration)
+    local hasSpells = false
+
     -- Iterate the FULL configured list (bar.icons), not activeIcons
     -- This ensures we pick up newly-talented spells when switching talent loadouts
     for _, icon in ipairs(bar.icons or {}) do
         local entry = icon.entry
         if entry and entry.id then
+            if entry.type == "spell" then hasSpells = true end
             local isUsable = true
             if entry.type == "spell" then
                 isUsable = IsSpellUsable(entry.id)
@@ -1524,6 +1561,9 @@ local function RebuildActiveSet(bar)
         end
     end
 
+    -- Store hasSpells for lazy event registration
+    bar.hasSpells = hasSpells
+
     -- Re-layout with the new active set (skip during combat — layout uses
     -- ClearAllPoints/SetPoint which are also protected on secure children)
     if inCombat then
@@ -1532,8 +1572,10 @@ local function RebuildActiveSet(bar)
         LayoutVisibleIcons(bar)
     end
 
-    -- DEBUG: Remove this line after verifying the optimization works
-    -- print("|cFF00FF00[QUI Debug]|r RebuildActiveSet: " .. #bar.activeIcons .. " of " .. #(bar.icons or {}) .. " icons active")
+    -- Performance: Update event registrations based on current bar configurations
+    if CustomTrackers.UpdateEventRegistrations then
+        CustomTrackers.UpdateEventRegistrations()
+    end
 end
 
 -- Module-level reference for event handlers
@@ -1605,10 +1647,8 @@ function CustomTrackers:StartCooldownPolling(bar)
                 -- not the buff duration (e.g., Power Word: Shield buff outlasting its cooldown)
                 if isActive and activeStartTime and activeDuration and activeDuration > 0 and not showOnlyOnCooldown then
                     -- Active state: show buff/cast duration (reverse fill)
-                    pcall(function()
-                        icon.cooldown:SetReverse(true)
-                        icon.cooldown:SetCooldown(activeStartTime, activeDuration)
-                    end)
+                    pcall(SafeSetReverse, icon.cooldown, true)
+                    pcall(SafeSetCooldown, icon.cooldown, activeStartTime, activeDuration)
                     isOnCD = false  -- Active overrides cooldown state
                 else
                     -- Normal cooldown display
@@ -1619,26 +1659,24 @@ function CustomTrackers:StartCooldownPolling(bar)
                     if isChargeSpell then
                         -- For charge spells: use charge cooldown values
                         if chargeStartTime and chargeDuration then
-                            -- Set cooldown first (inside pcall for secret value safety)
-                            pcall(function()
-                                icon.cooldown:SetCooldown(chargeStartTime, chargeDuration)
-                            end)
+                            -- Set cooldown first (pcall for secret value safety)
+                            pcall(SafeSetCooldown, icon.cooldown, chargeStartTime, chargeDuration)
                             -- Check if cooldown is active AFTER setting it
                             rechargeActive = IsCooldownFrameActive(icon.cooldown)
                         else
                             icon.cooldown:Clear()
                         end
 
-                        -- Control swipe/edge for charge spells (outside pcall for reliability)
+                        -- Control swipe/edge for charge spells
                         if config.showRechargeSwipe then
-                            pcall(icon.cooldown.SetSwipeColor, icon.cooldown, 0, 0, 0, 0.6)
-                            pcall(icon.cooldown.SetDrawSwipe, icon.cooldown, true)
+                            pcall(SafeSetSwipeColor, icon.cooldown, 0, 0, 0, 0.6)
+                            pcall(SafeSetDrawSwipe, icon.cooldown, true)
                         else
-                            pcall(icon.cooldown.SetSwipeColor, icon.cooldown, 0, 0, 0, 0)
-                            pcall(icon.cooldown.SetDrawSwipe, icon.cooldown, false)
+                            pcall(SafeSetSwipeColor, icon.cooldown, 0, 0, 0, 0)
+                            pcall(SafeSetDrawSwipe, icon.cooldown, false)
                         end
                         local showEdge = rechargeActive and GetRechargeEdgeSetting()
-                        pcall(icon.cooldown.SetDrawEdge, icon.cooldown, showEdge)
+                        pcall(SafeSetDrawEdge, icon.cooldown, showEdge)
 
                         -- EXPLICIT show/hide (critical for cooldown visibility)
                         if rechargeActive then
@@ -1656,18 +1694,14 @@ function CustomTrackers:StartCooldownPolling(bar)
                         -- Main cooldown is only active when ALL charges are depleted
                         -- Clear first to ensure clean state (SetCooldown(0,0) doesn't clear previous state)
                         icon.cooldown:Clear()
-                        pcall(function()
-                            icon.cooldown:SetCooldown(startTime, duration)
-                        end)
+                        pcall(SafeSetCooldown, icon.cooldown, startTime, duration)
                         -- Check if the frame shows this cooldown as active
                         -- IsCooldownFrameActive uses IsVisible() which handles secret values internally
                         mainCDActive = IsCooldownFrameActive(icon.cooldown)
 
                         -- Now restore charge cooldown values for display
                         if chargeStartTime and chargeDuration then
-                            pcall(function()
-                                icon.cooldown:SetCooldown(chargeStartTime, chargeDuration)
-                            end)
+                            pcall(SafeSetCooldown, icon.cooldown, chargeStartTime, chargeDuration)
                         end
 
                         -- Exclude GCD from triggering desaturation
@@ -1676,9 +1710,7 @@ function CustomTrackers:StartCooldownPolling(bar)
                             local isJustGCD = isOnGCD
                             if not isJustGCD then
                                 -- Fallback: check if main cooldown duration is within GCD range
-                                local gcdCheckOk, gcdCheckResult = pcall(function()
-                                    return duration and duration > 0 and duration <= 1.5
-                                end)
+                                local gcdCheckOk, gcdCheckResult = pcall(SafeCheckDuration, duration)
                                 if gcdCheckOk and gcdCheckResult then
                                     isJustGCD = true
                                 end
@@ -1702,9 +1734,7 @@ function CustomTrackers:StartCooldownPolling(bar)
                             if isOnGCD then
                                 -- Main spell is on GCD. Could be just GCD (full charges) or
                                 -- real recharge that started during GCD. Try to check charges.
-                                local chargeCheckOk, hasMissingCharges = pcall(function()
-                                    return count < maxCharges
-                                end)
+                                local chargeCheckOk, hasMissingCharges = pcall(SafeCheckCharges, count, maxCharges)
                                 if chargeCheckOk then
                                     if hasMissingCharges then
                                         -- We're missing charges = real recharge, keep showing
@@ -1736,13 +1766,11 @@ function CustomTrackers:StartCooldownPolling(bar)
                     else
                         -- Normal spell/item cooldown
                         if startTime and duration then
-                            pcall(function()
-                                icon.cooldown:SetCooldown(startTime, duration)
-                            end)
+                            pcall(SafeSetCooldown, icon.cooldown, startTime, duration)
                         end
 
-                        pcall(icon.cooldown.SetDrawSwipe, icon.cooldown, false)
-                        pcall(icon.cooldown.SetDrawEdge, icon.cooldown, false)
+                        pcall(SafeSetDrawSwipe, icon.cooldown, false)
+                        pcall(SafeSetDrawEdge, icon.cooldown, false)
 
                         if hideGCD then
                             -- Check if this is just GCD (not a real cooldown)
@@ -1751,10 +1779,7 @@ function CustomTrackers:StartCooldownPolling(bar)
                             local isJustGCD = isOnGCD
                             if not isJustGCD then
                                 -- Fallback: check if duration is within GCD range
-                                -- Wrap entire comparison in pcall to handle secret values
-                                local gcdCheckOk, gcdCheckResult = pcall(function()
-                                    return duration and duration > 0 and duration <= 1.5
-                                end)
+                                local gcdCheckOk, gcdCheckResult = pcall(SafeCheckDuration, duration)
                                 if gcdCheckOk and gcdCheckResult then
                                     isJustGCD = true
                                 end
@@ -1766,9 +1791,7 @@ function CustomTrackers:StartCooldownPolling(bar)
                                 isOnCD = false
                             else
                                 -- Real cooldown (> 1.5s duration)
-                                local checkSuccess, checkResult = pcall(function()
-                                    return startTime and startTime > 0 and duration and duration > 0
-                                end)
+                                local checkSuccess, checkResult = pcall(SafeCheckCooldownActive, startTime, duration)
                                 if checkSuccess then
                                     isOnCD = checkResult
                                 else
@@ -1777,9 +1800,7 @@ function CustomTrackers:StartCooldownPolling(bar)
                             end
                         else
                             -- hideGCD is disabled, treat any cooldown as "on cooldown"
-                            local checkSuccess, checkResult = pcall(function()
-                                return startTime and startTime > 0 and duration and duration > 0
-                            end)
+                            local checkSuccess, checkResult = pcall(SafeCheckCooldownActive, startTime, duration)
                             if checkSuccess then
                                 isOnCD = checkResult
                             else
@@ -2272,6 +2293,11 @@ function CustomTrackers:RefreshAll()
             self:CreateBar(barConfig.id, barConfig)
         end
     end
+
+    -- Performance: Update lazy event registrations after all bars are created
+    if CustomTrackers.UpdateEventRegistrations then
+        CustomTrackers.UpdateEventRegistrations()
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -2474,15 +2500,9 @@ initFrame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 initFrame:RegisterEvent("BAG_UPDATE_DELAYED")
 initFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 initFrame:RegisterEvent("SPELL_UPDATE_USABLE")
-initFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")  -- Performance: event-driven cooldown updates
-initFrame:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")  -- Performance: catches action bar cooldown changes
--- Active state detection events (casting/channeling/buff)
-initFrame:RegisterEvent("UNIT_AURA")
-initFrame:RegisterEvent("UNIT_SPELLCAST_START")
-initFrame:RegisterEvent("UNIT_SPELLCAST_STOP")
-initFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-initFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
-initFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
+-- Performance: high-frequency combat events are registered lazily via UpdateEventRegistrations()
+-- only when at least one active bar needs them. This avoids wasted processing when
+-- the user has no spell-tracking or active-state bars configured.
 -- Spec change detection for spec-specific spells
 initFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 -- Talent change detection for active icon rebuild (talent loadout swaps)
@@ -2492,6 +2512,64 @@ initFrame:RegisterEvent("UNIT_PET")
 -- Combat state changes for showOnlyInCombat icon visibility
 initFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 initFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+
+-- Performance: Lazy event registration for high-frequency combat events.
+-- Only register SPELL_UPDATE_COOLDOWN, ACTIONBAR_UPDATE_COOLDOWN, UNIT_AURA,
+-- and spellcast events when at least one bar actually needs them.
+local _cooldownEventsRegistered = false
+local _activeStateEventsRegistered = false
+
+local function UpdateEventRegistrations()
+    local needsCooldownEvents = false
+    local needsActiveStateEvents = false
+
+    for _, bar in pairs(CustomTrackers.activeBars) do
+        if bar and bar.config then
+            -- Any bar with spell entries needs cooldown events
+            if bar.hasSpells then
+                needsCooldownEvents = true
+            end
+            -- Any bar with active state enabled needs aura/spellcast events
+            if bar.config.showActiveState ~= false then
+                needsActiveStateEvents = true
+            end
+        end
+    end
+
+    -- Also register cooldown events if any bar exists (items have cooldowns too)
+    if next(CustomTrackers.activeBars) then
+        needsCooldownEvents = true
+    end
+
+    if needsCooldownEvents and not _cooldownEventsRegistered then
+        _cooldownEventsRegistered = true
+        initFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+        initFrame:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
+    elseif not needsCooldownEvents and _cooldownEventsRegistered then
+        _cooldownEventsRegistered = false
+        initFrame:UnregisterEvent("SPELL_UPDATE_COOLDOWN")
+        initFrame:UnregisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
+    end
+
+    if needsActiveStateEvents and not _activeStateEventsRegistered then
+        _activeStateEventsRegistered = true
+        initFrame:RegisterEvent("UNIT_AURA")
+        initFrame:RegisterEvent("UNIT_SPELLCAST_START")
+        initFrame:RegisterEvent("UNIT_SPELLCAST_STOP")
+        initFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+        initFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
+        initFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
+    elseif not needsActiveStateEvents and _activeStateEventsRegistered then
+        _activeStateEventsRegistered = false
+        initFrame:UnregisterEvent("UNIT_AURA")
+        initFrame:UnregisterEvent("UNIT_SPELLCAST_START")
+        initFrame:UnregisterEvent("UNIT_SPELLCAST_STOP")
+        initFrame:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+        initFrame:UnregisterEvent("UNIT_SPELLCAST_CHANNEL_START")
+        initFrame:UnregisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
+    end
+end
+CustomTrackers.UpdateEventRegistrations = UpdateEventRegistrations
 initFrame:SetScript("OnEvent", function(self, event, ...)
     -- Spec change: refresh all bars to load spec-appropriate spells
     -- PLAYER_SPECIALIZATION_CHANGED only fires for player, no unit check needed
@@ -2579,13 +2657,32 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
-    -- Event-driven cooldown updates (reduces ticker frequency)
+    -- Performance: Throttled event-driven cooldown updates
+    -- SPELL_UPDATE_COOLDOWN, ACTIONBAR_UPDATE_COOLDOWN, UNIT_AURA, and spellcast events
+    -- can all fire multiple times per frame/GCD. Instead of calling DoUpdate on every event,
+    -- we coalesce them with a minimum interval to prevent redundant full-bar scans.
     if event == "SPELL_UPDATE_COOLDOWN" or event == "ACTIONBAR_UPDATE_COOLDOWN" then
-        -- Update all active bars immediately on cooldown change
-        for _, bar in pairs(CustomTrackers.activeBars) do
-            if bar and bar:IsShown() and bar.DoUpdate then
-                bar.DoUpdate()
+        local now = GetTime()
+        if (now - _lastEventUpdate) >= _eventUpdateThrottle then
+            _lastEventUpdate = now
+            _eventUpdatePending = false
+            for _, bar in pairs(CustomTrackers.activeBars) do
+                if bar and bar:IsShown() and bar.DoUpdate then
+                    bar.DoUpdate()
+                end
             end
+        elseif not _eventUpdatePending then
+            -- Schedule a deferred update to ensure we don't miss the final state
+            _eventUpdatePending = true
+            C_Timer.After(_eventUpdateThrottle, function()
+                _eventUpdatePending = false
+                _lastEventUpdate = GetTime()
+                for _, bar in pairs(CustomTrackers.activeBars) do
+                    if bar and bar:IsShown() and bar.DoUpdate then
+                        bar.DoUpdate()
+                    end
+                end
+            end)
         end
         return
     end
@@ -2603,10 +2700,27 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
                     chargeSpellLastCast[spellID] = GetTime()
                 end
             end
-            for _, bar in pairs(CustomTrackers.activeBars) do
-                if bar and bar:IsShown() and bar.DoUpdate and bar.config and bar.config.showActiveState ~= false then
-                    bar.DoUpdate()
+            -- Throttle: reuse same coalescing as cooldown events
+            local now = GetTime()
+            if (now - _lastEventUpdate) >= _eventUpdateThrottle then
+                _lastEventUpdate = now
+                _eventUpdatePending = false
+                for _, bar in pairs(CustomTrackers.activeBars) do
+                    if bar and bar:IsShown() and bar.DoUpdate and bar.config and bar.config.showActiveState ~= false then
+                        bar.DoUpdate()
+                    end
                 end
+            elseif not _eventUpdatePending then
+                _eventUpdatePending = true
+                C_Timer.After(_eventUpdateThrottle, function()
+                    _eventUpdatePending = false
+                    _lastEventUpdate = GetTime()
+                    for _, bar in pairs(CustomTrackers.activeBars) do
+                        if bar and bar:IsShown() and bar.DoUpdate and bar.config and bar.config.showActiveState ~= false then
+                            bar.DoUpdate()
+                        end
+                    end
+                end)
             end
         end
         return
@@ -2615,10 +2729,27 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "UNIT_AURA" then
         local unit = ...
         if unit == "player" then
-            for _, bar in pairs(CustomTrackers.activeBars) do
-                if bar and bar:IsShown() and bar.DoUpdate and bar.config and bar.config.showActiveState ~= false then
-                    bar.DoUpdate()
+            -- Throttle: reuse same coalescing as cooldown events
+            local now = GetTime()
+            if (now - _lastEventUpdate) >= _eventUpdateThrottle then
+                _lastEventUpdate = now
+                _eventUpdatePending = false
+                for _, bar in pairs(CustomTrackers.activeBars) do
+                    if bar and bar:IsShown() and bar.DoUpdate and bar.config and bar.config.showActiveState ~= false then
+                        bar.DoUpdate()
+                    end
                 end
+            elseif not _eventUpdatePending then
+                _eventUpdatePending = true
+                C_Timer.After(_eventUpdateThrottle, function()
+                    _eventUpdatePending = false
+                    _lastEventUpdate = GetTime()
+                    for _, bar in pairs(CustomTrackers.activeBars) do
+                        if bar and bar:IsShown() and bar.DoUpdate and bar.config and bar.config.showActiveState ~= false then
+                            bar.DoUpdate()
+                        end
+                    end
+                end)
             end
         end
         return

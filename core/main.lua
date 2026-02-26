@@ -156,7 +156,13 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                 if elapsed < 0.1 then return end  -- Check every 0.1s
                 elapsed = 0
 
-                local processed = {}
+                -- Performance: reuse module-level scratch table instead of allocating per tick
+                local processed = QUICore.__backdropProcessed
+                if not processed then
+                    processed = {}
+                    QUICore.__backdropProcessed = processed
+                end
+                wipe(processed)
                 for pendingFrame in pairs(QUICore.__pendingBackdrops or {}) do
                     local pendingData = _pendingBackdropData[pendingFrame]
                     if pendingFrame and pendingData then
@@ -179,11 +185,11 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                                     pendingFrame:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1)
                                 end
                                 _pendingBackdropData[pendingFrame] = nil
-                                table.insert(processed, pendingFrame)
+                                processed[#processed + 1] = pendingFrame
                             end
                         end
                     else
-                        table.insert(processed, pendingFrame)
+                        processed[#processed + 1] = pendingFrame
                     end
                 end
 
@@ -4249,9 +4255,14 @@ function QUICore:HookEditMode()
         -- Safety net: OnUpdate watcher detects Edit Mode has closed even if
         -- the hooksecurefunc hook didn't fire (e.g. ExitEditMode errored out
         -- due to taint in CompactUnitFrame_UpdateHealthColor or similar).
+        -- Performance: throttled to every 0.5s instead of every frame.
         local editModeExitWatcher = CreateFrame("Frame", nil, UIParent)
         local _wasEditModeShown = false
-        editModeExitWatcher:SetScript("OnUpdate", function()
+        local _editWatcherElapsed = 0
+        editModeExitWatcher:SetScript("OnUpdate", function(self, delta)
+            _editWatcherElapsed = _editWatcherElapsed + (delta or 0)
+            if _editWatcherElapsed < 0.5 then return end
+            _editWatcherElapsed = 0
             local isShown = EditModeManagerFrame:IsShown()
             if not _wasEditModeShown and isShown then
                 -- New Edit Mode session — reset exit guard

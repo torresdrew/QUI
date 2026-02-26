@@ -945,6 +945,12 @@ end
 ---------------------------------------------------------------------------
 -- HELPER: Collect visible icons from viewer (stable order using layoutIndex)
 ---------------------------------------------------------------------------
+-- Performance: reusable scratch tables for custom CDM icon injection
+-- (avoids allocating positioned/unpositioned/merged tables on every layout call)
+local _collectPositioned = {}
+local _collectUnpositioned = {}
+local _collectMerged = {}
+
 local function CollectIcons(viewer, trackerKey)
     local icons = {}
     if not viewer or not viewer.GetNumChildren then return icons end
@@ -994,26 +1000,30 @@ local function CollectIcons(viewer, trackerKey)
             local placement = customData and customData.placement or "after"
 
             -- Phase 1: Separate into positioned and unpositioned
-            local positioned = {}
-            local unpositioned = {}
+            -- Performance: reuse module-level scratch tables
+            local positioned = _collectPositioned
+            local unpositioned = _collectUnpositioned
+            wipe(positioned)
+            wipe(unpositioned)
             for idx, ci in ipairs(customIcons) do
                 local entry = ci._customCDMEntry
                 if entry and entry.position and entry.position > 0 then
-                    table.insert(positioned, { icon = ci, origIndex = idx })
+                    positioned[#positioned + 1] = { icon = ci, origIndex = idx }
                 else
-                    table.insert(unpositioned, ci)
+                    unpositioned[#unpositioned + 1] = ci
                 end
             end
 
             -- Phase 2: Insert unpositioned using existing before/after logic
             if #unpositioned > 0 then
                 if placement == "before" then
-                    local merged = {}
-                    for _, ci in ipairs(unpositioned) do table.insert(merged, ci) end
-                    for _, bi in ipairs(icons) do table.insert(merged, bi) end
+                    local merged = _collectMerged
+                    wipe(merged)
+                    for _, ci in ipairs(unpositioned) do merged[#merged + 1] = ci end
+                    for _, bi in ipairs(icons) do merged[#merged + 1] = bi end
                     icons = merged
                 else
-                    for _, ci in ipairs(unpositioned) do table.insert(icons, ci) end
+                    for _, ci in ipairs(unpositioned) do icons[#icons + 1] = ci end
                 end
             end
 
