@@ -749,10 +749,25 @@ local function ProcessPendingIcons()
     end
 end
 
--- Register for combat end to process pending icons and refresh layouts
-local combatEndFrame = CreateFrame("Frame")
-combatEndFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-combatEndFrame:SetScript("OnEvent", function()
+-- Register for combat start/end to manage layout
+local combatFrame = CreateFrame("Frame")
+combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+combatFrame:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_REGEN_DISABLED" then
+        -- Combat enter: Blizzard resets CDM layout via internal Layout() calls.
+        -- Re-apply QUI's layout after a short delay to let Blizzard finish.
+        if QUI and QUI.DebugPrint then
+            QUI:DebugPrint("|cff34D399CDM|r Combat enter — scheduling re-layout")
+        end
+        C_Timer.After(0.05, function()
+            LayoutViewer(VIEWER_ESSENTIAL, "essential")
+            LayoutViewer(VIEWER_UTILITY, "utility")
+        end)
+        return
+    end
+
+    -- PLAYER_REGEN_ENABLED: combat end
     ProcessPendingIcons()
     -- Re-apply Utility anchor after combat if it was deferred.
     C_Timer.After(0.05, function()
@@ -1033,14 +1048,29 @@ local function LayoutViewer(viewerName, trackerKey)
     if Helpers.IsEditModeActive() then return end
 
     local settings = GetTrackerSettings(trackerKey)
-    if not settings or not settings.enabled then return end
+    if not settings or not settings.enabled then
+        if QUI and QUI.DebugPrint and InCombatLockdown() then
+            QUI:DebugPrint(format("|cff34D399CDM|r LayoutViewer %s BAIL: no settings or disabled", trackerKey))
+        end
+        return
+    end
     -- Allow re-layout in combat so spell morphs/procs don't leave the bars in a
     -- Blizzard-sized state until combat ends. Skinning work still defers in combat.
 
     -- Prevent re-entry during layout
-    if NCDM.applying[trackerKey] then return end
+    if NCDM.applying[trackerKey] then
+        if QUI and QUI.DebugPrint and InCombatLockdown() then
+            QUI:DebugPrint(format("|cff34D399CDM|r LayoutViewer %s BAIL: applying guard stuck", trackerKey))
+        end
+        return
+    end
     local vs = getViewerState(viewer)
-    if vs.cdmLayoutRunning then return end
+    if vs.cdmLayoutRunning then
+        if QUI and QUI.DebugPrint and InCombatLockdown() then
+            QUI:DebugPrint(format("|cff34D399CDM|r LayoutViewer %s BAIL: cdmLayoutRunning stuck", trackerKey))
+        end
+        return
+    end
 
     NCDM.applying[trackerKey] = true
     vs.cdmLayoutRunning = true
@@ -1520,6 +1550,25 @@ local function HookViewer(viewerName, trackerKey)
 
     local hvs = getViewerState(viewer)
 
+    -- Hook Layout(): Blizzard calls Layout() directly on the viewer during
+    -- combat enter and other state changes (bypasses RefreshLayout entirely).
+    -- Same pattern as BuffBar CDM Layout hook — defer to next frame so
+    -- Blizzard finishes its pass first, then re-apply QUI's layout on top.
+    if viewer.Layout then
+        hooksecurefunc(viewer, "Layout", function()
+            if Helpers.IsEditModeActive() then return end
+            local combat = InCombatLockdown()
+            if QUI and QUI.DebugPrint then
+                QUI:DebugPrint(format("|cff34D399CDM|r Layout() hook fired %s combat=%s",
+                    trackerKey, tostring(combat)))
+            end
+            C_Timer.After(0, function()
+                if Helpers.IsEditModeActive() then return end
+                LayoutViewer(viewerName, trackerKey)
+            end)
+        end)
+    end
+
     -- OnShow hook: single deferred layout when viewer becomes visible
     viewer:HookScript("OnShow", function(self)
         C_Timer.After(0.02, function()
@@ -1981,15 +2030,34 @@ local function Initialize()
     -- recalculates CDM layout (icon size slider, enable/disable, etc.).
     -- No loop prevention needed: LayoutViewer no longer calls SetSize on the
     -- viewer frame, so it cannot retrigger RefreshLayout.
+    -- Runs in combat too: Blizzard fires RefreshLayout mid-combat which resets
+    -- icon positions to defaults.  LayoutViewer safely defers skinning and
+    -- dependent-bar updates until post-combat while repositioning icons
+    -- immediately.  C_Timer.After(0) lets Blizzard finish its pass first
+    -- (same pattern as BuffBar CDM RefreshLayout hook).
     local settingsFrame = _G["CooldownViewerSettings"]
     if settingsFrame and settingsFrame.RefreshLayout
        and not NCDM.hooked["CooldownViewerSettings"] then
         NCDM.hooked["CooldownViewerSettings"] = true
         hooksecurefunc(settingsFrame, "RefreshLayout", function()
-            if InCombatLockdown() then return end
+            local combat = InCombatLockdown()
+            if QUI and QUI.DebugPrint then
+                QUI:DebugPrint(format("|cff34D399CDM|r RefreshLayout hook fired combat=%s editMode=%s",
+                    tostring(combat), tostring(Helpers.IsEditModeActive())))
+            end
             if Helpers.IsEditModeActive() then return end
-            LayoutViewer(VIEWER_ESSENTIAL, "essential")
-            LayoutViewer(VIEWER_UTILITY, "utility")
+            C_Timer.After(0, function()
+                if Helpers.IsEditModeActive() then return end
+                local combat2 = InCombatLockdown()
+                if QUI and QUI.DebugPrint then
+                    QUI:DebugPrint(format("|cff34D399CDM|r RefreshLayout deferred running combat=%s applying=[ess=%s util=%s]",
+                        tostring(combat2),
+                        tostring(NCDM.applying["essential"]),
+                        tostring(NCDM.applying["utility"])))
+                end
+                LayoutViewer(VIEWER_ESSENTIAL, "essential")
+                LayoutViewer(VIEWER_UTILITY, "utility")
+            end)
         end)
     end
 
