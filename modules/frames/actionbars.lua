@@ -871,6 +871,7 @@ local function HookExtraButtonPositioning()
     if ExtraActionBarFrame and not extraActionSetPointHooked then
         extraActionSetPointHooked = true
         hooksecurefunc(ExtraActionBarFrame, "SetPoint", function(self)
+            if hookingSetPoint then return end
             C_Timer.After(0, function()
                 if hookingSetPoint or InCombatLockdown() then return end
                 local settings = GetExtraButtonDB("extraActionButton")
@@ -885,6 +886,7 @@ local function HookExtraButtonPositioning()
     if ZoneAbilityFrame and not zoneAbilitySetPointHooked then
         zoneAbilitySetPointHooked = true
         hooksecurefunc(ZoneAbilityFrame, "SetPoint", function(self)
+            if hookingSetPoint then return end
             C_Timer.After(0, function()
                 if hookingSetPoint or InCombatLockdown() then return end
                 local settings = GetExtraButtonDB("zoneAbility")
