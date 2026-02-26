@@ -1290,6 +1290,17 @@ local function CDMSizeResolver(source)
     return width, height
 end
 
+-- Anchor resolver for CDM proxies: offsets the proxy vertically so it
+-- covers icons shifted by per-row yOffset settings.  Without this the
+-- proxy is centered on the viewer, but the icon bounding box may be
+-- shifted upward/downward.
+local function CDMAnchorResolver(proxy, source)
+    local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(source)
+    local yOff = (vs and vs.proxyYOffset) or 0
+    proxy:ClearAllPoints()
+    proxy:SetPoint("CENTER", source, "CENTER", 0, yOff)
+end
+
 local function GetCDMAnchorProxy(parentKey)
     if parentKey == "essential" then
         parentKey = "cdmEssential"
@@ -1310,6 +1321,7 @@ local function GetCDMAnchorProxy(parentKey)
         proxy = UIKit.CreateAnchorProxy(sourceFrame, {
             deferCreation = true,
             sizeResolver = sourceInfo.cdm and CDMSizeResolver or nil,
+            anchorResolver = sourceInfo.cdm and CDMAnchorResolver or nil,
         })
         if not proxy then
             cdmAnchorProxyPendingAfterCombat[parentKey] = true
