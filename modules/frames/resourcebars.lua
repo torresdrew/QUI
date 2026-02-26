@@ -984,14 +984,20 @@ function QUICore:GetPowerBar()
     bar:SetHeight(QUICore:PixelRound(cfg.height or 6, bar))
     QUICore:SetSnappedPoint(bar, "CENTER", UIParent, "CENTER", cfg.offsetX or 0, cfg.offsetY or 6)
 
-    -- Calculate width - use configured width or fallback
+    -- Calculate width - use configured width or fallback.
+    -- Avoid reading essentialViewer:GetWidth() here: at creation time CDM
+    -- LayoutViewer has not run yet, so the Blizzard frame width is stale/wrong.
+    -- Use the safe chain: viewer state → saved width from DB → fallback.
     local width = cfg.width or 0
     if width <= 0 then
-        -- Try to get Essential Cooldowns width if available
         local essentialViewer = _G["EssentialCooldownViewer"]
         if essentialViewer then
             local evs = GetViewerState(essentialViewer)
-            width = (evs and evs.iconWidth) or essentialViewer:GetWidth() or 0
+            width = (evs and evs.iconWidth) or 0
+        end
+        if width <= 0 then
+            width = QUICore.db and QUICore.db.profile and QUICore.db.profile.ncdm
+                and QUICore.db.profile.ncdm._lastEssentialWidth or 0
         end
         if width <= 0 then
             width = 200  -- Fallback width
@@ -1118,7 +1124,13 @@ function QUICore:UpdatePowerBar()
             local evs = GetViewerState(essentialViewer)
             width = evs and evs.iconWidth
         end
-        if not width or width <= 0 then
+        if width and width > 0 then
+            -- Persist for next reload so bars don't flash at stale/fallback width.
+            -- Skip during Edit Mode — those dimensions are transient.
+            if not Helpers.IsEditModeActive() and self.db.profile.ncdm then
+                self.db.profile.ncdm._lastEssentialWidth = width
+            end
+        else
             width = self.db.profile.ncdm and self.db.profile.ncdm._lastEssentialWidth
         end
         if not width or width <= 0 then
@@ -1403,6 +1415,9 @@ _G.QUI_UpdateLockedPowerBar = function()
     -- During combat, Blizzard mutates CDM viewer sizes so GetCenter()
     -- returns incorrect positions.  Defer to post-combat RefreshAll.
     if InCombatLockdown() then return end
+    -- During Edit Mode, viewer dimensions are transient — don't persist them
+    -- to cfg.width or the bar will flash at the Edit Mode width on next load.
+    if Helpers.IsEditModeActive() then return end
 
     local core = GetCore()
     if not core or not core.db then return end
@@ -1498,6 +1513,7 @@ end
 -- Global callback for NCDM to update power bar locked to Utility
 _G.QUI_UpdateLockedPowerBarToUtility = function()
     if InCombatLockdown() then return end
+    if Helpers.IsEditModeActive() then return end
 
     local core = GetCore()
     if not core or not core.db then return end
@@ -1592,6 +1608,7 @@ local cachedPrimaryDimensions = {
 -- Global callback for NCDM to update SECONDARY power bar locked to Essential
 _G.QUI_UpdateLockedSecondaryPowerBar = function()
     if InCombatLockdown() then return end
+    if Helpers.IsEditModeActive() then return end
 
     local core = GetCore()
     if not core or not core.db then return end
@@ -1684,6 +1701,7 @@ end
 -- Global callback for NCDM to update SECONDARY power bar locked to Utility
 _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
     if InCombatLockdown() then return end
+    if Helpers.IsEditModeActive() then return end
 
     local core = GetCore()
     if not core or not core.db then return end
@@ -1789,14 +1807,20 @@ function QUICore:GetSecondaryPowerBar()
     bar:SetHeight(QUICore:PixelRound(cfg.height or 4, bar))
     QUICore:SetSnappedPoint(bar, "CENTER", UIParent, "CENTER", cfg.offsetX or 0, cfg.offsetY or 12)
 
-    -- Calculate width - use configured width or fallback
+    -- Calculate width - use configured width or fallback.
+    -- Avoid reading essentialViewer:GetWidth() here: at creation time CDM
+    -- LayoutViewer has not run yet, so the Blizzard frame width is stale/wrong.
+    -- Use the safe chain: viewer state → saved width from DB → fallback.
     local width = cfg.width or 0
     if width <= 0 then
-        -- Try to get Essential Cooldowns width if available
         local essentialViewer = _G["EssentialCooldownViewer"]
         if essentialViewer then
             local evs = GetViewerState(essentialViewer)
-            width = (evs and evs.iconWidth) or essentialViewer:GetWidth() or 0
+            width = (evs and evs.iconWidth) or 0
+        end
+        if width <= 0 then
+            width = QUICore.db and QUICore.db.profile and QUICore.db.profile.ncdm
+                and QUICore.db.profile.ncdm._lastEssentialWidth or 0
         end
         if width <= 0 then
             width = 200  -- Fallback width
@@ -2575,7 +2599,13 @@ function QUICore:UpdateSecondaryPowerBar()
                     local evs = GetViewerState(essentialViewer)
                     width = evs and evs.iconWidth
                 end
-                if not width or width <= 0 then
+                if width and width > 0 then
+                    -- Persist for next reload so bars don't flash at stale/fallback width.
+                    -- Skip during Edit Mode — those dimensions are transient.
+                    if not Helpers.IsEditModeActive() and self.db.profile.ncdm then
+                        self.db.profile.ncdm._lastEssentialWidth = width
+                    end
+                else
                     width = self.db.profile.ncdm and self.db.profile.ncdm._lastEssentialWidth
                 end
                 if not width or width <= 0 then

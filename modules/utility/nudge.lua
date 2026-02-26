@@ -1101,6 +1101,27 @@ function QUICore:ShowViewerOverlays()
                     end
                 end
             end
+
+            -- Size BuffIcon overlay to the anchor proxy so the overlay
+            -- matches the effective bounds used for dependent-frame
+            -- anchoring (accounts for icon measurement + scale + min-width).
+            if viewerName == "BuffIconCooldownViewer" and viewer then
+                local getProxy = _G.QUI_GetCDMAnchorProxyFrame
+                local proxy = type(getProxy) == "function" and getProxy("buffIcon") or nil
+                if proxy then
+                    local pw = Helpers.SafeValue(proxy:GetWidth(), 0)
+                    local ph = Helpers.SafeValue(proxy:GetHeight(), 0)
+                    if pw > 1 and ph > 1 then
+                        -- Proxy is in UIParent space; overlay is a child
+                        -- of the viewer, so divide by viewer scale.
+                        local vScale = Helpers.SafeValue(viewer:GetScale(), 1)
+                        if vScale <= 0 then vScale = 1 end
+                        overlay:ClearAllPoints()
+                        overlay:SetPoint("CENTER", viewer, "CENTER", 0, 0)
+                        overlay:SetSize(pw / vScale, ph / vScale)
+                    end
+                end
+            end
         end
     end
     -- Store reference for selection manager access

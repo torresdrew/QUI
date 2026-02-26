@@ -894,6 +894,13 @@ local function ApplyIconStyle(icon, settings)
         width = size * aspectRatio
     end
 
+    -- Reset any scale Blizzard may have applied (Edit Mode slider can set
+    -- per-icon scale, which persists after exit and makes icons visually
+    -- larger even though GetWidth/GetHeight returns QUI's configured size).
+    if icon.GetScale and icon:GetScale() ~= 1 then
+        icon:SetScale(1)
+    end
+
     icon:SetSize(width, height)
 
     -- Create or update border (using BACKGROUND texture to avoid secret value errors during combat)
@@ -2482,6 +2489,29 @@ C_Timer.After(0, function()
         Initialize()
     end
 end)
+
+---------------------------------------------------------------------------
+-- EDIT MODE CALLBACKS: Re-apply QUI icon size / padding on exit
+---------------------------------------------------------------------------
+
+do
+    local core = GetCore()
+    if core and core.RegisterEditModeExit then
+        core:RegisterEditModeExit(function()
+            -- Reset hash so the next CheckIconChanges() triggers a full re-layout
+            lastIconHash = ""
+            iconState.isInitialized = false
+            barState.lastCount = 0
+
+            -- Deferred: Blizzard may still be tearing down Edit Mode on this frame
+            C_Timer.After(0.1, function()
+                if InCombatLockdown() then return end
+                LayoutBuffIcons()
+                LayoutBuffBars()
+            end)
+        end)
+    end
+end
 
 ---------------------------------------------------------------------------
 -- PUBLIC API
