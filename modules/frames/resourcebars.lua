@@ -340,6 +340,7 @@ local function GetPrimaryResource()
     }
 
     local spec = GetSpecialization()
+    if not spec then return Enum.PowerType.Mana end
     local specID = GetSpecializationInfo(spec)
 
     -- Druid: spec-aware for utility forms, form-based for combat forms
@@ -398,6 +399,7 @@ local function GetSecondaryResource()
     }
 
     local spec = GetSpecialization()
+    if not spec then return nil end
     local specID = GetSpecializationInfo(spec)
 
     -- Druid: spec-aware for utility/caster forms, form-based for combat forms
