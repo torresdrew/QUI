@@ -1479,12 +1479,30 @@ local function UpdateFrame(frame)
     end
 end
 
--- Expose helpers for unitframe_auras.lua (loaded after this file)
+-- Expose helpers for unitframe_auras.lua and raidframes.lua (loaded after this file)
 QUI_UF._GetFontPath = GetFontPath
 QUI_UF._GetFontOutline = GetFontOutline
 QUI_UF._GetUnitSettings = GetUnitSettings
 QUI_UF._GetGeneralSettings = GetGeneralSettings
 QUI_UF._UpdateFrame = UpdateFrame
+QUI_UF._UpdateHealth = UpdateHealth
+QUI_UF._UpdateAbsorbs = UpdateAbsorbs
+QUI_UF._UpdateHealPrediction = UpdateHealPrediction
+QUI_UF._UpdatePower = UpdatePower
+QUI_UF._UpdatePowerText = UpdatePowerText
+QUI_UF._UpdateName = UpdateName
+QUI_UF._UpdateTargetMarker = UpdateTargetMarker
+QUI_UF._UpdateHealthTextColor = UpdateHealthTextColor
+QUI_UF._GetHealthBarColor = GetHealthBarColor
+QUI_UF._GetTexturePath = GetTexturePath
+QUI_UF._GetAbsorbTexturePath = GetAbsorbTexturePath
+QUI_UF._GetTextAnchorInfo = GetTextAnchorInfo
+QUI_UF._TruncateName = TruncateName
+QUI_UF._GetHealthPct = GetHealthPct
+QUI_UF._Scale = Scale
+QUI_UF._ShowUnitTooltip = ShowUnitTooltip
+QUI_UF._HideUnitTooltip = HideUnitTooltip
+QUI_UF._ROLE_ICON_TEXCOORDS = ROLE_ICON_TEXCOORDS
 
 ---------------------------------------------------------------------------
 -- CREATE: Boss Frame (special handling for boss1-boss5)
@@ -1756,7 +1774,7 @@ local ROLE_ICON_TEXCOORDS = {
 
 local function UpdateRoleIcon(frame)
     if not frame or not frame.roleIcon then return end
-    local settings = GetUnitSettings("party")
+    local settings = GetUnitSettings(frame.unitKey or "party")
     local roleSettings = settings and settings.roleIcon
     if not roleSettings or not roleSettings.enabled then
         frame.roleIcon:Hide()
@@ -1778,7 +1796,7 @@ end
 
 local function UpdateReadyCheck(frame)
     if not frame or not frame.readyCheckIcon then return end
-    local settings = GetUnitSettings("party")
+    local settings = GetUnitSettings(frame.unitKey or "party")
     local rcSettings = settings and settings.readyCheck
     if not rcSettings or not rcSettings.enabled then
         frame.readyCheckIcon:Hide()
@@ -1805,7 +1823,7 @@ end
 
 local function UpdateResurrectIcon(frame)
     if not frame or not frame.resurrectIcon then return end
-    local settings = GetUnitSettings("party")
+    local settings = GetUnitSettings(frame.unitKey or "party")
     local rezSettings = settings and settings.resurrectIcon
     if not rezSettings or not rezSettings.enabled then
         frame.resurrectIcon:Hide()
@@ -1820,7 +1838,7 @@ end
 
 local function UpdateSummonIcon(frame)
     if not frame or not frame.summonIcon then return end
-    local settings = GetUnitSettings("party")
+    local settings = GetUnitSettings(frame.unitKey or "party")
     local sumSettings = settings and settings.summonIcon
     if not sumSettings or not sumSettings.enabled then
         frame.summonIcon:Hide()
@@ -1850,7 +1868,7 @@ local DISPEL_TYPES_BY_CLASS = {
 
 local function UpdateDebuffHighlight(frame)
     if not frame or not frame.debuffHighlight then return end
-    local settings = GetUnitSettings("party")
+    local settings = GetUnitSettings(frame.unitKey or "party")
     local dbhSettings = settings and settings.debuffHighlight
     if not dbhSettings or not dbhSettings.enabled then
         frame.debuffHighlight:Hide()
@@ -1904,7 +1922,7 @@ local THREAT_COLORS = {
 
 local function UpdateThreatIndicator(frame)
     if not frame or not frame.threatBorder then return end
-    local settings = GetUnitSettings("party")
+    local settings = GetUnitSettings(frame.unitKey or "party")
     local threatSettings = settings and settings.threatIndicator
     if not threatSettings or not threatSettings.enabled then
         frame.threatBorder:Hide()
@@ -3127,6 +3145,15 @@ function QUI_UF:ShowPreview(unitKey)
         return
     end
 
+    -- Handle raid frames — delegate to raid module's preview
+    if unitKey:match("^raid%d+$") or unitKey == "raid" then
+        local QUI_RF = ns.QUI_RaidFrames
+        if QUI_RF then
+            QUI_RF:ShowPreview()
+        end
+        return
+    end
+
     local frame = self.frames[unitKey]
     if not frame then return end
 
@@ -3140,12 +3167,12 @@ function QUI_UF:ShowPreview(unitKey)
     -- Show frame with fake data
     frame:Show()
     local settings = GetUnitSettings(unitKey)
-    
+
     -- Set fake health
     ApplyHealthFillDirection(frame, settings)
     frame.healthBar:SetMinMaxValues(0, 100)
     frame.healthBar:SetValue(75)
-    
+
     -- Set fake name
     if frame.nameText then
         local names = {
@@ -3316,6 +3343,15 @@ function QUI_UF:HidePreview(unitKey)
                 self:HideAuraPreviewForFrame(frame, partyKey, "buff")
                 self:HideAuraPreviewForFrame(frame, partyKey, "debuff")
             end
+        end
+        return
+    end
+
+    -- Handle raid frames — delegate to raid module
+    if unitKey:match("^raid%d+$") or unitKey == "raid" then
+        local QUI_RF = ns.QUI_RaidFrames
+        if QUI_RF then
+            QUI_RF:HidePreview()
         end
         return
     end
@@ -3581,6 +3617,15 @@ function QUI_UF:RefreshFrame(unitKey)
                     self:RestoreEditOverlayIfNeeded(bossKey)
                 end
             end
+        end
+        return
+    end
+
+    -- Handle raid frames - delegate to raid module
+    if unitKey == "raid" then
+        local QUI_RF = ns.QUI_RaidFrames
+        if QUI_RF then
+            QUI_RF:RefreshRaidFrames()
         end
         return
     end
@@ -4222,9 +4267,10 @@ function QUI_UF:RefreshFrame(unitKey)
 end
 
 function QUI_UF:RefreshAll()
-    -- Track if we've refreshed boss/party frames to avoid doing it 5 times each
+    -- Track if we've refreshed boss/party/raid frames to avoid doing it N times each
     local bossRefreshed = false
     local partyRefreshed = false
+    local raidRefreshed = false
 
     for unitKey, frame in pairs(self.frames) do
         -- Boss frames (boss1-boss5) share settings from "boss" key
@@ -4238,6 +4284,12 @@ function QUI_UF:RefreshAll()
             if not partyRefreshed then
                 self:RefreshFrame("party")  -- Refresh all 5 at once
                 partyRefreshed = true
+            end
+        -- Raid frames (raid1-raid40) share settings from "raid" key
+        elseif unitKey:match("^raid%d+$") then
+            if not raidRefreshed then
+                self:RefreshFrame("raid")  -- Refresh all at once
+                raidRefreshed = true
             end
         else
             self:RefreshFrame(unitKey)
@@ -4420,6 +4472,14 @@ function QUI_UF:Initialize()
         -- Start range fade ticker if enabled
         if db.party.rangeFade and db.party.rangeFade.enabled then
             StartPartyRangeTicker()
+        end
+    end
+
+    -- Create raid frames
+    if db.raid and db.raid.enabled then
+        local QUI_RF = ns.QUI_RaidFrames
+        if QUI_RF then
+            QUI_RF:Initialize()
         end
     end
 

@@ -254,8 +254,11 @@ function QUI_UF:EnableEditMode()
         -- Party frames party2-party5 follow party1 via stacking — skip their overlays.
         -- Only party1 gets a draggable overlay (labeled "Party Frames").
         local isFollowerPartyFrame = unitKey:match("^party[2-5]$")
+        -- Raid frames raid2-raid40 follow raid1 via grid layout — skip their overlays.
+        -- Only raid1 gets a draggable overlay (labeled "Raid Frames").
+        local isFollowerRaidFrame = unitKey:match("^raid%d+$") and unitKey ~= "raid1"
 
-        if not isBossFrame and not isFollowerPartyFrame then
+        if not isBossFrame and not isFollowerPartyFrame and not isFollowerRaidFrame then
             -- Create highlight overlay if not exists
             if not frame.editOverlay then
                 local overlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
@@ -290,6 +293,8 @@ function QUI_UF:EnableEditMode()
                 overlay.infoText = infoText
                 if unitKey == "party1" then
                     overlay.unitLabel = "Party Frames"
+                elseif unitKey == "raid1" then
+                    overlay.unitLabel = "Raid Frames"
                 else
                     overlay.unitLabel = unitKey:gsub("^%l", string.upper):gsub("(%l)(%u)", "%1 %2")
                 end
@@ -716,6 +721,11 @@ function QUI_UF:DisableEditMode()
                 if partyNum then
                     RegisterStateDriver(frame, "visibility", "[@party" .. partyNum .. ",exists] show; hide")
                 end
+            elseif unit and unit:match("^raid%d+$") then
+                local raidNum = unit:match("^raid(%d+)$")
+                if raidNum then
+                    RegisterStateDriver(frame, "visibility", "[@raid" .. raidNum .. ",exists] show; hide")
+                end
             end
         end
 
@@ -815,6 +825,30 @@ function QUI_UF:DisableEditMode()
         end
     end
 
+    -- Save raid group position and re-layout grid.
+    local raid1 = self.frames["raid1"]
+    if raid1 then
+        local raidSettings = GetUnitSettings("raid")
+        if raidSettings then
+            local selfX, selfY = raid1:GetCenter()
+            local parentX, parentY = UIParent:GetCenter()
+            if selfX and selfY and parentX and parentY then
+                local rawX, rawY = selfX - parentX, selfY - parentY
+                raidSettings.offsetX = QUICore and QUICore.PixelRound and QUICore:PixelRound(rawX) or Round(rawX)
+                raidSettings.offsetY = QUICore and QUICore.PixelRound and QUICore:PixelRound(rawY) or Round(rawY)
+            end
+
+            -- Re-layout the entire raid grid at the new anchor position
+            local QUI_RF = ns.QUI_RaidFrames
+            if QUI_RF then
+                QUI_RF:HidePreview()
+            end
+
+            -- Notify options panel of final position
+            self:NotifyPositionChanged("raid", raidSettings.offsetX or 0, raidSettings.offsetY or 0)
+        end
+    end
+
     print("|cFF56D1FFQUI|r: Edit Mode |cffff0000DISABLED|r - Positions saved.")
 end
 
@@ -835,6 +869,8 @@ function QUI_UF:RestoreEditOverlayIfNeeded(unitKey)
     if unitKey and unitKey:match("^boss%d$") then return end
     -- Party follower frames (party2-5) don't have individual overlays
     if unitKey and unitKey:match("^party[2-5]$") then return end
+    -- Raid follower frames (raid2-40) don't have individual overlays
+    if unitKey and unitKey:match("^raid%d+$") and unitKey ~= "raid1" then return end
 
     local frame = self.frames[unitKey]
     if not frame then return end

@@ -366,6 +366,7 @@ local function CreateUnitFramesPage(parent)
             focus = {index = 6, name = "Focus"},
             boss = {index = 7, name = "Boss"},
             party = {index = 8, name = "Party"},
+            raid = {index = 9, name = "Raid"},
         }
         local subTabInfo = unitSubTabs[unitKey] or {index = 2, name = unitKey}
         GUI:SetSearchContext({tabIndex = 5, tabName = "Unit Frames", subTabIndex = subTabInfo.index, subTabName = subTabInfo.name})
@@ -540,8 +541,8 @@ local function CreateUnitFramesPage(parent)
         borderSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
-        -- Boss and party frames get spacing slider
-        if unitKey == "boss" or unitKey == "party" then
+        -- Boss, party, and raid frames get spacing slider
+        if unitKey == "boss" or unitKey == "party" or unitKey == "raid" then
             local spacingSlider = GUI:CreateFormSlider(tabContent, "Spacing", 0, 100, 1, "spacing", unitDB, RefreshUnit)
             spacingSlider:SetPoint("TOPLEFT", PAD, y)
             spacingSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
@@ -560,6 +561,79 @@ local function CreateUnitFramesPage(parent)
             growDirDropdown:SetPoint("TOPLEFT", PAD, y)
             growDirDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
             y = y - FORM_ROW
+        end
+
+        -- Raid frames get grid layout section
+        if unitKey == "raid" then
+            local layoutHeader = GUI:CreateSectionHeader(tabContent, "Grid Layout")
+            layoutHeader:SetPoint("TOPLEFT", PAD, y)
+            y = y - layoutHeader.gap
+
+            if not unitDB.layout then unitDB.layout = {} end
+            local layoutDB = unitDB.layout
+
+            local groupsPerRowSlider = GUI:CreateFormSlider(tabContent, "Groups Per Row", 1, 8, 1, "groupsPerRow", layoutDB, RefreshUnit)
+            groupsPerRowSlider:SetPoint("TOPLEFT", PAD, y)
+            groupsPerRowSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local groupGapSlider = GUI:CreateFormSlider(tabContent, "Group Gap", 0, 40, 1, "groupGap", layoutDB, RefreshUnit)
+            groupGapSlider:SetPoint("TOPLEFT", PAD, y)
+            groupGapSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local memberSpacingSlider = GUI:CreateFormSlider(tabContent, "Member Spacing", 0, 20, 1, "memberSpacing", layoutDB, RefreshUnit)
+            memberSpacingSlider:SetPoint("TOPLEFT", PAD, y)
+            memberSpacingSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local groupGrowOptions = {
+                {value = "RIGHT", text = "Right"},
+                {value = "LEFT", text = "Left"},
+            }
+            local groupGrowDropdown = GUI:CreateFormDropdown(tabContent, "Group Direction", groupGrowOptions, "groupGrowDirection", layoutDB, RefreshUnit)
+            groupGrowDropdown:SetPoint("TOPLEFT", PAD, y)
+            groupGrowDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local memberGrowOptions = {
+                {value = "DOWN", text = "Down"},
+                {value = "UP", text = "Up"},
+            }
+            local memberGrowDropdown = GUI:CreateFormDropdown(tabContent, "Member Direction", memberGrowOptions, "memberGrowDirection", layoutDB, RefreshUnit)
+            memberGrowDropdown:SetPoint("TOPLEFT", PAD, y)
+            memberGrowDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local sortByRoleCheck = GUI:CreateFormCheckbox(tabContent, "Sort By Role (Tank > Healer > DPS)", "sortByRole", layoutDB, RefreshUnit)
+            sortByRoleCheck:SetPoint("TOPLEFT", PAD, y)
+            sortByRoleCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            -- Visible Groups (8 checkboxes)
+            local visGroupHeader = GUI:CreateSectionHeader(tabContent, "Visible Groups")
+            visGroupHeader:SetPoint("TOPLEFT", PAD, y)
+            y = y - visGroupHeader.gap
+
+            if not layoutDB.visibleGroups then
+                layoutDB.visibleGroups = { true, true, true, true, true, true, true, true }
+            end
+            for g = 1, 8 do
+                local groupIdx = g
+                local groupCheck = GUI:CreateFormCheckbox(tabContent, "Group " .. g, nil, nil, function(value)
+                    layoutDB.visibleGroups[groupIdx] = value
+                    RefreshUnit()
+                end)
+                -- Manually set the initial state
+                if groupCheck.SetChecked then
+                    groupCheck:SetChecked(layoutDB.visibleGroups[g] ~= false)
+                elseif groupCheck.SetValue then
+                    groupCheck.SetValue(layoutDB.visibleGroups[g] ~= false)
+                end
+                groupCheck:SetPoint("TOPLEFT", PAD, y)
+                groupCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+                y = y - FORM_ROW
+            end
         end
 
         -- Position sliders
@@ -706,7 +780,7 @@ local function CreateUnitFramesPage(parent)
         y = y - FORM_ROW
 
         -- Hostility Color checkbox (for frames that can show varied unit types)
-        if unitKey == "target" or unitKey == "focus" or unitKey == "targettarget" or unitKey == "pet" or unitKey == "boss" or unitKey == "party" then
+        if unitKey == "target" or unitKey == "focus" or unitKey == "targettarget" or unitKey == "pet" or unitKey == "boss" or unitKey == "party" or unitKey == "raid" then
             local hostilityColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Hostility Color", "useHostilityColor", unitDB, function()
                 RefreshUnit()
                 -- Disable custom color when hostility is ON (covers all units)
@@ -723,7 +797,7 @@ local function CreateUnitFramesPage(parent)
         customColor:SetPoint("TOPLEFT", PAD, y)
         customColor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         -- Set initial enabled state based on hostility setting
-        if unitKey == "target" or unitKey == "focus" or unitKey == "targettarget" or unitKey == "pet" or unitKey == "boss" or unitKey == "party" then
+        if unitKey == "target" or unitKey == "focus" or unitKey == "targettarget" or unitKey == "pet" or unitKey == "boss" or unitKey == "party" or unitKey == "raid" then
             customColor:SetEnabled(not unitDB.useHostilityColor)
         end
         y = y - FORM_ROW
@@ -769,7 +843,7 @@ local function CreateUnitFramesPage(parent)
         y = y - 20
 
         -- HEAL PREDICTION section (player/target/party)
-        if unitKey == "player" or unitKey == "target" or unitKey == "party" then
+        if unitKey == "player" or unitKey == "target" or unitKey == "party" or unitKey == "raid" then
             local healHeader = GUI:CreateSectionHeader(tabContent, "Heal Prediction")
             healHeader:SetPoint("TOPLEFT", PAD, y)
             y = y - healHeader.gap
@@ -1080,7 +1154,7 @@ local function CreateUnitFramesPage(parent)
         end
 
         -- CASTBAR section (for player, target, targettarget, focus, pet, boss, party)
-        if unitKey == "player" or unitKey == "target" or unitKey == "targettarget" or unitKey == "focus" or unitKey == "pet" or unitKey == "boss" or unitKey == "party" then
+        if unitKey == "player" or unitKey == "target" or unitKey == "targettarget" or unitKey == "focus" or unitKey == "pet" or unitKey == "boss" or unitKey == "party" or unitKey == "raid" then
             -- Use dedicated castbar options module (it creates its own header)
             if ns.QUI_CastbarOptions and ns.QUI_CastbarOptions.BuildCastbarOptions then
                 y = ns.QUI_CastbarOptions.BuildCastbarOptions(tabContent, unitKey, y, PAD, FORM_ROW, RefreshUnit, GetTextureList, NINE_POINT_ANCHOR_OPTIONS, GetUFDB, GetDB)
@@ -1089,7 +1163,7 @@ local function CreateUnitFramesPage(parent)
 
         -- Aura settings (all single unit frames)
         if unitKey == "player" or unitKey == "target" or unitKey == "focus"
-           or unitKey == "pet" or unitKey == "targettarget" or unitKey == "boss" or unitKey == "party" then
+           or unitKey == "pet" or unitKey == "targettarget" or unitKey == "boss" or unitKey == "party" or unitKey == "raid" then
             if not unitDB.auras then unitDB.auras = {} end
             local auraDB = unitDB.auras
             if auraDB.showBuffs == nil then auraDB.showBuffs = false end
@@ -1857,8 +1931,8 @@ local function CreateUnitFramesPage(parent)
             y = y - FORM_ROW
         end
 
-        -- PARTY INDICATORS section (party only)
-        if unitKey == "party" then
+        -- PARTY / RAID INDICATORS section
+        if unitKey == "party" or unitKey == "raid" then
             -- Role Icons
             local roleHeader = GUI:CreateSectionHeader(tabContent, "Role Icons")
             roleHeader:SetPoint("TOPLEFT", PAD, y)
@@ -1971,7 +2045,7 @@ local function CreateUnitFramesPage(parent)
             debuffHLEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
             y = y - FORM_ROW
 
-            local debuffHLDesc = GUI:CreateLabel(tabContent, "Colors the frame border when a party member has a debuff you can dispel.", 11, C.textMuted)
+            local debuffHLDesc = GUI:CreateLabel(tabContent, "Colors the frame border when a group member has a debuff you can dispel.", 11, C.textMuted)
             debuffHLDesc:SetPoint("TOPLEFT", PAD, y + 4)
             debuffHLDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
             debuffHLDesc:SetJustifyH("LEFT")
@@ -1989,7 +2063,7 @@ local function CreateUnitFramesPage(parent)
             threatEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
             y = y - FORM_ROW
 
-            local threatDesc = GUI:CreateLabel(tabContent, "Shows a colored border when a party member has threat (yellow/orange/red).", 11, C.textMuted)
+            local threatDesc = GUI:CreateLabel(tabContent, "Shows a colored border when a group member has threat (yellow/orange/red).", 11, C.textMuted)
             threatDesc:SetPoint("TOPLEFT", PAD, y + 4)
             threatDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
             threatDesc:SetJustifyH("LEFT")
@@ -2009,6 +2083,7 @@ local function CreateUnitFramesPage(parent)
         {name = "Focus", builder = function(c) BuildUnitTab(c, "focus") end},
         {name = "Boss", builder = function(c) BuildUnitTab(c, "boss") end},
         {name = "Party", builder = function(c) BuildUnitTab(c, "party") end},
+        {name = "Raid", builder = function(c) BuildUnitTab(c, "raid") end},
     }
 
     GUI:CreateSubTabs(content, subTabs)

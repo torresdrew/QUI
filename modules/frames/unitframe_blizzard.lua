@@ -289,6 +289,16 @@ function QUI_UF:HideBlizzardFrames()
             KillBlizzardFrame(PartyFrame)
         end
     end
+
+    -- Hide Blizzard compact raid frames
+    if db.raid and db.raid.enabled then
+        if CompactRaidFrameContainer then
+            KillBlizzardFrame(CompactRaidFrameContainer)
+        end
+        if CompactRaidFrameManager then
+            KillBlizzardFrame(CompactRaidFrameManager)
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
