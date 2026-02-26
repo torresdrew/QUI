@@ -354,7 +354,7 @@ local function ApplyHideSettings()
                     -- Blizzard restored alpha — re-hide if setting is still on
                     C_Timer.After(0, function()
                         if IsInEditMode() then _crfWatcherShown = false return end
-                        if InCombatLockdown() then return end
+                        if InCombatLockdown() then _crfWatcherShown = false return end
                         local s = GetSettings()
                         if s and s.hideRaidFrameManager then
                             CompactRaidFrameManager:SetAlpha(0)
