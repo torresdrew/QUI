@@ -110,7 +110,7 @@ local function BuildEffectsTab(tabContent)
     overlayHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - overlayHeader.gap
 
-    local overlayDesc = GUI:CreateLabel(tabContent, "Override the Blizzard yellow swipe overlay color on Essential and Utility icons.", 11, C.textMuted)
+    local overlayDesc = GUI:CreateLabel(tabContent, "Override the Blizzard yellow swipe overlay color on Essential, Utility and Buff Icon cooldown icons.", 11, C.textMuted)
     overlayDesc:SetPoint("TOPLEFT", PAD, y)
     overlayDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
     overlayDesc:SetJustifyH("LEFT")

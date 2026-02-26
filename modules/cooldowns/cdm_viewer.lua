@@ -684,9 +684,10 @@ local function SkinIcon(icon, size, aspectRatioCrop, zoom, borderSize, borderCol
         cooldown:SetAllPoints(icon)
         -- Use simple stretchable texture so swipe fills entire frame
         cooldown:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
-        -- NOTE: Swipe color is managed by swipe.lua (ApplyColorToIcon).
-        -- Do NOT hardcode SetSwipeColor here — it races with swipe.lua's
-        -- color application and the pulse can't re-apply fast enough.
+        -- Baseline dark color — swipe.lua will override with user's custom color
+        -- once its hooks are installed. Our SetSwipeColor hook on the icon catches
+        -- this call and immediately re-applies the custom color when available.
+        cooldown:SetSwipeColor(0, 0, 0, 0.8)
     end
     
     -- Always apply TexCoord (this is lightweight)

@@ -32,19 +32,11 @@ local function GetSettings()
     return Helpers.GetModuleSettings("cooldownSwipe", DEFAULTS)
 end
 
--- Performance: cached settings reference (refreshed on settings change / pulse tick)
-local _cachedSwipeSettings = nil
-local function GetCachedSettings()
-    if not _cachedSwipeSettings then
-        _cachedSwipeSettings = GetSettings()
-    end
-    return _cachedSwipeSettings
-end
-
 -- TAINT SAFETY: Weak-keyed tables for per-icon/viewer state instead of writing to Blizzard frames
 local iconSwipeState   = Helpers.CreateStateTable()
 local hookedViewers    = Helpers.CreateStateTable()
 local swipePulseHooked = Helpers.CreateStateTable()
+local _layoutPending = Helpers.CreateStateTable()  -- coalesce per-viewer layout hook timers
 
 local function IsSecret(value)
     return Helpers.IsSecretValue and Helpers.IsSecretValue(value)
@@ -87,25 +79,38 @@ end
 -- swipe.lua is the single source of truth for swipe color on CDM icons.
 local CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A = 0, 0, 0, 0.8
 
--- Returns overlay and swipe colors for Essential/Utility icons.
+-- Returns overlay and swipe colors for CDM icons (nil = Blizzard default).
 --   overlayR..A  →  active/aura state (buff duration showing)
 --   swipeR..A    →  cooldown state (radial darkening)
 local function GetIconColors(viewer, settings)
-    if viewer ~= _G.EssentialCooldownViewer and viewer ~= _G.UtilityCooldownViewer then
+    if viewer ~= _G.EssentialCooldownViewer
+       and viewer ~= _G.UtilityCooldownViewer
+       and viewer ~= _G.BuffIconCooldownViewer then
         return nil, nil, nil, nil, nil, nil, nil, nil
     end
     local oR, oG, oB, oA = ResolveColor(settings.overlayColorMode or "default", settings.overlayColor)
     local sR, sG, sB, sA = ResolveColor(settings.swipeColorMode  or "default", settings.swipeColor)
-    -- Fill CDM default when mode is "default" (ResolveColor returns nil).
-    -- This ensures swipe.lua always sets the color, preventing race conditions
-    -- with SkinIcon which sets SetSwipeTexture but defers color to us.
-    if not oR then oR, oG, oB, oA = CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A end
-    if not sR then sR, sG, sB, sA = CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A end
+    -- Fill fallback colors to prevent the race with SkinIcon's SetSwipeTexture.
+    -- When only one mode is user-set, mirror it to the other state so the custom
+    -- color persists across aura-active / cooldown transitions (fixes Essential
+    -- icons whose wasSetFromAura flips to true for active buffs).
+    if not oR and not sR then
+        oR, oG, oB, oA = CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A
+        sR, sG, sB, sA = CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A
+    elseif not oR then
+        oR, oG, oB, oA = sR, sG, sB, sA
+    elseif not sR then
+        sR, sG, sB, sA = oR, oG, oB, oA
+    end
     return oR, oG, oB, oA, sR, sG, sB, sA
 end
 
+-- Reentry guard: prevents our SetSwipeColor hook from recursing when we call
+-- SetSwipeColor ourselves inside ApplyColorToIcon.
+local _applyingSwipeColor = false
+
 -- Apply the correct swipe color to one icon based on its wasSetFromAura state.
--- Called from both the SetCooldown hook (reactive) and the pulse (on settings change).
+-- Called from the SetCooldown hook, the SetSwipeColor hook, and the pulse.
 local function ApplyColorToIcon(icon, settings)
     settings = settings or GetSettings()
     local parent = icon:GetParent()
@@ -113,23 +118,27 @@ local function ApplyColorToIcon(icon, settings)
     if not oR and not sR then return end  -- both "default", nothing to override
 
     local isActive = type(icon.wasSetFromAura) == "boolean" and icon.wasSetFromAura
+    _applyingSwipeColor = true
     if isActive then
         if oR then icon.Cooldown:SetSwipeColor(oR, oG, oB, oA) end
     else
         if sR then icon.Cooldown:SetSwipeColor(sR, sG, sB, sA) end
     end
+    _applyingSwipeColor = false
 end
 
-local ApplySwipeFromHook
-
--- Merged SetCooldown hook: handles both color and swipe in a single hook per icon.
--- This halves the number of hooksecurefunc calls on the hot SetCooldown path.
--- TAINT SAFETY: Guard flag stored in weak-keyed table, not on Blizzard frame.
+-- SetCooldown + SetSwipeColor hooks per icon.
+-- SetCooldown hook: applies swipe visibility + color after Blizzard's internal reset.
+-- SetSwipeColor hook: re-applies our color when Blizzard (or CDM) overrides it
+-- after SetCooldown returns (e.g. on the second cooldown cycle).
+-- TAINT SAFETY: Guard flags stored in weak-keyed table, not on Blizzard frame.
+local ApplySwipeFromHook  -- forward declaration (defined below)
 local function HookIconSetCooldown(icon)
     local iState = iconSwipeState[icon]
     if not iState then iState = {}; iconSwipeState[icon] = iState end
     if iState.setCooldownHooked then return end
     iState.setCooldownHooked = true
+
     hooksecurefunc(icon.Cooldown, "SetCooldown", function(_, _, durationArg)
         -- Blizzard's SetCooldown resets DrawSwipe to true internally,
         -- so invalidate the cache to force re-application of our setting.
@@ -140,6 +149,14 @@ local function HookIconSetCooldown(icon)
         ApplySwipeFromHook(icon, durationArg)
         ApplyColorToIcon(icon)
     end)
+
+    -- Catch Blizzard / CDM overwriting the swipe color after our SetCooldown
+    -- hook has already run. The _applyingSwipeColor guard prevents recursion
+    -- when we call SetSwipeColor ourselves inside ApplyColorToIcon.
+    hooksecurefunc(icon.Cooldown, "SetSwipeColor", function()
+        if _applyingSwipeColor then return end
+        ApplyColorToIcon(icon)
+    end)
 end
 
 -- Apply swipe/edge visibility from SetCooldown hook (safe to run in combat).
@@ -148,7 +165,7 @@ end
 -- (wasSetFromAura etc. are plain booleans). Guard flag in weak-keyed table.
 ApplySwipeFromHook = function(icon, durationArg)
     -- Performance: use cached settings to avoid DB walk on every SetCooldown hook
-    local settings = GetCachedSettings()
+    local settings = GetSettings()
     if not settings then return end
     if icon.IsForbidden and icon:IsForbidden() then return end
 
@@ -166,6 +183,8 @@ ApplySwipeFromHook = function(icon, durationArg)
     end
 
     -- GCD detection: use the hook's duration argument (avoids reading secret frame props)
+    -- Track whether we got a reliable duration for mode caching decisions.
+    local durationReliable = false
     if not mode then
         local duration = nil
         if IsSafeNumber(durationArg) then
@@ -173,13 +192,20 @@ ApplySwipeFromHook = function(icon, durationArg)
         elseif Helpers.SafeToNumber then
             duration = Helpers.SafeToNumber(durationArg, nil)
         end
-        if IsSafeNumber(duration) and duration > 0 and duration <= 2.5 then
-            mode = "gcd"
+        if IsSafeNumber(duration) and duration > 0 then
+            durationReliable = true
+            if duration <= 2.5 then
+                mode = "gcd"
+            end
         end
     end
 
-    -- Blizzard boolean flags for explicit cooldown classification
-    if not mode then
+    -- Blizzard boolean flags for explicit cooldown classification.
+    -- ONLY use these when duration is reliable (readable AND > 0).
+    -- duration=0 means "cooldown cleared" — its wasSetFromCooldown flag is stale
+    -- from the previous cooldown and would overwrite a correct "gcd" cache.
+    -- SECRET durations can't distinguish GCD from real cooldown.
+    if not mode and durationReliable then
         local wasSetFromCooldown = (type(icon.wasSetFromCooldown) == "boolean") and icon.wasSetFromCooldown or false
         local wasSetFromCharges = (type(icon.wasSetFromCharges) == "boolean") and icon.wasSetFromCharges or false
         if wasSetFromCooldown or wasSetFromCharges then
@@ -187,13 +213,20 @@ ApplySwipeFromHook = function(icon, durationArg)
         end
     end
 
-    -- Fall back to cached mode when all detection fails (e.g. all values secret)
+    -- Fall back to cached mode when classification is uncertain (SECRET duration
+    -- or duration=0 cooldown clear). Preserves the last reliable classification
+    -- so GCD icons stay as "gcd" when entering combat with secret durations.
     local iState = iconSwipeState[icon]
     if not iState then iState = {}; iconSwipeState[icon] = iState end
     if not mode then
         mode = iState.lastSwipeMode or "cooldown"
     end
-    iState.lastSwipeMode = mode
+    -- Only update cached mode when we had reliable data to classify with.
+    -- duration=0 (cooldown clear) and SECRET durations would overwrite a correct
+    -- "gcd" classification with "cooldown", causing swipe to disappear in combat.
+    if durationReliable then
+        iState.lastSwipeMode = mode
+    end
 
     -- Determine swipe visibility
     local showSwipe
@@ -209,9 +242,12 @@ ApplySwipeFromHook = function(icon, durationArg)
         showSwipe = settings.showCooldownSwipe
     end
 
-    -- Apply only when changed to avoid redundant writes / visual jitter
+    -- Apply only when changed to avoid redundant writes / visual jitter.
+    -- lastDrawSwipe is nil after cache invalidation (SetCooldown hook) to force
+    -- re-application, but lastLoggedSwipe persists to suppress repeated log lines.
     if iState.lastDrawSwipe ~= showSwipe then
-        if _G.QUI and _G.QUI.DEBUG_MODE then
+        if _G.QUI and _G.QUI.DEBUG_MODE and iState.lastLoggedSwipe ~= showSwipe then
+            iState.lastLoggedSwipe = showSwipe
             local iName = icon.GetName and icon:GetName() or "?"
             local durSecret = (durationArg ~= nil and not IsSafeNumber(durationArg)) and " dur=SECRET" or ""
             DebugLog(iName, "mode=", mode, "showSwipe=", tostring(showSwipe), durSecret,
@@ -289,6 +325,7 @@ local function ApplySettingsToIcon(icon, settings)
     -- Distinguish short GCD swipes from normal cooldown swipes without CooldownFlash.
     -- CooldownFlash is intentionally hidden by CDM skinning, so it cannot be used here.
     local isGCD = false
+    local durationReliable = false
     if not auraActive then
         local durationRaw = icon.cooldownDuration
         local duration = nil
@@ -297,9 +334,12 @@ local function ApplySettingsToIcon(icon, settings)
         elseif Helpers.SafeToNumber then
             duration = Helpers.SafeToNumber(durationRaw, nil)
         end
-        if IsSafeNumber(duration) and duration > 0 and duration <= 2.5 then
-            isGCD = true
-            mode = "gcd"
+        if IsSafeNumber(duration) and duration > 0 then
+            durationReliable = true
+            if duration <= 2.5 then
+                isGCD = true
+                mode = "gcd"
+            end
         end
         -- Debug: log GCD detection results (gated to avoid string alloc when off)
         if _G.QUI and _G.QUI.DEBUG_MODE then
@@ -312,8 +352,11 @@ local function ApplySettingsToIcon(icon, settings)
         end
     end
 
-    -- Use explicit Blizzard flags for cooldowns when available.
-    if not mode then
+    -- Blizzard boolean flags for explicit cooldown classification.
+    -- Only trust these when duration is reliable — wasSetFromCooldown is true for
+    -- both GCDs and real cooldowns, so using it with duration=0 or SECRET would
+    -- overwrite a correct "gcd" classification with "cooldown".
+    if not mode and durationReliable then
         local wasSetFromCooldown = (type(icon.wasSetFromCooldown) == "boolean") and icon.wasSetFromCooldown or false
         local wasSetFromCharges = (type(icon.wasSetFromCharges) == "boolean") and icon.wasSetFromCharges or false
         if wasSetFromCooldown or wasSetFromCharges then
@@ -328,7 +371,10 @@ local function ApplySettingsToIcon(icon, settings)
     if not mode then
         mode = iState.lastSwipeMode or "cooldown"
     end
-    iState.lastSwipeMode = mode
+    -- Only update cached mode when classification was reliable.
+    if durationReliable or auraActive then
+        iState.lastSwipeMode = mode
+    end
 
     if mode == "aura" then
         if parent == _G.BuffIconCooldownViewer then
@@ -379,11 +425,9 @@ end
 local function ProcessViewer(viewer, settings)
     if not viewer then return end
 
-    -- Performance: iterate via select() to avoid table allocation (called at 8 Hz by pulse ticker)
-    settings = settings or GetCachedSettings()
-    local numChildren = viewer:GetNumChildren()
-    for i = 1, numChildren do
-        local icon = select(i, viewer:GetChildren())
+    local children = {viewer:GetChildren()}
+    settings = settings or GetSettings()
+    for _, icon in ipairs(children) do
         if icon and icon.Cooldown then
             ApplySettingsToIcon(icon, settings)
         end
@@ -392,9 +436,7 @@ end
 
 -- Apply settings to all CDM viewers
 local function ApplyAllSettings()
-    -- Refresh cached settings on each full apply cycle
-    _cachedSwipeSettings = GetSettings()
-    local settings = _cachedSwipeSettings
+    local settings = GetSettings()
     EnsureViewerVisibilityHooks()
     local viewers = {
         _G.EssentialCooldownViewer,
@@ -412,7 +454,6 @@ local function ApplyAllSettings()
             hooksecurefunc(viewer, "Layout", function()
                 if _layoutPending[viewer] then return end  -- coalesce rapid Layout calls
                 _layoutPending[viewer] = true
-                _swipeDirty = true
                 C_Timer.After(0.15, function()  -- 150ms debounce for CPU efficiency
                     _layoutPending[viewer] = nil
                     ProcessViewer(viewer, GetSettings())
@@ -449,7 +490,6 @@ refreshEventFrame:RegisterEvent("BAG_UPDATE_COOLDOWN")
 refreshEventFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
 refreshEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 refreshEventFrame:SetScript("OnEvent", function(_, event)
-    _swipeDirty = true  -- mark dirty on any cooldown-related event
     if event == "PLAYER_REGEN_ENABLED" then
         if pendingCombatRefresh then
             QueueApplyAllSettings(0.05)
@@ -467,11 +507,9 @@ refreshEventFrame:SetScript("OnEvent", function(_, event)
 end)
 
 -- Keep swipe state responsive while viewers are visible.
--- Pulse at 1s for safety-net refresh; reactive updates are handled by SetCooldown hooks
--- and event-driven QueueApplyAllSettings. Only refresh when _swipeDirty is set.
-local PULSE_INTERVAL = 1.0
-local _swipeDirty = true  -- start dirty to ensure first apply
-local _layoutPending = Helpers.CreateStateTable()  -- coalesce per-viewer layout hook timers
+-- Pulse at 0.12s (~8 Hz) to catch any color/swipe overrides from Blizzard internals.
+-- Hooks handle instant feedback; the pulse is the safety net that keeps colors correct.
+local PULSE_INTERVAL = 0.12
 local pulseTicker = nil
 local VIEWER_NAMES = {
     "EssentialCooldownViewer",
@@ -532,11 +570,7 @@ StartPulseTicker = function()
             return
         end
 
-        -- Only do full refresh when something changed (dirty flag set by events/hooks)
-        if _swipeDirty then
-            _swipeDirty = false
-            QueueApplyAllSettings(0)
-        end
+        QueueApplyAllSettings(0)
     end)
 end
 -- Start ticker immediately if viewers are already visible.

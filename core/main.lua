@@ -3273,6 +3273,12 @@ function QUICore:OnInitialize()
     self.db = LibStub("AceDB-3.0"):New("QUIDB", defaults, true)
     QUI.db = self.db  -- Make database accessible to other QUI modules
 
+    -- Wire up the Helpers reference now that QUICore and db are ready.
+    -- Clears any stale cached profile from an earlier call.
+    if ns.Helpers and ns.Helpers.InitQUICore then
+        ns.Helpers.InitQUICore()
+    end
+
     -- Migrate visibility settings to SHOW logic
     -- Old hideWhenX → new showX (semantic conversion)
     -- hideOutOfCombat=true → showInCombat=true (user wants combat-only)
@@ -3380,6 +3386,12 @@ function QUICore:OnInitialize()
 end
 
 function QUICore:OnProfileChanged(event, db, profileKey)
+
+    -- Invalidate cached profile reference FIRST — AceDB already swapped db.profile
+    -- so any code reading settings must see the new profile, not the stale cache.
+    if ns.Helpers and ns.Helpers.InvalidateProfileCache then
+        ns.Helpers.InvalidateProfileCache()
+    end
 
     -- AGGRESSIVE M+ PROTECTION: If we're in a challenge mode dungeon, defer EVERYTHING
     -- WoW's protected state during M+ transitions can't be reliably detected by InCombatLockdown()
@@ -3542,11 +3554,13 @@ function QUICore:OnProfileChanged(event, db, profileKey)
         local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
         local RefreshNCDM = _G.QUI_RefreshNCDM
         local RefreshCDMVisibility = _G.QUI_RefreshCDMVisibility
+        local RefreshCooldownSwipe = _G.QUI_RefreshCooldownSwipe
         local RefreshReticle = _G.QUI_RefreshReticle
         local RefreshCustomTrackers = _G.QUI_RefreshCustomTrackers
         if RefreshUnitFrames then RefreshUnitFrames() end
         if RefreshNCDM then RefreshNCDM() end
         if RefreshCDMVisibility then RefreshCDMVisibility() end
+        if RefreshCooldownSwipe then RefreshCooldownSwipe() end
         if RefreshReticle then RefreshReticle() end
         if RefreshCustomTrackers then RefreshCustomTrackers() end
         self:ShowProfileChangeNotification()
