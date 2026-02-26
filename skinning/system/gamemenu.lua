@@ -131,10 +131,16 @@ local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     -- 12.0+, so we poll the overlay's bounds instead.  The overlay keeps
     -- EnableMouse(false) so clicks pass through to the button underneath.
     -- OnUpdate only runs while overlayContainer is shown (menu open).
+    -- Performance: throttled to ~20 Hz (0.05s) instead of every frame.
     if not info.hoverSetup then
         info.hoverSetup = true
         info.hovered = false
-        overlay:SetScript("OnUpdate", function(self)
+        local hoverElapsed = 0
+        overlay:SetScript("OnUpdate", function(self, delta)
+            hoverElapsed = hoverElapsed + (delta or 0)
+            if hoverElapsed < 0.05 then return end
+            hoverElapsed = 0
+
             local binfo = buttonOverlays[button]
             if not binfo then return end
 
@@ -489,8 +495,14 @@ if GameMenuFrame then
     local gameMenuWatcher = CreateFrame("Frame", nil, UIParent)
     local wasShown = false
     local lastButtonCount = 0
+    -- Performance: throttle polling to every 0.2s instead of every frame
+    local watcherElapsed = 0
 
-    gameMenuWatcher:SetScript("OnUpdate", function()
+    gameMenuWatcher:SetScript("OnUpdate", function(self, delta)
+        watcherElapsed = watcherElapsed + (delta or 0)
+        if watcherElapsed < 0.2 then return end
+        watcherElapsed = 0
+
         local isShown = GameMenuFrame:IsShown()
 
         if isShown and not wasShown then

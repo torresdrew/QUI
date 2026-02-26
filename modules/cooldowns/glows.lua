@@ -44,18 +44,16 @@ end
 -- ======================================================
 -- Determine viewer type from icon
 -- ======================================================
+-- Performance: compare frame references directly instead of pcall + GetName + string:find
 local function GetViewerType(icon)
     if not icon then return nil end
 
     local ok, parent = pcall(icon.GetParent, icon)
     if not ok or not parent then return nil end
 
-    local nameOk, parentName = pcall(parent.GetName, parent)
-    if not nameOk or not parentName then return nil end
-
-    if parentName:find("EssentialCooldown") then
+    if parent == _G.EssentialCooldownViewer then
         return "Essential"
-    elseif parentName:find("UtilityCooldown") then
+    elseif parent == _G.UtilityCooldownViewer then
         return "Utility"
     end
 
@@ -351,8 +349,10 @@ local function ScanViewerGlows(viewerName, targetSpellID)
     local viewer = _G[viewerName]
     if not viewer then return end
 
-    local children = { viewer:GetChildren() }
-    for _, icon in ipairs(children) do
+    -- Performance: iterate via select() to avoid table allocation
+    local numChildren = viewer:GetNumChildren()
+    for i = 1, numChildren do
+        local icon = select(i, viewer:GetChildren())
         -- Filter: must be a real shown CDM icon (not custom CDM, not Selection, not non-icon children)
         if icon and icon ~= viewer.Selection and not icon._isCustomCDMIcon
             and icon:IsShown() and IsIconFrame(icon) then

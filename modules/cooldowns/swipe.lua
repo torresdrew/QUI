@@ -32,6 +32,15 @@ local function GetSettings()
     return Helpers.GetModuleSettings("cooldownSwipe", DEFAULTS)
 end
 
+-- Performance: cached settings reference (refreshed on settings change / pulse tick)
+local _cachedSwipeSettings = nil
+local function GetCachedSettings()
+    if not _cachedSwipeSettings then
+        _cachedSwipeSettings = GetSettings()
+    end
+    return _cachedSwipeSettings
+end
+
 -- TAINT SAFETY: Weak-keyed tables for per-icon/viewer state instead of writing to Blizzard frames
 local iconSwipeState   = Helpers.CreateStateTable()
 local hookedViewers    = Helpers.CreateStateTable()
@@ -117,7 +126,8 @@ end
 -- TAINT SAFETY: Only reads duration via safe number checks and boolean frame flags
 -- (wasSetFromAura etc. are plain booleans). Guard flag in weak-keyed table.
 local function ApplySwipeFromHook(icon, durationArg)
-    local settings = GetSettings()
+    -- Performance: use cached settings to avoid DB walk on every SetCooldown hook
+    local settings = GetCachedSettings()
     if not settings then return end
     if icon.IsForbidden and icon:IsForbidden() then return end
 
@@ -368,11 +378,12 @@ end
 local function ProcessViewer(viewer, settings)
     if not viewer then return end
 
-    local children = {viewer:GetChildren()}
-
-    settings = settings or GetSettings()
-    for _, icon in ipairs(children) do
-        if icon.Cooldown then
+    -- Performance: iterate via select() to avoid table allocation (called at 8 Hz by pulse ticker)
+    settings = settings or GetCachedSettings()
+    local numChildren = viewer:GetNumChildren()
+    for i = 1, numChildren do
+        local icon = select(i, viewer:GetChildren())
+        if icon and icon.Cooldown then
             ApplySettingsToIcon(icon, settings)
         end
     end
@@ -380,7 +391,9 @@ end
 
 -- Apply settings to all CDM viewers
 local function ApplyAllSettings()
-    local settings = GetSettings()
+    -- Refresh cached settings on each full apply cycle
+    _cachedSwipeSettings = GetSettings()
+    local settings = _cachedSwipeSettings
     EnsureViewerVisibilityHooks()
     local viewers = {
         _G.EssentialCooldownViewer,
