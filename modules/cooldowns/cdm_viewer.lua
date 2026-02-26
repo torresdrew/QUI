@@ -2300,6 +2300,12 @@ local function Initialize()
         end)
     end
 
+    -- Early bar update: HookViewer's initial LayoutViewer fires at ~T+0.02s but
+    -- resource bars may not exist yet (OnEnable hasn't fired).  Schedule an
+    -- UpdateAllLockedBars once resource bars are likely initialized so they
+    -- pick up the correct CDM width instead of the stale DB fallback.
+    C_Timer.After(1.0, UpdateAllLockedBars)
+
     -- Single delayed refresh (consolidated from 3 calls at 1s/2s/4s to reduce CPU spike)
     C_Timer.After(2.5, RefreshAll)
 end
