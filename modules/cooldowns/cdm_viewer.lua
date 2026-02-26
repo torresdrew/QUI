@@ -1578,14 +1578,20 @@ local function HookViewer(viewerName, trackerKey)
     viewer:HookScript("OnSizeChanged", function(self)
         local svs = getViewerState(self)
 
+        -- Blizzard resets viewers to ~1x1 between layout passes; ignore these
+        -- transient sizes to avoid unnecessary work and noisy debug logs.
+        local rawW, rawH = self:GetWidth(), self:GetHeight()
+        if not rawW or not rawH or rawW < 2 or rawH < 2 then
+            return
+        end
+
         -- Debug: log every OnSizeChanged call (before any guards)
         local isEditMode = Helpers.IsEditModeActive()
         if QUI and QUI.DebugPrint then
-            local w, h = self:GetWidth(), self:GetHeight()
             local running = svs.cdmLayoutRunning
             QUI:DebugPrint(format("|cffFFFF00CDM OnSizeChanged|r %s: w=%.1f h=%.1f running=%s editMode=%s",
                 viewerName == VIEWER_ESSENTIAL and "Ess" or "Util",
-                w or 0, h or 0, tostring(running), tostring(isEditMode)))
+                rawW or 0, rawH or 0, tostring(running), tostring(isEditMode)))
         end
 
         -- Guard against re-entry (LayoutViewer is already running)
@@ -1600,15 +1606,9 @@ local function HookViewer(viewerName, trackerKey)
         -- Edit Mode — addon manipulation of .Selection causes taint.
         if isEditMode then
             svs._wasInEditMode = true  -- Track for exit transition detection
-            -- Blizzard resets viewers to ~1x1 between each Edit Mode layout
-            -- pass.  Detect transient resets using the LOGICAL viewer size
-            -- (before icon measurement) so we don't corrupt state.
-            local logicalW, logicalH = self:GetWidth(), self:GetHeight()
-            if not logicalW or not logicalH or logicalW < 2 or logicalH < 2 then
-                return
-            end
             -- Use LOGICAL size so Blizzard's slider tracks in real-time.
             -- Icon bounds are stale from QUI's previous LayoutViewer.
+            local logicalW, logicalH = rawW, rawH
             local iconW, iconH, iconCount = MeasureViewerIconBounds(self)
             local w = logicalW
             local h = logicalH
@@ -2250,6 +2250,8 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("CHALLENGE_MODE_START")
+eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
         -- Force load CDM first, then initialize our hooks
@@ -2266,6 +2268,12 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "CHALLENGE_MODE_START" then
         -- M+ keystone: refresh after scenario setup
         C_Timer.After(0.5, RefreshAll)
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+        -- Spec change: cooldowns differ per spec, full rebuild needed
+        C_Timer.After(0.5, RefreshAll)
+    elseif event == "ZONE_CHANGED_NEW_AREA" then
+        -- Zone change without loading screen (walking between open-world zones)
+        C_Timer.After(0.3, RefreshAll)
     end
 end)
 
