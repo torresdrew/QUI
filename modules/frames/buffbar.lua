@@ -772,8 +772,8 @@ local function StripBlizzardOverlay(icon)
         if region:IsObjectType("Texture") then
             -- Check for the specific overlay atlas
             if region.GetAtlas then
-                local atlas = region:GetAtlas()
-                if atlas == "UI-HUD-CoolDownManager-IconOverlay" then
+                local ok, atlas = pcall(region.GetAtlas, region)
+                if ok and atlas == "UI-HUD-CoolDownManager-IconOverlay" then
                     region:SetTexture("")
                     region:Hide()
                     -- TAINT SAFETY: Use guard table + hook instead of replacing Show method

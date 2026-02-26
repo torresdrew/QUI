@@ -19,11 +19,6 @@ local GetCore = Helpers.GetCore
 
 -- Weak-keyed table for edit mode state on SecureUnitButtonTemplate frames
 -- Avoids writing custom properties directly onto protected frames.
-local _editModeState = Helpers.CreateStateTable()
-local _bossSelectionHooked = false  -- guard: hook BossTargetFrameContainer.Selection once
-
--- Weak-keyed table for edit mode state on SecureUnitButtonTemplate frames
--- Avoids writing custom properties directly onto protected frames.
 local _editModeState = setmetatable({}, { __mode = "k" })
 local _bossSelectionHooked = false  -- guard: hook BossTargetFrameContainer.Selection once
 

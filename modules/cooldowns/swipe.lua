@@ -105,8 +105,10 @@ end
 -- Hook icon.Cooldown:SetCooldown so our color fires after Blizzard sets wasSetFromAura
 -- and its own color in the same update. Safe: we don't read the secret arguments.
 local function HookIconCooldown(icon)
-    if icon._QUI_CDColorHooked then return end
-    icon._QUI_CDColorHooked = true
+    local iState = iconSwipeState[icon]
+    if not iState then iState = {}; iconSwipeState[icon] = iState end
+    if iState.colorHooked then return end
+    iState.colorHooked = true
     hooksecurefunc(icon.Cooldown, "SetCooldown", function()
         ApplyColorToIcon(icon)
     end)

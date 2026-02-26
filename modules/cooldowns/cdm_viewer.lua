@@ -2283,7 +2283,7 @@ local function Initialize()
                             if ncdmDB then
                                 if bvName == "BuffBarCooldownViewer" and ncdmDB.trackedBar then
                                     ncdmDB.trackedBar.spacing = math.floor(gap + 0.5)
-                                    QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: saved BuffBar spacing = %d", ncdmDB.trackedBar.spacing))
+                                    if QUI and QUI.DebugPrint then QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: saved BuffBar spacing = %d", ncdmDB.trackedBar.spacing)) end
                                 end
                             end
                         end

@@ -27,11 +27,6 @@ local function RemovePadding(viewer)
         return
     end
 
-    -- Don't interfere if layout is currently being applied
-    if viewer._layoutApplying then
-        return
-    end
-    
     local children = {viewer:GetChildren()}
     
     -- Get the visible icons (because they're fully dynamic)
