@@ -53,9 +53,21 @@ local function ResetReadyCheckPosition()
     end
     -- Reset to default position
     local frame = _G.ReadyCheckFrame
-    if frame and not InCombatLockdown() then
-        frame:ClearAllPoints()
-        frame:SetPoint("CENTER", UIParent, "CENTER", 0, -10)
+    if frame then
+        if not InCombatLockdown() then
+            frame:ClearAllPoints()
+            frame:SetPoint("CENTER", UIParent, "CENTER", 0, -10)
+        else
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("PLAYER_REGEN_ENABLED")
+            f:SetScript("OnEvent", function(self)
+                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+                if frame and not InCombatLockdown() then
+                    frame:ClearAllPoints()
+                    frame:SetPoint("CENTER", UIParent, "CENTER", 0, -10)
+                end
+            end)
+        end
     end
     -- Also reset mover overlay if it exists
     if readyCheckMover then
