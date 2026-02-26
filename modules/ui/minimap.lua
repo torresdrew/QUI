@@ -1507,11 +1507,11 @@ function Minimap_Module:Refresh()
     if not settings.enabled then
         StopUpdateTickers()
         -- Hide QUI customizations but keep minimap visible
-        if minimapBackdrop then
-            minimapBackdrop:Hide()
+        if backdropFrame then
+            backdropFrame:Hide()
         end
-        if datatextPanel then
-            datatextPanel:Hide()
+        if datatextFrame then
+            datatextFrame:Hide()
         end
         -- Ensure minimap is still visible
         Minimap:Show()
