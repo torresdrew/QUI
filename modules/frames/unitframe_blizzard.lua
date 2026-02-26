@@ -272,6 +272,23 @@ function QUI_UF:HideBlizzardFrames()
             end
         end
     end
+
+    -- Hide Blizzard party frames
+    if db.party and db.party.enabled then
+        -- Hide compact party frame container (WoW 12.0+)
+        if CompactPartyFrame then
+            KillBlizzardFrame(CompactPartyFrame)
+        end
+        -- Hide classic PartyMemberFrames (1-4)
+        for i = 1, 4 do
+            local pf = _G["PartyMemberFrame" .. i]
+            if pf then KillBlizzardFrame(pf) end
+        end
+        -- Hide PartyFrame container if it exists
+        if PartyFrame then
+            KillBlizzardFrame(PartyFrame)
+        end
+    end
 end
 
 ---------------------------------------------------------------------------

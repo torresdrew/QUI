@@ -1,6 +1,6 @@
 --[[
     QUI Unit Frames - New Implementation
-    Creates secure unit frames for Player, Target, ToT, Pet, Focus, Boss
+    Creates secure unit frames for Player, Target, ToT, Pet, Focus, Boss, Party
     Features: Dark mode, class colors, power bars, castbars, preview mode
 ]]
 
@@ -1746,6 +1746,623 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
 end
 
 ---------------------------------------------------------------------------
+-- PARTY FRAME: Update helpers (party-specific indicators)
+---------------------------------------------------------------------------
+local ROLE_ICON_TEXCOORDS = {
+    TANK    = { 0, 0.25, 0, 1 },
+    HEALER  = { 0.25, 0.5, 0, 1 },
+    DAMAGER = { 0.5, 0.75, 0, 1 },
+}
+
+local function UpdateRoleIcon(frame)
+    if not frame or not frame.roleIcon then return end
+    local settings = GetUnitSettings("party")
+    local roleSettings = settings and settings.roleIcon
+    if not roleSettings or not roleSettings.enabled then
+        frame.roleIcon:Hide()
+        return
+    end
+    if not UnitExists(frame.unit) then
+        frame.roleIcon:Hide()
+        return
+    end
+    local role = UnitGroupRolesAssigned(frame.unit)
+    local coords = role and ROLE_ICON_TEXCOORDS[role]
+    if coords then
+        frame.roleIcon:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
+        frame.roleIcon:Show()
+    else
+        frame.roleIcon:Hide()
+    end
+end
+
+local function UpdateReadyCheck(frame)
+    if not frame or not frame.readyCheckIcon then return end
+    local settings = GetUnitSettings("party")
+    local rcSettings = settings and settings.readyCheck
+    if not rcSettings or not rcSettings.enabled then
+        frame.readyCheckIcon:Hide()
+        return
+    end
+    if not UnitExists(frame.unit) then
+        frame.readyCheckIcon:Hide()
+        return
+    end
+    local status = GetReadyCheckStatus(frame.unit)
+    if status == "ready" then
+        frame.readyCheckIcon:SetTexture([[Interface\RaidFrame\ReadyCheck-Ready]])
+        frame.readyCheckIcon:Show()
+    elseif status == "notready" then
+        frame.readyCheckIcon:SetTexture([[Interface\RaidFrame\ReadyCheck-NotReady]])
+        frame.readyCheckIcon:Show()
+    elseif status == "waiting" then
+        frame.readyCheckIcon:SetTexture([[Interface\RaidFrame\ReadyCheck-Waiting]])
+        frame.readyCheckIcon:Show()
+    else
+        frame.readyCheckIcon:Hide()
+    end
+end
+
+local function UpdateResurrectIcon(frame)
+    if not frame or not frame.resurrectIcon then return end
+    local settings = GetUnitSettings("party")
+    local rezSettings = settings and settings.resurrectIcon
+    if not rezSettings or not rezSettings.enabled then
+        frame.resurrectIcon:Hide()
+        return
+    end
+    if UnitExists(frame.unit) and UnitHasIncomingResurrection(frame.unit) then
+        frame.resurrectIcon:Show()
+    else
+        frame.resurrectIcon:Hide()
+    end
+end
+
+local function UpdateSummonIcon(frame)
+    if not frame or not frame.summonIcon then return end
+    local settings = GetUnitSettings("party")
+    local sumSettings = settings and settings.summonIcon
+    if not sumSettings or not sumSettings.enabled then
+        frame.summonIcon:Hide()
+        return
+    end
+    if not UnitExists(frame.unit) or not C_IncomingSummon then
+        frame.summonIcon:Hide()
+        return
+    end
+    local status = C_IncomingSummon.IncomingSummonStatus(frame.unit)
+    if status and status ~= 0 then
+        frame.summonIcon:Show()
+    else
+        frame.summonIcon:Hide()
+    end
+end
+
+local DISPEL_TYPES_BY_CLASS = {
+    PRIEST  = { Magic = true, Disease = true },
+    PALADIN = { Magic = true, Disease = true, Poison = true },
+    SHAMAN  = { Magic = true, Curse = true, Poison = true },
+    DRUID   = { Magic = true, Curse = true, Poison = true },
+    MAGE    = { Curse = true },
+    MONK    = { Magic = true, Disease = true, Poison = true },
+    EVOKER  = { Magic = true, Poison = true },
+}
+
+local function UpdateDebuffHighlight(frame)
+    if not frame or not frame.debuffHighlight then return end
+    local settings = GetUnitSettings("party")
+    local dbhSettings = settings and settings.debuffHighlight
+    if not dbhSettings or not dbhSettings.enabled then
+        frame.debuffHighlight:Hide()
+        return
+    end
+    if not UnitExists(frame.unit) then
+        frame.debuffHighlight:Hide()
+        return
+    end
+
+    -- Check what the player can dispel
+    local _, playerClass = UnitClass("player")
+    local canDispel = DISPEL_TYPES_BY_CLASS[playerClass] or {}
+
+    -- Scan debuffs for dispellable types
+    local dispelColor
+    for i = 1, 40 do
+        local auraData = C_UnitAuras.GetDebuffDataByIndex(frame.unit, i)
+        if not auraData then break end
+        local dispelName = auraData.dispelName
+        if dispelName and canDispel[dispelName] then
+            if dispelName == "Magic" then
+                dispelColor = { 0.2, 0.6, 1, 0.8 }
+            elseif dispelName == "Curse" then
+                dispelColor = { 0.6, 0, 1, 0.8 }
+            elseif dispelName == "Disease" then
+                dispelColor = { 0.6, 0.4, 0, 0.8 }
+            elseif dispelName == "Poison" then
+                dispelColor = { 0, 0.6, 0, 0.8 }
+            else
+                dispelColor = { 1, 0, 0, 0.8 }
+            end
+            break  -- Show first dispellable debuff
+        end
+    end
+
+    if dispelColor then
+        frame.debuffHighlight:SetBackdropBorderColor(dispelColor[1], dispelColor[2], dispelColor[3], dispelColor[4])
+        frame.debuffHighlight:Show()
+    else
+        frame.debuffHighlight:Hide()
+    end
+end
+
+local THREAT_COLORS = {
+    [0] = nil,                     -- No threat, hide indicator
+    [1] = { 1, 1, 0.47, 0.6 },    -- Gaining threat (yellow)
+    [2] = { 1, 0.6, 0, 0.7 },     -- Insecure highest threat (orange)
+    [3] = { 1, 0, 0, 0.8 },       -- Securely tanking (red)
+}
+
+local function UpdateThreatIndicator(frame)
+    if not frame or not frame.threatBorder then return end
+    local settings = GetUnitSettings("party")
+    local threatSettings = settings and settings.threatIndicator
+    if not threatSettings or not threatSettings.enabled then
+        frame.threatBorder:Hide()
+        return
+    end
+    if not UnitExists(frame.unit) then
+        frame.threatBorder:Hide()
+        return
+    end
+    local status = UnitThreatSituation(frame.unit)
+    local color = status and THREAT_COLORS[status]
+    if color then
+        frame.threatBorder:SetBackdropBorderColor(color[1], color[2], color[3], color[4])
+        frame.threatBorder:Show()
+    else
+        frame.threatBorder:Hide()
+    end
+end
+
+-- Party-specific full update
+local function UpdatePartyFrame(frame)
+    if not frame then return end
+    UpdateFrame(frame)
+    UpdateRoleIcon(frame)
+    UpdateReadyCheck(frame)
+    UpdateResurrectIcon(frame)
+    UpdateSummonIcon(frame)
+    UpdateDebuffHighlight(frame)
+    UpdateThreatIndicator(frame)
+end
+
+-- Range fade ticker management
+local partyRangeTicker = nil
+local PARTY_RANGE_INTERVAL = 0.5  -- 500ms polling
+
+local function StartPartyRangeTicker()
+    if partyRangeTicker then return end
+    local RangeLib = LibStub("LibRangeCheck-3.0", true)
+    if not RangeLib then return end
+
+    partyRangeTicker = C_Timer.NewTicker(PARTY_RANGE_INTERVAL, function()
+        local settings = GetUnitSettings("party")
+        local rangeSettings = settings and settings.rangeFade
+        if not rangeSettings or not rangeSettings.enabled then return end
+
+        local inAlpha = rangeSettings.inRangeAlpha or 1.0
+        local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
+
+        for i = 1, 5 do
+            local frame = QUI_UF.frames["party" .. i]
+            if frame and frame:IsShown() and UnitExists(frame.unit) then
+                local ok, minRange = pcall(RangeLib.GetRange, RangeLib, frame.unit)
+                -- If we can get a range and it's within 40 yards, consider in range
+                if ok and minRange and minRange <= 40 then
+                    frame:SetAlpha(inAlpha)
+                else
+                    frame:SetAlpha(outAlpha)
+                end
+            end
+        end
+    end)
+end
+
+local function StopPartyRangeTicker()
+    if partyRangeTicker then
+        partyRangeTicker:Cancel()
+        partyRangeTicker = nil
+    end
+end
+
+---------------------------------------------------------------------------
+-- CREATE: Party Frame (special handling for party1-party5)
+---------------------------------------------------------------------------
+local function CreatePartyFrame(unit, frameKey, partyIndex)
+    local settings = GetUnitSettings("party")
+    local general = GetGeneralSettings()
+
+    if not settings then return nil end
+
+    local frameName = "QUI_Party" .. partyIndex
+    local frame = CreateFrame("Button", frameName, UIParent, "SecureUnitButtonTemplate, BackdropTemplate, PingableUnitFrameTemplate")
+
+    frame.unit = unit            -- "party1", "party2", etc.
+    frame.unitKey = "party"      -- Shared settings key
+
+    -- Size and position
+    local width = (QUICore.PixelRound and QUICore:PixelRound(settings.width or 180, frame)) or (settings.width or 180)
+    local height = (QUICore.PixelRound and QUICore:PixelRound(settings.height or 36, frame)) or (settings.height or 36)
+    frame:SetSize(width, height)
+
+    -- First party frame positioned at config offsets; others stacked in Initialize
+    if QUICore.SetSnappedPoint then
+        QUICore:SetSnappedPoint(frame, "CENTER", UIParent, "CENTER", settings.offsetX or 0, settings.offsetY or 0)
+    else
+        frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX or 0, settings.offsetY or 0)
+    end
+
+    frame:SetMovable(true)
+    frame:SetClampedToScreen(true)
+
+    -- Secure unit attributes for click targeting
+    frame:SetAttribute("unit", unit)
+    frame:SetAttribute("*type1", "target")
+    frame:SetAttribute("*type2", "togglemenu")
+    frame:RegisterForClicks("AnyUp")
+
+    -- Tooltip
+    frame:HookScript("OnEnter", function(self)
+        ShowUnitTooltip(self)
+    end)
+    frame:HookScript("OnLeave", HideUnitTooltip)
+
+    -- Visibility state driver
+    RegisterStateDriver(frame, "visibility", "[@" .. unit .. ",exists] show; hide")
+
+    -- Refresh when party member appears
+    frame:HookScript("OnShow", function(self)
+        local partyKey = "party" .. partyIndex
+        if QUI_UF.previewMode[partyKey] then return end
+        UpdatePartyFrame(self)
+    end)
+
+    -- Background
+    local bgColor = { 0.1, 0.1, 0.1, 0.9 }
+    if general and general.darkMode then
+        bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
+    end
+
+    local borderPx = settings.borderSize or 1
+    local borderSize = borderPx > 0 and QUICore:Pixels(borderPx, frame) or 0
+
+    frame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = borderSize > 0 and "Interface\\Buttons\\WHITE8x8" or nil,
+        edgeSize = borderSize > 0 and borderSize or nil,
+    })
+    frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+    if borderSize > 0 then
+        frame:SetBackdropBorderColor(0, 0, 0, 1)
+    end
+
+    -- Health bar
+    local powerHeight = settings.showPowerBar and QUICore:PixelRound(settings.powerBarHeight or 4, frame) or 0
+    local separatorHeight = (settings.showPowerBar and settings.powerBarBorder ~= false) and QUICore:GetPixelSize(frame) or 0
+    local healthBar = CreateFrame("StatusBar", nil, frame)
+    healthBar:SetPoint("TOPLEFT", frame, "TOPLEFT", borderSize, -borderSize)
+    healthBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, borderSize + powerHeight + separatorHeight)
+    healthBar:SetStatusBarTexture(GetTexturePath(settings.texture))
+    healthBar:SetMinMaxValues(0, 100)
+    healthBar:SetValue(100)
+    healthBar:EnableMouse(false)
+    frame.healthBar = healthBar
+
+    -- Absorb bar
+    local absorbSettings = settings.absorbs or {}
+    local absorbBar = CreateFrame("StatusBar", nil, healthBar)
+    absorbBar:SetStatusBarTexture(GetAbsorbTexturePath(absorbSettings.texture))
+    local absorbBarTex = absorbBar:GetStatusBarTexture()
+    if absorbBarTex then
+        absorbBarTex:SetHorizTile(false)
+        absorbBarTex:SetVertTile(false)
+        absorbBarTex:SetTexCoord(0, 1, 0, 1)
+    end
+    local ac = absorbSettings.color or { 1, 1, 1 }
+    local aa = absorbSettings.opacity or 0.7
+    absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
+    absorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 1)
+    absorbBar:SetPoint("TOP", healthBar, "TOP", 0, 0)
+    absorbBar:SetPoint("BOTTOM", healthBar, "BOTTOM", 0, 0)
+    absorbBar:SetMinMaxValues(0, 1)
+    absorbBar:SetValue(0)
+    absorbBar:Hide()
+    frame.absorbBar = absorbBar
+
+    -- Heal absorb bar
+    local healAbsorbBar = CreateFrame("StatusBar", nil, healthBar)
+    healAbsorbBar:SetStatusBarTexture(GetTexturePath(settings.texture))
+    healAbsorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 2)
+    healAbsorbBar:SetAllPoints(healthBar)
+    healAbsorbBar:SetMinMaxValues(0, 1)
+    healAbsorbBar:SetValue(0)
+    healAbsorbBar:SetStatusBarColor(0.6, 0.1, 0.1, 0.8)
+    healAbsorbBar:SetReverseFill(true)
+    frame.healAbsorbBar = healAbsorbBar
+
+    -- Heal prediction bar
+    local hpSettings = settings.healPrediction or {}
+    if hpSettings.enabled ~= false then
+        local healPredictionBar = CreateFrame("StatusBar", nil, healthBar)
+        healPredictionBar:SetStatusBarTexture(GetTexturePath(settings.texture))
+        local hpc = hpSettings.color or { 0.2, 1, 0.2 }
+        local hpa = hpSettings.opacity or 0.5
+        healPredictionBar:SetStatusBarColor(hpc[1], hpc[2], hpc[3], hpa)
+        healPredictionBar:SetFrameLevel(healthBar:GetFrameLevel() + 1)
+        healPredictionBar:SetAllPoints(healthBar)
+        healPredictionBar:SetMinMaxValues(0, 1)
+        healPredictionBar:SetValue(0)
+        healPredictionBar:Hide()
+        frame.healPredictionBar = healPredictionBar
+    end
+
+    -- Initial health bar color
+    if general and general.darkMode then
+        local c = general.darkModeHealthColor or { 0.15, 0.15, 0.15, 1 }
+        healthBar:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
+    else
+        local r, g, b, a = GetHealthBarColor(unit, settings)
+        healthBar:SetStatusBarColor(r, g, b, a)
+    end
+
+    -- Power bar
+    if settings.showPowerBar then
+        local powerBar = CreateFrame("StatusBar", nil, frame)
+        powerBar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", borderSize, borderSize)
+        powerBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, borderSize)
+        powerBar:SetHeight(powerHeight)
+        powerBar:SetStatusBarTexture(GetTexturePath(settings.texture))
+        local powerColor = settings.powerBarColor or { 0, 0.5, 1, 1 }
+        powerBar:SetStatusBarColor(powerColor[1], powerColor[2], powerColor[3], powerColor[4] or 1)
+        powerBar:SetMinMaxValues(0, 100)
+        powerBar:SetValue(100)
+        powerBar:EnableMouse(false)
+        frame.powerBar = powerBar
+
+        if settings.powerBarBorder ~= false then
+            local separator = powerBar:CreateTexture(nil, "OVERLAY")
+            separator:SetHeight(QUICore:GetPixelSize(powerBar))
+            separator:SetPoint("BOTTOMLEFT", powerBar, "TOPLEFT", 0, 0)
+            separator:SetPoint("BOTTOMRIGHT", powerBar, "TOPRIGHT", 0, 0)
+            separator:SetTexture("Interface\\Buttons\\WHITE8x8")
+            separator:SetVertexColor(0, 0, 0, 1)
+            frame.powerBarSeparator = separator
+        end
+    end
+
+    -- Name text
+    if settings.showName then
+        local nameAnchorInfo = GetTextAnchorInfo(settings.nameAnchor or "LEFT")
+        local nameOffsetX = QUICore:PixelRound(settings.nameOffsetX or 4, healthBar)
+        local nameOffsetY = QUICore:PixelRound(settings.nameOffsetY or 0, healthBar)
+        local nameText = healthBar:CreateFontString(nil, "OVERLAY")
+        nameText:SetFont(GetFontPath(), settings.nameFontSize or 12, GetFontOutline())
+        nameText:SetShadowOffset(0, 0)
+        nameText:SetPoint(nameAnchorInfo.point, healthBar, nameAnchorInfo.point, nameOffsetX, nameOffsetY)
+        nameText:SetJustifyH(nameAnchorInfo.justify)
+        nameText:SetText("Party " .. partyIndex)
+        frame.nameText = nameText
+    end
+
+    -- Health text
+    if settings.showHealth then
+        local healthAnchorInfo = GetTextAnchorInfo(settings.healthAnchor or "RIGHT")
+        local healthOffsetX = QUICore:PixelRound(settings.healthOffsetX or -4, healthBar)
+        local healthOffsetY = QUICore:PixelRound(settings.healthOffsetY or 0, healthBar)
+        local healthText = healthBar:CreateFontString(nil, "OVERLAY")
+        healthText:SetFont(GetFontPath(), settings.healthFontSize or 11, GetFontOutline())
+        healthText:SetShadowOffset(0, 0)
+        healthText:SetPoint(healthAnchorInfo.point, healthBar, healthAnchorInfo.point, healthOffsetX, healthOffsetY)
+        healthText:SetJustifyH(healthAnchorInfo.justify)
+        healthText:SetText("100%")
+        frame.healthText = healthText
+    end
+
+    -- Power text
+    local powerAnchorInfo = GetTextAnchorInfo(settings.powerTextAnchor or "BOTTOMRIGHT")
+    local powerText = healthBar:CreateFontString(nil, "OVERLAY")
+    powerText:SetFont(GetFontPath(), settings.powerTextFontSize or 10, GetFontOutline())
+    powerText:SetShadowOffset(0, 0)
+    local pOffX = QUICore:PixelRound(settings.powerTextOffsetX or -4, healthBar)
+    local pOffY = QUICore:PixelRound(settings.powerTextOffsetY or 2, healthBar)
+    powerText:SetPoint(powerAnchorInfo.point, healthBar, powerAnchorInfo.point, pOffX, pOffY)
+    powerText:SetJustifyH(powerAnchorInfo.justify)
+    powerText:Hide()
+    frame.powerText = powerText
+
+    -- Target marker (raid icons)
+    if settings.targetMarker then
+        local indicatorFrame = CreateFrame("Frame", nil, frame)
+        indicatorFrame:SetAllPoints()
+        indicatorFrame:SetFrameLevel(healthBar:GetFrameLevel() + 5)
+        frame.indicatorFrame = indicatorFrame
+
+        local marker = settings.targetMarker
+        local targetMarker = indicatorFrame:CreateTexture(nil, "OVERLAY")
+        targetMarker:SetTexture([[Interface\TargetingFrame\UI-RaidTargetingIcons]])
+        targetMarker:SetSize(marker.size or 16, marker.size or 16)
+        local anchorInfo = GetTextAnchorInfo(marker.anchor or "TOP")
+        targetMarker:SetPoint(anchorInfo.point, frame, anchorInfo.point, marker.xOffset or 0, marker.yOffset or 8)
+        targetMarker:Hide()
+        frame.targetMarker = targetMarker
+    end
+
+    -- ===== Party-specific indicators =====
+    local indicatorLevel = healthBar:GetFrameLevel() + 6
+
+    -- Role icon (tank/healer/dps)
+    local roleSettings = settings.roleIcon or {}
+    local roleIcon = frame:CreateTexture(nil, "OVERLAY")
+    roleIcon:SetTexture([[Interface\LFGFrame\UI-LFG-ICON-PORTRAITROLES]])
+    roleIcon:SetSize(roleSettings.size or 14, roleSettings.size or 14)
+    local roleAnchorInfo = GetTextAnchorInfo(roleSettings.anchor or "LEFT")
+    roleIcon:SetPoint(roleAnchorInfo.point, frame, roleAnchorInfo.point, roleSettings.xOffset or -18, roleSettings.yOffset or 0)
+    roleIcon:SetDrawLayer("OVERLAY", 7)
+    roleIcon:Hide()
+    frame.roleIcon = roleIcon
+
+    -- Ready check icon
+    local rcSettings = settings.readyCheck or {}
+    local readyCheckIcon = frame:CreateTexture(nil, "OVERLAY")
+    readyCheckIcon:SetSize(rcSettings.size or 20, rcSettings.size or 20)
+    readyCheckIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    readyCheckIcon:SetDrawLayer("OVERLAY", 7)
+    readyCheckIcon:Hide()
+    frame.readyCheckIcon = readyCheckIcon
+
+    -- Resurrect icon
+    local rezSettings = settings.resurrectIcon or {}
+    local resurrectIcon = frame:CreateTexture(nil, "OVERLAY")
+    resurrectIcon:SetTexture([[Interface\RaidFrame\Raid-Icon-Rez]])
+    resurrectIcon:SetSize(rezSettings.size or 20, rezSettings.size or 20)
+    resurrectIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    resurrectIcon:SetDrawLayer("OVERLAY", 7)
+    resurrectIcon:Hide()
+    frame.resurrectIcon = resurrectIcon
+
+    -- Summon icon
+    local sumSettings = settings.summonIcon or {}
+    local summonIcon = frame:CreateTexture(nil, "OVERLAY")
+    summonIcon:SetTexture([[Interface\RaidFrame\Raid-Icon-SummonPending]])
+    summonIcon:SetSize(sumSettings.size or 20, sumSettings.size or 20)
+    summonIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    summonIcon:SetDrawLayer("OVERLAY", 7)
+    summonIcon:Hide()
+    frame.summonIcon = summonIcon
+
+    -- Debuff highlight border (overlay frame with colored border)
+    local debuffHighlight = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    debuffHighlight:SetPoint("TOPLEFT", frame, "TOPLEFT", -2, 2)
+    debuffHighlight:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 2, -2)
+    debuffHighlight:SetFrameLevel(indicatorLevel)
+    debuffHighlight:SetBackdrop({
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = QUICore:Pixels(2, debuffHighlight),
+    })
+    debuffHighlight:SetBackdropBorderColor(0, 0, 0, 0)
+    debuffHighlight:Hide()
+    frame.debuffHighlight = debuffHighlight
+
+    -- Threat border (separate from debuff highlight)
+    local threatBorder = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    threatBorder:SetPoint("TOPLEFT", frame, "TOPLEFT", -1, 1)
+    threatBorder:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 1, -1)
+    threatBorder:SetFrameLevel(indicatorLevel - 1)
+    threatBorder:SetBackdrop({
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = QUICore:Pixels(1, threatBorder),
+    })
+    threatBorder:SetBackdropBorderColor(0, 0, 0, 0)
+    threatBorder:Hide()
+    frame.threatBorder = threatBorder
+
+    -- ===== Event registration =====
+    frame:SetScript("OnEvent", function(self, event, ...)
+        if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                UpdateHealth(self)
+                UpdateAbsorbs(self)
+                UpdateHealPrediction(self)
+            end
+        elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" or event == "UNIT_HEAL_ABSORB_AMOUNT_CHANGED" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                UpdateAbsorbs(self)
+            end
+        elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" or event == "UNIT_MAXPOWER" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                UpdatePower(self)
+                UpdatePowerText(self)
+            end
+        elseif event == "UNIT_NAME_UPDATE" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                UpdateName(self)
+                UpdateRoleIcon(self)
+            end
+        elseif event == "RAID_TARGET_UPDATE" then
+            UpdateTargetMarker(self)
+        elseif event == "UNIT_THREAT_SITUATION_UPDATE" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                UpdateThreatIndicator(self)
+            end
+        elseif event == "UNIT_AURA" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                UpdateDebuffHighlight(self)
+            end
+        elseif event == "READY_CHECK" or event == "READY_CHECK_CONFIRM" then
+            UpdateReadyCheck(self)
+        elseif event == "READY_CHECK_FINISHED" then
+            -- Hide after a short delay so players can see final state
+            C_Timer.After(6, function()
+                if self.readyCheckIcon then
+                    self.readyCheckIcon:Hide()
+                end
+            end)
+        elseif event == "INCOMING_RESURRECT_CHANGED" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                UpdateResurrectIcon(self)
+            end
+        elseif event == "INCOMING_SUMMON_CHANGED" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                UpdateSummonIcon(self)
+            end
+        elseif event == "GROUP_ROSTER_UPDATE" then
+            UpdatePartyFrame(self)
+        elseif event == "UNIT_HEAL_PREDICTION" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                UpdateHealPrediction(self)
+            end
+        end
+    end)
+
+    -- Unit-specific events
+    frame:RegisterUnitEvent("UNIT_HEALTH", unit)
+    frame:RegisterUnitEvent("UNIT_MAXHEALTH", unit)
+    frame:RegisterUnitEvent("UNIT_ABSORB_AMOUNT_CHANGED", unit)
+    frame:RegisterUnitEvent("UNIT_HEAL_ABSORB_AMOUNT_CHANGED", unit)
+    frame:RegisterUnitEvent("UNIT_POWER_UPDATE", unit)
+    frame:RegisterUnitEvent("UNIT_POWER_FREQUENT", unit)
+    frame:RegisterUnitEvent("UNIT_MAXPOWER", unit)
+    frame:RegisterUnitEvent("UNIT_NAME_UPDATE", unit)
+    frame:RegisterUnitEvent("UNIT_THREAT_SITUATION_UPDATE", unit)
+    frame:RegisterUnitEvent("UNIT_AURA", unit)
+    frame:RegisterUnitEvent("UNIT_HEAL_PREDICTION", unit)
+    frame:RegisterUnitEvent("INCOMING_RESURRECT_CHANGED", unit)
+    frame:RegisterUnitEvent("INCOMING_SUMMON_CHANGED", unit)
+    -- Global events
+    frame:RegisterEvent("RAID_TARGET_UPDATE")
+    frame:RegisterEvent("READY_CHECK")
+    frame:RegisterEvent("READY_CHECK_CONFIRM")
+    frame:RegisterEvent("READY_CHECK_FINISHED")
+    frame:RegisterEvent("GROUP_ROSTER_UPDATE")
+
+    -- Register with Clique if available
+    if _G.ClickCastFrames then
+        _G.ClickCastFrames[frame] = true
+    end
+
+    return frame
+end
+
+---------------------------------------------------------------------------
 -- Force update ToT frame when target-related events fire
 ---------------------------------------------------------------------------
 local function ForceUpdateToT()
@@ -2441,16 +3058,85 @@ function QUI_UF:ShowPreview(unitKey)
         return
     end
 
+    -- Handle party frames specially - show all 5
+    if unitKey:match("^party%d$") or unitKey == "party" then
+        local general = GetGeneralSettings()
+        local settings = GetUnitSettings("party")
+
+        -- First apply current settings to all party frames
+        self:RefreshFrame("party")
+
+        local partyNames = {"Healer", "Tank", "Rogue", "Mage", "Warlock"}
+        for i = 1, 5 do
+            local partyKey = "party" .. i
+            local frame = self.frames[partyKey]
+            if frame then
+                self.previewMode[partyKey] = true
+                if not InCombatLockdown() then
+                    UnregisterStateDriver(frame, "visibility")
+                end
+                frame:Show()
+                frame.healthBar:SetMinMaxValues(0, 100)
+                frame.healthBar:SetValue(90 - (i * 10))
+                if frame.nameText then
+                    frame.nameText:SetText(partyNames[i] or ("Party " .. i))
+                end
+                if frame.healthText then
+                    frame.healthText:SetText("45.0K - " .. (90 - (i * 10)) .. "%")
+                end
+                if frame.powerBar and settings and settings.showPowerBar then
+                    frame.powerBar:SetMinMaxValues(0, 100)
+                    frame.powerBar:SetValue(70)
+                    frame.powerBar:Show()
+                end
+                if frame.powerText then
+                    if settings and settings.showPowerText then
+                        frame.powerText:SetText("70%")
+                        frame.powerText:Show()
+                    else
+                        frame.powerText:Hide()
+                    end
+                end
+
+                -- Apply colors
+                if general and general.darkMode then
+                    local c = general.darkModeHealthColor or { 0.15, 0.15, 0.15, 1 }
+                    frame.healthBar:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
+                else
+                    if settings and settings.useClassColor then
+                        local _, class = UnitClass("player")
+                        if class and RAID_CLASS_COLORS[class] then
+                            local color = RAID_CLASS_COLORS[class]
+                            frame.healthBar:SetStatusBarColor(color.r, color.g, color.b, 1)
+                        end
+                    else
+                        local c = settings and settings.customHealthColor or { 0.2, 0.6, 0.2, 1 }
+                        frame.healthBar:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
+                    end
+                end
+
+                -- Show party aura previews if enabled
+                if self.auraPreviewMode["party_buff"] then
+                    self:ShowAuraPreviewForFrame(frame, "party", "buff")
+                end
+                if self.auraPreviewMode["party_debuff"] then
+                    self:ShowAuraPreviewForFrame(frame, "party", "debuff")
+                end
+            end
+        end
+        return
+    end
+
     local frame = self.frames[unitKey]
     if not frame then return end
-    
+
     self.previewMode[unitKey] = true
-    
+
     -- Unregister state driver so we can show the frame manually
     if not InCombatLockdown() then
         UnregisterStateDriver(frame, "visibility")
     end
-    
+
     -- Show frame with fake data
     frame:Show()
     local settings = GetUnitSettings(unitKey)
@@ -2598,11 +3284,47 @@ function QUI_UF:HidePreview(unitKey)
         return
     end
 
+    -- Handle party frames specially - hide all 5
+    if unitKey:match("^party%d$") or unitKey == "party" then
+        for i = 1, 5 do
+            local partyKey = "party" .. i
+            local frame = self.frames[partyKey]
+            if frame then
+                self.previewMode[partyKey] = false
+                if frame.nameText then
+                    frame.nameText:SetText("")
+                end
+                if not InCombatLockdown() then
+                    RegisterStateDriver(frame, "visibility", "[@party" .. i .. ",exists] show; hide")
+                end
+                if UnitExists("party" .. i) then
+                    UpdatePartyFrame(frame)
+                    frame:Show()
+                else
+                    frame:Hide()
+                end
+
+                -- Hide party castbar preview
+                local castbar = self.castbars[partyKey]
+                if castbar then
+                    castbar.isPreviewSimulation = false
+                    castbar:SetScript("OnUpdate", nil)
+                    castbar:Hide()
+                end
+
+                -- Hide party aura previews
+                self:HideAuraPreviewForFrame(frame, partyKey, "buff")
+                self:HideAuraPreviewForFrame(frame, partyKey, "debuff")
+            end
+        end
+        return
+    end
+
     local frame = self.frames[unitKey]
     if not frame then return end
-    
+
     self.previewMode[unitKey] = false
-    
+
     -- Re-register state driver for non-player units
     if not InCombatLockdown() then
         local unit = frame.unit
@@ -2862,7 +3584,246 @@ function QUI_UF:RefreshFrame(unitKey)
         end
         return
     end
-    
+
+    -- Handle party frames specially - refresh all 5
+    if unitKey == "party" then
+        local settings = GetUnitSettings("party")
+        local general = GetGeneralSettings()
+        local spacing = settings and settings.spacing or 2
+
+        if not settings or InCombatLockdown() then
+            for i = 1, 5 do
+                local frame = self.frames["party" .. i]
+                if frame then UpdatePartyFrame(frame) end
+            end
+            return
+        end
+
+        local borderPx = settings.borderSize or 1
+        local texturePath = GetTexturePath(settings.texture)
+        local growDir = settings.growDirection or "DOWN"
+
+        -- Get HUD layer priority for party frames
+        local hudLayering = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.hudLayering
+        local partyLayerPriority = hudLayering and hudLayering.partyFrames or 4
+        local partyFrameLevel
+        if QUICore and QUICore.GetHUDFrameLevel then
+            partyFrameLevel = QUICore:GetHUDFrameLevel(partyLayerPriority)
+        end
+
+        for i = 1, 5 do
+            local partyKey = "party" .. i
+            local frame = self.frames[partyKey]
+            if frame then
+                if partyFrameLevel then
+                    frame:SetFrameLevel(partyFrameLevel)
+                end
+
+                local borderSize = borderPx > 0 and QUICore:Pixels(borderPx, frame) or 0
+                local powerHeight = settings.showPowerBar and QUICore:PixelRound(settings.powerBarHeight or 4, frame) or 0
+                local separatorHeight = (settings.showPowerBar and settings.powerBarBorder ~= false) and QUICore:GetPixelSize(frame) or 0
+
+                local baseWidth = (QUICore.PixelRound and QUICore:PixelRound(settings.width or 180, frame)) or (settings.width or 180)
+                local baseHeight = (QUICore.PixelRound and QUICore:PixelRound(settings.height or 36, frame)) or (settings.height or 36)
+                local width, height = ResolveRefreshSize(frame, baseWidth, baseHeight)
+                frame:SetSize(width, height)
+
+                -- Position: first party at configured position, rest stacked by grow direction
+                if not IsFrameOverridden(frame) then
+                    frame:ClearAllPoints()
+                    if i == 1 then
+                        if QUICore.SetSnappedPoint then
+                            QUICore:SetSnappedPoint(frame, "CENTER", UIParent, "CENTER", settings.offsetX or 0, settings.offsetY or 0)
+                        else
+                            frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX or 0, settings.offsetY or 0)
+                        end
+                    else
+                        local prevFrame = self.frames["party" .. (i - 1)]
+                        if prevFrame then
+                            if growDir == "UP" then
+                                frame:SetPoint("BOTTOM", prevFrame, "TOP", 0, spacing)
+                            elseif growDir == "LEFT" then
+                                frame:SetPoint("RIGHT", prevFrame, "LEFT", -spacing, 0)
+                            elseif growDir == "RIGHT" then
+                                frame:SetPoint("LEFT", prevFrame, "RIGHT", spacing, 0)
+                            else -- DOWN (default)
+                                frame:SetPoint("TOP", prevFrame, "BOTTOM", 0, -spacing)
+                            end
+                        end
+                    end
+                end
+
+                -- Colors and opacity
+                local bgColor, healthOpacity, bgOpacity
+                if general and general.darkMode then
+                    bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
+                    healthOpacity = general.darkModeHealthOpacity or general.darkModeOpacity or 1.0
+                    bgOpacity = general.darkModeBgOpacity or general.darkModeOpacity or 1.0
+                else
+                    bgColor = general and general.defaultBgColor or { 0.1, 0.1, 0.1, 0.9 }
+                    healthOpacity = general and general.defaultHealthOpacity or general and general.defaultOpacity or 1.0
+                    bgOpacity = general and general.defaultBgOpacity or general and general.defaultOpacity or 1.0
+                end
+                local bgAlpha = (bgColor[4] or 1) * bgOpacity
+
+                frame:SetBackdrop({
+                    bgFile = "Interface\\Buttons\\WHITE8x8",
+                    edgeFile = borderSize > 0 and "Interface\\Buttons\\WHITE8x8" or nil,
+                    edgeSize = borderSize > 0 and borderSize or nil,
+                })
+                frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
+                if borderSize > 0 then
+                    frame:SetBackdropBorderColor(0, 0, 0, 1)
+                end
+
+                frame.healthBar:SetAlpha(healthOpacity)
+                if frame.powerBar then frame.powerBar:SetAlpha(healthOpacity) end
+
+                -- Health bar texture and position
+                frame.healthBar:SetStatusBarTexture(texturePath)
+                frame.healthBar:ClearAllPoints()
+                frame.healthBar:SetPoint("TOPLEFT", frame, "TOPLEFT", borderSize, -borderSize)
+                frame.healthBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, borderSize + powerHeight + separatorHeight)
+
+                -- Power bar
+                if frame.powerBar then
+                    if settings.showPowerBar then
+                        frame.powerBar:SetStatusBarTexture(texturePath)
+                        frame.powerBar:ClearAllPoints()
+                        frame.powerBar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", borderSize, borderSize)
+                        frame.powerBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, borderSize)
+                        frame.powerBar:SetHeight(powerHeight)
+                        frame.powerBar:Show()
+                    else
+                        frame.powerBar:Hide()
+                    end
+                end
+
+                -- Power bar separator
+                if frame.powerBarSeparator then
+                    if settings.showPowerBar and settings.powerBarBorder ~= false then
+                        frame.powerBarSeparator:Show()
+                    else
+                        frame.powerBarSeparator:Hide()
+                    end
+                end
+
+                -- Absorb bar texture
+                local absorbSettings = settings.absorbs or {}
+                if frame.absorbBar then
+                    frame.absorbBar:SetStatusBarTexture(GetAbsorbTexturePath(absorbSettings.texture))
+                    local ac = absorbSettings.color or { 1, 1, 1 }
+                    local aa = absorbSettings.opacity or 0.7
+                    frame.absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
+                end
+
+                -- Name text
+                if settings.showName then
+                    if not frame.nameText then
+                        local nameText = frame.healthBar:CreateFontString(nil, "OVERLAY")
+                        nameText:SetShadowOffset(0, 0)
+                        frame.nameText = nameText
+                    end
+                    frame.nameText:SetFont(GetFontPath(), settings.nameFontSize or 11, GetFontOutline())
+                    local nameAnchorInfo = GetTextAnchorInfo(settings.nameAnchor or "LEFT")
+                    local nameOffsetX = QUICore:PixelRound(settings.nameOffsetX or 4, frame.healthBar)
+                    local nameOffsetY = QUICore:PixelRound(settings.nameOffsetY or 0, frame.healthBar)
+                    frame.nameText:ClearAllPoints()
+                    frame.nameText:SetPoint(nameAnchorInfo.point, frame.healthBar, nameAnchorInfo.point, nameOffsetX, nameOffsetY)
+                    frame.nameText:SetJustifyH(nameAnchorInfo.justify)
+                    frame.nameText:Show()
+                elseif frame.nameText then
+                    frame.nameText:Hide()
+                end
+
+                -- Health text
+                if settings.showHealth then
+                    if not frame.healthText then
+                        local healthText = frame.healthBar:CreateFontString(nil, "OVERLAY")
+                        healthText:SetShadowOffset(0, 0)
+                        frame.healthText = healthText
+                    end
+                    frame.healthText:SetFont(GetFontPath(), settings.healthFontSize or 11, GetFontOutline())
+                    local healthAnchorInfo = GetTextAnchorInfo(settings.healthAnchor or "RIGHT")
+                    local healthOffsetX = QUICore:PixelRound(settings.healthOffsetX or -4, frame.healthBar)
+                    local healthOffsetY = QUICore:PixelRound(settings.healthOffsetY or 0, frame.healthBar)
+                    frame.healthText:ClearAllPoints()
+                    frame.healthText:SetPoint(healthAnchorInfo.point, frame.healthBar, healthAnchorInfo.point, healthOffsetX, healthOffsetY)
+                    frame.healthText:SetJustifyH(healthAnchorInfo.justify)
+                    frame.healthText:Show()
+                elseif frame.healthText then
+                    frame.healthText:Hide()
+                end
+
+                -- Power text
+                if settings.showPowerText then
+                    if not frame.powerText then
+                        local powerText = frame.healthBar:CreateFontString(nil, "OVERLAY")
+                        powerText:SetShadowOffset(0, 0)
+                        frame.powerText = powerText
+                    end
+                    frame.powerText:SetFont(GetFontPath(), settings.powerTextFontSize or 12, GetFontOutline())
+                    frame.powerText:ClearAllPoints()
+                    local powerAnchorInfo = GetTextAnchorInfo(settings.powerTextAnchor or "BOTTOMRIGHT")
+                    local powerOffsetX = QUICore:PixelRound(settings.powerTextOffsetX or -4, frame.healthBar)
+                    local powerOffsetY = QUICore:PixelRound(settings.powerTextOffsetY or 2, frame.healthBar)
+                    frame.powerText:SetPoint(powerAnchorInfo.point, frame.healthBar, powerAnchorInfo.point, powerOffsetX, powerOffsetY)
+                    frame.powerText:SetJustifyH(powerAnchorInfo.justify)
+                    frame.powerText:Show()
+                elseif frame.powerText then
+                    frame.powerText:Hide()
+                end
+
+                -- Target marker
+                if frame.targetMarker and settings.targetMarker then
+                    local marker = settings.targetMarker
+                    frame.targetMarker:SetSize(marker.size or 16, marker.size or 16)
+                    frame.targetMarker:ClearAllPoints()
+                    local anchorInfo = GetTextAnchorInfo(marker.anchor or "TOP")
+                    frame.targetMarker:SetPoint(anchorInfo.point, frame, anchorInfo.point, marker.xOffset or 0, marker.yOffset or 8)
+                    UpdateTargetMarker(frame)
+                end
+
+                -- Role icon refresh
+                if frame.roleIcon then
+                    local roleSettings = settings.roleIcon or {}
+                    frame.roleIcon:SetSize(roleSettings.size or 14, roleSettings.size or 14)
+                    frame.roleIcon:ClearAllPoints()
+                    local roleAnchorInfo = GetTextAnchorInfo(roleSettings.anchor or "LEFT")
+                    frame.roleIcon:SetPoint(roleAnchorInfo.point, frame, roleAnchorInfo.point, roleSettings.xOffset or -18, roleSettings.yOffset or 0)
+                end
+
+                -- Update with real data if not in preview mode
+                if not self.previewMode[partyKey] then
+                    UpdatePartyFrame(frame)
+                end
+
+                -- Refresh party castbar if it exists
+                local castbar = self.castbars[partyKey]
+                if castbar and QUI_Castbar and QUI_Castbar.RefreshBossCastbar then
+                    local castSettings = settings.castbar
+                    if castSettings then
+                        QUI_Castbar:RefreshBossCastbar(castbar, partyKey, castSettings, frame)
+                    end
+                end
+
+                -- Restore edit overlay if in Edit Mode
+                if self.editModeActive then
+                    self:RestoreEditOverlayIfNeeded(partyKey)
+                end
+            end
+        end
+
+        -- Manage range ticker
+        if settings.rangeFade and settings.rangeFade.enabled then
+            StartPartyRangeTicker()
+        else
+            StopPartyRangeTicker()
+        end
+
+        return
+    end
+
     local frame = self.frames[unitKey]
     if not frame then
         -- Standalone mode only applies to the player castbar.
@@ -3261,8 +4222,9 @@ function QUI_UF:RefreshFrame(unitKey)
 end
 
 function QUI_UF:RefreshAll()
-    -- Track if we've refreshed boss frames to avoid doing it 5 times
+    -- Track if we've refreshed boss/party frames to avoid doing it 5 times each
     local bossRefreshed = false
+    local partyRefreshed = false
 
     for unitKey, frame in pairs(self.frames) do
         -- Boss frames (boss1-boss5) share settings from "boss" key
@@ -3270,6 +4232,12 @@ function QUI_UF:RefreshAll()
             if not bossRefreshed then
                 self:RefreshFrame("boss")  -- Refresh all 5 at once
                 bossRefreshed = true
+            end
+        -- Party frames (party1-party5) share settings from "party" key
+        elseif unitKey:match("^party%d+$") then
+            if not partyRefreshed then
+                self:RefreshFrame("party")  -- Refresh all 5 at once
+                partyRefreshed = true
             end
         else
             self:RefreshFrame(unitKey)
@@ -3411,6 +4379,47 @@ function QUI_UF:Initialize()
 
             -- Setup aura tracking for boss frame
             QUI_UF.SetupAuraTracking(self.frames[bossKey])
+        end
+    end
+
+    -- Create party frames (party1 through party5)
+    if db.party and db.party.enabled then
+        local spacing = db.party.spacing or 2
+        local growDir = db.party.growDirection or "DOWN"
+        for i = 1, 5 do
+            local partyUnit = "party" .. i
+            local partyKey = "party" .. i
+            self.frames[partyKey] = CreatePartyFrame(partyUnit, partyKey, i)
+
+            -- Position party frames stacked by grow direction (skip if anchoring override active)
+            if self.frames[partyKey] and i > 1 and not IsFrameOverridden(self.frames[partyKey]) then
+                local prevFrame = self.frames["party" .. (i - 1)]
+                if prevFrame then
+                    self.frames[partyKey]:ClearAllPoints()
+                    if growDir == "UP" then
+                        self.frames[partyKey]:SetPoint("BOTTOM", prevFrame, "TOP", 0, spacing)
+                    elseif growDir == "LEFT" then
+                        self.frames[partyKey]:SetPoint("RIGHT", prevFrame, "LEFT", -spacing, 0)
+                    elseif growDir == "RIGHT" then
+                        self.frames[partyKey]:SetPoint("LEFT", prevFrame, "RIGHT", spacing, 0)
+                    else -- DOWN (default)
+                        self.frames[partyKey]:SetPoint("TOP", prevFrame, "BOTTOM", 0, -spacing)
+                    end
+                end
+            end
+
+            -- Create party castbar
+            if self.frames[partyKey] and db.party.castbar and db.party.castbar.enabled then
+                self.castbars[partyKey] = CreateBossCastbar(self.frames[partyKey], partyUnit, i)
+            end
+
+            -- Setup aura tracking for party frame
+            QUI_UF.SetupAuraTracking(self.frames[partyKey])
+        end
+
+        -- Start range fade ticker if enabled
+        if db.party.rangeFade and db.party.rangeFade.enabled then
+            StartPartyRangeTicker()
         end
     end
 

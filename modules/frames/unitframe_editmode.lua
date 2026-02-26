@@ -251,8 +251,11 @@ function QUI_UF:EnableEditMode()
         -- Boss frames are grouped under BossTargetFrameContainer — skip individual
         -- overlays and drag handlers. They still get shown with preview data below.
         local isBossFrame = unitKey:match("^boss%d$")
+        -- Party frames party2-party5 follow party1 via stacking — skip their overlays.
+        -- Only party1 gets a draggable overlay (labeled "Party Frames").
+        local isFollowerPartyFrame = unitKey:match("^party[2-5]$")
 
-        if not isBossFrame then
+        if not isBossFrame and not isFollowerPartyFrame then
             -- Create highlight overlay if not exists
             if not frame.editOverlay then
                 local overlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
@@ -285,7 +288,11 @@ function QUI_UF:EnableEditMode()
                 infoText:SetPoint("BOTTOM", nudgeUp, "TOP", 0, 2)  -- 2px above the up arrow
                 infoText:SetTextColor(0.7, 0.7, 0.7, 1)  -- Subtle grey
                 overlay.infoText = infoText
-                overlay.unitLabel = unitKey:gsub("^%l", string.upper):gsub("(%l)(%u)", "%1 %2")
+                if unitKey == "party1" then
+                    overlay.unitLabel = "Party Frames"
+                else
+                    overlay.unitLabel = unitKey:gsub("^%l", string.upper):gsub("(%l)(%u)", "%1 %2")
+                end
 
                 local nudgeDown = CreateNudgeButton(overlay, "DOWN", 0, -1, unitKey)
                 nudgeDown:SetPoint("TOP", overlay, "BOTTOM", 0, -4)
@@ -704,6 +711,11 @@ function QUI_UF:DisableEditMode()
                 if bossNum then
                     RegisterStateDriver(frame, "visibility", "[@boss" .. bossNum .. ",exists] show; hide")
                 end
+            elseif unit and unit:match("^party%d$") then
+                local partyNum = unit:match("^party(%d)$")
+                if partyNum then
+                    RegisterStateDriver(frame, "visibility", "[@party" .. partyNum .. ",exists] show; hide")
+                end
             end
         end
 
@@ -761,6 +773,48 @@ function QUI_UF:DisableEditMode()
         BossTargetFrameContainer:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     end
 
+    -- Save party group position and restore normal stacking.
+    local party1 = self.frames["party1"]
+    if party1 then
+        local partySettings = GetUnitSettings("party")
+        if partySettings then
+            local selfX, selfY = party1:GetCenter()
+            local parentX, parentY = UIParent:GetCenter()
+            if selfX and selfY and parentX and parentY then
+                local rawX, rawY = selfX - parentX, selfY - parentY
+                partySettings.offsetX = QUICore and QUICore.PixelRound and QUICore:PixelRound(rawX) or Round(rawX)
+                partySettings.offsetY = QUICore and QUICore.PixelRound and QUICore:PixelRound(rawY) or Round(rawY)
+            end
+
+            -- Re-anchor party1 to UIParent at saved position
+            party1:ClearAllPoints()
+            party1:SetPoint("CENTER", UIParent, "CENTER", partySettings.offsetX or 0, partySettings.offsetY or 0)
+
+            -- Re-anchor party2-5 stacking
+            local spacing = partySettings.spacing or 2
+            local growDir = partySettings.growDirection or "DOWN"
+            for i = 2, 5 do
+                local pf = self.frames["party" .. i]
+                local prev = self.frames["party" .. (i - 1)]
+                if pf and prev then
+                    pf:ClearAllPoints()
+                    if growDir == "UP" then
+                        pf:SetPoint("BOTTOM", prev, "TOP", 0, spacing)
+                    elseif growDir == "LEFT" then
+                        pf:SetPoint("RIGHT", prev, "LEFT", -spacing, 0)
+                    elseif growDir == "RIGHT" then
+                        pf:SetPoint("LEFT", prev, "RIGHT", spacing, 0)
+                    else -- DOWN
+                        pf:SetPoint("TOP", prev, "BOTTOM", 0, -spacing)
+                    end
+                end
+            end
+
+            -- Notify options panel of final position
+            self:NotifyPositionChanged("party", partySettings.offsetX or 0, partySettings.offsetY or 0)
+        end
+    end
+
     print("|cFF56D1FFQUI|r: Edit Mode |cffff0000DISABLED|r - Positions saved.")
 end
 
@@ -779,6 +833,8 @@ function QUI_UF:RestoreEditOverlayIfNeeded(unitKey)
 
     -- Boss frames are grouped under BossTargetFrameContainer — no individual overlays
     if unitKey and unitKey:match("^boss%d$") then return end
+    -- Party follower frames (party2-5) don't have individual overlays
+    if unitKey and unitKey:match("^party[2-5]$") then return end
 
     local frame = self.frames[unitKey]
     if not frame then return end

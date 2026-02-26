@@ -2250,6 +2250,139 @@ local defaults = {
                     yOffset = 8,
                 },
             },
+            -- Party frames (party1-party5, shared settings)
+            party = {
+                enabled = false,
+                borderSize = 1,
+                width = 180,
+                height = 36,
+                offsetX = -600,
+                offsetY = 0,
+                spacing = 2,
+                growDirection = "DOWN",          -- DOWN, UP, LEFT, RIGHT
+                texture = "Quazii v5",
+                useClassColor = true,
+                customHealthColor = { 0.2, 0.6, 0.2, 1 },
+                -- Name text
+                showName = true,
+                nameTextUseClassColor = false,
+                nameTextColor = { 1, 1, 1, 1 },
+                nameFontSize = 11,
+                nameAnchor = "LEFT",
+                nameOffsetX = 4,
+                nameOffsetY = 0,
+                maxNameLength = 0,
+                -- Health text
+                showHealth = true,
+                healthDisplayStyle = "both",
+                healthDivider = " | ",
+                healthFontSize = 11,
+                healthAnchor = "RIGHT",
+                healthOffsetX = -4,
+                healthOffsetY = 0,
+                healthTextUseClassColor = false,
+                healthTextColor = { 1, 1, 1, 1 },
+                -- Power text
+                showPowerText = false,
+                powerTextFormat = "percent",
+                powerTextUsePowerColor = true,
+                powerTextUseClassColor = false,
+                powerTextColor = { 1, 1, 1, 1 },
+                powerTextFontSize = 10,
+                powerTextAnchor = "BOTTOMRIGHT",
+                powerTextOffsetX = -4,
+                powerTextOffsetY = 2,
+                -- Power bar
+                showPowerBar = true,
+                powerBarHeight = 3,
+                powerBarBorder = true,
+                powerBarUsePowerColor = true,
+                powerBarColor = { 0, 0.5, 1, 1 },
+                -- Absorbs
+                absorbs = {
+                    enabled = true,
+                    color = { 1, 1, 1 },
+                    opacity = 0.7,
+                    texture = "QUI Stripes",
+                },
+                -- Heal prediction
+                healPrediction = {
+                    enabled = true,
+                    color = { 0.2, 1, 0.2 },
+                    opacity = 0.5,
+                },
+                -- Castbar
+                castbar = {
+                    enabled = false,
+                    showIcon = true,
+                    width = 180,
+                    height = 16,
+                    offsetX = 0,
+                    offsetY = 0,
+                    widthAdjustment = 0,
+                    fontSize = 11,
+                    color = {0.404, 1, 0.984, 1},
+                    anchor = "unitframe",
+                },
+                -- Auras (buffs/debuffs)
+                auras = {
+                    showBuffs = false,
+                    showDebuffs = true,
+                    -- Debuff settings
+                    iconSize = 18,
+                    debuffAnchor = "TOPLEFT",
+                    debuffGrow = "RIGHT",
+                    debuffMaxIcons = 4,
+                    debuffOffsetX = 0,
+                    debuffOffsetY = 0,
+                    -- Buff settings
+                    buffIconSize = 18,
+                    buffAnchor = "BOTTOMLEFT",
+                    buffGrow = "RIGHT",
+                    buffMaxIcons = 4,
+                    buffOffsetX = 0,
+                    buffOffsetY = 0,
+                },
+                -- Target marker (raid icons)
+                targetMarker = {
+                    enabled = true,
+                    size = 16,
+                    anchor = "TOP",
+                    xOffset = 0,
+                    yOffset = 8,
+                },
+                -- Party-specific indicators
+                roleIcon = {
+                    enabled = true,
+                    size = 14,
+                    anchor = "LEFT",
+                    xOffset = -18,
+                    yOffset = 0,
+                },
+                rangeFade = {
+                    enabled = true,
+                    inRangeAlpha = 1.0,
+                    outOfRangeAlpha = 0.4,
+                },
+                readyCheck = {
+                    enabled = true,
+                    size = 20,
+                },
+                resurrectIcon = {
+                    enabled = true,
+                    size = 20,
+                },
+                summonIcon = {
+                    enabled = true,
+                    size = 20,
+                },
+                debuffHighlight = {
+                    enabled = true,
+                },
+                threatIndicator = {
+                    enabled = true,
+                },
+            },
         },
         unitFrames = {
             enabled = true,

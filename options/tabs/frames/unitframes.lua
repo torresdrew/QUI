@@ -365,6 +365,7 @@ local function CreateUnitFramesPage(parent)
             pet = {index = 5, name = "Pet"},
             focus = {index = 6, name = "Focus"},
             boss = {index = 7, name = "Boss"},
+            party = {index = 8, name = "Party"},
         }
         local subTabInfo = unitSubTabs[unitKey] or {index = 2, name = unitKey}
         GUI:SetSearchContext({tabIndex = 5, tabName = "Unit Frames", subTabIndex = subTabInfo.index, subTabName = subTabInfo.name})
@@ -462,7 +463,7 @@ local function CreateUnitFramesPage(parent)
         y = y - FORM_ROW
 
         -- Enable checkbox (requires reload)
-        local displayNames = {targettarget = "Target of Target"}
+        local displayNames = {targettarget = "Target of Target", party = "Party"}
         local frameName = displayNames[unitKey] or unitKey:gsub("^%l", string.upper)
         local enableCheck = GUI:CreateFormCheckbox(tabContent, "Enable " .. frameName .. " Frame", "enabled", unitDB, function()
             GUI:ShowConfirmation({
@@ -539,11 +540,25 @@ local function CreateUnitFramesPage(parent)
         borderSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
-        -- Boss frames get spacing slider
-        if unitKey == "boss" then
+        -- Boss and party frames get spacing slider
+        if unitKey == "boss" or unitKey == "party" then
             local spacingSlider = GUI:CreateFormSlider(tabContent, "Spacing", 0, 100, 1, "spacing", unitDB, RefreshUnit)
             spacingSlider:SetPoint("TOPLEFT", PAD, y)
             spacingSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+        end
+
+        -- Party frames get grow direction dropdown
+        if unitKey == "party" then
+            local growDirOptions = {
+                {value = "DOWN", text = "Down"},
+                {value = "UP", text = "Up"},
+                {value = "LEFT", text = "Left"},
+                {value = "RIGHT", text = "Right"},
+            }
+            local growDirDropdown = GUI:CreateFormDropdown(tabContent, "Grow Direction", growDirOptions, "growDirection", unitDB, RefreshUnit)
+            growDirDropdown:SetPoint("TOPLEFT", PAD, y)
+            growDirDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
             y = y - FORM_ROW
         end
 
@@ -691,7 +706,7 @@ local function CreateUnitFramesPage(parent)
         y = y - FORM_ROW
 
         -- Hostility Color checkbox (for frames that can show varied unit types)
-        if unitKey == "target" or unitKey == "focus" or unitKey == "targettarget" or unitKey == "pet" or unitKey == "boss" then
+        if unitKey == "target" or unitKey == "focus" or unitKey == "targettarget" or unitKey == "pet" or unitKey == "boss" or unitKey == "party" then
             local hostilityColorCheck = GUI:CreateFormCheckbox(tabContent, "Use Hostility Color", "useHostilityColor", unitDB, function()
                 RefreshUnit()
                 -- Disable custom color when hostility is ON (covers all units)
@@ -708,7 +723,7 @@ local function CreateUnitFramesPage(parent)
         customColor:SetPoint("TOPLEFT", PAD, y)
         customColor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         -- Set initial enabled state based on hostility setting
-        if unitKey == "target" or unitKey == "focus" or unitKey == "targettarget" or unitKey == "pet" or unitKey == "boss" then
+        if unitKey == "target" or unitKey == "focus" or unitKey == "targettarget" or unitKey == "pet" or unitKey == "boss" or unitKey == "party" then
             customColor:SetEnabled(not unitDB.useHostilityColor)
         end
         y = y - FORM_ROW
@@ -753,8 +768,8 @@ local function CreateUnitFramesPage(parent)
         absorbTextureDesc:SetJustifyH("LEFT")
         y = y - 20
 
-        -- HEAL PREDICTION section (player/target only)
-        if unitKey == "player" or unitKey == "target" then
+        -- HEAL PREDICTION section (player/target/party)
+        if unitKey == "player" or unitKey == "target" or unitKey == "party" then
             local healHeader = GUI:CreateSectionHeader(tabContent, "Heal Prediction")
             healHeader:SetPoint("TOPLEFT", PAD, y)
             y = y - healHeader.gap
@@ -1064,8 +1079,8 @@ local function CreateUnitFramesPage(parent)
             end
         end
 
-        -- CASTBAR section (for player, target, targettarget, focus, pet, boss)
-        if unitKey == "player" or unitKey == "target" or unitKey == "targettarget" or unitKey == "focus" or unitKey == "pet" or unitKey == "boss" then
+        -- CASTBAR section (for player, target, targettarget, focus, pet, boss, party)
+        if unitKey == "player" or unitKey == "target" or unitKey == "targettarget" or unitKey == "focus" or unitKey == "pet" or unitKey == "boss" or unitKey == "party" then
             -- Use dedicated castbar options module (it creates its own header)
             if ns.QUI_CastbarOptions and ns.QUI_CastbarOptions.BuildCastbarOptions then
                 y = ns.QUI_CastbarOptions.BuildCastbarOptions(tabContent, unitKey, y, PAD, FORM_ROW, RefreshUnit, GetTextureList, NINE_POINT_ANCHOR_OPTIONS, GetUFDB, GetDB)
@@ -1074,7 +1089,7 @@ local function CreateUnitFramesPage(parent)
 
         -- Aura settings (all single unit frames)
         if unitKey == "player" or unitKey == "target" or unitKey == "focus"
-           or unitKey == "pet" or unitKey == "targettarget" or unitKey == "boss" then
+           or unitKey == "pet" or unitKey == "targettarget" or unitKey == "boss" or unitKey == "party" then
             if not unitDB.auras then unitDB.auras = {} end
             local auraDB = unitDB.auras
             if auraDB.showBuffs == nil then auraDB.showBuffs = false end
@@ -1842,6 +1857,145 @@ local function CreateUnitFramesPage(parent)
             y = y - FORM_ROW
         end
 
+        -- PARTY INDICATORS section (party only)
+        if unitKey == "party" then
+            -- Role Icons
+            local roleHeader = GUI:CreateSectionHeader(tabContent, "Role Icons")
+            roleHeader:SetPoint("TOPLEFT", PAD, y)
+            y = y - roleHeader.gap
+
+            if not unitDB.roleIcon then unitDB.roleIcon = { enabled = true, size = 14, anchor = "LEFT", xOffset = -18, yOffset = 0 } end
+
+            local roleEnableCheck = GUI:CreateFormCheckbox(tabContent, "Show Role Icons", "enabled", unitDB.roleIcon, RefreshUnit)
+            roleEnableCheck:SetPoint("TOPLEFT", PAD, y)
+            roleEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local roleSizeSlider = GUI:CreateFormSlider(tabContent, "Icon Size", 8, 32, 1, "size", unitDB.roleIcon, RefreshUnit)
+            roleSizeSlider:SetPoint("TOPLEFT", PAD, y)
+            roleSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local roleXSlider = GUI:CreateFormSlider(tabContent, "X Offset", -50, 50, 1, "xOffset", unitDB.roleIcon, RefreshUnit)
+            roleXSlider:SetPoint("TOPLEFT", PAD, y)
+            roleXSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local roleYSlider = GUI:CreateFormSlider(tabContent, "Y Offset", -50, 50, 1, "yOffset", unitDB.roleIcon, RefreshUnit)
+            roleYSlider:SetPoint("TOPLEFT", PAD, y)
+            roleYSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            -- Range Fade
+            local rangeHeader = GUI:CreateSectionHeader(tabContent, "Range Fade")
+            rangeHeader:SetPoint("TOPLEFT", PAD, y)
+            y = y - rangeHeader.gap
+
+            if not unitDB.rangeFade then unitDB.rangeFade = { enabled = true, inRangeAlpha = 1.0, outOfRangeAlpha = 0.4 } end
+
+            local rangeEnableCheck = GUI:CreateFormCheckbox(tabContent, "Enable Range Fading", "enabled", unitDB.rangeFade, RefreshUnit)
+            rangeEnableCheck:SetPoint("TOPLEFT", PAD, y)
+            rangeEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local rangeInAlphaSlider = GUI:CreateFormSlider(tabContent, "In-Range Alpha", 0.1, 1.0, 0.05, "inRangeAlpha", unitDB.rangeFade, RefreshUnit)
+            rangeInAlphaSlider:SetPoint("TOPLEFT", PAD, y)
+            rangeInAlphaSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local rangeOutAlphaSlider = GUI:CreateFormSlider(tabContent, "Out-of-Range Alpha", 0.0, 1.0, 0.05, "outOfRangeAlpha", unitDB.rangeFade, RefreshUnit)
+            rangeOutAlphaSlider:SetPoint("TOPLEFT", PAD, y)
+            rangeOutAlphaSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            -- Ready Check
+            local readyCheckHeader = GUI:CreateSectionHeader(tabContent, "Ready Check")
+            readyCheckHeader:SetPoint("TOPLEFT", PAD, y)
+            y = y - readyCheckHeader.gap
+
+            if not unitDB.readyCheck then unitDB.readyCheck = { enabled = true, size = 20 } end
+
+            local readyCheckEnableCheck = GUI:CreateFormCheckbox(tabContent, "Show Ready Check Icon", "enabled", unitDB.readyCheck, RefreshUnit)
+            readyCheckEnableCheck:SetPoint("TOPLEFT", PAD, y)
+            readyCheckEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local readyCheckSizeSlider = GUI:CreateFormSlider(tabContent, "Icon Size", 10, 40, 1, "size", unitDB.readyCheck, RefreshUnit)
+            readyCheckSizeSlider:SetPoint("TOPLEFT", PAD, y)
+            readyCheckSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            -- Resurrect Icon
+            local rezHeader = GUI:CreateSectionHeader(tabContent, "Resurrect Icon")
+            rezHeader:SetPoint("TOPLEFT", PAD, y)
+            y = y - rezHeader.gap
+
+            if not unitDB.resurrectIcon then unitDB.resurrectIcon = { enabled = true, size = 20 } end
+
+            local rezEnableCheck = GUI:CreateFormCheckbox(tabContent, "Show Resurrect Icon", "enabled", unitDB.resurrectIcon, RefreshUnit)
+            rezEnableCheck:SetPoint("TOPLEFT", PAD, y)
+            rezEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local rezSizeSlider = GUI:CreateFormSlider(tabContent, "Icon Size", 10, 40, 1, "size", unitDB.resurrectIcon, RefreshUnit)
+            rezSizeSlider:SetPoint("TOPLEFT", PAD, y)
+            rezSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            -- Summon Icon
+            local summonHeader = GUI:CreateSectionHeader(tabContent, "Summon Icon")
+            summonHeader:SetPoint("TOPLEFT", PAD, y)
+            y = y - summonHeader.gap
+
+            if not unitDB.summonIcon then unitDB.summonIcon = { enabled = true, size = 20 } end
+
+            local summonEnableCheck = GUI:CreateFormCheckbox(tabContent, "Show Summon Icon", "enabled", unitDB.summonIcon, RefreshUnit)
+            summonEnableCheck:SetPoint("TOPLEFT", PAD, y)
+            summonEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local summonSizeSlider = GUI:CreateFormSlider(tabContent, "Icon Size", 10, 40, 1, "size", unitDB.summonIcon, RefreshUnit)
+            summonSizeSlider:SetPoint("TOPLEFT", PAD, y)
+            summonSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            -- Debuff Highlight
+            local debuffHLHeader = GUI:CreateSectionHeader(tabContent, "Debuff Highlight")
+            debuffHLHeader:SetPoint("TOPLEFT", PAD, y)
+            y = y - debuffHLHeader.gap
+
+            if not unitDB.debuffHighlight then unitDB.debuffHighlight = { enabled = true } end
+
+            local debuffHLEnableCheck = GUI:CreateFormCheckbox(tabContent, "Highlight Dispellable Debuffs", "enabled", unitDB.debuffHighlight, RefreshUnit)
+            debuffHLEnableCheck:SetPoint("TOPLEFT", PAD, y)
+            debuffHLEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local debuffHLDesc = GUI:CreateLabel(tabContent, "Colors the frame border when a party member has a debuff you can dispel.", 11, C.textMuted)
+            debuffHLDesc:SetPoint("TOPLEFT", PAD, y + 4)
+            debuffHLDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            debuffHLDesc:SetJustifyH("LEFT")
+            y = y - 20
+
+            -- Threat Indicator
+            local threatHeader = GUI:CreateSectionHeader(tabContent, "Threat Indicator")
+            threatHeader:SetPoint("TOPLEFT", PAD, y)
+            y = y - threatHeader.gap
+
+            if not unitDB.threatIndicator then unitDB.threatIndicator = { enabled = true } end
+
+            local threatEnableCheck = GUI:CreateFormCheckbox(tabContent, "Show Threat Border", "enabled", unitDB.threatIndicator, RefreshUnit)
+            threatEnableCheck:SetPoint("TOPLEFT", PAD, y)
+            threatEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            local threatDesc = GUI:CreateLabel(tabContent, "Shows a colored border when a party member has threat (yellow/orange/red).", 11, C.textMuted)
+            threatDesc:SetPoint("TOPLEFT", PAD, y + 4)
+            threatDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            threatDesc:SetJustifyH("LEFT")
+            y = y - 20
+        end
+
         tabContent:SetHeight(math.abs(y) + 30)
     end
 
@@ -1854,6 +2008,7 @@ local function CreateUnitFramesPage(parent)
         {name = "Pet", builder = function(c) BuildUnitTab(c, "pet") end},
         {name = "Focus", builder = function(c) BuildUnitTab(c, "focus") end},
         {name = "Boss", builder = function(c) BuildUnitTab(c, "boss") end},
+        {name = "Party", builder = function(c) BuildUnitTab(c, "party") end},
     }
 
     GUI:CreateSubTabs(content, subTabs)
