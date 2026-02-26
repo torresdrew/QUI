@@ -94,6 +94,14 @@ local function GetSavedViewerDims(viewerKey)
     return 0, 0
 end
 
+-- Locked-bar readiness flags.  When a bar is locked to a CDM viewer,
+-- suppress visibility until the CDM has actually computed the correct
+-- width.  This prevents a flash at a stale DB width on login/reload.
+-- Set to true by QUI_UpdateLockedPowerBar / QUI_UpdateLockedSecondaryPowerBar
+-- on their first successful run, or by a safety timeout.
+local _primaryLockedReady = false
+local _secondaryLockedReady = false
+
 -- Helper to get texture from general settings (falls back to default)
 local function GetDefaultTexture()
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general then
@@ -1079,6 +1087,13 @@ function QUICore:UpdatePowerBar()
         return
     end
 
+    -- When locked to CDM, suppress until CDM has computed the correct width.
+    -- Prevents a flash at a stale DB width on login/reload.
+    if (cfg.lockedToEssential or cfg.lockedToUtility) and not _primaryLockedReady then
+        if self.powerBar then SafeHide(self.powerBar) end
+        return
+    end
+
     -- Auto-hide primary when secondary is swapped to primary position (per-spec)
     if ShouldHidePrimaryOnSwap() then
         if self.powerBar then
@@ -1526,8 +1541,13 @@ _G.QUI_UpdateLockedPowerBar = function()
             Helpers.SafeValue(essentialViewer:GetWidth(), 0)))
     end
 
-    -- Update if values changed
+    -- First CDM update: mark primary locked bar as ready so it becomes visible.
     local needsUpdate = false
+    if not _primaryLockedReady then
+        _primaryLockedReady = true
+        needsUpdate = true
+    end
+
     if newWidth and cfg.width ~= newWidth then
         cfg.width = newWidth
         needsUpdate = true
@@ -1615,8 +1635,13 @@ _G.QUI_UpdateLockedPowerBarToUtility = function()
         end
     end
 
-    -- Update if values changed
+    -- First CDM update: mark primary locked bar as ready (Utility lock path).
     local needsUpdate = false
+    if not _primaryLockedReady then
+        _primaryLockedReady = true
+        needsUpdate = true
+    end
+
     if newWidth and cfg.width ~= newWidth then
         cfg.width = newWidth
         needsUpdate = true
@@ -1721,8 +1746,13 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
         end
     end
 
-    -- Update if values changed
+    -- First CDM update: mark secondary locked bar as ready.
     local needsUpdate = false
+    if not _secondaryLockedReady then
+        _secondaryLockedReady = true
+        needsUpdate = true
+    end
+
     if newWidth and cfg.width ~= newWidth then
         cfg.width = newWidth
         needsUpdate = true
@@ -1817,8 +1847,13 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
         end
     end
 
-    -- Update if values changed
+    -- First CDM update: mark secondary locked bar as ready (Utility lock path).
     local needsUpdate = false
+    if not _secondaryLockedReady then
+        _secondaryLockedReady = true
+        needsUpdate = true
+    end
+
     if newWidth and cfg.width ~= newWidth then
         cfg.width = newWidth
         needsUpdate = true
@@ -2286,6 +2321,12 @@ function QUICore:UpdateSecondaryPowerBar()
                 _G.QUI_UpdateAnchoredFrames()
             end
         end
+        return
+    end
+
+    -- When locked to CDM, suppress until CDM has computed the correct width.
+    if (cfg.lockedToEssential or cfg.lockedToUtility) and not _secondaryLockedReady then
+        if self.secondaryPowerBar then SafeHide(self.secondaryPowerBar) end
         return
     end
 
@@ -3033,6 +3074,24 @@ local function InitializeResourceBars(self)
     -- Initial update
     self:UpdatePowerBar()
     self:UpdateSecondaryPowerBar()
+
+    -- Safety timeout: ensure locked bars become visible even if CDM never
+    -- calls UpdateLockedPowerBar (e.g. CDM disabled, addon load order issue).
+    C_Timer.After(3, function()
+        local changed = false
+        if not _primaryLockedReady then
+            _primaryLockedReady = true
+            changed = true
+        end
+        if not _secondaryLockedReady then
+            _secondaryLockedReady = true
+            changed = true
+        end
+        if changed then
+            self:UpdatePowerBar()
+            self:UpdateSecondaryPowerBar()
+        end
+    end)
 
     -- Hook Blizzard Edit Mode for power bars (via centralized dispatcher)
     C_Timer.After(0.6, function()
