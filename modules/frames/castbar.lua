@@ -3286,13 +3286,14 @@ end
 ---------------------------------------------------------------------------
 local function DestroyCastbar(castbar)
     if not castbar then return end
-    
+
     ClearChannelTickState(castbar)
+    castbar:UnregisterAllEvents()
     castbar:SetScript("OnUpdate", nil)
     castbar:SetScript("OnEvent", nil)
     castbar:SetScript("OnDragStart", nil)
     castbar:SetScript("OnDragStop", nil)
-    
+
     castbar:Hide()
     castbar:ClearAllPoints()
 end
