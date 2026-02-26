@@ -2177,10 +2177,24 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
     end
     
     -- Unified OnUpdate handler - handles both real casts and preview
+    -- Throttle UnitCastingInfo/UnitChannelInfo queries to 20 FPS (0.05s).
+    -- These API calls are only used as boolean "is casting?" checks; actual
+    -- progress is interpolated from stored timing data every frame.
+    -- Start elapsed at threshold so the very first OnUpdate frame queries immediately.
+    local castInfoElapsed = 0.05
+    local cachedIsCasting = false
+    local cachedIsChanneling = false
     local function CastBar_OnUpdate(self, elapsed)
-        -- Check if actually casting (real cast takes priority)
-        local spellName = UnitCastingInfo(self.unit)
-        local channelName = UnitChannelInfo(self.unit)
+        -- Throttled API queries — re-query every 0.05s, use cached results between
+        castInfoElapsed = castInfoElapsed + elapsed
+        if castInfoElapsed >= 0.05 then
+            castInfoElapsed = 0
+            cachedIsCasting = UnitCastingInfo(self.unit) ~= nil
+            cachedIsChanneling = UnitChannelInfo(self.unit) ~= nil
+        end
+
+        local spellName = cachedIsCasting
+        local channelName = cachedIsChanneling
 
         -- Continue showing castbar during empowered hold phase even when API returns nil
         local isInEmpoweredHold = isPlayer and self.isEmpowered and self.startTime and self.endTime

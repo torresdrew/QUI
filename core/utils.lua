@@ -12,6 +12,10 @@ local Helpers = ns.Helpers
 -- Cache LibSharedMedia reference
 local LSM = LibStub("LibSharedMedia-3.0", true)
 
+-- Cache global secret-value API functions at file scope (avoids repeated _G lookups)
+local issecretvalue = _G.issecretvalue
+local canaccesstable = _G.canaccesstable
+
 local function GetCore()
     return (_G.QUI and _G.QUI.QUICore) or ns.Addon
 end
@@ -26,20 +30,14 @@ end
 --- @param value any The value to check
 --- @return boolean True if value is a secret value
 function Helpers.IsSecretValue(value)
-    if type(issecretvalue) == "function" then
-        return issecretvalue(value)
-    end
-    return false
+    return issecretvalue and issecretvalue(value) or false
 end
 
 --- Check if a table can be accessed (not tainted/restricted)
 --- @param tbl table The table to check
 --- @return boolean True if table can be accessed safely
 function Helpers.CanAccessTable(tbl)
-    if type(canaccesstable) == "function" then
-        return canaccesstable(tbl)
-    end
-    return true  -- Pre-12.0 always accessible
+    return canaccesstable and canaccesstable(tbl) or true
 end
 
 --- Safely get a value, returning fallback if it's a secret
@@ -119,9 +117,15 @@ end
 -- Cache reference to QUICore (set after ADDON_LOADED)
 local QUICore = nil
 
+-- Cached profile reference — avoids repeated core.db.profile chain walks.
+-- Call Helpers.InvalidateProfileCache() whenever the profile changes
+-- (e.g., on ADDON_LOADED, profile switch, profile reset).
+local _cachedProfile = nil
+
 --- Initialize QUICore reference (call after ADDON_LOADED)
 function Helpers.InitQUICore()
     QUICore = ns.Addon
+    _cachedProfile = nil  -- force re-resolve on next GetProfile()
 end
 
 --- Get QUICore reference
@@ -140,12 +144,21 @@ function Helpers.GetCore()
     return (_G.QUI and _G.QUI.QUICore) or ns.Addon
 end
 
+--- Invalidate the cached profile reference.
+--- Must be called on profile switch, profile reset, or any event that
+--- replaces core.db.profile (e.g., LibDualSpec swap).
+function Helpers.InvalidateProfileCache()
+    _cachedProfile = nil
+end
+
 --- Get the full profile database
 --- @return table|nil The profile table or nil
 function Helpers.GetProfile()
+    if _cachedProfile then return _cachedProfile end
     local core = Helpers.GetQUICore()
     if core and core.db and core.db.profile then
-        return core.db.profile
+        _cachedProfile = core.db.profile
+        return _cachedProfile
     end
     return nil
 end
@@ -156,7 +169,7 @@ end
 function Helpers.CreateDBGetter(moduleName)
     return function()
         local profile = Helpers.GetProfile()
-        if profile and profile[moduleName] then
+        if profile then
             return profile[moduleName]
         end
         return nil
@@ -168,7 +181,7 @@ end
 --- @return table|nil The module's DB table or nil
 function Helpers.GetModuleDB(moduleName)
     local profile = Helpers.GetProfile()
-    if profile and profile[moduleName] then
+    if profile then
         return profile[moduleName]
     end
     return nil
@@ -182,17 +195,12 @@ end
 --- @return table The module's settings table (never nil)
 function Helpers.GetModuleSettings(moduleName, defaults)
     defaults = defaults or {}
-    -- Try namespace first (preferred)
-    local core = GetCore()
-    if not (core and core.db and core.db.profile) then
-        -- Explicit global fallback if core isn't fully ready
-        core = (_G.QUI and _G.QUI.QUICore) or Helpers.GetQUICore() or ns.Addon
-    end
-    if core and core.db and core.db.profile then
-        if not core.db.profile[moduleName] then
-            core.db.profile[moduleName] = defaults
+    local profile = Helpers.GetProfile()
+    if profile then
+        if not profile[moduleName] then
+            profile[moduleName] = defaults
         end
-        return core.db.profile[moduleName]
+        return profile[moduleName]
     end
     return defaults
 end
@@ -406,6 +414,30 @@ function Helpers.GetSkinAccentColor()
     return sr, sg, sb, sa
 end
 
+--- Border key lookup cache — avoids 4x string concatenation per call.
+--- Keyed by prefix string; each entry holds { override, hide, useClass, color }.
+local _borderKeyCache = {}
+local _borderKeyDefault = {
+    override  = "borderOverride",
+    hide      = "hideBorder",
+    useClass  = "borderUseClassColor",
+    color     = "borderColor",
+}
+
+local function GetBorderKeys(prefix)
+    if not prefix or prefix == "" then return _borderKeyDefault end
+    local cached = _borderKeyCache[prefix]
+    if cached then return cached end
+    cached = {
+        override  = prefix .. "BorderOverride",
+        hide      = prefix .. "HideBorder",
+        useClass  = prefix .. "BorderUseClassColor",
+        color     = prefix .. "BorderColor",
+    }
+    _borderKeyCache[prefix] = cached
+    return cached
+end
+
 --- Get skin border color from dedicated border settings.
 --- Falls back to skin accent color so existing profiles keep current visuals.
 --- Supports optional per-module override settings tables.
@@ -436,25 +468,21 @@ function Helpers.GetSkinBorderColor(moduleSettings, prefix)
     end
 
     if type(moduleSettings) == "table" then
-        local keyPrefix = type(prefix) == "string" and prefix or ""
-        local overrideKey = keyPrefix ~= "" and (keyPrefix .. "BorderOverride") or "borderOverride"
-        local hideKey = keyPrefix ~= "" and (keyPrefix .. "HideBorder") or "hideBorder"
-        local useClassKey = keyPrefix ~= "" and (keyPrefix .. "BorderUseClassColor") or "borderUseClassColor"
-        local colorKey = keyPrefix ~= "" and (keyPrefix .. "BorderColor") or "borderColor"
+        local keys = GetBorderKeys(type(prefix) == "string" and prefix or "")
 
-        if moduleSettings[overrideKey] then
-            if moduleSettings[useClassKey] then
+        if moduleSettings[keys.override] then
+            if moduleSettings[keys.useClass] then
                 r, g, b = Helpers.GetPlayerClassColor()
                 a = 1
-            elseif type(moduleSettings[colorKey]) == "table" then
-                local moduleColor = moduleSettings[colorKey]
+            elseif type(moduleSettings[keys.color]) == "table" then
+                local moduleColor = moduleSettings[keys.color]
                 r = moduleColor[1] or r
                 g = moduleColor[2] or g
                 b = moduleColor[3] or b
                 a = moduleColor[4] or a
             end
 
-            if moduleSettings[hideKey] then
+            if moduleSettings[keys.hide] then
                 a = 0
             end
         end
@@ -585,13 +613,16 @@ function Helpers.FindAnchorFrame(type)
     local frameHighestWidth, highestWidth = nil, 0
     local f = EnumerateFrames()
     while f do
-        local unit = f.unit or (f.GetAttribute and f:GetAttribute("unit"))
-        if unit == type then
-            if f:IsVisible() and f:IsObjectType("Button") and f:GetName() then
-                local w = f:GetWidth()
-                if w > 20 and w > highestWidth then
-                    frameHighestWidth, highestWidth = f, w
-                end
+        -- Fast field access first; only fall back to GetAttribute if nil
+        local unit = f.unit
+        if unit == nil and f.GetAttribute then
+            unit = f:GetAttribute("unit")
+        end
+        -- Cheapest checks first: unit match > IsVisible > IsObjectType > GetName
+        if unit == type and f:IsVisible() and f:IsObjectType("Button") and f:GetName() then
+            local w = f:GetWidth()
+            if w > 20 and w > highestWidth then
+                frameHighestWidth, highestWidth = f, w
             end
         end
         f = EnumerateFrames(f)
@@ -782,6 +813,7 @@ function Helpers.SafeHide(frame)
     return pcall(frame.Hide, frame)
 end
 
+ns.InvalidateProfileCache = Helpers.InvalidateProfileCache
 ns.CreateStateTable = Helpers.CreateStateTable
 ns.IsEditModeActive = Helpers.IsEditModeActive
 ns.IsEditModeShown = Helpers.IsEditModeShown

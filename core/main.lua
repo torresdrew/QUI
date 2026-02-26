@@ -126,6 +126,33 @@ end
 local BACKDROP_MAX_RETRIES = 50
 local _backdropRetryCount = 0
 
+-- ForceReskinAllViewers coalescing: prevent duplicate timers from scheduling redundant reskins.
+-- When multiple C_Timer.After calls would invoke ForceReskinAllViewers, only the first
+-- schedules the work; subsequent calls within the coalescing window are skipped.
+local _reskinPending = false
+
+local function _ScheduleReskin(selfRef, delay)
+    if _reskinPending then return end
+    _reskinPending = true
+    C_Timer.After(delay, function()
+        _reskinPending = false
+        if not InCombatLockdown() then
+            selfRef:ForceReskinAllViewers()
+        end
+    end)
+end
+
+-- Reusable scratch table for GetChildren() results to avoid per-call allocation.
+-- _PackChildrenIntoScratch captures varargs from a single GetChildren() call.
+local _childrenScratch = {}
+local function _PackChildrenIntoScratch(...)
+    local n = select("#", ...)
+    for i = 1, n do
+        _childrenScratch[i] = select(i, ...)
+    end
+    return n
+end
+
 -- Global SafeSetBackdrop function that defers SetBackdrop calls when frame dimensions
 -- are secret values (Midnight 12.0 protection) or when in combat lockdown.
 -- This prevents the "attempt to perform arithmetic on a secret value" error that occurs
@@ -176,14 +203,17 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                     return
                 end
 
-                -- Performance: reuse module-level scratch table instead of allocating per tick
+                -- Performance: reuse module-level scratch table instead of allocating per tick.
+                -- Track total vs processed count to avoid a second pairs() scan to check emptiness.
                 local processed = QUICore.__backdropProcessed
                 if not processed then
                     processed = {}
                     QUICore.__backdropProcessed = processed
                 end
                 wipe(processed)
+                local totalCount = 0
                 for pendingFrame in pairs(QUICore.__pendingBackdrops or {}) do
+                    totalCount = totalCount + 1
                     local pendingData = _pendingBackdropData[pendingFrame]
                     if pendingFrame and pendingData then
                         -- Re-check if dimensions are now valid (reuse named function)
@@ -210,12 +240,7 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                 end
 
                 -- Stop OnUpdate if no more pending (SetScript nil to avoid per-frame CPU cost)
-                local hasAny = false
-                for _ in pairs(QUICore.__pendingBackdrops or {}) do
-                    hasAny = true
-                    break
-                end
-                if not hasAny then
+                if #processed >= totalCount then
                     _backdropRetryCount = 0
                     self:SetScript("OnUpdate", nil)
                     self:Hide()
@@ -3385,6 +3410,12 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     -- Update spec tracking (kept for reference)
     self._lastKnownSpec = GetSpecialization() or 0
 
+    -- Wipe the font registry so stale FontStrings from the old profile's frames
+    -- are released. Modules will re-register via ApplyFont when they rebuild.
+    if self.CleanupFontRegistry then
+        self:CleanupFontRegistry()
+    end
+
     -- Helper to apply UIParent scale safely (defers if in combat or protected state)
     -- pcall wraps SetScale because M+ keystone activation can enter a protected
     -- state while InCombatLockdown() still returns false.
@@ -3507,11 +3538,17 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     -- Consolidated profile-change refresh: single 0.2s delay for all module refreshes
     -- instead of 7 separate cascading timers (0.2, 0.3, 0.4, 0.45, 0.47, 0.5)
     C_Timer.After(0.2, function()
-        if _G.QUI_RefreshUnitFrames then _G.QUI_RefreshUnitFrames() end
-        if _G.QUI_RefreshNCDM then _G.QUI_RefreshNCDM() end
-        if _G.QUI_RefreshCDMVisibility then _G.QUI_RefreshCDMVisibility() end
-        if _G.QUI_RefreshReticle then _G.QUI_RefreshReticle() end
-        if _G.QUI_RefreshCustomTrackers then _G.QUI_RefreshCustomTrackers() end
+        -- Cache _G function lookups at point of use (avoid repeated _G hash lookups)
+        local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
+        local RefreshNCDM = _G.QUI_RefreshNCDM
+        local RefreshCDMVisibility = _G.QUI_RefreshCDMVisibility
+        local RefreshReticle = _G.QUI_RefreshReticle
+        local RefreshCustomTrackers = _G.QUI_RefreshCustomTrackers
+        if RefreshUnitFrames then RefreshUnitFrames() end
+        if RefreshNCDM then RefreshNCDM() end
+        if RefreshCDMVisibility then RefreshCDMVisibility() end
+        if RefreshReticle then RefreshReticle() end
+        if RefreshCustomTrackers then RefreshCustomTrackers() end
         self:ShowProfileChangeNotification()
     end)
 end
@@ -3568,8 +3605,13 @@ function QUICore:ShowProfileChangeNotification()
     -- Show the popup
     if self.profileChangePopup then
         self.profileChangePopup:Show()
-        -- Auto-hide after 10 seconds if not manually closed
+        -- Auto-hide after 10 seconds if not manually closed.
+        -- Generation counter: each new Show() increments the counter so stale timers
+        -- from rapid profile changes become no-ops instead of hiding the fresh popup early.
+        self._popupTimerGeneration = (self._popupTimerGeneration or 0) + 1
+        local gen = self._popupTimerGeneration
         C_Timer.After(10, function()
+            if self._popupTimerGeneration ~= gen then return end  -- stale timer, skip
             if self.profileChangePopup and self.profileChangePopup:IsShown() then
                 self.profileChangePopup:Hide()
             end
@@ -4050,11 +4092,14 @@ function QUICore:OnEnable()
         if not InCombatLockdown() then
             self:ForceReskinAllViewers()
         end
-        if _G.QUI_RefreshUIHider then
-            _G.QUI_RefreshUIHider()
+        -- Cache _G function lookups at point of use
+        local RefreshUIHider = _G.QUI_RefreshUIHider
+        local RefreshBuffBorders = _G.QUI_RefreshBuffBorders
+        if RefreshUIHider then
+            RefreshUIHider()
         end
-        if _G.QUI_RefreshBuffBorders then
-            _G.QUI_RefreshBuffBorders()
+        if RefreshBuffBorders then
+            RefreshBuffBorders()
         end
         ApplyFrameOverrides()
     end)
@@ -4189,9 +4234,7 @@ function QUICore:HookEditMode()
                 end
             end)
 
-            C_Timer.After(0.1, function()
-                self:ForceReskinAllViewers()
-            end)
+            _ScheduleReskin(self, 0.1)
 
             -- TAINT NOTE: Direct method replacement on secure frame. Required to prevent nil crash
             -- when GetRect() returns nil during Edit Mode. Edit Mode is combat-exclusive, so this
@@ -4228,7 +4271,13 @@ function QUICore:HookEditMode()
             C_Timer.After(0, FireExitCallbacks)
 
             C_Timer.After(0.1, function()
-                self:ForceReskinAllViewers()
+                if not _reskinPending then
+                    _reskinPending = true
+                    if not InCombatLockdown() then
+                        self:ForceReskinAllViewers()
+                    end
+                    _reskinPending = false
+                end
 
                 -- Hide power bar edit overlays that persist after edit mode exits
                 C_Timer.After(0.15, function()
@@ -4281,42 +4330,48 @@ function QUICore:HookEditMode()
         if event == "PLAYER_REGEN_ENABLED" then
             -- Reapply frame anchoring overrides deferred during combat
             C_Timer.After(0.3, function()
-                if _G.QUI_ApplyAllFrameAnchors then
-                    _G.QUI_ApplyAllFrameAnchors()
+                local ApplyAllFrameAnchors = _G.QUI_ApplyAllFrameAnchors
+                if ApplyAllFrameAnchors then
+                    ApplyAllFrameAnchors()
                 end
             end)
             -- Small delay to let things settle after combat
             C_Timer.After(0.2, function()
+                -- Cache _G function lookup outside the loop
+                local GetSkinIconState = _G.QUI_GetSkinIconState
                 -- Check if any icons need re-skinning
                 local needsReskin = false
                 for _, viewerName in ipairs(self.viewers) do
                     local viewer = _G[viewerName]
                     if viewer then
                         local container = viewer.viewerFrame or viewer
-                        local numKids = container:GetNumChildren()
+                        -- Capture all children in one GetChildren() call, reusing scratch table
+                        wipe(_childrenScratch)
+                        local numKids = 0
+                        if container:GetNumChildren() > 0 then
+                            numKids = _PackChildrenIntoScratch(container:GetChildren())
+                        end
                         for ci = 1, numKids do
-                            local child = select(ci, container:GetChildren())
-                            local childSkinState = _G.QUI_GetSkinIconState and _G.QUI_GetSkinIconState(child)
+                            local child = _childrenScratch[ci]
+                            local childSkinState = GetSkinIconState and GetSkinIconState(child)
                             if childSkinState and childSkinState.skinFailed then
                                 needsReskin = true
                                 break
                             end
-                end
-            end
+                        end
+                    end
                     if needsReskin then break end
                 end
-                
-                if needsReskin then
+
+                if needsReskin and not _reskinPending then
+                    _reskinPending = true
                     self:ForceReskinAllViewers()
+                    _reskinPending = false
                 end
             end)
         elseif event == "PLAYER_ENTERING_WORLD" then
-            -- Re-skin after zone changes/loading screens
-            C_Timer.After(1, function()
-                if not InCombatLockdown() then
-                    self:ForceReskinAllViewers()
-            end
-        end)
+            -- Re-skin after zone changes/loading screens (coalesced to avoid overlap with combat-end)
+            _ScheduleReskin(self, 1)
             end
         end)
     end
@@ -4505,8 +4560,9 @@ function QUICore:RefreshAll()
         self:ApplyGlobalFont()
     end
     -- Refresh skyriding HUD fonts
-    if _G.QUI_RefreshSkyriding then
-        _G.QUI_RefreshSkyriding()
+    local RefreshSkyriding = _G.QUI_RefreshSkyriding
+    if RefreshSkyriding then
+        RefreshSkyriding()
     end
 end
 

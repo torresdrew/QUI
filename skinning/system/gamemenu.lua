@@ -491,6 +491,11 @@ end
 --
 -- Instead, use a visibility watcher frame that polls GameMenuFrame:IsShown()
 -- without any hooks on the secure frame itself.
+--
+-- LIFECYCLE: The watcher OnUpdate is only active while the game menu is visible.
+-- We hook the global ShowUIPanel/HideUIPanel functions (NOT methods on GameMenuFrame)
+-- to start/stop the polling loop. This avoids burning CPU every frame when the
+-- game menu is hidden (99.99% of play time).
 if GameMenuFrame then
     local gameMenuWatcher = CreateFrame("Frame", nil, UIParent)
     local wasShown = false
@@ -498,7 +503,8 @@ if GameMenuFrame then
     -- Performance: throttle polling to every 0.2s instead of every frame
     local watcherElapsed = 0
 
-    gameMenuWatcher:SetScript("OnUpdate", function(self, delta)
+    -- The OnUpdate handler — only set when the game menu might be visible
+    local function WatcherOnUpdate(self, delta)
         watcherElapsed = watcherElapsed + (delta or 0)
         if watcherElapsed < 0.2 then return end
         watcherElapsed = 0
@@ -563,7 +569,7 @@ if GameMenuFrame then
                 end
             end
         elseif wasShown then
-            -- GameMenuFrame just became hidden
+            -- GameMenuFrame just became hidden — stop the polling loop
             wasShown = false
             lastButtonCount = 0
 
@@ -596,6 +602,37 @@ if GameMenuFrame then
                 menuBackdrop:ClearAllPoints()
                 menuBackdrop:SetAllPoints(GameMenuFrame)
             end
+
+            -- Stop OnUpdate until the menu is shown again
+            self:SetScript("OnUpdate", nil)
+        end
+    end
+
+    -- Start the watcher when the game menu opens. We hook the global
+    -- ShowUIPanel/HideUIPanel functions — these are NOT methods on
+    -- GameMenuFrame, so this does not create taint on the secure frame.
+    local function StartWatcherIfGameMenu(frame)
+        if frame == GameMenuFrame then
+            watcherElapsed = 0  -- reset throttle so first tick runs immediately
+            gameMenuWatcher:SetScript("OnUpdate", WatcherOnUpdate)
+        end
+    end
+
+    hooksecurefunc("ShowUIPanel", StartWatcherIfGameMenu)
+
+    -- Also catch cases where GameMenuFrame is hidden directly (e.g. HideUIPanel,
+    -- clicking a menu button) — the OnUpdate will detect the transition and stop
+    -- itself. But we also hook HideUIPanel so the watcher starts a final poll
+    -- cycle to run the cleanup path, in case it was already stopped.
+    hooksecurefunc("HideUIPanel", function(frame)
+        if frame == GameMenuFrame and wasShown then
+            watcherElapsed = 0
+            gameMenuWatcher:SetScript("OnUpdate", WatcherOnUpdate)
         end
     end)
+
+    -- Fallback: if GameMenuFrame is already visible at load time, start polling
+    if GameMenuFrame:IsShown() then
+        gameMenuWatcher:SetScript("OnUpdate", WatcherOnUpdate)
+    end
 end

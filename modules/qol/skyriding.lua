@@ -53,6 +53,14 @@ local swCurrentValue = 0
 local swMaxCharges = 0
 local LERP_SPEED = 8  -- Higher = faster animation
 
+-- Dirty flags: set by event handlers, consumed by OnUpdate.
+-- Only data-driven update functions are gated; animation functions
+-- (recharge overlay, speed, fade, bar lerp) must run every tick.
+local _vigorDirty        = true
+local _secondWindDirty   = true
+local _abilityDirty      = true
+local _visibilityDirty   = true
+
 -- Update throttling
 local UPDATE_THROTTLE = 0.05  -- 50ms = 20 FPS
 local elapsed = 0
@@ -1078,14 +1086,28 @@ local function OnUpdate(self, delta)
         secondWindMiniBar:SetValue(swCurrentValue * swMaxCharges)
     end
 
-    -- Update displays
-    UpdateVigorBar()
+    -- Data-driven updates: only run when corresponding event set the dirty flag
+    if _vigorDirty then
+        _vigorDirty = false
+        UpdateVigorBar()
+    end
+    if _secondWindDirty then
+        _secondWindDirty = false
+        UpdateSecondWind()
+    end
+    if _abilityDirty then
+        _abilityDirty = false
+        UpdateAbilityIcon()
+    end
+    if _visibilityDirty then
+        _visibilityDirty = false
+        UpdateVisibility()
+    end
+
+    -- Animation-driven updates: must run every tick for smooth visuals
     UpdateRechargeAnimation()
-    UpdateSecondWind()
     UpdateSecondWindRecharge()
     UpdateSpeed()
-    UpdateAbilityIcon()
-    UpdateVisibility()
 end
 
 ---------------------------------------------------------------------------
@@ -1100,7 +1122,7 @@ eventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
 eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-eventFrame:RegisterEvent("UNIT_AURA")  -- For detecting Thrill of the Skies buff
+eventFrame:RegisterUnitEvent("UNIT_AURA", "player")  -- Only player auras (Thrill of the Skies buff)
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "PLAYER_LOGIN" then
@@ -1114,26 +1136,22 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         end)
     elseif event == "PLAYER_CAN_GLIDE_CHANGED" then
         canGlide = arg1
-        UpdateVisibility()
+        _visibilityDirty = true
     elseif event == "PLAYER_IS_GLIDING_CHANGED" then
         isGliding = arg1
         groundedTime = 0
-        UpdateVisibility()
+        _visibilityDirty = true
     elseif event == "UPDATE_BONUS_ACTIONBAR" or event == "SPELL_UPDATE_CHARGES" then
-        if skyridingFrame and skyridingFrame:IsShown() then
-            UpdateVigorBar()
-            UpdateSecondWind()
-        end
+        _vigorDirty = true
+        _secondWindDirty = true
     elseif event == "SPELL_UPDATE_COOLDOWN" then
-        if skyridingFrame and skyridingFrame:IsShown() then
-            UpdateAbilityIcon()
-        end
+        _abilityDirty = true
     elseif event == "PLAYER_REGEN_DISABLED" then
         inCombat = true
-        UpdateVisibility()
+        _visibilityDirty = true
     elseif event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
-        UpdateVisibility()
+        _visibilityDirty = true
     elseif event == "UNIT_AURA" and arg1 == "player" then
         local settings = GetSettings()
         if not settings or settings.enabled == false then

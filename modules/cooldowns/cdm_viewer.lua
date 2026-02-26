@@ -70,6 +70,16 @@ local _iconState, getIconState     = Helpers.CreateStateTable()
 local _mouseoverHooked             = Helpers.CreateStateTable()
 local _keepVisibleSelections       = setmetatable({}, { __mode = "k" })
 
+---------------------------------------------------------------------------
+-- CACHES: Avoid per-frame allocations in OnUpdate paths
+---------------------------------------------------------------------------
+-- GetCDMFrames() cache – rebuilt only when dirty flag is set
+local _cdmFramesCache = {}
+local _cdmFramesDirty = true
+
+-- GetCDMVisibilitySettings() cache – invalidated on settings / profile change
+local _visSettingsCache = nil
+
 -- Combat-stable parent used for "Utility below Essential" anchoring.
 -- Out of combat this proxy follows Essential; in combat it stays fixed.
 local UtilityAnchorProxy = nil
@@ -2016,6 +2026,8 @@ local function ForceLoadCDM()
                 settingsFrame:Hide()
                 settingsFrame:SetAlpha(1)
             end
+            -- CDM frames may now exist after force-load
+            _cdmFramesDirty = true
         end)
     end
 end
@@ -2026,6 +2038,9 @@ end
 local function Initialize()
     if NCDM.initialized then return end
     NCDM.initialized = true
+
+    -- Viewers are now available — invalidate frames cache
+    _cdmFramesDirty = true
 
     if _G[VIEWER_ESSENTIAL] then
         HookViewer(VIEWER_ESSENTIAL, "essential")
@@ -2083,6 +2098,8 @@ local function Initialize()
         local bv = _G[bvName]
         if bv and not NCDM.hooked[bvName] then
             NCDM.hooked[bvName] = true
+            -- New buff viewer hooked — invalidate frames cache
+            _cdmFramesDirty = true
             -- On Edit Mode enter: show Selection (invisible) so we can read its size.
             -- _keepVisibleSelections flag prevents nudge.lua from re-hiding it.
             if QUICore and QUICore.RegisterEditModeEnter then
@@ -2418,31 +2435,38 @@ local CDMVisibility = {
     leaveTimer = nil,
 }
 
--- Get CDM frames (viewers + power bars)
+-- Get CDM frames (viewers + power bars) — cached to avoid per-frame allocations
 local function GetCDMFrames()
-    local frames = {}
+    if not _cdmFramesDirty then
+        return _cdmFramesCache
+    end
+
+    wipe(_cdmFramesCache)
 
     -- Blizzard CDM frames
     if _G.EssentialCooldownViewer then
-        table.insert(frames, _G.EssentialCooldownViewer)
+        _cdmFramesCache[#_cdmFramesCache + 1] = _G.EssentialCooldownViewer
     end
     if _G.UtilityCooldownViewer then
-        table.insert(frames, _G.UtilityCooldownViewer)
+        _cdmFramesCache[#_cdmFramesCache + 1] = _G.UtilityCooldownViewer
     end
     if _G.BuffIconCooldownViewer then
-        table.insert(frames, _G.BuffIconCooldownViewer)
+        _cdmFramesCache[#_cdmFramesCache + 1] = _G.BuffIconCooldownViewer
     end
     if _G.BuffBarCooldownViewer then
-        table.insert(frames, _G.BuffBarCooldownViewer)
+        _cdmFramesCache[#_cdmFramesCache + 1] = _G.BuffBarCooldownViewer
     end
 
-    return frames
+    _cdmFramesDirty = false
+    return _cdmFramesCache
 end
 
--- Get cdmVisibility settings from profile
+-- Get cdmVisibility settings from profile — cached to avoid repeated table lookups
 local function GetCDMVisibilitySettings()
+    if _visSettingsCache then return _visSettingsCache end
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.cdmVisibility then
-        return QUICore.db.profile.cdmVisibility
+        _visSettingsCache = QUICore.db.profile.cdmVisibility
+        return _visSettingsCache
     end
     return nil
 end
@@ -2955,7 +2979,12 @@ visibilityEventFrame:SetScript("OnEvent", function(self, event, ...)
 end)
 
 -- Global refresh functions for options panel
-_G.QUI_RefreshCDMVisibility = UpdateCDMVisibility
+-- Wrap CDM refresh to invalidate caches (called on profile switch & settings change)
+_G.QUI_RefreshCDMVisibility = function()
+    _visSettingsCache = nil   -- profile may have changed — drop cached reference
+    _cdmFramesDirty = true    -- viewers may differ after profile switch
+    UpdateCDMVisibility()
+end
 _G.QUI_RefreshUnitframesVisibility = UpdateUnitframesVisibility
 _G.QUI_RefreshCDMMouseover = SetupCDMMouseoverDetector
 _G.QUI_RefreshUnitframesMouseover = SetupUnitframesMouseoverDetector

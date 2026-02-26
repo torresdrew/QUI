@@ -2210,6 +2210,34 @@ local function CheckBarChanges()
 end
 
 ---------------------------------------------------------------------------
+-- OnUpdate handlers for buff icon/bar viewers (module-level to avoid
+-- per-hook closure allocation).  Elapsed accumulators live at module scope
+-- instead of being captured upvalues inside anonymous closures.
+---------------------------------------------------------------------------
+local buffIconOnUpdateElapsed = 0
+local buffBarOnUpdateElapsed = 0
+
+local function BuffIconViewer_OnUpdate(self, elapsed)
+    buffIconOnUpdateElapsed = buffIconOnUpdateElapsed + elapsed
+    if buffIconOnUpdateElapsed > 0.05 then  -- 20 FPS polling - hash prevents over-layout
+        buffIconOnUpdateElapsed = 0
+        if self:IsShown() then
+            CheckIconChanges()
+        end
+    end
+end
+
+local function BuffBarViewer_OnUpdate(self, elapsed)
+    buffBarOnUpdateElapsed = buffBarOnUpdateElapsed + elapsed
+    if buffBarOnUpdateElapsed > 0.05 then  -- 20 FPS for bars
+        buffBarOnUpdateElapsed = 0
+        if self:IsShown() then
+            CheckBarChanges()
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- FORCE POPULATE: Briefly trigger Edit Mode behavior to load all spells
 -- This ensures the buff icons know what spells to display on first load
 ---------------------------------------------------------------------------
@@ -2291,39 +2319,23 @@ local function Initialize()
     -- Force populate buff icons first (teaches the viewer what spells to show)
     ForcePopulateBuffIcons()
 
-    -- TAINT SAFETY: OnUpdate hooks use local elapsed tracking instead of writing
-    -- properties to Blizzard CDM viewer frames, to avoid tainting the frame table.
+    -- TAINT SAFETY: OnUpdate hooks use module-level elapsed tracking instead of
+    -- writing properties to Blizzard CDM viewer frames, to avoid tainting the
+    -- frame table.  Handlers are module-level named functions (BuffIconViewer_OnUpdate,
+    -- BuffBarViewer_OnUpdate) so no closure is allocated per HookScript call.
     -- OnUpdate polling at 0.05s (20 FPS) - works alongside UNIT_AURA event detection
-    local iconElapsed = 0
     local iconVbs = BuffIconCooldownViewer and (viewerBuffState[BuffIconCooldownViewer] or {})
     if BuffIconCooldownViewer then viewerBuffState[BuffIconCooldownViewer] = iconVbs end
     if BuffIconCooldownViewer and not iconVbs.onUpdateHooked then
         iconVbs.onUpdateHooked = true
-        BuffIconCooldownViewer:HookScript("OnUpdate", function(self, elapsed)
-            iconElapsed = iconElapsed + elapsed
-            if iconElapsed > 0.05 then  -- 20 FPS polling - hash prevents over-layout
-                iconElapsed = 0
-                if self:IsShown() then
-                    CheckIconChanges()
-                end
-            end
-        end)
+        BuffIconCooldownViewer:HookScript("OnUpdate", BuffIconViewer_OnUpdate)
     end
 
-    local barElapsed = 0
     local barVbs = BuffBarCooldownViewer and (viewerBuffState[BuffBarCooldownViewer] or {})
     if BuffBarCooldownViewer then viewerBuffState[BuffBarCooldownViewer] = barVbs end
     if BuffBarCooldownViewer and not barVbs.onUpdateHooked then
         barVbs.onUpdateHooked = true
-        BuffBarCooldownViewer:HookScript("OnUpdate", function(self, elapsed)
-            barElapsed = barElapsed + elapsed
-            if barElapsed > 0.05 then  -- 20 FPS for bars
-                barElapsed = 0
-                if self:IsShown() then
-                    CheckBarChanges()
-                end
-            end
-        end)
+        BuffBarCooldownViewer:HookScript("OnUpdate", BuffBarViewer_OnUpdate)
     end
 
     -- TAINT SAFETY: ALL hooks on Blizzard CDM viewer frames must defer via C_Timer.After(0)

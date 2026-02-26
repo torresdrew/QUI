@@ -389,6 +389,14 @@ function QUICore:RefreshAllFonts()
     end
 end
 
+--- Wipe the font registry to release all FontString references.
+--- Called on profile change so stale FontStrings from the previous profile's
+--- frames are not retained. Modules will re-register their FontStrings
+--- via ApplyFont when they rebuild their UI for the new profile.
+function QUICore:CleanupFontRegistry()
+    wipe(fontRegistry)
+end
+
 --------------------------------------------------------------------------------
 -- UI Scale Management
 --------------------------------------------------------------------------------

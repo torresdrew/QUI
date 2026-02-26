@@ -213,6 +213,10 @@ local fragmentedPowerTypes = {
 local runeUpdateElapsed = 0
 local runeUpdateRunning = false
 
+-- Rune text format cache: only call string.format when the truncated value changes
+local _lastRuneRounded = {}    -- [runeIndex] = last math.floor(remaining * 10) value
+local _lastRuneFormatted = {}  -- [runeIndex] = last formatted string
+
 -- Event throttle (16ms = ~60 FPS, smooth updates while managing CPU)
 local UPDATE_THROTTLE = 0.016
 local lastPrimaryUpdate = 0
@@ -2210,7 +2214,13 @@ local function RuneTimerOnUpdate(bar, delta)
                 if runeText then
                     local cfg = QUICore.db.profile.secondaryPowerBar
                     if cfg.showFragmentedPowerBarText ~= false then
-                        runeText:SetText(string.format("%.1f", remaining))
+                        -- Only reformat when the truncated value changes (avoids per-tick string.format)
+                        local rounded = math.floor(remaining * 10)
+                        if rounded ~= _lastRuneRounded[i] then
+                            _lastRuneRounded[i] = rounded
+                            _lastRuneFormatted[i] = string.format("%.1f", remaining)
+                        end
+                        runeText:SetText(_lastRuneFormatted[i])
                     else
                         runeText:SetText("")
                     end
@@ -2223,6 +2233,9 @@ local function RuneTimerOnUpdate(bar, delta)
     if not anyOnCooldown then
         bar:SetScript("OnUpdate", nil)
         runeUpdateRunning = false
+        -- Clear format cache so next cooldown cycle starts fresh
+        wipe(_lastRuneRounded)
+        wipe(_lastRuneFormatted)
     end
 end
 

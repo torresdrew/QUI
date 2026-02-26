@@ -35,6 +35,30 @@ CustomTrackers.activeBars = {}   -- Runtime bar frames indexed by barID
 CustomTrackers.infoCache = {}    -- Cached spell/item info
 
 ---------------------------------------------------------------------------
+-- DETECTOR FRAME POOL
+-- Avoids repeated CreateFrame calls when the mouseover detector is torn
+-- down and rebuilt on settings changes / PLAYER_ENTERING_WORLD.
+---------------------------------------------------------------------------
+local _detectorPool = {}
+
+local function AcquireDetector()
+    local f = table.remove(_detectorPool)
+    if not f then
+        f = CreateFrame("Frame")
+    end
+    f:Show()
+    return f
+end
+
+local function ReleaseDetector(f)
+    f:Hide()
+    f:SetScript("OnEvent", nil)
+    f:SetScript("OnUpdate", nil)
+    f:UnregisterAllEvents()
+    table.insert(_detectorPool, f)
+end
+
+---------------------------------------------------------------------------
 -- CONSTANTS
 ---------------------------------------------------------------------------
 local ASPECT_RATIOS = {
@@ -2934,10 +2958,9 @@ local function SetupCustomTrackersMouseoverDetector()
     local vis = GetCustomTrackersVisibilitySettings()
     if not vis then return end
 
-    -- Clean up existing detector
+    -- Release existing detector back to pool
     if CustomTrackersVisibility.mouseoverDetector then
-        CustomTrackersVisibility.mouseoverDetector:SetScript("OnUpdate", nil)
-        CustomTrackersVisibility.mouseoverDetector:Hide()
+        ReleaseDetector(CustomTrackersVisibility.mouseoverDetector)
         CustomTrackersVisibility.mouseoverDetector = nil
     end
 
@@ -2946,7 +2969,7 @@ local function SetupCustomTrackersMouseoverDetector()
         return
     end
 
-    local detector = CreateFrame("Frame")
+    local detector = AcquireDetector()
     local lastCheck = 0
     detector:SetScript("OnUpdate", function(self, elapsed)
         -- Skip during combat for CPU efficiency

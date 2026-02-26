@@ -55,6 +55,28 @@ local activeRolls = {}
 local rollAnchor = nil
 local waitingRolls = {}  -- Queue for rolls when all frames are busy
 
+-- Shared roll timer: single OnUpdate replaces up to MAX_ROLL_FRAMES individual handlers
+local rollTimerFrames = {}  -- [frame] = true for frames with active timers
+local rollTimerManager = CreateFrame("Frame")
+rollTimerManager:Hide()  -- shown only when rollTimerFrames is non-empty
+rollTimerManager:SetScript("OnUpdate", function(self, elapsed)
+    local now = GetTime()
+    local anyActive = false
+    for frame in pairs(rollTimerFrames) do
+        local remaining = frame.rollTime - (now - frame.startTime)
+        if remaining > 0 then
+            frame.timer:SetValue(remaining / frame.rollTime)
+            anyActive = true
+        else
+            frame.timer:SetValue(0)
+            rollTimerFrames[frame] = nil
+        end
+    end
+    if not anyActive then
+        self:Hide()
+    end
+end)
+
 -- TAINT SAFETY: Store per-frame hook guards in weak-keyed tables instead of writing
 -- properties directly to Blizzard frames, which taints them in Midnight (12.0)
 local hookedBorders = Helpers.CreateStateTable()
@@ -388,7 +410,7 @@ local function CreateRollButton(parent, rollType, rollValue, texture)
             -- Hide frame immediately after rolling (don't wait for CANCEL_LOOT_ROLL)
             frame:Hide()
             frame.rollID = nil
-            frame.timer:SetScript("OnUpdate", nil)
+            rollTimerFrames[frame] = nil
             activeRolls[rollID] = nil
             -- Defer repositioning and queue processing
             C_Timer.After(0, ProcessRollQueue)
@@ -679,15 +701,9 @@ StartRoll = function(rollID, rollTime, lootHandle)
     -- Timer update
     local _, accentColor = GetThemeColors()
     frame.timer:SetStatusBarColor(accentColor[1], accentColor[2], accentColor[3], 1)
-    frame.timer:SetScript("OnUpdate", function(self, elapsed)
-        local remaining = frame.rollTime - (GetTime() - frame.startTime)
-        if remaining > 0 then
-            self:SetValue(remaining / frame.rollTime)
-        else
-            self:SetValue(0)
-            self:SetScript("OnUpdate", nil)  -- Stop updates when timer expires
-        end
-    end)
+    -- Register with shared timer manager instead of per-frame OnUpdate
+    rollTimerFrames[frame] = true
+    rollTimerManager:Show()
 
     activeRolls[rollID] = frame
     frame:Show()
@@ -707,7 +723,7 @@ local function CancelRoll(rollID)
     if frame then
         frame:Hide()
         frame.rollID = nil
-        frame.timer:SetScript("OnUpdate", nil)
+        rollTimerFrames[frame] = nil
         activeRolls[rollID] = nil
         -- Use C_Timer to defer repositioning and queue processing
         C_Timer.After(0, ProcessRollQueue)
@@ -1476,7 +1492,7 @@ function Loot:ShowRollPreview()
         -- Timer with accent color
         frame.timer:SetValue(item.timer)
         frame.timer:SetStatusBarColor(borderColor[1], borderColor[2], borderColor[3], 1)
-        frame.timer:SetScript("OnUpdate", nil)
+        rollTimerFrames[frame] = nil  -- Not a real roll, remove from shared timer
 
         -- Make first frame draggable during preview
         if i == 1 then
