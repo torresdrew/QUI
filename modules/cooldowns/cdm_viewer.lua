@@ -761,8 +761,10 @@ combatFrame:SetScript("OnEvent", function(_, event)
             QUI:DebugPrint("|cff34D399CDM|r Combat enter — scheduling re-layout")
         end
         C_Timer.After(0.05, function()
-            LayoutViewer(VIEWER_ESSENTIAL, "essential")
-            LayoutViewer(VIEWER_UTILITY, "utility")
+            if NCDM.LayoutViewer then
+                NCDM.LayoutViewer(VIEWER_ESSENTIAL, "essential")
+                NCDM.LayoutViewer(VIEWER_UTILITY, "utility")
+            end
         end)
         return
     end
