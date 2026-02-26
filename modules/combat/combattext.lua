@@ -39,6 +39,43 @@ local function GetGlobalFont()
 end
 
 ---------------------------------------------------------------------------
+-- Refresh function (called when settings change)
+---------------------------------------------------------------------------
+local function RefreshCombatText()
+    local settings = GetSettings()
+
+    -- If disabled, hide any visible text
+    if not settings or not settings.enabled then
+        if CombatTextState.displayTimer then
+            CombatTextState.displayTimer:Cancel()
+            CombatTextState.displayTimer = nil
+        end
+        if CombatTextState.fadeFrame then
+            CombatTextState.fadeFrame:SetScript("OnUpdate", nil)
+        end
+        if CombatTextState.textFrame then
+            CombatTextState.textFrame:Hide()
+        end
+        return
+    end
+
+    local frame = CombatTextState.textFrame
+    if not frame then return end
+
+    -- Update position
+    local xOffset = settings.xOffset or 0
+    local yOffset = settings.yOffset or 100
+    frame:ClearAllPoints()
+    frame:SetPoint("CENTER", UIParent, "CENTER", xOffset, yOffset)
+
+    -- Update font (using LSM) - check if using custom font or global
+    local fontSize = settings.fontSize or 24
+    local fontName = settings.useCustomFont and settings.font or GetGlobalFont()
+    local fontPath = UIKit.ResolveFontPath(fontName)
+    frame.text:SetFont(fontPath, fontSize, "OUTLINE")
+end
+
+---------------------------------------------------------------------------
 -- Create the text frame (one-time setup)
 ---------------------------------------------------------------------------
 local function CreateTextFrame()
@@ -59,6 +96,8 @@ local function CreateTextFrame()
 
     frame:Hide()
     CombatTextState.textFrame = frame
+
+    RefreshCombatText()
 end
 
 ---------------------------------------------------------------------------
@@ -164,44 +203,6 @@ local function OnCombatEnd()
 end
 
 ---------------------------------------------------------------------------
--- Refresh function (called when settings change)
----------------------------------------------------------------------------
-local function RefreshCombatText()
-    local settings = GetSettings()
-
-    -- If disabled, hide any visible text
-    if not settings or not settings.enabled then
-        if CombatTextState.displayTimer then
-            CombatTextState.displayTimer:Cancel()
-            CombatTextState.displayTimer = nil
-        end
-        if CombatTextState.fadeFrame then
-            CombatTextState.fadeFrame:SetScript("OnUpdate", nil)
-        end
-        if CombatTextState.textFrame then
-            CombatTextState.textFrame:Hide()
-        end
-        return
-    end
-
-    local frame = CombatTextState.textFrame
-    if not frame then return end
-
-    -- Update position
-    local xOffset = settings.xOffset or 0
-    local yOffset = settings.yOffset or 100
-    frame:ClearAllPoints()
-    frame:SetPoint("CENTER", UIParent, "CENTER", xOffset, yOffset)
-
-    -- Update font (using LSM) - check if using custom font or global
-    local fontSize = settings.fontSize or 24
-    local fontName = settings.useCustomFont and settings.font or GetGlobalFont()
-    local fontPath = UIKit.ResolveFontPath(fontName)
-    frame.text:SetFont(fontPath, fontSize, "OUTLINE")
-
-end
-
----------------------------------------------------------------------------
 -- Initialize
 ---------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
@@ -235,10 +236,6 @@ _G.QUI_PreviewCombatText = function(message)
 
     -- Create frame if needed
     CreateTextFrame()
-    
-    if not CombatTextState.textFrame then return end
-
-    RefreshCombatText()
 
     -- Cancel any pending display timer
     if CombatTextState.displayTimer then
