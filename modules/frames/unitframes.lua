@@ -1502,7 +1502,6 @@ QUI_UF._GetHealthPct = GetHealthPct
 QUI_UF._Scale = Scale
 QUI_UF._ShowUnitTooltip = ShowUnitTooltip
 QUI_UF._HideUnitTooltip = HideUnitTooltip
-QUI_UF._ROLE_ICON_TEXCOORDS = ROLE_ICON_TEXCOORDS
 
 ---------------------------------------------------------------------------
 -- CREATE: Boss Frame (special handling for boss1-boss5)
@@ -1953,6 +1952,15 @@ local function UpdatePartyFrame(frame)
     UpdateDebuffHighlight(frame)
     UpdateThreatIndicator(frame)
 end
+
+-- Expose indicator helpers for raidframes.lua (must be after their definitions above)
+QUI_UF._UpdateRoleIcon = UpdateRoleIcon
+QUI_UF._UpdateReadyCheck = UpdateReadyCheck
+QUI_UF._UpdateResurrectIcon = UpdateResurrectIcon
+QUI_UF._UpdateSummonIcon = UpdateSummonIcon
+QUI_UF._UpdateDebuffHighlight = UpdateDebuffHighlight
+QUI_UF._UpdateThreatIndicator = UpdateThreatIndicator
+QUI_UF._ROLE_ICON_TEXCOORDS = ROLE_ICON_TEXCOORDS
 
 -- Range fade ticker management
 local partyRangeTicker = nil
