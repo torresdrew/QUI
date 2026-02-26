@@ -75,7 +75,7 @@ local SLEEK_AFFIX_ICON_SPACING = 2
 
 local FONT_FLAGS = "OUTLINE"
 
-local MIN_SPACING = 8
+local MIN_SPACING = 6
 
 ---------------------------------------------------------------------------
 -- Module State
@@ -344,8 +344,9 @@ function MPlusTimer:CreateFrames()
 
     local deathsText = deathsFrame:CreateFontString(nil, "ARTWORK")
     deathsText:SetFont(font, FONT_SIZE_DEATHS, FONT_FLAGS)
-    deathsText:SetJustifyH("RIGHT")
-    deathsText:SetPoint("RIGHT", deathsFrame, "RIGHT", 0, 0)
+    deathsText:SetJustifyH("CENTER")
+    deathsText:SetJustifyV("MIDDLE")
+    deathsText:SetPoint("CENTER", deathsFrame, "CENTER", 0, 0)
     deathsText:SetText("")
 
     deathsFrame:SetScript("OnEnter", function(frame)
@@ -2208,9 +2209,9 @@ eventFrame:RegisterEvent("SCENARIO_POI_UPDATE")
 eventFrame:RegisterEvent("ZONE_CHANGED")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 
----------------------------------------------------------------------------
+ ---------------------------------------------------------------------------
 -- Slash Command
----------------------------------------------------------------------------
+ ---------------------------------------------------------------------------
 SLASH_QUIIMPLUSTIMER1 = "/qmpt"
 SlashCmdList["QUIIMPLUSTIMER"] = function(msg)
     local cmd = msg:lower():trim()
@@ -2229,7 +2230,7 @@ SlashCmdList["QUIIMPLUSTIMER"] = function(msg)
     end
 end
 
----------------------------------------------------------------------------
+ ---------------------------------------------------------------------------
 -- Expose for skinning
----------------------------------------------------------------------------
+ ---------------------------------------------------------------------------
 _G.QUI_MPlusTimer = MPlusTimer
