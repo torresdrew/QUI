@@ -3520,9 +3520,10 @@ function GUI:RenderSearchResults(content, results, searchTerm, navResults)
     if not content then return end
 
     -- Clear previous child frames (unregister from widget sync first)
-    local numKids = content:GetNumChildren()
-    for i = 1, numKids do
-        local child = select(i, content:GetChildren())
+    -- Snapshot children before mutating: SetParent(nil) removes children
+    -- from the list mid-iteration, causing select() to return nil.
+    local kids = { content:GetChildren() }
+    for _, child in ipairs(kids) do
         UnregisterWidgetInstance(child)
         child:Hide()
         child:SetParent(nil)

@@ -756,6 +756,9 @@ function Helpers.DeferredHideOnShow(frame, opts)
         C_Timer.After(0, function()
             if combatCheck and InCombatLockdown() then return end
             if self.IsForbidden and self:IsForbidden() then return end
+            -- Protected frames cannot be hidden from addon code during combat;
+            -- attempting it fires ADDON_ACTION_BLOCKED even inside pcall.
+            if InCombatLockdown() and self.IsProtected and self:IsProtected() then return end
             pcall(self.Hide, self)
             if clearAlpha and self.SetAlpha then self:SetAlpha(0) end
         end)
