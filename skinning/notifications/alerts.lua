@@ -57,10 +57,16 @@ end
 
 --- Force alpha to 1 (prevents Blizzard fade animations)
 -- TAINT SAFETY: Defer to break taint chain from secure context.
+-- Re-entry guard: SetAlpha(1) re-triggers the hooksecurefunc that calls
+-- ForceAlpha, which would schedule another redundant timer without this.
+local _forceAlphaActive = {}
 local function ForceAlpha(frame)
+    if _forceAlphaActive[frame] then return end
     C_Timer.After(0, function()
         if frame and frame.SetAlpha and frame:GetAlpha() ~= 1 then
+            _forceAlphaActive[frame] = true
             frame:SetAlpha(1)
+            _forceAlphaActive[frame] = nil
         end
     end)
 end
@@ -235,9 +241,32 @@ local function SkinCriteriaAlert(frame)
     SkinBase.MarkSkinned(frame)
 end
 
+-- Refresh per-item quality border color on a pooled alert frame
+local function RefreshAlertQualityColor(frame, icon)
+    if not frame or not icon then return end
+    local lootItem = frame.lootItem or frame
+    local hyperlink = frame.hyperlink or (lootItem and lootItem.hyperlink)
+    local qualityColor = nil
+    if hyperlink then
+        local quality = C_Item.GetItemQualityByID(hyperlink)
+        if quality and quality >= 1 then
+            local r, g, b = GetItemQualityColor(quality)
+            qualityColor = { r = r, g = g, b = b }
+        end
+    end
+    CreateIconBorder(icon, frame, qualityColor)
+end
+
 --- Skin Loot Won Alert
 local function SkinLootWonAlert(frame)
-    if not frame or SkinBase.IsSkinned(frame) then return end
+    if not frame then return end
+
+    -- Pooled frames: refresh per-item quality border color
+    if SkinBase.IsSkinned(frame) then
+        local lootItem = frame.lootItem or frame
+        RefreshAlertQualityColor(frame, lootItem.Icon)
+        return
+    end
 
     frame:SetAlpha(1)
     if not SkinBase.GetFrameData(frame, "hooked") then
@@ -293,7 +322,13 @@ end
 
 --- Skin Loot Upgrade Alert
 local function SkinLootUpgradeAlert(frame)
-    if not frame or SkinBase.IsSkinned(frame) then return end
+    if not frame then return end
+
+    -- Pooled frames: refresh per-item quality border color
+    if SkinBase.IsSkinned(frame) then
+        RefreshAlertQualityColor(frame, frame.Icon)
+        return
+    end
 
     frame:SetAlpha(1)
     if not SkinBase.GetFrameData(frame, "hooked") then
@@ -562,7 +597,20 @@ end
 
 --- Skin Legendary Item Alert
 local function SkinLegendaryItemAlert(frame, itemLink)
-    if not frame or SkinBase.IsSkinned(frame) then return end
+    if not frame then return end
+
+    -- Pooled frames: refresh per-item quality border color
+    if SkinBase.IsSkinned(frame) then
+        if frame.Icon and itemLink then
+            local quality = C_Item.GetItemQualityByID(itemLink)
+            if quality then
+                local r, g, b = GetItemQualityColor(quality)
+                local border = SkinBase.GetFrameData(frame.Icon, "border")
+                if border then border:SetBackdropBorderColor(r, g, b, 1) end
+            end
+        end
+        return
+    end
 
     frame:SetAlpha(1)
     if not SkinBase.GetFrameData(frame, "hooked") then
@@ -808,6 +856,7 @@ local function SkinBonusRollFrames()
 
         local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetThemeColors()
         local moneyIconBorder = SkinBase.GetFrameData(moneyFrame.Icon, "border")
+        if not moneyIconBorder then return end
         local backdrop = CreateFrame("Frame", nil, moneyFrame, "BackdropTemplate")
         backdrop:SetFrameLevel(moneyFrame:GetFrameLevel())
         backdrop:SetPoint("TOPLEFT", moneyIconBorder, "TOPLEFT", -4, 4)

@@ -6,6 +6,8 @@
 
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
+local UIKit = ns.UIKit
+local nsHelpers = ns.Helpers
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -1255,6 +1257,50 @@ local function IsHUDAnchoredToCDM()
     return coreHelpers.IsHUDAnchoredToCDM(profile)
 end
 
+-- CDM viewers use viewer-state sizing with min-width enforcement;
+-- non-CDM sources use the factory default (mirror GetWidth/GetHeight).
+local function CDMSizeResolver(source)
+    local isEditMode = nsHelpers.IsEditModeActive()
+    local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(source)
+    local width, height
+    if isEditMode then
+        width = (vs and vs.iconWidth) or 0
+        height = (vs and vs.totalHeight) or 0
+        if width < 2 or height < 2 then
+            width = source:GetWidth() or 0
+            height = source:GetHeight() or 0
+        end
+    else
+        width = (vs and vs.iconWidth) or source:GetWidth() or 0
+        height = (vs and vs.totalHeight) or source:GetHeight() or 0
+    end
+    -- Viewer state stores logical (un-scaled) dimensions.  Return
+    -- source-local values so proxy Sync's effective-scale conversion
+    -- produces the correct visual-space proxy size.
+    -- Min-width is in visual (UIParent) space, so compare there.
+    local scale = source:GetScale() or 1
+    if scale <= 0 then scale = 1 end
+    local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
+    if minWidthEnabled and IsHUDAnchoredToCDM() then
+        local visualW = width * scale
+        if visualW < minWidth then
+            width = minWidth / scale
+        end
+    end
+    return width, height
+end
+
+-- Anchor resolver for CDM proxies: offsets the proxy vertically so it
+-- covers icons shifted by per-row yOffset settings.  Without this the
+-- proxy is centered on the viewer, but the icon bounding box may be
+-- shifted upward/downward.
+local function CDMAnchorResolver(proxy, source)
+    local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(source)
+    local yOff = (vs and vs.proxyYOffset) or 0
+    proxy:ClearAllPoints()
+    proxy:SetPoint("CENTER", source, "CENTER", 0, yOff)
+end
+
 local function GetCDMAnchorProxy(parentKey)
     if parentKey == "essential" then
         parentKey = "cdmEssential"
@@ -1262,151 +1308,33 @@ local function GetCDMAnchorProxy(parentKey)
         parentKey = "cdmUtility"
     end
 
-    local source = ANCHOR_PROXY_SOURCES[parentKey]
-    if not source then return nil end
+    local sourceInfo = ANCHOR_PROXY_SOURCES[parentKey]
+    if not sourceInfo then return nil end
 
-    local sourceFrame = source.resolver()
+    local sourceFrame = sourceInfo.resolver()
     if not sourceFrame then return nil end
 
     local proxy = cdmAnchorProxies[parentKey]
-    if not proxy then
-        -- Defer first creation until out of combat to avoid tainting
-        -- the anchor to a protected Blizzard CDM viewer frame.
-        if InCombatLockdown() then
+    if proxy then
+        proxy:SetSourceFrame(sourceFrame)
+    else
+        proxy = UIKit.CreateAnchorProxy(sourceFrame, {
+            deferCreation = true,
+            sizeResolver = sourceInfo.cdm and CDMSizeResolver or nil,
+            anchorResolver = sourceInfo.cdm and CDMAnchorResolver or nil,
+        })
+        if not proxy then
             cdmAnchorProxyPendingAfterCombat[parentKey] = true
             return nil
         end
-        proxy = CreateFrame("Frame", nil, UIParent)
-        proxy:SetClampedToScreen(false)
-        proxy:Show()
         cdmAnchorProxies[parentKey] = proxy
     end
 
-    -- Mirror source visibility on the proxy so that ResolveParentFrame's
-    -- IsShown() check naturally falls through to FRAME_ANCHOR_FALLBACKS
-    -- when the source is hidden (e.g. secondary power bar on Hunter).
-    local sourceVisible = sourceFrame.IsShown and sourceFrame:IsShown()
-    if sourceVisible then
-        if not proxy:IsShown() then proxy:Show() end
-    else
-        if proxy:IsShown() then proxy:Hide() end
-        return proxy
-    end
-
-    -- Combat-stable behavior:
-    -- Proxy is anchored to the protected CDM viewer, so it inherits protection
-    -- during combat — SetSize/SetPoint will taint. Keep it fully frozen.
-    -- Dependent frames (power bars, cast bars) are updated directly from viewer
-    -- state by QUI_UpdateCombatDependentFrames, bypassing the proxy entirely.
-    local inCombat = InCombatLockdown()
-    if inCombat and proxy.__quiCDMProxyInitialized then
+    proxy:Sync()
+    if proxy:NeedsCombatRefresh() then
         cdmAnchorProxyPendingAfterCombat[parentKey] = true
-        return proxy
     end
 
-    local width, height
-    local isEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
-
-    if source.cdm then
-        -- Measure actual icon bounds directly.  GetLeft/GetRight return
-        -- UIParent-unit values which is the same coordinate space as the
-        -- proxy (parented to UIParent with no extra scale).  This avoids
-        -- the viewer-state → scale-conversion round-trip and is always
-        -- accurate regardless of how Blizzard's CDM "Icon Size" slider
-        -- applies its scaling (SetScale, SetSize, or direct icon resize).
-        local boundsL, boundsR, boundsT, boundsB
-        local iconCount = 0
-        local sel = sourceFrame.Selection
-        for i = 1, sourceFrame:GetNumChildren() do
-            local child = select(i, sourceFrame:GetChildren())
-            if child and child ~= sel and child:IsShown()
-                and (child.Icon or child.icon)
-                and (child.Cooldown or child.cooldown) then
-                local il, ir, it, ib = child:GetLeft(), child:GetRight(), child:GetTop(), child:GetBottom()
-                if il and ir and it and ib then
-                    iconCount = iconCount + 1
-                    boundsL = boundsL and math.min(boundsL, il) or il
-                    boundsR = boundsR and math.max(boundsR, ir) or ir
-                    boundsT = boundsT and math.max(boundsT, it) or it
-                    boundsB = boundsB and math.min(boundsB, ib) or ib
-                end
-            end
-        end
-
-        if iconCount > 0 and boundsL and boundsR and boundsT and boundsB then
-            -- Direct measurement in UIParent units — no scale conversion needed.
-            width = boundsR - boundsL
-            height = boundsT - boundsB
-        else
-            -- No visible icons: fall back to viewer state + scale conversion
-            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(sourceFrame)
-            if vs then
-                width = vs.iconWidth or 0
-                height = vs.totalHeight or 0
-            elseif proxy.__quiCDMProxyInitialized then
-                width = proxy:GetWidth() or 1
-                height = proxy:GetHeight() or 1
-            else
-                width = sourceFrame:GetWidth() or 0
-                height = sourceFrame:GetHeight() or 0
-            end
-            -- Scale conversion for fallback path (viewer state is in viewer-local space)
-            local sourceScale = sourceFrame:GetEffectiveScale()
-            local proxyScale = proxy:GetEffectiveScale()
-            local scaleFactor = 1.0
-            if sourceScale and proxyScale and proxyScale > 0 and sourceScale ~= proxyScale then
-                scaleFactor = sourceScale / proxyScale
-                width = width * scaleFactor
-                height = height * scaleFactor
-            end
-        end
-
-        -- HUD minimum width only applies to the essential proxy (where the
-        -- HUD power bars / player frame are anchored).  Applying it to all
-        -- CDM proxies inflates the utility proxy beyond its actual icon
-        -- bounds when the multi-row layout is narrower than the minimum.
-        if parentKey == "cdmEssential" then
-            local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
-            if minWidthEnabled and IsHUDAnchoredToCDM() then
-                width = math.max(width, minWidth)
-            end
-        end
-    else
-        -- General frames: mirror size directly
-        width = sourceFrame:GetWidth() or 0
-        height = sourceFrame:GetHeight() or 0
-    end
-    width = math.max(1, width)
-    height = math.max(1, height)
-
-    -- Anchor proxy directly to source frame so it follows automatically
-    -- (no coordinate math, no feedback loops during Edit Mode drag).
-    local _, _, relTo = proxy:GetPoint(1)
-    if relTo ~= sourceFrame then
-        proxy:ClearAllPoints()
-        proxy:SetPoint("CENTER", sourceFrame, "CENTER", 0, 0)
-    end
-    -- Only update size when it actually changes to avoid triggering
-    -- OnSizeChanged hooks (which fire DebouncedReapplyOverrides).
-    -- Use epsilon comparison — WoW's GetWidth/GetHeight can return
-    -- slightly different floats than what was passed to SetSize,
-    -- causing infinite SetSize→OnSizeChanged→SetSize loops.
-    local curW, curH = proxy:GetWidth(), proxy:GetHeight()
-    if math.abs((curW or 0) - width) > 0.5 or math.abs((curH or 0) - height) > 0.5 then
-        proxy:SetSize(width, height)
-        if QUI and QUI.DebugPrint then
-            local srcScale = sourceFrame and sourceFrame:GetEffectiveScale() or 0
-            local pxyScale = proxy:GetEffectiveScale()
-            local srcLocalScale = sourceFrame and sourceFrame:GetScale() or 0
-            local srcBoundsW, srcBoundsH = 0, 0
-            local sl, sr, st, sb = sourceFrame:GetLeft(), sourceFrame:GetRight(), sourceFrame:GetTop(), sourceFrame:GetBottom()
-            if sl and sr then srcBoundsW = sr - sl end
-            if st and sb then srcBoundsH = st - sb end
-            QUI:DebugPrint(format("|cff34D399Proxy|r %s resized: %.0fx%.0f → %.1fx%.1f (editMode=%s combat=%s srcLocalScale=%.3f srcEff=%.3f pxyEff=%.3f srcBounds=%.1fx%.1f)",
-                parentKey, curW or 0, curH or 0, width, height,
-                tostring(isEditMode), tostring(inCombat), srcLocalScale, srcScale, pxyScale, srcBoundsW, srcBoundsH))
-        end
-    end
     -- Debug overlay: show a colored border on the proxy when debug mode is active
     local debugActive = QUI and QUI.DEBUG_MODE
     if debugActive then
@@ -1420,17 +1348,15 @@ local function GetCDMAnchorProxy(parentKey)
                 edgeFile = "Interface\\BUTTONS\\WHITE8X8",
                 edgeSize = 2,
             })
-            -- Color per proxy key for easy identification
             local colors = {
-                cdmEssential    = { 0.2, 1.0, 0.6 },  -- mint
-                cdmUtility      = { 1.0, 0.6, 0.2 },  -- orange
-                primaryPower    = { 0.2, 0.6, 1.0 },  -- blue
-                secondaryPower  = { 1.0, 0.2, 0.6 },  -- pink
+                cdmEssential    = { 0.2, 1.0, 0.6 },
+                cdmUtility      = { 1.0, 0.6, 0.2 },
+                primaryPower    = { 0.2, 0.6, 1.0 },
+                secondaryPower  = { 1.0, 0.2, 0.6 },
             }
             local c = colors[parentKey] or { 1, 1, 0 }
             proxy._debugBorder:SetBackdropBorderColor(c[1], c[2], c[3], 1)
             proxy._debugBorder:SetBackdropColor(c[1], c[2], c[3], 0.15)
-            -- Label in the center
             local label = proxy._debugBorder:CreateFontString(nil, "OVERLAY")
             label:SetFont("Fonts\\FRIZQT__.TTF", 11, "OUTLINE")
             label:SetPoint("CENTER")
@@ -1442,15 +1368,10 @@ local function GetCDMAnchorProxy(parentKey)
                 secondaryPower  = "Secondary Power Proxy",
             }
             label:SetText(labels[parentKey] or parentKey)
-            proxy._debugLabel = label
         end
         proxy._debugBorder:Show()
     elseif proxy._debugBorder then
         proxy._debugBorder:Hide()
-    end
-    proxy.__quiCDMProxyInitialized = true
-    if inCombat then
-        cdmAnchorProxyPendingAfterCombat[parentKey] = true
     end
 
     return proxy
@@ -1568,21 +1489,6 @@ end
 _G.QUI_UpdateCDMAnchorProxyFrames = UpdateCDMAnchorProxies
 _G.QUI_GetCDMAnchorProxyFrame = GetCDMAnchorProxy
 
--- Combat-safe proxy pending marker.
--- Called from cdm_viewer.lua during combat (OnSizeChanged + RecalcCombatDimensions).
--- The proxy is anchored to the protected CDM viewer, so it inherits taint
--- during combat — SetSize is always blocked.  We just mark it for
--- post-combat refresh (PLAYER_REGEN_ENABLED handler below).
-local function UpdateCDMAnchorProxyCombat(parentKey)
-    local proxy = cdmAnchorProxies[parentKey]
-    if not proxy or not proxy.__quiCDMProxyInitialized then
-        return
-    end
-    cdmAnchorProxyPendingAfterCombat[parentKey] = true
-end
-
-_G.QUI_UpdateCDMAnchorProxyCombat = UpdateCDMAnchorProxyCombat
-
 -- Re-sync frozen proxy anchors after combat ends.
 local cdmProxyCombatFrame = CreateFrame("Frame")
 cdmProxyCombatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -1592,6 +1498,12 @@ cdmProxyCombatFrame:SetScript("OnEvent", function()
         if pending then
             needsRefresh = true
             cdmAnchorProxyPendingAfterCombat[key] = nil
+        end
+    end
+    -- Clear combat-pending state on all factory proxies
+    for _, proxy in pairs(cdmAnchorProxies) do
+        if proxy.ClearCombatPending then
+            proxy:ClearCombatPending()
         end
     end
     if not needsRefresh then
@@ -1788,11 +1700,6 @@ end
 local function ApplyAutoSizing(frame, settings, parentFrame, key)
     if not frame then return end
 
-    -- CDM viewers get their dimensions from LayoutViewer — never override
-    -- with autoWidth/autoHeight.  Doing so fights LayoutViewer and causes
-    -- the viewer to inflate during Edit Mode and oscillate on exit.
-    if CDM_LOGICAL_SIZE_KEYS[key] then return end
-
     -- Auto-width: match anchor target width
     if settings.autoWidth and parentFrame and parentFrame ~= UIParent then
         local ok, parentWidth = pcall(function() return parentFrame:GetWidth() end)
@@ -1842,7 +1749,7 @@ end
 
 -- Apply a single frame anchor override
 function QUI_Anchoring:ApplyFrameAnchor(key, settings)
-    local inEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    local inEditMode = nsHelpers.IsEditModeActive()
     local editDbg = inEditMode and not _editModeTickerSilent
     if type(settings) ~= "table" then return end
 
@@ -2148,7 +2055,7 @@ function QUI_Anchoring:ApplyAllFrameAnchors()
     end
 
     local sorted = ComputeAnchorApplyOrder(anchoringDB)
-    local inEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+    local inEditMode = nsHelpers.IsEditModeActive()
     if inEditMode and not _editModeTickerSilent then
         AnchorDebug(format("ApplyAllFrameAnchors: %d keys in order: %s", #sorted, table.concat(sorted, ", ")))
     end
@@ -2273,7 +2180,7 @@ DebouncedReapplyOverrides = function()
         -- During Edit Mode this still runs — ApplyFrameAnchor now skips
         -- CDM viewer keys (Blizzard controls those) but repositions all
         -- other overridden frames so the anchor chain stays correct.
-        local inEditMode = EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive()
+        local inEditMode = nsHelpers.IsEditModeActive()
         if inEditMode and not _editModeTickerSilent then
             AnchorDebug("DebouncedReapplyOverrides: firing ApplyAllFrameAnchors in EditMode")
         end
@@ -2476,15 +2383,27 @@ local function CheckCDMViewerBoundsChanged(viewer, viewerKey, proxyKey)
     -- Also track viewer center for position changes (drag)
     local cx, cy = viewer:GetCenter()
 
+    local isBuffViewer = viewerKey == "buffIcon" or viewerKey == "buffBar"
     local last = _editModeLastBounds[viewerKey]
-    if last and math.abs(last.w - boundsW) < 0.5 and math.abs(last.h - boundsH) < 0.5
+    -- For buffIcon/buffBar, also check if icon bounds changed.  Blizzard's
+    -- slider may change icon scale without resizing the viewer frame, so the
+    -- viewer size stays constant while the visual icon extent changes.
+    local ibMatch = true
+    if isBuffViewer and last then
+        ibMatch = math.abs((last.ibW or 0) - (iconBoundsW or 0)) < 0.5
+             and math.abs((last.ibH or 0) - (iconBoundsH or 0)) < 0.5
+    end
+    if last and ibMatch and math.abs(last.w - boundsW) < 0.5 and math.abs(last.h - boundsH) < 0.5
            and math.abs((last.cx or 0) - (cx or 0)) < 0.5
            and math.abs((last.cy or 0) - (cy or 0)) < 0.5 then
         return  -- No change
     end
 
     -- Bounds changed — update everything
-    _editModeLastBounds[viewerKey] = { w = boundsW, h = boundsH, cx = cx, cy = cy }
+    _editModeLastBounds[viewerKey] = {
+        w = boundsW, h = boundsH, cx = cx, cy = cy,
+        ibW = iconBoundsW, ibH = iconBoundsH,
+    }
 
     if QUI and QUI.DebugPrint then
         local scale = viewer.GetScale and viewer:GetScale() or 1
@@ -2496,6 +2415,24 @@ local function CheckCDMViewerBoundsChanged(viewer, viewerKey, proxyKey)
     -- cdm_viewer.lua exposes QUI_SetCDMViewerBounds for this purpose.
     if _G.QUI_SetCDMViewerBounds then
         _G.QUI_SetCDMViewerBounds(viewer, boundsW, boundsH)
+    end
+
+    -- For buffIcon/buffBar, sync the Edit Mode overlay to the measured
+    -- icon bounds.  The overlay starts with SetAllPoints (= viewer size)
+    -- but during Edit Mode the viewer's logical size includes Blizzard's
+    -- slider padding, which is larger than the actual icon extent.
+    -- Convert from UIParent coordinate space to overlay local space by
+    -- dividing by the viewer's own scale.
+    if isBuffViewer and iconCount > 0 then
+        local viewerName = viewerKey == "buffIcon" and "BuffIconCooldownViewer" or "BuffBarCooldownViewer"
+        local overlay = _G.QUI_GetCDMViewerOverlay and _G.QUI_GetCDMViewerOverlay(viewerName)
+        if overlay and iconBoundsW > 1 and iconBoundsH > 1 then
+            local vScale = viewer:GetScale() or 1
+            if vScale <= 0 then vScale = 1 end
+            overlay:ClearAllPoints()
+            overlay:SetPoint("CENTER", viewer, "CENTER", 0, 0)
+            overlay:SetSize(iconBoundsW / vScale, iconBoundsH / vScale)
+        end
     end
 
     -- Update proxies (they read viewer state or frame bounds)
@@ -2532,7 +2469,7 @@ local function StartEditModeTicker()
     end
 
     _editModeTicker = C_Timer.NewTicker(0.05, function()
-        if not EditModeManagerFrame or not EditModeManagerFrame:IsEditModeActive() then
+        if not nsHelpers.IsEditModeActive() then
             StopEditModeTicker()
             return
         end

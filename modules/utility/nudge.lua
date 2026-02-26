@@ -42,9 +42,11 @@ local BLIZZARD_FRAME_LABELS = {
 -- CDM viewer names for click detection (populated when CDM_VIEWERS is defined)
 local CDM_VIEWER_LOOKUP = {}
 
+local Helpers = ns.Helpers
+
 -- Weak-keyed table to track frames we force-showed in Edit Mode
 -- (avoids writing custom properties directly onto protected Blizzard frames)
-local _forceShownFrames = setmetatable({}, { __mode = "k" })
+local _forceShownFrames = Helpers.CreateStateTable()
 
 local function IsNudgeTargetFrameName(frameName)
     if not frameName then return false end
@@ -538,14 +540,12 @@ local _hiddenSelections = {}  -- frame -> true
 
 local function HideSelectionIndicator(frame)
     if not frame or not frame.Selection then return end
-    local keepVisible = _G.QUI_IsSelectionKeepVisible and _G.QUI_IsSelectionKeepVisible(frame)
-    if keepVisible then return end
+    if _G.QUI_IsSelectionKeepVisible and _G.QUI_IsSelectionKeepVisible(frame.Selection) then return end
     if _hiddenSelections[frame] then return end
     _hiddenSelections[frame] = true
     frame.Selection:SetAlpha(0)
     C_Timer.After(0, function()
-        local keep = _G.QUI_IsSelectionKeepVisible and _G.QUI_IsSelectionKeepVisible(frame)
-        if frame.Selection and not keep then
+        if frame.Selection and not (_G.QUI_IsSelectionKeepVisible and _G.QUI_IsSelectionKeepVisible(frame.Selection)) then
             frame.Selection:SetAlpha(0)
             -- Ensure .Selection has valid bounds so GetScaledSelectionSides()
             -- doesn't crash when Blizzard iterates magnetic snap candidates.
@@ -979,9 +979,7 @@ function QUICore:ShowViewerOverlays()
                     -- Keep Blizzard's .Selection visually hidden; QUI overlay is the indicator.
                     -- Skip for BuffIcon/BuffBar when flagged to keep Selection visible
                     -- (cdm_viewer Edit Mode resize needs Selection shown to read MOH size).
-                    -- TAINT SAFETY: Read from viewer state table, not from Selection frame.
-                    local keepVis = _G.QUI_IsSelectionKeepVisible and _G.QUI_IsSelectionKeepVisible(v)
-                    if not keepVis then
+                    if not (_G.QUI_IsSelectionKeepVisible and _G.QUI_IsSelectionKeepVisible(self)) then
                         self:SetAlpha(0)
                     end
                 end)
@@ -1100,6 +1098,27 @@ function QUICore:ShowViewerOverlays()
                     -- full anchor chain follows viewer drag in realtime.
                     if _G.QUI_UpdateCDMAnchorProxyFrames then
                         _G.QUI_UpdateCDMAnchorProxyFrames()
+                    end
+                end
+            end
+
+            -- Size BuffIcon overlay to the anchor proxy so the overlay
+            -- matches the effective bounds used for dependent-frame
+            -- anchoring (accounts for icon measurement + scale + min-width).
+            if viewerName == "BuffIconCooldownViewer" and viewer then
+                local getProxy = _G.QUI_GetCDMAnchorProxyFrame
+                local proxy = type(getProxy) == "function" and getProxy("buffIcon") or nil
+                if proxy then
+                    local pw = Helpers.SafeValue(proxy:GetWidth(), 0)
+                    local ph = Helpers.SafeValue(proxy:GetHeight(), 0)
+                    if pw > 1 and ph > 1 then
+                        -- Proxy is in UIParent space; overlay is a child
+                        -- of the viewer, so divide by viewer scale.
+                        local vScale = Helpers.SafeValue(viewer:GetScale(), 1)
+                        if vScale <= 0 then vScale = 1 end
+                        overlay:ClearAllPoints()
+                        overlay:SetPoint("CENTER", viewer, "CENTER", 0, 0)
+                        overlay:SetSize(pw / vScale, ph / vScale)
                     end
                 end
             end
@@ -1411,6 +1430,16 @@ local function MarkEditModeLayoutDirty()
     end)
 end
 
+-- One-shot cluster sync during edit mode: move the cluster once so Blizzard
+-- detects a layout change and shows the save/revert dialog on exit.
+-- Per-frame sync is NOT safe — it poisons Blizzard's execution context.
+local function SyncClusterOnceInEditMode()
+    if _clusterDirtied then return end
+    _clusterDirtied = true
+    QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
+    MarkEditModeLayoutDirty()
+end
+
 -- Show minimap overlay
 function QUICore:ShowMinimapOverlay()
     if not minimapOverlay then
@@ -1516,10 +1545,8 @@ function QUICore:ShowMinimapOverlay()
                     -- during edit mode poisons Blizzard's execution context.
                     if not (_resizeContainer and _clusterSizeWatcher:IsShown()) then
                         QUICore.SyncMinimapClusterToMinimap()
-                    elseif not _clusterDirtied then
-                        _clusterDirtied = true
-                        QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
-                        MarkEditModeLayoutDirty()
+                    else
+                        SyncClusterOnceInEditMode()
                     end
                     -- Update frames anchored to the minimap so they follow in real-time
                     if _G.QUI_UpdateFramesAnchoredTo then
@@ -1558,10 +1585,8 @@ function QUICore:ShowMinimapOverlay()
                 -- Sync cluster: outside edit mode → always. During edit mode → one-shot.
                 if not (_resizeContainer and _clusterSizeWatcher:IsShown()) then
                     QUICore.SyncMinimapClusterToMinimap("drag-stop")
-                elseif not _clusterDirtied then
-                    _clusterDirtied = true
-                    QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
-                    MarkEditModeLayoutDirty()
+                else
+                    SyncClusterOnceInEditMode()
                 end
                 -- Update frames anchored to the minimap
                 if _G.QUI_UpdateFramesAnchoredTo then
@@ -1583,10 +1608,8 @@ function QUICore:ShowMinimapOverlay()
                     -- Sync cluster: outside edit mode → always. During edit mode → one-shot.
                     if not (_resizeContainer and _clusterSizeWatcher:IsShown()) then
                         QUICore.SyncMinimapClusterToMinimap("click-select")
-                    elseif not _clusterDirtied then
-                        _clusterDirtied = true
-                        QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
-                        MarkEditModeLayoutDirty()
+                    else
+                        SyncClusterOnceInEditMode()
                     end
                     -- Deferred: open Blizzard settings panel for minimap
                     C_Timer.After(0, function()
@@ -1965,14 +1988,7 @@ _clusterSizeWatcher:SetScript("OnUpdate", function(self)
     -- cause UpdateBackdrop() to set the backdrop to the wrong size in Minimap's
     -- coordinate space (where the frame is still _origMinimapSize). Final size
     -- update + full refresh happens in StopClusterSizeWatcher on Edit Mode exit.
-    -- One-shot cluster sync during edit mode: move the cluster once so Blizzard
-    -- detects a layout change and shows the save/revert dialog on exit.
-    -- Per-frame sync is NOT safe — it poisons Blizzard's execution context.
-    if not _clusterDirtied then
-        _clusterDirtied = true
-        QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
-        MarkEditModeLayoutDirty()
-    end
+    SyncClusterOnceInEditMode()
     -- Update frames anchored to the minimap so they follow the resize
     if _G.QUI_UpdateFramesAnchoredTo then
         _G.QUI_UpdateFramesAnchoredTo("minimap")
@@ -2306,10 +2322,8 @@ function QUICore:NudgeMinimap(direction)
     -- Sync cluster: outside edit mode → always. During edit mode → one-shot.
     if not (_resizeContainer and _clusterSizeWatcher:IsShown()) then
         QUICore.SyncMinimapClusterToMinimap("nudge")
-    elseif not _clusterDirtied then
-        _clusterDirtied = true
-        QUICore.SyncMinimapClusterToMinimap("editmode-dirty")
-        MarkEditModeLayoutDirty()
+    else
+        SyncClusterOnceInEditMode()
     end
     if _G.QUI_UpdateFramesAnchoredTo then
         _G.QUI_UpdateFramesAnchoredTo("minimap")
@@ -2656,13 +2670,19 @@ RegisterEditModeCallbacks()
 local minimapClusterSyncFrame = CreateFrame("Frame")
 minimapClusterSyncFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
 minimapClusterSyncFrame:RegisterEvent("PLAYER_LOGIN")
-minimapClusterSyncFrame:SetScript("OnEvent", function(self)
+local _minimapSyncFired = {}
+minimapClusterSyncFrame:SetScript("OnEvent", function(self, event)
+    _minimapSyncFired[event] = true
     -- Defer slightly to ensure Minimap is positioned and layouts are processed
     C_Timer.After(0.5, function()
         QUICore.SyncMinimapClusterToMinimap("login")
     end)
-    -- Only need to sync once on startup; unregister after first fire
-    self:UnregisterAllEvents()
+    -- Only unregister this specific event; keep listening for the other
+    self:UnregisterEvent(event)
+    -- Once both have fired, we're done
+    if _minimapSyncFired["EDIT_MODE_LAYOUTS_UPDATED"] and _minimapSyncFired["PLAYER_LOGIN"] then
+        _minimapSyncFired = nil
+    end
 end)
 
 -- Fix anchor mismatch on startup (for /reload scenarios)

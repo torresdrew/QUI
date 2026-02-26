@@ -19,7 +19,7 @@ local _blizzFrameGuards = {}
 
 -- TAINT SAFETY: Weak-keyed table to track which frames have had their OnShow
 -- hooked via hooksecurefunc, so we never store addon keys on Blizzard frames.
-local _hookedOnShowFrames = setmetatable({}, { __mode = "k" })
+local _hookedOnShowFrames = Helpers.CreateStateTable()
 
 ---------------------------------------------------------------------------
 -- LOCAL HELPERS
@@ -67,14 +67,7 @@ local function KillBlizzardChildFrame(frame)
     -- C_Timer.After(0) to break the taint chain from the secure execution context.
     if not _hookedOnShowFrames[frame] then
         _hookedOnShowFrames[frame] = true
-        hooksecurefunc(frame, "Show", function(self)
-            C_Timer.After(0, function()
-                if self and self.Hide then
-                    pcall(function() self:Hide() end)
-                    if self.SetAlpha then self:SetAlpha(0) end
-                end
-            end)
-        end)
+        Helpers.DeferredHideOnShow(frame, { clearAlpha = true, combatCheck = false })
     end
 end
 
@@ -203,7 +196,7 @@ function QUI_UF:HideBlizzardCastbars()
                 -- Skip re-hiding during Edit Mode — PlayerCastingBarFrame visibility
                 -- is used as a signal for the Cast Bar toggle checkbox. Re-hiding it
                 -- would immediately undo the toggle and cause castbar previews to flash.
-                if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then return end
+                if Helpers.IsEditModeActive() then return end
                 if PlayerCastingBarFrame:IsShown() then
                     C_Timer.After(0, function()
                         if InCombatLockdown() then return end

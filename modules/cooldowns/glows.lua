@@ -17,9 +17,9 @@ local activeGlowIcons = {}  -- [icon] = true
 
 -- TAINT SAFETY: Store per-icon glow state in weak-keyed tables instead of
 -- writing custom properties to Blizzard CDM icon frames.
-local glowIconState   = setmetatable({}, { __mode = "k" })  -- icon → { active, ... }
-local hookedFrames    = setmetatable({}, { __mode = "k" })  -- frame → true (Show hook applied)
-local hookedViewers   = setmetatable({}, { __mode = "k" })  -- viewer → true (scan hooks applied)
+local glowIconState   = Helpers.CreateStateTable()  -- icon → { active, ... }
+local hookedFrames    = Helpers.CreateStateTable()  -- frame → true (Show hook applied)
+local hookedViewers   = Helpers.CreateStateTable()  -- viewer → true (scan hooks applied)
 
 -- Expose glow state for cross-module reads (e.g., effects.lua checking _QUICustomGlowActive)
 _G.QUI_GetGlowState = function(icon)
@@ -127,14 +127,7 @@ local function SuppressBlizzardGlow(icon)
             -- Persistent hook: keep it hidden even if Blizzard re-shows it
             if not hookedFrames[alert] then
                 hookedFrames[alert] = true
-                hooksecurefunc(alert, "Show", function(self)
-                    C_Timer.After(0, function()
-                        if self and self.Hide then
-                            self:Hide()
-                            self:SetAlpha(0)
-                        end
-                    end)
-                end)
+                Helpers.DeferredHideOnShow(alert, { clearAlpha = true, combatCheck = false })
             end
         end
     end)
@@ -145,14 +138,7 @@ local function SuppressBlizzardGlow(icon)
             icon.OverlayGlow:SetAlpha(0)
             if not hookedFrames[icon.OverlayGlow] then
                 hookedFrames[icon.OverlayGlow] = true
-                hooksecurefunc(icon.OverlayGlow, "Show", function(self)
-                    C_Timer.After(0, function()
-                        if self and self.Hide then
-                            self:Hide()
-                            self:SetAlpha(0)
-                        end
-                    end)
-                end)
+                Helpers.DeferredHideOnShow(icon.OverlayGlow, { clearAlpha = true, combatCheck = false })
             end
         end
     end)

@@ -7,12 +7,12 @@
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local LSM = LibStub("LibSharedMedia-3.0")
-local Helpers = ns.Helpers
+local nsHelpers = ns.Helpers
 local UIKit = ns.UIKit
-local IsSecretValue = Helpers.IsSecretValue
-local SafeValue = Helpers.SafeValue
+local IsSecretValue = nsHelpers.IsSecretValue
+local SafeValue = nsHelpers.SafeValue
 
-local GetCore = ns.Helpers.GetCore
+local GetCore = nsHelpers.GetCore
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -3912,41 +3912,27 @@ end)
 -- TAINT SAFETY: Do NOT use hooksecurefunc on PlayerCastingBarFrame (secure frame).
 -- Even deferred callbacks execute addon code in the secure context, tainting the
 -- execution chain and causing ADDON_ACTION_FORBIDDEN / secret number errors.
--- Instead, poll IsShown() via a C_Timer ticker that only runs during Edit Mode.
+-- Instead, use an OnUpdate watcher to poll IsShown() from a UIParent-child frame.
 C_Timer.After(0.5, function()
     if not QUICore._castbarEditModeHooked then
         QUICore._castbarEditModeHooked = true
 
         if PlayerCastingBarFrame then
+            local castbarWatcher = CreateFrame("Frame", nil, UIParent)
             local wasCastbarShown = PlayerCastingBarFrame:IsShown()
-            local watcherTicker = nil
-
-            local function CheckCastbarVisibility()
+            castbarWatcher:SetScript("OnUpdate", function()
+                if not EditModeState.active then return end
                 local isShown = PlayerCastingBarFrame:IsShown()
                 if isShown ~= wasCastbarShown then
                     wasCastbarShown = isShown
                     EditModeState.castBarCheckboxEnabled = isShown
                     UpdateCastbarVisibilityForEditMode()
                 end
-            end
-
-            QUICore:RegisterEditModeEnter(function()
-                wasCastbarShown = PlayerCastingBarFrame:IsShown()
-                if not watcherTicker then
-                    watcherTicker = C_Timer.NewTicker(0.2, CheckCastbarVisibility)
-                end
-            end)
-
-            QUICore:RegisterEditModeExit(function()
-                if watcherTicker then
-                    watcherTicker:Cancel()
-                    watcherTicker = nil
-                end
             end)
         end
 
         -- Check if Edit Mode is already active (e.g., /reload while in Edit Mode)
-        if EditModeManagerFrame:IsEditModeActive() and not InCombatLockdown() then
+        if nsHelpers.IsEditModeActive() and not InCombatLockdown() then
             EnableCastbarEditMode()
         end
     end

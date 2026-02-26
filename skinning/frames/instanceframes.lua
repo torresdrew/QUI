@@ -334,10 +334,12 @@ local function SkinPVEFrame()
         C_Timer.After(0, function()
             local tab4 = _G.PVEFrameTab4
             if not tab4 or not tab4:IsShown() then return end
-            local twoShown = _G.PVEFrameTab2:IsShown()
-            local threeShown = _G.PVEFrameTab3:IsShown()
+            local tab2 = _G.PVEFrameTab2
+            local tab3 = _G.PVEFrameTab3
+            local twoShown = tab2 and tab2:IsShown()
+            local threeShown = tab3 and tab3:IsShown()
             tab4:ClearAllPoints()
-            tab4:SetPoint("TOPLEFT", (twoShown and threeShown and _G.PVEFrameTab3) or (twoShown and not threeShown and _G.PVEFrameTab2) or _G.PVEFrameTab1, "TOPRIGHT", -5, 0)
+            tab4:SetPoint("TOPLEFT", (twoShown and threeShown and tab3) or (twoShown and not threeShown and tab2) or _G.PVEFrameTab1, "TOPRIGHT", -5, 0)
         end)
     end)
 

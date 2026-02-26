@@ -25,9 +25,9 @@ local function GetSettings()
 end
 
 -- TAINT SAFETY: Weak-keyed tables for per-icon/viewer state instead of writing to Blizzard frames
-local iconSwipeState   = setmetatable({}, { __mode = "k" })
-local hookedViewers    = setmetatable({}, { __mode = "k" })
-local swipePulseHooked = setmetatable({}, { __mode = "k" })
+local iconSwipeState   = Helpers.CreateStateTable()
+local hookedViewers    = Helpers.CreateStateTable()
+local swipePulseHooked = Helpers.CreateStateTable()
 
 local function IsSecret(value)
     return Helpers.IsSecretValue and Helpers.IsSecretValue(value)
@@ -97,10 +97,8 @@ end
 -- Hook icon.Cooldown:SetCooldown so our color fires after Blizzard sets wasSetFromAura
 -- and its own color in the same update. Safe: we don't read the secret arguments.
 local function HookIconCooldown(icon)
-    local iState = iconSwipeState[icon]
-    if not iState then iState = {}; iconSwipeState[icon] = iState end
-    if iState.cdColorHooked then return end
-    iState.cdColorHooked = true
+    if icon._QUI_CDColorHooked then return end
+    icon._QUI_CDColorHooked = true
     hooksecurefunc(icon.Cooldown, "SetCooldown", function()
         ApplyColorToIcon(icon)
     end)

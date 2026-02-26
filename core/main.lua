@@ -108,7 +108,7 @@ end
 
 -- Weak-keyed table to store pending backdrop data per frame (avoids writing properties
 -- directly onto Blizzard secure frames, which can cause taint).
-local _pendingBackdropData = setmetatable({}, { __mode = "k" })
+local _pendingBackdropData = ns.Helpers.CreateStateTable()
 
 -- Global SafeSetBackdrop function that defers SetBackdrop calls when frame dimensions
 -- are secret values (Midnight 12.0 protection) or when in combat lockdown.
@@ -173,12 +173,14 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
 
                         if checkOk and checkResult and not InCombatLockdown() then
                             local setOk = pcall(pendingFrame.SetBackdrop, pendingFrame, pendingData.info)
-                            if setOk and pendingData.info and pendingData.borderColor then
-                                local c = pendingData.borderColor
-                                pendingFrame:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1)
+                            if setOk then
+                                if pendingData.info and pendingData.borderColor then
+                                    local c = pendingData.borderColor
+                                    pendingFrame:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1)
+                                end
+                                _pendingBackdropData[pendingFrame] = nil
+                                table.insert(processed, pendingFrame)
                             end
-                            _pendingBackdropData[pendingFrame] = nil
-                            table.insert(processed, pendingFrame)
                         end
                     else
                         table.insert(processed, pendingFrame)
@@ -221,20 +223,33 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
                 eventFrame:SetScript("OnEvent", function(self)
                     self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+                    local stillPending = false
                     for pendingFrame in pairs(QUICore.__pendingBackdrops or {}) do
                         local pendingData = _pendingBackdropData[pendingFrame]
                         if pendingFrame and pendingData then
                             if not InCombatLockdown() then
                                 local setOk = pcall(pendingFrame.SetBackdrop, pendingFrame, pendingData.info)
-                                if setOk and pendingData.info and pendingData.borderColor then
-                                    local c = pendingData.borderColor
-                                    pendingFrame:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1)
+                                if setOk then
+                                    if pendingData.info and pendingData.borderColor then
+                                        local c = pendingData.borderColor
+                                        pendingFrame:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1)
+                                    end
+                                    _pendingBackdropData[pendingFrame] = nil
+                                    QUICore.__pendingBackdrops[pendingFrame] = nil
+                                else
+                                    stillPending = true
                                 end
+                            else
+                                stillPending = true
                             end
+                        else
                             _pendingBackdropData[pendingFrame] = nil
+                            QUICore.__pendingBackdrops[pendingFrame] = nil
                         end
                     end
-                    QUICore.__pendingBackdrops = {}
+                    if not stillPending then
+                        QUICore.__pendingBackdrops = {}
+                    end
                 end)
                 QUICore.__backdropEventFrame = eventFrame
             end
@@ -3318,22 +3333,32 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     self._lastKnownSpec = GetSpecialization() or 0
 
     -- Helper to apply UIParent scale safely (defers if in combat or protected state)
+    -- pcall wraps SetScale because M+ keystone activation can enter a protected
+    -- state while InCombatLockdown() still returns false.
+    local function DeferUIScale(scale)
+        QUICore._pendingUIScale = scale
+        if not QUICore._scaleRegenFrame then
+            QUICore._scaleRegenFrame = CreateFrame("Frame")
+            QUICore._scaleRegenFrame:SetScript("OnEvent", function(self)
+                if QUICore._pendingUIScale and not InCombatLockdown() then
+                    local ok = pcall(UIParent.SetScale, UIParent, QUICore._pendingUIScale)
+                    if ok then
+                        QUICore._pendingUIScale = nil
+                        self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+                    end
+                end
+            end)
+        end
+        QUICore._scaleRegenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    end
     local function ApplyUIScale(scale)
         if InCombatLockdown() then
-            QUICore._pendingUIScale = scale
-            if not QUICore._scaleRegenFrame then
-                QUICore._scaleRegenFrame = CreateFrame("Frame")
-                QUICore._scaleRegenFrame:SetScript("OnEvent", function(self)
-                    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-                    if QUICore._pendingUIScale and not InCombatLockdown() then
-                        UIParent:SetScale(QUICore._pendingUIScale)
-                        QUICore._pendingUIScale = nil
-                    end
-                end)
-            end
-            QUICore._scaleRegenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+            DeferUIScale(scale)
         else
-            UIParent:SetScale(scale)
+            local ok = pcall(UIParent.SetScale, UIParent, scale)
+            if not ok then
+                DeferUIScale(scale)
+            end
         end
     end
 
@@ -4079,7 +4104,7 @@ end
 -- Viewer skinning, layout, and icon processing functions are in core/viewer_skinning.lua
 
 -- Weak-keyed table to track which CDM viewers have been hooked (avoids tainting Blizzard frames)
-local hookedViewers = setmetatable({}, { __mode = "k" })
+local hookedViewers = ns.Helpers.CreateStateTable()
 
 function QUICore:HookViewers()
     for _, name in ipairs(self.viewers) do

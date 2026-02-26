@@ -207,8 +207,8 @@ end
 ---------------------------------------------------------------------------
 
 -- TAINT SAFETY: Track skinned state in local tables, NOT on Blizzard frames.
-local skinnedTooltips = setmetatable({}, { __mode = "k" })   -- tooltip → true
-local hookedTooltips = setmetatable({}, { __mode = "k" })    -- tooltip → true (OnShow hooked)
+local skinnedTooltips = Helpers.CreateStateTable()   -- tooltip → true
+local hookedTooltips = Helpers.CreateStateTable()    -- tooltip → true (OnShow hooked)
 
 -- NineSlice piece names used by Blizzard tooltips
 local NINE_SLICE_PIECES = {
@@ -421,11 +421,16 @@ end
 
 -- Refresh colors on all skinned tooltips (rebuilds textures for thickness changes)
 local function RefreshAllTooltipColors()
+    -- Refresh named tooltips from the static list
     for _, name in ipairs(tooltipsToSkin) do
         local tooltip = _G[name]
         if tooltip and skinnedTooltips[tooltip] then
             ReapplySkin(tooltip)
         end
+    end
+    -- Also refresh dynamically skinned tooltips (via TooltipDataProcessor)
+    for tooltip in pairs(skinnedTooltips) do
+        ReapplySkin(tooltip)
     end
 end
 

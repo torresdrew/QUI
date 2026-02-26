@@ -8,7 +8,8 @@ local QUI = ns.QUI or {}
 ns.QUI = QUI
 local QUICore = ns.Addon
 
-local GetCore = ns.Helpers.GetCore
+local Helpers = ns.Helpers
+local GetCore = Helpers.GetCore
 
 ---------------------------------------------------------------------------
 -- Module State
@@ -26,13 +27,8 @@ local liteOverallDisplay = nil    -- Overall ilvl frame
 
 -- TAINT SAFETY: Store per-frame state in weak-keyed table instead of writing properties
 -- to Blizzard frames, which taints them in Midnight (12.0)
-local frameState = setmetatable({}, { __mode = "k" })
+local frameState, GetState = Helpers.CreateStateTable()
 local EMPTY = {}
-local function GetState(f)
-    local s = frameState[f]
-    if not s then s = {}; frameState[f] = s end
-    return s
-end
 
 ---------------------------------------------------------------------------
 -- Import shared functions from qui_character.lua
@@ -446,14 +442,7 @@ local function BlockInspectIconBorder(iconBorder)
     GetState(iconBorder).blocked = true
     iconBorder:SetAlpha(0)
     if iconBorder.SetTexture then iconBorder:SetTexture(nil) end
-    if iconBorder.SetAtlas then
-        hooksecurefunc(iconBorder, "SetAtlas", function(self)
-            C_Timer.After(0, function()
-                if self and self.SetTexture then self:SetTexture(nil) end
-                if self and self.SetAlpha then self:SetAlpha(0) end
-            end)
-        end)
-    end
+    Helpers.DeferredSetAtlasBlock(iconBorder, false)
 end
 
 -- Skin a single inspect equipment slot

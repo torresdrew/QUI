@@ -30,10 +30,10 @@ local customBg = nil
 
 -- TAINT SAFETY: Store per-frame state in weak-keyed tables instead of writing
 -- properties to Blizzard frames, which taints them in Midnight (12.0)
-local iconBorders = setmetatable({}, { __mode = "k" })  -- CurrencyIcon/entry.icon → border frame
-local skinnedEntries = setmetatable({}, { __mode = "k" })  -- entry → true
-local hookedScrollBoxes = setmetatable({}, { __mode = "k" })  -- ScrollBox → true (hooked for Update)
-local titleHighlights = setmetatable({}, { __mode = "k" })  -- button → highlight texture
+local iconBorders = Helpers.CreateStateTable()       -- CurrencyIcon/entry.icon → border frame
+local skinnedEntries = Helpers.CreateStateTable()    -- entry → true
+local hookedScrollBoxes = Helpers.CreateStateTable() -- ScrollBox → true (hooked for Update)
+local titleHighlights = Helpers.CreateStateTable()   -- button → highlight texture
 
 ---------------------------------------------------------------------------
 -- Helper: Get skin colors from QUI system

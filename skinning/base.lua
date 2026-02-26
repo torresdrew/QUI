@@ -11,7 +11,7 @@ ns.SkinBase = SkinBase
 
 -- Weak-keyed table to store backdrop references WITHOUT writing to Blizzard frames
 -- All code that previously used frame.quiBackdrop should use SkinBase.GetBackdrop(frame) instead
-local frameBackdrops = setmetatable({}, { __mode = "k" })
+local frameBackdrops = Helpers.CreateStateTable()
 
 ---------------------------------------------------------------------------
 -- GetPixelSize(frame, default)
@@ -79,8 +79,8 @@ end
 -- Replaces frame.quiSkinned / frame.quiStyled / frame.quiBackdrop writes
 -- which taint Blizzard frames in Midnight's taint model.
 ---------------------------------------------------------------------------
-local skinnedFrames = setmetatable({}, { __mode = "k" })
-local styledFrames = setmetatable({}, { __mode = "k" })
+local skinnedFrames = Helpers.CreateStateTable()
+local styledFrames = Helpers.CreateStateTable()
 
 -- Mark a frame as skinned (replaces frame.quiSkinned = true)
 function SkinBase.MarkSkinned(frame)
@@ -103,11 +103,10 @@ function SkinBase.IsStyled(frame)
 end
 
 -- Store arbitrary per-frame data (replaces frame.quiXxx = value)
-local frameData = setmetatable({}, { __mode = "k" })
+local frameData, getFrameData = Helpers.CreateStateTable()
 
 function SkinBase.SetFrameData(frame, key, value)
-    if not frameData[frame] then frameData[frame] = {} end
-    frameData[frame][key] = value
+    getFrameData(frame)[key] = value
 end
 
 function SkinBase.GetFrameData(frame, key)

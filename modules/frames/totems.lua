@@ -21,7 +21,7 @@ local TotemBar = {}
 
 -- TAINT SAFETY: Store per-button state in local weak-keyed tables instead of
 -- writing custom properties to Blizzard totem button frames.
-local buttonBorders = setmetatable({}, { __mode = "k" })  -- button → border texture
+local buttonBorders = Helpers.CreateStateTable()  -- button → border texture
 TotemBar.hooked = false
 TotemBar.ticker = nil
 TotemBar.showEnforceQueued = false

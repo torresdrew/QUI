@@ -396,11 +396,7 @@ local function HidePOIButtonGlows()
                             -- Hook Show to prevent Blizzard from re-showing
                             -- TAINT SAFETY: Defer to break taint chain from secure context.
                             if not SkinBase.GetFrameData(block.poiButton.Glow, "hooked") then
-                                hooksecurefunc(block.poiButton.Glow, "Show", function(self)
-                                    C_Timer.After(0, function()
-                                        if self and self.Hide then self:Hide() end
-                                    end)
-                                end)
+                                Helpers.DeferredHideOnShow(block.poiButton.Glow, { combatCheck = false })
                                 SkinBase.SetFrameData(block.poiButton.Glow, "hooked", true)
                             end
                         end

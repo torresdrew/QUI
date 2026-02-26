@@ -18,12 +18,12 @@ local copyButtons = {}          -- Track copy buttons per chat frame
 
 -- Weak-keyed tables to store per-frame state WITHOUT writing properties to Blizzard frames
 -- This avoids taint from `chatFrame.__quiXxx = value` writes
-local chatBackdrops = setmetatable({}, { __mode = "k" })      -- chatFrame -> backdrop frame
-local editBoxBackdrops = setmetatable({}, { __mode = "k" })    -- chatFrame -> editbox backdrop frame
-local editBoxState = setmetatable({}, { __mode = "k" })        -- editBox -> { styled, topModeHooked, historyInitialized, historyPosition, savedMessage, backdropRef }
-local tabBackdrops = setmetatable({}, { __mode = "k" })        -- tab -> backdrop frame
-local copyButtonHookState = setmetatable({}, { __mode = "k" }) -- chatFrame -> true (hover mode hooked)
-local _chatButtonsHidden = setmetatable({}, { __mode = "k" })  -- frame -> true/false (flag for hide-on-show hooks)
+local chatBackdrops = Helpers.CreateStateTable()       -- chatFrame -> backdrop frame
+local editBoxBackdrops = Helpers.CreateStateTable()    -- chatFrame -> editbox backdrop frame
+local editBoxState = Helpers.CreateStateTable()        -- editBox -> { styled, topModeHooked, historyInitialized, historyPosition, savedMessage, backdropRef }
+local tabBackdrops = Helpers.CreateStateTable()        -- tab -> backdrop frame
+local copyButtonHookState = Helpers.CreateStateTable() -- chatFrame -> true (hover mode hooked)
+local _chatButtonsHidden = Helpers.CreateStateTable()  -- frame -> true/false (flag for hide-on-show hooks)
 
 -- Localized table functions for performance
 local tinsert = table.insert
@@ -192,28 +192,6 @@ local function MakeURLsClickable(text)
     else
         return text
     end
-end
-
----------------------------------------------------------------------------
--- Hook chat frame AddMessage to process URLs
--- Uses hooksecurefunc (runs AFTER original) to avoid tainting AddMessage.
--- For pre-processing text (timestamps, URLs), we use ChatFrame_AddMessageEventFilter
--- instead of direct method replacement, which would taint the method permanently.
----------------------------------------------------------------------------
--- Track hooked chat frames in a local table (NOT on the frame itself)
-local hookedChatFrames = setmetatable({}, { __mode = "k" })
-
-local function HookChatMessages(chatFrame)
-    if hookedChatFrames[chatFrame] then return end
-    hookedChatFrames[chatFrame] = true
-
-    -- NOTE: Direct replacement of chatFrame.AddMessage has been removed because
-    -- it permanently taints the method in Midnight's taint model, causing
-    -- ADDON_ACTION_FORBIDDEN errors throughout Edit Mode and other secure paths.
-    --
-    -- Timestamps and URL detection are now applied via ChatFrame_AddMessageEventFilter
-    -- (see SetupMessageFilters below) which is the Blizzard-approved way to modify
-    -- chat messages before display.
 end
 
 ---------------------------------------------------------------------------
@@ -671,20 +649,31 @@ end
 ---------------------------------------------------------------------------
 -- Hide chat buttons (social, channel, scroll)
 ---------------------------------------------------------------------------
+-- Flag + hook + hide pattern used by all chat button frames.
+-- Can't use Helpers.DeferredHideOnShow because the _chatButtonsHidden
+-- guard allows toggling visibility back on at runtime.
+local _chatButtonHooked = setmetatable({}, { __mode = "k" })
+local function HideChatButtonOnShow(frame)
+    _chatButtonsHidden[frame] = true
+    if not _chatButtonHooked[frame] then
+        _chatButtonHooked[frame] = true
+        hooksecurefunc(frame, "Show", function(self)
+            C_Timer.After(0, function()
+                if not _chatButtonsHidden[self] then return end
+                if self and self.Hide then self:Hide() end
+            end)
+        end)
+    end
+    frame:Hide()
+end
+
 local function HideChatButtons(chatFrame)
     local settings = GetSettings()
     if not settings or not settings.hideButtons then return end
 
     -- Hide button frame and prevent Blizzard from re-showing it
     if chatFrame.buttonFrame then
-        _chatButtonsHidden[chatFrame.buttonFrame] = true
-        hooksecurefunc(chatFrame.buttonFrame, "Show", function(self)
-            C_Timer.After(0, function()
-                if not _chatButtonsHidden[self] then return end
-                if self and self.Hide then self:Hide() end
-            end)
-        end)
-        chatFrame.buttonFrame:Hide()
+        HideChatButtonOnShow(chatFrame.buttonFrame)
         chatFrame.buttonFrame:SetWidth(0.1)  -- Collapse to minimal width
     end
 
@@ -701,14 +690,7 @@ local function HideChatButtons(chatFrame)
     if frameName then
         local buttonFrame = _G[frameName .. "ButtonFrame"]
         if buttonFrame then
-            _chatButtonsHidden[buttonFrame] = true
-            hooksecurefunc(buttonFrame, "Show", function(self)
-                C_Timer.After(0, function()
-                    if not _chatButtonsHidden[self] then return end
-                    if self and self.Hide then self:Hide() end
-                end)
-            end)
-            buttonFrame:Hide()
+            HideChatButtonOnShow(buttonFrame)
             buttonFrame:SetWidth(0.1)
         end
 
@@ -718,19 +700,14 @@ local function HideChatButtons(chatFrame)
 
     -- Hide QuickJoinToastButton (global frame, not per-chat)
     if QuickJoinToastButton then
-        _chatButtonsHidden[QuickJoinToastButton] = true
-        hooksecurefunc(QuickJoinToastButton, "Show", function(self)
-            C_Timer.After(0, function()
-                if not _chatButtonsHidden[self] then return end
-                if self and self.Hide then self:Hide() end
-            end)
-        end)
-        QuickJoinToastButton:Hide()
+        HideChatButtonOnShow(QuickJoinToastButton)
     end
 
     -- Remove screen clamping so chat can move to edges
-    chatFrame:SetClampedToScreen(false)
-    chatFrame:SetClampRectInsets(0, 0, 0, 0)
+    if not InCombatLockdown() then
+        chatFrame:SetClampedToScreen(false)
+        chatFrame:SetClampRectInsets(0, 0, 0, 0)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -769,7 +746,9 @@ local function ShowChatButtons(chatFrame)
     end
 
     -- Restore screen clamping
-    chatFrame:SetClampedToScreen(true)
+    if not InCombatLockdown() then
+        chatFrame:SetClampedToScreen(true)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -1237,11 +1216,6 @@ local function SkinChatFrame(chatFrame)
 
     -- Apply font styling (always enabled)
     StyleFontStrings(chatFrame)
-
-    -- Hook URL detection
-    if settings.urls and settings.urls.enabled then
-        HookChatMessages(chatFrame)
-    end
 
     -- Setup message fade (handles both enabling and disabling)
     SetupMessageFade(chatFrame)

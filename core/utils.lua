@@ -682,3 +682,110 @@ ns.IsPlayerSkyriding = Helpers.IsPlayerSkyriding
 ns.IsPlayerInDungeonOrRaid = Helpers.IsPlayerInDungeonOrRaid
 ns.CreateOnUpdateThrottle = Helpers.CreateOnUpdateThrottle
 ns.CreateTimeThrottle = Helpers.CreateTimeThrottle
+
+---------------------------------------------------------------------------
+-- TAINT-SAFETY UTILITIES
+-- Shared patterns for WoW 12.0 taint-safe frame property management.
+---------------------------------------------------------------------------
+
+--- Create a weak-keyed state table (and optional lazy-init getter).
+-- @return table  The weak-keyed table.
+-- @return function  getter(key) — returns tbl[key], auto-creating {} if missing.
+function Helpers.CreateStateTable()
+    local tbl = setmetatable({}, { __mode = "k" })
+    local function get(key)
+        local s = tbl[key]
+        if not s then s = {}; tbl[key] = s end
+        return s
+    end
+    return tbl, get
+end
+
+--- Check whether Blizzard Edit Mode is currently active.
+-- Nil-safe for EditModeManagerFrame; uses IsEditModeActive() (not IsShown()).
+-- @return boolean
+function Helpers.IsEditModeActive()
+    return EditModeManagerFrame and EditModeManagerFrame.IsEditModeActive
+       and EditModeManagerFrame:IsEditModeActive() or false
+end
+
+--- Hook a frame's Show method to defer-hide it on the next frame.
+-- @param frame  The frame to hook.
+-- @param opts   Optional table: { clearAlpha = bool, combatCheck = bool }
+--               clearAlpha (default false): also call SetAlpha(0) after Hide.
+--               combatCheck (default true): skip hide if InCombatLockdown().
+local _deferredHideHooked = setmetatable({}, { __mode = "k" })
+function Helpers.DeferredHideOnShow(frame, opts)
+    if not frame or not frame.Show then return end
+    if _deferredHideHooked[frame] then return end
+    _deferredHideHooked[frame] = true
+    local clearAlpha = opts and opts.clearAlpha or false
+    local combatCheck = not opts or opts.combatCheck ~= false
+    hooksecurefunc(frame, "Show", function(self)
+        C_Timer.After(0, function()
+            if combatCheck and InCombatLockdown() then return end
+            if self.IsForbidden and self:IsForbidden() then return end
+            pcall(self.Hide, self)
+            if clearAlpha and self.SetAlpha then self:SetAlpha(0) end
+        end)
+    end)
+end
+
+--- Hook a texture's SetAtlas method to defer-clear it on the next frame.
+-- @param texture     The texture to hook.
+-- @param combatCheck Optional boolean (default true): skip clear if InCombatLockdown().
+local _deferredAtlasHooked = setmetatable({}, { __mode = "k" })
+function Helpers.DeferredSetAtlasBlock(texture, combatCheck)
+    if not texture or not texture.SetAtlas then return end
+    if _deferredAtlasHooked[texture] then return end
+    _deferredAtlasHooked[texture] = true
+    if combatCheck == nil then combatCheck = true end
+    hooksecurefunc(texture, "SetAtlas", function(self)
+        C_Timer.After(0, function()
+            if combatCheck and InCombatLockdown() then return end
+            if not self then return end
+            if self.SetTexture then self:SetTexture(nil) end
+            if self.SetAlpha then self:SetAlpha(0) end
+        end)
+    end)
+end
+
+--- Check whether Blizzard's Edit Mode panel is currently shown.
+-- Uses IsShown() (not IsEditModeActive()) — checks panel visibility,
+-- used for UI fade/hide suppression during edit mode.
+-- @return boolean
+function Helpers.IsEditModeShown()
+    return EditModeManagerFrame and EditModeManagerFrame:IsShown() or false
+end
+
+--- Combat-safe Show: skips if already shown or if protected + in combat.
+-- @param frame  The frame to show.
+-- @return boolean  true if shown (or already was), false if skipped/failed.
+function Helpers.SafeShow(frame)
+    if not frame then return false end
+    if frame:IsShown() then return true end
+    if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
+        return false
+    end
+    return pcall(frame.Show, frame)
+end
+
+--- Combat-safe Hide: skips if already hidden or if protected + in combat.
+-- @param frame  The frame to hide.
+-- @return boolean  true if hidden (or already was), false if skipped/failed.
+function Helpers.SafeHide(frame)
+    if not frame then return false end
+    if not frame:IsShown() then return true end
+    if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
+        return false
+    end
+    return pcall(frame.Hide, frame)
+end
+
+ns.CreateStateTable = Helpers.CreateStateTable
+ns.IsEditModeActive = Helpers.IsEditModeActive
+ns.IsEditModeShown = Helpers.IsEditModeShown
+ns.SafeShow = Helpers.SafeShow
+ns.SafeHide = Helpers.SafeHide
+ns.DeferredHideOnShow = Helpers.DeferredHideOnShow
+ns.DeferredSetAtlasBlock = Helpers.DeferredSetAtlasBlock

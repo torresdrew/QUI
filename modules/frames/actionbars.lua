@@ -102,16 +102,7 @@ local ActionBars = {
 
 -- Store QUI state outside secure Blizzard frame tables.
 -- Writing custom keys directly on action buttons can taint secret values.
-local frameState = setmetatable({}, { __mode = "k" })
-
-local function GetFrameState(frame)
-    local state = frameState[frame]
-    if not state then
-        state = {}
-        frameState[frame] = state
-    end
-    return state
-end
+local frameState, GetFrameState = ns.Helpers.CreateStateTable()
 
 ---------------------------------------------------------------------------
 -- HELPER FUNCTIONS
@@ -818,9 +809,10 @@ local function ApplyExtraButtonSettings(buttonType)
     blizzFrame:SetPoint("CENTER", holder, "CENTER", offsetX, offsetY)
     hookingSetPoint = false
 
-    -- Update holder size to match scaled frame
-    local width = (blizzFrame:GetWidth() or 64) * scale
-    local height = (blizzFrame:GetHeight() or 64) * scale
+    -- Update holder size to match scaled frame (SafeToNumber guards against
+    -- secret values that GetWidth/GetHeight can return during combat lockdown)
+    local width = Helpers.SafeToNumber(blizzFrame:GetWidth(), 64) * scale
+    local height = Helpers.SafeToNumber(blizzFrame:GetHeight(), 64) * scale
     holder:SetSize(math.max(width, 64), math.max(height, 64))
 
     -- Hide artwork if enabled
@@ -1580,8 +1572,6 @@ local function HookButtonIconsForUsability()
     end
 end
 
-local usabilityTicker
-
 -- Start/stop usability indicator system (event-driven + optional range polling)
 local function UpdateUsabilityPolling()
     local settings = GetGlobalSettings()
@@ -1619,19 +1609,16 @@ local function UpdateUsabilityPolling()
     end
 
     -- Range requires slow polling (no "player moved" event exists)
-    -- Use C_Timer ticker instead of OnUpdate to avoid per-frame overhead
+    -- Only poll when range indicator is enabled, at 250ms (was 100ms)
     if rangeEnabled then
-        if usabilityTicker then
-            usabilityTicker:Cancel()
-            usabilityTicker = nil
-        end
-        usabilityTicker = C_Timer.NewTicker(GetUpdateInterval(), UpdateAllButtonUsability)
+        usabilityCheckFrame:SetScript("OnUpdate", function(self, elapsed)
+            self.elapsed = self.elapsed + elapsed
+            if self.elapsed < GetUpdateInterval() then return end
+            self.elapsed = 0
+            UpdateAllButtonUsability()
+        end)
         usabilityCheckFrame:Show()
     else
-        if usabilityTicker then
-            usabilityTicker:Cancel()
-            usabilityTicker = nil
-        end
         usabilityCheckFrame:SetScript("OnUpdate", nil)
         usabilityCheckFrame.elapsed = 0
         -- Don't hide - events still need to work if usability is enabled
@@ -1664,11 +1651,8 @@ end
 -- MOUSEOVER FADE SYSTEM
 ---------------------------------------------------------------------------
 
--- Check if Blizzard's Edit Mode is currently active.
 -- During Edit Mode, fade-outs are suspended so all bars remain visible.
-local function IsInEditMode()
-    return EditModeManagerFrame and EditModeManagerFrame:IsShown()
-end
+local IsInEditMode = ns.Helpers.IsEditModeShown
 
 -- Get or create fade state for a bar
 local function GetBarFadeState(barKey)

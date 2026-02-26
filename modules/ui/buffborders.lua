@@ -30,7 +30,7 @@ local BORDER_COLOR_DEBUFF = {0.5, 0, 0, 1}    -- Dark red for debuffs
 local borderedButtons = {}
 
 -- Store border textures in a weak-keyed table to avoid writing properties to Blizzard aura frames
-local _buttonBorders = setmetatable({}, { __mode = "k" })
+local _buttonBorders = Helpers.CreateStateTable()
 
 -- Hook guards stored locally (NOT on Blizzard frames) to avoid taint
 local buffFrameShowHooked = false
@@ -170,8 +170,21 @@ local function ProcessAuraContainer(container, isBuff)
 end
 
 -- Hide/show entire BuffFrame or DebuffFrame based on settings
+local _frameHidingPendingRegen = false
 local function ApplyFrameHiding()
-    if InCombatLockdown() then return end
+    if InCombatLockdown() then
+        if not _frameHidingPendingRegen then
+            _frameHidingPendingRegen = true
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("PLAYER_REGEN_ENABLED")
+            f:SetScript("OnEvent", function(self)
+                self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+                _frameHidingPendingRegen = false
+                ApplyFrameHiding()
+            end)
+        end
+        return
+    end
     local settings = GetSettings()
     if not settings then return end
 
