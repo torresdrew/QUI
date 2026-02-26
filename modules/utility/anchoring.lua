@@ -870,12 +870,11 @@ function QUI_Anchoring:UpdateAllAnchoredFrames()
 
     pendingAnchoredFrameUpdateAfterCombat = false
 
+    local hasOverriddenFrames = false
     for frame, config in pairs(self.anchoredFrames) do
-        -- Skip frames with active anchoring overrides — reapply override instead
-        -- (callers may have called ClearAllPoints before triggering this update)
+        -- Skip frames with active anchoring overrides — collect and reapply once after loop
         if self.overriddenFrames[frame] then
-            self:ApplyAllFrameAnchors()
-            -- ApplyAllFrameAnchors handles all overridden frames, so we can continue
+            hasOverriddenFrames = true
         elseif frame and frame:IsShown() then
             local anchors = config.anchors
             if not anchors or #anchors == 0 then
@@ -964,6 +963,11 @@ function QUI_Anchoring:UpdateAllAnchoredFrames()
                 end
             end
         end
+    end
+
+    -- Reapply overrides once (not inside the loop) if any overridden frames were found
+    if hasOverriddenFrames then
+        self:ApplyAllFrameAnchors()
     end
 end
 
