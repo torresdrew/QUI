@@ -4228,7 +4228,10 @@ function QUICore:HookEditMode()
         local _wasEditModeShown = false
         editModeExitWatcher:SetScript("OnUpdate", function()
             local isShown = EditModeManagerFrame:IsShown()
-            if _wasEditModeShown and not isShown then
+            if not _wasEditModeShown and isShown then
+                -- New Edit Mode session — reset exit guard
+                _exitCallbacksFired = false
+            elseif _wasEditModeShown and not isShown then
                 -- Edit Mode just closed — ensure callbacks fired
                 C_Timer.After(0, FireExitCallbacks)
             end
