@@ -145,6 +145,10 @@ local function UnregisterWidgetInstance(widget)
             break
         end
     end
+    -- Prune empty arrays to prevent unbounded table growth
+    if #instances == 0 then
+        GUI.WidgetInstances[widget._widgetKey] = nil
+    end
 end
 
 -- Broadcast value change to all sibling widget instances
@@ -332,11 +336,13 @@ local function SetFont(fontString, size, flags, color)
 end
 
 -- Ensure all text in a frame subtree uses the shared QUI font.
+-- Uses select() iteration to avoid temporary table allocations.
 local function ApplyFontToFrameRecursive(frame, fontPath)
     if not frame then return end
 
-    local regions = { frame:GetRegions() }
-    for _, region in ipairs(regions) do
+    local numRegions = frame.GetNumRegions and frame:GetNumRegions() or 0
+    for i = 1, numRegions do
+        local region = select(i, frame:GetRegions())
         if region and region.IsObjectType and region:IsObjectType("FontString") and region.GetFont and region.SetFont then
             local _, size, flags = region:GetFont()
             if size and size > 0 then
@@ -345,8 +351,9 @@ local function ApplyFontToFrameRecursive(frame, fontPath)
         end
     end
 
-    local children = { frame:GetChildren() }
-    for _, child in ipairs(children) do
+    local numChildren = frame.GetNumChildren and frame:GetNumChildren() or 0
+    for i = 1, numChildren do
+        local child = select(i, frame:GetChildren())
         ApplyFontToFrameRecursive(child, fontPath)
     end
 end
@@ -3447,7 +3454,9 @@ function GUI:RenderSearchResults(content, results, searchTerm, navResults)
     if not content then return end
 
     -- Clear previous child frames (unregister from widget sync first)
-    for _, child in ipairs({content:GetChildren()}) do
+    local numKids = content:GetNumChildren()
+    for i = 1, numKids do
+        local child = select(i, content:GetChildren())
         UnregisterWidgetInstance(child)
         child:Hide()
         child:SetParent(nil)
@@ -4627,13 +4636,15 @@ function GUI:SelectTab(frame, index)
         end
 
         -- Force OnShow scripts to fire on all children (for refresh purposes)
+        -- Uses select() to avoid temporary table allocations on each recursion level
         local function TriggerOnShow(f)
             if f.GetScript and f:GetScript("OnShow") then
                 f:GetScript("OnShow")(f)
             end
-            if f.GetChildren then
-                for _, child in ipairs({f:GetChildren()}) do
-                    TriggerOnShow(child)
+            if f.GetNumChildren then
+                local n = f:GetNumChildren()
+                for i = 1, n do
+                    TriggerOnShow(select(i, f:GetChildren()))
                 end
             end
         end

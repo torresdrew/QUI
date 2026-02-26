@@ -1699,6 +1699,12 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
     end
 
     -- Register events for updates
+    -- Throttle UNIT_POWER_FREQUENT to ~5 updates/sec (0.2s) to reduce CPU.
+    -- UNIT_POWER_UPDATE and UNIT_MAXPOWER are processed immediately (infrequent).
+    local _powerThrottleElapsed = 0
+    local _powerThrottleDirty = false
+    local POWER_THROTTLE_INTERVAL = 0.2  -- 5 Hz max for frequent power updates
+
     frame:SetScript("OnEvent", function(self, event, ...)
         if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
             local eventUnit = ...
@@ -1711,11 +1717,17 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
             if eventUnit == self.unit then
                 UpdateAbsorbs(self)
             end
-        elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" or event == "UNIT_MAXPOWER" then
+        elseif event == "UNIT_POWER_FREQUENT" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                _powerThrottleDirty = true
+            end
+        elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" then
             local eventUnit = ...
             if eventUnit == self.unit then
                 UpdatePower(self)
                 UpdatePowerText(self)
+                _powerThrottleDirty = false  -- just did a full update
             end
         elseif event == "UNIT_NAME_UPDATE" then
             local eventUnit = ...
@@ -1725,6 +1737,17 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
         elseif event == "RAID_TARGET_UPDATE" then
             UpdateTargetMarker(self)
         end
+    end)
+
+    -- Throttled power update via OnUpdate (only active when dirty)
+    frame:SetScript("OnUpdate", function(self, delta)
+        if not _powerThrottleDirty then return end
+        _powerThrottleElapsed = _powerThrottleElapsed + delta
+        if _powerThrottleElapsed < POWER_THROTTLE_INTERVAL then return end
+        _powerThrottleElapsed = 0
+        _powerThrottleDirty = false
+        UpdatePower(self)
+        UpdatePowerText(self)
     end)
 
     frame:RegisterUnitEvent("UNIT_HEALTH", unit)

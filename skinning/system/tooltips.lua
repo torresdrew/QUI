@@ -129,20 +129,11 @@ local function ApplyTooltipFontSizeToFrame(tooltip)
     end
 
     -- Fallback for unnamed tooltips and named-but-empty tooltips
-    local regions = {}
-    if tooltip.GetRegions then
-        local ok, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15,
-            r16, r17, r18, r19, r20, r21, r22, r23, r24, r25, r26, r27, r28, r29, r30 = pcall(tooltip.GetRegions, tooltip)
-        if ok then
-            regions = {
-                r1, r2, r3, r4, r5, r6, r7, r8, r9, r10,
-                r11, r12, r13, r14, r15, r16, r17, r18, r19, r20,
-                r21, r22, r23, r24, r25, r26, r27, r28, r29, r30
-            }
-        end
-    end
+    -- Use select() iteration to avoid allocating a temporary 30-element table per call
+    local numRegions = tooltip.GetNumRegions and tooltip:GetNumRegions() or 0
     local isFirst = true
-    for _, region in ipairs(regions) do
+    for i = 1, numRegions do
+        local region = select(i, tooltip:GetRegions())
         if region and region.IsObjectType and region:IsObjectType("FontString") then
             SetFontStringSize(region, isFirst and headerSize or baseSize)
             isFirst = false
@@ -358,6 +349,11 @@ local function SkinTooltip(tooltip)
     skinnedTooltips[tooltip] = true
 end
 
+-- Track last-applied thickness per tooltip to skip redundant NineSlice rebuilds.
+-- Blizzard resets NineSlice layout on Show, so we must reapply — but we only need
+-- the full rebuild (textures + coords) when thickness changes. Otherwise, colors only.
+local _lastTooltipThickness = {}
+
 -- Re-apply skin to an already-skinned tooltip (called on every Show)
 local function ReapplySkin(tooltip)
     if not tooltip then return end
@@ -368,7 +364,11 @@ local function ReapplySkin(tooltip)
     local ns = tooltip.NineSlice
     if ns then
         ClearNineSliceLayoutInfo(tooltip)
-        ApplyFlatNineSlice(ns, thickness)
+        -- Only rebuild NineSlice textures when thickness changed; otherwise just recolor
+        if _lastTooltipThickness[tooltip] ~= thickness then
+            _lastTooltipThickness[tooltip] = thickness
+            ApplyFlatNineSlice(ns, thickness)
+        end
         ApplyNineSliceColors(ns, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         ns:Show()
     elseif tooltip.SetBackdrop then
@@ -433,6 +433,8 @@ end
 
 -- Refresh colors on all skinned tooltips (rebuilds textures for thickness changes)
 local function RefreshAllTooltipColors()
+    -- Invalidate thickness cache so next ReapplySkin does a full NineSlice rebuild
+    wipe(_lastTooltipThickness)
     -- Refresh named tooltips from the static list
     for _, name in ipairs(tooltipsToSkin) do
         local tooltip = _G[name]

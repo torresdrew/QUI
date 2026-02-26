@@ -12,6 +12,13 @@ local LSM = LibStub("LibSharedMedia-3.0", true)
 local Helpers = ns.Helpers
 local DEFAULT_FONT = "Fonts\\FRIZQT__.TTF"
 
+-- Shared fallback color table for checkboxes (avoids per-widget allocation)
+local DEFAULT_CHECKBOX_COLORS = {
+    accent = {0.204, 0.827, 0.600},
+    accentHover = {0.431, 0.906, 0.718},
+    toggleOff = {0.18, 0.18, 0.20},
+}
+
 --- Lazily resolve QUICore (safe if called before main.lua loads)
 local function GetCore()
     return ns.Addon
@@ -236,11 +243,7 @@ function UIKit.CreateAccentCheckbox(parent, options)
     if not colors and QUI and QUI.GUI and QUI.GUI.Colors then
         colors = QUI.GUI.Colors
     end
-    colors = colors or {
-        accent = {0.204, 0.827, 0.600},
-        accentHover = {0.431, 0.906, 0.718},
-        toggleOff = {0.18, 0.18, 0.20},
-    }
+    colors = colors or DEFAULT_CHECKBOX_COLORS
 
     local checkbox = CreateFrame("Button", nil, parent, "BackdropTemplate")
     checkbox:SetSize(size, size)

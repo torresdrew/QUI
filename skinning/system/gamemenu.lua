@@ -126,45 +126,41 @@ local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         text:SetTextColor(unpack(COLORS.text))
     end
 
-    -- Hover effects via IsMouseOver() polling on the overlay.
-    -- HookScript on secure pool buttons doesn't fire reliably in Midnight
-    -- 12.0+, so we poll the overlay's bounds instead.  The overlay keeps
-    -- EnableMouse(false) so clicks pass through to the button underneath.
-    -- OnUpdate only runs while overlayContainer is shown (menu open).
-    -- Performance: throttled to ~20 Hz (0.05s) instead of every frame.
+    -- Hover effects via OnEnter/OnLeave on the overlay frame.
+    -- OnEnter/OnLeave is more efficient than OnUpdate polling (~600 calls/sec → 0 when idle).
+    -- EnableMouse must be true on overlay so it receives enter/leave; clicks are passed
+    -- through to the button via overlay:SetMouseClickEnabled(false) where available,
+    -- or by registering clicks on the button directly (already done by Blizzard).
     if not info.hoverSetup then
         info.hoverSetup = true
         info.hovered = false
-        local hoverElapsed = 0
-        overlay:SetScript("OnUpdate", function(self, delta)
-            hoverElapsed = hoverElapsed + (delta or 0)
-            if hoverElapsed < 0.05 then return end
-            hoverElapsed = 0
+        overlay:EnableMouse(true)
+        if overlay.SetMouseClickEnabled then
+            overlay:SetMouseClickEnabled(false)  -- 10.x+: pass clicks through
+        end
 
+        overlay:SetScript("OnEnter", function(self)
             local binfo = buttonOverlays[button]
-            if not binfo then return end
+            if not binfo or binfo.hovered then return end
+            binfo.hovered = true
+            local r, g, b, a = unpack(binfo.bgColor)
+            self:SetBackdropColor(math.min(r + 0.30, 1), math.min(g + 0.30, 1), math.min(b + 0.30, 1), a)
+            local sr2, sg2, sb2, sa2 = unpack(binfo.skinColor)
+            self:SetBackdropBorderColor(math.min(sr2 * 1.6, 1), math.min(sg2 * 1.6, 1), math.min(sb2 * 1.6, 1), sa2)
+            local txt = button:GetFontString()
+            if txt then txt:SetTextColor(1, 1, 1, 1) end
+            if binfo.overlayText then binfo.overlayText:SetTextColor(1, 1, 1, 1) end
+        end)
 
-            if self:IsMouseOver() then
-                if not binfo.hovered then
-                    binfo.hovered = true
-                    local r, g, b, a = unpack(binfo.bgColor)
-                    self:SetBackdropColor(math.min(r + 0.30, 1), math.min(g + 0.30, 1), math.min(b + 0.30, 1), a)
-                    local sr2, sg2, sb2, sa2 = unpack(binfo.skinColor)
-                    self:SetBackdropBorderColor(math.min(sr2 * 1.6, 1), math.min(sg2 * 1.6, 1), math.min(sb2 * 1.6, 1), sa2)
-                    local txt = button:GetFontString()
-                    if txt then txt:SetTextColor(1, 1, 1, 1) end
-                    if binfo.overlayText then binfo.overlayText:SetTextColor(1, 1, 1, 1) end
-                end
-            else
-                if binfo.hovered then
-                    binfo.hovered = false
-                    self:SetBackdropColor(unpack(binfo.bgColor))
-                    self:SetBackdropBorderColor(unpack(binfo.skinColor))
-                    local txt = button:GetFontString()
-                    if txt then txt:SetTextColor(unpack(COLORS.text)) end
-                    if binfo.overlayText then binfo.overlayText:SetTextColor(unpack(COLORS.text)) end
-                end
-            end
+        overlay:SetScript("OnLeave", function(self)
+            local binfo = buttonOverlays[button]
+            if not binfo or not binfo.hovered then return end
+            binfo.hovered = false
+            self:SetBackdropColor(unpack(binfo.bgColor))
+            self:SetBackdropBorderColor(unpack(binfo.skinColor))
+            local txt = button:GetFontString()
+            if txt then txt:SetTextColor(unpack(COLORS.text)) end
+            if binfo.overlayText then binfo.overlayText:SetTextColor(unpack(COLORS.text)) end
         end)
     end
 end

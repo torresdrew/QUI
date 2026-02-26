@@ -307,11 +307,15 @@ local function SetupCharacterFrameSkinning()
     -- Create initial background (non-extended for Rep/Currency default)
     CreateOrUpdateBackground()
 
-    -- Hook ScrollBox updates for reputation
+    -- Hook ScrollBox updates for reputation (debounced to avoid timer spam during rapid scrolling)
+    local _repUpdatePending = false
     if ReputationFrame and ReputationFrame.ScrollBox then
         -- TAINT SAFETY: Defer to break taint chain from secure Update context.
         hooksecurefunc(ReputationFrame.ScrollBox, "Update", function(frame)
+            if _repUpdatePending then return end
+            _repUpdatePending = true
             C_Timer.After(0, function()
+                _repUpdatePending = false
                 if IsSkinningEnabled() then
                     frame:ForEachFrame(SkinReputationEntry)
                 end
@@ -319,11 +323,15 @@ local function SetupCharacterFrameSkinning()
         end)
     end
 
-    -- Hook ScrollBox updates for currency
+    -- Hook ScrollBox updates for currency (debounced to avoid timer spam during rapid scrolling)
+    local _tokenUpdatePending = false
     if TokenFrame and TokenFrame.ScrollBox then
         -- TAINT SAFETY: Defer to break taint chain from secure Update context.
         hooksecurefunc(TokenFrame.ScrollBox, "Update", function(frame)
+            if _tokenUpdatePending then return end
+            _tokenUpdatePending = true
             C_Timer.After(0, function()
+                _tokenUpdatePending = false
                 if IsSkinningEnabled() then
                     frame:ForEachFrame(SkinCurrencyEntry)
                 end

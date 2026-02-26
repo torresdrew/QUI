@@ -110,6 +110,22 @@ end
 -- directly onto Blizzard secure frames, which can cause taint).
 local _pendingBackdropData = ns.Helpers.CreateStateTable()
 
+-- Reusable named function: check if a frame has valid (non-secret) dimensions.
+-- Avoids creating a throwaway closure on every pcall.
+local function _CheckFrameHasValidSize(frame)
+    local w = frame:GetWidth()
+    local h = frame:GetHeight()
+    if w and h then
+        local test = w + h  -- Will error if secret
+        return test > 0
+    end
+    return false
+end
+
+-- Max retries for deferred backdrop processing before giving up (50 * 0.1s = 5 seconds)
+local BACKDROP_MAX_RETRIES = 50
+local _backdropRetryCount = 0
+
 -- Global SafeSetBackdrop function that defers SetBackdrop calls when frame dimensions
 -- are secret values (Midnight 12.0 protection) or when in combat lockdown.
 -- This prevents the "attempt to perform arithmetic on a secret value" error that occurs
@@ -125,18 +141,7 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
     -- Check if frame has valid (non-secret) dimensions
     -- SetBackdrop internally calls GetWidth/GetHeight which can error on secret values
     local hasValidSize = false
-    local ok, result = pcall(function()
-        local w = frame:GetWidth()
-        local h = frame:GetHeight()
-        -- Try to do arithmetic - this will fail if they're secret values
-        if w and h then
-            local test = w + h  -- This will error if secret
-            if test > 0 then
-                return true
-            end
-        end
-        return false
-    end)
+    local ok, result = pcall(_CheckFrameHasValidSize, frame)
     if ok and result then
         hasValidSize = true
     end
@@ -156,6 +161,21 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                 if elapsed < 0.1 then return end  -- Check every 0.1s
                 elapsed = 0
 
+                -- Max-retry: give up after ~5 seconds to prevent infinite polling
+                _backdropRetryCount = _backdropRetryCount + 1
+                if _backdropRetryCount > BACKDROP_MAX_RETRIES then
+                    -- Abandon remaining pending frames to stop the poller
+                    if QUICore.__pendingBackdrops then
+                        for pf in pairs(QUICore.__pendingBackdrops) do
+                            _pendingBackdropData[pf] = nil
+                        end
+                        wipe(QUICore.__pendingBackdrops)
+                    end
+                    self:SetScript("OnUpdate", nil)
+                    self:Hide()
+                    return
+                end
+
                 -- Performance: reuse module-level scratch table instead of allocating per tick
                 local processed = QUICore.__backdropProcessed
                 if not processed then
@@ -166,16 +186,8 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                 for pendingFrame in pairs(QUICore.__pendingBackdrops or {}) do
                     local pendingData = _pendingBackdropData[pendingFrame]
                     if pendingFrame and pendingData then
-                        -- Re-check if dimensions are now valid
-                        local checkOk, checkResult = pcall(function()
-                            local w = pendingFrame:GetWidth()
-                            local h = pendingFrame:GetHeight()
-                            if w and h then
-                                local test = w + h
-                                return test > 0
-                            end
-                            return false
-                        end)
+                        -- Re-check if dimensions are now valid (reuse named function)
+                        local checkOk, checkResult = pcall(_CheckFrameHasValidSize, pendingFrame)
 
                         if checkOk and checkResult and not InCombatLockdown() then
                             local setOk = pcall(pendingFrame.SetBackdrop, pendingFrame, pendingData.info)
@@ -204,6 +216,7 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                     break
                 end
                 if not hasAny then
+                    _backdropRetryCount = 0
                     self:SetScript("OnUpdate", nil)
                     self:Hide()
                 end
@@ -211,6 +224,7 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
             QUICore.__backdropUpdateHandler = updateFrame:GetScript("OnUpdate")
             QUICore.__backdropUpdateFrame = updateFrame
         end
+        _backdropRetryCount = 0  -- reset retry count for new batch
         if QUICore.__backdropUpdateHandler then
             QUICore.__backdropUpdateFrame:SetScript("OnUpdate", QUICore.__backdropUpdateHandler)
         end
@@ -228,6 +242,8 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                 local eventFrame = CreateFrame("Frame")
                 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
                 eventFrame:SetScript("OnEvent", function(self)
+                    self:UnregisterEvent("PLAYER_REGEN_ENABLED")
+                    QUICore.__backdropEventListening = false
                     local stillPending = false
                     for pendingFrame in pairs(QUICore.__pendingBackdrops or {}) do
                         local pendingData = _pendingBackdropData[pendingFrame]
@@ -265,7 +281,11 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
 
             QUICore.__pendingBackdrops = QUICore.__pendingBackdrops or {}
             QUICore.__pendingBackdrops[frame] = true
-            QUICore.__backdropEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+            -- Guard: only register if not already listening (avoids redundant event handler fires)
+            if not QUICore.__backdropEventListening then
+                QUICore.__backdropEventListening = true
+                QUICore.__backdropEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+            end
         end
         return false
     end
@@ -3479,49 +3499,19 @@ function QUICore:OnProfileChanged(event, db, profileKey)
         end
     end
 
-    -- Refresh Unit Frames (including castbars) on profile change
-    C_Timer.After(0.2, function()
-        if _G.QUI_RefreshUnitFrames then
-            _G.QUI_RefreshUnitFrames()
-        end
-    end)
-    
-    -- Refresh NCDM (Cooldown Display Manager) on profile change
-    C_Timer.After(0.3, function()
-        if _G.QUI_RefreshNCDM then
-            _G.QUI_RefreshNCDM()
-        end
-    end)
-
-    -- Refresh CDM Visibility on profile change
-    C_Timer.After(0.4, function()
-        if _G.QUI_RefreshCDMVisibility then
-            _G.QUI_RefreshCDMVisibility()
-        end
-    end)
-
-    -- Refresh Reticle on profile change
-    C_Timer.After(0.45, function()
-        if _G.QUI_RefreshReticle then
-            _G.QUI_RefreshReticle()
-        end
-    end)
-
-    -- Refresh Custom Trackers on profile change
-    C_Timer.After(0.47, function()
-        if _G.QUI_RefreshCustomTrackers then
-            _G.QUI_RefreshCustomTrackers()
-        end
-    end)
-
-    -- Refresh Spec Profiles tab if options panel is open
+    -- Refresh Spec Profiles tab if options panel is open (immediate, no delay needed)
     if _G.QUI_RefreshSpecProfilesTab then
         _G.QUI_RefreshSpecProfilesTab()
     end
 
-    -- Show popup notification about profile change
-    -- Delay slightly to ensure UI is ready
-    C_Timer.After(0.5, function()
+    -- Consolidated profile-change refresh: single 0.2s delay for all module refreshes
+    -- instead of 7 separate cascading timers (0.2, 0.3, 0.4, 0.45, 0.47, 0.5)
+    C_Timer.After(0.2, function()
+        if _G.QUI_RefreshUnitFrames then _G.QUI_RefreshUnitFrames() end
+        if _G.QUI_RefreshNCDM then _G.QUI_RefreshNCDM() end
+        if _G.QUI_RefreshCDMVisibility then _G.QUI_RefreshCDMVisibility() end
+        if _G.QUI_RefreshReticle then _G.QUI_RefreshReticle() end
+        if _G.QUI_RefreshCustomTrackers then _G.QUI_RefreshCustomTrackers() end
         self:ShowProfileChangeNotification()
     end)
 end
@@ -4255,23 +4245,31 @@ function QUICore:HookEditMode()
         -- Safety net: OnUpdate watcher detects Edit Mode has closed even if
         -- the hooksecurefunc hook didn't fire (e.g. ExitEditMode errored out
         -- due to taint in CompactUnitFrame_UpdateHealthColor or similar).
-        -- Performance: throttled to every 0.5s instead of every frame.
+        -- Performance: only runs while Edit Mode is active, stops once exit is detected.
         local editModeExitWatcher = CreateFrame("Frame", nil, UIParent)
-        local _wasEditModeShown = false
         local _editWatcherElapsed = 0
-        editModeExitWatcher:SetScript("OnUpdate", function(self, delta)
-            _editWatcherElapsed = _editWatcherElapsed + (delta or 0)
-            if _editWatcherElapsed < 0.5 then return end
+        editModeExitWatcher:Hide()  -- start hidden (inactive)
+
+        local function StartEditModeWatcher()
             _editWatcherElapsed = 0
-            local isShown = EditModeManagerFrame:IsShown()
-            if not _wasEditModeShown and isShown then
-                -- New Edit Mode session — reset exit guard
-                _exitCallbacksFired = false
-            elseif _wasEditModeShown and not isShown then
-                -- Edit Mode just closed — ensure callbacks fired
-                C_Timer.After(0, FireExitCallbacks)
-            end
-            _wasEditModeShown = isShown
+            editModeExitWatcher:SetScript("OnUpdate", function(self, delta)
+                _editWatcherElapsed = _editWatcherElapsed + (delta or 0)
+                if _editWatcherElapsed < 0.5 then return end
+                _editWatcherElapsed = 0
+                if not EditModeManagerFrame:IsShown() then
+                    -- Edit Mode closed — stop watcher and fire exit callbacks
+                    self:SetScript("OnUpdate", nil)
+                    self:Hide()
+                    C_Timer.After(0, FireExitCallbacks)
+                end
+            end)
+            editModeExitWatcher:Show()
+        end
+
+        -- Start watcher when entering Edit Mode
+        hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
+            _exitCallbacksFired = false
+            StartEditModeWatcher()
         end)
     end
             
@@ -4295,7 +4293,9 @@ function QUICore:HookEditMode()
                     local viewer = _G[viewerName]
                     if viewer then
                         local container = viewer.viewerFrame or viewer
-                        for _, child in ipairs({ container:GetChildren() }) do
+                        local numKids = container:GetNumChildren()
+                        for ci = 1, numKids do
+                            local child = select(ci, container:GetChildren())
                             local childSkinState = _G.QUI_GetSkinIconState and _G.QUI_GetSkinIconState(child)
                             if childSkinState and childSkinState.skinFailed then
                                 needsReskin = true
