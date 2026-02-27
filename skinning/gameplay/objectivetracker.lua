@@ -457,22 +457,24 @@ end
 
 -- Reposition all lines within a block based on their actual heights
 -- This fixes overlap caused by font changes affecting text wrapping
+local isRepositioning = false
 local function RepositionBlockLines(block)
     if not block or not block.usedLines then return end
 
-    -- Get all lines and sort them by their original order (using objectiveKey or creation order)
+    -- Collect lines with their objectiveKey for stable sorting
     local lines = {}
     for key, line in pairs(block.usedLines) do
         if line and line:IsShown() then
-            table.insert(lines, line)
+            table.insert(lines, { line = line, key = key })
         end
     end
 
-    -- Sort by current Y position (top to bottom)
+    -- Sort by objectiveKey (deterministic, not affected by frame position)
     table.sort(lines, function(a, b)
-        local topA = a:GetTop() or 0
-        local topB = b:GetTop() or 0
-        return topA > topB
+        if type(a.key) == "number" and type(b.key) == "number" then
+            return a.key < b.key
+        end
+        return tostring(a.key) < tostring(b.key)
     end)
 
     -- Reposition each line based on actual heights
@@ -483,24 +485,29 @@ local function RepositionBlockLines(block)
         yOffset = -(headerHeight + 5)  -- Start below header with padding
     end
 
-    for i, line in ipairs(lines) do
-        line:ClearAllPoints()
-        line:SetPoint("TOPLEFT", block, "TOPLEFT", 0, yOffset)
-        line:SetPoint("RIGHT", block, "RIGHT", 0, 0)
+    isRepositioning = true
+    for i, entry in ipairs(lines) do
+        entry.line:ClearAllPoints()
+        entry.line:SetPoint("TOPLEFT", block, "TOPLEFT", 0, yOffset)
+        entry.line:SetPoint("RIGHT", block, "RIGHT", 0, 0)
 
-        local lineHeight = line:GetHeight() or 14
+        local lineHeight = entry.line:GetHeight() or 14
         yOffset = yOffset - lineHeight - 2  -- Move down by line height + small gap
     end
 
-    -- Update block height to fit all content
+    -- Update block height only if it changed significantly (prevents layout thrashing)
     local totalHeight = math.abs(yOffset) + 5
-    block:SetHeight(totalHeight)
+    local currentBlockHeight = block:GetHeight() or 0
+    if math.abs(totalHeight - currentBlockHeight) > 1 then
+        block:SetHeight(totalHeight)
+    end
+    isRepositioning = false
 end
 
 -- Debounced line repositioning for all visible blocks
 local pendingLineReposition = false
 local function ScheduleLineReposition()
-    if pendingLineReposition then return end
+    if pendingLineReposition or isRepositioning then return end
     pendingLineReposition = true
     -- Small delay to batch multiple style changes
     C_Timer.After(0.05, function()
