@@ -500,13 +500,15 @@ if GameMenuFrame then
     local gameMenuWatcher = CreateFrame("Frame", nil, UIParent)
     local wasShown = false
     local lastButtonCount = 0
-    -- Performance: throttle polling to every 0.2s instead of every frame
+    -- Poll while the menu is visible only; use a short interval so ESC feels instant
+    -- even when Blizzard asynchronously adds/reflows buttons.
+    local WATCHER_INTERVAL = 0.05
     local watcherElapsed = 0
 
     -- The OnUpdate handler — only set when the game menu might be visible
     local function WatcherOnUpdate(self, delta)
         watcherElapsed = watcherElapsed + (delta or 0)
-        if watcherElapsed < 0.2 then return end
+        if watcherElapsed < WATCHER_INTERVAL then return end
         watcherElapsed = 0
 
         local isShown = GameMenuFrame:IsShown()
@@ -613,7 +615,8 @@ if GameMenuFrame then
     -- GameMenuFrame, so this does not create taint on the secure frame.
     local function StartWatcherIfGameMenu(frame)
         if frame == GameMenuFrame then
-            watcherElapsed = 0  -- reset throttle so first tick runs immediately
+            -- Prime the throttle so the very next frame processes immediately.
+            watcherElapsed = WATCHER_INTERVAL
             gameMenuWatcher:SetScript("OnUpdate", WatcherOnUpdate)
         end
     end
@@ -626,7 +629,7 @@ if GameMenuFrame then
     -- cycle to run the cleanup path, in case it was already stopped.
     hooksecurefunc("HideUIPanel", function(frame)
         if frame == GameMenuFrame and wasShown then
-            watcherElapsed = 0
+            watcherElapsed = WATCHER_INTERVAL
             gameMenuWatcher:SetScript("OnUpdate", WatcherOnUpdate)
         end
     end)
