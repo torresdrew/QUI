@@ -53,7 +53,7 @@ end
 -- STATE
 ---------------------------------------------------------------------------
 local NCDM = {
-    hooked = {},           -- Track which viewers are hooked
+    hooked = {},           -- Track hook targets (viewer frame refs + boolean flags)
     applying = {},         -- Prevent re-entry during layout
     initialized = false,
     pendingIcons = {},     -- Icons queued for skinning after combat
@@ -1600,9 +1600,9 @@ end
 local function HookViewer(viewerName, trackerKey)
     local viewer = _G[viewerName]
     if not viewer then return end
-    if NCDM.hooked[trackerKey] then return end
+    if NCDM.hooked[trackerKey] == viewer then return end
 
-    NCDM.hooked[trackerKey] = true
+    NCDM.hooked[trackerKey] = viewer
 
     local hvs = getViewerState(viewer)
 
@@ -2383,6 +2383,8 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("CHALLENGE_MODE_START")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+eventFrame:RegisterEvent("CINEMATIC_STOP")
+eventFrame:RegisterEvent("STOP_MOVIE")
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
         -- Force load CDM first, then initialize our hooks
@@ -2405,6 +2407,18 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "ZONE_CHANGED_NEW_AREA" then
         -- Zone change without loading screen (walking between open-world zones)
         C_Timer.After(0.3, RefreshAll)
+    elseif event == "CINEMATIC_STOP" or event == "STOP_MOVIE" then
+        -- Quest cinematics can invalidate/recreate CDM frames while they are hidden.
+        -- Re-load, re-hook, and refresh after the scene ends.
+        C_Timer.After(0.2, ForceLoadCDM)
+        C_Timer.After(0.4, function()
+            HookViewer(VIEWER_ESSENTIAL, "essential")
+            HookViewer(VIEWER_UTILITY, "utility")
+            _cdmFramesDirty = true
+            RefreshAll()
+            UpdateCDMVisibility()
+            UpdateUnitframesVisibility()
+        end)
     end
 end)
 
@@ -2525,6 +2539,7 @@ end
 local function OnCDMFadeUpdate(self, elapsed)
     local vis = GetCDMVisibilitySettings()
     local duration = (vis and vis.fadeDuration) or 0.2
+    if duration <= 0 then duration = 0.01 end
 
     local now = GetTime()
     local elapsedTime = now - CDMVisibility.fadeStart
@@ -2536,8 +2551,17 @@ local function OnCDMFadeUpdate(self, elapsed)
 
     -- Apply to CDM frames
     local frames = GetCDMFrames()
-    for _, frame in ipairs(frames) do
-        frame:SetAlpha(alpha)
+    for i = #frames, 1, -1 do
+        local frame = frames[i]
+        local ok = false
+        if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
+            ok = pcall(frame.SetAlpha, frame, alpha)
+        end
+        if not ok then
+            -- Remove stale/forbidden references to avoid repeat-error loops in OnUpdate.
+            table.remove(frames, i)
+            _cdmFramesDirty = true
+        end
     end
 
     -- Check if fade complete
@@ -2807,6 +2831,7 @@ end
 local function OnUnitframesFadeUpdate(self, elapsed)
     local vis = GetUnitframesVisibilitySettings()
     local duration = (vis and vis.fadeDuration) or 0.2
+    if duration <= 0 then duration = 0.01 end
 
     local now = GetTime()
     local elapsedTime = now - UnitframesVisibility.fadeStart
