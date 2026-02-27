@@ -5,7 +5,9 @@
 local ADDON_NAME, ns = ...
 local QUI = ns.QUI or {}
 ns.QUI = QUI
+local QUICore = ns.Addon
 local Helpers = ns.Helpers
+local UIKit = ns.UIKit
 
 ---------------------------------------------------------------------------
 -- State tracking for fade animation
@@ -24,6 +26,53 @@ local CombatTextState = {
 ---------------------------------------------------------------------------
 local function GetSettings()
     return Helpers.GetModuleDB("combatText")
+end
+
+---------------------------------------------------------------------------
+-- Get global addon font setting
+---------------------------------------------------------------------------
+local function GetGlobalFont()
+    if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general and QUICore.db.profile.general.font then
+        return QUICore.db.profile.general.font
+    end
+    return "Quazii"
+end
+
+---------------------------------------------------------------------------
+-- Refresh function (called when settings change)
+---------------------------------------------------------------------------
+local function RefreshCombatText()
+    local settings = GetSettings()
+
+    -- If disabled, hide any visible text
+    if not settings or not settings.enabled then
+        if CombatTextState.displayTimer then
+            CombatTextState.displayTimer:Cancel()
+            CombatTextState.displayTimer = nil
+        end
+        if CombatTextState.fadeFrame then
+            CombatTextState.fadeFrame:SetScript("OnUpdate", nil)
+        end
+        if CombatTextState.textFrame then
+            CombatTextState.textFrame:Hide()
+        end
+        return
+    end
+
+    local frame = CombatTextState.textFrame
+    if not frame then return end
+
+    -- Update position
+    local xOffset = settings.xOffset or 0
+    local yOffset = settings.yOffset or 100
+    frame:ClearAllPoints()
+    frame:SetPoint("CENTER", UIParent, "CENTER", xOffset, yOffset)
+
+    -- Update font (using LSM) - check if using custom font or global
+    local fontSize = settings.fontSize or 24
+    local fontName = settings.useCustomFont and settings.font or GetGlobalFont()
+    local fontPath = UIKit.ResolveFontPath(fontName)
+    frame.text:SetFont(fontPath, fontSize, "OUTLINE")
 end
 
 ---------------------------------------------------------------------------
@@ -47,6 +96,8 @@ local function CreateTextFrame()
 
     frame:Hide()
     CombatTextState.textFrame = frame
+
+    RefreshCombatText()
 end
 
 ---------------------------------------------------------------------------
@@ -124,16 +175,6 @@ local function ShowCombatText(message)
         CombatTextState.fadeFrame:SetScript("OnUpdate", nil)
     end
 
-    -- Update position
-    local xOffset = settings.xOffset or 0
-    local yOffset = settings.yOffset or 100
-    CombatTextState.textFrame:ClearAllPoints()
-    CombatTextState.textFrame:SetPoint("CENTER", UIParent, "CENTER", xOffset, yOffset)
-
-    -- Update font size
-    local fontSize = settings.fontSize or 24
-    CombatTextState.textFrame.text:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "OUTLINE")
-
     -- Determine and apply color based on message
     local color
     if message == "+Combat" then
@@ -165,27 +206,6 @@ end
 
 local function OnCombatEnd()
     ShowCombatText("-Combat")
-end
-
----------------------------------------------------------------------------
--- Refresh function (called when settings change)
----------------------------------------------------------------------------
-local function RefreshCombatText()
-    local settings = GetSettings()
-
-    -- If disabled, hide any visible text
-    if not settings or not settings.enabled then
-        if CombatTextState.displayTimer then
-            CombatTextState.displayTimer:Cancel()
-            CombatTextState.displayTimer = nil
-        end
-        if CombatTextState.fadeFrame then
-            CombatTextState.fadeFrame:SetScript("OnUpdate", nil)
-        end
-        if CombatTextState.textFrame then
-            CombatTextState.textFrame:Hide()
-        end
-    end
 end
 
 ---------------------------------------------------------------------------
@@ -223,8 +243,6 @@ _G.QUI_PreviewCombatText = function(message)
     -- Create frame if needed
     CreateTextFrame()
 
-    if not CombatTextState.textFrame then return end
-
     -- Cancel any pending display timer
     if CombatTextState.displayTimer then
         CombatTextState.displayTimer:Cancel()
@@ -235,16 +253,6 @@ _G.QUI_PreviewCombatText = function(message)
     if CombatTextState.fadeFrame then
         CombatTextState.fadeFrame:SetScript("OnUpdate", nil)
     end
-
-    -- Update position
-    local xOffset = settings.xOffset or 0
-    local yOffset = settings.yOffset or 100
-    CombatTextState.textFrame:ClearAllPoints()
-    CombatTextState.textFrame:SetPoint("CENTER", UIParent, "CENTER", xOffset, yOffset)
-
-    -- Update font size
-    local fontSize = settings.fontSize or 24
-    CombatTextState.textFrame.text:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "OUTLINE")
 
     -- Determine and apply color based on message
     local color
