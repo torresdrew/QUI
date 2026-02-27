@@ -71,22 +71,13 @@ local function GetEffectiveFontSize()
     return size
 end
 
-local function SetTooltipFontObjectSize(fontObject, size)
-    if not fontObject or not fontObject.GetFont or not fontObject.SetFont then return end
-    local fontPath, _, flags = fontObject:GetFont()
-    if not fontPath then
-        fontPath = Helpers.GetGeneralFont and Helpers.GetGeneralFont() or STANDARD_TEXT_FONT
-        flags = Helpers.GetGeneralFontOutline and Helpers.GetGeneralFontOutline() or ""
-    end
-    fontObject:SetFont(fontPath, size, flags or "")
-end
-
-local function ApplyTooltipFontSize()
-    local baseSize = GetEffectiveFontSize()
-    SetTooltipFontObjectSize(_G.GameTooltipText, baseSize)
-    SetTooltipFontObjectSize(_G.GameTooltipTextSmall, math.max(baseSize - 1, MIN_TOOLTIP_FONT_SIZE))
-    SetTooltipFontObjectSize(_G.GameTooltipHeaderText, baseSize + 2)
-end
+-- NOTE: Do NOT modify the shared global font objects (GameTooltipText,
+-- GameTooltipTextSmall, GameTooltipHeaderText) here.  Blizzard's UIWidget
+-- templates (e.g. UIWidgetTemplateTextWithState) inherit their FontStrings
+-- from these same objects.  Calling SetFont() on the shared template taints
+-- every derived FontString, so GetStringHeight() returns a secret value and
+-- Blizzard's widget Setup code errors out.
+-- Font sizing is applied per-tooltip via ApplyTooltipFontSizeToFrame() instead.
 
 local function SetFontStringSize(fontString, size)
     if not fontString or not fontString.GetFont or not fontString.SetFont then return end
@@ -461,7 +452,6 @@ local function RefreshAllTooltipColors()
 end
 
 local function RefreshAllTooltipFonts()
-    ApplyTooltipFontSize()
     for _, name in ipairs(tooltipsToSkin) do
         local tooltip = _G[name]
         if tooltip then
@@ -486,7 +476,6 @@ local function HookTooltipOnShow(tooltip)
             return
         end
 
-        ApplyTooltipFontSize()
         ApplyTooltipFontSizeToFrame(self)
         if not IsEnabled() then return end
         if not skinnedTooltips[self] then
