@@ -114,18 +114,12 @@ end
 -- Standardized pattern for accessing QUICore database profiles
 ---------------------------------------------------------------------------
 
--- Cache reference to QUICore (set after ADDON_LOADED)
+-- Reference to QUICore (set after ADDON_LOADED)
 local QUICore = nil
-
--- Cached profile reference — avoids repeated core.db.profile chain walks.
--- Call Helpers.InvalidateProfileCache() whenever the profile changes
--- (e.g., on ADDON_LOADED, profile switch, profile reset).
-local _cachedProfile = nil
 
 --- Initialize QUICore reference (call after ADDON_LOADED)
 function Helpers.InitQUICore()
     QUICore = ns.Addon
-    _cachedProfile = nil  -- force re-resolve on next GetProfile()
 end
 
 --- Get QUICore reference
@@ -144,21 +138,16 @@ function Helpers.GetCore()
     return (_G.QUI and _G.QUI.QUICore) or ns.Addon
 end
 
---- Invalidate the cached profile reference.
---- Must be called on profile switch, profile reset, or any event that
---- replaces core.db.profile (e.g., LibDualSpec swap).
+--- No-op kept for backward compatibility with callers.
 function Helpers.InvalidateProfileCache()
-    _cachedProfile = nil
 end
 
 --- Get the full profile database
 --- @return table|nil The profile table or nil
 function Helpers.GetProfile()
-    if _cachedProfile then return _cachedProfile end
     local core = Helpers.GetQUICore()
     if core and core.db and core.db.profile then
-        _cachedProfile = core.db.profile
-        return _cachedProfile
+        return core.db.profile
     end
     return nil
 end
@@ -414,28 +403,21 @@ function Helpers.GetSkinAccentColor()
     return sr, sg, sb, sa
 end
 
---- Border key lookup cache — avoids 4x string concatenation per call.
---- Keyed by prefix string; each entry holds { override, hide, useClass, color }.
-local _borderKeyCache = {}
-local _borderKeyDefault = {
-    override  = "borderOverride",
-    hide      = "hideBorder",
-    useClass  = "borderUseClassColor",
-    color     = "borderColor",
-}
-
 local function GetBorderKeys(prefix)
-    if not prefix or prefix == "" then return _borderKeyDefault end
-    local cached = _borderKeyCache[prefix]
-    if cached then return cached end
-    cached = {
+    if not prefix or prefix == "" then
+        return {
+            override  = "borderOverride",
+            hide      = "hideBorder",
+            useClass  = "borderUseClassColor",
+            color     = "borderColor",
+        }
+    end
+    return {
         override  = prefix .. "BorderOverride",
         hide      = prefix .. "HideBorder",
         useClass  = prefix .. "BorderUseClassColor",
         color     = prefix .. "BorderColor",
     }
-    _borderKeyCache[prefix] = cached
-    return cached
 end
 
 --- Get skin border color from dedicated border settings.
