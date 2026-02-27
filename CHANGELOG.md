@@ -51,6 +51,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.42.0 - 2026-02-28
+
+### Added
+- added xp tracker module
+- added option to hide player frame in party or raid
+- added multiple customization options for the m+ timer
+
+### Changed
+- made +/-combat text font configurable
+
+### Fixed
+- fixed queue icon being blocked by an overlay frame
+- fixed tons of edit mode issues
+- fixed tons of taint code paths
+- fixed minimap cluster anchoring
 ## v2.41.1 - 2026-02-24
 
 ### Fixed
