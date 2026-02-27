@@ -1027,7 +1027,13 @@ local function OnUpdate(self, delta)
     -- Track grounded time for auto-fade
     local gliding, canGlideNow, _ = GetGlidingInfo()
     if not gliding and canGlideNow then
+        local prevGroundedTime = groundedTime
         groundedTime = groundedTime + UPDATE_THROTTLE
+        -- Re-evaluate visibility once grounded time crosses the fade delay threshold
+        local fadeDelay = settings.fadeDelay or 3
+        if prevGroundedTime < fadeDelay and groundedTime >= fadeDelay then
+            _visibilityDirty = true
+        end
     else
         groundedTime = 0
     end
@@ -1136,11 +1142,12 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         end)
     elseif event == "PLAYER_CAN_GLIDE_CHANGED" then
         canGlide = arg1
-        _visibilityDirty = true
+        -- Must call directly: OnUpdate doesn't fire when frame is hidden
+        if skyridingFrame then UpdateVisibility() end
     elseif event == "PLAYER_IS_GLIDING_CHANGED" then
         isGliding = arg1
         groundedTime = 0
-        _visibilityDirty = true
+        if skyridingFrame then UpdateVisibility() end
     elseif event == "UPDATE_BONUS_ACTIONBAR" or event == "SPELL_UPDATE_CHARGES" then
         _vigorDirty = true
         _secondWindDirty = true
@@ -1148,10 +1155,10 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         _abilityDirty = true
     elseif event == "PLAYER_REGEN_DISABLED" then
         inCombat = true
-        _visibilityDirty = true
+        if skyridingFrame then UpdateVisibility() end
     elseif event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
-        _visibilityDirty = true
+        if skyridingFrame then UpdateVisibility() end
     elseif event == "UNIT_AURA" and arg1 == "player" then
         local settings = GetSettings()
         if not settings or settings.enabled == false then
