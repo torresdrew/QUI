@@ -226,22 +226,19 @@ local function HookAllGlows()
     -- When Blizzard tries to show a glow, we ALWAYS hide Blizzard's glow
     -- Our custom glow (via LibCustomGlow) is completely separate and won't be affected
     if type(ActionButton_ShowOverlayGlow) == "function" then
-        -- TAINT SAFETY: Defer ALL addon logic to break taint chain from secure context.
         hooksecurefunc("ActionButton_ShowOverlayGlow", function(button)
-            C_Timer.After(0, function()
-                -- Only hide glows on Essential/Utility cooldown viewers, NOT BuffIcon
-                if button and button.GetParent and button:GetParent() then
-                    local parent = button:GetParent()
-                    local parentName = parent.GetName and parent:GetName()
-                    if parentName and (
-                        parentName:find("EssentialCooldown") or
-                        parentName:find("UtilityCooldown")
-                        -- BuffIconCooldown is NOT included - we want glows on buff icons
-                    ) then
-                        pcall(HideBlizzardGlows, button)
-                    end
+            -- Only hide glows on Essential/Utility cooldown viewers, NOT BuffIcon
+            if button and button.GetParent and button:GetParent() then
+                local parent = button:GetParent()
+                local parentName = parent.GetName and parent:GetName()
+                if parentName and (
+                    parentName:find("EssentialCooldown") or
+                    parentName:find("UtilityCooldown")
+                    -- BuffIconCooldown is NOT included - we want glows on buff icons
+                ) then
+                    pcall(HideBlizzardGlows, button)
                 end
-            end)
+            end
         end)
     end
     

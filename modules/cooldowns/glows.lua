@@ -26,6 +26,27 @@ _G.QUI_GetGlowState = function(icon)
     return glowIconState[icon]
 end
 
+-- Get or create a transparent overlay frame for applying LCG glows.
+-- TAINT SAFETY: LCG writes glow frame references (e.g. "_PixelGlow_*") to its
+-- target frame's Lua table. If the target is a Blizzard CDM icon, this taints
+-- the icon's table — Blizzard's CooldownViewer then reads tainted cooldownInfo
+-- and errors in SpellIDMatchesAnyAssociatedSpellIDs. By targeting a separate
+-- overlay frame, all LCG writes stay off Blizzard's frames.
+local function GetGlowOverlay(icon)
+    local gis = glowIconState[icon]
+    if gis and gis.overlay then return gis.overlay end
+
+    local ok, overlay = pcall(CreateFrame, "Frame", nil, icon)
+    if not ok or not overlay then return nil end
+
+    overlay:SetAllPoints(icon)
+    pcall(function() overlay:SetFrameLevel(icon:GetFrameLevel() + 5) end)
+
+    if not gis then gis = {}; glowIconState[icon] = gis end
+    gis.overlay = overlay
+    return overlay
+end
+
 -- Track active glow spell names from SPELL_ACTIVATION_OVERLAY_GLOW events.
 -- Used for name-based matching since CDM cooldownIDs != actual spell IDs.
 local activeGlowSpellNames = {}  -- [spellName] = true
@@ -176,6 +197,10 @@ local function ApplyLibCustomGlow(icon, viewerSettings)
     if not LCG then return false end
     if not icon then return false end
 
+    -- TAINT SAFETY: Apply glow to an overlay frame, not the Blizzard icon
+    local overlay = GetGlowOverlay(icon)
+    if not overlay then return false end
+
     local glowType = viewerSettings.glowType
     local color = viewerSettings.color
     local lines = viewerSettings.lines
@@ -191,30 +216,30 @@ local function ApplyLibCustomGlow(icon, viewerSettings)
     if glowType == "Pixel Glow" then
         -- Pixel Glow: animated lines around the border
         -- Parameters: frame, color, numLines, frequency, length, thickness, xOffset, yOffset, border, key
-        LCG.PixelGlow_Start(icon, color, lines, frequency, nil, thickness, 0, 0, true, "_QUICustomGlow")
-        local glowFrame = icon["_PixelGlow_QUICustomGlow"]
+        LCG.PixelGlow_Start(overlay, color, lines, frequency, nil, thickness, 0, 0, true, "_QUICustomGlow")
+        local glowFrame = overlay["_PixelGlow_QUICustomGlow"]
         if glowFrame then
             glowFrame:ClearAllPoints()
             -- Apply offset: negative expands outward, positive shrinks inward
-            glowFrame:SetPoint("TOPLEFT", icon, "TOPLEFT", -xOffset, xOffset)
-            glowFrame:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", xOffset, -xOffset)
+            glowFrame:SetPoint("TOPLEFT", overlay, "TOPLEFT", -xOffset, xOffset)
+            glowFrame:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", xOffset, -xOffset)
         end
 
     elseif glowType == "Autocast Shine" then
         -- Autocast Shine: orbiting sparkle spots
         -- Parameters: frame, color, numSpots, frequency, scale, xOffset, yOffset, key
-        LCG.AutoCastGlow_Start(icon, color, lines, frequency, scale, 0, 0, "_QUICustomGlow")
-        local glowFrame = icon["_AutoCastGlow_QUICustomGlow"]
+        LCG.AutoCastGlow_Start(overlay, color, lines, frequency, scale, 0, 0, "_QUICustomGlow")
+        local glowFrame = overlay["_AutoCastGlow_QUICustomGlow"]
         if glowFrame then
             glowFrame:ClearAllPoints()
-            glowFrame:SetPoint("TOPLEFT", icon, "TOPLEFT", -xOffset, xOffset)
-            glowFrame:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", xOffset, -xOffset)
+            glowFrame:SetPoint("TOPLEFT", overlay, "TOPLEFT", -xOffset, xOffset)
+            glowFrame:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", xOffset, -xOffset)
         end
 
     elseif glowType == "Button Glow" then
         -- Button Glow: classic Blizzard-style action button glow
         -- Parameters: frame, color, frequency, frameLevel
-        LCG.ButtonGlow_Start(icon, color, frequency)
+        LCG.ButtonGlow_Start(overlay, color, frequency)
     end
 
     -- Flag already set by StartGlow, just ensure it's there
@@ -257,14 +282,16 @@ end
 StopGlow = function(icon)
     if not icon then return end
 
-    -- Stop all LibCustomGlow effect types
+    local gis = glowIconState[icon]
+    -- TAINT SAFETY: Stop LCG on the overlay frame (where glows are applied),
+    -- not on the Blizzard icon frame directly.
+    local target = (gis and gis.overlay) or icon
     if LCG then
-        pcall(LCG.PixelGlow_Stop, icon, "_QUICustomGlow")
-        pcall(LCG.AutoCastGlow_Stop, icon, "_QUICustomGlow")
-        pcall(LCG.ButtonGlow_Stop, icon)
+        pcall(LCG.PixelGlow_Stop, target, "_QUICustomGlow")
+        pcall(LCG.AutoCastGlow_Stop, target, "_QUICustomGlow")
+        pcall(LCG.ButtonGlow_Stop, target)
     end
 
-    local gis = glowIconState[icon]
     if gis then gis.active = nil end
     activeGlowIcons[icon] = nil
 end
@@ -435,8 +462,11 @@ local pendingTargetSpellID
 ScheduleGlowScan = function(targetSpellID)
     if scanPending then
         -- Already have a pending scan; widen to full scan if mixing targets
-        if pendingTargetSpellID and targetSpellID ~= pendingTargetSpellID then
-            pendingTargetSpellID = nil
+        -- TAINT SAFETY: use SafeCompare to avoid erroring on secret values
+        if pendingTargetSpellID then
+            if not targetSpellID or Helpers.SafeCompare(targetSpellID, pendingTargetSpellID) ~= true then
+                pendingTargetSpellID = nil
+            end
         end
         return
     end
@@ -486,6 +516,9 @@ local function SetupGlowDetection()
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     eventFrame:SetScript("OnEvent", function(_, event, spellID)
+        -- TAINT SAFETY: combat may deliver secret spell IDs — drop to nil (full scan)
+        if Helpers.IsSecretValue(spellID) then spellID = nil end
+
         if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" then
             -- Track this spell name as glowing (for name-based matching)
             pcall(function()

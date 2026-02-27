@@ -47,6 +47,15 @@ local lastAuraUpdate = {}
 QUI_UF._lastAuraUpdate = lastAuraUpdate
 
 ---------------------------------------------------------------------------
+-- AURA ICON STATE (weak-keyed to avoid tainting frames with secret values)
+---------------------------------------------------------------------------
+-- auraData.auraInstanceID is a secret number during combat.  Storing it
+-- directly on the Frame object taints the frame and propagates through
+-- Blizzard's CooldownViewer → tContains → "attempt to compare secret".
+-- A plain Lua side-table keeps the value off the frame entirely.
+local auraIconState = setmetatable({}, { __mode = "k" })
+
+---------------------------------------------------------------------------
 -- AURA ICON SETTINGS
 ---------------------------------------------------------------------------
 
@@ -145,19 +154,20 @@ local function CreateAuraIcon(parent, index, size, auraSettings, isDebuff)
     -- Enable mouse for tooltip interaction
     icon:EnableMouse(true)
 
-    -- Aura data storage for tooltips
-    icon.unit = nil
-    icon.auraInstanceID = nil
-    icon.filter = nil  -- "HELPFUL" or "HARMFUL"
+    -- Aura data stored in side-table (auraIconState) to avoid frame taint
+    icon.filter = nil  -- "HELPFUL" or "HARMFUL" (safe string, kept on frame)
 
-    -- Tooltip scripts using safe auraInstanceID API
+    -- Tooltip scripts — read auraInstanceID from side-table, not the frame
     icon:SetScript("OnEnter", function(self)
-        if self.unit and self.auraInstanceID then
+        local state = auraIconState[self]
+        local unit = state and state.unit
+        local auraID = state and state.auraInstanceID
+        if unit and auraID then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             if self.filter == "HELPFUL" then
-                GameTooltip:SetUnitBuffByAuraInstanceID(self.unit, self.auraInstanceID)
+                GameTooltip:SetUnitBuffByAuraInstanceID(unit, auraID)
             else
-                GameTooltip:SetUnitDebuffByAuraInstanceID(self.unit, self.auraInstanceID)
+                GameTooltip:SetUnitDebuffByAuraInstanceID(unit, auraID)
             end
             GameTooltip:Show()
         end
@@ -396,9 +406,11 @@ local function UpdateAuras(frame)
 
             local icon = GetAuraIcon(frame.debuffIcons, debuffCount, frame, iconSize, auraSettings, true)
 
-            -- Store aura data for tooltip
-            icon.unit = unit
-            icon.auraInstanceID = auraData.auraInstanceID
+            -- Store aura data in side-table (auraInstanceID is secret during combat)
+            local state = auraIconState[icon]
+            if not state then state = {}; auraIconState[icon] = state end
+            state.unit = unit
+            state.auraInstanceID = auraData.auraInstanceID
             icon.filter = debuffFilter
 
             -- Safely set texture (icon field is always safe)
@@ -472,9 +484,11 @@ local function UpdateAuras(frame)
 
             local icon = GetAuraIcon(frame.buffIcons, buffCount, frame, buffIconSize, auraSettings, false)
 
-            -- Store aura data for tooltip
-            icon.unit = unit
-            icon.auraInstanceID = auraData.auraInstanceID
+            -- Store aura data in side-table (auraInstanceID is secret during combat)
+            local state = auraIconState[icon]
+            if not state then state = {}; auraIconState[icon] = state end
+            state.unit = unit
+            state.auraInstanceID = auraData.auraInstanceID
             icon.filter = "HELPFUL"
 
             -- Safely set texture

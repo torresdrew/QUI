@@ -37,26 +37,41 @@ end
 
 -- Apply font and color to a single line (objective text)
 -- Returns true if line height was changed (callers use this to avoid unnecessary repositioning)
+-- IMPORTANT: This function must be idempotent. Redundant SetFont calls trigger text
+-- reflow which cascades into Blizzard layout updates → AddObjective fires again →
+-- StyleLine again → infinite oscillation. We skip SetFont when the font is already
+-- correct, and only adjust height when the font actually changed (with a 1px tolerance).
 local function StyleLine(line, fontPath, textFontSize, textColor)
     if not line then return false end
     local heightChanged = false
+    local targetFlags = GetFontFlags()
     if line.Text then
-        line.Text:SetFont(fontPath, textFontSize, GetFontFlags())
-        SafeSetTextColor(line.Text, textColor)
+        -- Only call SetFont when font actually needs changing
+        local curFont, curSize, curFlags = line.Text:GetFont()
+        local fontChanged = curFont ~= fontPath or curSize ~= textFontSize or curFlags ~= targetFlags
+        if fontChanged then
+            line.Text:SetFont(fontPath, textFontSize, targetFlags)
 
-        -- Recalculate line height after font change to handle multi-line wrapping
-        local textHeight = line.Text:GetStringHeight()
-        if textHeight and textHeight > 0 then
-            local currentHeight = line:GetHeight()
-            local minHeight = textHeight + 4
-            if currentHeight < minHeight then
-                line:SetHeight(minHeight)
-                heightChanged = true
+            -- Recalculate line height after font change to handle multi-line wrapping.
+            -- Only runs when font actually changed; 1px tolerance prevents sub-pixel
+            -- oscillation between our height and Blizzard's layout-computed height.
+            local textHeight = line.Text:GetStringHeight()
+            if textHeight and textHeight > 0 then
+                local currentHeight = line:GetHeight()
+                local minHeight = textHeight + 4
+                if minHeight - currentHeight > 1 then
+                    line:SetHeight(minHeight)
+                    heightChanged = true
+                end
             end
         end
+        SafeSetTextColor(line.Text, textColor)
     end
     if line.Dash then
-        line.Dash:SetFont(fontPath, textFontSize, GetFontFlags())
+        local curFont, curSize, curFlags = line.Dash:GetFont()
+        if curFont ~= fontPath or curSize ~= textFontSize or curFlags ~= targetFlags then
+            line.Dash:SetFont(fontPath, textFontSize, targetFlags)
+        end
         SafeSetTextColor(line.Dash, textColor)
     end
     return heightChanged

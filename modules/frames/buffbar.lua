@@ -776,15 +776,12 @@ local function StripBlizzardOverlay(icon)
                 if ok and atlas == "UI-HUD-CoolDownManager-IconOverlay" then
                     region:SetTexture("")
                     region:Hide()
-                    -- TAINT SAFETY: Use guard table + hook instead of replacing Show method
                     if not disabledRegions[region] then
                         disabledRegions[region] = true
                         hooksecurefunc(region, "Show", function(self)
-                            C_Timer.After(0, function()
-                                if self and not (self.IsForbidden and self:IsForbidden()) then
-                                    pcall(function() self:Hide() end)
-                                end
-                            end)
+                            if self and not (self.IsForbidden and self:IsForbidden()) then
+                                pcall(self.Hide, self)
+                            end
                         end)
                     end
                 end
@@ -812,18 +809,18 @@ local function DisableAtlasBorder(tex)
     if tex.SetAtlas and not (ibs and ibs.atlasDisabled) then
         iconBuffState[tex] = ibs or {}
         iconBuffState[tex].atlasDisabled = true
+        local _atlasGuard = false
         hooksecurefunc(tex, "SetAtlas", function(self)
-            C_Timer.After(0, function()
-                -- Safety check in case texture was released before timer fires
-                if not self or (self.IsForbidden and self:IsForbidden()) then return end
-                -- Must also clear the atlas, not just texture/alpha
-                pcall(function()
-                    self:SetAtlas(nil)
-                    self:SetTexture(nil)
-                    self:SetAlpha(0)
-                    self:Hide()
-                end)
+            if _atlasGuard then return end  -- prevent recursion from our own SetAtlas(nil)
+            if not self or (self.IsForbidden and self:IsForbidden()) then return end
+            _atlasGuard = true
+            pcall(function()
+                self:SetAtlas(nil)
+                self:SetTexture(nil)
+                self:SetAlpha(0)
+                self:Hide()
             end)
+            _atlasGuard = false
         end)
     end
 end
@@ -1303,12 +1300,9 @@ local function ApplyBarStyle(frame, settings, overrideBarWidth)
                 iconBuffState[iconTexture] = itbs or {}
                 iconBuffState[iconTexture].atlasHooked = true
                 hooksecurefunc(iconTexture, "SetAtlas", function(self)
-                    C_Timer.After(0, function()
-                        -- Restore TexCoord after any atlas change
-                        if self and self.SetTexCoord then
-                            self:SetTexCoord(0.07, 0.93, 0.07, 0.93)
-                        end
-                    end)
+                    if self and self.SetTexCoord then
+                        self:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+                    end
                 end)
             end
         end)

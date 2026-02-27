@@ -45,12 +45,19 @@ local function IsCooldownIconFrame(frame)
     return frame and (frame.icon or frame.Icon) and frame.Cooldown
 end
 
+local _overlayHooked = setmetatable({}, { __mode = "k" })
 local function StripBlizzardOverlay(icon)
     for _, region in ipairs({ icon:GetRegions() }) do
         if region:IsObjectType("Texture") and region.GetAtlas and region:GetAtlas() == "UI-HUD-CoolDownManager-IconOverlay" then
             region:SetTexture("")
             region:Hide()
-            Helpers.DeferredHideOnShow(region)
+            if not _overlayHooked[region] then
+                _overlayHooked[region] = true
+                hooksecurefunc(region, "Show", function(self)
+                    if self.IsForbidden and self:IsForbidden() then return end
+                    pcall(self.Hide, self)
+                end)
+            end
         end
     end
 end
@@ -300,23 +307,11 @@ function QUICore:SkinIcon(icon, settings)
     -- Strip Blizzard overlay
     StripBlizzardOverlay(icon)
 
-    -- BLIZZARD BUG WORKAROUND: OnCooldownIDCleared calls EnableSpellRangeCheck
-    -- with a nil spell identifier after ClearCooldownID already cleared it.
-    local iStateRPC = skinIconState[icon]
-    if not (iStateRPC and iStateRPC.rangeCheckPatched)
-       and type(icon.OnCooldownIDCleared) == "function" then
-        local origOnCleared = icon.OnCooldownIDCleared
-        icon.OnCooldownIDCleared = function(self, ...)
-            local ok, err = pcall(origOnCleared, self, ...)
-            if not ok then
-                if type(err) == "string" and err:find("EnableSpellRangeCheck") then
-                    return
-                end
-                error(err, 2)
-            end
-        end
-        GetSkinIconState(icon).rangeCheckPatched = true
-    end
+    -- NOTE: OnCooldownIDCleared workaround removed — replacing the function
+    -- directly on the Blizzard frame taints the icon's execution context,
+    -- causing isActive to become a secret value tainted by QUI and crashing
+    -- Blizzard_CooldownViewer SetIsActive comparisons.  The EnableSpellRangeCheck
+    -- nil-spell error it suppressed is a harmless Blizzard bug (cosmetic error log).
 
     -- Border (using BACKGROUND texture to avoid secret value errors during combat)
     -- BackdropTemplate causes "arithmetic on secret value" crashes when frame is resized during combat
