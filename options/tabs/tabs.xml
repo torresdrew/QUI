@@ -9,6 +9,7 @@
     <Script file="qol/tooltips.lua"/>
     <Script file="character/character.lua"/>
     <Script file="qol/skyriding.lua"/>
+    <Script file="qol/xptracker.lua"/>
     <Script file="frames/raidbuffs.lua"/>
     <Script file="ui/autohide.lua"/>
     <Script file="skinning/skinning.lua"/>

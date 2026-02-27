@@ -2724,6 +2724,29 @@ local defaults = {
             onlyShowInEncounters = false,  -- If true, only show during boss encounters (not general combat)
         },
 
+        -- XP Tracker
+        xpTracker = {
+            enabled = false,
+            width = 250,
+            height = 90,
+            barHeight = 20,
+            headerFontSize = 12,
+            headerLineHeight = 18,
+            fontSize = 11,
+            lineHeight = 14,
+            offsetX = 0,
+            offsetY = 150,
+            locked = true,
+            hideTextUntilHover = false,
+            barTexture = "Solid",
+            showBarText = true,
+            showRested = true,
+            barColor = {0.2, 0.5, 1.0, 1},
+            restedColor = {1.0, 0.7, 0.1, 0.5},
+            backdropColor = {0.05, 0.05, 0.07, 0.85},
+            borderColor = {0, 0, 0, 1},
+        },
+
         -- Cooldown Manager Effects
         cooldownSwipe = {
             showBuffSwipe = false,      -- Buff/aura duration swipe (Essential/Utility)
