@@ -58,7 +58,13 @@ local cachedPhysicalHeight = select(2, GetPhysicalScreenSize())
 --- @param frame? Frame The frame context (defaults to UIParent)
 --- @return number The size of 1 physical pixel in the frame's coordinate space
 function QUICore:GetPixelSize(frame)
-    local es = (frame or UIParent):GetEffectiveScale()
+    local es
+    if frame then
+        local ok, val = pcall(frame.GetEffectiveScale, frame)
+        es = ok and val or UIParent:GetEffectiveScale()
+    else
+        es = UIParent:GetEffectiveScale()
+    end
     if es == 0 then return 1 end
     if cachedPhysicalHeight == 0 then return 1 end
     return 768 / (cachedPhysicalHeight * es)
@@ -267,6 +273,7 @@ end
 --- @return number? y Snapped Y offset
 function QUICore:SnapFramePosition(frame)
     if not frame then return end
+    if InCombatLockdown() then return end
     local point, relativeTo, relativePoint, x, y = frame:GetPoint()
     if not point then return end
     x = self:PixelRound(x or 0, frame)
@@ -333,7 +340,7 @@ end
 --------------------------------------------------------------------------------
 
 --- Weak-keyed registry of FontStrings for scale-change refresh.
-local fontRegistry = setmetatable({}, { __mode = "k" })
+local fontRegistry = ns.Helpers.CreateStateTable()
 
 --- Internal: resolve font parameters and apply a pixel-snapped font to a FontString.
 --- Does NOT write to the registry — callers handle registration separately.
@@ -380,6 +387,14 @@ function QUICore:RefreshAllFonts()
     for fs, data in pairs(fontRegistry) do
         applyFontInternal(self, fs, data.frame, data.size, data.fontPath, data.flags)
     end
+end
+
+--- Wipe the font registry to release all FontString references.
+--- Called on profile change so stale FontStrings from the previous profile's
+--- frames are not retained. Modules will re-register their FontStrings
+--- via ApplyFont when they rebuild their UI for the new profile.
+function QUICore:CleanupFontRegistry()
+    wipe(fontRegistry)
 end
 
 --------------------------------------------------------------------------------

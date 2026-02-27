@@ -102,16 +102,7 @@ local ActionBars = {
 
 -- Store QUI state outside secure Blizzard frame tables.
 -- Writing custom keys directly on action buttons can taint secret values.
-local frameState = setmetatable({}, { __mode = "k" })
-
-local function GetFrameState(frame)
-    local state = frameState[frame]
-    if not state then
-        state = {}
-        frameState[frame] = state
-    end
-    return state
-end
+local frameState, GetFrameState = ns.Helpers.CreateStateTable()
 
 ---------------------------------------------------------------------------
 -- HELPER FUNCTIONS
@@ -165,6 +156,33 @@ end
 local function ShouldSuppressMouseoverHideForLevel()
     local fadeSettings = GetFadeSettings()
     return fadeSettings and fadeSettings.disableBelowMaxLevel and IsPlayerBelowMaxLevel()
+end
+
+local function IsLeaveVehicleButtonVisible()
+    if CanExitVehicle and CanExitVehicle() then
+        return true
+    end
+
+    local mainLeaveButton = _G.MainMenuBarVehicleLeaveButton
+    if mainLeaveButton and mainLeaveButton.IsShown and mainLeaveButton:IsShown() then
+        return true
+    end
+
+    local overrideBar = _G.OverrideActionBar
+    local overrideLeaveButton = overrideBar and overrideBar.LeaveButton
+    if overrideLeaveButton and overrideLeaveButton.IsShown and overrideLeaveButton:IsShown() then
+        return true
+    end
+
+    return false
+end
+
+local function ShouldKeepLeaveVehicleVisible()
+    local fadeSettings = GetFadeSettings()
+    if not (fadeSettings and fadeSettings.keepLeaveVehicleVisible) then
+        return false
+    end
+    return IsLeaveVehicleButtonVisible()
 end
 
 local function UpdateLevelSuppressionState()
@@ -615,6 +633,90 @@ local function GetExtraButtonDB(buttonType)
         and core.db.profile.actionBars.bars[buttonType]
 end
 
+-- Create a nudge button for extra button movers
+local function CreateExtraButtonNudgeButton(parent, direction, holder, buttonType)
+    local btn = CreateFrame("Button", nil, parent)
+    btn:SetSize(18, 18)
+    btn:SetFrameStrata("HIGH")
+    btn:SetFrameLevel(100)
+
+    -- Background
+    local bg = btn:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetTexture("Interface\\Buttons\\WHITE8x8")
+    bg:SetVertexColor(0.1, 0.1, 0.1, 0.7)
+
+    -- Chevron lines
+    local line1 = btn:CreateTexture(nil, "ARTWORK")
+    line1:SetColorTexture(1, 1, 1, 0.9)
+    line1:SetSize(7, 2)
+
+    local line2 = btn:CreateTexture(nil, "ARTWORK")
+    line2:SetColorTexture(1, 1, 1, 0.9)
+    line2:SetSize(7, 2)
+
+    if direction == "DOWN" then
+        line1:SetPoint("CENTER", btn, "CENTER", -2, 1)
+        line1:SetRotation(math.rad(-45))
+        line2:SetPoint("CENTER", btn, "CENTER", 2, 1)
+        line2:SetRotation(math.rad(45))
+    elseif direction == "UP" then
+        line1:SetPoint("CENTER", btn, "CENTER", -2, -1)
+        line1:SetRotation(math.rad(45))
+        line2:SetPoint("CENTER", btn, "CENTER", 2, -1)
+        line2:SetRotation(math.rad(-45))
+    elseif direction == "LEFT" then
+        line1:SetPoint("CENTER", btn, "CENTER", 1, -2)
+        line1:SetRotation(math.rad(-45))
+        line2:SetPoint("CENTER", btn, "CENTER", 1, 2)
+        line2:SetRotation(math.rad(45))
+    elseif direction == "RIGHT" then
+        line1:SetPoint("CENTER", btn, "CENTER", -1, -2)
+        line1:SetRotation(math.rad(45))
+        line2:SetPoint("CENTER", btn, "CENTER", -1, 2)
+        line2:SetRotation(math.rad(-45))
+    end
+
+    btn:SetScript("OnEnter", function(self)
+        line1:SetVertexColor(1, 0.8, 0, 1)
+        line2:SetVertexColor(1, 0.8, 0, 1)
+    end)
+    btn:SetScript("OnLeave", function(self)
+        line1:SetVertexColor(1, 1, 1, 0.9)
+        line2:SetVertexColor(1, 1, 1, 0.9)
+    end)
+
+    btn:SetScript("OnClick", function()
+        local dx, dy = 0, 0
+        if direction == "UP" then dy = 1
+        elseif direction == "DOWN" then dy = -1
+        elseif direction == "LEFT" then dx = -1
+        elseif direction == "RIGHT" then dx = 1
+        end
+        -- Move the holder
+        if holder.AdjustPointsOffset then
+            holder:AdjustPointsOffset(dx, dy)
+        else
+            local point, relativeTo, relativePoint, xOfs, yOfs = holder:GetPoint(1)
+            if point then
+                holder:ClearAllPoints()
+                holder:SetPoint(point, relativeTo, relativePoint, (xOfs or 0) + dx, (yOfs or 0) + dy)
+            end
+        end
+        -- Save position
+        local core = GetCore()
+        if core and core.SnapFramePosition then
+            local point, _, relPoint, x, y = core:SnapFramePosition(holder)
+            local db = GetExtraButtonDB(buttonType)
+            if db and point then
+                db.position = { point = point, relPoint = relPoint, x = x, y = y }
+            end
+        end
+    end)
+
+    return btn
+end
+
 -- Create holder frame and mover overlay for an extra button type
 local function CreateExtraButtonHolder(buttonType, displayName)
     local settings = GetExtraButtonDB(buttonType)
@@ -655,7 +757,7 @@ local function CreateExtraButtonHolder(buttonType, displayName)
     mover:EnableMouse(true)
     mover:SetMovable(true)
     mover:RegisterForDrag("LeftButton")
-    mover:SetFrameStrata("FULLSCREEN_DIALOG")
+    mover:SetFrameStrata("HIGH")
     mover:Hide()
 
     -- Label text
@@ -663,6 +765,19 @@ local function CreateExtraButtonHolder(buttonType, displayName)
     text:SetPoint("CENTER")
     text:SetText(displayName)
     mover.text = text
+
+    -- Nudge buttons
+    local nudgeUp = CreateExtraButtonNudgeButton(mover, "UP", holder, buttonType)
+    nudgeUp:SetPoint("BOTTOM", mover, "TOP", 0, 4)
+
+    local nudgeDown = CreateExtraButtonNudgeButton(mover, "DOWN", holder, buttonType)
+    nudgeDown:SetPoint("TOP", mover, "BOTTOM", 0, -4)
+
+    local nudgeLeft = CreateExtraButtonNudgeButton(mover, "LEFT", holder, buttonType)
+    nudgeLeft:SetPoint("RIGHT", mover, "LEFT", -4, 0)
+
+    local nudgeRight = CreateExtraButtonNudgeButton(mover, "RIGHT", holder, buttonType)
+    nudgeRight:SetPoint("LEFT", mover, "RIGHT", 4, 0)
 
     -- Drag handlers
     mover:SetScript("OnDragStart", function(self)
@@ -721,9 +836,10 @@ local function ApplyExtraButtonSettings(buttonType)
     blizzFrame:SetPoint("CENTER", holder, "CENTER", offsetX, offsetY)
     hookingSetPoint = false
 
-    -- Update holder size to match scaled frame
-    local width = (blizzFrame:GetWidth() or 64) * scale
-    local height = (blizzFrame:GetHeight() or 64) * scale
+    -- Update holder size to match scaled frame (SafeToNumber guards against
+    -- secret values that GetWidth/GetHeight can return during combat lockdown)
+    local width = Helpers.SafeToNumber(blizzFrame:GetWidth(), 64) * scale
+    local height = Helpers.SafeToNumber(blizzFrame:GetHeight(), 64) * scale
     holder:SetSize(math.max(width, 64), math.max(height, 64))
 
     -- Hide artwork if enabled
@@ -777,15 +893,19 @@ end
 
 -- Hook Blizzard frames to prevent them from repositioning
 local function HookExtraButtonPositioning()
+    -- TAINT SAFETY: Defer to break taint chain from secure Blizzard context.
     -- Hook ExtraActionBarFrame
     if ExtraActionBarFrame and not extraActionSetPointHooked then
         extraActionSetPointHooked = true
         hooksecurefunc(ExtraActionBarFrame, "SetPoint", function(self)
-            if hookingSetPoint or InCombatLockdown() then return end
-            local settings = GetExtraButtonDB("extraActionButton")
-            if extraActionHolder and settings and settings.enabled then
-                QueueExtraButtonReanchor("extraActionButton")
-            end
+            if hookingSetPoint then return end
+            C_Timer.After(0, function()
+                if hookingSetPoint or InCombatLockdown() then return end
+                local settings = GetExtraButtonDB("extraActionButton")
+                if extraActionHolder and settings and settings.enabled then
+                    QueueExtraButtonReanchor("extraActionButton")
+                end
+            end)
         end)
     end
 
@@ -793,11 +913,14 @@ local function HookExtraButtonPositioning()
     if ZoneAbilityFrame and not zoneAbilitySetPointHooked then
         zoneAbilitySetPointHooked = true
         hooksecurefunc(ZoneAbilityFrame, "SetPoint", function(self)
-            if hookingSetPoint or InCombatLockdown() then return end
-            local settings = GetExtraButtonDB("zoneAbility")
-            if zoneAbilityHolder and settings and settings.enabled then
-                QueueExtraButtonReanchor("zoneAbility")
-            end
+            if hookingSetPoint then return end
+            C_Timer.After(0, function()
+                if hookingSetPoint or InCombatLockdown() then return end
+                local settings = GetExtraButtonDB("zoneAbility")
+                if zoneAbilityHolder and settings and settings.enabled then
+                    QueueExtraButtonReanchor("zoneAbility")
+                end
+            end)
         end)
     end
 
@@ -1447,6 +1570,37 @@ local function ResetAllButtonTints()
     end
 end
 
+-- Hook SetVertexColor on each action button icon so that when Blizzard's
+-- update cycle resets the vertex color (e.g. on hover / ActionBarActionEventsFrame),
+-- we immediately reapply our range/usability tint in the same frame.
+-- hooksecurefunc is taint-safe: it appends after the original without tainting it,
+-- and SetVertexColor is not a protected function so no taint propagation can occur.
+local function HookButtonIconsForUsability()
+    for i = 1, 8 do
+        local barKey = "bar" .. i
+        local buttons = GetBarButtons(barKey)
+        for _, button in ipairs(buttons) do
+            local icon = button.icon or button.Icon
+            if icon then
+                local state = GetFrameState(button)
+                if not state.usabilityIconHooked then
+                    state.usabilityIconHooked = true
+                    hooksecurefunc(icon, "SetVertexColor", function()
+                        if state.suppressReapply then return end
+                        if not state.tinted then return end
+                        state.suppressReapply = true
+                        local gs = GetGlobalSettings()
+                        if gs then
+                            UpdateButtonUsability(button, gs)
+                        end
+                        state.suppressReapply = nil
+                    end)
+                end
+            end
+        end
+    end
+end
+
 -- Start/stop usability indicator system (event-driven + optional range polling)
 local function UpdateUsabilityPolling()
     local settings = GetGlobalSettings()
@@ -1471,6 +1625,10 @@ local function UpdateUsabilityPolling()
         usabilityCheckFrame:SetScript("OnEvent", function(self, event, ...)
             ScheduleUsabilityUpdate()
         end)
+
+        -- Hook icon SetVertexColor so Blizzard's per-frame updates
+        -- (e.g. on hover) can't reset our range/usability tint.
+        HookButtonIconsForUsability()
 
         -- Initial update
         ScheduleUsabilityUpdate()
@@ -1522,6 +1680,9 @@ end
 -- MOUSEOVER FADE SYSTEM
 ---------------------------------------------------------------------------
 
+-- During Edit Mode, fade-outs are suspended so all bars remain visible.
+local IsInEditMode = ns.Helpers.IsEditModeShown
+
 -- Get or create fade state for a bar
 local function GetBarFadeState(barKey)
     if not ActionBars.fadeState[barKey] then
@@ -1542,6 +1703,10 @@ end
 
 -- Apply alpha to all buttons in a bar
 local function SetBarAlpha(barKey, alpha)
+    if barKey == "bar1" and alpha < 1 and ShouldKeepLeaveVehicleVisible() then
+        alpha = 1
+    end
+
     local buttons = GetBarButtons(barKey)
     local settings = GetGlobalSettings()
     local hideEmptyEnabled = settings and settings.hideEmptySlots
@@ -1566,6 +1731,9 @@ end
 
 -- Start smooth fade animation for a bar
 local function StartBarFade(barKey, targetAlpha)
+    -- Don't fade bars out during Edit Mode — keep everything visible
+    if targetAlpha < 1 and IsInEditMode() then return end
+
     local state = GetBarFadeState(barKey)
     local fadeSettings = GetFadeSettings()
 
@@ -1700,6 +1868,8 @@ end
 
 -- Start fade-out for a linked bar
 local function FadeLinkedBarDirect(barKey)
+    if IsInEditMode() then return end
+
     local barSettings = GetBarSettings(barKey)
     local fadeSettings = GetFadeSettings()
 
@@ -1786,6 +1956,8 @@ end
 
 -- Handle mouse leaving a bar element (with delay to check if still over bar)
 local function OnBarMouseLeave(barKey)
+    if IsInEditMode() then return end
+
     local state = GetBarFadeState(barKey)
     local fadeSettings = GetFadeSettings()
     local barSettings = GetBarSettings(barKey)
@@ -1883,6 +2055,12 @@ end
 
 -- Setup mouseover detection for a bar (event-based, no polling)
 local function SetupBarMouseover(barKey)
+    -- During Edit Mode, keep all bars fully visible
+    if IsInEditMode() then
+        SetBarAlpha(barKey, 1)
+        return
+    end
+
     local barSettings = GetBarSettings(barKey)
     local fadeSettings = GetFadeSettings()
     local db = GetDB()
@@ -2085,11 +2263,14 @@ local function ApplyPageArrowVisibility(hide)
         pageNum:Hide()
         if not pageArrowShowHooked then
             pageArrowShowHooked = true
+            -- TAINT SAFETY: Defer to break taint chain from secure context.
             hooksecurefunc(pageNum, "Show", function(self)
-                local db = GetDB()
-                if db and db.bars and db.bars.bar1 and db.bars.bar1.hidePageArrow then
-                    self:Hide()
-                end
+                C_Timer.After(0, function()
+                    local db = GetDB()
+                    if db and db.bars and db.bars.bar1 and db.bars.bar1.hidePageArrow and self and self.Hide then
+                        self:Hide()
+                    end
+                end)
             end)
         end
     else
@@ -2145,6 +2326,7 @@ function ActionBars:Initialize()
     PatchLibKeyBoundForMidnight()
 
     -- Hook tooltip suppression for action buttons
+    -- NOTE: Synchronous — deferring causes tooltip flash before hide.
     hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
         local global = GetGlobalSettings()
         if not global or global.showTooltips ~= false then return end
@@ -2225,6 +2407,9 @@ eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("CURSOR_CHANGED")
 eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("UPDATE_VEHICLE_ACTIONBAR")
+eventFrame:RegisterEvent("UNIT_ENTERED_VEHICLE")
+eventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
@@ -2300,6 +2485,18 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
 
+    elseif event == "UPDATE_VEHICLE_ACTIONBAR" then
+        C_Timer.After(0.05, function()
+            SetupBarMouseover("bar1")
+        end)
+
+    elseif event == "UNIT_ENTERED_VEHICLE" or event == "UNIT_EXITED_VEHICLE" then
+        local unit = ...
+        if unit ~= "player" then return end
+        C_Timer.After(0.05, function()
+            SetupBarMouseover("bar1")
+        end)
+
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Process pending initialization (from /reload during combat)
         if ActionBars.pendingInitialize then
@@ -2337,30 +2534,48 @@ end
 
 ---------------------------------------------------------------------------
 -- EDIT MODE INTEGRATION
--- Show/hide extra button movers when Edit Mode is entered/exited
+-- Suspend mouseover fade and show extra button movers during Edit Mode
 ---------------------------------------------------------------------------
 
-local function SetupEditModeHooks()
-    if not EditModeManagerFrame then return end
+-- Use central Edit Mode dispatcher to avoid taint from multiple hooksecurefunc
+-- callbacks on EnterEditMode/ExitEditMode.
+do
+    local core = GetCore()
+    if core and core.RegisterEditModeEnter then
+        core:RegisterEditModeEnter(function()
+            -- Force all bars to full opacity and cancel pending fades
+            for barKey, state in pairs(ActionBars.fadeState) do
+                state.isFading = false
+                if state.delayTimer then
+                    state.delayTimer:Cancel()
+                    state.delayTimer = nil
+                end
+                if state.leaveCheckTimer then
+                    state.leaveCheckTimer:Cancel()
+                    state.leaveCheckTimer = nil
+                end
+                SetBarAlpha(barKey, 1)
+            end
 
-    -- Show movers when entering Edit Mode
-    hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
-        local extraSettings = GetExtraButtonDB("extraActionButton")
-        local zoneSettings = GetExtraButtonDB("zoneAbility")
-        -- Only show movers if at least one extra button feature is enabled
-        if (extraSettings and extraSettings.enabled) or (zoneSettings and zoneSettings.enabled) then
-            ShowExtraButtonMovers()
-        end
-    end)
+            -- Show extra button movers when QUI extra button feature is enabled
+            local extraSettings = GetExtraButtonDB("extraActionButton")
+            local zoneSettings = GetExtraButtonDB("zoneAbility")
+            if (extraSettings and extraSettings.enabled) or (zoneSettings and zoneSettings.enabled) then
+                ShowExtraButtonMovers()
+            end
 
-    -- Hide movers when exiting Edit Mode
-    hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
-        HideExtraButtonMovers()
-    end)
+        end)
+
+        core:RegisterEditModeExit(function()
+            HideExtraButtonMovers()
+
+            -- Resume mouseover fade for all bars
+            for barKey, _ in pairs(BAR_FRAMES) do
+                SetupBarMouseover(barKey)
+            end
+        end)
+    end
 end
-
--- Call setup after a short delay to ensure EditModeManagerFrame exists
-C_Timer.After(1, SetupEditModeHooks)
 
 ---------------------------------------------------------------------------
 -- EXPOSE MODULE

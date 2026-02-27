@@ -9,6 +9,7 @@
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local LSM = LibStub("LibSharedMedia-3.0")
+local UIKit = ns.UIKit
 
 -- Enable CDM immediately when file loads (before any events fire)
 pcall(function() SetCVar("cooldownViewerEnabled", 1) end)
@@ -35,6 +36,8 @@ local ASPECT_RATIOS = {
 
 -- Forward declaration for mouseover hook (defined later in visibility section)
 local HookFrameForMouseover
+local UpdateCDMVisibility
+local UpdateUnitframesVisibility
 
 -- Migrate old 'shape' setting to 'aspectRatioCrop' for CDM rows
 local function MigrateRowAspect(rowData)
@@ -52,20 +55,39 @@ end
 -- STATE
 ---------------------------------------------------------------------------
 local NCDM = {
-    hooked = {},           -- Track which viewers are hooked
+    hooked = {},           -- Track hook targets (viewer frame refs + boolean flags)
     applying = {},         -- Prevent re-entry during layout
     initialized = false,
     pendingIcons = {},     -- Icons queued for skinning after combat
     pendingTicker = nil,   -- Single ticker for pending icons (self-cancels when empty)
-    settingsVersion = {},  -- Track settings changes per tracker (for optimization)
 }
+
+---------------------------------------------------------------------------
+-- TAINT SAFETY: Weak-keyed tables for per-viewer and per-icon state
+-- Previously stored as viewer.__cdm*, icon._ncdm*, etc. which taints
+-- Blizzard frames in the Midnight (12.0) taint model.
+---------------------------------------------------------------------------
+local _viewerState, getViewerState = Helpers.CreateStateTable()
+local _iconState, getIconState     = Helpers.CreateStateTable()
+local _mouseoverHooked             = Helpers.CreateStateTable()
+local _keepVisibleSelections       = setmetatable({}, { __mode = "k" })
+
+---------------------------------------------------------------------------
+-- CACHES: Avoid per-frame allocations in OnUpdate paths
+---------------------------------------------------------------------------
+-- GetCDMFrames() cache – rebuilt only when dirty flag is set
+local _cdmFramesCache = {}
+local _cdmFramesDirty = true
+
+-- GetCDMVisibilitySettings() cache – invalidated on settings / profile change
+local _visSettingsCache = nil
 
 -- Combat-stable parent used for "Utility below Essential" anchoring.
 -- Out of combat this proxy follows Essential; in combat it stays fixed.
 local UtilityAnchorProxy = nil
 local FrameDriftDebug = {
     sessions = {}, -- key -> session
-    frameToKey = setmetatable({}, { __mode = "k" }),
+    frameToKey = Helpers.CreateStateTable(),
     defaultInterval = 0.10,
     defaultThreshold = 0.5,
     defaultMaxEntries = 120,
@@ -262,35 +284,27 @@ end
 
 local function GetUtilityAnchorProxy()
     if not UtilityAnchorProxy then
-        UtilityAnchorProxy = CreateFrame("Frame", nil, UIParent)
-        UtilityAnchorProxy:Show()
+        UtilityAnchorProxy = UIKit.CreateAnchorProxy(nil, {
+            mirrorVisibility = false,
+            sizeResolver = function(source)
+                local vs = _viewerState[source]
+                local width = (vs and vs.cdmIconWidth) or source:GetWidth() or 0
+                local height = (vs and vs.cdmTotalHeight) or source:GetHeight() or 0
+                return width, height
+            end,
+        })
     end
     return UtilityAnchorProxy
 end
 
 local function UpdateUtilityAnchorProxy()
     local proxy = GetUtilityAnchorProxy()
-    if InCombatLockdown() then
-        return proxy
-    end
-
     local essViewer = _G[VIEWER_ESSENTIAL]
     if not essViewer then
         return proxy
     end
-
-    local viewerX, viewerY = essViewer:GetCenter()
-    local screenX, screenY = UIParent:GetCenter()
-    local width = essViewer.__cdmIconWidth or essViewer:GetWidth() or 1
-    local height = essViewer.__cdmTotalHeight or essViewer:GetHeight() or 1
-    width = math.max(1, width)
-    height = math.max(1, height)
-
-    if viewerX and viewerY and screenX and screenY then
-        proxy:ClearAllPoints()
-        proxy:SetPoint("CENTER", UIParent, "CENTER", viewerX - screenX, viewerY - screenY)
-    end
-    proxy:SetSize(width, height)
+    proxy:SetSourceFrame(essViewer)
+    proxy:Sync()
     return proxy
 end
 
@@ -300,14 +314,15 @@ local function SetFrameLevelSafe(frame, level)
         return false
     end
 
+    local fs = getViewerState(frame)
     if InCombatLockdown() then
-        frame.__cdmPendingFrameLevel = level
+        fs.cdmPendingFrameLevel = level
         return false
     end
 
     local ok = pcall(frame.SetFrameLevel, frame, level)
     if ok then
-        frame.__cdmPendingFrameLevel = nil
+        fs.cdmPendingFrameLevel = nil
     end
     return ok
 end
@@ -318,42 +333,21 @@ local function SetSizeSafe(frame, width, height)
         return false
     end
 
+    local fs = getViewerState(frame)
     if InCombatLockdown() then
-        frame.__cdmPendingWidth = width
-        frame.__cdmPendingHeight = height
+        fs.cdmPendingWidth = width
+        fs.cdmPendingHeight = height
         return false
     end
 
     local ok = pcall(frame.SetSize, frame, width, height)
     if ok then
-        frame.__cdmPendingWidth = nil
-        frame.__cdmPendingHeight = nil
+        fs.cdmPendingWidth = nil
+        fs.cdmPendingHeight = nil
     end
     return ok
 end
 
-local function SyncViewerSelectionSafe(viewer)
-    if not viewer or not viewer.Selection then
-        return false
-    end
-
-    if InCombatLockdown() then
-        viewer.__cdmPendingSelectionSync = true
-        return false
-    end
-
-    local ok = pcall(function()
-        viewer.Selection:ClearAllPoints()
-        viewer.Selection:SetPoint("TOPLEFT", viewer, "TOPLEFT", 0, 0)
-        viewer.Selection:SetPoint("BOTTOMRIGHT", viewer, "BOTTOMRIGHT", 0, 0)
-    end)
-    SetFrameLevelSafe(viewer.Selection, viewer:GetFrameLevel())
-
-    if ok then
-        viewer.__cdmPendingSelectionSync = nil
-    end
-    return ok
-end
 
 ---------------------------------------------------------------------------
 -- HELPER: Get database
@@ -422,6 +416,20 @@ local function IsIconFrame(child)
 end
 
 ---------------------------------------------------------------------------
+-- HELPER: Iterate visible icon children of a viewer (skips Selection)
+-- Callback receives (child); return true from callback to stop early.
+---------------------------------------------------------------------------
+local function ForEachVisibleIcon(viewer, callback)
+    local sel = viewer.Selection
+    for i = 1, viewer:GetNumChildren() do
+        local child = select(i, viewer:GetChildren())
+        if child and child ~= sel and child:IsShown() and IsIconFrame(child) then
+            if callback(child) then return end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- HELPER: Check if an icon has a valid spell texture (not an empty placeholder)
 ---------------------------------------------------------------------------
 local function HasValidTexture(icon)
@@ -435,6 +443,26 @@ local function HasValidTexture(icon)
         return texID ~= 0 and texID ~= ""
     end
     return false
+end
+
+---------------------------------------------------------------------------
+-- HELPER: Update locked power bars and castbars for a given tracker type
+---------------------------------------------------------------------------
+local function UpdateLockedBarsForViewer(trackerKey)
+    if trackerKey == "essential" then
+        if _G.QUI_UpdateLockedPowerBar then _G.QUI_UpdateLockedPowerBar() end
+        if _G.QUI_UpdateLockedSecondaryPowerBar then _G.QUI_UpdateLockedSecondaryPowerBar() end
+        if _G.QUI_UpdateLockedCastbarToEssential then _G.QUI_UpdateLockedCastbarToEssential() end
+    elseif trackerKey == "utility" then
+        if _G.QUI_UpdateLockedPowerBarToUtility then _G.QUI_UpdateLockedPowerBarToUtility() end
+        if _G.QUI_UpdateLockedSecondaryPowerBarToUtility then _G.QUI_UpdateLockedSecondaryPowerBarToUtility() end
+        if _G.QUI_UpdateLockedCastbarToUtility then _G.QUI_UpdateLockedCastbarToUtility() end
+    end
+end
+
+local function UpdateAllLockedBars()
+    UpdateLockedBarsForViewer("essential")
+    UpdateLockedBarsForViewer("utility")
 end
 
 ---------------------------------------------------------------------------
@@ -463,10 +491,7 @@ local function StripBlizzardOverlay(icon)
             if ok and atlas == "UI-HUD-CoolDownManager-IconOverlay" then
                 region:SetTexture("")
                 region:Hide()
-                hooksecurefunc(region, "Show", function(self)
-                    if InCombatLockdown() then return end
-                    self:Hide()
-                end)
+                Helpers.DeferredHideOnShow(region)
             end
         end
     end
@@ -475,21 +500,19 @@ end
 ---------------------------------------------------------------------------
 -- HELPER: Proactively block atlas borders (CPU attribution shifts to Blizzard)
 ---------------------------------------------------------------------------
+local blockedAtlasTextures = Helpers.CreateStateTable()
+
 local function PreventAtlasBorder(texture)
-    if not texture or texture.__quiAtlasBlocked then return end
-    texture.__quiAtlasBlocked = true
+    if not texture or blockedAtlasTextures[texture] then return end
+    blockedAtlasTextures[texture] = true
 
     -- Hook future SetAtlas calls to block border re-application
-    if texture.SetAtlas then
-        hooksecurefunc(texture, "SetAtlas", function(self)
-            if InCombatLockdown() then return end
-            if self.SetTexture then self:SetTexture(nil) end
-            if self.SetAlpha then self:SetAlpha(0) end
-        end)
+    Helpers.DeferredSetAtlasBlock(texture)
+    -- Clear current state (only outside combat)
+    if not InCombatLockdown() then
+        if texture.SetTexture then texture:SetTexture(nil) end
+        if texture.SetAlpha then texture:SetAlpha(0) end
     end
-    -- Clear current state
-    if texture.SetTexture then texture:SetTexture(nil) end
-    if texture.SetAlpha then texture:SetAlpha(0) end
 end
 
 ---------------------------------------------------------------------------
@@ -497,8 +520,9 @@ end
 ---------------------------------------------------------------------------
 local function ApplyTexCoord(icon)
     if not icon then return end
-    local z = icon._ncdmZoom or 0
-    local aspectRatio = icon._ncdmAspectRatio or 1.0
+    local is = _iconState[icon]
+    local z = (is and is.ncdmZoom) or 0
+    local aspectRatio = (is and is.ncdmAspectRatio) or 1.0
     local baseCrop = 0.08
 
     -- Start with base crop + zoom
@@ -527,9 +551,11 @@ end
 -- HELPER: One-time setup (things that only need to happen once per icon)
 ---------------------------------------------------------------------------
 local function SetupIconOnce(icon)
-    if not icon or icon._ncdmSetup then return end
-    icon._ncdmSetup = true
-    
+    if not icon then return end
+    local is = getIconState(icon)
+    if is.ncdmSetup then return end
+    is.ncdmSetup = true
+
     -- Remove Blizzard's mask textures
     local textures = { icon.Icon, icon.icon }
     for _, tex in ipairs(textures) do
@@ -566,15 +592,20 @@ local function SetupIconOnce(icon)
     -- TexCoord is now applied via the Layout hook instead (v1.34 approach)
 end
 
+-- Weak-keyed table to track which CooldownFlash frames have been hooked
+local hookedCooldownFlash = Helpers.CreateStateTable()
+
 ---------------------------------------------------------------------------
 -- HELPER: Apply icon styling
 ---------------------------------------------------------------------------
 local function SkinIcon(icon, size, aspectRatioCrop, zoom, borderSize, borderColorTable)
     if not icon then return end
+    if InCombatLockdown() then return true end
 
     -- Store zoom and aspect ratio for the texture coordinate calculation
-    icon._ncdmZoom = zoom or 0
-    icon._ncdmAspectRatio = aspectRatioCrop or 1.0
+    local is = getIconState(icon)
+    is.ncdmZoom = zoom or 0
+    is.ncdmAspectRatio = aspectRatioCrop or 1.0
 
     -- One-time setup (mask removal, overlay strip, SetTexCoord hook)
     SetupIconOnce(icon)
@@ -599,30 +630,30 @@ local function SkinIcon(icon, size, aspectRatioCrop, zoom, borderSize, borderCol
         -- Convert border pixel count to exact virtual coordinates
         local bs = (QUICore and QUICore.Pixels) and QUICore:Pixels(borderSize, icon) or borderSize
 
-        if not icon._ncdmBorder then
-            icon._ncdmBorder = icon:CreateTexture(nil, "BACKGROUND", nil, -8)
+        if not is.ncdmBorder then
+            is.ncdmBorder = icon:CreateTexture(nil, "BACKGROUND", nil, -8)
         end
         local bc = borderColorTable or {0, 0, 0, 1}
-        icon._ncdmBorder:SetColorTexture(bc[1], bc[2], bc[3], bc[4])
+        is.ncdmBorder:SetColorTexture(bc[1], bc[2], bc[3], bc[4])
 
-        icon._ncdmBorder:ClearAllPoints()
-        icon._ncdmBorder:SetPoint("TOPLEFT", icon, "TOPLEFT", -bs, bs)
-        icon._ncdmBorder:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", bs, -bs)
-        icon._ncdmBorder:Show()
+        is.ncdmBorder:ClearAllPoints()
+        is.ncdmBorder:SetPoint("TOPLEFT", icon, "TOPLEFT", -bs, bs)
+        is.ncdmBorder:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", bs, -bs)
+        is.ncdmBorder:Show()
 
         -- Expand hit area to include border for mouseover detection
         icon:SetHitRectInsets(-bs, -bs, -bs, -bs)
     else
-        if icon._ncdmBorder then
-            icon._ncdmBorder:Hide()
+        if is.ncdmBorder then
+            is.ncdmBorder:Hide()
         end
         -- Reset hit area when no border
         icon:SetHitRectInsets(0, 0, 0, 0)
     end
     
     -- One-time setup for textures and flash
-    if not icon._ncdmPositioned then
-        icon._ncdmPositioned = true
+    if not is.ncdmPositioned then
+        is.ncdmPositioned = true
 
         local textures = { icon.Icon, icon.icon }
         for _, tex in ipairs(textures) do
@@ -636,10 +667,9 @@ local function SkinIcon(icon, size, aspectRatioCrop, zoom, borderSize, borderCol
         if icon.CooldownFlash then
             icon.CooldownFlash:SetAlpha(0)
             -- Hook Show to keep it hidden
-            if not icon.CooldownFlash._ncdmHooked then
-                icon.CooldownFlash._ncdmHooked = true
+            if not hookedCooldownFlash[icon.CooldownFlash] then
+                hookedCooldownFlash[icon.CooldownFlash] = true
                 hooksecurefunc(icon.CooldownFlash, "Show", function(self)
-                    if InCombatLockdown() then return end
                     self:SetAlpha(0)
                 end)
             end
@@ -653,6 +683,9 @@ local function SkinIcon(icon, size, aspectRatioCrop, zoom, borderSize, borderCol
         cooldown:SetAllPoints(icon)
         -- Use simple stretchable texture so swipe fills entire frame
         cooldown:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
+        -- Baseline dark color — swipe.lua will override with user's custom color
+        -- once its hooks are installed. Our SetSwipeColor hook on the icon catches
+        -- this call and immediately re-applies the custom color when available.
         cooldown:SetSwipeColor(0, 0, 0, 0.8)
     end
     
@@ -707,15 +740,16 @@ local function ProcessPendingIcons()
                 pcall(ApplyIconTextSizes, icon, data.durationSize, data.stackSize,
                     data.durationOffsetX, data.durationOffsetY, data.stackOffsetX, data.stackOffsetY,
                     data.durationTextColor, data.durationAnchor, data.stackTextColor, data.stackAnchor)
-                icon.__cdmSkinned = true
-                icon.__cdmSkinPending = nil
+                local pis = getIconState(icon)
+                pis.cdmSkinned = true
+                pis.cdmSkinPending = nil
                 processed = true
             end
         end
         -- If icon was hidden or skinning failed, clear pending flag so
         -- LayoutViewer can queue/skin it again on the next pass.
         if icon and not processed then
-            icon.__cdmSkinPending = nil
+            getIconState(icon).cdmSkinPending = nil
         end
         NCDM.pendingIcons[icon] = nil
     end
@@ -727,10 +761,27 @@ local function ProcessPendingIcons()
     end
 end
 
--- Register for combat end to process pending icons and refresh layouts
-local combatEndFrame = CreateFrame("Frame")
-combatEndFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-combatEndFrame:SetScript("OnEvent", function()
+-- Register for combat start/end to manage layout
+local combatFrame = CreateFrame("Frame")
+combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+combatFrame:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_REGEN_DISABLED" then
+        -- Combat enter: Blizzard resets CDM layout via internal Layout() calls.
+        -- Re-apply QUI's layout after a short delay to let Blizzard finish.
+        if QUI and QUI.DebugPrint then
+            QUI:DebugPrint("|cff34D399CDM|r Combat enter — scheduling re-layout")
+        end
+        C_Timer.After(0.05, function()
+            if NCDM.LayoutViewer then
+                NCDM.LayoutViewer(VIEWER_ESSENTIAL, "essential")
+                NCDM.LayoutViewer(VIEWER_UTILITY, "utility")
+            end
+        end)
+        return
+    end
+
+    -- PLAYER_REGEN_ENABLED: combat end
     ProcessPendingIcons()
     -- Re-apply Utility anchor after combat if it was deferred.
     C_Timer.After(0.05, function()
@@ -753,7 +804,7 @@ end)
 local function QueueIconForSkinning(icon, size, aspectRatioCrop, zoom, borderSize, borderColorTable, durationSize, stackSize, durationOffsetX, durationOffsetY, stackOffsetX, stackOffsetY, durationTextColor, durationAnchor, stackTextColor, stackAnchor)
     if not icon then return end
 
-    icon.__cdmSkinPending = true
+    getIconState(icon).cdmSkinPending = true
     NCDM.pendingIcons[icon] = {
         size = size,
         aspectRatioCrop = aspectRatioCrop,
@@ -906,6 +957,12 @@ end
 ---------------------------------------------------------------------------
 -- HELPER: Collect visible icons from viewer (stable order using layoutIndex)
 ---------------------------------------------------------------------------
+-- Performance: reusable scratch tables for custom CDM icon injection
+-- (avoids allocating positioned/unpositioned/merged tables on every layout call)
+local _collectPositioned = {}
+local _collectUnpositioned = {}
+local _collectMerged = {}
+
 local function CollectIcons(viewer, trackerKey)
     local icons = {}
     if not viewer or not viewer.GetNumChildren then return icons end
@@ -915,12 +972,13 @@ local function CollectIcons(viewer, trackerKey)
         local child = select(i, viewer:GetChildren())
         -- Skip custom CDM icons from child enumeration (we inject them separately)
         if child and child ~= viewer.Selection and not child._isCustomCDMIcon and IsIconFrame(child) then
-            if child:IsShown() or child._ncdmHidden then
+            local cis = _iconState[child]
+            if child:IsShown() or (cis and cis.ncdmHidden) then
                 if HasValidTexture(child) then
                     -- Track that this icon had a valid texture (last-known-good state)
-                    child._ncdmHadTexture = true
+                    getIconState(child).ncdmHadTexture = true
                     table.insert(icons, child)
-                elseif InCombatLockdown() and child._ncdmHadTexture then
+                elseif InCombatLockdown() and cis and cis.ncdmHadTexture then
                     -- During combat, keep icons that previously had a valid texture.
                     -- Spell morphs (e.g. Devourer DH) momentarily strip the texture;
                     -- we trust the icon will get its texture back shortly.
@@ -928,8 +986,10 @@ local function CollectIcons(viewer, trackerKey)
                 else
                     -- Clear flags on textureless frames out of combat so they
                     -- aren't perpetually re-collected; Blizzard will Show() them when ready
-                    child._ncdmHidden = nil
-                    child._ncdmHadTexture = nil
+                    if cis then
+                        cis.ncdmHidden = nil
+                        cis.ncdmHadTexture = nil
+                    end
                 end
             end
         end
@@ -952,26 +1012,30 @@ local function CollectIcons(viewer, trackerKey)
             local placement = customData and customData.placement or "after"
 
             -- Phase 1: Separate into positioned and unpositioned
-            local positioned = {}
-            local unpositioned = {}
+            -- Performance: reuse module-level scratch tables
+            local positioned = _collectPositioned
+            local unpositioned = _collectUnpositioned
+            wipe(positioned)
+            wipe(unpositioned)
             for idx, ci in ipairs(customIcons) do
                 local entry = ci._customCDMEntry
                 if entry and entry.position and entry.position > 0 then
-                    table.insert(positioned, { icon = ci, origIndex = idx })
+                    positioned[#positioned + 1] = { icon = ci, origIndex = idx }
                 else
-                    table.insert(unpositioned, ci)
+                    unpositioned[#unpositioned + 1] = ci
                 end
             end
 
             -- Phase 2: Insert unpositioned using existing before/after logic
             if #unpositioned > 0 then
                 if placement == "before" then
-                    local merged = {}
-                    for _, ci in ipairs(unpositioned) do table.insert(merged, ci) end
-                    for _, bi in ipairs(icons) do table.insert(merged, bi) end
+                    local merged = _collectMerged
+                    wipe(merged)
+                    for _, ci in ipairs(unpositioned) do merged[#merged + 1] = ci end
+                    for _, bi in ipairs(icons) do merged[#merged + 1] = bi end
                     icons = merged
                 else
-                    for _, ci in ipairs(unpositioned) do table.insert(icons, ci) end
+                    for _, ci in ipairs(unpositioned) do icons[#icons + 1] = ci end
                 end
             end
 
@@ -1002,17 +1066,60 @@ local function LayoutViewer(viewerName, trackerKey)
     local viewer = _G[viewerName]
     if not viewer then return end
 
+    -- Never layout during Edit Mode — user is manually resizing/positioning.
+    -- LayoutViewer recalculates icon positions and viewer size, which would
+    -- fight the user's manual resize and snap the viewer back.
+    if Helpers.IsEditModeActive() then return end
+
     local settings = GetTrackerSettings(trackerKey)
-    if not settings or not settings.enabled then return end
+    if not settings or not settings.enabled then
+        if QUI and QUI.DebugPrint and InCombatLockdown() then
+            QUI:DebugPrint(format("|cff34D399CDM|r LayoutViewer %s BAIL: no settings or disabled", trackerKey))
+        end
+        -- Hide icons and the viewer frame so they don't linger when disabled.
+        -- TAINT SAFETY: Always defer Hide() so OnHide handlers run outside
+        -- QUI's execution context (same rationale as deferred Show above).
+        for i = 1, viewer:GetNumChildren() do
+            local child = select(i, viewer:GetChildren())
+            if child and child ~= viewer.Selection and IsIconFrame(child) then
+                C_Timer.After(0, function() child:Hide() end)
+            end
+        end
+        C_Timer.After(0, function() viewer:Hide() end)
+        return
+    end
     -- Allow re-layout in combat so spell morphs/procs don't leave the bars in a
     -- Blizzard-sized state until combat ends. Skinning work still defers in combat.
 
     -- Prevent re-entry during layout
-    if NCDM.applying[trackerKey] then return end
-    if viewer.__cdmLayoutRunning then return end
+    if NCDM.applying[trackerKey] then
+        if QUI and QUI.DebugPrint and InCombatLockdown() then
+            QUI:DebugPrint(format("|cff34D399CDM|r LayoutViewer %s BAIL: applying guard stuck", trackerKey))
+        end
+        return
+    end
+    local vs = getViewerState(viewer)
+    if vs.cdmLayoutRunning then
+        if QUI and QUI.DebugPrint and InCombatLockdown() then
+            QUI:DebugPrint(format("|cff34D399CDM|r LayoutViewer %s BAIL: cdmLayoutRunning stuck", trackerKey))
+        end
+        return
+    end
 
     NCDM.applying[trackerKey] = true
-    viewer.__cdmLayoutRunning = true
+    vs.cdmLayoutRunning = true
+
+    -- Ensure the viewer is visible (it may have been hidden when disabled).
+    -- TAINT SAFETY: Always defer Show() via C_Timer.After(0) so Blizzard's
+    -- OnShow handler (which writes allowAvailableAlert, isActive, etc.) runs
+    -- outside QUI's execution context.  Without this, the fields are written
+    -- from QUI-tainted context and later boolean tests on them crash in
+    -- CheckCacheCooldownValuesFromSpellCooldown.
+    if not viewer:IsShown() then
+        C_Timer.After(0, function()
+            if not viewer:IsShown() then viewer:Show() end
+        end)
+    end
 
     -- Apply HUD layer priority
     local hudLayering = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.hudLayering
@@ -1021,8 +1128,9 @@ local function LayoutViewer(viewerName, trackerKey)
         local frameLevel = QUICore:GetHUDFrameLevel(layerPriority)
         SetFrameLevelSafe(viewer, frameLevel)
     end
-    if not InCombatLockdown() and viewer.__cdmPendingFrameLevel then
-        SetFrameLevelSafe(viewer, viewer.__cdmPendingFrameLevel)
+    local vfs = _viewerState[viewer]
+    if not InCombatLockdown() and vfs and vfs.cdmPendingFrameLevel then
+        SetFrameLevelSafe(viewer, vfs.cdmPendingFrameLevel)
     end
 
     -- Check for vertical layout mode
@@ -1030,33 +1138,38 @@ local function LayoutViewer(viewerName, trackerKey)
     local isVertical = (layoutDirection == "VERTICAL")
 
     -- Store layout direction on viewer for power bar snap detection
-    viewer.__cdmLayoutDirection = layoutDirection
+    vs.cdmLayoutDirection = layoutDirection
 
     local allIcons = CollectIcons(viewer, trackerKey)
     local totalCapacity = GetTotalIconCapacity(settings)
     
     -- Icons to layout
+    local inCombat = InCombatLockdown()
     local iconsToLayout = {}
     for i = 1, math.min(#allIcons, totalCapacity) do
         local icon = allIcons[i]
         iconsToLayout[i] = icon
-        icon._ncdmHidden = nil
-        icon:Show()
+        getIconState(icon).ncdmHidden = nil
+        -- TAINT SAFETY: Always defer Show() so Blizzard's OnShow /
+        -- OnCooldownIDSet handlers run outside QUI's execution context.
+        -- Prevents allowAvailableAlert and similar fields from being
+        -- written as "secret values tainted by QUI".
+        C_Timer.After(0, function() if icon:IsShown() == false then icon:Show() end end)
     end
-    
+
     -- Hide overflow
     for i = totalCapacity + 1, #allIcons do
         local icon = allIcons[i]
         if icon then
-            icon._ncdmHidden = true
-            icon:Hide()
-            icon:ClearAllPoints()
+            getIconState(icon).ncdmHidden = true
+            -- TAINT SAFETY: Always defer Hide() (see taint comment above).
+            C_Timer.After(0, function() icon:Hide(); icon:ClearAllPoints() end)
         end
     end
     
     if #iconsToLayout == 0 then
         NCDM.applying[trackerKey] = false
-        viewer.__cdmLayoutRunning = nil
+        vs.cdmLayoutRunning = nil
         return
     end
     
@@ -1111,7 +1224,7 @@ local function LayoutViewer(viewerName, trackerKey)
 
     if #rows == 0 then
         NCDM.applying[trackerKey] = false
-        viewer.__cdmLayoutRunning = nil
+        vs.cdmLayoutRunning = nil
         return
     end
     
@@ -1191,6 +1304,34 @@ local function LayoutViewer(viewerName, trackerKey)
         maxRowWidth = totalWidth
     end
 
+    -- Compute the yOffset-adjusted envelope for proxy sizing.
+    -- baseTotalHeight (sum of row heights + gaps, no yOffset) drives icon
+    -- positioning so it never inflates across passes.  proxyTotalHeight
+    -- includes yOffset extents and is written to viewer state for the proxy.
+    local baseTotalHeight = totalHeight
+    local proxyTotalHeight = totalHeight
+    vs.cdmProxyYOffset = 0
+    if not isVertical and numRowsUsed > 0 then
+        local pos = baseTotalHeight / 2  -- top of layout (CENTER-relative)
+        local actualTop = pos
+        local actualBot = -baseTotalHeight / 2
+        local tmpIdx = 1
+        for _, rc in ipairs(rows) do
+            local n = math.min(rc.count, #iconsToLayout - tmpIdx + 1)
+            if n <= 0 then break end
+            local ih = rc.size / (rc.aspectRatioCrop or 1.0)
+            local yOff = rc.yOffset or 0
+            actualTop = math.max(actualTop, pos + yOff)
+            actualBot = math.min(actualBot, pos - ih + yOff)
+            pos = pos - ih - rowGap
+            tmpIdx = tmpIdx + n
+        end
+        proxyTotalHeight = actualTop - actualBot
+        -- Bounding box center relative to viewer center.  The proxy must be
+        -- offset by this amount so it covers the yOffset-shifted icons.
+        vs.cdmProxyYOffset = (actualTop + actualBot) / 2
+    end
+
     -- Optional floor for HUD layouts anchored to CDM (player/target spacing safety).
     -- Apply this to container/anchor widths, but keep row layout widths untouched so
     -- icon spacing remains visually centered.
@@ -1202,8 +1343,12 @@ local function LayoutViewer(viewerName, trackerKey)
         potentialBottomRowWidth = math.max(potentialBottomRowWidth, minWidth)
     end
     
-    -- Position icons using CENTER-based anchoring (more stable, less flicker)
-    local currentY = totalHeight / 2  -- Start from top (positive Y from center)
+    -- Position icons using CENTER-based anchoring.  Offsets are relative to the
+    -- viewer's center point, which doesn't move when Blizzard auto-sizes the
+    -- viewer (since CDM viewers use CENTER anchoring from Edit Mode).
+    -- Loop safety: we no longer call SetSize on the viewer, and OnSizeChanged
+    -- no longer calls LayoutViewer, so CENTER anchoring cannot create loops.
+    local currentY = baseTotalHeight / 2  -- Start from top (positive Y from center)
     local currentX = -totalWidth / 2  -- Start from left (negative X from center) for vertical
 
     for rowNum, rowConfig in ipairs(rows) do
@@ -1233,7 +1378,7 @@ local function LayoutViewer(viewerName, trackerKey)
                 -- Vertical: icons stack top-to-bottom within each column
                 -- Columns stack left-to-right
                 local colCenterX = currentX + (iconWidth / 2)
-                local colStartY = totalHeight / 2 - iconHeight / 2
+                local colStartY = baseTotalHeight / 2 - iconHeight / 2
                 y = colStartY - ((i - 1) * (iconHeight + rowConfig.padding)) + rowConfig.yOffset
                 x = colCenterX + (rowConfig.xOffset or 0)
             else
@@ -1245,13 +1390,23 @@ local function LayoutViewer(viewerName, trackerKey)
                 y = rowCenterY
             end
 
-            -- Only skin if not already skinned with these settings
-            if not icon.__cdmSkinned then
+            -- Always enforce QUI's icon size and scale so Blizzard's
+            -- Layout() / Edit Mode changes never persist.
+            -- Defer SetSize during combat to avoid OnSizeChanged handler taint cascade.
+            if inCombat then
+                local sz, ar = rowConfig.size, rowConfig.aspectRatioCrop
+                C_Timer.After(0, function() ApplyIconSizeOnly(icon, sz, ar) end)
+            else
+                ApplyIconSizeOnly(icon, rowConfig.size, rowConfig.aspectRatioCrop)
+            end
+            if icon.GetScale and icon:GetScale() ~= 1 then
+                icon:SetScale(1)
+            end
+
+            -- Full skin pass (borders, texcoords, text) only when not yet done
+            local lis = getIconState(icon)
+            if not lis.cdmSkinned then
                 if InCombatLockdown() then
-                    -- Combat-safe immediate size inheritance so custom icons do not
-                    -- temporarily display at their creation size.
-                    ApplyIconSizeOnly(icon, rowConfig.size, rowConfig.aspectRatioCrop)
-                    -- Queue for after combat
                     QueueIconForSkinning(icon, rowConfig.size, rowConfig.aspectRatioCrop, rowConfig.zoom,
                         rowConfig.borderSize, rowConfig.borderColorTable, rowConfig.durationSize, rowConfig.stackSize,
                         rowConfig.durationOffsetX, rowConfig.durationOffsetY,
@@ -1266,12 +1421,11 @@ local function LayoutViewer(viewerName, trackerKey)
                             rowConfig.stackOffsetX, rowConfig.stackOffsetY,
                             rowConfig.durationTextColor, rowConfig.durationAnchor,
                             rowConfig.stackTextColor, rowConfig.stackAnchor)
-                        icon.__cdmSkinned = true
+                        lis.cdmSkinned = true
                     end
                 end
             end
 
-            -- Position using CENTER anchor (more stable than TOPLEFT)
             -- Pixel-snap position so icon/border edges land on pixel boundaries
             if QUICore and QUICore.PixelRound then
                 x = QUICore:PixelRound(x, viewer)
@@ -1279,7 +1433,8 @@ local function LayoutViewer(viewerName, trackerKey)
             end
             icon:ClearAllPoints()
             icon:SetPoint("CENTER", viewer, "CENTER", x, y)
-            icon:Show()
+            -- TAINT SAFETY: Always defer Show() (see taint comment above).
+            C_Timer.After(0, function() if icon:IsShown() == false then icon:Show() end end)
 
             -- Apply row opacity
             local opacity = rowConfig.opacity or 1.0
@@ -1293,19 +1448,48 @@ local function LayoutViewer(viewerName, trackerKey)
         end
     end
     
-    -- Store dimensions
-    viewer.__cdmIconWidth = maxRowWidth
-    viewer.__cdmTotalHeight = totalHeight
-    viewer.__cdmRow1IconHeight = rows[1] and (rows[1].size / (rows[1].aspectRatioCrop or 1.0)) or 0
-    viewer.__cdmRow1BorderSize = rows[1] and rows[1].borderSize or 0
-    viewer.__cdmBottomRowBorderSize = rows[#rows] and rows[#rows].borderSize or 0
-    viewer.__cdmBottomRowYOffset = rows[#rows] and rows[#rows].yOffset or 0
+    -- Store formula dimensions for proxy frames and dependent anchoring.
+    vs.cdmIconWidth = maxRowWidth
+    vs.cdmTotalHeight = proxyTotalHeight
+    -- Persist viewer dimensions for next reload / Edit Mode exit so resource
+    -- bars don't flash at a stale/fallback size before LayoutViewer runs.
+    local ncdm = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.ncdm
+    if ncdm and maxRowWidth > 0 then
+        if trackerKey == "essential" then
+            ncdm._lastEssentialWidth = maxRowWidth
+            ncdm._lastEssentialHeight = proxyTotalHeight
+        elseif trackerKey == "utility" then
+            ncdm._lastUtilityWidth = maxRowWidth
+            ncdm._lastUtilityHeight = proxyTotalHeight
+        end
+    end
+    if QUI and QUI.DebugPrint then
+        local rowDbg = ""
+        for rn, rc in ipairs(rows) do
+            local actual = math.min(rc.count, #iconsToLayout - (function()
+                local idx = 1
+                for ri = 1, rn - 1 do idx = idx + math.min(rows[ri].count, #iconsToLayout - idx + 1) end
+                return idx
+            end)() + 1)
+            rowDbg = rowDbg .. format(" r%d(%d/%d sz=%d pad=%d w=%d)",
+                rn, actual, rc.count, rc.size, rc.padding or 0, rowWidths[rn] or 0)
+        end
+        local hDbg = (proxyTotalHeight ~= baseTotalHeight)
+            and format(" baseH=%.0f proxyH=%.0f", baseTotalHeight, proxyTotalHeight)
+            or format(" totalH=%.0f", baseTotalHeight)
+        QUI:DebugPrint(format("|cff34D399CDM|r LayoutViewer %s: icons=%d maxRowW=%.0f%s%s",
+            trackerKey, #iconsToLayout, maxRowWidth, hDbg, rowDbg))
+    end
+    vs.cdmRow1IconHeight = rows[1] and (rows[1].size / (rows[1].aspectRatioCrop or 1.0)) or 0
+    vs.cdmRow1BorderSize = rows[1] and rows[1].borderSize or 0
+    vs.cdmBottomRowBorderSize = rows[#rows] and rows[#rows].borderSize or 0
+    vs.cdmBottomRowYOffset = rows[#rows] and rows[#rows].yOffset or 0
     -- In vertical mode, use total width for all row width vars so power bars span full viewer width
     if isVertical then
-        viewer.__cdmRow1Width = maxRowWidth
-        viewer.__cdmBottomRowWidth = maxRowWidth
-        viewer.__cdmPotentialRow1Width = maxRowWidth
-        viewer.__cdmPotentialBottomRowWidth = maxRowWidth
+        vs.cdmRow1Width = maxRowWidth
+        vs.cdmBottomRowWidth = maxRowWidth
+        vs.cdmPotentialRow1Width = maxRowWidth
+        vs.cdmPotentialBottomRowWidth = maxRowWidth
     else
         local row1Width = rowWidths[1] or maxRowWidth
         local bottomRowWidth = rowWidths[#rows] or maxRowWidth
@@ -1313,26 +1497,16 @@ local function LayoutViewer(viewerName, trackerKey)
             row1Width = math.max(row1Width, minWidth)
             bottomRowWidth = math.max(bottomRowWidth, minWidth)
         end
-        viewer.__cdmRow1Width = row1Width  -- Row 1 specifically for power bar snap
-        viewer.__cdmBottomRowWidth = bottomRowWidth  -- Bottom row for Utility snap
-        viewer.__cdmPotentialRow1Width = potentialRow1Width  -- Based on settings, not actual icons
-        viewer.__cdmPotentialBottomRowWidth = potentialBottomRowWidth
+        vs.cdmRow1Width = row1Width  -- Row 1 specifically for power bar snap
+        vs.cdmBottomRowWidth = bottomRowWidth  -- Bottom row for Utility snap
+        vs.cdmPotentialRow1Width = potentialRow1Width  -- Based on settings, not actual icons
+        vs.cdmPotentialBottomRowWidth = potentialBottomRowWidth
     end
 
-    -- Resize viewer (suppress OnSizeChanged triggering another layout)
-    if maxRowWidth > 0 and totalHeight > 0 then
-        if InCombatLockdown() then
-            SetSizeSafe(viewer, maxRowWidth, totalHeight)
-        else
-            viewer.__cdmLayoutSuppressed = (viewer.__cdmLayoutSuppressed or 0) + 1
-            SetSizeSafe(viewer, maxRowWidth, totalHeight)
-            viewer.__cdmLayoutSuppressed = viewer.__cdmLayoutSuppressed - 1
-            if viewer.__cdmLayoutSuppressed <= 0 then
-                viewer.__cdmLayoutSuppressed = nil
-            end
-        end
-        SyncViewerSelectionSafe(viewer)
-    end
+
+    -- No SetSize on the viewer frame — Blizzard auto-sizes it from children.
+    -- This eliminates the RefreshLayout → SetSize → RefreshLayout loop.
+    -- Proxy frames read dimensions from vs.cdmIconWidth/cdmTotalHeight (set above).
 
     -- Keep frame-anchoring CDM proxy parents up to date when safe.
     -- In combat, the proxy layer now freezes and schedules a post-combat refresh
@@ -1342,7 +1516,7 @@ local function LayoutViewer(viewerName, trackerKey)
     end
 
     NCDM.applying[trackerKey] = false
-    viewer.__cdmLayoutRunning = nil
+    vs.cdmLayoutRunning = nil
 
     -- If Essential just finished layout and anchor mode is on, reposition Utility
     if trackerKey == "essential" then
@@ -1357,32 +1531,15 @@ local function LayoutViewer(viewerName, trackerKey)
     end
 
     -- Update locked power bars, castbars, and unit frames after layout completes
-    -- Debounced to prevent spam during rapid layout changes
-    if not viewer.__cdmUpdatePending then
-        viewer.__cdmUpdatePending = true
+    -- Debounced to prevent spam during rapid layout changes.
+    -- Skip entirely during combat: Blizzard mutates viewer sizes so
+    -- GetCenter()-based position math drifts.  Post-combat RefreshAll
+    -- will trigger a full update with correct frame geometry.
+    if not vs.cdmUpdatePending and not InCombatLockdown() then
+        vs.cdmUpdatePending = true
         C_Timer.After(0.05, function()
-            viewer.__cdmUpdatePending = nil
-            if trackerKey == "essential" then
-                if _G.QUI_UpdateLockedPowerBar then
-                    _G.QUI_UpdateLockedPowerBar()
-                end
-                if _G.QUI_UpdateLockedSecondaryPowerBar then
-                    _G.QUI_UpdateLockedSecondaryPowerBar()
-                end
-                if _G.QUI_UpdateLockedCastbarToEssential then
-                    _G.QUI_UpdateLockedCastbarToEssential()
-                end
-            elseif trackerKey == "utility" then
-                if _G.QUI_UpdateLockedPowerBarToUtility then
-                    _G.QUI_UpdateLockedPowerBarToUtility()
-                end
-                if _G.QUI_UpdateLockedSecondaryPowerBarToUtility then
-                    _G.QUI_UpdateLockedSecondaryPowerBarToUtility()
-                end
-                if _G.QUI_UpdateLockedCastbarToUtility then
-                    _G.QUI_UpdateLockedCastbarToUtility()
-                end
-            end
+            vs.cdmUpdatePending = nil
+            UpdateLockedBarsForViewer(trackerKey)
             -- Unit frames anchored to CDM (can be anchored to either Essential or Utility)
             if _G.QUI_UpdateCDMAnchoredUnitFrames then
                 _G.QUI_UpdateCDMAnchoredUnitFrames()
@@ -1397,29 +1554,84 @@ end
 
 
 ---------------------------------------------------------------------------
--- HOOK: Setup viewer with OnUpdate rescan
+-- DEBOUNCED EVENT-DRIVEN LAYOUT
+-- SPELL_UPDATE_COOLDOWN fires on every cooldown tick (every GCD/second).
+-- We only re-layout when the visible icon count actually changes, matching
+-- the old polling system's behavior.  500ms debounce keeps CPU low.
+---------------------------------------------------------------------------
+local _eventDebounceTimers = {}  -- keyed by trackerKey
+local _lastEventIconCount = {}   -- keyed by trackerKey
+
+local function CountVisibleIcons(viewer)
+    local count = 0
+    for i = 1, viewer:GetNumChildren() do
+        local child = select(i, viewer:GetChildren())
+        if child and child ~= viewer.Selection and not child._isCustomCDMIcon
+           and IsIconFrame(child) and child:IsShown() and HasValidTexture(child) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function DebouncedLayoutFromEvent(viewerName, trackerKey)
+    if InCombatLockdown() then return end
+    if Helpers.IsEditModeActive() then return end
+    local viewer = _G[viewerName]
+    if not viewer or not viewer:IsShown() then return end
+    if _eventDebounceTimers[trackerKey] then return end  -- already pending
+
+    _eventDebounceTimers[trackerKey] = true
+    C_Timer.After(0.5, function()
+        _eventDebounceTimers[trackerKey] = nil
+        if InCombatLockdown() or Helpers.IsEditModeActive() then return end
+        local v = _G[viewerName]
+        if not v or not v:IsShown() then return end
+
+        -- Only re-layout when icon count changes (cooldown tick doesn't need layout)
+        local count = CountVisibleIcons(v)
+        if count == (_lastEventIconCount[trackerKey] or 0) then return end
+        _lastEventIconCount[trackerKey] = count
+        LayoutViewer(viewerName, trackerKey)
+    end)
+end
+
+---------------------------------------------------------------------------
+-- HOOK: Setup viewer with RefreshLayout and event-driven triggers
 ---------------------------------------------------------------------------
 local function HookViewer(viewerName, trackerKey)
     local viewer = _G[viewerName]
     if not viewer then return end
-    if NCDM.hooked[trackerKey] then return end
+    if NCDM.hooked[trackerKey] == viewer then return end
 
-    NCDM.hooked[trackerKey] = true
+    NCDM.hooked[trackerKey] = viewer
 
-    -- Step 1 & 3: OnShow hook - enable polling and single deferred layout
-    viewer:HookScript("OnShow", function(self)
-        -- Enable polling when viewer becomes visible (restore handler if we cleared it on Hide)
-        if self.__ncdmUpdateFrame then
-            if self.__ncdmUpdateHandler then
-                self.__ncdmUpdateFrame:SetScript("OnUpdate", self.__ncdmUpdateHandler)
+    local hvs = getViewerState(viewer)
+
+    -- Hook Layout(): Blizzard calls Layout() directly on the viewer during
+    -- combat enter and other state changes (bypasses RefreshLayout entirely).
+    -- Same pattern as BuffBar CDM Layout hook — defer to next frame so
+    -- Blizzard finishes its pass first, then re-apply QUI's layout on top.
+    if viewer.Layout then
+        hooksecurefunc(viewer, "Layout", function()
+            if Helpers.IsEditModeActive() then return end
+            local combat = InCombatLockdown()
+            if QUI and QUI.DebugPrint then
+                QUI:DebugPrint(format("|cff34D399CDM|r Layout() hook fired %s combat=%s",
+                    trackerKey, tostring(combat)))
             end
-            self.__ncdmUpdateFrame:Show()
-        end
-        -- Single deferred layout
+            C_Timer.After(0, function()
+                if Helpers.IsEditModeActive() then return end
+                LayoutViewer(viewerName, trackerKey)
+            end)
+        end)
+    end
+
+    -- OnShow hook: single deferred layout when viewer becomes visible
+    viewer:HookScript("OnShow", function(self)
         C_Timer.After(0.02, function()
             if self:IsShown() then
                 LayoutViewer(viewerName, trackerKey)
-                -- Apply anchor for Utility viewer after layout
                 if trackerKey == "utility" and _G.QUI_ApplyUtilityAnchor then
                     _G.QUI_ApplyUtilityAnchor()
                 end
@@ -1427,171 +1639,157 @@ local function HookViewer(viewerName, trackerKey)
         end)
     end)
 
-    -- Step 1: OnHide hook - disable polling to save CPU (SetScript nil stops OnUpdate entirely)
-    viewer:HookScript("OnHide", function(self)
-        if self.__ncdmUpdateFrame then
-            self.__ncdmUpdateFrame:SetScript("OnUpdate", nil)
-            self.__ncdmUpdateFrame:Hide()
+    -- Hook SetScale: Blizzard's CDM "Icon Size" slider may call SetScale on
+    -- the viewer.  SetScale does NOT fire OnSizeChanged, so the proxy would
+    -- never learn about the scale change.  Trigger a proxy refresh so the
+    -- effective-scale comparison in GetCDMAnchorProxy can adjust dimensions.
+    hooksecurefunc(viewer, "SetScale", function(self, newScale)
+        if QUI and QUI.DebugPrint then
+            local w, h = self:GetWidth(), self:GetHeight()
+            local effScale = self:GetEffectiveScale()
+            local parentEffScale = UIParent:GetEffectiveScale()
+            local boundsL, boundsR = Helpers.SafeValue(self:GetLeft(), nil), Helpers.SafeValue(self:GetRight(), nil)
+            local boundsW = (boundsL and boundsR) and (boundsR - boundsL) or 0
+            QUI:DebugPrint(format("|cffFF4444CDM SetScale|r %s: newScale=%.3f effScale=%.3f parentEffScale=%.3f logical=%.0fx%.0f boundsW=%.0f",
+                viewerName == VIEWER_ESSENTIAL and "Ess" or "Util",
+                newScale, effScale, parentEffScale, w, h, boundsW))
+        end
+        -- Refresh proxy dimensions to account for the new scale
+        if not InCombatLockdown() and _G.QUI_UpdateCDMAnchorProxyFrames then
+            _G.QUI_UpdateCDMAnchorProxyFrames()
         end
     end)
 
-    -- Step 5: OnSizeChanged hook - increment layout counter
-    viewer:HookScript("OnSizeChanged", function(self)
-        -- Increment layout counter so OnUpdate knows Blizzard changed something
-        self.__ncdmBlizzardLayoutCount = (self.__ncdmBlizzardLayoutCount or 0) + 1
-        if self.__cdmLayoutSuppressed or self.__cdmLayoutRunning then
-            return
-        end
-        LayoutViewer(viewerName, trackerKey)
-    end)
-
-    -- Step 2: Layout hook REMOVED (was causing cascade calls)
-
-    -- Step 1: Dedicated update frame (can be shown/hidden to completely stop polling)
-    local updateFrame = CreateFrame("Frame")
-    viewer.__ncdmUpdateFrame = updateFrame
-
-    local lastIconCount = 0
-    local lastSettingsVersion = 0
-    local lastBlizzardLayoutCount = 0
-    -- Fallback polling intervals (events handle immediate cooldown updates)
-    local combatInterval = 1.0   -- 1000ms in combat (can't do work anyway, events blocked)
-    local idleInterval = 0.5     -- 500ms out of combat (events handle immediate needs)
-
-    updateFrame:SetScript("OnUpdate", function(self, elapsed)
-        viewer.__ncdmElapsed = (viewer.__ncdmElapsed or 0) + elapsed
-
-        -- Adaptive throttle - slower polling since events handle immediate updates
-        local updateInterval = UnitAffectingCombat("player") and combatInterval or idleInterval
-
-        -- Step 4: Check event flag to skip throttle (immediate response to cooldown changes)
-        if viewer.__ncdmEventFired then
-            viewer.__ncdmEventFired = nil
-            viewer.__ncdmElapsed = 0
-        elseif viewer.__ncdmElapsed < updateInterval then
-            return
-        else
-            viewer.__ncdmElapsed = 0
-        end
-
-        if NCDM.applying[trackerKey] then return end
-
-        -- Skip expensive icon collection during combat for CPU efficiency
-        if InCombatLockdown() then return end
-
-        -- Step 5: Check if Blizzard layout changed or settings changed
-        local currentBlizzardCount = viewer.__ncdmBlizzardLayoutCount or 0
-        local currentVersion = NCDM.settingsVersion[trackerKey] or 0
-
-        -- Grace period: skip early-exit for 2 seconds after zone change to catch late Blizzard scrambles
-        local inGracePeriod = viewer.__ncdmGraceUntil and GetTime() < viewer.__ncdmGraceUntil
-        -- Clear expired grace period
-        if viewer.__ncdmGraceUntil and GetTime() >= viewer.__ncdmGraceUntil then
-            viewer.__ncdmGraceUntil = nil
-        end
-
-        -- Collect visible Blizzard icons (lightweight: ~10-20 children)
-        -- Excludes custom CDM icons to avoid phantom count changes
-        -- Also excludes empty placeholder frames without a spell texture
-        local icons = {}
-        for i = 1, viewer:GetNumChildren() do
-            local child = select(i, viewer:GetChildren())
-            if child and child ~= viewer.Selection and not child._isCustomCDMIcon and IsIconFrame(child) and child:IsShown() and HasValidTexture(child) then
-                table.insert(icons, child)
+    -- Helper: measure icon bounding box (icons can extend beyond viewer frame).
+    -- Returns boundsW, boundsH in screen-space coords, or nil if no icons.
+    local function MeasureViewerIconBounds(v)
+        local boundsL, boundsR, boundsT, boundsB
+        local iconCount = 0
+        ForEachVisibleIcon(v, function(child)
+            local cl = Helpers.SafeValue(child:GetLeft(), nil)
+            local cr = Helpers.SafeValue(child:GetRight(), nil)
+            local ct = Helpers.SafeValue(child:GetTop(), nil)
+            local cb = Helpers.SafeValue(child:GetBottom(), nil)
+            if cl and cr and ct and cb then
+                iconCount = iconCount + 1
+                boundsL = boundsL and math.min(boundsL, cl) or cl
+                boundsR = boundsR and math.max(boundsR, cr) or cr
+                boundsT = boundsT and math.max(boundsT, ct) or ct
+                boundsB = boundsB and math.min(boundsB, cb) or cb
             end
+        end)
+        if iconCount > 0 and boundsL and boundsR and boundsT and boundsB then
+            return boundsR - boundsL, boundsT - boundsB, iconCount
         end
-        local count = #icons
-
-        -- Early-exit if nothing changed (skip during grace period to catch late Blizzard scrambles)
-        if not inGracePeriod then
-            if currentBlizzardCount == lastBlizzardLayoutCount and currentVersion == lastSettingsVersion and count == lastIconCount then
-                return
-            end
-        end
-        lastBlizzardLayoutCount = currentBlizzardCount
-
-        local needsLayout = false
-
-        -- Check if count or settings version changed
-        if count ~= lastIconCount or currentVersion ~= lastSettingsVersion then
-            needsLayout = true
-            -- Reset skinned/pending flags on all icons when settings change
-            if currentVersion ~= lastSettingsVersion then
-                for _, icon in ipairs(icons) do
-                    icon.__cdmSkinned = nil
-                    icon.__cdmSkinPending = nil
-                    NCDM.pendingIcons[icon] = nil
-                end
-            end
-        end
-
-        -- Check if first icon's anchor is wrong (Blizzard reset it)
-        -- We use CENTER anchor, Blizzard uses different anchors
-        if not needsLayout and count > 0 then
-            local firstIcon = icons[1]
-            if firstIcon then
-                local point = firstIcon:GetPoint(1)
-                -- If first icon isn't anchored to CENTER, Blizzard broke our layout
-                if point and point ~= "CENTER" then
-                    needsLayout = true
-                end
-            end
-        end
-
-        if needsLayout then
-            lastIconCount = count
-            lastSettingsVersion = currentVersion
-            LayoutViewer(viewerName, trackerKey)
-        end
-    end)
-    viewer.__ncdmUpdateHandler = updateFrame:GetScript("OnUpdate")
-
-    -- Step 1: Initially show update frame only if viewer is visible
-    if viewer:IsShown() then
-        updateFrame:Show()
-    else
-        updateFrame:Hide()
+        return nil, nil, 0
     end
 
-    -- Step 4: Event-driven layout trigger - simplified flag approach
+    -- OnSizeChanged hook - respond to Blizzard viewer size changes
+    viewer:HookScript("OnSizeChanged", function(self)
+        local svs = getViewerState(self)
+
+        -- Blizzard resets viewers to ~1x1 between layout passes; ignore these
+        -- transient sizes to avoid unnecessary work and noisy debug logs.
+        local rawW = Helpers.SafeValue(self:GetWidth(), nil)
+        local rawH = Helpers.SafeValue(self:GetHeight(), nil)
+        if not rawW or not rawH or rawW < 2 or rawH < 2 then
+            return
+        end
+
+        -- Debug: log every OnSizeChanged call (before any guards)
+        local isEditMode = Helpers.IsEditModeActive()
+        if QUI and QUI.DebugPrint then
+            local running = svs.cdmLayoutRunning
+            QUI:DebugPrint(format("|cffFFFF00CDM OnSizeChanged|r %s: w=%.1f h=%.1f running=%s editMode=%s",
+                viewerName == VIEWER_ESSENTIAL and "Ess" or "Util",
+                rawW or 0, rawH or 0, tostring(running), tostring(isEditMode)))
+        end
+
+        -- Guard against re-entry (LayoutViewer is already running)
+        if svs.cdmLayoutRunning then
+            return
+        end
+
+        -- During Edit Mode: skip full layout (would fight user's manual resize),
+        -- just update cached viewer state dimensions from actual frame size so
+        -- anchor proxies AND size-stable center offset math pick up the new size.
+        -- Selection overlay is managed by Blizzard's AnchorSelectionFrame during
+        -- Edit Mode — addon manipulation of .Selection causes taint.
+        if isEditMode then
+            svs._wasInEditMode = true  -- Track for exit transition detection
+            -- Use LOGICAL size so Blizzard's slider tracks in real-time.
+            -- Icon bounds are stale from QUI's previous LayoutViewer.
+            local logicalW, logicalH = rawW, rawH
+            local iconW, iconH, iconCount = MeasureViewerIconBounds(self)
+            local w = logicalW
+            local h = logicalH
+            -- Update ALL viewer state fields that the anchoring system reads.
+            svs.cdmIconWidth = w
+            svs.cdmRow1Width = w
+            svs.cdmBottomRowWidth = w
+            svs.cdmPotentialRow1Width = w
+            svs.cdmPotentialBottomRowWidth = w
+            svs.cdmTotalHeight = h
+            -- Update proxy sizes
+            if _G.QUI_UpdateCDMAnchorProxyFrames then
+                _G.QUI_UpdateCDMAnchorProxyFrames()
+            end
+            local anchorKey = viewerName == VIEWER_ESSENTIAL and "cdmEssential" or "cdmUtility"
+            if _G.QUI_ReanchorFramePositionOnly then
+                _G.QUI_ReanchorFramePositionOnly(anchorKey)
+            end
+            if viewerName == VIEWER_ESSENTIAL and _G.QUI_ApplyUtilityAnchor then
+                _G.QUI_ApplyUtilityAnchor()
+            end
+            if _G.QUI_UpdateFramesAnchoredTo then
+                _G.QUI_UpdateFramesAnchoredTo(anchorKey)
+            end
+            UpdateLockedBarsForViewer(viewerName == VIEWER_ESSENTIAL and "essential" or "utility")
+            if QUI and QUI.DebugPrint then
+                local proxyFrame = _G.QUI_GetCDMAnchorProxyFrame and _G.QUI_GetCDMAnchorProxyFrame(anchorKey)
+                local proxyW, proxyH = proxyFrame and proxyFrame:GetWidth() or 0, proxyFrame and proxyFrame:GetHeight() or 0
+                local shortName = viewerName == VIEWER_ESSENTIAL and "Ess" or "Util"
+                local diagMsg = format("|cff34D399CDM|r EditMode %s chain: viewer=%.0fx%.0f(logical=%.0fx%.0f iconBounds=%.0fx%.0f icons=%d) → state(iconW=%.0f row1W=%.0f) → proxy=%.0fx%.0f",
+                    shortName,
+                    w, h, logicalW, logicalH, iconW or 0, iconH or 0, iconCount or 0,
+                    svs.cdmIconWidth or 0, svs.cdmRow1Width or 0,
+                    proxyW, proxyH)
+                QUI:DebugPrint(diagMsg)
+            end
+            return
+        end
+
+        -- Detect Edit Mode → normal transition and clear the flag.
+        -- RegisterEditModeExit callback handles the actual relayout and
+        -- full anchor chain update with delayed passes.
+        if not isEditMode and svs._wasInEditMode then
+            svs._wasInEditMode = nil
+        end
+
+        -- Outside Edit Mode, do NOT call LayoutViewer from OnSizeChanged.
+        -- Blizzard auto-sizes the viewer when we reposition icons, which
+        -- would create an infinite loop: LayoutViewer → icon SetPoint →
+        -- Blizzard auto-size → OnSizeChanged → LayoutViewer → ...
+        -- All meaningful layout triggers are covered by:
+        --   • CooldownViewerSettings:RefreshLayout hook (Blizzard settings)
+        --   • Event-driven debounced layout (SPELL_UPDATE_COOLDOWN, etc.)
+        --   • PLAYER_ENTERING_WORLD / PLAYER_REGEN_ENABLED → RefreshAll
+    end)
+
+    -- Event-driven layout: cooldown/actionbar events trigger direct layout
+    -- (debounced to batch rapid SPELL_UPDATE_COOLDOWN bursts)
     local layoutEventFrame = CreateFrame("Frame")
     layoutEventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
     layoutEventFrame:RegisterEvent("BAG_UPDATE_COOLDOWN")
     layoutEventFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
     layoutEventFrame:SetScript("OnEvent", function()
-        -- Skip during combat - layout will catch up when combat ends
-        if InCombatLockdown() then return end
-        -- Set flag for OnUpdate to check (no timer overhead)
-        if viewer:IsShown() then
-            viewer.__ncdmEventFired = true
-        end
+        DebouncedLayoutFromEvent(viewerName, trackerKey)
     end)
 
-    -- Pending icon ticker is now global and self-canceling (started in QueueIconForSkinning)
-    -- Clean up any old per-viewer ticker from previous versions
-    if viewer.__pendingTicker then
-        viewer.__pendingTicker:Cancel()
-        viewer.__pendingTicker = nil
-    end
-
-    -- Step 3: Initial layout - single deferred layout
+    -- Initial layout - single deferred layout
     C_Timer.After(0.02, function()
         LayoutViewer(viewerName, trackerKey)
     end)
-end
-
----------------------------------------------------------------------------
--- PUBLIC: Increment settings version (called by options panel)
--- This triggers the OnUpdate to re-layout without expensive string.format
----------------------------------------------------------------------------
-local function IncrementSettingsVersion(trackerKey)
-    if trackerKey then
-        NCDM.settingsVersion[trackerKey] = (NCDM.settingsVersion[trackerKey] or 0) + 1
-    else
-        -- Increment both if no specific tracker
-        NCDM.settingsVersion["essential"] = (NCDM.settingsVersion["essential"] or 0) + 1
-        NCDM.settingsVersion["utility"] = (NCDM.settingsVersion["utility"] or 0) + 1
-    end
 end
 
 ---------------------------------------------------------------------------
@@ -1608,23 +1806,31 @@ local function RefreshAll()
         ns.CustomCDM:RebuildIcons(VIEWER_UTILITY, "utility")
     end
 
-    -- Increment settings versions to trigger re-layout
-    IncrementSettingsVersion()
+    -- Clear icon skinning flags so all icons get re-skinned with current settings
+    for _, vn in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
+        local v = _G[vn]
+        if v then
+            for i = 1, v:GetNumChildren() do
+                local child = select(i, v:GetChildren())
+                if child and child ~= v.Selection then
+                    local cis = _iconState[child]
+                    if cis then
+                        cis.cdmSkinned = nil
+                        cis.cdmSkinPending = nil
+                    end
+                    NCDM.pendingIcons[child] = nil
+                end
+            end
+        end
+    end
 
-    -- Double layout pattern for stability
+    -- Single layout pass — no double-pass needed since we no longer call
+    -- SetSize on the viewer frame (Blizzard auto-sizes from children).
     C_Timer.After(0.01, function()
         LayoutViewer(VIEWER_ESSENTIAL, "essential")
     end)
     C_Timer.After(0.02, function()
         LayoutViewer(VIEWER_UTILITY, "utility")
-    end)
-    -- Second pass
-    C_Timer.After(0.03, function()
-        LayoutViewer(VIEWER_ESSENTIAL, "essential")
-    end)
-    C_Timer.After(0.04, function()
-        LayoutViewer(VIEWER_UTILITY, "utility")
-        -- Apply anchor after final Utility layout
         if _G.QUI_ApplyUtilityAnchor then
             _G.QUI_ApplyUtilityAnchor()
         end
@@ -1632,26 +1838,7 @@ local function RefreshAll()
 
     -- Update locked power bars and castbars after all layouts complete
     C_Timer.After(0.10, function()
-        -- Essential locked items
-        if _G.QUI_UpdateLockedPowerBar then
-            _G.QUI_UpdateLockedPowerBar()
-        end
-        if _G.QUI_UpdateLockedSecondaryPowerBar then
-            _G.QUI_UpdateLockedSecondaryPowerBar()
-        end
-        if _G.QUI_UpdateLockedCastbarToEssential then
-            _G.QUI_UpdateLockedCastbarToEssential()
-        end
-        -- Utility locked items
-        if _G.QUI_UpdateLockedPowerBarToUtility then
-            _G.QUI_UpdateLockedPowerBarToUtility()
-        end
-        if _G.QUI_UpdateLockedSecondaryPowerBarToUtility then
-            _G.QUI_UpdateLockedSecondaryPowerBarToUtility()
-        end
-        if _G.QUI_UpdateLockedCastbarToUtility then
-            _G.QUI_UpdateLockedCastbarToUtility()
-        end
+        UpdateAllLockedBars()
         -- Unit frames anchored to CDM
         if _G.QUI_UpdateCDMAnchoredUnitFrames then
             _G.QUI_UpdateCDMAnchoredUnitFrames()
@@ -1674,25 +1861,27 @@ local function ApplyUtilityAnchor()
     local utilViewer = _G[VIEWER_UTILITY]
     if not utilViewer then return end
 
+    local uvs = getViewerState(utilViewer)
+
     -- Respect centralized frame anchoring overrides.
     -- When cdmUtility is overridden in frame anchoring, this legacy anchor flow
     -- must not mutate points or it will fight the new anchoring system.
     if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(utilViewer) then
-        utilViewer.__cdmAnchoredToEssential = nil
-        utilViewer.__cdmAnchorPendingAfterCombat = nil
+        uvs.cdmAnchoredToEssential = nil
+        uvs.cdmAnchorPendingAfterCombat = nil
         DriftLog("ApplyUtilityAnchor: skipped (frame anchoring override)")
         return
     end
 
     if not utilSettings.anchorBelowEssential then
-        utilViewer.__cdmAnchoredToEssential = nil
+        uvs.cdmAnchoredToEssential = nil
         -- Stabilize unanchored Utility at current CENTER so combat-time
         -- Blizzard size changes do not visually shift its position.
         if InCombatLockdown() then
-            utilViewer.__cdmAnchorPendingAfterCombat = true
+            uvs.cdmAnchorPendingAfterCombat = true
             DriftLog("ApplyUtilityAnchor: disabled (deferred center stabilize)")
         else
-            utilViewer.__cdmAnchorPendingAfterCombat = nil
+            uvs.cdmAnchorPendingAfterCombat = nil
             local ux, uy = utilViewer:GetCenter()
             local sx, sy = UIParent:GetCenter()
             if ux and uy and sx and sy then
@@ -1710,7 +1899,7 @@ local function ApplyUtilityAnchor()
 
     -- Freeze Utility position during combat (proxy stays fixed), then re-anchor after.
     if InCombatLockdown() then
-        utilViewer.__cdmAnchorPendingAfterCombat = true
+        uvs.cdmAnchorPendingAfterCombat = true
         DriftLog("ApplyUtilityAnchor: deferred (combat)")
         return
     end
@@ -1733,8 +1922,8 @@ local function ApplyUtilityAnchor()
     utilViewer:ClearAllPoints()
     local ok = pcall(utilViewer.SetPoint, utilViewer, "TOP", anchorParent, "BOTTOM", 0, -totalOffset)
     if ok then
-        utilViewer.__cdmAnchoredToEssential = true
-        utilViewer.__cdmAnchorPendingAfterCombat = nil
+        uvs.cdmAnchoredToEssential = true
+        uvs.cdmAnchorPendingAfterCombat = nil
         local parentName = anchorParent and anchorParent.GetName and anchorParent:GetName() or tostring(anchorParent)
         DriftLog("ApplyUtilityAnchor: anchored to " .. tostring(parentName))
     else
@@ -1752,8 +1941,8 @@ local function ApplyUtilityAnchor()
             utilViewer:ClearAllPoints()
             utilViewer:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
         end
-        utilViewer.__cdmAnchoredToEssential = nil
-        utilViewer.__cdmAnchorPendingAfterCombat = nil
+        uvs.cdmAnchoredToEssential = nil
+        uvs.cdmAnchorPendingAfterCombat = nil
         -- Disable the setting so this doesn't repeat on every reload
         utilSettings.anchorBelowEssential = false
         print("|cff34D399QUI:|r Anchor Utility below Essential failed (circular dependency). Setting has been disabled. Reposition via Edit Mode.")
@@ -1761,14 +1950,96 @@ local function ApplyUtilityAnchor()
 end
 
 _G.QUI_RefreshNCDM = RefreshAll
-_G.QUI_IncrementNCDMVersion = IncrementSettingsVersion
 _G.QUI_ApplyUtilityAnchor = ApplyUtilityAnchor
+_G.QUI_IsSelectionKeepVisible = function(sel) return _keepVisibleSelections[sel] or false end
+
+-- Expose viewer layout state for resource bars, castbars, anchoring, etc.
+-- Reads from _viewerState weak-keyed table (previously __cdm* properties on frames).
+-- IMPORTANT: Returns a reused mutable snapshot table — callers MUST NOT cache
+-- the returned table across frames. Read values immediately or copy them.
+local _stateSnapshots = setmetatable({}, { __mode = "k" })
+_G.QUI_GetCDMViewerState = function(viewer)
+    if not viewer then return nil end
+    local vs = _viewerState[viewer]
+    if not vs or not vs.cdmIconWidth then return nil end
+    local snap = _stateSnapshots[viewer]
+    if not snap then
+        snap = {}
+        _stateSnapshots[viewer] = snap
+    end
+    snap.iconWidth              = vs.cdmIconWidth
+    snap.totalHeight            = vs.cdmTotalHeight
+    snap.row1Width              = vs.cdmRow1Width
+    snap.bottomRowWidth         = vs.cdmBottomRowWidth
+    snap.potentialRow1Width     = vs.cdmPotentialRow1Width
+    snap.potentialBottomRowWidth = vs.cdmPotentialBottomRowWidth
+    snap.row1IconHeight         = vs.cdmRow1IconHeight
+    snap.row1BorderSize         = vs.cdmRow1BorderSize
+    snap.bottomRowBorderSize    = vs.cdmBottomRowBorderSize
+    snap.bottomRowYOffset       = vs.cdmBottomRowYOffset
+    snap.layoutDir              = vs.cdmLayoutDirection
+    snap.proxyYOffset           = vs.cdmProxyYOffset or 0
+    return snap
+end
+
+-- Update viewer state dimensions from externally-measured icon bounds.
+-- Called by the Edit Mode ticker in anchoring.lua when Blizzard's slider
+-- changes icon size without firing SetScale/OnSizeChanged on the viewer.
+_G.QUI_SetCDMViewerBounds = function(viewer, boundsW, boundsH)
+    if not viewer then return end
+    local vs = getViewerState(viewer)
+    -- Update internal viewer state (used by proxy system, anchor calculations,
+    -- and QUI_GetCDMViewerState which resource bars should use).
+    -- Do NOT write __cdm* properties on the viewer frame — that taints
+    -- Blizzard protected frames in the Midnight (12.0) taint model.
+    vs.cdmIconWidth = boundsW
+    vs.cdmRow1Width = boundsW
+    vs.cdmBottomRowWidth = boundsW
+    vs.cdmPotentialRow1Width = boundsW
+    vs.cdmPotentialBottomRowWidth = boundsW
+    vs.cdmTotalHeight = boundsH
+end
+
+-- Refresh proxies and dependent frames after Edit Mode exit.
+-- LayoutViewer's formula is the authoritative source for viewer state
+-- dimensions — this function just ensures proxies and dependent frames
+-- are re-synced without overriding viewer state from icon bounds.
+_G.QUI_RefreshCDMViewerFromBounds = function(viewer, trackerKey)
+    if not viewer then return end
+    -- Update proxies
+    if _G.QUI_UpdateCDMAnchorProxyFrames then
+        _G.QUI_UpdateCDMAnchorProxyFrames()
+    end
+    -- Update power bars
+    UpdateLockedBarsForViewer(trackerKey)
+    -- Update anchored frames
+    if _G.QUI_UpdateAnchoredUnitFrames then
+        _G.QUI_UpdateAnchoredUnitFrames()
+    end
+    local proxyKey = trackerKey == "essential" and "cdmEssential" or "cdmUtility"
+    if _G.QUI_UpdateFramesAnchoredTo then
+        _G.QUI_UpdateFramesAnchoredTo(proxyKey)
+    end
+end
+
+-- Expose icon state accessor for other modules (cdm_custom, cdm_manager, options).
+_G.QUI_GetIconState = function(icon)
+    if not icon then return nil end
+    return _iconState[icon]
+end
+
+-- Clear icon state (used by cdm_custom when rebuilding icons).
+_G.QUI_ClearIconState = function(icon)
+    if not icon then return end
+    _iconState[icon] = nil
+end
 
 ---------------------------------------------------------------------------
 -- FORCE LOAD CDM: Open settings panel invisibly to force Blizzard init
 -- Shows at alpha 0 so OnShow scripts fire but user sees nothing
 ---------------------------------------------------------------------------
 local function ForceLoadCDM()
+    if InCombatLockdown() then return end
     local settingsFrame = _G["CooldownViewerSettings"]
     if settingsFrame then
         settingsFrame:SetAlpha(0)
@@ -1781,6 +2052,8 @@ local function ForceLoadCDM()
                 settingsFrame:Hide()
                 settingsFrame:SetAlpha(1)
             end
+            -- CDM frames may now exist after force-load
+            _cdmFramesDirty = true
         end)
     end
 end
@@ -1791,6 +2064,9 @@ end
 local function Initialize()
     if NCDM.initialized then return end
     NCDM.initialized = true
+
+    -- Viewers are now available — invalidate frames cache
+    _cdmFramesDirty = true
 
     if _G[VIEWER_ESSENTIAL] then
         HookViewer(VIEWER_ESSENTIAL, "essential")
@@ -1806,6 +2082,286 @@ local function Initialize()
         ns.CustomCDM:RebuildIcons(VIEWER_UTILITY, "utility")
         ns.CustomCDM:StartUpdateTicker()
     end
+
+    -- Hook CooldownViewerSettings:RefreshLayout — fires whenever Blizzard
+    -- recalculates CDM layout (icon size slider, enable/disable, etc.).
+    -- No loop prevention needed: LayoutViewer no longer calls SetSize on the
+    -- viewer frame, so it cannot retrigger RefreshLayout.
+    -- Runs in combat too: Blizzard fires RefreshLayout mid-combat which resets
+    -- icon positions to defaults.  LayoutViewer safely defers skinning and
+    -- dependent-bar updates until post-combat while repositioning icons
+    -- immediately.  C_Timer.After(0) lets Blizzard finish its pass first
+    -- (same pattern as BuffBar CDM RefreshLayout hook).
+    local settingsFrame = _G["CooldownViewerSettings"]
+    if settingsFrame and settingsFrame.RefreshLayout
+       and not NCDM.hooked["CooldownViewerSettings"] then
+        NCDM.hooked["CooldownViewerSettings"] = true
+        hooksecurefunc(settingsFrame, "RefreshLayout", function()
+            local combat = InCombatLockdown()
+            if QUI and QUI.DebugPrint then
+                QUI:DebugPrint(format("|cff34D399CDM|r RefreshLayout hook fired combat=%s editMode=%s",
+                    tostring(combat), tostring(Helpers.IsEditModeActive())))
+            end
+            if Helpers.IsEditModeActive() then return end
+            C_Timer.After(0, function()
+                if Helpers.IsEditModeActive() then return end
+                local combat2 = InCombatLockdown()
+                if QUI and QUI.DebugPrint then
+                    QUI:DebugPrint(format("|cff34D399CDM|r RefreshLayout deferred running combat=%s applying=[ess=%s util=%s]",
+                        tostring(combat2),
+                        tostring(NCDM.applying["essential"]),
+                        tostring(NCDM.applying["utility"])))
+                end
+                LayoutViewer(VIEWER_ESSENTIAL, "essential")
+                LayoutViewer(VIEWER_UTILITY, "utility")
+            end)
+        end)
+    end
+
+    -- Hook BuffIcon/BuffBar for Edit Mode resize (refresh anchor proxies so dependent frames follow).
+    local buffViewerNames = { "BuffIconCooldownViewer", "BuffBarCooldownViewer" }
+    for _, bvName in ipairs(buffViewerNames) do
+        local bv = _G[bvName]
+        if bv and not NCDM.hooked[bvName] then
+            NCDM.hooked[bvName] = true
+            -- New buff viewer hooked — invalidate frames cache
+            _cdmFramesDirty = true
+            -- On Edit Mode enter: show Selection (invisible) so we can read its size.
+            -- _keepVisibleSelections flag prevents nudge.lua from re-hiding it.
+            if QUICore and QUICore.RegisterEditModeEnter then
+                QUICore:RegisterEditModeEnter(function()
+                    local sel = bv.Selection
+                    if sel then
+                        _keepVisibleSelections[sel] = true
+                        sel:Show()
+                        sel:SetAlpha(0)
+                    end
+                end)
+            end
+            bv:HookScript("OnSizeChanged", function(self)
+                if Helpers.IsEditModeActive() then
+                    local w = Helpers.SafeValue(self:GetWidth(), 0)
+                    local h = Helpers.SafeValue(self:GetHeight(), 0)
+                    if w < 2 or h < 2 then return end
+
+                    local sel = self.Selection
+                    local selW = Helpers.SafeValue(sel and sel:GetWidth(), 0)
+                    local selH = Helpers.SafeValue(sel and sel:GetHeight(), 0)
+                    local proxyKey = bvName == "BuffIconCooldownViewer" and "buffIcon" or "buffBar"
+                    local bvs = getViewerState(self)
+
+                    -- Defer icon measurement by one frame — Blizzard resizes the
+                    -- viewer first, then scales icons on the next frame.
+                    -- Proxy and overlay both use scale-corrected icon dimensions.
+                    local viewerRef = self
+                    C_Timer.After(0, function()
+                        if not viewerRef or not Helpers.IsEditModeActive() then return end
+                        local overlay = _G.QUI_GetCDMViewerOverlay and _G.QUI_GetCDMViewerOverlay(bvName)
+
+                        -- Measure actual visual bounds of icon children (includes padding).
+                        -- GetLeft/GetRight/GetTop/GetBottom account for child scale,
+                        -- so the bounding box reflects the true visual extent.
+                        local iconCount = 0
+                        local boundsL, boundsR, boundsT, boundsB
+                        local iconScale = 1
+                        for i = 1, viewerRef:GetNumChildren() do
+                            local child = select(i, viewerRef:GetChildren())
+                            if child and child ~= viewerRef.Selection and IsIconFrame(child)
+                                and child:IsShown() then
+                                iconCount = iconCount + 1
+                                local cl = Helpers.SafeValue(child:GetLeft(), nil)
+                                local cr = Helpers.SafeValue(child:GetRight(), nil)
+                                local ct = Helpers.SafeValue(child:GetTop(), nil)
+                                local cb = Helpers.SafeValue(child:GetBottom(), nil)
+                                if cl and cr and ct and cb then
+                                    boundsL = boundsL and math.min(boundsL, cl) or cl
+                                    boundsR = boundsR and math.max(boundsR, cr) or cr
+                                    boundsT = boundsT and math.max(boundsT, ct) or ct
+                                    boundsB = boundsB and math.min(boundsB, cb) or cb
+                                end
+                                if iconCount == 1 then
+                                    iconScale = Helpers.SafeValue(child:GetScale(), 1)
+                                end
+                            end
+                        end
+
+                        local totalIconW = (boundsL and boundsR) and (boundsR - boundsL) or 0
+                        local maxIconH = (boundsT and boundsB) and (boundsT - boundsB) or 0
+
+                        -- Convert UIParent-space icon bounds to viewer-local (logical)
+                        -- space.  Viewer state must be logical so proxy Sync's
+                        -- effective-scale conversion produces the correct proxy size.
+                        local vScale = Helpers.SafeValue(viewerRef:GetScale(), 1)
+                        if vScale <= 0 then vScale = 1 end
+
+                        -- Store logical (un-scaled) dimensions in viewer state,
+                        -- matching the convention used by Essential/Utility viewers.
+                        -- totalIconW/maxIconH are in UIParent space (GetRight-GetLeft);
+                        -- divide by viewer scale to get logical.
+                        local iconW = totalIconW > 1 and (totalIconW / vScale) or Helpers.SafeValue(viewerRef:GetWidth(), 0)
+                        local iconH = maxIconH > 1 and (maxIconH / vScale) or Helpers.SafeValue(viewerRef:GetHeight(), 0)
+                        bvs.cdmIconWidth = iconW
+                        bvs.cdmRow1Width = iconW
+                        bvs.cdmBottomRowWidth = iconW
+                        bvs.cdmPotentialRow1Width = iconW
+                        bvs.cdmPotentialBottomRowWidth = iconW
+                        bvs.cdmTotalHeight = iconH
+                        if _G.QUI_UpdateCDMAnchorProxyFrames then
+                            _G.QUI_UpdateCDMAnchorProxyFrames()
+                        end
+
+                        -- Size overlay to the proxy so it matches the effective
+                        -- bounds (includes icon measurement + min-width).
+                        if overlay then
+                            local getProxy = _G.QUI_GetCDMAnchorProxyFrame
+                            local proxy = type(getProxy) == "function" and getProxy(proxyKey) or nil
+                            if proxy then
+                                local pw = Helpers.SafeValue(proxy:GetWidth(), 0)
+                                local ph = Helpers.SafeValue(proxy:GetHeight(), 0)
+                                if pw > 1 and ph > 1 then
+                                    overlay:ClearAllPoints()
+                                    overlay:SetPoint("CENTER", viewerRef, "CENTER", 0, 0)
+                                    overlay:SetSize(pw / vScale, ph / vScale)
+                                end
+                            end
+                        end
+
+                        -- Update frames anchored TO this viewer (via proxy)
+                        if _G.QUI_UpdateFramesAnchoredTo then
+                            _G.QUI_UpdateFramesAnchoredTo(proxyKey)
+                        end
+
+                        local vScale = Helpers.SafeValue(viewerRef:GetScale(), 1)
+                        if QUI and QUI.DebugPrint then QUI:DebugPrint(format("|cff34D399CDM|r EditMode %s: viewer=%.0fx%.0f(s=%.3f) icons=%d bounds=%.0fx%.0f(s=%.3f) overlay=%s",
+                            bvName, Helpers.SafeValue(viewerRef:GetWidth(), 0),
+                            Helpers.SafeValue(viewerRef:GetHeight(), 0), vScale,
+                            iconCount, totalIconW, maxIconH, iconScale,
+                            overlay and format("%.0fx%.0f", overlay:GetWidth(), overlay:GetHeight()) or "nil")) end
+                    end)
+                end
+            end)
+        end
+    end
+
+    -- On Edit Mode exit: full cleanup — sync Selection overlays, relayout icons,
+    -- refresh anchor proxies, and re-anchor all dependent frames.
+    -- DebouncedReapplyOverrides is suppressed during Edit Mode, so we must do
+    -- the full re-anchor here to pick up any changes the user made.
+    if QUICore and QUICore.RegisterEditModeExit then
+        QUICore:RegisterEditModeExit(function()
+            if InCombatLockdown() then return end
+            -- Immediately relayout so viewer state has correct QUI dimensions
+            -- before proxies and bars update.  Without this, bars flash at
+            -- Edit Mode dimensions until the first delayed LayoutViewer pass.
+            for _, vn in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
+                local v = _G[vn]
+                if v then
+                    local vvs = getViewerState(v)
+                    vvs._wasInEditMode = nil
+                    local tk = vn == VIEWER_ESSENTIAL and "essential" or "utility"
+                    LayoutViewer(vn, tk)
+                end
+            end
+            -- Refresh proxies and re-anchor all dependent frames
+            if _G.QUI_UpdateCDMAnchorProxyFrames then
+                _G.QUI_UpdateCDMAnchorProxyFrames()
+            end
+            -- Snap Utility back to correct position relative to Essential
+            -- (legacy anchorBelowEssential — not handled by ApplyAllFrameAnchors)
+            if _G.QUI_ApplyUtilityAnchor then
+                _G.QUI_ApplyUtilityAnchor()
+            end
+            if _G.QUI_ApplyAllFrameAnchors then
+                _G.QUI_ApplyAllFrameAnchors()
+            end
+            -- Blizzard applies the new icon size from the Edit Mode slider
+            -- AFTER our exit handler.  Schedule delayed re-measurements so
+            -- proxies, power bars, and anchored frames match the new icons.
+            for _, delay in ipairs({0.15, 0.5, 1.0}) do
+                C_Timer.After(delay, function()
+                    if InCombatLockdown() then return end
+                    -- Clean up transition state and re-layout Essential/Utility
+                    -- unconditionally so QUI's icon size and padding are always
+                    -- reapplied after Edit Mode exit.
+                    for _, vn in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
+                        local v = _G[vn]
+                        if v then
+                            local vvs = getViewerState(v)
+                            vvs._wasInEditMode = nil  -- clean up stale flags
+                            local tk = vn == VIEWER_ESSENTIAL and "essential" or "utility"
+                            LayoutViewer(vn, tk)
+                        end
+                    end
+                    if _G.QUI_RefreshCDMViewerFromBounds then
+                        _G.QUI_RefreshCDMViewerFromBounds(_G[VIEWER_ESSENTIAL], "essential")
+                        _G.QUI_RefreshCDMViewerFromBounds(_G[VIEWER_UTILITY], "utility")
+                    end
+                end)
+            end
+            -- Restore BuffIcon/BuffBar overlays to SetAllPoints and clear
+            -- cached Selection state from the Edit Mode session.
+            for _, bvName in ipairs({ "BuffIconCooldownViewer", "BuffBarCooldownViewer" }) do
+                local bv = _G[bvName]
+                if bv then
+                    local bvs = getViewerState(bv)
+                    bvs._lastSelW = nil
+                    bvs._lastSelH = nil
+                    -- Clear keep-visible flag
+                    local sel = bv.Selection
+                    if sel then
+                        _keepVisibleSelections[sel] = nil
+                    end
+
+                    -- Read Blizzard's Edit Mode padding from icon positions and
+                    -- save to QUI settings so LayoutBuffIcons/LayoutBuffBars uses
+                    -- the padding the user set in Edit Mode.
+                    local icons = {}
+                    for i = 1, bv:GetNumChildren() do
+                        local child = select(i, bv:GetChildren())
+                        if child and child ~= bv.Selection
+                            and (child.icon or child.Icon) and child:IsShown() then
+                            icons[#icons + 1] = child
+                        end
+                    end
+                    if #icons >= 2 then
+                        -- Sort left-to-right by screen position
+                        table.sort(icons, function(a, b)
+                            return (a:GetLeft() or 0) < (b:GetLeft() or 0)
+                        end)
+                        local r1 = icons[1]:GetRight()
+                        local l2 = icons[2]:GetLeft()
+                        if r1 and l2 then
+                            local gap = l2 - r1
+                            local ncdmDB = QUI.db and QUI.db.profile and QUI.db.profile.ncdm
+                            if ncdmDB then
+                                if bvName == "BuffBarCooldownViewer" and ncdmDB.trackedBar then
+                                    ncdmDB.trackedBar.spacing = math.floor(gap + 0.5)
+                                    if QUI and QUI.DebugPrint then QUI:DebugPrint(format("|cff34D399CDM|r EditMode exit: saved BuffBar spacing = %d", ncdmDB.trackedBar.spacing)) end
+                                end
+                            end
+                        end
+                    end
+                end
+                local ov = _G.QUI_GetCDMViewerOverlay and _G.QUI_GetCDMViewerOverlay(bvName)
+                if ov and bv then
+                    ov:ClearAllPoints()
+                    ov:SetAllPoints(bv)
+                end
+            end
+            -- Re-layout BuffIcon/BuffBar with saved settings (including new padding)
+            local buffBar = ns and ns.BuffBar
+            if buffBar then
+                if buffBar.LayoutIcons then buffBar.LayoutIcons() end
+                if buffBar.LayoutBars then buffBar.LayoutBars() end
+            end
+        end)
+    end
+
+    -- Early bar update: HookViewer's initial LayoutViewer fires at ~T+0.02s but
+    -- resource bars may not exist yet (OnEnable hasn't fired).  Schedule an
+    -- UpdateAllLockedBars once resource bars are likely initialized so they
+    -- pick up the correct CDM width instead of the stale DB fallback.
+    C_Timer.After(1.0, UpdateAllLockedBars)
 
     -- Single delayed refresh (consolidated from 3 calls at 1s/2s/4s to reduce CPU spike)
     C_Timer.After(2.5, RefreshAll)
@@ -1827,6 +2383,10 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("CHALLENGE_MODE_START")
+eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+eventFrame:RegisterEvent("CINEMATIC_STOP")
+eventFrame:RegisterEvent("STOP_MOVIE")
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
         -- Force load CDM first, then initialize our hooks
@@ -1837,32 +2397,34 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- Skip on initial login/reload (Initialize already schedules RefreshAll at 2.5s)
         -- But DO refresh on zone changes (M+ dungeons, instance portals, etc.)
         if not isLogin and not isReload then
-            -- Zone change: enable 2-second grace period for anchor checking
-            for _, viewerName in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
-                local viewer = _G[viewerName]
-                if viewer then
-                    viewer.__ncdmGraceUntil = GetTime() + 2.0
-                    -- Clear icon state flags for fresh layout in new zone
-                    for i = 1, viewer:GetNumChildren() do
-                        local child = select(i, viewer:GetChildren())
-                        if child and child ~= viewer.Selection then
-                            child.__cdmSkinned = nil
-                            child.__cdmSkinPending = nil
-                        end
-                    end
-                end
-            end
+            -- Zone change: refresh layout for new zone (icon state cleared by RefreshAll)
             C_Timer.After(0.3, RefreshAll)
         end
     elseif event == "CHALLENGE_MODE_START" then
-        -- M+ keystone: enable grace period to catch scenario-related scrambles
-        for _, viewerName in ipairs({VIEWER_ESSENTIAL, VIEWER_UTILITY}) do
-            local viewer = _G[viewerName]
-            if viewer then
-                viewer.__ncdmGraceUntil = GetTime() + 2.0
-            end
-        end
+        -- M+ keystone: refresh after scenario setup
         C_Timer.After(0.5, RefreshAll)
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+        -- Spec change: cooldowns differ per spec, full rebuild needed
+        C_Timer.After(0.5, RefreshAll)
+    elseif event == "ZONE_CHANGED_NEW_AREA" then
+        -- Zone change without loading screen (walking between open-world zones)
+        C_Timer.After(0.3, RefreshAll)
+    elseif event == "CINEMATIC_STOP" or event == "STOP_MOVIE" then
+        -- Quest cinematics can invalidate/recreate CDM frames while they are hidden.
+        -- Re-load, re-hook, and refresh after the scene ends.
+        C_Timer.After(0.2, ForceLoadCDM)
+        C_Timer.After(0.4, function()
+            HookViewer(VIEWER_ESSENTIAL, "essential")
+            HookViewer(VIEWER_UTILITY, "utility")
+            _cdmFramesDirty = true
+            RefreshAll()
+            if UpdateCDMVisibility then
+                UpdateCDMVisibility()
+            end
+            if UpdateUnitframesVisibility then
+                UpdateUnitframesVisibility()
+            end
+        end)
     end
 end)
 
@@ -1917,31 +2479,38 @@ local CDMVisibility = {
     leaveTimer = nil,
 }
 
--- Get CDM frames (viewers + power bars)
+-- Get CDM frames (viewers + power bars) — cached to avoid per-frame allocations
 local function GetCDMFrames()
-    local frames = {}
+    if not _cdmFramesDirty then
+        return _cdmFramesCache
+    end
+
+    wipe(_cdmFramesCache)
 
     -- Blizzard CDM frames
     if _G.EssentialCooldownViewer then
-        table.insert(frames, _G.EssentialCooldownViewer)
+        _cdmFramesCache[#_cdmFramesCache + 1] = _G.EssentialCooldownViewer
     end
     if _G.UtilityCooldownViewer then
-        table.insert(frames, _G.UtilityCooldownViewer)
+        _cdmFramesCache[#_cdmFramesCache + 1] = _G.UtilityCooldownViewer
     end
     if _G.BuffIconCooldownViewer then
-        table.insert(frames, _G.BuffIconCooldownViewer)
+        _cdmFramesCache[#_cdmFramesCache + 1] = _G.BuffIconCooldownViewer
     end
     if _G.BuffBarCooldownViewer then
-        table.insert(frames, _G.BuffBarCooldownViewer)
+        _cdmFramesCache[#_cdmFramesCache + 1] = _G.BuffBarCooldownViewer
     end
 
-    return frames
+    _cdmFramesDirty = false
+    return _cdmFramesCache
 end
 
--- Get cdmVisibility settings from profile
+-- Get cdmVisibility settings from profile — cached to avoid repeated table lookups
 local function GetCDMVisibilitySettings()
+    if _visSettingsCache then return _visSettingsCache end
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.cdmVisibility then
-        return QUICore.db.profile.cdmVisibility
+        _visSettingsCache = QUICore.db.profile.cdmVisibility
+        return _visSettingsCache
     end
     return nil
 end
@@ -1976,6 +2545,7 @@ end
 local function OnCDMFadeUpdate(self, elapsed)
     local vis = GetCDMVisibilitySettings()
     local duration = (vis and vis.fadeDuration) or 0.2
+    if duration <= 0 then duration = 0.01 end
 
     local now = GetTime()
     local elapsedTime = now - CDMVisibility.fadeStart
@@ -1987,8 +2557,17 @@ local function OnCDMFadeUpdate(self, elapsed)
 
     -- Apply to CDM frames
     local frames = GetCDMFrames()
-    for _, frame in ipairs(frames) do
-        frame:SetAlpha(alpha)
+    for i = #frames, 1, -1 do
+        local frame = frames[i]
+        local ok = false
+        if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
+            ok = pcall(frame.SetAlpha, frame, alpha)
+        end
+        if not ok then
+            -- Remove stale/forbidden references to avoid repeat-error loops in OnUpdate.
+            table.remove(frames, i)
+            _cdmFramesDirty = true
+        end
     end
 
     -- Check if fade complete
@@ -2026,7 +2605,14 @@ local function StartCDMFade(targetAlpha)
 end
 
 -- Update CDM visibility
-local function UpdateCDMVisibility()
+UpdateCDMVisibility = function()
+    -- During Edit Mode, force CDM frames fully visible so overlays (which are
+    -- children and inherit parent alpha) remain visible for repositioning.
+    if Helpers.IsEditModeActive() then
+        StartCDMFade(1)
+        return
+    end
+
     local shouldShow = ShouldCDMBeVisible()
     local vis = GetCDMVisibilitySettings()
 
@@ -2051,9 +2637,9 @@ end
 
 -- Helper: Hook a single frame for mouseover detection
 HookFrameForMouseover = function(frame)
-    if not frame or frame._quiMouseoverHooked then return end
+    if not frame or _mouseoverHooked[frame] then return end
 
-    frame._quiMouseoverHooked = true
+    _mouseoverHooked[frame] = true
 
     frame:HookScript("OnEnter", function()
         local vis = GetCDMVisibilitySettings()
@@ -2085,7 +2671,7 @@ HookFrameForMouseover = function(frame)
             end
 
             -- Delay fade to allow OnEnter on next icon to fire first
-            CDMVisibility.leaveTimer = C_Timer.After(0.5, function()
+            CDMVisibility.leaveTimer = C_Timer.NewTimer(0.5, function()
                 CDMVisibility.leaveTimer = nil
                 -- Re-check hoverCount - may have been incremented by OnEnter
                 if CDMVisibility.hoverCount == 0 then
@@ -2204,12 +2790,18 @@ end
 local function ApplyUnitframeVisibilityAlpha(frame, alpha)
     if not frame then return end
 
-    -- Respect castbar runtime visibility state so HUD visibility logic doesn't
-    -- resurrect inactive castbars (especially player castbar alpha-fallback mode).
-    -- Only castbars using alpha-fallback mode should be forced hidden this way.
-    if frame._quiCastbar and frame._quiUseAlphaVisibility and frame._quiDesiredVisible == false then
-        frame:SetAlpha(0)
-        return
+    if frame._quiCastbar then
+        -- Castbar is actively showing a cast — don't override its alpha.
+        -- The castbar module owns visibility during casts; letting HUD
+        -- visibility set alpha to 0 here is what caused castbars to
+        -- silently disappear when unit frames were faded out.
+        if frame._quiDesiredVisible then return end
+
+        -- Idle castbar using alpha-fallback mode — keep it hidden.
+        if frame._quiUseAlphaVisibility then
+            frame:SetAlpha(0)
+            return
+        end
     end
 
     frame:SetAlpha(alpha)
@@ -2245,6 +2837,7 @@ end
 local function OnUnitframesFadeUpdate(self, elapsed)
     local vis = GetUnitframesVisibilitySettings()
     local duration = (vis and vis.fadeDuration) or 0.2
+    if duration <= 0 then duration = 0.01 end
 
     local now = GetTime()
     local elapsedTime = now - UnitframesVisibility.fadeStart
@@ -2295,7 +2888,14 @@ local function StartUnitframesFade(targetAlpha)
 end
 
 -- Update Unitframes visibility
-local function UpdateUnitframesVisibility()
+UpdateUnitframesVisibility = function()
+    -- During Edit Mode, force unit frames fully visible so overlays (which are
+    -- children and inherit parent alpha) remain visible for repositioning.
+    if _G.QUI_IsUnitFrameEditModeActive and _G.QUI_IsUnitFrameEditModeActive() then
+        StartUnitframesFade(1)
+        return
+    end
+
     local vis = GetUnitframesVisibilitySettings()
     local shouldShow = ShouldUnitframesBeVisible()
 
@@ -2359,8 +2959,8 @@ local function SetupUnitframesMouseoverDetector()
     local hoverCount = 0
 
     for _, frame in ipairs(ufFrames) do
-        if frame and not frame._quiMouseoverHooked then
-            frame._quiMouseoverHooked = true
+        if frame and not _mouseoverHooked[frame] then
+            _mouseoverHooked[frame] = true
 
             -- Hook OnEnter
             frame:HookScript("OnEnter", function()
@@ -2382,7 +2982,7 @@ local function SetupUnitframesMouseoverDetector()
                     if UnitframesVisibility.leaveTimer then
                         UnitframesVisibility.leaveTimer:Cancel()
                     end
-                    UnitframesVisibility.leaveTimer = C_Timer.After(0.5, function()
+                    UnitframesVisibility.leaveTimer = C_Timer.NewTimer(0.5, function()
                         UnitframesVisibility.leaveTimer = nil
                         if hoverCount == 0 then
                             UnitframesVisibility.mouseOver = false
@@ -2440,7 +3040,12 @@ visibilityEventFrame:SetScript("OnEvent", function(self, event, ...)
 end)
 
 -- Global refresh functions for options panel
-_G.QUI_RefreshCDMVisibility = UpdateCDMVisibility
+-- Wrap CDM refresh to invalidate caches (called on profile switch & settings change)
+_G.QUI_RefreshCDMVisibility = function()
+    _visSettingsCache = nil   -- profile may have changed — drop cached reference
+    _cdmFramesDirty = true    -- viewers may differ after profile switch
+    UpdateCDMVisibility()
+end
 _G.QUI_RefreshUnitframesVisibility = UpdateUnitframesVisibility
 _G.QUI_RefreshCDMMouseover = SetupCDMMouseoverDetector
 _G.QUI_RefreshUnitframesMouseover = SetupUnitframesMouseoverDetector

@@ -53,7 +53,7 @@ local function CreateActionBarsPage(parent)
         local FORM_ROW = 32
 
         -- Set search context for widget auto-registration
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Action Bars", subTabIndex = 2, subTabName = "Mouseover Hide"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 2, subTabName = "Mouseover Hide"})
 
         ---------------------------------------------------------
         -- Warning: Enable Blizzard Action Bars
@@ -69,6 +69,7 @@ local function CreateActionBarsPage(parent)
         y = y - 55
 
         local openSettingsBtn = GUI:CreateButton(tabContent, "Open Game Settings", 160, 26, function()
+            if InCombatLockdown() then return end
             if SettingsPanel then
                 SettingsPanel:Open()
             end
@@ -126,6 +127,12 @@ local function CreateActionBarsPage(parent)
             "alwaysShowInCombat", fade, RefreshActionBars)
         combatCheck:SetPoint("TOPLEFT", PAD, y)
         combatCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local leaveVehicleCheck = GUI:CreateFormCheckbox(tabContent, "Keep Leave Vehicle Button Visible",
+            "keepLeaveVehicleVisible", fade, RefreshActionBars)
+        leaveVehicleCheck:SetPoint("TOPLEFT", PAD, y)
+        leaveVehicleCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
         local maxLevelCheck = GUI:CreateFormCheckbox(tabContent, "Disable Below Max Level",
@@ -205,7 +212,7 @@ local function CreateActionBarsPage(parent)
         local FORM_ROW = 32
 
         -- Set search context for auto-registration
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Action Bars", subTabIndex = 1, subTabName = "Master Settings"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 1, subTabName = "Master Settings"})
 
         -- 9-point anchor options for text positioning
         local anchorOptions = {
@@ -224,6 +231,7 @@ local function CreateActionBarsPage(parent)
         -- Quick Keybind Mode (prominent tool at top)
         ---------------------------------------------------------
         local keybindModeBtn = GUI:CreateButton(tabContent, "Quick Keybind Mode", 180, 28, function()
+            if InCombatLockdown() then return end
             local LibKeyBound = LibStub("LibKeyBound-1.0", true)
             if LibKeyBound then
                 LibKeyBound:Toggle()
@@ -368,6 +376,7 @@ local function CreateActionBarsPage(parent)
                 end
             end,
             __newindex = function(t, k, v)
+                if InCombatLockdown() then return end
                 if k == "buttonLock" and type(v) == "string" then
                     if v == "unlocked" then
                         SetCVar("lockActionBars", "0")
@@ -566,7 +575,7 @@ local function CreateActionBarsPage(parent)
     ---------------------------------------------------------
     local function BuildPerBarOverridesTab(tabContent)
         -- Set search context for widget auto-registration
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Action Bars", subTabIndex = 3, subTabName = "Per-Bar Overrides"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 3, subTabName = "Per-Bar Overrides"})
 
         -- Use tabContent directly - parent Action Bars page already has scroll
         local content = tabContent
@@ -988,7 +997,7 @@ local function CreateActionBarsPage(parent)
         local FORM_ROW = 32
 
         -- Set search context
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Action Bars", subTabIndex = 4, subTabName = "Extra Buttons"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 4, subTabName = "Extra Buttons"})
 
         -- Refresh callback
         local function RefreshExtraButtons()
@@ -1170,7 +1179,7 @@ BuildTotemBarTab = function(tabContent)
     local db = core and core.db and core.db.profile and core.db.profile.totemBar
 
     -- Set search context for widget auto-registration
-    GUI:SetSearchContext({tabIndex = 5, tabName = "Action Bars", subTabIndex = 5, subTabName = "Totem Bar"})
+    GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 5, subTabName = "Totem Bar"})
 
     -- Class guard: show notice for non-shamans
     local _, playerClass = UnitClass("player")

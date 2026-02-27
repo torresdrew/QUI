@@ -16,9 +16,13 @@ local VIEWER_UTILITY = "UtilityCooldownViewer"
 ---------------------------------------------------------------------------
 -- MODULE STATE
 ---------------------------------------------------------------------------
+-- Memory optimization: cap recyclePool to prevent unbounded frame accumulation
+-- across many spec swaps. 20 is generous — most configs have < 10 custom entries.
+local MAX_RECYCLE_POOL_SIZE = 20
+
 local CustomCDM = {
     iconPools = {},         -- [viewerName] = { icon1, icon2, ... }
-    recyclePool = {},       -- Recycled icon frames for reuse
+    recyclePool = {},       -- Recycled icon frames for reuse (capped at MAX_RECYCLE_POOL_SIZE)
     updateTicker = nil,
     pendingRebuild = {},    -- [viewerName] = trackerKey (queued for after combat)
     iconCounter = 0,        -- Unique name counter for frames
@@ -357,10 +361,10 @@ function CustomCDM:AcquireIcon(parent, entry, initialSize)
         icon:SetSize(size, size)
         icon._isCustomCDMIcon = true
         icon._customCDMEntry = entry
-        icon._ncdmSetup = nil      -- Reset skin state so SkinIcon re-processes
-        icon.__cdmSkinned = nil
-        icon.__cdmSkinPending = nil
-        icon._ncdmPositioned = nil
+        -- Reset skin state so SkinIcon re-processes (uses cdm_viewer's iconState table)
+        local getVS = _G.QUI_GetCDMViewerState  -- Access the iconState via the global API
+        -- Clear icon state stored in cdm_viewer's weak-keyed tables
+        if _G.QUI_ClearIconState then _G.QUI_ClearIconState(icon) end
         icon.Icon:SetTexture(GetEntryTexture(entry))
         icon.Cooldown:Clear()
         icon:Show()
@@ -385,9 +389,17 @@ function CustomCDM:RebuildIcons(viewerName, trackerKey)
         for _, icon in ipairs(oldPool) do
             icon:Hide()
             icon:ClearAllPoints()
-            icon:SetParent(UIParent)  -- Park on UIParent (SetParent(nil) leaks)
             icon._customCDMEntry = nil
-            table.insert(self.recyclePool, icon)
+            -- Memory optimization: only keep up to MAX_RECYCLE_POOL_SIZE frames in the pool.
+            -- Excess frames are parked on UIParent with no references (eventually GC-eligible
+            -- once Blizzard supports frame GC, and harmless until then).
+            if #self.recyclePool < MAX_RECYCLE_POOL_SIZE then
+                icon:SetParent(UIParent)  -- Park on UIParent (SetParent(nil) leaks)
+                table.insert(self.recyclePool, icon)
+            else
+                icon:SetParent(UIParent)
+                -- Drop reference — frame is orphaned but hidden and inert
+            end
         end
     end
     self.iconPools[viewerName] = {}

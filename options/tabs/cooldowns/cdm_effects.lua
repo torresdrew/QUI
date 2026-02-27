@@ -18,7 +18,7 @@ local function BuildEffectsTab(tabContent)
     local PAD = 10
 
     -- Set search context for auto-registration
-    GUI:SetSearchContext({tabIndex = 3, tabName = "Cooldown Manager", subTabIndex = 6, subTabName = "Effects"})
+    GUI:SetSearchContext({tabIndex = 4, tabName = "Cooldown Manager", subTabIndex = 6, subTabName = "Effects"})
 
     -- Refresh functions
     local function RefreshSwipe()
@@ -110,7 +110,7 @@ local function BuildEffectsTab(tabContent)
     overlayHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - overlayHeader.gap
 
-    local overlayDesc = GUI:CreateLabel(tabContent, "Override the Blizzard yellow swipe overlay color on Essential and Utility icons.", 11, C.textMuted)
+    local overlayDesc = GUI:CreateLabel(tabContent, "Override the Blizzard yellow swipe overlay color on Essential, Utility and Buff Icon cooldown icons.", 11, C.textMuted)
     overlayDesc:SetPoint("TOPLEFT", PAD, y)
     overlayDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
     overlayDesc:SetJustifyH("LEFT")

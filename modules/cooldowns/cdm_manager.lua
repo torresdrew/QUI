@@ -4,34 +4,51 @@
 -- Note: Swipe visibility is handled by cooldownswipe.lua
 
 local _, QUI = ...
+local Helpers = QUI.Helpers
+local SafeValue = Helpers.SafeValue
 
 -- Local variables
 local viewerPending = {}
 local updateBucket = {}
+local _iconPositions = Helpers.CreateStateTable()
+local _pendingCombatViewers
+-- Performance: reusable scratch table for visible children (avoids per-call allocation)
+local cdm_visibleScratch = {}
 
 -- Core function to remove padding and apply modifications
 local function RemovePadding(viewer)
     -- Don't apply modifications in edit mode
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then
+    if Helpers.IsEditModeActive() then
         return
     end
-    
+
+    -- Don't modify protected frames during combat — defer to post-combat
+    if InCombatLockdown() then
+        if not _pendingCombatViewers then _pendingCombatViewers = {} end
+        _pendingCombatViewers[viewer] = true
+        return
+    end
+
     -- Don't interfere if layout is currently being applied
     if viewer._layoutApplying then
         return
     end
     
-    local children = {viewer:GetChildren()}
-    
+    -- Performance: iterate children via select() to avoid table allocation
+    local numChildren = viewer:GetNumChildren()
     -- Get the visible icons (because they're fully dynamic)
-    local visibleChildren = {}
-    for _, child in ipairs(children) do
-        if child:IsShown() then
+    -- Performance: reuse module-level scratch table instead of allocating per call
+    local visibleChildren = cdm_visibleScratch
+    wipe(visibleChildren)
+    for i = 1, numChildren do
+        local child = select(i, viewer:GetChildren())
+        if child and child:IsShown() then
             -- Store original position for sorting
             local point, relativeTo, relativePoint, x, y = child:GetPoint(1)
-            child.originalX = x or 0
-            child.originalY = y or 0
-            table.insert(visibleChildren, child)
+            _iconPositions[child] = _iconPositions[child] or {}
+            _iconPositions[child].originalX = x or 0
+            _iconPositions[child].originalY = y or 0
+            visibleChildren[#visibleChildren + 1] = child
         end
     end
     
@@ -42,18 +59,22 @@ local function RemovePadding(viewer)
     if isHorizontal then
         -- Sort left to right, then top to bottom
         table.sort(visibleChildren, function(a, b)
-            if math.abs(a.originalY - b.originalY) < 1 then
-                return a.originalX < b.originalX
+            local posA = _iconPositions[a] or {}
+            local posB = _iconPositions[b] or {}
+            if math.abs((posA.originalY or 0) - (posB.originalY or 0)) < 1 then
+                return (posA.originalX or 0) < (posB.originalX or 0)
             end
-            return a.originalY > b.originalY
+            return (posA.originalY or 0) > (posB.originalY or 0)
         end)
     else
         -- Sort top to bottom, then left to right
         table.sort(visibleChildren, function(a, b)
-            if math.abs(a.originalX - b.originalX) < 1 then
-                return a.originalY > b.originalY
+            local posA = _iconPositions[a] or {}
+            local posB = _iconPositions[b] or {}
+            if math.abs((posA.originalX or 0) - (posB.originalX or 0)) < 1 then
+                return (posA.originalY or 0) > (posB.originalY or 0)
             end
-            return a.originalX < b.originalX
+            return (posA.originalX or 0) < (posB.originalX or 0)
         end)
     end
     
@@ -69,15 +90,20 @@ local function RemovePadding(viewer)
         if child.Icon then
             child.Icon:ClearAllPoints()
             child.Icon:SetPoint("CENTER", child, "CENTER", 0, 0)
-            child.Icon:SetSize(child:GetWidth() * iconScale, child:GetHeight() * iconScale)
+            local cw = SafeValue(child:GetWidth(), 0)
+            local ch = SafeValue(child:GetHeight(), 0)
+            if cw > 0 and ch > 0 then
+                child.Icon:SetSize(cw * iconScale, ch * iconScale)
+            end
         end
         
         -- Swipe visibility is now handled by cooldownswipe.lua
     end
     
     -- Reposition buttons respecting orientation and stride
-    local buttonWidth = visibleChildren[1]:GetWidth()
-    local buttonHeight = visibleChildren[1]:GetHeight()
+    local buttonWidth = SafeValue(visibleChildren[1]:GetWidth(), 0)
+    local buttonHeight = SafeValue(visibleChildren[1]:GetHeight(), 0)
+    if buttonWidth <= 0 or buttonHeight <= 0 then return end
     
     -- Calculate grid dimensions
     local numIcons = #visibleChildren
@@ -158,6 +184,18 @@ end
 
 -- Swipe visibility is now handled centrally by cooldownswipe.lua
 -- This file only handles icon layout (padding removal, scaling, positioning)
+
+-- Post-combat retry for viewers that were scheduled during combat
+local regenFrame = CreateFrame("Frame")
+regenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+regenFrame:SetScript("OnEvent", function()
+    if not _pendingCombatViewers then return end
+    local viewers = _pendingCombatViewers
+    _pendingCombatViewers = nil
+    for v in pairs(viewers) do
+        RemovePadding(v)
+    end
+end)
 
 -- Export function to QUI namespace
 QUI.CooldownManager = {

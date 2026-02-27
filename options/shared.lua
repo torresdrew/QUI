@@ -223,10 +223,16 @@ local function GetTextureList()
     return textures
 end
 
--- Hidden frame for pre-warming fonts (forces WoW to load font files)
+-- Hidden frame for pre-warming fonts (forces WoW to load font files).
+-- Created on demand and cleaned up after the font list is built to avoid
+-- holding an off-screen frame + FontString in memory for the entire session.
 local fontPrewarmFrame = nil
+local _fontListCache = nil  -- cache the result so prewarm only happens once
 
 local function GetFontList()
+    -- Return cached list if already built (font list doesn't change mid-session)
+    if _fontListCache then return _fontListCache end
+
     local fonts = {}
     if LSM then
         -- Create a hidden frame for pre-warming fonts if needed
@@ -262,6 +268,15 @@ local function GetFontList()
     else
         fonts = {{value = "Friz Quadrata TT", text = "Friz Quadrata TT"}}
     end
+
+    -- Clean up prewarm frame after building the list (no longer needed)
+    if fontPrewarmFrame then
+        fontPrewarmFrame.text:SetText("")
+        fontPrewarmFrame:Hide()
+        fontPrewarmFrame = nil  -- allow GC
+    end
+
+    _fontListCache = fonts
     return fonts
 end
 

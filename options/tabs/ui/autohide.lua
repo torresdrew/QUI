@@ -17,7 +17,7 @@ local function BuildAutohideTab(tabContent)
     local FORM_ROW = 32
     local db = Shared.GetDB()
 
-    GUI:SetSearchContext({tabIndex = 7, tabName = "Skinning & Autohide", subTabIndex = 1, subTabName = "Autohide"})
+    GUI:SetSearchContext({tabIndex = 8, tabName = "Skinning & Autohide", subTabIndex = 1, subTabName = "Autohide"})
     GUI:SetSearchSection("Autohide Settings")
 
     -- Refresh callback
@@ -87,6 +87,7 @@ local function BuildAutohideTab(tabContent)
             {key = "hideTalkingHead", label = "Hide Talking Head Frame"},
             {key = "muteTalkingHead", label = "Mute Talking Head Voice"},
             {key = "hideWorldMapBlackout", label = "Hide World Map Blackout"},
+            {key = "hidePlayerFrameInParty", label = "Hide Player Frame in Party/Raid"},
         }
 
         for _, opt in ipairs(frameOptions) do

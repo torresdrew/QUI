@@ -15,6 +15,38 @@ local IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.I
 -- Track which icons currently have active glows
 local activeGlowIcons = {}  -- [icon] = true
 
+-- TAINT SAFETY: Store per-icon glow state in weak-keyed tables instead of
+-- writing custom properties to Blizzard CDM icon frames.
+local glowIconState   = Helpers.CreateStateTable()  -- icon → { active, ... }
+local hookedFrames    = Helpers.CreateStateTable()  -- frame → true (Show hook applied)
+local hookedViewers   = Helpers.CreateStateTable()  -- viewer → true (scan hooks applied)
+
+-- Expose glow state for cross-module reads (e.g., effects.lua checking _QUICustomGlowActive)
+_G.QUI_GetGlowState = function(icon)
+    return glowIconState[icon]
+end
+
+-- Get or create a transparent overlay frame for applying LCG glows.
+-- TAINT SAFETY: LCG writes glow frame references (e.g. "_PixelGlow_*") to its
+-- target frame's Lua table. If the target is a Blizzard CDM icon, this taints
+-- the icon's table — Blizzard's CooldownViewer then reads tainted cooldownInfo
+-- and errors in SpellIDMatchesAnyAssociatedSpellIDs. By targeting a separate
+-- overlay frame, all LCG writes stay off Blizzard's frames.
+local function GetGlowOverlay(icon)
+    local gis = glowIconState[icon]
+    if gis and gis.overlay then return gis.overlay end
+
+    local ok, overlay = pcall(CreateFrame, "Frame", nil, icon)
+    if not ok or not overlay then return nil end
+
+    overlay:SetAllPoints(icon)
+    pcall(function() overlay:SetFrameLevel(icon:GetFrameLevel() + 5) end)
+
+    if not gis then gis = {}; glowIconState[icon] = gis end
+    gis.overlay = overlay
+    return overlay
+end
+
 -- Track active glow spell names from SPELL_ACTIVATION_OVERLAY_GLOW events.
 -- Used for name-based matching since CDM cooldownIDs != actual spell IDs.
 local activeGlowSpellNames = {}  -- [spellName] = true
@@ -33,18 +65,16 @@ end
 -- ======================================================
 -- Determine viewer type from icon
 -- ======================================================
+-- Performance: compare frame references directly instead of pcall + GetName + string:find
 local function GetViewerType(icon)
     if not icon then return nil end
 
     local ok, parent = pcall(icon.GetParent, icon)
     if not ok or not parent then return nil end
 
-    local nameOk, parentName = pcall(parent.GetName, parent)
-    if not nameOk or not parentName then return nil end
-
-    if parentName:find("EssentialCooldown") then
+    if parent == _G.EssentialCooldownViewer then
         return "Essential"
-    elseif parentName:find("UtilityCooldown") then
+    elseif parent == _G.UtilityCooldownViewer then
         return "Utility"
     end
 
@@ -104,19 +134,19 @@ end
 -- ======================================================
 local function SuppressBlizzardGlow(icon)
     if not icon then return end
-
+    -- NOTE: No InCombatLockdown() guard needed. SpellActivationAlert and
+    -- OverlayGlow are non-protected animation frames on CDM icons.
+    -- Glows are combat-only proc effects — blocking them in combat would
+    -- make this function useless.
     pcall(function()
         local alert = icon.SpellActivationAlert
         if alert then
             alert:Hide()
             alert:SetAlpha(0)
             -- Persistent hook: keep it hidden even if Blizzard re-shows it
-            if not alert._QUI_NoShow then
-                alert._QUI_NoShow = true
-                hooksecurefunc(alert, "Show", function(self)
-                    self:Hide()
-                    self:SetAlpha(0)
-                end)
+            if not hookedFrames[alert] then
+                hookedFrames[alert] = true
+                Helpers.DeferredHideOnShow(alert, { clearAlpha = true, combatCheck = false })
             end
         end
     end)
@@ -125,12 +155,9 @@ local function SuppressBlizzardGlow(icon)
         if icon.OverlayGlow then
             icon.OverlayGlow:Hide()
             icon.OverlayGlow:SetAlpha(0)
-            if not icon.OverlayGlow._QUI_NoShow then
-                icon.OverlayGlow._QUI_NoShow = true
-                hooksecurefunc(icon.OverlayGlow, "Show", function(self)
-                    self:Hide()
-                    self:SetAlpha(0)
-                end)
+            if not hookedFrames[icon.OverlayGlow] then
+                hookedFrames[icon.OverlayGlow] = true
+                Helpers.DeferredHideOnShow(icon.OverlayGlow, { clearAlpha = true, combatCheck = false })
             end
         end
     end)
@@ -170,6 +197,10 @@ local function ApplyLibCustomGlow(icon, viewerSettings)
     if not LCG then return false end
     if not icon then return false end
 
+    -- TAINT SAFETY: Apply glow to an overlay frame, not the Blizzard icon
+    local overlay = GetGlowOverlay(icon)
+    if not overlay then return false end
+
     local glowType = viewerSettings.glowType
     local color = viewerSettings.color
     local lines = viewerSettings.lines
@@ -185,34 +216,36 @@ local function ApplyLibCustomGlow(icon, viewerSettings)
     if glowType == "Pixel Glow" then
         -- Pixel Glow: animated lines around the border
         -- Parameters: frame, color, numLines, frequency, length, thickness, xOffset, yOffset, border, key
-        LCG.PixelGlow_Start(icon, color, lines, frequency, nil, thickness, 0, 0, true, "_QUICustomGlow")
-        local glowFrame = icon["_PixelGlow_QUICustomGlow"]
+        LCG.PixelGlow_Start(overlay, color, lines, frequency, nil, thickness, 0, 0, true, "_QUICustomGlow")
+        local glowFrame = overlay["_PixelGlow_QUICustomGlow"]
         if glowFrame then
             glowFrame:ClearAllPoints()
             -- Apply offset: negative expands outward, positive shrinks inward
-            glowFrame:SetPoint("TOPLEFT", icon, "TOPLEFT", -xOffset, xOffset)
-            glowFrame:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", xOffset, -xOffset)
+            glowFrame:SetPoint("TOPLEFT", overlay, "TOPLEFT", -xOffset, xOffset)
+            glowFrame:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", xOffset, -xOffset)
         end
 
     elseif glowType == "Autocast Shine" then
         -- Autocast Shine: orbiting sparkle spots
         -- Parameters: frame, color, numSpots, frequency, scale, xOffset, yOffset, key
-        LCG.AutoCastGlow_Start(icon, color, lines, frequency, scale, 0, 0, "_QUICustomGlow")
-        local glowFrame = icon["_AutoCastGlow_QUICustomGlow"]
+        LCG.AutoCastGlow_Start(overlay, color, lines, frequency, scale, 0, 0, "_QUICustomGlow")
+        local glowFrame = overlay["_AutoCastGlow_QUICustomGlow"]
         if glowFrame then
             glowFrame:ClearAllPoints()
-            glowFrame:SetPoint("TOPLEFT", icon, "TOPLEFT", -xOffset, xOffset)
-            glowFrame:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", xOffset, -xOffset)
+            glowFrame:SetPoint("TOPLEFT", overlay, "TOPLEFT", -xOffset, xOffset)
+            glowFrame:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", xOffset, -xOffset)
         end
 
     elseif glowType == "Button Glow" then
         -- Button Glow: classic Blizzard-style action button glow
         -- Parameters: frame, color, frequency, frameLevel
-        LCG.ButtonGlow_Start(icon, color, frequency)
+        LCG.ButtonGlow_Start(overlay, color, frequency)
     end
 
     -- Flag already set by StartGlow, just ensure it's there
-    icon._QUICustomGlowActive = true
+    local gis = glowIconState[icon]
+    if not gis then gis = {}; glowIconState[icon] = gis end
+    gis.active = true
     activeGlowIcons[icon] = true
 
     return true
@@ -225,7 +258,8 @@ local function StartGlow(icon)
     if not icon then return end
 
     -- Already has our glow? Skip
-    if icon._QUICustomGlowActive then return end
+    local gis = glowIconState[icon]
+    if gis and gis.active then return end
 
     local viewerType = GetViewerType(icon)
     if not viewerType then return end
@@ -237,7 +271,8 @@ local function StartGlow(icon)
     SuppressBlizzardGlow(icon)
 
     -- Set the flag FIRST so cooldowneffects.lua doesn't interfere
-    icon._QUICustomGlowActive = true
+    if not gis then gis = {}; glowIconState[icon] = gis end
+    gis.active = true
     activeGlowIcons[icon] = true
 
     ApplyLibCustomGlow(icon, viewerSettings)
@@ -247,14 +282,17 @@ end
 StopGlow = function(icon)
     if not icon then return end
 
-    -- Stop all LibCustomGlow effect types
+    local gis = glowIconState[icon]
+    -- TAINT SAFETY: Stop LCG on the overlay frame (where glows are applied),
+    -- not on the Blizzard icon frame directly.
+    local target = (gis and gis.overlay) or icon
     if LCG then
-        pcall(LCG.PixelGlow_Stop, icon, "_QUICustomGlow")
-        pcall(LCG.AutoCastGlow_Stop, icon, "_QUICustomGlow")
-        pcall(LCG.ButtonGlow_Stop, icon)
+        pcall(LCG.PixelGlow_Stop, target, "_QUICustomGlow")
+        pcall(LCG.AutoCastGlow_Stop, target, "_QUICustomGlow")
+        pcall(LCG.ButtonGlow_Stop, target)
     end
 
-    icon._QUICustomGlowActive = nil
+    if gis then gis.active = nil end
     activeGlowIcons[icon] = nil
 end
 
@@ -338,8 +376,10 @@ local function ScanViewerGlows(viewerName, targetSpellID)
     local viewer = _G[viewerName]
     if not viewer then return end
 
-    local children = { viewer:GetChildren() }
-    for _, icon in ipairs(children) do
+    -- Performance: iterate via select() to avoid table allocation
+    local numChildren = viewer:GetNumChildren()
+    for i = 1, numChildren do
+        local icon = select(i, viewer:GetChildren())
         -- Filter: must be a real shown CDM icon (not custom CDM, not Selection, not non-icon children)
         if icon and icon ~= viewer.Selection and not icon._isCustomCDMIcon
             and icon:IsShown() and IsIconFrame(icon) then
@@ -392,9 +432,11 @@ local function ScanViewerGlows(viewerName, targetSpellID)
                     -- Only modify glow state when we could reliably determine it.
                     -- Icons with secret or nil spellIDs keep their current glow state.
                     if canDetermine then
-                        if shouldGlow and not icon._QUICustomGlowActive then
+                        local iconGS = glowIconState[icon]
+                        local isActive = iconGS and iconGS.active
+                        if shouldGlow and not isActive then
                             StartGlow(icon)
-                        elseif not shouldGlow and icon._QUICustomGlowActive then
+                        elseif not shouldGlow and isActive then
                             StopGlow(icon)
                         end
                     end
@@ -420,8 +462,11 @@ local pendingTargetSpellID
 ScheduleGlowScan = function(targetSpellID)
     if scanPending then
         -- Already have a pending scan; widen to full scan if mixing targets
-        if pendingTargetSpellID and targetSpellID ~= pendingTargetSpellID then
-            pendingTargetSpellID = nil
+        -- TAINT SAFETY: use SafeCompare to avoid erroring on secret values
+        if pendingTargetSpellID then
+            if not targetSpellID or Helpers.SafeCompare(targetSpellID, pendingTargetSpellID) ~= true then
+                pendingTargetSpellID = nil
+            end
         end
         return
     end
@@ -444,8 +489,8 @@ end
 
 local function HookViewerForScan(viewerName)
     local viewer = _G[viewerName]
-    if not viewer or viewer._QUIGlowScanHooked then return end
-    viewer._QUIGlowScanHooked = true
+    if not viewer or hookedViewers[viewer] then return end
+    hookedViewers[viewer] = true
 
     -- New icons appear when Blizzard resizes the viewer
     viewer:HookScript("OnSizeChanged", function()
@@ -471,6 +516,9 @@ local function SetupGlowDetection()
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     eventFrame:SetScript("OnEvent", function(_, event, spellID)
+        -- TAINT SAFETY: combat may deliver secret spell IDs — drop to nil (full scan)
+        if Helpers.IsSecretValue(spellID) then spellID = nil end
+
         if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" then
             -- Track this spell name as glowing (for name-based matching)
             pcall(function()
@@ -491,6 +539,11 @@ local function SetupGlowDetection()
             ScheduleGlowScan(spellID)
         else
             -- Full scan for world entry, combat end, etc.
+            -- Memory cleanup: wipe activeGlowSpellNames on world entry / combat end
+            -- to prevent orphaned entries from missed GLOW_HIDE events (e.g. disconnect).
+            if event == "PLAYER_ENTERING_WORLD" then
+                wipe(activeGlowSpellNames)
+            end
             ScheduleGlowScan()
         end
     end)

@@ -12,6 +12,10 @@ local Helpers = ns.Helpers
 -- Cache LibSharedMedia reference
 local LSM = LibStub("LibSharedMedia-3.0", true)
 
+-- Cache global secret-value API functions at file scope (avoids repeated _G lookups)
+local issecretvalue = _G.issecretvalue
+local canaccesstable = _G.canaccesstable
+
 local function GetCore()
     return (_G.QUI and _G.QUI.QUICore) or ns.Addon
 end
@@ -26,20 +30,14 @@ end
 --- @param value any The value to check
 --- @return boolean True if value is a secret value
 function Helpers.IsSecretValue(value)
-    if type(issecretvalue) == "function" then
-        return issecretvalue(value)
-    end
-    return false
+    return issecretvalue and issecretvalue(value) or false
 end
 
 --- Check if a table can be accessed (not tainted/restricted)
 --- @param tbl table The table to check
 --- @return boolean True if table can be accessed safely
 function Helpers.CanAccessTable(tbl)
-    if type(canaccesstable) == "function" then
-        return canaccesstable(tbl)
-    end
-    return true  -- Pre-12.0 always accessible
+    return not canaccesstable or canaccesstable(tbl)
 end
 
 --- Safely get a value, returning fallback if it's a secret
@@ -116,7 +114,7 @@ end
 -- Standardized pattern for accessing QUICore database profiles
 ---------------------------------------------------------------------------
 
--- Cache reference to QUICore (set after ADDON_LOADED)
+-- Reference to QUICore (set after ADDON_LOADED)
 local QUICore = nil
 
 --- Initialize QUICore reference (call after ADDON_LOADED)
@@ -140,6 +138,10 @@ function Helpers.GetCore()
     return (_G.QUI and _G.QUI.QUICore) or ns.Addon
 end
 
+--- No-op kept for backward compatibility with callers.
+function Helpers.InvalidateProfileCache()
+end
+
 --- Get the full profile database
 --- @return table|nil The profile table or nil
 function Helpers.GetProfile()
@@ -156,7 +158,7 @@ end
 function Helpers.CreateDBGetter(moduleName)
     return function()
         local profile = Helpers.GetProfile()
-        if profile and profile[moduleName] then
+        if profile then
             return profile[moduleName]
         end
         return nil
@@ -168,7 +170,7 @@ end
 --- @return table|nil The module's DB table or nil
 function Helpers.GetModuleDB(moduleName)
     local profile = Helpers.GetProfile()
-    if profile and profile[moduleName] then
+    if profile then
         return profile[moduleName]
     end
     return nil
@@ -182,17 +184,12 @@ end
 --- @return table The module's settings table (never nil)
 function Helpers.GetModuleSettings(moduleName, defaults)
     defaults = defaults or {}
-    -- Try namespace first (preferred)
-    local core = GetCore()
-    if not (core and core.db and core.db.profile) then
-        -- Explicit global fallback if core isn't fully ready
-        core = (_G.QUI and _G.QUI.QUICore) or Helpers.GetQUICore() or ns.Addon
-    end
-    if core and core.db and core.db.profile then
-        if not core.db.profile[moduleName] then
-            core.db.profile[moduleName] = defaults
+    local profile = Helpers.GetProfile()
+    if profile then
+        if not profile[moduleName] then
+            profile[moduleName] = defaults
         end
-        return core.db.profile[moduleName]
+        return profile[moduleName]
     end
     return defaults
 end
@@ -406,6 +403,23 @@ function Helpers.GetSkinAccentColor()
     return sr, sg, sb, sa
 end
 
+local function GetBorderKeys(prefix)
+    if not prefix or prefix == "" then
+        return {
+            override  = "borderOverride",
+            hide      = "hideBorder",
+            useClass  = "borderUseClassColor",
+            color     = "borderColor",
+        }
+    end
+    return {
+        override  = prefix .. "BorderOverride",
+        hide      = prefix .. "HideBorder",
+        useClass  = prefix .. "BorderUseClassColor",
+        color     = prefix .. "BorderColor",
+    }
+end
+
 --- Get skin border color from dedicated border settings.
 --- Falls back to skin accent color so existing profiles keep current visuals.
 --- Supports optional per-module override settings tables.
@@ -436,27 +450,53 @@ function Helpers.GetSkinBorderColor(moduleSettings, prefix)
     end
 
     if type(moduleSettings) == "table" then
-        local keyPrefix = type(prefix) == "string" and prefix or ""
-        local overrideKey = keyPrefix ~= "" and (keyPrefix .. "BorderOverride") or "borderOverride"
-        local hideKey = keyPrefix ~= "" and (keyPrefix .. "HideBorder") or "hideBorder"
-        local useClassKey = keyPrefix ~= "" and (keyPrefix .. "BorderUseClassColor") or "borderUseClassColor"
-        local colorKey = keyPrefix ~= "" and (keyPrefix .. "BorderColor") or "borderColor"
+        local keys = GetBorderKeys(type(prefix) == "string" and prefix or "")
 
-        if moduleSettings[overrideKey] then
-            if moduleSettings[useClassKey] then
+        if moduleSettings[keys.override] then
+            if moduleSettings[keys.useClass] then
                 r, g, b = Helpers.GetPlayerClassColor()
                 a = 1
-            elseif type(moduleSettings[colorKey]) == "table" then
-                local moduleColor = moduleSettings[colorKey]
+            elseif type(moduleSettings[keys.color]) == "table" then
+                local moduleColor = moduleSettings[keys.color]
                 r = moduleColor[1] or r
                 g = moduleColor[2] or g
                 b = moduleColor[3] or b
                 a = moduleColor[4] or a
             end
 
-            if moduleSettings[hideKey] then
+            if moduleSettings[keys.hide] then
                 a = 0
             end
+        end
+    end
+
+    return r, g, b, a
+end
+
+--- Get skin bar color from dedicated bar settings.
+--- Falls back to border color so existing profiles keep current visuals.
+--- Supports optional per-module override settings tables.
+--- @param moduleSettings table|nil Optional module settings table
+--- @param prefix string|nil Optional key prefix for module settings in camelCase
+--- @return number, number, number, number r, g, b, a
+function Helpers.GetSkinBarColor(moduleSettings, prefix)
+    local fallbackR, fallbackG, fallbackB, fallbackA = Helpers.GetSkinBorderColor(moduleSettings, prefix)
+    local r, g, b, a = fallbackR, fallbackG, fallbackB, fallbackA
+
+    if type(moduleSettings) == "table" then
+        local keyPrefix = type(prefix) == "string" and prefix or ""
+        local useClassKey = keyPrefix ~= "" and (keyPrefix .. "BarUseClassColor") or "barUseClassColor"
+        local colorKey = keyPrefix ~= "" and (keyPrefix .. "BarColor") or "barColor"
+
+        if moduleSettings[useClassKey] then
+            r, g, b = Helpers.GetPlayerClassColor()
+            a = 1
+        elseif type(moduleSettings[colorKey]) == "table" then
+            local moduleColor = moduleSettings[colorKey]
+            r = moduleColor[1] or r
+            g = moduleColor[2] or g
+            b = moduleColor[3] or b
+            a = moduleColor[4] or a
         end
     end
 
@@ -478,6 +518,42 @@ end
 function Helpers.GetSkinBgColor()
     local _, _, _, _, bgr, bgg, bgb, bga = Helpers.GetSkinColors()
     return bgr, bgg, bgb, bga
+end
+
+--- Get skin background color with optional module-level override
+--- Supports optional per-module override settings tables for background color
+--- @param moduleSettings table|nil Optional module settings table
+--- @param prefix string|nil Optional key prefix for module settings in camelCase
+--- @return number, number, number, number r, g, b, a
+function Helpers.GetSkinBgColorWithOverride(moduleSettings, prefix)
+    local profile = Helpers.GetProfile()
+    local general = profile and profile.general
+
+    local fallbackR, fallbackG, fallbackB, fallbackA = Helpers.GetSkinBgColor()
+    local r, g, b, a = fallbackR, fallbackG, fallbackB, fallbackA
+
+    if type(moduleSettings) == "table" then
+        local keyPrefix = type(prefix) == "string" and prefix or ""
+        local overrideKey = keyPrefix ~= "" and (keyPrefix .. "BgOverride") or "bgOverride"
+        local hideKey = keyPrefix ~= "" and (keyPrefix .. "HideBackground") or "hideBackground"
+        local colorKey = keyPrefix ~= "" and (keyPrefix .. "BackgroundColor") or "backgroundColor"
+
+        if moduleSettings[overrideKey] then
+            if type(moduleSettings[colorKey]) == "table" then
+                local moduleColor = moduleSettings[colorKey]
+                r = moduleColor[1] or r
+                g = moduleColor[2] or g
+                b = moduleColor[3] or b
+                a = moduleColor[4] or a
+            end
+
+            if moduleSettings[hideKey] then
+                a = 0
+            end
+        end
+    end
+
+    return r, g, b, a
 end
 
 --- Get class color for a class token (e.g., "WARRIOR", "MAGE")
@@ -585,13 +661,16 @@ function Helpers.FindAnchorFrame(type)
     local frameHighestWidth, highestWidth = nil, 0
     local f = EnumerateFrames()
     while f do
-        local unit = f.unit or (f.GetAttribute and f:GetAttribute("unit"))
-        if unit == type then
-            if f:IsVisible() and f:IsObjectType("Button") and f:GetName() then
-                local w = f:GetWidth()
-                if w > 20 and w > highestWidth then
-                    frameHighestWidth, highestWidth = f, w
-                end
+        -- Fast field access first; only fall back to GetAttribute if nil
+        local unit = f.unit
+        if unit == nil and f.GetAttribute then
+            unit = f:GetAttribute("unit")
+        end
+        -- Cheapest checks first: unit match > IsVisible > IsObjectType > GetName
+        if unit == type and f:IsVisible() and f:IsObjectType("Button") and f:GetName() then
+            local w = f:GetWidth()
+            if w > 20 and w > highestWidth then
+                frameHighestWidth, highestWidth = f, w
             end
         end
         f = EnumerateFrames(f)
@@ -670,6 +749,7 @@ ns.GetModuleSettings = Helpers.GetModuleSettings
 ns.CreateDBGetter = Helpers.CreateDBGetter
 ns.GetSkinColors = Helpers.GetSkinColors
 ns.GetSkinBorderColor = Helpers.GetSkinBorderColor
+ns.GetSkinBarColor = Helpers.GetSkinBarColor
 ns.GetClassColor = Helpers.GetClassColor
 ns.GetPlayerClassColor = Helpers.GetPlayerClassColor
 ns.GetItemQualityColor = Helpers.GetItemQualityColor
@@ -682,3 +762,204 @@ ns.IsPlayerSkyriding = Helpers.IsPlayerSkyriding
 ns.IsPlayerInDungeonOrRaid = Helpers.IsPlayerInDungeonOrRaid
 ns.CreateOnUpdateThrottle = Helpers.CreateOnUpdateThrottle
 ns.CreateTimeThrottle = Helpers.CreateTimeThrottle
+
+ ---------------------------------------------------------------------------
+-- TEXT TRUNCATION HELPERS
+-- UTF-8 safe text truncation for names and labels
+ ---------------------------------------------------------------------------
+
+ --- Truncate text to max character length (UTF-8 safe)
+ --- Handles secret values from combat-restricted APIs in Patch 12.0+
+ --- @param text string|any The text to truncate
+ --- @param maxLength number Maximum character count (0 or nil = no limit)
+ --- @return string The truncated text, or original if no truncation needed
+ function Helpers.TruncateUTF8(text, maxLength)
+     if text == nil then return "" end
+     if type(text) ~= "string" then
+         return Helpers.SafeToString(text, "")
+     end
+     if not maxLength or maxLength <= 0 then return text end
+
+     if Helpers.IsSecretValue(text) then
+         return string.format("%." .. maxLength .. "s", text)
+     end
+
+     local lenOk, textLen = pcall(function() return #text end)
+     if not lenOk then
+         return string.format("%." .. maxLength .. "s", text)
+     end
+
+     if textLen <= maxLength then
+         return text
+     end
+
+     local byte = string.byte
+     local i = 1
+     local c = 0
+     while i <= textLen and c < maxLength do
+         c = c + 1
+         local b = byte(text, i)
+         if b < 0x80 then
+             i = i + 1
+         elseif b < 0xE0 then
+             i = i + 2
+         elseif b < 0xF0 then
+             i = i + 3
+         else
+             i = i + 4
+         end
+     end
+
+     local subOk, truncated = pcall(string.sub, text, 1, i - 1)
+     if subOk and truncated then
+         return truncated
+     end
+
+     return string.format("%." .. maxLength .. "s", text)
+ end
+
+ ns.TruncateUTF8 = Helpers.TruncateUTF8
+
+---------------------------------------------------------------------------
+-- TAINT-SAFETY UTILITIES
+-- Shared patterns for WoW 12.0 taint-safe frame property management.
+---------------------------------------------------------------------------
+
+--- Create a weak-keyed state table (and optional lazy-init getter).
+-- @return table  The weak-keyed table.
+-- @return function  getter(key) — returns tbl[key], auto-creating {} if missing.
+function Helpers.CreateStateTable()
+    local tbl = setmetatable({}, { __mode = "k" })
+    local function get(key)
+        local s = tbl[key]
+        if not s then s = {}; tbl[key] = s end
+        return s
+    end
+    return tbl, get
+end
+
+--- Check whether Blizzard Edit Mode is currently active.
+-- Nil-safe for EditModeManagerFrame; uses IsEditModeActive() (not IsShown()).
+-- @return boolean
+function Helpers.IsEditModeActive()
+    return EditModeManagerFrame and EditModeManagerFrame.IsEditModeActive
+       and EditModeManagerFrame:IsEditModeActive() or false
+end
+
+--- Hook a frame's Show method to defer-hide it on the next frame.
+-- @param frame  The frame to hook.
+-- @param opts   Optional table: { clearAlpha = bool, combatCheck = bool }
+--               clearAlpha (default false): also call SetAlpha(0) after Hide.
+--               combatCheck (default true): skip hide if InCombatLockdown().
+local _deferredHideHooked = setmetatable({}, { __mode = "k" })
+
+-- Queue for frames that need Hide() deferred until combat ends.
+-- When combatCheck=false and we're in combat, we alpha-hide immediately
+-- and queue the real Hide() for PLAYER_REGEN_ENABLED.
+local _combatHideQueue = {}  -- [frame] = clearAlpha (bool)
+local _combatHideFrame
+local function FlushCombatHideQueue()
+    -- Guard against rapid combat re-entry (PLAYER_REGEN_ENABLED can fire
+    -- while InCombatLockdown() is already true again from a new combat).
+    if InCombatLockdown() then return end
+    for frame, shouldClearAlpha in pairs(_combatHideQueue) do
+        if not (frame.IsForbidden and frame:IsForbidden()) then
+            pcall(frame.Hide, frame)
+            if shouldClearAlpha and frame.SetAlpha then frame:SetAlpha(0) end
+        end
+    end
+    wipe(_combatHideQueue)
+    _combatHideFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
+end
+local function QueueCombatHide(frame, clearAlpha)
+    _combatHideQueue[frame] = clearAlpha or false
+    if not _combatHideFrame then
+        _combatHideFrame = CreateFrame("Frame")
+        _combatHideFrame:SetScript("OnEvent", FlushCombatHideQueue)
+    end
+    _combatHideFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+end
+
+function Helpers.DeferredHideOnShow(frame, opts)
+    if not frame or not frame.Show then return end
+    if _deferredHideHooked[frame] then return end
+    _deferredHideHooked[frame] = true
+    local clearAlpha = opts and opts.clearAlpha or false
+    local combatCheck = not opts or opts.combatCheck ~= false
+    hooksecurefunc(frame, "Show", function(self)
+        C_Timer.After(0, function()
+            if self.IsForbidden and self:IsForbidden() then return end
+            if InCombatLockdown() then
+                if combatCheck then return end
+                -- Visually hide via alpha now; defer real Hide() to combat end.
+                -- Calling Hide() during combat fires ADDON_ACTION_BLOCKED even
+                -- inside pcall — IsProtected() doesn't catch all restricted frames.
+                if self.SetAlpha then self:SetAlpha(0) end
+                QueueCombatHide(self, clearAlpha)
+                return
+            end
+            pcall(self.Hide, self)
+            if clearAlpha and self.SetAlpha then self:SetAlpha(0) end
+        end)
+    end)
+end
+
+--- Hook a texture's SetAtlas method to defer-clear it on the next frame.
+-- @param texture     The texture to hook.
+-- @param combatCheck Optional boolean (default true): skip clear if InCombatLockdown().
+local _deferredAtlasHooked = setmetatable({}, { __mode = "k" })
+function Helpers.DeferredSetAtlasBlock(texture, combatCheck)
+    if not texture or not texture.SetAtlas then return end
+    if _deferredAtlasHooked[texture] then return end
+    _deferredAtlasHooked[texture] = true
+    if combatCheck == nil then combatCheck = true end
+    hooksecurefunc(texture, "SetAtlas", function(self)
+        C_Timer.After(0, function()
+            if combatCheck and InCombatLockdown() then return end
+            if not self then return end
+            if self.SetTexture then self:SetTexture(nil) end
+            if self.SetAlpha then self:SetAlpha(0) end
+        end)
+    end)
+end
+
+--- Check whether Blizzard's Edit Mode panel is currently shown.
+-- Uses IsShown() (not IsEditModeActive()) — checks panel visibility,
+-- used for UI fade/hide suppression during edit mode.
+-- @return boolean
+function Helpers.IsEditModeShown()
+    return EditModeManagerFrame and EditModeManagerFrame:IsShown() or false
+end
+
+--- Combat-safe Show: skips if already shown or if protected + in combat.
+-- @param frame  The frame to show.
+-- @return boolean  true if shown (or already was), false if skipped/failed.
+function Helpers.SafeShow(frame)
+    if not frame then return false end
+    if frame:IsShown() then return true end
+    if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
+        return false
+    end
+    return pcall(frame.Show, frame)
+end
+
+--- Combat-safe Hide: skips if already hidden or if protected + in combat.
+-- @param frame  The frame to hide.
+-- @return boolean  true if hidden (or already was), false if skipped/failed.
+function Helpers.SafeHide(frame)
+    if not frame then return false end
+    if not frame:IsShown() then return true end
+    if InCombatLockdown() and frame.IsProtected and frame:IsProtected() then
+        return false
+    end
+    return pcall(frame.Hide, frame)
+end
+
+ns.InvalidateProfileCache = Helpers.InvalidateProfileCache
+ns.CreateStateTable = Helpers.CreateStateTable
+ns.IsEditModeActive = Helpers.IsEditModeActive
+ns.IsEditModeShown = Helpers.IsEditModeShown
+ns.SafeShow = Helpers.SafeShow
+ns.SafeHide = Helpers.SafeHide
+ns.DeferredHideOnShow = Helpers.DeferredHideOnShow
+ns.DeferredSetAtlasBlock = Helpers.DeferredSetAtlasBlock

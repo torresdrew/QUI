@@ -36,26 +36,45 @@ local function GetFontPath()
 end
 
 -- Apply font and color to a single line (objective text)
+-- Returns true if line height was changed (callers use this to avoid unnecessary repositioning)
+-- IMPORTANT: This function must be idempotent. Redundant SetFont calls trigger text
+-- reflow which cascades into Blizzard layout updates → AddObjective fires again →
+-- StyleLine again → infinite oscillation. We skip SetFont when the font is already
+-- correct, and only adjust height when the font actually changed (with a 1px tolerance).
 local function StyleLine(line, fontPath, textFontSize, textColor)
-    if not line then return end
+    if not line then return false end
+    local heightChanged = false
+    local targetFlags = GetFontFlags()
     if line.Text then
-        line.Text:SetFont(fontPath, textFontSize, GetFontFlags())
-        SafeSetTextColor(line.Text, textColor)
+        -- Only call SetFont when font actually needs changing
+        local curFont, curSize, curFlags = line.Text:GetFont()
+        local fontChanged = curFont ~= fontPath or curSize ~= textFontSize or curFlags ~= targetFlags
+        if fontChanged then
+            line.Text:SetFont(fontPath, textFontSize, targetFlags)
 
-        -- Recalculate line height after font change to handle multi-line wrapping
-        local textHeight = line.Text:GetStringHeight()
-        if textHeight and textHeight > 0 then
-            local currentHeight = line:GetHeight()
-            local minHeight = textHeight + 4
-            if currentHeight < minHeight then
-                line:SetHeight(minHeight)
+            -- Recalculate line height after font change to handle multi-line wrapping.
+            -- Only runs when font actually changed; 1px tolerance prevents sub-pixel
+            -- oscillation between our height and Blizzard's layout-computed height.
+            local textHeight = line.Text:GetStringHeight()
+            if textHeight and textHeight > 0 then
+                local currentHeight = line:GetHeight()
+                local minHeight = textHeight + 4
+                if minHeight - currentHeight > 1 then
+                    line:SetHeight(minHeight)
+                    heightChanged = true
+                end
             end
         end
+        SafeSetTextColor(line.Text, textColor)
     end
     if line.Dash then
-        line.Dash:SetFont(fontPath, textFontSize, GetFontFlags())
+        local curFont, curSize, curFlags = line.Dash:GetFont()
+        if curFont ~= fontPath or curSize ~= textFontSize or curFlags ~= targetFlags then
+            line.Dash:SetFont(fontPath, textFontSize, targetFlags)
+        end
         SafeSetTextColor(line.Dash, textColor)
     end
+    return heightChanged
 end
 
 -- Apply font and color to a block (quest name header + all objective lines)
@@ -79,7 +98,7 @@ local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 
 -- Style quest POI icon (glow removed - was causing indefinite glow bug BUG-003)
 local function StyleQuestPOIIcon(button)
-    if not button or button.quiStyled then return end
+    if not button or SkinBase.IsStyled(button) then return end
 
     -- Style the POI button
     if button.NormalTexture then
@@ -97,19 +116,19 @@ local function StyleQuestPOIIcon(button)
         LCG.PixelGlow_Stop(button, "_QUIQuestGlow")
     end
 
-    button.quiStyled = true
+    SkinBase.MarkStyled(button)
 end
 
 -- Style completion checkmark with QUI color
 local function StyleCompletionCheck(check)
-    if not check or check.quiStyled then return end
+    if not check or SkinBase.IsStyled(check) then return end
 
     local sr, sg, sb = SkinBase.GetSkinColors()
     check:SetAtlas("checkmark-minimal")
     check:SetDesaturated(true)
     check:SetVertexColor(sr, sg, sb)
 
-    check.quiStyled = true
+    SkinBase.MarkStyled(check)
 end
 
 -- Apply full block skinning (fonts, colors, icons) to a single block
@@ -176,7 +195,11 @@ local function SyncBlizzardHeight()
     local settings = GetSettings()
     local maxHeight = settings and settings.objectiveTrackerHeight or 600
 
-    -- Set Blizzard's internal height so truncation happens at our max
+    -- Set Blizzard's internal height so truncation happens at our max.
+    -- TAINT NOTE: Direct property write to Blizzard frame — accepted/required because
+    -- Blizzard's UpdateHeight() reads self.editModeHeight. All callers of SyncBlizzardHeight()
+    -- are already guarded by InCombatLockdown() (ApplyLayoutSettingsSafely) or deferred to
+    -- PLAYER_REGEN_ENABLED, so this write never occurs during combat.
     TrackerFrame.editModeHeight = maxHeight
     if TrackerFrame.UpdateHeight then
         TrackerFrame:UpdateHeight()
@@ -270,19 +293,22 @@ local function ApplyMaxWidth(settings)
             -- Resize to match module buttons (16x16 vs default 18x19)
             minBtn:SetSize(16, 16)
             -- Set highlight to yellow (only once)
-            if not minBtn.quiHighlightSet and minBtn:GetHighlightTexture() then
+            if not SkinBase.GetFrameData(minBtn, "highlightSet") and minBtn:GetHighlightTexture() then
                 minBtn:GetHighlightTexture():SetAtlas("ui-questtrackerbutton-yellow-highlight")
-                minBtn.quiHighlightSet = true
+                SkinBase.SetFrameData(minBtn, "highlightSet", true)
             end
         end
 
         -- Hook SetCollapsed to override atlas with secondary style
         -- (Blizzard resets to collapse-all/expand-all on state change)
-        if TrackerFrame.Header.SetCollapsed and not TrackerFrame.Header.quiSetCollapsedHooked then
+        if TrackerFrame.Header.SetCollapsed and not SkinBase.GetFrameData(TrackerFrame.Header, "setCollapsedHooked") then
+            -- TAINT SAFETY: Defer to break taint chain from secure context.
             hooksecurefunc(TrackerFrame.Header, "SetCollapsed", function(self, collapsed)
-                UpdateMinimizeButtonAtlas(self.MinimizeButton, collapsed)
+                C_Timer.After(0, function()
+                    UpdateMinimizeButtonAtlas(self.MinimizeButton, collapsed)
+                end)
             end)
-            TrackerFrame.Header.quiSetCollapsedHooked = true
+            SkinBase.SetFrameData(TrackerFrame.Header, "setCollapsedHooked", true)
 
             -- Apply immediately for current state
             local isCollapsed = false
@@ -311,7 +337,8 @@ end
 -- Update backdrop to match content, respecting max height setting
 local function UpdateBackdropAnchors()
     local TrackerFrame = _G.ObjectiveTrackerFrame
-    if not TrackerFrame or not TrackerFrame.quiBackdrop then return end
+    local quiBackdrop = TrackerFrame and SkinBase.GetFrameData(TrackerFrame, "backdrop")
+    if not TrackerFrame or not quiBackdrop then return end
 
     local settings = GetSettings()
     local maxHeight = settings and settings.objectiveTrackerHeight or 600
@@ -346,9 +373,9 @@ local function UpdateBackdropAnchors()
     end
 
     -- Re-anchor backdrop to match content bounds
-    TrackerFrame.quiBackdrop:ClearAllPoints()
-    TrackerFrame.quiBackdrop:SetPoint("TOPLEFT", TrackerFrame, "TOPLEFT", -15, 0)
-    TrackerFrame.quiBackdrop:SetPoint("TOPRIGHT", TrackerFrame, "TOPRIGHT", 10, 0)
+    quiBackdrop:ClearAllPoints()
+    quiBackdrop:SetPoint("TOPLEFT", TrackerFrame, "TOPLEFT", -15, 0)
+    quiBackdrop:SetPoint("TOPRIGHT", TrackerFrame, "TOPRIGHT", 10, 0)
 
     if bottomModule then
         -- Calculate actual content height (guard against nil/invalid during initial layout)
@@ -360,15 +387,15 @@ local function UpdateBackdropAnchors()
 
         if contentHeight > maxHeight then
             -- Content exceeds max height, use fixed height
-            TrackerFrame.quiBackdrop:SetHeight(maxHeight)
+            quiBackdrop:SetHeight(maxHeight)
         else
             -- Content fits, anchor to bottommost module
-            TrackerFrame.quiBackdrop:SetPoint("BOTTOM", bottomModule, "BOTTOM", 0, -15)
+            quiBackdrop:SetPoint("BOTTOM", bottomModule, "BOTTOM", 0, -15)
         end
-        TrackerFrame.quiBackdrop:Show()
+        quiBackdrop:Show()
     else
         -- No visible modules, hide backdrop
-        TrackerFrame.quiBackdrop:Hide()
+        quiBackdrop:Hide()
     end
 end
 
@@ -386,11 +413,10 @@ local function HidePOIButtonGlows()
                             block.poiButton.Glow:Hide()
                             block.poiButton.Glow:SetAlpha(0)
                             -- Hook Show to prevent Blizzard from re-showing
-                            if not block.poiButton.Glow.quiHooked then
-                                hooksecurefunc(block.poiButton.Glow, "Show", function(self)
-                                    self:Hide()
-                                end)
-                                block.poiButton.Glow.quiHooked = true
+                            -- TAINT SAFETY: Defer to break taint chain from secure context.
+                            if not SkinBase.GetFrameData(block.poiButton.Glow, "hooked") then
+                                Helpers.DeferredHideOnShow(block.poiButton.Glow, { combatCheck = false })
+                                SkinBase.SetFrameData(block.poiButton.Glow, "hooked", true)
                             end
                         end
                         -- Stop any LibCustomGlow effects (cleanup)
@@ -448,74 +474,13 @@ local function ApplyLayoutSettingsSafely(settings)
     return true
 end
 
--- Reposition all lines within a block based on their actual heights
--- This fixes overlap caused by font changes affecting text wrapping
-local function RepositionBlockLines(block)
-    if not block or not block.usedLines then return end
-
-    -- Get all lines and sort them by their original order (using objectiveKey or creation order)
-    local lines = {}
-    for key, line in pairs(block.usedLines) do
-        if line and line:IsShown() then
-            table.insert(lines, line)
-        end
-    end
-
-    -- Sort by current Y position (top to bottom)
-    table.sort(lines, function(a, b)
-        local topA = a:GetTop() or 0
-        local topB = b:GetTop() or 0
-        return topA > topB
-    end)
-
-    -- Reposition each line based on actual heights
-    local yOffset = 0
-    local headerHeight = 0
-    if block.HeaderText then
-        headerHeight = block.HeaderText:GetStringHeight() or 0
-        yOffset = -(headerHeight + 5)  -- Start below header with padding
-    end
-
-    for i, line in ipairs(lines) do
-        line:ClearAllPoints()
-        line:SetPoint("TOPLEFT", block, "TOPLEFT", 0, yOffset)
-        line:SetPoint("RIGHT", block, "RIGHT", 0, 0)
-
-        local lineHeight = line:GetHeight() or 14
-        yOffset = yOffset - lineHeight - 2  -- Move down by line height + small gap
-    end
-
-    -- Update block height to fit all content
-    local totalHeight = math.abs(yOffset) + 5
-    block:SetHeight(totalHeight)
-end
-
--- Debounced line repositioning for all visible blocks
-local pendingLineReposition = false
-local function ScheduleLineReposition()
-    if pendingLineReposition then return end
-    pendingLineReposition = true
-    -- Small delay to batch multiple style changes
-    C_Timer.After(0.05, function()
-        pendingLineReposition = false
-
-        for _, trackerName in ipairs(trackerModules) do
-            local tracker = _G[trackerName]
-            if tracker and tracker:IsShown() and tracker.usedBlocks then
-                for template, blocks in pairs(tracker.usedBlocks) do
-                    for blockID, block in pairs(blocks) do
-                        if block:IsShown() then
-                            RepositionBlockLines(block)
-                        end
-                    end
-                end
-            end
-        end
-
-        -- Also update backdrop after repositioning
-        ScheduleBackdropUpdate()
-    end)
-end
+-- NOTE: Manual line repositioning (RepositionBlockLines / ScheduleLineReposition)
+-- was removed because it caused an oscillation feedback loop:
+--   AddObjective hook → StyleLine height change → reposition → SetHeight on block
+--   → Blizzard async relayout → AddObjective fires again → repeat
+-- Blizzard anchors each objective line to the previous line's BOTTOMLEFT, so
+-- setting the correct line height in StyleLine is sufficient — subsequent lines
+-- shift down automatically through the anchor chain.
 
 -- Kill all textures in a NineSlice frame
 local function KillNineSlice(nineSlice)
@@ -555,20 +520,24 @@ local function ApplyQUIBackdrop(trackerFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga
     KillNineSlice(trackerFrame.NineSlice)
 
     -- Hook SetBackgroundAlpha so edit mode opacity also affects our backdrop
-    if trackerFrame.SetBackgroundAlpha and not trackerFrame.quiBackgroundHooked then
+    if trackerFrame.SetBackgroundAlpha and not SkinBase.GetFrameData(trackerFrame, "backgroundHooked") then
+        -- TAINT SAFETY: Defer to break taint chain from secure context.
         hooksecurefunc(trackerFrame, "SetBackgroundAlpha", function(self, alpha)
-            -- Keep NineSlice hidden
-            if self.NineSlice then
-                self.NineSlice:Hide()
-                self.NineSlice:SetAlpha(0)
-            end
-            -- Apply edit mode opacity to our backdrop (get fresh colors)
-            if self.quiBackdrop then
-                local _, _, _, _, currBgR, currBgG, currBgB = SkinBase.GetSkinColors()
-                self.quiBackdrop:SetBackdropColor(currBgR, currBgG, currBgB, alpha)
-            end
+            C_Timer.After(0, function()
+                -- Keep NineSlice hidden
+                if self.NineSlice then
+                    self.NineSlice:Hide()
+                    self.NineSlice:SetAlpha(0)
+                end
+                -- Apply edit mode opacity to our backdrop (get fresh colors)
+                local bd = SkinBase.GetFrameData(self, "backdrop")
+                if bd then
+                    local _, _, _, _, currBgR, currBgG, currBgB = SkinBase.GetSkinColors()
+                    bd:SetBackdropColor(currBgR, currBgG, currBgB, alpha)
+                end
+            end)
         end)
-        trackerFrame.quiBackgroundHooked = true
+        SkinBase.SetFrameData(trackerFrame, "backgroundHooked", true)
     end
 
     -- Get initial opacity from edit mode (0 is valid = transparent, so check for nil)
@@ -581,27 +550,29 @@ local function ApplyQUIBackdrop(trackerFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga
     end
 
     -- Create QUI backdrop (anchors will be set by UpdateBackdropAnchors)
-    if not trackerFrame.quiBackdrop then
-        trackerFrame.quiBackdrop = CreateFrame("Frame", nil, trackerFrame, "BackdropTemplate")
-        trackerFrame.quiBackdrop:SetFrameLevel(math.max(trackerFrame:GetFrameLevel() - 1, 0))
-        trackerFrame.quiBackdrop:EnableMouse(false)
+    local backdrop = SkinBase.GetFrameData(trackerFrame, "backdrop")
+    if not backdrop then
+        backdrop = CreateFrame("Frame", nil, trackerFrame, "BackdropTemplate")
+        backdrop:SetFrameLevel(math.max(trackerFrame:GetFrameLevel() - 1, 0))
+        backdrop:EnableMouse(false)
+        SkinBase.SetFrameData(trackerFrame, "backdrop", backdrop)
     end
 
     local settings = GetSettings()
     local hideBorder = settings and settings.hideObjectiveTrackerBorder
 
-    local otPx = SkinBase.GetPixelSize(trackerFrame.quiBackdrop, 1)
-    trackerFrame.quiBackdrop:SetBackdrop({
+    local otPx = SkinBase.GetPixelSize(backdrop, 1)
+    backdrop:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = hideBorder and 0 or otPx,
         insets = { left = otPx, right = otPx, top = otPx, bottom = otPx }
     })
-    trackerFrame.quiBackdrop:SetBackdropColor(bgr, bgg, bgb, opacity)
+    backdrop:SetBackdropColor(bgr, bgg, bgb, opacity)
     if hideBorder then
-        trackerFrame.quiBackdrop:SetBackdropBorderColor(0, 0, 0, 0)
+        backdrop:SetBackdropBorderColor(0, 0, 0, 0)
     else
-        trackerFrame.quiBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
+        backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
     end
 
     -- Set initial anchors
@@ -657,35 +628,45 @@ local function HookLineCreation()
     local fontPath = GetFontPath()
 
     -- Hook ObjectiveTrackerBlockMixin:AddObjective to style lines as they're created
-    if ObjectiveTrackerBlockMixin and ObjectiveTrackerBlockMixin.AddObjective and not ObjectiveTrackerBlockMixin.quiAddObjectiveHooked then
-        hooksecurefunc(ObjectiveTrackerBlockMixin, "AddObjective", function(self, objectiveKey, text, template, useFullHeight, dashStyle, colorStyle, adjustForNoText, overrideHeight)
-            local line = self.usedLines and self.usedLines[objectiveKey]
-            if line then
-                local currentSettings = GetSettings()
-                local currentTextSize = currentSettings and currentSettings.objectiveTrackerTextFontSize or 0
-                local currentTextColor = currentSettings and currentSettings.objectiveTrackerTextColor
-                if currentTextSize > 0 then
-                    StyleLine(line, GetFontPath(), currentTextSize, currentTextColor)
-                    -- Schedule line repositioning to fix overlap from text wrapping
-                    ScheduleLineReposition()
+    -- TAINT SAFETY: Defer to break taint chain from secure context.
+    if ObjectiveTrackerBlockMixin and ObjectiveTrackerBlockMixin.AddObjective and not SkinBase.GetFrameData(ObjectiveTrackerBlockMixin, "addObjectiveHooked") then
+        hooksecurefunc(ObjectiveTrackerBlockMixin, "AddObjective", function(self, objectiveKey)
+            local block = self
+            C_Timer.After(0, function()
+                local line = block.usedLines and block.usedLines[objectiveKey]
+                if line then
+                    local currentSettings = GetSettings()
+                    local currentTextSize = currentSettings and currentSettings.objectiveTrackerTextFontSize or 0
+                    local currentTextColor = currentSettings and currentSettings.objectiveTrackerTextColor
+                    if currentTextSize > 0 then
+                        -- Style the line (font + color + height). Do NOT trigger
+                        -- manual repositioning — Blizzard anchors each line to
+                        -- the previous line's bottom, so height changes cascade
+                        -- automatically through the anchor chain.
+                        StyleLine(line, GetFontPath(), currentTextSize, currentTextColor)
+                    end
                 end
-            end
+            end)
         end)
-        ObjectiveTrackerBlockMixin.quiAddObjectiveHooked = true
+        SkinBase.SetFrameData(ObjectiveTrackerBlockMixin, "addObjectiveHooked", true)
     end
 
     -- Hook ObjectiveTrackerBlockMixin:SetHeader to style block headers (quest/achievement titles)
-    if ObjectiveTrackerBlockMixin and ObjectiveTrackerBlockMixin.SetHeader and not ObjectiveTrackerBlockMixin.quiSetHeaderHooked then
-        hooksecurefunc(ObjectiveTrackerBlockMixin, "SetHeader", function(self, text)
-            local currentSettings = GetSettings()
-            local currentTitleSize = currentSettings and currentSettings.objectiveTrackerTitleFontSize or 0
-            local currentTitleColor = currentSettings and currentSettings.objectiveTrackerTitleColor
-            if currentTitleSize > 0 and self.HeaderText then
-                self.HeaderText:SetFont(GetFontPath(), currentTitleSize, GetFontFlags())
-                SafeSetTextColor(self.HeaderText, currentTitleColor)
-            end
+    -- TAINT SAFETY: Defer to break taint chain from secure context.
+    if ObjectiveTrackerBlockMixin and ObjectiveTrackerBlockMixin.SetHeader and not SkinBase.GetFrameData(ObjectiveTrackerBlockMixin, "setHeaderHooked") then
+        hooksecurefunc(ObjectiveTrackerBlockMixin, "SetHeader", function(self)
+            local block = self
+            C_Timer.After(0, function()
+                local currentSettings = GetSettings()
+                local currentTitleSize = currentSettings and currentSettings.objectiveTrackerTitleFontSize or 0
+                local currentTitleColor = currentSettings and currentSettings.objectiveTrackerTitleColor
+                if currentTitleSize > 0 and block.HeaderText then
+                    block.HeaderText:SetFont(GetFontPath(), currentTitleSize, GetFontFlags())
+                    SafeSetTextColor(block.HeaderText, currentTitleColor)
+                end
+            end)
         end)
-        ObjectiveTrackerBlockMixin.quiSetHeaderHooked = true
+        SkinBase.SetFrameData(ObjectiveTrackerBlockMixin, "setHeaderHooked", true)
     end
 
     -- Note: POI button glows are hidden via HidePOIButtonGlows() called from ScheduleBackdropUpdate()
@@ -732,71 +713,88 @@ local function SkinObjectiveTracker()
         end
     end
 
+    -- TAINT SAFETY: Wrapper to defer ScheduleBackdropUpdate from secure context.
+    local function DeferredScheduleBackdropUpdate()
+        C_Timer.After(0, ScheduleBackdropUpdate)
+    end
+
     -- Hook the main container's Update to update backdrop anchors when content changes
-    if TrackerFrame.Update and not TrackerFrame.quiUpdateHooked then
-        hooksecurefunc(TrackerFrame, "Update", ScheduleBackdropUpdate)
-        TrackerFrame.quiUpdateHooked = true
+    if TrackerFrame.Update and not SkinBase.GetFrameData(TrackerFrame, "updateHooked") then
+        hooksecurefunc(TrackerFrame, "Update", DeferredScheduleBackdropUpdate)
+        SkinBase.SetFrameData(TrackerFrame, "updateHooked", true)
     end
 
     -- Hook main container's SetCollapsed for when entire tracker is collapsed/expanded
-    if TrackerFrame.SetCollapsed and not TrackerFrame.quiCollapseHooked then
-        hooksecurefunc(TrackerFrame, "SetCollapsed", ScheduleBackdropUpdate)
-        TrackerFrame.quiCollapseHooked = true
+    if TrackerFrame.SetCollapsed and not SkinBase.GetFrameData(TrackerFrame, "collapseHooked") then
+        hooksecurefunc(TrackerFrame, "SetCollapsed", DeferredScheduleBackdropUpdate)
+        SkinBase.SetFrameData(TrackerFrame, "collapseHooked", true)
     end
 
     -- Hook each module's header minimize button, SetCollapsed, LayoutContents, and AddBlock
     for _, trackerName in ipairs(trackerModules) do
         local tracker = _G[trackerName]
-        if tracker and not tracker.quiCollapseHooked then
+        if tracker and not SkinBase.GetFrameData(tracker, "collapseHooked") then
             -- Hook the header's minimize button click
             if tracker.Header and tracker.Header.MinimizeButton then
-                tracker.Header.MinimizeButton:HookScript("OnClick", ScheduleBackdropUpdate)
+                tracker.Header.MinimizeButton:HookScript("OnClick", DeferredScheduleBackdropUpdate)
             end
 
             -- Hook SetCollapsed on the module itself
             if tracker.SetCollapsed then
-                hooksecurefunc(tracker, "SetCollapsed", ScheduleBackdropUpdate)
+                hooksecurefunc(tracker, "SetCollapsed", DeferredScheduleBackdropUpdate)
             end
 
             -- Hook LayoutContents to catch world quest/bonus objective changes
             if tracker.LayoutContents then
-                hooksecurefunc(tracker, "LayoutContents", ScheduleBackdropUpdate)
+                hooksecurefunc(tracker, "LayoutContents", DeferredScheduleBackdropUpdate)
             end
 
             -- Hook AddBlock to style new blocks
-            if tracker.AddBlock and not tracker.quiAddBlockHooked then
-                hooksecurefunc(tracker, "AddBlock", ApplyBlockSkinning)
-                tracker.quiAddBlockHooked = true
+            -- TAINT SAFETY: Defer to break taint chain from secure context.
+            if tracker.AddBlock and not SkinBase.GetFrameData(tracker, "addBlockHooked") then
+                hooksecurefunc(tracker, "AddBlock", function(trackerSelf, block)
+                    C_Timer.After(0, function()
+                        ApplyBlockSkinning(trackerSelf, block)
+                    end)
+                end)
+                SkinBase.SetFrameData(tracker, "addBlockHooked", true)
             end
 
-            tracker.quiCollapseHooked = true
+            SkinBase.SetFrameData(tracker, "collapseHooked", true)
         end
     end
 
     -- Also update on size changes (with guard to prevent multiple hooks)
-    if not TrackerFrame.quiSizeChangedHooked then
-        TrackerFrame:HookScript("OnSizeChanged", UpdateBackdropAnchors)
-        TrackerFrame.quiSizeChangedHooked = true
+    -- TAINT SAFETY: Defer to break taint chain from secure context.
+    if not SkinBase.GetFrameData(TrackerFrame, "sizeChangedHooked") then
+        TrackerFrame:HookScript("OnSizeChanged", function()
+            C_Timer.After(0, UpdateBackdropAnchors)
+        end)
+        SkinBase.SetFrameData(TrackerFrame, "sizeChangedHooked", true)
     end
 
     -- Hook ObjectiveTrackerManager.SetOpacity to catch when edit mode loads saved settings
     local manager = _G.ObjectiveTrackerManager
-    if manager and manager.SetOpacity and not manager.quiOpacityHooked then
+    if manager and manager.SetOpacity and not SkinBase.GetFrameData(manager, "opacityHooked") then
+        -- TAINT SAFETY: Defer to break taint chain from secure context.
         hooksecurefunc(manager, "SetOpacity", function(self, opacityPercent)
-            local alpha = (opacityPercent or 0) / 100
-            local _, _, _, _, currBgR, currBgG, currBgB = SkinBase.GetSkinColors()
-            if TrackerFrame.quiBackdrop then
-                TrackerFrame.quiBackdrop:SetBackdropColor(currBgR, currBgG, currBgB, alpha)
-            end
+            C_Timer.After(0, function()
+                local alpha = (opacityPercent or 0) / 100
+                local _, _, _, _, currBgR, currBgG, currBgB = SkinBase.GetSkinColors()
+                local bd = SkinBase.GetFrameData(TrackerFrame, "backdrop")
+                if bd then
+                    bd:SetBackdropColor(currBgR, currBgG, currBgB, alpha)
+                end
+            end)
         end)
-        manager.quiOpacityHooked = true
+        SkinBase.SetFrameData(manager, "opacityHooked", true)
     end
 
     -- Hide POI glows after delay to catch late-loading POI buttons
     -- (ScheduleBackdropUpdate also calls HidePOIButtonGlows at 0.15s)
     C_Timer.After(0.5, HidePOIButtonGlows)
 
-    TrackerFrame.quiSkinned = true
+    SkinBase.MarkSkinned(TrackerFrame)
 end
 
 -- Refresh/update settings (called from options panel)
@@ -813,7 +811,8 @@ local function RefreshObjectiveTracker()
     ApplyLayoutSettingsSafely(settings)
 
     -- Update backdrop colors (SetBackdrop resets colors, so must re-apply both)
-    if TrackerFrame.quiBackdrop then
+    local refreshBackdrop = SkinBase.GetFrameData(TrackerFrame, "backdrop")
+    if refreshBackdrop then
         local hideBorder = settings.hideObjectiveTrackerBorder
 
         -- Get opacity from edit mode manager
@@ -826,18 +825,18 @@ local function RefreshObjectiveTracker()
         end
 
         -- Apply backdrop (edgeSize 0 hides border, px shows it)
-        local updPx = SkinBase.GetPixelSize(TrackerFrame.quiBackdrop, 1)
-        TrackerFrame.quiBackdrop:SetBackdrop({
+        local updPx = SkinBase.GetPixelSize(refreshBackdrop, 1)
+        refreshBackdrop:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
             edgeSize = hideBorder and 0 or updPx,
             insets = { left = updPx, right = updPx, top = updPx, bottom = updPx }
         })
-        TrackerFrame.quiBackdrop:SetBackdropColor(bgr, bgg, bgb, opacity)
+        refreshBackdrop:SetBackdropColor(bgr, bgg, bgb, opacity)
         if hideBorder then
-            TrackerFrame.quiBackdrop:SetBackdropBorderColor(0, 0, 0, 0)
+            refreshBackdrop:SetBackdropBorderColor(0, 0, 0, 0)
         else
-            TrackerFrame.quiBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
+            refreshBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
         end
     end
 

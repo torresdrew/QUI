@@ -41,6 +41,11 @@ local iconKeybindCache = {}
 -- Debug mode for keybind tracking
 local KEYBIND_DEBUG = false
 
+-- TAINT SAFETY: Store per-icon state in local weak-keyed tables instead of
+-- writing custom properties to Blizzard CDM icon frames.
+local iconKeybindState = QUI.Helpers.CreateStateTable()      -- icon → { text (FontString), keybind, spellID, overlay }
+local hookedKeybindViewers = QUI.Helpers.CreateStateTable()  -- viewer → true (hook guard for Layout)
+
 -- Performance: Check if ANY keybind display feature is enabled across all viewers
 -- This gates expensive operations to prevent CPU spikes when features are disabled
 local function IsAnyKeybindFeatureEnabled()
@@ -887,8 +892,9 @@ local function ApplyKeybindToIcon(icon, viewerName)
     
     -- Check if keybinds should be shown
     if not settings.showKeybinds then
-        if icon.keybindText then
-            icon.keybindText:Hide()
+        local iks = iconKeybindState[icon]
+        if iks and iks.text then
+            iks.text:Hide()
         end
         return
     end
@@ -987,10 +993,14 @@ local function ApplyKeybindToIcon(icon, viewerName)
     end
     if overrideKeybind then
         if overrideKeybind == "" then
-            -- Explicit clear: hide keybind text and return
-            if icon.keybindText then
-                icon.keybindText:SetText("")
-                icon.keybindText:Hide()
+            -- Explicit clear: hide keybind text (cache-aware) and return
+            local iks = iconKeybindState[icon]
+            if iks and iks.text then
+                if iks.shownText then
+                    iks.text:SetText("")
+                    iks.shownText = nil
+                end
+                if iks.text:IsShown() then iks.text:Hide() end
             end
             return
         end
@@ -1030,9 +1040,13 @@ local function ApplyKeybindToIcon(icon, viewerName)
                 end
                 if overrideKeybind then
                     if overrideKeybind == "" then
-                        if icon.keybindText then
-                            icon.keybindText:SetText("")
-                            icon.keybindText:Hide()
+                        local iks = iconKeybindState[icon]
+                        if iks and iks.text then
+                            if iks.shownText then
+                                iks.text:SetText("")
+                                iks.shownText = nil
+                            end
+                            if iks.text:IsShown() then iks.text:Hide() end
                         end
                         return
                     end
@@ -1063,9 +1077,13 @@ local function ApplyKeybindToIcon(icon, viewerName)
                 end
                 if overrideKeybind then
                     if overrideKeybind == "" then
-                        if icon.keybindText then
-                            icon.keybindText:SetText("")
-                            icon.keybindText:Hide()
+                        local iks = iconKeybindState[icon]
+                        if iks and iks.text then
+                            if iks.shownText then
+                                iks.text:SetText("")
+                                iks.shownText = nil
+                            end
+                            if iks.text:IsShown() then iks.text:Hide() end
                         end
                         return
                     end
@@ -1096,14 +1114,18 @@ local function ApplyKeybindToIcon(icon, viewerName)
         print("|cFF00FF00[KB Debug] Using keybind:|r " .. keybind)
     end
     
-    -- If no keybind at all, just hide and return
+    -- If no keybind at all, just hide (cache-aware) and return
     if not keybind then
         if KEYBIND_DEBUG then
             print("|cFFFF0000[KB Debug] No keybind found, hiding|r")
         end
-        if icon.keybindText then
-            icon.keybindText:SetText("")
-            icon.keybindText:Hide()
+        local iks = iconKeybindState[icon]
+        if iks and iks.text then
+            if iks.shownText then
+                iks.text:SetText("")
+                iks.shownText = nil
+            end
+            if iks.text:IsShown() then iks.text:Hide() end
         end
         return
     end
@@ -1114,31 +1136,55 @@ local function ApplyKeybindToIcon(icon, viewerName)
     local offsetX = settings.keybindOffsetX or 2
     local offsetY = settings.keybindOffsetY or -2
     local textColor = settings.keybindTextColor or { 1, 1, 1, 1 }
-    
-    -- Create keybind text if it doesn't exist
-    if not icon.keybindText then
-        icon.keybindText = icon:CreateFontString(nil, "OVERLAY")
-        icon.keybindText:SetShadowOffset(1, -1)
-        icon.keybindText:SetShadowColor(0, 0, 0, 1)
+
+    -- Get or create per-icon state table
+    local iks = iconKeybindState[icon]
+    if not iks then
+        iks = {}
+        iconKeybindState[icon] = iks
     end
-    
-    -- Update position (clear and re-anchor in case anchor changed)
-    icon.keybindText:ClearAllPoints()
-    icon.keybindText:SetPoint(anchor, icon, anchor, offsetX, offsetY)
-    
-    -- Set font size
-    icon.keybindText:SetFont(GetGeneralFont(), fontSize, GetGeneralFontOutline())
-    
-    -- Set text color
-    icon.keybindText:SetTextColor(textColor[1], textColor[2], textColor[3], textColor[4] or 1)
-    
-    -- Set text
+
+    -- Create keybind text FontString if it doesn't exist
+    if not iks.text then
+        iks.text = icon:CreateFontString(nil, "OVERLAY")
+        iks.text:SetShadowOffset(1, -1)
+        iks.text:SetShadowColor(0, 0, 0, 1)
+    end
+
+    -- Skip redundant work: only touch the FontString when something changed.
+    -- ClearAllPoints/SetPoint every call causes visible flicker.
+    local curFont = GetGeneralFont()
+    local curOutline = GetGeneralFontOutline()
+    local r, g, b, a = textColor[1], textColor[2], textColor[3], textColor[4] or 1
+
+    if iks.anchor ~= anchor or iks.offsetX ~= offsetX or iks.offsetY ~= offsetY then
+        iks.text:ClearAllPoints()
+        iks.text:SetPoint(anchor, icon, anchor, offsetX, offsetY)
+        iks.anchor, iks.offsetX, iks.offsetY = anchor, offsetX, offsetY
+    end
+
+    if iks.font ~= curFont or iks.fontSize ~= fontSize or iks.fontOutline ~= curOutline then
+        iks.text:SetFont(curFont, fontSize, curOutline)
+        iks.font, iks.fontSize, iks.fontOutline = curFont, fontSize, curOutline
+    end
+
+    if iks.r ~= r or iks.g ~= g or iks.b ~= b or iks.a ~= a then
+        iks.text:SetTextColor(r, g, b, a)
+        iks.r, iks.g, iks.b, iks.a = r, g, b, a
+    end
+
     if keybind then
-        icon.keybindText:SetText(keybind)
-        icon.keybindText:Show()
+        if iks.shownText ~= keybind then
+            iks.text:SetText(keybind)
+            iks.shownText = keybind
+        end
+        if not iks.text:IsShown() then iks.text:Show() end
     else
-        icon.keybindText:SetText("")
-        icon.keybindText:Hide()
+        if iks.shownText then
+            iks.text:SetText("")
+            iks.shownText = nil
+        end
+        if iks.text:IsShown() then iks.text:Hide() end
     end
 end
 
@@ -1239,17 +1285,25 @@ local function UpdateViewerKeybinds(viewerName)
     end
 end
 
--- Clear stored keybinds from all icons (called when bindings change)
+-- Clear stored keybinds from all icons (called when bindings change).
+-- Does NOT hide the FontString — the text stays visible with its old
+-- value until the next ApplyKeybindToIcon re-evaluates and either
+-- confirms or changes it.  Hiding here caused a visible blink because
+-- the ThrottledUpdate that re-shows text runs 0.5 s later.
 local function ClearStoredKeybinds(viewerName)
     local viewer = _G[viewerName]
     if not viewer then return end
-    
+
     local container = viewer.viewerFrame or viewer
     local children = { container:GetChildren() }
-    
+
     for _, child in ipairs(children) do
-        child._quiKeybind = nil
-        child._quiKeybindSpellID = nil
+        local cks = iconKeybindState[child]
+        if cks then
+            cks.keybind = nil
+            cks.spellID = nil
+            cks.shownText = nil  -- clear cached text so next apply re-evaluates
+        end
     end
 end
 
@@ -1336,18 +1390,9 @@ local function HookViewerLayout(viewerName)
     local viewer = _G[viewerName]
     if not viewer then return end
 
-    if viewer.Layout and not viewer._QUI_KeybindHooked then
-        viewer._QUI_KeybindHooked = true
-        hooksecurefunc(viewer, "Layout", function()
-            -- PERFORMANCE: Skip if no keybind features are enabled
-            if not IsAnyKeybindFeatureEnabled() then return end
-            C_Timer.After(0.25, function()  -- 250ms debounce for CPU efficiency
-                -- Double-check after timer (settings may have changed)
-                if not IsAnyKeybindFeatureEnabled() then return end
-                UpdateViewerKeybinds(viewerName)
-            end)
-        end)
-    end
+    -- Layout hook removed: CooldownViewerSettings:RefreshLayout hook in
+    -- cdm_viewer.lua triggers LayoutViewer → QUI_UpdateViewerKeybinds.
+    hookedKeybindViewers[viewer] = true  -- mark hooked so we don't retry
 end
 
 -- Initialize hooks when viewers are available
@@ -1876,8 +1921,9 @@ end
 -- when icons are resized during combat (GetWidth/GetHeight return secret values)
 -- Border renders INSIDE the icon frame, above glow effects (frame level +15)
 local function GetRotationHelperOverlay(icon)
-    if icon._rotationHelperOverlay then
-        return icon._rotationHelperOverlay
+    local iks = iconKeybindState[icon]
+    if iks and iks.overlay then
+        return iks.overlay
     end
 
     -- Create a simple frame for the overlay (no BackdropTemplate)
@@ -1935,7 +1981,11 @@ local function GetRotationHelperOverlay(icon)
     end
 
     overlay:Hide()
-    icon._rotationHelperOverlay = overlay
+    if not iks then
+        iks = {}
+        iconKeybindState[icon] = iks
+    end
+    iks.overlay = overlay
     return overlay
 end
 
@@ -1949,8 +1999,9 @@ local function ApplyRotationHelperToIcon(icon, viewerName, nextSpellID)
     local settings = viewers[viewerName]
     if not settings or not settings.showRotationHelper then
         -- Hide overlay if disabled
-        if icon._rotationHelperOverlay then
-            icon._rotationHelperOverlay:Hide()
+        local iks = iconKeybindState[icon]
+        if iks and iks.overlay then
+            iks.overlay:Hide()
         end
         return
     end
@@ -1982,8 +2033,9 @@ local function ApplyRotationHelperToIcon(icon, viewerName, nextSpellID)
     end
 
     if not iconSpellID then
-        if icon._rotationHelperOverlay then
-            icon._rotationHelperOverlay:Hide()
+        local iks = iconKeybindState[icon]
+        if iks and iks.overlay then
+            iks.overlay:Hide()
         end
         return
     end

@@ -1699,6 +1699,12 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
     end
 
     -- Register events for updates
+    -- Throttle UNIT_POWER_FREQUENT to ~5 updates/sec (0.2s) to reduce CPU.
+    -- UNIT_POWER_UPDATE and UNIT_MAXPOWER are processed immediately (infrequent).
+    local _powerThrottleElapsed = 0
+    local _powerThrottleDirty = false
+    local POWER_THROTTLE_INTERVAL = 0.2  -- 5 Hz max for frequent power updates
+
     frame:SetScript("OnEvent", function(self, event, ...)
         if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
             local eventUnit = ...
@@ -1711,11 +1717,17 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
             if eventUnit == self.unit then
                 UpdateAbsorbs(self)
             end
-        elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" or event == "UNIT_MAXPOWER" then
+        elseif event == "UNIT_POWER_FREQUENT" then
+            local eventUnit = ...
+            if eventUnit == self.unit then
+                _powerThrottleDirty = true
+            end
+        elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_MAXPOWER" then
             local eventUnit = ...
             if eventUnit == self.unit then
                 UpdatePower(self)
                 UpdatePowerText(self)
+                _powerThrottleDirty = false  -- just did a full update
             end
         elseif event == "UNIT_NAME_UPDATE" then
             local eventUnit = ...
@@ -1725,6 +1737,17 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
         elseif event == "RAID_TARGET_UPDATE" then
             UpdateTargetMarker(self)
         end
+    end)
+
+    -- Throttled power update via OnUpdate (only active when dirty)
+    frame:SetScript("OnUpdate", function(self, delta)
+        if not _powerThrottleDirty then return end
+        _powerThrottleElapsed = _powerThrottleElapsed + delta
+        if _powerThrottleElapsed < POWER_THROTTLE_INTERVAL then return end
+        _powerThrottleElapsed = 0
+        _powerThrottleDirty = false
+        UpdatePower(self)
+        UpdatePowerText(self)
     end)
 
     frame:RegisterUnitEvent("UNIT_HEALTH", unit)
@@ -3253,7 +3276,7 @@ function QUI_UF:RefreshFrame(unitKey)
     end
 
     -- Restore castbar edit overlay if in Blizzard's Edit Mode
-    if EditModeManagerFrame and EditModeManagerFrame:IsEditModeActive() then
+    if Helpers.IsEditModeActive() then
         if QUI_Castbar and QUI_Castbar.RestoreEditOverlaysIfNeeded then
             QUI_Castbar:RestoreEditOverlaysIfNeeded(unitKey)
         end
@@ -3582,15 +3605,20 @@ local function GetAnchorFrame(anchorType)
     return nil
 end
 
--- Helper: Get anchor frame dimensions
+-- Helper: Get anchor frame dimensions.
+-- anchorFrame may be the proxy (which mirrors CDM viewer size), so we check
+-- the viewer state on the ACTUAL CDM viewer, not the frame passed in.
 local function GetAnchorDimensions(anchorFrame, anchorType)
     if not anchorFrame then return nil end
 
     local width, height
     if anchorType == "essential" or anchorType == "utility" then
-        -- CDM viewers store width in custom property
-        width = anchorFrame.__cdmRow1Width or anchorFrame:GetWidth()
-        height = anchorFrame.__cdmTotalHeight or anchorFrame:GetHeight()
+        -- CDM viewers store dimensions in viewer state.
+        -- Try the actual viewer first (proxy won't have viewer state).
+        local actualViewer = GetAnchorFrame(anchorType)
+        local afvs = actualViewer and _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(actualViewer)
+        width = (afvs and afvs.row1Width) or anchorFrame:GetWidth()
+        height = (afvs and afvs.totalHeight) or anchorFrame:GetHeight()
     else
         -- Power bars use standard methods
         width = anchorFrame:GetWidth()
@@ -3599,6 +3627,17 @@ local function GetAnchorDimensions(anchorFrame, anchorType)
 
     local centerX, centerY = anchorFrame:GetCenter()
     if not centerX or not centerY then return nil end
+
+    -- Debug: log anchor dimensions during Edit Mode
+    local isEditMode = Helpers.IsEditModeActive()
+    if isEditMode and QUI and QUI.DebugPrint then
+        local afScale = anchorFrame.GetScale and anchorFrame:GetScale() or 1
+        local afLogW = anchorFrame:GetWidth() or 0
+        local afL, afR = anchorFrame:GetLeft(), anchorFrame:GetRight()
+        local afBoundsW = (afL and afR) and (afR - afL) or 0
+        QUI:DebugPrint(format("|cff88CCFF GetAnchorDim|r type=%s: w=%.0f h=%.0f logW=%.0f boundsW=%.0f scale=%.3f cx=%.0f cy=%.0f",
+            anchorType or "?", width, height, afLogW, afBoundsW, afScale, centerX, centerY))
+    end
 
     return {
         width = width,
@@ -3611,38 +3650,70 @@ local function GetAnchorDimensions(anchorFrame, anchorType)
     }
 end
 
--- Update unit frames that are anchored to another frame
--- Called when anchor frames (CDM, Power Bars) reposition
+-- Helper: Resolve anchor frame, preferring the proxy (which auto-follows the
+-- source via WoW's native anchor system, surviving Edit Mode drag in realtime).
+local function GetAnchorFrameOrProxy(anchorType)
+    local proxyKey
+    if anchorType == "essential" then
+        proxyKey = "cdmEssential"
+    elseif anchorType == "utility" then
+        proxyKey = "cdmUtility"
+    elseif anchorType == "primary" then
+        proxyKey = "primaryPower"
+    elseif anchorType == "secondary" then
+        proxyKey = "secondaryPower"
+    end
+    if proxyKey then
+        local getProxy = _G.QUI_GetCDMAnchorProxyFrame
+        if type(getProxy) == "function" then
+            local proxy = getProxy(proxyKey)
+            if proxy then return proxy end
+        end
+    end
+    -- Fallback to direct frame
+    return GetAnchorFrame(anchorType)
+end
+
+-- Update unit frames that are anchored to another frame.
+-- Uses RELATIVE WoW anchors through the proxy system so that when the
+-- anchor source is dragged in Edit Mode, the unit frame follows in
+-- realtime (WoW's anchor chain handles it automatically — no polling).
 _G.QUI_UpdateAnchoredUnitFrames = function()
     if InCombatLockdown() then return end  -- Skip during combat to avoid protected function errors
     local db = GetDB()
     if not db then return end
-
-    local screenCenterX, screenCenterY = UIParent:GetCenter()
-    if not screenCenterX or not screenCenterY then return end
 
     -- Update Player (anchors to LEFT edge of anchor frame)
     -- Skip if player frame has an active anchoring override
     local playerSettings = db.player
     local playerAnchorType = playerSettings and playerSettings.anchorTo
     if playerAnchorType and playerAnchorType ~= "disabled" and QUI_UF.frames.player and not IsFrameOverridden(QUI_UF.frames.player) then
-        local anchorFrame = GetAnchorFrame(playerAnchorType)
+        local anchorFrame = GetAnchorFrameOrProxy(playerAnchorType)
         if anchorFrame and anchorFrame:IsShown() then
             local anchor = GetAnchorDimensions(anchorFrame, playerAnchorType)
             if anchor then
                 local frame = QUI_UF.frames.player
-                local frameWidth = frame:GetWidth()
                 local frameHeight = frame:GetHeight()
                 local gap = QUICore:PixelRound(playerSettings.anchorGap or 10, frame)
                 local yOffset = QUICore:PixelRound(playerSettings.anchorYOffset or 0, frame)
 
-                -- X: Anchor left edge - gap - half frame width
-                local frameX = anchor.left - gap - (frameWidth / 2) - screenCenterX
-                -- Y: Align unit frame TOP with anchor TOP, then apply offset
-                local frameY = (anchor.top - (frameHeight / 2) - screenCenterY) + yOffset
+                -- Debug: log anchor dimensions during Edit Mode
+                local isEditMode = Helpers.IsEditModeActive()
+                if isEditMode and QUI and QUI.DebugPrint then
+                    local afScale = anchorFrame.GetScale and anchorFrame:GetScale() or 1
+                    local afL, afR = anchorFrame:GetLeft(), anchorFrame:GetRight()
+                    local afBoundsW = (afL and afR) and (afR - afL) or 0
+                    QUI:DebugPrint(format("|cff88CCFF UF Anchor|r player→%s: anchorW=%.0f anchorH=%.0f anchorBoundsW=%.0f anchorScale=%.3f gap=%.0f yOff=%.0f",
+                        playerAnchorType, anchor.width, anchor.height, afBoundsW, afScale, gap, yOffset))
+                end
+
+                -- Relative anchor: player RIGHT edge → anchor LEFT edge, with gap.
+                -- Y offset aligns unit frame TOP with anchor TOP, then applies user offset.
+                -- anchorHeight/2 - frameHeight/2 shifts from CENTER alignment to TOP alignment.
+                local yShift = (anchor.height / 2) - (frameHeight / 2) + yOffset
 
                 frame:ClearAllPoints()
-                frame:SetPoint("CENTER", UIParent, "CENTER", frameX, frameY)
+                frame:SetPoint("RIGHT", anchorFrame, "LEFT", -gap, yShift)
             end
         else
             -- Fallback: anchor target doesn't exist, use standard offset positioning
@@ -3659,23 +3730,30 @@ _G.QUI_UpdateAnchoredUnitFrames = function()
     local targetSettings = db.target
     local targetAnchorType = targetSettings and targetSettings.anchorTo
     if targetAnchorType and targetAnchorType ~= "disabled" and QUI_UF.frames.target and not IsFrameOverridden(QUI_UF.frames.target) then
-        local anchorFrame = GetAnchorFrame(targetAnchorType)
+        local anchorFrame = GetAnchorFrameOrProxy(targetAnchorType)
         if anchorFrame and anchorFrame:IsShown() then
             local anchor = GetAnchorDimensions(anchorFrame, targetAnchorType)
             if anchor then
                 local frame = QUI_UF.frames.target
-                local frameWidth = frame:GetWidth()
                 local frameHeight = frame:GetHeight()
                 local gap = QUICore:PixelRound(targetSettings.anchorGap or 10, frame)
                 local yOffset = QUICore:PixelRound(targetSettings.anchorYOffset or 0, frame)
 
-                -- X: Anchor right edge + gap + half frame width
-                local frameX = anchor.right + gap + (frameWidth / 2) - screenCenterX
-                -- Y: Align unit frame TOP with anchor TOP, then apply offset
-                local frameY = (anchor.top - (frameHeight / 2) - screenCenterY) + yOffset
+                -- Debug: log anchor dimensions during Edit Mode
+                local isEditMode = Helpers.IsEditModeActive()
+                if isEditMode and QUI and QUI.DebugPrint then
+                    local afScale = anchorFrame.GetScale and anchorFrame:GetScale() or 1
+                    local afL, afR = anchorFrame:GetLeft(), anchorFrame:GetRight()
+                    local afBoundsW = (afL and afR) and (afR - afL) or 0
+                    QUI:DebugPrint(format("|cff88CCFF UF Anchor|r target→%s: anchorW=%.0f anchorH=%.0f anchorBoundsW=%.0f anchorScale=%.3f gap=%.0f yOff=%.0f",
+                        targetAnchorType, anchor.width, anchor.height, afBoundsW, afScale, gap, yOffset))
+                end
+
+                -- Relative anchor: target LEFT edge → anchor RIGHT edge, with gap.
+                local yShift = (anchor.height / 2) - (frameHeight / 2) + yOffset
 
                 frame:ClearAllPoints()
-                frame:SetPoint("CENTER", UIParent, "CENTER", frameX, frameY)
+                frame:SetPoint("LEFT", anchorFrame, "RIGHT", gap, yShift)
             end
         else
             -- Fallback: anchor target doesn't exist, use standard offset positioning

@@ -74,7 +74,8 @@ local function BuildGeneralTab(tabContent)
     if db and db.general then
         local scaleSlider = GUI:CreateFormSlider(tabContent, "Global UI Scale", 0.3, 2.0, 0.01,
             "uiScale", db.general, function(val)
-                pcall(function() UIParent:SetScale(val) end)
+                if InCombatLockdown() then return end
+                UIParent:SetScale(val)
             end, { deferOnDrag = true, precision = 7 })
         scaleSlider:SetPoint("TOPLEFT", PADDING, y)
         scaleSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
@@ -85,8 +86,9 @@ local function BuildGeneralTab(tabContent)
         presetLabel:SetPoint("TOPLEFT", PADDING, y)
 
         local function ApplyPreset(val, name)
+            if InCombatLockdown() then return end
             db.general.uiScale = val
-            pcall(function() UIParent:SetScale(val) end)
+            UIParent:SetScale(val)
             local msg = "|cff34D399[QUI]|r UI scale set to " .. val
             if name then msg = msg .. " (" .. name .. ")" end
             DEFAULT_CHAT_FRAME:AddMessage(msg)
@@ -341,6 +343,32 @@ local function BuildGeneralTab(tabContent)
         end)
         fontSizeSlider:SetPoint("TOPLEFT", PADDING, y)
         fontSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        -- Font selection with custom toggle
+        local fontList = Shared.GetFontList()
+        local combatTextFontDropdown  -- Forward declare
+
+        local useCustomFontCheck = GUI:CreateFormCheckbox(tabContent, "Use Custom Font", "useCustomFont", combatTextDB, function(val)
+            if _G.QUI_RefreshCombatText then _G.QUI_RefreshCombatText() end
+            -- Enable/disable font dropdown based on toggle
+            if combatTextFontDropdown and combatTextFontDropdown.SetEnabled then
+                combatTextFontDropdown:SetEnabled(val)
+            end
+        end)
+        useCustomFontCheck:SetPoint("TOPLEFT", PADDING, y)
+        useCustomFontCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        y = y - FORM_ROW
+
+        combatTextFontDropdown = GUI:CreateFormDropdown(tabContent, "Font", fontList, "font", combatTextDB, function()
+            if _G.QUI_RefreshCombatText then _G.QUI_RefreshCombatText() end
+        end)
+        combatTextFontDropdown:SetPoint("TOPLEFT", PADDING, y)
+        combatTextFontDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        -- Initial state based on setting
+        if combatTextFontDropdown.SetEnabled then
+            combatTextFontDropdown:SetEnabled(combatTextDB.useCustomFont == true)
+        end
         y = y - FORM_ROW
 
         local xOffsetSlider = GUI:CreateFormSlider(tabContent, "X Position Offset", -2000, 2000, 1, "xOffset", combatTextDB, function()

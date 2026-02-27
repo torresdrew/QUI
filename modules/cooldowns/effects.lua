@@ -7,6 +7,17 @@
 local _, ns = ...
 local Helpers = ns.Helpers
 
+-- TAINT SAFETY: Store per-frame state in local weak-keyed tables instead of
+-- writing custom properties to Blizzard frames (CDM viewer icons/subframes).
+local hookedFrames   = Helpers.CreateStateTable()  -- frame → true (Show hook applied)
+local processedIcons = Helpers.CreateStateTable()  -- icon  → true (effects hidden)
+local hookedViewers  = Helpers.CreateStateTable()  -- viewer → { layout, show }
+
+-- Performance: coalescing flag for per-icon OnShow deferred hide.
+-- All icon OnShow hooks share this single flag so rapid icon appearances
+-- (e.g. 20 icons showing during a CDM Layout) produce only ONE deferred call.
+local _iconShowHidePending = false
+
 -- Default settings
 local DEFAULTS = { hideEssential = true, hideUtility = true }
 
@@ -20,37 +31,46 @@ end
 -- ======================================================
 local function HideCooldownEffects(child)
     if not child then return end
-    
+
     local effectFrames = {"PandemicIcon", "ProcStartFlipbook", "Finish"}
-    
+
     for _, frameName in ipairs(effectFrames) do
         local frame = child[frameName]
         if frame then
-            frame:Hide()
-            frame:SetAlpha(0)
-            
+            -- pcall to handle protected-state failures during combat
+            pcall(frame.Hide, frame)
+            pcall(frame.SetAlpha, frame, 0)
+
             -- Hook to keep it hidden
-            if not frame._QUI_NoShow then
-                frame._QUI_NoShow = true
-                
-                -- Hook Show to prevent it from showing
-                if frame.Show then
-                    hooksecurefunc(frame, "Show", function(self)
-                        if InCombatLockdown() then return end
-                        self:Hide()
-                        self:SetAlpha(0)
-                    end)
-                end
-                
-                -- Also hook parent OnShow
+            if not hookedFrames[frame] then
+                hookedFrames[frame] = true
+
+                -- TAINT SAFETY: Defer to break taint chain from secure CDM context.
+                Helpers.DeferredHideOnShow(frame, { clearAlpha = true })
+
+                -- Also hook parent OnShow — coalesced via module-level flag to avoid
+                -- creating a new timer on every icon OnShow (icons show frequently in combat).
                 if child.HookScript then
-                    child:HookScript("OnShow", function(self)
-                        if InCombatLockdown() then return end
-                        local f = self[frameName]
-                        if f then
-                            f:Hide()
-                            f:SetAlpha(0)
-                        end
+                    child:HookScript("OnShow", function()
+                        if _iconShowHidePending then return end
+                        _iconShowHidePending = true
+                        C_Timer.After(0, function()
+                            _iconShowHidePending = false
+                            -- Re-process all visible icons to catch any newly-shown effects
+                            for _, vn in ipairs(viewers) do
+                                local v = _G[vn]
+                                if v then
+                                    local nc = v:GetNumChildren()
+                                    for ci = 1, nc do
+                                        local ch = select(ci, v:GetChildren())
+                                        if ch and ch:IsShown() then
+                                            HideCooldownEffects(ch)
+                                            pcall(HideBlizzardGlows, ch)
+                                        end
+                                    end
+                                end
+                            end
+                        end)
                     end)
                 end
             end
@@ -68,23 +88,27 @@ local function HideBlizzardGlows(button)
     -- ALWAYS hide Blizzard's glows - our custom glow uses LibCustomGlow which is separate
     -- Don't call ActionButton_HideOverlayGlow as it may interfere with proc detection
 
+    -- pcall to handle protected-state failures during combat
+
     -- Hide the SpellActivationAlert overlay (the golden swirl glow frame)
     if button.SpellActivationAlert then
-        button.SpellActivationAlert:Hide()
-        button.SpellActivationAlert:SetAlpha(0)
+        pcall(button.SpellActivationAlert.Hide, button.SpellActivationAlert)
+        pcall(button.SpellActivationAlert.SetAlpha, button.SpellActivationAlert, 0)
     end
 
     -- Hide OverlayGlow frame if it exists (Blizzard's default)
     if button.OverlayGlow then
-        button.OverlayGlow:Hide()
-        button.OverlayGlow:SetAlpha(0)
+        pcall(button.OverlayGlow.Hide, button.OverlayGlow)
+        pcall(button.OverlayGlow.SetAlpha, button.OverlayGlow, 0)
     end
-    
+
     -- Hide _ButtonGlow only when it's Blizzard's frame, not LibCustomGlow's.
     -- LibCustomGlow's ButtonGlow_Start uses the same _ButtonGlow property,
     -- so skip hiding when our custom glow is active on this icon.
-    if button._ButtonGlow and not button._QUICustomGlowActive then
-        button._ButtonGlow:Hide()
+    -- NOTE: _QUICustomGlowActive is checked via the glows module's shared table
+    local glowState = _G.QUI_GetGlowState and _G.QUI_GetGlowState(button)
+    if button._ButtonGlow and not (glowState and glowState.active) then
+        pcall(button._ButtonGlow.Hide, button._ButtonGlow)
     end
 end
 
@@ -116,38 +140,55 @@ local function ProcessViewer(viewerName)
     if not shouldHide then return end -- Don't process if effects should be shown
     
     local function ProcessIcons()
-        local children = {viewer:GetChildren()}
-        for _, child in ipairs(children) do
-            if child:IsShown() then
+        -- Performance: iterate via select() to avoid table allocation
+        local numChildren = viewer:GetNumChildren()
+        for i = 1, numChildren do
+            local child = select(i, viewer:GetChildren())
+            if child and child:IsShown() then
                 -- Hide red/flash effects
                 HideCooldownEffects(child)
-                
+
                 -- Hide ALL glows (not just Epidemic)
                 pcall(HideAllGlows, child)
-                
+
                 -- Mark as processed (no OnUpdate hook needed - we handle glows via hooksecurefunc)
-                    child._QUI_EffectsHidden = true
+                processedIcons[child] = true
             end
         end
     end
-    
+
     -- Process immediately
     ProcessIcons()
-    
+
+    -- TAINT SAFETY: Defer to break taint chain from secure CDM context.
     -- Hook Layout to reprocess when viewer updates
-    if viewer.Layout and not viewer._QUI_EffectsHooked then
-        viewer._QUI_EffectsHooked = true
+    -- Performance: coalesce rapid Layout calls into a single deferred ProcessIcons
+    local hvState = hookedViewers[viewer]
+    if not hvState then hvState = {}; hookedViewers[viewer] = hvState end
+    if viewer.Layout and not hvState.layout then
+        hvState.layout = true
+        local processPending = false
         hooksecurefunc(viewer, "Layout", function()
-            C_Timer.After(0.15, ProcessIcons)  -- 150ms debounce for CPU efficiency
+            if processPending then return end
+            processPending = true
+            C_Timer.After(0.15, function()
+                processPending = false
+                ProcessIcons()
+            end)
         end)
     end
-    
+
     -- Hook OnShow
-    if not viewer._QUI_EffectsShowHooked then
-        viewer._QUI_EffectsShowHooked = true
+    if not hvState.show then
+        hvState.show = true
+        local showPending = false
         viewer:HookScript("OnShow", function()
-            if InCombatLockdown() then return end
-            C_Timer.After(0.15, ProcessIcons)  -- 150ms debounce for CPU efficiency
+            if showPending then return end
+            showPending = true
+            C_Timer.After(0.15, function()
+                showPending = false
+                ProcessIcons()
+            end)
         end)
     end
 end
@@ -168,9 +209,13 @@ local function HideExistingBlizzardGlows()
     for _, viewerName in ipairs(viewerNames) do
         local viewer = _G[viewerName]
         if viewer then
-            local children = {viewer:GetChildren()}
-            for _, child in ipairs(children) do
-                pcall(HideBlizzardGlows, child)
+            -- Performance: iterate via select() to avoid table allocation
+            local numChildren = viewer:GetNumChildren()
+            for i = 1, numChildren do
+                local child = select(i, viewer:GetChildren())
+                if child then
+                    pcall(HideBlizzardGlows, child)
+                end
             end
         end
     end
@@ -183,22 +228,15 @@ local function HookAllGlows()
     if type(ActionButton_ShowOverlayGlow) == "function" then
         hooksecurefunc("ActionButton_ShowOverlayGlow", function(button)
             -- Only hide glows on Essential/Utility cooldown viewers, NOT BuffIcon
-            if button and button:GetParent() then
+            if button and button.GetParent and button:GetParent() then
                 local parent = button:GetParent()
-                local parentName = parent:GetName()
+                local parentName = parent.GetName and parent:GetName()
                 if parentName and (
-                    parentName:find("EssentialCooldown") or 
+                    parentName:find("EssentialCooldown") or
                     parentName:find("UtilityCooldown")
                     -- BuffIconCooldown is NOT included - we want glows on buff icons
                 ) then
-                    -- Hide Blizzard's glow immediately
-                    -- customglows.lua runs first (load order) and applies LibCustomGlow
-                    -- which is NOT affected by HideBlizzardGlows
-                    C_Timer.After(0.01, function()
-                        if button then
-                            pcall(HideBlizzardGlows, button)
-                        end
-                    end)
+                    pcall(HideBlizzardGlows, button)
                 end
             end
         end)

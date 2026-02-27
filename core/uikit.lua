@@ -12,6 +12,13 @@ local LSM = LibStub("LibSharedMedia-3.0", true)
 local Helpers = ns.Helpers
 local DEFAULT_FONT = "Fonts\\FRIZQT__.TTF"
 
+-- Shared fallback color table for checkboxes (avoids per-widget allocation)
+local DEFAULT_CHECKBOX_COLORS = {
+    accent = {0.204, 0.827, 0.600},
+    accentHover = {0.431, 0.906, 0.718},
+    toggleOff = {0.18, 0.18, 0.20},
+}
+
 --- Lazily resolve QUICore (safe if called before main.lua loads)
 local function GetCore()
     return ns.Addon
@@ -236,11 +243,7 @@ function UIKit.CreateAccentCheckbox(parent, options)
     if not colors and QUI and QUI.GUI and QUI.GUI.Colors then
         colors = QUI.GUI.Colors
     end
-    colors = colors or {
-        accent = {0.204, 0.827, 0.600},
-        accentHover = {0.431, 0.906, 0.718},
-        toggleOff = {0.18, 0.18, 0.20},
-    }
+    colors = colors or DEFAULT_CHECKBOX_COLORS
 
     local checkbox = CreateFrame("Button", nil, parent, "BackdropTemplate")
     checkbox:SetSize(size, size)
@@ -400,4 +403,100 @@ function UIKit.CreateObjectPool(factory, resetter)
             return #free
         end,
     }
+end
+
+---------------------------------------------------------------------------
+-- ANCHOR PROXY
+---------------------------------------------------------------------------
+
+function UIKit.CreateAnchorProxy(sourceFrame, opts)
+    opts = opts or {}
+    local optCombatFreeze     = opts.combatFreeze ~= false
+    local optMirrorVisibility = opts.mirrorVisibility ~= false
+    local sizeResolver        = opts.sizeResolver
+    local anchorResolver      = opts.anchorResolver
+    local frameName           = opts.frameName
+    if (opts.deferCreation) and InCombatLockdown() then return nil end
+
+    local proxy = CreateFrame("Frame", frameName, UIParent)
+    proxy:SetClampedToScreen(false)
+    proxy:Show()
+
+    local initialized = false
+    local combatPending = false
+    local currentSource = sourceFrame
+    local lastWidth, lastHeight = 0, 0
+    local lastAnchorSource = nil
+
+    function proxy:Sync()
+        local source = currentSource
+        if not source then return false end
+        if optMirrorVisibility then
+            local visible = source.IsShown and source:IsShown()
+            if visible then
+                if not self:IsShown() then self:Show() end
+            else
+                if self:IsShown() then self:Hide() end
+                return true
+            end
+        end
+        local inCombat = InCombatLockdown()
+        if optCombatFreeze and inCombat and initialized then
+            combatPending = true
+            return false
+        end
+        local w, h
+        if sizeResolver then
+            w, h = sizeResolver(source)
+        else
+            w = source:GetWidth() or 0
+            h = source:GetHeight() or 0
+        end
+        w = math.max(1, w or 0)
+        h = math.max(1, h or 0)
+        -- Scale conversion: sizeResolver dimensions are in the source frame's
+        -- coordinate space, but the proxy is parented to UIParent.  Convert
+        -- so the proxy's screen-space size matches the actual source content.
+        local sourceScale = source:GetEffectiveScale()
+        local proxyScale = self:GetEffectiveScale()
+        if sourceScale and proxyScale and proxyScale > 0 and sourceScale ~= proxyScale then
+            local scaleFactor = sourceScale / proxyScale
+            w = w * scaleFactor
+            h = h * scaleFactor
+        end
+        -- Use epsilon comparison — WoW's GetWidth/GetHeight can return
+        -- slightly different floats than what was passed to SetSize,
+        -- causing infinite SetSize→OnSizeChanged→SetSize loops.
+        if math.abs(lastWidth - w) > 0.5 or math.abs(lastHeight - h) > 0.5 then
+            self:SetSize(w, h)
+            lastWidth, lastHeight = w, h
+        end
+        if anchorResolver then
+            anchorResolver(self, source)
+            lastAnchorSource = source
+        elseif lastAnchorSource ~= source then
+            self:ClearAllPoints()
+            self:SetPoint("CENTER", source, "CENTER", 0, 0)
+            lastAnchorSource = source
+        end
+        initialized = true
+        if inCombat then combatPending = true end
+        return true
+    end
+
+    function proxy:IsFrozen()
+        return optCombatFreeze and initialized and InCombatLockdown()
+    end
+    function proxy:NeedsCombatRefresh() return combatPending end
+    function proxy:ClearCombatPending() combatPending = false end
+    function proxy:SetSourceFrame(frame)
+        if currentSource == frame then return end
+        currentSource = frame
+        initialized = false
+        lastAnchorSource = nil
+        combatPending = false
+    end
+    function proxy:GetSourceFrame() return currentSource end
+
+    return proxy
 end

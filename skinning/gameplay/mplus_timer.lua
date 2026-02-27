@@ -67,38 +67,39 @@ end
 local function ApplyBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga, showBorder)
     if not frame then return end
 
-    if not frame.quiBackdrop then
-        frame.quiBackdrop = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-        frame.quiBackdrop:SetAllPoints()
-        frame.quiBackdrop:SetFrameLevel(math.max(1, frame:GetFrameLevel() - 1))
-        frame.quiBackdrop:EnableMouse(false)
+    local backdrop = SkinBase.GetFrameData(frame, "backdrop")
+    if not backdrop then
+        backdrop = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        backdrop:SetAllPoints()
+        backdrop:SetFrameLevel(math.max(0, frame:GetFrameLevel() - 1))
+        backdrop:EnableMouse(false)
+        SkinBase.SetFrameData(frame, "backdrop", backdrop)
     end
 
     local core = GetCore()
-    local px = (core and core.GetPixelSize) and core:GetPixelSize(frame.quiBackdrop) or 1
-    frame.quiBackdrop:SetBackdrop({
+    local px = (core and core.GetPixelSize) and core:GetPixelSize(backdrop) or 1
+    backdrop:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = px,
         insets = { left = px, right = px, top = px, bottom = px }
     })
-    frame.quiBackdrop:SetBackdropColor(bgr, bgg, bgb, bga)
+    backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
 
     -- Border visibility controlled by showBorder setting (alpha 0 when hidden)
     local borderAlpha = showBorder and sa or 0
-    frame.quiBackdrop:SetBackdropBorderColor(sr, sg, sb, borderAlpha)
+    backdrop:SetBackdropBorderColor(sr, sg, sb, borderAlpha)
 end
 
 ---------------------------------------------------------------------------
 -- Apply Bar Styling
 ---------------------------------------------------------------------------
-local function ApplyBarSkin(bar, sr, sg, sb, colors, isTimerBar, barIndex, showBorder)
+local function ApplyBarSkin(bar, sr, sg, sb, br, bg, bb, colors, isTimerBar, barIndex, showBorder, settings)
     if not bar or not bar.frame then return end
 
     local barBg = colors.barBg
     local borderMult = colors.barBorder
 
-    -- Bar container backdrop - use contrast-aware background
     local core = GetCore()
     local barPx = (core and core.GetPixelSize) and core:GetPixelSize(bar.frame) or 1
     bar.frame:SetBackdrop({
@@ -108,46 +109,41 @@ local function ApplyBarSkin(bar, sr, sg, sb, colors, isTimerBar, barIndex, showB
     })
     bar.frame:SetBackdropColor(barBg[1], barBg[2], barBg[3], barBg[4])
 
-    -- Border visibility controlled by showBorder setting
     local borderAlpha = showBorder and 1 or 0
     bar.frame:SetBackdropBorderColor(sr * borderMult, sg * borderMult, sb * borderMult, borderAlpha)
 
-    -- Status bar color
     if bar.bar then
         bar.bar:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
 
         if isTimerBar then
-            -- Timer bars: gradient from green (+3) to yellow (+2) to accent (+1)
             if barIndex == 3 then
-                -- +3 bar (leftmost) - green
                 bar.bar:SetStatusBarColor(0.2, 0.85, 0.4, 1)
             elseif barIndex == 2 then
-                -- +2 bar (middle) - yellow
                 bar.bar:SetStatusBarColor(0.95, 0.75, 0.2, 1)
             else
-                -- +1 bar (rightmost) - accent color
-                bar.bar:SetStatusBarColor(sr, sg, sb, 1)
+                bar.bar:SetStatusBarColor(br, bg, bb, 1)
             end
         else
-            -- Forces bar - accent color
-            bar.bar:SetStatusBarColor(sr, sg, sb, 1)
+            bar.bar:SetStatusBarColor(br, bg, bb, 1)
         end
     end
 
-    -- Pull overlay texture (forces bar only)
     if bar.overlay then
-        -- Slightly brighter version of accent for pull preview
         bar.overlay:SetVertexColor(
-            math.min(sr * 1.3, 1),
-            math.min(sg * 1.3, 1),
-            math.min(sb * 1.3, 1),
+            math.min(br * 1.3, 1),
+            math.min(bg * 1.3, 1),
+            math.min(bb * 1.3, 1),
             0.6
         )
     end
 
-    -- Bar text - use contrast-aware text color
     if bar.text then
-        bar.text:SetTextColor(colors.text[1], colors.text[2], colors.text[3], colors.text[4])
+        if not isTimerBar and settings and type(settings.forcesTextColor) == "table" then
+            local r, g, b, a = unpack(settings.forcesTextColor)
+            bar.text:SetTextColor(r, g, b, a)
+        else
+            bar.text:SetTextColor(colors.text[1], colors.text[2], colors.text[3], colors.text[4])
+        end
     end
 end
 
@@ -162,6 +158,7 @@ local function ApplyMPlusTimerSkin()
 
     local settings = GetMPlusTimerSettings()
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(settings)
+    local br, bg, bb, ba = SkinBase.GetSkinBarColor(settings)
     local colors = GetContrastColors(bgr, bgg, bgb)
     local showBorder = settings.showBorder ~= false  -- Default true
 
@@ -216,13 +213,30 @@ local function ApplyMPlusTimerSkin()
     if MPlusTimer.bars then
         for i = 1, 3 do
             if MPlusTimer.bars[i] then
-                ApplyBarSkin(MPlusTimer.bars[i], sr, sg, sb, colors, true, i, showBorder)
+                ApplyBarSkin(MPlusTimer.bars[i], sr, sg, sb, br, bg, bb, colors, true, i, showBorder, settings)
             end
         end
 
         -- Forces bar
         if MPlusTimer.bars.forces then
-            ApplyBarSkin(MPlusTimer.bars.forces, sr, sg, sb, colors, false, nil, showBorder)
+            ApplyBarSkin(MPlusTimer.bars.forces, sr, sg, sb, br, bg, bb, colors, false, nil, showBorder, settings)
+        end
+    end
+
+    -- Forces text-only display (for text mode)
+    if MPlusTimer.frames.forcesLabelText then
+        MPlusTimer.frames.forcesLabelText:SetTextColor(
+            colors.textMuted[1], colors.textMuted[2], colors.textMuted[3], colors.textMuted[4]
+        )
+    end
+    if MPlusTimer.frames.forcesValueText then
+        if settings and type(settings.forcesTextColor) == "table" then
+            local r, g, b, a = unpack(settings.forcesTextColor)
+            MPlusTimer.frames.forcesValueText:SetTextColor(r, g, b, a)
+        else
+            MPlusTimer.frames.forcesValueText:SetTextColor(
+                colors.text[1], colors.text[2], colors.text[3], colors.text[4]
+            )
         end
     end
 
@@ -278,8 +292,8 @@ local function ApplyMPlusTimerSkin()
     end
 
     -- Store colors for refresh
-    MPlusTimer.frames.root.quiSkinned = true
-    MPlusTimer.frames.root.quiColors = colors
+    SkinBase.MarkSkinned(MPlusTimer.frames.root)
+    SkinBase.SetFrameData(MPlusTimer.frames.root, "colors", colors)
 end
 
 ---------------------------------------------------------------------------
@@ -290,7 +304,7 @@ local function RefreshMPlusTimerColors()
     if not MPlusTimer or not MPlusTimer.frames or not MPlusTimer.frames.root then
         return
     end
-    if not MPlusTimer.frames.root.quiSkinned then return end
+    if not SkinBase.IsSkinned(MPlusTimer.frames.root) then return end
 
     -- Re-apply full skin to pick up new contrast colors
     ApplyMPlusTimerSkin()

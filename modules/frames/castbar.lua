@@ -7,12 +7,12 @@
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local LSM = LibStub("LibSharedMedia-3.0")
-local Helpers = ns.Helpers
+local nsHelpers = ns.Helpers
 local UIKit = ns.UIKit
-local IsSecretValue = Helpers.IsSecretValue
-local SafeValue = Helpers.SafeValue
+local IsSecretValue = nsHelpers.IsSecretValue
+local SafeValue = nsHelpers.SafeValue
 
-local GetCore = ns.Helpers.GetCore
+local GetCore = nsHelpers.GetCore
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -470,15 +470,22 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
         local widthAdj = QUICore:PixelRound(castSettings.widthAdjustment or 0, anchorFrame)
         local viewer = _G["EssentialCooldownViewer"]
         if viewer then
+            -- Use the CDM anchor proxy for edge-based dual anchoring. The proxy has
+            -- frozen dimensions during combat so the castbar width stays stable when
+            -- Blizzard resizes the actual viewer (icon count changes). The proxy tracks
+            -- the viewer's CENTER position, so its edges represent QUI's expected bounds.
+            local anchorTarget = (_G.QUI_GetCDMAnchorProxyFrame and _G.QUI_GetCDMAnchorProxyFrame("cdmEssential")) or viewer
+
             -- Keep castbar spacing visually consistent with the active bottom CDM row.
             -- In horizontal CDM layouts, row yOffset can move the visible bottom row
             -- without changing the viewer frame bounds.
             local bottomRowYOffset = 0
-            if viewer.__cdmLayoutDirection ~= "VERTICAL" then
-                bottomRowYOffset = QUICore:PixelRound(viewer.__cdmBottomRowYOffset or 0, anchorFrame)
+            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer)
+            if (vs and vs.layoutDir) ~= "VERTICAL" then
+                bottomRowYOffset = QUICore:PixelRound((vs and vs.bottomRowYOffset) or 0, anchorFrame)
             end
-            anchorFrame:SetPoint("TOPLEFT", viewer, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
-            anchorFrame:SetPoint("TOPRIGHT", viewer, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPLEFT", anchorTarget, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPRIGHT", anchorTarget, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
         else
             if unitFrame then
                 anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX, offsetY)
@@ -492,13 +499,17 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
         local widthAdj = QUICore:PixelRound(castSettings.widthAdjustment or 0, anchorFrame)
         local viewer = _G["UtilityCooldownViewer"]
         if viewer then
+            -- Use the CDM anchor proxy (same reasoning as Essential above).
+            local anchorTarget = (_G.QUI_GetCDMAnchorProxyFrame and _G.QUI_GetCDMAnchorProxyFrame("cdmUtility")) or viewer
+
             -- Mirror Essential logic so Utility-anchored castbars behave consistently.
             local bottomRowYOffset = 0
-            if viewer.__cdmLayoutDirection ~= "VERTICAL" then
-                bottomRowYOffset = QUICore:PixelRound(viewer.__cdmBottomRowYOffset or 0, anchorFrame)
+            local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer)
+            if (vs and vs.layoutDir) ~= "VERTICAL" then
+                bottomRowYOffset = QUICore:PixelRound((vs and vs.bottomRowYOffset) or 0, anchorFrame)
             end
-            anchorFrame:SetPoint("TOPLEFT", viewer, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
-            anchorFrame:SetPoint("TOPRIGHT", viewer, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPLEFT", anchorTarget, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPRIGHT", anchorTarget, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
         else
             if unitFrame then
                 anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX, offsetY)
@@ -623,16 +634,27 @@ local function UpdateStatusBarPosition(anchorFrame, castSettings, barHeight, ico
         border:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 0, 0)
 
         -- Only show border if borderSize > 0 (edgeSize=0 causes WoW to use texture's natural size)
+        local core = GetCore()
+        local SSB = core and core.SafeSetBackdrop
         if borderSize > 0 then
-            border:SetBackdrop({
+            local backdropInfo = {
                 edgeFile = "Interface\\Buttons\\WHITE8x8",
                 edgeSize = borderSize,
-            })
+            }
             local r, g, b, a = GetSafeColor(castSettings.borderColor, {0, 0, 0, 1})
-            border:SetBackdropBorderColor(r, g, b, a)
+            if SSB then
+                SSB(border, backdropInfo, { r, g, b, a })
+            else
+                border:SetBackdrop(backdropInfo)
+                border:SetBackdropBorderColor(r, g, b, a)
+            end
             border:Show()
         else
-            border:SetBackdrop(nil)
+            if SSB then
+                SSB(border, nil)
+            else
+                border:SetBackdrop(nil)
+            end
             border:Hide()
         end
     end
@@ -2156,9 +2178,8 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
     
     -- Unified OnUpdate handler - handles both real casts and preview
     local function CastBar_OnUpdate(self, elapsed)
-        -- Check if actually casting (real cast takes priority)
-        local spellName = UnitCastingInfo(self.unit)
-        local channelName = UnitChannelInfo(self.unit)
+        local spellName = UnitCastingInfo(self.unit) ~= nil
+        local channelName = UnitChannelInfo(self.unit) ~= nil
 
         -- Continue showing castbar during empowered hold phase even when API returns nil
         local isInEmpoweredHold = isPlayer and self.isEmpowered and self.startTime and self.endTime
@@ -2472,6 +2493,12 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
                 StoreCastTimes(self, isPlayer, startTimeMS, endTimeMS, startTime, endTime)
             end
 
+            -- Start OnUpdate handler and show FIRST — if any visual update below
+            -- errors, the castbar still appears (with stale visuals for one frame)
+            -- instead of silently staying hidden until /reload.
+            self:SetScript("OnUpdate", CastBar_OnUpdate)
+            SetCastbarFrameVisible(self, true)
+
             local channelCastContext = BuildChannelTickCastContext(
                 self,
                 spellName,
@@ -2505,10 +2532,6 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
 
             -- Update empowered state
             UpdateEmpoweredState(self, isPlayer, isEmpowered, numStages)
-
-            -- Start OnUpdate handler and show
-            self:SetScript("OnUpdate", CastBar_OnUpdate)
-            SetCastbarFrameVisible(self, true)
         else
             -- No real cast - handle preview mode
             ClearChannelTickState(self)
@@ -2903,8 +2926,10 @@ function QUI_Castbar:SetupBossCastbar(castbar, unit, bossIndex, castSettings)
                 -- Cast ended (cancelled, interrupted, or completed) - hide immediately
                 ClearEmpoweredState(self)
                 ClearChannelTickState(self)
+                self.timerDriven = false
+                self.durationObj = nil
                 self:SetScript("OnUpdate", nil)
-                self:Hide()
+                SetCastbarFrameVisible(self, false)
             end
         elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_CHANNEL_STOP"
             or event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED" then
@@ -2999,32 +3024,51 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
         -- Check if actually casting (real cast takes priority)
         local spellName = UnitCastingInfo(self.unit)
         local channelName = UnitChannelInfo(self.unit)
-        
+
         if spellName or channelName then
+            -- Timer-driven mode: engine animates the bar, we just update time text
+            if self.timerDriven then
+                local remaining = nil
+                if self.durationObj then
+                    local getter = self.durationObj.GetRemainingDuration or self.durationObj.GetRemaining
+                    if getter then
+                        local okRem, rem = pcall(getter, self.durationObj)
+                        if okRem and rem ~= nil then
+                            remaining = SafeToNumber(rem)
+                        end
+                    end
+                end
+                if remaining and self.timeText then
+                    self.timeText:SetText(string.format("%.1f", remaining))
+                    UpdateTimeTextColor(self, self.unit)
+                end
+                return
+            end
+
             -- Real cast - use real cast data
             if not self.startTime or not self.endTime then return end
-            
+
             local ufdb = GetDB()
             local uncapped = ufdb and ufdb.general and ufdb.general.smootherAnimation
-            
+
             if not uncapped then
                 self.updateElapsed = (self.updateElapsed or 0) + elapsed
                 if self.updateElapsed < 0.0167 then return end
                 self.updateElapsed = 0
             end
-            
+
             local now = GetTime()
             if now >= self.endTime then
                 ClearChannelTickState(self)
                 self:SetScript("OnUpdate", nil)
-                self:Hide()
+                SetCastbarFrameVisible(self, false)
                 TryApplyDeferredCastbarRefresh(self)
                 return
             end
-            
+
             local duration = self.endTime - self.startTime
             if duration <= 0 then return end
-            
+
             -- Never use reverse fill - drain effect achieved via progress calculation
             self.statusBar:SetReverseFill(false)
 
@@ -3050,7 +3094,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
             if not self.previewStartTime or not self.previewEndTime then
                 return
             end
-            
+
             local now = GetTime()
             if now >= self.previewEndTime then
                 -- Loop preview animation
@@ -3058,19 +3102,19 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
                 self.previewEndTime = now + self.previewMaxValue
                 self.previewValue = 0
             end
-            
+
             self.previewValue = self.previewValue + elapsed
             local progress = math.min(self.previewValue, self.previewMaxValue)
             local remaining = self.previewMaxValue - progress
-            
+
             self.statusBar:SetValue(progress)
-            
+
             UpdateThrottledText(self, elapsed, self.timeText, remaining)
         else
             -- No cast and no preview - hide
             ClearChannelTickState(self)
             self:SetScript("OnUpdate", nil)
-            self:Hide()
+            SetCastbarFrameVisible(self, false)
             TryApplyDeferredCastbarRefresh(self)
         end
     end
@@ -3080,74 +3124,92 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
     
     -- Cast function
     function anchorFrame:Cast()
-        -- Check if actually casting
-        local spellName, text, texture, startTimeMS, endTimeMS, _, _, notInterruptible, unitSpellID = UnitCastingInfo(self.unit)
-        local isChanneled = false
-        local channelSpellID = nil
-        
-        if not spellName then
-            spellName, text, texture, startTimeMS, endTimeMS, _, notInterruptible, channelSpellID = UnitChannelInfo(self.unit)
-            if spellName then
-                isChanneled = true
+        -- Use shared GetCastInfo for secret timing detection and duration objects
+        local spellName, text, texture, startTimeMS, endTimeMS, notInterruptible, unitSpellID, isChanneled, _, durationObj, hasSecretTiming = GetCastInfo(self, self.unit)
+
+        -- Determine if we can show the cast
+        local canShowCast = false
+        local useTimerDriven = false
+        local startTime, endTime
+
+        if spellName then
+            if hasSecretTiming and durationObj and self.statusBar and self.statusBar.SetTimerDuration then
+                -- Engine-driven mode: use SetTimerDuration for secret timing
+                useTimerDriven = true
+                canShowCast = true
+            elseif startTimeMS and endTimeMS then
+                local success
+                success, startTime, endTime = pcall(function()
+                    return startTimeMS / 1000, endTimeMS / 1000
+                end)
+                canShowCast = success
+            elseif durationObj and self.statusBar and self.statusBar.SetTimerDuration then
+                -- Fallback: timing not explicitly secret but not accessible, try engine-driven
+                useTimerDriven = true
+                canShowCast = true
             end
         end
 
-        -- If actually casting, show real cast (preview is hidden during real casts)
-        if spellName and startTimeMS and endTimeMS then
-            -- Use pcall to handle Midnight secret values (pass type checks but fail arithmetic)
-            local success, startTime, endTime = pcall(function()
-                return startTimeMS / 1000, endTimeMS / 1000
-            end)
-            if not success then return end
-
+        if canShowCast then
             -- Clear preview simulation
             if self.isPreviewSimulation then
                 ClearPreviewSimulation(self)
             end
 
-            local now = GetTime()
-            self.startTime = startTime
-            self.endTime = endTime
+            -- Store cast state
             self.isChanneled = isChanneled
             self.notInterruptible = notInterruptible
-            self.channelSpellID = unitSpellID or channelSpellID
+            self.channelSpellID = unitSpellID
+            self.timerDriven = useTimerDriven
+            self.durationObj = durationObj
 
-            if self.startTime < now - 5 then
-                local dur = self.endTime - self.startTime
-                if dur and dur > 0 then
-                    self.startTime = now
-                    self.endTime = now + dur
+            if useTimerDriven then
+                -- Engine-driven animation for secret timing
+                local channelFillForward = castSettings and castSettings.channelFillForward
+                local direction = (isChanneled and not channelFillForward) and 1 or 0
+                local ok = pcall(self.statusBar.SetTimerDuration, self.statusBar, durationObj, 0, direction)
+                if not ok then
+                    pcall(self.statusBar.SetTimerDuration, self.statusBar, durationObj)
+                end
+                self.startTime = nil
+                self.endTime = nil
+            else
+                local now = GetTime()
+                self.startTime = startTime
+                self.endTime = endTime
+
+                if self.startTime < now - 5 then
+                    local dur = self.endTime - self.startTime
+                    if dur and dur > 0 then
+                        self.startTime = now
+                        self.endTime = now + dur
+                    end
                 end
             end
-            
-            -- Ensure status bar has texture
+
+            -- Start OnUpdate handler and show FIRST — if any visual update below
+            -- errors, the castbar still appears instead of silently staying hidden.
+            self:SetScript("OnUpdate", BossCastBar_OnUpdate)
+            SetCastbarFrameVisible(self, true)
+
+            -- Visual updates (non-critical — castbar already visible above)
             local currentSettings = GetUnitSettings(self.unitKey)
             local currentCastSettings = currentSettings and currentSettings.castbar or castSettings
             if self.statusBar then
                 self.statusBar:SetStatusBarTexture(GetTexturePath(currentCastSettings.texture))
+                self.statusBar:SetReverseFill(false)
             end
-            
-            -- Set icon texture and show it
+
             if SetIconTexture(self, texture) then
-                -- Only show icon if showIcon is enabled
-                local currentSettings = GetUnitSettings(self.unitKey)
-                local currentCastSettings = currentSettings and currentSettings.castbar or castSettings
                 if ShouldShowIcon(self, currentCastSettings) then
                     self.icon:Show()
                 else
                     self.icon:Hide()
                 end
             end
-            
+
             UpdateSpellText(self, text, spellName, castSettings, self.unit)
-
-            self.statusBar:SetReverseFill(false)
-
             ApplyCastColor(self.statusBar, notInterruptible, self.customColor, self.customNotInterruptibleColor)
-
-            -- Start OnUpdate handler
-            self:SetScript("OnUpdate", BossCastBar_OnUpdate)
-            self:Show()
         else
             -- No real cast - check if preview mode is enabled AND boss frame preview is active
             ClearChannelTickState(self)
@@ -3166,7 +3228,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
                             ClearPreviewSimulation(self)
                         end
                         self:SetScript("OnUpdate", nil)
-                        self:Hide()
+                        SetCastbarFrameVisible(self, false)
                         TryApplyDeferredCastbarRefresh(self)
                     end
                 end
@@ -3264,13 +3326,14 @@ end
 ---------------------------------------------------------------------------
 local function DestroyCastbar(castbar)
     if not castbar then return end
-    
+
     ClearChannelTickState(castbar)
+    castbar:UnregisterAllEvents()
     castbar:SetScript("OnUpdate", nil)
     castbar:SetScript("OnEvent", nil)
     castbar:SetScript("OnDragStart", nil)
     castbar:SetScript("OnDragStop", nil)
-    
+
     castbar:Hide()
     castbar:ClearAllPoints()
 end
@@ -3473,8 +3536,8 @@ end
 local function CreateCastbarNudgeButton(parent, direction, deltaX, deltaY, unitKey)
     local btn = CreateFrame("Button", nil, parent)
     btn:SetSize(18, 18)
-    -- Use TOOLTIP strata so nudge buttons appear above all other frames
-    btn:SetFrameStrata("TOOLTIP")
+    -- Use HIGH strata so nudge buttons appear above all other frames
+    btn:SetFrameStrata("HIGH")
     btn:SetFrameLevel(100)
 
     -- Background - dark grey at 70% for visibility over any game content
@@ -3884,50 +3947,44 @@ local function DisableCastbarEditMode()
     wipe(EditModeState.showedPreviews)
 end
 
--- Hook Blizzard Edit Mode after a short delay to ensure EditModeManagerFrame exists
-C_Timer.After(0.5, function()
-    if EditModeManagerFrame and not QUICore._castbarEditModeHooked then
-        QUICore._castbarEditModeHooked = true
-        hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
-            if not InCombatLockdown() then
-                EnableCastbarEditMode()
-            end
-        end)
-        hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
-            if not InCombatLockdown() then
-                DisableCastbarEditMode()
-            end
-        end)
+-- Use central Edit Mode dispatcher to avoid taint from multiple hooksecurefunc
+-- callbacks on EnterEditMode/ExitEditMode.
+QUICore:RegisterEditModeEnter(function()
+    if not InCombatLockdown() then
+        EnableCastbarEditMode()
+    end
+end)
+QUICore:RegisterEditModeExit(function()
+    if not InCombatLockdown() then
+        DisableCastbarEditMode()
+    end
+end)
 
-        -- Hook PlayerCastingBarFrame visibility changes to sync with QUI castbar
-        -- When the "Cast Bar" checkbox is toggled in Edit Mode, Blizzard changes visibility
-        -- Wrapped in pcall — frame can be forbidden in 12.0.x beta
+-- Monitor PlayerCastingBarFrame visibility changes for Edit Mode sync
+-- TAINT SAFETY: Do NOT use hooksecurefunc on PlayerCastingBarFrame (secure frame).
+-- Even deferred callbacks execute addon code in the secure context, tainting the
+-- execution chain and causing ADDON_ACTION_FORBIDDEN / secret number errors.
+-- Instead, use an OnUpdate watcher to poll IsShown() from a UIParent-child frame.
+C_Timer.After(0.5, function()
+    if not QUICore._castbarEditModeHooked then
+        QUICore._castbarEditModeHooked = true
+
         if PlayerCastingBarFrame then
-            local ok, err = pcall(function()
-                hooksecurefunc(PlayerCastingBarFrame, "SetShown", function(_, shown)
-                    if EditModeState.active then
-                        EditModeState.castBarCheckboxEnabled = shown
-                        UpdateCastbarVisibilityForEditMode()
-                    end
-                end)
-                hooksecurefunc(PlayerCastingBarFrame, "Show", function()
-                    if EditModeState.active then
-                        EditModeState.castBarCheckboxEnabled = true
-                        UpdateCastbarVisibilityForEditMode()
-                    end
-                end)
-                hooksecurefunc(PlayerCastingBarFrame, "Hide", function()
-                    if EditModeState.active then
-                        EditModeState.castBarCheckboxEnabled = false
-                        UpdateCastbarVisibilityForEditMode()
-                    end
-                end)
+            local castbarWatcher = CreateFrame("Frame", nil, UIParent)
+            local wasCastbarShown = PlayerCastingBarFrame:IsShown()
+            castbarWatcher:SetScript("OnUpdate", function()
+                if not EditModeState.active then return end
+                local isShown = PlayerCastingBarFrame:IsShown()
+                if isShown ~= wasCastbarShown then
+                    wasCastbarShown = isShown
+                    EditModeState.castBarCheckboxEnabled = isShown
+                    UpdateCastbarVisibilityForEditMode()
+                end
             end)
-            if not ok then QUI:DebugPrint("Could not hook PlayerCastingBarFrame for Edit Mode: " .. tostring(err)) end
         end
 
         -- Check if Edit Mode is already active (e.g., /reload while in Edit Mode)
-        if EditModeManagerFrame:IsEditModeActive() and not InCombatLockdown() then
+        if nsHelpers.IsEditModeActive() and not InCombatLockdown() then
             EnableCastbarEditMode()
         end
     end

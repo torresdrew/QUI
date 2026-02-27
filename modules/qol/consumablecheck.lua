@@ -691,7 +691,17 @@ HideConsumablePicker = function()
             end
         end
         pickerFrame.ownerButton = nil
-        pickerFrame:Hide()
+        if InCombatLockdown() then
+            -- Defer hide until combat ends to avoid ADDON_ACTION_BLOCKED
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("PLAYER_REGEN_ENABLED")
+            f:SetScript("OnEvent", function(self)
+                self:UnregisterAllEvents()
+                if pickerFrame then pickerFrame:Hide() end
+            end)
+        else
+            pickerFrame:Hide()
+        end
     end
 end
 
@@ -1305,13 +1315,30 @@ local function OnReadyCheck(starter, timer)
     ConsumablesFrame:Show()
 end
 
+local consumableCombatDeferFrame  -- reused for combat-deferred hides
+
 local function OnReadyCheckFinished()
     HideConsumablePicker()
-    ConsumablesFrame:Hide()
     if not InCombatLockdown() then
+        ConsumablesFrame:Hide()
         for _, button in pairs(ConsumablesFrame.buttons) do
             if type(button) == "table" and button.click then button.click:Hide() end
         end
+    else
+        -- Defer hide until combat ends to avoid ADDON_ACTION_BLOCKED
+        if not consumableCombatDeferFrame then
+            consumableCombatDeferFrame = CreateFrame("Frame")
+            consumableCombatDeferFrame:SetScript("OnEvent", function(f)
+                f:UnregisterAllEvents()
+                if ConsumablesFrame then
+                    ConsumablesFrame:Hide()
+                    for _, btn in pairs(ConsumablesFrame.buttons) do
+                        if type(btn) == "table" and btn.click then btn.click:Hide() end
+                    end
+                end
+            end)
+        end
+        consumableCombatDeferFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     end
 end
 

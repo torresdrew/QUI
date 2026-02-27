@@ -64,6 +64,29 @@ GUI.Colors = {
 local C = GUI.Colors
 
 ---------------------------------------------------------------------------
+-- CACHED COLOR COMPONENTS — avoid unpack() in hot-path handlers
+-- Refreshed by GUI:RefreshCachedColors() after accent color changes
+---------------------------------------------------------------------------
+local C_accent_r, C_accent_g, C_accent_b, C_accent_a = C.accent[1], C.accent[2], C.accent[3], C.accent[4]
+local C_accentHover_r, C_accentHover_g, C_accentHover_b, C_accentHover_a = C.accentHover[1], C.accentHover[2], C.accentHover[3], C.accentHover[4]
+local C_accentLight_r, C_accentLight_g, C_accentLight_b, C_accentLight_a = C.accentLight[1], C.accentLight[2], C.accentLight[3], C.accentLight[4]
+local C_text_r, C_text_g, C_text_b, C_text_a = C.text[1], C.text[2], C.text[3], C.text[4]
+local C_border_r, C_border_g, C_border_b, C_border_a = C.border[1], C.border[2], C.border[3], C.border[4]
+local C_tabHover_r, C_tabHover_g, C_tabHover_b, C_tabHover_a = C.tabHover[1], C.tabHover[2], C.tabHover[3], C.tabHover[4]
+local C_tabNormal_r, C_tabNormal_g, C_tabNormal_b, C_tabNormal_a = C.tabNormal[1], C.tabNormal[2], C.tabNormal[3], C.tabNormal[4]
+
+local function RefreshCachedColors()
+    C_accent_r, C_accent_g, C_accent_b, C_accent_a = C.accent[1], C.accent[2], C.accent[3], C.accent[4]
+    C_accentHover_r, C_accentHover_g, C_accentHover_b, C_accentHover_a = C.accentHover[1], C.accentHover[2], C.accentHover[3], C.accentHover[4]
+    C_accentLight_r, C_accentLight_g, C_accentLight_b, C_accentLight_a = C.accentLight[1], C.accentLight[2], C.accentLight[3], C.accentLight[4]
+    C_text_r, C_text_g, C_text_b, C_text_a = C.text[1], C.text[2], C.text[3], C.text[4]
+    C_border_r, C_border_g, C_border_b, C_border_a = C.border[1], C.border[2], C.border[3], C.border[4]
+    C_tabHover_r, C_tabHover_g, C_tabHover_b, C_tabHover_a = C.tabHover[1], C.tabHover[2], C.tabHover[3], C.tabHover[4]
+    C_tabNormal_r, C_tabNormal_g, C_tabNormal_b, C_tabNormal_a = C.tabNormal[1], C.tabNormal[2], C.tabNormal[3], C.tabNormal[4]
+end
+GUI.RefreshCachedColors = RefreshCachedColors
+
+---------------------------------------------------------------------------
 -- ACCENT COLOR - Derive theme colors from a base accent color
 ---------------------------------------------------------------------------
 function GUI:ApplyAccentColor(r, g, b)
@@ -82,6 +105,8 @@ function GUI:ApplyAccentColor(r, g, b)
     C.tabSelected[1], C.tabSelected[2], C.tabSelected[3] = r, g, b
     C.borderAccent[1], C.borderAccent[2], C.borderAccent[3] = r, g, b
     C.sectionHeader[1], C.sectionHeader[2], C.sectionHeader[3] = C.accentLight[1], C.accentLight[2], C.accentLight[3]
+    -- Refresh cached color components after accent derivation
+    RefreshCachedColors()
 end
 
 -- Panel dimensions (used for widget sizing)
@@ -116,7 +141,7 @@ GUI.SettingsRegistryKeys = {}
 GUI.WidgetInstances = {}
 
 -- Section header registry for scroll-to-section navigation
--- Key format: "tabIndex_subTabIndex_sectionName" -> {frame = sectionFrame, scrollParent = scrollFrame}
+-- Nested format: SectionRegistry[tabIndex * 10000 + subTabIndex][sectionName] -> {frame, scrollParent}
 GUI.SectionRegistry = {}
 
 -- Generate unique key for widget instance tracking
@@ -144,6 +169,10 @@ local function UnregisterWidgetInstance(widget)
             table.remove(instances, i)
             break
         end
+    end
+    -- Prune empty arrays to prevent unbounded table growth
+    if #instances == 0 then
+        GUI.WidgetInstances[widget._widgetKey] = nil
     end
 end
 
@@ -210,20 +239,33 @@ function GUI:RegisterNavigationItem(navType, info)
     if not info.tabIndex then return end
 
     -- Build unique key based on type and navigation path
+    -- Use arithmetic keys for tab/subtab (avoids string concat garbage)
     local regKey
     if navType == "tab" then
-        regKey = "nav_tab_" .. info.tabIndex
+        regKey = info.tabIndex * 100000
     elseif navType == "subtab" then
-        regKey = "nav_subtab_" .. info.tabIndex .. "_" .. (info.subTabIndex or 0)
+        regKey = info.tabIndex * 100000 + (info.subTabIndex or 0)
     elseif navType == "section" then
-        regKey = "nav_section_" .. info.tabIndex .. "_" .. (info.subTabIndex or 0) .. "_" .. (info.sectionName or "")
+        -- Section keys include a string name; keep string concat
+        regKey = info.tabIndex * 100000 + (info.subTabIndex or 0) + 50000
+        local sectionKeys = self._navSectionKeys
+        if not sectionKeys then
+            sectionKeys = {}
+            self._navSectionKeys = sectionKeys
+        end
+        local sName = info.sectionName or ""
+        if not sectionKeys[regKey] then sectionKeys[regKey] = {} end
+        if sectionKeys[regKey][sName] then return end
+        sectionKeys[regKey][sName] = true
     else
         return
     end
 
-    -- Deduplicate
-    if self.NavigationRegistryKeys[regKey] then return end
-    self.NavigationRegistryKeys[regKey] = true
+    -- Deduplicate (tab / subtab use numeric key directly)
+    if navType ~= "section" then
+        if self.NavigationRegistryKeys[regKey] then return end
+        self.NavigationRegistryKeys[regKey] = true
+    end
 
     -- Build display label based on type
     local label, keywords
@@ -332,11 +374,13 @@ local function SetFont(fontString, size, flags, color)
 end
 
 -- Ensure all text in a frame subtree uses the shared QUI font.
+-- Uses select() iteration to avoid temporary table allocations.
 local function ApplyFontToFrameRecursive(frame, fontPath)
     if not frame then return end
 
-    local regions = { frame:GetRegions() }
-    for _, region in ipairs(regions) do
+    local numRegions = frame.GetNumRegions and frame:GetNumRegions() or 0
+    for i = 1, numRegions do
+        local region = select(i, frame:GetRegions())
         if region and region.IsObjectType and region:IsObjectType("FontString") and region.GetFont and region.SetFont then
             local _, size, flags = region:GetFont()
             if size and size > 0 then
@@ -345,8 +389,9 @@ local function ApplyFontToFrameRecursive(frame, fontPath)
         end
     end
 
-    local children = { frame:GetChildren() }
-    for _, child in ipairs(children) do
+    local numChildren = frame.GetNumChildren and frame:GetNumChildren() or 0
+    for i = 1, numChildren do
+        local child = select(i, frame:GetChildren())
         ApplyFontToFrameRecursive(child, fontPath)
     end
 end
@@ -641,7 +686,7 @@ function GUI:CreateSectionHeader(parent, text)
             if not GUI._suppressSearchRegistration and GUI._searchContext.tabIndex and text then
                 local tabIndex = GUI._searchContext.tabIndex
                 local subTabIndex = GUI._searchContext.subTabIndex or 0
-                local regKey = tabIndex .. "_" .. subTabIndex .. "_" .. text
+                local numKey = tabIndex * 10000 + subTabIndex
 
                 -- Find scroll parent by walking up the hierarchy
                 local scrollParent = nil
@@ -654,7 +699,10 @@ function GUI:CreateSectionHeader(parent, text)
                     current = current:GetParent()
                 end
 
-                GUI.SectionRegistry[regKey] = {
+                if not GUI.SectionRegistry[numKey] then
+                    GUI.SectionRegistry[numKey] = {}
+                end
+                GUI.SectionRegistry[numKey][text] = {
                     frame = container,
                     scrollParent = scrollParent,
                     contentParent = parent,
@@ -685,7 +733,7 @@ function GUI:CreateSectionBox(parent, title)
     if title and title ~= "" then
         local titleText = box:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         titleText:SetFont(GetFontPath(), 12, "")
-        titleText:SetTextColor(unpack(C.accentLight))
+        titleText:SetTextColor(C_accentLight_r, C_accentLight_g, C_accentLight_b, C_accentLight_a)
         titleText:SetText(title)
         titleText:SetPoint("TOPLEFT", 10, -8)
         box.title = titleText
@@ -932,7 +980,7 @@ function GUI:CreateColorPicker(parent, label, dbKey, dbTable, onChange)
     
     -- Hover effect
     swatch:SetScript("OnEnter", function(self)
-        pcall(self.SetBackdropBorderColor, self, unpack(C.accent))
+        pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a)
     end)
     swatch:SetScript("OnLeave", function(self)
         pcall(self.SetBackdropBorderColor, self, 0.4, 0.4, 0.4, 1)
@@ -1011,22 +1059,39 @@ function GUI:CreateSubTabs(parent, tabs)
         local topPad = 3
 
         -- Calculate natural (minimum) width for each button based on text
-        local naturalWidths = {}
+        -- Reuse tables stored on the container to avoid per-call allocations
+        local naturalWidths = buttonGroup._layoutWidths
+        if not naturalWidths then
+            naturalWidths = {}
+            buttonGroup._layoutWidths = naturalWidths
+        else
+            wipe(naturalWidths)
+        end
         for i, btn in ipairs(tabButtons) do
             local textWidth = btn.text:GetStringWidth()
             naturalWidths[i] = math.max(textWidth + btnPadding, 50)
         end
 
         -- Greedy line-breaking: flow buttons left-to-right, wrap when they don't fit
-        local rows = { {} }
+        -- Reuse row tables stored on the container
+        local rows = buttonGroup._layoutRows
+        if not rows then
+            rows = { {} }
+            buttonGroup._layoutRows = rows
+        else
+            -- Wipe each existing inner row table, then trim excess
+            for ri = 1, #rows do wipe(rows[ri]) end
+        end
+        local numUsedRows = 1
         local currentRowWidth = 0
 
         for i = 1, #tabButtons do
             local gapBefore = 0
-            if #rows[#rows] > 0 then
+            local curRow = rows[numUsedRows]
+            if #curRow > 0 then
                 gapBefore = spacing
                 -- Separator spacing comes after the previous button
-                local prevIdx = rows[#rows][#rows[#rows]]
+                local prevIdx = curRow[#curRow]
                 if tabs[prevIdx] and tabs[prevIdx].isSeparator then
                     gapBefore = gapBefore + separatorSpacing
                 end
@@ -1034,15 +1099,23 @@ function GUI:CreateSubTabs(parent, tabs)
 
             local neededWidth = gapBefore + naturalWidths[i]
 
-            if currentRowWidth + neededWidth > availableWidth and #rows[#rows] > 0 then
-                -- Start a new row
-                rows[#rows + 1] = {}
+            if currentRowWidth + neededWidth > availableWidth and #curRow > 0 then
+                -- Start a new row (reuse existing table or create)
+                numUsedRows = numUsedRows + 1
+                if not rows[numUsedRows] then
+                    rows[numUsedRows] = {}
+                end
                 currentRowWidth = naturalWidths[i]
             else
                 currentRowWidth = currentRowWidth + neededWidth
             end
 
-            table.insert(rows[#rows], i)
+            rows[numUsedRows][#rows[numUsedRows] + 1] = i
+        end
+
+        -- Trim excess rows from previous layouts that used more rows
+        for ri = numUsedRows + 1, #rows do
+            rows[ri] = nil
         end
 
         local numRows = #rows
@@ -1091,15 +1164,15 @@ function GUI:CreateSubTabs(parent, tabs)
         for i, btn in ipairs(tabButtons) do
             if i == index then
                 pcall(btn.SetBackdropColor, btn, 0.12, 0.18, 0.18, 1)
-                pcall(btn.SetBackdropBorderColor, btn, unpack(C.accent))
+                pcall(btn.SetBackdropBorderColor, btn, C_accent_r, C_accent_g, C_accent_b, C_accent_a)
                 btn.text:SetFont(GetFontPath(), 10, "")
-                btn.text:SetTextColor(unpack(C.accent))
+                btn.text:SetTextColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a)
                 tabContents[i]:Show()
             else
                 pcall(btn.SetBackdropColor, btn, 0.15, 0.15, 0.15, 1)
                 pcall(btn.SetBackdropBorderColor, btn, 0.3, 0.3, 0.3, 1)
                 btn.text:SetFont(GetFontPath(), 10, "")
-                btn.text:SetTextColor(unpack(C.text))
+                btn.text:SetTextColor(C_text_r, C_text_g, C_text_b, C_text_a)
                 tabContents[i]:Hide()
             end
         end
@@ -1112,7 +1185,7 @@ function GUI:CreateSubTabs(parent, tabs)
         btn:SetScript("OnClick", function() SelectSubTab(i) end)
         btn:SetScript("OnEnter", function(self)
             if buttonGroup.selectedTab ~= i then
-                pcall(self.SetBackdropBorderColor, self, unpack(C.accentHover))
+                pcall(self.SetBackdropBorderColor, self, C_accentHover_r, C_accentHover_g, C_accentHover_b, C_accentHover_a)
             end
         end)
         btn:SetScript("OnLeave", function(self)
@@ -1215,11 +1288,11 @@ function GUI:CreateCheckbox(parent, label, dbKey, dbTable, onChange)
         container.checked = val
         if val then
             box.check:Show()
-            box:SetBackdropBorderColor(unpack(C.accent))  -- Mint when checked
+            box:SetBackdropBorderColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a)  -- Mint when checked
             box:SetBackdropColor(0.1, 0.2, 0.15, 1)
         else
             box.check:Hide()
-            box:SetBackdropBorderColor(unpack(C.border))
+            box:SetBackdropBorderColor(C_border_r, C_border_g, C_border_b, C_border_a)
             box:SetBackdropColor(0.1, 0.1, 0.1, 1)
         end
         if dbTable and dbKey then dbTable[dbKey] = val end
@@ -1231,12 +1304,12 @@ function GUI:CreateCheckbox(parent, label, dbKey, dbTable, onChange)
     SetValue(GetValue())
     
     box:SetScript("OnClick", function() SetValue(not GetValue()) end)
-    box:SetScript("OnEnter", function(self) pcall(self.SetBackdropBorderColor, self, unpack(C.accentHover)) end)
+    box:SetScript("OnEnter", function(self) pcall(self.SetBackdropBorderColor, self, C_accentHover_r, C_accentHover_g, C_accentHover_b, C_accentHover_a) end)
     box:SetScript("OnLeave", function(self)
         if GetValue() then
-            pcall(self.SetBackdropBorderColor, self, unpack(C.accent))
+            pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a)
         else
-            pcall(self.SetBackdropBorderColor, self, unpack(C.border))
+            pcall(self.SetBackdropBorderColor, self, C_border_r, C_border_g, C_border_b, C_border_a)
         end
     end)
     
@@ -1290,11 +1363,11 @@ function GUI:CreateCheckboxCentered(parent, label, dbKey, dbTable, onChange)
         container.checked = val
         if val then
             box.check:Show()
-            box:SetBackdropBorderColor(unpack(C.accent))
+            box:SetBackdropBorderColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a)
             box:SetBackdropColor(0.1, 0.2, 0.15, 1)
         else
             box.check:Hide()
-            box:SetBackdropBorderColor(unpack(C.border))
+            box:SetBackdropBorderColor(C_border_r, C_border_g, C_border_b, C_border_a)
             box:SetBackdropColor(0.1, 0.1, 0.1, 1)
         end
         if dbTable and dbKey then dbTable[dbKey] = val end
@@ -1306,12 +1379,12 @@ function GUI:CreateCheckboxCentered(parent, label, dbKey, dbTable, onChange)
     SetValue(GetValue())
     
     box:SetScript("OnClick", function() SetValue(not GetValue()) end)
-    box:SetScript("OnEnter", function(self) pcall(self.SetBackdropBorderColor, self, unpack(C.accentHover)) end)
+    box:SetScript("OnEnter", function(self) pcall(self.SetBackdropBorderColor, self, C_accentHover_r, C_accentHover_g, C_accentHover_b, C_accentHover_a) end)
     box:SetScript("OnLeave", function(self)
         if GetValue() then
-            pcall(self.SetBackdropBorderColor, self, unpack(C.accent))
+            pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a)
         else
-            pcall(self.SetBackdropBorderColor, self, unpack(C.border))
+            pcall(self.SetBackdropBorderColor, self, C_border_r, C_border_g, C_border_b, C_border_a)
         end
     end)
     
@@ -1395,7 +1468,7 @@ function GUI:CreateColorPickerCentered(parent, label, dbKey, dbTable, onChange)
     end)
     
     swatch:SetScript("OnEnter", function(self)
-        pcall(self.SetBackdropBorderColor, self, unpack(C.accent))
+        pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a)
     end)
     swatch:SetScript("OnLeave", function(self)
         pcall(self.SetBackdropBorderColor, self, 0.4, 0.4, 0.4, 1)
@@ -1455,11 +1528,11 @@ function GUI:CreateCheckboxInverted(parent, label, dbKey, dbTable, onChange)
         local dbVal = not checked  -- Invert for storage
         if checked then
             box.check:Show()
-            box:SetBackdropBorderColor(unpack(C.accent))
+            box:SetBackdropBorderColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a)
             box:SetBackdropColor(0.1, 0.2, 0.15, 1)
         else
             box.check:Hide()
-            box:SetBackdropBorderColor(unpack(C.border))
+            box:SetBackdropBorderColor(C_border_r, C_border_g, C_border_b, C_border_a)
             box:SetBackdropColor(0.1, 0.1, 0.1, 1)
         end
         if dbTable and dbKey then dbTable[dbKey] = dbVal end
@@ -1471,12 +1544,12 @@ function GUI:CreateCheckboxInverted(parent, label, dbKey, dbTable, onChange)
     SetChecked(IsChecked())
     
     box:SetScript("OnClick", function() SetChecked(not IsChecked()) end)
-    box:SetScript("OnEnter", function(self) pcall(self.SetBackdropBorderColor, self, unpack(C.accentHover)) end)
+    box:SetScript("OnEnter", function(self) pcall(self.SetBackdropBorderColor, self, C_accentHover_r, C_accentHover_g, C_accentHover_b, C_accentHover_a) end)
     box:SetScript("OnLeave", function(self)
         if IsChecked() then
-            pcall(self.SetBackdropBorderColor, self, unpack(C.accent))
+            pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a)
         else
-            pcall(self.SetBackdropBorderColor, self, unpack(C.border))
+            pcall(self.SetBackdropBorderColor, self, C_border_r, C_border_g, C_border_b, C_border_a)
         end
     end)
     
@@ -1582,7 +1655,7 @@ function GUI:CreateSlider(parent, label, min, max, step, dbKey, dbTable, onChang
     editBox:SetBackdropColor(0.08, 0.08, 0.08, 1)
     editBox:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
     editBox:SetFont(GetFontPath(), 11, "")
-    editBox:SetTextColor(unpack(C.text))
+    editBox:SetTextColor(C_text_r, C_text_g, C_text_b, C_text_a)
     editBox:SetJustifyH("CENTER")
     editBox:SetAutoFocus(false)
 
@@ -1820,7 +1893,7 @@ function GUI:CreateDropdown(parent, label, options, dbKey, dbTable, onChange)
 
     -- Hover effect
     dropdown:SetScript("OnEnter", function(self)
-        pcall(self.SetBackdropBorderColor, self, unpack(C.accent))
+        pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a)
         chevronZone:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], CHEVRON_BG_ALPHA_HOVER)
         separator:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.5)
         chevronLeft:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
@@ -1889,7 +1962,7 @@ function GUI:CreateDropdown(parent, label, options, dbKey, dbTable, onChange)
         edgeSize = px,
     })
     menuFrame:SetBackdropColor(0.08, 0.08, 0.08, 0.98)
-    menuFrame:SetBackdropBorderColor(unpack(C.accent))
+    menuFrame:SetBackdropBorderColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a)
     menuFrame:SetFrameStrata("TOOLTIP")
     menuFrame:Hide()
     
@@ -2074,7 +2147,7 @@ function GUI:CreateDropdownFullWidth(parent, label, options, dbKey, dbTable, onC
 
     -- Hover effect
     dropdown:SetScript("OnEnter", function(self)
-        pcall(self.SetBackdropBorderColor, self, unpack(C.accent))
+        pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a)
         chevronZone:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], CHEVRON_BG_ALPHA_HOVER)
         separator:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.5)
         chevronLeft:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
@@ -2139,7 +2212,7 @@ function GUI:CreateDropdownFullWidth(parent, label, options, dbKey, dbTable, onC
         edgeSize = px,
     })
     menuFrame:SetBackdropColor(0.08, 0.08, 0.08, 0.98)
-    menuFrame:SetBackdropBorderColor(unpack(C.accent))
+    menuFrame:SetBackdropBorderColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a)
     menuFrame:SetFrameStrata("TOOLTIP")
     menuFrame:Hide()
     
@@ -2517,11 +2590,11 @@ function GUI:CreateFormCheckboxOriginal(parent, label, dbKey, dbTable, onChange)
     local function UpdateVisual(val)
         if val then
             box.check:Show()
-            box:SetBackdropBorderColor(unpack(C.accent))
+            box:SetBackdropBorderColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a)
             box:SetBackdropColor(0.1, 0.2, 0.15, 1)
         else
             box.check:Hide()
-            box:SetBackdropBorderColor(unpack(C.border))
+            box:SetBackdropBorderColor(C_border_r, C_border_g, C_border_b, C_border_a)
             box:SetBackdropColor(0.1, 0.1, 0.1, 1)
         end
     end
@@ -2544,12 +2617,12 @@ function GUI:CreateFormCheckboxOriginal(parent, label, dbKey, dbTable, onChange)
     SetValue(GetValue(), true)
 
     box:SetScript("OnClick", function() SetValue(not GetValue()) end)
-    box:SetScript("OnEnter", function(self) pcall(self.SetBackdropBorderColor, self, unpack(C.accentHover)) end)
+    box:SetScript("OnEnter", function(self) pcall(self.SetBackdropBorderColor, self, C_accentHover_r, C_accentHover_g, C_accentHover_b, C_accentHover_a) end)
     box:SetScript("OnLeave", function(self)
         if GetValue() then
-            pcall(self.SetBackdropBorderColor, self, unpack(C.accent))
+            pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a)
         else
-            pcall(self.SetBackdropBorderColor, self, unpack(C.border))
+            pcall(self.SetBackdropBorderColor, self, C_border_r, C_border_g, C_border_b, C_border_a)
         end
     end)
 
@@ -2654,7 +2727,7 @@ function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onC
     editBox:SetBackdropColor(0.08, 0.08, 0.08, 1)
     editBox:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
     editBox:SetFont(GetFontPath(), 11, "")
-    editBox:SetTextColor(unpack(C.text))
+    editBox:SetTextColor(C_text_r, C_text_g, C_text_b, C_text_a)
     editBox:SetJustifyH("CENTER")
     editBox:SetAutoFocus(false)
 
@@ -2904,7 +2977,7 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
 
     -- Hover effect
     dropdown:SetScript("OnEnter", function(self)
-        pcall(self.SetBackdropBorderColor, self, unpack(C.accent))
+        pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a)
         chevronZone:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], CHEVRON_BG_ALPHA_HOVER)
         separator:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.5)
         chevronLeft:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
@@ -3017,8 +3090,8 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
                     SetValue(opt.value)
                     menuFrame:Hide()
                 end)
-                btn:SetScript("OnEnter", function() btnText:SetTextColor(unpack(C.accent)) end)
-                btn:SetScript("OnLeave", function() btnText:SetTextColor(unpack(C.text)) end)
+                btn:SetScript("OnEnter", function() btnText:SetTextColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a) end)
+                btn:SetScript("OnLeave", function() btnText:SetTextColor(C_text_r, C_text_g, C_text_b, C_text_a) end)
                 yOff = yOff - itemHeight
             end
         end
@@ -3177,7 +3250,7 @@ function GUI:CreateFormColorPicker(parent, label, dbKey, dbTable, onChange, opti
         })
     end)
 
-    swatch:SetScript("OnEnter", function(self) pcall(self.SetBackdropBorderColor, self, unpack(C.accent)) end)
+    swatch:SetScript("OnEnter", function(self) pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a) end)
     swatch:SetScript("OnLeave", function(self) pcall(self.SetBackdropBorderColor, self, 0.4, 0.4, 0.4, 1) end)
 
     -- Enable/disable (for conditional UI)
@@ -3447,7 +3520,10 @@ function GUI:RenderSearchResults(content, results, searchTerm, navResults)
     if not content then return end
 
     -- Clear previous child frames (unregister from widget sync first)
-    for _, child in ipairs({content:GetChildren()}) do
+    -- Snapshot children before mutating: SetParent(nil) removes children
+    -- from the list mid-iteration, causing select() to return nil.
+    local kids = { content:GetChildren() }
+    for _, child in ipairs(kids) do
         UnregisterWidgetInstance(child)
         child:Hide()
         child:SetParent(nil)
@@ -3583,8 +3659,9 @@ function GUI:RenderSearchResults(content, results, searchTerm, navResults)
                 -- Helper to scroll to a section
                 local function ScrollToSection()
                     local subTabIdx = targetSubTabIndex or 0
-                    local regKey = targetTabIndex .. "_" .. subTabIdx .. "_" .. (targetSectionName or "")
-                    local sectionInfo = GUI.SectionRegistry[regKey]
+                    local numKey = targetTabIndex * 10000 + subTabIdx
+                    local subReg = GUI.SectionRegistry[numKey]
+                    local sectionInfo = subReg and subReg[targetSectionName or ""]
 
                     if sectionInfo and sectionInfo.scrollParent and sectionInfo.frame then
                         local scrollFrame = sectionInfo.scrollParent
@@ -3725,8 +3802,9 @@ function GUI:RenderSearchResults(content, results, searchTerm, navResults)
                 -- Helper to scroll to a section
                 local function ScrollToSection()
                     local subTabIdx = targetSubTabIndex or 0
-                    local regKey = targetTabIndex .. "_" .. subTabIdx .. "_" .. (targetSectionName or "")
-                    local sectionInfo = GUI.SectionRegistry[regKey]
+                    local numKey = targetTabIndex * 10000 + subTabIdx
+                    local subReg = GUI.SectionRegistry[numKey]
+                    local sectionInfo = subReg and subReg[targetSectionName or ""]
 
                     if sectionInfo and sectionInfo.scrollParent and sectionInfo.frame then
                         local scrollFrame = sectionInfo.scrollParent
@@ -4015,7 +4093,7 @@ function GUI:CreateMainFrame()
     end)
 
     accentSwatch:SetScript("OnEnter", function(self)
-        pcall(self.SetBackdropBorderColor, self, unpack(C.accentLight))
+        pcall(self.SetBackdropBorderColor, self, C_accentLight_r, C_accentLight_g, C_accentLight_b, C_accentLight_a)
     end)
     accentSwatch:SetScript("OnLeave", function(self)
         pcall(self.SetBackdropBorderColor, self, 0.4, 0.4, 0.4, 1)
@@ -4083,7 +4161,7 @@ function GUI:CreateMainFrame()
     scaleEditBox:SetBackdropColor(0.08, 0.08, 0.08, 1)
     scaleEditBox:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
     scaleEditBox:SetFont(GetFontPath(), 10, "")
-    scaleEditBox:SetTextColor(unpack(C.text))
+    scaleEditBox:SetTextColor(C_text_r, C_text_g, C_text_b, C_text_a)
     scaleEditBox:SetJustifyH("CENTER")
     scaleEditBox:SetAutoFocus(false)
     scaleEditBox:SetMaxLetters(4)
@@ -4158,7 +4236,7 @@ function GUI:CreateMainFrame()
     end)
 
     scaleEditBox:SetScript("OnEditFocusGained", function(self)
-        pcall(self.SetBackdropBorderColor, self, unpack(C.accent))
+        pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a)
     end)
 
     scaleEditBox:SetScript("OnEditFocusLost", function(self)
@@ -4214,7 +4292,7 @@ function GUI:CreateMainFrame()
     titleSep:SetPoint("TOPLEFT", 10, -30)
     titleSep:SetPoint("TOPRIGHT", -10, -30)
     titleSep:SetHeight(1)
-    titleSep:SetColorTexture(unpack(C.border))
+    titleSep:SetColorTexture(C_border_r, C_border_g, C_border_b, C_border_a)
 
     ---------------------------------------------------------------------------
     -- SIDEBAR (vertical tab list on the left)
@@ -4234,7 +4312,7 @@ function GUI:CreateMainFrame()
     sidebarBorder:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", 0, 0)
     sidebarBorder:SetPoint("BOTTOMRIGHT", sidebar, "BOTTOMRIGHT", 0, 0)
     sidebarBorder:SetWidth(1)
-    sidebarBorder:SetColorTexture(unpack(C.border))
+    sidebarBorder:SetColorTexture(C_border_r, C_border_g, C_border_b, C_border_a)
 
     frame.sidebar = sidebar
     frame._sidebarItems = {}       -- All sidebar items (tabs + bottom items)
@@ -4262,7 +4340,7 @@ function GUI:CreateMainFrame()
     subTabBarBorder:SetPoint("BOTTOMLEFT", subTabBar, "BOTTOMLEFT", 0, 0)
     subTabBarBorder:SetPoint("BOTTOMRIGHT", subTabBar, "BOTTOMRIGHT", 0, 0)
     subTabBarBorder:SetHeight(1)
-    subTabBarBorder:SetColorTexture(unpack(C.border))
+    subTabBarBorder:SetColorTexture(C_border_r, C_border_g, C_border_b, C_border_a)
 
     frame.subTabBar = subTabBar
 
@@ -4447,14 +4525,14 @@ function GUI:AddTab(frame, name, pageCreateFunc, isBottomItem)
 
     tab:SetScript("OnEnter", function(self)
         if frame.activeTab ~= self.index then
-            self.text:SetTextColor(unpack(C.tabHover))
+            self.text:SetTextColor(C_tabHover_r, C_tabHover_g, C_tabHover_b, C_tabHover_a)
             self.hoverBg:Show()
         end
     end)
 
     tab:SetScript("OnLeave", function(self)
         if frame.activeTab ~= self.index then
-            self.text:SetTextColor(unpack(C.tabNormal))
+            self.text:SetTextColor(C_tabNormal_r, C_tabNormal_g, C_tabNormal_b, C_tabNormal_a)
             self.hoverBg:Hide()
         end
     end)
@@ -4566,7 +4644,7 @@ function GUI:SelectTab(frame, index)
     if frame.activeTab then
         local prevTab = frame.tabs[frame.activeTab]
         if prevTab and not prevTab.isActionButton then
-            prevTab.text:SetTextColor(unpack(C.tabNormal))
+            prevTab.text:SetTextColor(C_tabNormal_r, C_tabNormal_g, C_tabNormal_b, C_tabNormal_a)
             if prevTab.indicator then prevTab.indicator:Hide() end
             if prevTab.hoverBg then prevTab.hoverBg:Hide() end
         end
@@ -4580,7 +4658,7 @@ function GUI:SelectTab(frame, index)
     frame.activeTab = index
     local tab = frame.tabs[index]
     if tab and not tab.isActionButton then
-        tab.text:SetTextColor(unpack(C.accent))
+        tab.text:SetTextColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a)
         if tab.indicator then tab.indicator:Show() end
         if tab.hoverBg then tab.hoverBg:Show() end
     end
@@ -4627,13 +4705,15 @@ function GUI:SelectTab(frame, index)
         end
 
         -- Force OnShow scripts to fire on all children (for refresh purposes)
+        -- Uses select() to avoid temporary table allocations on each recursion level
         local function TriggerOnShow(f)
             if f.GetScript and f:GetScript("OnShow") then
                 f:GetScript("OnShow")(f)
             end
-            if f.GetChildren then
-                for _, child in ipairs({f:GetChildren()}) do
-                    TriggerOnShow(child)
+            if f.GetNumChildren then
+                local n = f:GetNumChildren()
+                for i = 1, n do
+                    TriggerOnShow(select(i, f:GetChildren()))
                 end
             end
         end

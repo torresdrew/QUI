@@ -299,7 +299,7 @@ local function BuildMinimapTab(tabContent)
     local db = Shared.GetDB()
 
     -- Set search context for auto-registration
-    GUI:SetSearchContext({tabIndex = 6, tabName = "Minimap & Datatext", subTabIndex = 1, subTabName = "Minimap"})
+    GUI:SetSearchContext({tabIndex = 7, tabName = "Minimap & Datatext", subTabIndex = 1, subTabName = "Minimap"})
 
     -- Early return if database not ready
     if not db then
@@ -576,7 +576,7 @@ BuildDatatextTab = function(tabContent)
     local db = Shared.GetDB()
 
     -- Set search context for auto-registration
-    GUI:SetSearchContext({tabIndex = 6, tabName = "Minimap & Datatext", subTabIndex = 2, subTabName = "Datatext"})
+    GUI:SetSearchContext({tabIndex = 7, tabName = "Minimap & Datatext", subTabIndex = 2, subTabName = "Datatext"})
 
     -- Early return if database not ready
     if not db then
@@ -592,9 +592,10 @@ BuildDatatextTab = function(tabContent)
         watcher:SetScript("OnEvent", function()
             CheckAndRebuildCurrencyOptions()
         end)
+        -- TAINT SAFETY: Defer to break taint chain from secure Blizzard context.
         if BackpackTokenFrame and BackpackTokenFrame.Update then
             hooksecurefunc(BackpackTokenFrame, "Update", function()
-                CheckAndRebuildCurrencyOptions()
+                C_Timer.After(0, CheckAndRebuildCurrencyOptions)
             end)
         end
         tabContent._currencyWatcher = watcher
