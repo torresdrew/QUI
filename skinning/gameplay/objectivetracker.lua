@@ -36,8 +36,10 @@ local function GetFontPath()
 end
 
 -- Apply font and color to a single line (objective text)
+-- Returns true if line height was changed (callers use this to avoid unnecessary repositioning)
 local function StyleLine(line, fontPath, textFontSize, textColor)
-    if not line then return end
+    if not line then return false end
+    local heightChanged = false
     if line.Text then
         line.Text:SetFont(fontPath, textFontSize, GetFontFlags())
         SafeSetTextColor(line.Text, textColor)
@@ -49,6 +51,7 @@ local function StyleLine(line, fontPath, textFontSize, textColor)
             local minHeight = textHeight + 4
             if currentHeight < minHeight then
                 line:SetHeight(minHeight)
+                heightChanged = true
             end
         end
     end
@@ -56,6 +59,7 @@ local function StyleLine(line, fontPath, textFontSize, textColor)
         line.Dash:SetFont(fontPath, textFontSize, GetFontFlags())
         SafeSetTextColor(line.Dash, textColor)
     end
+    return heightChanged
 end
 
 -- Apply font and color to a block (quest name header + all objective lines)
@@ -490,7 +494,15 @@ local function RepositionBlockLines(block)
         entry.line:SetPoint("TOPLEFT", block, "TOPLEFT", 0, yOffset)
         entry.line:SetPoint("RIGHT", block, "RIGHT", 0, 0)
 
-        local lineHeight = entry.line:GetHeight() or 14
+        -- Use text-based height (deterministic) instead of frame height
+        -- which Blizzard may reset between layout passes
+        local lineHeight = 14
+        if entry.line.Text then
+            local textHeight = entry.line.Text:GetStringHeight()
+            if textHeight and textHeight > 0 then
+                lineHeight = textHeight + 4
+            end
+        end
         yOffset = yOffset - lineHeight - 2  -- Move down by line height + small gap
     end
 
@@ -692,9 +704,12 @@ local function HookLineCreation()
                     local currentTextSize = currentSettings and currentSettings.objectiveTrackerTextFontSize or 0
                     local currentTextColor = currentSettings and currentSettings.objectiveTrackerTextColor
                     if currentTextSize > 0 then
-                        StyleLine(line, GetFontPath(), currentTextSize, currentTextColor)
-                        -- Schedule line repositioning to fix overlap from text wrapping
-                        ScheduleLineReposition()
+                        local heightChanged = StyleLine(line, GetFontPath(), currentTextSize, currentTextColor)
+                        -- Only reposition when height actually changed to avoid
+                        -- fighting Blizzard's layout on every tracker event
+                        if heightChanged then
+                            ScheduleLineReposition()
+                        end
                     end
                 end
             end)
