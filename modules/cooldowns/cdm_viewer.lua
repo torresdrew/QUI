@@ -1094,6 +1094,16 @@ local function LayoutViewer(viewerName, trackerKey)
         if QUI and QUI.DebugPrint and InCombatLockdown() then
             QUI:DebugPrint(format("|cff34D399CDM|r LayoutViewer %s BAIL: no settings or disabled", trackerKey))
         end
+        -- Hide icons and the viewer frame so they don't linger when disabled.
+        -- TAINT SAFETY: Always defer Hide() so OnHide handlers run outside
+        -- QUI's execution context (same rationale as deferred Show above).
+        for i = 1, viewer:GetNumChildren() do
+            local child = select(i, viewer:GetChildren())
+            if child and child ~= viewer.Selection and IsIconFrame(child) then
+                C_Timer.After(0, function() child:Hide() end)
+            end
+        end
+        C_Timer.After(0, function() viewer:Hide() end)
         return
     end
     -- Allow re-layout in combat so spell morphs/procs don't leave the bars in a
@@ -1116,6 +1126,18 @@ local function LayoutViewer(viewerName, trackerKey)
 
     NCDM.applying[trackerKey] = true
     vs.cdmLayoutRunning = true
+
+    -- Ensure the viewer is visible (it may have been hidden when disabled).
+    -- TAINT SAFETY: Always defer Show() via C_Timer.After(0) so Blizzard's
+    -- OnShow handler (which writes allowAvailableAlert, isActive, etc.) runs
+    -- outside QUI's execution context.  Without this, the fields are written
+    -- from QUI-tainted context and later boolean tests on them crash in
+    -- CheckCacheCooldownValuesFromSpellCooldown.
+    if not viewer:IsShown() then
+        C_Timer.After(0, function()
+            if not viewer:IsShown() then viewer:Show() end
+        end)
+    end
 
     -- Apply HUD layer priority
     local hudLayering = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.hudLayering
@@ -1145,7 +1167,11 @@ local function LayoutViewer(viewerName, trackerKey)
         local icon = allIcons[i]
         iconsToLayout[i] = icon
         getIconState(icon).ncdmHidden = nil
-        icon:Show()
+        -- TAINT SAFETY: Always defer Show() so Blizzard's OnShow /
+        -- OnCooldownIDSet handlers run outside QUI's execution context.
+        -- Prevents allowAvailableAlert and similar fields from being
+        -- written as "secret values tainted by QUI".
+        C_Timer.After(0, function() if icon:IsShown() == false then icon:Show() end end)
     end
 
     -- Hide overflow
@@ -1153,8 +1179,8 @@ local function LayoutViewer(viewerName, trackerKey)
         local icon = allIcons[i]
         if icon then
             getIconState(icon).ncdmHidden = true
-            icon:Hide()
-            icon:ClearAllPoints()
+            -- TAINT SAFETY: Always defer Hide() (see taint comment above).
+            C_Timer.After(0, function() icon:Hide(); icon:ClearAllPoints() end)
         end
     end
     
@@ -1418,7 +1444,8 @@ local function LayoutViewer(viewerName, trackerKey)
             end
             icon:ClearAllPoints()
             icon:SetPoint("CENTER", viewer, "CENTER", x, y)
-            icon:Show()
+            -- TAINT SAFETY: Always defer Show() (see taint comment above).
+            C_Timer.After(0, function() if icon:IsShown() == false then icon:Show() end end)
 
             -- Apply row opacity
             local opacity = rowConfig.opacity or 1.0
