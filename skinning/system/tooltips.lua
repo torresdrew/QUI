@@ -294,8 +294,8 @@ local function ApplyNineSliceColors(nineSlice, sr, sg, sb, sa, bgr, bgg, bgb, bg
 end
 
 -- Prevent Blizzard from re-applying the default NineSlice layout on Show
--- NOTE: Nil'ing these properties on Blizzard tooltip frames is safe — tooltips are not
--- protected frames and don't participate in secure execution paths.
+-- NOTE: Only call outside combat — tooltip OnShow runs inside a securecall chain
+-- and modifying frame properties during combat propagates taint to line FontStrings.
 local function ClearNineSliceLayoutInfo(tooltip)
     if not tooltip then return end
 
@@ -465,12 +465,14 @@ local function HookTooltipOnShow(tooltip)
     -- NOTE: Tooltip OnShow runs synchronously — deferring causes unskinned tooltip flash.
     -- Tooltip skinning is NOT in the Edit Mode taint chain.
     tooltip:HookScript("OnShow", function(self)
-        -- Skip font modifications during combat — SetFont on tooltip line
-        -- FontStrings inside the tooltip show chain can propagate taint
-        if not InCombatLockdown() then
-            ApplyTooltipFontSize()
-            ApplyTooltipFontSizeToFrame(self)
-        end
+        -- Skip all tooltip modifications during combat — modifying NineSlice children
+        -- (SetTexture, SetSize, SetPoint) inside the OnShow securecall chain taints
+        -- sibling FontStrings, causing other addons (e.g. Altoholic) to get secret values
+        -- when they read tooltip lines.
+        if InCombatLockdown() then return end
+
+        ApplyTooltipFontSize()
+        ApplyTooltipFontSizeToFrame(self)
         if not IsEnabled() then return end
         if not skinnedTooltips[self] then
             SkinTooltip(self)

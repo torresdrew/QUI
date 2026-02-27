@@ -753,6 +753,9 @@ local _deferredHideHooked = setmetatable({}, { __mode = "k" })
 local _combatHideQueue = {}  -- [frame] = clearAlpha (bool)
 local _combatHideFrame
 local function FlushCombatHideQueue()
+    -- Guard against rapid combat re-entry (PLAYER_REGEN_ENABLED can fire
+    -- while InCombatLockdown() is already true again from a new combat).
+    if InCombatLockdown() then return end
     for frame, shouldClearAlpha in pairs(_combatHideQueue) do
         if not (frame.IsForbidden and frame:IsForbidden()) then
             pcall(frame.Hide, frame)
