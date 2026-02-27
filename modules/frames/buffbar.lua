@@ -1802,7 +1802,11 @@ LayoutBuffBars = function()
             vbsBar.goingUp = growFromBottom
         end
 
-        for index, frame in ipairs(bars) do
+        -- COMBAT PASS 1: Apply styling and strata/level first.
+        -- SetHeight/SetWidth in ApplyBarStyle can trigger Blizzard's Layout()
+        -- which repositions bars with default spacing, so we style first and
+        -- position last to ensure QUI spacing wins.
+        for _, frame in ipairs(bars) do
             if stylingEnabled then
                 ApplyBarStyle(frame, settings, resolvedBarWidth)
             else
@@ -1824,8 +1828,11 @@ LayoutBuffBars = function()
                     frame.Icon:SetFrameLevel(frameLevel + 1)
                 end
             end)
+        end
 
-            -- Re-apply QUI stack positioning in combat.
+        -- COMBAT PASS 2: Position bars and apply alpha LAST so QUI spacing
+        -- overrides any positions Blizzard's Layout() set during styling.
+        for index, frame in ipairs(bars) do
             pcall(function()
                 frame:ClearAllPoints()
                 local offsetIndex = index - 1
@@ -2000,15 +2007,45 @@ LayoutBuffBars = function()
     end
     totalSize = QUICore:PixelRound(totalSize)
 
-    -- POSITION VERIFICATION: Check if bars are already in correct positions (within 2px tolerance)
-    -- This mirrors the icon layout's self-correcting behavior - if Blizzard moves a bar,
-    -- we detect it and snap it back immediately
+    -- PASS 1: Apply visual styling and frame strata/level FIRST.
+    -- ApplyBarStyle calls SetHeight/SetWidth which can trigger Blizzard's Layout()
+    -- on the viewer, overriding bar positions. By styling first we let Blizzard's
+    -- Layout finish before our positioning pass claims the final word.
+    for _, bar in ipairs(bars) do
+        if stylingEnabled then
+            ApplyBarStyle(bar, settings, resolvedBarWidth)
+        else
+            pcall(function()
+                bar:SetAlpha(1)
+            end)
+            local iconContainer = bar.Icon
+            local iconTexture = iconContainer and (iconContainer.Icon or iconContainer.icon or iconContainer.texture)
+            if iconTexture and iconTexture.SetDesaturated then
+                pcall(function()
+                    iconTexture:SetDesaturated(false)
+                end)
+            end
+        end
+        -- Apply frame strata/level to each bar AND its .Bar child for proper HUD layering
+        bar:SetFrameStrata("MEDIUM")
+        bar:SetFrameLevel(frameLevel)
+        if bar.Bar then
+            bar.Bar:SetFrameStrata("MEDIUM")
+            bar.Bar:SetFrameLevel(frameLevel + 1)
+        end
+        if bar.Icon then
+            bar.Icon:SetFrameStrata("MEDIUM")
+            bar.Icon:SetFrameLevel(frameLevel + 1)
+        end
+    end
+
+    -- POSITION CHECK: After styling, verify if bars need repositioning.
+    -- The styling pass above may have triggered Blizzard's Layout() which uses
+    -- its own childYPadding — check for position drift before doing SetPoint work.
     local needsReposition = false
     for index, bar in ipairs(bars) do
         local offsetIndex = index - 1
-
         if isVertical then
-            -- Check X position for vertical layout
             local expectedX
             if growFromBottom then
                 expectedX = QUICore:PixelRound(offsetIndex * (effectiveBarWidth + spacing))
@@ -2021,7 +2058,6 @@ LayoutBuffBars = function()
                 break
             end
         else
-            -- Check Y position for horizontal layout
             local expectedY
             if growFromBottom then
                 expectedY = QUICore:PixelRound(offsetIndex * (effectiveBarHeight + spacing))
@@ -2036,13 +2072,12 @@ LayoutBuffBars = function()
         end
     end
 
+    -- PASS 2: Position each bar LAST so QUI's spacing overrides any positions
+    -- that Blizzard's Layout() applied during the styling pass above.
     if needsReposition then
-        -- PASS 1: Clear all points
         for _, bar in ipairs(bars) do
             bar:ClearAllPoints()
         end
-
-        -- PASS 2: Position each bar
         for index, bar in ipairs(bars) do
             local offsetIndex = index - 1
 
@@ -2073,35 +2108,6 @@ LayoutBuffBars = function()
                     bar:SetPoint("TOP", BuffBarCooldownViewer, "TOP", 0, y)
                 end
             end
-        end
-    end
-
-    -- Apply visual styling and frame strata/level to each bar (always, regardless of reposition)
-    for _, bar in ipairs(bars) do
-        if stylingEnabled then
-            ApplyBarStyle(bar, settings, resolvedBarWidth)
-        else
-            pcall(function()
-                bar:SetAlpha(1)
-            end)
-            local iconContainer = bar.Icon
-            local iconTexture = iconContainer and (iconContainer.Icon or iconContainer.icon or iconContainer.texture)
-            if iconTexture and iconTexture.SetDesaturated then
-                pcall(function()
-                    iconTexture:SetDesaturated(false)
-                end)
-            end
-        end
-        -- Apply frame strata/level to each bar AND its .Bar child for proper HUD layering
-        bar:SetFrameStrata("MEDIUM")
-        bar:SetFrameLevel(frameLevel)
-        if bar.Bar then
-            bar.Bar:SetFrameStrata("MEDIUM")
-            bar.Bar:SetFrameLevel(frameLevel + 1)
-        end
-        if bar.Icon then
-            bar.Icon:SetFrameStrata("MEDIUM")
-            bar.Icon:SetFrameLevel(frameLevel + 1)
         end
     end
 
@@ -2196,10 +2202,8 @@ local function CheckBarChanges()
     -- Skip during Edit Mode — Blizzard controls bar layout/padding.
     if Helpers.IsEditModeActive() then return end
 
-    -- Always call LayoutBuffBars - it now has internal position verification
-    -- that will skip repositioning if all bars are already in correct positions.
-    -- This ensures we catch any position drift caused by Blizzard's Layout()
-    -- even when count/settings haven't changed.
+    -- Always call LayoutBuffBars - it styles bars first, then verifies positions
+    -- and corrects any drift caused by Blizzard's Layout() overriding QUI spacing.
     LayoutBuffBars()
 end
 
