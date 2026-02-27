@@ -33,7 +33,7 @@ local function BuildXPTrackerTab(tabContent)
 
     -- Initialize defaults if missing
     if xp.enabled == nil then xp.enabled = false end
-    if xp.width == nil then xp.width = 250 end
+    if xp.width == nil then xp.width = 300 end
     if xp.height == nil then xp.height = 90 end
     if xp.barHeight == nil then xp.barHeight = 20 end
     if xp.headerFontSize == nil then xp.headerFontSize = 12 end
@@ -44,6 +44,7 @@ local function BuildXPTrackerTab(tabContent)
     if xp.offsetY == nil then xp.offsetY = 150 end
     if xp.locked == nil then xp.locked = true end
     if xp.hideTextUntilHover == nil then xp.hideTextUntilHover = false end
+    if xp.detailsGrowDirection == nil then xp.detailsGrowDirection = "auto" end
     if xp.barTexture == nil then xp.barTexture = "Solid" end
     if xp.showBarText == nil then xp.showBarText = true end
     if xp.showRested == nil then xp.showRested = true end
@@ -90,7 +91,7 @@ local function BuildXPTrackerTab(tabContent)
     sizeHeader:SetPoint("TOPLEFT", PADDING, y)
     y = y - sizeHeader.gap
 
-    local widthSlider = GUI:CreateFormSlider(tabContent, "Width", 150, 500, 1, "width", xp, RefreshXPTracker)
+    local widthSlider = GUI:CreateFormSlider(tabContent, "Bar Width", 200, 1000, 1, "width", xp, RefreshXPTracker)
     widthSlider:SetPoint("TOPLEFT", PADDING, y)
     widthSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
     y = y - FORM_ROW
@@ -220,6 +221,22 @@ local function BuildXPTrackerTab(tabContent)
     hideTextDesc:SetPoint("TOPLEFT", PADDING, y)
     hideTextDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
     hideTextDesc:SetJustifyH("LEFT")
+    y = y - 24
+
+    local growDirectionOptions = {
+        {value = "auto", text = "Auto"},
+        {value = "up", text = "Up"},
+        {value = "down", text = "Down"},
+    }
+    local growDirectionDropdown = GUI:CreateFormDropdown(tabContent, "Details Grow Direction", growDirectionOptions, "detailsGrowDirection", xp, RefreshXPTracker)
+    growDirectionDropdown:SetPoint("TOPLEFT", PADDING, y)
+    growDirectionDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    y = y - FORM_ROW
+
+    local growDirectionDesc = GUI:CreateLabel(tabContent, "Auto grows details above/below based on screen space. Up/Down forces a fixed direction.", 10, C.textMuted)
+    growDirectionDesc:SetPoint("TOPLEFT", PADDING, y)
+    growDirectionDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    growDirectionDesc:SetJustifyH("LEFT")
     y = y - 24
 
     tabContent:SetHeight(math.abs(y) + 50)

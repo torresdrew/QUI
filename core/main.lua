@@ -2727,7 +2727,7 @@ local defaults = {
         -- XP Tracker
         xpTracker = {
             enabled = false,
-            width = 250,
+            width = 300,
             height = 90,
             barHeight = 20,
             headerFontSize = 12,
@@ -2738,6 +2738,7 @@ local defaults = {
             offsetY = 150,
             locked = true,
             hideTextUntilHover = false,
+            detailsGrowDirection = "auto",
             barTexture = "Solid",
             showBarText = true,
             showRested = true,

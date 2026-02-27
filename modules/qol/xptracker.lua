@@ -16,6 +16,7 @@ local XPTrackerState = {
     isPreviewMode = false,
     ticker = nil,
     tickCount = 0,
+    startupScheduled = false,
     -- Session tracking
     sessionStartTime = 0,
     sessionStartXP = 0,
@@ -112,32 +113,57 @@ end
 ---------------------------------------------------------------------------
 -- Text visibility (for hide-until-hover mode)
 ---------------------------------------------------------------------------
+local UpdateDetailsDirection
+
 local function SetTextVisible(frame, visible)
-    if not frame then return end
-    local alpha = visible and 1 or 0
-    frame.headerLeft:SetAlpha(alpha)
-    frame.headerRight:SetAlpha(alpha)
-    frame.line1:SetAlpha(alpha)
-    frame.line2:SetAlpha(alpha)
-    frame.line3:SetAlpha(alpha)
-    -- Also hide/show backdrop and border so only the bar remains
-    local settings = GetSettings()
-    if visible then
-        local bg = settings and settings.backdropColor or {0.05, 0.05, 0.07, 0.85}
-        frame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
-        local bc = settings and settings.borderColor or {0, 0, 0, 1}
-        UIKit.UpdateBorderLines(frame, 1, bc[1], bc[2], bc[3], bc[4])
-        -- Expand hit rect to full frame
-        frame:SetHitRectInsets(0, 0, 0, 0)
+    if not frame or not frame.detailsFrame then return end
+    local detailsHeight = frame.detailsFrame:GetHeight() or 0
+    if visible and detailsHeight > 0 then
+        UpdateDetailsDirection(frame)
+        frame.detailsFrame:Show()
     else
-        frame:SetBackdropColor(0, 0, 0, 0)
-        UIKit.UpdateBorderLines(frame, 1, 0, 0, 0, 0, true)
-        -- Shrink hit rect to just the bar area at the bottom
-        local barHeight = settings and settings.barHeight or 20
-        local frameHeight = frame:GetHeight()
-        local topInset = frameHeight - barHeight - 6  -- 3px padding on each side
-        if topInset < 0 then topInset = 0 end
-        frame:SetHitRectInsets(0, 0, topInset, 0)
+        frame.detailsFrame:Hide()
+    end
+end
+
+UpdateDetailsDirection = function(frame)
+    if not frame or not frame.detailsFrame then return end
+
+    local settings = GetSettings()
+    local detailsFrame = frame.detailsFrame
+    local detailsHeight = detailsFrame:GetHeight() or 0
+    if detailsHeight <= 0 then return end
+
+    local growDown
+    local direction = settings and settings.detailsGrowDirection or "auto"
+    if direction == "up" then
+        growDown = false
+    elseif direction == "down" then
+        growDown = true
+    else
+        local uiTop = UIParent:GetTop() or 0
+        local uiBottom = UIParent:GetBottom() or 0
+        local frameTop = frame:GetTop() or 0
+        local frameBottom = frame:GetBottom() or 0
+        local spaceAbove = uiTop - frameTop
+        local spaceBelow = frameBottom - uiBottom
+
+        if spaceAbove >= detailsHeight then
+            growDown = false
+        elseif spaceBelow >= detailsHeight then
+            growDown = true
+        else
+            growDown = spaceBelow > spaceAbove
+        end
+    end
+
+    detailsFrame:ClearAllPoints()
+    if growDown then
+        detailsFrame:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 0, 0)
+        detailsFrame:SetPoint("TOPRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    else
+        detailsFrame:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, 0)
+        detailsFrame:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", 0, 0)
     end
 end
 
@@ -150,25 +176,34 @@ local function CreateFrame_XPTracker()
     local settings = GetSettings()
     if not settings then return end
 
-    local width = settings.width or 250
+    local width = settings.width or 300
     local height = settings.height or 90
+    local barHeight = settings.barHeight or 20
+    local barFrameHeight = barHeight
+    local detailsHeight = math.max(0, height - barFrameHeight)
 
     local frame = CreateFrame("Frame", "QUI_XPTracker", UIParent, "BackdropTemplate")
     frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX or 0, settings.offsetY or 150)
-    frame:SetSize(width, height)
+    frame:SetSize(width, barFrameHeight)
     frame:SetFrameStrata("MEDIUM")
     frame:SetFrameLevel(50)
     frame:SetClampedToScreen(true)
 
-    -- Backdrop
-    frame:SetBackdrop(UIKit.GetBackdropInfo(nil, nil, frame))
-    local bg = settings.backdropColor or {0.05, 0.05, 0.07, 0.85}
-    frame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
-
-    -- Border
-    UIKit.CreateBorderLines(frame)
     local bc = settings.borderColor or {0, 0, 0, 1}
-    UIKit.UpdateBorderLines(frame, 1, bc[1], bc[2], bc[3], bc[4])
+
+    -- Details panel (separate from anchor frame so anchoring always targets the bar)
+    local detailsFrame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    detailsFrame:SetHeight(detailsHeight)
+    detailsFrame:SetFrameStrata("MEDIUM")
+    detailsFrame:SetFrameLevel(frame:GetFrameLevel())
+    detailsFrame:SetBackdrop(UIKit.GetBackdropInfo(nil, nil, detailsFrame))
+    local bg = settings.backdropColor or {0.05, 0.05, 0.07, 0.85}
+    detailsFrame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+    UIKit.CreateBorderLines(detailsFrame)
+    UIKit.UpdateBorderLines(detailsFrame, 1, bc[1], bc[2], bc[3], bc[4])
+    detailsFrame:EnableMouse(true)
+    frame.detailsFrame = detailsFrame
+    UpdateDetailsDirection(frame)
 
     -- Font settings
     local fontPath, fontOutline = Helpers.GetGeneralFontSettings()
@@ -177,17 +212,17 @@ local function CreateFrame_XPTracker()
     local headerLineHeight = settings.headerLineHeight or 18
 
     -- Header: "Experience" left, "Level X" right
-    local headerLeft = frame:CreateFontString(nil, "OVERLAY")
+    local headerLeft = detailsFrame:CreateFontString(nil, "OVERLAY")
     headerLeft:SetFont(fontPath, headerFontSize, fontOutline)
     headerLeft:SetTextColor(0.9, 0.9, 0.9, 1)
-    headerLeft:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, -5)
+    headerLeft:SetPoint("TOPLEFT", detailsFrame, "TOPLEFT", 6, -5)
     headerLeft:SetText("Experience")
     frame.headerLeft = headerLeft
 
-    local headerRight = frame:CreateFontString(nil, "OVERLAY")
+    local headerRight = detailsFrame:CreateFontString(nil, "OVERLAY")
     headerRight:SetFont(fontPath, headerFontSize, fontOutline)
     headerRight:SetTextColor(1.0, 0.82, 0.0, 1) -- Gold
-    headerRight:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -6, -5)
+    headerRight:SetPoint("TOPRIGHT", detailsFrame, "TOPRIGHT", -6, -5)
     headerRight:SetText("Level 1")
     frame.headerRight = headerRight
 
@@ -196,41 +231,38 @@ local function CreateFrame_XPTracker()
     local lineSpacing = settings.lineHeight or 14
 
     -- Line 1: Completed / Rested
-    local line1 = frame:CreateFontString(nil, "OVERLAY")
+    local line1 = detailsFrame:CreateFontString(nil, "OVERLAY")
     line1:SetFont(fontPath, fontSize, fontOutline)
     line1:SetTextColor(0.8, 0.8, 0.8, 1)
-    line1:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, lineY)
-    line1:SetPoint("RIGHT", frame, "RIGHT", -6, 0)
+    line1:SetPoint("TOPLEFT", detailsFrame, "TOPLEFT", 6, lineY)
+    line1:SetPoint("RIGHT", detailsFrame, "RIGHT", -6, 0)
     line1:SetJustifyH("LEFT")
     line1:SetWordWrap(false)
     frame.line1 = line1
 
     -- Line 2: XP/hour + Leveling in
-    local line2 = frame:CreateFontString(nil, "OVERLAY")
+    local line2 = detailsFrame:CreateFontString(nil, "OVERLAY")
     line2:SetFont(fontPath, fontSize, fontOutline)
     line2:SetTextColor(0.8, 0.8, 0.8, 1)
-    line2:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, lineY - lineSpacing)
-    line2:SetPoint("RIGHT", frame, "RIGHT", -6, 0)
+    line2:SetPoint("TOPLEFT", detailsFrame, "TOPLEFT", 6, lineY - lineSpacing)
+    line2:SetPoint("RIGHT", detailsFrame, "RIGHT", -6, 0)
     line2:SetJustifyH("LEFT")
     line2:SetWordWrap(false)
     frame.line2 = line2
 
     -- Line 3: Level time / Session time
-    local line3 = frame:CreateFontString(nil, "OVERLAY")
+    local line3 = detailsFrame:CreateFontString(nil, "OVERLAY")
     line3:SetFont(fontPath, fontSize, fontOutline)
     line3:SetTextColor(0.8, 0.8, 0.8, 1)
-    line3:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, lineY - lineSpacing * 2)
-    line3:SetPoint("RIGHT", frame, "RIGHT", -6, 0)
+    line3:SetPoint("TOPLEFT", detailsFrame, "TOPLEFT", 6, lineY - lineSpacing * 2)
+    line3:SetPoint("RIGHT", detailsFrame, "RIGHT", -6, 0)
     line3:SetJustifyH("LEFT")
     line3:SetWordWrap(false)
     frame.line3 = line3
 
     -- XP Bar container
-    local barHeight = settings.barHeight or 20
     local barContainer = CreateFrame("Frame", nil, frame)
-    barContainer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 3, 3)
-    barContainer:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -3, 3)
-    barContainer:SetHeight(barHeight)
+    barContainer:SetAllPoints(frame)
     frame.barContainer = barContainer
 
     -- Bar background
@@ -281,18 +313,24 @@ local function CreateFrame_XPTracker()
     barText:SetJustifyH("CENTER")
     frame.barText = barText
 
-    -- Hover to reveal text
-    frame:SetScript("OnEnter", function(self)
+    -- Hover to reveal text (keep details visible while hovering either bar or details panel)
+    local function UpdateHoverVisibility()
         local s = GetSettings()
-        if s and s.hideTextUntilHover then
-            SetTextVisible(self, true)
+        if not s then return end
+        if s.hideTextUntilHover then
+            local isHover = frame:IsMouseOver() or (frame.detailsFrame and frame.detailsFrame:IsMouseOver())
+            SetTextVisible(frame, isHover)
+        else
+            SetTextVisible(frame, true)
         end
+    end
+    frame:SetScript("OnEnter", UpdateHoverVisibility)
+    frame:SetScript("OnLeave", function()
+        C_Timer.After(0, UpdateHoverVisibility)
     end)
-    frame:SetScript("OnLeave", function(self)
-        local s = GetSettings()
-        if s and s.hideTextUntilHover then
-            SetTextVisible(self, false)
-        end
+    detailsFrame:SetScript("OnEnter", UpdateHoverVisibility)
+    detailsFrame:SetScript("OnLeave", function()
+        C_Timer.After(0, UpdateHoverVisibility)
     end)
 
     -- Dragging support
@@ -317,6 +355,7 @@ local function CreateFrame_XPTracker()
                 s.offsetY = math.floor((y or 0) + 0.5)
             end
         end
+        UpdateDetailsDirection(self)
     end)
 
     frame:Hide()
@@ -421,7 +460,7 @@ local function UpdateDisplay()
     local showRested = settings.showRested ~= false
     if showRested and exhaustion and exhaustion > 0 then
         local barWidth = frame.barContainer:GetWidth()
-        if barWidth <= 0 then barWidth = frame:GetWidth() - 6 end
+        if barWidth <= 0 then barWidth = frame:GetWidth() end
         local restedFraction = exhaustion / maxXP
         -- Clamp so rested doesn't extend past the bar end
         local maxRestedWidth = barWidth * (1 - fraction)
@@ -452,9 +491,12 @@ local function UpdateDisplay()
 
     frame:Show()
 
-    -- Apply text visibility for hide-until-hover mode (skip if mouse is over frame)
-    if settings.hideTextUntilHover and not frame:IsMouseOver() then
-        SetTextVisible(frame, false)
+    -- Apply text visibility for hide-until-hover mode
+    if settings.hideTextUntilHover then
+        local isHover = frame:IsMouseOver() or (frame.detailsFrame and frame.detailsFrame:IsMouseOver())
+        SetTextVisible(frame, isHover)
+    else
+        SetTextVisible(frame, true)
     end
 end
 
@@ -472,9 +514,12 @@ local function UpdateAppearance()
     local settings = GetSettings()
     if not settings then return end
 
-    local width = settings.width or 250
+    local width = settings.width or 300
     local height = settings.height or 90
-    frame:SetSize(width, height)
+    local barHeight = settings.barHeight or 20
+    local barFrameHeight = barHeight
+    local detailsHeight = math.max(0, height - barFrameHeight)
+    frame:SetSize(width, barFrameHeight)
 
     -- Position
     if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(frame)) then
@@ -482,14 +527,16 @@ local function UpdateAppearance()
         frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX or 0, settings.offsetY or 150)
     end
 
-    -- Backdrop
-    frame:SetBackdrop(UIKit.GetBackdropInfo(nil, nil, frame))
-    local bg = settings.backdropColor or {0.05, 0.05, 0.07, 0.85}
-    frame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
-
-    -- Border
     local bc = settings.borderColor or {0, 0, 0, 1}
-    UIKit.UpdateBorderLines(frame, 1, bc[1], bc[2], bc[3], bc[4])
+
+    -- Details panel appearance/size
+    local bg = settings.backdropColor or {0.05, 0.05, 0.07, 0.85}
+    frame.detailsFrame:SetWidth(width)
+    frame.detailsFrame:SetHeight(detailsHeight)
+    frame.detailsFrame:SetBackdrop(UIKit.GetBackdropInfo(nil, nil, frame.detailsFrame))
+    frame.detailsFrame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+    UIKit.UpdateBorderLines(frame.detailsFrame, 1, bc[1], bc[2], bc[3], bc[4])
+    UpdateDetailsDirection(frame)
 
     -- Font
     local fontPath, fontOutline = Helpers.GetGeneralFontSettings()
@@ -508,18 +555,16 @@ local function UpdateAppearance()
     local lineSpacing = settings.lineHeight or 14
     local lineY = -(5 + headerLineHeight)
     frame.line1:ClearAllPoints()
-    frame.line1:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, lineY)
-    frame.line1:SetPoint("RIGHT", frame, "RIGHT", -6, 0)
+    frame.line1:SetPoint("TOPLEFT", frame.detailsFrame, "TOPLEFT", 6, lineY)
+    frame.line1:SetPoint("RIGHT", frame.detailsFrame, "RIGHT", -6, 0)
     frame.line2:ClearAllPoints()
-    frame.line2:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, lineY - lineSpacing)
-    frame.line2:SetPoint("RIGHT", frame, "RIGHT", -6, 0)
+    frame.line2:SetPoint("TOPLEFT", frame.detailsFrame, "TOPLEFT", 6, lineY - lineSpacing)
+    frame.line2:SetPoint("RIGHT", frame.detailsFrame, "RIGHT", -6, 0)
     frame.line3:ClearAllPoints()
-    frame.line3:SetPoint("TOPLEFT", frame, "TOPLEFT", 6, lineY - lineSpacing * 2)
-    frame.line3:SetPoint("RIGHT", frame, "RIGHT", -6, 0)
+    frame.line3:SetPoint("TOPLEFT", frame.detailsFrame, "TOPLEFT", 6, lineY - lineSpacing * 2)
+    frame.line3:SetPoint("RIGHT", frame.detailsFrame, "RIGHT", -6, 0)
 
     -- Bar height
-    local barHeight = settings.barHeight or 20
-    frame.barContainer:SetHeight(barHeight)
     frame.restedOverlay:SetHeight(barHeight)
 
     -- Bar texture
@@ -543,6 +588,13 @@ local function UpdateAppearance()
 
     -- Movable state
     frame:SetMovable(not settings.locked)
+
+    if settings.hideTextUntilHover then
+        local isHover = frame:IsMouseOver() or (frame.detailsFrame and frame.detailsFrame:IsMouseOver())
+        SetTextVisible(frame, isHover)
+    else
+        SetTextVisible(frame, true)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -708,32 +760,51 @@ local function IsPreviewMode()
     return XPTrackerState.isPreviewMode
 end
 
+local function InitializeXPTrackerStartup()
+    if XPTrackerState.sessionInitialized then return end
+
+    InitializeSession()
+    CreateFrame_XPTracker()
+
+    local settings = GetSettings()
+    if settings and settings.enabled then
+        local isAtCap = IsPlayerAtEffectiveLevelCap and IsPlayerAtEffectiveLevelCap() or false
+        local isXPDisabled = IsXPUserDisabled and IsXPUserDisabled() or false
+        if not isAtCap and not isXPDisabled then
+            UpdateAppearance()
+            StartTicker()
+            UpdateDisplay()
+        end
+    end
+
+    -- Force one immediate details/layout pass right after init.
+    if XPTrackerState.frame then
+        UpdateDetailsDirection(XPTrackerState.frame)
+    end
+end
+
+local function ScheduleXPTrackerStartup()
+    if XPTrackerState.sessionInitialized or XPTrackerState.startupScheduled then return end
+    XPTrackerState.startupScheduled = true
+    C_Timer.After(1, function()
+        XPTrackerState.startupScheduled = false
+        InitializeXPTrackerStartup()
+    end)
+end
+
 ---------------------------------------------------------------------------
 -- Event handler
 ---------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_XP_UPDATE")
 eventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 eventFrame:RegisterEvent("UPDATE_EXHAUSTION")
 eventFrame:RegisterEvent("PLAYER_UPDATE_RESTING")
 eventFrame:SetScript("OnEvent", function(self, event, ...)
-    if event == "PLAYER_LOGIN" then
-        C_Timer.After(1, function()
-            InitializeSession()
-            CreateFrame_XPTracker()
-
-            local settings = GetSettings()
-            if settings and settings.enabled then
-                local isAtCap = IsPlayerAtEffectiveLevelCap and IsPlayerAtEffectiveLevelCap() or false
-                local isXPDisabled = IsXPUserDisabled and IsXPUserDisabled() or false
-                if not isAtCap and not isXPDisabled then
-                    UpdateAppearance()
-                    StartTicker()
-                    UpdateDisplay()
-                end
-            end
-        end)
+    if event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+        ScheduleXPTrackerStartup()
     elseif event == "PLAYER_XP_UPDATE" then
         OnXPUpdate()
     elseif event == "PLAYER_LEVEL_UP" then
