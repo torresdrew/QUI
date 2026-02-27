@@ -155,9 +155,12 @@ local function HookIconSetCooldown(icon)
     -- when we call SetSwipeColor ourselves inside ApplyColorToIcon.
     hooksecurefunc(icon.Cooldown, "SetSwipeColor", function()
         if _applyingSwipeColor then return end
-        -- Synchronous: by the time CDM calls SetSwipeColor, wasSetFromAura
-        -- is already finalized, so we can safely apply the correct color.
-        ApplyColorToIcon(icon)
+        -- Defer color: CDM flag order isn't guaranteed — wasSetFromAura may
+        -- not be finalized when SetSwipeColor is called.  Deferring one frame
+        -- ensures all CDM state is settled before we pick overlay vs swipe color.
+        C_Timer.After(0, function()
+            ApplyColorToIcon(icon)
+        end)
     end)
 end
 
