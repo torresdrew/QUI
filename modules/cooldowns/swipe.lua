@@ -140,27 +140,14 @@ local function HookIconSetCooldown(icon)
     iState.setCooldownHooked = true
 
     hooksecurefunc(icon.Cooldown, "SetCooldown", function(_, _, durationArg)
-        -- Swipe visibility applied synchronously to eliminate one-frame flash.
         ApplySwipeFromHook(icon, durationArg)
-        -- Color deferred: wasSetFromAura is updated by CDM AFTER SetCooldown
-        -- returns, so reading it here gives stale values. Deferring one frame
-        -- lets the CDM finalize all icon state before we pick a color.
-        C_Timer.After(0, function()
-            ApplyColorToIcon(icon)
-        end)
+        ApplyColorToIcon(icon)
     end)
 
-    -- Catch Blizzard / CDM overwriting the swipe color after our SetCooldown
-    -- hook has already run. The _applyingSwipeColor guard prevents recursion
-    -- when we call SetSwipeColor ourselves inside ApplyColorToIcon.
+    -- Re-apply our color when Blizzard or CDM overwrites it after SetCooldown.
     hooksecurefunc(icon.Cooldown, "SetSwipeColor", function()
         if _applyingSwipeColor then return end
-        -- Defer color: CDM flag order isn't guaranteed — wasSetFromAura may
-        -- not be finalized when SetSwipeColor is called.  Deferring one frame
-        -- ensures all CDM state is settled before we pick overlay vs swipe color.
-        C_Timer.After(0, function()
-            ApplyColorToIcon(icon)
-        end)
+        ApplyColorToIcon(icon)
     end)
 end
 
