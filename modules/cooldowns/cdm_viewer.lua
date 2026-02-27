@@ -36,6 +36,8 @@ local ASPECT_RATIOS = {
 
 -- Forward declaration for mouseover hook (defined later in visibility section)
 local HookFrameForMouseover
+local UpdateCDMVisibility
+local UpdateUnitframesVisibility
 
 -- Migrate old 'shape' setting to 'aspectRatioCrop' for CDM rows
 local function MigrateRowAspect(rowData)
@@ -2416,8 +2418,12 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             HookViewer(VIEWER_UTILITY, "utility")
             _cdmFramesDirty = true
             RefreshAll()
-            UpdateCDMVisibility()
-            UpdateUnitframesVisibility()
+            if UpdateCDMVisibility then
+                UpdateCDMVisibility()
+            end
+            if UpdateUnitframesVisibility then
+                UpdateUnitframesVisibility()
+            end
         end)
     end
 end)
@@ -2599,7 +2605,7 @@ local function StartCDMFade(targetAlpha)
 end
 
 -- Update CDM visibility
-local function UpdateCDMVisibility()
+UpdateCDMVisibility = function()
     -- During Edit Mode, force CDM frames fully visible so overlays (which are
     -- children and inherit parent alpha) remain visible for repositioning.
     if Helpers.IsEditModeActive() then
@@ -2882,7 +2888,7 @@ local function StartUnitframesFade(targetAlpha)
 end
 
 -- Update Unitframes visibility
-local function UpdateUnitframesVisibility()
+UpdateUnitframesVisibility = function()
     -- During Edit Mode, force unit frames fully visible so overlays (which are
     -- children and inherit parent alpha) remain visible for repositioning.
     if _G.QUI_IsUnitFrameEditModeActive and _G.QUI_IsUnitFrameEditModeActive() then

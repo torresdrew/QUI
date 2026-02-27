@@ -930,7 +930,11 @@ function QUICore:ShowViewerOverlays()
     for _, viewerName in ipairs(CDM_VIEWERS) do
         local viewer = _G[viewerName]
         if viewer and not viewer:IsShown() then
-            pcall(function() viewer:Show() end)
+            C_Timer.After(0, function()
+                if viewer and not viewer:IsShown() then
+                    pcall(function() viewer:Show() end)
+                end
+            end)
             viewersForceShown[viewerName] = true
         end
     end
@@ -960,7 +964,13 @@ function QUICore:ShowViewerOverlays()
                     end
                     if viewersForceShown[hookedName] then
                         local v = _G[hookedName]
-                        if v then pcall(function() v:Hide() end) end
+                        if v then
+                            C_Timer.After(0, function()
+                                if v then
+                                    pcall(function() v:Hide() end)
+                                end
+                            end)
+                        end
                         viewersForceShown[hookedName] = nil
                     end
                 end)
@@ -969,7 +979,11 @@ function QUICore:ShowViewerOverlays()
                     local v = _G[hookedName]
                     -- Re-show viewer if it was hidden (same logic as force-show on enter)
                     if v and not v:IsShown() then
-                        pcall(function() v:Show() end)
+                        C_Timer.After(0, function()
+                            if v and not v:IsShown() then
+                                pcall(function() v:Show() end)
+                            end
+                        end)
                         viewersForceShown[hookedName] = true
                     end
                     local ov = viewerOverlays[hookedName]
@@ -992,7 +1006,11 @@ function QUICore:ShowViewerOverlays()
                     overlay:EnableMouse(false)
                 end
                 if viewersForceShown[viewerName] then
-                    pcall(function() viewer:Hide() end)
+                    C_Timer.After(0, function()
+                        if viewer then
+                            pcall(function() viewer:Hide() end)
+                        end
+                    end)
                     viewersForceShown[viewerName] = nil
                 end
                 overlay = nil  -- skip locked/free logic below
@@ -1168,7 +1186,11 @@ function QUICore:HideViewerOverlays()
         if viewersForceShown[viewerName] then
             local viewer = _G[viewerName]
             if viewer then
-                pcall(function() viewer:Hide() end)
+                C_Timer.After(0, function()
+                    if viewer then
+                        pcall(function() viewer:Hide() end)
+                    end
+                end)
             end
         end
     end
