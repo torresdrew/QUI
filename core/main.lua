@@ -2920,6 +2920,9 @@ local defaults = {
             -- Features
             autoZoom = false,  -- Auto zoom out after 10 seconds
             hideAddonButtons = true,  -- Show addon buttons on hover only
+            middleClickMenuEnabled = true,  -- Middle click minimap opens quick menu
+            hideMicroMenu = false,  -- Hide Blizzard micro menu (Character/Spellbook/etc.)
+            hideBagBar = false,  -- Hide Blizzard bag bar
             
             -- Button Visibility
             showZoomButtons = false,

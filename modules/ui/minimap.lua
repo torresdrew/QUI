@@ -23,6 +23,9 @@ local clockFrame, clockText
 local coordsFrame, coordsText
 local zoneTextFrame, zoneTextFont
 local minimapTooltip
+local middleClickMenuFrame
+local middleClickMenuBlocker
+local middleClickMenuRows = {}
 
 -- Datatext panel (3-slot architecture using QUICore.Datatexts registry)
 local datatextFrame
@@ -34,6 +37,12 @@ local coordsTicker = nil
 
 -- Combat-deferred refresh flag
 local pendingMinimapRefresh = false
+local middleClickMenuHooked = false
+local microMenuShowHooked = false
+local bagsBarShowHooked = false
+local originalMicroMenuParent = nil
+local originalBagsBarParent = nil
+local minimapOriginalOnMouseUp = nil
 
 ---=================================================================================
 --- BLIZZARD LAYOUT NO-OPS
@@ -74,6 +83,283 @@ local function GetClassColor()
     -- Support custom class color addons, fallback to standard
     local color = CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[class] or RAID_CLASS_COLORS[class]
     return color
+end
+
+local function SafeExecute(func)
+    if type(func) ~= "function" then return end
+    local ok = pcall(func)
+    return ok
+end
+
+local function ClickMicroButton(...)
+    for i = 1, select("#", ...) do
+        local button = _G[select(i, ...)]
+        if button and button.IsShown and button:IsShown() and button.Click then
+            button:Click()
+            return true
+        end
+    end
+
+    for i = 1, select("#", ...) do
+        local button = _G[select(i, ...)]
+        if button and button.Click then
+            button:Click()
+            return true
+        end
+    end
+
+    return false
+end
+
+local function TryOpenSpellbookTab()
+    local function FindAndClickSpellbookTabButton(parent, maxDepth, depth)
+        if not parent or depth > maxDepth then return false end
+        local children = { parent:GetChildren() }
+        for i = 1, #children do
+            local child = children[i]
+            if child then
+                if child.IsObjectType and child:IsObjectType("Button") and child.Click then
+                    local label = nil
+                    if child.GetText then
+                        label = child:GetText()
+                    end
+                    if (not label or label == "") and child.Text and child.Text.GetText then
+                        label = child.Text:GetText()
+                    end
+                    if label and label ~= "" then
+                        if (SPELLBOOK and label == SPELLBOOK)
+                            or (SPELLBOOK_ABILITIES_BUTTON and label == SPELLBOOK_ABILITIES_BUTTON)
+                            or (SPELLBOOK and label:find(SPELLBOOK, 1, true)) then
+                            child:Click()
+                            return true
+                        end
+                    end
+                end
+
+                if FindAndClickSpellbookTabButton(child, maxDepth, depth + 1) then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local function ActivatePlayerSpellsSpellbookTab()
+        local frame = _G.PlayerSpellsFrame
+        if not frame or (frame.IsShown and not frame:IsShown()) then
+            return false
+        end
+
+        if frame.SpellBookFrame then
+            if frame.SpellBookFrame.TabButton and frame.SpellBookFrame.TabButton.Click then
+                frame.SpellBookFrame.TabButton:Click()
+                return true
+            end
+            if frame.SpellBookFrame.Show then
+                frame.SpellBookFrame:Show()
+            end
+        end
+
+        local tabButtonCandidates = {
+            "PlayerSpellsFrameSpellBookFrameTabButton",
+            "PlayerSpellsFrameSpellBookTabButton",
+            "PlayerSpellsSpellBookTabButton",
+        }
+        if ClickMicroButton(unpack(tabButtonCandidates)) then
+            return true
+        end
+
+        if FindAndClickSpellbookTabButton(frame, 4, 0) then
+            return true
+        end
+
+        return false
+    end
+
+    local opened = false
+    if ClickMicroButton("SpellbookMicroButton") then
+        opened = true
+    elseif SafeExecute(function() ToggleSpellBook(BOOKTYPE_SPELL) end) then
+        opened = true
+    else
+        opened = SafeExecute(TogglePlayerSpellsFrame) and true or false
+    end
+
+    local activated = ActivatePlayerSpellsSpellbookTab()
+    if not activated then
+        -- Frame tabs can initialize a tick later; retry briefly.
+        C_Timer.After(0, ActivatePlayerSpellsSpellbookTab)
+        C_Timer.After(0.05, ActivatePlayerSpellsSpellbookTab)
+        C_Timer.After(0.15, ActivatePlayerSpellsSpellbookTab)
+    end
+
+    return opened or activated
+end
+
+local function TryOpenTalentsTab()
+    local function FindAndClickTalentsTabButton(parent, maxDepth, depth)
+        if not parent or depth > maxDepth then return false end
+        local children = { parent:GetChildren() }
+        for i = 1, #children do
+            local child = children[i]
+            if child then
+                if child.IsObjectType and child:IsObjectType("Button") and child.Click then
+                    local label = nil
+                    if child.GetText then
+                        label = child:GetText()
+                    end
+                    if (not label or label == "") and child.Text and child.Text.GetText then
+                        label = child.Text:GetText()
+                    end
+                    if label and label ~= "" then
+                        if (TALENTS and label == TALENTS)
+                            or (TALENTS and label:find(TALENTS, 1, true)) then
+                            child:Click()
+                            return true
+                        end
+                    end
+                end
+
+                if FindAndClickTalentsTabButton(child, maxDepth, depth + 1) then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local function ActivatePlayerSpellsTalentsTab()
+        local frame = _G.PlayerSpellsFrame
+        if not frame or (frame.IsShown and not frame:IsShown()) then
+            return false
+        end
+
+        if frame.TalentsFrame then
+            if frame.TalentsFrame.TabButton and frame.TalentsFrame.TabButton.Click then
+                frame.TalentsFrame.TabButton:Click()
+                return true
+            end
+            if frame.TalentsFrame.Show then
+                frame.TalentsFrame:Show()
+            end
+        end
+
+        local tabButtonCandidates = {
+            "PlayerSpellsFrameTalentsFrameTabButton",
+            "PlayerSpellsFrameTalentsTabButton",
+            "PlayerSpellsTalentsTabButton",
+        }
+        if ClickMicroButton(unpack(tabButtonCandidates)) then
+            return true
+        end
+
+        if FindAndClickTalentsTabButton(frame, 4, 0) then
+            return true
+        end
+
+        return false
+    end
+
+    local opened = false
+    if ClickMicroButton("TalentMicroButton", "PlayerSpellsMicroButton") then
+        opened = true
+    elseif SafeExecute(ToggleTalentFrame) then
+        opened = true
+    else
+        opened = SafeExecute(TogglePlayerSpellsFrame) and true or false
+    end
+
+    local activated = ActivatePlayerSpellsTalentsTab()
+    if not activated then
+        C_Timer.After(0, ActivatePlayerSpellsTalentsTab)
+        C_Timer.After(0.05, ActivatePlayerSpellsTalentsTab)
+        C_Timer.After(0.15, ActivatePlayerSpellsTalentsTab)
+    end
+
+    return opened or activated
+end
+
+local function TryOpenSpecializationTab()
+    local function FindAndClickSpecTabButton(parent, maxDepth, depth)
+        if not parent or depth > maxDepth then return false end
+        local children = { parent:GetChildren() }
+        for i = 1, #children do
+            local child = children[i]
+            if child then
+                if child.IsObjectType and child:IsObjectType("Button") and child.Click then
+                    local label = nil
+                    if child.GetText then
+                        label = child:GetText()
+                    end
+                    if (not label or label == "") and child.Text and child.Text.GetText then
+                        label = child.Text:GetText()
+                    end
+                    if label and label ~= "" then
+                        if (SPECIALIZATION and label == SPECIALIZATION)
+                            or (SPECIALIZATION and label:find(SPECIALIZATION, 1, true))
+                            or (SPECIALIZATIONS and label:find(SPECIALIZATIONS, 1, true)) then
+                            child:Click()
+                            return true
+                        end
+                    end
+                end
+
+                if FindAndClickSpecTabButton(child, maxDepth, depth + 1) then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local function ActivatePlayerSpellsSpecializationTab()
+        local frame = _G.PlayerSpellsFrame
+        if not frame or (frame.IsShown and not frame:IsShown()) then
+            return false
+        end
+
+        if frame.SpecFrame then
+            if frame.SpecFrame.TabButton and frame.SpecFrame.TabButton.Click then
+                frame.SpecFrame.TabButton:Click()
+                return true
+            end
+            if frame.SpecFrame.Show then
+                frame.SpecFrame:Show()
+            end
+        end
+
+        local tabButtonCandidates = {
+            "PlayerSpellsFrameSpecFrameTabButton",
+            "PlayerSpellsFrameSpecTabButton",
+            "PlayerSpellsFrameSpecializationTabButton",
+            "PlayerSpellsSpecializationTabButton",
+        }
+        if ClickMicroButton(unpack(tabButtonCandidates)) then
+            return true
+        end
+
+        if FindAndClickSpecTabButton(frame, 4, 0) then
+            return true
+        end
+
+        return false
+    end
+
+    local opened = false
+    if ClickMicroButton("PlayerSpellsMicroButton", "TalentMicroButton") then
+        opened = true
+    else
+        opened = SafeExecute(TogglePlayerSpellsFrame) and true or false
+    end
+
+    local activated = ActivatePlayerSpellsSpecializationTab()
+    if not activated then
+        C_Timer.After(0, ActivatePlayerSpellsSpecializationTab)
+        C_Timer.After(0.05, ActivatePlayerSpellsSpecializationTab)
+        C_Timer.After(0.15, ActivatePlayerSpellsSpecializationTab)
+    end
+
+    return opened or activated
 end
 
 ---=================================================================================
@@ -841,6 +1127,10 @@ local hiddenButtonParent = CreateFrame("Frame")
 hiddenButtonParent:Hide()
 hiddenButtonParent.Layout = function() end  -- Prevent nil errors when Blizzard code calls Layout on children
 
+local hiddenActionBarParent = CreateFrame("Frame")
+hiddenActionBarParent:Hide()
+hiddenActionBarParent.Layout = function() end
+
 -- Hook Show() on zoom buttons to prevent Blizzard from re-showing them
 -- Use local guard variables instead of writing properties to Blizzard frames
 local zoomInShowHooked = false
@@ -1010,6 +1300,393 @@ local function UpdateButtonVisibility()
             trackingFrame:SetParent(hiddenButtonParent)
         end
     end
+end
+
+local function SetupMicroBagVisibilityHooks()
+    local microMenu = MicroMenuContainer or MicroMenu
+    if microMenu and not microMenuShowHooked then
+        microMenuShowHooked = true
+        hooksecurefunc(microMenu, "Show", function(self)
+            C_Timer.After(0, function()
+                local settings = GetSettings()
+                if settings and settings.hideMicroMenu then
+                    self:Hide()
+                end
+            end)
+        end)
+    end
+
+    local bagsBar = BagsBar
+    if bagsBar and not bagsBarShowHooked then
+        bagsBarShowHooked = true
+        hooksecurefunc(bagsBar, "Show", function(self)
+            C_Timer.After(0, function()
+                local settings = GetSettings()
+                if settings and settings.hideBagBar then
+                    self:Hide()
+                end
+            end)
+        end)
+    end
+end
+
+local function UpdateMicroAndBagVisibility()
+    if InCombatLockdown() then
+        pendingMinimapRefresh = true
+        return
+    end
+    local settings = GetSettings()
+    if not settings or not settings.enabled then return end
+
+    local microMenu = MicroMenuContainer or MicroMenu
+    if microMenu then
+        originalMicroMenuParent = originalMicroMenuParent or microMenu:GetParent()
+        if settings.hideMicroMenu then
+            microMenu:SetParent(hiddenActionBarParent)
+            microMenu:Hide()
+        else
+            microMenu:SetParent(originalMicroMenuParent or UIParent)
+            microMenu:Show()
+        end
+    end
+
+    local bagsBar = BagsBar
+    if bagsBar then
+        originalBagsBarParent = originalBagsBarParent or bagsBar:GetParent()
+        if settings.hideBagBar then
+            bagsBar:SetParent(hiddenActionBarParent)
+            bagsBar:Hide()
+        else
+            bagsBar:SetParent(originalBagsBarParent or UIParent)
+            bagsBar:Show()
+        end
+    end
+end
+
+local function BuildMiddleClickMenu()
+    local settings = GetSettings() or {}
+
+    return {
+        { text = "QUI Menu", isTitle = true, notCheckable = true },
+        { text = "Achievements", notCheckable = true, func = function()
+            if not SafeExecute(ToggleAchievementFrame) then
+                ClickMicroButton("AchievementMicroButton")
+            end
+        end },
+        { text = "Calendar", notCheckable = true, func = function() SafeExecute(ToggleCalendar) end },
+        { text = "Character Info", notCheckable = true, func = function()
+            if not SafeExecute(function() ToggleCharacter("PaperDollFrame") end) then
+                ClickMicroButton("CharacterMicroButton")
+            end
+        end },
+        { text = "Chat Channels", notCheckable = true, func = function()
+            if not SafeExecute(ToggleChannelFrame) then
+                ClickMicroButton("ChatFrameChannelButton")
+            end
+        end },
+        { text = "Clock", notCheckable = true, func = function()
+            if not SafeExecute(TimeManager_Toggle) then
+                SafeExecute(function()
+                    if TimeManagerFrame then
+                        if TimeManagerFrame:IsShown() then TimeManagerFrame:Hide() else TimeManagerFrame:Show() end
+                    end
+                end)
+            end
+        end },
+        { text = "Dungeon Journal", notCheckable = true, func = function()
+            if not SafeExecute(ToggleEncounterJournal) then
+                ClickMicroButton("EJMicroButton")
+            end
+        end },
+        { text = "Guild", notCheckable = true, func = function()
+            if not SafeExecute(ToggleGuildFrame) then
+                ClickMicroButton("GuildMicroButton")
+            end
+        end },
+        { text = "Looking For Group", notCheckable = true, func = function()
+            if not SafeExecute(PVEFrame_ToggleFrame) then
+                ClickMicroButton("LFDMicroButton")
+            end
+        end },
+        { text = "Professions", notCheckable = true, func = function()
+            if not SafeExecute(ToggleProfessionsBook) then
+                ClickMicroButton("ProfessionMicroButton")
+            end
+        end },
+        { text = "Quest Log", notCheckable = true, func = function() SafeExecute(ToggleQuestLog) end },
+        { text = "Shop", notCheckable = true, func = function()
+            if not SafeExecute(StoreMicroButton_OnClick) then
+                ClickMicroButton("StoreMicroButton")
+            end
+        end },
+        { text = "Social", notCheckable = true, func = function()
+            if not SafeExecute(ToggleFriendsFrame) then
+                ClickMicroButton("SocialsMicroButton")
+            end
+        end },
+        { text = "Specialization", notCheckable = true, func = function() TryOpenSpecializationTab() end },
+        { text = "Talents", notCheckable = true, func = function() TryOpenTalentsTab() end },
+        { text = "Spellbook", notCheckable = true, func = function()
+            TryOpenSpellbookTab()
+        end },
+        { text = "Warband Collections", notCheckable = true, func = function()
+            if not SafeExecute(ToggleCollectionsJournal) then
+                ClickMicroButton("CollectionsMicroButton")
+            end
+        end },
+        { text = "Game Menu", notCheckable = true, func = function()
+            if InCombatLockdown() then return end
+
+            -- Prefer UIPanel flow (ESC-equivalent path used by skin watcher).
+            local function OpenGameMenu()
+                if GameMenuFrame and GameMenuFrame.IsShown and GameMenuFrame:IsShown() then
+                    return true
+                end
+
+                if ShowUIPanel and GameMenuFrame then
+                    ShowUIPanel(GameMenuFrame)
+                    if GameMenuFrame:IsShown() then
+                        return true
+                    end
+                end
+
+                if ToggleGameMenu then
+                    ToggleGameMenu()
+                    if GameMenuFrame and GameMenuFrame:IsShown() then
+                        return true
+                    end
+                end
+
+                -- Last-resort fallback if client blocks the above from this context.
+                if GameMenuFrame and GameMenuFrame.Show then
+                    GameMenuFrame:Show()
+                    -- Kick UIPanel hook once so skin watcher can still attach.
+                    if ShowUIPanel then
+                        ShowUIPanel(GameMenuFrame)
+                    end
+                end
+                return GameMenuFrame and GameMenuFrame:IsShown()
+            end
+
+            SafeExecute(OpenGameMenu)
+        end },
+        { text = "Customer Support", notCheckable = true, func = function()
+            if not SafeExecute(ToggleHelpFrame) then
+                ClickMicroButton("HelpMicroButton")
+            end
+        end },
+        { text = "", disabled = true, notCheckable = true },
+        { text = "Hide Micro Menu", keepShownOnClick = true, checked = settings.hideMicroMenu and true or false, func = function()
+            settings.hideMicroMenu = not settings.hideMicroMenu
+            UpdateMicroAndBagVisibility()
+        end },
+        { text = "Hide Bag Bar", keepShownOnClick = true, checked = settings.hideBagBar and true or false, func = function()
+            settings.hideBagBar = not settings.hideBagBar
+            UpdateMicroAndBagVisibility()
+        end },
+    }
+end
+
+local function ShowMiddleClickMenu(keepPosition)
+    if not middleClickMenuFrame then
+        middleClickMenuFrame = CreateFrame("Frame", "QUI_MinimapMiddleClickMenu", UIParent, "BackdropTemplate")
+        middleClickMenuFrame:SetFrameStrata("DIALOG")
+        middleClickMenuFrame:SetFrameLevel(250)
+        middleClickMenuFrame:SetClampedToScreen(true)
+        middleClickMenuFrame:EnableMouse(true)
+    end
+
+    if not middleClickMenuBlocker then
+        middleClickMenuBlocker = CreateFrame("Frame", nil, UIParent)
+        middleClickMenuBlocker:SetAllPoints(UIParent)
+        middleClickMenuBlocker:SetFrameStrata("DIALOG")
+        middleClickMenuBlocker:SetFrameLevel(240)
+        middleClickMenuBlocker:EnableMouse(true)
+        middleClickMenuBlocker:SetScript("OnMouseDown", function()
+            if middleClickMenuFrame then
+                middleClickMenuFrame:Hide()
+            end
+            middleClickMenuBlocker:Hide()
+        end)
+        middleClickMenuBlocker:Hide()
+    end
+
+    local menuData = BuildMiddleClickMenu()
+    local QUI = _G.QUI
+    local fontPath = QUI and QUI.GetGlobalFont and QUI:GetGlobalFont() or STANDARD_TEXT_FONT
+    local fontSize = 12
+    local borderR, borderG, borderB, borderA = 0.2, 0.8, 0.6, 1
+    local bgR, bgG, bgB, bgA = 0.03, 0.03, 0.03, 0.98
+    if Helpers and Helpers.GetSkinBorderColor then
+        borderR, borderG, borderB, borderA = Helpers.GetSkinBorderColor()
+    elseif QUI and QUI.GetAddonAccentColor then
+        borderR, borderG, borderB, borderA = QUI:GetAddonAccentColor()
+    end
+    borderA = borderA or 1
+
+    if Helpers and Helpers.GetSkinBgColor then
+        bgR, bgG, bgB, bgA = Helpers.GetSkinBgColor()
+    else
+        local core = Helpers.GetCore and Helpers.GetCore() or nil
+        if core and core.db and core.db.profile and core.db.profile.general and core.db.profile.general.skinBgColor then
+            local c = core.db.profile.general.skinBgColor
+            bgR, bgG, bgB, bgA = c[1] or bgR, c[2] or bgG, c[3] or bgB, c[4] or bgA
+        end
+    end
+
+    local px = (QUI and QUI.GetPixelSize and QUI:GetPixelSize(middleClickMenuFrame)) or 1
+    middleClickMenuFrame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = px,
+        insets = { left = px, right = px, top = px, bottom = px },
+    })
+    middleClickMenuFrame:SetBackdropColor(bgR, bgG, bgB, bgA)
+    middleClickMenuFrame:SetBackdropBorderColor(borderR, borderG, borderB, borderA)
+
+    for i = 1, #middleClickMenuRows do
+        middleClickMenuRows[i]:Hide()
+    end
+
+    local maxWidth = 180
+    local y = -8
+    local itemHeight = 18
+    local sepHeight = 8
+    local totalHeight = 12
+    local rowIndex = 0
+
+    for i = 1, #menuData do
+        local item = menuData[i]
+        rowIndex = rowIndex + 1
+        local row = middleClickMenuRows[rowIndex]
+        if not row then
+            row = CreateFrame("Button", nil, middleClickMenuFrame)
+            row:SetPoint("RIGHT", middleClickMenuFrame, "RIGHT", -8, 0)
+            row:SetHeight(itemHeight)
+            row:SetNormalFontObject("GameFontNormal")
+            row:SetHighlightTexture("Interface\\Buttons\\WHITE8x8")
+            row.text = row:CreateFontString(nil, "OVERLAY")
+            row.text:SetPoint("LEFT", row, "LEFT", 4, 0)
+            row.text:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+            row.text:SetJustifyH("LEFT")
+            row.text:SetFontObject(GameFontNormal)
+            row.separator = row:CreateTexture(nil, "ARTWORK")
+            row.separator:SetColorTexture(borderR, borderG, borderB, 0.7)
+            row.separator:SetHeight(1)
+            row.separator:SetPoint("LEFT", row, "LEFT", 2, 0)
+            row.separator:SetPoint("RIGHT", row, "RIGHT", -2, 0)
+            row:SetScript("OnEnter", function(self)
+                local hl = self:GetHighlightTexture()
+                if hl then
+                    hl:SetVertexColor(borderR, borderG, borderB, 0.2)
+                end
+            end)
+            middleClickMenuRows[rowIndex] = row
+        end
+
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", middleClickMenuFrame, "TOPLEFT", 8, y)
+        row:SetPoint("RIGHT", middleClickMenuFrame, "RIGHT", -8, 0)
+
+        row.item = item
+        row.separator:Hide()
+        row:EnableMouse(false)
+        row:SetScript("OnClick", nil)
+
+        if item.text == "" or item.disabled then
+            row.text:SetFontObject(GameFontNormal)
+            row.text:SetText("")
+            row.separator:Show()
+            row:SetHeight(sepHeight)
+            totalHeight = totalHeight + sepHeight
+            y = y - sepHeight
+        else
+            local label = item.text
+            if item.checked ~= nil then
+                label = (item.checked and "|cff55ff55[x]|r " or "|cff777777[ ]|r ") .. label
+            end
+            row.text:SetFont(fontPath, fontSize, "OUTLINE")
+            row.text:SetText(label)
+
+            if item.isTitle then
+                row.text:SetTextColor(borderR, borderG, borderB, 1)
+                row:EnableMouse(false)
+            else
+                row.text:SetTextColor(0.9, 0.9, 0.9, 1)
+                row:EnableMouse(true)
+                row:SetScript("OnClick", function(self)
+                    local data = self.item
+                    if data and data.func then
+                        data.func()
+                    end
+                    if not (data and data.keepShownOnClick) then
+                        middleClickMenuFrame:Hide()
+                        middleClickMenuBlocker:Hide()
+                    else
+                        ShowMiddleClickMenu(true)
+                    end
+                end)
+            end
+
+            local tw = row.text:GetStringWidth() or 0
+            if tw + 30 > maxWidth then
+                maxWidth = tw + 30
+            end
+            row:SetHeight(itemHeight)
+            totalHeight = totalHeight + itemHeight
+            y = y - itemHeight
+        end
+
+        row:Show()
+    end
+
+    middleClickMenuFrame:SetSize(maxWidth + 16, totalHeight + 8)
+
+    if not keepPosition or not middleClickMenuFrame:IsShown() then
+        local scale = UIParent:GetEffectiveScale() or 1
+        local x, yCursor = GetCursorPosition()
+        x = x / scale
+        yCursor = yCursor / scale
+        local w, h = middleClickMenuFrame:GetWidth(), middleClickMenuFrame:GetHeight()
+        local screenW, screenH = UIParent:GetWidth(), UIParent:GetHeight()
+        local left = x + 12
+        local top = yCursor - 12
+        if left + w > screenW then
+            left = screenW - w - 8
+        end
+        if top - h < 0 then
+            top = h + 8
+        end
+        if left < 8 then left = 8 end
+        if top > screenH - 8 then top = screenH - 8 end
+
+        middleClickMenuFrame:ClearAllPoints()
+        middleClickMenuFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+    end
+    middleClickMenuBlocker:Show()
+    middleClickMenuFrame:Show()
+
+    if EasyMenu then
+        -- noop: keep variable reference to avoid lint false-positives in mixed client APIs.
+    end
+end
+
+local function SetupMiddleClickMenu()
+    if middleClickMenuHooked then return end
+    middleClickMenuHooked = true
+
+    minimapOriginalOnMouseUp = Minimap:GetScript("OnMouseUp")
+    Minimap:SetScript("OnMouseUp", function(self, button)
+        local settings = GetSettings()
+        if settings and settings.enabled and settings.middleClickMenuEnabled and button == "MiddleButton" then
+            ShowMiddleClickMenu()
+            return
+        end
+
+        if minimapOriginalOnMouseUp then
+            minimapOriginalOnMouseUp(self, button)
+        end
+    end)
 end
 
 ---=================================================================================
@@ -1416,10 +2093,13 @@ function Minimap_Module:Initialize()
     UpdateDatatextPanel()
 
     UpdateButtonVisibility()
+    SetupMicroBagVisibilityHooks()
+    UpdateMicroAndBagVisibility()
     SetupAddonButtonHiding()
     SetupDungeonEyeHook()
     UpdateDungeonEyePosition()
     SetupMouseWheelZoom()
+    SetupMiddleClickMenu()
     SetupAutoZoom()
 
     -- Start performance-optimized ticker updates
@@ -1531,6 +2211,8 @@ function Minimap_Module:Refresh()
     UpdateZoneText()
     UpdateDatatextPanel()
     UpdateButtonVisibility()
+    SetupMicroBagVisibilityHooks()
+    UpdateMicroAndBagVisibility()
     SetupAddonButtonHiding()
     UpdateDungeonEyePosition()
 
