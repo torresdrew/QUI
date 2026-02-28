@@ -200,6 +200,12 @@ local function LayoutContainer(trackerKey)
     -- Never layout during Edit Mode
     if Helpers.IsEditModeActive() then return end
 
+    -- Never rebuild during combat — Blizzard CooldownFrames adopted onto our
+    -- icons are updated natively.  Rebuilding mid-combat destroys the working
+    -- layout (ClearPool) and may produce wrong positions.
+    -- A full rebuild fires on PLAYER_REGEN_ENABLED via _G.QUI_RefreshNCDM.
+    if InCombatLockdown() then return end
+
     local settings = GetTrackerSettings(trackerKey)
     if not settings or not settings.enabled then
         container:Hide()
@@ -280,6 +286,7 @@ local function LayoutContainer(trackerKey)
     -- Build icons via the icon factory (essential/utility only)
     local allIcons = ns.CDMIcons:BuildIcons(trackerKey, container)
     local totalCapacity = GetTotalIconCapacity(settings)
+
 
     -- Select icons to layout (up to capacity)
     local iconsToLayout = {}
@@ -594,6 +601,11 @@ end
 local function RefreshAll()
     if not initialized then return end
 
+    -- Defer to combat end — rebuilding destroys the current layout.
+    -- The classic engine's combatFrame calls _G.QUI_RefreshNCDM on
+    -- PLAYER_REGEN_ENABLED, which routes here and provides recovery.
+    if InCombatLockdown() then return end
+
     if ns.CDMSpellData then
         ns.CDMSpellData:UpdateCVar()
     end
@@ -865,6 +877,14 @@ local VIEWER_KEY_MAP = {
     buffBar   = nil,  -- owned engine doesn't manage BuffBar
 }
 
+-- Blizzard frame fallback for pre-container resolution and unmanaged viewers
+local BLIZZARD_FALLBACKS = {
+    essential = "EssentialCooldownViewer",
+    utility   = "UtilityCooldownViewer",
+    buffIcon  = "BuffIconCooldownViewer",
+    buffBar   = "BuffBarCooldownViewer",
+}
+
 ---------------------------------------------------------------------------
 -- Initialize: called by cdm_provider.lua after engine selection
 ---------------------------------------------------------------------------
@@ -913,6 +933,7 @@ function ownedEngine:Initialize()
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     eventFrame:RegisterEvent("CHALLENGE_MODE_START")
     eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
     eventFrame:RegisterEvent("CINEMATIC_STOP")
@@ -920,7 +941,16 @@ function ownedEngine:Initialize()
     eventFrame:RegisterEvent("ADDON_LOADED")
 
     eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
-        if event == "ADDON_LOADED" and arg1 == "Blizzard_CooldownManager" then
+        if event == "PLAYER_REGEN_ENABLED" then
+            -- Combat end: full rebuild to pick up any spell data changes
+            -- that were deferred while LayoutContainer was combat-gated.
+            C_Timer.After(0.1, function()
+                if not InCombatLockdown() then
+                    RefreshAll()
+                end
+            end)
+            return
+        elseif event == "ADDON_LOADED" and arg1 == "Blizzard_CooldownManager" then
             -- Viewer just loaded -- grab it as buff container
             InitBuffContainer()
             if initialized then
@@ -960,8 +990,13 @@ end
 
 function ownedEngine:GetViewerFrame(key)
     local containerKey = VIEWER_KEY_MAP[key]
-    if not containerKey then return nil end
-    return containers[containerKey]
+    if containerKey then
+        local container = containers[containerKey]
+        if container then return container end
+    end
+    -- Fall back to Blizzard frame (before containers exist or for unmanaged viewers)
+    local blizzName = BLIZZARD_FALLBACKS[key]
+    return blizzName and _G[blizzName] or nil
 end
 
 function ownedEngine:GetViewerFrames()
@@ -1047,3 +1082,4 @@ ns.CDMContainers = {
     LayoutContainer = LayoutContainer,
     RefreshAll = RefreshAll,
 }
+

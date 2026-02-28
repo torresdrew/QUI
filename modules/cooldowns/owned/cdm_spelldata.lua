@@ -98,7 +98,39 @@ end
 -- HIDE / SHOW BLIZZARD VIEWERS
 -- During normal gameplay: hidden (alpha 0, no mouse).
 -- During Edit Mode: visible (restored) so Blizzard's Edit Mode can interact.
+-- SetAlpha hooks prevent Blizzard's CDM code from restoring viewer visibility
+-- during combat (cooldown activation triggers SetAlpha(1) internally).
 ---------------------------------------------------------------------------
+local viewerAlphaHooked = {} -- [viewerName] = true
+
+local function HookViewerAlpha(viewer, viewerName)
+    if viewerAlphaHooked[viewerName] then return end
+    viewerAlphaHooked[viewerName] = true
+    hooksecurefunc(viewer, "SetAlpha", function(self, alpha)
+        if viewersHidden and alpha > 0 then
+            self:SetAlpha(0)
+        end
+    end)
+end
+
+-- Periodic alpha enforcer: catches cases where Blizzard restores alpha
+-- via internal paths that don't trigger the SetAlpha hook.
+-- Runs only while viewers are hidden; stops when shown (Edit Mode).
+local alphaEnforcerFrame = CreateFrame("Frame")
+local alphaEnforcerElapsed = 0
+alphaEnforcerFrame:SetScript("OnUpdate", function(self, dt)
+    if not viewersHidden then return end
+    alphaEnforcerElapsed = alphaEnforcerElapsed + dt
+    if alphaEnforcerElapsed < 0.1 then return end
+    alphaEnforcerElapsed = 0
+    for _, viewerName in pairs(VIEWER_NAMES) do
+        local viewer = _G[viewerName]
+        if viewer and viewer:GetAlpha() > 0 then
+            viewer:SetAlpha(0)
+        end
+    end
+end)
+
 local function HideBlizzardViewers()
     if viewersHidden then return end
     -- Hide all three viewers (alpha 0, no mouse).
@@ -111,6 +143,9 @@ local function HideBlizzardViewers()
             if viewer.SetMouseClickEnabled then
                 viewer:SetMouseClickEnabled(false)
             end
+            -- Hook SetAlpha to prevent Blizzard from restoring visibility
+            -- during combat (CDM system calls SetAlpha(1) when cooldowns activate)
+            HookViewerAlpha(viewer, viewerName)
         end
     end
     viewersHidden = true
@@ -118,6 +153,8 @@ end
 
 local function ShowBlizzardViewers()
     if not viewersHidden then return end
+    -- Clear the hidden flag BEFORE setting alpha so the hook doesn't fight us
+    viewersHidden = false
     for vtype, viewerName in pairs(VIEWER_NAMES) do
         local viewer = _G[viewerName]
         if viewer then
@@ -127,17 +164,6 @@ local function ShowBlizzardViewers()
                 viewer:SetMouseClickEnabled(true)
             end
         end
-    end
-    viewersHidden = false
-end
-
----------------------------------------------------------------------------
--- DEBUG LOGGING: /cdmdebug to trigger a debug scan
----------------------------------------------------------------------------
-local cdmDebugActive = false
-local function DebugLog(...)
-    if cdmDebugActive then
-        print("|cff00ccff[CDM-Harvest]|r", ...)
     end
 end
 
@@ -149,13 +175,9 @@ end
 local function ScanCooldownViewer(viewerType)
     local viewerName = VIEWER_NAMES[viewerType]
     local viewer = _G[viewerName]
-    if not viewer then
-        DebugLog(viewerType, "viewer NOT FOUND:", viewerName)
-        return
-    end
+    if not viewer then return end
 
     local container = viewer.viewerFrame or viewer
-    local usedViewerFrame = (viewer.viewerFrame ~= nil)
 
     local list = {}
     local sel = viewer.Selection
@@ -170,16 +192,6 @@ local function ScanCooldownViewer(viewerType)
         end
     end
 
-    local totalChildren = 0
-    for _, scanContainer in ipairs(containersToScan) do
-        local numChildren = scanContainer:GetNumChildren()
-        totalChildren = totalChildren + numChildren
-    end
-
-    DebugLog(viewerType, "scanning", viewerName,
-        "| viewerFrame:", tostring(usedViewerFrame),
-        "| children:", totalChildren)
-
     for _, scanContainer in ipairs(containersToScan) do
         local numChildren = scanContainer:GetNumChildren()
         for i = 1, numChildren do
@@ -188,12 +200,6 @@ local function ScanCooldownViewer(viewerType)
                 local shown = child:IsShown()
                 local hasTex = HasValidTexture(child)
                 local hasCDInfo = (child.cooldownInfo ~= nil)
-
-                DebugLog(viewerType, "  child", i,
-                    "| shown:", tostring(shown),
-                    "| tex:", tostring(hasTex),
-                    "| cdInfo:", tostring(hasCDInfo),
-                    "| name:", tostring(child:GetName()))
 
                 if shown and hasTex and (hasTex or hasCDInfo) then
                     local spellID, overrideSpellID, name, isAura
@@ -206,12 +212,6 @@ local function ScanCooldownViewer(viewerType)
                         name = Helpers.SafeValue(info.name, nil)
                         isAura = info.wasSetFromAura or info.cooldownUseAuraDisplayTime or false
 
-                        DebugLog(viewerType, "    cooldownInfo ->",
-                            "spellID:", tostring(spellID),
-                            "override:", tostring(overrideSpellID),
-                            "name:", tostring(name),
-                            "isAura:", tostring(isAura),
-                            "layoutIdx:", tostring(layoutIndex))
                     end
 
                     if spellID and not name then
@@ -253,15 +253,6 @@ local function ScanCooldownViewer(viewerType)
         return a.layoutIndex < b.layoutIndex
     end)
 
-    DebugLog(viewerType, "RESULT:", #list, "entries")
-    for idx, entry in ipairs(list) do
-        DebugLog(viewerType, "  [" .. idx .. "]",
-            "spell:", entry.spellID,
-            "override:", entry.overrideSpellID,
-            "name:", entry.name,
-            "aura:", tostring(entry.isAura))
-    end
-
     spellLists[viewerType] = list
 end
 
@@ -272,10 +263,7 @@ end
 local function ScanBuffViewer()
     local viewerName = VIEWER_NAMES["buff"]
     local viewer = _G[viewerName]
-    if not viewer then
-        DebugLog("buff", "viewer NOT FOUND:", viewerName)
-        return
-    end
+    if not viewer then return end
 
     -- Count shown children for change detection
     local container = viewer.viewerFrame or viewer
@@ -292,8 +280,6 @@ local function ScanBuffViewer()
             end
         end
     end
-
-    DebugLog("buff", "scan:", viewerName, "| children:", numChildren, "| shown:", shownCount)
 
     -- Store count for change detection (used by ScanAll)
     spellLists["buff"] = shownCount
@@ -384,8 +370,10 @@ local function ScanAll()
     end
 
     -- Notify containers that spell data changed
-    if changed and _G.QUI_OnSpellDataChanged then
-        _G.QUI_OnSpellDataChanged()
+    if changed then
+        if _G.QUI_OnSpellDataChanged then
+            _G.QUI_OnSpellDataChanged()
+        end
     end
 end
 
@@ -572,9 +560,7 @@ local P = "|cff00ccff[CDM-Debug]|r"
 
 SlashCmdList["CDMDEBUG"] = function()
     print(P, "Running debug scan...")
-    cdmDebugActive = true
     ScanAll()
-    cdmDebugActive = false
 
     --------------------------------------------------------------------------
     -- 1. HARVESTED DATA (all three viewer types store spell tables)

@@ -270,6 +270,17 @@ local function AdoptBlizzCooldown(icon, blizzChild)
     icon._addonCooldown = icon.Cooldown
     icon._addonCooldown:Hide()
 
+    -- TAINT SAFETY: Track CD→icon association in a weak-keyed table instead
+    -- of writing directly to Blizzard's Cooldown widget.
+    -- Set bypass BEFORE reparenting so post-hooks (installed on re-adoption)
+    -- don't fight the new anchor target.
+    local state = blizzCDState[blizzCD]
+    if not state then
+        state = {}
+        blizzCDState[blizzCD] = state
+    end
+    state.bypass = true
+
     -- Reparent Blizzard's secure CooldownFrame onto our icon.
     -- The viewer is alpha=0 (not hidden), so Blizzard's CDM system
     -- continues updating this frame. It renders at our icon's position.
@@ -289,13 +300,7 @@ local function AdoptBlizzCooldown(icon, blizzChild)
     icon.Cooldown = blizzCD
     icon._blizzCooldown = blizzCD
 
-    -- TAINT SAFETY: Track CD→icon association in a weak-keyed table instead
-    -- of writing directly to Blizzard's Cooldown widget.
-    local state = blizzCDState[blizzCD]
-    if not state then
-        state = {}
-        blizzCDState[blizzCD] = state
-    end
+    -- Update icon reference and clear bypass
     state.icon = icon
     state.bypass = false
 
@@ -329,6 +334,48 @@ local function AdoptBlizzCooldown(icon, blizzChild)
             local targetIcon = s.icon
             if not targetIcon or not targetIcon._spellEntry then return end
             ReapplySwipeStyle(self, targetIcon)
+        end)
+
+        -- Prevent Blizzard from re-anchoring the adopted CooldownFrame back
+        -- to its original parent during combat layout updates.
+        -- If Blizzard calls SetAllPoints(blizzChild) or SetPoint to a non-icon
+        -- frame, immediately re-anchor to our addon icon.
+        hooksecurefunc(blizzCD, "SetAllPoints", function(self, relativeTo)
+            local s = blizzCDState[self]
+            if not s or s.bypass then return end
+            local targetIcon = s.icon
+            if targetIcon and relativeTo ~= targetIcon then
+                s.bypass = true
+                self:ClearAllPoints()
+                self:SetAllPoints(targetIcon)
+                s.bypass = false
+            end
+        end)
+
+        hooksecurefunc(blizzCD, "SetPoint", function(self, _, relativeTo)
+            local s = blizzCDState[self]
+            if not s or s.bypass then return end
+            local targetIcon = s.icon
+            if targetIcon and relativeTo and relativeTo ~= targetIcon then
+                s.bypass = true
+                self:ClearAllPoints()
+                self:SetAllPoints(targetIcon)
+                s.bypass = false
+            end
+        end)
+
+        hooksecurefunc(blizzCD, "SetParent", function(self, newParent)
+            local s = blizzCDState[self]
+            if not s or s.bypass then return end
+            local targetIcon = s.icon
+            if targetIcon and newParent ~= targetIcon then
+                s.bypass = true
+                self:SetParent(targetIcon)
+                self:ClearAllPoints()
+                self:SetAllPoints(targetIcon)
+                self:SetFrameLevel(targetIcon:GetFrameLevel() + 1)
+                s.bypass = false
+            end
         end)
     end
 end
@@ -1131,12 +1178,18 @@ function CustomCDM:SetEntryPosition(trackerKey, entryIndex, position)
     if _G.QUI_RefreshNCDM then _G.QUI_RefreshNCDM() end
 end
 
--- Legacy compat: GetIcons returns the pool for a viewer name
+-- Legacy compat: GetIcons returns the pool for a viewer name.
+-- Returns empty when called from the classic engine's LayoutViewer context
+-- (which passes Blizzard viewer names) to prevent the classic engine from
+-- repositioning our addon-owned icons onto the Blizzard viewer during combat.
 function CustomCDM:GetIcons(viewerName)
-    -- Map viewer name to tracker key
-    if viewerName == "EssentialCooldownViewer" or viewerName == "QUI_EssentialContainer" then
+    -- Only return icons when asked for addon-owned container names
+    -- (internal callers from the owned engine).  The classic engine passes
+    -- Blizzard viewer names ("EssentialCooldownViewer", etc.) — return
+    -- empty so it doesn't adopt and reposition our icons.
+    if viewerName == "QUI_EssentialContainer" then
         return iconPools["essential"] or {}
-    elseif viewerName == "UtilityCooldownViewer" or viewerName == "QUI_UtilityContainer" then
+    elseif viewerName == "QUI_UtilityContainer" then
         return iconPools["utility"] or {}
     end
     return {}

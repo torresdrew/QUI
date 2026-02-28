@@ -21,6 +21,13 @@ local GetGeneralFont = Helpers.GetGeneralFont
 local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
 
 ---------------------------------------------------------------------------
+-- CDM ENGINE DETECTION
+---------------------------------------------------------------------------
+local function IsOwnedEngine()
+    return ns.CDMProvider and ns.CDMProvider:GetActiveEngineName() == "owned"
+end
+
+---------------------------------------------------------------------------
 -- CDM VIEWER FRAME GETTERS (resolve via QUI-owned frame registry)
 ---------------------------------------------------------------------------
 local function GetBuffIconViewer() return _G.QUI_GetCDMViewerFrame("buffIcon") end
@@ -504,6 +511,29 @@ end
 ---------------------------------------------------------------------------
 
 local function GetBuffIconFrames()
+    -- Owned engine: read addon-owned icons from the CDM icon pool
+    if IsOwnedEngine() then
+        local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
+        if not pool or #pool == 0 then return {} end
+
+        local visible = {}
+        for _, icon in ipairs(pool) do
+            if icon:IsShown() then
+                visible[#visible + 1] = icon
+            end
+        end
+
+        -- Sort by layoutIndex from spell entry
+        table.sort(visible, function(a, b)
+            local aIdx = (a._spellEntry and a._spellEntry.layoutIndex) or 0
+            local bIdx = (b._spellEntry and b._spellEntry.layoutIndex) or 0
+            return aIdx < bIdx
+        end)
+
+        return visible
+    end
+
+    -- Classic engine: iterate Blizzard viewer children
     local viewer = GetBuffIconViewer()
     if not viewer then
         return {}
@@ -886,6 +916,40 @@ end
 local function ApplyIconStyle(icon, settings)
     if not icon then return end
 
+    -- Owned engine: delegate to icon factory + swipe module
+    if IsOwnedEngine() then
+        local rowConfig = {
+            size = settings.iconSize or 42,
+            borderSize = settings.borderSize or 2,
+            borderColorTable = settings.borderColorTable or {0, 0, 0, 1},
+            aspectRatioCrop = settings.aspectRatioCrop or 1.0,
+            zoom = settings.zoom or 0,
+            durationSize = settings.durationSize or 14,
+            durationOffsetX = settings.durationOffsetX or 0,
+            durationOffsetY = settings.durationOffsetY or 8,
+            durationTextColor = settings.durationTextColor or {1, 1, 1, 1},
+            durationAnchor = settings.durationAnchor or "TOP",
+            stackSize = settings.stackSize or 14,
+            stackOffsetX = settings.stackOffsetX or 0,
+            stackOffsetY = settings.stackOffsetY or -8,
+            stackTextColor = settings.stackTextColor or {1, 1, 1, 1},
+            stackAnchor = settings.stackAnchor or "BOTTOM",
+            opacity = settings.opacity or 1.0,
+        }
+        if ns.CDMIcons and ns.CDMIcons.ConfigureIcon then
+            ns.CDMIcons.ConfigureIcon(icon, rowConfig)
+        end
+        local swipeMod = QUI and QUI.CooldownSwipe
+        if swipeMod and swipeMod.ApplyToIcon then
+            swipeMod.ApplyToIcon(icon)
+        end
+        if icon.GetScale and icon:GetScale() ~= 1 then
+            icon:SetScale(1)
+        end
+        return
+    end
+
+    -- Classic engine: manual styling
     SetupIconOnce(icon)
 
     local size = settings.iconSize or 42
@@ -1681,8 +1745,11 @@ LayoutBuffIcons = function()
         end
     end
 
-    -- No SetSize on the viewer frame — Blizzard auto-sizes it from children.
-    -- This prevents the SetSize → RefreshLayout → re-layout loop.
+    -- Owned containers need explicit sizing (Blizzard viewers auto-size from children).
+    if IsOwnedEngine() then
+        viewer:SetSize(totalWidth, totalHeight)
+    end
+
     -- Write calculated dimensions to viewer state so the proxy sizeResolver
     -- (CDMSizeResolver) reads our formula dimensions instead of falling back
     -- to Blizzard's auto-sized frame dimensions.
@@ -2189,10 +2256,19 @@ local function CheckIconChanges()
 
     -- Count visible icons
     local visibleCount = 0
-    for _, child in ipairs({ viewer:GetChildren() }) do
-        if child and child ~= viewer.Selection then
-            if (child.icon or child.Icon) and child:IsShown() then
-                visibleCount = visibleCount + 1
+    if IsOwnedEngine() then
+        local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
+        if pool then
+            for _, icon in ipairs(pool) do
+                if icon:IsShown() then visibleCount = visibleCount + 1 end
+            end
+        end
+    else
+        for _, child in ipairs({ viewer:GetChildren() }) do
+            if child and child ~= viewer.Selection then
+                if (child.icon or child.Icon) and child:IsShown() then
+                    visibleCount = visibleCount + 1
+                end
             end
         end
     end
@@ -2261,6 +2337,17 @@ local function ForcePopulateBuffIcons()
     if forcePopulateDone then return end
     if InCombatLockdown() then return end
 
+    -- Owned engine: trigger spell data rescan; the container module handles
+    -- icon building and fires QUI_OnBuffLayoutReady when icons are ready.
+    if IsOwnedEngine() then
+        forcePopulateDone = true
+        if ns.CDMSpellData then
+            ns.CDMSpellData:ForceScan()
+        end
+        return
+    end
+
+    -- Classic engine: poke Blizzard viewer to populate
     local viewer = GetBuffIconViewer()
     if not viewer then return end
 
@@ -2362,58 +2449,62 @@ local function Initialize()
     -- → OnSizeChanged → LayoutBuffIcons). The Layout hook below covers
     -- Blizzard-initiated layout changes.
 
-    -- OnShow hook - refresh when viewer becomes visible
-    if iconViewer then
-        iconViewer:HookScript("OnShow", function(self)
-            C_Timer.After(0, function()
-                if InCombatLockdown() then return end
-                if IsLayoutSuppressed() then return end
-                if isIconLayoutRunning then return end
-                LayoutBuffIcons()
+    -- Blizzard viewer hooks (classic engine only — owned containers don't use
+    -- .Layout/.RefreshLayout and the alpha=0 Blizzard viewer never shows).
+    if not IsOwnedEngine() then
+        -- OnShow hook - refresh when viewer becomes visible
+        if iconViewer then
+            iconViewer:HookScript("OnShow", function(self)
+                C_Timer.After(0, function()
+                    if InCombatLockdown() then return end
+                    if IsLayoutSuppressed() then return end
+                    if isIconLayoutRunning then return end
+                    LayoutBuffIcons()
+                end)
             end)
-        end)
-    end
+        end
 
-    -- Hook Layout - deferred call after Blizzard's layout completes
-    if iconViewer and iconViewer.Layout then
-        hooksecurefunc(iconViewer, "Layout", function()
-            C_Timer.After(0, function()
-                if InCombatLockdown() then return end
-                if IsLayoutSuppressed() then return end
-                if isIconLayoutRunning then return end
-                LayoutBuffIcons()
+        -- Hook Layout - deferred call after Blizzard's layout completes
+        if iconViewer and iconViewer.Layout then
+            hooksecurefunc(iconViewer, "Layout", function()
+                C_Timer.After(0, function()
+                    if InCombatLockdown() then return end
+                    if IsLayoutSuppressed() then return end
+                    if isIconLayoutRunning then return end
+                    LayoutBuffIcons()
+                end)
             end)
-        end)
-    end
+        end
 
-    if barViewer and barViewer.Layout then
-        hooksecurefunc(barViewer, "Layout", function()
-            C_Timer.After(0, function()
-                if InCombatLockdown() then return end
-                if IsLayoutSuppressed() then return end
-                if isBarLayoutRunning then return end
-                LayoutBuffBars()
+        if barViewer and barViewer.Layout then
+            hooksecurefunc(barViewer, "Layout", function()
+                C_Timer.After(0, function()
+                    if InCombatLockdown() then return end
+                    if IsLayoutSuppressed() then return end
+                    if isBarLayoutRunning then return end
+                    LayoutBuffBars()
+                end)
             end)
-        end)
-    end
+        end
 
-    -- FEAT-007: Hook RefreshLayout to correct layout direction after Blizzard sets it
-    -- Blizzard's RefreshLayout() sets isHorizontal based on IsHorizontal() (always true for BuffBar)
-    -- then calls Layout(). We hook RefreshLayout to fix direction right before Layout() runs.
-    -- TAINT SAFETY: Store in local table instead of writing to Blizzard viewer
-    if barViewer and barViewer.RefreshLayout then
-        hooksecurefunc(barViewer, "RefreshLayout", function(self)
-            C_Timer.After(0, function()
-                if InCombatLockdown() then return end
-                local settings = GetTrackedBarSettings()
-                if settings.enabled and settings.orientation == "vertical" then
-                    viewerBuffState[self] = viewerBuffState[self] or {}
-                    viewerBuffState[self].isHorizontal = false
-                    viewerBuffState[self].goingRight = settings.growUp ~= false
-                    viewerBuffState[self].goingUp = false
-                end
+        -- FEAT-007: Hook RefreshLayout to correct layout direction after Blizzard sets it
+        -- Blizzard's RefreshLayout() sets isHorizontal based on IsHorizontal() (always true for BuffBar)
+        -- then calls Layout(). We hook RefreshLayout to fix direction right before Layout() runs.
+        -- TAINT SAFETY: Store in local table instead of writing to Blizzard viewer
+        if barViewer and barViewer.RefreshLayout then
+            hooksecurefunc(barViewer, "RefreshLayout", function(self)
+                C_Timer.After(0, function()
+                    if InCombatLockdown() then return end
+                    local settings = GetTrackedBarSettings()
+                    if settings.enabled and settings.orientation == "vertical" then
+                        viewerBuffState[self] = viewerBuffState[self] or {}
+                        viewerBuffState[self].isHorizontal = false
+                        viewerBuffState[self].goingRight = settings.growUp ~= false
+                        viewerBuffState[self].goingUp = false
+                    end
+                end)
             end)
-        end)
+        end
     end
 
     ---------------------------------------------------------------------------
@@ -2491,6 +2582,24 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end)
     end
 end)
+
+---------------------------------------------------------------------------
+-- OWNED ENGINE CALLBACKS
+-- cdm_containers.lua fires these when buff container/icons are ready.
+---------------------------------------------------------------------------
+_G.QUI_OnBuffContainerReady = function()
+    -- Container was just created; re-initialize if we haven't yet
+    if not initialized then
+        Initialize()
+    end
+end
+
+_G.QUI_OnBuffLayoutReady = function()
+    -- Icons were (re)built in the owned container; position + style them
+    lastIconHash = ""
+    iconState.isInitialized = false
+    LayoutBuffIcons()
+end
 
 -- Also try to initialize immediately if viewers exist
 C_Timer.After(0, function()
