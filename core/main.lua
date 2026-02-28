@@ -692,9 +692,7 @@ local defaults = {
                     stackTextColor = {1, 1, 1, 1},
                     stackAnchor = "BOTTOMRIGHT",
                 },
-                rangeIndicator = false,       -- Tint icons red when target out of range (owned engine)
                 rangeColor = {0.8, 0.1, 0.1}, -- Range indicator tint color
-                usabilityIndicator = false,    -- Desaturate unusable spells (owned engine)
             },
             utility = {
                 enabled = true,
@@ -764,9 +762,7 @@ local defaults = {
                 },
                 anchorBelowEssential = false,
                 anchorGap = 0,
-                rangeIndicator = false,
                 rangeColor = {0.8, 0.1, 0.1},
-                usabilityIndicator = false,
             },
             buff = {
                 enabled = true,

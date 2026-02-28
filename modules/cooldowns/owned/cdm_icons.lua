@@ -70,6 +70,11 @@ local blizzCDState = setmetatable({}, { __mode = "k" })
 -- to the addon-owned icon without reading restricted frames during combat.
 local blizzTexState = setmetatable({}, { __mode = "k" })
 
+-- TAINT SAFETY: Blizzard buff child visibility hook state tracked in a weak-keyed table.
+-- Maps Blizzard buff children → { icon = quiIcon, hooked = bool } so Hide/Show hooks
+-- can mirror visibility to the addon-owned icon via SetAlpha without polling.
+local blizzVisState = setmetatable({}, { __mode = "k" })
+
 ---------------------------------------------------------------------------
 -- DB ACCESS
 ---------------------------------------------------------------------------
@@ -323,16 +328,32 @@ local function AdoptBlizzCooldown(icon, blizzChild)
                 -- Track aura state for swipe color classification
                 -- (swipe.lua uses _auraActive to pick overlay vs swipe color).
                 -- Let Blizzard's CooldownFrame handle the actual display.
-                targetIcon._auraActive = isAura or false
+                -- isAura may be secret in combat; only update when safe
+                if not IsSecretValue(isAura) then
+                    targetIcon._auraActive = isAura or false
+                end
                 ReapplySwipeStyle(self, targetIcon)
             end)
         end
 
-        hooksecurefunc(blizzCD, "SetCooldown", function(self)
+        hooksecurefunc(blizzCD, "SetCooldown", function(self, start, duration)
             local s = blizzCDState[self]
             if not s or s.bypass then return end
             local targetIcon = s.icon
             if not targetIcon or not targetIcon._spellEntry then return end
+
+            -- Capture cooldown values from Blizzard's native update so
+            -- the desaturation ticker uses hook-driven data instead of
+            -- API calls that return secret values during combat.
+            local safeStart = SafeToNumber(start, nil)
+            local safeDur = SafeToNumber(duration, nil)
+            if safeStart then targetIcon._lastStart = safeStart end
+            if safeDur then targetIcon._lastDuration = safeDur end
+            if safeDur == 0 then
+                targetIcon._lastStart = 0
+                targetIcon._lastDuration = 0
+            end
+
             ReapplySwipeStyle(self, targetIcon)
         end)
 
@@ -426,7 +447,7 @@ local function HookBlizzTexture(icon, blizzChild)
     end
     state.icon = icon
 
-    -- Install hook once per Blizzard texture region
+    -- Install hooks once per Blizzard texture region
     if not state.hooked then
         state.hooked = true
         hooksecurefunc(iconRegion, "SetTexture", function(self, texture)
@@ -437,6 +458,21 @@ local function HookBlizzTexture(icon, blizzChild)
                 quiIcon.Icon:SetTexture(texture)
             end
         end)
+
+        -- Mirror desaturation from Blizzard's icon so our icon reflects
+        -- the same visual state without needing API calls in combat.
+        hooksecurefunc(iconRegion, "SetDesaturated", function(self, desaturated)
+            local s = blizzTexState[self]
+            if not s or not s.icon then return end
+            local quiIcon = s.icon
+            if not quiIcon.Icon then return end
+            local entry = quiIcon._spellEntry
+            if not entry then return end
+            if entry.viewerType == "buff" or (entry.isAura and quiIcon._auraActive) then
+                return
+            end
+            quiIcon.Icon:SetDesaturated(desaturated)
+        end)
     end
 end
 
@@ -446,6 +482,51 @@ local function UnhookBlizzTexture(icon)
     local iconRegion = entry._blizzChild.Icon or entry._blizzChild.icon
     if not iconRegion then return end
     local state = blizzTexState[iconRegion]
+    if state then state.icon = nil end
+end
+
+---------------------------------------------------------------------------
+-- BLIZZARD BUFF VISIBILITY HOOK
+-- Mirrors Blizzard buff child Show/Hide to addon-owned icon alpha.
+-- Uses hooksecurefunc (one-time install) so we never call IsShown()
+-- during combat — only out-of-combat initial sync.
+---------------------------------------------------------------------------
+local function HookBlizzVisibility(icon, blizzChild)
+    if not blizzChild then return end
+
+    local state = blizzVisState[blizzChild]
+    if not state then
+        state = {}
+        blizzVisState[blizzChild] = state
+    end
+    state.icon = icon
+
+    -- Sync initial state (safe — BuildIcons runs out of combat only)
+    if blizzChild:IsShown() then
+        icon:SetAlpha(icon:GetAlpha())  -- keep current alpha
+    else
+        icon:SetAlpha(0)
+    end
+
+    if not state.hooked then
+        state.hooked = true
+        hooksecurefunc(blizzChild, "Hide", function(self)
+            local s = blizzVisState[self]
+            if not s or not s.icon then return end
+            s.icon:SetAlpha(0)
+        end)
+        hooksecurefunc(blizzChild, "Show", function(self)
+            local s = blizzVisState[self]
+            if not s or not s.icon then return end
+            s.icon:SetAlpha(1)
+        end)
+    end
+end
+
+local function UnhookBlizzVisibility(icon)
+    local entry = icon._spellEntry
+    if not entry or not entry._blizzChild then return end
+    local state = blizzVisState[entry._blizzChild]
     if state then state.icon = nil end
 end
 
@@ -690,20 +771,35 @@ end
 -- COOLDOWN UPDATE
 -- Update cooldown state for a single icon.
 ---------------------------------------------------------------------------
+local function GetTrackerSettings(viewerType)
+    local db = GetDB()
+    if not db or not viewerType then return nil end
+    return db[viewerType]
+end
+
 local function UpdateIconCooldown(icon)
     if not icon or not icon._spellEntry then return end
     local entry = icon._spellEntry
-
     if entry._blizzChild then
         -- Adopted Blizzard CooldownFrame: Blizzard drives the display
         -- natively (aura duration, charge recharge, transitions).
         -- We only track state for swipe color classification.
 
-        -- Track duration for swipe classification (swipe.lua reads _lastDuration)
+        -- Track duration + start for swipe classification and desaturation.
+        -- Primary source during combat is the SetCooldown hook in
+        -- AdoptBlizzCooldown; this API query is a fallback that works
+        -- outside combat (secrets → no update).
         local sid = entry.overrideSpellID or entry.spellID or entry.id
         if sid and not (entry.type == "item" or entry.type == "trinket") then
-            local _, dur = GetBestSpellCooldown(sid)
-            icon._lastDuration = SafeToNumber(dur, nil) or 0
+            local cdStart, dur = GetBestSpellCooldown(sid)
+            local safeDurVal = SafeToNumber(dur, nil)
+            local safeStartVal = SafeToNumber(cdStart, nil)
+            if safeDurVal then icon._lastDuration = safeDurVal end
+            if safeStartVal then icon._lastStart = safeStartVal end
+            if safeDurVal == 0 then
+                icon._lastStart = 0
+                icon._lastDuration = 0
+            end
         end
 
         -- Re-apply swipe styling (colors) in case state changed
@@ -755,7 +851,16 @@ local function UpdateIconCooldown(icon)
         end
 
         local safeDur = SafeToNumber(duration, nil)
-        icon._lastDuration = safeDur or 0
+        local safeStartVal = SafeToNumber(startTime, nil)
+        -- Only update when safe values are available.  Defaulting to 0 on
+        -- secret values would make the desaturation code think the spell
+        -- is off cooldown mid-combat.
+        if safeDur then icon._lastDuration = safeDur end
+        if safeStartVal then icon._lastStart = safeStartVal end
+        if safeDur == 0 then
+            icon._lastStart = 0
+            icon._lastDuration = 0
+        end
 
         if icon.Cooldown then
             if startTime and duration then
@@ -771,25 +876,91 @@ local function UpdateIconCooldown(icon)
         end
     end
 
-    -- Update charge / stack / resource count — mirror Blizzard's native
-    -- FontStrings.  Always check both ChargeCount and Applications for
-    -- adopted icons: resources like DH Soul Fragments use ChargeCount
-    -- but don't register as multi-charge via C_Spell.GetSpellCharges,
-    -- and some displays use Applications without being flagged as auras.
-    -- GetText() may return secret values; SetText() accepts them safely.
+    -- Mirror charge/stack/resource text from Blizzard's native FontStrings.
+    -- Check ChargeCount first — secondary resources like DH Soul Fragments
+    -- use ChargeCount without registering via C_Spell.GetSpellCharges.
+    -- Only use ChargeCount when Blizzard is actually showing it (IsShown);
+    -- spells like Wraith Walk have ChargeCount with spurious text (alpha=1)
+    -- but Blizzard keeps the frame hidden (shown=false).
+    -- IsShown() may return a secret boolean in combat but we only write to
+    -- addon-owned StackText so taint spread is harmless.
+    -- Fall through to Applications for aura stacks if ChargeCount is hidden.
     if entry._blizzChild then
-        local text
-        local chargeFS = entry._blizzChild.ChargeCount and entry._blizzChild.ChargeCount.Current
-        if chargeFS then text = chargeFS:GetText() end
-        if not text then
-            local appFS = entry._blizzChild.Applications and entry._blizzChild.Applications.Applications
-            if appFS then text = appFS:GetText() end
+        local shown = false
+        local chargeFrame = entry._blizzChild.ChargeCount
+        local appFrame = entry._blizzChild.Applications
+
+        if chargeFrame and chargeFrame.Current then
+            if SafeValue(chargeFrame:IsShown(), false) then
+               icon.StackText:SetText(chargeFrame.Current:GetText())
+               icon.StackText:Show()
+               shown = true
+            end
         end
-        icon.StackText:SetText(text or "")
-        icon.StackText:Show()
+        if not shown then
+            if appFrame and appFrame.Applications then
+                if SafeValue(appFrame:IsShown(), false) then
+                   icon.StackText:SetText(appFrame.Applications:GetText())
+                   icon.StackText:Show()
+                   shown = true
+                end
+            end
+        end
+        if not shown then
+            icon.StackText:SetText("")
+            icon.StackText:Hide()
+        end
     else
         icon.StackText:SetText("")
         icon.StackText:Hide()
+    end
+
+    -- Desaturation for _blizzChild entries is driven entirely by the
+    -- SetDesaturated hook in HookBlizzTexture — Blizzard's CooldownViewer
+    -- calls RefreshIconDesaturation natively, and the hook mirrors that
+    -- state onto our icon.  The ticker only handles custom entries (macros,
+    -- manually-added spells) that have no Blizzard source to mirror.
+    if icon.Icon and icon.Icon.SetDesaturated and not entry._blizzChild then
+        local viewerType = entry.viewerType
+
+        -- Skip buff viewer icons and aura-active icons (they show buff timers)
+        if viewerType ~= "buff" and not icon._auraActive and not icon._rangeTinted and not icon._usabilityTinted then
+            local dur = icon._lastDuration or 0
+            local start = icon._lastStart or 0
+
+            local ok, shouldDesat = pcall(function()
+                if dur > 1.5 and start > 0 then
+                    local remaining = (start + dur) - GetTime()
+                    if remaining > 0 then
+                        local sid = entry.overrideSpellID or entry.spellID or entry.id
+                        if sid and C_Spell.GetSpellCharges then
+                            local chargeInfo = C_Spell.GetSpellCharges(sid)
+                            if chargeInfo and chargeInfo.currentCharges > 0 then
+                                return false
+                            end
+                        end
+                        return true
+                    end
+                end
+                return false
+            end)
+
+            if ok then
+                if shouldDesat then
+                    icon.Icon:SetDesaturated(true)
+                    icon._cdDesaturated = true
+                else
+                    icon.Icon:SetDesaturated(false)
+                    icon._cdDesaturated = nil
+                end
+            else
+                icon.Icon:SetDesaturated(false)
+                icon._cdDesaturated = nil
+            end
+        else
+            icon.Icon:SetDesaturated(false)
+            icon._cdDesaturated = nil
+        end
     end
 end
 
@@ -829,6 +1000,10 @@ function CDMIcons:AcquireIcon(parent, spellEntry)
         if texID and icon.Icon then
             icon.Icon:SetTexture(texID)
         end
+        -- Ensure clean visual state for recycled icon
+        if icon.Icon then
+            icon.Icon:SetDesaturated(false)
+        end
 
         if icon.Cooldown then
             icon.Cooldown:Clear()
@@ -846,11 +1021,14 @@ function CDMIcons:ReleaseIcon(icon)
     -- Disconnect hooks before clearing _spellEntry (needs blizzChild ref)
     RestoreAddonCooldown(icon)
     UnhookBlizzTexture(icon)
+    UnhookBlizzVisibility(icon)
     icon:Hide()
     icon:ClearAllPoints()
     icon._spellEntry = nil
     icon._rangeTinted = nil
     icon._usabilityTinted = nil
+    icon._cdDesaturated = nil
+    icon._lastStart = nil
     if icon.Icon then
         icon.Icon:SetVertexColor(1, 1, 1, 1)
         icon.Icon:SetDesaturated(false)
@@ -998,11 +1176,17 @@ function CDMIcons:BuildIcons(viewerType, container)
             -- SetCooldownFromDurationObject hook fires.
             if entry.viewerType == "buff" then
                 icon._auraActive = true
+                HookBlizzVisibility(icon, entry._blizzChild)
             end
         end
     end
 
     iconPools[viewerType] = pool
+
+    -- Immediately update cooldown state so icons reflect correct
+    -- desaturation/stack text without waiting for the next ticker.
+    self:UpdateCooldownsForType(viewerType)
+
     return pool
 end
 
@@ -1012,6 +1196,18 @@ end
 function CDMIcons:UpdateAllCooldowns()
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
+            -- Sync non-buff icon visibility with Blizzard child.
+            -- Buff icons use hook-based approach (HookBlizzVisibility).
+            local entry = icon._spellEntry
+            if entry and entry._blizzChild and entry.viewerType ~= "buff" then
+                local blizzShown = entry._blizzChild:IsShown()
+                local iconShown = icon:IsShown()
+                if blizzShown and not iconShown then
+                    icon:Show()
+                elseif not blizzShown and iconShown then
+                    icon:Hide()
+                end
+            end
             UpdateIconCooldown(icon)
         end
     end
@@ -1235,16 +1431,9 @@ local function SafeIsSpellUsable(spellID)
     return isUsable, notEnoughMana
 end
 
-local function GetTrackerSettings(viewerType)
-    local db = GetDB()
-    if not db or not viewerType then return nil end
-    return db[viewerType]
-end
-
--- Reset icon to normal visual state (clear any tinting/desaturation)
+-- Reset icon to normal visual state (clear any tinting)
 local function ResetIconVisuals(icon)
     icon.Icon:SetVertexColor(1, 1, 1, 1)
-    icon.Icon:SetDesaturated(false)
     icon._rangeTinted = nil
     icon._usabilityTinted = nil
 end
@@ -1253,26 +1442,7 @@ local function UpdateIconVisualState(icon)
     if not icon or not icon._spellEntry then return end
     local entry = icon._spellEntry
     local viewerType = entry.viewerType
-    if not viewerType then return end
-
-    local settings = GetTrackerSettings(viewerType)
-    if not settings then
-        if icon._rangeTinted or icon._usabilityTinted then
-            ResetIconVisuals(icon)
-        end
-        return
-    end
-
-    local rangeEnabled = settings.rangeIndicator
-    local usabilityEnabled = settings.usabilityIndicator
-
-    -- Nothing enabled — reset and bail
-    if not rangeEnabled and not usabilityEnabled then
-        if icon._rangeTinted or icon._usabilityTinted then
-            ResetIconVisuals(icon)
-        end
-        return
-    end
+    if not viewerType or viewerType == "buff" then return end
 
     -- Skip items/trinkets (self-use, no range/usability concept)
     if entry.type == "item" or entry.type == "trinket" then return end
@@ -1288,7 +1458,7 @@ local function UpdateIconVisualState(icon)
     ---------------------------------------------------------------------------
     -- Priority 1: Out of range (red tint) — only when target exists + ranged
     ---------------------------------------------------------------------------
-    if rangeEnabled and UnitExists("target") then
+    if UnitExists("target") then
         local hasRange = true
         if C_Spell.SpellHasRange then
             hasRange = C_Spell.SpellHasRange(spellID)
@@ -1296,12 +1466,12 @@ local function UpdateIconVisualState(icon)
         if hasRange then
             local inRange = SafeIsSpellInRange(spellID)
             if inRange == false then
-                -- Clear usability desaturation if switching to range tint
+                -- Clear usability darkening if switching to range tint
                 if icon._usabilityTinted then
-                    icon.Icon:SetDesaturated(false)
                     icon._usabilityTinted = nil
                 end
-                local c = settings.rangeColor
+                local settings = GetTrackerSettings(viewerType)
+                local c = settings and settings.rangeColor
                 local r = c and c[1] or 0.8
                 local g = c and c[2] or 0.1
                 local b = c and c[3] or 0.1
@@ -1320,21 +1490,49 @@ local function UpdateIconVisualState(icon)
     end
 
     ---------------------------------------------------------------------------
-    -- Priority 2: Unusable / resource-starved (desaturate + grey)
+    -- Priority 2: Unusable / resource-starved (darken + desaturate)
     ---------------------------------------------------------------------------
-    if usabilityEnabled then
-        local isUsable, notEnoughMana = SafeIsSpellUsable(spellID)
-        if not isUsable then
-            icon.Icon:SetDesaturated(true)
-            icon.Icon:SetVertexColor(0.6, 0.6, 0.6, 1)
+    local isUsable, insufficientPower
+    if C_Spell and C_Spell.IsSpellUsable then
+        isUsable, insufficientPower = C_Spell.IsSpellUsable(spellID)
+    end
+
+    -- Try to evaluate usability (works when values aren't secret)
+    local ok, notUsable = pcall(function()
+        if not isUsable then return true end
+        -- C_Spell.IsSpellUsable returns true for charge spells even at 0 charges.
+        -- Check charges explicitly: 0 charges remaining = not usable.
+        if entry.hasCharges and C_Spell.GetSpellCharges then
+            local chargeInfo = C_Spell.GetSpellCharges(spellID)
+            if chargeInfo and chargeInfo.currentCharges == 0 then
+                return true
+            end
+        end
+        return false
+    end)
+    if ok then
+        -- Clean values: full visual logic
+        if notUsable then
+            -- Clear cooldown desaturation so vertex color darkening is visible
+            if icon._cdDesaturated then
+                icon.Icon:SetDesaturated(false)
+                icon._cdDesaturated = nil
+            end
+            icon.Icon:SetVertexColor(0.4, 0.4, 0.4, 1)
             icon._usabilityTinted = true
             return
         end
+    elseif insufficientPower ~= nil and not icon._cdDesaturated then
+        -- Secret values (combat): pass raw insufficientPower to SetDesaturated.
+        -- insufficientPower is already correct polarity (true = can't cast).
+        -- Gate on not _cdDesaturated to avoid clearing cooldown desaturation
+        -- when the spell has enough resources but is on CD.
+        icon.Icon:SetDesaturated(insufficientPower)
+        return
     end
 
     -- If was usability-tinted but now usable, clear it
     if icon._usabilityTinted then
-        icon.Icon:SetDesaturated(false)
         icon.Icon:SetVertexColor(1, 1, 1, 1)
         icon._usabilityTinted = nil
     end
@@ -1372,18 +1570,10 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
 end)
 
 -- Visual state polling: 250ms OnUpdate for range + usability checks.
--- Only runs when at least one tracker has rangeIndicator or usabilityIndicator.
+-- Always on for owned engine icons.
 cdEventFrame:SetScript("OnUpdate", function(self, elapsed)
     rangePollElapsed = rangePollElapsed + elapsed
     if rangePollElapsed < RANGE_POLL_INTERVAL then return end
     rangePollElapsed = 0
-
-    -- Quick check: is any visual state indicator enabled?
-    local db = GetDB()
-    if not db then return end
-    local anyEnabled = (db.essential and (db.essential.rangeIndicator or db.essential.usabilityIndicator))
-        or (db.utility and (db.utility.rangeIndicator or db.utility.usabilityIndicator))
-    if not anyEnabled then return end
-
     CDMIcons:UpdateAllIconRanges()
 end)
