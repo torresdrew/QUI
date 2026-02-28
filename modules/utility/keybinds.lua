@@ -2021,7 +2021,11 @@ local function ApplyRotationHelperToIcon(icon, viewerName, nextSpellID)
     -- Get the icon's spell ID
     local iconSpellID
     local ok, result = pcall(function()
-        -- Try cooldownID first (CDM uses this)
+        -- Try owned engine _spellEntry first
+        if icon._spellEntry then
+            return icon._spellEntry.overrideSpellID or icon._spellEntry.spellID or icon._spellEntry.id
+        end
+        -- Try cooldownID (classic CDM uses this)
         if icon.cooldownID then
             return icon.cooldownID
         end
@@ -2060,10 +2064,19 @@ local function ApplyRotationHelperToIcon(icon, viewerName, nextSpellID)
             isNextSpell = true
         end
         -- Check overrideSpellID (some spells morph)
-        if not isNextSpell and icon.cooldownInfo and icon.cooldownInfo.overrideSpellID then
-            local compareOk, isMatch = pcall(function() return icon.cooldownInfo.overrideSpellID == nextSpellID end)
-            if compareOk and isMatch then
-                isNextSpell = true
+        if not isNextSpell then
+            local overrideID
+            if icon._spellEntry then
+                -- Owned engine: check both base and override
+                overrideID = icon._spellEntry.spellID  -- base ID (iconSpellID used override above)
+            elseif icon.cooldownInfo then
+                overrideID = icon.cooldownInfo.overrideSpellID
+            end
+            if overrideID then
+                local compareOk, isMatch = pcall(function() return overrideID == nextSpellID end)
+                if compareOk and isMatch then
+                    isNextSpell = true
+                end
             end
         end
     end
