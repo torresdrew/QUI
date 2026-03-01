@@ -20,6 +20,12 @@ local function RefreshMinimap()
     end
 end
 
+local function RefreshActionBars()
+    if _G.QUI_RefreshActionBars then
+        _G.QUI_RefreshActionBars()
+    end
+end
+
 local function RefreshUIHider()
     if _G.QUI_RefreshUIHider then
         _G.QUI_RefreshUIHider()
@@ -314,6 +320,9 @@ local function BuildMinimapTab(tabContent)
         db.minimap = {}
     end
     local mm = db.minimap
+    if mm.middleClickMenuEnabled == nil then mm.middleClickMenuEnabled = true end
+    if mm.hideMicroMenu == nil then mm.hideMicroMenu = false end
+    if mm.hideBagBar == nil then mm.hideBagBar = false end
 
     if true then  -- Always build widgets
 
@@ -347,6 +356,40 @@ local function BuildMinimapTab(tabContent)
         scaleDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         scaleDesc:SetJustifyH("LEFT")
         y = y - 20
+
+        y = y - 10
+
+        -- SECTION 1b: Middle Click Menu
+        local middleClickHeader = GUI:CreateSectionHeader(tabContent, "Middle Click Menu")
+        middleClickHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - middleClickHeader.gap
+
+        local middleClickEnabled = GUI:CreateFormCheckbox(tabContent, "Enable middle-click minimap menu", "middleClickMenuEnabled", mm, RefreshMinimap)
+        middleClickEnabled:SetPoint("TOPLEFT", PAD, y)
+        middleClickEnabled:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local hideMicroMenuCheck = GUI:CreateFormCheckbox(tabContent, "Hide Blizzard Micro Menu", "hideMicroMenu", mm, function()
+            RefreshMinimap()
+            RefreshActionBars()
+        end)
+        hideMicroMenuCheck:SetPoint("TOPLEFT", PAD, y)
+        hideMicroMenuCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local hideBagBarCheck = GUI:CreateFormCheckbox(tabContent, "Hide Blizzard Bag Bar", "hideBagBar", mm, function()
+            RefreshMinimap()
+            RefreshActionBars()
+        end)
+        hideBagBarCheck:SetPoint("TOPLEFT", PAD, y)
+        hideBagBarCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local middleClickDesc = GUI:CreateLabel(tabContent, "Middle-click the minimap to open an ElvUI-style quick menu. You can hide Micro Menu and Bag Bar from here too.", 11, C.textMuted)
+        middleClickDesc:SetPoint("TOPLEFT", PAD, y)
+        middleClickDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        middleClickDesc:SetJustifyH("LEFT")
+        y = y - 24
 
         y = y - 10
 
