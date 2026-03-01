@@ -52,6 +52,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.43.0 - 2026-03-01
+
+### Added
+- **added a second CDM engine (you can now pick between our own and the classic blizzard hook one in the CDM options) **
+- added minimap menu (click with middle mousebutton on the minimap)
+- added main chat frame as an anchoring target
+- added pull timer command(s) (/pull (if available), /qpull, /quipull)
+- added more anchoring options for tooltips when anchoring to the mouse cursor
 ## v2.42.0 - 2026-02-28
 
 ### Added
