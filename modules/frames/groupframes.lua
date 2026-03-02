@@ -1,0 +1,1843 @@
+--[[
+    QUI Group Frames - Party/Raid Frame System
+    Creates secure group headers with auto-managed child frames for party and raid.
+    Features: Class colors, absorbs, heal prediction, dispel overlay, range check,
+    role icons, threat borders, target highlight, unified scaling, click-casting support.
+]]
+
+local ADDON_NAME, ns = ...
+local QUICore = ns.Addon
+local LSM = LibStub("LibSharedMedia-3.0")
+local Helpers = ns.Helpers
+local IsSecretValue = Helpers.IsSecretValue
+local SafeValue = Helpers.SafeValue
+local SafeToNumber = Helpers.SafeToNumber
+local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
+
+local GetCore = Helpers.GetCore
+
+---------------------------------------------------------------------------
+-- MODULE TABLE
+---------------------------------------------------------------------------
+local QUI_GF = {}
+ns.QUI_GroupFrames = QUI_GF
+
+-- Frame references
+QUI_GF.headers = {}          -- "party", "raid" header frames
+QUI_GF.petHeader = nil       -- pet header
+QUI_GF.spotlightHeader = nil -- spotlight header
+QUI_GF.allFrames = {}        -- flat list of all child frames (for iteration)
+QUI_GF.unitFrameMap = {}     -- unitToken → frame (O(1) event dispatch)
+QUI_GF.initialized = false
+QUI_GF.testMode = false
+QUI_GF.editMode = false
+
+-- State tables for taint safety (weak-keyed)
+local frameState, GetFrameState = Helpers.CreateStateTable()
+local healthThrottle = {}     -- unitToken → last update time
+local powerThrottle = {}      -- unitToken → last update time
+local THROTTLE_INTERVAL = 0.1 -- 100ms coalesce window
+
+-- Font/texture caching
+local cachedFontPath = nil
+local cachedTexturePath = nil
+local cachedFontOutline = nil
+
+-- Pre-allocated color tables for common colors
+local COLOR_BLACK = { 0, 0, 0, 1 }
+local COLOR_WHITE = { 1, 1, 1, 1 }
+local COLOR_DEAD = { 0.5, 0.5, 0.5, 1 }
+local COLOR_OFFLINE = { 0.4, 0.4, 0.4, 1 }
+local COLOR_GHOST = { 0.6, 0.6, 0.6, 1 }
+
+-- Dispel type → color mapping
+local DISPEL_COLORS = {
+    Magic   = { 0.2, 0.6, 1.0, 1 },  -- Blue
+    Curse   = { 0.6, 0.0, 1.0, 1 },  -- Purple
+    Disease = { 0.6, 0.4, 0.0, 1 },  -- Brown
+    Poison  = { 0.0, 0.6, 0.0, 1 },  -- Green
+    Bleed   = { 0.8, 0.0, 0.0, 1 },  -- Red
+}
+
+-- Power type → color mapping
+local POWER_COLORS = {
+    [0]  = { 0, 0.50, 1 },       -- Mana
+    [1]  = { 1, 0, 0 },          -- Rage
+    [2]  = { 1, 0.5, 0.25 },     -- Focus
+    [3]  = { 1, 1, 0 },          -- Energy
+    [6]  = { 0, 0.82, 1 },       -- Runic Power
+    [8]  = { 0.3, 0.52, 0.9 },   -- Lunar Power
+    [11] = { 0, 0.5, 1 },        -- Maelstrom
+    [13] = { 0.4, 0, 0.8 },      -- Insanity
+    [17] = { 0.79, 0.26, 0.99 }, -- Fury
+    [18] = { 1, 0.61, 0 },       -- Pain
+}
+
+-- Role sorting priority
+local ROLE_SORT_ORDER = { TANK = 1, HEALER = 2, DAMAGER = 3, NONE = 4 }
+
+-- Pending combat-deferred operations
+local pendingResize = false
+local pendingVisibilityUpdate = false
+local pendingInitialize = false
+
+---------------------------------------------------------------------------
+-- HELPERS: Settings access
+---------------------------------------------------------------------------
+local function GetSettings()
+    return GetDB()
+end
+
+local function GetGeneralSettings()
+    local db = GetDB()
+    return db and db.general
+end
+
+local function GetLayoutSettings()
+    local db = GetDB()
+    return db and db.layout
+end
+
+local function GetDimensionSettings()
+    local db = GetDB()
+    return db and db.dimensions
+end
+
+local function GetHealthSettings()
+    local db = GetDB()
+    return db and db.health
+end
+
+local function GetPowerSettings()
+    local db = GetDB()
+    return db and db.power
+end
+
+local function GetNameSettings()
+    local db = GetDB()
+    return db and db.name
+end
+
+local function GetIndicatorSettings()
+    local db = GetDB()
+    return db and db.indicators
+end
+
+local function GetHealerSettings()
+    local db = GetDB()
+    return db and db.healer
+end
+
+local function GetRangeSettings()
+    local db = GetDB()
+    return db and db.range
+end
+
+local function GetAuraSettings()
+    local db = GetDB()
+    return db and db.auras
+end
+
+---------------------------------------------------------------------------
+-- HELPERS: Font and texture
+---------------------------------------------------------------------------
+local function GetFontPath()
+    if cachedFontPath then return cachedFontPath end
+    local general = GetGeneralSettings()
+    local fontName = general and general.font or "Quazii"
+    cachedFontPath = LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
+    return cachedFontPath
+end
+
+local function GetFontOutline()
+    if cachedFontOutline then return cachedFontOutline end
+    local general = GetGeneralSettings()
+    cachedFontOutline = general and general.fontOutline or "OUTLINE"
+    return cachedFontOutline
+end
+
+local function GetTexturePath(textureName)
+    if not textureName then
+        if cachedTexturePath then return cachedTexturePath end
+        local general = GetGeneralSettings()
+        textureName = general and general.texture or "Quazii v5"
+    end
+    local path = LSM:Fetch("statusbar", textureName)
+    if not cachedTexturePath then
+        cachedTexturePath = path
+    end
+    return path or "Interface\\TargetingFrame\\UI-StatusBar"
+end
+
+local function InvalidateCache()
+    cachedFontPath = nil
+    cachedTexturePath = nil
+    cachedFontOutline = nil
+end
+
+---------------------------------------------------------------------------
+-- HELPERS: Anchor info
+---------------------------------------------------------------------------
+local ANCHOR_MAP = {
+    LEFT       = { point = "LEFT",       justify = "LEFT" },
+    RIGHT      = { point = "RIGHT",      justify = "RIGHT" },
+    CENTER     = { point = "CENTER",     justify = "CENTER" },
+    TOPLEFT    = { point = "TOPLEFT",    justify = "LEFT" },
+    TOPRIGHT   = { point = "TOPRIGHT",   justify = "RIGHT" },
+    TOP        = { point = "TOP",        justify = "CENTER" },
+    BOTTOMLEFT = { point = "BOTTOMLEFT", justify = "LEFT" },
+    BOTTOMRIGHT= { point = "BOTTOMRIGHT",justify = "RIGHT" },
+    BOTTOM     = { point = "BOTTOM",     justify = "CENTER" },
+}
+
+local function GetTextAnchorInfo(anchorName)
+    return ANCHOR_MAP[anchorName] or ANCHOR_MAP.LEFT
+end
+
+---------------------------------------------------------------------------
+-- HELPERS: Health formatting
+---------------------------------------------------------------------------
+local function FormatNumber(num)
+    if not num or num == 0 then return "0" end
+    local ok, result = pcall(function()
+        if num >= 1000000000 then
+            return format("%.1fB", num / 1000000000)
+        elseif num >= 1000000 then
+            return format("%.1fM", num / 1000000)
+        elseif num >= 1000 then
+            return format("%.0fK", num / 1000)
+        end
+        return tostring(math.floor(num))
+    end)
+    if ok then return result end
+    return "?"
+end
+
+local function GetHealthPct(unit)
+    local ok, hp, maxHP = pcall(function()
+        return UnitHealth(unit), UnitHealthMax(unit)
+    end)
+    if not ok then return nil end
+    local safeMax = SafeToNumber(maxHP, 1)
+    local safeHP = SafeToNumber(hp, 0)
+    if safeMax == 0 then safeMax = 1 end
+    return math.floor((safeHP / safeMax) * 100 + 0.5)
+end
+
+local function FormatHealthText(hp, hpPct, maxHP, style)
+    if not hp then return "" end
+    style = style or "percent"
+    if style == "percent" then
+        return (hpPct or 100) .. "%"
+    elseif style == "absolute" then
+        return FormatNumber(SafeToNumber(hp, 0))
+    elseif style == "both" then
+        return FormatNumber(SafeToNumber(hp, 0)) .. " | " .. (hpPct or 100) .. "%"
+    elseif style == "deficit" then
+        local safeHP = SafeToNumber(hp, 0)
+        local safeMax = SafeToNumber(maxHP, 1)
+        local deficit = safeMax - safeHP
+        if deficit > 0 then
+            return "-" .. FormatNumber(deficit)
+        end
+        return ""
+    end
+    return (hpPct or 100) .. "%"
+end
+
+---------------------------------------------------------------------------
+-- HELPERS: Group size + dimensions
+---------------------------------------------------------------------------
+local function GetGroupSize()
+    if IsInRaid() then
+        return GetNumGroupMembers()
+    elseif IsInGroup() then
+        return GetNumGroupMembers()
+    end
+    return 0
+end
+
+local function GetGroupMode()
+    if IsInRaid() then
+        local size = GetNumGroupMembers()
+        if size > 25 then return "large" end
+        if size > 15 then return "medium" end
+        return "small"
+    end
+    return "party"
+end
+
+local function GetFrameDimensions(mode)
+    local dims = GetDimensionSettings()
+    if not dims then return 200, 40 end
+
+    if mode == "party" then
+        return dims.partyWidth or 200, dims.partyHeight or 40
+    elseif mode == "small" then
+        return dims.smallRaidWidth or 180, dims.smallRaidHeight or 36
+    elseif mode == "medium" then
+        return dims.mediumRaidWidth or 160, dims.mediumRaidHeight or 30
+    elseif mode == "large" then
+        return dims.largeRaidWidth or 140, dims.largeRaidHeight or 24
+    end
+    return 200, 40
+end
+
+---------------------------------------------------------------------------
+-- HELPERS: Unit tooltip
+---------------------------------------------------------------------------
+local function ShowUnitTooltip(frame)
+    local db = GetSettings()
+    if not db or not db.general or db.general.showTooltips == false then return end
+    local unit = frame.unit
+    if not unit or not UnitExists(unit) then return end
+    GameTooltip:SetOwner(frame, "ANCHOR_RIGHT")
+    GameTooltip:SetUnit(unit)
+    GameTooltip:Show()
+end
+
+local function HideUnitTooltip()
+    GameTooltip:Hide()
+end
+
+---------------------------------------------------------------------------
+-- HELPERS: Health bar color
+---------------------------------------------------------------------------
+local function GetHealthBarColor(unit)
+    local general = GetGeneralSettings()
+    if general and general.darkMode then
+        local c = general.darkModeHealthColor or { 0.15, 0.15, 0.15, 1 }
+        return c[1], c[2], c[3], c[4] or 1
+    end
+
+    if general and general.useClassColor ~= false then
+        local _, class = UnitClass(unit)
+        if class then
+            local cc = RAID_CLASS_COLORS[class]
+            if cc then
+                return cc.r, cc.g, cc.b, 1
+            end
+        end
+    end
+
+    return 0.2, 0.8, 0.2, 1 -- Fallback green
+end
+
+---------------------------------------------------------------------------
+-- HELPERS: Power bar color
+---------------------------------------------------------------------------
+local function GetPowerBarColor(unit)
+    local db = GetPowerSettings()
+    if db and not db.powerBarUsePowerColor then
+        local c = db.powerBarColor or { 0.2, 0.4, 0.8, 1 }
+        return c[1], c[2], c[3], c[4] or 1
+    end
+
+    local ok, powerType = pcall(UnitPowerType, unit)
+    if ok and powerType then
+        local c = POWER_COLORS[powerType]
+        if c then return c[1], c[2], c[3], 1 end
+    end
+    return 0, 0.5, 1, 1 -- Default mana blue
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Health
+---------------------------------------------------------------------------
+local function UpdateHealth(frame)
+    if not frame or not frame.unit then return end
+    local unit = frame.unit
+
+    if not UnitExists(unit) then
+        if frame.healthBar then frame.healthBar:SetValue(0) end
+        if frame.healthText then frame.healthText:SetText("") end
+        return
+    end
+
+    -- Health bar value (StatusBar handles secret values natively)
+    if frame.healthBar then
+        local maxHP = UnitHealthMax(unit)
+        local hp = UnitHealth(unit)
+        pcall(frame.healthBar.SetMinMaxValues, frame.healthBar, 0, maxHP)
+        pcall(frame.healthBar.SetValue, frame.healthBar, hp)
+
+        -- Color
+        local isDeadOrGhost = UnitIsDeadOrGhost(unit)
+        local isConnected = UnitIsConnected(unit)
+        if not isConnected then
+            frame.healthBar:SetStatusBarColor(COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3], COLOR_OFFLINE[4])
+        elseif isDeadOrGhost then
+            frame.healthBar:SetStatusBarColor(COLOR_DEAD[1], COLOR_DEAD[2], COLOR_DEAD[3], COLOR_DEAD[4])
+        else
+            local r, g, b, a = GetHealthBarColor(unit)
+            frame.healthBar:SetStatusBarColor(r, g, b, a)
+        end
+    end
+
+    -- Health text
+    local healthSettings = GetHealthSettings()
+    if frame.healthText and healthSettings and healthSettings.showHealthText ~= false then
+        local isDeadOrGhost = UnitIsDeadOrGhost(unit)
+        local isConnected = UnitIsConnected(unit)
+        if not isConnected then
+            frame.healthText:SetText("Offline")
+            frame.healthText:SetTextColor(COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3])
+        elseif isDeadOrGhost then
+            frame.healthText:SetText("Dead")
+            frame.healthText:SetTextColor(COLOR_DEAD[1], COLOR_DEAD[2], COLOR_DEAD[3])
+        else
+            local hp = UnitHealth(unit)
+            local maxHP = UnitHealthMax(unit)
+            local hpPct = GetHealthPct(unit)
+            local style = healthSettings.healthDisplayStyle or "percent"
+            frame.healthText:SetText(FormatHealthText(hp, hpPct, maxHP, style))
+            local tc = healthSettings.healthTextColor or COLOR_WHITE
+            frame.healthText:SetTextColor(tc[1], tc[2], tc[3], tc[4] or 1)
+        end
+    elseif frame.healthText then
+        frame.healthText:SetText("")
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Power
+---------------------------------------------------------------------------
+local function UpdatePower(frame)
+    if not frame or not frame.unit or not frame.powerBar then return end
+    local unit = frame.unit
+
+    if not UnitExists(unit) then
+        frame.powerBar:SetValue(0)
+        return
+    end
+
+    local maxPower = UnitPowerMax(unit)
+    local power = UnitPower(unit)
+    pcall(frame.powerBar.SetMinMaxValues, frame.powerBar, 0, maxPower)
+    pcall(frame.powerBar.SetValue, frame.powerBar, power)
+
+    -- Update color
+    local r, g, b, a = GetPowerBarColor(unit)
+    frame.powerBar:SetStatusBarColor(r, g, b, a)
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Name
+---------------------------------------------------------------------------
+local function UpdateName(frame)
+    if not frame or not frame.unit or not frame.nameText then return end
+    local unit = frame.unit
+
+    if not UnitExists(unit) then
+        frame.nameText:SetText("")
+        return
+    end
+
+    local nameSettings = GetNameSettings()
+    if nameSettings and nameSettings.showName == false then
+        frame.nameText:SetText("")
+        return
+    end
+
+    local name = UnitName(unit)
+    if name then
+        local maxLen = nameSettings and nameSettings.maxNameLength or 10
+        if maxLen > 0 and #name > maxLen then
+            name = Helpers.TruncateUTF8 and Helpers.TruncateUTF8(name, maxLen) or name:sub(1, maxLen)
+        end
+        frame.nameText:SetText(name)
+
+        -- Color
+        if nameSettings and nameSettings.nameTextUseClassColor then
+            local _, class = UnitClass(unit)
+            if class then
+                local cc = RAID_CLASS_COLORS[class]
+                if cc then
+                    frame.nameText:SetTextColor(cc.r, cc.g, cc.b, 1)
+                    return
+                end
+            end
+        end
+        local tc = nameSettings and nameSettings.nameTextColor or COLOR_WHITE
+        frame.nameText:SetTextColor(tc[1], tc[2], tc[3], tc[4] or 1)
+    else
+        frame.nameText:SetText("")
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Absorbs
+---------------------------------------------------------------------------
+local function UpdateAbsorbs(frame)
+    if not frame or not frame.unit or not frame.absorbBar then return end
+    local db = GetSettings()
+    if not db or not db.absorbs or db.absorbs.enabled == false then
+        frame.absorbBar:Hide()
+        return
+    end
+
+    local unit = frame.unit
+    if not UnitExists(unit) or UnitIsDeadOrGhost(unit) then
+        frame.absorbBar:Hide()
+        return
+    end
+
+    local maxHP = UnitHealthMax(unit)
+    local absorbAmount = UnitGetTotalAbsorbs(unit)
+
+    -- Safe check for zero absorb
+    local hideAbsorb = false
+    if not absorbAmount then
+        hideAbsorb = true
+    else
+        local success, isZero = pcall(function() return absorbAmount == 0 end)
+        if success and isZero then hideAbsorb = true end
+    end
+
+    if hideAbsorb then
+        frame.absorbBar:Hide()
+        return
+    end
+
+    local healthTexture = frame.healthBar:GetStatusBarTexture()
+    frame.absorbBar:ClearAllPoints()
+    frame.absorbBar:SetPoint("LEFT", healthTexture, "RIGHT", 0, 0)
+    frame.absorbBar:SetHeight(frame.healthBar:GetHeight())
+    frame.absorbBar:SetWidth(frame.healthBar:GetWidth())
+    frame.absorbBar:SetMinMaxValues(0, maxHP or 1)
+    pcall(frame.absorbBar.SetValue, frame.absorbBar, absorbAmount)
+
+    local ac = db.absorbs.color or COLOR_WHITE
+    local aa = db.absorbs.opacity or 0.3
+    frame.absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
+    frame.absorbBar:Show()
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Heal Prediction
+---------------------------------------------------------------------------
+local function UpdateHealPrediction(frame)
+    if not frame or not frame.unit or not frame.healPredictionBar then return end
+    local db = GetSettings()
+    if not db or not db.healPrediction or db.healPrediction.enabled == false then
+        frame.healPredictionBar:Hide()
+        return
+    end
+
+    local unit = frame.unit
+    if not UnitExists(unit) or UnitIsDeadOrGhost(unit) then
+        frame.healPredictionBar:Hide()
+        return
+    end
+
+    local myIncoming = UnitGetIncomingHeals(unit, "player") or 0
+    local allIncoming = UnitGetIncomingHeals(unit) or 0
+    local totalIncoming = SafeToNumber(allIncoming, 0)
+
+    if totalIncoming <= 0 then
+        frame.healPredictionBar:Hide()
+        return
+    end
+
+    local maxHP = SafeToNumber(UnitHealthMax(unit), 1)
+    local currentHP = SafeToNumber(UnitHealth(unit), 0)
+    local healthTexture = frame.healthBar:GetStatusBarTexture()
+
+    -- Clamp prediction so it doesn't exceed max health
+    local predictedTotal = currentHP + totalIncoming
+    local clampedPrediction = math.min(totalIncoming, maxHP - currentHP)
+    if clampedPrediction <= 0 then
+        frame.healPredictionBar:Hide()
+        return
+    end
+
+    frame.healPredictionBar:ClearAllPoints()
+    frame.healPredictionBar:SetPoint("LEFT", healthTexture, "RIGHT", 0, 0)
+    frame.healPredictionBar:SetHeight(frame.healthBar:GetHeight())
+    frame.healPredictionBar:SetWidth(frame.healthBar:GetWidth())
+    frame.healPredictionBar:SetMinMaxValues(0, maxHP)
+    frame.healPredictionBar:SetValue(clampedPrediction)
+    frame.healPredictionBar:Show()
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Role Icon
+---------------------------------------------------------------------------
+local ROLE_ATLAS = {
+    TANK   = "roleicon-tiny-tank",
+    HEALER = "roleicon-tiny-healer",
+    DAMAGER = "roleicon-tiny-dps",
+}
+
+local function UpdateRoleIcon(frame)
+    if not frame or not frame.unit or not frame.roleIcon then return end
+    local indSettings = GetIndicatorSettings()
+    if not indSettings or indSettings.showRoleIcon == false then
+        frame.roleIcon:Hide()
+        return
+    end
+
+    local role = UnitGroupRolesAssigned(frame.unit)
+    local atlas = ROLE_ATLAS[role]
+    if atlas then
+        frame.roleIcon:SetAtlas(atlas)
+        frame.roleIcon:Show()
+    else
+        frame.roleIcon:Hide()
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Ready Check
+---------------------------------------------------------------------------
+local READY_CHECK_TEXTURES = {
+    ready    = "INTERFACE\\RAIDFRAME\\ReadyCheck-Ready",
+    notready = "INTERFACE\\RAIDFRAME\\ReadyCheck-NotReady",
+    waiting  = "INTERFACE\\RAIDFRAME\\ReadyCheck-Waiting",
+}
+
+local function UpdateReadyCheck(frame)
+    if not frame or not frame.unit or not frame.readyCheckIcon then return end
+    local indSettings = GetIndicatorSettings()
+    if not indSettings or indSettings.showReadyCheck == false then
+        frame.readyCheckIcon:Hide()
+        return
+    end
+
+    local status = GetReadyCheckStatus(frame.unit)
+    if status then
+        local tex = READY_CHECK_TEXTURES[status] or READY_CHECK_TEXTURES.waiting
+        frame.readyCheckIcon:SetTexture(tex)
+        frame.readyCheckIcon:Show()
+    else
+        frame.readyCheckIcon:Hide()
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Resurrection
+---------------------------------------------------------------------------
+local function UpdateResurrection(frame)
+    if not frame or not frame.unit or not frame.resIcon then return end
+    local indSettings = GetIndicatorSettings()
+    if not indSettings or indSettings.showResurrection == false then
+        frame.resIcon:Hide()
+        return
+    end
+
+    local hasRes = UnitHasIncomingResurrection(frame.unit)
+    if hasRes then
+        frame.resIcon:Show()
+    else
+        frame.resIcon:Hide()
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Summon Pending
+---------------------------------------------------------------------------
+local function UpdateSummonPending(frame)
+    if not frame or not frame.unit or not frame.summonIcon then return end
+    local indSettings = GetIndicatorSettings()
+    if not indSettings or indSettings.showSummonPending == false then
+        frame.summonIcon:Hide()
+        return
+    end
+
+    local hasSummon = C_IncomingSummon and C_IncomingSummon.HasIncomingSummon(frame.unit)
+    if hasSummon then
+        frame.summonIcon:Show()
+    else
+        frame.summonIcon:Hide()
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Threat Border
+---------------------------------------------------------------------------
+local function UpdateThreat(frame)
+    if not frame or not frame.unit or not frame.threatBorder then return end
+    local indSettings = GetIndicatorSettings()
+    if not indSettings or indSettings.showThreatBorder == false then
+        frame.threatBorder:Hide()
+        return
+    end
+
+    local ok, status = pcall(UnitThreatSituation, frame.unit)
+    if ok and status and status >= 2 then
+        local tc = indSettings.threatColor or { 1, 0, 0, 0.8 }
+        frame.threatBorder:SetBackdropBorderColor(tc[1], tc[2], tc[3], tc[4] or 0.8)
+        frame.threatBorder:Show()
+    else
+        frame.threatBorder:Hide()
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Target Marker (Raid Icon)
+---------------------------------------------------------------------------
+local function UpdateTargetMarker(frame)
+    if not frame or not frame.unit or not frame.targetMarker then return end
+    local indSettings = GetIndicatorSettings()
+    if not indSettings or indSettings.showTargetMarker == false then
+        frame.targetMarker:Hide()
+        return
+    end
+
+    local index = GetRaidTargetIndex(frame.unit)
+    if index then
+        frame.targetMarker:SetAtlas("raidtargetingicon_" .. index)
+        frame.targetMarker:Show()
+    else
+        frame.targetMarker:Hide()
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Leader Icon
+---------------------------------------------------------------------------
+local function UpdateLeaderIcon(frame)
+    if not frame or not frame.unit or not frame.leaderIcon then return end
+    local indSettings = GetIndicatorSettings()
+    if not indSettings or indSettings.showLeaderIcon == false then
+        frame.leaderIcon:Hide()
+        return
+    end
+
+    local isLeader = UnitIsGroupLeader(frame.unit)
+    local isAssistant = UnitIsGroupAssistant(frame.unit)
+    if isLeader then
+        frame.leaderIcon:SetAtlas("groupfinder-icon-leader")
+        frame.leaderIcon:Show()
+    elseif isAssistant then
+        frame.leaderIcon:SetAtlas("groupfinder-icon-leader") -- Same icon, slight dimming
+        frame.leaderIcon:SetAlpha(0.6)
+        frame.leaderIcon:Show()
+    else
+        frame.leaderIcon:Hide()
+        frame.leaderIcon:SetAlpha(1)
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Phase Icon
+---------------------------------------------------------------------------
+local function UpdatePhaseIcon(frame)
+    if not frame or not frame.unit or not frame.phaseIcon then return end
+    local indSettings = GetIndicatorSettings()
+    if not indSettings or indSettings.showPhaseIcon == false then
+        frame.phaseIcon:Hide()
+        return
+    end
+
+    local phased = not UnitInPhase(frame.unit) and UnitExists(frame.unit)
+    if phased then
+        frame.phaseIcon:Show()
+    else
+        frame.phaseIcon:Hide()
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Connection (offline dimming)
+---------------------------------------------------------------------------
+local function UpdateConnection(frame)
+    if not frame or not frame.unit then return end
+    local isConnected = UnitIsConnected(frame.unit)
+    if not isConnected and UnitExists(frame.unit) then
+        frame:SetAlpha(0.5)
+    else
+        -- Restore alpha (range check may override)
+        local rangeSettings = GetRangeSettings()
+        local state = GetFrameState(frame)
+        if state.outOfRange then
+            frame:SetAlpha(rangeSettings and rangeSettings.outOfRangeAlpha or 0.4)
+        else
+            frame:SetAlpha(1)
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Target Highlight
+---------------------------------------------------------------------------
+local function UpdateTargetHighlight(frame)
+    if not frame or not frame.targetHighlight then return end
+    local healerSettings = GetHealerSettings()
+    if not healerSettings or not healerSettings.targetHighlight or healerSettings.targetHighlight.enabled == false then
+        frame.targetHighlight:Hide()
+        return
+    end
+
+    if frame.unit and UnitIsUnit(frame.unit, "target") then
+        local c = healerSettings.targetHighlight.color or { 1, 1, 1, 0.6 }
+        frame.targetHighlight:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 0.6)
+        frame.targetHighlight:Show()
+    else
+        frame.targetHighlight:Hide()
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Dispel Overlay
+---------------------------------------------------------------------------
+local function UpdateDispelOverlay(frame)
+    if not frame or not frame.unit or not frame.dispelOverlay then return end
+    local healerSettings = GetHealerSettings()
+    if not healerSettings or not healerSettings.dispelOverlay or healerSettings.dispelOverlay.enabled == false then
+        frame.dispelOverlay:Hide()
+        return
+    end
+
+    if not UnitExists(frame.unit) or UnitIsDeadOrGhost(frame.unit) then
+        frame.dispelOverlay:Hide()
+        return
+    end
+
+    -- Find highest priority dispellable debuff
+    local dispelType = nil
+    local slot = 1
+    while true do
+        local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, frame.unit, slot)
+        if not ok or not auraData then break end
+        if auraData.isHarmful and auraData.dispelName then
+            local dType = SafeValue(auraData.dispelName, nil)
+            if dType and DISPEL_COLORS[dType] then
+                dispelType = dType
+                break -- Highest priority = first found
+            end
+        end
+        slot = slot + 1
+        if slot > 80 then break end -- Safety limit
+    end
+
+    if dispelType then
+        local c = DISPEL_COLORS[dispelType]
+        local opacity = healerSettings.dispelOverlay.opacity or 0.8
+        frame.dispelOverlay:SetBackdropBorderColor(c[1], c[2], c[3], opacity)
+        frame.dispelOverlay:Show()
+    else
+        frame.dispelOverlay:Hide()
+    end
+end
+
+---------------------------------------------------------------------------
+-- UPDATE: Full frame refresh
+---------------------------------------------------------------------------
+local function UpdateFrame(frame)
+    if not frame or not frame.unit then return end
+    UpdateHealth(frame)
+    UpdatePower(frame)
+    UpdateName(frame)
+    UpdateAbsorbs(frame)
+    UpdateHealPrediction(frame)
+    UpdateRoleIcon(frame)
+    UpdateReadyCheck(frame)
+    UpdateResurrection(frame)
+    UpdateSummonPending(frame)
+    UpdateThreat(frame)
+    UpdateTargetMarker(frame)
+    UpdateLeaderIcon(frame)
+    UpdatePhaseIcon(frame)
+    UpdateConnection(frame)
+    UpdateTargetHighlight(frame)
+    UpdateDispelOverlay(frame)
+end
+
+---------------------------------------------------------------------------
+-- DECORATE: Apply QUI visuals to a SecureGroupHeader child frame
+---------------------------------------------------------------------------
+local function DecorateGroupFrame(frame)
+    if not frame or frame._quiDecorated then return end
+    frame._quiDecorated = true
+
+    local db = GetSettings()
+    local general = GetGeneralSettings()
+    local mode = GetGroupMode()
+    local frameWidth, frameHeight = GetFrameDimensions(mode)
+
+    -- Backdrop
+    local borderPx = general and general.borderSize or 1
+    local borderSize = borderPx > 0 and (QUICore.Pixels and QUICore:Pixels(borderPx, frame) or borderPx) or 0
+    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
+
+    frame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = borderSize > 0 and "Interface\\Buttons\\WHITE8x8" or nil,
+        edgeSize = borderSize > 0 and borderSize or nil,
+    })
+
+    local bgColor = { 0.1, 0.1, 0.1, 0.9 }
+    if general and general.darkMode then
+        bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
+    end
+    frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+    if borderSize > 0 then
+        frame:SetBackdropBorderColor(0, 0, 0, 1)
+    end
+
+    -- Power bar height calculation
+    local powerSettings = GetPowerSettings()
+    local showPower = powerSettings and powerSettings.showPowerBar ~= false
+    local powerHeight = showPower and (QUICore.PixelRound and QUICore:PixelRound(powerSettings.powerBarHeight or 4, frame) or 4) or 0
+    local separatorHeight = showPower and px or 0
+
+    -- Health bar
+    local healthBar = CreateFrame("StatusBar", nil, frame)
+    healthBar:SetPoint("TOPLEFT", frame, "TOPLEFT", borderSize, -borderSize)
+    healthBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, borderSize + powerHeight + separatorHeight)
+    healthBar:SetStatusBarTexture(GetTexturePath())
+    healthBar:SetMinMaxValues(0, 100)
+    healthBar:SetValue(100)
+    healthBar:EnableMouse(false)
+    frame.healthBar = healthBar
+
+    -- Health bar background
+    local healthBg = healthBar:CreateTexture(nil, "BACKGROUND")
+    healthBg:SetAllPoints()
+    healthBg:SetTexture("Interface\\Buttons\\WHITE8x8")
+    healthBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
+    frame.healthBg = healthBg
+
+    -- Heal prediction bar
+    local predSettings = db and db.healPrediction
+    local healPredictionBar = CreateFrame("StatusBar", nil, healthBar)
+    healPredictionBar:SetStatusBarTexture(GetTexturePath())
+    healPredictionBar:SetFrameLevel(healthBar:GetFrameLevel() + 1)
+    healPredictionBar:SetPoint("TOP", healthBar, "TOP", 0, 0)
+    healPredictionBar:SetPoint("BOTTOM", healthBar, "BOTTOM", 0, 0)
+    healPredictionBar:SetMinMaxValues(0, 1)
+    healPredictionBar:SetValue(0)
+    local pc = predSettings and predSettings.color or { 0.2, 1, 0.2 }
+    local pa = predSettings and predSettings.opacity or 0.5
+    healPredictionBar:SetStatusBarColor(pc[1] or 0.2, pc[2] or 1, pc[3] or 0.2, pa)
+    healPredictionBar:Hide()
+    frame.healPredictionBar = healPredictionBar
+
+    -- Absorb bar
+    local absorbSettings = db and db.absorbs
+    local absorbBar = CreateFrame("StatusBar", nil, healthBar)
+    absorbBar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Fill")
+    local ac = absorbSettings and absorbSettings.color or COLOR_WHITE
+    local aa = absorbSettings and absorbSettings.opacity or 0.3
+    absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
+    absorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 1)
+    absorbBar:SetPoint("TOP", healthBar, "TOP", 0, 0)
+    absorbBar:SetPoint("BOTTOM", healthBar, "BOTTOM", 0, 0)
+    absorbBar:SetMinMaxValues(0, 1)
+    absorbBar:SetValue(0)
+    absorbBar:Hide()
+    frame.absorbBar = absorbBar
+
+    -- Power bar
+    if showPower then
+        local powerBar = CreateFrame("StatusBar", nil, frame)
+        powerBar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", borderSize, borderSize)
+        powerBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, borderSize)
+        powerBar:SetHeight(powerHeight)
+        powerBar:SetStatusBarTexture(GetTexturePath())
+        powerBar:SetMinMaxValues(0, 100)
+        powerBar:SetValue(100)
+        powerBar:EnableMouse(false)
+        frame.powerBar = powerBar
+
+        -- Power bar background
+        local powerBg = powerBar:CreateTexture(nil, "BACKGROUND")
+        powerBg:SetAllPoints()
+        powerBg:SetTexture("Interface\\Buttons\\WHITE8x8")
+        powerBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
+
+        -- Separator
+        local separator = powerBar:CreateTexture(nil, "OVERLAY")
+        separator:SetHeight(px)
+        separator:SetPoint("BOTTOMLEFT", powerBar, "TOPLEFT", 0, 0)
+        separator:SetPoint("BOTTOMRIGHT", powerBar, "TOPRIGHT", 0, 0)
+        separator:SetTexture("Interface\\Buttons\\WHITE8x8")
+        separator:SetVertexColor(0, 0, 0, 1)
+    end
+
+    -- Text frame (above health bar for layering)
+    local textFrame = CreateFrame("Frame", nil, frame)
+    textFrame:SetAllPoints()
+    textFrame:SetFrameLevel(healthBar:GetFrameLevel() + 3)
+
+    -- Name text
+    local fontPath = GetFontPath()
+    local fontOutline = GetFontOutline()
+    local nameSettings = GetNameSettings()
+    local nameFontSize = nameSettings and nameSettings.nameFontSize or 12
+    local nameAnchor = GetTextAnchorInfo(nameSettings and nameSettings.nameAnchor or "LEFT")
+    local nameOffsetX = nameSettings and nameSettings.nameOffsetX or 4
+    local nameOffsetY = nameSettings and nameSettings.nameOffsetY or 0
+
+    local nameText = textFrame:CreateFontString(nil, "OVERLAY")
+    nameText:SetFont(fontPath, nameFontSize, fontOutline)
+    nameText:SetPoint(nameAnchor.point, frame, nameAnchor.point, nameOffsetX, nameOffsetY)
+    nameText:SetJustifyH(nameAnchor.justify)
+    nameText:SetTextColor(1, 1, 1, 1)
+    frame.nameText = nameText
+
+    -- Health text
+    local healthSettings = GetHealthSettings()
+    local healthFontSize = healthSettings and healthSettings.healthFontSize or 12
+    local healthAnchor = GetTextAnchorInfo(healthSettings and healthSettings.healthAnchor or "RIGHT")
+    local healthOffsetX = healthSettings and healthSettings.healthOffsetX or -4
+    local healthOffsetY = healthSettings and healthSettings.healthOffsetY or 0
+
+    local healthText = textFrame:CreateFontString(nil, "OVERLAY")
+    healthText:SetFont(fontPath, healthFontSize, fontOutline)
+    healthText:SetPoint(healthAnchor.point, frame, healthAnchor.point, healthOffsetX, healthOffsetY)
+    healthText:SetJustifyH(healthAnchor.justify)
+    healthText:SetTextColor(1, 1, 1, 1)
+    frame.healthText = healthText
+
+    -- Role icon
+    local indSettings = GetIndicatorSettings()
+    local roleIconSize = indSettings and indSettings.roleIconSize or 12
+    local roleAnchor = indSettings and indSettings.roleIconAnchor or "TOPLEFT"
+
+    local roleIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    roleIcon:SetSize(roleIconSize, roleIconSize)
+    roleIcon:SetPoint(roleAnchor, frame, roleAnchor, 2, -2)
+    roleIcon:Hide()
+    frame.roleIcon = roleIcon
+
+    -- Ready check icon
+    local readyCheckIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    readyCheckIcon:SetSize(16, 16)
+    readyCheckIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    readyCheckIcon:Hide()
+    frame.readyCheckIcon = readyCheckIcon
+
+    -- Resurrection icon
+    local resIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    resIcon:SetSize(16, 16)
+    resIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    resIcon:SetAtlas("nameplates-icon-flag-horde") -- Placeholder, will be proper res icon
+    resIcon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
+    resIcon:Hide()
+    frame.resIcon = resIcon
+
+    -- Summon pending icon
+    local summonIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    summonIcon:SetSize(16, 16)
+    summonIcon:SetPoint("CENTER", frame, "CENTER", 16, 0)
+    summonIcon:SetAtlas("Raid-Icon-SummonPending")
+    summonIcon:Hide()
+    frame.summonIcon = summonIcon
+
+    -- Leader icon
+    local leaderIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    leaderIcon:SetSize(12, 12)
+    leaderIcon:SetPoint("TOP", frame, "TOP", 0, 6)
+    leaderIcon:Hide()
+    frame.leaderIcon = leaderIcon
+
+    -- Target marker (raid icon)
+    local targetMarker = textFrame:CreateTexture(nil, "OVERLAY")
+    targetMarker:SetSize(14, 14)
+    targetMarker:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, -2)
+    targetMarker:Hide()
+    frame.targetMarker = targetMarker
+
+    -- Phase icon
+    local phaseIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    phaseIcon:SetSize(16, 16)
+    phaseIcon:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 2, 2)
+    phaseIcon:SetAtlas("nameplates-icon-flag-horde") -- Placeholder
+    phaseIcon:SetTexture("Interface\\TargetingFrame\\UI-PhasingIcon")
+    phaseIcon:Hide()
+    frame.phaseIcon = phaseIcon
+
+    -- Threat border (overlay frame)
+    local threatBorder = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    threatBorder:SetAllPoints()
+    threatBorder:SetFrameLevel(frame:GetFrameLevel() + 5)
+    threatBorder:SetBackdrop({
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = borderSize > 0 and borderSize * 2 or px * 2,
+    })
+    threatBorder:Hide()
+    frame.threatBorder = threatBorder
+
+    -- Target highlight (overlay frame)
+    local targetHighlight = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    targetHighlight:SetPoint("TOPLEFT", -px, px)
+    targetHighlight:SetPoint("BOTTOMRIGHT", px, -px)
+    targetHighlight:SetFrameLevel(frame:GetFrameLevel() + 4)
+    targetHighlight:SetBackdrop({
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = px * 2,
+    })
+    targetHighlight:Hide()
+    frame.targetHighlight = targetHighlight
+
+    -- Dispel overlay (overlay frame)
+    local dispelOverlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    dispelOverlay:SetPoint("TOPLEFT", -px, px)
+    dispelOverlay:SetPoint("BOTTOMRIGHT", px, -px)
+    dispelOverlay:SetFrameLevel(frame:GetFrameLevel() + 6)
+    dispelOverlay:SetBackdrop({
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = px * 3,
+    })
+    dispelOverlay:Hide()
+    frame.dispelOverlay = dispelOverlay
+
+    -- Tooltip
+    frame:HookScript("OnEnter", function(self)
+        ShowUnitTooltip(self)
+    end)
+    frame:HookScript("OnLeave", HideUnitTooltip)
+
+    -- Register with Clique / click-cast
+    if ClickCastFrames then
+        ClickCastFrames[frame] = true
+    end
+
+    -- Store in flat list
+    table.insert(QUI_GF.allFrames, frame)
+end
+
+---------------------------------------------------------------------------
+-- UNIT FRAME MAP: Rebuild unit → frame lookup
+---------------------------------------------------------------------------
+local function RebuildUnitFrameMap()
+    wipe(QUI_GF.unitFrameMap)
+
+    for _, headerKey in ipairs({"party", "raid"}) do
+        local header = QUI_GF.headers[headerKey]
+        if header and header:IsShown() then
+            local i = 1
+            while true do
+                local child = header:GetAttribute("child" .. i)
+                if not child then break end
+                local unit = child:GetAttribute("unit")
+                if unit then
+                    QUI_GF.unitFrameMap[unit] = child
+                    -- Also map petN to the frame if needed
+                end
+                i = i + 1
+            end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- HEADER: Configure secure header attributes
+---------------------------------------------------------------------------
+local function ConfigurePartyHeader(header)
+    local layout = GetLayoutSettings()
+    if not layout then return end
+
+    header:SetAttribute("showParty", true)
+    header:SetAttribute("showPlayer", layout.showPlayer ~= false)
+    header:SetAttribute("showRaid", false)
+    header:SetAttribute("showSolo", false)
+    header:SetAttribute("maxColumns", 1)
+    header:SetAttribute("unitsPerColumn", 5)
+
+    local mode = "party"
+    local w, h = GetFrameDimensions(mode)
+    local spacing = layout.spacing or 2
+
+    -- Grow direction
+    local grow = layout.growDirection or "DOWN"
+    if grow == "DOWN" then
+        header:SetAttribute("point", "TOP")
+        header:SetAttribute("yOffset", -spacing)
+        header:SetAttribute("xOffset", 0)
+    elseif grow == "UP" then
+        header:SetAttribute("point", "BOTTOM")
+        header:SetAttribute("yOffset", spacing)
+        header:SetAttribute("xOffset", 0)
+    end
+
+    -- Sorting
+    if layout.sortByRole then
+        header:SetAttribute("groupBy", "ASSIGNEDROLE")
+        header:SetAttribute("groupingOrder", "TANK,HEALER,DAMAGER,NONE")
+    else
+        local sortMethod = layout.sortMethod or "INDEX"
+        header:SetAttribute("sortMethod", sortMethod)
+    end
+
+    -- Frame size via initial config
+    header:SetAttribute("_initialAttributeNames", "unit-width,unit-height")
+    header:SetAttribute("_initialAttribute-unit-width", w)
+    header:SetAttribute("_initialAttribute-unit-height", h)
+end
+
+local function ConfigureRaidHeader(header)
+    local layout = GetLayoutSettings()
+    if not layout then return end
+
+    header:SetAttribute("showRaid", true)
+    header:SetAttribute("showParty", false)
+    header:SetAttribute("showPlayer", false)
+    header:SetAttribute("showSolo", false)
+
+    local mode = GetGroupMode()
+    local w, h = GetFrameDimensions(mode)
+    local spacing = layout.spacing or 2
+    local groupSpacing = layout.groupSpacing or 10
+
+    -- Grow direction
+    local grow = layout.growDirection or "DOWN"
+    if grow == "DOWN" then
+        header:SetAttribute("point", "TOP")
+        header:SetAttribute("yOffset", -spacing)
+    else
+        header:SetAttribute("point", "BOTTOM")
+        header:SetAttribute("yOffset", spacing)
+    end
+
+    -- Columns for groups
+    local groupGrow = layout.groupGrowDirection or "RIGHT"
+    header:SetAttribute("maxColumns", 8)
+    header:SetAttribute("unitsPerColumn", 5)
+    header:SetAttribute("columnSpacing", groupSpacing)
+
+    if groupGrow == "RIGHT" then
+        header:SetAttribute("columnAnchorPoint", "LEFT")
+    else
+        header:SetAttribute("columnAnchorPoint", "RIGHT")
+    end
+
+    -- Group filtering
+    local groupBy = layout.groupBy or "GROUP"
+    if groupBy == "GROUP" then
+        header:SetAttribute("groupBy", "GROUP")
+        header:SetAttribute("groupFilter", "1,2,3,4,5,6,7,8")
+        header:SetAttribute("groupingOrder", "1,2,3,4,5,6,7,8")
+    elseif groupBy == "ROLE" then
+        header:SetAttribute("groupBy", "ASSIGNEDROLE")
+        header:SetAttribute("groupingOrder", "TANK,HEALER,DAMAGER,NONE")
+    elseif groupBy == "CLASS" then
+        header:SetAttribute("groupBy", "CLASS")
+        header:SetAttribute("groupingOrder", "WARRIOR,DEATHKNIGHT,PALADIN,MONK,PRIEST,SHAMAN,DRUID,ROGUE,MAGE,WARLOCK,HUNTER,DEMONHUNTER,EVOKER")
+    end
+
+    -- Sorting
+    if layout.sortByRole and groupBy ~= "ROLE" then
+        -- Role sort within groups
+        header:SetAttribute("sortMethod", "NAME")
+    else
+        header:SetAttribute("sortMethod", layout.sortMethod or "INDEX")
+    end
+
+    -- Frame size via initial config
+    header:SetAttribute("_initialAttributeNames", "unit-width,unit-height")
+    header:SetAttribute("_initialAttribute-unit-width", w)
+    header:SetAttribute("_initialAttribute-unit-height", h)
+end
+
+---------------------------------------------------------------------------
+-- HEADER: Create secure group headers
+---------------------------------------------------------------------------
+local function CreateHeaders()
+    local db = GetSettings()
+    if not db then return end
+    local layout = GetLayoutSettings()
+    local position = db.position
+
+    -- initialConfigFunction runs in secure context for each new child
+    local initConfigFunc = [[
+        local header = self:GetParent()
+        local w = header:GetAttribute("_initialAttribute-unit-width") or 200
+        local h = header:GetAttribute("_initialAttribute-unit-height") or 40
+        self:SetWidth(w)
+        self:SetHeight(h)
+        self:SetAttribute("*type1", "target")
+        self:SetAttribute("*type2", "togglemenu")
+        RegisterUnitWatch(self)
+    ]]
+
+    -- Party header
+    local partyHeader = CreateFrame("Frame", "QUI_PartyHeader", UIParent, "SecureGroupHeaderTemplate")
+    partyHeader:SetAttribute("template", "SecureUnitButtonTemplate, BackdropTemplate")
+    partyHeader:SetAttribute("initialConfigFunction", initConfigFunc)
+    ConfigurePartyHeader(partyHeader)
+
+    -- Position
+    local offsetX = position and position.offsetX or -400
+    local offsetY = position and position.offsetY or 0
+    partyHeader:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+    partyHeader:SetMovable(true)
+    partyHeader:SetClampedToScreen(true)
+    partyHeader:Hide()
+    QUI_GF.headers.party = partyHeader
+
+    -- Raid header
+    local raidHeader = CreateFrame("Frame", "QUI_RaidHeader", UIParent, "SecureGroupHeaderTemplate")
+    raidHeader:SetAttribute("template", "SecureUnitButtonTemplate, BackdropTemplate")
+    raidHeader:SetAttribute("initialConfigFunction", initConfigFunc)
+    ConfigureRaidHeader(raidHeader)
+
+    raidHeader:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+    raidHeader:SetMovable(true)
+    raidHeader:SetClampedToScreen(true)
+    raidHeader:Hide()
+    QUI_GF.headers.raid = raidHeader
+end
+
+---------------------------------------------------------------------------
+-- HEADER: Decorate all child frames in a header
+---------------------------------------------------------------------------
+local function DecorateHeaderChildren(header)
+    if not header then return end
+    local i = 1
+    while true do
+        local child = header:GetAttribute("child" .. i)
+        if not child then break end
+        DecorateGroupFrame(child)
+        -- Register for clicks
+        child:RegisterForClicks("AnyUp")
+        i = i + 1
+    end
+end
+
+---------------------------------------------------------------------------
+-- HEADER: Show/hide based on group status
+---------------------------------------------------------------------------
+local function UpdateHeaderVisibility()
+    if InCombatLockdown() then
+        pendingVisibilityUpdate = true
+        return
+    end
+
+    local db = GetSettings()
+    if not db or not db.enabled then
+        if QUI_GF.headers.party then QUI_GF.headers.party:Hide() end
+        if QUI_GF.headers.raid then QUI_GF.headers.raid:Hide() end
+        return
+    end
+
+    if QUI_GF.testMode then
+        -- Test mode handled by edit mode module
+        return
+    end
+
+    if IsInRaid() then
+        if QUI_GF.headers.party then QUI_GF.headers.party:Hide() end
+        if QUI_GF.headers.raid then QUI_GF.headers.raid:Show() end
+    elseif IsInGroup() then
+        if QUI_GF.headers.raid then QUI_GF.headers.raid:Hide() end
+        if QUI_GF.headers.party then QUI_GF.headers.party:Show() end
+    else
+        if QUI_GF.headers.party then QUI_GF.headers.party:Hide() end
+        if QUI_GF.headers.raid then QUI_GF.headers.raid:Hide() end
+    end
+
+    -- Defer decoration + map rebuild to next frame (after header creates children)
+    C_Timer.After(0.1, function()
+        DecorateHeaderChildren(QUI_GF.headers.party)
+        DecorateHeaderChildren(QUI_GF.headers.raid)
+        RebuildUnitFrameMap()
+        QUI_GF:RefreshAllFrames()
+    end)
+end
+
+---------------------------------------------------------------------------
+-- SCALING: Resize frames based on group size thresholds
+---------------------------------------------------------------------------
+local lastMode = nil
+
+local function UpdateFrameScaling()
+    local mode = GetGroupMode()
+    if mode == lastMode then return end
+    lastMode = mode
+
+    if InCombatLockdown() then
+        pendingResize = true
+        return
+    end
+
+    local w, h = GetFrameDimensions(mode)
+
+    -- Update header attributes (secure context — must be out of combat)
+    for _, headerKey in ipairs({"party", "raid"}) do
+        local header = QUI_GF.headers[headerKey]
+        if header then
+            header:SetAttribute("_initialAttribute-unit-width", w)
+            header:SetAttribute("_initialAttribute-unit-height", h)
+
+            -- Resize existing children
+            local i = 1
+            while true do
+                local child = header:GetAttribute("child" .. i)
+                if not child then break end
+                child:SetSize(w, h)
+                -- Re-layout health/power bars
+                if child.healthBar and child.powerBar then
+                    local general = GetGeneralSettings()
+                    local borderPx = general and general.borderSize or 1
+                    local borderSize = borderPx > 0 and (QUICore.Pixels and QUICore:Pixels(borderPx, child) or borderPx) or 0
+                    local powerSettings = GetPowerSettings()
+                    local powerHeight = powerSettings and powerSettings.showPowerBar ~= false and
+                        (QUICore.PixelRound and QUICore:PixelRound(powerSettings.powerBarHeight or 4, child) or 4) or 0
+                    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(child) or 1
+                    local sepH = powerHeight > 0 and px or 0
+
+                    child.healthBar:ClearAllPoints()
+                    child.healthBar:SetPoint("TOPLEFT", child, "TOPLEFT", borderSize, -borderSize)
+                    child.healthBar:SetPoint("BOTTOMRIGHT", child, "BOTTOMRIGHT", -borderSize, borderSize + powerHeight + sepH)
+
+                    if child.powerBar then
+                        child.powerBar:ClearAllPoints()
+                        child.powerBar:SetPoint("BOTTOMLEFT", child, "BOTTOMLEFT", borderSize, borderSize)
+                        child.powerBar:SetPoint("BOTTOMRIGHT", child, "BOTTOMRIGHT", -borderSize, borderSize)
+                        child.powerBar:SetHeight(powerHeight)
+                    end
+                end
+                i = i + 1
+            end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- RANGE CHECK: Ticker-based range dimming
+---------------------------------------------------------------------------
+local rangeCheckTicker = nil
+
+local function GetRangeCheckSpellID()
+    -- Use UnitInRange as primary (reliable for most classes)
+    return nil
+end
+
+local function DoRangeCheck()
+    local rangeSettings = GetRangeSettings()
+    if not rangeSettings or rangeSettings.enabled == false then return end
+
+    local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
+
+    for unit, frame in pairs(QUI_GF.unitFrameMap) do
+        if frame and frame:IsShown() and UnitExists(unit) then
+            local state = GetFrameState(frame)
+            local inRange = false
+
+            if UnitIsConnected(unit) and not UnitIsDeadOrGhost(unit) then
+                -- Try C_Spell.IsSpellInRange first for class-specific range
+                local ok, result = pcall(UnitInRange, unit)
+                if ok then
+                    inRange = result
+                else
+                    inRange = true -- Assume in range on error
+                end
+            else
+                inRange = true -- Don't dim disconnected/dead (handled elsewhere)
+            end
+
+            if inRange then
+                if state.outOfRange then
+                    state.outOfRange = false
+                    frame:SetAlpha(1)
+                end
+            else
+                if not state.outOfRange then
+                    state.outOfRange = true
+                    frame:SetAlpha(outAlpha)
+                end
+            end
+        end
+    end
+end
+
+local function StartRangeCheck()
+    if rangeCheckTicker then return end
+    local rangeSettings = GetRangeSettings()
+    if not rangeSettings or rangeSettings.enabled == false then return end
+
+    -- Longer interval for large raids
+    local interval = GetGroupSize() > 25 and 0.3 or 0.2
+    rangeCheckTicker = C_Timer.NewTicker(interval, DoRangeCheck)
+end
+
+local function StopRangeCheck()
+    if rangeCheckTicker then
+        rangeCheckTicker:Cancel()
+        rangeCheckTicker = nil
+    end
+end
+
+---------------------------------------------------------------------------
+-- EVENTS: Centralized event dispatch
+---------------------------------------------------------------------------
+local eventFrame = CreateFrame("Frame")
+
+local function OnEvent(self, event, arg1, ...)
+    if not QUI_GF.initialized then return end
+    local db = GetSettings()
+    if not db or not db.enabled then return end
+
+    -- Unit-specific events — dispatch via lookup map
+    if arg1 and QUI_GF.unitFrameMap[arg1] then
+        local frame = QUI_GF.unitFrameMap[arg1]
+
+        if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
+            -- Throttle
+            local now = GetTime()
+            local last = healthThrottle[arg1] or 0
+            if (now - last) < THROTTLE_INTERVAL then return end
+            healthThrottle[arg1] = now
+            UpdateHealth(frame)
+            UpdateAbsorbs(frame)
+            UpdateHealPrediction(frame)
+
+        elseif event == "UNIT_POWER_UPDATE" or event == "UNIT_POWER_FREQUENT" then
+            local now = GetTime()
+            local last = powerThrottle[arg1] or 0
+            if (now - last) < THROTTLE_INTERVAL then return end
+            powerThrottle[arg1] = now
+            UpdatePower(frame)
+
+        elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" then
+            UpdateAbsorbs(frame)
+
+        elseif event == "UNIT_HEAL_PREDICTION" then
+            UpdateHealPrediction(frame)
+
+        elseif event == "UNIT_NAME_UPDATE" then
+            UpdateName(frame)
+
+        elseif event == "UNIT_THREAT_SITUATION_UPDATE" then
+            UpdateThreat(frame)
+
+        elseif event == "UNIT_AURA" then
+            UpdateDispelOverlay(frame)
+            -- Aura icons handled by groupframes_auras.lua
+
+        elseif event == "UNIT_CONNECTION" or event == "UNIT_FLAGS" then
+            UpdateConnection(frame)
+            UpdateHealth(frame)
+
+        elseif event == "UNIT_PHASE" then
+            UpdatePhaseIcon(frame)
+
+        elseif event == "INCOMING_RESURRECT_CHANGED" then
+            UpdateResurrection(frame)
+
+        elseif event == "INCOMING_SUMMON_CHANGED" then
+            UpdateSummonPending(frame)
+        end
+        return
+    end
+
+    -- Non-unit events — iterate relevant frames
+    if event == "GROUP_ROSTER_UPDATE" then
+        UpdateHeaderVisibility()
+        UpdateFrameScaling()
+        -- Rebuild map after a short delay (header needs time to create children)
+        C_Timer.After(0.2, function()
+            DecorateHeaderChildren(QUI_GF.headers.party)
+            DecorateHeaderChildren(QUI_GF.headers.raid)
+            RebuildUnitFrameMap()
+            QUI_GF:RefreshAllFrames()
+        end)
+        -- Restart range check with appropriate interval
+        StopRangeCheck()
+        StartRangeCheck()
+
+    elseif event == "PLAYER_TARGET_CHANGED" then
+        for _, frame in pairs(QUI_GF.unitFrameMap) do
+            UpdateTargetHighlight(frame)
+        end
+
+    elseif event == "READY_CHECK" or event == "READY_CHECK_CONFIRM" then
+        for _, frame in pairs(QUI_GF.unitFrameMap) do
+            UpdateReadyCheck(frame)
+        end
+
+    elseif event == "READY_CHECK_FINISHED" then
+        -- Hide ready check icons after delay
+        C_Timer.After(6, function()
+            for _, frame in pairs(QUI_GF.unitFrameMap) do
+                if frame.readyCheckIcon then
+                    frame.readyCheckIcon:Hide()
+                end
+            end
+        end)
+
+    elseif event == "RAID_TARGET_UPDATE" then
+        for _, frame in pairs(QUI_GF.unitFrameMap) do
+            UpdateTargetMarker(frame)
+        end
+
+    elseif event == "PARTY_LEADER_CHANGED" then
+        for _, frame in pairs(QUI_GF.unitFrameMap) do
+            UpdateLeaderIcon(frame)
+        end
+
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        -- Process deferred operations
+        if pendingResize then
+            pendingResize = false
+            UpdateFrameScaling()
+        end
+        if pendingVisibilityUpdate then
+            pendingVisibilityUpdate = false
+            UpdateHeaderVisibility()
+        end
+        if pendingInitialize then
+            pendingInitialize = false
+            QUI_GF:Initialize()
+        end
+
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        C_Timer.After(1.0, function()
+            UpdateHeaderVisibility()
+            UpdateFrameScaling()
+        end)
+    end
+end
+
+eventFrame:SetScript("OnEvent", OnEvent)
+
+---------------------------------------------------------------------------
+-- EVENT REGISTRATION
+---------------------------------------------------------------------------
+local function RegisterEvents()
+    -- Group events
+    eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+
+    -- Unit events (will be routed via unitFrameMap)
+    eventFrame:RegisterEvent("UNIT_HEALTH")
+    eventFrame:RegisterEvent("UNIT_MAXHEALTH")
+    eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
+    eventFrame:RegisterEvent("UNIT_ABSORB_AMOUNT_CHANGED")
+    eventFrame:RegisterEvent("UNIT_HEAL_PREDICTION")
+    eventFrame:RegisterEvent("UNIT_NAME_UPDATE")
+    eventFrame:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
+    eventFrame:RegisterEvent("UNIT_AURA")
+    eventFrame:RegisterEvent("UNIT_CONNECTION")
+    eventFrame:RegisterEvent("UNIT_FLAGS")
+    eventFrame:RegisterEvent("UNIT_PHASE")
+    eventFrame:RegisterEvent("INCOMING_RESURRECT_CHANGED")
+    eventFrame:RegisterEvent("INCOMING_SUMMON_CHANGED")
+
+    -- Non-unit events
+    eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+    eventFrame:RegisterEvent("READY_CHECK")
+    eventFrame:RegisterEvent("READY_CHECK_CONFIRM")
+    eventFrame:RegisterEvent("READY_CHECK_FINISHED")
+    eventFrame:RegisterEvent("RAID_TARGET_UPDATE")
+    eventFrame:RegisterEvent("PARTY_LEADER_CHANGED")
+end
+
+local function UnregisterEvents()
+    eventFrame:UnregisterAllEvents()
+end
+
+---------------------------------------------------------------------------
+-- SELECTIVE EVENT REGISTRATION: Unregister power events for large raids
+---------------------------------------------------------------------------
+local function UpdateSelectiveEvents()
+    local db = GetSettings()
+    local powerSettings = GetPowerSettings()
+    local mode = GetGroupMode()
+
+    if mode == "large" and (not powerSettings or powerSettings.showPowerBar == false) then
+        eventFrame:UnregisterEvent("UNIT_POWER_UPDATE")
+        eventFrame:UnregisterEvent("UNIT_POWER_FREQUENT")
+    else
+        eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
+    end
+end
+
+---------------------------------------------------------------------------
+-- REFRESH ALL: Update all visible frames
+---------------------------------------------------------------------------
+function QUI_GF:RefreshAllFrames()
+    for _, frame in pairs(self.unitFrameMap) do
+        if frame and frame:IsShown() then
+            UpdateFrame(frame)
+        end
+    end
+
+    -- Also trigger aura/indicator updates via module callbacks
+    if ns.QUI_GroupFrameAuras and ns.QUI_GroupFrameAuras.RefreshAll then
+        ns.QUI_GroupFrameAuras:RefreshAll()
+    end
+    if ns.QUI_GroupFrameIndicators and ns.QUI_GroupFrameIndicators.RefreshAll then
+        ns.QUI_GroupFrameIndicators:RefreshAll()
+    end
+end
+
+---------------------------------------------------------------------------
+-- REFRESH: Settings changed (called from options panel)
+---------------------------------------------------------------------------
+function QUI_GF:RefreshSettings()
+    InvalidateCache()
+
+    if not self.initialized then return end
+
+    local db = GetSettings()
+    if not db or not db.enabled then
+        self:Disable()
+        return
+    end
+
+    if InCombatLockdown() then
+        pendingResize = true
+        return
+    end
+
+    -- Re-configure headers
+    if self.headers.party then ConfigurePartyHeader(self.headers.party) end
+    if self.headers.raid then ConfigureRaidHeader(self.headers.raid) end
+
+    -- Force re-decoration of all children
+    for _, frame in pairs(self.allFrames) do
+        frame._quiDecorated = false
+    end
+    wipe(self.allFrames)
+
+    -- Update visibility + redecorate
+    UpdateHeaderVisibility()
+    UpdateFrameScaling()
+    UpdateSelectiveEvents()
+end
+
+---------------------------------------------------------------------------
+-- HUD LAYERING
+---------------------------------------------------------------------------
+local function ApplyHUDLayering()
+    local profile = QUI.db and QUI.db.profile
+    local layering = profile and profile.hudLayering
+    local level = layering and layering.groupFrames or 4
+
+    if QUICore.GetHUDFrameLevel then
+        local frameLevel = QUICore:GetHUDFrameLevel(level)
+        for _, headerKey in ipairs({"party", "raid"}) do
+            local header = QUI_GF.headers[headerKey]
+            if header then
+                pcall(header.SetFrameLevel, header, frameLevel)
+            end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- INITIALIZE
+---------------------------------------------------------------------------
+function QUI_GF:Initialize()
+    local db = GetSettings()
+    if not db or not db.enabled then return end
+
+    if InCombatLockdown() then
+        pendingInitialize = true
+        return
+    end
+
+    -- Create headers
+    CreateHeaders()
+
+    -- Register events
+    RegisterEvents()
+
+    -- Apply HUD layering
+    ApplyHUDLayering()
+
+    -- Show appropriate header based on group status
+    UpdateHeaderVisibility()
+
+    -- Start range check
+    StartRangeCheck()
+
+    self.initialized = true
+
+    -- Hide Blizzard group frames
+    if ns.QUI_GroupFrameBlizzard and ns.QUI_GroupFrameBlizzard.HideBlizzardFrames then
+        ns.QUI_GroupFrameBlizzard:HideBlizzardFrames()
+    end
+
+    -- Delayed full refresh
+    C_Timer.After(1.5, function()
+        self:RefreshAllFrames()
+    end)
+end
+
+---------------------------------------------------------------------------
+-- DISABLE
+---------------------------------------------------------------------------
+function QUI_GF:Disable()
+    UnregisterEvents()
+    StopRangeCheck()
+
+    if InCombatLockdown() then return end
+
+    for _, headerKey in ipairs({"party", "raid"}) do
+        local header = self.headers[headerKey]
+        if header then
+            header:Hide()
+        end
+    end
+
+    wipe(self.unitFrameMap)
+    self.initialized = false
+
+    -- Restore Blizzard frames
+    if ns.QUI_GroupFrameBlizzard and ns.QUI_GroupFrameBlizzard.RestoreBlizzardFrames then
+        ns.QUI_GroupFrameBlizzard:RestoreBlizzardFrames()
+    end
+end
+
+---------------------------------------------------------------------------
+-- STARTUP: Init on PLAYER_LOGIN
+---------------------------------------------------------------------------
+local initFrame = CreateFrame("Frame")
+initFrame:RegisterEvent("PLAYER_LOGIN")
+initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+initFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+
+initFrame:SetScript("OnEvent", function(self, event)
+    if event == "PLAYER_LOGIN" then
+        C_Timer.After(0.5, function()
+            QUI_GF:Initialize()
+        end)
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        if QUI_GF.initialized then
+            C_Timer.After(1.0, function()
+                UpdateHeaderVisibility()
+                QUI_GF:RefreshAllFrames()
+            end)
+        end
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        if pendingInitialize then
+            pendingInitialize = false
+            QUI_GF:Initialize()
+        end
+    end
+end)
+
+---------------------------------------------------------------------------
+-- PUBLIC API (for other modules)
+---------------------------------------------------------------------------
+function QUI_GF:GetUnitFrame(unit)
+    return self.unitFrameMap[unit]
+end
+
+function QUI_GF:GetAllFrames()
+    return self.unitFrameMap
+end
+
+function QUI_GF:GetHeaders()
+    return self.headers
+end
+
+function QUI_GF:IsEnabled()
+    local db = GetSettings()
+    return db and db.enabled
+end
+
+function QUI_GF:IsInitialized()
+    return self.initialized
+end
+
+-- Global refresh function for options panel
+_G.QUI_RefreshGroupFrames = function()
+    QUI_GF:RefreshSettings()
+end
