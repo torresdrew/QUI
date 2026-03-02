@@ -3617,6 +3617,8 @@ function QUICore:OnProfileChanged(event, db, profileKey)
         local RefreshCooldownSwipe = _G.QUI_RefreshCooldownSwipe
         local RefreshReticle = _G.QUI_RefreshReticle
         local RefreshCustomTrackers = _G.QUI_RefreshCustomTrackers
+        local ApplyAllFrameAnchors = _G.QUI_ApplyAllFrameAnchors
+        if ApplyAllFrameAnchors then ApplyAllFrameAnchors() end
         if RefreshUnitFrames then RefreshUnitFrames() end
         if RefreshNCDM then RefreshNCDM() end
         if RefreshCDMVisibility then RefreshCDMVisibility() end
