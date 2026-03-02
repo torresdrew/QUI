@@ -159,6 +159,12 @@ local function ShouldSuppressMouseoverHideForLevel()
 end
 
 local function IsLeaveVehicleButtonVisible()
+    -- Only apply when player is actually in a vehicle; prevents bar1 staying visible
+    -- when keepLeaveVehicleVisible is enabled but player is not in a vehicle
+    if not (UnitInVehicle and UnitInVehicle("player")) then
+        return false
+    end
+
     if CanExitVehicle and CanExitVehicle() then
         return true
     end
