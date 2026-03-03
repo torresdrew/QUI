@@ -1382,6 +1382,7 @@ local defaults = {
                 countOffsetY = 0,           -- Stack count text Y offset
                 -- Bar Layout settings
                 barScale = 1.0,             -- Global scale multiplier (0.5 - 2.0)
+                buttonSpacing = nil,        -- Button spacing override (nil = use Blizzard Edit Mode padding)
                 hideEmptySlots = false,     -- Hide buttons with no ability assigned
                 lockButtons = false,        -- Prevent dragging abilities off buttons
                 -- Range indicator settings
