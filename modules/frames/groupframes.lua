@@ -219,64 +219,9 @@ local function FormatNumber(num)
 end
 
 local function GetHealthPct(unit)
-    -- Use C-side UnitHealthPercent (handles secret values natively)
-    if type(UnitHealthPercent) == "function" then
-        local ok, pct
-        if CurveConstants and CurveConstants.ScaleTo100 then
-            ok, pct = pcall(UnitHealthPercent, unit, false, CurveConstants.ScaleTo100)
-        end
-        if not ok or pct == nil then
-            ok, pct = pcall(UnitHealthPercent, unit, false)
-        end
-        if ok and pct ~= nil then
-            return pct
-        end
-    end
-    -- Manual fallback (pre-12.0 or API unavailable)
-    local calcOk, result = pcall(function()
-        local hp = UnitHealth(unit)
-        local maxHP = UnitHealthMax(unit)
-        if hp and maxHP and maxHP > 0 then
-            return math.floor((hp / maxHP) * 100 + 0.5)
-        end
-        return nil
-    end)
-    return calcOk and result or nil
-end
-
-local function FormatHealthText(hp, hpPct, maxHP, style)
-    -- All values may be secret (tainted) — use pcall for any arithmetic/formatting
-    -- Mirrors the unit frames approach: individual pcall per format operation
-    local abbr = AbbreviateNumbers or AbbreviateLargeNumbers
-    style = style or "percent"
-    if style == "percent" then
-        if not hpPct then return "" end
-        local ok, str = pcall(function() return string.format("%d%%", hpPct) end)
-        return ok and str or ""
-    elseif style == "absolute" then
-        local ok, str = pcall(function() return abbr and abbr(hp) or tostring(hp) end)
-        return ok and str or ""
-    elseif style == "both" then
-        local ok, hpStr = pcall(function() return abbr and abbr(hp) or tostring(hp) end)
-        if not ok then hpStr = "" end
-        if hpPct then
-            local ok2, str = pcall(function() return string.format("%s | %d%%", hpStr, hpPct) end)
-            return ok2 and str or hpStr
-        end
-        return hpStr
-    elseif style == "deficit" then
-        local ok, str = pcall(function()
-            local deficit = maxHP - hp
-            if deficit > 0 then
-                return "-" .. (abbr and abbr(deficit) or tostring(deficit))
-            end
-            return ""
-        end)
-        return ok and str or ""
-    end
-    if not hpPct then return "" end
-    local ok, str = pcall(function() return string.format("%d%%", hpPct) end)
-    return ok and str or ""
+    -- C-side UnitHealthPercent handles secret values natively — no pcall needed
+    -- Returns 0-100 via CurveConstants.ScaleTo100 (matches DandersFrames pattern)
+    return UnitHealthPercent(unit, true, CurveConstants.ScaleTo100)
 end
 
 ---------------------------------------------------------------------------
@@ -388,16 +333,17 @@ local function UpdateHealth(frame)
         return
     end
 
-    -- Health bar value (StatusBar handles secret values natively)
+    local isDeadOrGhost = UnitIsDeadOrGhost(unit)
+    local isConnected = UnitIsConnected(unit) or IsNPCPartyMember(unit)
+
+    -- Health bar value — use percentage-based approach (matches DandersFrames)
+    -- UnitHealthPercent returns 0-100 via CurveConstants.ScaleTo100, C-side handles secrets
     if frame.healthBar then
-        local maxHP = UnitHealthMax(unit)
-        local hp = UnitHealth(unit)
-        pcall(frame.healthBar.SetMinMaxValues, frame.healthBar, 0, maxHP)
-        pcall(frame.healthBar.SetValue, frame.healthBar, hp)
+        local pct = GetHealthPct(unit)
+        frame.healthBar:SetMinMaxValues(0, 100)
+        frame.healthBar:SetValue(pct)
 
         -- Color
-        local isDeadOrGhost = UnitIsDeadOrGhost(unit)
-        local isConnected = UnitIsConnected(unit) or IsNPCPartyMember(unit)
         if not isConnected then
             frame.healthBar:SetStatusBarColor(COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3], COLOR_OFFLINE[4])
         elseif isDeadOrGhost then
@@ -408,11 +354,9 @@ local function UpdateHealth(frame)
         end
     end
 
-    -- Health text
+    -- Health text — use SetFormattedText (C-side) which handles secret values natively
     local healthSettings = GetHealthSettings()
     if frame.healthText and healthSettings and healthSettings.showHealthText ~= false then
-        local isDeadOrGhost = UnitIsDeadOrGhost(unit)
-        local isConnected = UnitIsConnected(unit) or IsNPCPartyMember(unit)
         if not isConnected then
             frame.healthText:SetText("Offline")
             frame.healthText:SetTextColor(COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3])
@@ -420,13 +364,41 @@ local function UpdateHealth(frame)
             frame.healthText:SetText("Dead")
             frame.healthText:SetTextColor(COLOR_DEAD[1], COLOR_DEAD[2], COLOR_DEAD[3])
         else
-            local hp = UnitHealth(unit)
-            local maxHP = UnitHealthMax(unit)
-            local hpPct = GetHealthPct(unit)
             local style = healthSettings.healthDisplayStyle or "percent"
-            local text = FormatHealthText(hp, hpPct, maxHP, style)
-            -- text may be a secret string — pass directly to C-side SetText
-            pcall(frame.healthText.SetText, frame.healthText, text or "")
+            local abbr = AbbreviateNumbers or AbbreviateLargeNumbers
+            if style == "percent" then
+                local pct = GetHealthPct(unit)
+                frame.healthText:SetFormattedText("%.0f%%", pct)
+            elseif style == "absolute" then
+                local hp = UnitHealth(unit, true)
+                if abbr then
+                    frame.healthText:SetText(abbr(hp))
+                else
+                    frame.healthText:SetFormattedText("%s", hp)
+                end
+            elseif style == "both" then
+                local hp = UnitHealth(unit, true)
+                local pct = GetHealthPct(unit)
+                if abbr then
+                    frame.healthText:SetFormattedText("%s | %.0f%%", abbr(hp), pct)
+                else
+                    frame.healthText:SetFormattedText("%s | %.0f%%", hp, pct)
+                end
+            elseif style == "deficit" then
+                local miss = UnitHealthMissing(unit, true)
+                if C_StringUtil and C_StringUtil.TruncateWhenZero and C_StringUtil.WrapString then
+                    local truncated = C_StringUtil.TruncateWhenZero(miss)
+                    local result = C_StringUtil.WrapString(truncated, "-")
+                    frame.healthText:SetText(result)
+                elseif abbr then
+                    frame.healthText:SetFormattedText("-%s", abbr(miss))
+                else
+                    frame.healthText:SetFormattedText("-%s", miss)
+                end
+            else
+                local pct = GetHealthPct(unit)
+                frame.healthText:SetFormattedText("%.0f%%", pct)
+            end
             local tc = healthSettings.healthTextColor or COLOR_WHITE
             frame.healthText:SetTextColor(tc[1], tc[2], tc[3], tc[4] or 1)
         end
@@ -447,10 +419,18 @@ local function UpdatePower(frame)
         return
     end
 
-    local maxPower = UnitPowerMax(unit)
     local power = UnitPower(unit)
-    pcall(frame.powerBar.SetMinMaxValues, frame.powerBar, 0, maxPower)
-    pcall(frame.powerBar.SetValue, frame.powerBar, power)
+    local maxPower = UnitPowerMax(unit)
+
+    -- If values are secret (not numbers), hide the bar (matches DandersFrames pattern)
+    if type(power) ~= "number" or type(maxPower) ~= "number" then
+        frame.powerBar:Hide()
+        return
+    end
+
+    -- C-side SetMinMaxValues/SetValue handle values natively — no pcall needed
+    frame.powerBar:SetMinMaxValues(0, maxPower)
+    frame.powerBar:SetValue(power)
 
     -- Update color
     local r, g, b, a = GetPowerBarColor(unit)
@@ -521,25 +501,22 @@ local function UpdateAbsorbs(frame)
     local maxHP = UnitHealthMax(unit)
     local absorbAmount = UnitGetTotalAbsorbs(unit)
 
-    -- Check for nil or definitively zero (pcall handles secret values)
+    -- Only hide on nil (API unavailable). Do NOT check for zero — StatusBar
+    -- naturally shows 0-width when value is 0 (matches DandersFrames pattern).
+    -- absorbAmount may be a secret value; pass directly to C-side.
     if not absorbAmount then
         frame.absorbBar:Hide()
         return
     end
-    local success, isZero = pcall(function() return absorbAmount == 0 end)
-    if success and isZero then
-        frame.absorbBar:Hide()
-        return
-    end
 
-    -- Pass values directly to C-side (handles secret values natively)
+    -- C-side SetMinMaxValues/SetValue handle secret values natively — no pcall needed
     -- Reverse fill from right, clamped to maxHP by StatusBar
     frame.absorbBar:SetFrameLevel(frame.healthBar:GetFrameLevel() + 2)
     frame.absorbBar:ClearAllPoints()
     frame.absorbBar:SetAllPoints(frame.healthBar)
     frame.absorbBar:SetReverseFill(true)
-    pcall(frame.absorbBar.SetMinMaxValues, frame.absorbBar, 0, maxHP)
-    pcall(frame.absorbBar.SetValue, frame.absorbBar, absorbAmount)
+    frame.absorbBar:SetMinMaxValues(0, maxHP)
+    frame.absorbBar:SetValue(absorbAmount)
 
     local ac = db.absorbs.color or COLOR_WHITE
     local aa = db.absorbs.opacity or 0.3
@@ -564,29 +541,42 @@ local function UpdateHealPrediction(frame)
         return
     end
 
-    local allIncoming = UnitGetIncomingHeals(unit)
+    local maxHP = UnitHealthMax(unit)
+    local incomingHeals
 
-    -- Check for nil or definitively zero (pcall handles secret values)
-    if not allIncoming then
-        frame.healPredictionBar:Hide()
-        return
+    -- Use CreateUnitHealPredictionCalculator (11.1+) if available (matches DandersFrames pattern)
+    if CreateUnitHealPredictionCalculator then
+        if not frame._healPredCalc then
+            frame._healPredCalc = CreateUnitHealPredictionCalculator()
+        end
+        local calc = frame._healPredCalc
+        calc:SetIncomingHealClampMode(0) -- Clamp to max health
+        calc:SetIncomingHealOverflowPercent(1.0)
+        UnitGetDetailedHealPrediction(unit, nil, calc)
+        incomingHeals = calc:GetIncomingHeals()
+    else
+        -- Fallback to simple API
+        incomingHeals = UnitGetIncomingHeals(unit)
     end
-    local success, isZero = pcall(function() return allIncoming == 0 end)
-    if success and isZero then
+
+    -- Only hide on nil (API unavailable). Do NOT check for zero — StatusBar
+    -- naturally shows 0-width when value is 0 (matches DandersFrames pattern).
+    if not incomingHeals then
         frame.healPredictionBar:Hide()
         return
     end
 
     -- Anchor from health fill edge to health bar right edge — naturally constrains
-    -- to remaining space, no Lua-side math needed. C-side handles secret values.
-    local maxHP = UnitHealthMax(unit)
+    -- to remaining space, no Lua-side math needed.
     local healthTexture = frame.healthBar:GetStatusBarTexture()
 
     frame.healPredictionBar:ClearAllPoints()
     frame.healPredictionBar:SetPoint("TOPLEFT", healthTexture, "TOPRIGHT", 0, 0)
     frame.healPredictionBar:SetPoint("BOTTOMRIGHT", frame.healthBar, "BOTTOMRIGHT", 0, 0)
-    pcall(frame.healPredictionBar.SetMinMaxValues, frame.healPredictionBar, 0, maxHP)
-    pcall(frame.healPredictionBar.SetValue, frame.healPredictionBar, allIncoming)
+
+    -- C-side SetMinMaxValues/SetValue handle secret values natively — no pcall needed
+    frame.healPredictionBar:SetMinMaxValues(0, maxHP)
+    frame.healPredictionBar:SetValue(incomingHeals)
     frame.healPredictionBar:Show()
 end
 
@@ -1988,67 +1978,4 @@ _G.QUI_RefreshGroupFrames = function()
     if editMode and editMode.RefreshTestMode then
         editMode:RefreshTestMode()
     end
-end
-
--- Debug: /qui debuggf — dumps frame stack + health info for all group frames
-_G.QUI_DebugGroupFrames = function()
-    local P = function(...) print("|cFF56D1FFQUI GF Debug:|r", ...) end
-    local safe = function(fn)
-        local ok, result = pcall(fn)
-        return ok and tostring(result) or "SECRET"
-    end
-    P("--- Group Frame Debug ---")
-    P("inCombat:", tostring(InCombatLockdown()))
-    local count = 0
-    for unit, frame in pairs(QUI_GF.unitFrameMap) do
-        count = count + 1
-        P(string.format("  [%s] frame=%s shown=%s", unit, tostring(frame:GetName() or "anon"), tostring(frame:IsShown())))
-
-        -- Health info (secret-safe)
-        local safeHP = SafeToNumber(UnitHealth(unit), -1)
-        local safeMax = SafeToNumber(UnitHealthMax(unit), -1)
-        local isSecret = IsSecretValue(UnitHealth(unit))
-        P(string.format("    Health: hp=%s maxHP=%s secret=%s", safeHP, safeMax, tostring(isSecret)))
-        if frame.healthBar then
-            P(string.format("    HealthBar: val=%s alpha=%.2f lvl=%d strata=%s",
-                safe(function() return frame.healthBar:GetValue() end),
-                frame.healthBar:GetAlpha(), frame.healthBar:GetFrameLevel(), frame.healthBar:GetFrameStrata()))
-        end
-        if frame.healthText then
-            P(string.format("    HealthText: '%s'", frame.healthText:GetText() or "nil"))
-        end
-
-        -- Frame stack for absorb bar
-        if frame.absorbBar then
-            P(string.format("    AbsorbBar: shown=%s lvl=%d strata=%s parent=%s reverseFill=%s val=%s",
-                tostring(frame.absorbBar:IsShown()),
-                frame.absorbBar:GetFrameLevel(),
-                frame.absorbBar:GetFrameStrata(),
-                tostring(frame.absorbBar:GetParent() and frame.absorbBar:GetParent():GetName() or "anon"),
-                tostring(frame.absorbBar:GetReverseFill()),
-                safe(function() return frame.absorbBar:GetValue() end)))
-            -- Check absorb amount
-            local rawAbsorb = UnitGetTotalAbsorbs(unit)
-            P(string.format("    AbsorbRaw: secret=%s safe=%s", tostring(IsSecretValue(rawAbsorb)), SafeToNumber(rawAbsorb, -1)))
-        else
-            P("    AbsorbBar: nil")
-        end
-
-        -- Heal prediction bar
-        if frame.healPredictionBar then
-            P(string.format("    HealPredBar: shown=%s lvl=%d strata=%s",
-                tostring(frame.healPredictionBar:IsShown()),
-                frame.healPredictionBar:GetFrameLevel(),
-                frame.healPredictionBar:GetFrameStrata()))
-        end
-
-        if count >= 5 then
-            P("  ... (showing first 5)")
-            break
-        end
-    end
-    if count == 0 then
-        P("  No frames in unitFrameMap. allFrames count:", #QUI_GF.allFrames)
-    end
-    P("--- End Debug ---")
 end
