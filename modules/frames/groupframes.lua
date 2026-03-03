@@ -849,13 +849,15 @@ end
 local function UpdateDarkModeVisuals(frame)
     if not frame then return end
     local general = GetGeneralSettings()
-    local bgColor = { 0.1, 0.1, 0.1, 0.9 }
-    local healthOpacity = 1
-    local bgOpacity = 1
+    local bgColor, healthOpacity, bgOpacity
     if general and general.darkMode then
         bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
         healthOpacity = general.darkModeHealthOpacity or 1.0
         bgOpacity = general.darkModeBgOpacity or 1.0
+    else
+        bgColor = general and general.defaultBgColor or { 0.1, 0.1, 0.1, 0.9 }
+        healthOpacity = general and general.defaultHealthOpacity or 1.0
+        bgOpacity = general and general.defaultBgOpacity or 1.0
     end
     local bgAlpha = (bgColor[4] or 1) * bgOpacity
     frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
@@ -909,13 +911,15 @@ local function DecorateGroupFrame(frame)
         edgeSize = borderSize > 0 and borderSize or nil,
     })
 
-    local bgColor = { 0.1, 0.1, 0.1, 0.9 }
-    local healthOpacity = 1
-    local bgOpacity = 1
+    local bgColor, healthOpacity, bgOpacity
     if general and general.darkMode then
         bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
         healthOpacity = general.darkModeHealthOpacity or 1.0
         bgOpacity = general.darkModeBgOpacity or 1.0
+    else
+        bgColor = general and general.defaultBgColor or { 0.1, 0.1, 0.1, 0.9 }
+        healthOpacity = general and general.defaultHealthOpacity or 1.0
+        bgOpacity = general and general.defaultBgOpacity or 1.0
     end
     local bgAlpha = (bgColor[4] or 1) * bgOpacity
     frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
@@ -941,12 +945,12 @@ local function DecorateGroupFrame(frame)
     healthBar:SetAlpha(healthOpacity)
     frame.healthBar = healthBar
 
-    -- Health bar background
-    local healthBg = frame.healthBg or healthBar:CreateTexture(nil, "BACKGROUND")
-    healthBg:SetAllPoints()
-    healthBg:SetTexture("Interface\\Buttons\\WHITE8x8")
-    healthBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
-    frame.healthBg = healthBg
+    -- No separate healthBg texture — the frame backdrop shows through the
+    -- unfilled StatusBar area, matching unit frame behavior.
+    if frame.healthBg then
+        frame.healthBg:Hide()
+        frame.healthBg = nil
+    end
 
     -- Heal prediction bar (overlays health bar, peeks out beyond health fill)
     local predSettings = db and db.healPrediction
@@ -1810,7 +1814,9 @@ end
 function QUI_GF:RefreshSettings()
     InvalidateCache()
 
-    if not self.initialized then return end
+    if not self.initialized then
+        return
+    end
 
     local db = GetSettings()
     if not db or not db.enabled then
@@ -1832,6 +1838,20 @@ function QUI_GF:RefreshSettings()
         frame._quiDecorated = false
     end
     wipe(self.allFrames)
+
+    -- Also clear decorated flag on header children directly
+    for _, headerKey in ipairs({"party", "raid"}) do
+        local header = self.headers[headerKey]
+        if header then
+            local i = 1
+            while true do
+                local child = header:GetAttribute("child" .. i)
+                if not child then break end
+                child._quiDecorated = false
+                i = i + 1
+            end
+        end
+    end
 
     -- Update visibility + redecorate
     UpdateHeaderVisibility()

@@ -106,7 +106,19 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         edgeFile = borderSize > 0 and "Interface\\Buttons\\WHITE8x8" or nil,
         edgeSize = borderSize > 0 and borderSize or nil,
     })
-    frame:SetBackdropColor(0.1, 0.1, 0.1, 0.9)
+    -- Background color matching groupframes.lua behavior
+    local bgColor, healthOpacity, bgOpacity
+    if general and general.darkMode then
+        bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
+        healthOpacity = general.darkModeHealthOpacity or 1.0
+        bgOpacity = general.darkModeBgOpacity or 1.0
+    else
+        bgColor = general and general.defaultBgColor or { 0.1, 0.1, 0.1, 0.9 }
+        healthOpacity = general and general.defaultHealthOpacity or 1.0
+        bgOpacity = general and general.defaultBgOpacity or 1.0
+    end
+    local bgAlpha = (bgColor[4] or 1) * bgOpacity
+    frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
     if borderSize > 0 then
         frame:SetBackdropBorderColor(0, 0, 0, 1)
     end
@@ -128,12 +140,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     healthBar:SetStatusBarTexture(texturePath)
     healthBar:SetMinMaxValues(0, 100)
     healthBar:SetValue(healthPct)
-
-    -- Health bar background
-    local healthBg = healthBar:CreateTexture(nil, "BACKGROUND")
-    healthBg:SetAllPoints()
-    healthBg:SetTexture("Interface\\Buttons\\WHITE8x8")
-    healthBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
+    healthBar:SetAlpha(healthOpacity)
 
     -- Class color on health bar
     if general and general.darkMode then
@@ -183,27 +190,33 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     local fontPath = LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
     local fontOutline = general and general.fontOutline or "OUTLINE"
 
-    -- Anchor map for text positioning
+    -- Anchor map for text positioning (two-point horizontal anchoring for proper justify)
     local ANCHOR_MAP = {
-        LEFT = { point = "LEFT", justify = "LEFT" },
-        RIGHT = { point = "RIGHT", justify = "RIGHT" },
-        CENTER = { point = "CENTER", justify = "CENTER" },
-        TOPLEFT = { point = "TOPLEFT", justify = "LEFT" },
-        TOPRIGHT = { point = "TOPRIGHT", justify = "RIGHT" },
-        TOP = { point = "TOP", justify = "CENTER" },
-        BOTTOMLEFT = { point = "BOTTOMLEFT", justify = "LEFT" },
-        BOTTOMRIGHT = { point = "BOTTOMRIGHT", justify = "RIGHT" },
-        BOTTOM = { point = "BOTTOM", justify = "CENTER" },
+        LEFT       = { leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "LEFT",   justifyV = "MIDDLE" },
+        RIGHT      = { leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "RIGHT",  justifyV = "MIDDLE" },
+        CENTER     = { leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "CENTER", justifyV = "MIDDLE" },
+        TOPLEFT    = { leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "LEFT",   justifyV = "TOP" },
+        TOPRIGHT   = { leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "RIGHT",  justifyV = "TOP" },
+        TOP        = { leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "CENTER", justifyV = "TOP" },
+        BOTTOMLEFT = { leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "LEFT",   justifyV = "BOTTOM" },
+        BOTTOMRIGHT= { leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "RIGHT",  justifyV = "BOTTOM" },
+        BOTTOM     = { leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "CENTER", justifyV = "BOTTOM" },
     }
 
     -- Name text
     local nameSettings = db.name
     if not nameSettings or nameSettings.showName ~= false then
         local nameAnchorInfo = ANCHOR_MAP[nameSettings and nameSettings.nameAnchor or "LEFT"] or ANCHOR_MAP.LEFT
+        local nameOffsetX = nameSettings and nameSettings.nameOffsetX or 4
+        local nameOffsetY = nameSettings and nameSettings.nameOffsetY or 0
+        local namePadX = math.abs(nameOffsetX)
         local nameText = textFrame:CreateFontString(nil, "OVERLAY")
         nameText:SetFont(fontPath, nameSettings and nameSettings.nameFontSize or 12, fontOutline)
-        nameText:SetPoint(nameAnchorInfo.point, frame, nameAnchorInfo.point, nameSettings and nameSettings.nameOffsetX or 4, nameSettings and nameSettings.nameOffsetY or 0)
+        nameText:SetPoint(nameAnchorInfo.leftPoint, frame, nameAnchorInfo.leftPoint, namePadX, nameOffsetY)
+        nameText:SetPoint(nameAnchorInfo.rightPoint, frame, nameAnchorInfo.rightPoint, -namePadX, nameOffsetY)
         nameText:SetJustifyH(nameAnchorInfo.justify)
+        nameText:SetJustifyV(nameAnchorInfo.justifyV)
+        nameText:SetWordWrap(false)
 
         local displayName = name
         local maxLen = nameSettings and nameSettings.maxNameLength or 10
@@ -232,10 +245,16 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     local healthSettings = db.health
     if not healthSettings or healthSettings.showHealthText ~= false then
         local healthAnchorInfo = ANCHOR_MAP[healthSettings and healthSettings.healthAnchor or "RIGHT"] or ANCHOR_MAP.RIGHT
+        local healthOffsetX = healthSettings and healthSettings.healthOffsetX or -4
+        local healthOffsetY = healthSettings and healthSettings.healthOffsetY or 0
+        local healthPadX = math.abs(healthOffsetX)
         local healthText = textFrame:CreateFontString(nil, "OVERLAY")
         healthText:SetFont(fontPath, healthSettings and healthSettings.healthFontSize or 12, fontOutline)
-        healthText:SetPoint(healthAnchorInfo.point, frame, healthAnchorInfo.point, healthSettings and healthSettings.healthOffsetX or -4, healthSettings and healthSettings.healthOffsetY or 0)
+        healthText:SetPoint(healthAnchorInfo.leftPoint, frame, healthAnchorInfo.leftPoint, healthPadX, healthOffsetY)
+        healthText:SetPoint(healthAnchorInfo.rightPoint, frame, healthAnchorInfo.rightPoint, -healthPadX, healthOffsetY)
         healthText:SetJustifyH(healthAnchorInfo.justify)
+        healthText:SetJustifyV(healthAnchorInfo.justifyV)
+        healthText:SetWordWrap(false)
 
         if healthPct == 0 then
             healthText:SetText("Dead")

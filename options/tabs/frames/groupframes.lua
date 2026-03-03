@@ -228,16 +228,43 @@ local function CreateGroupFramesPage(parent)
         classColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
-        -- Dark mode widget refs for conditional enable/disable
+        -- Widget refs for bidirectional conditional enable/disable
+        local defaultWidgets = {}
         local darkModeWidgets = {}
 
         local function UpdateDarkModeWidgetStates()
             local darkModeOn = general.darkMode
+            -- Default widgets: enabled when dark mode OFF
+            if defaultWidgets.bgColor then defaultWidgets.bgColor:SetEnabled(not darkModeOn) end
+            if defaultWidgets.healthOpacity then defaultWidgets.healthOpacity:SetEnabled(not darkModeOn) end
+            if defaultWidgets.bgOpacity then defaultWidgets.bgOpacity:SetEnabled(not darkModeOn) end
+            -- Darkmode widgets: enabled when dark mode ON
             if darkModeWidgets.healthColor then darkModeWidgets.healthColor:SetEnabled(darkModeOn) end
             if darkModeWidgets.bgColor then darkModeWidgets.bgColor:SetEnabled(darkModeOn) end
             if darkModeWidgets.healthOpacity then darkModeWidgets.healthOpacity:SetEnabled(darkModeOn) end
             if darkModeWidgets.bgOpacity then darkModeWidgets.bgOpacity:SetEnabled(darkModeOn) end
         end
+
+        -- Default Background Color
+        local defBgColor = GUI:CreateFormColorPicker(tabContent, "Default Background Color", "defaultBgColor", general, RefreshGF, { noAlpha = true })
+        defBgColor:SetPoint("TOPLEFT", PAD, y)
+        defBgColor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        defaultWidgets.bgColor = defBgColor
+        y = y - FORM_ROW
+
+        -- Default Health Opacity
+        local defHealthOpacity = GUI:CreateFormSlider(tabContent, "Health Opacity", 0.1, 1.0, 0.01, "defaultHealthOpacity", general, RefreshGF)
+        defHealthOpacity:SetPoint("TOPLEFT", PAD, y)
+        defHealthOpacity:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        defaultWidgets.healthOpacity = defHealthOpacity
+        y = y - SLIDER_HEIGHT
+
+        -- Default Background Opacity
+        local defBgOpacity = GUI:CreateFormSlider(tabContent, "Background Opacity", 0.1, 1.0, 0.01, "defaultBgOpacity", general, RefreshGF)
+        defBgOpacity:SetPoint("TOPLEFT", PAD, y)
+        defBgOpacity:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        defaultWidgets.bgOpacity = defBgOpacity
+        y = y - SLIDER_HEIGHT
 
         -- Dark mode toggle
         local darkModeCheck = GUI:CreateFormCheckbox(tabContent, "Dark Mode", "darkMode", general, function()
