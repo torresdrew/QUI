@@ -1228,6 +1228,57 @@ local FRAME_RESOLVERS = {
     end,
 }
 
+local CUSTOM_TRACKER_ANCHOR_PREFIX = "customTracker:"
+local CUSTOM_TRACKER_ANCHOR_CATEGORY = "Custom Trackers"
+local CUSTOM_TRACKER_ANCHOR_CATEGORY_ORDER = 90
+
+local function GetCustomTrackerBarIDFromAnchorKey(key)
+    if type(key) ~= "string" then return nil end
+    if key:sub(1, #CUSTOM_TRACKER_ANCHOR_PREFIX) ~= CUSTOM_TRACKER_ANCHOR_PREFIX then
+        return nil
+    end
+    local barID = key:sub(#CUSTOM_TRACKER_ANCHOR_PREFIX + 1)
+    if barID == "" then
+        return nil
+    end
+    return barID
+end
+
+local function ResolveCustomTrackerFrameForKey(key)
+    local barID = GetCustomTrackerBarIDFromAnchorKey(key)
+    if not barID then
+        return nil
+    end
+    local trackerModule = QUICore and QUICore.CustomTrackers
+    local activeBars = trackerModule and trackerModule.activeBars
+    if not activeBars then
+        return nil
+    end
+    return activeBars[barID]
+end
+
+local function HasFrameResolverForKey(key)
+    if FRAME_RESOLVERS[key] then
+        return true
+    end
+    return GetCustomTrackerBarIDFromAnchorKey(key) ~= nil
+end
+
+-- Resolve a frame for direct anchoring apply.
+-- Important: keep static keys on their original resolver path (no proxy substitution),
+-- and only use dynamic resolution for custom tracker keys.
+local function ResolveApplyFrameForKey(key)
+    local resolver = FRAME_RESOLVERS[key]
+    if resolver then
+        local frame = resolver()
+        if type(frame) == "table" and not frame.GetObjectType then
+            frame = frame[1]
+        end
+        return frame
+    end
+    return ResolveCustomTrackerFrameForKey(key)
+end
+
 -- Blizzard-managed right-side frames are controlled by UIParentPanelManager.
 -- Previously objectiveTracker, buffFrame, and debuffFrame were blocked here,
 -- but the existing combat deferral and SecureHandlerStateTemplate taint cleaner
@@ -1525,6 +1576,12 @@ local function ResolveFrameForKey(key)
         if cdmProxy then return cdmProxy end
     end
 
+    -- Dynamic custom tracker bars (customTracker:<barID>)
+    do
+        local customTrackerFrame = ResolveCustomTrackerFrameForKey(key)
+        if customTrackerFrame then return customTrackerFrame end
+    end
+
     -- Frame resolver
     local resolver = FRAME_RESOLVERS[key]
     if resolver then
@@ -1656,6 +1713,44 @@ cdmProxyCombatFrame:SetScript("OnEvent", function(_, event)
     end)
 end)
 
+local function ClearCustomTrackerAnchorTargets()
+    for name in pairs(QUI_Anchoring.anchorTargets) do
+        if GetCustomTrackerBarIDFromAnchorKey(name) then
+            QUI_Anchoring.anchorTargets[name] = nil
+        end
+    end
+end
+
+local function RegisterCustomTrackerAnchorTargets(self)
+    ClearCustomTrackerAnchorTargets()
+
+    local profile = QUICore and QUICore.db and QUICore.db.profile
+    local bars = profile and profile.customTrackers and profile.customTrackers.bars
+    if type(bars) ~= "table" then
+        return
+    end
+
+    for index, barConfig in ipairs(bars) do
+        local barID = barConfig and barConfig.id
+        if type(barID) == "string" and barID ~= "" then
+            local anchorKey = CUSTOM_TRACKER_ANCHOR_PREFIX .. barID
+            local frame = ResolveCustomTrackerFrameForKey(anchorKey)
+            if frame then
+                local displayName = barConfig.name
+                if type(displayName) ~= "string" or displayName == "" then
+                    displayName = ("Tracker %d"):format(index)
+                end
+                self:RegisterAnchorTarget(anchorKey, frame, {
+                    displayName = displayName,
+                    category = CUSTOM_TRACKER_ANCHOR_CATEGORY,
+                    categoryOrder = CUSTOM_TRACKER_ANCHOR_CATEGORY_ORDER,
+                    order = index,
+                })
+            end
+        end
+    end
+end
+
 -- Register all controllable frames as anchor targets (for dropdown lists)
 function QUI_Anchoring:RegisterAllFrameTargets()
     for key, resolver in pairs(FRAME_RESOLVERS) do
@@ -1674,6 +1769,7 @@ function QUI_Anchoring:RegisterAllFrameTargets()
             })
         end
     end
+    RegisterCustomTrackerAnchorTargets(self)
 end
 
 -- Helper: mark a frame as overridden (blocks module positioning via PositionFrame/RegisterAnchoredFrame)
@@ -1891,13 +1987,12 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
     local editDbg = inEditMode and not _editModeTickerSilent
     if type(settings) ~= "table" then return end
 
-    local resolver = FRAME_RESOLVERS[key]
-    if not resolver then
+    if not HasFrameResolverForKey(key) then
         if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): NO RESOLVER", key)) end
         return
     end
 
-    local resolved = resolver()
+    local resolved = ResolveApplyFrameForKey(key)
 
     -- If override is disabled, unblock module positioning and let modules reclaim the frame
     if not settings.enabled then
@@ -2139,7 +2234,7 @@ ComputeAnchorApplyOrder = function(anchoringDB)
     local enabledSet = {}
     local enabledList = {}
     for key, settings in pairs(anchoringDB) do
-        if type(settings) == "table" and FRAME_RESOLVERS[key] and settings.enabled then
+        if type(settings) == "table" and HasFrameResolverForKey(key) and settings.enabled then
             enabledSet[key] = true
             enabledList[#enabledList + 1] = key
         end
@@ -2243,7 +2338,7 @@ _G.QUI_ApplyFrameAnchor = function(key)
     if not QUI_Anchoring or not QUICore or not QUICore.db or not QUICore.db.profile then return end
     local anchoringDB = QUICore.db.profile.frameAnchoring
     local settings = anchoringDB and anchoringDB[key]
-    if type(settings) == "table" and FRAME_RESOLVERS[key] then
+    if type(settings) == "table" and HasFrameResolverForKey(key) then
         QUI_Anchoring:ApplyFrameAnchor(key, settings)
     end
 end
@@ -2259,9 +2354,8 @@ _G.QUI_ReanchorFramePositionOnly = function(key)
     local settings = anchoringDB[key]
     if type(settings) ~= "table" or not settings.enabled then return end
 
-    local resolver = FRAME_RESOLVERS[key]
-    if not resolver then return end
-    local resolved = resolver()
+    if not HasFrameResolverForKey(key) then return end
+    local resolved = ResolveApplyFrameForKey(key)
     if not resolved then return end
 
     local parentFrame = ResolveParentFrame(settings.parent)

@@ -210,6 +210,7 @@ local function CreateCustomTrackersPage(parent)
     local function BuildTrackerBarTab(tabContent, barConfig, barIndex, subTabsRef)
         GUI:SetSearchContext({tabIndex = 9, tabName = "Custom Trackers", subTabIndex = barIndex, subTabName = barConfig.name or ("Bar " .. barIndex)})
         local y = -10
+
         local entryListFrame  -- Forward declaration for refresh callback
 
         -- Refresh callback for this bar
