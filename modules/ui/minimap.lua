@@ -1162,6 +1162,48 @@ if Minimap.ZoomOut and not zoomOutShowHooked then
     end)
 end
 
+-- Hook ExpansionLandingPageMinimapButton to prevent Blizzard from overriding
+-- QUI's position/size. Blizzard's UpdateIcon() calls UpdateIconForGarrison()
+-- and SetLandingPageIconOffset() which both call SetPoint() internally.
+-- Also hook SetParent to prevent other addons from reparenting it away.
+local expansionButtonHooked = false
+local expansionButtonReparenting = false  -- guard against SetParent hook recursion
+if ExpansionLandingPageMinimapButton and not expansionButtonHooked then
+    expansionButtonHooked = true
+    hooksecurefunc(ExpansionLandingPageMinimapButton, "SetParent", function()
+        if expansionButtonReparenting then return end
+        C_Timer.After(0, function()
+            local s = GetSettings()
+            if not s or not s.enabled then return end
+            if s.showMissions then
+                expansionButtonReparenting = true
+                ExpansionLandingPageMinimapButton:SetParent(Minimap)
+                expansionButtonReparenting = false
+            end
+        end)
+    end)
+    hooksecurefunc(ExpansionLandingPageMinimapButton, "UpdateIconForGarrison", function()
+        C_Timer.After(0, function()
+            local s = GetSettings()
+            if not s or not s.enabled or not s.showMissions then return end
+            if InCombatLockdown() then return end
+            ExpansionLandingPageMinimapButton:ClearAllPoints()
+            ExpansionLandingPageMinimapButton:SetPoint("LEFT", Minimap, "LEFT", -5, 0)
+        end)
+    end)
+    if ExpansionLandingPageMinimapButton.SetLandingPageIconOffset then
+        hooksecurefunc(ExpansionLandingPageMinimapButton, "SetLandingPageIconOffset", function()
+            C_Timer.After(0, function()
+                local s = GetSettings()
+                if not s or not s.enabled or not s.showMissions then return end
+                if InCombatLockdown() then return end
+                ExpansionLandingPageMinimapButton:ClearAllPoints()
+                ExpansionLandingPageMinimapButton:SetPoint("LEFT", Minimap, "LEFT", -5, 0)
+            end)
+        end)
+    end
+end
+
 local function UpdateButtonVisibility()
     if InCombatLockdown() then return end
     local settings = GetSettings()
@@ -1256,12 +1298,17 @@ local function UpdateButtonVisibility()
     end
     
     -- Expansion landing page button (missions) - position at left side
+    -- Must call UpdateIcon() after showing to force Blizzard to refresh the
+    -- icon to the current expansion (prevents stale Shadowlands/TWW icons).
     if ExpansionLandingPageMinimapButton then
         if settings.showMissions then
             ExpansionLandingPageMinimapButton:SetParent(Minimap)
             ExpansionLandingPageMinimapButton:ClearAllPoints()
             ExpansionLandingPageMinimapButton:SetPoint("LEFT", Minimap, "LEFT", -5, 0)
             ExpansionLandingPageMinimapButton:Show()
+            if ExpansionLandingPageMinimapButton.UpdateIcon then
+                ExpansionLandingPageMinimapButton:UpdateIcon()
+            end
         else
             ExpansionLandingPageMinimapButton:SetParent(hiddenButtonParent)
             ExpansionLandingPageMinimapButton:Hide()
