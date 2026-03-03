@@ -1798,6 +1798,25 @@ local function ApplyButtonSpacing(barKey)
     end
 end
 
+-- Restore buttons back to their Blizzard containers (undoes QUI's custom anchoring).
+-- Called on Edit Mode enter so Blizzard's LayoutFrame can freely reposition containers
+-- when the user changes column/row settings. Without this, buttons stay locked at QUI's
+-- overridden positions and the grid layout doesn't update.
+local function RestoreButtonsToContainers()
+    if InCombatLockdown() then return end
+
+    local settings = GetGlobalSettings()
+    if not settings or settings.buttonSpacing == nil then return end
+
+    for barKey, _ in pairs(BUTTON_PATTERNS) do
+        local buttons = GetBarButtons(barKey)
+        for _, button in ipairs(buttons) do
+            button:ClearAllPoints()
+            button:SetAllPoints(button:GetParent())
+        end
+    end
+end
+
 -- Apply spacing override to all standard bars.
 local function ApplyAllBarSpacing()
     if InCombatLockdown() then
@@ -2786,6 +2805,10 @@ do
     local core = GetCore()
     if core and core.RegisterEditModeEnter then
         core:RegisterEditModeEnter(function()
+            -- Restore buttons to their Blizzard containers so Edit Mode column/row
+            -- changes are reflected immediately (undoes QUI's custom anchoring)
+            RestoreButtonsToContainers()
+
             -- Force all bars to full opacity and cancel pending fades
             for barKey, state in pairs(ActionBars.fadeState) do
                 state.isFading = false
