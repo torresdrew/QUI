@@ -504,13 +504,14 @@ local function UpdateAbsorbs(frame)
         return
     end
 
-    local healthTexture = frame.healthBar:GetStatusBarTexture()
+    local safeMaxHP = SafeToNumber(maxHP, 1)
+    local safeAbsorb = SafeToNumber(absorbAmount, 0)
+
     frame.absorbBar:ClearAllPoints()
-    frame.absorbBar:SetPoint("LEFT", healthTexture, "RIGHT", 0, 0)
-    frame.absorbBar:SetHeight(frame.healthBar:GetHeight())
-    frame.absorbBar:SetWidth(frame.healthBar:GetWidth())
-    frame.absorbBar:SetMinMaxValues(0, maxHP or 1)
-    pcall(frame.absorbBar.SetValue, frame.absorbBar, absorbAmount)
+    frame.absorbBar:SetAllPoints(frame.healthBar)
+    frame.absorbBar:SetReverseFill(true)
+    frame.absorbBar:SetMinMaxValues(0, safeMaxHP)
+    frame.absorbBar:SetValue(math.min(safeAbsorb, safeMaxHP))
 
     local ac = db.absorbs.color or COLOR_WHITE
     local aa = db.absorbs.opacity or 0.3
@@ -546,22 +547,16 @@ local function UpdateHealPrediction(frame)
 
     local maxHP = SafeToNumber(UnitHealthMax(unit), 1)
     local currentHP = SafeToNumber(UnitHealth(unit), 0)
-    local healthTexture = frame.healthBar:GetStatusBarTexture()
 
-    -- Clamp prediction so it doesn't exceed max health
-    local predictedTotal = currentHP + totalIncoming
-    local clampedPrediction = math.min(totalIncoming, maxHP - currentHP)
-    if clampedPrediction <= 0 then
+    if currentHP >= maxHP then
         frame.healPredictionBar:Hide()
         return
     end
 
     frame.healPredictionBar:ClearAllPoints()
-    frame.healPredictionBar:SetPoint("LEFT", healthTexture, "RIGHT", 0, 0)
-    frame.healPredictionBar:SetHeight(frame.healthBar:GetHeight())
-    frame.healPredictionBar:SetWidth(frame.healthBar:GetWidth())
+    frame.healPredictionBar:SetAllPoints(frame.healthBar)
     frame.healPredictionBar:SetMinMaxValues(0, maxHP)
-    frame.healPredictionBar:SetValue(clampedPrediction)
+    frame.healPredictionBar:SetValue(math.min(currentHP + totalIncoming, maxHP))
     frame.healPredictionBar:Show()
 end
 
@@ -910,13 +905,12 @@ local function DecorateGroupFrame(frame)
     healthBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
     frame.healthBg = healthBg
 
-    -- Heal prediction bar
+    -- Heal prediction bar (overlays health bar, peeks out beyond health fill)
     local predSettings = db and db.healPrediction
     local healPredictionBar = CreateFrame("StatusBar", nil, healthBar)
     healPredictionBar:SetStatusBarTexture(GetTexturePath())
     healPredictionBar:SetFrameLevel(healthBar:GetFrameLevel() + 1)
-    healPredictionBar:SetPoint("TOP", healthBar, "TOP", 0, 0)
-    healPredictionBar:SetPoint("BOTTOM", healthBar, "BOTTOM", 0, 0)
+    healPredictionBar:SetAllPoints(healthBar)
     healPredictionBar:SetMinMaxValues(0, 1)
     healPredictionBar:SetValue(0)
     local pc = predSettings and predSettings.color or { 0.2, 1, 0.2 }
@@ -925,16 +919,16 @@ local function DecorateGroupFrame(frame)
     healPredictionBar:Hide()
     frame.healPredictionBar = healPredictionBar
 
-    -- Absorb bar
+    -- Absorb bar (overlays health bar, reverse-fills from right)
     local absorbSettings = db and db.absorbs
-    local absorbBar = CreateFrame("StatusBar", nil, healthBar)
+    local absorbBar = CreateFrame("StatusBar", nil, frame)
     absorbBar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Fill")
     local ac = absorbSettings and absorbSettings.color or COLOR_WHITE
     local aa = absorbSettings and absorbSettings.opacity or 0.3
     absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
-    absorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 1)
-    absorbBar:SetPoint("TOP", healthBar, "TOP", 0, 0)
-    absorbBar:SetPoint("BOTTOM", healthBar, "BOTTOM", 0, 0)
+    absorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 2)
+    absorbBar:SetAllPoints(healthBar)
+    absorbBar:SetReverseFill(true)
     absorbBar:SetMinMaxValues(0, 1)
     absorbBar:SetValue(0)
     absorbBar:Hide()
