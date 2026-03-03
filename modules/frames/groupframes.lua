@@ -824,8 +824,30 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Full frame refresh
 ---------------------------------------------------------------------------
+-- UPDATE: Dark Mode Visuals (backdrop, health bar alpha)
+---------------------------------------------------------------------------
+local function UpdateDarkModeVisuals(frame)
+    if not frame then return end
+    local general = GetGeneralSettings()
+    local bgColor = { 0.1, 0.1, 0.1, 0.9 }
+    local healthOpacity = 1
+    local bgOpacity = 1
+    if general and general.darkMode then
+        bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
+        healthOpacity = general.darkModeHealthOpacity or 1.0
+        bgOpacity = general.darkModeBgOpacity or 1.0
+    end
+    local bgAlpha = (bgColor[4] or 1) * bgOpacity
+    frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
+    if frame.healthBar then
+        frame.healthBar:SetAlpha(healthOpacity)
+    end
+end
+
+---------------------------------------------------------------------------
 local function UpdateFrame(frame)
     if not frame or not frame.unit then return end
+    UpdateDarkModeVisuals(frame)
     UpdateHealth(frame)
     UpdatePower(frame)
     UpdateName(frame)
@@ -887,8 +909,9 @@ local function DecorateGroupFrame(frame)
     local powerHeight = showPower and (QUICore.PixelRound and QUICore:PixelRound(powerSettings.powerBarHeight or 4, frame) or 4) or 0
     local separatorHeight = showPower and px or 0
 
-    -- Health bar
-    local healthBar = CreateFrame("StatusBar", nil, frame)
+    -- Health bar (reuse existing to avoid frame leaks on re-decoration)
+    local healthBar = frame.healthBar or CreateFrame("StatusBar", nil, frame)
+    healthBar:ClearAllPoints()
     healthBar:SetPoint("TOPLEFT", frame, "TOPLEFT", borderSize, -borderSize)
     healthBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, borderSize + powerHeight + separatorHeight)
     healthBar:SetStatusBarTexture(GetTexturePath())
@@ -899,7 +922,7 @@ local function DecorateGroupFrame(frame)
     frame.healthBar = healthBar
 
     -- Health bar background
-    local healthBg = healthBar:CreateTexture(nil, "BACKGROUND")
+    local healthBg = frame.healthBg or healthBar:CreateTexture(nil, "BACKGROUND")
     healthBg:SetAllPoints()
     healthBg:SetTexture("Interface\\Buttons\\WHITE8x8")
     healthBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
@@ -907,9 +930,10 @@ local function DecorateGroupFrame(frame)
 
     -- Heal prediction bar (overlays health bar, peeks out beyond health fill)
     local predSettings = db and db.healPrediction
-    local healPredictionBar = CreateFrame("StatusBar", nil, healthBar)
+    local healPredictionBar = frame.healPredictionBar or CreateFrame("StatusBar", nil, healthBar)
     healPredictionBar:SetStatusBarTexture(GetTexturePath())
     healPredictionBar:SetFrameLevel(healthBar:GetFrameLevel() + 1)
+    healPredictionBar:ClearAllPoints()
     healPredictionBar:SetAllPoints(healthBar)
     healPredictionBar:SetMinMaxValues(0, 1)
     healPredictionBar:SetValue(0)
@@ -921,12 +945,13 @@ local function DecorateGroupFrame(frame)
 
     -- Absorb bar (overlays health bar, reverse-fills from right)
     local absorbSettings = db and db.absorbs
-    local absorbBar = CreateFrame("StatusBar", nil, frame)
+    local absorbBar = frame.absorbBar or CreateFrame("StatusBar", nil, frame)
     absorbBar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Fill")
     local ac = absorbSettings and absorbSettings.color or COLOR_WHITE
     local aa = absorbSettings and absorbSettings.opacity or 0.3
     absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
     absorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 2)
+    absorbBar:ClearAllPoints()
     absorbBar:SetAllPoints(healthBar)
     absorbBar:SetReverseFill(true)
     absorbBar:SetMinMaxValues(0, 1)
@@ -936,7 +961,8 @@ local function DecorateGroupFrame(frame)
 
     -- Power bar
     if showPower then
-        local powerBar = CreateFrame("StatusBar", nil, frame)
+        local powerBar = frame.powerBar or CreateFrame("StatusBar", nil, frame)
+        powerBar:ClearAllPoints()
         powerBar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", borderSize, borderSize)
         powerBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, borderSize)
         powerBar:SetHeight(powerHeight)
@@ -947,24 +973,31 @@ local function DecorateGroupFrame(frame)
         frame.powerBar = powerBar
 
         -- Power bar background
-        local powerBg = powerBar:CreateTexture(nil, "BACKGROUND")
-        powerBg:SetAllPoints()
-        powerBg:SetTexture("Interface\\Buttons\\WHITE8x8")
-        powerBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
+        if not frame._powerBg then
+            local powerBg = powerBar:CreateTexture(nil, "BACKGROUND")
+            powerBg:SetAllPoints()
+            powerBg:SetTexture("Interface\\Buttons\\WHITE8x8")
+            powerBg:SetVertexColor(0.05, 0.05, 0.05, 0.9)
+            frame._powerBg = powerBg
+        end
 
         -- Separator
-        local separator = powerBar:CreateTexture(nil, "OVERLAY")
-        separator:SetHeight(px)
-        separator:SetPoint("BOTTOMLEFT", powerBar, "TOPLEFT", 0, 0)
-        separator:SetPoint("BOTTOMRIGHT", powerBar, "TOPRIGHT", 0, 0)
-        separator:SetTexture("Interface\\Buttons\\WHITE8x8")
-        separator:SetVertexColor(0, 0, 0, 1)
+        if not frame._powerSeparator then
+            local separator = powerBar:CreateTexture(nil, "OVERLAY")
+            separator:SetHeight(px)
+            separator:SetPoint("BOTTOMLEFT", powerBar, "TOPLEFT", 0, 0)
+            separator:SetPoint("BOTTOMRIGHT", powerBar, "TOPRIGHT", 0, 0)
+            separator:SetTexture("Interface\\Buttons\\WHITE8x8")
+            separator:SetVertexColor(0, 0, 0, 1)
+            frame._powerSeparator = separator
+        end
     end
 
     -- Text frame (above health bar for layering)
-    local textFrame = CreateFrame("Frame", nil, frame)
+    local textFrame = frame._textFrame or CreateFrame("Frame", nil, frame)
     textFrame:SetAllPoints()
     textFrame:SetFrameLevel(healthBar:GetFrameLevel() + 3)
+    frame._textFrame = textFrame
 
     -- Name text
     local fontPath = GetFontPath()
@@ -975,7 +1008,8 @@ local function DecorateGroupFrame(frame)
     local nameOffsetX = nameSettings and nameSettings.nameOffsetX or 4
     local nameOffsetY = nameSettings and nameSettings.nameOffsetY or 0
 
-    local nameText = textFrame:CreateFontString(nil, "OVERLAY")
+    local nameText = frame.nameText or textFrame:CreateFontString(nil, "OVERLAY")
+    nameText:ClearAllPoints()
     nameText:SetFont(fontPath, nameFontSize, fontOutline)
     nameText:SetPoint(nameAnchor.point, frame, nameAnchor.point, nameOffsetX, nameOffsetY)
     nameText:SetJustifyH(nameAnchor.justify)
@@ -989,7 +1023,8 @@ local function DecorateGroupFrame(frame)
     local healthOffsetX = healthSettings and healthSettings.healthOffsetX or -4
     local healthOffsetY = healthSettings and healthSettings.healthOffsetY or 0
 
-    local healthText = textFrame:CreateFontString(nil, "OVERLAY")
+    local healthText = frame.healthText or textFrame:CreateFontString(nil, "OVERLAY")
+    healthText:ClearAllPoints()
     healthText:SetFont(fontPath, healthFontSize, fontOutline)
     healthText:SetPoint(healthAnchor.point, frame, healthAnchor.point, healthOffsetX, healthOffsetY)
     healthText:SetJustifyH(healthAnchor.justify)
@@ -1001,21 +1036,24 @@ local function DecorateGroupFrame(frame)
     local roleIconSize = indSettings and indSettings.roleIconSize or 12
     local roleAnchor = indSettings and indSettings.roleIconAnchor or "TOPLEFT"
 
-    local roleIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    local roleIcon = frame.roleIcon or textFrame:CreateTexture(nil, "OVERLAY")
+    roleIcon:ClearAllPoints()
     roleIcon:SetSize(roleIconSize, roleIconSize)
     roleIcon:SetPoint(roleAnchor, frame, roleAnchor, 2, -2)
     roleIcon:Hide()
     frame.roleIcon = roleIcon
 
     -- Ready check icon
-    local readyCheckIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    local readyCheckIcon = frame.readyCheckIcon or textFrame:CreateTexture(nil, "OVERLAY")
+    readyCheckIcon:ClearAllPoints()
     readyCheckIcon:SetSize(16, 16)
     readyCheckIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
     readyCheckIcon:Hide()
     frame.readyCheckIcon = readyCheckIcon
 
     -- Resurrection icon
-    local resIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    local resIcon = frame.resIcon or textFrame:CreateTexture(nil, "OVERLAY")
+    resIcon:ClearAllPoints()
     resIcon:SetSize(16, 16)
     resIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
     resIcon:SetAtlas("nameplates-icon-flag-horde") -- Placeholder, will be proper res icon
@@ -1024,7 +1062,8 @@ local function DecorateGroupFrame(frame)
     frame.resIcon = resIcon
 
     -- Summon pending icon
-    local summonIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    local summonIcon = frame.summonIcon or textFrame:CreateTexture(nil, "OVERLAY")
+    summonIcon:ClearAllPoints()
     summonIcon:SetSize(16, 16)
     summonIcon:SetPoint("CENTER", frame, "CENTER", 16, 0)
     summonIcon:SetAtlas("Raid-Icon-SummonPending")
@@ -1032,21 +1071,24 @@ local function DecorateGroupFrame(frame)
     frame.summonIcon = summonIcon
 
     -- Leader icon
-    local leaderIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    local leaderIcon = frame.leaderIcon or textFrame:CreateTexture(nil, "OVERLAY")
+    leaderIcon:ClearAllPoints()
     leaderIcon:SetSize(12, 12)
     leaderIcon:SetPoint("TOP", frame, "TOP", 0, 6)
     leaderIcon:Hide()
     frame.leaderIcon = leaderIcon
 
     -- Target marker (raid icon)
-    local targetMarker = textFrame:CreateTexture(nil, "OVERLAY")
+    local targetMarker = frame.targetMarker or textFrame:CreateTexture(nil, "OVERLAY")
+    targetMarker:ClearAllPoints()
     targetMarker:SetSize(14, 14)
     targetMarker:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, -2)
     targetMarker:Hide()
     frame.targetMarker = targetMarker
 
     -- Phase icon
-    local phaseIcon = textFrame:CreateTexture(nil, "OVERLAY")
+    local phaseIcon = frame.phaseIcon or textFrame:CreateTexture(nil, "OVERLAY")
+    phaseIcon:ClearAllPoints()
     phaseIcon:SetSize(16, 16)
     phaseIcon:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 2, 2)
     phaseIcon:SetAtlas("nameplates-icon-flag-horde") -- Placeholder
@@ -1055,7 +1097,7 @@ local function DecorateGroupFrame(frame)
     frame.phaseIcon = phaseIcon
 
     -- Threat border (overlay frame)
-    local threatBorder = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    local threatBorder = frame.threatBorder or CreateFrame("Frame", nil, frame, "BackdropTemplate")
     threatBorder:SetAllPoints()
     threatBorder:SetFrameLevel(frame:GetFrameLevel() + 5)
     threatBorder:SetBackdrop({
@@ -1066,7 +1108,8 @@ local function DecorateGroupFrame(frame)
     frame.threatBorder = threatBorder
 
     -- Target highlight (overlay frame)
-    local targetHighlight = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    local targetHighlight = frame.targetHighlight or CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    targetHighlight:ClearAllPoints()
     targetHighlight:SetPoint("TOPLEFT", -px, px)
     targetHighlight:SetPoint("BOTTOMRIGHT", px, -px)
     targetHighlight:SetFrameLevel(frame:GetFrameLevel() + 4)
@@ -1078,7 +1121,8 @@ local function DecorateGroupFrame(frame)
     frame.targetHighlight = targetHighlight
 
     -- Dispel overlay (overlay frame)
-    local dispelOverlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    local dispelOverlay = frame.dispelOverlay or CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    dispelOverlay:ClearAllPoints()
     dispelOverlay:SetPoint("TOPLEFT", -px, px)
     dispelOverlay:SetPoint("BOTTOMRIGHT", px, -px)
     dispelOverlay:SetFrameLevel(frame:GetFrameLevel() + 6)
@@ -1089,25 +1133,29 @@ local function DecorateGroupFrame(frame)
     dispelOverlay:Hide()
     frame.dispelOverlay = dispelOverlay
 
-    -- Tooltip
-    frame:HookScript("OnEnter", function(self)
-        ShowUnitTooltip(self)
-    end)
-    frame:HookScript("OnLeave", HideUnitTooltip)
+    -- One-time hooks (only on first decoration)
+    if not frame._quiHooked then
+        frame._quiHooked = true
 
-    -- Sync unit attribute → frame.unit whenever the secure header changes it
-    frame:HookScript("OnAttributeChanged", function(self, key, value)
-        if key ~= "unit" then return end
-        local oldUnit = self.unit
-        self.unit = value
-        if oldUnit and QUI_GF.unitFrameMap[oldUnit] == self then
-            QUI_GF.unitFrameMap[oldUnit] = nil
-        end
-        if value then
-            QUI_GF.unitFrameMap[value] = self
-            UpdateFrame(self)
-        end
-    end)
+        frame:HookScript("OnEnter", function(self)
+            ShowUnitTooltip(self)
+        end)
+        frame:HookScript("OnLeave", HideUnitTooltip)
+
+        -- Sync unit attribute → frame.unit whenever the secure header changes it
+        frame:HookScript("OnAttributeChanged", function(self, key, value)
+            if key ~= "unit" then return end
+            local oldUnit = self.unit
+            self.unit = value
+            if oldUnit and QUI_GF.unitFrameMap[oldUnit] == self then
+                QUI_GF.unitFrameMap[oldUnit] = nil
+            end
+            if value then
+                QUI_GF.unitFrameMap[value] = self
+                UpdateFrame(self)
+            end
+        end)
+    end
 
     -- Pick up the current unit if already assigned by the secure header
     local currentUnit = frame:GetAttribute("unit")
@@ -1410,9 +1458,9 @@ end
 ---------------------------------------------------------------------------
 local lastMode = nil
 
-local function UpdateFrameScaling()
+local function UpdateFrameScaling(forceUpdate)
     local mode = GetGroupMode()
-    if mode == lastMode then return end
+    if not forceUpdate and mode == lastMode then return end
     lastMode = mode
 
     if InCombatLockdown() then
@@ -1754,7 +1802,7 @@ function QUI_GF:RefreshSettings()
 
     -- Update visibility + redecorate
     UpdateHeaderVisibility()
-    UpdateFrameScaling()
+    UpdateFrameScaling(true)
     UpdateSelectiveEvents()
 end
 
