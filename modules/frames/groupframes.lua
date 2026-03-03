@@ -735,7 +735,7 @@ local function UpdatePhaseIcon(frame)
         return
     end
 
-    local phased = not UnitInPhase(frame.unit) and UnitExists(frame.unit)
+    local phased = UnitPhaseReason(frame.unit) ~= nil and UnitExists(frame.unit)
     if phased then
         frame.phaseIcon:Show()
     else
