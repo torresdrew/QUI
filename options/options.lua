@@ -73,17 +73,27 @@ function GUI:InitializeOptions()
     GUI:AddTab(frame, "Frame Levels", ns.QUI_HUDLayeringOptions.CreateHUDLayeringPage)
     GUI:AddTab(frame, "Profiles", ns.QUI_ProfilesOptions.CreateSpecProfilesPage)
     GUI:AddTab(frame, "Import & Export Strings", ns.QUI_ImportOptions.CreateImportExportPage)
-    -- Bottom sidebar items (Search tab + action buttons)
+    -- Bottom sidebar items (Search tab, Help tab, action buttons)
     -- Add separator line between normal tabs and bottom items
     local sepLine = frame.sidebar:CreateTexture(nil, "ARTWORK")
     sepLine:SetHeight(1)
     sepLine:SetColorTexture(C.border[1], C.border[2], C.border[3], 0.6)
-    -- Position separator above the bottom items (will sit above 3 items * 28px + some padding)
-    sepLine:SetPoint("BOTTOMLEFT", frame.sidebar, "BOTTOMLEFT", 8, 3 * 28 + 8)
-    sepLine:SetPoint("BOTTOMRIGHT", frame.sidebar, "BOTTOMRIGHT", -8, 3 * 28 + 8)
+    -- Position separator above the bottom items (will sit above 4 items * 28px + some padding)
+    sepLine:SetPoint("BOTTOMLEFT", frame.sidebar, "BOTTOMLEFT", 8, 4 * 28 + 8)
+    sepLine:SetPoint("BOTTOMRIGHT", frame.sidebar, "BOTTOMRIGHT", -8, 4 * 28 + 8)
 
-    GUI:AddTab(frame, "Search", CreateSearchPage, true)  -- isBottomItem = true
+    local searchTab = GUI:AddTab(frame, "Search", CreateSearchPage, true)  -- isBottomItem = true
     GUI._searchTabIndex = #frame.tabs
+
+    -- Make Search more discoverable: magnifying glass icon + subtle accent background
+    local searchIcon = "|TInterface\\Common\\UI-Searchbox-Icon:12:12:0:0|t "
+    searchTab.text:SetText(searchIcon .. "Search")
+    local accentBg = searchTab:CreateTexture(nil, "BACKGROUND", nil, -1)
+    accentBg:SetAllPoints()
+    accentBg:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.08)
+    searchTab._accentBg = accentBg
+
+    GUI:AddTab(frame, "Help", ns.QUI_HelpOptions.CreateHelpPage, true)  -- isBottomItem = true
 
     GUI:AddActionButton(frame, "CDM Settings", function()
         if CooldownViewerSettings then

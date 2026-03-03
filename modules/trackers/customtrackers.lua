@@ -2269,10 +2269,20 @@ end
 ---------------------------------------------------------------------------
 -- REFRESH BAR POSITION (called when anchor settings change in options)
 ---------------------------------------------------------------------------
+local function ApplyCustomTrackerAnchorOverride(barID)
+    if type(barID) ~= "string" or barID == "" then
+        return
+    end
+    if _G.QUI_ApplyFrameAnchor then
+        _G.QUI_ApplyFrameAnchor("customTracker:" .. barID)
+    end
+end
+
 function CustomTrackers:RefreshBarPosition(barID)
     local bar = self.activeBars[barID]
     if bar then
         PositionBar(bar)
+        ApplyCustomTrackerAnchorOverride(barID)
     end
 end
 
@@ -2392,6 +2402,7 @@ function CustomTrackers:UpdateBar(barID)
                 bar:Hide()
             end
 
+            ApplyCustomTrackerAnchorOverride(barID)
             break
         end
     end
@@ -2424,6 +2435,17 @@ function CustomTrackers:RefreshAll()
     -- Performance: Update lazy event registrations after all bars are created
     if CustomTrackers.UpdateEventRegistrations then
         CustomTrackers.UpdateEventRegistrations()
+    end
+
+    -- Keep frame-anchoring dropdown targets in sync with dynamic tracker bars.
+    if ns.QUI_Anchoring and ns.QUI_Anchoring.RegisterAllFrameTargets then
+        ns.QUI_Anchoring:RegisterAllFrameTargets()
+    end
+    if _G.QUI_ApplyAllFrameAnchors then
+        _G.QUI_ApplyAllFrameAnchors()
+    end
+    if _G.QUI_RefreshCustomTrackersVisibility then
+        _G.QUI_RefreshCustomTrackersVisibility()
     end
 end
 
@@ -2952,10 +2974,8 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
         C_Timer.After(0.6, function()
             CustomTrackers:RefreshAll()
             -- Apply HUD visibility instantly to prevent flash on /reload while mounted.
-            -- UpdateCustomTrackersVisibility is defined later in this file but exists
-            -- by the time this 0.6s timer fires.
-            if UpdateCustomTrackersVisibility then
-                UpdateCustomTrackersVisibility()
+            if _G.QUI_RefreshCustomTrackersVisibility then
+                _G.QUI_RefreshCustomTrackersVisibility()
             end
         end)
     elseif event == "GET_ITEM_INFO_RECEIVED" then
@@ -3006,6 +3026,9 @@ local CustomTrackersVisibility = {
     fadeFrame = nil,
     mouseOver = false,
     mouseoverDetector = nil,
+    anchoringPreviewAll = false,
+    anchoringPreviewAlpha = 0.5,
+    pendingPreviewSync = false,
 }
 
 local function GetCustomTrackersVisibilitySettings()
@@ -3014,17 +3037,69 @@ local function GetCustomTrackersVisibilitySettings()
     return core.db.profile.customTrackersVisibility
 end
 
-local function GetCustomTrackerFrames()
+local function GetCustomTrackerFrames(includeAllBars)
     local frames = {}
     if CustomTrackers and CustomTrackers.activeBars then
         for _, bar in pairs(CustomTrackers.activeBars) do
-            -- Only include enabled bars that are shown
-            if bar and bar.config and bar.config.enabled and bar:IsShown() then
+            if bar and bar.config and (includeAllBars or (bar.config.enabled and bar:IsShown())) then
                 table.insert(frames, bar)
             end
         end
     end
     return frames
+end
+
+local function IsSecureBarInCombat(bar)
+    if not bar or not InCombatLockdown() then
+        return false
+    end
+    local firstIcon = bar.icons and bar.icons[1]
+    return firstIcon and firstIcon.clickButton
+end
+
+local function SetBarShownForPreview(bar, shouldShow)
+    if not bar or not bar.config then
+        return
+    end
+
+    if shouldShow then
+        if not bar:IsShown() then
+            if IsSecureBarInCombat(bar) then
+                CustomTrackersVisibility.pendingPreviewSync = true
+            else
+                bar:Show()
+            end
+        end
+    else
+        if bar:IsShown() then
+            if IsSecureBarInCombat(bar) then
+                CustomTrackersVisibility.pendingPreviewSync = true
+            else
+                bar:Hide()
+            end
+        end
+    end
+end
+
+local function ApplyAnchoringPreviewState()
+    local frames = GetCustomTrackerFrames(true)
+    for _, bar in ipairs(frames) do
+        SetBarShownForPreview(bar, true)
+        if bar:IsShown() then
+            bar:SetAlpha(CustomTrackersVisibility.anchoringPreviewAlpha)
+        end
+    end
+end
+
+local function RestoreAfterAnchoringPreview()
+    local frames = GetCustomTrackerFrames(true)
+    for _, bar in ipairs(frames) do
+        local shouldShow = bar.config and bar.config.enabled
+        SetBarShownForPreview(bar, shouldShow == true)
+        if shouldShow and bar:IsShown() then
+            bar:SetAlpha(1)
+        end
+    end
 end
 
 local function ShouldCustomTrackersBeVisible()
@@ -3099,6 +3174,13 @@ local function StartCustomTrackersFade(targetAlpha)
 end
 
 local function UpdateCustomTrackersVisibility()
+    -- Anchoring preview mode overrides all visibility logic.
+    if CustomTrackersVisibility.anchoringPreviewAll then
+        ApplyAnchoringPreviewState()
+        CustomTrackersVisibility.currentlyHidden = false
+        return
+    end
+
     -- During Edit Mode, force all trackers visible
     if IsInEditMode() then
         local frames = GetCustomTrackerFrames()
@@ -3199,6 +3281,15 @@ visibilityEventFrame:SetScript("OnEvent", function(self, event, ...)
         -- Combat ended: update visibility and process any pending secure button updates
         UpdateCustomTrackersVisibility()
         ProcessPendingSecureUpdates()
+        if CustomTrackersVisibility.pendingPreviewSync then
+            CustomTrackersVisibility.pendingPreviewSync = false
+            if CustomTrackersVisibility.anchoringPreviewAll then
+                ApplyAnchoringPreviewState()
+            else
+                RestoreAfterAnchoringPreview()
+                UpdateCustomTrackersVisibility()
+            end
+        end
     else
         UpdateCustomTrackersVisibility()
     end
@@ -3209,6 +3300,34 @@ end)
 ---------------------------------------------------------------------------
 _G.QUI_RefreshCustomTrackersVisibility = UpdateCustomTrackersVisibility
 _G.QUI_RefreshCustomTrackersMouseover = SetupCustomTrackersMouseoverDetector
+
+_G.QUI_IsAnchoringPreviewAllCustomTrackers = function()
+    return CustomTrackersVisibility.anchoringPreviewAll == true
+end
+
+_G.QUI_SetAnchoringPreviewAllCustomTrackers = function(enabled)
+    local isEnabled = enabled and true or false
+    if CustomTrackersVisibility.anchoringPreviewAll == isEnabled then
+        if isEnabled then
+            ApplyAnchoringPreviewState()
+        end
+        return
+    end
+
+    CustomTrackersVisibility.anchoringPreviewAll = isEnabled
+
+    if CustomTrackersVisibility.fadeFrame then
+        CustomTrackersVisibility.fadeFrame:SetScript("OnUpdate", nil)
+    end
+    CustomTrackersVisibility.isFading = false
+
+    if isEnabled then
+        ApplyAnchoringPreviewState()
+    else
+        RestoreAfterAnchoringPreview()
+        UpdateCustomTrackersVisibility()
+    end
+end
 
 -- Suspend/resume visibility rules during Edit Mode
 -- Retry with a ticker until core is ready, then cancel
@@ -3221,10 +3340,14 @@ _editModeRegTicker = C_Timer.NewTicker(1.5, function()
     _editModeRegTicker = nil
 
     core:RegisterEditModeEnter(function()
-        -- Force all trackers to full opacity
+        -- Force all trackers visible while in Edit Mode (unless anchoring preview is active).
         CustomTrackersVisibility.isFading = false
         if CustomTrackersVisibility.fadeFrame then
             CustomTrackersVisibility.fadeFrame:SetScript("OnUpdate", nil)
+        end
+        if CustomTrackersVisibility.anchoringPreviewAll then
+            ApplyAnchoringPreviewState()
+            return
         end
         local frames = GetCustomTrackerFrames()
         for _, frame in ipairs(frames) do
@@ -3233,8 +3356,12 @@ _editModeRegTicker = C_Timer.NewTicker(1.5, function()
     end)
 
     core:RegisterEditModeExit(function()
-        -- Re-apply normal visibility rules
-        UpdateCustomTrackersVisibility()
+        if CustomTrackersVisibility.anchoringPreviewAll then
+            ApplyAnchoringPreviewState()
+        else
+            -- Re-apply normal visibility rules
+            UpdateCustomTrackersVisibility()
+        end
     end)
 end)
 
