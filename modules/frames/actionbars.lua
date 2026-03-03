@@ -1734,9 +1734,8 @@ end
 
 -- Reposition action bar buttons with custom spacing override.
 -- WoW 12.0 wraps each button in a per-button container managed by an internal
--- LayoutFrame. We anchor button 1 directly to the bar frame (cross-hierarchy
--- SetPoint bypasses the LayoutFrame), chain buttons 2..N off it, then resize
--- the bar frame to exactly fit the button group (eliminates Blizzard's edge padding).
+-- LayoutFrame. We reposition the containers (not the buttons) to override
+-- Blizzard's layout, then resize the bar frame to exactly fit the group.
 local function ApplyButtonSpacing(barKey)
     if InCombatLockdown() then
         ActionBars.pendingSpacing = true
@@ -1775,33 +1774,41 @@ local function ApplyButtonSpacing(barKey)
         groupHeight * containerEffScale / barEffScale
     )
 
-    -- Anchor button 1 to bar frame BOTTOMLEFT (bar now fits exactly, no offset needed)
-    buttons[1]:ClearAllPoints()
-    buttons[1]:SetPoint("BOTTOMLEFT", barFrame, "BOTTOMLEFT", 0, 0)
+    -- Reposition the CONTAINERS (button parents) instead of the buttons themselves.
+    -- Blizzard's LayoutFrame positions containers; button-level anchors don't
+    -- override the visual layout because the container is what renders.
+    local container1 = buttons[1]:GetParent()
+    container1:ClearAllPoints()
+    container1:SetPoint("TOPLEFT", barFrame, "TOPLEFT", 0, 0)
+    container1:SetSize(btnWidth, btnHeight)
 
-    -- Chain buttons 2..N off button 1
     for i = 2, #buttons do
+        local container = buttons[i]:GetParent()
         local colIndex = ((i - 1) % numCols) + 1
 
+        container:ClearAllPoints()
         if colIndex == 1 then
-            -- First button in a new row: anchor below the button directly above
-            local aboveIndex = i - numCols
-            if aboveIndex >= 1 then
-                buttons[i]:ClearAllPoints()
-                buttons[i]:SetPoint("TOPLEFT", buttons[aboveIndex], "BOTTOMLEFT", 0, -spacing)
-            end
+            -- First container in a new row: anchor below the container above
+            local aboveContainer = buttons[i - numCols]:GetParent()
+            container:SetPoint("TOPLEFT", aboveContainer, "BOTTOMLEFT", 0, -spacing)
         else
-            -- Same row: anchor to the right of the previous button
-            buttons[i]:ClearAllPoints()
-            buttons[i]:SetPoint("LEFT", buttons[i - 1], "RIGHT", spacing, 0)
+            -- Same row: anchor to the right of the previous container
+            local prevContainer = buttons[i - 1]:GetParent()
+            container:SetPoint("LEFT", prevContainer, "RIGHT", spacing, 0)
         end
+        container:SetSize(btnWidth, btnHeight)
+    end
+
+    -- Re-anchor each button to fill its container (undo any previous cross-hierarchy anchors)
+    for i = 1, #buttons do
+        buttons[i]:ClearAllPoints()
+        buttons[i]:SetAllPoints(buttons[i]:GetParent())
     end
 end
 
--- Restore buttons back to their Blizzard containers (undoes QUI's custom anchoring).
--- Called on Edit Mode enter so Blizzard's LayoutFrame can freely reposition containers
--- when the user changes column/row settings. Without this, buttons stay locked at QUI's
--- overridden positions and the grid layout doesn't update.
+-- Restore buttons and containers back to Blizzard's default layout.
+-- Invalidates the LayoutFrame so Blizzard can recalculate container positions
+-- (e.g., after column/row changes in Edit Mode).
 local function RestoreButtonsToContainers()
     if InCombatLockdown() then return end
 
@@ -1809,10 +1816,23 @@ local function RestoreButtonsToContainers()
     if not settings or settings.buttonSpacing == nil then return end
 
     for barKey, _ in pairs(BUTTON_PATTERNS) do
+        local barFrame = GetBarFrame(barKey)
         local buttons = GetBarButtons(barKey)
         for _, button in ipairs(buttons) do
+            -- Restore button to fill its container
             button:ClearAllPoints()
             button:SetAllPoints(button:GetParent())
+        end
+
+        -- Invalidate the LayoutFrame so Blizzard recalculates container positions.
+        -- The containers are children of a LayoutFrame inside the bar frame.
+        if barFrame and #buttons > 0 then
+            local layoutParent = buttons[1]:GetParent():GetParent()
+            if layoutParent and layoutParent.MarkDirty then
+                layoutParent:MarkDirty()
+            elseif layoutParent and layoutParent.Layout then
+                layoutParent:Layout()
+            end
         end
     end
 end
@@ -2805,9 +2825,9 @@ do
     local core = GetCore()
     if core and core.RegisterEditModeEnter then
         core:RegisterEditModeEnter(function()
-            -- Restore buttons to their Blizzard containers so Edit Mode column/row
-            -- changes are reflected immediately (undoes QUI's custom anchoring)
-            RestoreButtonsToContainers()
+            -- Re-apply our spacing so the layout looks correct during Edit Mode too.
+            -- Blizzard's LayoutFrame will recalculate on exit; we re-apply again then.
+            ApplyAllBarSpacing()
 
             -- Force all bars to full opacity and cancel pending fades
             for barKey, state in pairs(ActionBars.fadeState) do
