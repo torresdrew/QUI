@@ -184,15 +184,15 @@ end
 -- HELPERS: Anchor info
 ---------------------------------------------------------------------------
 local ANCHOR_MAP = {
-    LEFT       = { point = "LEFT",       justify = "LEFT" },
-    RIGHT      = { point = "RIGHT",      justify = "RIGHT" },
-    CENTER     = { point = "CENTER",     justify = "CENTER" },
-    TOPLEFT    = { point = "TOPLEFT",    justify = "LEFT" },
-    TOPRIGHT   = { point = "TOPRIGHT",   justify = "RIGHT" },
-    TOP        = { point = "TOP",        justify = "CENTER" },
-    BOTTOMLEFT = { point = "BOTTOMLEFT", justify = "LEFT" },
-    BOTTOMRIGHT= { point = "BOTTOMRIGHT",justify = "RIGHT" },
-    BOTTOM     = { point = "BOTTOM",     justify = "CENTER" },
+    LEFT       = { point = "LEFT",       leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "LEFT",   justifyV = "MIDDLE" },
+    RIGHT      = { point = "RIGHT",      leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "RIGHT",  justifyV = "MIDDLE" },
+    CENTER     = { point = "CENTER",     leftPoint = "LEFT",       rightPoint = "RIGHT",        justify = "CENTER", justifyV = "MIDDLE" },
+    TOPLEFT    = { point = "TOPLEFT",    leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "LEFT",   justifyV = "TOP" },
+    TOPRIGHT   = { point = "TOPRIGHT",   leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "RIGHT",  justifyV = "TOP" },
+    TOP        = { point = "TOP",        leftPoint = "TOPLEFT",    rightPoint = "TOPRIGHT",     justify = "CENTER", justifyV = "TOP" },
+    BOTTOMLEFT = { point = "BOTTOMLEFT", leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "LEFT",   justifyV = "BOTTOM" },
+    BOTTOMRIGHT= { point = "BOTTOMRIGHT",leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "RIGHT",  justifyV = "BOTTOM" },
+    BOTTOM     = { point = "BOTTOM",     leftPoint = "BOTTOMLEFT", rightPoint = "BOTTOMRIGHT",  justify = "CENTER", justifyV = "BOTTOM" },
 }
 
 local function GetTextAnchorInfo(anchorName)
@@ -1035,9 +1035,13 @@ local function DecorateGroupFrame(frame)
     local nameText = frame.nameText or textFrame:CreateFontString(nil, "OVERLAY")
     nameText:ClearAllPoints()
     nameText:SetFont(fontPath, nameFontSize, fontOutline)
-    nameText:SetPoint(nameAnchor.point, frame, nameAnchor.point, nameOffsetX, nameOffsetY)
+    local namePadX = math.abs(nameOffsetX)
+    nameText:SetPoint(nameAnchor.leftPoint, frame, nameAnchor.leftPoint, namePadX, nameOffsetY)
+    nameText:SetPoint(nameAnchor.rightPoint, frame, nameAnchor.rightPoint, -namePadX, nameOffsetY)
     nameText:SetJustifyH(nameAnchor.justify)
+    nameText:SetJustifyV(nameAnchor.justifyV)
     nameText:SetTextColor(1, 1, 1, 1)
+    nameText:SetWordWrap(false)
     frame.nameText = nameText
 
     -- Health text
@@ -1050,9 +1054,13 @@ local function DecorateGroupFrame(frame)
     local healthText = frame.healthText or textFrame:CreateFontString(nil, "OVERLAY")
     healthText:ClearAllPoints()
     healthText:SetFont(fontPath, healthFontSize, fontOutline)
-    healthText:SetPoint(healthAnchor.point, frame, healthAnchor.point, healthOffsetX, healthOffsetY)
+    local healthPadX = math.abs(healthOffsetX)
+    healthText:SetPoint(healthAnchor.leftPoint, frame, healthAnchor.leftPoint, healthPadX, healthOffsetY)
+    healthText:SetPoint(healthAnchor.rightPoint, frame, healthAnchor.rightPoint, -healthPadX, healthOffsetY)
     healthText:SetJustifyH(healthAnchor.justify)
+    healthText:SetJustifyV(healthAnchor.justifyV)
     healthText:SetTextColor(1, 1, 1, 1)
+    healthText:SetWordWrap(false)
     frame.healthText = healthText
 
     -- Role icon
