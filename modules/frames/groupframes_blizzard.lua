@@ -75,6 +75,21 @@ local function HideBlizzardPartyFrames()
     -- CompactPartyFrame (Retail party frames)
     if CompactPartyFrame then
         SafeHideFrame(CompactPartyFrame)
+        -- Also hide individual member frames (container alpha=0 hides visuals
+        -- but children can still receive mouse events and show highlights)
+        for i = 1, 5 do
+            local mf = _G["CompactPartyFrameMember" .. i]
+            if mf then
+                SafeHideFrame(mf)
+            end
+        end
+        -- Hide border/title overlays
+        if CompactPartyFrame.borderFrame then
+            SafeHideFrame(CompactPartyFrame.borderFrame)
+        end
+        if CompactPartyFrame.title then
+            SafeHideFrame(CompactPartyFrame.title)
+        end
     end
 
     -- Legacy PartyMemberFrame1-4
@@ -165,11 +180,15 @@ function QUI_GFB:StartWatcher()
         local db = GetDB()
         if not db or not db.enabled then return end
 
-        -- Re-hide CompactPartyFrame if it became visible
+        -- Re-hide CompactPartyFrame and its children if they became visible
         if CompactPartyFrame and CompactPartyFrame:GetAlpha() > 0 then
             C_Timer.After(0, function()
                 if InCombatLockdown() then return end
                 SafeHideFrame(CompactPartyFrame)
+                for i = 1, 5 do
+                    local mf = _G["CompactPartyFrameMember" .. i]
+                    if mf then SafeHideFrame(mf) end
+                end
             end)
         end
 

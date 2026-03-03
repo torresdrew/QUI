@@ -76,6 +76,11 @@ local POWER_COLORS = {
 -- Role sorting priority
 local ROLE_SORT_ORDER = { TANK = 1, HEALER = 2, DAMAGER = 3, NONE = 4 }
 
+-- NPC party member detection (follower dungeons)
+local function IsNPCPartyMember(unit)
+    return UnitExists(unit) and not UnitIsPlayer(unit)
+end
+
 -- Pending combat-deferred operations
 local pendingResize = false
 local pendingVisibilityUpdate = false
@@ -363,7 +368,7 @@ local function UpdateHealth(frame)
 
         -- Color
         local isDeadOrGhost = UnitIsDeadOrGhost(unit)
-        local isConnected = UnitIsConnected(unit)
+        local isConnected = UnitIsConnected(unit) or IsNPCPartyMember(unit)
         if not isConnected then
             frame.healthBar:SetStatusBarColor(COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3], COLOR_OFFLINE[4])
         elseif isDeadOrGhost then
@@ -378,7 +383,7 @@ local function UpdateHealth(frame)
     local healthSettings = GetHealthSettings()
     if frame.healthText and healthSettings and healthSettings.showHealthText ~= false then
         local isDeadOrGhost = UnitIsDeadOrGhost(unit)
-        local isConnected = UnitIsConnected(unit)
+        local isConnected = UnitIsConnected(unit) or IsNPCPartyMember(unit)
         if not isConnected then
             frame.healthText:SetText("Offline")
             frame.healthText:SetTextColor(COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3])
@@ -743,7 +748,7 @@ end
 ---------------------------------------------------------------------------
 local function UpdateConnection(frame)
     if not frame or not frame.unit then return end
-    local isConnected = UnitIsConnected(frame.unit)
+    local isConnected = UnitIsConnected(frame.unit) or IsNPCPartyMember(frame.unit)
     if not isConnected and UnitExists(frame.unit) then
         frame:SetAlpha(0.5)
     else
@@ -868,10 +873,15 @@ local function DecorateGroupFrame(frame)
     })
 
     local bgColor = { 0.1, 0.1, 0.1, 0.9 }
+    local healthOpacity = 1
+    local bgOpacity = 1
     if general and general.darkMode then
         bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
+        healthOpacity = general.darkModeHealthOpacity or 1.0
+        bgOpacity = general.darkModeBgOpacity or 1.0
     end
-    frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+    local bgAlpha = (bgColor[4] or 1) * bgOpacity
+    frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
     if borderSize > 0 then
         frame:SetBackdropBorderColor(0, 0, 0, 1)
     end
@@ -890,6 +900,7 @@ local function DecorateGroupFrame(frame)
     healthBar:SetMinMaxValues(0, 100)
     healthBar:SetValue(100)
     healthBar:EnableMouse(false)
+    healthBar:SetAlpha(healthOpacity)
     frame.healthBar = healthBar
 
     -- Health bar background
@@ -1090,6 +1101,27 @@ local function DecorateGroupFrame(frame)
     end)
     frame:HookScript("OnLeave", HideUnitTooltip)
 
+    -- Sync unit attribute → frame.unit whenever the secure header changes it
+    frame:HookScript("OnAttributeChanged", function(self, key, value)
+        if key ~= "unit" then return end
+        local oldUnit = self.unit
+        self.unit = value
+        if oldUnit and QUI_GF.unitFrameMap[oldUnit] == self then
+            QUI_GF.unitFrameMap[oldUnit] = nil
+        end
+        if value then
+            QUI_GF.unitFrameMap[value] = self
+            UpdateFrame(self)
+        end
+    end)
+
+    -- Pick up the current unit if already assigned by the secure header
+    local currentUnit = frame:GetAttribute("unit")
+    if currentUnit then
+        frame.unit = currentUnit
+        QUI_GF.unitFrameMap[currentUnit] = frame
+    end
+
     -- Register with Clique / click-cast
     if ClickCastFrames then
         ClickCastFrames[frame] = true
@@ -1113,9 +1145,9 @@ local function RebuildUnitFrameMap()
                 local child = header:GetAttribute("child" .. i)
                 if not child then break end
                 local unit = child:GetAttribute("unit")
+                child.unit = unit  -- sync Lua property (nil clears stale)
                 if unit then
                     QUI_GF.unitFrameMap[unit] = child
-                    -- Also map petN to the frame if needed
                 end
                 i = i + 1
             end
@@ -1293,6 +1325,14 @@ local function CreateHeaders()
     partyHeader:Hide()
     QUI_GF.headers.party = partyHeader
 
+    -- Watch for new children added by the secure header (handles late NPC frames)
+    partyHeader:HookScript("OnAttributeChanged", function(self, key, value)
+        if value and type(key) == "string" and key:match("^child") then
+            DecorateGroupFrame(value)
+            value:RegisterForClicks("AnyUp")
+        end
+    end)
+
     -- Raid header
     local raidHeader = CreateFrame("Frame", "QUI_RaidHeader", UIParent, "SecureGroupHeaderTemplate")
     raidHeader:SetAttribute("template", "SecureUnitButtonTemplate, BackdropTemplate")
@@ -1304,6 +1344,14 @@ local function CreateHeaders()
     raidHeader:SetClampedToScreen(true)
     raidHeader:Hide()
     QUI_GF.headers.raid = raidHeader
+
+    -- Watch for new children on raid header too
+    raidHeader:HookScript("OnAttributeChanged", function(self, key, value)
+        if value and type(key) == "string" and key:match("^child") then
+            DecorateGroupFrame(value)
+            value:RegisterForClicks("AnyUp")
+        end
+    end)
 end
 
 ---------------------------------------------------------------------------
@@ -1444,7 +1492,7 @@ local function DoRangeCheck()
             -- pcall and just blindly SetAlpha every tick (C-side, cheap).
             local alpha = 1
             local ok, result = pcall(function()
-                if UnitIsConnected(unit) and not UnitIsDeadOrGhost(unit) then
+                if (UnitIsConnected(unit) or IsNPCPartyMember(unit)) and not UnitIsDeadOrGhost(unit) then
                     if not UnitInRange(unit) then
                         alpha = outAlpha
                     end

@@ -174,7 +174,7 @@ local function SetupFrameClickCast(frame)
             frame:HookScript("OnEnter", function(self)
                 if InCombatLockdown() then return end
                 local unit = self:GetAttribute("unit")
-                if unit and UnitIsDeadOrGhost(unit) and UnitIsConnected(unit) then
+                if unit and UnitIsDeadOrGhost(unit) and (UnitIsConnected(unit) or not UnitIsPlayer(unit)) then
                     -- Swap left click to res
                     self:SetAttribute("type1", "spell")
                     self:SetAttribute("spell1", resSpell)

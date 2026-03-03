@@ -228,11 +228,56 @@ local function CreateGroupFramesPage(parent)
         classColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
-        -- Dark mode
-        local darkModeCheck = GUI:CreateFormCheckbox(tabContent, "Dark Mode", "darkMode", general, RefreshGF)
+        -- Dark mode widget refs for conditional enable/disable
+        local darkModeWidgets = {}
+
+        local function UpdateDarkModeWidgetStates()
+            local darkModeOn = general.darkMode
+            if darkModeWidgets.healthColor then darkModeWidgets.healthColor:SetEnabled(darkModeOn) end
+            if darkModeWidgets.bgColor then darkModeWidgets.bgColor:SetEnabled(darkModeOn) end
+            if darkModeWidgets.healthOpacity then darkModeWidgets.healthOpacity:SetEnabled(darkModeOn) end
+            if darkModeWidgets.bgOpacity then darkModeWidgets.bgOpacity:SetEnabled(darkModeOn) end
+        end
+
+        -- Dark mode toggle
+        local darkModeCheck = GUI:CreateFormCheckbox(tabContent, "Dark Mode", "darkMode", general, function()
+            RefreshGF()
+            UpdateDarkModeWidgetStates()
+        end)
         darkModeCheck:SetPoint("TOPLEFT", PAD, y)
         darkModeCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
+
+        -- Darkmode Health Color
+        local dmHealthColor = GUI:CreateFormColorPicker(tabContent, "Darkmode Health Color", "darkModeHealthColor", general, RefreshGF, { noAlpha = true })
+        dmHealthColor:SetPoint("TOPLEFT", PAD, y)
+        dmHealthColor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        darkModeWidgets.healthColor = dmHealthColor
+        y = y - FORM_ROW
+
+        -- Darkmode Background Color
+        local dmBgColor = GUI:CreateFormColorPicker(tabContent, "Darkmode Background Color", "darkModeBgColor", general, RefreshGF, { noAlpha = true })
+        dmBgColor:SetPoint("TOPLEFT", PAD, y)
+        dmBgColor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        darkModeWidgets.bgColor = dmBgColor
+        y = y - FORM_ROW
+
+        -- Darkmode Health Opacity
+        local dmHealthOpacity = GUI:CreateFormSlider(tabContent, "Darkmode Health Opacity", 0.1, 1.0, 0.01, "darkModeHealthOpacity", general, RefreshGF)
+        dmHealthOpacity:SetPoint("TOPLEFT", PAD, y)
+        dmHealthOpacity:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        darkModeWidgets.healthOpacity = dmHealthOpacity
+        y = y - SLIDER_HEIGHT
+
+        -- Darkmode Background Opacity
+        local dmBgOpacity = GUI:CreateFormSlider(tabContent, "Darkmode Background Opacity", 0.1, 1.0, 0.01, "darkModeBgOpacity", general, RefreshGF)
+        dmBgOpacity:SetPoint("TOPLEFT", PAD, y)
+        dmBgOpacity:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        darkModeWidgets.bgOpacity = dmBgOpacity
+        y = y - SLIDER_HEIGHT
+
+        -- Set initial enable/disable states
+        UpdateDarkModeWidgetStates()
 
         -- Texture
         local textureDrop = GUI:CreateDropdown(tabContent, "Health Bar Texture", GetTextureList(), "texture", general, RefreshGF)

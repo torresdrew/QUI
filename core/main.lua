@@ -2364,6 +2364,8 @@ local defaults = {
                 darkMode = false,
                 darkModeHealthColor = { 0.15, 0.15, 0.15, 1 },
                 darkModeBgColor = { 0.25, 0.25, 0.25, 1 },
+                darkModeHealthOpacity = 1.0,
+                darkModeBgOpacity = 1.0,
             },
 
             -- Layout
