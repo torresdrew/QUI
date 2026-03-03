@@ -464,6 +464,40 @@ local function GetCachedItemInfo(itemID)
     return nil
 end
 
+local function GetCachedSlotInfo(slotNum)
+    if not slotNum then return nil end
+    local cacheKey = "slot_" .. slotNum
+    if CustomTrackers.infoCache[cacheKey] then
+        return CustomTrackers.infoCache[cacheKey]
+    end
+    local itemID = GetInventoryItemID("player", slotNum)
+    if not itemID then
+        -- Empty slot: return placeholder
+        CustomTrackers.infoCache[cacheKey] = {
+            name = "Empty Slot",
+            icon = "Interface\\Icons\\INV_Misc_QuestionMark",
+            id = slotNum,
+            itemID = nil,
+            type = "slot",
+        }
+        return CustomTrackers.infoCache[cacheKey]
+    end
+    local name, _, _, _, _, _, _, _, _, icon = C_Item.GetItemInfo(itemID)
+    if name then
+        CustomTrackers.infoCache[cacheKey] = {
+            name = name,
+            icon = icon,
+            id = slotNum,
+            itemID = itemID,
+            type = "slot",
+        }
+        return CustomTrackers.infoCache[cacheKey]
+    end
+    -- Item not cached yet, request it
+    C_Item.RequestLoadItemDataByID(itemID)
+    return nil
+end
+
 ---------------------------------------------------------------------------
 -- COOLDOWN INFO HELPERS
 ---------------------------------------------------------------------------
@@ -885,6 +919,13 @@ local function CreateTrackerIcon(parent, clickable)
             end
             if iconFrame.entry.type == "spell" then
                 pcall(GameTooltip.SetSpellByID, GameTooltip, iconFrame.entry.id)
+            elseif iconFrame.entry.type == "slot" then
+                local itemID = GetInventoryItemID("player", iconFrame.entry.id)
+                if itemID then
+                    pcall(GameTooltip.SetItemByID, GameTooltip, itemID)
+                else
+                    GameTooltip:SetText("Empty Equipment Slot")
+                end
             elseif iconFrame.entry.type == "item" then
                 -- pcall to handle Blizzard MoneyFrame secret value bug in Midnight beta
                 pcall(GameTooltip.SetItemByID, GameTooltip, iconFrame.entry.id)
@@ -1004,6 +1045,22 @@ local function UpdateIconSecureAttributes(icon, entry, config)
             icon.clickButton:SetAttribute("type", "spell")
             icon.clickButton:SetAttribute("spell", info.name)
             icon.clickButton:Show()
+        else
+            ClearClickButtonAttributes()
+            icon.clickButton:Hide()
+        end
+    elseif entry.type == "slot" then
+        local itemID = GetInventoryItemID("player", entry.id)
+        if itemID then
+            local name = C_Item.GetItemInfo(itemID)
+            if name then
+                icon.clickButton:SetAttribute("type", "item")
+                icon.clickButton:SetAttribute("item", name)
+                icon.clickButton:Show()
+            else
+                ClearClickButtonAttributes()
+                icon.clickButton:Hide()
+            end
         else
             ClearClickButtonAttributes()
             icon.clickButton:Hide()
@@ -1246,6 +1303,26 @@ local function ApplyKeybindToTrackerIcon(icon)
                 keybind = QUIKeybinds.GetKeybindForSpellName(spellInfo.name)
             end
         end
+    elseif entry.type == "slot" and entry.id then
+        -- Slot entries: resolve current itemID, then look up keybinds for that item
+        local itemID = GetInventoryItemID("player", entry.id)
+        if itemID then
+            if overrides then
+                local overrideKey = -itemID
+                if overrides[overrideKey] and overrides[overrideKey] ~= "" then
+                    keybind = overrides[overrideKey]
+                end
+            end
+            if not keybind then
+                keybind = QUIKeybinds.GetKeybindForItem(itemID)
+            end
+            if not keybind and QUIKeybinds.GetKeybindForItemName then
+                local itemName = C_Item.GetItemInfo(itemID)
+                if itemName then
+                    keybind = QUIKeybinds.GetKeybindForItemName(itemName)
+                end
+            end
+        end
     elseif entry.type == "item" and entry.id then
         -- Step 1: Check for user override (highest priority)
         -- Items use negative itemID as key to avoid conflicts with spellIDs
@@ -1460,6 +1537,8 @@ function CustomTrackers:UpdateBarIcons(bar)
         local info
         if entry.type == "spell" then
             info = GetCachedSpellInfo(entry.id)
+        elseif entry.type == "slot" then
+            info = GetCachedSlotInfo(entry.id)
         else
             info = GetCachedItemInfo(entry.id)
         end
@@ -1547,6 +1626,10 @@ local function RebuildActiveSet(bar)
             local isUsable = true
             if entry.type == "spell" then
                 isUsable = IsSpellUsable(entry.id)
+            elseif entry.type == "slot" then
+                -- Slot entries: usable when an item is equipped in the slot
+                local itemID = GetInventoryItemID("player", entry.id)
+                isUsable = itemID ~= nil
             elseif entry.type == "item" then
                 -- Items: equipment check is stable, consumables always in active set
                 if IsEquipmentItem(entry.id) then
@@ -1647,6 +1730,16 @@ function CustomTrackers:StartCooldownPolling(bar)
                 if entry.type == "spell" then
                     startTime, duration, enabled, isOnGCD = GetSpellCooldownInfo(entry.id)
                     count, maxCharges, chargeStartTime, chargeDuration = GetSpellChargeCount(entry.id)
+                elseif entry.type == "slot" then
+                    local itemID = GetInventoryItemID("player", entry.id)
+                    if itemID then
+                        startTime, duration, enabled = GetItemCooldownInfo(itemID)
+                        icon._usable = true
+                    else
+                        startTime, duration, enabled = 0, 0, false
+                        icon._usable = false
+                    end
+                    isOnGCD = false
                 else
                     startTime, duration, enabled = GetItemCooldownInfo(entry.id)
                     count = GetItemStackCount(entry.id, config.showItemCharges)
@@ -1660,6 +1753,11 @@ function CustomTrackers:StartCooldownPolling(bar)
                 if showActiveState then
                     if entry.type == "spell" then
                         isActive, activeStartTime, activeDuration, activeType = GetSpellActiveInfo(entry.id)
+                    elseif entry.type == "slot" then
+                        local itemID = GetInventoryItemID("player", entry.id)
+                        if itemID then
+                            isActive, activeStartTime, activeDuration, activeType = GetItemActiveInfo(itemID)
+                        end
                     elseif entry.type == "item" then
                         isActive, activeStartTime, activeDuration, activeType = GetItemActiveInfo(entry.id)
                     end
@@ -2791,6 +2889,55 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
+    if event == "PLAYER_EQUIPMENT_CHANGED" then
+        local slot = ...
+        if slot then
+            -- Invalidate cache for the changed slot
+            CustomTrackers.infoCache["slot_" .. slot] = nil
+
+            -- Check if any bar has a slot entry matching this slot
+            local hasSlotEntry = false
+            for _, bar in pairs(CustomTrackers.activeBars) do
+                for _, icon in ipairs(bar.icons or {}) do
+                    if icon.entry and icon.entry.type == "slot" and icon.entry.id == slot then
+                        hasSlotEntry = true
+                        -- Update icon texture immediately
+                        local info = GetCachedSlotInfo(slot)
+                        if info and info.icon then
+                            icon.tex:SetTexture(info.icon)
+                        else
+                            icon.tex:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+                        end
+                        -- Defer secure attribute updates if in combat
+                        if InCombatLockdown() then
+                            icon._pendingSecureUpdate = true
+                        else
+                            UpdateIconSecureAttributes(icon, icon.entry, bar.config)
+                        end
+                    end
+                end
+            end
+
+            -- Rebuild active sets and trigger DoUpdate for affected bars
+            if hasSlotEntry then
+                for _, bar in pairs(CustomTrackers.activeBars) do
+                    local barHasSlot = false
+                    for _, icon in ipairs(bar.icons or {}) do
+                        if icon.entry and icon.entry.type == "slot" and icon.entry.id == slot then
+                            barHasSlot = true
+                            break
+                        end
+                    end
+                    if barHasSlot then
+                        RebuildActiveSet(bar)
+                        if bar.DoUpdate then bar.DoUpdate() end
+                    end
+                end
+            end
+        end
+        return
+    end
+
     if event == "PLAYER_ENTERING_WORLD" then
         local core = GetCore()
         if core then
@@ -2817,13 +2964,24 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
         if itemID then
             -- Clear cache for this item so it gets re-fetched
             CustomTrackers.infoCache["item_" .. itemID] = nil
-            -- Quick refresh of all bars
+            -- Quick refresh of all bars (items and slot entries whose resolved itemID matches)
             for _, bar in pairs(CustomTrackers.activeBars) do
                 for _, icon in ipairs(bar.icons or {}) do
                     if icon.entry and icon.entry.type == "item" and icon.entry.id == itemID then
                         local info = GetCachedItemInfo(itemID)
                         if info and info.icon then
                             icon.tex:SetTexture(info.icon)
+                        end
+                    elseif icon.entry and icon.entry.type == "slot" then
+                        -- Check if this slot's current item matches the loaded itemID
+                        local slotItemID = GetInventoryItemID("player", icon.entry.id)
+                        if slotItemID == itemID then
+                            -- Invalidate slot cache so it re-fetches with the now-available item info
+                            CustomTrackers.infoCache["slot_" .. icon.entry.id] = nil
+                            local info = GetCachedSlotInfo(icon.entry.id)
+                            if info and info.icon then
+                                icon.tex:SetTexture(info.icon)
+                            end
                         end
                     end
                 end

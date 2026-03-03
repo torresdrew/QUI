@@ -29,7 +29,7 @@ QUICore.__reloadEventFrame = nil
 
 -- Safe reload function - queues if in combat, reloads immediately if not
 function QUICore:SafeReload()
-    if InCombatLockdown() then
+    if InCombatLockdown() and not (QUI.db and QUI.db.profile and QUI.db.profile.general and QUI.db.profile.general.allowReloadInCombat) then
         if not self.__pendingReload then
             self.__pendingReload = true
             print("|cFF30D1FFQUI:|r Reload queued - will execute when combat ends.")
@@ -75,7 +75,7 @@ function QUI:SafeReload()
         self.QUICore:SafeReload()
     else
         -- Fallback if QUICore not loaded
-        if InCombatLockdown() then
+        if InCombatLockdown() and not (self.db and self.db.profile and self.db.profile.general and self.db.profile.general.allowReloadInCombat) then
             print("|cFF30D1FFQUI:|r Cannot reload during combat.")
         else
             ReloadUI()
@@ -389,6 +389,7 @@ local defaults = {
             autoInsertKey = true,  -- Auto-insert keystone in M+ UI
             skinKeystoneFrame = true,  -- Skin keystone insertion window
             skinGameMenu = false,  -- Skin ESC menu (opt-in)
+            allowReloadInCombat = false,  -- Allow /reload during combat (bypass SafeReload)
             addQUIButton = false,  -- Add QUI button to ESC menu (opt-in)
             gameMenuFontSize = 12,  -- Game menu button font size
             gameMenuDim = true,  -- Dim background when game menu is open
