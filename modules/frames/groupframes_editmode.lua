@@ -587,17 +587,15 @@ local function OnEditModeExit()
     QUI_GFEM:DisableEditMode()
 end
 
--- Hook Blizzard Edit Mode events
-local editModeFrame = CreateFrame("Frame")
-editModeFrame:RegisterEvent("EDIT_MODE_ENTER")
-editModeFrame:RegisterEvent("EDIT_MODE_EXIT")
-editModeFrame:SetScript("OnEvent", function(self, event)
+-- Hook Blizzard Edit Mode via QUICore callback registry
+QUICore:RegisterEditModeEnter(function()
     local db = GetDB()
     if not db or not db.enabled then return end
+    OnEditModeEnter()
+end)
 
-    if event == "EDIT_MODE_ENTER" then
-        OnEditModeEnter()
-    elseif event == "EDIT_MODE_EXIT" then
-        OnEditModeExit()
-    end
+QUICore:RegisterEditModeExit(function()
+    local db = GetDB()
+    if not db or not db.enabled then return end
+    OnEditModeExit()
 end)
