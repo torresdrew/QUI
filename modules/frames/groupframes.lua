@@ -1653,12 +1653,13 @@ local function OnEvent(self, event, arg1, ...)
     -- Non-unit events — iterate relevant frames
     if event == "GROUP_ROSTER_UPDATE" then
         UpdateHeaderVisibility()
-        UpdateFrameScaling()
+        UpdateFrameScaling(true)
         -- Rebuild map after a short delay (header needs time to create children)
         C_Timer.After(0.2, function()
             DecorateHeaderChildren(QUI_GF.headers.party)
             DecorateHeaderChildren(QUI_GF.headers.raid)
             RebuildUnitFrameMap()
+            UpdateFrameScaling(true)
             QUI_GF:RefreshAllFrames()
         end)
         -- Restart range check with appropriate interval
@@ -1872,6 +1873,7 @@ function QUI_GF:Initialize()
 
     -- Show appropriate header based on group status
     UpdateHeaderVisibility()
+    UpdateFrameScaling(true)
 
     -- Start range check
     StartRangeCheck()
@@ -1935,6 +1937,7 @@ initFrame:SetScript("OnEvent", function(self, event)
         if QUI_GF.initialized then
             C_Timer.After(1.0, function()
                 UpdateHeaderVisibility()
+                UpdateFrameScaling(true)
                 QUI_GF:RefreshAllFrames()
             end)
         end
