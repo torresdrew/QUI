@@ -95,6 +95,13 @@ function QUI:SlashCommandOpen(input)
             print("|cFF56D1FFQUI:|r Unit Frames module not loaded.")
         end
         return
+    elseif input and input == "debuggf" then
+        if _G.QUI_DebugGroupFrames then
+            _G.QUI_DebugGroupFrames()
+        else
+            print("|cFF56D1FFQUI:|r Group Frames module not loaded.")
+        end
+        return
     elseif input and input:find("^grouptest") then
         -- Toggle Group Frames test/preview mode
         local GFEditMode = ns.QUI_GroupFrameEditMode
