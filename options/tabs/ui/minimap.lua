@@ -470,7 +470,7 @@ local function BuildMinimapTab(tabContent)
         hideDifficulty:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
-        local hideExpansion = GUI:CreateFormCheckboxInverted(tabContent, "Hide Progress Report", "showMissions", mm, RefreshMinimap)
+        local hideExpansion = GUI:CreateFormCheckboxInverted(tabContent, "Hide Garrison/Mission Report", "showMissions", mm, RefreshMinimap)
         hideExpansion:SetPoint("TOPLEFT", PAD, y)
         hideExpansion:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
