@@ -310,11 +310,13 @@ local function ApplySettingsToIcon(icon, settings)
             end
         end
         -- Debug: log GCD detection results (gated to avoid string alloc when off)
+        -- Only log meaningful events (dur > 0 or secret), skip zero-duration noise
         if _G.QUI and _G.QUI.DEBUG_MODE then
-            local iName = icon.GetName and icon:GetName() or "?"
-            if duration then
+            if duration and duration > 0 then
+                local iName = icon.GetName and icon:GetName() or "?"
                 DebugLog(iName, "dur=", format("%.2f", duration), isGCD and "→ GCD" or "→ cooldown")
-            elseif durationRaw ~= nil then
+            elseif durationRaw ~= nil and not duration then
+                local iName = icon.GetName and icon:GetName() or "?"
                 DebugLog(iName, "dur=SECRET (raw unreadable), fallthrough to cooldown")
             end
         end
