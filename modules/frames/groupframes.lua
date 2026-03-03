@@ -1439,32 +1439,19 @@ local function DoRangeCheck()
 
     for unit, frame in pairs(QUI_GF.unitFrameMap) do
         if frame and frame:IsShown() and UnitExists(unit) then
-            local state = GetFrameState(frame)
-            local inRange = false
-
-            if UnitIsConnected(unit) and not UnitIsDeadOrGhost(unit) then
-                -- Try C_Spell.IsSpellInRange first for class-specific range
-                local ok, result = pcall(UnitInRange, unit)
-                if ok then
-                    inRange = result
-                else
-                    inRange = true -- Assume in range on error
+            -- UnitInRange / UnitIsConnected / UnitIsDeadOrGhost can all
+            -- return secret booleans in combat. Wrap the whole check in
+            -- pcall and just blindly SetAlpha every tick (C-side, cheap).
+            local alpha = 1
+            local ok, result = pcall(function()
+                if UnitIsConnected(unit) and not UnitIsDeadOrGhost(unit) then
+                    if not UnitInRange(unit) then
+                        alpha = outAlpha
+                    end
                 end
-            else
-                inRange = true -- Don't dim disconnected/dead (handled elsewhere)
-            end
-
-            if inRange then
-                if state.outOfRange then
-                    state.outOfRange = false
-                    frame:SetAlpha(1)
-                end
-            else
-                if not state.outOfRange then
-                    state.outOfRange = true
-                    frame:SetAlpha(outAlpha)
-                end
-            end
+            end)
+            -- On pcall failure (secret value in boolean test), assume in range
+            frame:SetAlpha(alpha)
         end
     end
 end
