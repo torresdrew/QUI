@@ -54,6 +54,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+
+
+## v2.44.3 - 2026-03-03
+
+### Added
+- allow for ESC to close the settings panel
+- added Rotation Assist Icon to Anchoring & Layout (under CDM)
+
+### Fixed
+- fixed GCD swipes/glows for some classes
+- fixed issues with tooltip parent frames
+- fixed skyriding speed math
+- fixed missing enchant texts for character pane
+- fixed LeaveVehicleButton showing when not in a vehicle
+## v2.44.2 - 2026-03-02
+
+### Fixed
+- fixed game menu highlighting and "growing"
+- fixed GCD glow showing on hidden CDM frames
+- fixed some minor performance issues with duplicate recompute paths
+- hardened search renderer
+- cleaned up duplicate code
+## v2.44.1 - 2026-03-02
+
+### Added
+- added "Reset All Movers" button to profiles tab
+
+### Changed
+- no cursor-anchoring for tooltips in combat anymore to avoid taints
+
+### Fixed
+- re-apply frame anchors after profile change
+- minor objective tracking skinning fixes
+- prevent CDM flash on load
+- fixed ESC and slash commands not working in Edit Mode
 ## v2.44.0 - 2026-03-02
 
 ### Added

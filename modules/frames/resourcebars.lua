@@ -181,13 +181,13 @@ local function GetPowerPct(unit, powerType, usePredicted)
             return pct
         end
     end
-    -- Manual calculation fallback
-    local cur = UnitPower(unit, powerType)
-    local max = UnitPowerMax(unit, powerType)
-    if cur and max and max > 0 then
-        return (cur / max) * 100
-    end
-    return nil
+    -- Manual calculation fallback (UnitPower/UnitPowerMax can return secret values in 12.0.x)
+    local ok, result = pcall(function()
+        local cur = UnitPower(unit, powerType)
+        local max = UnitPowerMax(unit, powerType)
+        if cur and max and max > 0 then return (cur / max) * 100 end
+    end)
+    return ok and result or nil
 end
 
 local tickedPowerTypes = {
@@ -967,33 +967,8 @@ function QUICore:EnablePowerBarEditMode()
                 end
             end)
 
-            -- Enable keyboard for arrow key nudging
-            bar:EnableKeyboard(true)
-            bar:SetScript("OnKeyDown", function(self, key)
-                if not PowerBarEditMode.active then
-                    self:SetPropagateKeyboardInput(true)
-                    return
-                end
-
-                local deltaX, deltaY = 0, 0
-                if key == "LEFT" then deltaX = -1
-                elseif key == "RIGHT" then deltaX = 1
-                elseif key == "UP" then deltaY = 1
-                elseif key == "DOWN" then deltaY = -1
-                else
-                    -- Non-arrow keys: propagate to game (WASD, hotkeys, Escape, etc.)
-                    self:SetPropagateKeyboardInput(true)
-                    return
-                end
-
-                -- Consume arrow keys so they nudge instead of moving the camera
-                self:SetPropagateKeyboardInput(false)
-
-                -- Use global selection system - nudge the SELECTED element, not this bar
-                if QUICore and QUICore.EditModeSelection and QUICore.EditModeSelection.selectedType then
-                    QUICore:NudgeSelectedElement(deltaX, deltaY)
-                end
-            end)
+            -- Keyboard handling is centralized in EditModeKeyHandler (core/main.lua).
+            -- Per-bar EnableKeyboard is removed to prevent input blocking.
             end -- else (free)
         end
     end
@@ -3183,11 +3158,8 @@ function QUICore:OnShapeshiftChanged()
         _G.QUI_UpdateAnchoredFrames()
     end
 end
--- Hook into that shit
-local oldOnEnable = QUICore.OnEnable
-function QUICore:OnEnable()
-    if oldOnEnable then
-        oldOnEnable(self)
-    end
-    InitializeResourceBars(self)
+if QUICore and QUICore.RegisterPostEnable then
+    QUICore:RegisterPostEnable(function(core)
+        InitializeResourceBars(core)
+    end)
 end

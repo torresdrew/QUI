@@ -81,12 +81,13 @@ end
 
 local function SetFontStringSize(fontString, size)
     if not fontString or not fontString.GetFont or not fontString.SetFont then return end
-    local fontPath, _, flags = fontString:GetFont()
-    if not fontPath then
+    if fontString.IsForbidden and fontString:IsForbidden() then return end
+    local ok, fontPath, _, flags = pcall(fontString.GetFont, fontString)
+    if not ok or not fontPath then
         fontPath = Helpers.GetGeneralFont and Helpers.GetGeneralFont() or STANDARD_TEXT_FONT
         flags = Helpers.GetGeneralFontOutline and Helpers.GetGeneralFontOutline() or ""
     end
-    fontString:SetFont(fontPath, size, flags or "")
+    pcall(fontString.SetFont, fontString, fontPath, size, flags or "")
 end
 
 local function ApplyTooltipFontSizeToFrame(tooltip)
@@ -108,12 +109,23 @@ local function ApplyTooltipFontSizeToFrame(tooltip)
             lineCount = count or 0
         end
         if lineCount > 0 then
-            for i = 1, lineCount do
-                local left = _G[tooltipName .. "TextLeft" .. i]
-                local right = _G[tooltipName .. "TextRight" .. i]
-                local size = (i == 1) and headerSize or baseSize
-                SetFontStringSize(left, size)
-                SetFontStringSize(right, size)
+            if tooltip.GetLeftLine and tooltip.GetRightLine then
+                for i = 1, lineCount do
+                    local left = tooltip:GetLeftLine(i)
+                    local right = tooltip:GetRightLine(i)
+                    local size = (i == 1) and headerSize or baseSize
+                    SetFontStringSize(left, size)
+                    SetFontStringSize(right, size)
+                end
+            else
+                -- Fallback for non-GameTooltip frames without GetLeftLine/GetRightLine
+                for i = 1, lineCount do
+                    local left = _G[tooltipName .. "TextLeft" .. i]
+                    local right = _G[tooltipName .. "TextRight" .. i]
+                    local size = (i == 1) and headerSize or baseSize
+                    SetFontStringSize(left, size)
+                    SetFontStringSize(right, size)
+                end
             end
             return
         end
@@ -211,6 +223,7 @@ local NINE_SLICE_PIECES = {
 -- Apply flat QUI textures to all NineSlice pieces
 local function ApplyFlatNineSlice(nineSlice, edgeSize)
     if not nineSlice then return end
+    if nineSlice.IsForbidden and nineSlice:IsForbidden() then return end
 
     local core = GetCore()
     local px = core and core.GetPixelSize and core:GetPixelSize(nineSlice) or 1
@@ -309,6 +322,7 @@ end
 -- Full skin application for a tooltip
 local function SkinTooltip(tooltip)
     if not tooltip then return end
+    if tooltip.IsForbidden and tooltip:IsForbidden() then return end
     if skinnedTooltips[tooltip] then return end
 
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetEffectiveColors()
@@ -320,7 +334,7 @@ local function SkinTooltip(tooltip)
         ClearNineSliceLayoutInfo(tooltip)
         ApplyFlatNineSlice(ns, thickness)
         ApplyNineSliceColors(ns, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        ns:Show()
+        pcall(ns.Show, ns)
     elseif tooltip.SetBackdrop then
         -- Legacy BackdropTemplate path (fallback)
         -- Memory optimization: reuse cached backdrop table (updated in-place)
@@ -332,9 +346,9 @@ local function SkinTooltip(tooltip)
         _cachedBackdropInsets.right = edge
         _cachedBackdropInsets.top = edge
         _cachedBackdropInsets.bottom = edge
-        tooltip:SetBackdrop(_cachedBackdrop)
-        tooltip:SetBackdropColor(bgr, bgg, bgb, bga)
-        tooltip:SetBackdropBorderColor(sr, sg, sb, sa)
+        pcall(tooltip.SetBackdrop, tooltip, _cachedBackdrop)
+        pcall(tooltip.SetBackdropColor, tooltip, bgr, bgg, bgb, bga)
+        pcall(tooltip.SetBackdropBorderColor, tooltip, sr, sg, sb, sa)
     else
         -- No NineSlice and no BackdropTemplate — cannot skin this tooltip
         return
@@ -346,6 +360,7 @@ end
 -- Re-apply skin to an already-skinned tooltip (called on every Show)
 local function ReapplySkin(tooltip)
     if not tooltip then return end
+    if tooltip.IsForbidden and tooltip:IsForbidden() then return end
 
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetEffectiveColors()
     local thickness = GetEffectiveBorderThickness()
@@ -357,7 +372,7 @@ local function ReapplySkin(tooltip)
         -- default rounded NineSlice piece settings between tooltip displays.
         ApplyFlatNineSlice(ns, thickness)
         ApplyNineSliceColors(ns, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        ns:Show()
+        pcall(ns.Show, ns)
     elseif tooltip.SetBackdrop then
         -- Memory optimization: reuse cached backdrop table (updated in-place)
         local core = GetCore()
@@ -368,9 +383,87 @@ local function ReapplySkin(tooltip)
         _cachedBackdropInsets.right = edge
         _cachedBackdropInsets.top = edge
         _cachedBackdropInsets.bottom = edge
-        tooltip:SetBackdrop(_cachedBackdrop)
-        tooltip:SetBackdropColor(bgr, bgg, bgb, bga)
-        tooltip:SetBackdropBorderColor(sr, sg, sb, sa)
+        pcall(tooltip.SetBackdrop, tooltip, _cachedBackdrop)
+        pcall(tooltip.SetBackdropColor, tooltip, bgr, bgg, bgb, bga)
+        pcall(tooltip.SetBackdropBorderColor, tooltip, sr, sg, sb, sa)
+    end
+end
+
+---------------------------------------------------------------------------
+-- Embedded tooltip border stripping
+-- EmbeddedItemTooltip lives inside GameTooltip for World Quest item rewards.
+-- Blizzard applies GAME_TOOLTIP_BACKDROP_STYLE_EMBEDDED via
+-- SharedTooltip_SetBackdropStyle, creating a visible "box within a box."
+-- We hook that function and hide the NineSlice entirely (alpha 0) so the
+-- embedded tooltip blends seamlessly into the already-skinned parent.
+-- SetAlpha is C-side and taint-safe even during combat.
+---------------------------------------------------------------------------
+
+local function StripEmbeddedBorder(frame)
+    if not frame then return end
+    local nineSlice = frame.NineSlice
+    if nineSlice then
+        pcall(nineSlice.SetAlpha, nineSlice, 0)
+    end
+    -- Also strip ItemTooltip sub-frame border if present
+    if frame.ItemTooltip then
+        local itemNS = frame.ItemTooltip.NineSlice
+        if itemNS then
+            pcall(itemNS.SetAlpha, itemNS, 0)
+        end
+    end
+end
+
+local function RestoreEmbeddedBorder(frame)
+    if not frame then return end
+    local nineSlice = frame.NineSlice
+    if nineSlice then
+        pcall(nineSlice.SetAlpha, nineSlice, 1)
+    end
+    if frame.ItemTooltip then
+        local itemNS = frame.ItemTooltip.NineSlice
+        if itemNS then
+            pcall(itemNS.SetAlpha, itemNS, 1)
+        end
+    end
+end
+
+local function SetupEmbeddedTooltipHooks()
+    -- Hook SharedTooltip_SetBackdropStyle to catch Blizzard re-applying the
+    -- embedded backdrop style. Fires AFTER Blizzard's function, giving us
+    -- the last word on the NineSlice appearance.
+    if SharedTooltip_SetBackdropStyle then
+        hooksecurefunc("SharedTooltip_SetBackdropStyle", function(tooltip, style, isEmbedded)
+            if not IsEnabled() then return end
+            if not tooltip then return end
+            -- Only strip embedded tooltips (EmbeddedItemTooltip has .IsEmbedded = true)
+            if not (isEmbedded or tooltip.IsEmbedded) then return end
+            StripEmbeddedBorder(tooltip)
+        end)
+    end
+
+    -- Direct OnShow hook on EmbeddedItemTooltip as fallback — catches cases
+    -- where OnShow fires without SharedTooltip_SetBackdropStyle being called.
+    if EmbeddedItemTooltip then
+        EmbeddedItemTooltip:HookScript("OnShow", function(self)
+            if not IsEnabled() then return end
+            StripEmbeddedBorder(self)
+        end)
+        -- Initial strip if already visible
+        if IsEnabled() then
+            StripEmbeddedBorder(EmbeddedItemTooltip)
+        end
+    end
+
+    -- Also handle GameTooltip.ItemTooltip sub-frame if present
+    if GameTooltip and GameTooltip.ItemTooltip and GameTooltip.ItemTooltip.NineSlice then
+        GameTooltip.ItemTooltip:HookScript("OnShow", function(self)
+            if not IsEnabled() then return end
+            local nineSlice = self.NineSlice
+            if nineSlice then
+                pcall(nineSlice.SetAlpha, nineSlice, 0)
+            end
+        end)
     end
 end
 
@@ -414,7 +507,6 @@ local tooltipsToSkin = {
     "ItemRefShoppingTooltip2",
     "ShoppingTooltip1",
     "ShoppingTooltip2",
-    "EmbeddedItemTooltip",
     "GameTooltipTooltip",
     "WorldMapTooltip",
     "WorldMapCompareTooltip1",
@@ -462,6 +554,15 @@ local function RefreshAllTooltipColors()
     -- Also refresh dynamically skinned tooltips (via TooltipDataProcessor)
     for tooltip in pairs(skinnedTooltips) do
         ReapplySkin(tooltip)
+    end
+
+    -- Handle embedded tooltip border visibility on settings change
+    if EmbeddedItemTooltip then
+        if IsEnabled() then
+            StripEmbeddedBorder(EmbeddedItemTooltip)
+        else
+            RestoreEmbeddedBorder(EmbeddedItemTooltip)
+        end
     end
 end
 
@@ -523,7 +624,7 @@ local function UpdateHealthBarVisibility(tooltip)
     if InCombatLockdown() then return end
 
     local statusBar = tooltip.StatusBar or (tooltip == GameTooltip and GameTooltipStatusBar)
-    if statusBar then
+    if statusBar and not (statusBar.IsForbidden and statusBar:IsForbidden()) then
         statusBar:Hide()
     end
 end
@@ -539,7 +640,7 @@ local function SetupTooltipPostProcessor()
     -- Modifying tooltip line properties (SetFont, SetTextColor, etc.) during combat
     -- taints the line objects and breaks other addons (e.g. Altoholic).
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tooltip)
-        if not tooltip then return end
+        if not tooltip or tooltip == EmbeddedItemTooltip then return end
         HookTooltipOnShow(tooltip)
         if not InCombatLockdown() then
             ApplyTooltipFontSizeToFrame(tooltip)
@@ -616,6 +717,9 @@ eventFrame:SetScript("OnEvent", function(self, event)
             if IsEnabled() then
                 SkinAllTooltips()
             end
+
+            -- Strip embedded item tooltip border (World Quest item rewards)
+            SetupEmbeddedTooltipHooks()
 
             -- Post processor handles both skinning and health bar
             SetupTooltipPostProcessor()
