@@ -57,6 +57,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.44.4 - 2026-03-03
+
+### Added
+- added factory reset button to profiles page
+
+### Fixed
+- fix: respect Blizzard expansion button initialization state
+- fix: stabilize expansion landing page button and add buttonSpacing default
+- fix: safeguard CDM viewer totem refresh and strip embedded tooltip border
+- fix: prevent override action bar taint loop during combat
 ## v2.44.3 - 2026-03-03
 
 ### Added
