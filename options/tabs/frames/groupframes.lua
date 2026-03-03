@@ -430,7 +430,7 @@ local function CreateGroupFramesPage(parent)
         smallW:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
 
-        local smallH = GUI:CreateFormSlider(tabContent, "Height", 14, 60, 1, "smallRaidHeight", dims, RefreshGF)
+        local smallH = GUI:CreateFormSlider(tabContent, "Height", 14, 100, 1, "smallRaidHeight", dims, RefreshGF)
         smallH:SetPoint("TOPLEFT", PAD, y)
         smallH:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
@@ -445,7 +445,7 @@ local function CreateGroupFramesPage(parent)
         medW:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
 
-        local medH = GUI:CreateFormSlider(tabContent, "Height", 12, 50, 1, "mediumRaidHeight", dims, RefreshGF)
+        local medH = GUI:CreateFormSlider(tabContent, "Height", 12, 100, 1, "mediumRaidHeight", dims, RefreshGF)
         medH:SetPoint("TOPLEFT", PAD, y)
         medH:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
@@ -460,7 +460,7 @@ local function CreateGroupFramesPage(parent)
         largeW:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
 
-        local largeH = GUI:CreateFormSlider(tabContent, "Height", 10, 40, 1, "largeRaidHeight", dims, RefreshGF)
+        local largeH = GUI:CreateFormSlider(tabContent, "Height", 10, 100, 1, "largeRaidHeight", dims, RefreshGF)
         largeH:SetPoint("TOPLEFT", PAD, y)
         largeH:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
