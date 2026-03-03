@@ -1705,6 +1705,122 @@ local function UpdateUsabilityPolling()
     end
 end
 
+---------------------------------------------------------------------------
+-- BUTTON SPACING OVERRIDE
+---------------------------------------------------------------------------
+
+-- Detect how many columns a bar has by comparing button Y positions.
+-- Buttons in the same row share a similar top edge; a new row drops down.
+local function DetectBarColumns(buttons)
+    if #buttons < 2 then return #buttons end
+
+    local firstTop = buttons[1]:GetTop()
+    if not firstTop then return #buttons end
+
+    local buttonHeight = buttons[1]:GetHeight() or 30
+    local threshold = buttonHeight * 0.3
+    local numCols = 1
+
+    for i = 2, #buttons do
+        local top = buttons[i]:GetTop()
+        if not top or math.abs(top - firstTop) > threshold then
+            break
+        end
+        numCols = numCols + 1
+    end
+
+    return numCols
+end
+
+-- Reposition action bar buttons with custom spacing override.
+-- WoW 12.0 wraps each button in a per-button container managed by an internal
+-- LayoutFrame. We anchor button 1 directly to the bar frame (cross-hierarchy
+-- SetPoint bypasses the LayoutFrame), chain buttons 2..N off it, then resize
+-- the bar frame to exactly fit the button group (eliminates Blizzard's edge padding).
+local function ApplyButtonSpacing(barKey)
+    if InCombatLockdown() then
+        ActionBars.pendingSpacing = true
+        return
+    end
+
+    local settings = GetGlobalSettings()
+    if not settings or settings.buttonSpacing == nil then return end
+
+    local spacing = settings.buttonSpacing
+    local buttons = GetBarButtons(barKey)
+    if #buttons < 2 then return end
+
+    local barFrame = GetBarFrame(barKey)
+    if not barFrame then return end
+
+    -- Detect grid columns BEFORE moving anything (reads Blizzard's original Y positions)
+    local numCols = DetectBarColumns(buttons)
+
+    -- Effective scales for coordinate space conversion
+    local containerEffScale = buttons[1]:GetParent():GetEffectiveScale()
+    local barEffScale = barFrame:GetEffectiveScale()
+    if not containerEffScale or containerEffScale <= 0 or not barEffScale or barEffScale <= 0 then return end
+
+    -- Group dimensions in container coordinate space (buttons are scale 1.0 inside containers)
+    local btnWidth = buttons[1]:GetWidth()
+    local btnHeight = buttons[1]:GetHeight()
+    local numRows = math.ceil(#buttons / numCols)
+    local groupWidth = numCols * btnWidth + math.max(0, numCols - 1) * spacing
+    local groupHeight = numRows * btnHeight + math.max(0, numRows - 1) * spacing
+
+    -- Resize bar frame to exactly fit the button group (eliminates edge padding).
+    -- Convert from container coordinate space to bar frame coordinate space.
+    barFrame:SetSize(
+        groupWidth * containerEffScale / barEffScale,
+        groupHeight * containerEffScale / barEffScale
+    )
+
+    -- Anchor button 1 to bar frame BOTTOMLEFT (bar now fits exactly, no offset needed)
+    buttons[1]:ClearAllPoints()
+    buttons[1]:SetPoint("BOTTOMLEFT", barFrame, "BOTTOMLEFT", 0, 0)
+
+    -- Chain buttons 2..N off button 1
+    for i = 2, #buttons do
+        local colIndex = ((i - 1) % numCols) + 1
+
+        if colIndex == 1 then
+            -- First button in a new row: anchor below the button directly above
+            local aboveIndex = i - numCols
+            if aboveIndex >= 1 then
+                buttons[i]:ClearAllPoints()
+                buttons[i]:SetPoint("TOPLEFT", buttons[aboveIndex], "BOTTOMLEFT", 0, -spacing)
+            end
+        else
+            -- Same row: anchor to the right of the previous button
+            buttons[i]:ClearAllPoints()
+            buttons[i]:SetPoint("LEFT", buttons[i - 1], "RIGHT", spacing, 0)
+        end
+    end
+end
+
+-- Apply spacing override to all standard bars.
+local function ApplyAllBarSpacing()
+    if InCombatLockdown() then
+        ActionBars.pendingSpacing = true
+        return
+    end
+
+    for barKey, _ in pairs(BUTTON_PATTERNS) do
+        ApplyButtonSpacing(barKey)
+    end
+
+    -- Safety net: if Blizzard's re-layout is deferred (async), re-apply next frame
+    local settings = GetGlobalSettings()
+    if settings and settings.buttonSpacing ~= nil then
+        C_Timer.After(0, function()
+            if InCombatLockdown() then return end
+            for barKey, _ in pairs(BUTTON_PATTERNS) do
+                ApplyButtonSpacing(barKey)
+            end
+        end)
+    end
+end
+
 -- Apply all bar layout settings
 local function ApplyBarLayoutSettings()
     ApplyBarScale()
@@ -1721,6 +1837,9 @@ local function ApplyBarLayoutSettings()
             end
         end
     end
+
+    -- Apply button spacing override (after scale + visibility so positions are final)
+    ApplyAllBarSpacing()
 end
 
 ---------------------------------------------------------------------------
@@ -2636,6 +2755,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             ActionBars.pendingExtraButtonRefresh = false
             RefreshExtraButtons()
         end
+        -- Re-apply button spacing that was deferred during combat
+        if ActionBars.pendingSpacing then
+            ActionBars.pendingSpacing = false
+            ApplyAllBarSpacing()
+        end
     end
 end)
 
@@ -2692,6 +2816,11 @@ do
             for barKey, _ in pairs(BAR_FRAMES) do
                 SetupBarMouseover(barKey)
             end
+
+            -- Re-apply button spacing after Blizzard re-layouts buttons on Edit Mode exit
+            C_Timer.After(0, function()
+                ApplyAllBarSpacing()
+            end)
         end)
     end
 end

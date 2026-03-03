@@ -1382,6 +1382,7 @@ local defaults = {
                 countOffsetY = 0,           -- Stack count text Y offset
                 -- Bar Layout settings
                 barScale = 1.0,             -- Global scale multiplier (0.5 - 2.0)
+                buttonSpacing = nil,        -- Button spacing override (nil = use Blizzard Edit Mode padding)
                 hideEmptySlots = false,     -- Hide buttons with no ability assigned
                 lockButtons = false,        -- Prevent dragging abilities off buttons
                 -- Range indicator settings
@@ -3118,6 +3119,20 @@ local defaults = {
             -- Features
             autoZoom = false,  -- Auto zoom out after 10 seconds
             hideAddonButtons = true,  -- Show addon buttons on hover only
+            buttonDrawer = {
+                enabled = false,        -- Off by default (opt-in feature)
+                anchor = "RIGHT",       -- Which side of minimap: LEFT, RIGHT, TOPLEFT, TOPRIGHT, BOTTOMLEFT, BOTTOMRIGHT, TOP, BOTTOM
+                offsetX = 0,            -- Horizontal offset from anchor position
+                offsetY = 0,            -- Vertical offset from anchor position
+                toggleOffsetX = 0,      -- Horizontal offset for the toggle button
+                toggleOffsetY = 0,      -- Vertical offset for the toggle button
+                autoHideToggle = false, -- Auto-hide the toggle button (show on minimap hover)
+                hiddenButtons = {},     -- Table of button names hidden from the drawer (e.g., { ["LibDBIcon10_Details"] = true })
+                autoHideDelay = 1.5,    -- Seconds after mouse leave before hiding (0 = no auto-hide)
+                buttonSize = 28,        -- Size of collected buttons in pixels
+                buttonSpacing = 2,      -- Gap between buttons in pixels
+                columns = 1,            -- Number of columns in grid layout (1 = vertical strip)
+            },
             middleClickMenuEnabled = true,  -- Middle click minimap opens quick menu
             hideMicroMenu = false,  -- Hide Blizzard micro menu (Character/Spellbook/etc.)
             hideBagBar = false,  -- Hide Blizzard bag bar
