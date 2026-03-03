@@ -608,6 +608,146 @@ local function BuildMinimapTab(tabContent)
         y = y - FORM_ROW
     end
 
+    -- SECTION 6: Button Drawer
+    if true then
+        y = y - 10
+
+        GUI:SetSearchSection("Button Drawer")
+        local drawerHeader = GUI:CreateSectionHeader(tabContent, "Button Drawer")
+        drawerHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - drawerHeader.gap
+
+        -- Description
+        local drawerDesc = GUI:CreateLabel(tabContent, "Collects addon minimap buttons into a styled drawer that opens from the minimap edge. Replaces the default hover-to-show behavior when enabled.", 11, C.textMuted)
+        drawerDesc:SetPoint("TOPLEFT", PAD, y)
+        drawerDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        drawerDesc:SetJustifyH("LEFT")
+        y = y - 28
+
+        -- Ensure buttonDrawer settings exist
+        local mm = db.minimap
+        if not mm.buttonDrawer then
+            mm.buttonDrawer = {
+                enabled = false,
+                anchor = "RIGHT",
+                offsetX = 0,
+                offsetY = 0,
+                autoHideDelay = 1.5,
+                buttonSize = 28,
+                buttonSpacing = 2,
+                columns = 1,
+            }
+        end
+        if mm.buttonDrawer.offsetX == nil then mm.buttonDrawer.offsetX = 0 end
+        if mm.buttonDrawer.offsetY == nil then mm.buttonDrawer.offsetY = 0 end
+        if mm.buttonDrawer.toggleOffsetX == nil then mm.buttonDrawer.toggleOffsetX = 0 end
+        if mm.buttonDrawer.toggleOffsetY == nil then mm.buttonDrawer.toggleOffsetY = 0 end
+        if mm.buttonDrawer.autoHideToggle == nil then mm.buttonDrawer.autoHideToggle = false end
+        if mm.buttonDrawer.hiddenButtons == nil then mm.buttonDrawer.hiddenButtons = {} end
+        local drawer = mm.buttonDrawer
+
+        -- Enable toggle
+        local drawerEnable = GUI:CreateFormCheckbox(tabContent, "Enable Button Drawer", "enabled", drawer, RefreshMinimap)
+        drawerEnable:SetPoint("TOPLEFT", PAD, y)
+        drawerEnable:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Anchor dropdown
+        local anchorOptions = {
+            {value = "RIGHT", text = "Right"},
+            {value = "LEFT", text = "Left"},
+            {value = "TOP", text = "Top"},
+            {value = "BOTTOM", text = "Bottom"},
+            {value = "TOPLEFT", text = "Top Left"},
+            {value = "TOPRIGHT", text = "Top Right"},
+            {value = "BOTTOMLEFT", text = "Bottom Left"},
+            {value = "BOTTOMRIGHT", text = "Bottom Right"},
+        }
+        local drawerAnchor = GUI:CreateFormDropdown(tabContent, "Anchor Side", anchorOptions, "anchor", drawer, RefreshMinimap)
+        drawerAnchor:SetPoint("TOPLEFT", PAD, y)
+        drawerAnchor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- X Offset slider
+        local drawerOfsX = GUI:CreateFormSlider(tabContent, "X Offset", -200, 200, 1, "offsetX", drawer, RefreshMinimap)
+        drawerOfsX:SetPoint("TOPLEFT", PAD, y)
+        drawerOfsX:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Y Offset slider
+        local drawerOfsY = GUI:CreateFormSlider(tabContent, "Y Offset", -200, 200, 1, "offsetY", drawer, RefreshMinimap)
+        drawerOfsY:SetPoint("TOPLEFT", PAD, y)
+        drawerOfsY:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Toggle Button X Offset slider
+        local drawerTogOfsX = GUI:CreateFormSlider(tabContent, "Toggle Button X Offset", -200, 200, 1, "toggleOffsetX", drawer, RefreshMinimap)
+        drawerTogOfsX:SetPoint("TOPLEFT", PAD, y)
+        drawerTogOfsX:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Toggle Button Y Offset slider
+        local drawerTogOfsY = GUI:CreateFormSlider(tabContent, "Toggle Button Y Offset", -200, 200, 1, "toggleOffsetY", drawer, RefreshMinimap)
+        drawerTogOfsY:SetPoint("TOPLEFT", PAD, y)
+        drawerTogOfsY:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Auto-hide delay slider
+        local drawerDelay = GUI:CreateFormSlider(tabContent, "Auto-Hide Delay (0 = manual only)", 0, 5, 0.5, "autoHideDelay", drawer, RefreshMinimap)
+        drawerDelay:SetPoint("TOPLEFT", PAD, y)
+        drawerDelay:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Button size slider
+        local drawerSize = GUI:CreateFormSlider(tabContent, "Button Size", 20, 40, 1, "buttonSize", drawer, RefreshMinimap)
+        drawerSize:SetPoint("TOPLEFT", PAD, y)
+        drawerSize:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Columns slider
+        local drawerCols = GUI:CreateFormSlider(tabContent, "Columns", 1, 6, 1, "columns", drawer, RefreshMinimap)
+        drawerCols:SetPoint("TOPLEFT", PAD, y)
+        drawerCols:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Auto-hide toggle button
+        local autoHideToggle = GUI:CreateFormCheckbox(tabContent, "Auto-Hide Toggle Button", "autoHideToggle", drawer, RefreshMinimap)
+        autoHideToggle:SetPoint("TOPLEFT", PAD, y)
+        autoHideToggle:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Button filter section
+        y = y - 6
+        local filterLabel = GUI:CreateLabel(tabContent, "Hidden Buttons", 12, C.text)
+        filterLabel:SetPoint("TOPLEFT", PAD, y)
+        y = y - 18
+
+        local filterDesc = GUI:CreateLabel(tabContent, "Check a button to hide it from the drawer.", 11, C.textMuted)
+        filterDesc:SetPoint("TOPLEFT", PAD, y)
+        filterDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        filterDesc:SetJustifyH("LEFT")
+        y = y - 20
+
+        -- Dynamic list of collected buttons
+        local buttonNames = _G.QUI_GetDrawerButtonNames and _G.QUI_GetDrawerButtonNames() or {}
+        if #buttonNames > 0 then
+            for _, bName in ipairs(buttonNames) do
+                -- Clean up name for display: strip "LibDBIcon10_" prefix
+                local displayName = bName:gsub("^LibDBIcon10_", "")
+                local cb = GUI:CreateFormCheckbox(tabContent, displayName, bName, drawer.hiddenButtons, RefreshMinimap)
+                cb:SetPoint("TOPLEFT", PAD + 10, y)
+                cb:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+                y = y - FORM_ROW
+            end
+        else
+            local noneLabel = GUI:CreateLabel(tabContent, "No buttons collected yet. Enable the drawer and reload to see buttons here.", 11, C.textMuted)
+            noneLabel:SetPoint("TOPLEFT", PAD + 10, y)
+            noneLabel:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            noneLabel:SetJustifyH("LEFT")
+            y = y - 20
+        end
+    end
+
     tabContent:SetHeight(math.abs(y) + 50)
 end
 
