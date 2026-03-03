@@ -1151,6 +1151,14 @@ local function ConfigurePartyHeader(header)
         header:SetAttribute("point", "BOTTOM")
         header:SetAttribute("yOffset", spacing)
         header:SetAttribute("xOffset", 0)
+    elseif grow == "RIGHT" then
+        header:SetAttribute("point", "LEFT")
+        header:SetAttribute("xOffset", spacing)
+        header:SetAttribute("yOffset", 0)
+    elseif grow == "LEFT" then
+        header:SetAttribute("point", "RIGHT")
+        header:SetAttribute("xOffset", -spacing)
+        header:SetAttribute("yOffset", 0)
     end
 
     -- Sorting
@@ -1182,26 +1190,43 @@ local function ConfigureRaidHeader(header)
     local spacing = layout.spacing or 2
     local groupSpacing = layout.groupSpacing or 10
 
-    -- Grow direction
+    -- Grow direction (within each group column)
     local grow = layout.growDirection or "DOWN"
     if grow == "DOWN" then
         header:SetAttribute("point", "TOP")
         header:SetAttribute("yOffset", -spacing)
-    else
+        header:SetAttribute("xOffset", 0)
+    elseif grow == "UP" then
         header:SetAttribute("point", "BOTTOM")
         header:SetAttribute("yOffset", spacing)
+        header:SetAttribute("xOffset", 0)
+    elseif grow == "RIGHT" then
+        header:SetAttribute("point", "LEFT")
+        header:SetAttribute("xOffset", spacing)
+        header:SetAttribute("yOffset", 0)
+    elseif grow == "LEFT" then
+        header:SetAttribute("point", "RIGHT")
+        header:SetAttribute("xOffset", -spacing)
+        header:SetAttribute("yOffset", 0)
     end
 
     -- Columns for groups
-    local groupGrow = layout.groupGrowDirection or "RIGHT"
+    -- When frames within a group are horizontal, groups stack vertically (and vice versa)
+    local horizontal = (grow == "LEFT" or grow == "RIGHT")
     header:SetAttribute("maxColumns", 8)
     header:SetAttribute("unitsPerColumn", 5)
     header:SetAttribute("columnSpacing", groupSpacing)
 
-    if groupGrow == "RIGHT" then
-        header:SetAttribute("columnAnchorPoint", "LEFT")
+    if horizontal then
+        -- Groups stack vertically when intra-group is horizontal
+        header:SetAttribute("columnAnchorPoint", "TOP")
     else
-        header:SetAttribute("columnAnchorPoint", "RIGHT")
+        local groupGrow = layout.groupGrowDirection or "RIGHT"
+        if groupGrow == "RIGHT" then
+            header:SetAttribute("columnAnchorPoint", "LEFT")
+        else
+            header:SetAttribute("columnAnchorPoint", "RIGHT")
+        end
     end
 
     -- Group filtering
@@ -1664,6 +1689,9 @@ function QUI_GF:RefreshAllFrames()
     if ns.QUI_GroupFrameIndicators and ns.QUI_GroupFrameIndicators.RefreshAll then
         ns.QUI_GroupFrameIndicators:RefreshAll()
     end
+    if ns.QUI_GroupFramePrivateAuras and ns.QUI_GroupFramePrivateAuras.RefreshAll then
+        ns.QUI_GroupFramePrivateAuras:RefreshAll()
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -1776,6 +1804,10 @@ function QUI_GF:Disable()
         end
     end
 
+    if ns.QUI_GroupFramePrivateAuras and ns.QUI_GroupFramePrivateAuras.CleanupAll then
+        ns.QUI_GroupFramePrivateAuras:CleanupAll()
+    end
+
     wipe(self.unitFrameMap)
     self.initialized = false
 
@@ -1840,4 +1872,9 @@ end
 -- Global refresh function for options panel
 _G.QUI_RefreshGroupFrames = function()
     QUI_GF:RefreshSettings()
+    -- Also refresh test/preview frames if active
+    local editMode = ns.QUI_GroupFrameEditMode
+    if editMode and editMode.RefreshTestMode then
+        editMode:RefreshTestMode()
+    end
 end

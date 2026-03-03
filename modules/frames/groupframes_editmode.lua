@@ -18,7 +18,8 @@ ns.QUI_GroupFrameEditMode = QUI_GFEM
 local isEditMode = false
 local isTestMode = false
 local testFrames = {}
-local editOverlays = {}
+local testContainer = nil  -- direct reference to the active test container
+local groupMover = nil     -- single mover for party + raid (created on first edit mode enter)
 local spotlightHeader = nil
 
 ---------------------------------------------------------------------------
@@ -34,6 +35,28 @@ local FAKE_RAID_ROLES = { "TANK", "TANK", "HEALER", "HEALER", "HEALER", "HEALER"
     "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER",
     "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER",
     "DAMAGER", "DAMAGER", "DAMAGER" }
+
+local FAKE_BUFF_ICONS = {
+    136034,  -- Spell_Holy_Renew
+    135940,  -- Spell_Holy_PowerWordShield
+    136081,  -- Spell_Nature_Rejuvenation
+}
+local FAKE_DEBUFF_ICONS = {
+    136207,  -- Spell_Shadow_ShadowWordPain
+    136130,  -- Ability_Creature_Cursed_01
+    136067,  -- Spell_Nature_NullifyPoison_02
+}
+
+-- Distribution tables — keyed by party frame index (1–5).
+-- Each entry lists what preview indicators that frame should show.
+-- Only used for party (first 5 frames); raid frames get no extras.
+local PREVIEW_INDICATORS = {
+    [1] = { leader = true, targetHighlight = true, threatBorder = true, buffs = 1 },
+    [2] = { readyCheck = true, raidMarker = 1, debuffs = 2, buffs = 1 },
+    [3] = { phaseIcon = true, resurrection = true, debuffs = 1 },
+    [4] = { dispelOverlay = true, summonPending = true, debuffs = 3 },
+    [5] = { raidMarker = 8, buffs = 2 },
+}
 
 local function GetFakeHealthPct(index)
     -- Varied health levels for visual interest
@@ -160,35 +183,96 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     local fontPath = LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
     local fontOutline = general and general.fontOutline or "OUTLINE"
 
+    -- Anchor map for text positioning
+    local ANCHOR_MAP = {
+        LEFT = { point = "LEFT", justify = "LEFT" },
+        RIGHT = { point = "RIGHT", justify = "RIGHT" },
+        CENTER = { point = "CENTER", justify = "CENTER" },
+        TOPLEFT = { point = "TOPLEFT", justify = "LEFT" },
+        TOPRIGHT = { point = "TOPRIGHT", justify = "RIGHT" },
+        TOP = { point = "TOP", justify = "CENTER" },
+        BOTTOMLEFT = { point = "BOTTOMLEFT", justify = "LEFT" },
+        BOTTOMRIGHT = { point = "BOTTOMRIGHT", justify = "RIGHT" },
+        BOTTOM = { point = "BOTTOM", justify = "CENTER" },
+    }
+
     -- Name text
     local nameSettings = db.name
-    local nameText = textFrame:CreateFontString(nil, "OVERLAY")
-    nameText:SetFont(fontPath, nameSettings and nameSettings.nameFontSize or 12, fontOutline)
-    nameText:SetPoint("LEFT", frame, "LEFT", nameSettings and nameSettings.nameOffsetX or 4, nameSettings and nameSettings.nameOffsetY or 0)
-    nameText:SetJustifyH("LEFT")
-    nameText:SetTextColor(1, 1, 1, 1)
+    if not nameSettings or nameSettings.showName ~= false then
+        local nameAnchorInfo = ANCHOR_MAP[nameSettings and nameSettings.nameAnchor or "LEFT"] or ANCHOR_MAP.LEFT
+        local nameText = textFrame:CreateFontString(nil, "OVERLAY")
+        nameText:SetFont(fontPath, nameSettings and nameSettings.nameFontSize or 12, fontOutline)
+        nameText:SetPoint(nameAnchorInfo.point, frame, nameAnchorInfo.point, nameSettings and nameSettings.nameOffsetX or 4, nameSettings and nameSettings.nameOffsetY or 0)
+        nameText:SetJustifyH(nameAnchorInfo.justify)
 
-    local displayName = name
-    local maxLen = nameSettings and nameSettings.maxNameLength or 10
-    if maxLen > 0 and #displayName > maxLen then
-        displayName = displayName:sub(1, maxLen)
+        local displayName = name
+        local maxLen = nameSettings and nameSettings.maxNameLength or 10
+        if maxLen > 0 and #displayName > maxLen then
+            displayName = displayName:sub(1, maxLen)
+        end
+        nameText:SetText(displayName)
+
+        -- Name color
+        if nameSettings and nameSettings.nameTextUseClassColor then
+            local cc = RAID_CLASS_COLORS[classToken]
+            if cc then
+                nameText:SetTextColor(cc.r, cc.g, cc.b, 1)
+            else
+                nameText:SetTextColor(1, 1, 1, 1)
+            end
+        elseif nameSettings and nameSettings.nameTextColor then
+            local tc = nameSettings.nameTextColor
+            nameText:SetTextColor(tc[1], tc[2], tc[3], tc[4] or 1)
+        else
+            nameText:SetTextColor(1, 1, 1, 1)
+        end
     end
-    nameText:SetText(displayName)
 
     -- Health text
     local healthSettings = db.health
-    local healthText = textFrame:CreateFontString(nil, "OVERLAY")
-    healthText:SetFont(fontPath, healthSettings and healthSettings.healthFontSize or 12, fontOutline)
-    healthText:SetPoint("RIGHT", frame, "RIGHT", healthSettings and healthSettings.healthOffsetX or -4, healthSettings and healthSettings.healthOffsetY or 0)
-    healthText:SetJustifyH("RIGHT")
-    healthText:SetTextColor(1, 1, 1, 1)
+    if not healthSettings or healthSettings.showHealthText ~= false then
+        local healthAnchorInfo = ANCHOR_MAP[healthSettings and healthSettings.healthAnchor or "RIGHT"] or ANCHOR_MAP.RIGHT
+        local healthText = textFrame:CreateFontString(nil, "OVERLAY")
+        healthText:SetFont(fontPath, healthSettings and healthSettings.healthFontSize or 12, fontOutline)
+        healthText:SetPoint(healthAnchorInfo.point, frame, healthAnchorInfo.point, healthSettings and healthSettings.healthOffsetX or -4, healthSettings and healthSettings.healthOffsetY or 0)
+        healthText:SetJustifyH(healthAnchorInfo.justify)
 
-    if healthPct == 0 then
-        healthText:SetText("Dead")
-        healthText:SetTextColor(0.5, 0.5, 0.5, 1)
+        if healthPct == 0 then
+            healthText:SetText("Dead")
+            healthText:SetTextColor(0.5, 0.5, 0.5, 1)
+            healthBar:SetStatusBarColor(0.5, 0.5, 0.5, 1)
+        else
+            -- Format based on display style
+            local style = healthSettings and healthSettings.healthDisplayStyle or "percent"
+            local fakeHP = healthPct * 1000  -- Simulate ~100k max HP
+            local fakeMax = 100000
+            if style == "percent" then
+                healthText:SetText(healthPct .. "%")
+            elseif style == "absolute" then
+                healthText:SetText(string.format("%.0fK", fakeHP / 1000))
+            elseif style == "both" then
+                healthText:SetText(string.format("%.0fK", fakeHP / 1000) .. " | " .. healthPct .. "%")
+            elseif style == "deficit" then
+                local deficit = fakeMax - fakeHP
+                if deficit > 0 then
+                    healthText:SetText("-" .. string.format("%.0fK", deficit / 1000))
+                else
+                    healthText:SetText("")
+                end
+            else
+                healthText:SetText(healthPct .. "%")
+            end
+
+            -- Health text color
+            if healthSettings and healthSettings.healthTextColor then
+                local tc = healthSettings.healthTextColor
+                healthText:SetTextColor(tc[1], tc[2], tc[3], tc[4] or 1)
+            else
+                healthText:SetTextColor(1, 1, 1, 1)
+            end
+        end
+    elseif healthPct == 0 then
         healthBar:SetStatusBarColor(0.5, 0.5, 0.5, 1)
-    else
-        healthText:SetText(healthPct .. "%")
     end
 
     -- Role icon
@@ -206,28 +290,215 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         end
     end
 
+    ---------------------------------------------------------------------------
+    -- PREVIEW INDICATORS / OVERLAYS / AURAS
+    -- Only rendered for party-size previews (first 5 frames).
+    ---------------------------------------------------------------------------
+    local prev = totalCount <= 5 and PREVIEW_INDICATORS[index]
+    local baseLevel = frame:GetFrameLevel()
+
+    if prev and indSettings then
+        -- Ready Check icon
+        if prev.readyCheck and indSettings.showReadyCheck ~= false then
+            local rc = textFrame:CreateTexture(nil, "OVERLAY")
+            rc:SetSize(16, 16)
+            rc:SetPoint("CENTER", frame, "CENTER", 0, 0)
+            rc:SetTexture("INTERFACE\\RAIDFRAME\\ReadyCheck-Ready")
+        end
+
+        -- Resurrection icon
+        if prev.resurrection and indSettings.showResurrection ~= false then
+            local ri = textFrame:CreateTexture(nil, "OVERLAY")
+            ri:SetSize(16, 16)
+            ri:SetPoint("CENTER", frame, "CENTER", 0, 0)
+            ri:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
+        end
+
+        -- Summon Pending icon
+        if prev.summonPending and indSettings.showSummonPending ~= false then
+            local si = textFrame:CreateTexture(nil, "OVERLAY")
+            si:SetSize(20, 20)
+            si:SetPoint("CENTER", frame, "CENTER", 16, 0)
+            si:SetTexture("Interface\\RaidFrame\\Raid-Icon-SummonPending")
+        end
+
+        -- Leader icon
+        if prev.leader and indSettings.showLeaderIcon ~= false then
+            local li = textFrame:CreateTexture(nil, "OVERLAY")
+            li:SetSize(12, 12)
+            li:SetPoint("TOP", frame, "TOP", 0, 6)
+            li:SetAtlas("groupfinder-icon-leader")
+        end
+
+        -- Raid Target Marker
+        if prev.raidMarker and indSettings.showTargetMarker ~= false then
+            local rm = textFrame:CreateTexture(nil, "OVERLAY")
+            rm:SetSize(14, 14)
+            rm:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, -2)
+            rm:SetAtlas("raidtargetingicon_" .. prev.raidMarker)
+        end
+
+        -- Phase icon
+        if prev.phaseIcon and indSettings.showPhaseIcon ~= false then
+            local pi = textFrame:CreateTexture(nil, "OVERLAY")
+            pi:SetSize(16, 16)
+            pi:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 2, 2)
+            pi:SetAtlas("nameplates-icon-flag-horde")
+        end
+
+        -- Threat Border — edge + tinted fill over the whole frame
+        if prev.threatBorder and indSettings.showThreatBorder ~= false then
+            local threatOverlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+            threatOverlay:SetAllPoints()
+            threatOverlay:SetFrameLevel(baseLevel + 5)
+            local tc = indSettings.threatColor or { 1, 0, 0, 0.8 }
+            threatOverlay:SetBackdrop({
+                bgFile = "Interface\\Buttons\\WHITE8x8",
+                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                edgeSize = borderSize > 0 and borderSize * 2 or px * 2,
+            })
+            threatOverlay:SetBackdropColor(tc[1], tc[2], tc[3], indSettings.threatFillOpacity or 0.15)
+            threatOverlay:SetBackdropBorderColor(tc[1], tc[2], tc[3], tc[4] or 0.8)
+        end
+    end
+
+    -- Healer overlays
+    local healerSettings = db.healer
+    if prev and healerSettings then
+        -- Target Highlight — edge + tinted fill
+        if prev.targetHighlight then
+            local th = healerSettings.targetHighlight
+            if th and th.enabled ~= false then
+                local highlight = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+                highlight:SetPoint("TOPLEFT", -px, px)
+                highlight:SetPoint("BOTTOMRIGHT", px, -px)
+                highlight:SetFrameLevel(baseLevel + 4)
+                local hc = th.color or { 1, 1, 1, 0.6 }
+                highlight:SetBackdrop({
+                    bgFile = "Interface\\Buttons\\WHITE8x8",
+                    edgeFile = "Interface\\Buttons\\WHITE8x8",
+                    edgeSize = px * 2,
+                })
+                highlight:SetBackdropColor(hc[1], hc[2], hc[3], th.fillOpacity or 0.12)
+                highlight:SetBackdropBorderColor(hc[1], hc[2], hc[3], hc[4] or 0.6)
+            end
+        end
+
+        -- Dispel Overlay — edge + tinted fill
+        if prev.dispelOverlay then
+            local dsp = healerSettings.dispelOverlay
+            if dsp and dsp.enabled ~= false then
+                local dispel = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+                dispel:SetPoint("TOPLEFT", -px, px)
+                dispel:SetPoint("BOTTOMRIGHT", px, -px)
+                dispel:SetFrameLevel(baseLevel + 6)
+                local dc = dsp.color or { 0.26, 0.54, 1, 0.8 }
+                local opacity = dsp.opacity or 0.8
+                dispel:SetBackdrop({
+                    bgFile = "Interface\\Buttons\\WHITE8x8",
+                    edgeFile = "Interface\\Buttons\\WHITE8x8",
+                    edgeSize = px * 3,
+                })
+                dispel:SetBackdropColor(dc[1], dc[2], dc[3], dsp.fillOpacity or 0.18)
+                dispel:SetBackdropBorderColor(dc[1], dc[2], dc[3], opacity)
+            end
+        end
+    end
+
+    -- Aura icons (buffs & debuffs; matches runtime: frame + 8)
+    local auraSettings = db.auras
+    if prev and auraSettings then
+        local auraLevel = baseLevel + 8
+
+        -- Debuff icons (anchored BOTTOMRIGHT, growing LEFT)
+        if prev.debuffs and auraSettings.showDebuffs ~= false then
+            local count = math.min(prev.debuffs, auraSettings.maxDebuffs or 3)
+            local size = auraSettings.debuffIconSize or 16
+            for i = 1, count do
+                local iconFrame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+                iconFrame:SetSize(size, size)
+                iconFrame:SetFrameLevel(auraLevel)
+                iconFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -((i - 1) * (size + 1)) - 1, 1)
+                iconFrame:SetBackdrop({
+                    bgFile = "Interface\\Buttons\\WHITE8x8",
+                    edgeFile = "Interface\\Buttons\\WHITE8x8",
+                    edgeSize = 1,
+                })
+                iconFrame:SetBackdropBorderColor(0.8, 0, 0, 1) -- red debuff border
+                iconFrame:SetBackdropColor(0, 0, 0, 1)
+
+                local icon = iconFrame:CreateTexture(nil, "ARTWORK")
+                icon:SetPoint("TOPLEFT", 1, -1)
+                icon:SetPoint("BOTTOMRIGHT", -1, 1)
+                icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+                icon:SetTexture(FAKE_DEBUFF_ICONS[((i - 1) % #FAKE_DEBUFF_ICONS) + 1])
+
+                -- Stack count on second icon
+                if i == 2 then
+                    local stack = iconFrame:CreateFontString(nil, "OVERLAY")
+                    stack:SetFont(fontPath, math.max(size * 0.55, 8), "OUTLINE")
+                    stack:SetPoint("BOTTOMRIGHT", iconFrame, "BOTTOMRIGHT", 0, 0)
+                    stack:SetText("3")
+                end
+            end
+        end
+
+        -- Buff icons (anchored TOPLEFT, growing RIGHT)
+        if prev.buffs and auraSettings.showBuffs then
+            local count = math.min(prev.buffs, auraSettings.maxBuffs or 3)
+            local size = auraSettings.buffIconSize or 14
+            for i = 1, count do
+                local iconFrame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+                iconFrame:SetSize(size, size)
+                iconFrame:SetFrameLevel(auraLevel)
+                iconFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", ((i - 1) * (size + 1)) + 1, -1)
+                iconFrame:SetBackdrop({
+                    bgFile = "Interface\\Buttons\\WHITE8x8",
+                    edgeFile = "Interface\\Buttons\\WHITE8x8",
+                    edgeSize = 1,
+                })
+                iconFrame:SetBackdropBorderColor(0, 0.6, 0, 1) -- green buff border
+                iconFrame:SetBackdropColor(0, 0, 0, 1)
+
+                local icon = iconFrame:CreateTexture(nil, "ARTWORK")
+                icon:SetPoint("TOPLEFT", 1, -1)
+                icon:SetPoint("BOTTOMRIGHT", -1, 1)
+                icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+                icon:SetTexture(FAKE_BUFF_ICONS[((i - 1) % #FAKE_BUFF_ICONS) + 1])
+            end
+        end
+    end
+
     frame:Show()
     return frame
 end
 
 local function DestroyTestFrames()
+    -- Clean up private aura placeholders
+    local PA = ns.QUI_GroupFramePrivateAuras
+    if PA and PA.CleanupTestFrames then
+        PA:CleanupTestFrames()
+    end
+
     for _, frame in ipairs(testFrames) do
         frame:Hide()
         frame:SetParent(nil)
     end
     wipe(testFrames)
+    testContainer = nil
 end
 
 ---------------------------------------------------------------------------
 -- TEST MODE: Toggle
 ---------------------------------------------------------------------------
 function QUI_GFEM:EnableTestMode(previewType)
-    if isTestMode then self:DisableTestMode() end
+    if isTestMode then self:DisableTestMode(true) end  -- true = switching, don't exit edit mode
 
     local db = GetDB()
     if not db then return end
 
     isTestMode = true
+    self._lastTestPreviewType = previewType  -- remember for refresh
 
     local GF = ns.QUI_GroupFrames
     if GF then GF.testMode = true end
@@ -240,22 +511,44 @@ function QUI_GFEM:EnableTestMode(previewType)
         count = db.testMode and db.testMode.partyCount or 5
     end
 
-    -- Create container
-    local container = CreateFrame("Frame", "QUI_TestContainer", UIParent)
-    local position = db.position
-    container:SetPoint("CENTER", UIParent, "CENTER", position and position.offsetX or -400, position and position.offsetY or 0)
+    -- Create container — anchor to mover if edit mode is active, otherwise UIParent
+    local container = CreateFrame("Frame", nil, UIParent)
+    if isEditMode and groupMover then
+        container:SetPoint("CENTER", groupMover, "CENTER", 0, 0)
+    else
+        local position = db.position
+        container:SetPoint("CENTER", UIParent, "CENTER", position and position.offsetX or -400, position and position.offsetY or 0)
+    end
     container:Show()
+    testContainer = container  -- store direct reference
     table.insert(testFrames, container)
 
     -- Create test frames
     local layout = db.layout
     local spacing = layout and layout.spacing or 2
-    local growDown = (layout and layout.growDirection or "DOWN") == "DOWN"
+    local grow = layout and layout.growDirection or "DOWN"
     local groupGrowRight = (layout and layout.groupGrowDirection or "RIGHT") == "RIGHT"
     local groupSpacing = layout and layout.groupSpacing or 10
+    local horizontal = (grow == "LEFT" or grow == "RIGHT")
 
     local framesPerGroup = 5
     local numGroups = math.ceil(count / framesPerGroup)
+
+    -- Determine frame dimensions for the current mode
+    local mode
+    if count <= 5 then mode = "party"
+    elseif count <= 15 then mode = "small"
+    elseif count <= 25 then mode = "medium"
+    else mode = "large"
+    end
+
+    local dims = db.dimensions
+    local frameW, frameH
+    if mode == "party" then frameW, frameH = dims.partyWidth or 200, dims.partyHeight or 40
+    elseif mode == "small" then frameW, frameH = dims.smallRaidWidth or 180, dims.smallRaidHeight or 36
+    elseif mode == "medium" then frameW, frameH = dims.mediumRaidWidth or 160, dims.mediumRaidHeight or 30
+    else frameW, frameH = dims.largeRaidWidth or 140, dims.largeRaidHeight or 24
+    end
 
     for g = 1, numGroups do
         for i = 1, framesPerGroup do
@@ -275,46 +568,75 @@ function QUI_GFEM:EnableTestMode(previewType)
 
             local testFrame = CreateTestFrame(container, index, count, classToken, name, role, healthPct)
             if testFrame then
-                -- Position within container
-                local mode
-                if count <= 5 then mode = "party"
-                elseif count <= 15 then mode = "small"
-                elseif count <= 25 then mode = "medium"
-                else mode = "large"
-                end
-
-                local dims = db.dimensions
-                local w, h
-                if mode == "party" then w, h = dims.partyWidth or 200, dims.partyHeight or 40
-                elseif mode == "small" then w, h = dims.smallRaidWidth or 180, dims.smallRaidHeight or 36
-                elseif mode == "medium" then w, h = dims.mediumRaidWidth or 160, dims.mediumRaidHeight or 30
-                else w, h = dims.largeRaidWidth or 140, dims.largeRaidHeight or 24
-                end
-
                 local col = g - 1
                 local row = i - 1
+                local xOff, yOff, anchor
 
-                local xOff = groupGrowRight and (col * (w + groupSpacing)) or -(col * (w + groupSpacing))
-                local yOff = growDown and -(row * (h + spacing)) or (row * (h + spacing))
+                if horizontal then
+                    -- Frames within a group go left/right; groups stack down
+                    yOff = -(col * (frameH + groupSpacing))
+                    if grow == "RIGHT" then
+                        anchor = "TOPLEFT"
+                        xOff = row * (frameW + spacing)
+                    else -- LEFT
+                        anchor = "TOPRIGHT"
+                        xOff = -(row * (frameW + spacing))
+                    end
+                else
+                    -- Frames within a group go up/down; groups go left/right
+                    if grow == "DOWN" then
+                        anchor = "TOPLEFT"
+                        yOff = -(row * (frameH + spacing))
+                    else -- UP
+                        anchor = "BOTTOMLEFT"
+                        yOff = row * (frameH + spacing)
+                    end
+                    xOff = groupGrowRight and (col * (frameW + groupSpacing)) or -(col * (frameW + groupSpacing))
+                end
 
-                testFrame:SetPoint("TOPLEFT", container, "TOPLEFT", xOff, yOff)
+                testFrame:SetPoint(anchor, container, anchor, xOff, yOff)
                 table.insert(testFrames, testFrame)
+
+                -- Attach private aura placeholders
+                local PA = ns.QUI_GroupFramePrivateAuras
+                if PA and PA.SetupTestFrame then
+                    PA:SetupTestFrame(testFrame)
+                end
             end
         end
     end
 
-    -- Set container size based on total extent
-    local totalW = numGroups * ((db.dimensions.partyWidth or 200) + (layout and layout.groupSpacing or 10))
-    local totalH = framesPerGroup * ((db.dimensions.partyHeight or 40) + spacing)
+    -- Set container size
+    local totalW, totalH
+    if horizontal then
+        totalW = framesPerGroup * frameW + (framesPerGroup - 1) * spacing
+        totalH = numGroups * frameH + (numGroups - 1) * groupSpacing
+    else
+        totalW = numGroups * frameW + (numGroups - 1) * groupSpacing
+        totalH = framesPerGroup * frameH + (framesPerGroup - 1) * spacing
+    end
     container:SetSize(totalW, totalH)
+
+    -- If edit mode is active, sync the mover size and re-anchor
+    if isEditMode then
+        self:SyncMoverToContent()
+    end
 end
 
-function QUI_GFEM:DisableTestMode()
+function QUI_GFEM:DisableTestMode(switching)
     DestroyTestFrames()
     isTestMode = false
+    self._lastTestPreviewType = nil
 
     local GF = ns.QUI_GroupFrames
     if GF then GF.testMode = false end
+
+    -- If edit mode is active, there's no real group, and we're not just
+    -- switching preview types, exit edit mode — the mover has nothing to
+    -- control.
+    if not switching and isEditMode and not IsInGroup() and not IsInRaid() then
+        self:DisableEditMode()
+    end
 end
 
 function QUI_GFEM:IsTestMode()
@@ -323,85 +645,427 @@ end
 
 function QUI_GFEM:ToggleTestMode(previewType)
     if isTestMode then
-        self:DisableTestMode()
+        if self._lastTestPreviewType == previewType then
+            -- Same type — toggle off
+            self:DisableTestMode()
+        else
+            -- Different type — switch to the new type
+            self:EnableTestMode(previewType or "party")
+        end
     else
         self:EnableTestMode(previewType or "party")
     end
 end
 
+-- Rebuild test frames with current settings (called when options change).
+-- Uses leading-edge + trailing-edge throttle: fires immediately on first
+-- call, then suppresses rapid calls (slider drags) for a cooldown period
+-- and fires one final rebuild when the cooldown expires.
+local refreshTimer = nil
+local refreshPending = false
+function QUI_GFEM:RefreshTestMode()
+    if not isTestMode then return end
+
+    if refreshTimer then
+        -- Inside cooldown window — just mark that another refresh is needed
+        refreshPending = true
+        return
+    end
+
+    -- Leading edge: fire immediately
+    local previewType = self._lastTestPreviewType or "party"
+    self:EnableTestMode(previewType)
+
+    -- Start cooldown to suppress rapid-fire rebuilds (slider drags)
+    refreshTimer = C_Timer.NewTimer(0.2, function()
+        refreshTimer = nil
+        if refreshPending then
+            refreshPending = false
+            if not isTestMode then return end
+            local pt = self._lastTestPreviewType or "party"
+            self:EnableTestMode(pt)
+        end
+    end)
+end
+
 ---------------------------------------------------------------------------
 -- EDIT MODE: Dragging + overlays
+--
+-- We create a single non-secure mover frame parented to UIParent.
+-- During edit mode, headers and test containers are anchored TO the mover
+-- so everything moves together.  On exit, headers are re-anchored to
+-- UIParent at the saved offset.
 ---------------------------------------------------------------------------
-function QUI_GFEM:EnableEditMode()
-    if isEditMode then return end
+
+-- Calculate the visual bounds of a header from its children
+local function GetHeaderBounds(header, db)
+    if not header then return 0, 0 end
+
+    -- Count visible children
+    local childCount = 0
+    local i = 1
+    while true do
+        local child = header:GetAttribute("child" .. i)
+        if not child then break end
+        childCount = childCount + 1
+        i = i + 1
+    end
+
+    if childCount == 0 then return 0, 0 end
+
+    local layout = db and db.layout
+    local dims = db and db.dimensions
+    local spacing = layout and layout.spacing or 2
+    local groupSpacing = layout and layout.groupSpacing or 10
+
+    -- Determine mode and frame size
+    local mode
+    if childCount <= 5 then mode = "party"
+    elseif childCount <= 15 then mode = "small"
+    elseif childCount <= 25 then mode = "medium"
+    else mode = "large"
+    end
+
+    local w, h
+    if dims then
+        if mode == "party" then w, h = dims.partyWidth or 200, dims.partyHeight or 40
+        elseif mode == "small" then w, h = dims.smallRaidWidth or 180, dims.smallRaidHeight or 36
+        elseif mode == "medium" then w, h = dims.mediumRaidWidth or 160, dims.mediumRaidHeight or 30
+        else w, h = dims.largeRaidWidth or 140, dims.largeRaidHeight or 24
+        end
+    else
+        w, h = 200, 40
+    end
+
+    local framesPerGroup = 5
+    local numGroups = math.ceil(childCount / framesPerGroup)
+    local framesInTallestGroup = math.min(childCount, framesPerGroup)
+
+    local grow = layout and layout.growDirection or "DOWN"
+    local horizontal = (grow == "LEFT" or grow == "RIGHT")
+
+    local totalW, totalH
+    if horizontal then
+        totalW = framesInTallestGroup * w + (framesInTallestGroup - 1) * spacing
+        totalH = numGroups * h + (numGroups - 1) * groupSpacing
+    else
+        totalW = numGroups * w + (numGroups - 1) * groupSpacing
+        totalH = framesInTallestGroup * h + (framesInTallestGroup - 1) * spacing
+    end
+
+    return totalW, totalH
+end
+
+-- Helper: Create a nudge button (matches unitframe_editmode chevron style)
+local function CreateNudgeButton(parent, direction, deltaX, deltaY)
+    local btn = CreateFrame("Button", nil, parent)
+    btn:SetSize(18, 18)
+    btn:SetFrameStrata("HIGH")
+    btn:SetFrameLevel(100)
+
+    local bg = btn:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetTexture("Interface\\Buttons\\WHITE8x8")
+    bg:SetVertexColor(0.1, 0.1, 0.1, 0.7)
+
+    local line1 = btn:CreateTexture(nil, "ARTWORK")
+    line1:SetColorTexture(1, 1, 1, 0.9)
+    line1:SetSize(7, 2)
+
+    local line2 = btn:CreateTexture(nil, "ARTWORK")
+    line2:SetColorTexture(1, 1, 1, 0.9)
+    line2:SetSize(7, 2)
+
+    if direction == "DOWN" then
+        line1:SetPoint("CENTER", btn, "CENTER", -2, 1)
+        line1:SetRotation(math.rad(-45))
+        line2:SetPoint("CENTER", btn, "CENTER", 2, 1)
+        line2:SetRotation(math.rad(45))
+    elseif direction == "UP" then
+        line1:SetPoint("CENTER", btn, "CENTER", -2, -1)
+        line1:SetRotation(math.rad(45))
+        line2:SetPoint("CENTER", btn, "CENTER", 2, -1)
+        line2:SetRotation(math.rad(-45))
+    elseif direction == "LEFT" then
+        line1:SetPoint("CENTER", btn, "CENTER", -1, -2)
+        line1:SetRotation(math.rad(-45))
+        line2:SetPoint("CENTER", btn, "CENTER", -1, 2)
+        line2:SetRotation(math.rad(45))
+    elseif direction == "RIGHT" then
+        line1:SetPoint("CENTER", btn, "CENTER", 1, -2)
+        line1:SetRotation(math.rad(45))
+        line2:SetPoint("CENTER", btn, "CENTER", 1, 2)
+        line2:SetRotation(math.rad(-45))
+    end
+
+    btn:SetScript("OnEnter", function(self)
+        line1:SetColorTexture(0.204, 0.827, 0.6, 1)
+        line2:SetColorTexture(0.204, 0.827, 0.6, 1)
+    end)
+    btn:SetScript("OnLeave", function(self)
+        line1:SetColorTexture(1, 1, 1, 0.9)
+        line2:SetColorTexture(1, 1, 1, 0.9)
+    end)
+
+    btn:SetScript("OnClick", function()
+        local shift = IsShiftKeyDown()
+        local step = shift and 10 or 1
+        QUI_GFEM:NudgeHeader("party", deltaX * step, deltaY * step)
+    end)
+
+    return btn
+end
+
+local function UpdateMoverPositionText(mover, oX, oY)
+    if mover and mover.posText then
+        mover.posText:SetText(format("Group Frames  X: %d  Y: %d", oX, oY))
+    end
+end
+
+local function SaveMoverPosition(mover)
+    local selfX, selfY = mover:GetCenter()
+    local parentX, parentY = UIParent:GetCenter()
+    if not selfX or not selfY or not parentX or not parentY then return end
+
+    local rawX = selfX - parentX
+    local rawY = selfY - parentY
+    local oX = QUICore.PixelRound and QUICore:PixelRound(rawX) or Round(rawX)
+    local oY = QUICore.PixelRound and QUICore:PixelRound(rawY) or Round(rawY)
+
+    local db = GetDB()
+    if db and db.position then
+        db.position.offsetX = oX
+        db.position.offsetY = oY
+    end
+
+    UpdateMoverPositionText(mover, oX, oY)
+    return oX, oY
+end
+
+-- Resize the mover to match content and re-anchor all frames to it.
+-- Called after any state change (test mode toggle, settings refresh, edit mode enter).
+function QUI_GFEM:SyncMoverToContent()
+    if not isEditMode or not groupMover then return end
+    if InCombatLockdown() then return end
+
+    local db = GetDB()
+    local GF = ns.QUI_GroupFrames
+
+    local boundsW, boundsH = 0, 0
+
+    -- In test mode the test container IS the content — use its dimensions
+    -- directly.  Header children may be stale from a previous group session
+    -- and would give the wrong size for the current preview type.
+    if isTestMode and testContainer then
+        boundsW = Helpers.SafeValue(testContainer:GetWidth(), 200)
+        boundsH = Helpers.SafeValue(testContainer:GetHeight(), 200)
+    elseif GF then
+        -- Calculate size from header children (real group, not test mode)
+        for _, hKey in ipairs({"party", "raid"}) do
+            local hdr = GF.headers[hKey]
+            if hdr then
+                local w, h = GetHeaderBounds(hdr, db)
+                if w > boundsW then boundsW = w end
+                if h > boundsH then boundsH = h end
+            end
+        end
+    end
+
+    boundsW = math.max(boundsW, 100)
+    boundsH = math.max(boundsH, 40)
+    groupMover:SetSize(boundsW, boundsH)
+
+    -- Re-parent and re-anchor content to the mover.
+    -- Only child frames follow their parent during StartMoving() — merely
+    -- anchored frames stay behind.  Re-parenting the non-secure test
+    -- container is safe; secure headers are also re-parented (out-of-combat
+    -- guard above ensures this is taint-safe).
+    if GF then
+        for _, hKey in ipairs({"party", "raid"}) do
+            local hdr = GF.headers[hKey]
+            if hdr then
+                hdr:SetParent(groupMover)
+                hdr:ClearAllPoints()
+                hdr:SetPoint("CENTER", groupMover, "CENTER", 0, 0)
+            end
+        end
+    end
+
+    if testContainer then
+        testContainer:SetParent(groupMover)
+        testContainer:ClearAllPoints()
+        testContainer:SetPoint("CENTER", groupMover, "CENTER", 0, 0)
+    end
+end
+
+local function CreateGroupMover()
+    local mover = CreateFrame("Frame", "QUI_GroupFramesMover", UIParent)
+    mover:SetFrameStrata("HIGH")
+    mover:SetClampedToScreen(true)
+    mover:SetMovable(true)
+    mover:EnableMouse(true)
+    mover:RegisterForDrag("LeftButton")
+
+    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(mover) or 1
+
+    -- Border overlay: a separate frame at a high frame level so it renders
+    -- on top of child content (test frames, headers) that gets re-parented
+    -- to the mover during edit mode.
+    local border = CreateFrame("Frame", nil, mover, "BackdropTemplate")
+    border:SetAllPoints()
+    border:SetFrameLevel(mover:GetFrameLevel() + 100)
+    border:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = px * 2,
+    })
+    border:SetBackdropColor(0.2, 0.8, 1, 0.08)
+    border:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+    border:EnableMouse(false)  -- clicks pass through to the mover
+    mover.border = border
+
+    -- Position / label text above the mover (on the border overlay so it's on top)
+    local fontPath = LibStub("LibSharedMedia-3.0"):Fetch("font", "Quazii") or "Fonts\\FRIZQT__.TTF"
+    local posText = border:CreateFontString(nil, "OVERLAY")
+    posText:SetFont(fontPath, 10, "OUTLINE")
+    posText:SetPoint("BOTTOM", mover, "TOP", 0, 24)
+    posText:SetTextColor(0.2, 0.8, 1, 1)
+    mover.posText = posText
+
+    -- Hint text
+    local hint = border:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    hint:SetFont(fontPath, 9, "OUTLINE")
+    hint:SetPoint("TOP", mover, "BOTTOM", 0, -4)
+    hint:SetTextColor(0.6, 0.6, 0.6, 1)
+    hint:SetText("Drag to move  |  Arrows to nudge (Shift=10px)")
+    mover.hint = hint
+
+    -- Nudge buttons
+    local nudgeUp = CreateNudgeButton(mover, "UP", 0, 1)
+    nudgeUp:SetPoint("BOTTOM", mover, "TOP", 0, 4)
+    mover.nudgeUp = nudgeUp
+
+    local nudgeDown = CreateNudgeButton(mover, "DOWN", 0, -1)
+    nudgeDown:SetPoint("TOP", mover, "BOTTOM", 0, -4)
+    mover.nudgeDown = nudgeDown
+
+    local nudgeLeft = CreateNudgeButton(mover, "LEFT", -1, 0)
+    nudgeLeft:SetPoint("RIGHT", mover, "LEFT", -4, 0)
+    mover.nudgeLeft = nudgeLeft
+
+    local nudgeRight = CreateNudgeButton(mover, "RIGHT", 1, 0)
+    nudgeRight:SetPoint("LEFT", mover, "RIGHT", 4, 0)
+    mover.nudgeRight = nudgeRight
+
+    -- Click to select (re-select after clicking another edit mode element)
+    mover:SetScript("OnMouseDown", function(self, button)
+        if button == "LeftButton" then
+            QUICore:SelectEditModeElement("groupframes", "mover")
+        end
+    end)
+
+    -- Drag handlers
+    mover:SetScript("OnDragStart", function(self)
+        if InCombatLockdown() then return end
+        self:StartMoving()
+        self._isMoving = true
+
+        self:SetScript("OnUpdate", function(self)
+            if not self._isMoving then
+                self:SetScript("OnUpdate", nil)
+                return
+            end
+            local selfX, selfY = self:GetCenter()
+            local parentX, parentY = UIParent:GetCenter()
+            if selfX and selfY and parentX and parentY then
+                local oX = QUICore.PixelRound and QUICore:PixelRound(selfX - parentX) or Round(selfX - parentX)
+                local oY = QUICore.PixelRound and QUICore:PixelRound(selfY - parentY) or Round(selfY - parentY)
+                UpdateMoverPositionText(self, oX, oY)
+            end
+        end)
+    end)
+
+    mover:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        self._isMoving = false
+        self:SetScript("OnUpdate", nil)
+        SaveMoverPosition(self)
+    end)
+
+    mover:Hide()
+    return mover
+end
+
+-- Re-parent headers back to UIParent and restore saved offset (edit mode exit)
+local function RestoreHeaderAnchors()
+    if InCombatLockdown() then return end
+
+    local GF = ns.QUI_GroupFrames
+    if not GF then return end
+
+    local db = GetDB()
+    local pos = db and db.position
+    local oX = pos and pos.offsetX or -400
+    local oY = pos and pos.offsetY or 0
+
+    for _, hKey in ipairs({"party", "raid"}) do
+        local hdr = GF.headers[hKey]
+        if hdr then
+            hdr:SetParent(UIParent)
+            hdr:ClearAllPoints()
+            hdr:SetPoint("CENTER", UIParent, "CENTER", oX, oY)
+        end
+    end
+end
+
+function QUI_GFEM:EnableEditMode(previewType)
+    if InCombatLockdown() then return end
+
+    local wantType = previewType or "party"
+
+    -- Already in edit mode — switch preview type if different, else no-op
+    if isEditMode then
+        if self._lastTestPreviewType ~= wantType then
+            self:EnableTestMode(wantType)
+            -- SyncMoverToContent is called at the end of EnableTestMode
+        end
+        return
+    end
+
+    -- Fresh entry into edit mode
     isEditMode = true
 
     local GF = ns.QUI_GroupFrames
     if not GF then return end
     GF.editMode = true
 
-    -- Make headers draggable
-    for _, headerKey in ipairs({"party", "raid"}) do
-        local header = GF.headers[headerKey]
-        if header then
-            -- Create or show edit overlay
-            if not editOverlays[headerKey] then
-                local overlay = CreateFrame("Frame", nil, header)
-                overlay:SetAllPoints()
-                overlay:SetFrameLevel(header:GetFrameLevel() + 20)
-
-                -- Blue highlight border
-                local px = QUICore.GetPixelSize and QUICore:GetPixelSize(overlay) or 1
-                local border = CreateFrame("Frame", nil, overlay, "BackdropTemplate")
-                border:SetPoint("TOPLEFT", -px * 2, px * 2)
-                border:SetPoint("BOTTOMRIGHT", px * 2, -px * 2)
-                border:SetBackdrop({
-                    edgeFile = "Interface\\Buttons\\WHITE8x8",
-                    edgeSize = px * 2,
-                })
-                border:SetBackdropBorderColor(0.2, 0.6, 1, 0.8) -- Blue
-                overlay.border = border
-
-                -- Position text
-                local posText = overlay:CreateFontString(nil, "OVERLAY")
-                local fontPath = LibStub("LibSharedMedia-3.0"):Fetch("font", "Quazii") or "Fonts\\FRIZQT__.TTF"
-                posText:SetFont(fontPath, 10, "OUTLINE")
-                posText:SetPoint("BOTTOM", overlay, "TOP", 0, 4)
-                posText:SetTextColor(0.2, 0.6, 1, 1)
-                overlay.posText = posText
-
-                -- Make draggable
-                overlay:EnableMouse(true)
-                overlay:RegisterForDrag("LeftButton")
-                overlay:SetScript("OnDragStart", function()
-                    if InCombatLockdown() then return end
-                    header:StartMoving()
-                end)
-                overlay:SetScript("OnDragStop", function()
-                    header:StopMovingOrSizing()
-                    -- Save position
-                    local db = GetDB()
-                    if db and db.position then
-                        local _, _, _, x, y = header:GetPoint(1)
-                        db.position.offsetX = x
-                        db.position.offsetY = y
-                    end
-                    -- Update position text
-                    self:UpdatePositionText(overlay, header)
-                end)
-
-                editOverlays[headerKey] = overlay
-            end
-
-            editOverlays[headerKey]:Show()
-            self:UpdatePositionText(editOverlays[headerKey], header)
+    -- If not in a group, show test frames so there's something to see.
+    if not IsInGroup() and not IsInRaid() then
+        if not isTestMode or self._lastTestPreviewType ~= wantType then
+            self:EnableTestMode(wantType)
         end
     end
 
-    -- If not in a group, enable test mode
-    if not IsInGroup() and not IsInRaid() then
-        self:EnableTestMode("party")
+    -- Create the mover if needed
+    if not groupMover then
+        groupMover = CreateGroupMover()
     end
+
+    -- Position at current saved offset
+    local db = GetDB()
+    local pos = db and db.position
+    local oX = pos and pos.offsetX or -400
+    local oY = pos and pos.offsetY or 0
+    groupMover:ClearAllPoints()
+    groupMover:SetPoint("CENTER", UIParent, "CENTER", oX, oY)
+    UpdateMoverPositionText(groupMover, oX, oY)
+    groupMover:Show()
+
+    -- Size the mover and anchor all content to it
+    self:SyncMoverToContent()
+
+    -- Select the mover for arrow key nudging
+    QUICore:SelectEditModeElement("groupframes", "mover")
 end
 
 function QUI_GFEM:DisableEditMode()
@@ -411,10 +1075,24 @@ function QUI_GFEM:DisableEditMode()
     local GF = ns.QUI_GroupFrames
     if GF then GF.editMode = false end
 
-    -- Hide overlays
-    for _, overlay in pairs(editOverlays) do
-        overlay:Hide()
+    -- Clear keyboard selection
+    if QUICore.EditModeSelection and QUICore.EditModeSelection.selectedType == "groupframes" then
+        QUICore:ClearEditModeSelection()
     end
+
+    -- Save final position and hide mover
+    if groupMover then
+        if groupMover._isMoving then
+            groupMover:StopMovingOrSizing()
+            groupMover._isMoving = false
+            groupMover:SetScript("OnUpdate", nil)
+        end
+        SaveMoverPosition(groupMover)
+        groupMover:Hide()
+    end
+
+    -- Re-anchor headers to UIParent at saved offset
+    RestoreHeaderAnchors()
 
     -- Disable test mode if active
     if isTestMode then
@@ -422,11 +1100,11 @@ function QUI_GFEM:DisableEditMode()
     end
 end
 
-function QUI_GFEM:ToggleEditMode()
+function QUI_GFEM:ToggleEditMode(previewType)
     if isEditMode then
         self:DisableEditMode()
     else
-        self:EnableEditMode()
+        self:EnableEditMode(previewType)
     end
 end
 
@@ -434,22 +1112,10 @@ function QUI_GFEM:IsEditMode()
     return isEditMode
 end
 
-function QUI_GFEM:UpdatePositionText(overlay, header)
-    if not overlay or not overlay.posText or not header then return end
-    local _, _, _, x, y = header:GetPoint(1)
-    if x and y then
-        overlay.posText:SetText(format("X: %.0f  Y: %.0f", x, y))
-    end
-end
-
 ---------------------------------------------------------------------------
 -- NUDGE: Pixel-level positioning
 ---------------------------------------------------------------------------
 function QUI_GFEM:NudgeHeader(headerKey, dx, dy)
-    local GF = ns.QUI_GroupFrames
-    if not GF then return end
-    local header = GF.headers[headerKey]
-    if not header then return end
     if InCombatLockdown() then return end
 
     local db = GetDB()
@@ -458,11 +1124,11 @@ function QUI_GFEM:NudgeHeader(headerKey, dx, dy)
     db.position.offsetX = (db.position.offsetX or 0) + dx
     db.position.offsetY = (db.position.offsetY or 0) + dy
 
-    header:ClearAllPoints()
-    header:SetPoint("CENTER", UIParent, "CENTER", db.position.offsetX, db.position.offsetY)
-
-    if editOverlays[headerKey] then
-        self:UpdatePositionText(editOverlays[headerKey], header)
+    -- Move the mover (headers are anchored to it, so they follow)
+    if groupMover then
+        groupMover:ClearAllPoints()
+        groupMover:SetPoint("CENTER", UIParent, "CENTER", db.position.offsetX, db.position.offsetY)
+        UpdateMoverPositionText(groupMover, db.position.offsetX, db.position.offsetY)
     end
 end
 

@@ -2431,14 +2431,14 @@ local defaults = {
                 showSummonPending = true,
                 showLeaderIcon = true,
                 showTargetMarker = true,
-                showThreatBorder = true, threatColor = { 1, 0, 0, 0.8 },
+                showThreatBorder = true, threatColor = { 1, 0, 0, 0.8 }, threatFillOpacity = 0.15,
                 showPhaseIcon = true,
             },
 
             -- Healer features
             healer = {
-                dispelOverlay = { enabled = true, opacity = 0.8 },
-                targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 } },
+                dispelOverlay = { enabled = true, opacity = 0.8, fillOpacity = 0.18, color = { 0.26, 0.54, 1, 0.8 } },
+                targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
                 myBuffIndicator = { enabled = false, color = { 0.2, 0.8, 0.2, 0.5 } },
                 defensiveIndicator = { enabled = false, iconSize = 16 },
             },
@@ -2455,6 +2455,20 @@ local defaults = {
                 showBuffs = false, maxBuffs = 0, buffIconSize = 14,
                 showDurationColor = true,
                 showExpiringPulse = true,
+            },
+
+            -- Private auras (boss debuffs displayed by Blizzard)
+            privateAuras = {
+                enabled = true,
+                maxPerFrame = 2,
+                iconSize = 20,
+                growDirection = "RIGHT",
+                spacing = 2,
+                anchor = "RIGHT",
+                anchorOffsetX = -2,
+                anchorOffsetY = 0,
+                showCountdown = true,
+                showCountdownNumbers = true,
             },
 
             -- Custom aura indicators (per-spec)
@@ -3954,6 +3968,8 @@ function QUICore:HideCurrentSelectionArrows()
                 self:HideNudgeButtons(castbar.editOverlay)
             end
         end
+    elseif sel.selectedType == "groupframes" then
+        -- Group frame mover manages its own nudge button visibility
     end
 end
 
@@ -4021,6 +4037,8 @@ function QUICore:ShowSelectionArrows(elementType, elementKey)
                 end
             end
         end
+    elseif elementType == "groupframes" then
+        -- Group frame mover manages its own nudge button visibility
     end
 end
 
@@ -4160,6 +4178,12 @@ function QUICore:NudgeSelectedElement(deltaX, deltaY)
                 return true
             end
         end
+    elseif sel.selectedType == "groupframes" then
+        local gfem = ns.QUI_GroupFrameEditMode
+        if gfem then
+            gfem:NudgeHeader("party", dx, dy)
+            return true
+        end
     end
     return false
 end
@@ -4210,7 +4234,11 @@ local function IsAnyEditModeActive()
         and ns.QUI_UnitFrames
         and ns.QUI_UnitFrames.editModeActive
 
-    return blizzardActive or unitFrameEditActive
+    local groupFrameEditActive = ns
+        and ns.QUI_GroupFrameEditMode
+        and ns.QUI_GroupFrameEditMode:IsEditMode()
+
+    return blizzardActive or unitFrameEditActive or groupFrameEditActive
 end
 
 -- Enable/disable keyboard handling based on edit mode state

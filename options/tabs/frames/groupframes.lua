@@ -20,6 +20,7 @@ local NINE_POINT_ANCHOR_OPTIONS = Shared.NINE_POINT_ANCHOR_OPTIONS
 
 -- Constants
 local FORM_ROW = 32
+local DROP_ROW = 52       -- Dropdown container is 60px tall (label + button); needs more than FORM_ROW
 local SECTION_GAP = 46
 local SLIDER_HEIGHT = 65
 local PAD = 10
@@ -41,6 +42,8 @@ end
 local GROW_OPTIONS = {
     { value = "DOWN", text = "Down" },
     { value = "UP", text = "Up" },
+    { value = "RIGHT", text = "Right (Horizontal)" },
+    { value = "LEFT", text = "Left (Horizontal)" },
 }
 
 local GROUP_GROW_OPTIONS = {
@@ -96,6 +99,30 @@ local BAR_WIDTH_OPTIONS = {
 }
 
 ---------------------------------------------------------------------------
+-- HELPER: Preview button for indicator/healer/aura sub-tabs
+---------------------------------------------------------------------------
+local function CreatePreviewButton(tabContent, y)
+    local editMode = ns.QUI_GroupFrameEditMode
+    local isActive = editMode and editMode:IsTestMode()
+
+    local label = isActive and "Preview Active" or "Show Preview"
+    local btn = GUI:CreateButton(tabContent, label, 140, 26, function()
+        if not editMode then return end
+        if not editMode:IsTestMode() then
+            editMode:EnableTestMode("party")
+        end
+    end)
+    btn:SetPoint("TOPLEFT", PAD, y)
+
+    -- Dim the button when preview is already active
+    if isActive then
+        btn:Disable()
+    end
+
+    return btn, y - 34
+end
+
+---------------------------------------------------------------------------
 -- PAGE: Group Frames
 ---------------------------------------------------------------------------
 local function CreateGroupFramesPage(parent)
@@ -147,27 +174,44 @@ local function CreateGroupFramesPage(parent)
         testDesc:SetJustifyH("LEFT")
         y = y - 24
 
-        -- Party test button
+        -- Party preview + edit
         local partyTestBtn = GUI:CreateButton(tabContent, "Party Preview (5)", 150, 28, function()
             local editMode = ns.QUI_GroupFrameEditMode
             if editMode then editMode:ToggleTestMode("party") end
         end)
         partyTestBtn:SetPoint("TOPLEFT", PAD, y)
 
-        -- Raid test button
-        local raidTestBtn = GUI:CreateButton(tabContent, "Raid Preview", 150, 28, function()
+        local partyEditBtn = GUI:CreateButton(tabContent, "Edit Party", 120, 28, function()
+            local editMode = ns.QUI_GroupFrameEditMode
+            if not editMode then return end
+            -- If already editing party, toggle off; otherwise enter/switch to party
+            if editMode:IsEditMode() and editMode._lastTestPreviewType == "party" then
+                editMode:DisableEditMode()
+            else
+                editMode:EnableEditMode("party")
+            end
+        end)
+        partyEditBtn:SetPoint("LEFT", partyTestBtn, "RIGHT", 10, 0)
+        y = y - 36
+
+        -- Raid preview + edit
+        local raidTestBtn = GUI:CreateButton(tabContent, "Raid Preview (25)", 150, 28, function()
             local editMode = ns.QUI_GroupFrameEditMode
             if editMode then editMode:ToggleTestMode("raid") end
         end)
-        raidTestBtn:SetPoint("LEFT", partyTestBtn, "RIGHT", 10, 0)
-        y = y - 36
+        raidTestBtn:SetPoint("TOPLEFT", PAD, y)
 
-        -- Edit Mode button
-        local editBtn = GUI:CreateButton(tabContent, "Toggle Edit Mode", 150, 28, function()
+        local raidEditBtn = GUI:CreateButton(tabContent, "Edit Raid", 120, 28, function()
             local editMode = ns.QUI_GroupFrameEditMode
-            if editMode then editMode:ToggleEditMode() end
+            if not editMode then return end
+            -- If already editing raid, toggle off; otherwise enter/switch to raid
+            if editMode:IsEditMode() and editMode._lastTestPreviewType == "raid" then
+                editMode:DisableEditMode()
+            else
+                editMode:EnableEditMode("raid")
+            end
         end)
-        editBtn:SetPoint("TOPLEFT", PAD, y)
+        raidEditBtn:SetPoint("LEFT", raidTestBtn, "RIGHT", 10, 0)
         y = y - 40
 
         -- Appearance section
@@ -194,7 +238,7 @@ local function CreateGroupFramesPage(parent)
         local textureDrop = GUI:CreateDropdown(tabContent, "Health Bar Texture", GetTextureList(), "texture", general, RefreshGF)
         textureDrop:SetPoint("TOPLEFT", PAD, y)
         textureDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         -- Border size
         local borderSlider = GUI:CreateFormSlider(tabContent, "Border Size", 0, 3, 1, "borderSize", general, RefreshGF)
@@ -206,7 +250,7 @@ local function CreateGroupFramesPage(parent)
         local fontDrop = GUI:CreateDropdown(tabContent, "Font", GetFontList(), "font", general, RefreshGF)
         fontDrop:SetPoint("TOPLEFT", PAD, y)
         fontDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         -- Font size
         local fontSizeSlider = GUI:CreateFormSlider(tabContent, "Font Size", 8, 20, 1, "fontSize", general, RefreshGF)
@@ -239,13 +283,13 @@ local function CreateGroupFramesPage(parent)
         local growDrop = GUI:CreateDropdown(tabContent, "Grow Direction", GROW_OPTIONS, "growDirection", layout, RefreshGF)
         growDrop:SetPoint("TOPLEFT", PAD, y)
         growDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         -- Group grow direction (raid)
         local groupGrowDrop = GUI:CreateDropdown(tabContent, "Group Grow Direction (Raid)", GROUP_GROW_OPTIONS, "groupGrowDirection", layout, RefreshGF)
         groupGrowDrop:SetPoint("TOPLEFT", PAD, y)
         groupGrowDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         -- Spacing
         local spacingSlider = GUI:CreateFormSlider(tabContent, "Frame Spacing", 0, 10, 1, "spacing", layout, RefreshGF)
@@ -274,13 +318,13 @@ local function CreateGroupFramesPage(parent)
         local groupByDrop = GUI:CreateDropdown(tabContent, "Group By", GROUP_BY_OPTIONS, "groupBy", layout, RefreshGF)
         groupByDrop:SetPoint("TOPLEFT", PAD, y)
         groupByDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         -- Sort method
         local sortDrop = GUI:CreateDropdown(tabContent, "Sort Method", SORT_OPTIONS, "sortMethod", layout, RefreshGF)
         sortDrop:SetPoint("TOPLEFT", PAD, y)
         sortDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         -- Sort by role
         local roleSortCheck = GUI:CreateFormCheckbox(tabContent, "Sort by Role (Tank > Healer > DPS)", "sortByRole", layout, RefreshGF)
@@ -420,7 +464,7 @@ local function CreateGroupFramesPage(parent)
         local displayDrop = GUI:CreateDropdown(tabContent, "Display Style", HEALTH_DISPLAY_OPTIONS, "healthDisplayStyle", health, RefreshGF)
         displayDrop:SetPoint("TOPLEFT", PAD, y)
         displayDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         local healthFontSlider = GUI:CreateFormSlider(tabContent, "Health Font Size", 8, 20, 1, "healthFontSize", health, RefreshGF)
         healthFontSlider:SetPoint("TOPLEFT", PAD, y)
@@ -430,7 +474,7 @@ local function CreateGroupFramesPage(parent)
         local healthAnchorDrop = GUI:CreateDropdown(tabContent, "Health Text Anchor", NINE_POINT_ANCHOR_OPTIONS, "healthAnchor", health, RefreshGF)
         healthAnchorDrop:SetPoint("TOPLEFT", PAD, y)
         healthAnchorDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         local healthColor = GUI:CreateFormColorPicker(tabContent, "Health Text Color", "healthTextColor", health, RefreshGF)
         healthColor:SetPoint("TOPLEFT", PAD, y)
@@ -458,7 +502,7 @@ local function CreateGroupFramesPage(parent)
         local nameAnchorDrop = GUI:CreateDropdown(tabContent, "Name Anchor", NINE_POINT_ANCHOR_OPTIONS, "nameAnchor", nameDB, RefreshGF)
         nameAnchorDrop:SetPoint("TOPLEFT", PAD, y)
         nameAnchorDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         local maxNameSlider = GUI:CreateFormSlider(tabContent, "Max Name Length", 0, 20, 1, "maxNameLength", nameDB, RefreshGF)
         maxNameSlider:SetPoint("TOPLEFT", PAD, y)
@@ -516,6 +560,9 @@ local function CreateGroupFramesPage(parent)
 
         GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 5, subTabName = "Indicators"})
 
+        local _, newY = CreatePreviewButton(tabContent, y)
+        y = newY
+
         local ind = gfdb.indicators
         if not ind then gfdb.indicators = {} ind = gfdb.indicators end
 
@@ -537,7 +584,7 @@ local function CreateGroupFramesPage(parent)
         local roleAnchor = GUI:CreateDropdown(tabContent, "Role Icon Anchor", NINE_POINT_ANCHOR_OPTIONS, "roleIconAnchor", ind, RefreshGF)
         roleAnchor:SetPoint("TOPLEFT", PAD, y)
         roleAnchor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         -- Ready check
         local readyCheck = GUI:CreateFormCheckbox(tabContent, "Show Ready Check", "showReadyCheck", ind, RefreshGF)
@@ -590,6 +637,11 @@ local function CreateGroupFramesPage(parent)
         threatColor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
+        local threatFill = GUI:CreateFormSlider(tabContent, "Threat Fill Opacity", 0, 0.5, 0.05, "threatFillOpacity", ind, RefreshGF)
+        threatFill:SetPoint("TOPLEFT", PAD, y)
+        threatFill:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
         tabContent:SetHeight(math.abs(y) + 30)
     end
 
@@ -599,6 +651,9 @@ local function CreateGroupFramesPage(parent)
         if not gfdb then return end
 
         GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 6, subTabName = "Healer Features"})
+
+        local _, newY = CreatePreviewButton(tabContent, y)
+        y = newY
 
         local healer = gfdb.healer
         if not healer then gfdb.healer = {} healer = gfdb.healer end
@@ -622,9 +677,19 @@ local function CreateGroupFramesPage(parent)
         dispelCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
+        local dispelColor = GUI:CreateFormColorPicker(tabContent, "Dispel Color", "color", dispelDB, RefreshGF)
+        dispelColor:SetPoint("TOPLEFT", PAD, y)
+        dispelColor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
         local dispelOpacity = GUI:CreateFormSlider(tabContent, "Overlay Opacity", 0.1, 1, 0.05, "opacity", dispelDB, RefreshGF)
         dispelOpacity:SetPoint("TOPLEFT", PAD, y)
         dispelOpacity:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local dispelFill = GUI:CreateFormSlider(tabContent, "Fill Opacity", 0, 0.5, 0.05, "fillOpacity", dispelDB, RefreshGF)
+        dispelFill:SetPoint("TOPLEFT", PAD, y)
+        dispelFill:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
 
         -- Target highlight
@@ -644,6 +709,11 @@ local function CreateGroupFramesPage(parent)
         highlightColor:SetPoint("TOPLEFT", PAD, y)
         highlightColor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
+
+        local highlightFill = GUI:CreateFormSlider(tabContent, "Fill Opacity", 0, 0.5, 0.05, "fillOpacity", highlightDB, RefreshGF)
+        highlightFill:SetPoint("TOPLEFT", PAD, y)
+        highlightFill:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
 
         -- My buff indicator
         local myBuffHeader = GUI:CreateSectionHeader(tabContent, "My Buff Indicator")
@@ -696,6 +766,9 @@ local function CreateGroupFramesPage(parent)
         if not gfdb then return end
 
         GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 7, subTabName = "Auras"})
+
+        local _, newY = CreatePreviewButton(tabContent, y)
+        y = newY
 
         local auras = gfdb.auras
         if not auras then gfdb.auras = {} auras = gfdb.auras end
@@ -934,12 +1007,110 @@ local function CreateGroupFramesPage(parent)
         tabContent:SetHeight(math.abs(y) + 30)
     end
 
+    ---------------------------------------------------------------------------
+    -- SUB-TAB: Private Auras (Boss Debuffs)
+    ---------------------------------------------------------------------------
+    local PRIVATE_AURA_GROW_OPTIONS = {
+        { value = "RIGHT", text = "Right" },
+        { value = "LEFT", text = "Left" },
+        { value = "UP", text = "Up" },
+        { value = "DOWN", text = "Down" },
+    }
+
+    local function BuildPrivateAurasTab(tabContent)
+        local y = -10
+        local gfdb = GetGFDB()
+        if not gfdb then return end
+
+        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 10, subTabName = "Private Auras"})
+
+        local pa = gfdb.privateAuras
+        if not pa then gfdb.privateAuras = {} pa = gfdb.privateAuras end
+
+        local desc = GUI:CreateLabel(tabContent,
+            "Private auras are boss debuffs hidden from addons. WoW renders them directly into frames you provide. " ..
+            "These are critical boss mechanics — keeping this enabled is recommended.",
+            11, C.textMuted)
+        desc:SetPoint("TOPLEFT", PAD, y)
+        desc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        desc:SetJustifyH("LEFT")
+        y = y - 40
+
+        -- Enable
+        local enableCheck = GUI:CreateFormCheckbox(tabContent, "Enable Private Auras", "enabled", pa, RefreshGF)
+        enableCheck:SetPoint("TOPLEFT", PAD, y)
+        enableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Icon settings
+        local iconHeader = GUI:CreateSectionHeader(tabContent, "Icon Settings")
+        iconHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - iconHeader.gap
+
+        local maxSlots = GUI:CreateFormSlider(tabContent, "Max Icons Per Frame", 1, 4, 1, "maxPerFrame", pa, RefreshGF)
+        maxSlots:SetPoint("TOPLEFT", PAD, y)
+        maxSlots:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local iconSize = GUI:CreateFormSlider(tabContent, "Icon Size", 10, 40, 1, "iconSize", pa, RefreshGF)
+        iconSize:SetPoint("TOPLEFT", PAD, y)
+        iconSize:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local spacingSlider = GUI:CreateFormSlider(tabContent, "Icon Spacing", 0, 10, 1, "spacing", pa, RefreshGF)
+        spacingSlider:SetPoint("TOPLEFT", PAD, y)
+        spacingSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        -- Position
+        local posHeader = GUI:CreateSectionHeader(tabContent, "Position")
+        posHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - posHeader.gap
+
+        local anchorDrop = GUI:CreateDropdown(tabContent, "Anchor Point", NINE_POINT_ANCHOR_OPTIONS, "anchor", pa, RefreshGF)
+        anchorDrop:SetPoint("TOPLEFT", PAD, y)
+        anchorDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
+
+        local growDrop = GUI:CreateDropdown(tabContent, "Grow Direction", PRIVATE_AURA_GROW_OPTIONS, "growDirection", pa, RefreshGF)
+        growDrop:SetPoint("TOPLEFT", PAD, y)
+        growDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
+
+        local offsetX = GUI:CreateFormSlider(tabContent, "Offset X", -50, 50, 1, "anchorOffsetX", pa, RefreshGF)
+        offsetX:SetPoint("TOPLEFT", PAD, y)
+        offsetX:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local offsetY = GUI:CreateFormSlider(tabContent, "Offset Y", -50, 50, 1, "anchorOffsetY", pa, RefreshGF)
+        offsetY:SetPoint("TOPLEFT", PAD, y)
+        offsetY:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        -- Countdown
+        local countdownHeader = GUI:CreateSectionHeader(tabContent, "Countdown")
+        countdownHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - countdownHeader.gap
+
+        local countdownCheck = GUI:CreateFormCheckbox(tabContent, "Show Countdown Frame", "showCountdown", pa, RefreshGF)
+        countdownCheck:SetPoint("TOPLEFT", PAD, y)
+        countdownCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local numbersCheck = GUI:CreateFormCheckbox(tabContent, "Show Countdown Numbers", "showCountdownNumbers", pa, RefreshGF)
+        numbersCheck:SetPoint("TOPLEFT", PAD, y)
+        numbersCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        tabContent:SetHeight(math.abs(y) + 30)
+    end
+
     local function BuildRangeTab(tabContent)
         local y = -10
         local gfdb = GetGFDB()
         if not gfdb then return end
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 10, subTabName = "Range & Misc"})
+        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 11, subTabName = "Range & Misc"})
 
         -- Range check
         local rangeHeader = GUI:CreateSectionHeader(tabContent, "Range Check")
@@ -975,7 +1146,7 @@ local function CreateGroupFramesPage(parent)
         local portraitSide = GUI:CreateDropdown(tabContent, "Portrait Side", ANCHOR_SIDE_OPTIONS, "portraitSide", portrait, RefreshGF)
         portraitSide:SetPoint("TOPLEFT", PAD, y)
         portraitSide:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         local portraitSize = GUI:CreateFormSlider(tabContent, "Portrait Size", 16, 60, 1, "portraitSize", portrait, RefreshGF)
         portraitSize:SetPoint("TOPLEFT", PAD, y)
@@ -1008,7 +1179,7 @@ local function CreateGroupFramesPage(parent)
         local petAnchor = GUI:CreateDropdown(tabContent, "Pet Anchor", PET_ANCHOR_OPTIONS, "anchorTo", pets, RefreshGF)
         petAnchor:SetPoint("TOPLEFT", PAD, y)
         petAnchor:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         -- Spotlight
         local spotHeader = GUI:CreateSectionHeader(tabContent, "Spotlight")
@@ -1032,7 +1203,7 @@ local function CreateGroupFramesPage(parent)
         local spotGrow = GUI:CreateDropdown(tabContent, "Spotlight Grow Direction", GROW_OPTIONS, "growDirection", spot, RefreshGF)
         spotGrow:SetPoint("TOPLEFT", PAD, y)
         spotGrow:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = y - DROP_ROW
 
         local spotSpacing = GUI:CreateFormSlider(tabContent, "Spotlight Spacing", 0, 10, 1, "spacing", spot, RefreshGF)
         spotSpacing:SetPoint("TOPLEFT", PAD, y)
@@ -1053,6 +1224,7 @@ local function CreateGroupFramesPage(parent)
         {name = "Auras", builder = BuildAurasTab},
         {name = "Aura Indicators", builder = BuildAuraIndicatorsTab},
         {name = "Click-Cast", builder = BuildClickCastTab},
+        {name = "Private Auras", builder = BuildPrivateAurasTab},
         {name = "Range & Misc", builder = BuildRangeTab},
     }
 

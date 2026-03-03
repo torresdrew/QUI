@@ -4466,6 +4466,15 @@ function GUI:CreateMainFrame()
 
     frame.resizeHandle = resizeHandle
 
+    -- Teardown preview/edit states when the options panel is closed
+    frame:SetScript("OnHide", function()
+        local gfem = ns and ns.QUI_GroupFrameEditMode
+        if gfem then
+            if gfem:IsEditMode() then gfem:DisableEditMode() end
+            if gfem:IsTestMode() then gfem:DisableTestMode() end
+        end
+    end)
+
     return frame
 end
 
