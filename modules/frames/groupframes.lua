@@ -1886,6 +1886,9 @@ local function OnEvent(self, event, arg1, ...)
 
         elseif event == "INCOMING_SUMMON_CHANGED" then
             UpdateSummonPending(frame)
+
+        elseif event == "READY_CHECK_CONFIRM" then
+            UpdateReadyCheck(frame)
         end
         return
     end
@@ -1895,16 +1898,16 @@ local function OnEvent(self, event, arg1, ...)
         UpdateHeaderVisibility()
         UpdateFrameScaling(true)
         -- Rebuild map after a short delay (header needs time to create children)
+        StopRangeCheck()
         C_Timer.After(0.2, function()
             DecorateHeaderChildren(QUI_GF.headers.party)
             DecorateHeaderChildren(QUI_GF.headers.raid)
             RebuildUnitFrameMap()
             UpdateFrameScaling(true)
             QUI_GF:RefreshAllFrames()
+            -- Restart range check AFTER map rebuild so it iterates fresh data
+            StartRangeCheck()
         end)
-        -- Restart range check with appropriate interval
-        StopRangeCheck()
-        StartRangeCheck()
 
     elseif event == "PLAYER_TARGET_CHANGED" then
         for _, frame in pairs(QUI_GF.unitFrameMap) do
@@ -1917,7 +1920,11 @@ local function OnEvent(self, event, arg1, ...)
         end
 
     elseif event == "READY_CHECK_FINISHED" then
-        -- Hide ready check icons after delay
+        -- Final state update — show accepted/declined result before hiding
+        for _, frame in pairs(QUI_GF.unitFrameMap) do
+            UpdateReadyCheck(frame)
+        end
+        -- Hide ready check icons after delay (DandersFrames: configurable persist)
         C_Timer.After(6, function()
             for _, frame in pairs(QUI_GF.unitFrameMap) do
                 if frame.readyCheckIcon then
@@ -1962,7 +1969,7 @@ local function OnEvent(self, event, arg1, ...)
             UpdateFrameScaling()
         end)
 
-    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "SPELLS_CHANGED" then
         ResolveRangeSpells()
     end
 end
@@ -1995,6 +2002,7 @@ local function RegisterEvents()
 
     -- Non-unit events
     eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    eventFrame:RegisterEvent("SPELLS_CHANGED")
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     eventFrame:RegisterEvent("READY_CHECK")
     eventFrame:RegisterEvent("READY_CHECK_CONFIRM")
