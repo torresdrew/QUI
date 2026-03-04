@@ -70,6 +70,14 @@ local pendingSetUnit = nil
 -- Frames below this alpha are considered "faded out" and tooltips will be suppressed
 local FADED_ALPHA_THRESHOLD = 0.5
 
+-- GetEffectiveAlpha is C-side (returns fine), but we need to compare in Lua.
+-- SafeToNumber returns fallback when the value is secret in combat.
+local function IsOwnerFadedOut(owner)
+    if not owner or not owner.GetEffectiveAlpha then return false end
+    local alpha = Helpers.SafeToNumber(owner:GetEffectiveAlpha(), 1)
+    return alpha < FADED_ALPHA_THRESHOLD
+end
+
 ---------------------------------------------------------------------------
 -- Get settings from database (cached for performance)
 ---------------------------------------------------------------------------
@@ -120,6 +128,10 @@ end
 local function PositionTooltipAtCursor(tooltip, settings)
     if not tooltip then return end
     if tooltip.IsForbidden and tooltip:IsForbidden() then return end
+    -- GetCursorPosition / GetEffectiveScale return secret values in combat;
+    -- Lua arithmetic on them taints tooltip frame layout. Let Blizzard handle
+    -- default positioning in combat.
+    if InCombatLockdown() then return end
 
     local cursorX, cursorY = GetCursorPosition()
     if not cursorX or not cursorY then return end
@@ -220,9 +232,11 @@ local function GetTooltipContext(owner)
        strmatch(name, "ElvUI_Bar") then         -- ElvUI
 
         -- Check if this action button contains an item (trinket, equipment, etc)
+        -- GetAttribute returns a secret value in combat; GetActionInfo may reject it
+        -- and the returned actionType needs Lua comparison
         local actionSlot = owner:GetAttribute("action")
-        if actionSlot then
-            local actionType, actionID = GetActionInfo(actionSlot)
+        if actionSlot and not Helpers.IsSecretValue(actionSlot) then
+            local actionType = GetActionInfo(actionSlot)
             if actionType == "item" then
                 return "items"
             end
@@ -502,7 +516,10 @@ local function SetupTooltipHook()
     end
 
     -- Use TooltipDataProcessor for Spell tooltips (action bars, spellbook, CDM, etc.)
+    -- Skip in combat: running code in the tainted callback chain contributes to
+    -- taint reaching ActionBarController (WoWUIBugs #298). Spell IDs are informational-only.
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Spell, function(tooltip, data)
+        if InCombatLockdown() then return end
         pcall(function()
             if data and data.id and type(data.id) == "number" then
                 AddSpellIDToTooltip(tooltip, data.id)
@@ -513,6 +530,7 @@ local function SetupTooltipHook()
     -- Aura tooltip data (player buffs/debuffs) - guard for optional enum
     if Enum.TooltipDataType.Aura then
         TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Aura, function(tooltip, data)
+            if InCombatLockdown() then return end
             pcall(function()
                 if data and data.id and type(data.id) == "number" then
                     AddSpellIDToTooltip(tooltip, data.id, false)
@@ -576,7 +594,7 @@ local function SetupTooltipHook()
         local owner = tooltip:GetOwner()
 
         -- Suppress tooltip if owner frame is faded out (e.g., CDM hidden when mounted)
-        if owner and owner.GetEffectiveAlpha and owner:GetEffectiveAlpha() < FADED_ALPHA_THRESHOLD then
+        if IsOwnerFadedOut(owner) then
             tooltip:Hide()
             return
         end
@@ -600,7 +618,7 @@ local function SetupTooltipHook()
         local owner = tooltip:GetOwner()
 
         -- Suppress tooltip if owner frame is faded out (e.g., CDM hidden when mounted)
-        if owner and owner.GetEffectiveAlpha and owner:GetEffectiveAlpha() < FADED_ALPHA_THRESHOLD then
+        if IsOwnerFadedOut(owner) then
             tooltip:Hide()
             return
         end
