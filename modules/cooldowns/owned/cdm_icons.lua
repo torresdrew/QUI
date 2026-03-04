@@ -771,6 +771,253 @@ local function CreateIcon(parent, spellEntry)
 end
 
 ---------------------------------------------------------------------------
+-- CLICK-TO-CAST: Secure overlay button for CDM icons
+-- Creates a SecureActionButtonTemplate child that receives clicks and
+-- forwards them to the WoW secure action system.  The parent icon
+-- stays as a plain Frame so layout/pooling remain taint-free.
+---------------------------------------------------------------------------
+local function EnsureClickButton(icon)
+    if icon.clickButton then return icon.clickButton end
+
+    local btn = CreateFrame("Button", nil, icon, "SecureActionButtonTemplate")
+    btn:SetAllPoints()
+    btn:RegisterForClicks("AnyUp", "AnyDown")
+    btn:EnableMouse(true)
+    btn:Hide()
+
+    -- Sit above TextOverlay so the button receives clicks
+    if icon.TextOverlay then
+        btn:SetFrameLevel(icon.TextOverlay:GetFrameLevel() + 2)
+    end
+
+    -- Forward tooltip events to the parent icon's handler
+    btn:SetScript("OnEnter", function(self)
+        local parent = self:GetParent()
+        if parent then
+            local onEnter = parent:GetScript("OnEnter")
+            if onEnter then onEnter(parent) end
+        end
+    end)
+    btn:SetScript("OnLeave", function()
+        pcall(GameTooltip.Hide, GameTooltip)
+    end)
+
+    icon.clickButton = btn
+    return btn
+end
+
+local function ClearClickButtonAttributes(btn)
+    btn:SetAttribute("type", nil)
+    btn:SetAttribute("spell", nil)
+    btn:SetAttribute("item", nil)
+    btn:SetAttribute("macro", nil)
+end
+
+---------------------------------------------------------------------------
+-- MACRO RESOLUTION
+-- Scan all player macros for one that casts the given spell.
+-- If found, clicking the CDM icon will execute through the macro,
+-- preserving all conditionals (@mouseover, /cancelaura, modifiers, etc.).
+--
+-- Scans macro indices directly (1-120 account, 121-138 character) instead
+-- of action bar slots, because GetActionInfo returns bogus "macro" entries
+-- with spell IDs instead of real macro indices in WoW 12.0+.
+--
+-- Match priority (highest → lowest):
+--   1. GetMacroSpell — WoW resolved the macro's tooltip to our spell
+--   2. #showtooltip / #show line names our spell — the macro's declared identity
+--   3. /cast or /use line names our spell — broadest fallback
+-- Multi-spell macros (e.g. Lichborne + Death Coil) only match via their
+-- tooltip identity, not via a /cast line for a secondary spell.
+---------------------------------------------------------------------------
+local MAX_ACCOUNT_MACROS = 120
+local MAX_CHARACTER_MACROS = 18
+
+-- Extract the spell name from #showtooltip or #show lines.
+-- Returns lowercase name or nil.  Handles:
+--   #showtooltip              → nil (bare, no explicit spell)
+--   #showtooltip Spell Name   → "spell name"
+--   #show Spell Name          → "spell name"
+local function GetMacroTooltipSpell(body)
+    if not body then return nil end
+    local name = body:match("^#showtooltip%s+(.+)") or body:match("\n#showtooltip%s+(.+)")
+    if not name then
+        name = body:match("^#show%s+(.+)") or body:match("\n#show%s+(.+)")
+    end
+    if name then
+        name = name:match("^(.-)%s*$")
+        if name and name ~= "" then return name:lower() end
+    end
+    return nil
+end
+
+local function FindMacroForSpell(spellID, overrideSpellID)
+    if not spellID and not overrideSpellID then return nil end
+
+    -- Build lowercase spell name set for matching
+    local names = {}
+    if spellID and C_Spell.GetSpellInfo then
+        local info = C_Spell.GetSpellInfo(spellID)
+        if info and info.name then names[info.name:lower()] = true end
+    end
+    if overrideSpellID and overrideSpellID ~= spellID and C_Spell.GetSpellInfo then
+        local info = C_Spell.GetSpellInfo(overrideSpellID)
+        if info and info.name then names[info.name:lower()] = true end
+    end
+    if not next(names) then return nil end
+
+    -- Pass 1: GetMacroSpell (WoW-resolved tooltip spell ID)
+    for i = 1, MAX_ACCOUNT_MACROS + MAX_CHARACTER_MACROS do
+        local macroName = GetMacroInfo(i)
+        if macroName then
+            local macroSpell = GetMacroSpell(i)
+            if macroSpell and (macroSpell == spellID or macroSpell == overrideSpellID) then
+                return macroName
+            end
+        end
+    end
+
+    -- Pass 2: #showtooltip / #show declares the macro's identity spell
+    for i = 1, MAX_ACCOUNT_MACROS + MAX_CHARACTER_MACROS do
+        local macroName = GetMacroInfo(i)
+        if macroName then
+            local tooltipSpell = GetMacroTooltipSpell(GetMacroBody(i))
+            if tooltipSpell and names[tooltipSpell] then
+                return macroName
+            end
+        end
+    end
+
+    -- Pass 3: /cast or /use line mentions our spell (broadest, skips
+    -- multi-spell macros whose tooltip identity is a different spell)
+    for i = 1, MAX_ACCOUNT_MACROS + MAX_CHARACTER_MACROS do
+        local macroName = GetMacroInfo(i)
+        if macroName then
+            local body = GetMacroBody(i)
+            if body then
+                local tooltipSpell = GetMacroTooltipSpell(body)
+                if tooltipSpell and not names[tooltipSpell] then
+                    -- Tooltip declares a different spell — skip
+                else
+                    local lowerBody = body:lower()
+                    for name in pairs(names) do
+                        if lowerBody:find(name, 1, true) then
+                            return macroName
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+---------------------------------------------------------------------------
+-- SECURE ATTRIBUTE MANAGEMENT
+-- Sets or clears the click-to-cast secure button attributes on a CDM icon.
+---------------------------------------------------------------------------
+local function UpdateIconSecureAttributes(icon, entry, viewerType)
+    if not icon then return end
+
+    -- Can't modify secure attributes during combat
+    if InCombatLockdown() then
+        icon._pendingSecureUpdate = true
+        return
+    end
+
+    -- Never clickable for buff icons
+    if viewerType == "buff" then
+        if icon.clickButton then
+            ClearClickButtonAttributes(icon.clickButton)
+            icon.clickButton:Hide()
+        end
+        return
+    end
+
+    local db = GetDB()
+    local viewerDB = db and db[viewerType]
+
+    -- Feature disabled or no config
+    if not viewerDB or not viewerDB.clickableIcons then
+        if icon.clickButton then
+            ClearClickButtonAttributes(icon.clickButton)
+            icon.clickButton:Hide()
+        end
+        return
+    end
+
+    -- No entry assigned
+    if not entry then
+        if icon.clickButton then
+            ClearClickButtonAttributes(icon.clickButton)
+            icon.clickButton:Hide()
+        end
+        return
+    end
+
+    local btn = EnsureClickButton(icon)
+
+    -- Determine secure attributes based on entry type
+    if entry.type == "macro" and entry.macroName then
+        btn:SetAttribute("type", "macro")
+        btn:SetAttribute("macro", entry.macroName)
+        btn:Show()
+    elseif entry.type == "trinket" then
+        local itemID = GetInventoryItemID("player", entry.id)
+        if itemID then
+            local itemName = C_Item.GetItemNameByID(itemID)
+            if itemName then
+                btn:SetAttribute("type", "item")
+                btn:SetAttribute("item", itemName)
+                btn:Show()
+            else
+                ClearClickButtonAttributes(btn)
+                btn:Hide()
+            end
+        else
+            ClearClickButtonAttributes(btn)
+            btn:Hide()
+        end
+    elseif entry.type == "item" then
+        local itemName = C_Item.GetItemNameByID(entry.id)
+        if itemName then
+            btn:SetAttribute("type", "item")
+            btn:SetAttribute("item", itemName)
+            btn:Show()
+        else
+            ClearClickButtonAttributes(btn)
+            btn:Hide()
+        end
+    else
+        -- Spell (harvested or custom spell type)
+        -- Prefer player macro if one casts this spell, so clicking
+        -- the CDM icon executes through the macro's conditionals.
+        local spellID = entry.overrideSpellID or entry.spellID
+        local macroName = FindMacroForSpell(entry.spellID, entry.overrideSpellID)
+        if macroName then
+            btn:SetAttribute("type", "macro")
+            btn:SetAttribute("macro", macroName)
+            btn:Show()
+        elseif spellID then
+            local spellInfo = C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(spellID)
+            if spellInfo and spellInfo.name then
+                btn:SetAttribute("type", "spell")
+                btn:SetAttribute("spell", spellInfo.name)
+                btn:Show()
+            else
+                ClearClickButtonAttributes(btn)
+                btn:Hide()
+            end
+        else
+            ClearClickButtonAttributes(btn)
+            btn:Hide()
+        end
+    end
+
+    icon._pendingSecureUpdate = nil
+end
+
+---------------------------------------------------------------------------
 -- ICON CONFIGURATION
 -- Applies size, border, zoom, texcoord, text styling to an icon.
 -- No combat guards needed — all addon-owned frames.
@@ -840,9 +1087,15 @@ local function ConfigureIcon(icon, rowConfig)
         icon.Border:Show()
 
         icon:SetHitRectInsets(-bs, -bs, -bs, -bs)
+        if icon.clickButton then
+            icon.clickButton:SetHitRectInsets(-bs, -bs, -bs, -bs)
+        end
     else
         icon.Border:Hide()
         icon:SetHitRectInsets(0, 0, 0, 0)
+        if icon.clickButton then
+            icon.clickButton:SetHitRectInsets(0, 0, 0, 0)
+        end
     end
 
     -- TexCoord (zoom + aspect ratio crop)
@@ -1209,10 +1462,19 @@ function CDMIcons:AcquireIcon(parent, spellEntry)
         end
         icon.StackText:SetText("")
         icon.StackText:Hide()
+        -- Update click-to-cast secure attributes for recycled icons
+        if spellEntry.viewerType ~= "buff" then
+            UpdateIconSecureAttributes(icon, spellEntry, spellEntry.viewerType)
+        end
         icon:Show()
         return icon
     end
-    return CreateIcon(parent, spellEntry)
+    local newIcon = CreateIcon(parent, spellEntry)
+    -- Update click-to-cast secure attributes for new icons
+    if spellEntry.viewerType ~= "buff" then
+        UpdateIconSecureAttributes(newIcon, spellEntry, spellEntry.viewerType)
+    end
+    return newIcon
 end
 
 function CDMIcons:ReleaseIcon(icon)
@@ -1239,6 +1501,15 @@ function CDMIcons:ReleaseIcon(icon)
     end
     icon.StackText:SetText("")
     icon.Border:Hide()
+
+    -- Clear click-to-cast secure button
+    if icon.clickButton then
+        if not InCombatLockdown() then
+            ClearClickButtonAttributes(icon.clickButton)
+            icon.clickButton:Hide()
+        end
+    end
+    icon._pendingSecureUpdate = nil
 
     if #recyclePool < MAX_RECYCLE_POOL_SIZE then
         icon:SetParent(UIParent)
@@ -1392,6 +1663,17 @@ function CDMIcons:BuildIcons(viewerType, container)
         end
     end
 
+    -- Update click-to-cast secure attributes for essential/utility icons.
+    -- AcquireIcon sets attrs per-icon, but this catches any pending updates
+    -- (e.g., from combat-deferred rebuilds via PLAYER_REGEN_ENABLED).
+    if viewerType == "essential" or viewerType == "utility" then
+        for _, icon in ipairs(pool) do
+            if icon._pendingSecureUpdate then
+                UpdateIconSecureAttributes(icon, icon._spellEntry, viewerType)
+            end
+        end
+    end
+
     iconPools[viewerType] = pool
 
     -- Immediately update cooldown state so icons reflect correct
@@ -1479,6 +1761,7 @@ end
 CDMIcons.ConfigureIcon = ConfigureIcon
 CDMIcons.UpdateIconCooldown = UpdateIconCooldown
 CDMIcons.ApplyTexCoord = ApplyTexCoord
+CDMIcons.UpdateIconSecureAttributes = UpdateIconSecureAttributes
 
 ---------------------------------------------------------------------------
 -- CUSTOM ENTRY MANAGEMENT (backward-compatible API surface)
