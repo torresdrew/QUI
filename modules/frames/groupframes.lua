@@ -658,6 +658,14 @@ local function UpdateReadyCheck(frame)
 
     local status = GetReadyCheckStatus(frame.unit)
     if status then
+        -- DandersFrames pattern: AFK players waiting on ready check show "not ready"
+        if status == "waiting" then
+            local isAFK = nil
+            pcall(function() isAFK = UnitIsAFK(frame.unit) end)
+            if isAFK and not IsSecretValue(isAFK) and isAFK == true then
+                status = "notready"
+            end
+        end
         local tex = READY_CHECK_TEXTURES[status] or READY_CHECK_TEXTURES.waiting
         frame.readyCheckIcon:SetTexture(tex)
         frame.readyCheckIcon:Show()
@@ -1929,9 +1937,6 @@ local function OnEvent(self, event, arg1, ...)
 
         elseif event == "INCOMING_SUMMON_CHANGED" then
             UpdateSummonPending(frame)
-
-        elseif event == "READY_CHECK_CONFIRM" then
-            UpdateReadyCheck(frame)
         end
         return
     end
@@ -1957,10 +1962,11 @@ local function OnEvent(self, event, arg1, ...)
             UpdateTargetHighlight(frame)
         end
 
-    elseif event == "READY_CHECK" then
-        -- READY_CHECK fires with arg1=initiatorName (not a unit token),
-        -- so it falls through to this global handler. All frames enter "waiting".
-        -- READY_CHECK_CONFIRM is handled in the unit-specific dispatch above.
+    elseif event == "READY_CHECK" or event == "READY_CHECK_CONFIRM" then
+        -- DandersFrames pattern: iterate all frames for both events.
+        -- READY_CHECK fires with arg1=initiatorName (not a unit token).
+        -- READY_CHECK_CONFIRM fires per-unit but we refresh all frames to
+        -- avoid relying on unitFrameMap lookup which can miss stale tokens.
         for _, frame in pairs(QUI_GF.unitFrameMap) do
             UpdateReadyCheck(frame)
         end

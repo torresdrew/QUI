@@ -27,6 +27,7 @@ local function SafeHideFrame(frame)
     if not frame then return end
     pcall(function()
         frame:SetAlpha(0)
+        frame:EnableMouse(false)
     end)
     hiddenFrames[frame] = true
 end
@@ -80,6 +81,12 @@ local function StripUnitFrameEvents(frame)
     if not frame then return end
     pcall(function()
         frame:UnregisterAllEvents()
+        -- Keep UNIT_AURA alive so Blizzard's aura cache still updates
+        -- (DandersFrames "Blizzard mode" pattern — avoids stale aura data)
+        local unit = frame.unit or frame.displayedUnit
+        if unit and frame.RegisterUnitEvent then
+            frame:RegisterUnitEvent("UNIT_AURA", unit)
+        end
     end)
     strippedFrames[frame] = true
 end
@@ -162,6 +169,21 @@ if CompactUnitFrame_UpdateReadyCheck then
 end
 
 ---------------------------------------------------------------------------
+-- HOOK: Re-strip events when Blizzard tries to restore them
+-- (DandersFrames pattern — Blizzard calls CompactUnitFrame_UpdateUnitEvents
+-- on hidden frames during roster changes, which restores their events)
+---------------------------------------------------------------------------
+if CompactUnitFrame_UpdateUnitEvents then
+    hooksecurefunc("CompactUnitFrame_UpdateUnitEvents", function(frame)
+        if not frame then return end
+        if not strippedFrames[frame] then return end
+
+        -- Blizzard just restored events on a frame we stripped — re-strip it
+        StripUnitFrameEvents(frame)
+    end)
+end
+
+---------------------------------------------------------------------------
 -- HIDE: Blizzard party frames
 ---------------------------------------------------------------------------
 local function HideBlizzardPartyFrames()
@@ -171,6 +193,7 @@ local function HideBlizzardPartyFrames()
     if CompactPartyFrame then
         SafeHideFrame(CompactPartyFrame)
         HideSelectionHighlights(CompactPartyFrame)
+        StripUnitFrameEvents(CompactPartyFrame)
 
         -- Hide border/title overlays
         SafeHideFrame(CompactPartyFrame.borderFrame)

@@ -145,6 +145,9 @@ local function CalculateSlotOffset(index, iconSize, spacing, direction)
     return step, 0 -- fallback to RIGHT
 end
 
+-- Track icons that need mouse setup deferred from combat
+local pendingMouseFix = false
+
 ---------------------------------------------------------------------------
 -- AURA ICON: Create/get icon for a frame
 ---------------------------------------------------------------------------
@@ -210,6 +213,43 @@ local function CreateAuraIcon(parent, size)
     pulseGroup:SetLooping("BOUNCE")
     icon.pulseGroup = pulseGroup
 
+    -- DandersFrames pattern: mouse propagation so @mouseover targeting and
+    -- click-casting work even when hovering aura icons.
+    -- EnableMouse(true)                  → icon receives OnEnter/OnLeave (tooltips)
+    -- SetPropagateMouseMotion(true)      → parent frame also gets motion events (@mouseover)
+    -- SetPropagateMouseClicks(true)      → clicks pass through to parent (targeting/cast)
+    -- SetMouseClickEnabled(false)        → icon itself doesn't consume clicks
+    if not InCombatLockdown() then
+        icon:EnableMouse(true)
+        if icon.SetPropagateMouseMotion then icon:SetPropagateMouseMotion(true) end
+        if icon.SetPropagateMouseClicks then icon:SetPropagateMouseClicks(true) end
+        if icon.SetMouseClickEnabled then icon:SetMouseClickEnabled(false) end
+    else
+        pendingMouseFix = true
+    end
+
+    -- Store parent unit frame reference for tooltip lookups
+    icon.unitFrame = parent
+
+    -- Aura tooltip on hover
+    icon:SetScript("OnEnter", function(self)
+        if not self:IsShown() then return end
+        local state = auraIconState[self]
+        local uf = self.unitFrame
+        if not state or not uf or not uf.unit then return end
+        local auraID = state.auraInstanceID
+        if not auraID or IsSecretValue(auraID) then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        if GameTooltip.SetUnitAuraByAuraInstanceID then
+            pcall(GameTooltip.SetUnitAuraByAuraInstanceID, GameTooltip, uf.unit, auraID)
+        end
+        GameTooltip:Show()
+    end)
+
+    icon:SetScript("OnLeave", function(self)
+        GameTooltip:Hide()
+    end)
+
     icon:Hide()
     return icon
 end
@@ -226,59 +266,77 @@ local function UpdateAuraIcon(icon, auraData, unit)
         auraIconState[icon] = state
     end
 
+    -- DandersFrames pattern: when bulk scan returns secret values, re-fetch
+    -- individual aura data by auraInstanceID for reliable display properties.
+    local auraID = auraData.auraInstanceID
+    local displayData = auraData
+    if auraID and not IsSecretValue(auraID) and C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+        if IsSecretValue(auraData.icon) or IsSecretValue(auraData.duration) then
+            local ok, freshData = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, auraID)
+            if ok and freshData then
+                displayData = freshData
+            end
+        end
+    end
+
     -- Store data in side-table (NOT on frame — taint safety)
     state.unit = unit
-    state.auraInstanceID = auraData.auraInstanceID
-    state.expirationTime = auraData.expirationTime
-    state.duration = auraData.duration
-    state.applications = auraData.applications
+    state.auraInstanceID = auraID
+    state.expirationTime = displayData.expirationTime
+    state.duration = displayData.duration
+    state.applications = displayData.applications
 
-    -- Icon texture
-    if not IsSecretValue(auraData.icon) and auraData.icon and icon.icon then
-        icon.icon:SetTexture(auraData.icon)  -- C-side, handles secret values
+    -- Icon texture (C-side SetTexture handles secret values natively)
+    if icon.icon then
+        pcall(icon.icon.SetTexture, icon.icon, displayData.icon)
     end
 
-    -- Stack count
-    local stacks = SafeToNumber(auraData.applications, 0)
-    if stacks > 1 and icon.stackText then
-        icon.stackText:SetText(stacks)
-    elseif icon.stackText then
-        icon.stackText:SetText("")
-    end
-
-    -- Cooldown swipe (use C-side methods which handle secret values natively)
-    if icon.cooldown then
-        local dur = auraData.duration
-        local expTime = auraData.expirationTime
-        local auraID = auraData.auraInstanceID
-        local hasValues = not IsSecretValue(dur) and dur and not IsSecretValue(expTime) and expTime
-        local hasSecretValues = not hasValues and (IsSecretValue(dur) or IsSecretValue(expTime))
-
-        if hasValues or hasSecretValues then
-            -- Path 1: DurationObject (WoW 12.0+, fully secret-safe)
-            if icon.cooldown.SetCooldownFromDurationObject and not IsSecretValue(auraID) and auraID and C_UnitAuras and C_UnitAuras.GetAuraDuration then
-                local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraID)
-                if ok and durationObj then
-                    pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durationObj, true)
-                elseif icon.cooldown.SetCooldownFromExpirationTime then
-                    pcall(icon.cooldown.SetCooldownFromExpirationTime, icon.cooldown, expTime, dur)
-                elseif hasValues then
-                    pcall(function() icon.cooldown:SetCooldown(expTime - dur, dur) end)
-                end
-            elseif icon.cooldown.SetCooldownFromExpirationTime then
-                -- Path 2: SetCooldownFromExpirationTime (C-side, secret-safe)
-                pcall(icon.cooldown.SetCooldownFromExpirationTime, icon.cooldown, expTime, dur)
-            elseif hasValues then
-                -- Path 3: Legacy fallback (Lua arithmetic, only safe with non-secret values)
-                pcall(function() icon.cooldown:SetCooldown(expTime - dur, dur) end)
+    -- Stack count (DandersFrames pattern: use GetAuraApplicationDisplayCount
+    -- which returns a display-ready string, fully secret-safe via C-side SetText)
+    if icon.stackText then
+        if auraID and not IsSecretValue(auraID) and C_UnitAuras.GetAuraApplicationDisplayCount then
+            local ok, countStr = pcall(C_UnitAuras.GetAuraApplicationDisplayCount, unit, auraID, 2, 99)
+            if ok and countStr then
+                pcall(icon.stackText.SetText, icon.stackText, countStr)
+            else
+                icon.stackText:SetText("")
             end
+        else
+            local stacks = SafeToNumber(displayData.applications, 0)
+            if stacks > 1 then
+                icon.stackText:SetText(stacks)
+            else
+                icon.stackText:SetText("")
+            end
+        end
+    end
+
+    -- Cooldown swipe (DandersFrames pattern: prefer DurationObject → ExpirationTime → legacy)
+    if icon.cooldown then
+        local dur = displayData.duration
+        local expTime = displayData.expirationTime
+
+        if auraID and not IsSecretValue(auraID) and icon.cooldown.SetCooldownFromDurationObject and C_UnitAuras.GetAuraDuration then
+            -- Path 1: DurationObject (WoW 12.0+, fully secret-safe)
+            local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraID)
+            if ok and durationObj then
+                pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durationObj, true)
+            elseif icon.cooldown.SetCooldownFromExpirationTime then
+                pcall(icon.cooldown.SetCooldownFromExpirationTime, icon.cooldown, expTime, dur)
+            end
+        elseif icon.cooldown.SetCooldownFromExpirationTime and (dur or expTime) then
+            -- Path 2: SetCooldownFromExpirationTime (C-side, secret-safe)
+            pcall(icon.cooldown.SetCooldownFromExpirationTime, icon.cooldown, expTime, dur)
+        elseif not IsSecretValue(dur) and dur and not IsSecretValue(expTime) and expTime then
+            -- Path 3: Legacy fallback (Lua arithmetic, only safe with non-secret values)
+            pcall(function() icon.cooldown:SetCooldown(expTime - dur, dur) end)
         else
             icon.cooldown:Clear()
         end
     end
 
     -- Duration text + timer registration
-    local safeDur = SafeToNumber(auraData.duration, 0)
+    local safeDur = SafeToNumber(displayData.duration, 0)
     if safeDur > 0 then
         RegisterIconTimer(icon, state)
     else
@@ -290,7 +348,7 @@ local function UpdateAuraIcon(icon, auraData, unit)
     local db = GetDB()
     local showPulse = db and db.auras and db.auras.showExpiringPulse ~= false
     if showPulse and safeDur > 0 then
-        local safeExp = SafeToNumber(auraData.expirationTime, 0)
+        local safeExp = SafeToNumber(displayData.expirationTime, 0)
         local remaining = safeExp - GetTime()
         if remaining > 0 and remaining < 5 then
             if icon.pulseGroup and not icon.pulseGroup:IsPlaying() then
@@ -308,8 +366,8 @@ local function UpdateAuraIcon(icon, auraData, unit)
     end
 
     -- Dispellable debuff border color
-    if not IsSecretValue(auraData.dispelName) and auraData.dispelName then
-        local dispelType = SafeValue(auraData.dispelName, nil)
+    if not IsSecretValue(displayData.dispelName) and displayData.dispelName then
+        local dispelType = SafeValue(displayData.dispelName, nil)
         local DISPEL_COLORS = {
             Magic   = { 0.2, 0.6, 1.0, 1 },
             Curse   = { 0.6, 0.0, 1.0, 1 },
@@ -541,10 +599,40 @@ end
 ---------------------------------------------------------------------------
 -- EVENT HOOKUP: Listen to UNIT_AURA via the group frame event system
 ---------------------------------------------------------------------------
+local function FixIconMouse(icon)
+    if not icon or InCombatLockdown() then return end
+    pcall(function()
+        icon:EnableMouse(true)
+        if icon.SetPropagateMouseMotion then icon:SetPropagateMouseMotion(true) end
+        if icon.SetPropagateMouseClicks then icon:SetPropagateMouseClicks(true) end
+        if icon.SetMouseClickEnabled then icon:SetMouseClickEnabled(false) end
+    end)
+end
+
+local function FixAllIconMouse()
+    if InCombatLockdown() then return end
+    local GF = ns.QUI_GroupFrames
+    if not GF then return end
+    for _, frame in pairs(GF.unitFrameMap) do
+        if frame.debuffIcons then
+            for _, icon in ipairs(frame.debuffIcons) do FixIconMouse(icon) end
+        end
+        if frame.buffIcons then
+            for _, icon in ipairs(frame.buffIcons) do FixIconMouse(icon) end
+        end
+    end
+    pendingMouseFix = false
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("UNIT_AURA")
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 eventFrame:SetScript("OnEvent", function(self, event, unit)
+    if event == "PLAYER_REGEN_ENABLED" then
+        if pendingMouseFix then FixAllIconMouse() end
+        return
+    end
     if event ~= "UNIT_AURA" then return end
     local GF = ns.QUI_GroupFrames
     if not GF or not GF.initialized then return end
