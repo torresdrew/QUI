@@ -85,6 +85,7 @@ end
 local pendingResize = false
 local pendingVisibilityUpdate = false
 local pendingInitialize = false
+local pendingRegisterClicks = false
 
 ---------------------------------------------------------------------------
 -- HELPERS: Settings access
@@ -1442,8 +1443,12 @@ local function DecorateHeaderChildren(header)
         local child = header:GetAttribute("child" .. i)
         if not child then break end
         DecorateGroupFrame(child)
-        -- Register for clicks
-        child:RegisterForClicks("AnyUp")
+        -- RegisterForClicks is protected — defer during combat
+        if not InCombatLockdown() then
+            child:RegisterForClicks("AnyUp")
+        else
+            pendingRegisterClicks = true
+        end
         i = i + 1
     end
 end
@@ -1721,6 +1726,11 @@ local function OnEvent(self, event, arg1, ...)
         if pendingInitialize then
             pendingInitialize = false
             QUI_GF:Initialize()
+        end
+        if pendingRegisterClicks then
+            pendingRegisterClicks = false
+            DecorateHeaderChildren(QUI_GF.headers.party)
+            DecorateHeaderChildren(QUI_GF.headers.raid)
         end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
