@@ -3,6 +3,7 @@ local QUICore = ns.Addon
 local Helpers = ns.Helpers
 
 local GetCore = ns.Helpers.GetCore
+local SkinBase = ns.SkinBase
 
 ---------------------------------------------------------------------------
 -- TOOLTIP SKINNING
@@ -225,8 +226,7 @@ local function ApplyFlatNineSlice(nineSlice, edgeSize)
     if not nineSlice then return end
     if nineSlice.IsForbidden and nineSlice:IsForbidden() then return end
 
-    local core = GetCore()
-    local px = core and core.GetPixelSize and core:GetPixelSize(nineSlice) or 1
+    local px = SkinBase.GetPixelSize(nineSlice, 1)
     local edge = (edgeSize or 1) * px
 
     for _, pieceName in ipairs(NINE_SLICE_PIECES) do
@@ -338,8 +338,7 @@ local function SkinTooltip(tooltip)
     elseif tooltip.SetBackdrop then
         -- Legacy BackdropTemplate path (fallback)
         -- Memory optimization: reuse cached backdrop table (updated in-place)
-        local core = GetCore()
-        local px = core and core.GetPixelSize and core:GetPixelSize(tooltip) or 1
+        local px = SkinBase.GetPixelSize(tooltip, 1)
         local edge = thickness * px
         _cachedBackdrop.edgeSize = edge
         _cachedBackdropInsets.left = edge
@@ -375,8 +374,7 @@ local function ReapplySkin(tooltip)
         pcall(ns.Show, ns)
     elseif tooltip.SetBackdrop then
         -- Memory optimization: reuse cached backdrop table (updated in-place)
-        local core = GetCore()
-        local px = core and core.GetPixelSize and core:GetPixelSize(tooltip) or 1
+        local px = SkinBase.GetPixelSize(tooltip, 1)
         local edge = thickness * px
         _cachedBackdrop.edgeSize = edge
         _cachedBackdropInsets.left = edge
@@ -544,6 +542,9 @@ end
 
 -- Refresh colors/geometry on all skinned tooltips
 local function RefreshAllTooltipColors()
+    -- Defer to next tooltip show if in combat — C-side calls (SetTexture, SetFont)
+    -- propagate taint through the securecall chain to other addons' tooltip hooks.
+    if InCombatLockdown() then return end
     -- Refresh named tooltips from the static list
     for _, name in ipairs(tooltipsToSkin) do
         local tooltip = _G[name]
@@ -567,6 +568,8 @@ local function RefreshAllTooltipColors()
 end
 
 local function RefreshAllTooltipFonts()
+    -- Defer to next tooltip show if in combat — font mutations propagate taint.
+    if InCombatLockdown() then return end
     for _, name in ipairs(tooltipsToSkin) do
         local tooltip = _G[name]
         if tooltip then
