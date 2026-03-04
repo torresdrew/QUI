@@ -320,39 +320,6 @@ local function MirrorBlizzCooldown(icon, blizzChild)
                     pcall(cd.SetCooldownFromDurationObject, cd, durationObj, isAura)
                 end
 
-                -- Extract duration for desaturation and fallback classification.
-                -- DurationObject is C-side — access via methods, not fields.
-                if durationObj then
-                    local durGetter = durationObj.GetTotalDuration
-                    if durGetter then
-                        local dOK, rawDur = pcall(durGetter, durationObj)
-                        if dOK and rawDur ~= nil then
-                            local safeDur = SafeToNumber(rawDur, nil)
-                            if safeDur then
-                                targetIcon._lastDuration = safeDur
-                                if safeDur == 0 then
-                                    targetIcon._lastStart = 0
-                                    targetIcon._lastDuration = 0
-                                end
-                            end
-                        end
-                    end
-                end
-
-                -- Track GCD state for swipe classification (matches CMC pattern).
-                -- isOnGCD is a Blizzard boolean — CMC accesses it directly without
-                -- secret guards, but we use pcall for safety.
-                local sid = targetIcon._spellEntry and
-                    (targetIcon._spellEntry.overrideSpellID or targetIcon._spellEntry.spellID or targetIcon._spellEntry.id)
-                if sid and C_Spell.GetSpellCooldown then
-                    local ok, cdInfo = pcall(C_Spell.GetSpellCooldown, sid)
-                    if ok and cdInfo then
-                        if not IsSecretValue(cdInfo.isOnGCD) then
-                            targetIcon._isOnGCD = cdInfo.isOnGCD or false
-                        end
-                    end
-                end
-
                 -- Track aura state for swipe color classification
                 -- (swipe.lua uses _auraActive to pick overlay vs swipe color).
                 -- isAura may be secret in combat; only update when safe
@@ -375,17 +342,10 @@ local function MirrorBlizzCooldown(icon, blizzChild)
                 pcall(cd.SetCooldown, cd, start, duration)
             end
 
-            -- Capture cooldown values from Blizzard's native update so
-            -- the desaturation ticker uses hook-driven data instead of
-            -- API calls that return secret values during combat.
-            local safeStart = SafeToNumber(start, nil)
-            local safeDur = SafeToNumber(duration, nil)
-            if safeStart then targetIcon._lastStart = safeStart end
-            if safeDur then targetIcon._lastDuration = safeDur end
-            if safeDur == 0 then
-                targetIcon._lastStart = 0
-                targetIcon._lastDuration = 0
-            end
+            -- SetCooldown fires when Blizzard transitions from aura to
+            -- cooldown on the same icon — clear the aura flag so the
+            -- swipe classifier picks up the change immediately.
+            targetIcon._auraActive = false
 
             -- Track GCD state for swipe classification (matches CMC pattern).
             -- isOnGCD is a Blizzard boolean — CMC accesses it directly without
@@ -962,24 +922,8 @@ local function UpdateIconCooldown(icon)
     if entry._blizzChild then
         -- Mirrored Blizzard CooldownFrame: Blizzard drives the hidden
         -- viewer; our hooks forward updates to the addon-owned CD.
-        -- We only track state for swipe color classification.
-
-        -- Track duration + start for swipe classification and desaturation.
-        -- Primary source during combat is the SetCooldown hook in
-        -- MirrorBlizzCooldown; this API query is a fallback that works
-        -- outside combat (secrets → no update).
-        local sid = entry.overrideSpellID or entry.spellID or entry.id
-        if sid and not (entry.type == "item" or entry.type == "trinket") then
-            local cdStart, dur = GetBestSpellCooldown(sid)
-            local safeDurVal = SafeToNumber(dur, nil)
-            local safeStartVal = SafeToNumber(cdStart, nil)
-            if safeDurVal then icon._lastDuration = safeDurVal end
-            if safeStartVal then icon._lastStart = safeStartVal end
-            if safeDurVal == 0 then
-                icon._lastStart = 0
-                icon._lastDuration = 0
-            end
-        end
+        -- Hooks (SetCooldown / SetCooldownFromDurationObject) drive all
+        -- mirrored cooldown updates; no API polling needed here.
 
         -- Re-apply swipe styling (colors) in case state changed
         if icon.Cooldown then
@@ -1046,12 +990,7 @@ local function UpdateIconCooldown(icon)
 
         if icon.Cooldown then
             if startTime and duration then
-                local safeStart = SafeToNumber(startTime, nil)
-                if safeStart and safeDur and safeDur > 0 then
-                    icon.Cooldown:SetCooldown(safeStart, safeDur)
-                else
-                    pcall(icon.Cooldown.SetCooldown, icon.Cooldown, startTime, duration)
-                end
+                pcall(icon.Cooldown.SetCooldown, icon.Cooldown, startTime, duration)
             else
                 icon.Cooldown:Clear()
             end
