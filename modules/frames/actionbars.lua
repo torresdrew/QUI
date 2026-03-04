@@ -1784,11 +1784,51 @@ local function ApplyButtonSpacing(barKey)
     if not settings or settings.buttonSpacing == nil then return end
 
     local spacing = settings.buttonSpacing
-    local buttons = GetBarButtons(barKey)
-    if #buttons < 2 then return end
+    -- Only apply spacing to standard action bars (1-8).
+    -- Pet/stance bars have variable visible button counts per class
+    -- and resizing their bar frames breaks the frame anchoring chain
+    -- (size-stable CENTER anchoring shifts visual content on resize).
+    if barKey == "pet" or barKey == "stance" then return end
+
+    local allButtons = GetBarButtons(barKey)
+    if #allButtons < 2 then return end
 
     local barFrame = GetBarFrame(barKey)
     if not barFrame then return end
+
+    -- Read the visible icon count from Edit Mode API.
+    -- Users can configure bars to show fewer than 12 buttons (e.g. 9 of 12).
+    -- We must only layout the visible subset, otherwise the bar frame is sized
+    -- for invisible buttons and the layout breaks.
+    local buttons = allButtons
+    local EditModeSettings = Enum.EditModeActionBarSetting
+    if barFrame.GetSettingValue and EditModeSettings then
+        local okN, numIcons = pcall(barFrame.GetSettingValue, barFrame, EditModeSettings.NumIcons)
+        if okN and numIcons and numIcons > 0 and numIcons < #allButtons then
+            local visible = {}
+            for i = 1, numIcons do
+                visible[i] = allButtons[i]
+            end
+            buttons = visible
+        end
+    end
+
+    -- Fallback: filter to only shown buttons if Edit Mode API didn't reduce the count.
+    -- Stance/pet bars may have 10 slots but only a few actually shown (class-dependent).
+    -- When ALL buttons are hidden (e.g. no pet summoned), skip the bar entirely.
+    if #buttons == #allButtons then
+        local shown = {}
+        for _, btn in ipairs(allButtons) do
+            if btn:IsShown() then
+                shown[#shown + 1] = btn
+            end
+        end
+        if #shown < #buttons then
+            buttons = shown
+        end
+    end
+
+    if #buttons < 2 then return end
 
     local numCols, numRows, isVertical = GetBarGridLayout(barFrame, buttons)
 
