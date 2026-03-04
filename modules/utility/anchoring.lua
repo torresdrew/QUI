@@ -1207,6 +1207,25 @@ local FRAME_RESOLVERS = {
     focusCastAlert = function() return _G["QUI_FocusCastAlertFrame"] end,
     missingRaidBuffs = function() return _G["QUI_MissingRaidBuffs"] end,
     mplusTimer = function() return _G["QUI_MPlusTimerFrame"] end,
+    -- Group Frames
+    -- During edit/test mode the headers are hidden and re-parented to the mover;
+    -- return the mover/test container so anchoring works with preview frames.
+    partyFrames = function()
+        local GFEM = ns.QUI_GroupFrameEditMode
+        if GFEM then
+            local active = GFEM:GetActiveFrame()
+            if active then return active end
+        end
+        return ns.QUI_GroupFrames and ns.QUI_GroupFrames.headers and ns.QUI_GroupFrames.headers.party
+    end,
+    raidFrames = function()
+        local GFEM = ns.QUI_GroupFrameEditMode
+        if GFEM then
+            local active = GFEM:GetActiveFrame()
+            if active then return active end
+        end
+        return ns.QUI_GroupFrames and ns.QUI_GroupFrames.headers and ns.QUI_GroupFrames.headers.raid
+    end,
     -- Display
     minimap = function() return _G["Minimap"] end,
     objectiveTracker = function() return _G["ObjectiveTrackerFrame"] end,
@@ -1329,6 +1348,8 @@ local FRAME_ANCHOR_INFO = {
     focusCastAlert  = { displayName = "Focus Cast Alert",      category = "QoL",               order = 8 },
     missingRaidBuffs = { displayName = "Missing Raid Buffs",   category = "QoL",               order = 9 },
     mplusTimer      = { displayName = "M+ Timer",              category = "QoL",               order = 10 },
+    partyFrames     = { displayName = "Party Frames",           category = "Group Frames",      order = 1 },
+    raidFrames      = { displayName = "Raid Frames",            category = "Group Frames",      order = 2 },
     minimap         = { displayName = "Minimap",               category = "Display",           order = 1 },
     objectiveTracker = { displayName = "Objective Tracker",    category = "Display",           order = 2 },
     buffFrame       = { displayName = "Buff Frame",            category = "Display",           order = 3 },

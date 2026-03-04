@@ -305,6 +305,69 @@ function QUI_GFCC:GetActiveBindings()
     return activeBindings
 end
 
+function QUI_GFCC:GetEditableBindings()
+    local db = GetDB()
+    if not db or not db.clickCast then return {} end
+    local cc = db.clickCast
+
+    if cc.perSpec then
+        local specID = GetSpecializationInfo(GetSpecialization() or 1)
+        if specID then
+            if not cc.specBindings then cc.specBindings = {} end
+            if not cc.specBindings[specID] then cc.specBindings[specID] = {} end
+            return cc.specBindings[specID]
+        end
+    end
+
+    if not cc.bindings then cc.bindings = {} end
+    return cc.bindings
+end
+
+function QUI_GFCC:AddBinding(binding)
+    if not binding or not binding.button then return false, "No button specified" end
+
+    local bindings = self:GetEditableBindings()
+    local mod = binding.modifiers or ""
+
+    -- Duplicate detection: same button+modifier combo
+    for _, existing in ipairs(bindings) do
+        if existing.button == binding.button and (existing.modifiers or "") == mod then
+            return false, "A binding for " .. (MODIFIER_LABELS[mod] or "") .. (BUTTON_NAMES[binding.button] or binding.button) .. " already exists"
+        end
+    end
+
+    table.insert(bindings, binding)
+
+    if not InCombatLockdown() then
+        self:RefreshBindings()
+    else
+        self.pendingRefresh = true
+    end
+    return true
+end
+
+function QUI_GFCC:RemoveBinding(index)
+    local bindings = self:GetEditableBindings()
+    if index < 1 or index > #bindings then return false end
+
+    table.remove(bindings, index)
+
+    if not InCombatLockdown() then
+        self:RefreshBindings()
+    else
+        self.pendingRefresh = true
+    end
+    return true
+end
+
+function QUI_GFCC:GetButtonNames()
+    return BUTTON_NAMES
+end
+
+function QUI_GFCC:GetModifierLabels()
+    return MODIFIER_LABELS
+end
+
 ---------------------------------------------------------------------------
 -- EVENTS: Spec change and combat end
 ---------------------------------------------------------------------------

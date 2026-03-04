@@ -213,9 +213,8 @@ local function UpdateAuraIcon(icon, auraData, unit)
     state.applications = auraData.applications
 
     -- Icon texture
-    local spellIcon = SafeValue(auraData.icon, nil)
-    if spellIcon and icon.icon then
-        icon.icon:SetTexture(spellIcon)
+    if auraData.icon and icon.icon then
+        icon.icon:SetTexture(auraData.icon)  -- C-side, handles secret values
     end
 
     -- Stack count
@@ -232,16 +231,25 @@ local function UpdateAuraIcon(icon, auraData, unit)
         local expTime = auraData.expirationTime
         if dur and expTime then
             -- Try SetCooldownFromDurationObject first (WoW 12.0+)
+            -- Path 1: DurationObject (WoW 12.0+, fully secret-safe)
             if icon.cooldown.SetCooldownFromDurationObject and auraData.auraInstanceID and C_UnitAuras and C_UnitAuras.GetAuraDuration then
                 local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraData.auraInstanceID)
                 if ok and durationObj then
                     pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durationObj, true)
+                elseif icon.cooldown.SetCooldownFromExpirationTime then
+                    -- Path 2: SetCooldownFromExpirationTime (C-side, secret-safe)
+                    pcall(icon.cooldown.SetCooldownFromExpirationTime, icon.cooldown, expTime, dur)
                 else
+                    -- Path 3: Legacy fallback (Lua arithmetic, only safe out of combat)
                     pcall(function()
                         icon.cooldown:SetCooldown(expTime - dur, dur)
                     end)
                 end
+            elseif icon.cooldown.SetCooldownFromExpirationTime then
+                -- Path 2: SetCooldownFromExpirationTime (C-side, secret-safe)
+                pcall(icon.cooldown.SetCooldownFromExpirationTime, icon.cooldown, expTime, dur)
             else
+                -- Path 3: Legacy fallback (Lua arithmetic, only safe out of combat)
                 pcall(function()
                     icon.cooldown:SetCooldown(expTime - dur, dur)
                 end)
@@ -282,7 +290,7 @@ local function UpdateAuraIcon(icon, auraData, unit)
     end
 
     -- Dispellable debuff border color
-    if auraData.isHarmful and auraData.dispelName then
+    if auraData.dispelName then
         local dispelType = SafeValue(auraData.dispelName, nil)
         local DISPEL_COLORS = {
             Magic   = { 0.2, 0.6, 1.0, 1 },
@@ -314,7 +322,7 @@ local PRIORITY_NORMAL = 1
 local function GetAuraPriority(auraData)
     if not auraData then return 0 end
     local isDispellable = auraData.dispelName and SafeValue(auraData.dispelName, nil)
-    local isBoss = auraData.isBossAura
+    local isBoss = auraData.isBossAura and not IsSecretValue(auraData.isBossAura)
 
     if isDispellable then return PRIORITY_DISPELLABLE end
     if isBoss then return PRIORITY_BOSS end
@@ -361,21 +369,33 @@ local function UpdateFrameAuras(frame)
             frame.debuffIcons = {}
         end
 
-        -- Collect harmful auras using priority sorting
+        -- Collect harmful auras using C-side filtering (secret-safe)
         wipe(sortedAuras)
-        local slot = 1
-        while true do
-            local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
-            if not ok or not auraData then break end
-            if auraData.isHarmful then
-                local entry = AcquireAuraTable()
-                entry.auraData = auraData
-                entry.priority = GetAuraPriority(auraData)
-                entry.slot = slot
-                table.insert(sortedAuras, entry)
+        if C_UnitAuras.GetUnitAuras then
+            local ok, harmfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, "HARMFUL", 80)
+            if ok and harmfulAuras then
+                for _, auraData in ipairs(harmfulAuras) do
+                    local entry = AcquireAuraTable()
+                    entry.auraData = auraData
+                    entry.priority = GetAuraPriority(auraData)
+                    table.insert(sortedAuras, entry)
+                end
             end
-            slot = slot + 1
-            if slot > 80 then break end
+        else
+            -- Pre-12.0 fallback: slot iteration
+            local slot = 1
+            while true do
+                local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
+                if not ok or not auraData then break end
+                if auraData.isHarmful then
+                    local entry = AcquireAuraTable()
+                    entry.auraData = auraData
+                    entry.priority = GetAuraPriority(auraData)
+                    table.insert(sortedAuras, entry)
+                end
+                slot = slot + 1
+                if slot > 80 then break end
+            end
         end
 
         -- Sort by priority (higher first)
@@ -427,18 +447,31 @@ local function UpdateFrameAuras(frame)
         end
 
         wipe(sortedAuras)
-        local slot = 1
-        while true do
-            local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
-            if not ok or not auraData then break end
-            if auraData.isHelpful then
-                local entry = AcquireAuraTable()
-                entry.auraData = auraData
-                entry.priority = 1
-                table.insert(sortedAuras, entry)
+        if C_UnitAuras.GetUnitAuras then
+            local ok, helpfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL", 80)
+            if ok and helpfulAuras then
+                for _, auraData in ipairs(helpfulAuras) do
+                    local entry = AcquireAuraTable()
+                    entry.auraData = auraData
+                    entry.priority = 1
+                    table.insert(sortedAuras, entry)
+                end
             end
-            slot = slot + 1
-            if slot > 80 then break end
+        else
+            -- Pre-12.0 fallback: slot iteration
+            local slot = 1
+            while true do
+                local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
+                if not ok or not auraData then break end
+                if auraData.isHelpful then
+                    local entry = AcquireAuraTable()
+                    entry.auraData = auraData
+                    entry.priority = 1
+                    table.insert(sortedAuras, entry)
+                end
+                slot = slot + 1
+                if slot > 80 then break end
+            end
         end
 
         for i = 1, maxBuffs do

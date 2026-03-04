@@ -1060,23 +1060,481 @@ local function CreateGroupFramesPage(parent)
         tooltipCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
-        -- Bindings info
-        local bindingsHeader = GUI:CreateSectionHeader(tabContent, "Binding Configuration")
+        -------------------------------------------------------------------
+        -- CLICK-CAST BACKEND REFERENCE
+        -------------------------------------------------------------------
+        local GFCC = ns.QUI_GroupFrameClickCast
+
+        -- Action type icons/labels
+        local ACTION_TYPE_OPTIONS = {
+            { value = "spell",  text = "Spell" },
+            { value = "macro",  text = "Macro" },
+            { value = "target", text = "Target Unit" },
+            { value = "focus",  text = "Set Focus" },
+            { value = "assist", text = "Assist" },
+        }
+
+        local BUTTON_OPTIONS = {
+            { value = "LeftButton",   text = "Left Click" },
+            { value = "RightButton",  text = "Right Click" },
+            { value = "MiddleButton", text = "Middle Click" },
+            { value = "Button4",      text = "Button 4" },
+            { value = "Button5",      text = "Button 5" },
+        }
+
+        local MOD_OPTIONS = {
+            { value = "",              text = "None" },
+            { value = "shift",         text = "Shift" },
+            { value = "ctrl",          text = "Ctrl" },
+            { value = "alt",           text = "Alt" },
+            { value = "shift-ctrl",    text = "Shift+Ctrl" },
+            { value = "shift-alt",     text = "Shift+Alt" },
+            { value = "ctrl-alt",      text = "Ctrl+Alt" },
+            { value = "shift-ctrl-alt", text = "Shift+Ctrl+Alt" },
+        }
+
+        local ACTION_FALLBACK_ICONS = {
+            target = "Interface\\Icons\\Ability_Hunter_SniperShot",
+            focus  = "Interface\\Icons\\Ability_TrickShot",
+            assist = "Interface\\Icons\\Ability_Hunter_MasterMarksman",
+            macro  = "Interface\\Icons\\INV_Misc_Note_01",
+        }
+
+        -------------------------------------------------------------------
+        -- A. SPEC CONTEXT LABEL
+        -------------------------------------------------------------------
+        local specLabel = GUI:CreateLabel(tabContent, "", 11, C.accent)
+        specLabel:SetPoint("TOPLEFT", PAD, y)
+        specLabel:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        specLabel:SetJustifyH("LEFT")
+        specLabel:Hide()
+
+        local function UpdateSpecLabel()
+            if cc.perSpec then
+                local specIndex = GetSpecialization()
+                if specIndex then
+                    local _, specName = GetSpecializationInfo(specIndex)
+                    if specName then
+                        specLabel:SetText("Editing bindings for: " .. specName)
+                        specLabel:Show()
+                        return
+                    end
+                end
+            end
+            specLabel:Hide()
+        end
+        UpdateSpecLabel()
+        if specLabel:IsShown() then y = y - 20 end
+
+        -------------------------------------------------------------------
+        -- B. CURRENT BINDINGS LIST
+        -------------------------------------------------------------------
+        local bindingsHeader = GUI:CreateSectionHeader(tabContent, "Current Bindings")
         bindingsHeader:SetPoint("TOPLEFT", PAD, y)
         y = y - bindingsHeader.gap
 
-        local bindDesc = GUI:CreateLabel(tabContent,
-            "Click-cast bindings are configured via the clickCast.bindings table in your profile.\n" ..
-            "Each binding specifies: button (LeftButton, RightButton, MiddleButton, Button4, Button5), " ..
-            "modifiers (shift, ctrl, alt, or combinations), and spell name.\n\n" ..
-            "Example: { button = \"LeftButton\", modifiers = \"shift\", spell = \"Flash Heal\" }",
-            11, C.textMuted)
-        bindDesc:SetPoint("TOPLEFT", PAD, y)
-        bindDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        bindDesc:SetJustifyH("LEFT")
-        y = y - 80
+        -- Container for dynamically built binding rows
+        local bindingListFrame = CreateFrame("Frame", nil, tabContent)
+        bindingListFrame:SetPoint("TOPLEFT", PAD, y)
+        bindingListFrame:SetSize(400, 20)
 
-        tabContent:SetHeight(math.abs(y) + 30)
+        -- Forward declaration
+        local RefreshBindingList
+
+        -------------------------------------------------------------------
+        -- C. ADD BINDING FORM (below list — anchored dynamically)
+        -------------------------------------------------------------------
+        local addContainer = CreateFrame("Frame", nil, tabContent)
+        addContainer:SetPoint("TOPLEFT", bindingListFrame, "BOTTOMLEFT", 0, -10)
+        addContainer:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        addContainer:SetHeight(400)
+        addContainer:EnableMouse(false)
+
+        local addHeader = GUI:CreateSectionHeader(addContainer, "Add Binding")
+        addHeader:SetPoint("TOPLEFT", 0, 0)
+        local ay = -addHeader.gap
+
+        -- Drop zone
+        local dropZone = CreateFrame("Button", nil, addContainer, "BackdropTemplate")
+        dropZone:SetHeight(68)
+        dropZone:SetPoint("TOPLEFT", 0, ay)
+        dropZone:SetPoint("RIGHT", addContainer, "RIGHT", 0, 0)
+        local pxDrop = QUICore:GetPixelSize(dropZone)
+        dropZone:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8x8",
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = pxDrop,
+        })
+        dropZone:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 0.8)
+        dropZone:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.5)
+
+        local dropLabel = dropZone:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        dropLabel:SetPoint("CENTER", 0, 0)
+        dropLabel:SetText("Drop a spell from your spellbook")
+        dropLabel:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+
+        -- Add-form state table (not DB-bound)
+        local addState = {
+            button    = "LeftButton",
+            modifiers = "",
+            actionType = "spell",
+            spellName = "",
+            macroText = "",
+        }
+
+        -- Spell name input reference (forward declared for drop zone)
+        local spellInput
+
+        dropZone:SetScript("OnReceiveDrag", function()
+            local cursorType, id1, id2, _, id4 = GetCursorInfo()
+            if cursorType == "spell" then
+                local slotIndex = id1
+                local bookType = id2 or "spell"
+                local spellID = id4
+
+                if not spellID and slotIndex then
+                    local spellBank = (bookType == "pet") and Enum.SpellBookSpellBank.Pet or Enum.SpellBookSpellBank.Player
+                    local spellBookInfo = C_SpellBook.GetSpellBookItemInfo(slotIndex, spellBank)
+                    if spellBookInfo then
+                        spellID = spellBookInfo.spellID
+                    end
+                end
+
+                if spellID then
+                    local overrideID = C_Spell.GetOverrideSpell(spellID)
+                    if overrideID and overrideID ~= spellID then
+                        spellID = overrideID
+                    end
+                    local name = C_Spell.GetSpellName(spellID)
+                    if name then
+                        addState.spellName = name
+                        addState.actionType = "spell"
+                        if spellInput then spellInput:SetText(name) end
+                    end
+                end
+                ClearCursor()
+            end
+        end)
+        dropZone:SetScript("OnMouseUp", function(self)
+            local cursorType = GetCursorInfo()
+            if cursorType == "spell" then
+                local handler = self:GetScript("OnReceiveDrag")
+                if handler then handler() end
+            end
+        end)
+        dropZone:SetScript("OnEnter", function(self)
+            local cursorType = GetCursorInfo()
+            if cursorType == "spell" then
+                self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                dropLabel:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
+            end
+        end)
+        dropZone:SetScript("OnLeave", function(self)
+            self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.5)
+            dropLabel:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+        end)
+        ay = ay - 78
+
+        -- Mouse Button dropdown
+        local buttonDrop = GUI:CreateFormDropdown(addContainer, "Mouse Button", BUTTON_OPTIONS, "button", addState)
+        buttonDrop:SetPoint("TOPLEFT", 0, ay)
+        buttonDrop:SetPoint("RIGHT", addContainer, "RIGHT", 0, 0)
+        ay = ay - FORM_ROW
+
+        -- Modifier dropdown
+        local modDrop = GUI:CreateFormDropdown(addContainer, "Modifier", MOD_OPTIONS, "modifiers", addState)
+        modDrop:SetPoint("TOPLEFT", 0, ay)
+        modDrop:SetPoint("RIGHT", addContainer, "RIGHT", 0, 0)
+        ay = ay - FORM_ROW
+
+        -- Action Type dropdown
+        local spellInputContainer, macroInputContainer  -- forward declare for show/hide
+
+        local actionDrop = GUI:CreateFormDropdown(addContainer, "Action Type", ACTION_TYPE_OPTIONS, "actionType", addState, function(val)
+            addState.actionType = val
+            if spellInputContainer then
+                if val == "spell" then spellInputContainer:Show() else spellInputContainer:Hide() end
+            end
+            if macroInputContainer then
+                if val == "macro" then macroInputContainer:Show() else macroInputContainer:Hide() end
+            end
+        end)
+        actionDrop:SetPoint("TOPLEFT", 0, ay)
+        actionDrop:SetPoint("RIGHT", addContainer, "RIGHT", 0, 0)
+        ay = ay - FORM_ROW
+
+        -- Spell Name editbox (shown for "spell" action type)
+        spellInputContainer = CreateFrame("Frame", nil, addContainer)
+        spellInputContainer:SetHeight(FORM_ROW)
+        spellInputContainer:SetPoint("TOPLEFT", 0, ay)
+        spellInputContainer:SetPoint("RIGHT", addContainer, "RIGHT", 0, 0)
+
+        local spellLabel = spellInputContainer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        spellLabel:SetPoint("LEFT", 0, 0)
+        spellLabel:SetText("Spell Name")
+        spellLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+
+        local spellInputBg = CreateFrame("Frame", nil, spellInputContainer, "BackdropTemplate")
+        spellInputBg:SetPoint("LEFT", spellInputContainer, "LEFT", 180, 0)
+        spellInputBg:SetPoint("RIGHT", spellInputContainer, "RIGHT", 0, 0)
+        spellInputBg:SetHeight(24)
+        local pxSpell = QUICore:GetPixelSize(spellInputBg)
+        spellInputBg:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8x8",
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = pxSpell,
+        })
+        spellInputBg:SetBackdropColor(0.08, 0.08, 0.08, 1)
+        spellInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+
+        spellInput = CreateFrame("EditBox", nil, spellInputBg)
+        spellInput:SetPoint("LEFT", 8, 0)
+        spellInput:SetPoint("RIGHT", -8, 0)
+        spellInput:SetHeight(22)
+        spellInput:SetAutoFocus(false)
+        spellInput:SetFont(GUI.FONT_PATH, 11, "")
+        spellInput:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+        spellInput:SetText("")
+        spellInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+        spellInput:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+        spellInput:SetScript("OnTextChanged", function(self)
+            addState.spellName = self:GetText()
+        end)
+        spellInput:SetScript("OnEditFocusGained", function()
+            spellInputBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+        end)
+        spellInput:SetScript("OnEditFocusLost", function()
+            spellInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+        end)
+        ay = ay - FORM_ROW
+
+        -- Macro Text editbox (shown for "macro" action type)
+        macroInputContainer = CreateFrame("Frame", nil, addContainer)
+        macroInputContainer:SetHeight(FORM_ROW)
+        macroInputContainer:SetPoint("TOPLEFT", 0, ay)
+        macroInputContainer:SetPoint("RIGHT", addContainer, "RIGHT", 0, 0)
+        macroInputContainer:Hide()
+
+        local macroLabel = macroInputContainer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        macroLabel:SetPoint("LEFT", 0, 0)
+        macroLabel:SetText("Macro Text")
+        macroLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+
+        local macroInputBg = CreateFrame("Frame", nil, macroInputContainer, "BackdropTemplate")
+        macroInputBg:SetPoint("LEFT", macroInputContainer, "LEFT", 180, 0)
+        macroInputBg:SetPoint("RIGHT", macroInputContainer, "RIGHT", 0, 0)
+        macroInputBg:SetHeight(24)
+        local pxMacro = QUICore:GetPixelSize(macroInputBg)
+        macroInputBg:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8x8",
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = pxMacro,
+        })
+        macroInputBg:SetBackdropColor(0.08, 0.08, 0.08, 1)
+        macroInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+
+        local macroInput = CreateFrame("EditBox", nil, macroInputBg)
+        macroInput:SetPoint("LEFT", 8, 0)
+        macroInput:SetPoint("RIGHT", -8, 0)
+        macroInput:SetHeight(22)
+        macroInput:SetAutoFocus(false)
+        macroInput:SetFont(GUI.FONT_PATH, 11, "")
+        macroInput:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+        macroInput:SetText("")
+        macroInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+        macroInput:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+        macroInput:SetScript("OnTextChanged", function(self)
+            addState.macroText = self:GetText()
+        end)
+        macroInput:SetScript("OnEditFocusGained", function()
+            macroInputBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+        end)
+        macroInput:SetScript("OnEditFocusLost", function()
+            macroInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+        end)
+        -- ay not decremented here since macro row overlaps spell row slot
+
+        -- "Add Binding" button
+        local addBtnY = ay - FORM_ROW  -- below the last input row
+        local addBtn = GUI:CreateButton(addContainer, "Add Binding", 130, 26, function()
+            local actionType = addState.actionType
+            local newBinding = {
+                button    = addState.button,
+                modifiers = addState.modifiers,
+                actionType = actionType,
+            }
+
+            if actionType == "spell" then
+                local name = addState.spellName
+                if not name or name == "" then
+                    print("|cFFFF5555[QUI]|r Enter a spell name.")
+                    return
+                end
+                -- Validate spell exists
+                local spellID = C_Spell.GetSpellIDForSpellIdentifier(name)
+                if not spellID then
+                    print("|cFFFF5555[QUI]|r Spell not found: " .. name)
+                    return
+                end
+                newBinding.spell = C_Spell.GetSpellName(spellID) or name
+            elseif actionType == "macro" then
+                local text = addState.macroText
+                if not text or text == "" then
+                    print("|cFFFF5555[QUI]|r Enter macro text.")
+                    return
+                end
+                newBinding.spell = "Macro"
+                newBinding.macro = text
+            else
+                -- target/focus/assist — no spell needed
+                newBinding.spell = actionType
+            end
+
+            local ok, err = GFCC:AddBinding(newBinding)
+            if not ok then
+                print("|cFFFF5555[QUI]|r " .. (err or "Failed to add binding."))
+                return
+            end
+
+            -- Reset form
+            addState.spellName = ""
+            addState.macroText = ""
+            spellInput:SetText("")
+            macroInput:SetText("")
+
+            RefreshBindingList()
+        end)
+        addBtn:SetPoint("TOPLEFT", 0, addBtnY)
+
+        -- Total add container height
+        addContainer:SetHeight(math.abs(addBtnY) + 36)
+
+        -------------------------------------------------------------------
+        -- D. REFRESH BINDING LIST
+        -------------------------------------------------------------------
+        RefreshBindingList = function()
+            -- Clear existing children
+            for _, child in ipairs({bindingListFrame:GetChildren()}) do
+                child:Hide()
+                child:SetParent(nil)
+            end
+
+            UpdateSpecLabel()
+
+            local buttonNames = GFCC:GetButtonNames()
+            local modLabels  = GFCC:GetModifierLabels()
+            local bindings   = GFCC:GetEditableBindings()
+            local listY = 0
+
+            if #bindings == 0 then
+                local emptyLabel = CreateFrame("Frame", nil, bindingListFrame)
+                emptyLabel:SetSize(300, 28)
+                emptyLabel:SetPoint("TOPLEFT", 0, 0)
+                local emptyText = emptyLabel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                emptyText:SetPoint("LEFT", 0, 0)
+                emptyText:SetText("No bindings configured yet.")
+                emptyText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+                listY = -28
+            else
+                for i, binding in ipairs(bindings) do
+                    local row = CreateFrame("Frame", nil, bindingListFrame)
+                    row:SetSize(400, 28)
+                    row:SetPoint("TOPLEFT", 0, listY)
+
+                    -- Spell icon (24x24)
+                    local iconTex = row:CreateTexture(nil, "ARTWORK")
+                    iconTex:SetSize(24, 24)
+                    iconTex:SetPoint("LEFT", 0, 0)
+                    iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+                    local actionType = binding.actionType or "spell"
+                    if actionType == "spell" and binding.spell then
+                        local spellID = C_Spell.GetSpellIDForSpellIdentifier(binding.spell)
+                        if spellID then
+                            local info = C_Spell.GetSpellInfo(spellID)
+                            iconTex:SetTexture(info and info.iconID or "Interface\\Icons\\INV_Misc_QuestionMark")
+                        else
+                            iconTex:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+                        end
+                    else
+                        iconTex:SetTexture(ACTION_FALLBACK_ICONS[actionType] or "Interface\\Icons\\INV_Misc_QuestionMark")
+                    end
+
+                    -- Modifier + button label
+                    local modLabel = modLabels[binding.modifiers or ""] or ""
+                    local btnLabel = buttonNames[binding.button] or binding.button
+                    local comboText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                    comboText:SetPoint("LEFT", iconTex, "RIGHT", 6, 0)
+                    comboText:SetWidth(140)
+                    comboText:SetJustifyH("LEFT")
+                    comboText:SetText(modLabel .. btnLabel)
+                    comboText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+
+                    -- Spell/action name
+                    local spellText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                    spellText:SetPoint("LEFT", comboText, "RIGHT", 8, 0)
+                    spellText:SetWidth(140)
+                    spellText:SetJustifyH("LEFT")
+                    local displayName = binding.spell or actionType
+                    if actionType == "macro" then displayName = "Macro" end
+                    spellText:SetText(displayName)
+                    spellText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+
+                    -- Remove "X" button (22x22)
+                    local removeBtn = CreateFrame("Button", nil, row, "BackdropTemplate")
+                    removeBtn:SetSize(22, 22)
+                    local pxRm = QUICore:GetPixelSize(removeBtn)
+                    removeBtn:SetBackdrop({
+                        bgFile = "Interface\\Buttons\\WHITE8x8",
+                        edgeFile = "Interface\\Buttons\\WHITE8x8",
+                        edgeSize = pxRm,
+                    })
+                    removeBtn:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+                    removeBtn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+                    local xText = removeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                    xText:SetPoint("CENTER", 0, 0)
+                    xText:SetText("X")
+                    xText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 0.7)
+                    removeBtn:SetScript("OnEnter", function(self)
+                        self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                        xText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                    end)
+                    removeBtn:SetScript("OnLeave", function(self)
+                        self:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+                        xText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 0.7)
+                    end)
+                    removeBtn:SetScript("OnClick", function()
+                        GFCC:RemoveBinding(i)
+                        RefreshBindingList()
+                    end)
+                    removeBtn:SetPoint("LEFT", spellText, "RIGHT", 8, 0)
+
+                    listY = listY - 30
+                end
+            end
+
+            -- Update list frame height
+            local listHeight = math.max(20, math.abs(listY))
+            bindingListFrame:SetHeight(listHeight)
+
+            -- Recalculate total content height:
+            -- Fixed top sections (toggles + notes + spec label) took us to the y before bindingsHeader
+            -- Then: bindingsHeader.gap + listHeight + 10 gap + addContainer height + padding
+            local fixedTop = math.abs(y)  -- y at the point we placed bindingListFrame
+            local totalHeight = fixedTop + listHeight + 10 + addContainer:GetHeight() + 30
+            tabContent:SetHeight(totalHeight)
+        end
+
+        RefreshBindingList()
+
+        -------------------------------------------------------------------
+        -- E. WIRE PER-SPEC TOGGLE TO REFRESH
+        -------------------------------------------------------------------
+        perSpecCheck.track:HookScript("OnClick", function()
+            C_Timer.After(0.05, function()
+                RefreshBindingList()
+            end)
+        end)
     end
 
     ---------------------------------------------------------------------------

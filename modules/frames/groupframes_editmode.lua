@@ -21,6 +21,8 @@ local testFrames = {}
 local testContainer = nil  -- direct reference to the active test container
 local groupMover = nil     -- single mover for party + raid (created on first edit mode enter)
 local spotlightHeader = nil
+local partySelectionWatcher = nil   -- OnUpdate guard for CompactPartyFrame.Selection
+local raidSelectionWatcher = nil    -- OnUpdate guard for CompactRaidFrameContainer.Selection
 
 ---------------------------------------------------------------------------
 -- FAKE DATA: For test/preview mode
@@ -986,6 +988,8 @@ local function CreateGroupMover()
     -- Drag handlers
     mover:SetScript("OnDragStart", function(self)
         if InCombatLockdown() then return end
+        -- Block dragging when locked by anchoring system
+        if _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(self) then return end
         self:StartMoving()
         self._isMoving = true
 
@@ -1037,6 +1041,66 @@ local function RestoreHeaderAnchors()
     end
 end
 
+-- Apply locked (grey) or unlocked (blue) styling to the group mover based on
+-- whether the anchoring system has an active override for party/raid frames.
+function QUI_GFEM:UpdateMoverLockedState()
+    if not groupMover or not groupMover.border then return end
+
+    local isLocked = false
+    local GF = ns.QUI_GroupFrames
+    if _G.QUI_IsFrameLocked then
+        -- Check the mover itself (resolver returns mover during edit/test mode)
+        if _G.QUI_IsFrameLocked(groupMover) then
+            isLocked = true
+        end
+        -- Also check the headers (resolver returns headers outside edit mode,
+        -- but the override may have been applied to them before edit mode started)
+        if not isLocked and GF and GF.headers then
+            if _G.QUI_IsFrameLocked(GF.headers.party) or _G.QUI_IsFrameLocked(GF.headers.raid) then
+                isLocked = true
+            end
+        end
+    end
+
+    local border = groupMover.border
+    if isLocked then
+        -- Grey locked style — matches unit frame / CDM locked overlay pattern
+        border:SetBackdropColor(0.5, 0.5, 0.5, 0.3)
+        border:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8)
+        if groupMover.posText then
+            groupMover.posText:SetTextColor(0.5, 0.5, 0.5, 1)
+            groupMover.posText:SetText("Group Frames  (Locked)")
+        end
+        if groupMover.hint then groupMover.hint:Hide() end
+        -- Hide nudge buttons
+        if groupMover.nudgeUp then groupMover.nudgeUp:Hide() end
+        if groupMover.nudgeDown then groupMover.nudgeDown:Hide() end
+        if groupMover.nudgeLeft then groupMover.nudgeLeft:Hide() end
+        if groupMover.nudgeRight then groupMover.nudgeRight:Hide() end
+        -- Block dragging
+        groupMover:EnableMouse(false)
+    else
+        -- Normal blue style
+        border:SetBackdropColor(0.2, 0.8, 1, 0.08)
+        border:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+        if groupMover.posText then
+            groupMover.posText:SetTextColor(0.2, 0.8, 1, 1)
+            -- Restore position text
+            local db = GetDB()
+            local pos = db and db.position
+            UpdateMoverPositionText(groupMover, pos and pos.offsetX or 0, pos and pos.offsetY or 0)
+        end
+        if groupMover.hint then groupMover.hint:Show() end
+        -- Show nudge buttons
+        if groupMover.nudgeUp then groupMover.nudgeUp:Show() end
+        if groupMover.nudgeDown then groupMover.nudgeDown:Show() end
+        if groupMover.nudgeLeft then groupMover.nudgeLeft:Show() end
+        if groupMover.nudgeRight then groupMover.nudgeRight:Show() end
+        -- Allow dragging
+        groupMover:EnableMouse(true)
+    end
+end
+
 function QUI_GFEM:EnableEditMode(previewType)
     if InCombatLockdown() then return end
 
@@ -1083,6 +1147,58 @@ function QUI_GFEM:EnableEditMode(previewType)
     -- Size the mover and anchor all content to it
     self:SyncMoverToContent()
 
+    -- Check if group frames are locked by the anchoring system
+    self:UpdateMoverLockedState()
+
+    -- Hide Blizzard's CompactPartyFrame selection overlay (blue box in Edit Mode)
+    -- Use SetAlpha(0) not Hide() — hidden frames return nil from GetRect(),
+    -- crashing Blizzard's magnetic snap loop (GetScaledSelectionSides).
+    if CompactPartyFrame and CompactPartyFrame.Selection then
+        C_Timer.After(0, function()
+            if CompactPartyFrame and CompactPartyFrame.Selection then
+                CompactPartyFrame.Selection:SetAlpha(0)
+            end
+        end)
+        -- Persistent watcher: Blizzard re-shows Selection on every click/select cycle
+        if not partySelectionWatcher then
+            partySelectionWatcher = CreateFrame("Frame", nil, UIParent)
+            partySelectionWatcher:SetScript("OnUpdate", function()
+                if not isEditMode then return end
+                local sel = CompactPartyFrame and CompactPartyFrame.Selection
+                if sel and sel:GetAlpha() > 0 then
+                    C_Timer.After(0, function()
+                        if sel then sel:SetAlpha(0) end
+                    end)
+                end
+            end)
+        else
+            partySelectionWatcher:Show()
+        end
+    end
+
+    -- Hide Blizzard's CompactRaidFrameContainer selection overlay
+    if CompactRaidFrameContainer and CompactRaidFrameContainer.Selection then
+        C_Timer.After(0, function()
+            if CompactRaidFrameContainer and CompactRaidFrameContainer.Selection then
+                CompactRaidFrameContainer.Selection:SetAlpha(0)
+            end
+        end)
+        if not raidSelectionWatcher then
+            raidSelectionWatcher = CreateFrame("Frame", nil, UIParent)
+            raidSelectionWatcher:SetScript("OnUpdate", function()
+                if not isEditMode then return end
+                local sel = CompactRaidFrameContainer and CompactRaidFrameContainer.Selection
+                if sel and sel:GetAlpha() > 0 then
+                    C_Timer.After(0, function()
+                        if sel then sel:SetAlpha(0) end
+                    end)
+                end
+            end)
+        else
+            raidSelectionWatcher:Show()
+        end
+    end
+
     -- Select the mover for arrow key nudging
     QUICore:SelectEditModeElement("groupframes", "mover")
 end
@@ -1090,6 +1206,14 @@ end
 function QUI_GFEM:DisableEditMode()
     if not isEditMode then return end
     isEditMode = false
+
+    -- Stop suppressing Blizzard selection overlays
+    if partySelectionWatcher then
+        partySelectionWatcher:Hide()
+    end
+    if raidSelectionWatcher then
+        raidSelectionWatcher:Hide()
+    end
 
     local GF = ns.QUI_GroupFrames
     if GF then GF.editMode = false end
@@ -1129,6 +1253,23 @@ end
 
 function QUI_GFEM:IsEditMode()
     return isEditMode
+end
+
+function QUI_GFEM:IsTestMode()
+    return isTestMode
+end
+
+-- Returns the currently visible frame for anchoring purposes.
+-- During edit/test mode this is the mover or test container;
+-- outside edit mode returns nil (callers should fall back to headers).
+function QUI_GFEM:GetActiveFrame()
+    if isEditMode and groupMover then
+        return groupMover
+    end
+    if isTestMode and testContainer then
+        return testContainer
+    end
+    return nil
 end
 
 ---------------------------------------------------------------------------

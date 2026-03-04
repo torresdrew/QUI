@@ -286,6 +286,13 @@ local function BuildUnitFramesTab(tabContent)
         { key = "bossFrames",  name = "Boss Frames",     autoWidth = true },
     }
 
+    -- QUI Group Frames (conditional)
+    local gfDB = QUI and QUI.db and QUI.db.profile and QUI.db.profile.quiGroupFrames
+    if gfDB and gfDB.enabled then
+        table.insert(frames, { key = "partyFrames", name = "Party Frames" })
+        table.insert(frames, { key = "raidFrames",  name = "Raid Frames" })
+    end
+
     -- DandersFrames entries (conditional)
     local dandersAvailable = ns.QUI_DandersFrames and ns.QUI_DandersFrames:IsAvailable()
     if dandersAvailable then

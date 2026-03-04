@@ -305,12 +305,9 @@ local function RenderIconIndicator(frame, config, auraData, unit)
         config.offsetX or 2, config.offsetY or -2)
     element:SetFrameLevel(frame:GetFrameLevel() + 8)
 
-    -- Icon texture
-    if auraData and element.icon then
-        local spellIcon = SafeValue(auraData.icon, nil)
-        if spellIcon then
-            element.icon:SetTexture(spellIcon)
-        end
+    -- Icon texture (C-side SetTexture handles secret values natively)
+    if auraData and element.icon and auraData.icon then
+        element.icon:SetTexture(auraData.icon)
     end
 
     -- Cooldown
@@ -318,9 +315,29 @@ local function RenderIconIndicator(frame, config, auraData, unit)
         local dur = auraData.duration
         local expTime = auraData.expirationTime
         if dur and expTime then
-            pcall(function()
-                element.cooldown:SetCooldown(expTime - dur, dur)
-            end)
+            -- Path 1: DurationObject (WoW 12.0+, fully secret-safe)
+            if unit and auraData.auraInstanceID
+               and C_UnitAuras and C_UnitAuras.GetAuraDuration
+               and element.cooldown.SetCooldownFromDurationObject then
+                local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraData.auraInstanceID)
+                if ok and durationObj then
+                    pcall(element.cooldown.SetCooldownFromDurationObject, element.cooldown, durationObj)
+                elseif element.cooldown.SetCooldownFromExpirationTime then
+                    pcall(element.cooldown.SetCooldownFromExpirationTime, element.cooldown, expTime, dur)
+                else
+                    pcall(function()
+                        element.cooldown:SetCooldown(expTime - dur, dur)
+                    end)
+                end
+            elseif element.cooldown.SetCooldownFromExpirationTime then
+                -- Path 2: SetCooldownFromExpirationTime (C-side, secret-safe)
+                pcall(element.cooldown.SetCooldownFromExpirationTime, element.cooldown, expTime, dur)
+            else
+                -- Path 3: Legacy fallback (Lua arithmetic, only safe out of combat)
+                pcall(function()
+                    element.cooldown:SetCooldown(expTime - dur, dur)
+                end)
+            end
         end
     elseif element.cooldown then
         element.cooldown:Clear()
@@ -439,10 +456,16 @@ local function RenderBarIndicator(frame, config, auraData)
 end
 
 local function RenderBorderIndicator(frame, config)
-    -- Recolor the frame border when tracked buff is active
+    -- Recolor the frame border when tracked buff is active (StatusBar borders)
     if frame.dispelOverlay then
         local c = config.color or { 1, 1, 0, 0.8 }
-        frame.dispelOverlay:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 0.8)
+        local a = c[4] or 0.8
+        for _, key in ipairs({"borderTop", "borderBottom", "borderLeft", "borderRight"}) do
+            local border = frame.dispelOverlay[key]
+            if border then
+                border:GetStatusBarTexture():SetVertexColor(c[1], c[2], c[3], a)
+            end
+        end
         frame.dispelOverlay:Show()
     end
 end

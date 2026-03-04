@@ -59,6 +59,37 @@ local DISPEL_COLORS = {
     Bleed   = { 0.8, 0.0, 0.0, 1 },  -- Red
 }
 
+-- Dispel type enum values (WoW 12.0+, from SpellDispelType DB2)
+local ALL_DISPEL_ENUMS = {1, 2, 3, 4, 9, 11}
+
+-- Map enum → color (reuses existing DISPEL_COLORS values)
+local DISPEL_ENUM_COLORS = {
+    [1] = DISPEL_COLORS.Magic,
+    [2] = DISPEL_COLORS.Curse,
+    [3] = DISPEL_COLORS.Disease,
+    [4] = DISPEL_COLORS.Poison,
+    [9] = DISPEL_COLORS.Bleed,   -- Enrage uses Bleed color
+    [11] = DISPEL_COLORS.Bleed,
+}
+
+local dispelColorCurve = nil
+
+local function GetDispelColorCurve(opacity)
+    if dispelColorCurve then return dispelColorCurve end
+    if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
+    local curve = C_CurveUtil.CreateColorCurve()
+    curve:SetType(Enum.LuaCurveType.Step)
+    curve:AddPoint(0, CreateColor(0, 0, 0, 0))  -- None = invisible
+    for _, enumVal in ipairs(ALL_DISPEL_ENUMS) do
+        local c = DISPEL_ENUM_COLORS[enumVal]
+        if c then
+            curve:AddPoint(enumVal, CreateColor(c[1], c[2], c[3], opacity or 0.8))
+        end
+    end
+    dispelColorCurve = curve
+    return curve
+end
+
 -- Power type → color mapping
 local POWER_COLORS = {
     [0]  = { 0, 0.50, 1 },       -- Mana
@@ -802,6 +833,28 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Dispel Overlay
 ---------------------------------------------------------------------------
+-- Helper: apply color to all 4 StatusBar borders
+local function SetDispelBorderColor(overlay, r, g, b, a)
+    for _, key in ipairs({"borderTop", "borderBottom", "borderLeft", "borderRight"}) do
+        local border = overlay[key]
+        if border then
+            border:GetStatusBarTexture():SetVertexColor(r, g, b, a)
+        end
+    end
+end
+
+-- Helper: apply a ColorMixin (secret-safe) to all 4 StatusBar borders
+local function SetDispelBorderColorMixin(overlay, color)
+    for _, key in ipairs({"borderTop", "borderBottom", "borderLeft", "borderRight"}) do
+        local border = overlay[key]
+        if border then
+            local tex = border:GetStatusBarTexture()
+            -- GetRGBA() returns secret values; SetVertexColor is C-side and handles them
+            tex:SetVertexColor(color:GetRGBA())
+        end
+    end
+end
+
 local function UpdateDispelOverlay(frame)
     if not frame or not frame.unit or not frame.dispelOverlay then return end
     local healerSettings = GetHealerSettings()
@@ -815,30 +868,58 @@ local function UpdateDispelOverlay(frame)
         return
     end
 
-    -- Find highest priority dispellable debuff
+    local unit = frame.unit
+    local overlay = frame.dispelOverlay
+
+    -- WoW 12.0+ secret-safe path: C-side detection + color resolution
+    if C_UnitAuras.GetUnitAuras and C_UnitAuras.GetAuraDispelTypeColor then
+        local opacity = healerSettings.dispelOverlay.opacity or 0.8
+        local curve = GetDispelColorCurve(opacity)
+        if curve then
+            -- C-side filtering: no secret value reads in Lua
+            local ok, dispellables = pcall(C_UnitAuras.GetUnitAuras, unit, "HARMFUL|RAID_PLAYER_DISPELLABLE", 1)
+            if ok and dispellables and dispellables[1] then
+                local auraInstanceID = dispellables[1].auraInstanceID
+                if auraInstanceID then
+                    -- C-side dispel type → color resolution (returns ColorMixin)
+                    local cOk, color = pcall(C_UnitAuras.GetAuraDispelTypeColor, unit, auraInstanceID, curve)
+                    if cOk and color then
+                        SetDispelBorderColorMixin(overlay, color)
+                        overlay:Show()
+                        return
+                    end
+                end
+            end
+            -- No dispellable debuff found (or API returned nil)
+            overlay:Hide()
+            return
+        end
+    end
+
+    -- Fallback: original slot-scanning (works out of combat, pre-12.0)
     local dispelType = nil
     local slot = 1
     while true do
-        local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, frame.unit, slot)
+        local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
         if not ok or not auraData then break end
         if auraData.isHarmful and auraData.dispelName then
             local dType = SafeValue(auraData.dispelName, nil)
             if dType and DISPEL_COLORS[dType] then
                 dispelType = dType
-                break -- Highest priority = first found
+                break
             end
         end
         slot = slot + 1
-        if slot > 80 then break end -- Safety limit
+        if slot > 80 then break end
     end
 
     if dispelType then
         local c = DISPEL_COLORS[dispelType]
-        local opacity = healerSettings.dispelOverlay.opacity or 0.8
-        frame.dispelOverlay:SetBackdropBorderColor(c[1], c[2], c[3], opacity)
-        frame.dispelOverlay:Show()
+        local fallbackOpacity = healerSettings.dispelOverlay.opacity or 0.8
+        SetDispelBorderColor(overlay, c[1], c[2], c[3], fallbackOpacity)
+        overlay:Show()
     else
-        frame.dispelOverlay:Hide()
+        overlay:Hide()
     end
 end
 
@@ -1157,16 +1238,50 @@ local function DecorateGroupFrame(frame)
     targetHighlight:Hide()
     frame.targetHighlight = targetHighlight
 
-    -- Dispel overlay (overlay frame)
-    local dispelOverlay = frame.dispelOverlay or CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    -- Dispel overlay (StatusBar borders for secret-value-safe SetVertexColor)
+    local dispelOverlay = frame.dispelOverlay or CreateFrame("Frame", nil, frame)
     dispelOverlay:ClearAllPoints()
     dispelOverlay:SetPoint("TOPLEFT", -px, px)
     dispelOverlay:SetPoint("BOTTOMRIGHT", px, -px)
     dispelOverlay:SetFrameLevel(frame:GetFrameLevel() + 6)
-    dispelOverlay:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px * 3,
-    })
+
+    local dispelBorderSize = px * 3
+    local function MakeDispelBorder(parent)
+        local sb = CreateFrame("StatusBar", nil, parent)
+        sb:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+        sb:SetMinMaxValues(0, 1)
+        sb:SetValue(1)
+        return sb
+    end
+
+    local bTop = dispelOverlay.borderTop or MakeDispelBorder(dispelOverlay)
+    bTop:ClearAllPoints()
+    bTop:SetPoint("TOPLEFT", dispelOverlay, "TOPLEFT", 0, 0)
+    bTop:SetPoint("TOPRIGHT", dispelOverlay, "TOPRIGHT", 0, 0)
+    bTop:SetHeight(dispelBorderSize)
+    dispelOverlay.borderTop = bTop
+
+    local bBottom = dispelOverlay.borderBottom or MakeDispelBorder(dispelOverlay)
+    bBottom:ClearAllPoints()
+    bBottom:SetPoint("BOTTOMLEFT", dispelOverlay, "BOTTOMLEFT", 0, 0)
+    bBottom:SetPoint("BOTTOMRIGHT", dispelOverlay, "BOTTOMRIGHT", 0, 0)
+    bBottom:SetHeight(dispelBorderSize)
+    dispelOverlay.borderBottom = bBottom
+
+    local bLeft = dispelOverlay.borderLeft or MakeDispelBorder(dispelOverlay)
+    bLeft:ClearAllPoints()
+    bLeft:SetPoint("TOPLEFT", dispelOverlay, "TOPLEFT", 0, 0)
+    bLeft:SetPoint("BOTTOMLEFT", dispelOverlay, "BOTTOMLEFT", 0, 0)
+    bLeft:SetWidth(dispelBorderSize)
+    dispelOverlay.borderLeft = bLeft
+
+    local bRight = dispelOverlay.borderRight or MakeDispelBorder(dispelOverlay)
+    bRight:ClearAllPoints()
+    bRight:SetPoint("TOPRIGHT", dispelOverlay, "TOPRIGHT", 0, 0)
+    bRight:SetPoint("BOTTOMRIGHT", dispelOverlay, "BOTTOMRIGHT", 0, 0)
+    bRight:SetWidth(dispelBorderSize)
+    dispelOverlay.borderRight = bRight
+
     dispelOverlay:Hide()
     frame.dispelOverlay = dispelOverlay
 
@@ -1553,13 +1668,67 @@ local function UpdateFrameScaling(forceUpdate)
 end
 
 ---------------------------------------------------------------------------
--- RANGE CHECK: Ticker-based range dimming
+-- RANGE CHECK: Ticker-based range dimming (spell-based for combat safety)
 ---------------------------------------------------------------------------
 local rangeCheckTicker = nil
 
-local function GetRangeCheckSpellID()
-    -- Use UnitInRange as primary (reliable for most classes)
-    return nil
+-- Class → array of candidate friendly spell IDs for range checking.
+-- First IsPlayerSpell() match wins. Classes without friendly spells use
+-- fallback methods (CheckInteractDistance OOC, UnitInRange last resort).
+local RANGE_SPELLS = {
+    PRIEST      = { 2061, 17 },          -- Flash Heal, Power Word: Shield
+    PALADIN     = { 19750, 85673 },      -- Flash of Light, Word of Glory
+    DRUID       = { 8936, 774 },         -- Regrowth, Rejuvenation
+    SHAMAN      = { 8004, 188070 },      -- Healing Surge, Healing Rain
+    MONK        = { 116670, 119611 },    -- Vivify, Renewing Mist
+    EVOKER      = { 361469, 364343 },    -- Living Flame, Echo
+    MAGE        = { 130, 1459 },         -- Slow Fall, Arcane Intellect
+    WARLOCK     = { 5697 },              -- Unending Breath
+    ROGUE       = { 57934 },             -- Tricks of the Trade
+    DEATHKNIGHT = { 61999 },             -- Raise Ally
+    WARRIOR     = {},
+    DEMONHUNTER = {},
+    HUNTER      = {},
+}
+
+-- Class → single rez spell ID for dead-target range checking.
+local RES_SPELLS = {
+    PRIEST      = 2006,   -- Resurrection
+    PALADIN     = 7328,   -- Redemption
+    DRUID       = 50769,  -- Revive
+    SHAMAN      = 2008,   -- Ancestral Spirit
+    MONK        = 115178, -- Resuscitate
+    EVOKER      = 361227, -- Return
+    DEATHKNIGHT = 61999,  -- Raise Ally
+}
+
+local playerClass = nil
+local rangeSpell = nil   -- Resolved friendly spell ID for living targets
+local resSpell = nil     -- Resolved rez spell ID for dead targets
+
+local function ResolveRangeSpells()
+    if not playerClass then
+        playerClass = select(2, UnitClass("player"))
+    end
+
+    -- Resolve primary range spell
+    rangeSpell = nil
+    local candidates = RANGE_SPELLS[playerClass]
+    if candidates then
+        for _, spellID in ipairs(candidates) do
+            if IsPlayerSpell(spellID) then
+                rangeSpell = spellID
+                break
+            end
+        end
+    end
+
+    -- Resolve rez spell
+    resSpell = nil
+    local rezID = RES_SPELLS[playerClass]
+    if rezID and IsPlayerSpell(rezID) then
+        resSpell = rezID
+    end
 end
 
 local function DoRangeCheck()
@@ -1567,22 +1736,61 @@ local function DoRangeCheck()
     if not rangeSettings or rangeSettings.enabled == false then return end
 
     local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
+    local inCombat = InCombatLockdown()
 
     for unit, frame in pairs(QUI_GF.unitFrameMap) do
         if frame and frame:IsShown() and UnitExists(unit) then
-            -- UnitInRange / UnitIsConnected / UnitIsDeadOrGhost can all
-            -- return secret booleans in combat. Wrap the whole check in
-            -- pcall and just blindly SetAlpha every tick (C-side, cheap).
-            local alpha = 1
-            local ok, result = pcall(function()
-                if (UnitIsConnected(unit) or IsNPCPartyMember(unit)) and not UnitIsDeadOrGhost(unit) then
-                    if not UnitInRange(unit) then
-                        alpha = outAlpha
+            local state = GetFrameState(frame)
+            local inRange = true -- default: assume in range
+
+            -- Check connectivity (secret-value safe)
+            local connected = UnitIsConnected(unit)
+            if IsSecretValue(connected) then
+                connected = true
+            end
+            if not connected then
+                local isNPC = IsNPCPartyMember(unit)
+                if IsSecretValue(isNPC) then isNPC = false end
+                connected = isNPC
+            end
+
+            if connected then
+                -- Check if dead (secret-value safe)
+                local isDead = UnitIsDeadOrGhost(unit)
+                if IsSecretValue(isDead) then isDead = false end
+
+                if isDead and resSpell then
+                    -- Dead target: use rez spell range
+                    local ok, result = pcall(C_Spell.IsSpellInRange, resSpell, unit)
+                    if ok and result == false then
+                        inRange = false
                     end
+                elseif rangeSpell then
+                    -- Primary: spell-based range (returns clean booleans in combat)
+                    local ok, result = pcall(C_Spell.IsSpellInRange, rangeSpell, unit)
+                    if ok and result == false then
+                        inRange = false
+                    end
+                elseif not inCombat then
+                    -- Out-of-combat fallback for classes without friendly spells
+                    local ok, result = pcall(CheckInteractDistance, unit, 4) -- ~28yd
+                    if ok and result == false then
+                        inRange = false
+                    end
+                else
+                    -- In-combat last resort: UnitInRange with secret-value guard
+                    local ok, result = pcall(UnitInRange, unit)
+                    if ok and not IsSecretValue(result) then
+                        if result == false then
+                            inRange = false
+                        end
+                    end
+                    -- If secret or pcall failure, keep inRange = true
                 end
-            end)
-            -- On pcall failure (secret value in boolean test), assume in range
-            frame:SetAlpha(alpha)
+            end
+
+            state.outOfRange = not inRange
+            frame:SetAlpha(inRange and 1 or outAlpha)
         end
     end
 end
@@ -1591,6 +1799,11 @@ local function StartRangeCheck()
     if rangeCheckTicker then return end
     local rangeSettings = GetRangeSettings()
     if not rangeSettings or rangeSettings.enabled == false then return end
+
+    -- Ensure spells are resolved before starting
+    if not rangeSpell and not resSpell then
+        ResolveRangeSpells()
+    end
 
     -- Longer interval for large raids
     local interval = GetGroupSize() > 25 and 0.3 or 0.2
@@ -1738,6 +1951,9 @@ local function OnEvent(self, event, arg1, ...)
             UpdateHeaderVisibility()
             UpdateFrameScaling()
         end)
+
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+        ResolveRangeSpells()
     end
 end
 
@@ -1768,6 +1984,7 @@ local function RegisterEvents()
     eventFrame:RegisterEvent("INCOMING_SUMMON_CHANGED")
 
     -- Non-unit events
+    eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
     eventFrame:RegisterEvent("READY_CHECK")
     eventFrame:RegisterEvent("READY_CHECK_CONFIRM")
@@ -1823,6 +2040,7 @@ end
 ---------------------------------------------------------------------------
 function QUI_GF:RefreshSettings()
     InvalidateCache()
+    dispelColorCurve = nil  -- Rebuild with new opacity on next use
 
     if not self.initialized then
         return
@@ -1913,7 +2131,8 @@ function QUI_GF:Initialize()
     UpdateHeaderVisibility()
     UpdateFrameScaling(true)
 
-    -- Start range check
+    -- Resolve range check spells and start ticker
+    ResolveRangeSpells()
     StartRangeCheck()
 
     self.initialized = true
