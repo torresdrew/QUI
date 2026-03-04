@@ -449,6 +449,10 @@ local function LayoutContainer(trackerKey)
         if editModeActive then
             allIcons[i]:EnableMouse(false)
             _disabledMouseFrames[allIcons[i]] = true
+            if allIcons[i].clickButton and not InCombatLockdown() then
+                allIcons[i].clickButton:EnableMouse(false)
+                allIcons[i].clickButton:Hide()
+            end
         end
     end
 
@@ -1022,6 +1026,11 @@ local function DisableMouseForEditMode(viewerType)
     for _, icon in ipairs(pool) do
         icon:EnableMouse(false)
         _disabledMouseFrames[icon] = true
+        -- Hide click-to-cast buttons so they don't intercept edit mode clicks
+        if icon.clickButton and not InCombatLockdown() then
+            icon.clickButton:EnableMouse(false)
+            icon.clickButton:Hide()
+        end
     end
 end
 
@@ -1031,6 +1040,20 @@ local function RestoreMouseAfterEditMode()
         frame:EnableMouse(true)
     end
     wipe(_disabledMouseFrames)
+
+    -- Re-enable click-to-cast buttons for essential/utility icons
+    if not InCombatLockdown() and ns.CDMIcons then
+        for _, viewerType in ipairs({"essential", "utility"}) do
+            local pool = ns.CDMIcons:GetIconPool(viewerType) or {}
+            for _, icon in ipairs(pool) do
+                if icon.clickButton then
+                    icon.clickButton:EnableMouse(true)
+                end
+                -- Refresh secure attributes (may have been pending)
+                ns.CDMIcons.UpdateIconSecureAttributes(icon, icon._spellEntry, viewerType)
+            end
+        end
+    end
 end
 
 -- Force all buff icons to full alpha (called on edit mode enter).
