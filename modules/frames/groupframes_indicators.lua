@@ -455,19 +455,65 @@ local function RenderBarIndicator(frame, config, auraData)
     return element
 end
 
-local function RenderBorderIndicator(frame, config)
-    -- Recolor the frame border when tracked buff is active (StatusBar borders)
-    if frame.dispelOverlay then
-        local c = config.color or { 1, 1, 0, 0.8 }
-        local a = c[4] or 0.8
-        for _, key in ipairs({"borderTop", "borderBottom", "borderLeft", "borderRight"}) do
-            local border = frame.dispelOverlay[key]
-            if border then
-                border:GetStatusBarTexture():SetVertexColor(c[1], c[2], c[3], a)
-            end
-        end
-        frame.dispelOverlay:Show()
+local function EnsureIndicatorBorder(frame)
+    if frame._indicatorBorder then return frame._indicatorBorder end
+
+    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
+    local overlay = CreateFrame("Frame", nil, frame)
+    overlay:ClearAllPoints()
+    overlay:SetPoint("TOPLEFT", -px, px)
+    overlay:SetPoint("BOTTOMRIGHT", px, -px)
+    overlay:SetFrameLevel(frame:GetFrameLevel() + 7)
+
+    local borderSize = px * 3
+    local function MakeBorder(parent)
+        local sb = CreateFrame("StatusBar", nil, parent)
+        sb:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
+        sb:SetMinMaxValues(0, 1)
+        sb:SetValue(1)
+        return sb
     end
+
+    local bTop = MakeBorder(overlay)
+    bTop:SetPoint("TOPLEFT", overlay, "TOPLEFT", 0, 0)
+    bTop:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", 0, 0)
+    bTop:SetHeight(borderSize)
+    overlay.borderTop = bTop
+
+    local bBottom = MakeBorder(overlay)
+    bBottom:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", 0, 0)
+    bBottom:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", 0, 0)
+    bBottom:SetHeight(borderSize)
+    overlay.borderBottom = bBottom
+
+    local bLeft = MakeBorder(overlay)
+    bLeft:SetPoint("TOPLEFT", overlay, "TOPLEFT", 0, 0)
+    bLeft:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", 0, 0)
+    bLeft:SetWidth(borderSize)
+    overlay.borderLeft = bLeft
+
+    local bRight = MakeBorder(overlay)
+    bRight:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", 0, 0)
+    bRight:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", 0, 0)
+    bRight:SetWidth(borderSize)
+    overlay.borderRight = bRight
+
+    overlay:Hide()
+    frame._indicatorBorder = overlay
+    return overlay
+end
+
+local function RenderBorderIndicator(frame, config)
+    local overlay = EnsureIndicatorBorder(frame)
+    local c = config.color or { 1, 1, 0, 0.8 }
+    local a = c[4] or 0.8
+    for _, key in ipairs({"borderTop", "borderBottom", "borderLeft", "borderRight"}) do
+        local border = overlay[key]
+        if border then
+            border:GetStatusBarTexture():SetVertexColor(c[1], c[2], c[3], a)
+        end
+    end
+    overlay:Show()
 end
 
 local function RenderHealthColorIndicator(frame, config)
@@ -499,6 +545,11 @@ local function ClearIndicators(frame)
     end
     wipe(state.elements)
     wipe(state.activeSpells)
+
+    -- Hide dedicated indicator border overlay
+    if frame._indicatorBorder then
+        frame._indicatorBorder:Hide()
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -525,21 +576,40 @@ local function UpdateFrameIndicators(frame)
     for _, element in pairs(state.elements) do
         element:Hide()
     end
+    if frame._indicatorBorder then
+        frame._indicatorBorder:Hide()
+    end
 
-    -- Build a set of active auras on the unit
+    -- Build a set of active auras on the unit (batch API handles non-contiguous slots)
     local activeAuras = {} -- [spellID] = auraData
-    local slot = 1
-    while true do
-        local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
-        if not ok or not auraData then break end
-
-        local spellID = SafeValue(auraData.spellId, nil)
-        if spellID then
-            activeAuras[spellID] = auraData
+    if C_UnitAuras.GetUnitAuras then
+        local ok, helpfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL", 80)
+        if ok and helpfulAuras then
+            for _, auraData in ipairs(helpfulAuras) do
+                local spellID = SafeValue(auraData.spellId, nil)
+                if spellID then activeAuras[spellID] = auraData end
+            end
         end
-
-        slot = slot + 1
-        if slot > 80 then break end
+        local ok2, harmfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, "HARMFUL", 80)
+        if ok2 and harmfulAuras then
+            for _, auraData in ipairs(harmfulAuras) do
+                local spellID = SafeValue(auraData.spellId, nil)
+                if spellID then activeAuras[spellID] = auraData end
+            end
+        end
+    else
+        -- Pre-12.0 fallback: slot iteration
+        local slot = 1
+        while true do
+            local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
+            if not ok or not auraData then break end
+            local spellID = SafeValue(auraData.spellId, nil)
+            if spellID then
+                activeAuras[spellID] = auraData
+            end
+            slot = slot + 1
+            if slot > 80 then break end
+        end
     end
 
     -- Check each indicator config against active auras

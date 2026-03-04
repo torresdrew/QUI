@@ -175,6 +175,11 @@ local function GetAuraSettings()
     return db and db.auras
 end
 
+local function GetPortraitSettings()
+    local db = GetDB()
+    return db and db.portrait
+end
+
 ---------------------------------------------------------------------------
 -- HELPERS: Font and texture
 ---------------------------------------------------------------------------
@@ -371,9 +376,13 @@ local function UpdateHealth(frame)
     -- Health bar value — use percentage-based approach (matches DandersFrames)
     -- UnitHealthPercent returns 0-100 via CurveConstants.ScaleTo100, C-side handles secrets
     if frame.healthBar then
-        local pct = GetHealthPct(unit)
         frame.healthBar:SetMinMaxValues(0, 100)
-        frame.healthBar:SetValue(pct)
+        if isDeadOrGhost then
+            frame.healthBar:SetValue(0)
+        else
+            local pct = GetHealthPct(unit)
+            frame.healthBar:SetValue(pct)
+        end
 
         -- Color
         if not isConnected then
@@ -386,15 +395,31 @@ local function UpdateHealth(frame)
         end
     end
 
+    -- Centered status text overlay for dead/offline
+    if frame.statusText then
+        if not isConnected then
+            frame.statusText:SetText("OFFLINE")
+            frame.statusText:SetTextColor(COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3])
+            frame.statusText:Show()
+        elseif isDeadOrGhost then
+            local isGhost = UnitIsGhost(unit)
+            frame.statusText:SetText(isGhost and "GHOST" or "DEAD")
+            frame.statusText:SetTextColor(COLOR_DEAD[1], COLOR_DEAD[2], COLOR_DEAD[3])
+            frame.statusText:Show()
+            -- Dim the frame slightly for dead units (offline dimming handled in UpdateConnection)
+            frame:SetAlpha(0.65)
+        else
+            frame.statusText:Hide()
+        end
+    end
+
     -- Health text — use SetFormattedText (C-side) which handles secret values natively
     local healthSettings = GetHealthSettings()
     if frame.healthText and healthSettings and healthSettings.showHealthText ~= false then
         if not isConnected then
-            frame.healthText:SetText("Offline")
-            frame.healthText:SetTextColor(COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3])
+            frame.healthText:SetText("")
         elseif isDeadOrGhost then
-            frame.healthText:SetText("Dead")
-            frame.healthText:SetTextColor(COLOR_DEAD[1], COLOR_DEAD[2], COLOR_DEAD[3])
+            frame.healthText:SetText("")
         else
             local style = healthSettings.healthDisplayStyle or "percent"
             local abbr = AbbreviateNumbers or AbbreviateLargeNumbers
@@ -806,6 +831,9 @@ local function UpdateConnection(frame)
     local isConnected = UnitIsConnected(frame.unit) or IsNPCPartyMember(frame.unit)
     if not isConnected and UnitExists(frame.unit) then
         frame:SetAlpha(0.5)
+    elseif UnitIsDeadOrGhost(frame.unit) then
+        -- Dead dimming (set in UpdateHealth) — don't override with 1.0
+        frame:SetAlpha(0.65)
     else
         -- Restore alpha (range check may override)
         local rangeSettings = GetRangeSettings()
@@ -932,6 +960,38 @@ local function UpdateDispelOverlay(frame)
 end
 
 ---------------------------------------------------------------------------
+-- UPDATE: Portrait
+---------------------------------------------------------------------------
+local function UpdatePortrait(frame)
+    if not frame or not frame.unit then return end
+    local portraitSettings = GetPortraitSettings()
+
+    if not portraitSettings or not portraitSettings.showPortrait then
+        if frame.portrait then frame.portrait:Hide() end
+        return
+    end
+
+    if not frame.portrait or not frame.portraitTexture then return end
+
+    local unit = frame.unit
+    if not UnitExists(unit) then
+        frame.portrait:Hide()
+        return
+    end
+
+    -- Update texture
+    pcall(SetPortraitTexture, frame.portraitTexture, unit, true)
+    frame.portraitTexture:SetTexCoord(0.15, 0.85, 0.15, 0.85)
+
+    -- Desaturate for dead/offline
+    local isDeadOrGhost = UnitIsDeadOrGhost(unit)
+    local isConnected = UnitIsConnected(unit) or IsNPCPartyMember(unit)
+    frame.portraitTexture:SetDesaturated(isDeadOrGhost or not isConnected)
+
+    frame.portrait:Show()
+end
+
+---------------------------------------------------------------------------
 -- UPDATE: Full frame refresh
 ---------------------------------------------------------------------------
 -- UPDATE: Dark Mode Visuals (backdrop, health bar alpha)
@@ -976,6 +1036,7 @@ local function UpdateFrame(frame)
     UpdateConnection(frame)
     UpdateTargetHighlight(frame)
     UpdateDispelOverlay(frame)
+    UpdatePortrait(frame)
 end
 
 ---------------------------------------------------------------------------
@@ -1116,6 +1177,17 @@ local function DecorateGroupFrame(frame)
     textFrame:SetAllPoints()
     textFrame:SetFrameLevel(healthBar:GetFrameLevel() + 3)
     frame._textFrame = textFrame
+
+    -- Centered status text (DEAD / OFFLINE overlay)
+    local statusText = frame.statusText or textFrame:CreateFontString(nil, "OVERLAY")
+    statusText:ClearAllPoints()
+    statusText:SetFont(GetFontPath(), 14, "OUTLINE")
+    statusText:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    statusText:SetJustifyH("CENTER")
+    statusText:SetJustifyV("MIDDLE")
+    statusText:SetTextColor(0.9, 0.9, 0.9, 1)
+    statusText:Hide()
+    frame.statusText = statusText
 
     -- Name text
     local fontPath = GetFontPath()
@@ -1292,6 +1364,42 @@ local function DecorateGroupFrame(frame)
 
     dispelOverlay:Hide()
     frame.dispelOverlay = dispelOverlay
+
+    -- Portrait (optional, side-attached)
+    local portraitSettings = GetPortraitSettings()
+    if portraitSettings and portraitSettings.showPortrait then
+        local portraitSizePx = portraitSettings.portraitSize or 30
+        local portraitSizeRound = QUICore.PixelRound and QUICore:PixelRound(portraitSizePx, frame) or portraitSizePx
+        local portraitBorderPx = QUICore.Pixels and QUICore:Pixels(1, frame) or px
+
+        local portrait = frame.portrait or CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        portrait:SetSize(portraitSizeRound, portraitSizeRound)
+        portrait:ClearAllPoints()
+
+        local side = portraitSettings.portraitSide or "LEFT"
+        if side == "LEFT" then
+            portrait:SetPoint("RIGHT", frame, "LEFT", 0, 0)
+        else
+            portrait:SetPoint("LEFT", frame, "RIGHT", 0, 0)
+        end
+
+        portrait:SetBackdrop({
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = portraitBorderPx,
+        })
+        portrait:SetBackdropBorderColor(0, 0, 0, 1)
+        portrait:SetFrameLevel(frame:GetFrameLevel() + 1)
+
+        local portraitTex = frame.portraitTexture or portrait:CreateTexture(nil, "ARTWORK")
+        portraitTex:ClearAllPoints()
+        portraitTex:SetPoint("TOPLEFT", portraitBorderPx, -portraitBorderPx)
+        portraitTex:SetPoint("BOTTOMRIGHT", -portraitBorderPx, portraitBorderPx)
+        frame.portraitTexture = portraitTex
+        frame.portrait = portrait
+        portrait:Show()
+    elseif frame.portrait then
+        frame.portrait:Hide()
+    end
 
     -- One-time hooks (only on first decoration)
     if not frame._quiHooked then
