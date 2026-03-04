@@ -104,6 +104,38 @@ local POWER_COLORS = {
     [18] = { 1, 0.61, 0 },       -- Pain
 }
 
+-- Defensive cooldown spell IDs (fallback when AuraUtil.AuraFilters unavailable)
+local DEFENSIVE_SPELL_IDS = {
+    -- External defensives
+    [102342] = true, -- Ironbark
+    [33206]  = true, -- Pain Suppression
+    [47788]  = true, -- Guardian Spirit
+    [6940]   = true, -- Blessing of Sacrifice
+    [116849] = true, -- Life Cocoon
+    [357170] = true, -- Time Dilation
+    [98008]  = true, -- Spirit Link Totem
+    -- Big personal defensives
+    [48707]  = true, -- Anti-Magic Shell
+    [48792]  = true, -- Icebound Fortitude
+    [61336]  = true, -- Survival Instincts
+    [22812]  = true, -- Barkskin
+    [186265] = true, -- Aspect of the Turtle
+    [45438]  = true, -- Ice Block
+    [55233]  = true, -- Vampiric Blood
+    [184364] = true, -- Enraged Regeneration
+    [12975]  = true, -- Last Stand
+    [871]    = true, -- Shield Wall
+    [31224]  = true, -- Cloak of Shadows
+    [5277]   = true, -- Evasion
+    [104773] = true, -- Unending Resolve
+    [47585]  = true, -- Dispersion
+    [19236]  = true, -- Desperate Prayer
+    [108271] = true, -- Astral Shift
+    [122278] = true, -- Dampen Harm
+    [122783] = true, -- Diffuse Magic
+    [363916] = true, -- Obsidian Scales
+}
+
 -- Role sorting priority
 local ROLE_SORT_ORDER = { TANK = 1, HEALER = 2, DAMAGER = 3, NONE = 4 }
 
@@ -960,6 +992,102 @@ local function UpdateDispelOverlay(frame)
 end
 
 ---------------------------------------------------------------------------
+-- UPDATE: Defensive Indicator
+---------------------------------------------------------------------------
+local function UpdateDefensiveIndicator(frame)
+    if not frame or not frame.unit or not frame.defensiveIcon then return end
+
+    local healerSettings = GetHealerSettings()
+    if not healerSettings or not healerSettings.defensiveIndicator
+       or not healerSettings.defensiveIndicator.enabled then
+        frame.defensiveIcon:Hide()
+        return
+    end
+
+    local unit = frame.unit
+    if not UnitExists(unit) or UnitIsDeadOrGhost(unit) then
+        frame.defensiveIcon:Hide()
+        return
+    end
+
+    -- Try WoW 12.0+ AuraUtil.AuraFilters first (C-side, secret-safe)
+    local foundAura = nil
+    if C_UnitAuras and C_UnitAuras.GetUnitAuras then
+        -- BIG_DEFENSIVE filter
+        if AuraUtil and AuraUtil.AuraFilters and AuraUtil.AuraFilters.BigDefensive then
+            local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit,
+                "HELPFUL|" .. AuraUtil.AuraFilters.BigDefensive, 1)
+            if ok and auras and auras[1] then
+                foundAura = auras[1]
+            end
+        end
+        -- EXTERNAL_DEFENSIVE filter (if no big defensive found)
+        if not foundAura and AuraUtil and AuraUtil.AuraFilters
+           and AuraUtil.AuraFilters.ExternalDefensive then
+            local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit,
+                "HELPFUL|" .. AuraUtil.AuraFilters.ExternalDefensive, 1)
+            if ok and auras and auras[1] then
+                foundAura = auras[1]
+            end
+        end
+        -- Fallback: scan helpful auras for known defensive spell IDs
+        if not foundAura then
+            local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL", 40)
+            if ok and auras then
+                for _, auraData in ipairs(auras) do
+                    local spellID = SafeValue(auraData.spellId, nil)
+                    if spellID and DEFENSIVE_SPELL_IDS[spellID] then
+                        foundAura = auraData
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    if not foundAura then
+        frame.defensiveIcon:Hide()
+        return
+    end
+
+    -- Update icon texture (C-side SetTexture handles secret values)
+    if foundAura.icon and frame.defensiveIcon.icon then
+        pcall(frame.defensiveIcon.icon.SetTexture, frame.defensiveIcon.icon, foundAura.icon)
+    end
+
+    -- Update cooldown swipe
+    local cd = frame.defensiveIcon.cooldown
+    if cd and foundAura.duration and foundAura.expirationTime then
+        if foundAura.auraInstanceID and C_UnitAuras.GetAuraDuration
+           and cd.SetCooldownFromDurationObject then
+            local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, foundAura.auraInstanceID)
+            if ok and durationObj then
+                pcall(cd.SetCooldownFromDurationObject, cd, durationObj)
+            elseif cd.SetCooldownFromExpirationTime then
+                pcall(cd.SetCooldownFromExpirationTime, cd, foundAura.expirationTime, foundAura.duration)
+            end
+        elseif cd.SetCooldownFromExpirationTime then
+            pcall(cd.SetCooldownFromExpirationTime, cd, foundAura.expirationTime, foundAura.duration)
+        else
+            pcall(function()
+                cd:SetCooldown(foundAura.expirationTime - foundAura.duration, foundAura.duration)
+            end)
+        end
+    elseif cd then
+        cd:Clear()
+    end
+
+    -- Size and position
+    local iconSize = healerSettings.defensiveIndicator.iconSize or 16
+    frame.defensiveIcon:SetSize(iconSize, iconSize)
+    frame.defensiveIcon:ClearAllPoints()
+    frame.defensiveIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    frame.defensiveIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
+
+    frame.defensiveIcon:Show()
+end
+
+---------------------------------------------------------------------------
 -- UPDATE: Portrait
 ---------------------------------------------------------------------------
 local function UpdatePortrait(frame)
@@ -1036,6 +1164,7 @@ local function UpdateFrame(frame)
     UpdateConnection(frame)
     UpdateTargetHighlight(frame)
     UpdateDispelOverlay(frame)
+    UpdateDefensiveIndicator(frame)
     UpdatePortrait(frame)
 end
 
@@ -1364,6 +1493,41 @@ local function DecorateGroupFrame(frame)
 
     dispelOverlay:Hide()
     frame.dispelOverlay = dispelOverlay
+
+    -- Defensive indicator icon (centered, high frame level)
+    local defensiveIcon = frame.defensiveIcon or CreateFrame("Frame", nil, frame, "BackdropTemplate")
+    defensiveIcon:SetSize(16, 16)
+    defensiveIcon:ClearAllPoints()
+    defensiveIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    defensiveIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
+
+    local defTex = defensiveIcon.icon or defensiveIcon:CreateTexture(nil, "ARTWORK")
+    defTex:SetAllPoints()
+    defTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    defensiveIcon.icon = defTex
+
+    defensiveIcon:SetBackdrop({
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = px,
+    })
+    defensiveIcon:SetBackdropBorderColor(0, 0.8, 0, 1)
+
+    local defCD = defensiveIcon.cooldown or CreateFrame("Cooldown", nil, defensiveIcon, "CooldownFrameTemplate")
+    defCD:SetAllPoints(defTex)
+    defCD:SetDrawEdge(false)
+    defCD:SetDrawSwipe(true)
+    defCD:SetReverse(true)
+    defCD:SetHideCountdownNumbers(false)
+    defensiveIcon.cooldown = defCD
+
+    -- Disable mouse on the icon so clicks pass through to the unit frame
+    if defensiveIcon.SetMouseClickEnabled then
+        defensiveIcon:SetMouseClickEnabled(false)
+    end
+    defensiveIcon:EnableMouse(false)
+
+    defensiveIcon:Hide()
+    frame.defensiveIcon = defensiveIcon
 
     -- Portrait (optional, side-attached)
     local portraitSettings = GetPortraitSettings()
@@ -2031,6 +2195,7 @@ local function OnEvent(self, event, arg1, ...)
 
         elseif event == "UNIT_AURA" then
             UpdateDispelOverlay(frame)
+            UpdateDefensiveIndicator(frame)
             -- Aura icons handled by groupframes_auras.lua
 
         elseif event == "UNIT_CONNECTION" or event == "UNIT_FLAGS" then
