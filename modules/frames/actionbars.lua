@@ -1257,8 +1257,9 @@ local function UpdateKeybindText(button, settings)
 
     -- Only hide keybinds on empty action slots when hideEmptyKeybinds is enabled
     if shouldShow and settings.hideEmptyKeybinds then
-        if button.action then
-            local hasAction = SafeHasAction(button.action)
+        local action = Helpers.SafeToNumber(button.action)
+        if action then
+            local hasAction = SafeHasAction(action)
             if not hasAction then
                 shouldShow = false
             end
@@ -1400,8 +1401,9 @@ local function UpdateEmptySlotVisibility(button, settings)
     end
 
     -- Only applies to action buttons with action property
-    if button.action then
-        local hasAction = SafeHasAction(button.action)
+    local action = Helpers.SafeToNumber(button.action)
+    if action then
+        local hasAction = SafeHasAction(action)
         if hasAction then
             button:SetAlpha(targetAlpha)
             state.hiddenEmpty = nil
@@ -1488,20 +1490,39 @@ local function SafeIsUsableAction(action)
     end
 end
 
--- Update range and usability indicators for a single button
+-- Get or create a QUI-owned tint overlay for range/usability coloring.
+-- Uses MOD (multiplicative) blend on ARTWORK sublevel 1, so it renders
+-- above the icon (sublevel 0) but below OVERLAY borders/gloss.
+-- Hidden by default — no overlay = no tint.
+local function GetTintOverlay(button)
+    local state = GetFrameState(button)
+    if not state.tintOverlay then
+        local icon = button.icon or button.Icon
+        if not icon then return nil end
+        local overlay = button:CreateTexture(nil, "ARTWORK", nil, 1)
+        overlay:SetAllPoints(icon)
+        overlay:SetBlendMode("MOD")
+        overlay:SetColorTexture(1, 1, 1, 1)  -- White = no tint
+        overlay:Hide()
+        state.tintOverlay = overlay
+    end
+    return state.tintOverlay
+end
+
+-- Update range and usability indicators for a single button.
+-- Uses a QUI-owned overlay texture instead of modifying Blizzard's icon
+-- directly, which avoids tainting secret values during combat.
 local function UpdateButtonUsability(button, settings)
     if not settings then return end
-    if not button.action then return end
+    local action = Helpers.SafeToNumber(button.action)
+    if not action then return end
 
     local state = GetFrameState(button)
-    local icon = button.icon or button.Icon
-    if not icon then return end
 
     -- Reset state if both features disabled
     if not settings.rangeIndicator and not settings.usabilityIndicator then
         if state.tinted then
-            icon:SetVertexColor(1, 1, 1, 1)
-            icon:SetDesaturated(false)
+            if state.tintOverlay then state.tintOverlay:Hide() end
             state.tinted = nil
         end
         return
@@ -1509,15 +1530,14 @@ local function UpdateButtonUsability(button, settings)
 
     -- Priority 1: Out of Range check (if enabled)
     if settings.rangeIndicator then
-        local inRange = SafeIsActionInRange(button.action)
+        local inRange = SafeIsActionInRange(action)
         if inRange == false then  -- false = out of range, nil = no range check needed
-            local c = settings.rangeColor
-            local r = c and c[1] or 0.8
-            local g = c and c[2] or 0.1
-            local b = c and c[3] or 0.1
-            local a = c and c[4] or 1
-            icon:SetVertexColor(r, g, b, a)
-            icon:SetDesaturated(false)
+            local overlay = GetTintOverlay(button)
+            if overlay then
+                local c = settings.rangeColor
+                overlay:SetColorTexture(c and c[1] or 0.8, c and c[2] or 0.1, c and c[3] or 0.1, c and c[4] or 1)
+                overlay:Show()
+            end
             state.tinted = "range"
             return
         end
@@ -1525,42 +1545,39 @@ local function UpdateButtonUsability(button, settings)
 
     -- Priority 2: Usability check (if enabled)
     if settings.usabilityIndicator then
-        local isUsable, notEnoughMana = SafeIsUsableAction(button.action)
+        local isUsable, notEnoughMana = SafeIsUsableAction(action)
 
         if notEnoughMana then
             -- Out of mana/resources - blue tint
-            local c = settings.manaColor
-            local r = c and c[1] or 0.5
-            local g = c and c[2] or 0.5
-            local b = c and c[3] or 1.0
-            local a = c and c[4] or 1
-            icon:SetVertexColor(r, g, b, a)
-            icon:SetDesaturated(false)
+            local overlay = GetTintOverlay(button)
+            if overlay then
+                local c = settings.manaColor
+                overlay:SetColorTexture(c and c[1] or 0.5, c and c[2] or 0.5, c and c[3] or 1.0, c and c[4] or 1)
+                overlay:Show()
+            end
             state.tinted = "mana"
             return
         elseif not isUsable then
-            -- Not usable - desaturate or apply grey tint
-            if settings.usabilityDesaturate then
-                icon:SetDesaturated(true)
-                icon:SetVertexColor(0.6, 0.6, 0.6, 1)  -- Slight brightness reduction with desaturation
-            else
-                local c = settings.usabilityColor
-                local r = c and c[1] or 0.4
-                local g = c and c[2] or 0.4
-                local b = c and c[3] or 0.4
-                local a = c and c[4] or 1
-                icon:SetVertexColor(r, g, b, a)
-                icon:SetDesaturated(false)
+            -- Not usable - dark tint (MOD blend can't desaturate, so we
+            -- approximate the desaturate look with a dim grey overlay)
+            local overlay = GetTintOverlay(button)
+            if overlay then
+                if settings.usabilityDesaturate then
+                    overlay:SetColorTexture(0.4, 0.4, 0.4, 1)
+                else
+                    local c = settings.usabilityColor
+                    overlay:SetColorTexture(c and c[1] or 0.4, c and c[2] or 0.4, c and c[3] or 0.4, c and c[4] or 1)
+                end
+                overlay:Show()
             end
             state.tinted = "unusable"
             return
         end
     end
 
-    -- Normal state - reset to full brightness
+    -- Normal state - hide overlay
     if state.tinted then
-        icon:SetVertexColor(1, 1, 1, 1)
-        icon:SetDesaturated(false)
+        if state.tintOverlay then state.tintOverlay:Hide() end
         state.tinted = nil
     end
 end
@@ -1601,48 +1618,9 @@ local function ResetAllButtonTints()
         local buttons = GetBarButtons(barKey)
         for _, button in ipairs(buttons) do
             local state = GetFrameState(button)
-            local icon = button.icon or button.Icon
-            if icon and state.tinted then
-                icon:SetVertexColor(1, 1, 1, 1)
-                icon:SetDesaturated(false)
+            if state.tinted then
+                if state.tintOverlay then state.tintOverlay:Hide() end
                 state.tinted = nil
-            end
-        end
-    end
-end
-
--- Hook SetVertexColor on each action button icon so that when Blizzard's
--- update cycle resets the vertex color (e.g. on hover / ActionBarActionEventsFrame),
--- we defer our range/usability tint reapplication via C_Timer.After(0) so the
--- callback runs in addon context next frame, not within the secure chain.
--- This prevents taint propagation from writing back to the icon during combat.
-local function HookButtonIconsForUsability()
-    for i = 1, 8 do
-        local barKey = "bar" .. i
-        local buttons = GetBarButtons(barKey)
-        for _, button in ipairs(buttons) do
-            local icon = button.icon or button.Icon
-            if icon then
-                local state = GetFrameState(button)
-                if not state.usabilityIconHooked then
-                    state.usabilityIconHooked = true
-                    hooksecurefunc(icon, "SetVertexColor", function()
-                        if state.suppressReapply then return end
-                        if not state.tinted then return end
-                        if state.deferPending then return end
-                        state.deferPending = true
-                        C_Timer.After(0, function()
-                            state.deferPending = nil
-                            if not state.tinted then return end
-                            state.suppressReapply = true
-                            local gs = GetGlobalSettings()
-                            if gs then
-                                UpdateButtonUsability(button, gs)
-                            end
-                            state.suppressReapply = nil
-                        end)
-                    end)
-                end
             end
         end
     end
@@ -1672,10 +1650,6 @@ local function UpdateUsabilityPolling()
         usabilityCheckFrame:SetScript("OnEvent", function(self, event, ...)
             ScheduleUsabilityUpdate()
         end)
-
-        -- Hook icon SetVertexColor so Blizzard's per-frame updates
-        -- (e.g. on hover) can't reset our range/usability tint.
-        HookButtonIconsForUsability()
 
         -- Initial update
         ScheduleUsabilityUpdate()
@@ -2789,6 +2763,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end)
 
     elseif event == "ACTIONBAR_SLOT_CHANGED" then
+        -- Defer slot-change processing during combat to avoid taint
+        if InCombatLockdown() then
+            ActionBars.pendingSlotUpdate = true
+            return
+        end
         -- Re-apply text styling and empty slot visibility when actions change
         C_Timer.After(0.1, function()
             for barKey, _ in pairs(BUTTON_PATTERNS) do
@@ -2895,6 +2874,22 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if ActionBars.pendingSpacing then
             ActionBars.pendingSpacing = false
             ApplyAllBarSpacing()
+        end
+        -- Process slot changes deferred from combat
+        if ActionBars.pendingSlotUpdate then
+            ActionBars.pendingSlotUpdate = false
+            C_Timer.After(0.1, function()
+                for barKey, _ in pairs(BUTTON_PATTERNS) do
+                    local effectiveSettings = GetEffectiveSettings(barKey)
+                    if effectiveSettings then
+                        local buttons = GetBarButtons(barKey)
+                        for _, button in ipairs(buttons) do
+                            UpdateButtonText(button, effectiveSettings)
+                            UpdateEmptySlotVisibility(button, effectiveSettings)
+                        end
+                    end
+                end
+            end)
         end
     end
 end)

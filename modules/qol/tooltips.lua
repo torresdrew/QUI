@@ -657,7 +657,10 @@ local function SetupTooltipHook()
                 isOverOwner = true
                 break
             end
-            checkFrame = checkFrame:GetParent()
+            -- pcall: some frames (e.g. PingListenerFrame) are restricted and
+            -- reject GetParent() with "calling on bad self"
+            local ok, parent = pcall(checkFrame.GetParent, checkFrame)
+            checkFrame = ok and parent or nil
         end
 
         -- If mouse moved away from owner, hide stuck tooltip
