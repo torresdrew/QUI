@@ -64,7 +64,8 @@ jobs:
               content: "🔧 **Dev Build** — `\($branch)` @ [`\($sha)`](\($url))\n> \($msg)"
             }')
 
+          echo "$PAYLOAD" > payload.json
           curl --fail-with-body \
-            -F "payload_json=$PAYLOAD" \
+            -F "payload_json=<payload.json" \
             -F "file1=@$FILENAME" \
             "$DISCORD_WEBHOOK"
