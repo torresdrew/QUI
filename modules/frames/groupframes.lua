@@ -1937,6 +1937,13 @@ local function OnEvent(self, event, arg1, ...)
 
         elseif event == "INCOMING_SUMMON_CHANGED" then
             UpdateSummonPending(frame)
+
+        elseif event == "READY_CHECK_CONFIRM" then
+            -- READY_CHECK_CONFIRM arg1 is a unit token, so it lands here.
+            -- Update ALL frames (not just the confirming unit) to stay consistent.
+            for _, f in pairs(QUI_GF.unitFrameMap) do
+                UpdateReadyCheck(f)
+            end
         end
         return
     end
