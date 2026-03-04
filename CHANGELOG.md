@@ -62,6 +62,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.46.1 - 2026-03-04
+
+### Fixed
+- rework tooltip skinning a bit to avoid taints
+- fix: explicitly hide/show QUI textures on faded and empty action buttons
+- don't show a skyriding bar when being a passenger
+- fixed action bar 1 not fading when 'keep leave vehicle button visible' was active
+- fixed circular anchor dependency introduced by alert skinning
 ## v2.46.0 - 2026-03-04
 
 ### Added
