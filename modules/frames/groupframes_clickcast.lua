@@ -21,19 +21,8 @@ local activeBindings = {} -- Resolved bindings for current spec
 local isEnabled = false
 
 ---------------------------------------------------------------------------
--- MODIFIER HELPERS
+-- MODIFIER / BUTTON HELPERS
 ---------------------------------------------------------------------------
-local MODIFIER_MAP = {
-    [""]      = function() return not IsShiftKeyDown() and not IsControlKeyDown() and not IsAltKeyDown() end,
-    ["shift"] = function() return IsShiftKeyDown() and not IsControlKeyDown() and not IsAltKeyDown() end,
-    ["ctrl"]  = function() return not IsShiftKeyDown() and IsControlKeyDown() and not IsAltKeyDown() end,
-    ["alt"]   = function() return not IsShiftKeyDown() and not IsControlKeyDown() and IsAltKeyDown() end,
-    ["shift-ctrl"]  = function() return IsShiftKeyDown() and IsControlKeyDown() and not IsAltKeyDown() end,
-    ["shift-alt"]   = function() return IsShiftKeyDown() and not IsControlKeyDown() and IsAltKeyDown() end,
-    ["ctrl-alt"]    = function() return not IsShiftKeyDown() and IsControlKeyDown() and IsAltKeyDown() end,
-    ["shift-ctrl-alt"] = function() return IsShiftKeyDown() and IsControlKeyDown() and IsAltKeyDown() end,
-}
-
 local BUTTON_NAMES = {
     LeftButton = "Left Click",
     RightButton = "Right Click",
@@ -115,6 +104,17 @@ local function ResolveBindings()
 end
 
 ---------------------------------------------------------------------------
+-- BUTTON NUMBER HELPER
+---------------------------------------------------------------------------
+local BUTTON_NUMBERS = {
+    LeftButton = "1",
+    RightButton = "2",
+    MiddleButton = "3",
+    Button4 = "4",
+    Button5 = "5",
+}
+
+---------------------------------------------------------------------------
 -- FRAME SETUP: Apply click-cast attributes to a frame
 ---------------------------------------------------------------------------
 local function SetupFrameClickCast(frame)
@@ -129,39 +129,29 @@ local function SetupFrameClickCast(frame)
         local prefix = ""
         local mods = binding.modifiers or ""
         if mods ~= "" then
-            -- Convert "shift" to "shift-", "ctrl" to "ctrl-", etc.
+            -- Convert "shift" to "shift-", "shift-ctrl" to "shift-ctrl-", etc.
             prefix = mods:gsub("%-$", "") .. "-"
-            if not prefix:find("-$") then prefix = prefix .. "-" end
         end
 
-        local attrType = prefix .. "type" .. (binding.button == "LeftButton" and "1" or
-            binding.button == "RightButton" and "2" or
-            binding.button == "MiddleButton" and "3" or
-            binding.button == "Button4" and "4" or
-            binding.button == "Button5" and "5" or "1")
-
+        local btnNum = BUTTON_NUMBERS[binding.button] or "1"
         local actionType = binding.actionType or "spell"
 
         if actionType == "spell" then
-            frame:SetAttribute(attrType, "spell")
-            local spellAttr = prefix .. "spell-" .. (binding.button == "LeftButton" and "1" or
-                binding.button == "RightButton" and "2" or
-                binding.button == "MiddleButton" and "3" or
-                binding.button == "Button4" and "4" or
-                binding.button == "Button5" and "5" or "1")
-            frame:SetAttribute(spellAttr, binding.spell)
+            -- Use macro with @mouseover conditional for reliable targeting
+            frame:SetAttribute(prefix .. "type" .. btnNum, "macro")
+            frame:SetAttribute(prefix .. "macrotext" .. btnNum,
+                "/cast [@mouseover,help,nodead] " .. binding.spell
+                .. "; [@mouseover,harm,nodead] " .. binding.spell
+                .. "; [@mouseover] " .. binding.spell)
         elseif actionType == "macro" then
-            frame:SetAttribute(attrType, "macro")
-            local macroAttr = prefix .. "macrotext-" .. (binding.button == "LeftButton" and "1" or
-                binding.button == "RightButton" and "2" or
-                binding.button == "MiddleButton" and "3" or "1")
-            frame:SetAttribute(macroAttr, binding.macro)
+            frame:SetAttribute(prefix .. "type" .. btnNum, "macro")
+            frame:SetAttribute(prefix .. "macrotext" .. btnNum, binding.macro)
         elseif actionType == "target" then
-            frame:SetAttribute(attrType, "target")
+            frame:SetAttribute(prefix .. "type" .. btnNum, "target")
         elseif actionType == "focus" then
-            frame:SetAttribute(attrType, "focus")
+            frame:SetAttribute(prefix .. "type" .. btnNum, "focus")
         elseif actionType == "assist" then
-            frame:SetAttribute(attrType, "assist")
+            frame:SetAttribute(prefix .. "type" .. btnNum, "assist")
         end
     end
 
@@ -171,13 +161,14 @@ local function SetupFrameClickCast(frame)
     if db.clickCast.smartRes then
         local resSpell = GetResurrectionSpellName()
         if resSpell then
+            local resMacro = "/cast [@mouseover] " .. resSpell
             frame:HookScript("OnEnter", function(self)
                 if InCombatLockdown() then return end
                 local unit = self:GetAttribute("unit")
                 if unit and UnitIsDeadOrGhost(unit) and (UnitIsConnected(unit) or not UnitIsPlayer(unit)) then
                     -- Swap left click to res
-                    self:SetAttribute("type1", "spell")
-                    self:SetAttribute("spell1", resSpell)
+                    self:SetAttribute("type1", "macro")
+                    self:SetAttribute("macrotext1", resMacro)
                 end
             end)
             frame:HookScript("OnLeave", function(self)
@@ -191,9 +182,18 @@ local function SetupFrameClickCast(frame)
                     end
                 end
                 if normalBinding then
-                    self:SetAttribute("type1", normalBinding.actionType or "spell")
-                    if normalBinding.actionType == "spell" or not normalBinding.actionType then
-                        self:SetAttribute("spell1", normalBinding.spell)
+                    local actionType = normalBinding.actionType or "spell"
+                    if actionType == "spell" then
+                        self:SetAttribute("type1", "macro")
+                        self:SetAttribute("macrotext1",
+                            "/cast [@mouseover,help,nodead] " .. normalBinding.spell
+                            .. "; [@mouseover,harm,nodead] " .. normalBinding.spell
+                            .. "; [@mouseover] " .. normalBinding.spell)
+                    elseif actionType == "macro" then
+                        self:SetAttribute("type1", "macro")
+                        self:SetAttribute("macrotext1", normalBinding.macro)
+                    else
+                        self:SetAttribute("type1", actionType)
                     end
                 else
                     -- Default: target
@@ -237,9 +237,18 @@ local function ClearFrameClickCast(frame)
     if not frame or not registeredFrames[frame] then return end
     if InCombatLockdown() then return end
 
+    -- Clear all click-cast attributes for every button/modifier combo
+    local modPrefixes = { "", "shift-", "ctrl-", "alt-", "shift-ctrl-", "shift-alt-", "ctrl-alt-", "shift-ctrl-alt-" }
+    for _, prefix in ipairs(modPrefixes) do
+        for _, btnNum in pairs(BUTTON_NUMBERS) do
+            frame:SetAttribute(prefix .. "type" .. btnNum, nil)
+            frame:SetAttribute(prefix .. "macrotext" .. btnNum, nil)
+        end
+    end
+
     -- Restore default target/menu behavior
-    frame:SetAttribute("*type1", "target")
-    frame:SetAttribute("*type2", "togglemenu")
+    frame:SetAttribute("type1", "target")
+    frame:SetAttribute("type2", "togglemenu")
 
     registeredFrames[frame] = nil
 end
