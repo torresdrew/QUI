@@ -61,7 +61,7 @@ local CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A = 0, 0, 0, 0.8
 
 ---------------------------------------------------------------------------
 -- APPLY SWIPE TO A SINGLE ICON
--- Classification uses icon._spellEntry.isAura and icon._lastDuration
+-- Classification uses icon._auraActive (from hook) and icon._isOnGCD (from API)
 -- (set by cdm_icons.lua during cooldown updates).
 ---------------------------------------------------------------------------
 local function ApplySwipeToIcon(icon, settings)
@@ -77,8 +77,6 @@ local function ApplySwipeToIcon(icon, settings)
     if isBuffIcon or (entry.isAura and icon._auraActive) then
         mode = "aura"
     elseif icon._isOnGCD then
-        mode = "gcd"
-    elseif icon._lastDuration and icon._lastDuration > 0 and icon._lastDuration <= 2.5 then
         mode = "gcd"
     else
         mode = "cooldown"

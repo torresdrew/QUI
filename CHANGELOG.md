@@ -59,6 +59,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+
+## v2.45.2 - 2026-03-04
+
+### Fixed
+- resolve trinket slot to item ID for icons, tooltips, and cooldowns
+- read bar grid layout from Edit Mode API, support vertical orientation
+## v2.45.1 - 2026-03-04
+
+### Fixed
+- fixed cdm engine race condition that led to lua errors
+- fixed issues with action bars and fixed their growth direction for multirow setups
 ## v2.45.0 - 2026-03-03
 
 ### Added

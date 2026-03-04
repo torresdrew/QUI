@@ -1292,7 +1292,8 @@ local function UpdateButtonVisibility()
     -- expansion garrison content (WoD-Shadowlands). For Midnight, the landing
     -- page uses a different system. Respect Blizzard's visibility — only
     -- reposition the button if Blizzard has initialized it (self.title ~= nil),
-    -- and allow the user setting to hide it.
+    -- and allow the user setting to hide it. Must call UpdateIcon() after
+    -- showing to force Blizzard to refresh the icon to the current expansion.
     if ExpansionLandingPageMinimapButton then
         if settings.showMissions and ExpansionLandingPageMinimapButton.title then
             ExpansionLandingPageMinimapButton:SetParent(Minimap)
