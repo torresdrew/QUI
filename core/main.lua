@@ -2458,7 +2458,11 @@ local defaults = {
             -- Auras (compact)
             auras = {
                 showDebuffs = true, maxDebuffs = 3, debuffIconSize = 16,
+                debuffAnchor = "BOTTOMRIGHT", debuffGrowDirection = "LEFT",
+                debuffSpacing = 2, debuffOffsetX = -2, debuffOffsetY = -18,
                 showBuffs = false, maxBuffs = 0, buffIconSize = 14,
+                buffAnchor = "TOPLEFT", buffGrowDirection = "RIGHT",
+                buffSpacing = 2, buffOffsetX = 2, buffOffsetY = 16,
                 showDurationColor = true,
                 showExpiringPulse = true,
             },

@@ -129,6 +129,23 @@ local function UnregisterIconTimer(icon)
 end
 
 ---------------------------------------------------------------------------
+-- SLOT OFFSET: Calculate icon position for configurable grow direction
+---------------------------------------------------------------------------
+local function CalculateSlotOffset(index, iconSize, spacing, direction)
+    local step = (index - 1) * (iconSize + spacing)
+    if direction == "RIGHT" then
+        return step, 0
+    elseif direction == "LEFT" then
+        return -step, 0
+    elseif direction == "UP" then
+        return 0, step
+    elseif direction == "DOWN" then
+        return 0, -step
+    end
+    return step, 0 -- fallback to RIGHT
+end
+
+---------------------------------------------------------------------------
 -- AURA ICON: Create/get icon for a frame
 ---------------------------------------------------------------------------
 local function GetFontPath()
@@ -405,14 +422,21 @@ local function UpdateFrameAuras(frame)
         end)
 
         -- Display up to maxDebuffs
+        local dAnchor = auraSettings.debuffAnchor or "BOTTOMRIGHT"
+        local dGrow = auraSettings.debuffGrowDirection or "LEFT"
+        local dSpacing = auraSettings.debuffSpacing or 2
+        local dOffX = auraSettings.debuffOffsetX or -2
+        local dOffY = auraSettings.debuffOffsetY or -18
         for i = 1, maxDebuffs do
             local entry = sortedAuras[i]
             if not frame.debuffIcons[i] then
                 frame.debuffIcons[i] = CreateAuraIcon(frame, iconSize)
-                -- Position: right side of frame, growing left
-                local xOffset = -(iconSize + 2) * (i - 1) - 2
-                frame.debuffIcons[i]:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", xOffset, -iconSize - 2)
             end
+            -- Reposition every update (settings may change)
+            local offX, offY = CalculateSlotOffset(i, iconSize, dSpacing, dGrow)
+            frame.debuffIcons[i]:ClearAllPoints()
+            frame.debuffIcons[i]:SetPoint(dAnchor, frame, dAnchor, dOffX + offX, dOffY + offY)
+            frame.debuffIcons[i]:SetSize(iconSize, iconSize)
             if entry then
                 UpdateAuraIcon(frame.debuffIcons[i], entry.auraData, unit)
             else
@@ -475,13 +499,21 @@ local function UpdateFrameAuras(frame)
             end
         end
 
+        local bAnchor = auraSettings.buffAnchor or "TOPLEFT"
+        local bGrow = auraSettings.buffGrowDirection or "RIGHT"
+        local bSpacing = auraSettings.buffSpacing or 2
+        local bOffX = auraSettings.buffOffsetX or 2
+        local bOffY = auraSettings.buffOffsetY or 16
         for i = 1, maxBuffs do
             local entry = sortedAuras[i]
             if not frame.buffIcons[i] then
                 frame.buffIcons[i] = CreateAuraIcon(frame, iconSize)
-                local xOffset = (iconSize + 2) * (i - 1) + 2
-                frame.buffIcons[i]:SetPoint("TOPLEFT", frame, "TOPLEFT", xOffset, iconSize + 2)
             end
+            -- Reposition every update (settings may change)
+            local offX, offY = CalculateSlotOffset(i, iconSize, bSpacing, bGrow)
+            frame.buffIcons[i]:ClearAllPoints()
+            frame.buffIcons[i]:SetPoint(bAnchor, frame, bAnchor, bOffX + offX, bOffY + offY)
+            frame.buffIcons[i]:SetSize(iconSize, iconSize)
             if entry then
                 UpdateAuraIcon(frame.buffIcons[i], entry.auraData, unit)
             else

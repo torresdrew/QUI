@@ -1705,6 +1705,7 @@ local RES_SPELLS = {
 local playerClass = nil
 local rangeSpell = nil   -- Resolved friendly spell ID for living targets
 local resSpell = nil     -- Resolved rez spell ID for dead targets
+local rangeCache = {}    -- unit → boolean (change detection, avoids redundant SetAlpha)
 
 local function ResolveRangeSpells()
     if not playerClass then
@@ -1810,8 +1811,6 @@ local function CheckUnitRange(unit)
     -- No method available — assume in range (better than fading entire raid)
     return true
 end
-
-local rangeCache = {}  -- unit → boolean (change detection, avoids redundant SetAlpha)
 
 local function DoRangeCheck()
     local rangeSettings = GetRangeSettings()

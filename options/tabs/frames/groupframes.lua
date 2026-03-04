@@ -865,6 +865,36 @@ local function CreateGroupFramesPage(parent)
         debuffSize:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
 
+        -- Debuff position
+        local debuffPosHeader = GUI:CreateSectionHeader(tabContent, "Debuff Position")
+        debuffPosHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - debuffPosHeader.gap
+
+        local debuffAnchorDrop = GUI:CreateDropdown(tabContent, "Anchor Point", NINE_POINT_ANCHOR_OPTIONS, "debuffAnchor", auras, RefreshGF)
+        debuffAnchorDrop:SetPoint("TOPLEFT", PAD, y)
+        debuffAnchorDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
+
+        local debuffGrowDrop = GUI:CreateDropdown(tabContent, "Grow Direction", AURA_GROW_OPTIONS, "debuffGrowDirection", auras, RefreshGF)
+        debuffGrowDrop:SetPoint("TOPLEFT", PAD, y)
+        debuffGrowDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
+
+        local debuffSpacing = GUI:CreateFormSlider(tabContent, "Spacing", 0, 10, 1, "debuffSpacing", auras, RefreshGF)
+        debuffSpacing:SetPoint("TOPLEFT", PAD, y)
+        debuffSpacing:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local debuffOffX = GUI:CreateFormSlider(tabContent, "Offset X", -50, 50, 1, "debuffOffsetX", auras, RefreshGF)
+        debuffOffX:SetPoint("TOPLEFT", PAD, y)
+        debuffOffX:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local debuffOffY = GUI:CreateFormSlider(tabContent, "Offset Y", -50, 50, 1, "debuffOffsetY", auras, RefreshGF)
+        debuffOffY:SetPoint("TOPLEFT", PAD, y)
+        debuffOffY:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
         -- Buffs
         local buffHeader = GUI:CreateSectionHeader(tabContent, "Buffs")
         buffHeader:SetPoint("TOPLEFT", PAD, y)
@@ -883,6 +913,36 @@ local function CreateGroupFramesPage(parent)
         local buffSize = GUI:CreateFormSlider(tabContent, "Buff Icon Size", 8, 32, 1, "buffIconSize", auras, RefreshGF)
         buffSize:SetPoint("TOPLEFT", PAD, y)
         buffSize:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        -- Buff position
+        local buffPosHeader = GUI:CreateSectionHeader(tabContent, "Buff Position")
+        buffPosHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - buffPosHeader.gap
+
+        local buffAnchorDrop = GUI:CreateDropdown(tabContent, "Anchor Point", NINE_POINT_ANCHOR_OPTIONS, "buffAnchor", auras, RefreshGF)
+        buffAnchorDrop:SetPoint("TOPLEFT", PAD, y)
+        buffAnchorDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
+
+        local buffGrowDrop = GUI:CreateDropdown(tabContent, "Grow Direction", AURA_GROW_OPTIONS, "buffGrowDirection", auras, RefreshGF)
+        buffGrowDrop:SetPoint("TOPLEFT", PAD, y)
+        buffGrowDrop:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
+
+        local buffSpacingSlider = GUI:CreateFormSlider(tabContent, "Spacing", 0, 10, 1, "buffSpacing", auras, RefreshGF)
+        buffSpacingSlider:SetPoint("TOPLEFT", PAD, y)
+        buffSpacingSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local buffOffX = GUI:CreateFormSlider(tabContent, "Offset X", -50, 50, 1, "buffOffsetX", auras, RefreshGF)
+        buffOffX:SetPoint("TOPLEFT", PAD, y)
+        buffOffX:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local buffOffY = GUI:CreateFormSlider(tabContent, "Offset Y", -50, 50, 1, "buffOffsetY", auras, RefreshGF)
+        buffOffY:SetPoint("TOPLEFT", PAD, y)
+        buffOffY:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
 
         -- Visual settings
@@ -1540,6 +1600,13 @@ local function CreateGroupFramesPage(parent)
     ---------------------------------------------------------------------------
     -- SUB-TAB: Private Auras (Boss Debuffs)
     ---------------------------------------------------------------------------
+    local AURA_GROW_OPTIONS = {
+        { value = "RIGHT", text = "Right" },
+        { value = "LEFT", text = "Left" },
+        { value = "UP", text = "Up" },
+        { value = "DOWN", text = "Down" },
+    }
+
     local PRIVATE_AURA_GROW_OPTIONS = {
         { value = "RIGHT", text = "Right" },
         { value = "LEFT", text = "Left" },
