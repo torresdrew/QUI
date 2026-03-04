@@ -2090,16 +2090,63 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
             key, parentName, tostring(parentExists), tostring(parentIsSystem), tostring(parentShown), tostring(isBlizzEditModeSystem)))
     end
 
-    -- Skip repositioning when the parent is a hidden Blizzard Edit Mode system
-    -- frame (e.g. StanceBar anchored to PetActionBar when there is no pet).
-    -- Anchoring a secure frame to a hidden secure frame via SetPoint from addon
-    -- code taints the anchor chain; when Edit Mode reads it in the secure context
-    -- the taint propagates and causes "secret number tainted by QUI" errors.
-    -- Leave the frame at Blizzard's default position instead.
+    -- Hidden Blizzard Edit Mode system parent (e.g. StanceBar anchored to
+    -- PetActionBar when there is no pet).  We can't anchor directly to the
+    -- hidden frame because (a) its QUI position was also skipped (line 2039)
+    -- so it sits at Blizzard's default, and (b) addon SetPoint to a hidden
+    -- secure frame taints the anchor chain.
+    -- Instead, walk the anchor chain: find the hidden parent's own anchor
+    -- target and position relative to that, combining CENTER offsets so the
+    -- child frame ends up where it would be if the hidden parent were visible.
     if parentFrame and parentFrame ~= UIParent then
         local parentIsBlizzSystem = parentFrame.system ~= nil or parentFrame.systemIndex ~= nil
         if parentIsBlizzSystem and parentFrame.IsShown and not parentFrame:IsShown() then
-            if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): SKIP hidden system parent=%s", key, settings.parent or "nil")) end
+            local anchoringDB = QUICore and QUICore.db and QUICore.db.profile
+                and QUICore.db.profile.frameAnchoring
+            local parentKey = settings.parent
+            local parentSettings = anchoringDB and anchoringDB[parentKey]
+            if parentSettings and parentSettings.enabled and parentSettings.parent then
+                local gpFrame = ResolveParentFrame(parentSettings.parent)
+                if gpFrame then
+                    -- Compute combined CENTER offsets:
+                    -- child → hiddenParent + hiddenParent → grandparent
+                    local childPt  = settings.point or "CENTER"
+                    local childRel = settings.relative or "CENTER"
+                    local childOX  = settings.offsetX or 0
+                    local childOY  = settings.offsetY or 0
+                    local childCX, childCY = ComputeCenterOffsetsForAnchor(
+                        resolved, key, parentFrame, childPt, childRel, childOX, childOY, parentKey
+                    )
+                    local pPt  = parentSettings.point or "CENTER"
+                    local pRel = parentSettings.relative or "CENTER"
+                    local pOX  = parentSettings.offsetX or 0
+                    local pOY  = parentSettings.offsetY or 0
+                    local parentCX, parentCY = ComputeCenterOffsetsForAnchor(
+                        parentFrame, parentKey, gpFrame, pPt, pRel, pOX, pOY, parentSettings.parent
+                    )
+                    local totalCX = childCX + parentCX
+                    local totalCY = childCY + parentCY
+
+                    if not FrameAlreadyAtPosition(resolved, "CENTER", gpFrame, "CENTER", totalCX, totalCY) then
+                        _editModeReapplyGuard = true
+                        pcall(function()
+                            resolved:ClearAllPoints()
+                            resolved:SetPoint("CENTER", gpFrame, "CENTER", totalCX, totalCY)
+                        end)
+                        _editModeReapplyGuard = false
+                    end
+                    if isBlizzEditModeSystem then
+                        TrackSecureFramePosition(resolved, gpFrame, "CENTER", "CENTER", totalCX, totalCY)
+                    end
+                    if editDbg then
+                        AnchorDebug(format("ApplyFrameAnchor(%s): hidden parent=%s → chain to %s cx=%.1f cy=%.1f",
+                            key, parentKey, parentSettings.parent, totalCX, totalCY))
+                    end
+                    return
+                end
+            end
+            -- Chain walk not possible — skip as before
+            if editDbg then AnchorDebug(format("ApplyFrameAnchor(%s): SKIP hidden system parent=%s (no chain)", key, settings.parent or "nil")) end
             return
         end
     end
