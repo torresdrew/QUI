@@ -213,7 +213,7 @@ local function UpdateAuraIcon(icon, auraData, unit)
     state.applications = auraData.applications
 
     -- Icon texture
-    if auraData.icon and icon.icon then
+    if not IsSecretValue(auraData.icon) and auraData.icon and icon.icon then
         icon.icon:SetTexture(auraData.icon)  -- C-side, handles secret values
     end
 
@@ -225,34 +225,31 @@ local function UpdateAuraIcon(icon, auraData, unit)
         icon.stackText:SetText("")
     end
 
-    -- Cooldown swipe (use C-side method which handles secret values)
+    -- Cooldown swipe (use C-side methods which handle secret values natively)
     if icon.cooldown then
         local dur = auraData.duration
         local expTime = auraData.expirationTime
-        if dur and expTime then
-            -- Try SetCooldownFromDurationObject first (WoW 12.0+)
+        local auraID = auraData.auraInstanceID
+        local hasValues = not IsSecretValue(dur) and dur and not IsSecretValue(expTime) and expTime
+        local hasSecretValues = not hasValues and (IsSecretValue(dur) or IsSecretValue(expTime))
+
+        if hasValues or hasSecretValues then
             -- Path 1: DurationObject (WoW 12.0+, fully secret-safe)
-            if icon.cooldown.SetCooldownFromDurationObject and auraData.auraInstanceID and C_UnitAuras and C_UnitAuras.GetAuraDuration then
-                local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraData.auraInstanceID)
+            if icon.cooldown.SetCooldownFromDurationObject and not IsSecretValue(auraID) and auraID and C_UnitAuras and C_UnitAuras.GetAuraDuration then
+                local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraID)
                 if ok and durationObj then
                     pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durationObj, true)
                 elseif icon.cooldown.SetCooldownFromExpirationTime then
-                    -- Path 2: SetCooldownFromExpirationTime (C-side, secret-safe)
                     pcall(icon.cooldown.SetCooldownFromExpirationTime, icon.cooldown, expTime, dur)
-                else
-                    -- Path 3: Legacy fallback (Lua arithmetic, only safe out of combat)
-                    pcall(function()
-                        icon.cooldown:SetCooldown(expTime - dur, dur)
-                    end)
+                elseif hasValues then
+                    pcall(function() icon.cooldown:SetCooldown(expTime - dur, dur) end)
                 end
             elseif icon.cooldown.SetCooldownFromExpirationTime then
                 -- Path 2: SetCooldownFromExpirationTime (C-side, secret-safe)
                 pcall(icon.cooldown.SetCooldownFromExpirationTime, icon.cooldown, expTime, dur)
-            else
-                -- Path 3: Legacy fallback (Lua arithmetic, only safe out of combat)
-                pcall(function()
-                    icon.cooldown:SetCooldown(expTime - dur, dur)
-                end)
+            elseif hasValues then
+                -- Path 3: Legacy fallback (Lua arithmetic, only safe with non-secret values)
+                pcall(function() icon.cooldown:SetCooldown(expTime - dur, dur) end)
             end
         else
             icon.cooldown:Clear()
@@ -290,7 +287,7 @@ local function UpdateAuraIcon(icon, auraData, unit)
     end
 
     -- Dispellable debuff border color
-    if auraData.dispelName then
+    if not IsSecretValue(auraData.dispelName) and auraData.dispelName then
         local dispelType = SafeValue(auraData.dispelName, nil)
         local DISPEL_COLORS = {
             Magic   = { 0.2, 0.6, 1.0, 1 },
@@ -321,8 +318,8 @@ local PRIORITY_NORMAL = 1
 
 local function GetAuraPriority(auraData)
     if not auraData then return 0 end
-    local isDispellable = auraData.dispelName and SafeValue(auraData.dispelName, nil)
-    local isBoss = auraData.isBossAura and not IsSecretValue(auraData.isBossAura)
+    local isDispellable = SafeValue(auraData.dispelName, nil)
+    local isBoss = SafeValue(auraData.isBossAura, false)
 
     if isDispellable then return PRIORITY_DISPELLABLE end
     if isBoss then return PRIORITY_BOSS end
@@ -387,7 +384,7 @@ local function UpdateFrameAuras(frame)
             while true do
                 local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
                 if not ok or not auraData then break end
-                if auraData.isHarmful then
+                if SafeValue(auraData.isHarmful, false) then
                     local entry = AcquireAuraTable()
                     entry.auraData = auraData
                     entry.priority = GetAuraPriority(auraData)
@@ -463,7 +460,7 @@ local function UpdateFrameAuras(frame)
             while true do
                 local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
                 if not ok or not auraData then break end
-                if auraData.isHelpful then
+                if SafeValue(auraData.isHelpful, false) then
                     local entry = AcquireAuraTable()
                     entry.auraData = auraData
                     entry.priority = 1
