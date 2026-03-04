@@ -1175,6 +1175,14 @@ local function SkinButton(button, settings)
         cooldown:SetAllPoints(button)
     end
 
+    -- If the button is currently hidden (bar faded out or empty slot),
+    -- keep newly-created textures hidden to match the fade state.
+    if state.fadeHidden then
+        if state.backdrop then state.backdrop:Hide() end
+        if state.normal then state.normal:Hide() end
+        if state.gloss then state.gloss:Hide() end
+    end
+
     ActionBars.skinnedButtons[button] = true
 end
 
@@ -1363,6 +1371,44 @@ local function UpdateButtonText(button, settings)
 end
 
 ---------------------------------------------------------------------------
+-- FADE-HIDE HELPERS
+-- QUI-owned textures (backdrop, border, gloss, tintOverlay) may not
+-- respect parent alpha inheritance — especially MOD-blend textures.
+-- We must explicitly Hide()/Show() them when the button should be
+-- invisible (bar faded to alpha 0, or hidden empty slot).
+---------------------------------------------------------------------------
+
+-- Hide QUI textures on a button, saving which were visible for later restore.
+local function FadeHideTextures(state)
+    if state.fadeHidden then return end
+    state.fadeHidden = true
+    if state.tintOverlay and state.tintOverlay:IsShown() then
+        state.tintOverlay:Hide(); state._fhTint = true
+    end
+    if state.backdrop and state.backdrop:IsShown() then
+        state.backdrop:Hide(); state._fhBg = true
+    end
+    if state.normal and state.normal:IsShown() then
+        state.normal:Hide(); state._fhNorm = true
+    end
+    if state.gloss and state.gloss:IsShown() then
+        state.gloss:Hide(); state._fhGloss = true
+    end
+end
+
+-- Restore QUI textures that were hidden by FadeHideTextures.
+local function FadeShowTextures(state)
+    if not state.fadeHidden then return end
+    state.fadeHidden = nil
+    if state._fhTint and state.tintOverlay then state.tintOverlay:Show() end
+    if state._fhBg and state.backdrop then state.backdrop:Show() end
+    if state._fhNorm and state.normal then state.normal:Show() end
+    if state._fhGloss and state.gloss then state.gloss:Show() end
+    state._fhTint = nil; state._fhBg = nil
+    state._fhNorm = nil; state._fhGloss = nil
+end
+
+---------------------------------------------------------------------------
 -- BAR LAYOUT FEATURES
 ---------------------------------------------------------------------------
 
@@ -1396,6 +1442,7 @@ local function UpdateEmptySlotVisibility(button, settings)
         if state.hiddenEmpty then
             button:SetAlpha(targetAlpha)
             state.hiddenEmpty = nil
+            FadeShowTextures(state)
         end
         return
     end
@@ -1406,7 +1453,10 @@ local function UpdateEmptySlotVisibility(button, settings)
         local hasAction = SafeHasAction(action)
         if hasAction then
             button:SetAlpha(targetAlpha)
-            state.hiddenEmpty = nil
+            if state.hiddenEmpty then
+                state.hiddenEmpty = nil
+                FadeShowTextures(state)
+            end
         else
             -- Show at preview alpha while dragging a placeable action
             if ActionBars.dragPreviewActive then
@@ -1414,7 +1464,10 @@ local function UpdateEmptySlotVisibility(button, settings)
             else
                 button:SetAlpha(0)
             end
-            state.hiddenEmpty = true
+            if not state.hiddenEmpty then
+                state.hiddenEmpty = true
+                FadeHideTextures(state)
+            end
         end
     end
 end
@@ -1519,6 +1572,13 @@ local function UpdateButtonUsability(button, settings)
 
     local state = GetFrameState(button)
 
+    -- Skip buttons that are effectively invisible (faded bar or hidden empty
+    -- slot).  MOD-blend textures ignore parent alpha inheritance and will
+    -- darken the scene behind them even when the button is at alpha 0.
+    if state.fadeHidden or state.hiddenEmpty then
+        return
+    end
+
     -- Reset state if both features disabled
     if not settings.rangeIndicator and not settings.usabilityIndicator then
         if state.tinted then
@@ -1591,10 +1651,15 @@ local function UpdateAllButtonUsability()
     -- Only check action bars 1-8 (not pet/stance/micro/bags)
     for i = 1, 8 do
         local barKey = "bar" .. i
-        local buttons = GetBarButtons(barKey)
-        for _, button in ipairs(buttons) do
-            if button:IsVisible() then
-                UpdateButtonUsability(button, globalSettings)
+        -- Skip bars that are fully faded out
+        local fadeState = ActionBars.fadeState and ActionBars.fadeState[barKey]
+        if not fadeState or fadeState.currentAlpha > 0 then
+            local buttons = GetBarButtons(barKey)
+            for _, button in ipairs(buttons) do
+                -- UpdateButtonUsability internally checks fadeHidden/hiddenEmpty
+                if button:IsVisible() then
+                    UpdateButtonUsability(button, globalSettings)
+                end
             end
         end
     end
@@ -1998,6 +2063,17 @@ local function SetBarAlpha(barKey, alpha)
             button:SetAlpha(ActionBars.dragPreviewActive and (DRAG_PREVIEW_ALPHA * alpha) or 0)
         else
             button:SetAlpha(alpha)
+        end
+
+        -- Explicitly hide/show QUI-owned textures when the button should be
+        -- invisible.  Child textures (especially MOD-blend tintOverlays) may
+        -- not respect parent alpha inheritance and keep rendering even when
+        -- the button is at alpha 0.
+        local hidden = alpha <= 0 or (hideEmptyEnabled and state.hiddenEmpty)
+        if hidden then
+            FadeHideTextures(state)
+        elseif state.fadeHidden then
+            FadeShowTextures(state)
         end
     end
 
