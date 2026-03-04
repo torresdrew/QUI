@@ -1828,15 +1828,25 @@ local function OnEvent(self, event, arg1, ...)
     if not db or not db.enabled then return end
 
     -- Unit-specific events — dispatch via lookup map
-    if arg1 and QUI_GF.unitFrameMap[arg1] then
-        local frame = QUI_GF.unitFrameMap[arg1]
+    local frame = arg1 and QUI_GF.unitFrameMap[arg1]
+
+    -- Self-healing: rebuild map on lookup miss (DandersFrames pattern)
+    -- Handles stale maps from combat zone transitions or delayed header updates
+    if arg1 and not frame and (arg1:match("^party%d") or arg1:match("^raid%d") or arg1 == "player") then
+        local now = GetTime()
+        if not QUI_GF.lastMapRebuild or (now - QUI_GF.lastMapRebuild) > 1.0 then
+            QUI_GF.lastMapRebuild = now
+            RebuildUnitFrameMap()
+            frame = QUI_GF.unitFrameMap[arg1]
+        end
+    end
+
+    if frame then
 
         if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
-            -- Throttle
-            local now = GetTime()
-            local last = healthThrottle[arg1] or 0
-            if (now - last) < THROTTLE_INTERVAL then return end
-            healthThrottle[arg1] = now
+            -- No throttle — UNIT_HEALTH is already coalesced by the WoW client.
+            -- Throttling drops the final update, leaving the bar stale (DandersFrames
+            -- pattern: process every UNIT_HEALTH without throttling).
             UpdateHealth(frame)
             UpdateAbsorbs(frame)
             UpdateHealPrediction(frame)

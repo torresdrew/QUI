@@ -143,6 +143,10 @@ local function CreateAuraIcon(parent, size)
     local icon = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     icon:SetSize(size, size)
 
+    -- Render above healthBar (+0), healPrediction (+1), absorb (+2)
+    local baseLevel = parent.healthBar and parent.healthBar:GetFrameLevel() or parent:GetFrameLevel()
+    icon:SetFrameLevel(baseLevel + 5)
+
     -- Icon texture
     local tex = icon:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints()
