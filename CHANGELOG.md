@@ -61,6 +61,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.46.0 - 2026-03-04
+
+### Added
+- added new collapsible side menu structure to help people find things (also use the search!)
+- added some minimap button drawer enhancements
+
+### Fixed
+- fixed search interface scrollbar styling
+- fix: simplify CDM cooldown mirroring and swipe classification
+- fix: remove LibDBIcon10_QUI from minimap drawer blacklist
+- fix: pcall SetLootRollItem to guard against third-party tooltip hook errors
+- fix: combat taint safety for scaling, tooltips, and tooltip skinning
+- fix: taint-safe font system, overlay-based button tints, and max-level detection
+- fix: apply tooltip visibility rules to CDM item tooltips via SetItemByID
+- feat: visible-only button spacing and anchor chain walk for hidden parents
 ## v2.45.2 - 2026-03-04
 
 ### Fixed

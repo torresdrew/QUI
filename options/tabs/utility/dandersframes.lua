@@ -104,8 +104,8 @@ local function BuildPartyRaidframesTab(tabContent)
     local y = -10
     local PAD = PADDING
 
-    -- Set search context for Unit Frames > Party/Raidframes sub-tab
-    GUI:SetSearchContext({tabIndex = 5, tabName = "Unit Frames", subTabIndex = 8, subTabName = "Party/Raidframes"})
+    -- Set search context to the active 3rd-party anchoring location
+    GUI:SetSearchContext({tabIndex = 3, tabName = "Anchoring & Layout", subTabIndex = 9, subTabName = "3rd Party Addons"})
 
     -- Check if QUI native group frames are active
     local core = GetCore()
