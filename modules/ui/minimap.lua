@@ -1872,7 +1872,6 @@ local DRAWER_BLACKLIST = {
     ["GarrisonLandingPageMinimapButton"] = true,
     ["ExpansionLandingPageMinimapButton"] = true,
     ["AddonCompartmentFrame"] = true,
-    ["LibDBIcon10_QUI"] = true,
     ["QUI_MinimapBackdrop"] = true,
     ["QUI_MinimapButtonDrawer"] = true,
     ["QUI_DrawerToggle"] = true,
