@@ -1859,29 +1859,38 @@ local function ApplyButtonSpacing(barKey)
     -- We must only layout the visible subset, otherwise the bar frame is sized
     -- for invisible buttons and the layout breaks.
     local buttons = allButtons
+    local editModeNumIcons = nil
     local EditModeSettings = Enum.EditModeActionBarSetting
     if barFrame.GetSettingValue and EditModeSettings then
         local okN, numIcons = pcall(barFrame.GetSettingValue, barFrame, EditModeSettings.NumIcons)
-        if okN and numIcons and numIcons > 0 and numIcons < #allButtons then
-            local visible = {}
-            for i = 1, numIcons do
-                visible[i] = allButtons[i]
+        if okN and numIcons and numIcons > 0 then
+            editModeNumIcons = numIcons
+            if numIcons < #allButtons then
+                local visible = {}
+                for i = 1, numIcons do
+                    visible[i] = allButtons[i]
+                end
+                buttons = visible
             end
-            buttons = visible
+            -- When numIcons == #allButtons, trust the API — use all buttons.
+            -- Do NOT fall through to the IsShown fallback, which would filter
+            -- out buttons that Blizzard hasn't re-shown yet (e.g. after the
+            -- user increases the button count in Edit Mode).
         end
     end
 
-    -- Fallback: filter to only shown buttons if Edit Mode API didn't reduce the count.
-    -- Stance/pet bars may have 10 slots but only a few actually shown (class-dependent).
+    -- Fallback: filter to only shown buttons when the Edit Mode API is NOT
+    -- available (should not happen for bars 1-8, but guards pet/stance bars
+    -- if they ever reach here).
     -- When ALL buttons are hidden (e.g. no pet summoned), skip the bar entirely.
-    if #buttons == #allButtons then
+    if not editModeNumIcons and #buttons == #allButtons then
         local shown = {}
         for _, btn in ipairs(allButtons) do
             if btn:IsShown() then
                 shown[#shown + 1] = btn
             end
         end
-        if #shown < #buttons then
+        if #shown > 0 and #shown < #buttons then
             buttons = shown
         end
     end
@@ -3012,9 +3021,10 @@ do
     local core = GetCore()
     if core and core.RegisterEditModeEnter then
         core:RegisterEditModeEnter(function()
-            -- Re-apply our spacing so the layout looks correct during Edit Mode too.
-            -- Blizzard's LayoutFrame will recalculate on exit; we re-apply again then.
-            ApplyAllBarSpacing()
+            -- Restore Blizzard's default layout so Edit Mode can properly manage
+            -- button counts and bar sizing.  QUI's spacing override will be
+            -- re-applied when Edit Mode exits.
+            RestoreButtonsToContainers()
 
             -- Force all bars to full opacity and cancel pending fades
             for barKey, state in pairs(ActionBars.fadeState) do
