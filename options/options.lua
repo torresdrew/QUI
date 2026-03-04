@@ -95,7 +95,7 @@ function GUI:InitializeOptions()
     local actionBarsTab = GUI:AddTab(frame, "Action Bars", ns.QUI_ActionBarsOptions.CreateActionBarsPage)
     local minimapTab = GUI:AddTab(frame, "Minimap & Datatext", ns.QUI_MinimapPageOptions.CreateMinimapPage)
     local skinningTab = GUI:AddTab(frame, "Skinning & Autohide", ns.QUI_AutohidesOptions.CreateAutohidesPage)
-    local customTrackersTab = GUI:AddTab(frame, "Custom Trackers", ns.QUI_CustomTrackersOptions.CreateCustomTrackersPage) main
+    local customTrackersTab = GUI:AddTab(frame, "Custom Trackers", ns.QUI_CustomTrackersOptions.CreateCustomTrackersPage)
     GUI:AddTab(frame, "Frame Levels", ns.QUI_HUDLayeringOptions.CreateHUDLayeringPage)
     GUI:AddTab(frame, "Profiles", ns.QUI_ProfilesOptions.CreateSpecProfilesPage)
     local importExportTab = GUI:AddTab(frame, "Import & Export Strings", ns.QUI_ImportOptions.CreateImportExportPage)
