@@ -1711,6 +1711,9 @@ local function ResolveRangeSpells()
         playerClass = select(2, UnitClass("player"))
     end
 
+    -- Clear cache — spells changed, previous results may be stale
+    wipe(rangeCache)
+
     -- Resolve primary range spell
     rangeSpell = nil
     local candidates = RANGE_SPELLS[playerClass]
@@ -1731,66 +1734,106 @@ local function ResolveRangeSpells()
     end
 end
 
+local function CheckUnitRange(unit)
+    -- Self is always in range (DandersFrames pattern)
+    if UnitIsUnit(unit, "player") then
+        return true
+    end
+
+    if not UnitExists(unit) then
+        return true
+    end
+
+    -- Connectivity check (secret-value safe)
+    local connected = UnitIsConnected(unit)
+    if IsSecretValue(connected) then connected = true end
+    if not connected then
+        local isNPC = IsNPCPartyMember(unit)
+        if IsSecretValue(isNPC) then isNPC = false end
+        if not isNPC then return true end -- disconnected non-NPC, skip range
+    end
+
+    -- Dead check (secret-value safe)
+    local isDead = UnitIsDeadOrGhost(unit)
+    if IsSecretValue(isDead) then isDead = false end
+
+    -- Track whether spell returned nil (for NIL-ON-ALIVE rule)
+    local spellReturnedNil = false
+
+    -- Primary: friendly spell range check
+    if rangeSpell and not isDead then
+        local result = C_Spell.IsSpellInRange(rangeSpell, unit)
+        if IsSecretValue(result) then
+            spellReturnedNil = true
+        elseif result ~= nil then
+            return result  -- explicit true/false — trust it
+        else
+            spellReturnedNil = true
+        end
+    end
+
+    -- Dead target: rez spell range check
+    if isDead and resSpell then
+        local result = C_Spell.IsSpellInRange(resSpell, unit)
+        if IsSecretValue(result) then
+            -- fall through
+        elseif result ~= nil then
+            return result
+        end
+    end
+
+    -- Out of combat: interact distance (~28 yards)
+    if not InCombatLockdown() then
+        return CheckInteractDistance(unit, 4)
+    end
+
+    -- NIL-ON-ALIVE (DandersFrames pattern): friendly spell returned nil on an
+    -- alive, connected target during combat. IsSpellInRange returns nil (not
+    -- false) for extremely distant targets outside position-awareness range.
+    -- Old fallback chain defaulted to "in range" — this fixes that.
+    if spellReturnedNil and connected and not isDead then
+        return false
+    end
+
+    -- In-combat last resort: UnitInRange (Warrior/DH/Hunter)
+    -- Returns two values; both may be secret in Midnight+
+    if UnitInRange then
+        local inRange, checked = UnitInRange(unit)
+        if IsSecretValue(inRange) or IsSecretValue(checked) then
+            return true  -- secret — assume in range
+        end
+        if checked and not inRange then
+            return false
+        end
+    end
+
+    -- No method available — assume in range (better than fading entire raid)
+    return true
+end
+
+local rangeCache = {}  -- unit → boolean (change detection, avoids redundant SetAlpha)
+
 local function DoRangeCheck()
     local rangeSettings = GetRangeSettings()
     if not rangeSettings or rangeSettings.enabled == false then return end
 
     local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
-    local inCombat = InCombatLockdown()
 
     for unit, frame in pairs(QUI_GF.unitFrameMap) do
-        if frame and frame:IsShown() and UnitExists(unit) then
+        if frame and frame:IsShown() then
+            local inRange = CheckUnitRange(unit)
             local state = GetFrameState(frame)
-            local inRange = true -- default: assume in range
 
-            -- Check connectivity (secret-value safe)
-            local connected = UnitIsConnected(unit)
-            if IsSecretValue(connected) then
-                connected = true
+            -- Only update alpha when range state changes (cache hit = skip)
+            if rangeCache[unit] ~= inRange then
+                rangeCache[unit] = inRange
+                state.outOfRange = not inRange
+                frame:SetAlpha(inRange and 1 or outAlpha)
+            elseif state.outOfRange == nil then
+                -- First check for this frame — initialize
+                state.outOfRange = not inRange
+                frame:SetAlpha(inRange and 1 or outAlpha)
             end
-            if not connected then
-                local isNPC = IsNPCPartyMember(unit)
-                if IsSecretValue(isNPC) then isNPC = false end
-                connected = isNPC
-            end
-
-            if connected then
-                -- Check if dead (secret-value safe)
-                local isDead = UnitIsDeadOrGhost(unit)
-                if IsSecretValue(isDead) then isDead = false end
-
-                if isDead and resSpell then
-                    -- Dead target: use rez spell range
-                    local ok, result = pcall(C_Spell.IsSpellInRange, resSpell, unit)
-                    if ok and result == false then
-                        inRange = false
-                    end
-                elseif rangeSpell then
-                    -- Primary: spell-based range (returns clean booleans in combat)
-                    local ok, result = pcall(C_Spell.IsSpellInRange, rangeSpell, unit)
-                    if ok and result == false then
-                        inRange = false
-                    end
-                elseif not inCombat then
-                    -- Out-of-combat fallback for classes without friendly spells
-                    local ok, result = pcall(CheckInteractDistance, unit, 4) -- ~28yd
-                    if ok and result == false then
-                        inRange = false
-                    end
-                else
-                    -- In-combat last resort: UnitInRange with secret-value guard
-                    local ok, result = pcall(UnitInRange, unit)
-                    if ok and not IsSecretValue(result) then
-                        if result == false then
-                            inRange = false
-                        end
-                    end
-                    -- If secret or pcall failure, keep inRange = true
-                end
-            end
-
-            state.outOfRange = not inRange
-            frame:SetAlpha(inRange and 1 or outAlpha)
         end
     end
 end
@@ -1815,6 +1858,7 @@ local function StopRangeCheck()
         rangeCheckTicker:Cancel()
         rangeCheckTicker = nil
     end
+    wipe(rangeCache)
 end
 
 ---------------------------------------------------------------------------
@@ -1914,24 +1958,32 @@ local function OnEvent(self, event, arg1, ...)
             UpdateTargetHighlight(frame)
         end
 
-    elseif event == "READY_CHECK" or event == "READY_CHECK_CONFIRM" then
+    elseif event == "READY_CHECK" then
+        -- READY_CHECK fires with arg1=initiatorName (not a unit token),
+        -- so it falls through to this global handler. All frames enter "waiting".
+        -- READY_CHECK_CONFIRM is handled in the unit-specific dispatch above.
         for _, frame in pairs(QUI_GF.unitFrameMap) do
             UpdateReadyCheck(frame)
         end
 
     elseif event == "READY_CHECK_FINISHED" then
-        -- Final state update — show accepted/declined result before hiding
+        -- Do NOT call UpdateReadyCheck here — GetReadyCheckStatus returns nil
+        -- after READY_CHECK_FINISHED, which would hide icons immediately.
+        -- Icons already show the correct state from READY_CHECK_CONFIRM events.
+        -- Just schedule hiding after persist delay (DandersFrames pattern).
         for _, frame in pairs(QUI_GF.unitFrameMap) do
-            UpdateReadyCheck(frame)
-        end
-        -- Hide ready check icons after delay (DandersFrames: configurable persist)
-        C_Timer.After(6, function()
-            for _, frame in pairs(QUI_GF.unitFrameMap) do
+            -- Cancel any existing timer for this frame
+            if frame._readyCheckHideTimer then
+                frame._readyCheckHideTimer:Cancel()
+                frame._readyCheckHideTimer = nil
+            end
+            frame._readyCheckHideTimer = C_Timer.NewTimer(6, function()
                 if frame.readyCheckIcon then
                     frame.readyCheckIcon:Hide()
                 end
-            end
-        end)
+                frame._readyCheckHideTimer = nil
+            end)
+        end
 
     elseif event == "RAID_TARGET_UPDATE" then
         for _, frame in pairs(QUI_GF.unitFrameMap) do

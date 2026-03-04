@@ -134,6 +134,34 @@ if CompactUnitFrame_UpdateSelectionHighlight then
 end
 
 ---------------------------------------------------------------------------
+-- HOOK: Suppress Blizzard ready check icons on hidden frames
+---------------------------------------------------------------------------
+local function SuppressBlizzardReadyCheck(frame)
+    if not frame then return end
+    local db = GetDB()
+    if not db or not db.enabled then return end
+
+    local unit = frame.unit or frame.displayedUnit
+    if not unit then return end
+
+    local isParty = unit:match("^party") or unit == "player"
+    local isRaid = unit:match("^raid")
+
+    if isParty or isRaid then
+        if frame.readyCheckIcon then
+            frame.readyCheckIcon:SetAlpha(0)
+        end
+        if frame.readyCheckDecline then
+            frame.readyCheckDecline:SetAlpha(0)
+        end
+    end
+end
+
+if CompactUnitFrame_UpdateReadyCheck then
+    hooksecurefunc("CompactUnitFrame_UpdateReadyCheck", SuppressBlizzardReadyCheck)
+end
+
+---------------------------------------------------------------------------
 -- HIDE: Blizzard party frames
 ---------------------------------------------------------------------------
 local function HideBlizzardPartyFrames()
@@ -148,13 +176,16 @@ local function HideBlizzardPartyFrames()
         SafeHideFrame(CompactPartyFrame.borderFrame)
         SafeHideFrame(CompactPartyFrame.title)
 
-        -- Individual member frames: alpha=0, suppress highlights, strip events
+        -- Individual member frames: alpha=0, suppress highlights/readycheck, strip events
         for i = 1, 5 do
             local mf = _G["CompactPartyFrameMember" .. i]
             if mf then
                 SafeHideFrame(mf)
                 HideSelectionHighlights(mf)
                 StripUnitFrameEvents(mf)
+                -- Hide ready check elements on Blizzard frames
+                if mf.readyCheckIcon then pcall(function() mf.readyCheckIcon:SetAlpha(0) end) end
+                if mf.readyCheckDecline then pcall(function() mf.readyCheckDecline:SetAlpha(0) end) end
             end
         end
     end
