@@ -1116,10 +1116,21 @@ end
 -- BUTTON SKINNING
 ---------------------------------------------------------------------------
 
+-- DEBUG: Track bar1 border state (temporary — remove after diagnosing)
+local BORDER_DEBUG = true
+local function BorderDebug(msg, ...)
+    if not BORDER_DEBUG then return end
+    local text = string.format(msg, ...)
+    if DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage("|cff34D399[QUI Border Debug]|r " .. text)
+    end
+end
+
 -- Apply QUI skin to a single button
 local function SkinButton(button, settings)
     if not button or not settings or not settings.skinEnabled then return end
     local state = GetFrameState(button)
+    local btnName = button.GetName and button:GetName() or "?"
 
     -- Skip if already skinned with same settings
     local settingsKey = string.format("%d_%.2f_%s_%.2f_%s_%.2f_%s",
@@ -1131,8 +1142,18 @@ local function SkinButton(button, settings)
         settings.glossAlpha or 0.6,
         tostring(settings.showBorders)
     )
-    if state.skinKey == settingsKey then return end
+    if state.skinKey == settingsKey then
+        if btnName == "ActionButton1" then
+            BorderDebug("ActionButton1 SKIPPED (cache hit), key=%s", settingsKey)
+        end
+        return
+    end
     state.skinKey = settingsKey
+
+    if btnName == "ActionButton1" then
+        BorderDebug("ActionButton1 SKINNING — showBorders=%s, settingsKey=%s",
+            tostring(settings.showBorders), settingsKey)
+    end
 
     -- Strip Blizzard artwork first
     StripBlizzardArtwork(button)
@@ -1173,8 +1194,18 @@ local function SkinButton(button, settings)
         state.normal:ClearAllPoints()
         state.normal:SetAllPoints(button)
         state.normal:Show()
+        if btnName == "ActionButton1" then
+            BorderDebug("  border SHOWN (alpha=%.2f)", state.normal:GetAlpha())
+        end
     elseif state.normal then
         state.normal:Hide()
+        if btnName == "ActionButton1" then
+            BorderDebug("  border HIDDEN")
+        end
+    else
+        if btnName == "ActionButton1" then
+            BorderDebug("  border OFF (no texture, showBorders=%s)", tostring(settings.showBorders))
+        end
     end
 
     -- Create or update Gloss overlay (ADD blend shine)
@@ -1405,6 +1436,13 @@ end
 local function FadeHideTextures(state)
     if state.fadeHidden then return end
     state.fadeHidden = true
+    if BORDER_DEBUG and state.normal then
+        local parent = state.normal:GetParent()
+        local name = parent and parent.GetName and parent:GetName()
+        if name == "ActionButton1" then
+            BorderDebug("FadeHideTextures: ActionButton1 border fade-hidden")
+        end
+    end
     if state.tintOverlay and state.tintOverlay:IsShown() then
         state.tintOverlay:Hide(); state._fhTint = true
     end
@@ -2597,7 +2635,14 @@ local function SetupBarMouseover(barKey)
 
     -- Initialize to faded state if not moused over
     if not IsMouseOverBar(barKey) then
+        if barKey == "bar1" then
+            BorderDebug("SetupBarMouseover(bar1): fading to alpha=%.2f (not moused over)", fadeOutAlpha)
+        end
         SetBarAlpha(barKey, fadeOutAlpha)
+    else
+        if barKey == "bar1" then
+            BorderDebug("SetupBarMouseover(bar1): mouse IS over, staying visible")
+        end
     end
 end
 
@@ -2708,16 +2753,29 @@ end)
 -- Skin all buttons for a specific bar
 local function SkinBar(barKey)
     local db = GetDB()
-    if not db or not db.enabled then return end
+    if not db or not db.enabled then
+        if barKey == "bar1" then BorderDebug("SkinBar(bar1) ABORT: db=%s enabled=%s", tostring(db), tostring(db and db.enabled)) end
+        return
+    end
 
     local barSettings = GetBarSettings(barKey)
-    if not barSettings or not barSettings.enabled then return end
+    if not barSettings or not barSettings.enabled then
+        if barKey == "bar1" then BorderDebug("SkinBar(bar1) ABORT: barSettings=%s enabled=%s", tostring(barSettings), tostring(barSettings and barSettings.enabled)) end
+        return
+    end
 
     -- Use effective settings (global merged with per-bar overrides)
     local effectiveSettings = GetEffectiveSettings(barKey)
-    if not effectiveSettings then return end
+    if not effectiveSettings then
+        if barKey == "bar1" then BorderDebug("SkinBar(bar1) ABORT: no effectiveSettings") end
+        return
+    end
 
     local buttons = GetBarButtons(barKey)
+    if barKey == "bar1" then
+        BorderDebug("SkinBar(bar1): %d buttons, showBorders=%s, overrideEnabled=%s",
+            #buttons, tostring(effectiveSettings.showBorders), tostring(barSettings.overrideEnabled))
+    end
 
     for _, button in ipairs(buttons) do
         SkinButton(button, effectiveSettings)
@@ -2850,6 +2908,11 @@ function ActionBars:Initialize()
     end)
 
     -- Initial skin pass
+    BorderDebug("=== Initialize() starting ===")
+    BorderDebug("global.showBorders=%s, bar1.overrideEnabled=%s, bar1.showBorders=%s",
+        tostring(db.global and db.global.showBorders),
+        tostring(db.bars and db.bars.bar1 and db.bars.bar1.overrideEnabled),
+        tostring(db.bars and db.bars.bar1 and db.bars.bar1.showBorders))
     SkinAllBars()
 
     -- Apply bar layout settings (scale, lock, range indicator, empty slots)
@@ -2866,6 +2929,30 @@ function ActionBars:Initialize()
 
     -- Initialize extra button holders (Extra Action Button & Zone Ability)
     InitializeExtraButtons()
+
+    -- DEBUG: Delayed border verification
+    C_Timer.After(2, function()
+        local btn1 = _G["ActionButton1"]
+        if not btn1 then BorderDebug("=== 2s CHECK: ActionButton1 NOT FOUND ===") return end
+        local st = GetFrameState(btn1)
+        local normalTex = btn1:GetNormalTexture()
+        BorderDebug("=== 2s POST-INIT CHECK ===")
+        BorderDebug("  state.normal=%s shown=%s", tostring(st.normal ~= nil), tostring(st.normal and st.normal:IsShown()))
+        BorderDebug("  skinKey=%s stripped=%s fadeHidden=%s", tostring(st.skinKey), tostring(st.stripped), tostring(st.fadeHidden))
+        BorderDebug("  BlizzNormalTex alpha=%.2f visible=%s", normalTex and normalTex:GetAlpha() or -1, tostring(normalTex and normalTex:IsShown()))
+        BorderDebug("  button alpha=%.2f visible=%s", btn1:GetAlpha(), tostring(btn1:IsShown()))
+        BorderDebug("  effective showBorders=%s", tostring(GetEffectiveSettings("bar1") and GetEffectiveSettings("bar1").showBorders))
+    end)
+    C_Timer.After(5, function()
+        local btn1 = _G["ActionButton1"]
+        if not btn1 then return end
+        local st = GetFrameState(btn1)
+        local normalTex = btn1:GetNormalTexture()
+        BorderDebug("=== 5s POST-INIT CHECK ===")
+        BorderDebug("  state.normal=%s shown=%s", tostring(st.normal ~= nil), tostring(st.normal and st.normal:IsShown()))
+        BorderDebug("  BlizzNormalTex alpha=%.2f", normalTex and normalTex:GetAlpha() or -1)
+        BorderDebug("  fadeHidden=%s button alpha=%.2f", tostring(st.fadeHidden), btn1:GetAlpha())
+    end)
 
     -- Debounced button update system (prevents rapid-fire during combat)
     local pendingButtonUpdates = {}
