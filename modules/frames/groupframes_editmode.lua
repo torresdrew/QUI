@@ -915,21 +915,50 @@ function QUI_GFEM:SyncMoverToContent()
     -- anchored frames stay behind.  Re-parenting the non-secure test
     -- container is safe; secure headers are also re-parented (out-of-combat
     -- guard above ensures this is taint-safe).
+    --
+    -- Use BOTTOMLEFT with exact pixel offsets instead of CENTER-to-CENTER to
+    -- avoid sub-pixel drift from WoW's anchor chain rounding.
     if GF then
         for _, hKey in ipairs({"party", "raid"}) do
             local hdr = GF.headers[hKey]
             if hdr then
+                local hLeft = Helpers.SafeValue(hdr:GetLeft(), nil)
+                local hBottom = Helpers.SafeValue(hdr:GetBottom(), nil)
                 hdr:SetParent(groupMover)
                 hdr:ClearAllPoints()
-                hdr:SetPoint("CENTER", groupMover, "CENTER", 0, 0)
+                if hLeft and hBottom then
+                    local mLeft = groupMover:GetLeft()
+                    local mBottom = groupMover:GetBottom()
+                    if mLeft and mBottom then
+                        hdr:SetPoint("BOTTOMLEFT", groupMover, "BOTTOMLEFT",
+                            hLeft - mLeft, hBottom - mBottom)
+                    else
+                        hdr:SetPoint("CENTER", groupMover, "CENTER", 0, 0)
+                    end
+                else
+                    hdr:SetPoint("CENTER", groupMover, "CENTER", 0, 0)
+                end
             end
         end
     end
 
     if testContainer then
+        local tLeft = Helpers.SafeValue(testContainer:GetLeft(), nil)
+        local tBottom = Helpers.SafeValue(testContainer:GetBottom(), nil)
         testContainer:SetParent(groupMover)
         testContainer:ClearAllPoints()
-        testContainer:SetPoint("CENTER", groupMover, "CENTER", 0, 0)
+        if tLeft and tBottom then
+            local mLeft = groupMover:GetLeft()
+            local mBottom = groupMover:GetBottom()
+            if mLeft and mBottom then
+                testContainer:SetPoint("BOTTOMLEFT", groupMover, "BOTTOMLEFT",
+                    tLeft - mLeft, tBottom - mBottom)
+            else
+                testContainer:SetPoint("CENTER", groupMover, "CENTER", 0, 0)
+            end
+        else
+            testContainer:SetPoint("CENTER", groupMover, "CENTER", 0, 0)
+        end
     end
 end
 
