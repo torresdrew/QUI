@@ -964,21 +964,20 @@ local function UpdateDispelOverlay(frame)
         end
     end
 
-    -- Fallback: original slot-scanning (works out of combat, pre-12.0)
+    -- Fallback: check shared aura cache (avoids redundant slot-scanning)
     local dispelType = nil
-    local slot = 1
-    while true do
-        local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
-        if not ok or not auraData then break end
-        if auraData.isHarmful and auraData.dispelName then
-            local dType = SafeValue(auraData.dispelName, nil)
-            if dType and DISPEL_COLORS[dType] then
-                dispelType = dType
-                break
+    local GFA = ns.QUI_GroupFrameAuras
+    local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
+    if cache and cache.harmful then
+        for _, auraData in ipairs(cache.harmful) do
+            if auraData.isHarmful and auraData.dispelName then
+                local dType = SafeValue(auraData.dispelName, nil)
+                if dType and DISPEL_COLORS[dType] then
+                    dispelType = dType
+                    break
+                end
             end
         end
-        slot = slot + 1
-        if slot > 80 then break end
     end
 
     if dispelType then
@@ -1010,7 +1009,7 @@ local function UpdateDefensiveIndicator(frame)
         return
     end
 
-    -- Try WoW 12.0+ AuraUtil.AuraFilters first (C-side, secret-safe)
+    -- Try WoW 12.0+ AuraUtil.AuraFilters first (C-side, secret-safe, 1 result each)
     local foundAura = nil
     if C_UnitAuras and C_UnitAuras.GetUnitAuras then
         -- BIG_DEFENSIVE filter
@@ -1030,11 +1029,13 @@ local function UpdateDefensiveIndicator(frame)
                 foundAura = auras[1]
             end
         end
-        -- Fallback: scan helpful auras for known defensive spell IDs
+        -- Fallback: check shared aura cache for known defensive spell IDs
+        -- (cache populated by groupframes_auras.lua — avoids redundant bulk scan)
         if not foundAura then
-            local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL", 40)
-            if ok and auras then
-                for _, auraData in ipairs(auras) do
+            local GFA = ns.QUI_GroupFrameAuras
+            local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
+            if cache and cache.helpful then
+                for _, auraData in ipairs(cache.helpful) do
                     local spellID = SafeValue(auraData.spellId, nil)
                     if spellID and DEFENSIVE_SPELL_IDS[spellID] then
                         foundAura = auraData
@@ -2194,9 +2195,9 @@ local function OnEvent(self, event, arg1, ...)
             UpdateThreat(frame)
 
         elseif event == "UNIT_AURA" then
-            UpdateDispelOverlay(frame)
-            UpdateDefensiveIndicator(frame)
-            -- Aura icons handled by groupframes_auras.lua
+            -- All aura-driven updates (icons, dispel, defensive) are handled
+            -- by the shared throttled scan in groupframes_auras.lua.
+            -- This avoids redundant GetUnitAuras calls.
 
         elseif event == "UNIT_CONNECTION" or event == "UNIT_FLAGS" then
             UpdateConnection(frame)
@@ -2366,6 +2367,18 @@ local function UpdateSelectiveEvents()
     else
         eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
     end
+end
+
+---------------------------------------------------------------------------
+-- PUBLIC: Expose dispel/defensive updates for the shared aura scan in
+-- groupframes_auras.lua (avoids redundant GetUnitAuras calls)
+---------------------------------------------------------------------------
+function QUI_GF:UpdateDispelOverlay(frame)
+    UpdateDispelOverlay(frame)
+end
+
+function QUI_GF:UpdateDefensiveIndicator(frame)
+    UpdateDefensiveIndicator(frame)
 end
 
 ---------------------------------------------------------------------------

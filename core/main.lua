@@ -3508,6 +3508,7 @@ local defaults = {
             groupFrames = 4,
             groupPetFrames = 3,
         },
+        frameAnchoring = {},
     },
     -- Account-wide storage (shared across all characters)
     global = {
@@ -3788,6 +3789,17 @@ function QUICore:OnProfileChanged(event, db, profileKey)
         self.db.profile.configPanelAlpha = self._preservedPanelAlpha
     end
     
+    -- Invalidate options panel — cached widgets hold stale profile table references
+    if QUI.GUI and QUI.GUI.MainFrame then
+        QUI.GUI.MainFrame:Hide()
+        QUI.GUI.MainFrame:SetParent(nil)
+        QUI.GUI.MainFrame = nil
+        QUI.GUI._searchIndexBuilt = false
+        QUI.GUI._allTabsAdded = false
+        QUI.GUI.SettingsRegistry = {}
+        QUI.GUI.SettingsRegistryKeys = {}
+    end
+
     if self.RefreshAll then
         self:RefreshAll()
     end

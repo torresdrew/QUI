@@ -22,6 +22,51 @@ ns.QUI_GroupFrameAuras = QUI_GFA
 -- Weak-keyed state for aura icons (taint safety)
 local auraIconState = setmetatable({}, { __mode = "k" })
 
+-- Layout versioning: only reposition icons when settings change
+local layoutVersion = 0
+local frameLayoutVersions = setmetatable({}, { __mode = "k" })
+
+-- UNIT_AURA throttling: coalesce rapid events per unit
+local AURA_THROTTLE = 0.05 -- 50ms coalesce window
+local pendingAuraUnits = {} -- [unit] = true
+local auraThrottleRunning = false
+
+---------------------------------------------------------------------------
+-- SHARED AURA CACHE: Single scan feeds aura icons, dispel, and defensive
+---------------------------------------------------------------------------
+-- Populated once per throttle window, read by all consumers.
+-- Structure: unitAuraCache[unit] = { helpful = {auraData...}, harmful = {auraData...} }
+local unitAuraCache = {}
+
+local function ScanUnitAuras(unit)
+    local cache = unitAuraCache[unit]
+    if not cache then
+        cache = { helpful = {}, harmful = {} }
+        unitAuraCache[unit] = cache
+    else
+        wipe(cache.helpful)
+        wipe(cache.harmful)
+    end
+
+    if not C_UnitAuras or not C_UnitAuras.GetUnitAuras then return cache end
+
+    local ok, harmful = pcall(C_UnitAuras.GetUnitAuras, unit, "HARMFUL", 40)
+    if ok and harmful then
+        cache.harmful = harmful
+    end
+
+    local ok2, helpful = pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL", 40)
+    if ok2 and helpful then
+        cache.helpful = helpful
+    end
+
+    return cache
+end
+
+-- Expose cache for other modules (dispel overlay, defensive indicator)
+QUI_GFA.unitAuraCache = unitAuraCache
+QUI_GFA.ScanUnitAuras = ScanUnitAuras
+
 ---------------------------------------------------------------------------
 -- TABLE POOLING: Reusable aura data tables for GC reduction
 ---------------------------------------------------------------------------
@@ -368,15 +413,8 @@ local function UpdateAuraIcon(icon, auraData, unit)
     -- Dispellable debuff border color
     if not IsSecretValue(displayData.dispelName) and displayData.dispelName then
         local dispelType = SafeValue(displayData.dispelName, nil)
-        local DISPEL_COLORS = {
-            Magic   = { 0.2, 0.6, 1.0, 1 },
-            Curse   = { 0.6, 0.0, 1.0, 1 },
-            Disease = { 0.6, 0.4, 0.0, 1 },
-            Poison  = { 0.0, 0.6, 0.0, 1 },
-            Bleed   = { 0.8, 0.0, 0.0, 1 },
-        }
-        if dispelType and DISPEL_COLORS[dispelType] then
-            local c = DISPEL_COLORS[dispelType]
+        if dispelType and AURA_DISPEL_COLORS[dispelType] then
+            local c = AURA_DISPEL_COLORS[dispelType]
             icon:SetBackdropBorderColor(c[1], c[2], c[3], c[4])
         else
             icon:SetBackdropBorderColor(0.8, 0, 0, 1) -- Default debuff red
@@ -394,6 +432,20 @@ end
 local PRIORITY_DISPELLABLE = 3
 local PRIORITY_BOSS = 2
 local PRIORITY_NORMAL = 1
+
+-- Dispel border colors (file-level to avoid per-call allocation)
+local AURA_DISPEL_COLORS = {
+    Magic   = { 0.2, 0.6, 1.0, 1 },
+    Curse   = { 0.6, 0.0, 1.0, 1 },
+    Disease = { 0.6, 0.4, 0.0, 1 },
+    Poison  = { 0.0, 0.6, 0.0, 1 },
+    Bleed   = { 0.8, 0.0, 0.0, 1 },
+}
+
+-- Reusable sort comparator (avoids closure allocation per sort call)
+local function AuraPrioritySort(a, b)
+    return a.priority > b.priority
+end
 
 local function GetAuraPriority(auraData)
     if not auraData then return 0 end
@@ -416,6 +468,9 @@ local function UpdateFrameAuras(frame)
     local db = GetDB()
     if not db or not db.auras then return end
     local auraSettings = db.auras
+
+    -- Layout versioning: only reposition icons when settings have changed
+    local needsLayout = (frameLayoutVersions[frame] or 0) ~= layoutVersion
 
     local unit = frame.unit
     if not UnitExists(unit) then
@@ -445,39 +500,20 @@ local function UpdateFrameAuras(frame)
             frame.debuffIcons = {}
         end
 
-        -- Collect harmful auras using C-side filtering (secret-safe)
+        -- Collect harmful auras from shared cache (already scanned)
         wipe(sortedAuras)
-        if C_UnitAuras.GetUnitAuras then
-            local ok, harmfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, "HARMFUL", 80)
-            if ok and harmfulAuras then
-                for _, auraData in ipairs(harmfulAuras) do
-                    local entry = AcquireAuraTable()
-                    entry.auraData = auraData
-                    entry.priority = GetAuraPriority(auraData)
-                    table.insert(sortedAuras, entry)
-                end
-            end
-        else
-            -- Pre-12.0 fallback: slot iteration
-            local slot = 1
-            while true do
-                local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
-                if not ok or not auraData then break end
-                if SafeValue(auraData.isHarmful, false) then
-                    local entry = AcquireAuraTable()
-                    entry.auraData = auraData
-                    entry.priority = GetAuraPriority(auraData)
-                    table.insert(sortedAuras, entry)
-                end
-                slot = slot + 1
-                if slot > 80 then break end
+        local cache = unitAuraCache[unit]
+        if cache and cache.harmful then
+            for _, auraData in ipairs(cache.harmful) do
+                local entry = AcquireAuraTable()
+                entry.auraData = auraData
+                entry.priority = GetAuraPriority(auraData)
+                table.insert(sortedAuras, entry)
             end
         end
 
         -- Sort by priority (higher first)
-        table.sort(sortedAuras, function(a, b)
-            return a.priority > b.priority
-        end)
+        table.sort(sortedAuras, AuraPrioritySort)
 
         -- Display up to maxDebuffs
         local dAnchor = auraSettings.debuffAnchor or "BOTTOMRIGHT"
@@ -489,12 +525,15 @@ local function UpdateFrameAuras(frame)
             local entry = sortedAuras[i]
             if not frame.debuffIcons[i] then
                 frame.debuffIcons[i] = CreateAuraIcon(frame, iconSize)
+                needsLayout = true -- New icon always needs positioning
             end
-            -- Reposition every update (settings may change)
-            local offX, offY = CalculateSlotOffset(i, iconSize, dSpacing, dGrow)
-            frame.debuffIcons[i]:ClearAllPoints()
-            frame.debuffIcons[i]:SetPoint(dAnchor, frame, dAnchor, dOffX + offX, dOffY + offY)
-            frame.debuffIcons[i]:SetSize(iconSize, iconSize)
+            -- Only reposition when layout settings changed (version mismatch)
+            if needsLayout then
+                local offX, offY = CalculateSlotOffset(i, iconSize, dSpacing, dGrow)
+                frame.debuffIcons[i]:ClearAllPoints()
+                frame.debuffIcons[i]:SetPoint(dAnchor, frame, dAnchor, dOffX + offX, dOffY + offY)
+                frame.debuffIcons[i]:SetSize(iconSize, iconSize)
+            end
             if entry then
                 UpdateAuraIcon(frame.debuffIcons[i], entry.auraData, unit)
             else
@@ -530,30 +569,13 @@ local function UpdateFrameAuras(frame)
         end
 
         wipe(sortedAuras)
-        if C_UnitAuras.GetUnitAuras then
-            local ok, helpfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL", 80)
-            if ok and helpfulAuras then
-                for _, auraData in ipairs(helpfulAuras) do
-                    local entry = AcquireAuraTable()
-                    entry.auraData = auraData
-                    entry.priority = 1
-                    table.insert(sortedAuras, entry)
-                end
-            end
-        else
-            -- Pre-12.0 fallback: slot iteration
-            local slot = 1
-            while true do
-                local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
-                if not ok or not auraData then break end
-                if SafeValue(auraData.isHelpful, false) then
-                    local entry = AcquireAuraTable()
-                    entry.auraData = auraData
-                    entry.priority = 1
-                    table.insert(sortedAuras, entry)
-                end
-                slot = slot + 1
-                if slot > 80 then break end
+        local cache = unitAuraCache[unit]
+        if cache and cache.helpful then
+            for _, auraData in ipairs(cache.helpful) do
+                local entry = AcquireAuraTable()
+                entry.auraData = auraData
+                entry.priority = 1
+                table.insert(sortedAuras, entry)
             end
         end
 
@@ -566,12 +588,15 @@ local function UpdateFrameAuras(frame)
             local entry = sortedAuras[i]
             if not frame.buffIcons[i] then
                 frame.buffIcons[i] = CreateAuraIcon(frame, iconSize)
+                needsLayout = true
             end
-            -- Reposition every update (settings may change)
-            local offX, offY = CalculateSlotOffset(i, iconSize, bSpacing, bGrow)
-            frame.buffIcons[i]:ClearAllPoints()
-            frame.buffIcons[i]:SetPoint(bAnchor, frame, bAnchor, bOffX + offX, bOffY + offY)
-            frame.buffIcons[i]:SetSize(iconSize, iconSize)
+            -- Only reposition when layout settings changed
+            if needsLayout then
+                local offX, offY = CalculateSlotOffset(i, iconSize, bSpacing, bGrow)
+                frame.buffIcons[i]:ClearAllPoints()
+                frame.buffIcons[i]:SetPoint(bAnchor, frame, bAnchor, bOffX + offX, bOffY + offY)
+                frame.buffIcons[i]:SetSize(iconSize, iconSize)
+            end
             if entry then
                 UpdateAuraIcon(frame.buffIcons[i], entry.auraData, unit)
             else
@@ -594,6 +619,9 @@ local function UpdateFrameAuras(frame)
             UnregisterIconTimer(icon)
         end
     end
+
+    -- Stamp layout version so we skip repositioning until settings change
+    frameLayoutVersions[frame] = layoutVersion
 end
 
 ---------------------------------------------------------------------------
@@ -624,6 +652,29 @@ local function FixAllIconMouse()
     pendingMouseFix = false
 end
 
+-- Flush all pending throttled aura updates
+-- Single scan per unit feeds aura icons, dispel overlay, and defensive indicator
+local function FlushPendingAuras()
+    auraThrottleRunning = false
+    local GF = ns.QUI_GroupFrames
+    if not GF or not GF.initialized then
+        wipe(pendingAuraUnits)
+        return
+    end
+    for unit in pairs(pendingAuraUnits) do
+        local frame = GF.unitFrameMap[unit]
+        if frame then
+            -- Single scan populates shared cache
+            ScanUnitAuras(unit)
+            -- All consumers read from cache — no redundant API calls
+            UpdateFrameAuras(frame)
+            if GF.UpdateDispelOverlay then GF:UpdateDispelOverlay(frame) end
+            if GF.UpdateDefensiveIndicator then GF:UpdateDefensiveIndicator(frame) end
+        end
+    end
+    wipe(pendingAuraUnits)
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("UNIT_AURA")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -637,11 +688,23 @@ eventFrame:SetScript("OnEvent", function(self, event, unit)
     local GF = ns.QUI_GroupFrames
     if not GF or not GF.initialized then return end
 
-    local frame = GF.unitFrameMap[unit]
-    if frame then
-        UpdateFrameAuras(frame)
+    -- Skip units we don't track
+    if not GF.unitFrameMap[unit] then return end
+
+    -- Coalesce rapid UNIT_AURA events (50ms window)
+    pendingAuraUnits[unit] = true
+    if not auraThrottleRunning then
+        auraThrottleRunning = true
+        C_Timer.After(AURA_THROTTLE, FlushPendingAuras)
     end
 end)
+
+---------------------------------------------------------------------------
+-- PUBLIC: Bump layout version (call when aura settings change in options)
+---------------------------------------------------------------------------
+function QUI_GFA:InvalidateLayout()
+    layoutVersion = layoutVersion + 1
+end
 
 ---------------------------------------------------------------------------
 -- PUBLIC: Refresh all frames
@@ -650,13 +713,20 @@ function QUI_GFA:RefreshAll()
     local GF = ns.QUI_GroupFrames
     if not GF or not GF.initialized then return end
 
-    for _, frame in pairs(GF.unitFrameMap) do
+    -- Force layout recalculation on explicit refresh
+    layoutVersion = layoutVersion + 1
+
+    for unit, frame in pairs(GF.unitFrameMap) do
         if frame and frame:IsShown() then
+            ScanUnitAuras(unit)
             UpdateFrameAuras(frame)
         end
     end
 end
 
 function QUI_GFA:RefreshFrame(frame)
+    if frame and frame.unit then
+        ScanUnitAuras(frame.unit)
+    end
     UpdateFrameAuras(frame)
 end
