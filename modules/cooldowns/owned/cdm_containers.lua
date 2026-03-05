@@ -1092,6 +1092,27 @@ _G.QUI_OnEditModeEnterCDM = function()
     end
     LayoutContainer("buff")
 
+    -- Force trackedBar container to have a reasonable size before Edit Mode
+    -- so the overlay/mover is visible and draggable (not 1x1).
+    if containers.trackedBar then
+        local cw = Helpers.SafeValue(containers.trackedBar:GetWidth(), 0)
+        local ch = Helpers.SafeValue(containers.trackedBar:GetHeight(), 0)
+        if cw <= 1 or ch <= 1 then
+            local db = GetDB()
+            local tbSettings = db and db.trackedBar
+            local barWidth = (tbSettings and tbSettings.barWidth) or 215
+            local barHeight = (tbSettings and tbSettings.barHeight) or 25
+            containers.trackedBar:SetSize(barWidth, barHeight)
+        end
+        containers.trackedBar:Show()
+        containers.trackedBar:SetAlpha(1)
+    end
+
+    -- Force a bar layout so owned bars are built before Edit Mode
+    if _G.QUI_RefreshBuffBar then
+        _G.QUI_RefreshBuffBar()
+    end
+
     _editModeActive = true
 
     -- Hide Blizzard .Selection frames so only QUI overlays show.
