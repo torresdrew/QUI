@@ -999,9 +999,18 @@ local function HideBlizzardSelections()
         local viewer = _G[blizzName]
         if viewer and viewer.Selection then
             viewer.Selection:SetAlpha(0)
-            -- Hook SetAlpha so Blizzard's Edit Mode can't restore it
+            -- Hook SetAlpha and Show so Blizzard's Edit Mode can't restore it
             if not _selectionAlphaHooked[blizzName] then
                 _selectionAlphaHooked[blizzName] = true
+                hooksecurefunc(viewer.Selection, "Show", function(self)
+                    if _editModeActive then
+                        C_Timer.After(0, function()
+                            if _editModeActive then
+                                self:SetAlpha(0)
+                            end
+                        end)
+                    end
+                end)
                 hooksecurefunc(viewer.Selection, "SetAlpha", function(self, alpha)
                     if _editModeActive and alpha > 0 then
                         C_Timer.After(0, function()

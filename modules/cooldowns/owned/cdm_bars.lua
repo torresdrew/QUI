@@ -107,6 +107,7 @@ local function CreateBar(parent)
     -- State tracking
     bar._spellEntry = nil
     bar._blizzBar = nil
+    bar._spellID = nil
     bar._active = false
 
     bar:Hide()
@@ -329,6 +330,70 @@ function CDMBars.ConfigureBar(bar, settings, overrideWidth)
 end
 
 ---------------------------------------------------------------------------
+-- SPELL ID EXTRACTION: Get spellID from a Blizzard bar child via
+-- cooldownInfo, cooldownID + C_CooldownViewer API, or name lookup.
+---------------------------------------------------------------------------
+local function ExtractSpellID(blizzBarChild)
+    if not blizzBarChild then return nil end
+
+    -- 1. Direct cooldownInfo (same property icons use)
+    local cdInfo = blizzBarChild.cooldownInfo
+    if cdInfo then
+        local override = SafeToNumber(cdInfo.overrideSpellID, nil)
+        if override then return override end
+        local spell = SafeToNumber(cdInfo.spellID, nil)
+        if spell then return spell end
+    end
+
+    -- 2. cooldownID + C_CooldownViewer API
+    local cdID = blizzBarChild.cooldownID
+    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        local ok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
+        if ok and info then
+            local override = SafeToNumber(info.overrideSpellID, nil)
+            if override then return override end
+            local spell = SafeToNumber(info.spellID, nil)
+            if spell then return spell end
+        end
+    end
+
+    -- 3. Name-based lookup: read name from bar FontStrings, look up spellID
+    local function GetBarName(frame)
+        if not frame or not frame.GetRegions then return nil end
+        for _, region in ipairs({ frame:GetRegions() }) do
+            if region and region:GetObjectType() == "FontString" then
+                local okT, text = pcall(region.GetText, region)
+                if okT and type(text) == "string" and text ~= "" then
+                    local justify = region:GetJustifyH()
+                    if justify ~= "RIGHT" then return text end
+                end
+            end
+        end
+        return nil
+    end
+    local name = GetBarName(blizzBarChild) or GetBarName(blizzBarChild.Bar)
+    if name and C_Spell and C_Spell.GetSpellInfo then
+        local ok, info = pcall(C_Spell.GetSpellInfo, name)
+        if ok and info and info.spellID then
+            return info.spellID
+        end
+    end
+
+    return nil
+end
+
+---------------------------------------------------------------------------
+-- ACTIVE STATE: Check if a Blizzard bar child is active.
+-- Blizzard calls Show/Hide on bar children even when the viewer is alpha=0,
+-- so IsShown() is a reliable signal for active state.
+---------------------------------------------------------------------------
+local function CheckBarActive(blizzBarChild)
+    if not blizzBarChild then return false end
+    local ok, shown = pcall(blizzBarChild.IsShown, blizzBarChild)
+    return ok and shown or false
+end
+
+---------------------------------------------------------------------------
 -- MIRROR BLIZZARD BAR DATA → OWNED BAR
 -- Uses hooksecurefunc to forward data from hidden Blizzard bar children.
 -- C-side StatusBar methods handle secret values natively.
@@ -364,15 +429,10 @@ local function MirrorBlizzBar(ownedBar, blizzBarChild)
     hookedBars[blizzBarChild] = true
     mirrorMap[blizzBarChild] = ownedBar
 
-    -- Hook Show/Hide on the Blizzard bar child to track active state
-    hooksecurefunc(blizzBarChild, "Show", function(self)
-        local target = mirrorMap[self]
-        if target then target._active = true end
-    end)
-    hooksecurefunc(blizzBarChild, "Hide", function(self)
-        local target = mirrorMap[self]
-        if target then target._active = false end
-    end)
+    -- Active state is tracked via CheckBarActive(IsShown()) in BuildBars,
+    -- called on every Refresh cycle. No Show/Hide hooks on Blizzard frames
+    -- needed — avoids tainting Blizzard's secure execution context during
+    -- Edit Mode frame iteration.
 
     -- Hook StatusBar value/range forwarding
     local blizzStatusBar = blizzBarChild.Bar
@@ -383,16 +443,6 @@ local function MirrorBlizzBar(ownedBar, blizzBarChild)
             if not target then return end
             -- Forward value to owned StatusBar (C-side handles secret values)
             pcall(target.StatusBar.SetValue, target.StatusBar, value)
-            -- Detect active state: value between min and max
-            local ok, minVal, maxVal = pcall(self.GetMinMaxValues, self)
-            if ok then
-                local safeVal = SafeToNumber(value, nil)
-                local safeMin = SafeToNumber(minVal, nil)
-                local safeMax = SafeToNumber(maxVal, nil)
-                if safeVal and safeMin and safeMax then
-                    target._active = (safeVal > safeMin + 0.001 and safeVal < safeMax - 0.001)
-                end
-            end
         end)
 
         -- Mirror SetMinMaxValues
@@ -469,7 +519,7 @@ local function MirrorBlizzBar(ownedBar, blizzBarChild)
         HookFontStrings(blizzStatusBar, ownedBar.NameText, ownedBar.DurationText)
     end
 
-    -- Initial value sync
+    -- Initial value sync (C-side forwarding, handles secret values)
     if blizzStatusBar then
         local ok1, minVal, maxVal = pcall(blizzStatusBar.GetMinMaxValues, blizzStatusBar)
         if ok1 then
@@ -478,15 +528,6 @@ local function MirrorBlizzBar(ownedBar, blizzBarChild)
         local ok2, val = pcall(blizzStatusBar.GetValue, blizzStatusBar)
         if ok2 then
             pcall(ownedBar.StatusBar.SetValue, ownedBar.StatusBar, val)
-            -- Set initial active state
-            if ok1 then
-                local safeVal = SafeToNumber(val, nil)
-                local safeMin = SafeToNumber(minVal, nil)
-                local safeMax = SafeToNumber(maxVal, nil)
-                if safeVal and safeMin and safeMax then
-                    ownedBar._active = (safeVal > safeMin + 0.001 and safeVal < safeMax - 0.001)
-                end
-            end
         end
     end
 end
@@ -512,6 +553,7 @@ local function ReleaseBar(bar)
     bar:ClearAllPoints()
     bar._spellEntry = nil
     bar._blizzBar = nil
+    bar._spellID = nil
     bar._active = false
     bar.NameText:SetText("")
     bar.DurationText:SetText("")
@@ -553,8 +595,10 @@ function CDMBars:BuildBars(container)
     if okc and children then
         for _, child in ipairs(children) do
             if child and child ~= sel and child:IsObjectType("Frame") then
-                -- Bar children have a .Bar StatusBar
-                if child.Bar and child.Bar.IsObjectType and child.Bar:IsObjectType("StatusBar") then
+                -- Bar children have a .Bar StatusBar + cooldownID/layoutIndex
+                -- Skip Blizzard's empty pool frames (no cooldownID and no layoutIndex)
+                if child.Bar and child.Bar.IsObjectType and child.Bar:IsObjectType("StatusBar")
+                    and (child.cooldownID or child.layoutIndex) then
                     blizzBars[#blizzBars + 1] = child
                 end
             end
@@ -577,7 +621,24 @@ function CDMBars:BuildBars(container)
         end
     end
 
-    if not needsRebuild then return end
+    -- Force rebuild if bars are parented to wrong frame (e.g. initial build
+    -- happened before owned container existed)
+    if not needsRebuild and #barPool > 0 then
+        local firstParent = barPool[1]:GetParent()
+        if firstParent ~= container then
+            needsRebuild = true
+        end
+    end
+
+    -- No rebuild needed — just update active state from Blizzard IsShown
+    if not needsRebuild then
+        for _, bar in ipairs(barPool) do
+            if bar._blizzBar then
+                bar._active = CheckBarActive(bar._blizzBar)
+            end
+        end
+        return
+    end
 
     -- Clear existing pool
     self:ClearPool()
@@ -587,12 +648,27 @@ function CDMBars:BuildBars(container)
         local bar = AcquireBar(container)
         bar._blizzBar = blizzChild
 
-        -- Check if the Blizzard bar is shown (has an active tracked buff)
-        local okShown, isShown = pcall(blizzChild.IsShown, blizzChild)
-        bar._active = (okShown and isShown) or false
+        -- Extract spellID for reliable active state detection
+        bar._spellID = ExtractSpellID(blizzChild)
+
+        -- Check active state from Blizzard IsShown (reliable even with alpha=0 viewer)
+        bar._active = CheckBarActive(blizzChild)
 
         -- Set up data mirroring hooks
         MirrorBlizzBar(bar, blizzChild)
+    end
+end
+
+---------------------------------------------------------------------------
+-- FORCE ALL ACTIVE: For Edit Mode, force all bars with names visible
+-- so the mover overlay shows the full expected area.
+---------------------------------------------------------------------------
+function CDMBars:ForceAllActive()
+    for _, bar in ipairs(barPool) do
+        local name = bar.NameText and bar.NameText:GetText()
+        if name and name ~= "" then
+            bar._active = true
+        end
     end
 end
 
@@ -803,7 +879,7 @@ SlashCmdList["BUFFBARDEBUG"] = function()
         print(P, "Blizzard BuffBarCooldownViewer: size=", string.format("%.1fx%.1f", bw or 0, bh or 0),
             "shown=", tostring(bshown), "alpha=", string.format("%.2f", balpha or 0))
 
-        -- Count bar children
+        -- Dump bar children with all available identifiers
         local barCount = 0
         local shownBars = 0
         local sel = blizzViewer.Selection
@@ -813,6 +889,14 @@ SlashCmdList["BUFFBARDEBUG"] = function()
                 if child.Bar and child.Bar.IsObjectType and child.Bar:IsObjectType("StatusBar") then
                     barCount = barCount + 1
                     if child:IsShown() then shownBars = shownBars + 1 end
+                    -- Dump identifiers
+                    local cdID = child.cooldownID
+                    local cdInfo = child.cooldownInfo
+                    local spellID = cdInfo and cdInfo.spellID
+                    local li = child.layoutIndex
+                    print(P, string.format("  bar[%d] shown=%s li=%s cdID=%s spell=%s",
+                        barCount, tostring(child:IsShown()), tostring(li),
+                        tostring(cdID), tostring(spellID)))
                 end
             end
         end
@@ -829,12 +913,17 @@ SlashCmdList["BUFFBARDEBUG"] = function()
         local active = bar._active
         local blizz = bar._blizzBar
         local blizzShown = blizz and blizz:IsShown()
+        local spellID = bar._spellID
+        local blizzActive = bar._blizzBar and CheckBarActive(bar._blizzBar) or false
+        local parent = bar:GetParent()
+        local parentName = parent and (parent:GetName() or "unnamed") or "nil"
         print(P, string.format("  [%d] size=%.0fx%.0f shown=%s active=%s blizzShown=%s",
             i, bw or 0, bh or 0, tostring(shown), tostring(active), tostring(blizzShown)))
-        -- Show text content
-        local nameText = bar.NameText and bar.NameText:GetText() or "nil"
-        local durText = bar.DurationText and bar.DurationText:GetText() or "nil"
-        print(P, string.format("       name='%s' dur='%s'", nameText, durText))
+        print(P, string.format("       name='%s' dur='%s'",
+            bar.NameText and bar.NameText:GetText() or "nil",
+            bar.DurationText and bar.DurationText:GetText() or "nil"))
+        print(P, string.format("       spellID=%s blizzActive=%s parent=%s",
+            tostring(spellID), tostring(blizzActive), parentName))
     end
 
     -- 6. DB settings
