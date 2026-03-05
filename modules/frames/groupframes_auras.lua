@@ -299,6 +299,15 @@ local function CreateAuraIcon(parent, size)
     return icon
 end
 
+-- Dispel border colors (file-level to avoid per-call allocation)
+local AURA_DISPEL_COLORS = {
+    Magic   = { 0.2, 0.6, 1.0, 1 },
+    Curse   = { 0.6, 0.0, 1.0, 1 },
+    Disease = { 0.6, 0.4, 0.0, 1 },
+    Poison  = { 0.0, 0.6, 0.0, 1 },
+    Bleed   = { 0.8, 0.0, 0.0, 1 },
+}
+
 local function UpdateAuraIcon(icon, auraData, unit)
     if not icon or not auraData then
         if icon then icon:Hide() end
@@ -433,14 +442,6 @@ local PRIORITY_DISPELLABLE = 3
 local PRIORITY_BOSS = 2
 local PRIORITY_NORMAL = 1
 
--- Dispel border colors (file-level to avoid per-call allocation)
-local AURA_DISPEL_COLORS = {
-    Magic   = { 0.2, 0.6, 1.0, 1 },
-    Curse   = { 0.6, 0.0, 1.0, 1 },
-    Disease = { 0.6, 0.4, 0.0, 1 },
-    Poison  = { 0.0, 0.6, 0.0, 1 },
-    Bleed   = { 0.8, 0.0, 0.0, 1 },
-}
 
 -- Reusable sort comparator (avoids closure allocation per sort call)
 local function AuraPrioritySort(a, b)

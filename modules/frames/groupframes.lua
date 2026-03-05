@@ -289,7 +289,7 @@ end
 
 local function GetHealthPct(unit)
     -- C-side UnitHealthPercent handles secret values natively — no pcall needed
-    -- Returns 0-100 via CurveConstants.ScaleTo100 (matches DandersFrames pattern)
+    -- Returns 0-100 via CurveConstants.ScaleTo100 (matches QUI pattern)
     return UnitHealthPercent(unit, true, CurveConstants.ScaleTo100)
 end
 
@@ -405,7 +405,7 @@ local function UpdateHealth(frame)
     local isDeadOrGhost = UnitIsDeadOrGhost(unit)
     local isConnected = UnitIsConnected(unit) or IsNPCPartyMember(unit)
 
-    -- Health bar value — use percentage-based approach (matches DandersFrames)
+    -- Health bar value — use percentage-based approach
     -- UnitHealthPercent returns 0-100 via CurveConstants.ScaleTo100, C-side handles secrets
     if frame.healthBar then
         frame.healthBar:SetMinMaxValues(0, 100)
@@ -511,7 +511,7 @@ local function UpdatePower(frame)
     local power = UnitPower(unit)
     local maxPower = UnitPowerMax(unit)
 
-    -- If values are secret (not numbers), hide the bar (matches DandersFrames pattern)
+    -- If values are secret (not numbers), hide the bar (matches QUI pattern)
     if type(power) ~= "number" or type(maxPower) ~= "number" then
         frame.powerBar:Hide()
         return
@@ -591,7 +591,7 @@ local function UpdateAbsorbs(frame)
     local absorbAmount = UnitGetTotalAbsorbs(unit)
 
     -- Only hide on nil (API unavailable). Do NOT check for zero — StatusBar
-    -- naturally shows 0-width when value is 0 (matches DandersFrames pattern).
+    -- naturally shows 0-width when value is 0 (matches QUI pattern).
     -- absorbAmount may be a secret value; pass directly to C-side.
     if not absorbAmount then
         frame.absorbBar:Hide()
@@ -633,7 +633,7 @@ local function UpdateHealPrediction(frame)
     local maxHP = UnitHealthMax(unit)
     local incomingHeals
 
-    -- Use CreateUnitHealPredictionCalculator (11.1+) if available (matches DandersFrames pattern)
+    -- Use CreateUnitHealPredictionCalculator (11.1+) if available (matches QUI pattern)
     if CreateUnitHealPredictionCalculator then
         if not frame._healPredCalc then
             frame._healPredCalc = CreateUnitHealPredictionCalculator()
@@ -649,7 +649,7 @@ local function UpdateHealPrediction(frame)
     end
 
     -- Only hide on nil (API unavailable). Do NOT check for zero — StatusBar
-    -- naturally shows 0-width when value is 0 (matches DandersFrames pattern).
+    -- naturally shows 0-width when value is 0 (matches QUI pattern).
     if not incomingHeals then
         frame.healPredictionBar:Hide()
         return
@@ -715,7 +715,7 @@ local function UpdateReadyCheck(frame)
 
     local status = GetReadyCheckStatus(frame.unit)
     if status then
-        -- DandersFrames pattern: AFK players waiting on ready check show "not ready"
+        -- QUI pattern: AFK players waiting on ready check show "not ready"
         if status == "waiting" then
             local isAFK = nil
             pcall(function() isAFK = UnitIsAFK(frame.unit) end)
@@ -860,19 +860,26 @@ end
 ---------------------------------------------------------------------------
 local function UpdateConnection(frame)
     if not frame or not frame.unit then return end
-    local isConnected = UnitIsConnected(frame.unit) or IsNPCPartyMember(frame.unit)
-    if not isConnected and UnitExists(frame.unit) then
+    local unit = frame.unit
+
+    -- Guard against secret values (WoW 12.0+ combat taint)
+    local isConnected = UnitIsConnected(unit) or IsNPCPartyMember(unit)
+    if IsSecretValue(isConnected) then isConnected = true end
+
+    local isDead = UnitIsDeadOrGhost(unit)
+    if IsSecretValue(isDead) then isDead = false end
+
+    if not isConnected and UnitExists(unit) then
         frame:SetAlpha(0.5)
-    elseif UnitIsDeadOrGhost(frame.unit) then
+    elseif isDead then
         -- Dead dimming (set in UpdateHealth) — don't override with 1.0
         frame:SetAlpha(0.65)
     else
-        -- Restore alpha (range check may override)
-        local rangeSettings = GetRangeSettings()
+        -- Alive + connected: don't fight with DoRangeCheck for alpha ownership.
+        -- Range check ticker runs every 0.2s and owns the alpha for alive targets.
+        -- Only set alpha here if range check hasn't initialized state yet.
         local state = GetFrameState(frame)
-        if state.outOfRange then
-            frame:SetAlpha(rangeSettings and rangeSettings.outOfRangeAlpha or 0.4)
-        else
+        if state.outOfRange == nil then
             frame:SetAlpha(1)
         end
     end
@@ -2017,7 +2024,7 @@ local function ResolveRangeSpells()
 end
 
 local function CheckUnitRange(unit)
-    -- Self is always in range (DandersFrames pattern)
+    -- Self is always in range (QUI pattern)
     if UnitIsUnit(unit, "player") then
         return true
     end
@@ -2039,14 +2046,15 @@ local function CheckUnitRange(unit)
     local isDead = UnitIsDeadOrGhost(unit)
     if IsSecretValue(isDead) then isDead = false end
 
-    -- Track whether spell returned nil (for NIL-ON-ALIVE rule)
+    -- Track whether spell returned nil vs secret (for NIL-ON-ALIVE rule)
     local spellReturnedNil = false
+    local spellReturnedSecret = false
 
     -- Primary: friendly spell range check
     if rangeSpell and not isDead then
         local result = C_Spell.IsSpellInRange(rangeSpell, unit)
         if IsSecretValue(result) then
-            spellReturnedNil = true
+            spellReturnedSecret = true
         elseif result ~= nil then
             return result  -- explicit true/false — trust it
         else
@@ -2058,7 +2066,7 @@ local function CheckUnitRange(unit)
     if isDead and resSpell then
         local result = C_Spell.IsSpellInRange(resSpell, unit)
         if IsSecretValue(result) then
-            -- fall through
+            spellReturnedSecret = true
         elseif result ~= nil then
             return result
         end
@@ -2069,7 +2077,13 @@ local function CheckUnitRange(unit)
         return CheckInteractDistance(unit, 4)
     end
 
-    -- NIL-ON-ALIVE (DandersFrames pattern): friendly spell returned nil on an
+    -- Secret value during combat — we can't read the result, assume in range
+    -- (better than fading the entire raid)
+    if spellReturnedSecret then
+        return true
+    end
+
+    -- NIL-ON-ALIVE (QUI pattern): friendly spell returned nil on an
     -- alive, connected target during combat. IsSpellInRange returns nil (not
     -- false) for extremely distant targets outside position-awareness range.
     -- Old fallback chain defaulted to "in range" — this fixes that.
@@ -2101,18 +2115,49 @@ local function DoRangeCheck()
 
     for unit, frame in pairs(QUI_GF.unitFrameMap) do
         if frame and frame:IsShown() then
-            local inRange = CheckUnitRange(unit)
-            local state = GetFrameState(frame)
+            local handled = false
 
-            -- Only update alpha when range state changes (cache hit = skip)
-            if rangeCache[unit] ~= inRange then
-                rangeCache[unit] = inRange
-                state.outOfRange = not inRange
-                frame:SetAlpha(inRange and 1 or outAlpha)
-            elseif state.outOfRange == nil then
-                -- First check for this frame — initialize
-                state.outOfRange = not inRange
-                frame:SetAlpha(inRange and 1 or outAlpha)
+            -- C-side fast path: forward raw IsSpellInRange result directly to
+            -- SetAlphaFromBoolean. C code evaluates secret booleans natively,
+            -- so range indication works correctly during combat without needing
+            -- to read the value in Lua. (QUI pattern)
+            if rangeSpell and frame.SetAlphaFromBoolean
+               and not UnitIsUnit(unit, "player") and UnitExists(unit) then
+                local isDead = UnitIsDeadOrGhost(unit)
+                local connected = UnitIsConnected(unit)
+                -- Alive + connected: use primary range spell
+                -- Secret dead/connected: treat as alive+connected (safe assumption)
+                local isAlive = IsSecretValue(isDead) or not isDead
+                local isConnected = IsSecretValue(connected) or connected
+
+                if isAlive and isConnected then
+                    local result = C_Spell.IsSpellInRange(rangeSpell, unit)
+                    if result ~= nil then
+                        frame:SetAlphaFromBoolean(result, 1, outAlpha)
+                        -- Update cache/state when result is a normal boolean
+                        if not IsSecretValue(result) then
+                            rangeCache[unit] = result
+                            GetFrameState(frame).outOfRange = not result
+                        end
+                        handled = true
+                    end
+                end
+            end
+
+            -- Lua fallback: player frame, dead/disconnected targets, no spell,
+            -- nil result, or no SetAlphaFromBoolean method
+            if not handled then
+                local inRange = CheckUnitRange(unit)
+                local state = GetFrameState(frame)
+
+                if rangeCache[unit] ~= inRange then
+                    rangeCache[unit] = inRange
+                    state.outOfRange = not inRange
+                    frame:SetAlpha(inRange and 1 or outAlpha)
+                elseif state.outOfRange == nil then
+                    state.outOfRange = not inRange
+                    frame:SetAlpha(inRange and 1 or outAlpha)
+                end
             end
         end
     end
@@ -2154,7 +2199,7 @@ local function OnEvent(self, event, arg1, ...)
     -- Unit-specific events — dispatch via lookup map
     local frame = arg1 and QUI_GF.unitFrameMap[arg1]
 
-    -- Self-healing: rebuild map on lookup miss (DandersFrames pattern)
+    -- Self-healing: rebuild map on lookup miss (QUI pattern)
     -- Handles stale maps from combat zone transitions or delayed header updates
     if arg1 and not frame and (arg1:match("^party%d") or arg1:match("^raid%d") or arg1 == "player") then
         local now = GetTime()
@@ -2169,8 +2214,8 @@ local function OnEvent(self, event, arg1, ...)
 
         if event == "UNIT_HEALTH" or event == "UNIT_MAXHEALTH" then
             -- No throttle — UNIT_HEALTH is already coalesced by the WoW client.
-            -- Throttling drops the final update, leaving the bar stale (DandersFrames
-            -- pattern: process every UNIT_HEALTH without throttling).
+            -- Throttling drops the final update, leaving the bar stale.
+            -- Process every UNIT_HEALTH without throttling.
             UpdateHealth(frame)
             UpdateAbsorbs(frame)
             UpdateHealPrediction(frame)
@@ -2244,7 +2289,7 @@ local function OnEvent(self, event, arg1, ...)
         end
 
     elseif event == "READY_CHECK" or event == "READY_CHECK_CONFIRM" then
-        -- DandersFrames pattern: iterate all frames for both events.
+        -- QUI pattern: iterate all frames for both events.
         -- READY_CHECK fires with arg1=initiatorName (not a unit token).
         -- READY_CHECK_CONFIRM fires per-unit but we refresh all frames to
         -- avoid relying on unitFrameMap lookup which can miss stale tokens.
@@ -2256,7 +2301,7 @@ local function OnEvent(self, event, arg1, ...)
         -- Do NOT call UpdateReadyCheck here — GetReadyCheckStatus returns nil
         -- after READY_CHECK_FINISHED, which would hide icons immediately.
         -- Icons already show the correct state from READY_CHECK_CONFIRM events.
-        -- Just schedule hiding after persist delay (DandersFrames pattern).
+        -- Just schedule hiding after persist delay (QUI pattern).
         for _, frame in pairs(QUI_GF.unitFrameMap) do
             -- Cancel any existing timer for this frame
             if frame._readyCheckHideTimer then
@@ -2281,7 +2326,17 @@ local function OnEvent(self, event, arg1, ...)
             UpdateLeaderIcon(frame)
         end
 
+    elseif event == "PLAYER_REGEN_DISABLED" then
+        -- Combat started: clear range cache so stale OOC values
+        -- (CheckInteractDistance) don't persist into combat where
+        -- that API is unavailable. (QUI pattern)
+        wipe(rangeCache)
+
     elseif event == "PLAYER_REGEN_ENABLED" then
+        -- Combat ended: clear range cache so combat-era results
+        -- don't prevent OOC methods from updating.
+        wipe(rangeCache)
+
         -- Process deferred operations
         if pendingResize then
             pendingResize = false
@@ -2321,6 +2376,7 @@ local function RegisterEvents()
     -- Group events
     eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
     -- Unit events (will be routed via unitFrameMap)
