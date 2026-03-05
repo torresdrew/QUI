@@ -63,6 +63,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+
+## v2.46.3 - 2026-03-05
+
+### Fixed
+- fix: tooltip taint hardening and anchoring debug silencing
+- fix: layoutIndex sorting, loot tooltip guard, respect layout direction flags, sort before subset
+- fix: invalidate options panel on profile change
+## v2.46.2 - 2026-03-05
+
+### Added
+- feat: click-to-cast for CDM icons with macro resolution and secure overlays
+
+### Fixed
+- fixed more tooltip taint paths
+- fix: trust Edit Mode NumIcons API and restore bars on edit mode enter
+- fix: correct secondary stat calculations and tooltips in character panel
 ## v2.46.1 - 2026-03-04
 
 ### Fixed

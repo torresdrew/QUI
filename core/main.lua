@@ -3788,7 +3788,8 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     if self._preservedPanelAlpha then
         self.db.profile.configPanelAlpha = self._preservedPanelAlpha
     end
-    
+
+
     -- Invalidate options panel — cached widgets hold stale profile table references
     if QUI.GUI and QUI.GUI.MainFrame then
         QUI.GUI.MainFrame:Hide()
