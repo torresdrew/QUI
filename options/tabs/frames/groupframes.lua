@@ -492,24 +492,6 @@ local function CreateGroupFramesPage(parent)
         largeH:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
 
-        -- Power bar height
-        local powerHeader = GUI:CreateSectionHeader(tabContent, "Power Bar")
-        powerHeader:SetPoint("TOPLEFT", PAD, y)
-        y = y - powerHeader.gap
-
-        local power = gfdb.power
-        if not power then gfdb.power = {} power = gfdb.power end
-
-        local showPowerCheck = GUI:CreateFormCheckbox(tabContent, "Show Power Bar", "showPowerBar", power, RefreshGF)
-        showPowerCheck:SetPoint("TOPLEFT", PAD, y)
-        showPowerCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
-
-        local powerH = GUI:CreateFormSlider(tabContent, "Power Bar Height", 1, 10, 1, "powerBarHeight", power, RefreshGF)
-        powerH:SetPoint("TOPLEFT", PAD, y)
-        powerH:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - SLIDER_HEIGHT
-
         tabContent:SetHeight(math.abs(y) + 30)
     end
 
@@ -620,6 +602,24 @@ local function CreateGroupFramesPage(parent)
         local healPredOpacity = GUI:CreateFormSlider(tabContent, "Heal Prediction Opacity", 0.1, 1, 0.05, "opacity", healPredDB, RefreshGF)
         healPredOpacity:SetPoint("TOPLEFT", PAD, y)
         healPredOpacity:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        -- Power bar
+        local powerHeader = GUI:CreateSectionHeader(tabContent, "Power Bar")
+        powerHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - powerHeader.gap
+
+        local power = gfdb.power
+        if not power then gfdb.power = {} power = gfdb.power end
+
+        local showPowerCheck = GUI:CreateFormCheckbox(tabContent, "Show Power Bar", "showPowerBar", power, RefreshGF)
+        showPowerCheck:SetPoint("TOPLEFT", PAD, y)
+        showPowerCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local powerH = GUI:CreateFormSlider(tabContent, "Power Bar Height", 1, 10, 1, "powerBarHeight", power, RefreshGF)
+        powerH:SetPoint("TOPLEFT", PAD, y)
+        powerH:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
 
         tabContent:SetHeight(math.abs(y) + 30)
