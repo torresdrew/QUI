@@ -1106,6 +1106,10 @@ _G.QUI_OnEditModeEnterCDM = function()
             local tbSettings = db and db.trackedBar
             if tbSettings then
                 ns.CDMBars:Refresh(containers.trackedBar, tbSettings, tbSettings.barWidth)
+                -- Force all tracked bars visible for Edit Mode so the mover
+                -- shows the full expected area (not just active buffs).
+                ns.CDMBars:ForceAllActive()
+                ns.CDMBars:LayoutBars(containers.trackedBar, tbSettings)
             end
         end
 
