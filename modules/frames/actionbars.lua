@@ -1200,10 +1200,11 @@ local function SkinButton(button, settings)
 
     -- If the button is currently hidden (bar faded out or empty slot),
     -- keep newly-created textures hidden to match the fade state.
+    -- Record _fh* flags so FadeShowTextures knows to restore them on hover.
     if state.fadeHidden then
-        if state.backdrop then state.backdrop:Hide() end
-        if state.normal then state.normal:Hide() end
-        if state.gloss then state.gloss:Hide() end
+        if state.backdrop and state.backdrop:IsShown() then state.backdrop:Hide(); state._fhBg = true end
+        if state.normal and state.normal:IsShown() then state.normal:Hide(); state._fhNorm = true end
+        if state.gloss and state.gloss:IsShown() then state.gloss:Hide(); state._fhGloss = true end
     end
 
     ActionBars.skinnedButtons[button] = true
