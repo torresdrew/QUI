@@ -1094,23 +1094,31 @@ _G.QUI_OnEditModeEnterCDM = function()
 
     -- Force trackedBar container to have a reasonable size before Edit Mode
     -- so the overlay/mover is visible and draggable (not 1x1).
+    -- CDMBars:Refresh() is called directly because LayoutBuffBars() bails
+    -- when Blizzard's Edit Mode is active (IsEditModeActive() is already true
+    -- at this point — Blizzard fires the callback before we get here).
     if containers.trackedBar then
+        containers.trackedBar:Show()
+        containers.trackedBar:SetAlpha(1)
+
+        if ns.CDMBars then
+            local db = GetDB()
+            local tbSettings = db and db.trackedBar
+            if tbSettings then
+                ns.CDMBars:Refresh(containers.trackedBar, tbSettings, tbSettings.barWidth)
+            end
+        end
+
+        -- Final fallback: if Refresh didn't size it (no CDMBars or no settings)
         local cw = Helpers.SafeValue(containers.trackedBar:GetWidth(), 0)
         local ch = Helpers.SafeValue(containers.trackedBar:GetHeight(), 0)
         if cw <= 1 or ch <= 1 then
-            local db = GetDB()
-            local tbSettings = db and db.trackedBar
-            local barWidth = (tbSettings and tbSettings.barWidth) or 215
-            local barHeight = (tbSettings and tbSettings.barHeight) or 25
+            local db2 = GetDB()
+            local tbs2 = db2 and db2.trackedBar
+            local barWidth = (tbs2 and tbs2.barWidth) or 215
+            local barHeight = (tbs2 and tbs2.barHeight) or 25
             containers.trackedBar:SetSize(barWidth, barHeight)
         end
-        containers.trackedBar:Show()
-        containers.trackedBar:SetAlpha(1)
-    end
-
-    -- Force a bar layout so owned bars are built before Edit Mode
-    if _G.QUI_RefreshBuffBar then
-        _G.QUI_RefreshBuffBar()
     end
 
     _editModeActive = true

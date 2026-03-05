@@ -575,15 +575,29 @@ function CDMBars:LayoutBars(container, settings)
     if not container then return end
     if not settings then return end
 
+    local barHeight = settings.barHeight or 25
+    local barWidth = settings.barWidth or 215
+
     local count = #barPool
+
+    -- Even with 0 bars, set a minimum container size so the Edit Mode
+    -- overlay is draggable and visible (not 1x1).
     if count == 0 then
-        container:SetSize(1, 1)
+        local orientation = settings.orientation or "horizontal"
+        local w, h
+        if orientation == "vertical" then
+            w, h = barHeight, barWidth
+        else
+            w, h = barWidth, barHeight
+        end
+        container:SetSize(w, h)
+        if _G.QUI_SetCDMViewerBounds then
+            _G.QUI_SetCDMViewerBounds(container, w, h)
+        end
         return
     end
 
     local stylingEnabled = settings.enabled
-    local barHeight = settings.barHeight or 25
-    local barWidth = settings.barWidth or 215
     local spacing = settings.spacing or 2
     local growFromBottom = (settings.growUp ~= false)
     local orientation = settings.orientation or "horizontal"
@@ -703,4 +717,114 @@ function CDMBars:Refresh(container, settings, overrideWidth)
 
     self:BuildBars(container)
     self:LayoutBars(container, settings)
+end
+
+---------------------------------------------------------------------------
+-- DEBUG SLASH COMMAND: /buffbardebug
+---------------------------------------------------------------------------
+SLASH_BUFFBARDEBUG1 = "/buffbardebug"
+local P = "|cff00ccff[BuffBar-Debug]|r"
+
+SlashCmdList["BUFFBARDEBUG"] = function()
+    print(P, "=== Owned BuffBar Container Debug ===")
+
+    -- 1. Engine check
+    local isOwned = ns.CDMProvider and ns.CDMProvider:GetActiveEngineName() == "owned"
+    print(P, "Engine:", isOwned and "owned" or "classic/unknown")
+
+    -- 2. Container state
+    local container = ns.CDMContainers and ns.CDMContainers.GetTrackedBarContainer and ns.CDMContainers.GetTrackedBarContainer()
+    if container then
+        local w, h = container:GetWidth(), container:GetHeight()
+        local shown = container:IsShown()
+        local alpha = container:GetAlpha()
+        local cx, cy = container:GetCenter()
+        print(P, "QUI_BuffBarContainer: size=", string.format("%.1fx%.1f", w or 0, h or 0),
+            "shown=", tostring(shown), "alpha=", string.format("%.2f", alpha or 0))
+        if cx and cy then
+            print(P, "  center=", string.format("%.1f, %.1f", cx, cy))
+        else
+            print(P, "  center= nil (not positioned)")
+        end
+        print(P, "  numChildren=", container:GetNumChildren())
+    else
+        print(P, "QUI_BuffBarContainer: NOT FOUND")
+    end
+
+    -- 3. GetBuffBarViewer resolution
+    local viewerFrame = _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame("buffBar")
+    if viewerFrame then
+        local name = viewerFrame:GetName() or "unnamed"
+        local w, h = viewerFrame:GetWidth(), viewerFrame:GetHeight()
+        print(P, "GetCDMViewerFrame('buffBar'):", name, "size=", string.format("%.1fx%.1f", w or 0, h or 0))
+        print(P, "  isOwnedContainer=", tostring(viewerFrame == container))
+    else
+        print(P, "GetCDMViewerFrame('buffBar'): nil")
+    end
+
+    -- 4. Blizzard BuffBarCooldownViewer
+    local blizzViewer = _G["BuffBarCooldownViewer"]
+    if blizzViewer then
+        local bw, bh = blizzViewer:GetWidth(), blizzViewer:GetHeight()
+        local balpha = blizzViewer:GetAlpha()
+        local bshown = blizzViewer:IsShown()
+        print(P, "Blizzard BuffBarCooldownViewer: size=", string.format("%.1fx%.1f", bw or 0, bh or 0),
+            "shown=", tostring(bshown), "alpha=", string.format("%.2f", balpha or 0))
+
+        -- Count bar children
+        local barCount = 0
+        local shownBars = 0
+        local sel = blizzViewer.Selection
+        for i = 1, blizzViewer:GetNumChildren() do
+            local child = select(i, blizzViewer:GetChildren())
+            if child and child ~= sel and child:IsObjectType("Frame") then
+                if child.Bar and child.Bar.IsObjectType and child.Bar:IsObjectType("StatusBar") then
+                    barCount = barCount + 1
+                    if child:IsShown() then shownBars = shownBars + 1 end
+                end
+            end
+        end
+        print(P, "  barChildren=", barCount, "shown=", shownBars)
+    else
+        print(P, "Blizzard BuffBarCooldownViewer: NOT FOUND (addon not loaded?)")
+    end
+
+    -- 5. CDMBars pool state
+    print(P, "CDMBars pool: active=", #barPool, "recycled=", #recyclePool)
+    for i, bar in ipairs(barPool) do
+        local bw, bh = bar:GetWidth(), bar:GetHeight()
+        local shown = bar:IsShown()
+        local active = bar._active
+        local blizz = bar._blizzBar
+        local blizzShown = blizz and blizz:IsShown()
+        print(P, string.format("  [%d] size=%.0fx%.0f shown=%s active=%s blizzShown=%s",
+            i, bw or 0, bh or 0, tostring(shown), tostring(active), tostring(blizzShown)))
+        -- Show text content
+        local nameText = bar.NameText and bar.NameText:GetText() or "nil"
+        local durText = bar.DurationText and bar.DurationText:GetText() or "nil"
+        print(P, string.format("       name='%s' dur='%s'", nameText, durText))
+    end
+
+    -- 6. DB settings
+    local QUICore2 = ns.Addon
+    local ncdmDB = QUICore2 and QUICore2.db and QUICore2.db.profile and QUICore2.db.profile.ncdm
+    local tbSettings = ncdmDB and ncdmDB.trackedBar
+    if tbSettings then
+        print(P, "trackedBar DB: enabled=", tostring(tbSettings.enabled),
+            "barWidth=", tostring(tbSettings.barWidth),
+            "barHeight=", tostring(tbSettings.barHeight))
+        print(P, "  anchorTo=", tostring(tbSettings.anchorTo),
+            "pos=", tbSettings.pos and string.format("ox=%.1f oy=%.1f", tbSettings.pos.ox or 0, tbSettings.pos.oy or 0) or "nil")
+    else
+        print(P, "trackedBar DB: NOT FOUND")
+    end
+
+    -- 7. Hook state
+    local hookCount = 0
+    for _ in pairs(hookedBars) do hookCount = hookCount + 1 end
+    local mirrorCount = 0
+    for _ in pairs(mirrorMap) do mirrorCount = mirrorCount + 1 end
+    print(P, "Hooks: hookedBars=", hookCount, "mirrorMap=", mirrorCount)
+
+    print(P, "=== End Debug ===")
 end
