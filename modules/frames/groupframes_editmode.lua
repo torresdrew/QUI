@@ -860,6 +860,7 @@ local function SaveMoverPosition(mover)
     end
 
     UpdateMoverPositionText(mover, oX, oY)
+    QUI:DebugPrint(("[GF] SaveMoverPosition: offset=(%d,%d)"):format(oX, oY))
     return oX, oY
 end
 
@@ -873,6 +874,7 @@ function QUI_GFEM:SyncMoverToContent()
     local GF = ns.QUI_GroupFrames
 
     local boundsW, boundsH = 0, 0
+    local sizeSource = "none"
 
     -- In test mode the test container IS the content — use its dimensions
     -- directly.  Header children may be stale from a previous group session
@@ -880,20 +882,34 @@ function QUI_GFEM:SyncMoverToContent()
     if isTestMode and testContainer then
         boundsW = Helpers.SafeValue(testContainer:GetWidth(), 200)
         boundsH = Helpers.SafeValue(testContainer:GetHeight(), 200)
+        sizeSource = "testContainer"
     elseif GF then
-        -- Use the header's actual rendered size to avoid CENTER anchor drift.
-        -- GetHeaderBounds calculates an ideal size that may differ from the
-        -- real header dimensions, causing children to shift when reparented.
-        for _, hKey in ipairs({"party", "raid"}) do
-            local hdr = GF.headers[hKey]
-            if hdr and hdr:IsShown() then
-                local w = Helpers.SafeValue(hdr:GetWidth(), 0)
-                local h = Helpers.SafeValue(hdr:GetHeight(), 0)
-                if w > boundsW then boundsW = w end
-                if h > boundsH then boundsH = h end
-            end
+        -- Try CalculateHeaderSize first — gives correct bounds for actual
+        -- member count regardless of header's explicit SetSize (which may
+        -- be sized for max capacity).
+        if GF.CalculateHeaderSize then
+            local memberCount = IsInRaid() and GetNumGroupMembers() or
+                (IsInGroup() and GetNumGroupMembers() or 5)
+            if not IsInRaid() then memberCount = math.min(memberCount, 5) end
+            boundsW, boundsH = GF.CalculateHeaderSize(db, memberCount)
+            sizeSource = ("calc(n=%d)"):format(memberCount)
         end
-        -- Fall back to calculated bounds if headers have no size yet
+
+        -- Fall back to header rendered size if calc returned nothing useful
+        if boundsW == 0 or boundsH == 0 then
+            for _, hKey in ipairs({"party", "raid"}) do
+                local hdr = GF.headers[hKey]
+                if hdr and hdr:IsShown() then
+                    local w = Helpers.SafeValue(hdr:GetWidth(), 0)
+                    local h = Helpers.SafeValue(hdr:GetHeight(), 0)
+                    if w > boundsW then boundsW = w end
+                    if h > boundsH then boundsH = h end
+                end
+            end
+            if boundsW > 0 and boundsH > 0 then sizeSource = "hdr:GetSize" end
+        end
+
+        -- Fall back to child-counting bounds
         if boundsW == 0 or boundsH == 0 then
             for _, hKey in ipairs({"party", "raid"}) do
                 local hdr = GF.headers[hKey]
@@ -903,12 +919,15 @@ function QUI_GFEM:SyncMoverToContent()
                     if h > boundsH then boundsH = h end
                 end
             end
+            if boundsW > 0 and boundsH > 0 then sizeSource = "GetHeaderBounds" end
         end
     end
 
     boundsW = math.max(boundsW, 100)
     boundsH = math.max(boundsH, 40)
     groupMover:SetSize(boundsW, boundsH)
+    QUI:DebugPrint(("[GF] SyncMoverToContent: size=(%d,%d) source=%s testMode=%s"):format(
+        boundsW, boundsH, sizeSource, tostring(isTestMode)))
 
     -- Re-parent and re-anchor content to the mover.
     -- Only child frames follow their parent during StartMoving() — merely
@@ -992,7 +1011,7 @@ local function CreateGroupMover()
     local fontPath = LibStub("LibSharedMedia-3.0"):Fetch("font", "Quazii") or "Fonts\\FRIZQT__.TTF"
     local posText = border:CreateFontString(nil, "OVERLAY")
     posText:SetFont(fontPath, 10, "OUTLINE")
-    posText:SetPoint("BOTTOM", mover, "TOP", 0, 24)
+    posText:SetPoint("CENTER", mover, "CENTER", 0, 0)
     posText:SetTextColor(0.2, 0.8, 1, 1)
     mover.posText = posText
 
@@ -1079,6 +1098,21 @@ local function RestoreHeaderAnchors()
         if hdr then
             hdr:SetParent(UIParent)
             hdr:ClearAllPoints()
+
+            -- Recompute header size for current roster
+            if GF.CalculateHeaderSize and db then
+                local count
+                if hKey == "party" then
+                    count = IsInGroup() and not IsInRaid() and GetNumGroupMembers() or 5
+                else
+                    count = IsInRaid() and GetNumGroupMembers() or 25
+                    count = math.max(count, 5)
+                end
+                local w, h = GF.CalculateHeaderSize(db, count)
+                hdr:SetSize(w, h)
+                QUI:DebugPrint(("[GF] RestoreHeaderAnchors %s: pos=(%d,%d) size=(%d,%d)"):format(hKey, oX, oY, w, h))
+            end
+
             hdr:SetPoint("CENTER", UIParent, "CENTER", oX, oY)
         end
     end
@@ -1177,15 +1211,40 @@ function QUI_GFEM:EnableEditMode(previewType)
         groupMover = CreateGroupMover()
     end
 
-    -- Position at current saved offset
+    -- Position mover at the actual header position (which may differ from
+    -- the saved DB offset when the anchoring system is active).
     local db = GetDB()
     local pos = db and db.position
     local oX = pos and pos.offsetX or -400
     local oY = pos and pos.offsetY or 0
+
+    -- If a header is visible, derive mover position from its actual screen
+    -- center so the mover border surrounds the content even when the
+    -- anchoring system has repositioned it.
+    if GF then
+        local parentCX, parentCY = UIParent:GetCenter()
+        if parentCX and parentCY then
+            for _, hKey in ipairs({"party", "raid"}) do
+                local hdr = GF.headers[hKey]
+                if hdr and hdr:IsShown() then
+                    local rawCX, rawCY = hdr:GetCenter()
+                    local hCX = Helpers.SafeValue(rawCX, nil)
+                    local hCY = Helpers.SafeValue(rawCY, nil)
+                    if hCX and hCY then
+                        oX = QUICore.PixelRound and QUICore:PixelRound(hCX - parentCX) or Round(hCX - parentCX)
+                        oY = QUICore.PixelRound and QUICore:PixelRound(hCY - parentCY) or Round(hCY - parentCY)
+                        break
+                    end
+                end
+            end
+        end
+    end
+
     groupMover:ClearAllPoints()
     groupMover:SetPoint("CENTER", UIParent, "CENTER", oX, oY)
     UpdateMoverPositionText(groupMover, oX, oY)
     groupMover:Show()
+    QUI:DebugPrint(("[GF] EnableEditMode: mover pos=(%d,%d)"):format(oX, oY))
 
     -- Size the mover and anchor all content to it
     self:SyncMoverToContent()

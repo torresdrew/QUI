@@ -332,6 +332,47 @@ local function GetFrameDimensions(mode)
     return 200, 40
 end
 
+--- Compute expected header pixel dimensions from settings + member count.
+--- Works without child frames (unlike GetHeaderBounds in editmode).
+local function CalculateHeaderSize(db, memberCount)
+    if not db or not memberCount or memberCount <= 0 then return 100, 40 end
+
+    local layout = db.layout
+    local spacing = layout and layout.spacing or 2
+    local groupSpacing = layout and layout.groupSpacing or 10
+    local grow = layout and layout.growDirection or "DOWN"
+
+    -- Determine mode from member count
+    local mode
+    if memberCount <= 5 then mode = "party"
+    elseif memberCount <= 15 then mode = "small"
+    elseif memberCount <= 25 then mode = "medium"
+    else mode = "large"
+    end
+
+    local w, h = GetFrameDimensions(mode)
+
+    local framesPerGroup = 5
+    local numGroups = math.ceil(memberCount / framesPerGroup)
+    local framesInTallestGroup = math.min(memberCount, framesPerGroup)
+
+    local horizontal = (grow == "LEFT" or grow == "RIGHT")
+    local totalW, totalH
+
+    if horizontal then
+        totalW = framesInTallestGroup * w + (framesInTallestGroup - 1) * spacing
+        totalH = numGroups * h + (numGroups - 1) * groupSpacing
+    else
+        totalW = numGroups * w + (numGroups - 1) * groupSpacing
+        totalH = framesInTallestGroup * h + (framesInTallestGroup - 1) * spacing
+    end
+
+    return math.max(totalW, 100), math.max(totalH, 40)
+end
+
+-- Expose for editmode module
+QUI_GF.CalculateHeaderSize = CalculateHeaderSize
+
 ---------------------------------------------------------------------------
 -- HELPERS: Unit tooltip
 ---------------------------------------------------------------------------
@@ -1803,11 +1844,14 @@ local function CreateHeaders()
     -- Position
     local offsetX = position and position.offsetX or -400
     local offsetY = position and position.offsetY or 0
+    local partyW, partyH = CalculateHeaderSize(db, 5)
+    partyHeader:SetSize(partyW, partyH)
     partyHeader:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
     partyHeader:SetMovable(true)
     partyHeader:SetClampedToScreen(true)
     partyHeader:Hide()
     QUI_GF.headers.party = partyHeader
+    QUI:DebugPrint(("[GF] CreateHeaders party: pos=(%d,%d) size=(%d,%d)"):format(offsetX, offsetY, partyW, partyH))
 
     -- Watch for new children added by the secure header (handles late NPC frames)
     partyHeader:HookScript("OnAttributeChanged", function(self, key, value)
@@ -1823,11 +1867,15 @@ local function CreateHeaders()
     raidHeader:SetAttribute("initialConfigFunction", initConfigFunc)
     ConfigureRaidHeader(raidHeader)
 
+    local raidCount = math.max(IsInRaid() and GetNumGroupMembers() or 25, 5)
+    local raidW, raidH = CalculateHeaderSize(db, raidCount)
+    raidHeader:SetSize(raidW, raidH)
     raidHeader:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
     raidHeader:SetMovable(true)
     raidHeader:SetClampedToScreen(true)
     raidHeader:Hide()
     QUI_GF.headers.raid = raidHeader
+    QUI:DebugPrint(("[GF] CreateHeaders raid: pos=(%d,%d) size=(%d,%d)"):format(offsetX, offsetY, raidW, raidH))
 
     -- Watch for new children on raid header too
     raidHeader:HookScript("OnAttributeChanged", function(self, key, value)
@@ -1836,6 +1884,35 @@ local function CreateHeaders()
             value:RegisterForClicks("AnyUp")
         end
     end)
+end
+
+---------------------------------------------------------------------------
+-- HEADER: Update header sizes based on current roster
+---------------------------------------------------------------------------
+local function UpdateHeaderSizes()
+    if InCombatLockdown() then return end
+    local db = GetSettings()
+    if not db then return end
+
+    local partyHdr = QUI_GF.headers.party
+    if partyHdr then
+        local count = IsInGroup() and not IsInRaid() and GetNumGroupMembers() or 5
+        if db.layout and db.layout.showPlayer ~= false then
+            count = math.max(count, 1)  -- showPlayer adds the player
+        end
+        local w, h = CalculateHeaderSize(db, count)
+        partyHdr:SetSize(w, h)
+        QUI:DebugPrint(("[GF] UpdateHeaderSizes party: count=%d size=(%d,%d)"):format(count, w, h))
+    end
+
+    local raidHdr = QUI_GF.headers.raid
+    if raidHdr then
+        local count = IsInRaid() and GetNumGroupMembers() or 25
+        count = math.max(count, 5)
+        local w, h = CalculateHeaderSize(db, count)
+        raidHdr:SetSize(w, h)
+        QUI:DebugPrint(("[GF] UpdateHeaderSizes raid: count=%d size=(%d,%d)"):format(count, w, h))
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -1955,6 +2032,8 @@ local function UpdateFrameScaling(forceUpdate)
             end
         end
     end
+
+    UpdateHeaderSizes()
 end
 
 ---------------------------------------------------------------------------
@@ -2208,6 +2287,7 @@ local function OnEvent(self, event, arg1, ...)
     if event == "GROUP_ROSTER_UPDATE" then
         UpdateHeaderVisibility()
         UpdateFrameScaling(true)
+        UpdateHeaderSizes()
         -- Rebuild map after a short delay (header needs time to create children)
         StopRangeCheck()
         C_Timer.After(0.2, function()
@@ -2446,6 +2526,7 @@ function QUI_GF:RefreshSettings()
     -- Update visibility + redecorate
     UpdateHeaderVisibility()
     UpdateFrameScaling(true)
+    UpdateHeaderSizes()
     UpdateSelectiveEvents()
 end
 
