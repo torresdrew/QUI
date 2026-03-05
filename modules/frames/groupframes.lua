@@ -34,6 +34,7 @@ QUI_GF.editMode = false
 
 -- State tables for taint safety (weak-keyed)
 local frameState, GetFrameState = Helpers.CreateStateTable()
+
 local healthThrottle = {}     -- unitToken → last update time
 local powerThrottle = {}      -- unitToken → last update time
 local THROTTLE_INTERVAL = 0.1 -- 100ms coalesce window
@@ -1183,6 +1184,7 @@ local function DecorateGroupFrame(frame)
     if not frame or frame._quiDecorated then return end
     frame._quiDecorated = true
 
+
     local db = GetSettings()
     local general = GetGeneralSettings()
     local mode = GetGroupMode()
@@ -2024,39 +2026,25 @@ local function ResolveRangeSpells()
 end
 
 local function CheckUnitRange(unit)
-    -- Self is always in range (QUI pattern)
-    if UnitIsUnit(unit, "player") then
-        return true
-    end
+    if UnitIsUnit(unit, "player") then return true end
+    if not UnitExists(unit) then return true end
 
-    if not UnitExists(unit) then
-        return true
-    end
-
-    -- Connectivity check (secret-value safe)
     local connected = UnitIsConnected(unit)
     if IsSecretValue(connected) then connected = true end
     if not connected then
-        local isNPC = IsNPCPartyMember(unit)
-        if IsSecretValue(isNPC) then isNPC = false end
-        if not isNPC then return true end -- disconnected non-NPC, skip range
+        if not IsNPCPartyMember(unit) then return true end
     end
 
-    -- Dead check (secret-value safe)
     local isDead = UnitIsDeadOrGhost(unit)
     if IsSecretValue(isDead) then isDead = false end
 
-    -- Track whether spell returned nil vs secret (for NIL-ON-ALIVE rule)
     local spellReturnedNil = false
-    local spellReturnedSecret = false
 
     -- Primary: friendly spell range check
     if rangeSpell and not isDead then
         local result = C_Spell.IsSpellInRange(rangeSpell, unit)
-        if IsSecretValue(result) then
-            spellReturnedSecret = true
-        elseif result ~= nil then
-            return result  -- explicit true/false — trust it
+        if result ~= nil then
+            return result
         else
             spellReturnedNil = true
         end
@@ -2065,11 +2053,7 @@ local function CheckUnitRange(unit)
     -- Dead target: rez spell range check
     if isDead and resSpell then
         local result = C_Spell.IsSpellInRange(resSpell, unit)
-        if IsSecretValue(result) then
-            spellReturnedSecret = true
-        elseif result ~= nil then
-            return result
-        end
+        if result ~= nil then return result end
     end
 
     -- Out of combat: interact distance (~28 yards)
@@ -2077,33 +2061,19 @@ local function CheckUnitRange(unit)
         return CheckInteractDistance(unit, 4)
     end
 
-    -- Secret value during combat — we can't read the result, assume in range
-    -- (better than fading the entire raid)
-    if spellReturnedSecret then
-        return true
-    end
-
-    -- NIL-ON-ALIVE (QUI pattern): friendly spell returned nil on an
-    -- alive, connected target during combat. IsSpellInRange returns nil (not
-    -- false) for extremely distant targets outside position-awareness range.
-    -- Old fallback chain defaulted to "in range" — this fixes that.
+    -- NIL-ON-ALIVE: friendly spell returned nil on alive connected target in
+    -- combat — target is likely extremely distant (outside position awareness).
     if spellReturnedNil and connected and not isDead then
         return false
     end
 
-    -- In-combat last resort: UnitInRange (Warrior/DH/Hunter)
-    -- Returns two values; both may be secret in Midnight+
+    -- In-combat last resort: UnitInRange (Warrior/DH/Hunter with no friendly spell)
     if UnitInRange then
         local inRange, checked = UnitInRange(unit)
-        if IsSecretValue(inRange) or IsSecretValue(checked) then
-            return true  -- secret — assume in range
-        end
-        if checked and not inRange then
-            return false
-        end
+        if checked and not inRange then return false end
     end
 
-    -- No method available — assume in range (better than fading entire raid)
+    -- No method available — assume in range
     return true
 end
 
@@ -2115,49 +2085,16 @@ local function DoRangeCheck()
 
     for unit, frame in pairs(QUI_GF.unitFrameMap) do
         if frame and frame:IsShown() then
-            local handled = false
+            local inRange = CheckUnitRange(unit)
+            local state = GetFrameState(frame)
 
-            -- C-side fast path: forward raw IsSpellInRange result directly to
-            -- SetAlphaFromBoolean. C code evaluates secret booleans natively,
-            -- so range indication works correctly during combat without needing
-            -- to read the value in Lua. (QUI pattern)
-            if rangeSpell and frame.SetAlphaFromBoolean
-               and not UnitIsUnit(unit, "player") and UnitExists(unit) then
-                local isDead = UnitIsDeadOrGhost(unit)
-                local connected = UnitIsConnected(unit)
-                -- Alive + connected: use primary range spell
-                -- Secret dead/connected: treat as alive+connected (safe assumption)
-                local isAlive = IsSecretValue(isDead) or not isDead
-                local isConnected = IsSecretValue(connected) or connected
-
-                if isAlive and isConnected then
-                    local result = C_Spell.IsSpellInRange(rangeSpell, unit)
-                    if result ~= nil then
-                        frame:SetAlphaFromBoolean(result, 1, outAlpha)
-                        -- Update cache/state when result is a normal boolean
-                        if not IsSecretValue(result) then
-                            rangeCache[unit] = result
-                            GetFrameState(frame).outOfRange = not result
-                        end
-                        handled = true
-                    end
-                end
-            end
-
-            -- Lua fallback: player frame, dead/disconnected targets, no spell,
-            -- nil result, or no SetAlphaFromBoolean method
-            if not handled then
-                local inRange = CheckUnitRange(unit)
-                local state = GetFrameState(frame)
-
-                if rangeCache[unit] ~= inRange then
-                    rangeCache[unit] = inRange
-                    state.outOfRange = not inRange
-                    frame:SetAlpha(inRange and 1 or outAlpha)
-                elseif state.outOfRange == nil then
-                    state.outOfRange = not inRange
-                    frame:SetAlpha(inRange and 1 or outAlpha)
-                end
+            if rangeCache[unit] ~= inRange then
+                rangeCache[unit] = inRange
+                state.outOfRange = not inRange
+                frame:SetAlpha(inRange and 1 or outAlpha)
+            elseif state.outOfRange == nil then
+                state.outOfRange = not inRange
+                frame:SetAlpha(inRange and 1 or outAlpha)
             end
         end
     end
@@ -2360,6 +2297,7 @@ local function OnEvent(self, event, arg1, ...)
         C_Timer.After(1.0, function()
             UpdateHeaderVisibility()
             UpdateFrameScaling()
+            ResolveRangeSpells()
         end)
 
     elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "SPELLS_CHANGED" then

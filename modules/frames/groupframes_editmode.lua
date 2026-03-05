@@ -881,13 +881,27 @@ function QUI_GFEM:SyncMoverToContent()
         boundsW = Helpers.SafeValue(testContainer:GetWidth(), 200)
         boundsH = Helpers.SafeValue(testContainer:GetHeight(), 200)
     elseif GF then
-        -- Calculate size from header children (real group, not test mode)
+        -- Use the header's actual rendered size to avoid CENTER anchor drift.
+        -- GetHeaderBounds calculates an ideal size that may differ from the
+        -- real header dimensions, causing children to shift when reparented.
         for _, hKey in ipairs({"party", "raid"}) do
             local hdr = GF.headers[hKey]
-            if hdr then
-                local w, h = GetHeaderBounds(hdr, db)
+            if hdr and hdr:IsShown() then
+                local w = Helpers.SafeValue(hdr:GetWidth(), 0)
+                local h = Helpers.SafeValue(hdr:GetHeight(), 0)
                 if w > boundsW then boundsW = w end
                 if h > boundsH then boundsH = h end
+            end
+        end
+        -- Fall back to calculated bounds if headers have no size yet
+        if boundsW == 0 or boundsH == 0 then
+            for _, hKey in ipairs({"party", "raid"}) do
+                local hdr = GF.headers[hKey]
+                if hdr then
+                    local w, h = GetHeaderBounds(hdr, db)
+                    if w > boundsW then boundsW = w end
+                    if h > boundsH then boundsH = h end
+                end
             end
         end
     end
@@ -1229,8 +1243,9 @@ function QUI_GFEM:DisableEditMode()
             groupMover:StopMovingOrSizing()
             groupMover._isMoving = false
             groupMover:SetScript("OnUpdate", nil)
+            -- Only recalculate position if mover was actively being dragged
+            SaveMoverPosition(groupMover)
         end
-        SaveMoverPosition(groupMover)
         groupMover:Hide()
     end
 

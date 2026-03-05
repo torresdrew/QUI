@@ -137,6 +137,7 @@ local function SetupPrivateAuras(frame)
         end
 
         container:SetSize(iconSize, iconSize)
+        container:SetFrameLevel(frame:GetFrameLevel() + (settings.frameLevel or 50))
 
         -- Position relative to the anchor point on the parent frame
         local slotOffX, slotOffY = CalculateSlotOffset(i, iconSize, spacingVal, direction)
