@@ -2813,6 +2813,24 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
+    if event == "SPELL_UPDATE_USABLE" then
+        -- Spell usability updates can happen after login/spec swaps; re-apply secure
+        -- click attributes so spell icons don't stay non-clickable after info resolves.
+        for _, bar in pairs(CustomTrackers.activeBars) do
+            if bar and bar.config and bar.icons then
+                for _, icon in ipairs(bar.icons) do
+                    if icon.entry and icon.entry.type == "spell" then
+                        UpdateIconSecureAttributes(icon, icon.entry, bar.config)
+                    end
+                end
+            end
+            if bar and bar:IsShown() and bar.DoUpdate then
+                bar.DoUpdate()
+            end
+        end
+        return
+    end
+
     -- Performance: Throttled event-driven cooldown updates
     -- SPELL_UPDATE_COOLDOWN, ACTIONBAR_UPDATE_COOLDOWN, UNIT_AURA, and spellcast events
     -- can all fire multiple times per frame/GCD. Instead of calling DoUpdate on every event,
@@ -2979,7 +2997,7 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end)
     elseif event == "GET_ITEM_INFO_RECEIVED" then
-        -- Item info loaded, refresh bars to update any "?" icons
+        -- Item info loaded, refresh bars to update any "?" icons and click buttons.
         local itemID = ...
         if itemID then
             -- Clear cache for this item so it gets re-fetched
@@ -2992,6 +3010,12 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
                         if info and info.icon then
                             icon.tex:SetTexture(info.icon)
                         end
+                        -- Re-apply secure attributes once item info is available.
+                        if InCombatLockdown() then
+                            icon._pendingSecureUpdate = true
+                        else
+                            UpdateIconSecureAttributes(icon, icon.entry, bar.config)
+                        end
                     elseif icon.entry and icon.entry.type == "slot" then
                         -- Check if this slot's current item matches the loaded itemID
                         local slotItemID = GetInventoryItemID("player", icon.entry.id)
@@ -3001,6 +3025,12 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
                             local info = GetCachedSlotInfo(icon.entry.id)
                             if info and info.icon then
                                 icon.tex:SetTexture(info.icon)
+                            end
+                            -- Keep slot clickability in sync when delayed item data resolves.
+                            if InCombatLockdown() then
+                                icon._pendingSecureUpdate = true
+                            else
+                                UpdateIconSecureAttributes(icon, icon.entry, bar.config)
                             end
                         end
                     end
