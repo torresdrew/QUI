@@ -336,12 +336,43 @@ end
 local function MirrorBlizzBar(ownedBar, blizzBarChild)
     if not blizzBarChild then return end
     if hookedBars[blizzBarChild] then
-        -- Already hooked — just update the mapping
+        -- Already hooked — just update the mapping and resync initial state
         mirrorMap[blizzBarChild] = ownedBar
+        -- Resync current state since the owned bar is new (from pool rebuild)
+        local blizzStatusBar = blizzBarChild.Bar
+        if blizzStatusBar then
+            local ok1, minVal, maxVal = pcall(blizzStatusBar.GetMinMaxValues, blizzStatusBar)
+            if ok1 then
+                pcall(ownedBar.StatusBar.SetMinMaxValues, ownedBar.StatusBar, minVal, maxVal)
+            end
+            local ok2, val = pcall(blizzStatusBar.GetValue, blizzStatusBar)
+            if ok2 then
+                pcall(ownedBar.StatusBar.SetValue, ownedBar.StatusBar, val)
+            end
+        end
+        -- Resync icon texture
+        local blizzIcon = blizzBarChild.Icon
+        local blizzIconTex = blizzIcon and (blizzIcon.Icon or blizzIcon.icon or blizzIcon.texture)
+        if blizzIconTex then
+            local ok, currentTex = pcall(blizzIconTex.GetTexture, blizzIconTex)
+            if ok and currentTex then
+                pcall(ownedBar.IconTexture.SetTexture, ownedBar.IconTexture, currentTex)
+            end
+        end
         return
     end
     hookedBars[blizzBarChild] = true
     mirrorMap[blizzBarChild] = ownedBar
+
+    -- Hook Show/Hide on the Blizzard bar child to track active state
+    hooksecurefunc(blizzBarChild, "Show", function(self)
+        local target = mirrorMap[self]
+        if target then target._active = true end
+    end)
+    hooksecurefunc(blizzBarChild, "Hide", function(self)
+        local target = mirrorMap[self]
+        if target then target._active = false end
+    end)
 
     -- Hook StatusBar value/range forwarding
     local blizzStatusBar = blizzBarChild.Bar
@@ -557,10 +588,8 @@ function CDMBars:BuildBars(container)
         bar._blizzBar = blizzChild
 
         -- Check if the Blizzard bar is shown (has an active tracked buff)
-        local isShown = blizzChild:IsShown()
-        if not isShown then
-            bar._active = false
-        end
+        local okShown, isShown = pcall(blizzChild.IsShown, blizzChild)
+        bar._active = (okShown and isShown) or false
 
         -- Set up data mirroring hooks
         MirrorBlizzBar(bar, blizzChild)
@@ -685,7 +714,10 @@ function CDMBars:LayoutBars(container, settings)
     -- Set container size from calculated bounds
     local totalW, totalH
     if visibleIndex == 0 then
-        totalW, totalH = 1, 1
+        -- All bars hidden by inactiveMode — use settings dimensions so
+        -- the container (and Edit Mode overlay) stays a reasonable size.
+        totalW = effectiveBarWidth
+        totalH = effectiveBarHeight
     elseif isVertical then
         totalW = (visibleIndex * effectiveBarWidth) + ((visibleIndex - 1) * spacing)
         totalH = effectiveBarHeight
