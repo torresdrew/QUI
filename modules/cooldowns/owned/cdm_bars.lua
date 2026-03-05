@@ -1,0 +1,706 @@
+--[[
+    QUI CDM Bar Factory
+
+    Creates and manages addon-owned bar frames for the CDM tracked bar system.
+    All bars are simple Frame objects with StatusBar children — no protected
+    attributes, eliminating combat taint concerns for frame operations.
+
+    Data is mirrored from hidden Blizzard BuffBarCooldownViewer children via
+    hooksecurefunc. Blizzard C-side methods (SetValue, SetMinMaxValues, etc.)
+    handle secret values natively.
+
+    Pattern mirrors cdm_icons.lua pool management.
+]]
+
+local ADDON_NAME, ns = ...
+local Helpers = ns.Helpers
+local QUICore = ns.Addon
+local LSM = LibStub("LibSharedMedia-3.0")
+
+---------------------------------------------------------------------------
+-- MODULE
+---------------------------------------------------------------------------
+local CDMBars = {}
+ns.CDMBars = CDMBars
+
+---------------------------------------------------------------------------
+-- HELPERS
+---------------------------------------------------------------------------
+local GetGeneralFont = Helpers.GetGeneralFont
+local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
+local SafeValue = Helpers.SafeValue
+local SafeToNumber = Helpers.SafeToNumber
+
+---------------------------------------------------------------------------
+-- CONSTANTS
+---------------------------------------------------------------------------
+local MAX_RECYCLE_POOL_SIZE = 20
+
+---------------------------------------------------------------------------
+-- STATE
+---------------------------------------------------------------------------
+local barPool = {}       -- active bars (array)
+local recyclePool = {}   -- recycled bars (array, max MAX_RECYCLE_POOL_SIZE)
+
+-- Weak-keyed: Blizzard statusBar → owned bar (handles Blizzard frame recycling)
+local mirrorMap = setmetatable({}, { __mode = "k" })
+
+-- Track which Blizzard bar children have been hooked (weak-keyed)
+local hookedBars = setmetatable({}, { __mode = "k" })
+
+---------------------------------------------------------------------------
+-- BAR FRAME FACTORY
+---------------------------------------------------------------------------
+local function CreateBar(parent)
+    local bar = CreateFrame("Frame", nil, parent)
+    bar:SetSize(200, 25)
+
+    -- StatusBar for duration progress
+    local statusBar = CreateFrame("StatusBar", nil, bar)
+    statusBar:SetMinMaxValues(0, 1)
+    statusBar:SetValue(0)
+    bar.StatusBar = statusBar
+
+    -- Background texture (BACKGROUND, sublevel -8)
+    local bg = bar:CreateTexture(nil, "BACKGROUND", nil, -8)
+    bg:SetColorTexture(0, 0, 0, 1)
+    bar.Background = bg
+
+    -- Icon container frame
+    local iconContainer = CreateFrame("Frame", nil, bar)
+    iconContainer:SetSize(25, 25)
+    bar.IconContainer = iconContainer
+
+    -- Icon texture inside container
+    local iconTex = iconContainer:CreateTexture(nil, "ARTWORK")
+    iconTex:SetAllPoints(iconContainer)
+    iconTex:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    bar.IconTexture = iconTex
+
+    -- Border container with 4-edge textures
+    local borderFrame = CreateFrame("Frame", nil, bar)
+    borderFrame:SetFrameLevel((bar.GetFrameLevel and bar:GetFrameLevel() or 1) + 5)
+    borderFrame._top = borderFrame:CreateTexture(nil, "OVERLAY", nil, 7)
+    borderFrame._top:SetColorTexture(0, 0, 0, 1)
+    borderFrame._bottom = borderFrame:CreateTexture(nil, "OVERLAY", nil, 7)
+    borderFrame._bottom:SetColorTexture(0, 0, 0, 1)
+    borderFrame._left = borderFrame:CreateTexture(nil, "OVERLAY", nil, 7)
+    borderFrame._left:SetColorTexture(0, 0, 0, 1)
+    borderFrame._right = borderFrame:CreateTexture(nil, "OVERLAY", nil, 7)
+    borderFrame._right:SetColorTexture(0, 0, 0, 1)
+    bar.BorderContainer = borderFrame
+
+    -- Name text (spell name)
+    local nameText = statusBar:CreateFontString(nil, "OVERLAY")
+    nameText:SetFont(GetGeneralFont(), 14, GetGeneralFontOutline())
+    nameText:SetPoint("LEFT", statusBar, "LEFT", 4, 0)
+    nameText:SetJustifyH("LEFT")
+    bar.NameText = nameText
+
+    -- Duration text (remaining time)
+    local durationText = statusBar:CreateFontString(nil, "OVERLAY")
+    durationText:SetFont(GetGeneralFont(), 14, GetGeneralFontOutline())
+    durationText:SetPoint("RIGHT", statusBar, "RIGHT", -4, 0)
+    durationText:SetJustifyH("RIGHT")
+    bar.DurationText = durationText
+
+    -- State tracking
+    bar._spellEntry = nil
+    bar._blizzBar = nil
+    bar._active = false
+
+    bar:Hide()
+    return bar
+end
+
+---------------------------------------------------------------------------
+-- CONFIGURE BAR (clean rewrite of ApplyBarStyle for owned frames)
+---------------------------------------------------------------------------
+function CDMBars.ConfigureBar(bar, settings, overrideWidth)
+    if not bar then return end
+
+    local barHeight = settings.barHeight or 25
+    local barWidth = overrideWidth or settings.barWidth or 215
+    local texture = settings.texture or "Quazii v5"
+    local useClassColor = settings.useClassColor
+    local barColor = settings.barColor or {0.204, 0.827, 0.6, 1}
+    local barOpacity = settings.barOpacity or 1.0
+    local borderSize = settings.borderSize or 2
+    local bgColor = settings.bgColor or {0, 0, 0, 1}
+    local bgOpacity = settings.bgOpacity or 0.5
+    local textSize = settings.textSize or 14
+    local hideIcon = settings.hideIcon
+    local hideText = settings.hideText
+
+    -- Inactive visual settings
+    local inactiveMode = settings.inactiveMode or "hide"
+    if inactiveMode ~= "always" and inactiveMode ~= "fade" and inactiveMode ~= "hide" then
+        inactiveMode = "always"
+    end
+    local inactiveAlpha = settings.inactiveAlpha or 0.3
+    if inactiveAlpha < 0 then inactiveAlpha = 0 end
+    if inactiveAlpha > 1 then inactiveAlpha = 1 end
+    local desaturateInactive = (settings.desaturateInactive == true)
+
+    -- Vertical bar settings
+    local orientation = settings.orientation or "horizontal"
+    local isVertical = (orientation == "vertical")
+    local fillDirection = settings.fillDirection or "up"
+    local iconPosition = settings.iconPosition or "top"
+    local showTextOnVertical = settings.showTextOnVertical or false
+
+    local isActive = bar._active
+
+    -- For vertical bars: swap width/height conceptually
+    local frameWidth, frameHeight
+    if isVertical then
+        frameWidth = barHeight
+        frameHeight = barWidth
+    else
+        frameWidth = barWidth
+        frameHeight = barHeight
+    end
+
+    -- Set bar dimensions
+    bar:SetSize(frameWidth, frameHeight)
+
+    local statusBar = bar.StatusBar
+    if statusBar then
+        statusBar:SetSize(frameWidth, frameHeight)
+        if statusBar.SetOrientation then
+            statusBar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
+        end
+        if isVertical and statusBar.SetReverseFill then
+            statusBar:SetReverseFill(fillDirection == "down")
+        end
+    end
+
+    -- Icon container
+    local iconContainer = bar.IconContainer
+    if iconContainer then
+        if hideIcon then
+            iconContainer:Hide()
+            iconContainer:SetAlpha(0)
+        else
+            iconContainer:Show()
+            iconContainer:SetAlpha(1)
+            local iconSize = isVertical and frameWidth or frameHeight
+            iconContainer:SetSize(iconSize, iconSize)
+
+            -- Apply optional desaturation for inactive entries
+            if bar.IconTexture and bar.IconTexture.SetDesaturated then
+                bar.IconTexture:SetDesaturated((not isActive) and desaturateInactive and inactiveMode ~= "always")
+            end
+        end
+    end
+
+    -- Position statusBar and icon based on orientation
+    if statusBar then
+        statusBar:ClearAllPoints()
+        if isVertical then
+            if hideIcon or not iconContainer then
+                statusBar:SetAllPoints(bar)
+            else
+                iconContainer:ClearAllPoints()
+                if iconPosition == "bottom" then
+                    iconContainer:SetPoint("BOTTOM", bar, "BOTTOM", 0, 0)
+                    statusBar:SetPoint("TOP", bar, "TOP", 0, 0)
+                    statusBar:SetPoint("LEFT", bar, "LEFT", 0, 0)
+                    statusBar:SetPoint("RIGHT", bar, "RIGHT", 0, 0)
+                    statusBar:SetPoint("BOTTOM", iconContainer, "TOP", 0, 0)
+                else -- "top" (default)
+                    iconContainer:SetPoint("TOP", bar, "TOP", 0, 0)
+                    statusBar:SetPoint("BOTTOM", bar, "BOTTOM", 0, 0)
+                    statusBar:SetPoint("LEFT", bar, "LEFT", 0, 0)
+                    statusBar:SetPoint("RIGHT", bar, "RIGHT", 0, 0)
+                    statusBar:SetPoint("TOP", iconContainer, "BOTTOM", 0, 0)
+                end
+            end
+        else
+            if hideIcon or not iconContainer then
+                statusBar:SetPoint("LEFT", bar, "LEFT", 0, 0)
+            else
+                iconContainer:ClearAllPoints()
+                iconContainer:SetPoint("LEFT", bar, "LEFT", 0, 0)
+                statusBar:SetPoint("LEFT", iconContainer, "RIGHT", 0, 0)
+            end
+            statusBar:SetPoint("TOP", bar, "TOP", 0, 0)
+            statusBar:SetPoint("BOTTOM", bar, "BOTTOM", 0, 0)
+            statusBar:SetPoint("RIGHT", bar, "RIGHT", 0, 0)
+        end
+    end
+
+    -- Apply StatusBar texture
+    if statusBar and statusBar.SetStatusBarTexture then
+        local texturePath = LSM:Fetch("statusbar", texture) or LSM:Fetch("statusbar", "Quazii v5")
+        if texturePath then
+            statusBar:SetStatusBarTexture(texturePath)
+        end
+    end
+
+    -- Apply bar color (class or custom) with opacity
+    if statusBar and statusBar.SetStatusBarColor then
+        local c = barColor
+        if useClassColor then
+            local _, class = UnitClass("player")
+            local safeClass = Helpers.SafeToString(class, nil)
+            local color = safeClass and RAID_CLASS_COLORS[safeClass]
+            if color then
+                statusBar:SetStatusBarColor(color.r, color.g, color.b, barOpacity)
+            else
+                statusBar:SetStatusBarColor(c[1] or 0.2, c[2] or 0.8, c[3] or 0.6, barOpacity)
+            end
+        else
+            statusBar:SetStatusBarColor(c[1] or 0.2, c[2] or 0.8, c[3] or 0.6, barOpacity)
+        end
+    end
+
+    -- Background
+    local bg = bar.Background
+    if bg then
+        local bgR, bgG, bgB = bgColor[1] or 0, bgColor[2] or 0, bgColor[3] or 0
+        bg:SetColorTexture(bgR, bgG, bgB, 1)
+        if statusBar then
+            bg:ClearAllPoints()
+            bg:SetAllPoints(statusBar)
+        end
+        bg:SetAlpha(bgOpacity)
+        bg:Show()
+    end
+
+    -- Border (4-edge technique)
+    local borderFrame = bar.BorderContainer
+    if borderFrame then
+        if borderSize > 0 then
+            borderFrame:ClearAllPoints()
+            borderFrame:SetPoint("TOPLEFT", bar, "TOPLEFT", -borderSize, borderSize)
+            borderFrame:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", borderSize, -borderSize)
+
+            borderFrame._top:ClearAllPoints()
+            borderFrame._top:SetPoint("TOPLEFT", borderFrame, "TOPLEFT", 0, 0)
+            borderFrame._top:SetPoint("TOPRIGHT", borderFrame, "TOPRIGHT", 0, 0)
+            borderFrame._top:SetHeight(borderSize)
+
+            borderFrame._bottom:ClearAllPoints()
+            borderFrame._bottom:SetPoint("BOTTOMLEFT", borderFrame, "BOTTOMLEFT", 0, 0)
+            borderFrame._bottom:SetPoint("BOTTOMRIGHT", borderFrame, "BOTTOMRIGHT", 0, 0)
+            borderFrame._bottom:SetHeight(borderSize)
+
+            borderFrame._left:ClearAllPoints()
+            borderFrame._left:SetPoint("TOPLEFT", borderFrame, "TOPLEFT", 0, 0)
+            borderFrame._left:SetPoint("BOTTOMLEFT", borderFrame, "BOTTOMLEFT", 0, 0)
+            borderFrame._left:SetWidth(borderSize)
+
+            borderFrame._right:ClearAllPoints()
+            borderFrame._right:SetPoint("TOPRIGHT", borderFrame, "TOPRIGHT", 0, 0)
+            borderFrame._right:SetPoint("BOTTOMRIGHT", borderFrame, "BOTTOMRIGHT", 0, 0)
+            borderFrame._right:SetWidth(borderSize)
+
+            borderFrame:Show()
+        else
+            borderFrame:Hide()
+        end
+    end
+
+    -- Text
+    local generalFont = GetGeneralFont()
+    local generalOutline = GetGeneralFontOutline()
+    local showText = not hideText and (not isVertical or showTextOnVertical)
+
+    if bar.NameText then
+        bar.NameText:SetFont(generalFont, textSize, generalOutline)
+        bar.NameText:SetAlpha(showText and 1 or 0)
+    end
+    if bar.DurationText then
+        bar.DurationText:SetFont(generalFont, textSize, generalOutline)
+        bar.DurationText:SetAlpha(showText and 1 or 0)
+    end
+
+    -- Apply frame alpha based on active state
+    local targetAlpha = 1
+    if not isActive then
+        if inactiveMode == "fade" then
+            targetAlpha = inactiveAlpha
+        elseif inactiveMode == "hide" then
+            targetAlpha = 0
+        end
+    end
+    bar:SetAlpha(targetAlpha)
+end
+
+---------------------------------------------------------------------------
+-- MIRROR BLIZZARD BAR DATA → OWNED BAR
+-- Uses hooksecurefunc to forward data from hidden Blizzard bar children.
+-- C-side StatusBar methods handle secret values natively.
+---------------------------------------------------------------------------
+local function MirrorBlizzBar(ownedBar, blizzBarChild)
+    if not blizzBarChild then return end
+    if hookedBars[blizzBarChild] then
+        -- Already hooked — just update the mapping
+        mirrorMap[blizzBarChild] = ownedBar
+        return
+    end
+    hookedBars[blizzBarChild] = true
+    mirrorMap[blizzBarChild] = ownedBar
+
+    -- Hook StatusBar value/range forwarding
+    local blizzStatusBar = blizzBarChild.Bar
+    if blizzStatusBar then
+        -- Mirror SetValue: forward progress to owned StatusBar
+        hooksecurefunc(blizzStatusBar, "SetValue", function(self, value)
+            local target = mirrorMap[blizzBarChild]
+            if not target then return end
+            -- Forward value to owned StatusBar (C-side handles secret values)
+            pcall(target.StatusBar.SetValue, target.StatusBar, value)
+            -- Detect active state: value between min and max
+            local ok, minVal, maxVal = pcall(self.GetMinMaxValues, self)
+            if ok then
+                local safeVal = SafeToNumber(value, nil)
+                local safeMin = SafeToNumber(minVal, nil)
+                local safeMax = SafeToNumber(maxVal, nil)
+                if safeVal and safeMin and safeMax then
+                    target._active = (safeVal > safeMin + 0.001 and safeVal < safeMax - 0.001)
+                end
+            end
+        end)
+
+        -- Mirror SetMinMaxValues
+        hooksecurefunc(blizzStatusBar, "SetMinMaxValues", function(self, minVal, maxVal)
+            local target = mirrorMap[blizzBarChild]
+            if not target then return end
+            pcall(target.StatusBar.SetMinMaxValues, target.StatusBar, minVal, maxVal)
+        end)
+    end
+
+    -- Hook icon texture (SetTexture and SetAtlas)
+    local blizzIcon = blizzBarChild.Icon
+    local blizzIconTex = blizzIcon and (blizzIcon.Icon or blizzIcon.icon or blizzIcon.texture)
+    if blizzIconTex then
+        if blizzIconTex.SetTexture then
+            hooksecurefunc(blizzIconTex, "SetTexture", function(self, tex)
+                local target = mirrorMap[blizzBarChild]
+                if not target or not target.IconTexture then return end
+                pcall(target.IconTexture.SetTexture, target.IconTexture, tex)
+            end)
+        end
+        if blizzIconTex.SetAtlas then
+            hooksecurefunc(blizzIconTex, "SetAtlas", function(self, atlas)
+                local target = mirrorMap[blizzBarChild]
+                if not target or not target.IconTexture then return end
+                pcall(target.IconTexture.SetAtlas, target.IconTexture, atlas)
+            end)
+        end
+        -- Initial texture copy
+        local ok, currentTex = pcall(blizzIconTex.GetTexture, blizzIconTex)
+        if ok and currentTex then
+            pcall(ownedBar.IconTexture.SetTexture, ownedBar.IconTexture, currentTex)
+        end
+    end
+
+    -- Hook text regions on bar frame and statusBar
+    -- Blizzard bar children have FontString regions for name and duration
+    local function HookFontStrings(blizzFrame, nameTarget, durationTarget)
+        if not blizzFrame or not blizzFrame.GetRegions then return end
+        local fontStrings = {}
+        for _, region in ipairs({ blizzFrame:GetRegions() }) do
+            if region and region:GetObjectType() == "FontString" then
+                fontStrings[#fontStrings + 1] = region
+            end
+        end
+        -- Blizzard bars typically have 2 FontStrings: name (left) and duration (right)
+        for _, fs in ipairs(fontStrings) do
+            hooksecurefunc(fs, "SetText", function(self, text)
+                local target = mirrorMap[blizzBarChild]
+                if not target then return end
+                -- Determine which text this is by checking justify
+                local justify = self:GetJustifyH()
+                if justify == "RIGHT" then
+                    pcall(target.DurationText.SetText, target.DurationText, text or "")
+                else
+                    pcall(target.NameText.SetText, target.NameText, text or "")
+                end
+            end)
+            -- Initial text copy
+            local ok, text = pcall(fs.GetText, fs)
+            if ok and text then
+                local justify = fs:GetJustifyH()
+                if justify == "RIGHT" then
+                    pcall(durationTarget.SetText, durationTarget, text)
+                else
+                    pcall(nameTarget.SetText, nameTarget, text)
+                end
+            end
+        end
+    end
+
+    HookFontStrings(blizzBarChild, ownedBar.NameText, ownedBar.DurationText)
+    if blizzStatusBar then
+        HookFontStrings(blizzStatusBar, ownedBar.NameText, ownedBar.DurationText)
+    end
+
+    -- Initial value sync
+    if blizzStatusBar then
+        local ok1, minVal, maxVal = pcall(blizzStatusBar.GetMinMaxValues, blizzStatusBar)
+        if ok1 then
+            pcall(ownedBar.StatusBar.SetMinMaxValues, ownedBar.StatusBar, minVal, maxVal)
+        end
+        local ok2, val = pcall(blizzStatusBar.GetValue, blizzStatusBar)
+        if ok2 then
+            pcall(ownedBar.StatusBar.SetValue, ownedBar.StatusBar, val)
+            -- Set initial active state
+            if ok1 then
+                local safeVal = SafeToNumber(val, nil)
+                local safeMin = SafeToNumber(minVal, nil)
+                local safeMax = SafeToNumber(maxVal, nil)
+                if safeVal and safeMin and safeMax then
+                    ownedBar._active = (safeVal > safeMin + 0.001 and safeVal < safeMax - 0.001)
+                end
+            end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- POOL MANAGEMENT
+---------------------------------------------------------------------------
+local function AcquireBar(parent)
+    local bar
+    if #recyclePool > 0 then
+        bar = table.remove(recyclePool)
+        bar:SetParent(parent)
+    else
+        bar = CreateBar(parent)
+    end
+    bar:Show()
+    barPool[#barPool + 1] = bar
+    return bar
+end
+
+local function ReleaseBar(bar)
+    bar:Hide()
+    bar:ClearAllPoints()
+    bar._spellEntry = nil
+    bar._blizzBar = nil
+    bar._active = false
+    bar.NameText:SetText("")
+    bar.DurationText:SetText("")
+    bar.IconTexture:SetTexture(nil)
+    bar.StatusBar:SetValue(0)
+
+    if #recyclePool < MAX_RECYCLE_POOL_SIZE then
+        recyclePool[#recyclePool + 1] = bar
+    end
+end
+
+function CDMBars:ClearPool()
+    for i = #barPool, 1, -1 do
+        ReleaseBar(barPool[i])
+        barPool[i] = nil
+    end
+end
+
+function CDMBars:GetActiveBars()
+    return barPool
+end
+
+---------------------------------------------------------------------------
+-- BUILD BARS: Scan Blizzard BuffBarCooldownViewer children, create owned
+-- bars for each, and set up hooks for data mirroring.
+---------------------------------------------------------------------------
+function CDMBars:BuildBars(container)
+    if not container then return end
+
+    local blizzViewer = _G["BuffBarCooldownViewer"]
+    if not blizzViewer then return end
+
+    -- Collect Blizzard bar children
+    local blizzBars = {}
+    local sel = blizzViewer.Selection
+    local okc, children = pcall(function()
+        return { blizzViewer:GetChildren() }
+    end)
+    if okc and children then
+        for _, child in ipairs(children) do
+            if child and child ~= sel and child:IsObjectType("Frame") then
+                -- Bar children have a .Bar StatusBar
+                if child.Bar and child.Bar.IsObjectType and child.Bar:IsObjectType("StatusBar") then
+                    blizzBars[#blizzBars + 1] = child
+                end
+            end
+        end
+    end
+
+    -- Sort by layoutIndex
+    table.sort(blizzBars, function(a, b)
+        return (a.layoutIndex or 0) < (b.layoutIndex or 0)
+    end)
+
+    -- Check if we need to rebuild: compare blizzard bar count with current pool
+    local needsRebuild = (#blizzBars ~= #barPool)
+    if not needsRebuild then
+        for i, bar in ipairs(barPool) do
+            if bar._blizzBar ~= blizzBars[i] then
+                needsRebuild = true
+                break
+            end
+        end
+    end
+
+    if not needsRebuild then return end
+
+    -- Clear existing pool
+    self:ClearPool()
+
+    -- Create owned bars for each Blizzard bar child
+    for _, blizzChild in ipairs(blizzBars) do
+        local bar = AcquireBar(container)
+        bar._blizzBar = blizzChild
+
+        -- Check if the Blizzard bar is shown (has an active tracked buff)
+        local isShown = blizzChild:IsShown()
+        if not isShown then
+            bar._active = false
+        end
+
+        -- Set up data mirroring hooks
+        MirrorBlizzBar(bar, blizzChild)
+    end
+end
+
+---------------------------------------------------------------------------
+-- LAYOUT BARS: Pure math positioning, no Blizzard frame interaction.
+-- Stacks bars vertically (default) or horizontally (vertical orientation).
+---------------------------------------------------------------------------
+function CDMBars:LayoutBars(container, settings)
+    if not container then return end
+    if not settings then return end
+
+    local count = #barPool
+    if count == 0 then
+        container:SetSize(1, 1)
+        return
+    end
+
+    local stylingEnabled = settings.enabled
+    local barHeight = settings.barHeight or 25
+    local barWidth = settings.barWidth or 215
+    local spacing = settings.spacing or 2
+    local growFromBottom = (settings.growUp ~= false)
+    local orientation = settings.orientation or "horizontal"
+    local isVertical = (orientation == "vertical")
+    local inactiveMode = settings.inactiveMode or "hide"
+    local reserveSlotWhenInactive = (settings.reserveSlotWhenInactive == true)
+
+    -- For vertical bars, swap dimensions
+    local effectiveBarWidth, effectiveBarHeight
+    if isVertical then
+        effectiveBarWidth = barHeight
+        effectiveBarHeight = barWidth
+    else
+        effectiveBarWidth = barWidth
+        effectiveBarHeight = barHeight
+    end
+
+    -- Apply HUD layer priority
+    local hudLayering = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.hudLayering
+    local layerPriority = hudLayering and hudLayering.buffBar or 5
+    local frameLevel = 200
+    if QUICore and QUICore.GetHUDFrameLevel then
+        frameLevel = QUICore:GetHUDFrameLevel(layerPriority)
+    end
+    container:SetFrameStrata("MEDIUM")
+    container:SetFrameLevel(frameLevel)
+
+    -- Configure and position each bar
+    local visibleIndex = 0
+    for _, bar in ipairs(barPool) do
+        -- Apply styling
+        CDMBars.ConfigureBar(bar, settings, barWidth)
+
+        -- Apply strata/level
+        bar:SetFrameStrata("MEDIUM")
+        bar:SetFrameLevel(frameLevel)
+        if bar.StatusBar then
+            bar.StatusBar:SetFrameStrata("MEDIUM")
+            bar.StatusBar:SetFrameLevel(frameLevel + 1)
+        end
+        if bar.IconContainer then
+            bar.IconContainer:SetFrameStrata("MEDIUM")
+            bar.IconContainer:SetFrameLevel(frameLevel + 1)
+        end
+
+        -- Determine visibility
+        local shouldShow = true
+        if not bar._active then
+            if inactiveMode == "hide" and not reserveSlotWhenInactive then
+                shouldShow = false
+            end
+        end
+
+        if shouldShow then
+            bar:ClearAllPoints()
+            local offsetIndex = visibleIndex
+
+            if isVertical then
+                local x
+                if growFromBottom then
+                    x = QUICore:PixelRound(offsetIndex * (effectiveBarWidth + spacing))
+                    bar:SetPoint("LEFT", container, "LEFT", x, 0)
+                else
+                    x = QUICore:PixelRound(-offsetIndex * (effectiveBarWidth + spacing))
+                    bar:SetPoint("RIGHT", container, "RIGHT", x, 0)
+                end
+            else
+                local y
+                if growFromBottom then
+                    y = QUICore:PixelRound(offsetIndex * (effectiveBarHeight + spacing))
+                    bar:SetPoint("BOTTOM", container, "BOTTOM", 0, y)
+                else
+                    y = QUICore:PixelRound(-offsetIndex * (effectiveBarHeight + spacing))
+                    bar:SetPoint("TOP", container, "TOP", 0, y)
+                end
+            end
+
+            bar:Show()
+            visibleIndex = visibleIndex + 1
+        else
+            bar:Hide()
+        end
+    end
+
+    -- Set container size from calculated bounds
+    local totalW, totalH
+    if visibleIndex == 0 then
+        totalW, totalH = 1, 1
+    elseif isVertical then
+        totalW = (visibleIndex * effectiveBarWidth) + ((visibleIndex - 1) * spacing)
+        totalH = effectiveBarHeight
+    else
+        totalW = effectiveBarWidth
+        totalH = (visibleIndex * effectiveBarHeight) + ((visibleIndex - 1) * spacing)
+    end
+    totalW = QUICore:PixelRound(totalW)
+    totalH = QUICore:PixelRound(totalH)
+    container:SetSize(totalW, totalH)
+
+    -- Write calculated dimensions to viewer state for proxy sizing
+    if _G.QUI_SetCDMViewerBounds then
+        _G.QUI_SetCDMViewerBounds(container, totalW, totalH)
+    end
+end
+
+---------------------------------------------------------------------------
+-- REFRESH: Rebuild + re-layout (called from buffbar.lua)
+---------------------------------------------------------------------------
+function CDMBars:Refresh(container, settings, overrideWidth)
+    if not container then return end
+    if not settings then return end
+
+    -- Update barWidth if autoWidth provides an override
+    if overrideWidth then
+        settings = setmetatable({ barWidth = overrideWidth }, { __index = settings })
+    end
+
+    self:BuildBars(container)
+    self:LayoutBars(container, settings)
+end
