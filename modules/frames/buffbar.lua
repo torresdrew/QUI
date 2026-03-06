@@ -179,6 +179,8 @@ end
 local function ApplyTrackedBarAnchor(settings)
     local viewer = GetBuffBarViewer()
     if not viewer then return end
+    -- Respect centralized frame anchoring overrides
+    if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(viewer) then return end
     -- Avoid ClearAllPoints/SetPoint churn on protected Blizzard viewers during combat.
     if InCombatLockdown() then return end
     -- Don't reposition during Edit Mode — let the user drag/nudge freely.
@@ -274,6 +276,8 @@ end
 local function ApplyBuffIconAnchor(settings)
     local viewer = GetBuffIconViewer()
     if not viewer then return end
+    -- Respect centralized frame anchoring overrides
+    if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(viewer) then return end
     if InCombatLockdown() then return end
     if Helpers.IsEditModeActive() then return end
 
