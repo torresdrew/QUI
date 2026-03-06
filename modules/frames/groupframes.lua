@@ -1842,6 +1842,7 @@ local function CreateHeaders()
         self:SetHeight(h)
         self:SetAttribute("*type1", "target")
         self:SetAttribute("*type2", "togglemenu")
+        self:RegisterForClicks("AnyUp")
         RegisterUnitWatch(self)
     ]]
 
@@ -1859,7 +1860,13 @@ local function CreateHeaders()
     partyHeader:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
     partyHeader:SetMovable(true)
     partyHeader:SetClampedToScreen(true)
+
+    -- Pre-create all 5 party frames upfront so no frames are created mid-combat
+    partyHeader:SetAttribute("startingIndex", -4)
+    partyHeader:Show()
+    partyHeader:SetAttribute("startingIndex", 1)
     partyHeader:Hide()
+
     QUI_GF.headers.party = partyHeader
     QUI:DebugPrint(("[GF] CreateHeaders party: pos=(%d,%d) size=(%d,%d)"):format(offsetX, offsetY, partyW, partyH))
 
@@ -1887,7 +1894,13 @@ local function CreateHeaders()
     raidHeader:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
     raidHeader:SetMovable(true)
     raidHeader:SetClampedToScreen(true)
+
+    -- Pre-create all 40 raid frames upfront so no frames are created mid-combat
+    raidHeader:SetAttribute("startingIndex", -39)
+    raidHeader:Show()
+    raidHeader:SetAttribute("startingIndex", 1)
     raidHeader:Hide()
+
     QUI_GF.headers.raid = raidHeader
     QUI:DebugPrint(("[GF] CreateHeaders raid: pos=(%d,%d) size=(%d,%d)"):format(offsetX, offsetY, raidW, raidH))
 
