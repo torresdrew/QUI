@@ -149,41 +149,6 @@ local function CreateBarIndicator(parent)
 end
 
 ---------------------------------------------------------------------------
--- SECRET AURA WORKAROUND: UNIT_SPELLCAST_SUCCEEDED tracking
--- When C_UnitAuras returns restricted data in combat, use cast tracking
--- to identify player-cast buffs by spell ID correlation.
----------------------------------------------------------------------------
-local castTracker = {} -- [spellID] = { targetUnit, castTime }
-local CAST_TRACK_WINDOW = 5 -- seconds to keep cast records
-
-local castEventFrame = CreateFrame("Frame")
-castEventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-castEventFrame:SetScript("OnEvent", function(self, event, unit, castGUID, spellID)
-    if event ~= "UNIT_SPELLCAST_SUCCEEDED" then return end
-    if unit ~= "player" then return end
-
-    -- Record the cast with timestamp
-    castTracker[spellID] = {
-        time = GetTime(),
-        castGUID = castGUID,
-    }
-
-    -- Cleanup old entries
-    local now = GetTime()
-    for id, info in pairs(castTracker) do
-        if (now - info.time) > CAST_TRACK_WINDOW then
-            castTracker[id] = nil
-        end
-    end
-end)
-
-local function WasRecentlyCast(spellID)
-    local info = castTracker[spellID]
-    if not info then return false end
-    return (GetTime() - info.time) < CAST_TRACK_WINDOW
-end
-
----------------------------------------------------------------------------
 -- PER-SPEC PRESETS: Built-in indicator configurations
 ---------------------------------------------------------------------------
 local SPEC_PRESETS = {
@@ -625,12 +590,6 @@ local function UpdateFrameIndicators(frame)
     for _, config in ipairs(sortedIndicators) do
         local spellID = config.spellId
         local auraData = spellID and activeAuras[spellID]
-
-        -- Secret aura workaround: check cast tracker if aura not found
-        if not auraData and spellID and WasRecentlyCast(spellID) then
-            -- Create minimal stub so the indicator shows
-            auraData = { spellId = spellID, icon = C_Spell.GetSpellTexture(spellID) }
-        end
 
         if auraData then
             local pos = config.position or "TOPLEFT"
