@@ -2449,7 +2449,7 @@ local defaults = {
                 dispelOverlay = { enabled = true, opacity = 0.8, fillOpacity = 0.18, color = { 0.26, 0.54, 1, 0.8 } },
                 targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
                 myBuffIndicator = { enabled = false, color = { 0.2, 0.8, 0.2, 0.5 } },
-                defensiveIndicator = { enabled = false, iconSize = 16 },
+                defensiveIndicator = { enabled = false, iconSize = 16, position = "CENTER", offsetX = 0, offsetY = 0 },
             },
 
             -- Class power pips

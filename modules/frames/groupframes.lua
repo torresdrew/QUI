@@ -1128,10 +1128,14 @@ local function UpdateDefensiveIndicator(frame)
     end
 
     -- Size and position
-    local iconSize = healerSettings.defensiveIndicator.iconSize or 16
+    local defSettings = healerSettings.defensiveIndicator
+    local iconSize = defSettings.iconSize or 16
+    local position = defSettings.position or "CENTER"
+    local offsetX = defSettings.offsetX or 0
+    local offsetY = defSettings.offsetY or 0
     frame.defensiveIcon:SetSize(iconSize, iconSize)
     frame.defensiveIcon:ClearAllPoints()
-    frame.defensiveIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    frame.defensiveIcon:SetPoint(position, frame, position, offsetX, offsetY)
     frame.defensiveIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
 
     frame.defensiveIcon:Show()

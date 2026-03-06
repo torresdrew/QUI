@@ -829,6 +829,32 @@ local function CreateGroupFramesPage(parent)
         defSize:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
 
+        local positionOptions = {
+            {value = "TOPLEFT", text = "Top Left"},
+            {value = "TOP", text = "Top"},
+            {value = "TOPRIGHT", text = "Top Right"},
+            {value = "LEFT", text = "Left"},
+            {value = "CENTER", text = "Center"},
+            {value = "RIGHT", text = "Right"},
+            {value = "BOTTOMLEFT", text = "Bottom Left"},
+            {value = "BOTTOM", text = "Bottom"},
+            {value = "BOTTOMRIGHT", text = "Bottom Right"},
+        }
+        local defPos = GUI:CreateFormDropdown(tabContent, "Position", positionOptions, "position", defDB, RefreshGF)
+        defPos:SetPoint("TOPLEFT", PAD, y)
+        defPos:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
+
+        local defOffX = GUI:CreateFormSlider(tabContent, "X Offset", -50, 50, 1, "offsetX", defDB, RefreshGF)
+        defOffX:SetPoint("TOPLEFT", PAD, y)
+        defOffX:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local defOffY = GUI:CreateFormSlider(tabContent, "Y Offset", -50, 50, 1, "offsetY", defDB, RefreshGF)
+        defOffY:SetPoint("TOPLEFT", PAD, y)
+        defOffY:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
         tabContent:SetHeight(math.abs(y) + 30)
     end
 
