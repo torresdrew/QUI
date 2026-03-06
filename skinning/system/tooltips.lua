@@ -376,13 +376,19 @@ local function SkinTooltip(tooltip)
 
     local ns = tooltip.NineSlice
     if ns then
-        -- Clear Blizzard's cached layout properties to prevent re-application
-        -- of default styles during tooltip resize/re-layout. Safe in addon context.
+        -- Clear Blizzard's cached layout properties on the NineSlice to prevent
+        -- re-application of default styles during tooltip resize/re-layout.
+        -- TAINT SAFETY: Only clear on the NineSlice sub-frame, NEVER on the
+        -- tooltip frame itself. Writing to tooltip.layoutType/layoutTextureKit
+        -- taints the GameTooltip frame. During combat, Blizzard's widget code
+        -- (GameTooltip_AddWidgetSet → RegisterForWidgetSet → ProcessWidget →
+        -- UIWidgetTemplateTextWithState:Setup) reads tainted keys, propagating
+        -- taint to the execution context. GetStringHeight() then returns a
+        -- secret value, breaking widget arithmetic. The SharedTooltip_SetBackdropStyle
+        -- hook and OnShow hook handle re-styling without needing tooltip-level clears.
         ns.layoutType = nil
         ns.layoutTextureKit = nil
         ns.backdropInfo = nil
-        if tooltip.layoutType ~= nil then tooltip.layoutType = nil end
-        if tooltip.layoutTextureKit ~= nil then tooltip.layoutTextureKit = nil end
 
         -- NineSlice path (modern WoW 9.1.5+)
         ApplyFlatNineSlice(ns, thickness)
