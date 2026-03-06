@@ -318,6 +318,20 @@ local function BuildHUDVisibilityTab(tabContent)
     table.insert(ufConditionChecks, ufMouseoverCheck)
     y = y - FORM_ROW
 
+    if ufVis.showWhenHealthBelow100 == nil then ufVis.showWhenHealthBelow100 = false end
+    local ufHealthCheck = GUI:CreateFormCheckbox(
+        tabContent,
+        "Show When Health < 100%",
+        "showWhenHealthBelow100",
+        ufVis,
+        RefreshUnitframesVisibility,
+        BuildSearchInfo("unitframes", "unit frames", "health", "damaged", "hurt", "injured")
+    )
+    ufHealthCheck:SetPoint("TOPLEFT", PADDING, y)
+    ufHealthCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    table.insert(ufConditionChecks, ufHealthCheck)
+    y = y - FORM_ROW
+
     UpdateUFConditionState()
 
     local ufFadeSlider = GUI:CreateFormSlider(tabContent, "Fade Duration (sec)", 0.1, 1.0, 0.05, "fadeDuration", ufVis, RefreshUnitframesVisibility)

@@ -869,6 +869,7 @@ local defaults = {
             showInGroup = false,
             showInInstance = false,
             showOnMouseover = false,
+            showWhenHealthBelow100 = false,
             fadeDuration = 0.2,
             fadeOutAlpha = 0,
             alwaysShowCastbars = false,  -- When true, castbars ignore UF visibility
@@ -1946,6 +1947,14 @@ local defaults = {
                     xOffset = -8,
                     yOffset = 8,
                 },
+                -- Classification icon (elite/rare/boss indicator)
+                classificationIcon = {
+                    enabled = false,
+                    size = 16,
+                    anchor = "LEFT",
+                    xOffset = -8,
+                    yOffset = 0,
+                },
             },
             -- Target of Target
             targettarget = {
@@ -2252,6 +2261,14 @@ local defaults = {
                     xOffset = -8,
                     yOffset = 8,
                 },
+                -- Classification icon (elite/rare/boss indicator)
+                classificationIcon = {
+                    enabled = false,
+                    size = 16,
+                    anchor = "LEFT",
+                    xOffset = -8,
+                    yOffset = 0,
+                },
             },
             -- Boss frames
             boss = {
@@ -2347,6 +2364,14 @@ local defaults = {
                     anchor = "TOP",
                     xOffset = 0,
                     yOffset = 8,
+                },
+                -- Classification icon (elite/rare/boss indicator)
+                classificationIcon = {
+                    enabled = false,
+                    size = 16,
+                    anchor = "LEFT",
+                    xOffset = -8,
+                    yOffset = 0,
                 },
             },
         },
