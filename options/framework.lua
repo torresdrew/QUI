@@ -2507,11 +2507,14 @@ function GUI:CreateFormToggle(parent, label, dbKey, dbTable, onChange, registryI
     local container = CreateFrame("Frame", nil, parent)
     container:SetHeight(FORM_ROW_HEIGHT)
 
-    -- Label on left (off-white text)
+    -- Label on left (off-white text, constrained to not overlap toggle)
     local text = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(text, 12, "", C.text)
     text:SetText(label or "Option")
     text:SetPoint("LEFT", 0, 0)
+    text:SetWidth(170)
+    text:SetWordWrap(true)
+    text:SetJustifyH("LEFT")
 
     -- Toggle track (the pill-shaped background)
     local track = CreateFrame("Button", nil, container, "BackdropTemplate")
@@ -2638,11 +2641,14 @@ function GUI:CreateFormToggleInverted(parent, label, dbKey, dbTable, onChange)
     local container = CreateFrame("Frame", nil, parent)
     container:SetHeight(FORM_ROW_HEIGHT)
 
-    -- Label on left (off-white text)
+    -- Label on left (off-white text, constrained to not overlap toggle)
     local text = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(text, 12, "", C.text)
     text:SetText(label or "Option")
     text:SetPoint("LEFT", 0, 0)
+    text:SetWidth(170)
+    text:SetWordWrap(true)
+    text:SetJustifyH("LEFT")
 
     -- Toggle track
     local track = CreateFrame("Button", nil, container, "BackdropTemplate")
@@ -2754,11 +2760,14 @@ function GUI:CreateFormCheckboxOriginal(parent, label, dbKey, dbTable, onChange)
     local container = CreateFrame("Frame", nil, parent)
     container:SetHeight(FORM_ROW_HEIGHT)
 
-    -- Label on left (off-white text)
+    -- Label on left (off-white text, constrained to not overlap checkbox)
     local text = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(text, 12, "", C.text)
     text:SetText(label or "Option")
     text:SetPoint("LEFT", 0, 0)
+    text:SetWidth(170)
+    text:SetWordWrap(true)
+    text:SetJustifyH("LEFT")
 
     -- Checkbox aligned with other widgets (starts at 180px from left)
     local box = CreateFrame("Button", nil, container, "BackdropTemplate")
@@ -2849,11 +2858,14 @@ function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onC
     local precision = options.precision
     local formatStr = precision and string.format("%%.%df", precision) or (step < 1 and "%.2f" or "%d")
 
-    -- Label on left (off-white text)
+    -- Label on left (off-white text, constrained to not overlap slider track)
     local text = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     SetFont(text, 12, "", C.text)
     text:SetText(label or "Setting")
     text:SetPoint("LEFT", 0, 0)
+    text:SetWidth(170)
+    text:SetWordWrap(true)
+    text:SetJustifyH("LEFT")
     container.label = text
 
     -- Track container (for the filled + unfilled portions)
@@ -4381,7 +4393,9 @@ function GUI:RefreshSidebarTree(frame)
                         frame._sidebarExpandedTabs[tabIndex] = true
                         frame._sidebarExpandedSubTabs[tabIndex] = frame._sidebarExpandedSubTabs[tabIndex] or {}
                         local isExpanded = frame._sidebarExpandedSubTabs[tabIndex][subTabIndex] and true or false
-                        if isExpanded then
+                        local isActive = (activeTab == tabIndex and activeSubTab == subTabIndex)
+                        if isExpanded and isActive then
+                            -- Only toggle collapse when clicking the already-active subtab
                             frame._sidebarExpandedSubTabs[tabIndex][subTabIndex] = false
                             if frame._sidebarActiveSectionKey
                                 and string.match(frame._sidebarActiveSectionKey, "^" .. tabIndex .. ":" .. subTabIndex .. ":") then

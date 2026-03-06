@@ -217,6 +217,7 @@ local SPEC_PRESETS = {
     -- Holy Paladin (65)
     [65] = {
         { spellId = 53563,  name = "Beacon of Light",type = "icon",  position = "TOPLEFT",    size = 16, priority = 10, showCooldown = false },
+        { spellId = 156910, name = "Beacon of Faith", type = "icon", position = "TOPRIGHT",   size = 14, priority = 9,  showCooldown = false },
         { spellId = 287280, name = "Glimmer",        type = "square", position = "BOTTOMLEFT",size = 8,  priority = 8,  color = { 1.0, 0.9, 0.3, 1 } },
         { spellId = 6940,   name = "Sacrifice",      type = "border", position = "CENTER",    priority = 15, color = { 1.0, 0.2, 0.2, 0.8 } },
     },
@@ -580,35 +581,31 @@ local function UpdateFrameIndicators(frame)
         frame._indicatorBorder:Hide()
     end
 
-    -- Build a set of active auras on the unit (batch API handles non-contiguous slots)
+    -- Build a set of active auras on the unit
     local activeAuras = {} -- [spellID] = auraData
-    if C_UnitAuras.GetUnitAuras then
-        local ok, helpfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL", 80)
-        if ok and helpfulAuras then
-            for _, auraData in ipairs(helpfulAuras) do
-                local spellID = SafeValue(auraData.spellId, nil)
-                if spellID then activeAuras[spellID] = auraData end
-            end
-        end
-        local ok2, harmfulAuras = pcall(C_UnitAuras.GetUnitAuras, unit, "HARMFUL", 80)
-        if ok2 and harmfulAuras then
-            for _, auraData in ipairs(harmfulAuras) do
-                local spellID = SafeValue(auraData.spellId, nil)
-                if spellID then activeAuras[spellID] = auraData end
+    local GetUnitAuras = C_UnitAuras.GetUnitAuras
+    if GetUnitAuras then
+        -- Bulk API: 2 calls instead of 80+ per-index lookups
+        for _, filter in ipairs({"HELPFUL", "HARMFUL"}) do
+            local auras = GetUnitAuras(unit, filter, 40)
+            if auras then
+                for _, auraData in ipairs(auras) do
+                    local spellID = SafeValue(auraData.spellId, nil)
+                    if spellID then activeAuras[spellID] = auraData end
+                end
             end
         end
     else
-        -- Pre-12.0 fallback: slot iteration
-        local slot = 1
-        while true do
-            local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySlot, unit, slot)
-            if not ok or not auraData then break end
-            local spellID = SafeValue(auraData.spellId, nil)
-            if spellID then
-                activeAuras[spellID] = auraData
+        -- Fallback: per-index iteration
+        for _, filter in ipairs({"HELPFUL", "HARMFUL"}) do
+            local idx = 1
+            while idx <= 80 do
+                local ok, auraData = pcall(C_UnitAuras.GetAuraDataByIndex, unit, idx, filter)
+                if not ok or not auraData then break end
+                local spellID = SafeValue(auraData.spellId, nil)
+                if spellID then activeAuras[spellID] = auraData end
+                idx = idx + 1
             end
-            slot = slot + 1
-            if slot > 80 then break end
         end
     end
 

@@ -30,35 +30,28 @@ end
 -- Fallback to bundled Quazii font (always available, loaded early in media.lua)
 local QUAZII_FONT_PATH = [[Interface\AddOns\QUI\assets\Quazii.ttf]]
 
--- Font objects to override (preserves original size/flags, only changes font file)
+-- TAINT SAFETY: Shared Font object modification is FUNDAMENTALLY UNSAFE.
+-- Calling SetFont() on ANY shared Font object from addon code permanently
+-- taints that object and ALL derived FontStrings for the entire session.
+-- During combat, Blizzard's secure code calls GetStringHeight(),
+-- GetStringWidth(), etc. on those FontStrings and gets secret/tainted
+-- values, causing arithmetic errors in:
+--   - UIWidgetTemplateTextWithState (inherits GameFontNormal) — tooltip
+--     widget Setup() fails with "secret number value tainted by 'QUI'"
+--   - ActionButton Count/Name text (inherits NumberFontNormal)
+--   - Any other secure frame that reads FontString metrics during combat
 --
--- TAINT SAFETY: Shared font objects used by secure frames are EXCLUDED.
--- Calling SetFont() on a shared Font object taints every derived FontString.
--- During combat, Blizzard's secure code reads those FontStrings and gets
--- secret/tainted values, causing errors:
---   - Tooltip fonts (GameTooltipText, etc.): UIWidgetTemplateTextWithState
---     inherits these — GetStringHeight() returns a secret value, breaking
---     widget Setup() arithmetic.  Tooltip fonts are handled per-instance
---     by skinning/system/tooltips.lua instead.
---   - Number fonts (NumberFontNormal, etc.): ActionButton Count/Name text
---     inherits these — tainted metrics propagate to ActionButton:Update()
---     comparisons during combat.
+-- All font overrides are applied PER-INSTANCE instead:
+--   - Tooltips: skinning/system/tooltips.lua (ApplyTooltipFontSizeToFrame)
+--   - Chat frames: per-frame SetFont below
+--   - ObjectiveTracker: per-frame ApplyFontToFrameRecursive below
 local BLIZZARD_FONT_OBJECTS = {
-    -- Game fonts (menus, dialogs, general UI)
-    "GameFontNormal", "GameFontHighlight", "GameFontNormalSmall",
-    "GameFontHighlightSmall", "GameFontNormalLarge", "GameFontHighlightLarge",
-    "GameFontDisable", "GameFontDisableSmall", "GameFontDisableLarge",
-    -- Number fonts — EXCLUDED (taint ActionButton text in combat)
-    -- "NumberFontNormal", "NumberFontNormalSmall", "NumberFontNormalLarge",
-    -- "NumberFontNormalHuge", "NumberFontNormalSmallGray",
-    -- Quest fonts
-    "QuestFont", "QuestFontHighlight", "QuestFontNormalSmall",
-    "QuestFontHighlightSmall",
-    -- Tooltip fonts — EXCLUDED (taint UIWidget GetStringHeight in combat)
-    -- Handled per-instance by skinning/system/tooltips.lua instead.
-    -- "GameTooltipHeaderText", "GameTooltipText", "GameTooltipTextSmall",
-    -- Chat fonts
-    "ChatFontNormal", "ChatFontSmall", "ChatFontLarge",
+    -- ALL shared Font objects are excluded — see taint safety note above.
+    -- Game fonts: taint UIWidgetTemplateTextWithState (GetStringHeight)
+    -- Number fonts: taint ActionButton text metrics
+    -- Quest fonts: may be inherited by secure UI elements
+    -- Tooltip fonts: handled per-instance by skinning/system/tooltips.lua
+    -- Chat fonts: handled per-frame below (SetFont on ScrollingMessageFrame)
 }
 
 -- Track if hooks are already set up (one-time)
@@ -117,8 +110,6 @@ local function ScheduleGlobalFontApply()
 end
 
 function QUICore:ApplyGlobalFont()
-    -- NOTE: No InCombatLockdown() guard needed. Font:SetFont() on Blizzard
-    -- font objects is not a protected operation — safe in combat.
     -- Check if feature is enabled
     if not self.db or not self.db.profile or not self.db.profile.general then return end
     if not self.db.profile.general.applyGlobalFontToBlizzard then return end

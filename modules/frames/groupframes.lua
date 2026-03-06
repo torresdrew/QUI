@@ -1652,6 +1652,12 @@ local function DecorateGroupFrame(frame)
         ClickCastFrames[frame] = true
     end
 
+    -- Register with QUI click-cast system
+    local GFCC = ns.QUI_GroupFrameClickCast
+    if GFCC and GFCC:IsEnabled() then
+        GFCC:RegisterFrame(frame)
+    end
+
     -- Store in flat list
     table.insert(QUI_GF.allFrames, frame)
 end
@@ -2041,20 +2047,76 @@ end
 ---------------------------------------------------------------------------
 local rangeCheckTicker = nil
 
--- Class → array of candidate friendly spell IDs for range checking.
--- First IsPlayerSpell() match wins. Classes without friendly spells use
--- fallback methods (CheckInteractDistance OOC, UnitInRange last resort).
-local RANGE_SPELLS = {
+-- Spec → friendly spell ID for range checking (validated with IsPlayerSpell).
+-- Spec-based gives better coverage than class-based: every healer/caster spec
+-- has a friendly spell that returns true/false (not nil) on alive targets.
+local SPEC_RANGE_SPELLS = {
+    -- Death Knight
+    [250] = 47541,  -- Blood: Death Coil (heals undead allies, works as range check)
+    [251] = 47541,  -- Frost: Death Coil
+    [252] = 47541,  -- Unholy: Death Coil
+    -- Demon Hunter
+    [577] = nil,    -- Havoc: no friendly spell
+    [581] = nil,    -- Vengeance: no friendly spell
+    -- Druid
+    [102] = 8936,   -- Balance: Regrowth
+    [103] = 8936,   -- Feral: Regrowth
+    [104] = 8936,   -- Guardian: Regrowth
+    [105] = 774,    -- Restoration: Rejuvenation
+    -- Evoker
+    [1467] = 360995, -- Devastation: Emerald Blossom
+    [1468] = 360995, -- Preservation: Emerald Blossom
+    [1473] = 360995, -- Augmentation: Emerald Blossom
+    -- Hunter
+    [253] = nil,    -- Beast Mastery
+    [254] = nil,    -- Marksmanship
+    [255] = nil,    -- Survival
+    -- Mage
+    [62]  = 1459,   -- Arcane: Arcane Intellect
+    [63]  = 1459,   -- Fire: Arcane Intellect
+    [64]  = 1459,   -- Frost: Arcane Intellect
+    -- Monk
+    [268] = 116670, -- Brewmaster: Vivify
+    [269] = 116670, -- Windwalker: Vivify
+    [270] = 116670, -- Mistweaver: Vivify
+    -- Paladin
+    [65]  = 19750,  -- Holy: Flash of Light
+    [66]  = 19750,  -- Protection: Flash of Light
+    [70]  = 19750,  -- Retribution: Flash of Light
+    -- Priest
+    [256] = 17,     -- Discipline: Power Word: Shield
+    [257] = 2061,   -- Holy: Flash Heal
+    [258] = 17,     -- Shadow: Power Word: Shield
+    -- Rogue
+    [259] = 57934,  -- Assassination: Tricks of the Trade
+    [260] = 57934,  -- Outlaw: Tricks of the Trade
+    [261] = 57934,  -- Subtlety: Tricks of the Trade
+    -- Shaman
+    [262] = 8004,   -- Elemental: Healing Surge
+    [263] = 8004,   -- Enhancement: Healing Surge
+    [264] = 8004,   -- Restoration: Healing Surge
+    -- Warlock
+    [265] = 5697,   -- Affliction: Unending Breath
+    [266] = 5697,   -- Demonology: Unending Breath
+    [267] = 5697,   -- Destruction: Unending Breath
+    -- Warrior
+    [71]  = nil,    -- Arms
+    [72]  = nil,    -- Fury
+    [73]  = nil,    -- Protection
+}
+
+-- Class fallback: used if spec not detected or spec spell not known
+local CLASS_RANGE_SPELLS = {
     PRIEST      = { 2061, 17 },          -- Flash Heal, Power Word: Shield
-    PALADIN     = { 19750, 85673 },      -- Flash of Light, Word of Glory
+    PALADIN     = { 19750 },             -- Flash of Light
     DRUID       = { 8936, 774 },         -- Regrowth, Rejuvenation
-    SHAMAN      = { 8004, 188070 },      -- Healing Surge, Healing Rain
-    MONK        = { 116670, 119611 },    -- Vivify, Renewing Mist
-    EVOKER      = { 361469, 364343 },    -- Living Flame, Echo
-    MAGE        = { 130, 1459 },         -- Slow Fall, Arcane Intellect
+    SHAMAN      = { 8004 },              -- Healing Surge
+    MONK        = { 116670 },            -- Vivify
+    EVOKER      = { 360995, 361469 },    -- Emerald Blossom, Living Flame
+    MAGE        = { 1459 },              -- Arcane Intellect
     WARLOCK     = { 5697 },              -- Unending Breath
     ROGUE       = { 57934 },             -- Tricks of the Trade
-    DEATHKNIGHT = { 61999 },             -- Raise Ally
+    DEATHKNIGHT = { 47541 },             -- Death Coil
     WARRIOR     = {},
     DEMONHUNTER = {},
     HUNTER      = {},
@@ -2084,14 +2146,26 @@ local function ResolveRangeSpells()
     -- Clear cache — spells changed, previous results may be stale
     wipe(rangeCache)
 
-    -- Resolve primary range spell
+    -- Resolve primary range spell (spec-based first, then class fallback)
     rangeSpell = nil
-    local candidates = RANGE_SPELLS[playerClass]
-    if candidates then
-        for _, spellID in ipairs(candidates) do
-            if IsPlayerSpell(spellID) then
-                rangeSpell = spellID
-                break
+    local specIndex = GetSpecialization and GetSpecialization()
+    local specID = specIndex and GetSpecializationInfo and GetSpecializationInfo(specIndex)
+    if specID and SPEC_RANGE_SPELLS[specID] then
+        local spellID = SPEC_RANGE_SPELLS[specID]
+        if spellID and IsPlayerSpell(spellID) then
+            rangeSpell = spellID
+        end
+    end
+
+    -- Class fallback if spec lookup didn't resolve
+    if not rangeSpell then
+        local candidates = CLASS_RANGE_SPELLS[playerClass]
+        if candidates then
+            for _, spellID in ipairs(candidates) do
+                if IsPlayerSpell(spellID) then
+                    rangeSpell = spellID
+                    break
+                end
             end
         end
     end
@@ -2120,6 +2194,7 @@ local function CheckUnitRange(unit)
     local spellReturnedNil = false
 
     -- Primary: friendly spell range check
+    -- IsSpellInRange returns true/false/nil (normal booleans, not secret values)
     if rangeSpell and not isDead then
         local result = C_Spell.IsSpellInRange(rangeSpell, unit)
         if result ~= nil then
@@ -2149,6 +2224,10 @@ local function CheckUnitRange(unit)
     -- In-combat last resort: UnitInRange (Warrior/DH/Hunter with no friendly spell)
     if UnitInRange then
         local inRange, checked = UnitInRange(unit)
+        -- Guard against secret values (Midnight+)
+        if IsSecretValue(inRange) or IsSecretValue(checked) then
+            return true  -- Can't trust secret values, assume in range
+        end
         if checked and not inRange then return false end
     end
 
@@ -2579,6 +2658,12 @@ function QUI_GF:Initialize()
     StartRangeCheck()
 
     self.initialized = true
+
+    -- Initialize click-casting
+    local GFCC = ns.QUI_GroupFrameClickCast
+    if GFCC then
+        GFCC:Initialize()
+    end
 
     -- Hide Blizzard group frames
     if ns.QUI_GroupFrameBlizzard and ns.QUI_GroupFrameBlizzard.HideBlizzardFrames then
