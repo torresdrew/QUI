@@ -241,16 +241,10 @@ local function CreateCopyPopup()
     closeBtn:SetPoint("TOPRIGHT", -2, -2)
     closeBtn:SetSize(24, 24)
 
-    -- ESC to close (OnKeyDown avoids tainting UISpecialFrames)
-    urlPopup:EnableKeyboard(true)
-    urlPopup:SetScript("OnKeyDown", function(self, key)
-        if key == "ESCAPE" then
-            self:SetPropagateKeyboardInput(false)
-            self:Hide()
-        else
-            self:SetPropagateKeyboardInput(true)
-        end
-    end)
+    -- Add to special frames so ESC closes it
+    if not tContains(UISpecialFrames, "QUI_ChatCopyPopup") then
+        tinsert(UISpecialFrames, "QUI_ChatCopyPopup")
+    end
 
     return urlPopup
 end
@@ -469,16 +463,10 @@ local function CreateChatCopyFrame()
         editBox:SetWidth(scrollFrame:GetWidth())
     end)
 
-    -- ESC to close (OnKeyDown avoids tainting UISpecialFrames)
-    chatCopyFrame:EnableKeyboard(true)
-    chatCopyFrame:SetScript("OnKeyDown", function(self, key)
-        if key == "ESCAPE" then
-            self:SetPropagateKeyboardInput(false)
-            self:Hide()
-        else
-            self:SetPropagateKeyboardInput(true)
-        end
-    end)
+    -- Add to special frames so ESC closes it
+    if not tContains(UISpecialFrames, "QUI_ChatCopyFrame") then
+        tinsert(UISpecialFrames, "QUI_ChatCopyFrame")
+    end
 
     return chatCopyFrame
 end

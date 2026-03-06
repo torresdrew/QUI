@@ -4563,18 +4563,9 @@ function GUI:CreateMainFrame()
     self.MainFrame = frame
 
     -- ESC to close the settings panel
-    -- NOTE: Do NOT use UISpecialFrames — tinsert taints the table in WoW 12.0+,
-    -- breaking ToggleGameMenu()'s secure CloseSpecialWindows() iteration and
-    -- causing the game menu to open when closing ANY window via ESC.
-    frame:EnableKeyboard(true)
-    frame:SetScript("OnKeyDown", function(self, key)
-        if key == "ESCAPE" then
-            self:SetPropagateKeyboardInput(false)
-            self:Hide()
-        else
-            self:SetPropagateKeyboardInput(true)
-        end
-    end)
+    if not tContains(UISpecialFrames, "QUI_Options") then
+        tinsert(UISpecialFrames, "QUI_Options")
+    end
 
     -- Note: Registry is NOT cleared on show - deduplication keys prevent duplicates
     -- when tabs are re-clicked. Registry persists to allow searching across all visited tabs.
