@@ -421,6 +421,7 @@ local function ShouldUnitframesBeVisible()
     if vis.showInGroup and IsPlayerInGroup() then return true end
     if vis.showInInstance and IsPlayerInInstance() then return true end
     if vis.showOnMouseover and UnitframesVisibility.mouseOver then return true end
+    if vis.showWhenHealthBelow100 and UnitHealth("player") < UnitHealthMax("player") then return true end
 
     return false
 end
@@ -595,6 +596,8 @@ visibilityEventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
 visibilityEventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
 visibilityEventFrame:RegisterEvent("PLAYER_FLAGS_CHANGED")
 visibilityEventFrame:RegisterEvent("PLAYER_IS_GLIDING_CHANGED")
+visibilityEventFrame:RegisterUnitEvent("UNIT_HEALTH", "player")
+visibilityEventFrame:RegisterUnitEvent("UNIT_MAXHEALTH", "player")
 
 local _pendingSetupTimer = nil
 

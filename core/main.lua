@@ -869,6 +869,7 @@ local defaults = {
             showInGroup = false,
             showInInstance = false,
             showOnMouseover = false,
+            showWhenHealthBelow100 = false,
             fadeDuration = 0.2,
             fadeOutAlpha = 0,
             alwaysShowCastbars = false,  -- When true, castbars ignore UF visibility
