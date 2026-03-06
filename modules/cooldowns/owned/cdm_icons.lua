@@ -308,7 +308,7 @@ local function MirrorBlizzCooldown(icon, blizzChild)
         state.hooked = true
 
         if blizzCD.SetCooldownFromDurationObject then
-            hooksecurefunc(blizzCD, "SetCooldownFromDurationObject", function(self, durationObj, isAura)
+            hooksecurefunc(blizzCD, "SetCooldownFromDurationObject", function(self, durationObj)
                 local s = blizzCDState[self]
                 if not s or s.bypass then return end
                 local targetIcon = s.icon
@@ -317,15 +317,9 @@ local function MirrorBlizzCooldown(icon, blizzChild)
                 -- Mirror to addon-owned CD
                 local cd = targetIcon.Cooldown
                 if cd and cd.SetCooldownFromDurationObject then
-                    pcall(cd.SetCooldownFromDurationObject, cd, durationObj, isAura)
+                    pcall(cd.SetCooldownFromDurationObject, cd, durationObj)
                 end
 
-                -- Track aura state for swipe color classification
-                -- (swipe.lua uses _auraActive to pick overlay vs swipe color).
-                -- isAura may be secret in combat; only update when safe
-                if not IsSecretValue(isAura) then
-                    targetIcon._auraActive = isAura or false
-                end
                 ReapplySwipeStyle(cd, targetIcon)
             end)
         end
@@ -341,11 +335,6 @@ local function MirrorBlizzCooldown(icon, blizzChild)
             if cd then
                 pcall(cd.SetCooldown, cd, start, duration)
             end
-
-            -- SetCooldown fires when Blizzard transitions from aura to
-            -- cooldown on the same icon — clear the aura flag so the
-            -- swipe classifier picks up the change immediately.
-            targetIcon._auraActive = false
 
             -- Track GCD state for swipe classification (matches CMC pattern).
             -- isOnGCD is a Blizzard boolean — CMC accesses it directly without
@@ -367,6 +356,28 @@ local function MirrorBlizzCooldown(icon, blizzChild)
         -- No SetAllPoints/SetPoint/SetParent hooks: the Blizzard
         -- CooldownFrame stays on its original parent frame.  Nothing
         -- to guard against re-anchoring because we never moved it.
+    end
+
+    -- Initial cooldown sync: on reload, the Blizzard CD may already have
+    -- an active cooldown running. Forward its current state to the addon CD
+    -- so swipe/countdown display correctly without waiting for the next update.
+    local addonCD = icon.Cooldown
+    if addonCD then
+        -- Mirror current cooldown duration via GetCooldownTimes (C-side, secret-safe)
+        local ok, startMs, durMs = pcall(blizzCD.GetCooldownTimes, blizzCD)
+        if ok and startMs and durMs then
+            local start = SafeToNumber(startMs)
+            local dur = SafeToNumber(durMs)
+            if start and dur and start > 0 and dur > 0 then
+                pcall(addonCD.SetCooldown, addonCD, start / 1000, dur / 1000)
+            end
+        end
+        -- Mirror reverse state (aura timers show reversed swipe)
+        local okR, isReversed = pcall(blizzCD.GetReverse, blizzCD)
+        if okR and not IsSecretValue(isReversed) then
+            pcall(addonCD.SetReverse, addonCD, isReversed)
+        end
+        ReapplySwipeStyle(addonCD, icon)
     end
 end
 
@@ -425,7 +436,7 @@ local function HookBlizzTexture(icon, blizzChild)
             local entry = quiIcon._spellEntry
             if not entry then return end
             local viewerType = entry.viewerType
-            if viewerType == "buff" or (entry.isAura and quiIcon._auraActive) then
+            if viewerType == "buff" or quiIcon._auraActive then
                 return
             end
             local db = GetDB()

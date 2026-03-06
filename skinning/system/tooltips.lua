@@ -834,6 +834,45 @@ eventFrame:SetScript("OnEvent", function(self, event)
     if event == "PLAYER_LOGIN" then
         -- Defer slightly to ensure all tooltips are created
         C_Timer.After(0.5, function()
+            -----------------------------------------------------------------
+            -- TAINT SAFETY: Wrap Blizzard tooltip functions that do arithmetic
+            -- on frame dimensions (GetWidth, GetStringHeight).  During combat,
+            -- ANY addon-tainted tooltip frame returns secret values from these
+            -- getters, causing arithmetic errors in Blizzard's own code.
+            -- This is inherent to the WoW 12.0 taint model — every tooltip-
+            -- modifying addon triggers it.  Wrapping with pcall during combat
+            -- suppresses the harmless sizing errors (tooltip may have slightly
+            -- wrong dimensions during combat, but won't spam error logs).
+            -----------------------------------------------------------------
+            -- EmbeddedItemTooltip_UpdateSize: Called from OnSizeChanged and
+            -- SetItemByID/SetItemByQuestReward. Does arithmetic on GetWidth()
+            -- which returns a secret value when the parent tooltip is tainted.
+            if EmbeddedItemTooltip_UpdateSize then
+                local origUpdateSize = EmbeddedItemTooltip_UpdateSize
+                EmbeddedItemTooltip_UpdateSize = function(self, ...)
+                    if InCombatLockdown() then
+                        pcall(origUpdateSize, self, ...)
+                        return
+                    end
+                    return origUpdateSize(self, ...)
+                end
+            end
+
+            -- GameTooltip_AddWidgetSet → RegisterForWidgetSet → ProcessWidget →
+            -- UIWidgetTemplateTextWithState:Setup does SetWidth(secretValue) and
+            -- arithmetic on GetStringHeight() (secret). Wrapping the entry point
+            -- catches both error variants.
+            if GameTooltip_AddWidgetSet then
+                local origAddWidgetSet = GameTooltip_AddWidgetSet
+                GameTooltip_AddWidgetSet = function(tooltip, ...)
+                    if InCombatLockdown() then
+                        pcall(origAddWidgetSet, tooltip, ...)
+                        return
+                    end
+                    return origAddWidgetSet(tooltip, ...)
+                end
+            end
+
             -- All tooltip modifications gated by master toggle + skinTooltips
             if not IsEnabled() then
                 -- Still hook OnShow so enabling live takes effect on next show
