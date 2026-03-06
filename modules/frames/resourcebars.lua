@@ -6,6 +6,17 @@ local UIKit = ns.UIKit
 local Helpers = ns.Helpers
 local GetCore = Helpers.GetCore
 
+-- Pre-create named frames so Edit Mode layout anchoring can resolve
+-- "QUIPowerBar" / "QUISecondaryPowerBar" before full initialization.
+-- GetPowerBar()/GetSecondaryPowerBar() will create the real frames later,
+-- overwriting these globals.
+if not _G[ADDON_NAME .. "PowerBar"] then
+    CreateFrame("Frame", ADDON_NAME .. "PowerBar", UIParent):Hide()
+end
+if not _G[ADDON_NAME .. "SecondaryPowerBar"] then
+    CreateFrame("Frame", ADDON_NAME .. "SecondaryPowerBar", UIParent):Hide()
+end
+
 -- Pixel-perfect scaling helper
 local function Scale(x, frame)
     if QUICore and QUICore.Scale then
