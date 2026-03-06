@@ -1867,7 +1867,11 @@ local function CreateHeaders()
     partyHeader:HookScript("OnAttributeChanged", function(self, key, value)
         if value and type(key) == "string" and key:match("^child") then
             DecorateGroupFrame(value)
-            value:RegisterForClicks("AnyUp")
+            if not InCombatLockdown() then
+                value:RegisterForClicks("AnyUp")
+            else
+                pendingRegisterClicks = true
+            end
         end
     end)
 
@@ -1891,7 +1895,11 @@ local function CreateHeaders()
     raidHeader:HookScript("OnAttributeChanged", function(self, key, value)
         if value and type(key) == "string" and key:match("^child") then
             DecorateGroupFrame(value)
-            value:RegisterForClicks("AnyUp")
+            if not InCombatLockdown() then
+                value:RegisterForClicks("AnyUp")
+            else
+                pendingRegisterClicks = true
+            end
         end
     end)
 end
