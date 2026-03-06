@@ -74,14 +74,56 @@ local function ApplySwipeToIcon(icon, settings)
     local isBuffIcon = (entry.viewerType == "buff")
 
     -- Classify: aura, gcd, or cooldown
-    -- Buff viewer children are always auras, but cooldownInfo doesn't flag them
+    -- Buff viewer children are always auras, but cooldownInfo doesn't flag them.
     local mode
-    if isBuffIcon or (entry.isAura and icon._auraActive) then
+    if isBuffIcon or icon._auraActive then
         mode = "aura"
-    elseif icon._isOnGCD then
-        mode = "gcd"
-    else
-        mode = "cooldown"
+    elseif not isBuffIcon then
+        -- Detect active auras on essential/utility icons.
+        -- Primary: check Blizzard's wasSetFromAura property on the viewer
+        -- child frame (set by Blizzard internally, works in combat).
+        -- Fallback 1: buff pool cross-reference (combat-safe).
+        -- Fallback 2: aura API queries (out of combat only).
+        local blizzChild = entry._blizzChild
+        if blizzChild and blizzChild.wasSetFromAura then
+            mode = "aura"
+        end
+        if not mode then
+            local sid = entry.overrideSpellID or entry.spellID
+            if sid then
+                -- Buff pool cross-reference (combat-safe)
+                local CDMIcons = ns.CDMIcons
+                if CDMIcons then
+                    local buffPool = CDMIcons:GetIconPool("buff")
+                    for _, buffIcon in ipairs(buffPool) do
+                        local be = buffIcon._spellEntry
+                        if be and (be.overrideSpellID == sid or be.spellID == sid) and buffIcon:IsShown() then
+                            mode = "aura"
+                            break
+                        end
+                    end
+                end
+                -- Aura API fallback (out of combat only)
+                if not mode and not InCombatLockdown() then
+                    local ok, auraData = pcall(C_UnitAuras.GetPlayerAuraBySpellID, sid)
+                    if ok and auraData then
+                        mode = "aura"
+                    elseif entry.name and entry.name ~= "" then
+                        local ok2, auraName = pcall(AuraUtil.FindAuraByName, entry.name, "player", "HELPFUL")
+                        if ok2 and auraName then
+                            mode = "aura"
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if not mode then
+        if icon._isOnGCD then
+            mode = "gcd"
+        else
+            mode = "cooldown"
+        end
     end
 
     -- Swipe visibility
