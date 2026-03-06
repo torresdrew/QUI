@@ -1842,7 +1842,6 @@ local function CreateHeaders()
         self:SetHeight(h)
         self:SetAttribute("*type1", "target")
         self:SetAttribute("*type2", "togglemenu")
-        self:RegisterForClicks("AnyUp")
         RegisterUnitWatch(self)
     ]]
 
