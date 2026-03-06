@@ -90,18 +90,30 @@ local function CreateBar(parent)
     borderFrame._right:SetColorTexture(0, 0, 0, 1)
     bar.BorderContainer = borderFrame
 
+    -- Text overlay frame (renders above StatusBar fill texture)
+    local textOverlay = CreateFrame("Frame", nil, statusBar)
+    textOverlay:SetAllPoints(statusBar)
+    textOverlay:SetFrameLevel((statusBar.GetFrameLevel and statusBar:GetFrameLevel() or 1) + 2)
+    bar.TextOverlay = textOverlay
+
     -- Name text (spell name)
-    local nameText = statusBar:CreateFontString(nil, "OVERLAY")
+    local nameText = textOverlay:CreateFontString(nil, "OVERLAY", nil, 7)
     nameText:SetFont(GetGeneralFont(), 14, GetGeneralFontOutline())
     nameText:SetPoint("LEFT", statusBar, "LEFT", 4, 0)
     nameText:SetJustifyH("LEFT")
+    nameText:SetTextColor(1, 1, 1, 1)
+    nameText:SetShadowColor(0, 0, 0, 1)
+    nameText:SetShadowOffset(1, -1)
     bar.NameText = nameText
 
     -- Duration text (remaining time)
-    local durationText = statusBar:CreateFontString(nil, "OVERLAY")
+    local durationText = textOverlay:CreateFontString(nil, "OVERLAY", nil, 7)
     durationText:SetFont(GetGeneralFont(), 14, GetGeneralFontOutline())
     durationText:SetPoint("RIGHT", statusBar, "RIGHT", -4, 0)
     durationText:SetJustifyH("RIGHT")
+    durationText:SetTextColor(1, 1, 1, 1)
+    durationText:SetShadowColor(0, 0, 0, 1)
+    durationText:SetShadowOffset(1, -1)
     bar.DurationText = durationText
 
     -- State tracking
@@ -478,45 +490,96 @@ local function MirrorBlizzBar(ownedBar, blizzBarChild)
         end
     end
 
-    -- Hook text regions on bar frame and statusBar
-    -- Blizzard bar children have FontString regions for name and duration
-    local function HookFontStrings(blizzFrame, nameTarget, durationTarget)
-        if not blizzFrame or not blizzFrame.GetRegions then return end
-        local fontStrings = {}
-        for _, region in ipairs({ blizzFrame:GetRegions() }) do
-            if region and region:GetObjectType() == "FontString" then
-                fontStrings[#fontStrings + 1] = region
-            end
+    -- Hook text: Blizzard bar children have .Name and .Duration FontString
+    -- properties on sub-children. Both FontStrings can be LEFT-justified so
+    -- we identify them by reference identity, not justify direction.
+    local hookedFontStrings = {}  -- track to avoid double-hooking
+    local knownNameFS = {}        -- FontStrings identified as spell name
+    local knownDurationFS = {}    -- FontStrings identified as duration
+
+    -- Discover .Name and .Duration FontString references from all frames
+    local function DiscoverNamedFontStrings(frame)
+        if not frame then return end
+        if frame.Name and type(frame.Name) == "table"
+            and frame.Name.GetObjectType and frame.Name:GetObjectType() == "FontString" then
+            knownNameFS[frame.Name] = true
         end
-        -- Blizzard bars typically have 2 FontStrings: name (left) and duration (right)
-        for _, fs in ipairs(fontStrings) do
-            hooksecurefunc(fs, "SetText", function(self, text)
-                local target = mirrorMap[blizzBarChild]
-                if not target then return end
-                -- Determine which text this is by checking justify
-                local justify = self:GetJustifyH()
-                if justify == "RIGHT" then
-                    pcall(target.DurationText.SetText, target.DurationText, text or "")
-                else
-                    pcall(target.NameText.SetText, target.NameText, text or "")
-                end
-            end)
-            -- Initial text copy
-            local ok, text = pcall(fs.GetText, fs)
-            if ok and text then
-                local justify = fs:GetJustifyH()
-                if justify == "RIGHT" then
-                    pcall(durationTarget.SetText, durationTarget, text)
-                else
-                    pcall(nameTarget.SetText, nameTarget, text)
-                end
+        if frame.Duration and type(frame.Duration) == "table"
+            and frame.Duration.GetObjectType and frame.Duration:GetObjectType() == "FontString" then
+            knownDurationFS[frame.Duration] = true
+        end
+    end
+
+    -- Discover from bar child, .Bar, and all sub-children first
+    DiscoverNamedFontStrings(blizzBarChild)
+    if blizzStatusBar then
+        DiscoverNamedFontStrings(blizzStatusBar)
+    end
+    if blizzBarChild.GetChildren then
+        for _, subChild in ipairs({ blizzBarChild:GetChildren() }) do
+            DiscoverNamedFontStrings(subChild)
+        end
+    end
+
+    local function ForwardText(fs, text)
+        local target = mirrorMap[blizzBarChild]
+        if not target then return end
+        if knownDurationFS[fs] then
+            pcall(target.DurationText.SetText, target.DurationText, text or "")
+        elseif knownNameFS[fs] then
+            pcall(target.NameText.SetText, target.NameText, text or "")
+        else
+            -- Fallback: use justify for unknown FontStrings
+            local justify = fs:GetJustifyH()
+            if justify == "RIGHT" then
+                pcall(target.DurationText.SetText, target.DurationText, text or "")
+            else
+                pcall(target.NameText.SetText, target.NameText, text or "")
             end
         end
     end
 
-    HookFontStrings(blizzBarChild, ownedBar.NameText, ownedBar.DurationText)
+    local function HookFontString(fs)
+        if hookedFontStrings[fs] then return end
+        hookedFontStrings[fs] = true
+
+        hooksecurefunc(fs, "SetText", function(self, text)
+            ForwardText(self, text)
+        end)
+        if fs.SetFormattedText then
+            hooksecurefunc(fs, "SetFormattedText", function(self, fmt, ...)
+                local okT, finalText = pcall(self.GetText, self)
+                if okT then
+                    ForwardText(self, finalText)
+                end
+            end)
+        end
+        -- Initial text copy
+        local ok, text = pcall(fs.GetText, fs)
+        if ok and text then
+            ForwardText(fs, text)
+        end
+    end
+
+    -- Hook all FontString regions on a frame
+    local function HookFrameRegions(frame)
+        if not frame or not frame.GetRegions then return end
+        for _, region in ipairs({ frame:GetRegions() }) do
+            if region and region:GetObjectType() == "FontString" then
+                HookFontString(region)
+            end
+        end
+    end
+
+    -- Hook bar child, .Bar, and all sub-children
+    HookFrameRegions(blizzBarChild)
     if blizzStatusBar then
-        HookFontStrings(blizzStatusBar, ownedBar.NameText, ownedBar.DurationText)
+        HookFrameRegions(blizzStatusBar)
+    end
+    if blizzBarChild.GetChildren then
+        for _, subChild in ipairs({ blizzBarChild:GetChildren() }) do
+            HookFrameRegions(subChild)
+        end
     end
 
     -- Initial value sync (C-side forwarding, handles secret values)
@@ -742,6 +805,10 @@ function CDMBars:LayoutBars(container, settings)
         if bar.StatusBar then
             bar.StatusBar:SetFrameStrata("MEDIUM")
             bar.StatusBar:SetFrameLevel(frameLevel + 1)
+        end
+        if bar.TextOverlay then
+            bar.TextOverlay:SetFrameStrata("MEDIUM")
+            bar.TextOverlay:SetFrameLevel(frameLevel + 3)
         end
         if bar.IconContainer then
             bar.IconContainer:SetFrameStrata("MEDIUM")
