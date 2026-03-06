@@ -4393,7 +4393,13 @@ function GUI:RefreshSidebarTree(frame)
                         frame._sidebarExpandedTabs[tabIndex] = true
                         frame._sidebarExpandedSubTabs[tabIndex] = frame._sidebarExpandedSubTabs[tabIndex] or {}
                         local isExpanded = frame._sidebarExpandedSubTabs[tabIndex][subTabIndex] and true or false
-                        local isActive = (activeTab == tabIndex and activeSubTab == subTabIndex)
+                        -- Read current active state at click time, not from stale closure
+                        local curActiveTab = frame.activeTab
+                        local curActiveSubTab
+                        if curActiveTab and frame.pages and frame.pages[curActiveTab] and frame.pages[curActiveTab]._subTabGroup then
+                            curActiveSubTab = frame.pages[curActiveTab]._subTabGroup.selectedTab
+                        end
+                        local isActive = (curActiveTab == tabIndex and curActiveSubTab == subTabIndex)
                         if isExpanded and isActive then
                             -- Only toggle collapse when clicking the already-active subtab
                             frame._sidebarExpandedSubTabs[tabIndex][subTabIndex] = false
