@@ -1094,8 +1094,13 @@ end
 
 function QUICore:UpdatePowerBar()
     local cfg = self.db.profile.powerBar
+
+    -- Always ensure the frame exists so the global name "QUIPowerBar" is
+    -- available for Edit Mode layout anchoring even when the bar is disabled.
+    local bar = self:GetPowerBar()
+
     if not cfg.enabled then
-        if self.powerBar then SafeHide(self.powerBar) end
+        SafeHide(bar)
         return
     end
 
@@ -1115,7 +1120,6 @@ function QUICore:UpdatePowerBar()
         return
     end
 
-    local bar = self:GetPowerBar()
     local resource = GetPrimaryResource()
 
     if not resource then
@@ -2335,25 +2339,26 @@ end
 
 function QUICore:UpdateSecondaryPowerBar()
     local cfg = self.db.profile.secondaryPowerBar
+
+    -- Always ensure the frame exists so the global name "QUISecondaryPowerBar"
+    -- is available for Edit Mode layout anchoring even when the bar is disabled.
+    local bar = self:GetSecondaryPowerBar()
+
     if not cfg.enabled then
-        if self.secondaryPowerBar then
-            local wasShown = self.secondaryPowerBar:IsShown()
-            SafeHide(self.secondaryPowerBar)
-            -- Visibility changed — reapply frame anchoring so fallback targets update
-            if wasShown and not self.secondaryPowerBar:IsShown() and _G.QUI_UpdateAnchoredFrames then
-                _G.QUI_UpdateAnchoredFrames()
-            end
+        local wasShown = bar:IsShown()
+        SafeHide(bar)
+        -- Visibility changed — reapply frame anchoring so fallback targets update
+        if wasShown and not bar:IsShown() and _G.QUI_UpdateAnchoredFrames then
+            _G.QUI_UpdateAnchoredFrames()
         end
         return
     end
 
     -- When locked to CDM, suppress until CDM has computed the correct width.
     if (cfg.lockedToEssential or cfg.lockedToUtility) and not _secondaryLockedReady then
-        if self.secondaryPowerBar then SafeHide(self.secondaryPowerBar) end
+        SafeHide(bar)
         return
     end
-
-    local bar = self:GetSecondaryPowerBar()
     local resource = GetSecondaryResource()
 
     if not resource then
