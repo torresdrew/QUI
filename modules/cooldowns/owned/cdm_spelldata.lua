@@ -53,35 +53,13 @@ local buffChildrenHooked = false  -- one-time hook for buff viewer aura events
 -- the frame, causing isActive to become a "secret boolean tainted by QUI".
 local hookedBuffChildren = setmetatable({}, { __mode = "k" })
 
--- BUG-012: Prevent "secret boolean value tainted by QUI" crash in
--- Blizzard CooldownViewer's RefreshTotemData.  QUI's SetAlpha(0) on the
--- viewers taints their execution context, causing GetTotemInfo() to
--- return secret values during combat.  Since the Blizzard viewers are
--- hidden (alpha 0), their totem display is irrelevant — pcall-wrap to
--- suppress the crash.
-local totemSafeguardApplied = false
-local function SafeguardViewerTotemRefresh()
-    if totemSafeguardApplied then return end
-    local applied = false
-    for _, viewerName in pairs(VIEWER_NAMES) do
-        local viewer = _G[viewerName]
-        if viewer and viewer.RefreshTotemData then
-            local orig = viewer.RefreshTotemData
-            viewer.RefreshTotemData = function(self, ...)
-                local ok, err = pcall(orig, self, ...)
-                if not ok and type(err) == "string" and err:find("secret") then
-                    return  -- suppress secret value errors
-                elseif not ok then
-                    error(err, 2)  -- re-raise non-secret errors
-                end
-            end
-            applied = true
-        end
-    end
-    if applied then
-        totemSafeguardApplied = true
-    end
-end
+-- BUG-012 (REMOVED): The previous pcall-wrap of viewer.RefreshTotemData
+-- replaced the Blizzard method with an addon function, which tainted the
+-- viewer's method table.  When Blizzard later called self:RefreshTotemData()
+-- in a call chain that also touches isActive / ShouldBeShown, QUI's taint
+-- propagated through the entire chain causing "secret boolean tainted by QUI"
+-- errors.  Letting the totem error occur in Blizzard's own context is harmless
+-- (caught by WoW's error handler, no taint propagation).
 
 ---------------------------------------------------------------------------
 -- HELPER: Check if a child frame is a cooldown icon
@@ -375,8 +353,6 @@ end
 
 local function ScanAll()
     if InCombatLockdown() then return end
-
-    SafeguardViewerTotemRefresh()
 
     ScanViewer("essential")
     ScanViewer("utility")
