@@ -737,9 +737,27 @@ local function SetupTooltipPostProcessor()
         end)
     end
 
+    -- TAINT SAFETY: HookTooltipOnShow calls HookScript which modifies the
+    -- frame's script table.  Inside Blizzard's securecallfunction chain
+    -- (TooltipDataProcessor callbacks), this taints the execution context
+    -- and causes subsequent SetAttribute calls to fail with "Attempt to
+    -- access forbidden object."  Defer hook installation out of the secure
+    -- chain during combat.  The hook is a one-time install (guarded by
+    -- hookedTooltips), so the 1-frame deferral is harmless.
+    local function SafeHookTooltipOnShow(tooltip)
+        if hookedTooltips[tooltip] then return end
+        if InCombatLockdown() then
+            C_Timer.After(0, function()
+                if tooltip then HookTooltipOnShow(tooltip) end
+            end)
+        else
+            HookTooltipOnShow(tooltip)
+        end
+    end
+
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tooltip)
         if not tooltip or tooltip == EmbeddedItemTooltip then return end
-        HookTooltipOnShow(tooltip)
+        SafeHookTooltipOnShow(tooltip)
         if not InCombatLockdown() then
             DeferFontSizing(tooltip)
             if IsEnabled() and not skinnedTooltips[tooltip] then
@@ -751,8 +769,8 @@ local function SetupTooltipPostProcessor()
     end)
 
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Spell, function(tooltip)
-        if not tooltip then return end
-        HookTooltipOnShow(tooltip)
+        if not tooltip or tooltip == EmbeddedItemTooltip then return end
+        SafeHookTooltipOnShow(tooltip)
         if not InCombatLockdown() then
             DeferFontSizing(tooltip)
             if IsEnabled() and not skinnedTooltips[tooltip] then
@@ -764,8 +782,8 @@ local function SetupTooltipPostProcessor()
     end)
 
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Unit, function(tooltip)
-        if not tooltip then return end
-        HookTooltipOnShow(tooltip)
+        if not tooltip or tooltip == EmbeddedItemTooltip then return end
+        SafeHookTooltipOnShow(tooltip)
         if not InCombatLockdown() then
             DeferFontSizing(tooltip)
             if IsEnabled() and not skinnedTooltips[tooltip] then
