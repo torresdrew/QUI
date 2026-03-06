@@ -419,6 +419,7 @@ local function CreateSkyridingFrame()
     skyridingFrame:EnableMouse(false)  -- Disabled by default (locked)
     skyridingFrame:RegisterForDrag("LeftButton")
     skyridingFrame:SetScript("OnDragStart", function(self)
+        if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(self) then return end
         local settings = GetSettings()
         if settings and not settings.locked then
             self:StartMoving()
@@ -955,10 +956,12 @@ local function ApplySettings()
     local offsetY = settings.offsetY or -150
     local locked = settings.locked ~= false
 
-    -- Size and position
+    -- Size and position (skip if anchoring system has overridden this frame)
     skyridingFrame:SetSize(width, height)
-    skyridingFrame:ClearAllPoints()
-    skyridingFrame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+    if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(skyridingFrame)) then
+        skyridingFrame:ClearAllPoints()
+        skyridingFrame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+    end
 
     -- Apply HUD layer priority
     local db = QUICore and QUICore.db and QUICore.db.profile

@@ -2502,6 +2502,21 @@ HookRefreshGlobal("QUI_RefreshCastbars")
 HookRefreshGlobal("QUI_RefreshUnitFrames")
 HookRefreshGlobal("QUI_RefreshNCDM")
 HookRefreshGlobal("QUI_RefreshBuffBar")
+HookRefreshGlobal("QUI_RefreshRaidBuffs")
+
+-- Modules that load after utility (trackers, qol, dungeon) need deferred hooking
+-- since their globals don't exist yet at file-load time.
+C_Timer.After(0, function()
+    HookRefreshGlobal("QUI_RefreshCustomTrackers")
+    HookRefreshGlobal("QUI_RefreshBrezCounter")
+    HookRefreshGlobal("QUI_RefreshCombatTimer")
+    HookRefreshGlobal("QUI_RefreshRangeCheck")
+    HookRefreshGlobal("QUI_RefreshXPTracker")
+    HookRefreshGlobal("QUI_RefreshActionTracker")
+    HookRefreshGlobal("QUI_RefreshSkyriding")
+    HookRefreshGlobal("QUI_RefreshPetWarning")
+    HookRefreshGlobal("QUI_RefreshFocusCastAlert")
+end)
 
 -- Global callback for updating anchored frames (called by NCDM, resource bars, etc.)
 -- Preserve any existing unit-frame updater to avoid breaking legacy anchoring.
