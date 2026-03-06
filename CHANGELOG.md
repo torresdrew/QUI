@@ -65,6 +65,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+
+
+## v2.46.6 - 2026-03-06
+
+### Fixed
+- fix: tooltip combat hide flash and broaden SetSpellByID/SetItemByID suppression
+- fix: replace UISpecialFrames with OnKeyDown ESC handler to avoid taint
+- fix: sidebar subtab active state reads current tab at click time
+- fix: separate aura/cooldown swipe color defaults, clarify options labels
+- fix: datapanel init timing and gold datatext initial update
+- feat: anchoring system integration, custom tracker improvements, taint safety
+- fix: consumable frame SetScale combat taint, tooltip hook taint safety
+- fix: remove RefreshTotemData method replacement that tainted CDM viewer
+- fix: font system taint safety, CDM bar and buffbar improvements
+## v2.46.5 - 2026-03-06
+
+### Added
+- added tracked buff bar factory to QUI CDM engine
+
+### Fixed
+- fix: buff bar active state, parent mismatch, and Edit Mode taint
+- fix: stop overwriting point/relative on container position save
+## v2.46.4 - 2026-03-05
+
+### Fixed
+- fix(custom-trackers): restore clickable tracker actions after info/usability updates
+- fix: remove border debug logging, fix fade-hide flag tracking
+- fix: action bar border toggle and NormalTexture re-hide on updates
 ## v2.46.3 - 2026-03-05
 
 ### Fixed
