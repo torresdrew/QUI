@@ -46,6 +46,23 @@ local initialized = false
 -- Anchor proxy for Utility below Essential
 local UtilityAnchorProxy = nil
 
+-- Point→center offset (mirrors anchoring.lua GetPointOffsetForRect).
+-- Returns the offset of the named anchor point relative to the frame's center.
+local function PointOffset(point, width, height)
+    local halfW = (width or 0) * 0.5
+    local halfH = (height or 0) * 0.5
+    if point == "TOPLEFT" then     return -halfW,  halfH
+    elseif point == "TOP" then     return 0,       halfH
+    elseif point == "TOPRIGHT" then return  halfW,  halfH
+    elseif point == "LEFT" then    return -halfW,  0
+    elseif point == "RIGHT" then   return  halfW,  0
+    elseif point == "BOTTOMLEFT" then  return -halfW, -halfH
+    elseif point == "BOTTOM" then      return 0,      -halfH
+    elseif point == "BOTTOMRIGHT" then return  halfW, -halfH
+    end
+    return 0, 0
+end
+
 ---------------------------------------------------------------------------
 -- DB ACCESS
 ---------------------------------------------------------------------------
@@ -185,8 +202,28 @@ local function SaveContainerPosition(trackerKey)
             if settings and settings.enabled then
                 local parent = settings.parent or "screen"
                 if parent == "screen" or parent == "disabled" then
-                    settings.offsetX = ox
-                    settings.offsetY = oy
+                    -- ox/oy are CENTER→CENTER offsets. If the anchoring config
+                    -- uses a non-CENTER point/relative pair, reverse the
+                    -- ComputeCenterOffsetsForAnchor math so
+                    -- ApplyFrameAnchor produces the correct screen position.
+                    -- Equation: centerOff = targetOff + offset - sourceOff
+                    -- So:       offset    = centerOff - targetOff + sourceOff
+                    local pt  = settings.point or "CENTER"
+                    local rel = settings.relative or "CENTER"
+                    if pt == "CENTER" and rel == "CENTER" then
+                        settings.offsetX = ox
+                        settings.offsetY = oy
+                    else
+                        local vs = viewerState[container]
+                        local frameW = (vs and (vs.cdmIconWidth or vs.row1Width)) or Helpers.SafeValue(container:GetWidth(), 1) or 1
+                        local frameH = (vs and vs.cdmTotalHeight) or Helpers.SafeValue(container:GetHeight(), 1) or 1
+                        local parentW = Helpers.SafeValue(UIParent:GetWidth(), 1) or 1
+                        local parentH = Helpers.SafeValue(UIParent:GetHeight(), 1) or 1
+                        local srcX, srcY = PointOffset(pt, frameW, frameH)
+                        local tgtX, tgtY = PointOffset(rel, parentW, parentH)
+                        settings.offsetX = ox - tgtX + srcX
+                        settings.offsetY = oy - tgtY + srcY
+                    end
                 end
             end
         end

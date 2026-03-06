@@ -132,6 +132,10 @@ end
 ---------------------------------------------------------------------------
 local function PositionBar(bar)
     if not bar or not bar.config then return end
+
+    -- Skip if anchoring system has overridden this frame
+    if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar) then return end
+
     local config = bar.config
 
     -- Migration: if bar has old position format, convert to offsetX/offsetY
@@ -604,9 +608,11 @@ end
 local function IsItemUsable(itemID, itemCount)
     if IsEquipmentItem(itemID) then
         -- Equipment: ONLY check if equipped, bag count irrelevant
-        return C_Item.IsEquippedItem(itemID)
+        return C_Item.IsEquippedItem(itemID) and true or false
     else
-        -- Consumables: check stack count
+        -- Consumables: C_Item.GetItemCount can return secret values during combat.
+        -- Can't compare secrets with > so guard just this one Lua read.
+        if IsSecretValue(itemCount) then return true end
         return itemCount and itemCount > 0
     end
 end
@@ -946,6 +952,7 @@ local function CreateTrackerIcon(parent, clickable)
     icon:RegisterForDrag("LeftButton")
     icon:SetScript("OnDragStart", function(self)
         local bar = self:GetParent()
+        if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar) then return end
         if bar and bar.config and not bar.config.locked and not bar.config.lockedToPlayer and not bar.config.lockedToTarget then
             bar:StartMoving()
         end
@@ -976,6 +983,7 @@ local function CreateTrackerIcon(parent, clickable)
         icon.clickButton:RegisterForDrag("LeftButton")
         icon.clickButton:SetScript("OnDragStart", function(self)
             local bar = self:GetParent():GetParent()
+            if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(bar) then return end
             if bar and bar.config and not bar.config.locked and not bar.config.lockedToPlayer and not bar.config.lockedToTarget then
                 bar:StartMoving()
             end
@@ -1631,12 +1639,10 @@ local function RebuildActiveSet(bar)
                 local itemID = GetInventoryItemID("player", entry.id)
                 isUsable = itemID ~= nil
             elseif entry.type == "item" then
-                -- Items: equipment check is stable, consumables always in active set
-                if IsEquipmentItem(entry.id) then
-                    isUsable = C_Item.IsEquippedItem(entry.id)
-                else
-                    isUsable = true  -- Consumables always in active set (count checked in DoUpdate)
-                end
+                -- Items: check current usability (equipment or consumable count).
+                -- Updated on ITEM_COUNT_CHANGED, not polled in DoUpdate.
+                local count = GetItemStackCount(entry.id)
+                isUsable = IsItemUsable(entry.id, count)
             end
 
             -- Only add usable spells to activeIcons (CPU optimization)
@@ -1744,8 +1750,8 @@ function CustomTrackers:StartCooldownPolling(bar)
                     startTime, duration, enabled = GetItemCooldownInfo(entry.id)
                     count = GetItemStackCount(entry.id, config.showItemCharges)
                     isOnGCD = false  -- Items don't have GCD
-                    -- Update item usability based on current count (consumables deplete during gameplay)
-                    icon._usable = IsItemUsable(entry.id, count)
+                    -- _usable for items is updated by ITEM_COUNT_CHANGED, not here.
+                    -- Polling item counts every tick is wasteful and secret-prone.
                 end
 
                 -- Check if spell/item is currently active (casting/channeling/buff)
@@ -2189,6 +2195,7 @@ function CustomTrackers:SetupDragging(bar)
     bar:SetClampedToScreen(true)
 
     bar:SetScript("OnDragStart", function(self)
+        if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(self) then return end
         if not self.config.locked and not self.config.lockedToPlayer and not self.config.lockedToTarget then
             self:StartMoving()
         end
@@ -2287,7 +2294,12 @@ function CustomTrackers:RefreshBarPosition(barID)
 end
 
 ---------------------------------------------------------------------------
--- BAR CREATION
+-- BAR FRAME POOL (reuse frames instead of leaking orphans)
+---------------------------------------------------------------------------
+local _barFramePool = {}  -- [barID] = frame (hidden, ready for reuse)
+
+---------------------------------------------------------------------------
+-- BAR CREATION (reuses existing frame if available)
 ---------------------------------------------------------------------------
 function CustomTrackers:CreateBar(barID, config)
     if not barID or not config then return nil end
@@ -2296,8 +2308,17 @@ function CustomTrackers:CreateBar(barID, config)
         return self.activeBars[barID]
     end
 
-    local bar = CreateFrame("Frame", "QUI_CustomTracker_" .. barID, UIParent, "BackdropTemplate")
-    bar:SetFrameStrata("MEDIUM")
+    -- Reuse pooled frame or create new one
+    local bar = _barFramePool[barID]
+    if bar then
+        _barFramePool[barID] = nil
+        bar:SetParent(UIParent)
+    else
+        bar = CreateFrame("Frame", "QUI_CustomTracker_" .. barID, UIParent, "BackdropTemplate")
+        bar:SetFrameStrata("MEDIUM")
+        -- Setup dragging (once per frame lifetime)
+        self:SetupDragging(bar)
+    end
 
     -- Apply HUD layer priority
     local core = GetCore()
@@ -2326,9 +2347,6 @@ function CustomTrackers:CreateBar(barID, config)
     -- Initialize icons array
     bar.icons = {}
 
-    -- Setup dragging
-    self:SetupDragging(bar)
-
     -- Create icons for entries
     self:UpdateBarIcons(bar)
 
@@ -2352,22 +2370,30 @@ function CustomTrackers:CreateBar(barID, config)
 end
 
 ---------------------------------------------------------------------------
--- BAR DELETION
+-- BAR DELETION (returns frame to pool for reuse)
 ---------------------------------------------------------------------------
 function CustomTrackers:DeleteBar(barID)
     local bar = self.activeBars[barID]
     if bar then
         if bar.ticker then
             bar.ticker:Cancel()
+            bar.ticker = nil
         end
-        -- Hide and clear icons
+        bar.DoUpdate = nil
+        pendingActiveSetRebuilds[bar] = nil
+        -- Clean up icons
         for _, icon in ipairs(bar.icons or {}) do
             icon:Hide()
+            icon:ClearAllPoints()
             icon:SetParent(nil)
         end
+        bar.icons = {}
+        bar.activeIcons = nil
+        -- Hide and pool the frame for reuse
         bar:Hide()
-        bar:SetParent(nil)
+        bar:ClearAllPoints()
         self.activeBars[barID] = nil
+        _barFramePool[barID] = bar
     end
 end
 
@@ -2646,9 +2672,8 @@ local pendingTalentRebuild = false
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 initFrame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
-initFrame:RegisterEvent("BAG_UPDATE_DELAYED")
 initFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
-initFrame:RegisterEvent("SPELL_UPDATE_USABLE")
+initFrame:RegisterEvent("ITEM_COUNT_CHANGED")
 -- Performance: high-frequency combat events are registered lazily via UpdateEventRegistrations()
 -- only when at least one active bar needs them. This avoids wasted processing when
 -- the user has no spell-tracking or active-state bars configured.
@@ -2790,7 +2815,8 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
         -- Data (activeIcons, _usable) is already current — just do proper Show/Hide + layout.
         if event == "PLAYER_REGEN_ENABLED" then
             for bar in pairs(pendingActiveSetRebuilds) do
-                if bar then
+                -- Validate bar is still active (may have been deleted during combat)
+                if bar and bar.barID and CustomTrackers.activeBars[bar.barID] == bar then
                     -- Sync Show/Hide state to match the alpha-based visibility set during combat
                     for _, icon in ipairs(bar.icons or {}) do
                         if icon.isVisible then
@@ -2955,6 +2981,31 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
                         if bar.DoUpdate then bar.DoUpdate() end
                     end
                 end
+            end
+        end
+        return
+    end
+
+    -- Item count changed: update _usable for item entries and re-layout affected bars.
+    -- This is the ONLY place item usability is updated (not in DoUpdate),
+    -- avoiding secret value polling in the per-tick update loop.
+    if event == "ITEM_COUNT_CHANGED" then
+        local itemID = ...
+        for _, bar in pairs(CustomTrackers.activeBars) do
+            local barAffected = false
+            for _, icon in ipairs(bar.icons or {}) do
+                if icon.entry and icon.entry.type == "item" then
+                    -- Update specific item or all items if no itemID provided
+                    if not itemID or icon.entry.id == itemID then
+                        local count = GetItemStackCount(icon.entry.id, bar.config and bar.config.showItemCharges)
+                        icon._usable = IsItemUsable(icon.entry.id, count)
+                        barAffected = true
+                    end
+                end
+            end
+            if barAffected then
+                RebuildActiveSet(bar)
+                if bar.DoUpdate then bar.DoUpdate() end
             end
         end
         return
