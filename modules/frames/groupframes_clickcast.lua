@@ -17,6 +17,7 @@ ns.QUI_GroupFrameClickCast = QUI_GFCC
 
 -- Track registered frames
 local registeredFrames = setmetatable({}, { __mode = "k" })
+local hookedFrames = setmetatable({}, { __mode = "k" }) -- Tracks frames with OnEnter/OnLeave hooks (permanent)
 local activeBindings = {} -- Resolved bindings for current spec
 local isEnabled = false
 
@@ -157,76 +158,86 @@ local function SetupFrameClickCast(frame)
 
     registeredFrames[frame] = true
 
-    -- Smart resurrection: hook to swap spell when target is dead
-    if db.clickCast.smartRes then
-        local resSpell = GetResurrectionSpellName()
-        if resSpell then
-            local resMacro = "/cast [@mouseover] " .. resSpell
-            frame:HookScript("OnEnter", function(self)
-                if InCombatLockdown() then return end
-                local unit = self:GetAttribute("unit")
-                if unit and UnitIsDeadOrGhost(unit) and (UnitIsConnected(unit) or not UnitIsPlayer(unit)) then
-                    -- Swap left click to res
-                    self:SetAttribute("type1", "macro")
-                    self:SetAttribute("macrotext1", resMacro)
-                end
-            end)
-            frame:HookScript("OnLeave", function(self)
-                if InCombatLockdown() then return end
-                -- Restore normal binding
-                local normalBinding = nil
-                for _, b in ipairs(activeBindings) do
-                    if b.button == "LeftButton" and (b.modifiers or "") == "" then
-                        normalBinding = b
-                        break
+    -- Only add script hooks once per frame — HookScript is additive and
+    -- cannot be removed, so re-hooking on every RefreshBindings would
+    -- duplicate tooltip lines and resurrection swaps.
+    if not hookedFrames[frame] then
+        hookedFrames[frame] = true
+
+        -- Smart resurrection: hook to swap spell when target is dead
+        if db.clickCast.smartRes then
+            local resSpell = GetResurrectionSpellName()
+            if resSpell then
+                local resMacro = "/cast [@mouseover] " .. resSpell
+                frame:HookScript("OnEnter", function(self)
+                    if not isEnabled then return end
+                    if InCombatLockdown() then return end
+                    local unit = self:GetAttribute("unit")
+                    if unit and UnitIsDeadOrGhost(unit) and (UnitIsConnected(unit) or not UnitIsPlayer(unit)) then
+                        -- Swap left click to res
+                        self:SetAttribute("type1", "macro")
+                        self:SetAttribute("macrotext1", resMacro)
                     end
-                end
-                if normalBinding then
-                    local actionType = normalBinding.actionType or "spell"
-                    if actionType == "spell" then
-                        self:SetAttribute("type1", "macro")
-                        self:SetAttribute("macrotext1",
-                            "/cast [@mouseover,help,nodead] " .. normalBinding.spell
-                            .. "; [@mouseover,harm,nodead] " .. normalBinding.spell
-                            .. "; [@mouseover] " .. normalBinding.spell)
-                    elseif actionType == "macro" then
-                        self:SetAttribute("type1", "macro")
-                        self:SetAttribute("macrotext1", normalBinding.macro)
+                end)
+                frame:HookScript("OnLeave", function(self)
+                    if not isEnabled then return end
+                    if InCombatLockdown() then return end
+                    -- Restore normal binding
+                    local normalBinding = nil
+                    for _, b in ipairs(activeBindings) do
+                        if b.button == "LeftButton" and (b.modifiers or "") == "" then
+                            normalBinding = b
+                            break
+                        end
+                    end
+                    if normalBinding then
+                        local actionType = normalBinding.actionType or "spell"
+                        if actionType == "spell" then
+                            self:SetAttribute("type1", "macro")
+                            self:SetAttribute("macrotext1",
+                                "/cast [@mouseover,help,nodead] " .. normalBinding.spell
+                                .. "; [@mouseover,harm,nodead] " .. normalBinding.spell
+                                .. "; [@mouseover] " .. normalBinding.spell)
+                        elseif actionType == "macro" then
+                            self:SetAttribute("type1", "macro")
+                            self:SetAttribute("macrotext1", normalBinding.macro)
+                        else
+                            self:SetAttribute("type1", actionType)
+                        end
                     else
-                        self:SetAttribute("type1", actionType)
+                        -- Default: target
+                        self:SetAttribute("type1", "target")
                     end
-                else
-                    -- Default: target
-                    self:SetAttribute("type1", "target")
+                end)
+            end
+        end
+
+        -- Tooltip showing available bindings
+        if db.clickCast.showTooltip then
+            frame:HookScript("OnEnter", function(self)
+                if not isEnabled then return end
+                if #activeBindings == 0 then return end
+
+                -- Check if we should show tooltip (avoid conflict with unit tooltip)
+                local existingOwner = GameTooltip:GetOwner()
+                if existingOwner == self then
+                    -- Append to existing unit tooltip
+                    GameTooltip:AddLine(" ")
+                    GameTooltip:AddLine("Click-Cast Bindings:", 0.2, 0.83, 0.6)
+                    for _, binding in ipairs(activeBindings) do
+                        local modLabel = MODIFIER_LABELS[binding.modifiers or ""] or ""
+                        local buttonLabel = BUTTON_NAMES[binding.button] or binding.button
+                        local spellLabel = binding.spell or binding.actionType or "?"
+                        GameTooltip:AddDoubleLine(
+                            modLabel .. buttonLabel,
+                            spellLabel,
+                            0.8, 0.8, 0.8, 1, 1, 1
+                        )
+                    end
+                    GameTooltip:Show()
                 end
             end)
         end
-    end
-
-    -- Tooltip showing available bindings
-    if db.clickCast.showTooltip then
-        frame:HookScript("OnEnter", function(self)
-            if #activeBindings == 0 then return end
-
-            -- Check if we should show tooltip (avoid conflict with unit tooltip)
-            local existingOwner = GameTooltip:GetOwner()
-            if existingOwner == self then
-                -- Append to existing unit tooltip
-                GameTooltip:AddLine(" ")
-                GameTooltip:AddLine("Click-Cast Bindings:", 0.2, 0.83, 0.6)
-                for _, binding in ipairs(activeBindings) do
-                    local modLabel = MODIFIER_LABELS[binding.modifiers or ""] or ""
-                    local buttonLabel = BUTTON_NAMES[binding.button] or binding.button
-                    local spellLabel = binding.spell or binding.actionType or "?"
-                    GameTooltip:AddDoubleLine(
-                        modLabel .. buttonLabel,
-                        spellLabel,
-                        0.8, 0.8, 0.8, 1, 1, 1
-                    )
-                end
-                GameTooltip:Show()
-            end
-        end)
     end
 end
 
