@@ -2390,10 +2390,12 @@ local function CreateDrawerFrame()
     drawerFrame:SetScript("OnLeave", OnDrawerLeave)
 end
 
+local DEFAULT_TOGGLE_SIZE = 20
+
 local function CreateDrawerToggleButton()
     if drawerToggleButton then return end
     drawerToggleButton = CreateFrame("Button", "QUI_DrawerToggle", Minimap)
-    drawerToggleButton:SetSize(20, 20)
+    drawerToggleButton:SetSize(DEFAULT_TOGGLE_SIZE, DEFAULT_TOGGLE_SIZE)
     drawerToggleButton:SetFrameStrata("HIGH")
     drawerToggleButton:SetFrameLevel(Minimap:GetFrameLevel() + 5)
 
@@ -2402,20 +2404,17 @@ local function CreateDrawerToggleButton()
     bg:SetAllPoints()
     bg:SetColorTexture(0.05, 0.05, 0.05, 0.9)
 
-    -- Grid icon: 4 small squares (2x2 grid)
-    local gridSize = 5
-    local gridGap = 2
-    local gridOfs = 4
+    -- Grid icon: 4 small squares (2x2 grid) — store refs for resizing
+    drawerToggleButton._gridDots = {}
+    local r, g, b = 0.2, 0.8, 0.6
+    if Helpers and Helpers.GetSkinBorderColor then
+        r, g, b = Helpers.GetSkinBorderColor()
+    end
     for row = 0, 1 do
         for col = 0, 1 do
             local dot = drawerToggleButton:CreateTexture(nil, "ARTWORK")
-            dot:SetSize(gridSize, gridSize)
-            dot:SetPoint("TOPLEFT", drawerToggleButton, "TOPLEFT", gridOfs + col * (gridSize + gridGap), -(gridOfs + row * (gridSize + gridGap)))
-            local r, g, b = 0.2, 0.8, 0.6
-            if Helpers and Helpers.GetSkinBorderColor then
-                r, g, b = Helpers.GetSkinBorderColor()
-            end
             dot:SetColorTexture(r, g, b, 1)
+            drawerToggleButton._gridDots[#drawerToggleButton._gridDots + 1] = dot
         end
     end
 
@@ -2459,6 +2458,34 @@ local function CreateDrawerToggleButton()
             HideToggleButton()
         end
     end)
+end
+
+local function ResizeDrawerToggle()
+    if not drawerToggleButton then return end
+    local s = GetSettings()
+    local size = (s and s.buttonDrawer and s.buttonDrawer.toggleSize) or DEFAULT_TOGGLE_SIZE
+    drawerToggleButton:SetSize(size, size)
+
+    -- Rescale grid dots proportionally (base: 5px dots, 2px gap, 4px offset at size 20)
+    local scale = size / DEFAULT_TOGGLE_SIZE
+    local gridSize = math.max(1, math.floor(5 * scale + 0.5))
+    local gridGap = math.max(1, math.floor(2 * scale + 0.5))
+    local gridOfs = math.max(1, math.floor(4 * scale + 0.5))
+    local dots = drawerToggleButton._gridDots
+    if dots then
+        local idx = 1
+        for row = 0, 1 do
+            for col = 0, 1 do
+                local dot = dots[idx]
+                if dot then
+                    dot:ClearAllPoints()
+                    dot:SetSize(gridSize, gridSize)
+                    dot:SetPoint("TOPLEFT", drawerToggleButton, "TOPLEFT", gridOfs + col * (gridSize + gridGap), -(gridOfs + row * (gridSize + gridGap)))
+                end
+                idx = idx + 1
+            end
+        end
+    end
 end
 
 local function UpdateDrawerAnchor()
@@ -2666,6 +2693,7 @@ local function SetupButtonDrawer()
 
     CreateDrawerFrame()
     CreateDrawerToggleButton()
+    ResizeDrawerToggle()
     StyleDrawerFrame()
     ScanAndCollectButtons()
     LayoutDrawerButtons()
@@ -2734,6 +2762,7 @@ local function RefreshButtonDrawer()
         return
     end
     if drawerFrame then
+        ResizeDrawerToggle()
         StyleDrawerFrame()
         LayoutDrawerButtons()
         UpdateDrawerAnchor()
