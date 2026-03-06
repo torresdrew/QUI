@@ -1780,7 +1780,11 @@ function CustomTrackers:StartCooldownPolling(bar)
                 -- If active, show active state progress instead of cooldown
                 -- Skip active override when showOnlyOnCooldown: we need real CD state and swipe,
                 -- not the buff duration (e.g., Power Word: Shield buff outlasting its cooldown)
-                if isActive and activeStartTime and activeDuration and activeDuration > 0 and not showOnlyOnCooldown then
+                -- Skip active cooldown override for items/slots: show real item cooldown,
+                -- not buff duration (trinkets/pots have meaningful cooldowns users want to track;
+                -- active glow still indicates the buff is active)
+                local isItemEntry = entry.type == "slot" or entry.type == "item"
+                if isActive and activeStartTime and activeDuration and activeDuration > 0 and not showOnlyOnCooldown and not isItemEntry then
                     -- Active state: show buff/cast duration (reverse fill)
                     pcall(SafeSetReverse, icon.cooldown, true)
                     pcall(SafeSetCooldown, icon.cooldown, activeStartTime, activeDuration)
