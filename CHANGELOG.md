@@ -70,6 +70,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.46.9 - 2026-03-07
+
+### Added
+- feat: add Whirlwind, Tip of the Spear, and Essence regen resource bars
+- added second icon option for the minimap button drawer
+
+### Fixed
+- fixed nested menu entries for action bars and onwards
+- fixed missing icons for the target classification
+- fix: combat taint safety for keystone tracker hide and tooltip widget setup
+- fix: eliminate tooltip taint by skipping all addon work in combat
+- fix: detect spell list reordering via fingerprint instead of count
 ## v2.46.8 - 2026-03-07
 
 ### Added
