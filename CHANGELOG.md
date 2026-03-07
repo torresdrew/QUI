@@ -68,6 +68,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+
+## v2.46.8 - 2026-03-07
+
+### Added
+- feat: configurable minimap drawer toggle button size
+- feat: add classification icon for target, focus, and boss unit frames
+- feat: show unit frames when player health is below 100%
+
+### Fixed
+- fix skyriding bar staying visible when flying into dungeons
+- fix: exclude maxLength from castbar copy to prevent truncation
+- fix: improve CDM aura detection, initial cooldown sync, and tooltip taint safety
+- fix: stop clearing layoutType/layoutTextureKit on tooltip frame to prevent taint
+- fix: show real item/slot cooldown instead of buff duration in trackers
+- fix: gate all tooltip features behind master enabled toggle
+- fix: pre-create power bar globals for Edit Mode anchoring at load time
+- fix: ensure power bar globals exist for Edit Mode anchoring
+## v2.46.7 - 2026-03-06
+
+### Fixed
+- revert: restore UISpecialFrames for ESC-to-close on chat and options frames
 ## v2.46.6 - 2026-03-06
 
 ### Fixed
