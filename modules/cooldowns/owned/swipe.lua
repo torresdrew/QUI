@@ -12,7 +12,6 @@ local DEFAULTS = {
     showBuffIconSwipe = false,
     showGCDSwipe = true,
     showCooldownSwipe = true,
-    showRechargeEdge = true,
     -- Overlay color: shown when spell/buff is ACTIVE (aura duration)
     overlayColorMode = "default",  -- "default" | "class" | "accent" | "custom"
     overlayColor = {1, 1, 1, 1},
@@ -141,13 +140,7 @@ local function ApplySwipeToIcon(icon, settings)
     end
 
     icon.Cooldown:SetDrawSwipe(showSwipe)
-
-    -- Edge visibility
-    if mode == "aura" then
-        icon.Cooldown:SetDrawEdge(showSwipe)
-    else
-        icon.Cooldown:SetDrawEdge(settings.showRechargeEdge)
-    end
+    icon.Cooldown:SetDrawEdge(showSwipe and mode == "aura")
 
     -- Apply color and texture based on mode
     if mode == "aura" then

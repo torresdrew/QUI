@@ -27,7 +27,7 @@ local function CreateHelpPage(parent)
     local contentWidth = 700
 
     -- Set search context so Help tab content is searchable
-    GUI:SetSearchContext({tabIndex = 14, tabName = "Help"})
+    GUI:SetSearchContext({tabIndex = 15, tabName = "Help"})
 
     -- =====================================================
     -- HEADER

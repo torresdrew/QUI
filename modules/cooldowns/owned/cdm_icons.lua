@@ -316,6 +316,7 @@ local function MirrorBlizzCooldown(icon, blizzChild)
 
                 -- Mirror to addon-owned CD
                 local cd = targetIcon.Cooldown
+
                 if cd and cd.SetCooldownFromDurationObject then
                     pcall(cd.SetCooldownFromDurationObject, cd, durationObj)
                 end
@@ -680,6 +681,11 @@ local function CreateIcon(parent, spellEntry)
     icon.Cooldown:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
     icon.Cooldown:SetSwipeColor(0, 0, 0, 0.8)
     icon.Cooldown:SetDrawBling(true)
+
+    -- .TextOverlay (sits above the CooldownFrame so text is never behind the swipe)
+    icon.TextOverlay = CreateFrame("Frame", nil, icon)
+    icon.TextOverlay:SetAllPoints(icon)
+    icon.TextOverlay:SetFrameLevel(icon.Cooldown:GetFrameLevel() + 2)
 
     -- .TextOverlay (sits above the CooldownFrame so text is never behind the swipe)
     icon.TextOverlay = CreateFrame("Frame", nil, icon)

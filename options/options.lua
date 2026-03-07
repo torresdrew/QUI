@@ -91,6 +91,7 @@ function GUI:InitializeOptions()
     local anchoringTab = GUI:AddTab(frame, "Anchoring & Layout", ns.QUI_FrameAnchoringOptions.CreateFrameAnchoringPage)
     local cdmTab = GUI:AddTab(frame, "Cooldown Manager", ns.QUI_NCDMOptions.CreateCDMSetupPage)
     local unitFramesTab = GUI:AddTab(frame, "Unit Frames", ns.QUI_UnitFramesOptions.CreateUnitFramesPage)
+    local groupFramesTab = GUI:AddTab(frame, "Group Frames", ns.QUI_GroupFramesOptions.CreateGroupFramesPage)
     local actionBarsTab = GUI:AddTab(frame, "Action Bars", ns.QUI_ActionBarsOptions.CreateActionBarsPage)
     local minimapTab = GUI:AddTab(frame, "Minimap & Datatext", ns.QUI_MinimapPageOptions.CreateMinimapPage)
     local skinningTab = GUI:AddTab(frame, "Skinning & Autohide", ns.QUI_AutohidesOptions.CreateAutohidesPage)
@@ -104,6 +105,7 @@ function GUI:InitializeOptions()
     anchoringTab._hasSubTabsHint = true
     cdmTab._hasSubTabsHint = true
     unitFramesTab._hasSubTabsHint = true
+    groupFramesTab._hasSubTabsHint = true
     actionBarsTab._hasSubTabsHint = true
     minimapTab._hasSubTabsHint = true
     skinningTab._hasSubTabsHint = true

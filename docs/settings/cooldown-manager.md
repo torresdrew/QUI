@@ -235,7 +235,7 @@ Control cooldown swipe (clock-hand sweep) visibility on various frame types. Sto
 | `cooldownSwipe.showCooldownSwipe` | boolean | `false` | Show spell cooldown swipe on CDM icons |
 | `cooldownSwipe.showBuffSwipe` | boolean | `false` | Show buff/aura duration swipe on Essential/Utility bars |
 | `cooldownSwipe.showBuffIconSwipe` | boolean | `false` | Show swipe on Buff Icon viewer |
-| `cooldownSwipe.showRechargeEdge` | boolean | `false` | Show yellow edge on multi-charge abilities |
+
 | `cooldownSwipe.showActionSwipe` | boolean | `true` | Show cooldown swipe on action bar buttons |
 | `cooldownSwipe.showNcdmSwipe` | boolean | `true` | Show cooldown swipe on NCDM (owned engine) icons |
 | `cooldownSwipe.showCustomTrackerSwipe` | boolean | `true` | Show cooldown swipe on custom tracker bars |

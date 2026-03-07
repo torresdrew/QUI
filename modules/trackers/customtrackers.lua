@@ -118,15 +118,6 @@ local function IsPlayerInInstance()
     return true
 end
 
--- Helper: Get recharge edge setting from global cooldownSwipe settings
-local function GetRechargeEdgeSetting()
-    local core = GetCore()
-    if core and core.db and core.db.profile and core.db.profile.cooldownSwipe then
-        return core.db.profile.cooldownSwipe.showRechargeEdge
-    end
-    return false  -- Default to off
-end
-
 ---------------------------------------------------------------------------
 -- POSITIONING SYSTEM (edge-anchored based on growth direction)
 ---------------------------------------------------------------------------
@@ -1806,7 +1797,7 @@ function CustomTrackers:StartCooldownPolling(bar)
                             icon.cooldown:Clear()
                         end
 
-                        -- Control swipe/edge for charge spells
+                        -- Control swipe for charge spells
                         if config.showRechargeSwipe then
                             pcall(SafeSetSwipeColor, icon.cooldown, 0, 0, 0, 0.6)
                             pcall(SafeSetDrawSwipe, icon.cooldown, true)
@@ -1814,8 +1805,7 @@ function CustomTrackers:StartCooldownPolling(bar)
                             pcall(SafeSetSwipeColor, icon.cooldown, 0, 0, 0, 0)
                             pcall(SafeSetDrawSwipe, icon.cooldown, false)
                         end
-                        local showEdge = rechargeActive and GetRechargeEdgeSetting()
-                        pcall(SafeSetDrawEdge, icon.cooldown, showEdge)
+                        pcall(SafeSetDrawEdge, icon.cooldown, false)
 
                         -- EXPLICIT show/hide (critical for cooldown visibility)
                         if rechargeActive then

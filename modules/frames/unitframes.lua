@@ -1321,18 +1321,21 @@ end
 ---------------------------------------------------------------------------
 -- Classification → atlas + vertex color
 -- Uses Blizzard's built-in atlas textures for a clean icon look
+-- Classification indicator textures (custom icons in assets/)
+-- Star shape for elite/rareelite, diamond for rare, skull for worldboss
+local CLASS_ICON_PATH = [[Interface\AddOns\QUI\assets\]]
 local CLASSIFICATION_DATA = {
-    worldboss = { atlas = "UI-HUD-UnitFrame-Target-PortraitOn-Boss-Gold-Star", color = {1, 0.85, 0} },
-    elite     = { atlas = "worldquest-icon-elite",                             color = {1, 1, 1} },
-    rare      = { atlas = "worldquest-icon-elite",                             color = {0.75, 0.75, 0.75} },
-    rareelite = { atlas = "worldquest-icon-elite",                             color = {1, 0.75, 0.4} },
+    worldboss = { texture = CLASS_ICON_PATH .. "classification_skull",  color = {1, 0.85, 0} },
+    elite     = { texture = CLASS_ICON_PATH .. "classification_elite",  color = {1, 0.84, 0} },
+    rare      = { texture = CLASS_ICON_PATH .. "classification_rare",   color = {0, 0.44, 0.87} },
+    rareelite = { texture = CLASS_ICON_PATH .. "classification_elite",  color = {1, 0.5, 0} },
 }
 
 local function UpdateClassificationIcon(frame)
     if not frame or not frame.unit or not frame.classificationIcon then return end
     local settings = GetUnitSettings(frame.unitKey)
     if not settings or not settings.classificationIcon or not settings.classificationIcon.enabled then
-        frame.classificationIcon:Hide()
+        if frame.classificationIcon then frame.classificationIcon:Hide() end
         return
     end
 
@@ -1342,15 +1345,20 @@ local function UpdateClassificationIcon(frame)
     end
 
     local classification = UnitClassification(frame.unit)
-    local data = CLASSIFICATION_DATA[classification]
-    if data then
-        local ok = pcall(frame.classificationIcon.SetAtlas, frame.classificationIcon, data.atlas)
-        if ok then
-            frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
-            frame.classificationIcon:Show()
-        else
-            frame.classificationIcon:Hide()
+    -- Boss-level mobs (skull, level -1) may return "normal" from UnitClassification
+    if not CLASSIFICATION_DATA[classification] then
+        local level = UnitLevel(frame.unit)
+        if level and level == -1 then
+            classification = "worldboss"
         end
+    end
+    local data = CLASSIFICATION_DATA[classification]
+
+    if data then
+        frame.classificationIcon:SetTexture(data.texture)
+        frame.classificationIcon:SetTexCoord(0, 1, 0, 1)
+        frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
+        frame.classificationIcon:Show()
     else
         frame.classificationIcon:Hide()
     end
@@ -2535,6 +2543,17 @@ function QUI_UF:ShowPreview(unitKey)
                     end
                 end
 
+                -- Show classification icon preview (fake "elite" for boss frames)
+                if frame.classificationIcon and settings.classificationIcon and settings.classificationIcon.enabled then
+                    local data = CLASSIFICATION_DATA["elite"]
+                    if data then
+                        frame.classificationIcon:SetTexture(data.texture)
+                        frame.classificationIcon:SetTexCoord(0, 1, 0, 1)
+                        frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
+                        frame.classificationIcon:Show()
+                    end
+                end
+
                 -- Show boss castbar preview if castbar previewMode is enabled
                 if settings and settings.castbar and settings.castbar.previewMode then
                     local castbar = self.castbars[bossKey]
@@ -2671,6 +2690,17 @@ function QUI_UF:ShowPreview(unitKey)
             frame.healthBar:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
         end
     end
+
+    -- Show classification icon preview (fake "elite" for target/focus)
+    if frame.classificationIcon and settings and settings.classificationIcon and settings.classificationIcon.enabled then
+        local data = CLASSIFICATION_DATA["elite"]
+        if data then
+            frame.classificationIcon:SetTexture(data.texture)
+            frame.classificationIcon:SetTexCoord(0, 1, 0, 1)
+            frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
+            frame.classificationIcon:Show()
+        end
+    end
 end
 
 function QUI_UF:HidePreview(unitKey)
@@ -2693,6 +2723,11 @@ function QUI_UF:HidePreview(unitKey)
                     frame:Show()
                 else
                     frame:Hide()
+                end
+
+                -- Hide classification icon preview
+                if frame.classificationIcon then
+                    frame.classificationIcon:Hide()
                 end
 
                 -- Hide boss castbar preview
@@ -2732,6 +2767,11 @@ function QUI_UF:HidePreview(unitKey)
         end
     end
     
+    -- Hide classification icon preview
+    if frame.classificationIcon then
+        frame.classificationIcon:Hide()
+    end
+
     -- Restore real state
     if UnitExists(frame.unit) or unitKey == "player" then
         UpdateFrame(frame)
@@ -2957,12 +2997,34 @@ function QUI_UF:RefreshFrame(unitKey)
 
                 -- Update classification icon (boss frames)
                 if settings.classificationIcon and settings.classificationIcon.enabled then
-                    if frame.classificationIcon then
-                        local ci = settings.classificationIcon
-                        frame.classificationIcon:SetSize(ci.size or 16, ci.size or 16)
-                        frame.classificationIcon:ClearAllPoints()
-                        local anchorInfo = GetTextAnchorInfo(ci.anchor or "LEFT")
-                        frame.classificationIcon:SetPoint(anchorInfo.point, frame, anchorInfo.point, ci.xOffset or -8, ci.yOffset or 0)
+                    -- Create icon if it doesn't exist (feature was enabled after initial load)
+                    if not frame.classificationIcon then
+                        if not frame.indicatorFrame then
+                            local indicatorFrame = CreateFrame("Frame", nil, frame)
+                            indicatorFrame:SetAllPoints()
+                            indicatorFrame:SetFrameLevel(frame.healthBar:GetFrameLevel() + 5)
+                            frame.indicatorFrame = indicatorFrame
+                        end
+                        local classificationIcon = frame.indicatorFrame:CreateTexture(nil, "OVERLAY")
+                        classificationIcon:Hide()
+                        frame.classificationIcon = classificationIcon
+                        frame:RegisterUnitEvent("UNIT_CLASSIFICATION_CHANGED", frame.unit)
+                    end
+                    local ci = settings.classificationIcon
+                    frame.classificationIcon:SetSize(ci.size or 16, ci.size or 16)
+                    frame.classificationIcon:ClearAllPoints()
+                    local anchorInfo = GetTextAnchorInfo(ci.anchor or "LEFT")
+                    frame.classificationIcon:SetPoint(anchorInfo.point, frame, anchorInfo.point, ci.xOffset or -8, ci.yOffset or 0)
+                    -- In preview mode, show fake "elite" icon; otherwise update from real unit
+                    if self.previewMode[bossKey] then
+                        local data = CLASSIFICATION_DATA["elite"]
+                        if data then
+                            frame.classificationIcon:SetTexture(data.texture)
+                            frame.classificationIcon:SetTexCoord(0, 1, 0, 1)
+                            frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
+                            frame.classificationIcon:Show()
+                        end
+                    else
                         UpdateClassificationIcon(frame)
                     end
                 elseif frame.classificationIcon then

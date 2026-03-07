@@ -18,7 +18,7 @@ local DEFAULTS = {
     showBuffIconSwipe = false,
     showGCDSwipe = true,
     showCooldownSwipe = true,
-    showRechargeEdge = true,
+
     -- Overlay color: shown when spell/buff is ACTIVE (aura duration)
     overlayColorMode = "default",  -- "default" | "class" | "custom"
     overlayColor = {1, 1, 1, 1},   -- white (matches color picker default)
@@ -245,15 +245,7 @@ ApplySwipeFromHook = function(icon, durationArg)
     end
 
     icon.Cooldown:SetDrawSwipe(showSwipe)
-
-    -- Edge
-    local drawEdge
-    if mode == "aura" then
-        drawEdge = showSwipe
-    else
-        drawEdge = settings.showRechargeEdge
-    end
-    icon.Cooldown:SetDrawEdge(drawEdge)
+    icon.Cooldown:SetDrawEdge(showSwipe and mode == "aura")
 end
 
 -- HookIconSwipe removed — merged into HookIconSetCooldown above.
@@ -377,14 +369,7 @@ local function ApplySettingsToIcon(icon, settings)
     end
 
     icon.Cooldown:SetDrawSwipe(showSwipe)
-
-    local drawEdge
-    if mode == "aura" then
-        drawEdge = showSwipe
-    else
-        drawEdge = settings.showRechargeEdge
-    end
-    icon.Cooldown:SetDrawEdge(drawEdge)
+    icon.Cooldown:SetDrawEdge(showSwipe and mode == "aura")
 
     -- Hook SetCooldown to apply overlay/swipe color at the right moment
     -- (after Blizzard sets wasSetFromAura and its own color in the same update).
