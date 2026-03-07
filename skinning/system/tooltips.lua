@@ -533,6 +533,10 @@ local function SetupEmbeddedTooltipHooks()
     -- the last word on the NineSlice appearance.
     if SharedTooltip_SetBackdropStyle then
         hooksecurefunc("SharedTooltip_SetBackdropStyle", function(tooltip, style, isEmbedded)
+            -- TAINT SAFETY: Any addon code here taints the execution context.
+            -- Combat check must be first to avoid tainting subsequent Blizzard
+            -- calls in the same call stack (e.g. GameTooltip_AddWidgetSet).
+            if InCombatLockdown() then return end
             if not IsEnabled() then return end
             if not tooltip then return end
             if isEmbedded or tooltip.IsEmbedded then
@@ -553,6 +557,7 @@ local function SetupEmbeddedTooltipHooks()
     -- where OnShow fires without SharedTooltip_SetBackdropStyle being called.
     if EmbeddedItemTooltip then
         EmbeddedItemTooltip:HookScript("OnShow", function(self)
+            if InCombatLockdown() then return end
             if not IsEnabled() then return end
             StripEmbeddedBorder(self)
         end)
@@ -565,6 +570,7 @@ local function SetupEmbeddedTooltipHooks()
     -- Also handle GameTooltip.ItemTooltip sub-frame if present
     if GameTooltip and GameTooltip.ItemTooltip and GameTooltip.ItemTooltip.NineSlice then
         GameTooltip.ItemTooltip:HookScript("OnShow", function(self)
+            if InCombatLockdown() then return end
             if not IsEnabled() then return end
             local nineSlice = self.NineSlice
             if nineSlice then
@@ -662,6 +668,19 @@ local function HookTooltipOnShow(tooltip)
     -- NOTE: Tooltip OnShow runs synchronously — deferring causes unskinned tooltip flash.
     -- Tooltip skinning is NOT in the Edit Mode taint chain.
     tooltip:HookScript("OnShow", function(self)
+        -- TAINT SAFETY: Combat check MUST be the very first line.  ANY addon code
+        -- (even IsEnabled()) taints the execution context.  Blizzard code that runs
+        -- after this hook in the same call stack (e.g. AreaPoiUtil calling
+        -- GameTooltip_AddWidgetSet → RegisterForWidgetSet → ProcessWidget →
+        -- UIWidgetTemplateTextWithState:Setup) inherits the taint, causing
+        -- GetStringHeight() to return secret values and arithmetic to fail.
+        -- Tooltip may briefly show default NineSlice during combat — acceptable
+        -- tradeoff vs. Lua errors.  Skin reapplies on next out-of-combat show.
+        if InCombatLockdown() then
+            QueueCombatTooltipSkin(self)
+            return
+        end
+
         -- TAINT SAFETY: Font sizing (SetFont) changes FontString intrinsic metrics,
         -- tainting the tooltip's auto-sized width. Blizzard's GameTooltip_InsertFrame
         -- then fails comparing the tainted frameWidth. Defer font sizing to after the
@@ -673,19 +692,6 @@ local function HookTooltipOnShow(tooltip)
                     pcall(ApplyTooltipFontSizeToFrame, self)
                 end
             end)
-        end
-
-        if InCombatLockdown() then
-            -- TAINT SAFETY: Skip ALL addon work during combat to avoid tainting
-            -- the execution context.  Even though NineSlice ops are C-side, the
-            -- addon Lua that drives them (ReapplySkin) executes in the same call
-            -- stack as Blizzard's tooltip show chain.  Subsequent Blizzard code
-            -- (GameTooltip_AddWidgetSet → RegisterForWidgetSet → ProcessWidget →
-            -- UIWidgetTemplateTextWithState:Setup) then inherits the taint,
-            -- causing GetStringHeight() to return secret values.  Tooltip may
-            -- briefly show Blizzard's default NineSlice during combat — acceptable
-            -- tradeoff vs. Lua errors.  Skin reapplies on next out-of-combat show.
-            return
         end
 
         if not IsEnabled() then return end
@@ -811,9 +817,9 @@ local function SetupHealthBarHook()
     local statusBar = GameTooltip.StatusBar or GameTooltipStatusBar
     if statusBar then
         hooksecurefunc(statusBar, "Show", function(self)
+            -- TAINT SAFETY: Combat check first to avoid tainting execution context.
+            if InCombatLockdown() then return end
             if ShouldHideHealthBar() then
-                -- TAINT SAFETY: Use SafeHide to avoid calling Hide() inside a secure
-                -- call chain during combat, which would propagate taint.
                 Helpers.SafeHide(self)
             end
         end)
@@ -861,41 +867,50 @@ eventFrame:SetScript("OnEvent", function(self, event)
             if GameTooltip_AddWidgetSet then
                 local origAddWidgetSet = GameTooltip_AddWidgetSet
                 GameTooltip_AddWidgetSet = function(tooltip, ...)
-                    if InCombatLockdown() then
-                        pcall(origAddWidgetSet, tooltip, ...)
-                        return
+                    -- TAINT SAFETY: Always pcall.  The taint system can activate
+                    -- before InCombatLockdown() returns true (race at combat entry),
+                    -- and addon hooks (OnShow, SharedTooltip_SetBackdropStyle) may
+                    -- have already tainted the execution context.  pcall overhead
+                    -- is negligible for a per-tooltip-show function.
+                    local ok, err = pcall(origAddWidgetSet, tooltip, ...)
+                    if not ok then
+                        -- Only suppress taint/secret-value errors; re-raise real bugs
+                        if type(err) == "string" and (err:find("secret") or err:find("tainted")) then
+                            return
+                        end
+                        error(err, 0)
                     end
-                    return origAddWidgetSet(tooltip, ...)
                 end
             end
 
             -- TAINT SAFETY: Blizzard files (e.g. AreaPoiUtil) may capture a local
             -- reference to GameTooltip_AddWidgetSet before our wrapper is installed,
-            -- bypassing the pcall above.  Hook RegisterForWidgetSet on GameTooltip's
-            -- actual widget container child frame — this is the real entry point for
+            -- bypassing the pcall above.  Hook RegisterForWidgetSet on the tooltip's
+            -- actual widget container instance — this is the real entry point for
             -- widget setup and can't be bypassed by local reference capture.
-            -- NOTE: The previous approach of replacing UIWidgetTemplateTextWithStateMixin.Setup
-            -- on the mixin table was ineffective — frame instances created via Mixin()
-            -- already have their own copy of Setup that doesn't go through the table.
-            if GameTooltip then
-                local widgetContainer
-                for i = 1, select("#", GameTooltip:GetChildren()) do
-                    local child = select(i, GameTooltip:GetChildren())
-                    if child and child.RegisterForWidgetSet then
-                        widgetContainer = child
-                        break
-                    end
-                end
-                if widgetContainer then
-                    local origRegister = widgetContainer.RegisterForWidgetSet
-                    widgetContainer.RegisterForWidgetSet = function(self, ...)
-                        if InCombatLockdown() then
-                            pcall(origRegister, self, ...)
-                            return
+            --
+            -- The widget container is created LAZILY inside GameTooltip_AddWidgetSet
+            -- on first use, so it doesn't exist at init time.  Use a hooksecurefunc
+            -- posthook to install the pcall wrapper after the container is created.
+            if GameTooltip_AddWidgetSet then
+                local widgetContainerWrapped = {}  -- track wrapped containers
+                hooksecurefunc("GameTooltip_AddWidgetSet", function(tooltip)
+                    if not tooltip then return end
+                    local wc = tooltip.widgetContainer
+                    if wc and wc.RegisterForWidgetSet and not widgetContainerWrapped[wc] then
+                        widgetContainerWrapped[wc] = true
+                        local origRegister = wc.RegisterForWidgetSet
+                        wc.RegisterForWidgetSet = function(self, ...)
+                            local ok, err = pcall(origRegister, self, ...)
+                            if not ok then
+                                if type(err) == "string" and (err:find("secret") or err:find("tainted")) then
+                                    return
+                                end
+                                error(err, 0)
+                            end
                         end
-                        return origRegister(self, ...)
                     end
-                end
+                end)
             end
 
             -- All tooltip modifications gated by master toggle + skinTooltips
