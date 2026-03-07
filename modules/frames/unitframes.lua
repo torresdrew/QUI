@@ -1319,16 +1319,13 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Classification Icon (elite/rare/boss dragon/skull indicator)
 ---------------------------------------------------------------------------
--- Classification → atlas + vertex color
--- Uses Blizzard's built-in atlas textures for a clean icon look
--- Classification indicator textures (custom icons in assets/)
--- Star shape for elite/rareelite, diamond for rare, skull for worldboss
-local CLASS_ICON_PATH = [[Interface\AddOns\QUI\assets\]]
+-- Classification → Blizzard atlas textures
+-- Dragon for elite/rareelite, star for rare, skull for worldboss
 local CLASSIFICATION_DATA = {
-    worldboss = { texture = CLASS_ICON_PATH .. "classification_skull",  color = {1, 0.85, 0} },
-    elite     = { texture = CLASS_ICON_PATH .. "classification_elite",  color = {1, 0.84, 0} },
-    rare      = { texture = CLASS_ICON_PATH .. "classification_rare",   color = {0, 0.44, 0.87} },
-    rareelite = { texture = CLASS_ICON_PATH .. "classification_elite",  color = {1, 0.5, 0} },
+    worldboss = { atlas = "worldquest-icon-boss",        color = {1, 0.85, 0} },
+    elite     = { atlas = "nameplates-icon-elite-gold",  color = {1, 0.84, 0} },
+    rare      = { atlas = "nameplates-icon-elite-silver", color = {0.7, 0.7, 0.7} },
+    rareelite = { atlas = "nameplates-icon-elite-gold",  color = {1, 0.5, 0} },
 }
 
 local function UpdateClassificationIcon(frame)
@@ -1355,8 +1352,7 @@ local function UpdateClassificationIcon(frame)
     local data = CLASSIFICATION_DATA[classification]
 
     if data then
-        frame.classificationIcon:SetTexture(data.texture)
-        frame.classificationIcon:SetTexCoord(0, 1, 0, 1)
+        frame.classificationIcon:SetAtlas(data.atlas)
         frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
         frame.classificationIcon:Show()
     else
@@ -2547,8 +2543,7 @@ function QUI_UF:ShowPreview(unitKey)
                 if frame.classificationIcon and settings.classificationIcon and settings.classificationIcon.enabled then
                     local data = CLASSIFICATION_DATA["elite"]
                     if data then
-                        frame.classificationIcon:SetTexture(data.texture)
-                        frame.classificationIcon:SetTexCoord(0, 1, 0, 1)
+                        frame.classificationIcon:SetAtlas(data.atlas)
                         frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
                         frame.classificationIcon:Show()
                     end
@@ -2695,8 +2690,7 @@ function QUI_UF:ShowPreview(unitKey)
     if frame.classificationIcon and settings and settings.classificationIcon and settings.classificationIcon.enabled then
         local data = CLASSIFICATION_DATA["elite"]
         if data then
-            frame.classificationIcon:SetTexture(data.texture)
-            frame.classificationIcon:SetTexCoord(0, 1, 0, 1)
+            frame.classificationIcon:SetAtlas(data.atlas)
             frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
             frame.classificationIcon:Show()
         end
@@ -3019,8 +3013,7 @@ function QUI_UF:RefreshFrame(unitKey)
                     if self.previewMode[bossKey] then
                         local data = CLASSIFICATION_DATA["elite"]
                         if data then
-                            frame.classificationIcon:SetTexture(data.texture)
-                            frame.classificationIcon:SetTexCoord(0, 1, 0, 1)
+                            frame.classificationIcon:SetAtlas(data.atlas)
                             frame.classificationIcon:SetVertexColor(data.color[1], data.color[2], data.color[3])
                             frame.classificationIcon:Show()
                         end
