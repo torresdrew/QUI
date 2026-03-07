@@ -142,6 +142,13 @@ local function TrackSecureFramePosition(frame, parentFrame, point, relPoint, off
     secureTaintCleaner:SetAttribute("relPoint" .. idx, relPoint)
     secureTaintCleaner:SetAttribute("offsetX" .. idx, offsetX)
     secureTaintCleaner:SetAttribute("offsetY" .. idx, offsetY)
+
+    -- Immediately re-stamp through secure code to clear taint left by the
+    -- addon-side ClearAllPoints/SetPoint that just ran.  Without this,
+    -- Blizzard's UpdateLayoutInfo -> InitSystemAnchors -> secureexecuterange
+    -- can hit the tainted SetPointBase before combat enter or ExitEditMode
+    -- has a chance to clean it (e.g. on login, entering Edit Mode).
+    secureTaintCleaner:SetAttribute("clean-now", GetTime())
 end
 
 ---------------------------------------------------------------------------

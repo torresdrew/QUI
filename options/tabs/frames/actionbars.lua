@@ -53,7 +53,7 @@ local function CreateActionBarsPage(parent)
         local FORM_ROW = 32
 
         -- Set search context for widget auto-registration
-        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 2, subTabName = "Mouseover Hide"})
+        GUI:SetSearchContext({tabIndex = 7, tabName = "Action Bars", subTabIndex = 2, subTabName = "Mouseover Hide"})
 
         ---------------------------------------------------------
         -- Warning: Enable Blizzard Action Bars
@@ -218,7 +218,7 @@ local function CreateActionBarsPage(parent)
         local FORM_ROW = 32
 
         -- Set search context for auto-registration
-        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 1, subTabName = "Master Settings"})
+        GUI:SetSearchContext({tabIndex = 7, tabName = "Action Bars", subTabIndex = 1, subTabName = "Master Settings"})
 
         -- 9-point anchor options for text positioning
         local anchorOptions = {
@@ -587,7 +587,7 @@ local function CreateActionBarsPage(parent)
     ---------------------------------------------------------
     local function BuildPerBarOverridesTab(tabContent)
         -- Set search context for widget auto-registration
-        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 3, subTabName = "Per-Bar Overrides"})
+        GUI:SetSearchContext({tabIndex = 7, tabName = "Action Bars", subTabIndex = 3, subTabName = "Per-Bar Overrides"})
 
         -- Use tabContent directly - parent Action Bars page already has scroll
         local content = tabContent
@@ -1009,7 +1009,7 @@ local function CreateActionBarsPage(parent)
         local FORM_ROW = 32
 
         -- Set search context
-        GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 4, subTabName = "Extra Buttons"})
+        GUI:SetSearchContext({tabIndex = 7, tabName = "Action Bars", subTabIndex = 4, subTabName = "Extra Buttons"})
 
         -- Refresh callback
         local function RefreshExtraButtons()
@@ -1191,7 +1191,7 @@ BuildTotemBarTab = function(tabContent)
     local db = core and core.db and core.db.profile and core.db.profile.totemBar
 
     -- Set search context for widget auto-registration
-    GUI:SetSearchContext({tabIndex = 6, tabName = "Action Bars", subTabIndex = 5, subTabName = "Totem Bar"})
+    GUI:SetSearchContext({tabIndex = 7, tabName = "Action Bars", subTabIndex = 5, subTabName = "Totem Bar"})
 
     -- Class guard: show notice for non-shamans
     local _, playerClass = UnitClass("player")

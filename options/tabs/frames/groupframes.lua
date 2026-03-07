@@ -134,7 +134,7 @@ local function CreateGroupFramesPage(parent)
         local y = -10
         local gfdb = GetGFDB()
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 1, subTabName = "General"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 1, subTabName = "General"})
 
         if not gfdb then
             local info = GUI:CreateLabel(tabContent, "Group frame settings not available - database not loaded", 12, C.textMuted)
@@ -344,7 +344,7 @@ local function CreateGroupFramesPage(parent)
         local gfdb = GetGFDB()
         if not gfdb then return end
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 2, subTabName = "Layout"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 2, subTabName = "Layout"})
 
         local layout = gfdb.layout
         if not layout then gfdb.layout = {} layout = gfdb.layout end
@@ -427,7 +427,7 @@ local function CreateGroupFramesPage(parent)
         local gfdb = GetGFDB()
         if not gfdb then return end
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 3, subTabName = "Dimensions"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 3, subTabName = "Dimensions"})
 
         local dims = gfdb.dimensions
         if not dims then gfdb.dimensions = {} dims = gfdb.dimensions end
@@ -500,7 +500,7 @@ local function CreateGroupFramesPage(parent)
         local gfdb = GetGFDB()
         if not gfdb then return end
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 4, subTabName = "Health & Power"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 4, subTabName = "Health & Power"})
 
         -- Health section
         local healthHeader = GUI:CreateSectionHeader(tabContent, "Health Text")
@@ -630,7 +630,7 @@ local function CreateGroupFramesPage(parent)
         local gfdb = GetGFDB()
         if not gfdb then return end
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 5, subTabName = "Indicators"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 5, subTabName = "Indicators"})
 
         local _, newY = CreatePreviewButton(tabContent, y)
         y = newY
@@ -722,7 +722,7 @@ local function CreateGroupFramesPage(parent)
         local gfdb = GetGFDB()
         if not gfdb then return end
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 6, subTabName = "Healer Features"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 6, subTabName = "Healer Features"})
 
         local _, newY = CreatePreviewButton(tabContent, y)
         y = newY
@@ -863,7 +863,7 @@ local function CreateGroupFramesPage(parent)
         local gfdb = GetGFDB()
         if not gfdb then return end
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 7, subTabName = "Auras"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 7, subTabName = "Auras"})
 
         local _, newY = CreatePreviewButton(tabContent, y)
         y = newY
@@ -994,7 +994,7 @@ local function CreateGroupFramesPage(parent)
         local gfdb = GetGFDB()
         if not gfdb then return end
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 8, subTabName = "Aura Indicators"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 8, subTabName = "Aura Indicators"})
 
         local aidb = gfdb.auraIndicators
         if not aidb then gfdb.auraIndicators = {} aidb = gfdb.auraIndicators end
@@ -1106,7 +1106,7 @@ local function CreateGroupFramesPage(parent)
         local gfdb = GetGFDB()
         if not gfdb then return end
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 9, subTabName = "Click-Casting"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 9, subTabName = "Click-Casting"})
 
         local cc = gfdb.clickCast
         if not cc then gfdb.clickCast = {} cc = gfdb.clickCast end
@@ -1645,7 +1645,7 @@ local function CreateGroupFramesPage(parent)
         local gfdb = GetGFDB()
         if not gfdb then return end
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 10, subTabName = "Private Auras"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 10, subTabName = "Private Auras"})
 
         local pa = gfdb.privateAuras
         if not pa then gfdb.privateAuras = {} pa = gfdb.privateAuras end
@@ -1733,7 +1733,7 @@ local function CreateGroupFramesPage(parent)
         local gfdb = GetGFDB()
         if not gfdb then return end
 
-        GUI:SetSearchContext({tabIndex = 5, tabName = "Group Frames", subTabIndex = 11, subTabName = "Range & Misc"})
+        GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 11, subTabName = "Range & Misc"})
 
         -- Range check
         local rangeHeader = GUI:CreateSectionHeader(tabContent, "Range Check")

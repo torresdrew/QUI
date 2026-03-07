@@ -36,7 +36,7 @@ The engine is set in your profile and defaults to "owned."
 - **Buff Icons** -- Tracked buff and aura display with customizable shape, growth direction, and duration/stack text.
 - **Tracked Bar** -- Status bars for tracked buffs with inactive mode options: always visible, fade out, or hide entirely.
 - **Custom Entries** -- Per-character spell or item additions to the Essential or Utility bars. Stored in your character-specific database (`db.char`), so each character can have unique additions.
-- **Effects** -- Glow types (Pixel Glow, Autocast Shine, Button Glow) and swipe overlays for GCD, cooldown, buff duration, and recharge edge visualization.
+- **Effects** -- Glow types (Pixel Glow, Autocast Shine, Button Glow) and swipe overlays for GCD, cooldown, and buff duration visualization.
 - **Range Indicator** -- Tints icons red when your target is out of range for that ability.
 - **Usability Indicator** -- Shows when abilities cannot currently be used (insufficient resources, wrong stance, etc.).
 - **Desaturation** -- Icons go desaturated while on cooldown for clear visual distinction.

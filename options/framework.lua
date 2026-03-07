@@ -356,6 +356,16 @@ function GUI:UpdateSidebarSectionHighlightFromScroll(scrollFrame)
     if not order or #order == 0 or not registry then return end
 
     local currentScroll = scrollFrame:GetVerticalScroll() or 0
+
+    -- At the top — no section should be highlighted
+    if currentScroll <= 5 then
+        if frame._sidebarActiveSectionKey then
+            frame._sidebarActiveSectionKey = nil
+            self:RefreshSidebarTree(frame)
+        end
+        return
+    end
+
     local threshold = currentScroll + 28
     local activeName
     local bestOffset = -math.huge
@@ -4401,12 +4411,29 @@ function GUI:RefreshSidebarTree(frame)
                         end
                         local isActive = (curActiveTab == tabIndex and curActiveSubTab == subTabIndex)
                         if isExpanded and isActive then
-                            -- Only toggle collapse when clicking the already-active subtab
-                            frame._sidebarExpandedSubTabs[tabIndex][subTabIndex] = false
-                            if frame._sidebarActiveSectionKey
-                                and string.match(frame._sidebarActiveSectionKey, "^" .. tabIndex .. ":" .. subTabIndex .. ":") then
-                                frame._sidebarActiveSectionKey = nil
+                            -- Check if content is scrolled away from top
+                            local regKey = GetSectionRegistryKey(tabIndex, subTabIndex)
+                            local order = GUI.SectionRegistryOrder[regKey]
+                            local registry = GUI.SectionRegistry[regKey]
+                            local scrollFrame
+                            if order and order[1] and registry and registry[order[1]] then
+                                scrollFrame = registry[order[1]].scrollParent
                             end
+                            local currentScroll = scrollFrame and scrollFrame.GetVerticalScroll and scrollFrame:GetVerticalScroll() or 0
+                            if currentScroll > 5 then
+                                -- Not at top — scroll to top and clear section highlight
+                                frame._sidebarManualSectionSelection = true
+                                scrollFrame:SetVerticalScroll(0)
+                                frame._sidebarActiveSectionKey = nil
+                                GUI:RefreshSidebarTree(frame)
+                                C_Timer.After(0.1, function()
+                                    frame._sidebarManualSectionSelection = nil
+                                end)
+                                return
+                            end
+                            -- Already at top (or no sections) — collapse
+                            frame._sidebarExpandedSubTabs[tabIndex][subTabIndex] = false
+                            frame._sidebarActiveSectionKey = nil
                             GUI:RefreshSidebarTree(frame)
                             return
                         end

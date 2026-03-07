@@ -92,15 +92,6 @@ local function BuildEffectsTab(tabContent)
         buffIconDesc:SetJustifyH("LEFT")
         y = y - 14
 
-        local showRechargeEdge = GUI:CreateFormCheckbox(tabContent, "Recharge Edge", "showRechargeEdge", db.cooldownSwipe, RefreshSwipe)
-        showRechargeEdge:SetPoint("TOPLEFT", PAD, y)
-        showRechargeEdge:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
-        local rechargeEdgeDesc = GUI:CreateLabel(tabContent, "Yellow radial line that shows cooldown recharge time. Note: This comes with a faint GCD swipe too.", 10, C.textMuted)
-        rechargeEdgeDesc:SetPoint("TOPLEFT", PAD, y + 4)
-        rechargeEdgeDesc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-        rechargeEdgeDesc:SetJustifyH("LEFT")
-        y = y - 14
     end
 
     -- =====================================================

@@ -1947,6 +1947,14 @@ local defaults = {
                     xOffset = -8,
                     yOffset = 8,
                 },
+                -- Classification icon (elite/rare/boss indicator)
+                classificationIcon = {
+                    enabled = false,
+                    size = 16,
+                    anchor = "LEFT",
+                    xOffset = -8,
+                    yOffset = 0,
+                },
             },
             -- Target of Target
             targettarget = {
@@ -2253,6 +2261,14 @@ local defaults = {
                     xOffset = -8,
                     yOffset = 8,
                 },
+                -- Classification icon (elite/rare/boss indicator)
+                classificationIcon = {
+                    enabled = false,
+                    size = 16,
+                    anchor = "LEFT",
+                    xOffset = -8,
+                    yOffset = 0,
+                },
             },
             -- Boss frames
             boss = {
@@ -2348,6 +2364,14 @@ local defaults = {
                     anchor = "TOP",
                     xOffset = 0,
                     yOffset = 8,
+                },
+                -- Classification icon (elite/rare/boss indicator)
+                classificationIcon = {
+                    enabled = false,
+                    size = 16,
+                    anchor = "LEFT",
+                    xOffset = -8,
+                    yOffset = 0,
                 },
             },
         },
@@ -3041,7 +3065,7 @@ local defaults = {
             showBuffIconSwipe = false,  -- BuffIcon viewer swipe (opt-in)
             showGCDSwipe = false,       -- GCD swipe (~1.5s)
             showCooldownSwipe = false,  -- Actual spell cooldown swipe
-            showRechargeEdge = false,   -- Yellow edge on multi-charge abilities
+
             showActionSwipe = true,     -- Action bar cooldown swipe
             showNcdmSwipe = true,       -- NCDM cooldown swipe
             showCustomTrackerSwipe = true, -- Custom tracker cooldown swipe

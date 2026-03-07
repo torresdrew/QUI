@@ -661,7 +661,7 @@ SlashCmdList["CDMDEBUG"] = function()
             print(P, "  showBuffIconSwipe:", tostring(resolved.showBuffIconSwipe))
             print(P, "  showGCDSwipe:", tostring(resolved.showGCDSwipe))
             print(P, "  showCooldownSwipe:", tostring(resolved.showCooldownSwipe))
-            print(P, "  showRechargeEdge:", tostring(resolved.showRechargeEdge))
+
             print(P, "  overlayColorMode:", tostring(resolved.overlayColorMode or "nil"))
             print(P, "  overlayColor:", tostring(resolved.overlayColor and ("{" .. table.concat(resolved.overlayColor, ", ") .. "}") or "nil"))
             print(P, "  swipeColorMode:", tostring(resolved.swipeColorMode or "nil"))
