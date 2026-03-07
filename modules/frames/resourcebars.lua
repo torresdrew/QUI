@@ -167,9 +167,11 @@ end
 
 --TABLES
 
--- Custom power type ID for Enhancement Shaman Maelstrom Weapon and Vengeance Demon Hunter Soul Fragments (aura-based, not a Blizzard PowerType)
+-- Custom power type IDs for aura-based resources (not Blizzard PowerTypes)
 Enum.PowerType.MaelstromWeapon = 100
 Enum.PowerType.VengSoulFragments = 101
+Enum.PowerType.Whirlwind = 102       -- Fury Warrior Improved Whirlwind stacks
+Enum.PowerType.TipOfTheSpear = 103   -- Survival Hunter Tip of the Spear stacks
 local VDH_SOUL_FRAGMENTS_POWER = (Enum.PowerType and type(Enum.PowerType.SoulFragments) == "number") and Enum.PowerType.SoulFragments or nil
 
 local tocVersion = select(4, GetBuildInfo())
@@ -211,6 +213,8 @@ local tickedPowerTypes = {
     [Enum.PowerType.SoulShards] = true,
     [Enum.PowerType.MaelstromWeapon] = true,
     [Enum.PowerType.VengSoulFragments] = true,
+    [Enum.PowerType.Whirlwind] = true,
+    [Enum.PowerType.TipOfTheSpear] = true,
 }
 if VDH_SOUL_FRAGMENTS_POWER then
     tickedPowerTypes[VDH_SOUL_FRAGMENTS_POWER] = true
@@ -218,11 +222,16 @@ end
 
 local fragmentedPowerTypes = {
     [Enum.PowerType.Runes] = true,
+    [Enum.PowerType.Essence] = true,
 }
 
 -- Smooth rune timer update state
 local runeUpdateElapsed = 0
 local runeUpdateRunning = false
+
+-- Smooth essence regen timer state
+local essenceUpdateElapsed = 0
+local essenceUpdateRunning = false
 
 -- Rune text format cache: only call string.format when the truncated value changes
 local _lastRuneRounded = {}    -- [runeIndex] = last math.floor(remaining * 10) value
@@ -245,6 +254,8 @@ local instantFeedbackTypes = {
     [Enum.PowerType.SoulShards] = true,
     [Enum.PowerType.MaelstromWeapon] = true,
     [Enum.PowerType.VengSoulFragments] = true,
+    [Enum.PowerType.Whirlwind] = true,
+    [Enum.PowerType.TipOfTheSpear] = true,
 }
 if VDH_SOUL_FRAGMENTS_POWER then
     instantFeedbackTypes[VDH_SOUL_FRAGMENTS_POWER] = true
@@ -392,7 +403,9 @@ local function GetSecondaryResource()
             [31]   = Enum.PowerType.Mana, -- Moonkin
         },
         ["EVOKER"]      = Enum.PowerType.Essence,
-        ["HUNTER"]      = nil,
+        ["HUNTER"]      = {
+            [255] = Enum.PowerType.TipOfTheSpear, -- Survival
+        },
         ["MAGE"]        = {
             [62]   = Enum.PowerType.ArcaneCharges, -- Arcane
         },
@@ -410,7 +423,9 @@ local function GetSecondaryResource()
             [263]  = Enum.PowerType.MaelstromWeapon,  -- Enhancement (aura stacks via C_UnitAuras)
         },
         ["WARLOCK"]     = Enum.PowerType.SoulShards,
-        ["WARRIOR"]     = nil,
+        ["WARRIOR"]     = {
+            [72] = Enum.PowerType.Whirlwind, -- Fury
+        },
     }
 
     local spec = GetSpecialization()
@@ -505,6 +520,10 @@ local function GetResourceColor(resource)
             customColor = pc.maelstrom
         elseif resource == Enum.PowerType.MaelstromWeapon then
             customColor = pc.maelstromWeapon or pc.maelstrom
+        elseif resource == Enum.PowerType.Whirlwind then
+            customColor = pc.whirlwind
+        elseif resource == Enum.PowerType.TipOfTheSpear then
+            customColor = pc.tipOfTheSpear
         elseif resource == Enum.PowerType.LunarPower then
             customColor = pc.lunarPower
         elseif resource == Enum.PowerType.HolyPower then
@@ -640,6 +659,20 @@ local function GetSecondaryResourceValue(resource)
         local aura = C_UnitAuras.GetPlayerAuraBySpellID(344179)
         local current = aura and aura.applications or 0
         return 10, current, current, "number"
+    end
+
+    if resource == Enum.PowerType.Whirlwind then
+        -- Fury Warrior Improved Whirlwind stacks (aura-based, spell ID 85739)
+        local aura = C_UnitAuras.GetPlayerAuraBySpellID(85739)
+        local current = aura and aura.applications or 0
+        return 4, current, current, "number"
+    end
+
+    if resource == Enum.PowerType.TipOfTheSpear then
+        -- Survival Hunter Tip of the Spear stacks (aura-based, spell ID 260286)
+        local aura = C_UnitAuras.GetPlayerAuraBySpellID(260286)
+        local current = aura and aura.applications or 0
+        return 3, current, current, "number"
     end
 
     if resource == Enum.PowerType.Runes then
@@ -2211,6 +2244,107 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
                 tick:Hide()
             end
         end
+
+    elseif resource == Enum.PowerType.Essence then
+        -- Evoker Essence with regen prediction on the recharging segment
+        local current = UnitPower("player", Enum.PowerType.Essence) or 0
+
+        -- Get fractional essence via the modified (true) parameter
+        local fractionalPower = UnitPower("player", Enum.PowerType.Essence, true) or 0
+        local fractionalMax = UnitPowerMax("player", Enum.PowerType.Essence, true) or 1
+        if fractionalMax <= 0 then fractionalMax = 1 end
+        -- Fractional per-essence = fractionalMax / maxPower
+        local perEssence = fractionalMax / maxPower
+        local partialFill = 0
+        if current < maxPower and perEssence > 0 then
+            local remainder = fractionalPower - (current * perEssence)
+            partialFill = math.max(0, math.min(1, remainder / perEssence))
+        end
+
+        for pos = 1, maxPower do
+            local essenceFrame = bar.FragmentedPowerBars[pos]
+            local essenceText = bar.FragmentedPowerBarTexts[pos]
+
+            if essenceFrame then
+                essenceFrame:ClearAllPoints()
+                essenceFrame:SetSize(fragmentedBarWidth, fragmentedBarHeight)
+                if isVertical then
+                    essenceFrame:SetPoint("BOTTOM", bar, "BOTTOM", 0, (pos - 1) * fragmentedBarHeight)
+                else
+                    essenceFrame:SetPoint("LEFT", bar, "LEFT", (pos - 1) * fragmentedBarWidth, 0)
+                end
+
+                essenceFrame:SetMinMaxValues(0, 1)
+
+                if pos <= current then
+                    -- Full segment
+                    essenceFrame:SetValue(1)
+                    essenceFrame:SetStatusBarColor(color.r, color.g, color.b)
+                elseif pos == current + 1 then
+                    -- Recharging segment — partial fill
+                    essenceFrame:SetValue(partialFill)
+                    essenceFrame:SetStatusBarColor(color.r * 0.5, color.g * 0.5, color.b * 0.5)
+                else
+                    -- Empty segment
+                    essenceFrame:SetValue(0)
+                    essenceFrame:SetStatusBarColor(color.r * 0.5, color.g * 0.5, color.b * 0.5)
+                end
+
+                -- No timer text for essence segments
+                if essenceText then
+                    essenceText:SetText("")
+                end
+
+                essenceFrame:Show()
+            end
+        end
+
+        -- Hide any extra frames beyond current maxPower
+        for i = maxPower + 1, #bar.FragmentedPowerBars do
+            if bar.FragmentedPowerBars[i] then
+                bar.FragmentedPowerBars[i]:Hide()
+                if bar.FragmentedPowerBarTexts[i] then
+                    bar.FragmentedPowerBarTexts[i]:SetText("")
+                end
+            end
+        end
+
+        -- Ticks between essence segments
+        if cfg.showTicks then
+            local tickThickness = QUICore:Pixels(cfg.tickThickness or 1, bar)
+            local tc = cfg.tickColor or { 0, 0, 0, 1 }
+            for i = 1, maxPower - 1 do
+                local tick = bar.ticks[i]
+                if not tick then
+                    tick = bar:CreateTexture(nil, "OVERLAY")
+                    bar.ticks[i] = tick
+                end
+                tick:SetColorTexture(tc[1], tc[2], tc[3], tc[4] or 1)
+
+                tick:ClearAllPoints()
+                if isVertical then
+                    local y = i * fragmentedBarHeight
+                    tick:SetPoint("BOTTOM", bar, "BOTTOM", 0, QUICore:PixelRound(y - (tickThickness / 2), bar))
+                    tick:SetSize(barWidth, tickThickness)
+                else
+                    local x = i * fragmentedBarWidth
+                    tick:SetPoint("LEFT", bar, "LEFT", QUICore:PixelRound(x - (tickThickness / 2), bar), 0)
+                    tick:SetSize(tickThickness, barHeight)
+                end
+                tick:Show()
+            end
+
+            -- Hide extra ticks
+            for i = maxPower, #bar.ticks do
+                if bar.ticks[i] then
+                    bar.ticks[i]:Hide()
+                end
+            end
+        else
+            for _, tick in ipairs(bar.ticks) do
+                tick:Hide()
+            end
+        end
     end
 end
 
@@ -2259,6 +2393,52 @@ local function RuneTimerOnUpdate(bar, delta)
         -- Clear format cache so next cooldown cycle starts fresh
         wipe(_lastRuneRounded)
         wipe(_lastRuneFormatted)
+    end
+end
+
+-- Smooth essence regen timer update (runs at 20 FPS while essence is recharging)
+local function EssenceTimerOnUpdate(bar, delta)
+    essenceUpdateElapsed = essenceUpdateElapsed + delta
+    if essenceUpdateElapsed < 0.05 then return end  -- 20 FPS throttle
+    essenceUpdateElapsed = 0
+
+    local maxPower = UnitPowerMax("player", Enum.PowerType.Essence)
+    if maxPower <= 0 then return end
+
+    local current = UnitPower("player", Enum.PowerType.Essence) or 0
+
+    -- At max essence, disable the timer
+    if current >= maxPower then
+        bar:SetScript("OnUpdate", nil)
+        essenceUpdateRunning = false
+        -- Set all visible segments to full
+        for i = 1, maxPower do
+            local essenceFrame = bar.FragmentedPowerBars and bar.FragmentedPowerBars[i]
+            if essenceFrame and essenceFrame:IsShown() then
+                essenceFrame:SetValue(1)
+            end
+        end
+        return
+    end
+
+    -- Get fractional fill for the recharging segment
+    local fractionalPower = UnitPower("player", Enum.PowerType.Essence, true) or 0
+    local fractionalMax = UnitPowerMax("player", Enum.PowerType.Essence, true) or 1
+    if fractionalMax <= 0 then fractionalMax = 1 end
+    local perEssence = fractionalMax / maxPower
+    local partialFill = 0
+    if perEssence > 0 then
+        local remainder = fractionalPower - (current * perEssence)
+        partialFill = math.max(0, math.min(1, remainder / perEssence))
+    end
+
+    -- Update the recharging segment (current + 1)
+    local rechargingIdx = current + 1
+    if rechargingIdx <= maxPower then
+        local essenceFrame = bar.FragmentedPowerBars and bar.FragmentedPowerBars[rechargingIdx]
+        if essenceFrame and essenceFrame:IsShown() then
+            essenceFrame:SetValue(partialFill)
+        end
     end
 end
 
@@ -2818,10 +2998,24 @@ function QUICore:UpdateSecondaryPowerBar()
         return
     end
 
-    -- Handle fragmented power types (Runes)
+    -- Handle fragmented power types (Runes, Essence)
     if fragmentedPowerTypes[resource] then
         self:CreateFragmentedPowerBars(bar, resource, isVertical)
         self:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
+
+        -- Essence regen animation timer
+        if resource == Enum.PowerType.Essence then
+            local essenceMax = UnitPowerMax("player", Enum.PowerType.Essence) or 0
+            local essenceCur = UnitPower("player", Enum.PowerType.Essence) or 0
+            if essenceCur < essenceMax and not essenceUpdateRunning then
+                essenceUpdateRunning = true
+                essenceUpdateElapsed = 0
+                bar:SetScript("OnUpdate", EssenceTimerOnUpdate)
+            elseif essenceCur >= essenceMax and essenceUpdateRunning then
+                bar:SetScript("OnUpdate", nil)
+                essenceUpdateRunning = false
+            end
+        end
 
         bar.StatusBar:SetMinMaxValues(0, max)
         bar.StatusBar:SetValue(current)
@@ -2988,7 +3182,9 @@ function QUICore:OnUnitAura(_, unit)
     if resource == Enum.PowerType.MaelstromWeapon
         or resource == Enum.PowerType.VengSoulFragments
         or (VDH_SOUL_FRAGMENTS_POWER and resource == VDH_SOUL_FRAGMENTS_POWER)
-        or resource == "SOUL" then
+        or resource == "SOUL"
+        or resource == Enum.PowerType.Whirlwind
+        or resource == Enum.PowerType.TipOfTheSpear then
         self:UpdateSecondaryPowerBar()
     end
 end
