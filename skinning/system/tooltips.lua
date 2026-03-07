@@ -873,6 +873,23 @@ eventFrame:SetScript("OnEvent", function(self, event)
                 end
             end
 
+            -- TAINT SAFETY: Blizzard files (e.g. AreaPoiUtil) may capture a local
+            -- reference to GameTooltip_AddWidgetSet before our wrapper is installed,
+            -- bypassing the pcall above. Wrap UIWidgetTemplateTextWithStateMixin.Setup
+            -- directly so ALL widget setup calls are protected regardless of call path.
+            -- The mixin table is consulted via __index for pooled widget frames, so
+            -- this covers both existing and future TextWithState widget instances.
+            if UIWidgetTemplateTextWithStateMixin and UIWidgetTemplateTextWithStateMixin.Setup then
+                local origTextSetup = UIWidgetTemplateTextWithStateMixin.Setup
+                UIWidgetTemplateTextWithStateMixin.Setup = function(self, ...)
+                    if InCombatLockdown() then
+                        pcall(origTextSetup, self, ...)
+                        return
+                    end
+                    return origTextSetup(self, ...)
+                end
+            end
+
             -- All tooltip modifications gated by master toggle + skinTooltips
             if not IsEnabled() then
                 -- Still hook OnShow so enabling live takes effect on next show
