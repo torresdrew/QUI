@@ -2392,6 +2392,21 @@ end
 
 local DEFAULT_TOGGLE_SIZE = 20
 
+local function UpdateToggleIcon()
+    if not drawerToggleButton then return end
+    local s = GetSettings()
+    local icon = (s and s.buttonDrawer and s.buttonDrawer.toggleIcon) or "hammer"
+    local showHammer = (icon == "hammer")
+    if drawerToggleButton._hammerIcon then
+        drawerToggleButton._hammerIcon:SetShown(showHammer)
+    end
+    if drawerToggleButton._gridDots then
+        for _, dot in ipairs(drawerToggleButton._gridDots) do
+            dot:SetShown(not showHammer)
+        end
+    end
+end
+
 local function CreateDrawerToggleButton()
     if drawerToggleButton then return end
     drawerToggleButton = CreateFrame("Button", "QUI_DrawerToggle", Minimap)
@@ -2403,6 +2418,13 @@ local function CreateDrawerToggleButton()
     local bg = drawerToggleButton:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
     bg:SetColorTexture(0.05, 0.05, 0.05, 0.9)
+
+    -- Hammer icon texture
+    local hammer = drawerToggleButton:CreateTexture(nil, "ARTWORK")
+    hammer:SetPoint("TOPLEFT", 2, -2)
+    hammer:SetPoint("BOTTOMRIGHT", -2, 2)
+    hammer:SetTexture("Interface\\AddOns\\QUI\\assets\\quazii_hammer")
+    drawerToggleButton._hammerIcon = hammer
 
     -- Grid icon: 4 small squares (2x2 grid) — store refs for resizing
     drawerToggleButton._gridDots = {}
@@ -2417,6 +2439,9 @@ local function CreateDrawerToggleButton()
             drawerToggleButton._gridDots[#drawerToggleButton._gridDots + 1] = dot
         end
     end
+
+    -- Show/hide the correct icon based on settings
+    UpdateToggleIcon()
 
     -- Border
     local border = drawerToggleButton:CreateTexture(nil, "OVERLAY")
@@ -2486,6 +2511,16 @@ local function ResizeDrawerToggle()
             end
         end
     end
+
+    -- Update hammer icon insets proportionally
+    if drawerToggleButton._hammerIcon then
+        local inset = math.max(1, math.floor(2 * scale + 0.5))
+        drawerToggleButton._hammerIcon:ClearAllPoints()
+        drawerToggleButton._hammerIcon:SetPoint("TOPLEFT", inset, -inset)
+        drawerToggleButton._hammerIcon:SetPoint("BOTTOMRIGHT", -inset, inset)
+    end
+
+    UpdateToggleIcon()
 end
 
 local function UpdateDrawerAnchor()

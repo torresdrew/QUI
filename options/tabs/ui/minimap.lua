@@ -654,6 +654,7 @@ local function BuildMinimapTab(tabContent)
         if mm.buttonDrawer.toggleOffsetX == nil then mm.buttonDrawer.toggleOffsetX = 0 end
         if mm.buttonDrawer.toggleOffsetY == nil then mm.buttonDrawer.toggleOffsetY = 0 end
         if mm.buttonDrawer.toggleSize == nil then mm.buttonDrawer.toggleSize = 20 end
+        if not mm.buttonDrawer.toggleIcon then mm.buttonDrawer.toggleIcon = "hammer" end
         if mm.buttonDrawer.autoHideToggle == nil then mm.buttonDrawer.autoHideToggle = false end
         if mm.buttonDrawer.hiddenButtons == nil then mm.buttonDrawer.hiddenButtons = {} end
         if mm.buttonDrawer.padding == nil then mm.buttonDrawer.padding = 6 end
@@ -715,6 +716,16 @@ local function BuildMinimapTab(tabContent)
         local drawerTogSize = GUI:CreateFormSlider(tabContent, "Toggle Button Size", 12, 40, 1, "toggleSize", drawer, RefreshMinimap)
         drawerTogSize:SetPoint("TOPLEFT", PAD, y)
         drawerTogSize:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        -- Toggle Icon dropdown
+        local toggleIconOptions = {
+            {value = "hammer", text = "Hammer"},
+            {value = "grid", text = "Grid Dots"},
+        }
+        local drawerTogIcon = GUI:CreateFormDropdown(tabContent, "Toggle Icon", toggleIconOptions, "toggleIcon", drawer, RefreshMinimap)
+        drawerTogIcon:SetPoint("TOPLEFT", PAD, y)
+        drawerTogIcon:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
         -- Auto-hide delay slider
