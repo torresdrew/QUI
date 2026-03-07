@@ -333,7 +333,6 @@ local function MirrorBlizzCooldown(icon, blizzChild)
 
             -- Mirror to addon-owned CD
             local cd = targetIcon.Cooldown
-            PreapplyEdgeTexture(cd)
             if cd then
                 pcall(cd.SetCooldown, cd, start, duration)
             end
@@ -371,7 +370,6 @@ local function MirrorBlizzCooldown(icon, blizzChild)
             local start = SafeToNumber(startMs)
             local dur = SafeToNumber(durMs)
             if start and dur and start > 0 and dur > 0 then
-                PreapplyEdgeTexture(addonCD)
                 pcall(addonCD.SetCooldown, addonCD, start / 1000, dur / 1000)
             end
         end
