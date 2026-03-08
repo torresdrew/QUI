@@ -1113,29 +1113,35 @@ local function GetPowerBarProxy(barKey)
     return getProxy(proxyKey)
 end
 
+local function SetPowerBarEditOverlayStyle(overlay, bgColor, borderColor)
+    if not overlay then return end
+
+    if not overlay.Background then
+        overlay.Background = UIKit.CreateBackground(overlay, bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+    else
+        overlay.Background:SetVertexColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+    end
+
+    if UIKit and UIKit.CreateBackdropBorder then
+        overlay.Border = UIKit.CreateBackdropBorder(
+            overlay,
+            2,
+            borderColor[1],
+            borderColor[2],
+            borderColor[3],
+            borderColor[4] or 1
+        )
+    end
+end
+
 local function CreatePowerBarEditOverlay(bar, barKey)
     if bar.editOverlay then return bar.editOverlay end
     if InCombatLockdown() then return nil end
 
-    local overlay = CreateFrame("Frame", nil, bar, "BackdropTemplate")
+    local overlay = CreateFrame("Frame", nil, bar)
     overlay:SetAllPoints()
     overlay:SetFrameLevel(bar:GetFrameLevel() + 10)
-    local overlayPx = QUICore:GetPixelSize(overlay)
-    local backdropInfo = {
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 2 * overlayPx,
-        insets = { left = 2 * overlayPx, right = 2 * overlayPx, top = 2 * overlayPx, bottom = 2 * overlayPx },
-    }
-    local core = GetCore()
-    local SSB = core and core.SafeSetBackdrop
-    if SSB then
-        SSB(overlay, backdropInfo, { 0.2, 0.8, 1, 1 })
-    else
-        overlay:SetBackdrop(backdropInfo)
-        overlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
-    end
-    overlay:SetBackdropColor(0.2, 0.8, 1, 0.3)
+    SetPowerBarEditOverlayStyle(overlay, { 0.2, 0.8, 1, 0.3 }, { 0.2, 0.8, 1, 1 })
 
     -- Nudge buttons
     overlay.nudgeLeft = CreatePowerBarNudgeButton(overlay, "LEFT", -1, 0, barKey)
@@ -1228,8 +1234,7 @@ function QUICore:EnablePowerBarEditMode()
 
             if isLocked then
                 -- Locked: grey overlay, no drag
-                bar.editOverlay:SetBackdropColor(0.5, 0.5, 0.5, 0.3)
-                bar.editOverlay:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.8)
+                SetPowerBarEditOverlayStyle(bar.editOverlay, { 0.5, 0.5, 0.5, 0.3 }, { 0.5, 0.5, 0.5, 0.8 })
                 if bar.editOverlay.infoText then
                     bar.editOverlay.infoText:SetTextColor(0.5, 0.5, 0.5, 0.8)
                     bar.editOverlay.infoText:Show()
@@ -1242,8 +1247,7 @@ function QUICore:EnablePowerBarEditMode()
                 bar:SetScript("OnDragStop", nil)
             else
             -- Restore default (unlocked) overlay visuals
-            bar.editOverlay:SetBackdropColor(0.2, 0.8, 1, 0.3)
-            bar.editOverlay:SetBackdropBorderColor(0.2, 0.8, 1, 1)
+            SetPowerBarEditOverlayStyle(bar.editOverlay, { 0.2, 0.8, 1, 0.3 }, { 0.2, 0.8, 1, 1 })
             if bar.editOverlay.infoText then
                 bar.editOverlay.infoText:SetTextColor(0.7, 0.7, 0.7, 1)
                 bar.editOverlay.infoText:Show()
@@ -1655,19 +1659,15 @@ function QUICore:UpdatePowerBar()
     end
 
     -- Update border size only when changed (prevents flicker)
-    local borderPxUpdate = cfg.borderSize or 1
-    local borderSize = borderPxUpdate > 0 and QUICore:Pixels(borderPxUpdate, bar) or 0
-    if bar.Border and bar._cachedBorderSize ~= borderSize then
-        bar.Border:ClearAllPoints()
-        bar.Border:SetPoint("TOPLEFT", bar, -borderSize, borderSize)
-        bar.Border:SetPoint("BOTTOMRIGHT", bar, borderSize, -borderSize)
-        bar.Border:SetBackdrop({
-            edgeFile = "Interface\\Buttons\\WHITE8X8",
-            edgeSize = borderSize,
-        })
-        bar.Border:SetBackdropBorderColor(0, 0, 0, 1)
-        bar.Border:SetShown(borderSize > 0)
-        bar._cachedBorderSize = borderSize
+    local borderSizePixels = cfg.borderSize or 1
+    if bar._cachedBorderSize ~= borderSizePixels then
+        if UIKit and UIKit.CreateBackdropBorder then
+            bar.Border = UIKit.CreateBackdropBorder(bar, borderSizePixels, 0, 0, 0, 1)
+            if bar.Border then
+                bar.Border:SetShown(borderSizePixels > 0)
+            end
+        end
+        bar._cachedBorderSize = borderSizePixels
     end
 
     -- Update background color
@@ -3327,18 +3327,15 @@ function QUICore:UpdateSecondaryPowerBar()
     end
 
     -- Update border size (pixel-perfect)
-    local secBorderPxUpdate = cfg.borderSize or 1
-    local borderSize = secBorderPxUpdate > 0 and QUICore:Pixels(secBorderPxUpdate, bar) or 0
-    if bar.Border then
-        bar.Border:ClearAllPoints()
-        bar.Border:SetPoint("TOPLEFT", bar, -borderSize, borderSize)
-        bar.Border:SetPoint("BOTTOMRIGHT", bar, borderSize, -borderSize)
-        bar.Border:SetBackdrop({
-            edgeFile = "Interface\\Buttons\\WHITE8X8",
-            edgeSize = borderSize,
-        })
-        bar.Border:SetBackdropBorderColor(0, 0, 0, 1)
-        bar.Border:SetShown(borderSize > 0)
+    local secBorderSizePixels = cfg.borderSize or 1
+    if bar._cachedBorderSize ~= secBorderSizePixels then
+        if UIKit and UIKit.CreateBackdropBorder then
+            bar.Border = UIKit.CreateBackdropBorder(bar, secBorderSizePixels, 0, 0, 0, 1)
+            if bar.Border then
+                bar.Border:SetShown(secBorderSizePixels > 0)
+            end
+        end
+        bar._cachedBorderSize = secBorderSizePixels
     end
 
     -- Update background color

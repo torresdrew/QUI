@@ -88,20 +88,7 @@ local function CreateSpecProfilesPage(parent)
     resetLabel:SetText("Reset Profile")
     resetLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
 
-    local resetBtn = CreateFrame("Button", nil, resetContainer, "BackdropTemplate")
-    resetBtn:SetSize(120, 24)
-    resetBtn:SetPoint("LEFT", resetContainer, "LEFT", 180, 0)
-    local pxReset = GetCore() and GetCore():GetPixelSize(resetBtn) or 1
-    resetBtn:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxReset})
-    resetBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
-    resetBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
-    local resetBtnText = resetBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    resetBtnText:SetPoint("CENTER")
-    resetBtnText:SetText("Reset to Defaults")
-    resetBtnText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-    resetBtn:SetScript("OnEnter", function(self) self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1) end)
-    resetBtn:SetScript("OnLeave", function(self) self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1) end)
-    resetBtn:SetScript("OnClick", function()
+    local resetBtn = GUI:CreateButton(content, "Reset to Defaults", 120, 24, function()
         local core = GetCore()
         local dbRef = core and core.db
         if dbRef then
@@ -124,6 +111,7 @@ local function CreateSpecProfilesPage(parent)
             })
         end
     end)
+    resetBtn:SetPoint("LEFT", resetContainer, "LEFT", 180, 0)
     y = y - FORM_ROW
 
     -- Reset All Movers button (form style row)
@@ -137,20 +125,7 @@ local function CreateSpecProfilesPage(parent)
     moversLabel:SetText("Reset All Movers")
     moversLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
 
-    local moversBtn = CreateFrame("Button", nil, moversContainer, "BackdropTemplate")
-    moversBtn:SetSize(120, 24)
-    moversBtn:SetPoint("LEFT", moversContainer, "LEFT", 180, 0)
-    local pxMovers = GetCore() and GetCore():GetPixelSize(moversBtn) or 1
-    moversBtn:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxMovers})
-    moversBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
-    moversBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
-    local moversBtnText = moversBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    moversBtnText:SetPoint("CENTER")
-    moversBtnText:SetText("Reset Positions")
-    moversBtnText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-    moversBtn:SetScript("OnEnter", function(self) self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1) end)
-    moversBtn:SetScript("OnLeave", function(self) self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1) end)
-    moversBtn:SetScript("OnClick", function()
+    local moversBtn = GUI:CreateButton(content, "Reset Positions", 120, 24, function()
         GUI:ShowConfirmation({
             title = "Reset All Movers?",
             message = "Reset all frame and mover positions to defaults?",
@@ -269,6 +244,7 @@ local function CreateSpecProfilesPage(parent)
             end,
         })
     end)
+    moversBtn:SetPoint("LEFT", moversContainer, "LEFT", 180, 0)
     y = y - FORM_ROW
 
     -- Reset All Data (Factory Reset) button (form style row)
@@ -282,20 +258,7 @@ local function CreateSpecProfilesPage(parent)
     factoryLabel:SetText("Reset All Data")
     factoryLabel:SetTextColor(0.9, 0.3, 0.3, 1)
 
-    local factoryBtn = CreateFrame("Button", nil, factoryContainer, "BackdropTemplate")
-    factoryBtn:SetSize(120, 24)
-    factoryBtn:SetPoint("LEFT", factoryContainer, "LEFT", 180, 0)
-    local pxFactory = GetCore() and GetCore():GetPixelSize(factoryBtn) or 1
-    factoryBtn:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxFactory})
-    factoryBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
-    factoryBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
-    local factoryBtnText = factoryBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    factoryBtnText:SetPoint("CENTER")
-    factoryBtnText:SetText("Factory Reset")
-    factoryBtnText:SetTextColor(0.9, 0.3, 0.3, 1)
-    factoryBtn:SetScript("OnEnter", function(self) self:SetBackdropBorderColor(0.9, 0.3, 0.3, 1) end)
-    factoryBtn:SetScript("OnLeave", function(self) self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1) end)
-    factoryBtn:SetScript("OnClick", function()
+    local factoryBtn = GUI:CreateButton(content, "Factory Reset", 120, 24, function()
         local core = GetCore()
         local dbRef = core and core.db
         if dbRef then
@@ -317,6 +280,16 @@ local function CreateSpecProfilesPage(parent)
                 end,
             })
         end
+    end)
+    factoryBtn:SetPoint("LEFT", factoryContainer, "LEFT", 180, 0)
+    if factoryBtn.text then
+        factoryBtn.text:SetTextColor(0.9, 0.3, 0.3, 1)
+    end
+    factoryBtn:SetScript("OnEnter", function(self)
+        self:SetFieldBorderColor(0.9, 0.3, 0.3, 1)
+    end)
+    factoryBtn:SetScript("OnLeave", function(self)
+        self:SetFieldBorderColor(C.border[1], C.border[2], C.border[3], 1)
     end)
     y = y - FORM_ROW - 10
 
@@ -362,181 +335,45 @@ local function CreateSpecProfilesPage(parent)
         end
     end
 
-    -- Profile dropdown - custom styled (matches our form dropdowns)
-    local profileDropdownContainer = CreateFrame("Frame", nil, content)
-    profileDropdownContainer:SetHeight(FORM_ROW)
-    profileDropdownContainer:SetPoint("TOPLEFT", PAD, y)
-    profileDropdownContainer:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-
-    local profileDropdownLabel = profileDropdownContainer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    profileDropdownLabel:SetPoint("LEFT", 0, 0)
-    profileDropdownLabel:SetText("Select Profile")
-    profileDropdownLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-
-    -- Custom dropdown button (styled to match our form dropdowns)
-    local CHEVRON_ZONE_WIDTH = 28
-    local CHEVRON_BG_ALPHA = 0.15
-    local CHEVRON_BG_ALPHA_HOVER = 0.25
-    local CHEVRON_TEXT_ALPHA = 0.8
-
-    profileDropdown = CreateFrame("Button", nil, profileDropdownContainer, "BackdropTemplate")
-    profileDropdown:SetHeight(24)
-    profileDropdown:SetPoint("LEFT", profileDropdownContainer, "LEFT", 180, 0)
-    profileDropdown:SetPoint("RIGHT", profileDropdownContainer, "RIGHT", 0, 0)
-    local px = GetCore() and GetCore():GetPixelSize(profileDropdown) or 1
-    profileDropdown:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
-    profileDropdown:SetBackdropColor(0.08, 0.08, 0.08, 1)
-    profileDropdown:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-
-    -- Chevron zone (right side with accent tint)
-    local chevronZone = CreateFrame("Frame", nil, profileDropdown, "BackdropTemplate")
-    chevronZone:SetWidth(CHEVRON_ZONE_WIDTH)
-    chevronZone:SetPoint("TOPRIGHT", profileDropdown, "TOPRIGHT", -1, -1)
-    chevronZone:SetPoint("BOTTOMRIGHT", profileDropdown, "BOTTOMRIGHT", -1, 1)
-    chevronZone:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-    })
-    chevronZone:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], CHEVRON_BG_ALPHA)
-
-    -- Separator line (left edge of chevron zone)
-    local separator = chevronZone:CreateTexture(nil, "ARTWORK")
-    separator:SetWidth(1)
-    separator:SetPoint("TOPLEFT", chevronZone, "TOPLEFT", 0, 0)
-    separator:SetPoint("BOTTOMLEFT", chevronZone, "BOTTOMLEFT", 0, 0)
-    separator:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.3)
-
-    -- Line chevron (two angled lines forming a V pointing DOWN)
-    local chevronLeft = chevronZone:CreateTexture(nil, "OVERLAY")
-    chevronLeft:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], CHEVRON_TEXT_ALPHA)
-    chevronLeft:SetSize(7, 2)
-    chevronLeft:SetPoint("CENTER", chevronZone, "CENTER", -2, -1)
-    chevronLeft:SetRotation(math.rad(-45))
-
-    local chevronRight = chevronZone:CreateTexture(nil, "OVERLAY")
-    chevronRight:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], CHEVRON_TEXT_ALPHA)
-    chevronRight:SetSize(7, 2)
-    chevronRight:SetPoint("CENTER", chevronZone, "CENTER", 2, -1)
-    chevronRight:SetRotation(math.rad(45))
-
-    local profileDropdownText = profileDropdown:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    profileDropdownText:SetFont(GUI.FONT_PATH, 11, "")
-    profileDropdownText:SetPoint("LEFT", 8, 0)
-    profileDropdownText:SetPoint("RIGHT", chevronZone, "LEFT", -5, 0)
-    profileDropdownText:SetJustifyH("LEFT")
-    profileDropdownText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-
-    profileDropdown:SetScript("OnEnter", function(self)
-        self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-        chevronZone:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], CHEVRON_BG_ALPHA_HOVER)
-        separator:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.5)
-        chevronLeft:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
-        chevronRight:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
-    end)
-    profileDropdown:SetScript("OnLeave", function(self)
-        self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-        chevronZone:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], CHEVRON_BG_ALPHA)
-        separator:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.3)
-        chevronLeft:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], CHEVRON_TEXT_ALPHA)
-        chevronRight:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], CHEVRON_TEXT_ALPHA)
-    end)
-
-    -- Menu frame for profile options
-    local profileMenu = CreateFrame("Frame", nil, profileDropdown, "BackdropTemplate")
-    profileMenu:SetPoint("TOPLEFT", profileDropdown, "BOTTOMLEFT", 0, -2)
-    profileMenu:SetPoint("TOPRIGHT", profileDropdown, "BOTTOMRIGHT", 0, -2)
-    local pxMenu = GetCore() and GetCore():GetPixelSize(profileMenu) or 1
-    profileMenu:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = pxMenu,
-    })
-    profileMenu:SetBackdropColor(0.1, 0.1, 0.1, 0.98)
-    profileMenu:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-    profileMenu:SetFrameStrata("TOOLTIP")
-    profileMenu:Hide()
-
-    local function BuildProfileMenu()
-        -- Clear existing items
-        for _, child in ipairs({profileMenu:GetChildren()}) do
-            child:Hide()
-            child:SetParent(nil)
-        end
-
+    local profileWrapper = { selected = "" }
+    profileDropdown = GUI:CreateFormDropdown(content, "Select Profile", GetProfileList(), "selected", profileWrapper, function(value)
         local core = GetCore()
         local freshDB = core and core.db
-        if not freshDB then return end
-
-        local profiles = freshDB:GetProfiles()
-        local currentProfile = freshDB:GetCurrentProfile()
-        local itemHeight = 20
-        local menuHeight = #profiles * itemHeight + 4
-
-        profileMenu:SetHeight(menuHeight)
-
-        for i, profileName in ipairs(profiles) do
-            local item = CreateFrame("Button", nil, profileMenu, "BackdropTemplate")
-            item:SetHeight(itemHeight)
-            item:SetPoint("TOPLEFT", 2, -2 - (i-1) * itemHeight)
-            item:SetPoint("TOPRIGHT", -2, -2 - (i-1) * itemHeight)
-
-            local itemText = item:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            itemText:SetFont(GUI.FONT_PATH, 11, "")
-            itemText:SetPoint("LEFT", 6, 0)
-            itemText:SetText(profileName)
-
-            if profileName == currentProfile then
-                itemText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
-            else
-                itemText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+        if freshDB and value and value ~= "" then
+            local currentProfile = freshDB:GetCurrentProfile()
+            if value ~= currentProfile then
+                freshDB:SetProfile(value)
+                currentProfileName:SetText(value)
+                print("|cff34D399QUI:|r Switched to profile: " .. value)
+                RefreshProfileDropdowns()
             end
-
-            item:SetScript("OnEnter", function(self)
-                self:SetBackdropColor(C.accent[1] * 0.3, C.accent[2] * 0.3, C.accent[3] * 0.3, 1)
-            end)
-            item:SetScript("OnLeave", function(self)
-                self:SetBackdropColor(0, 0, 0, 0)
-            end)
-            item:SetScript("OnClick", function()
-                if profileName ~= currentProfile then
-                    freshDB:SetProfile(profileName)
-                    profileDropdownText:SetText(profileName)
-                    currentProfileName:SetText(profileName)
-                    print("|cff34D399QUI:|r Switched to profile: " .. profileName)
-                    RefreshProfileDropdowns()
-                end
-                profileMenu:Hide()
-            end)
-        end
-    end
-
-    profileDropdown:SetScript("OnClick", function()
-        if profileMenu:IsShown() then
-            profileMenu:Hide()
-        else
-            BuildProfileMenu()
-            profileMenu:Show()
         end
     end)
+    profileDropdown:SetPoint("TOPLEFT", PAD, y)
+    profileDropdown:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    table.insert(profileDropdowns_all, profileDropdown)
+    local profileDropdownText = profileDropdown.dropdown and profileDropdown.dropdown.selected
 
     -- Set initial text
     local initCore = GetCore()
     local initDB = initCore and initCore.db
     local initProfile = initDB and initDB:GetCurrentProfile() or "Default"
-    profileDropdownText:SetText(initProfile)
+    profileWrapper.selected = initProfile
+    if profileDropdown.SetValue then
+        profileDropdown:SetValue(initProfile, true)
+    end
 
     -- Update RefreshProfileDisplay to use our custom dropdown
-    local oldRefresh = RefreshProfileDisplay
     RefreshProfileDisplay = function()
         local core = GetCore()
         local freshDB = core and core.db
         if freshDB then
             local currentName = freshDB:GetCurrentProfile()
             currentProfileName:SetText(currentName or "Unknown")
-            profileDropdownText:SetText(currentName or "Default")
+            profileWrapper.selected = currentName or "Default"
+            if profileDropdown and profileDropdown.SetValue then
+                profileDropdown:SetValue(profileWrapper.selected, true)
+            end
         end
         RefreshProfileDropdowns()
     end
@@ -562,72 +399,38 @@ local function CreateSpecProfilesPage(parent)
     y = y - newHeader.gap
 
     -- New profile name input (form style row)
-    local newProfileContainer = CreateFrame("Frame", nil, content)
-    newProfileContainer:SetHeight(FORM_ROW)
-    newProfileContainer:SetPoint("TOPLEFT", PAD, y)
-    newProfileContainer:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-
-    local newProfileLabel = newProfileContainer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    newProfileLabel:SetPoint("LEFT", 0, 0)
-    newProfileLabel:SetText("Profile Name")
-    newProfileLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-
-    -- Custom styled editbox (matches dropdown styling)
-    local newProfileBoxBg = CreateFrame("Frame", nil, newProfileContainer, "BackdropTemplate")
-    newProfileBoxBg:SetPoint("LEFT", newProfileContainer, "LEFT", 180, 0)
-    newProfileBoxBg:SetSize(200, 24)
-    local pxBox = GetCore() and GetCore():GetPixelSize(newProfileBoxBg) or 1
-    newProfileBoxBg:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = pxBox,
+    local newProfileInput = GUI:CreateFormEditBox(content, "Profile Name", nil, nil, nil, {
+        width = 200,
+        commitOnEnter = false,
+        commitOnFocusLost = false,
+        onEscapePressed = function(self)
+            self:ClearFocus()
+        end,
     })
-    newProfileBoxBg:SetBackdropColor(0.08, 0.08, 0.08, 1)
-    newProfileBoxBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-
-    local newProfileBox = CreateFrame("EditBox", nil, newProfileBoxBg)
-    newProfileBox:SetPoint("LEFT", 8, 0)
-    newProfileBox:SetPoint("RIGHT", -8, 0)
-    newProfileBox:SetHeight(22)
-    newProfileBox:SetAutoFocus(false)
-    newProfileBox:SetFont(GUI.FONT_PATH, 11, "")
-    newProfileBox:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-    newProfileBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    newProfileBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-    newProfileBox:SetScript("OnEditFocusGained", function()
-        newProfileBoxBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-    end)
-    newProfileBox:SetScript("OnEditFocusLost", function()
-        newProfileBoxBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-    end)
+    newProfileInput:SetPoint("TOPLEFT", PAD, y)
+    newProfileInput:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    local newProfileBox = newProfileInput.editBox
 
     -- Create button
-    local createBtn = CreateFrame("Button", nil, newProfileContainer, "BackdropTemplate")
-    createBtn:SetSize(80, 24)
-    createBtn:SetPoint("LEFT", newProfileBoxBg, "RIGHT", 10, 0)
-    local pxCreate = GetCore() and GetCore():GetPixelSize(createBtn) or 1
-    createBtn:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxCreate})
-    createBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
-    createBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
-    local createBtnText = createBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    createBtnText:SetPoint("CENTER")
-    createBtnText:SetText("Create")
-    createBtnText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-    createBtn:SetScript("OnEnter", function(self) self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1) end)
-    createBtn:SetScript("OnLeave", function(self) self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1) end)
-    createBtn:SetScript("OnClick", function()
+    local createBtn = GUI:CreateButton(content, "Create", 80, 24, function()
         local core = GetCore()
         local dbRef = core and core.db
         local newName = newProfileBox:GetText()
         if newName and newName ~= "" and dbRef then
             dbRef:SetProfile(newName)
             currentProfileName:SetText(newName)
-            profileDropdownText:SetText(newName)
+            profileWrapper.selected = newName
+            if profileDropdown and profileDropdown.SetValue then
+                profileDropdown:SetValue(newName, true)
+            elseif profileDropdownText then
+                profileDropdownText:SetText(newName)
+            end
             newProfileBox:SetText("")
             print("|cff34D399QUI:|r Created new profile: " .. newName)
             RefreshProfileDropdowns()
         end
     end)
+    createBtn:SetPoint("LEFT", newProfileInput.field, "RIGHT", 10, 0)
     y = y - FORM_ROW - 10
 
     -- =====================================================

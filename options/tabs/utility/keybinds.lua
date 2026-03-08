@@ -392,45 +392,36 @@ local function BuildKeybindsTab(tabContent)
                     nameLabel:SetWidth(200)
 
                     -- Keybind text input box
-                    local keybindInputBg = CreateFrame("Frame", nil, entryFrame, "BackdropTemplate")
-                    keybindInputBg:SetPoint("LEFT", nameLabel, "RIGHT", 6, 0)
-                    keybindInputBg:SetSize(100, 22)
-                    keybindInputBg:SetBackdrop({
-                        bgFile = "Interface\\Buttons\\WHITE8x8",
-                        edgeFile = "Interface\\Buttons\\WHITE8x8",
-                        edgeSize = 1,
+                    local saveBtn
+                    local keybindInputBg, keybindInput = GUI:CreateInlineEditBox(entryFrame, {
+                        width = 100,
+                        height = 22,
+                        textInset = 6,
+                        text = entry.keybindText or "",
+                        bgColor = {0.05, 0.05, 0.05, 0.4},
+                        borderColor = {0.25, 0.25, 0.25, 0.6},
+                        activeBorderColor = C.accent,
+                        commitOnFocusLost = false,
+                        onEscapePressed = function(self)
+                            self:SetText(entry.keybindText or "")
+                            self:SetCursorPosition(0)
+                        end,
+                        onEditFocusGained = function(self)
+                            self:HighlightText()
+                        end,
+                        onEnterPressed = function()
+                            if saveBtn then
+                                saveBtn:Click()
+                            end
+                        end,
                     })
-                    keybindInputBg:SetBackdropColor(0.05, 0.05, 0.05, 0.4)
-                    keybindInputBg:SetBackdropBorderColor(0.25, 0.25, 0.25, 0.6)
-
-                    local keybindInput = CreateFrame("EditBox", nil, keybindInputBg)
-                    keybindInput:SetPoint("LEFT", 6, 0)
-                    keybindInput:SetPoint("RIGHT", -6, 0)
-                    keybindInput:SetHeight(20)
-                    keybindInput:SetAutoFocus(false)
-                    keybindInput:SetFont(GUI.FONT_PATH, 11, "")
-                    keybindInput:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-                    keybindInput:SetText(entry.keybindText or "")
+                    keybindInputBg:SetPoint("LEFT", nameLabel, "RIGHT", 6, 0)
                     keybindInput:SetCursorPosition(0)
                     keybindInput.entryKey = entry.key -- Store the key (positive for spells, negative for items)
                     keybindInput.entryType = entry.type
                     keybindInput.entryID = entry.id
 
-                    keybindInput:SetScript("OnEscapePressed", function(self)
-                        self:SetText(entry.keybindText or "")
-                        self:ClearFocus()
-                    end)
-
-                    keybindInput:SetScript("OnEditFocusGained", function(self)
-                        keybindInputBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-                        self:HighlightText()
-                    end)
-                    keybindInput:SetScript("OnEditFocusLost", function(self)
-                        keybindInputBg:SetBackdropBorderColor(0.25, 0.25, 0.25, 0.6)
-                    end)
-
-                    -- Save button for this entry (forward-declared for OnEnterPressed)
-                    local saveBtn
+                    -- Save button for this entry
                     saveBtn = GUI:CreateButton(entryFrame, "Save", 50, 22, function()
                         local newKeybindText = keybindInput:GetText() or ""
                         local saved = false
@@ -458,11 +449,6 @@ local function BuildKeybindsTab(tabContent)
                         end
                     end)
                     saveBtn:SetPoint("LEFT", keybindInputBg, "RIGHT", 6, 0)
-
-                    -- Save on Enter key
-                    keybindInput:SetScript("OnEnterPressed", function(self)
-                        saveBtn:Click()
-                    end)
 
                     -- Remove button (X)
                     local removeBtn = CreateFrame("Button", nil, entryFrame, "BackdropTemplate")

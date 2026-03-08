@@ -1123,21 +1123,20 @@ local function CreateCDMSetupPage(parent)
             end)
 
             -- Position EditBox
-            local posBox = CreateFrame("EditBox", nil, entryRow, "BackdropTemplate")
-            posBox:SetSize(36, 20)
-            posBox:SetPoint("RIGHT", entryRow, "RIGHT", -158, 0)
-            posBox:SetBackdrop({
-                bgFile = "Interface\\Buttons\\WHITE8x8",
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = 1,
+            local posField, posBox = GUI:CreateInlineEditBox(entryRow, {
+                width = 36,
+                height = 20,
+                textInset = 4,
+                justifyH = "CENTER",
+                fontSize = 10,
+                bgColor = {0.1, 0.1, 0.12, 0.8},
+                borderColor = {0.3, 0.3, 0.35, 1},
+                activeBorderColor = C.accent,
+                commitOnFocusLost = false,
+                maxLetters = 3,
             })
-            posBox:SetBackdropColor(0.1, 0.1, 0.12, 0.8)
-            posBox:SetBackdropBorderColor(0.3, 0.3, 0.35, 1)
-            posBox:SetFontObject("GameFontHighlightSmall")
-            posBox:SetJustifyH("CENTER")
-            posBox:SetAutoFocus(false)
+            posField:SetPoint("RIGHT", entryRow, "RIGHT", -158, 0)
             posBox:SetNumeric(false)
-            posBox:SetMaxLetters(3)
 
             if entry.position and entry.position > 0 then
                 posBox:SetText(tostring(entry.position))
@@ -1145,7 +1144,7 @@ local function CreateCDMSetupPage(parent)
                 posBox:SetText("")
             end
 
-            local placeholder = posBox:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            local placeholder = posField:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
             placeholder:SetPoint("CENTER", 0, 0)
             placeholder:SetText("Auto")
             placeholder:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 0.6)
@@ -1163,12 +1162,12 @@ local function CreateCDMSetupPage(parent)
                 local text = self:GetText()
                 local val = tonumber(text)
                 if text ~= "" and val == nil then
-                    self:SetBackdropBorderColor(1, 0.3, 0.3, 1)
+                    posField:SetFieldBorderColor(1, 0.3, 0.3, 1)
                     C_Timer.After(0.4, function()
                         if self:HasFocus() then
-                            self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                            posField:SetFieldBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
                         else
-                            self:SetBackdropBorderColor(0.3, 0.3, 0.35, 1)
+                            posField:SetFieldBorderColor(0.3, 0.3, 0.35, 1)
                         end
                     end)
                     if entry.position and entry.position > 0 then
@@ -1199,20 +1198,13 @@ local function CreateCDMSetupPage(parent)
                 self:ClearFocus()
             end)
 
-            posBox:SetScript("OnEditFocusGained", function(self)
-                self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-            end)
-            posBox:SetScript("OnEditFocusLost", function(self)
-                self:SetBackdropBorderColor(0.3, 0.3, 0.35, 1)
-            end)
-
-            posBox:SetScript("OnEnter", function(self)
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            posBox:HookScript("OnEnter", function(self)
+                GameTooltip:SetOwner(posField, "ANCHOR_RIGHT")
                 GameTooltip:SetText("Position (Slot)")
                 GameTooltip:AddLine("Set a specific slot number in the bar.\nLeave empty for automatic placement.", 1, 1, 1, true)
                 GameTooltip:Show()
             end)
-            posBox:SetScript("OnLeave", function()
+            posBox:HookScript("OnLeave", function()
                 GameTooltip:Hide()
             end)
 

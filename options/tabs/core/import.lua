@@ -4,6 +4,7 @@ local GUI = QUI.GUI
 local C = GUI.Colors
 local Shared = ns.QUI_Options
 local QUICore = ns.Addon
+local UIKit = ns.UIKit
 
 -- Local references for shared infrastructure
 local CreateScrollableContent = Shared.CreateScrollableContent
@@ -13,67 +14,33 @@ local GetCore = ns.Helpers.GetCore
 --------------------------------------------------------------------------------
 -- Helper: Create a scrollable text box container
 --------------------------------------------------------------------------------
-local function SafeGetPixelSize(frame)
-    local core = ns.Addon
-    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+local function CreateScrollableTextBox(parent, height, text)
+    return GUI:CreateScrollableTextBox(parent, height, text)
 end
 
-local function CreateScrollableTextBox(parent, height, text)
-    local container = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    container:SetHeight(height)
-    local px = SafeGetPixelSize(container)
-    container:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
-    container:SetBackdropColor(0.1, 0.1, 0.1, 1)
-    container:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+local function ApplyImportSurface(frame, bgColor, borderColor)
+    if not frame then return end
 
-    -- ScrollFrame to contain the EditBox
-    local scrollFrame = CreateFrame("ScrollFrame", nil, container, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", 6, -6)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -26, 6)
-
-    -- Style the scroll bar (QUI theme)
-    local scrollBar = scrollFrame.ScrollBar or _G[scrollFrame:GetName().."ScrollBar"]
-    if scrollBar then
-        scrollBar:ClearAllPoints()
-        scrollBar:SetPoint("TOPRIGHT", container, "TOPRIGHT", -4, -18)
-        scrollBar:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", -4, 18)
-
-        local thumb = scrollBar:GetThumbTexture()
-        if thumb then
-            thumb:SetColorTexture(0.35, 0.45, 0.5, 0.8)
+    if not frame.bg then
+        frame.bg = frame:CreateTexture(nil, "BACKGROUND")
+        frame.bg:SetAllPoints()
+        frame.bg:SetTexture("Interface\\Buttons\\WHITE8x8")
+        if UIKit and UIKit.DisablePixelSnap then
+            UIKit.DisablePixelSnap(frame.bg)
         end
-
-        local scrollUp = scrollBar.ScrollUpButton or scrollBar.Back
-        local scrollDown = scrollBar.ScrollDownButton or scrollBar.Forward
-        if scrollUp then scrollUp:Hide(); scrollUp:SetAlpha(0) end
-        if scrollDown then scrollDown:Hide(); scrollDown:SetAlpha(0) end
     end
+    frame.bg:SetVertexColor((bgColor or C.bg)[1], (bgColor or C.bg)[2], (bgColor or C.bg)[3], (bgColor or C.bg)[4] or 1)
 
-    -- EditBox inside ScrollFrame
-    local editBox = CreateFrame("EditBox", nil, scrollFrame)
-    editBox:SetMultiLine(true)
-    editBox:SetAutoFocus(false)
-    editBox:SetFontObject(GameFontHighlightSmall)
-    editBox:SetWidth(scrollFrame:GetWidth() or 400)
-    editBox:SetText(text or "")
-    editBox:SetCursorPosition(0)
-    editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-
-    -- Update width when container is sized
-    container:SetScript("OnSizeChanged", function(self)
-        editBox:SetWidth(self:GetWidth() - 36)
-    end)
-
-    scrollFrame:SetScrollChild(editBox)
-    ns.ApplyScrollWheel(scrollFrame)
-
-    container.editBox = editBox
-    container.scrollFrame = scrollFrame
-    return container
+    if UIKit and UIKit.CreateBackdropBorder then
+        frame.Border = UIKit.CreateBackdropBorder(
+            frame,
+            1,
+            (borderColor or C.border)[1],
+            (borderColor or C.border)[2],
+            (borderColor or C.border)[3],
+            (borderColor or C.border)[4] or 1
+        )
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -102,54 +69,13 @@ local function BuildImportExportTab(tabContent)
     exportHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - exportHeader.gap
 
-    -- Create a scroll frame for the export box
-    local exportScroll = CreateFrame("ScrollFrame", nil, tabContent, "UIPanelScrollFrameTemplate")
-    exportScroll:SetPoint("TOPLEFT", PAD, y)
-    exportScroll:SetPoint("TOPRIGHT", -PAD - 20, y)
-    exportScroll:SetHeight(100)
-
-    -- Style export scrollbar (QUI theme)
-    local exportScrollBar = exportScroll.ScrollBar
-    if exportScrollBar then
-        local thumb = exportScrollBar:GetThumbTexture()
-        if thumb then thumb:SetColorTexture(0.35, 0.45, 0.5, 0.8) end
-        local scrollUp = exportScrollBar.ScrollUpButton or exportScrollBar.Back
-        local scrollDown = exportScrollBar.ScrollDownButton or exportScrollBar.Forward
-        if scrollUp then scrollUp:Hide(); scrollUp:SetAlpha(0) end
-        if scrollDown then scrollDown:Hide(); scrollDown:SetAlpha(0) end
-    end
-
-    local exportEditBox = CreateFrame("EditBox", nil, exportScroll)
-    exportEditBox:SetMultiLine(true)
-    exportEditBox:SetAutoFocus(false)
-    exportEditBox:SetFont(GUI.FONT_PATH, 11, "")
+    -- Export text box
+    local exportContainer = CreateScrollableTextBox(tabContent, 100, "")
+    exportContainer:SetPoint("TOPLEFT", PAD, y)
+    exportContainer:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+    local exportEditBox = exportContainer.editBox
     exportEditBox:SetTextColor(0.8, 0.85, 0.9, 1)
-    exportEditBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     exportEditBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
-    exportScroll:SetScrollChild(exportEditBox)
-
-    -- Set width dynamically when scroll frame is sized
-    exportScroll:SetScript("OnSizeChanged", function(self)
-        exportEditBox:SetWidth(self:GetWidth() - 10)
-    end)
-    ns.ApplyScrollWheel(exportScroll)
-
-    -- Background for export box
-    local exportBg = tabContent:CreateTexture(nil, "BACKGROUND")
-    exportBg:SetPoint("TOPLEFT", exportScroll, -5, 5)
-    exportBg:SetPoint("BOTTOMRIGHT", exportScroll, 25, -5)
-    exportBg:SetColorTexture(0.05, 0.07, 0.1, 0.9)
-
-    -- Border for export box
-    local exportBorder = CreateFrame("Frame", nil, tabContent, "BackdropTemplate")
-    exportBorder:SetPoint("TOPLEFT", exportScroll, -6, 6)
-    exportBorder:SetPoint("BOTTOMRIGHT", exportScroll, 26, -6)
-    local pxExport = SafeGetPixelSize(exportBorder)
-    exportBorder:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = pxExport,
-    })
-    exportBorder:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
 
     -- Populate export string
     local function RefreshExportString()
@@ -189,58 +115,16 @@ local function BuildImportExportTab(tabContent)
 
     y = y - importHeader.gap
 
-    -- Import EditBox (user pastes string here)
-    local importScroll = CreateFrame("ScrollFrame", nil, tabContent, "UIPanelScrollFrameTemplate")
-    importScroll:SetPoint("TOPLEFT", PAD, y)
-    importScroll:SetPoint("TOPRIGHT", -PAD - 20, y)
-    importScroll:SetHeight(100)
-
-    -- Style import scrollbar (QUI theme)
-    local importScrollBar = importScroll.ScrollBar
-    if importScrollBar then
-        local thumb = importScrollBar:GetThumbTexture()
-        if thumb then thumb:SetColorTexture(0.35, 0.45, 0.5, 0.8) end
-        local scrollUp = importScrollBar.ScrollUpButton or importScrollBar.Back
-        local scrollDown = importScrollBar.ScrollDownButton or importScrollBar.Forward
-        if scrollUp then scrollUp:Hide(); scrollUp:SetAlpha(0) end
-        if scrollDown then scrollDown:Hide(); scrollDown:SetAlpha(0) end
-    end
-
-    local importEditBox = CreateFrame("EditBox", nil, importScroll)
-    importEditBox:SetMultiLine(true)
-    importEditBox:SetAutoFocus(false)
-    importEditBox:SetFont(GUI.FONT_PATH, 11, "")
+    -- Import text box (user pastes string here)
+    local importContainer = CreateScrollableTextBox(tabContent, 100, "")
+    importContainer:SetPoint("TOPLEFT", PAD, y)
+    importContainer:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+    importContainer:EnableMouse(true)
+    local importEditBox = importContainer.editBox
     importEditBox:SetTextColor(0.8, 0.85, 0.9, 1)
-    importEditBox:SetHeight(100)
-    importEditBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    importScroll:SetScrollChild(importEditBox)
-
-    -- Set width dynamically when scroll frame is sized
-    importScroll:SetScript("OnSizeChanged", function(self)
-        importEditBox:SetWidth(self:GetWidth() - 10)
+    importContainer:SetScript("OnMouseDown", function()
+        importEditBox:SetFocus()
     end)
-    ns.ApplyScrollWheel(importScroll)
-
-    -- Background for import box - make it clickable to focus the editbox
-    local importBg = CreateFrame("Button", nil, tabContent)
-    importBg:SetPoint("TOPLEFT", importScroll, -5, 5)
-    importBg:SetPoint("BOTTOMRIGHT", importScroll, 25, -5)
-    importBg:SetScript("OnClick", function() importEditBox:SetFocus() end)
-
-    local importBgTex = importBg:CreateTexture(nil, "BACKGROUND")
-    importBgTex:SetAllPoints()
-    importBgTex:SetColorTexture(0.05, 0.07, 0.1, 0.9)
-
-    -- Border for import box
-    local importBorder = CreateFrame("Frame", nil, tabContent, "BackdropTemplate")
-    importBorder:SetPoint("TOPLEFT", importScroll, -6, 6)
-    importBorder:SetPoint("BOTTOMRIGHT", importScroll, 26, -6)
-    local pxImport = SafeGetPixelSize(importBorder)
-    importBorder:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = pxImport,
-    })
-    importBorder:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
 
     y = y - 115
 
@@ -284,17 +168,10 @@ local function BuildQuaziiStringsTab(tabContent)
     GUI:SetSearchContext({tabIndex = 13, tabName = "Import & Export Strings", subTabIndex = 2, subTabName = "Quazii's Strings"})
 
     -- Disclaimer banner
-    local warnBg = CreateFrame("Frame", nil, tabContent, "BackdropTemplate")
+    local warnBg = CreateFrame("Frame", nil, tabContent)
     warnBg:SetPoint("TOPLEFT", PAD, y)
     warnBg:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-    local px = SafeGetPixelSize(warnBg)
-    warnBg:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
-    warnBg:SetBackdropColor(0.5, 0.25, 0.0, 0.25)
-    warnBg:SetBackdropBorderColor(0.961, 0.620, 0.043, 0.6)
+    ApplyImportSurface(warnBg, {0.5, 0.25, 0.0, 0.25}, {0.961, 0.620, 0.043, 0.6})
 
     local warnTitle = warnBg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     warnTitle:SetFont(GUI.FONT_PATH or "Fonts\\FRIZQT__.TTF", 12, "")

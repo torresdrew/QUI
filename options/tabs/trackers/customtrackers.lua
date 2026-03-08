@@ -14,6 +14,98 @@ local GetFontList = Shared.GetFontList
 -- Local reference to QUICore (needed by helper functions)
 local QUICore = ns.Addon
 local Helpers = ns.Helpers
+local UIKit = ns.UIKit
+local trackerSurfaceState, GetTrackerSurfaceState = Helpers.CreateStateTable()
+
+local function ApplyTrackerSurface(frame, bgColor, borderColor, borderSizePixels)
+    if not frame then return end
+
+    local state = GetTrackerSurfaceState(frame)
+    state.bgColor = bgColor or state.bgColor or {0.1, 0.1, 0.1, 0.8}
+    state.borderColor = borderColor or state.borderColor or {0.3, 0.3, 0.3, 1}
+    state.borderSizePixels = borderSizePixels or state.borderSizePixels or 1
+
+    if not state.bg then
+        state.bg = frame:CreateTexture(nil, "BACKGROUND")
+        state.bg:SetAllPoints()
+        state.bg:SetTexture("Interface\\Buttons\\WHITE8x8")
+        if UIKit and UIKit.DisablePixelSnap then
+            UIKit.DisablePixelSnap(state.bg)
+        end
+    end
+    state.bg:SetVertexColor(unpack(state.bgColor))
+
+    if UIKit and UIKit.CreateBackdropBorder then
+        state.border = UIKit.CreateBackdropBorder(
+            frame,
+            state.borderSizePixels,
+            state.borderColor[1] or 0,
+            state.borderColor[2] or 0,
+            state.borderColor[3] or 0,
+            state.borderColor[4] or 1
+        )
+        state.border:SetFrameLevel(frame:GetFrameLevel() + 1)
+    end
+end
+
+local function SetTrackerSurfaceBorderColor(frame, r, g, b, a)
+    if not frame then return end
+    local state = GetTrackerSurfaceState(frame)
+    state.borderColor = {r or 0.3, g or 0.3, b or 0.3, a or 1}
+    ApplyTrackerSurface(frame)
+end
+
+local function CreateTrackerSurfaceFrame(parent, width, height, bgColor, borderColor)
+    local frame = CreateFrame("Frame", nil, parent)
+    if UIKit and UIKit.SetSizePx then
+        UIKit.SetSizePx(frame, width, height)
+    else
+        frame:SetSize(width, height)
+    end
+    ApplyTrackerSurface(frame, bgColor, borderColor, 1)
+    return frame
+end
+
+local function CreateTrackerSurfaceButton(parent, width, height, onClick, options)
+    options = options or {}
+
+    local btn = CreateFrame("Button", nil, parent)
+    if UIKit and UIKit.SetSizePx then
+        UIKit.SetSizePx(btn, width, height)
+    else
+        btn:SetSize(width, height)
+    end
+
+    local bgColor = options.bgColor or {0.1, 0.1, 0.1, 0.8}
+    local borderColor = options.borderColor or {0.3, 0.3, 0.3, 1}
+    local hoverBorderColor = options.hoverBorderColor or C.accent
+    ApplyTrackerSurface(btn, bgColor, borderColor, options.borderSizePixels or 1)
+
+    if options.text then
+        btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        btn.text:SetPoint("CENTER", options.textOffsetX or 0, options.textOffsetY or 0)
+        btn.text:SetText(options.text)
+        btn.text:SetTextColor(unpack(options.textColor or C.text))
+    end
+
+    btn:SetScript("OnEnter", function(self)
+        SetTrackerSurfaceBorderColor(self, unpack(hoverBorderColor))
+        if self.text and options.hoverTextColor then
+            self.text:SetTextColor(unpack(options.hoverTextColor))
+        end
+    end)
+    btn:SetScript("OnLeave", function(self)
+        SetTrackerSurfaceBorderColor(self, unpack(borderColor))
+        if self.text then
+            self.text:SetTextColor(unpack(options.textColor or C.text))
+        end
+    end)
+    if onClick then
+        btn:SetScript("OnClick", onClick)
+    end
+
+    return btn
+end
 ---------------------------------------------------------------------------
 -- Helper: Refresh tracker bar position
 ---------------------------------------------------------------------------
@@ -83,18 +175,15 @@ local function CreateCustomTrackersPage(parent)
         container:SetHeight(83)  -- 50% taller than original 55
 
         -- DROP ZONE: Click here while holding an item/spell on cursor
-        local dropZone = CreateFrame("Button", nil, container, "BackdropTemplate")
-        dropZone:SetHeight(68)  -- 50% taller than original 45
+        local dropZone = CreateFrame("Button", nil, container)
+        if UIKit and UIKit.SetHeightPx then
+            UIKit.SetHeightPx(dropZone, 68)  -- 50% taller than original 45
+        else
+            dropZone:SetHeight(68)
+        end
         dropZone:SetPoint("TOPLEFT", 0, 0)
         dropZone:SetPoint("RIGHT", container, "RIGHT", 0, 0)  -- Full width
-        local pxDrop = QUICore:GetPixelSize(dropZone)
-        dropZone:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = pxDrop,
-        })
-        dropZone:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 0.8)
-        dropZone:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.5)
+        ApplyTrackerSurface(dropZone, {C.bg[1], C.bg[2], C.bg[3], 0.8}, {C.accent[1], C.accent[2], C.accent[3], 0.5}, 1)
 
         local dropLabel = dropZone:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         dropLabel:SetPoint("CENTER", 0, 0)
@@ -163,12 +252,12 @@ local function CreateCustomTrackersPage(parent)
         dropZone:SetScript("OnEnter", function(self)
             local cursorType = GetCursorInfo()
             if cursorType == "item" or cursorType == "spell" then
-                self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                SetTrackerSurfaceBorderColor(self, C.accent[1], C.accent[2], C.accent[3], 1)
                 dropLabel:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
             end
         end)
         dropZone:SetScript("OnLeave", function(self)
-            self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.5)
+            SetTrackerSurfaceBorderColor(self, C.accent[1], C.accent[2], C.accent[3], 0.5)
             dropLabel:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
         end)
 
@@ -247,59 +336,31 @@ local function CreateCustomTrackersPage(parent)
         y = y - FORM_ROW
 
         -- Bar Name (editable, updates tab text instantly)
-        local nameContainer = CreateFrame("Frame", nil, tabContent)
-        nameContainer:SetHeight(FORM_ROW)
-        nameContainer:SetPoint("TOPLEFT", PAD, y)
-        nameContainer:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        local nameRow = GUI:CreateFormEditBox(tabContent, "Bar Name", nil, nil, nil, {
+            width = 200,
+            value = barConfig.name or "Tracker",
+            commitOnEnter = false,
+            commitOnFocusLost = false,
+            live = true,
+            onTextChanged = function(self)
+                local newName = self:GetText()
+                if newName == "" then newName = "Tracker" end
+                barConfig.name = newName
 
-        local nameLabel = nameContainer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        nameLabel:SetPoint("LEFT", 0, 0)
-        nameLabel:SetText("Bar Name")
-        nameLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-
-        -- Custom styled editbox (matches QUI dropdown styling)
-        local nameInputBg = CreateFrame("Frame", nil, nameContainer, "BackdropTemplate")
-        nameInputBg:SetPoint("LEFT", nameContainer, "LEFT", 180, 0)
-        nameInputBg:SetSize(200, 24)
-        local pxName = QUICore:GetPixelSize(nameInputBg)
-        nameInputBg:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = pxName,
-        })
-        nameInputBg:SetBackdropColor(0.08, 0.08, 0.08, 1)
-        nameInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-
-        local nameInput = CreateFrame("EditBox", nil, nameInputBg)
-        nameInput:SetPoint("LEFT", 8, 0)
-        nameInput:SetPoint("RIGHT", -8, 0)
-        nameInput:SetHeight(22)
-        nameInput:SetAutoFocus(false)
-        nameInput:SetFont(GUI.FONT_PATH, 11, "")
-        nameInput:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-        nameInput:SetText(barConfig.name or "Tracker")
-        nameInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-        nameInput:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-        nameInput:SetScript("OnEditFocusGained", function()
-            nameInputBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-        end)
-        nameInput:SetScript("OnEditFocusLost", function()
-            nameInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-        end)
-        nameInput:SetScript("OnTextChanged", function(self)
-            local newName = self:GetText()
-            if newName == "" then newName = "Tracker" end
-            barConfig.name = newName
-
-            -- Update sub-tab text instantly
-            if subTabsRef and subTabsRef.tabButtons and subTabsRef.tabButtons[barIndex] then
-                local displayName = newName
-                if #displayName > 20 then
-                    displayName = displayName:sub(1, 17) .. "..."
+                if subTabsRef and subTabsRef.tabButtons and subTabsRef.tabButtons[barIndex] then
+                    local displayName = newName
+                    if #displayName > 20 then
+                        displayName = displayName:sub(1, 17) .. "..."
+                    end
+                    subTabsRef.tabButtons[barIndex].text:SetText(displayName)
                 end
-                subTabsRef.tabButtons[barIndex].text:SetText(displayName)
-            end
-        end)
+            end,
+            onEscapePressed = function(self)
+                self:ClearFocus()
+            end,
+        })
+        nameRow:SetPoint("TOPLEFT", PAD, y)
+        nameRow:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
         -- Export This Bar button
@@ -464,36 +525,27 @@ local function CreateCustomTrackersPage(parent)
                 entryFrame.iconTex = iconTex  -- Store reference for name resolution
 
                 -- Name (editable input box with subtle styling)
-                local nameInputBg = CreateFrame("Frame", nil, entryFrame, "BackdropTemplate")
-                nameInputBg:SetPoint("LEFT", iconTex, "RIGHT", 6, 0)
-                nameInputBg:SetSize(176, 22)
-                local pxEntry = QUICore:GetPixelSize(nameInputBg)
-                nameInputBg:SetBackdrop({
-                    bgFile = "Interface\\Buttons\\WHITE8x8",
-                    edgeFile = "Interface\\Buttons\\WHITE8x8",
-                    edgeSize = pxEntry,
+                local nameInputBg, nameInput = GUI:CreateInlineEditBox(entryFrame, {
+                    width = 176,
+                    height = 22,
+                    editHeight = 20,
+                    textInset = 6,
+                    text = GetEntryDisplayName(entry),
+                    bgColor = {0.05, 0.05, 0.05, 0.4},
+                    borderColor = {0.25, 0.25, 0.25, 0.6},
+                    activeBorderColor = C.accent,
+                    onEscapePressed = function(self)
+                        self:SetText(GetEntryDisplayName(self.entry))
+                    end,
+                    onEditFocusGained = function(self)
+                        self:HighlightText()
+                    end,
                 })
-                nameInputBg:SetBackdropColor(0.05, 0.05, 0.05, 0.4)
-                nameInputBg:SetBackdropBorderColor(0.25, 0.25, 0.25, 0.6)
-
-                local nameInput = CreateFrame("EditBox", nil, nameInputBg)
-                nameInput:SetPoint("LEFT", 6, 0)
-                nameInput:SetPoint("RIGHT", -6, 0)
-                nameInput:SetHeight(20)
-                nameInput:SetAutoFocus(false)
-                nameInput:SetFont(GUI.FONT_PATH, 11, "")
-                nameInput:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-                nameInput:SetText(GetEntryDisplayName(entry))
-                nameInput:SetCursorPosition(0)
+                nameInputBg:SetPoint("LEFT", iconTex, "RIGHT", 6, 0)
 
                 -- Store reference to entry for saving
                 nameInput.entry = entry
                 nameInput.barConfig = barConfig
-
-                nameInput:SetScript("OnEscapePressed", function(self)
-                    self:SetText(GetEntryDisplayName(self.entry))
-                    self:ClearFocus()
-                end)
 
                 -- Helper to resolve name to spell/item and update entry
                 local function ResolveAndUpdateEntry(self)
@@ -578,13 +630,13 @@ local function CreateCustomTrackersPage(parent)
                     ResolveAndUpdateEntry(self)
                     self:ClearFocus()
                 end)
-                nameInput:SetScript("OnEditFocusGained", function(self)
-                    nameInputBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-                    self:HighlightText()
-                end)
                 nameInput:SetScript("OnEditFocusLost", function(self)
-                    nameInputBg:SetBackdropBorderColor(0.25, 0.25, 0.25, 0.6)
+                    nameInputBg:SetFieldBorderColor(0.25, 0.25, 0.25, 0.6)
                     ResolveAndUpdateEntry(self)
+                end)
+                nameInput:SetScript("OnEditFocusGained", function(self)
+                    nameInputBg:SetFieldBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                    self:HighlightText()
                 end)
 
                 -- Store reference for button positioning
@@ -592,16 +644,11 @@ local function CreateCustomTrackersPage(parent)
 
                 -- Helper: Create styled chevron button (matches dropdown style)
                 local function CreateChevronButton(parent, direction, onClick)
-                    local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
-                    btn:SetSize(22, 22)
-                    local pxChevron = QUICore:GetPixelSize(btn)
-                    btn:SetBackdrop({
-                        bgFile = "Interface\\Buttons\\WHITE8x8",
-                        edgeFile = "Interface\\Buttons\\WHITE8x8",
-                        edgeSize = pxChevron,
+                    local btn = CreateTrackerSurfaceButton(parent, 22, 22, onClick, {
+                        bgColor = {0.1, 0.1, 0.1, 0.8},
+                        borderColor = {0.3, 0.3, 0.3, 1},
+                        hoverBorderColor = {C.accent[1], C.accent[2], C.accent[3], 1},
                     })
-                    btn:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-                    btn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
 
                     -- Chevron made of two rotated lines
                     local chevronLeft = btn:CreateTexture(nil, "OVERLAY")
@@ -625,18 +672,19 @@ local function CreateCustomTrackersPage(parent)
 
                     btn.chevronLeft = chevronLeft
                     btn.chevronRight = chevronRight
+                    if UIKit and UIKit.DisablePixelSnap then
+                        UIKit.DisablePixelSnap(chevronLeft)
+                        UIKit.DisablePixelSnap(chevronRight)
+                    end
 
-                    btn:SetScript("OnEnter", function(self)
-                        self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                    btn:HookScript("OnEnter", function(self)
                         self.chevronLeft:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
                         self.chevronRight:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 1)
                     end)
-                    btn:SetScript("OnLeave", function(self)
-                        self:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+                    btn:HookScript("OnLeave", function(self)
                         self.chevronLeft:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.7)
                         self.chevronRight:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.7)
                     end)
-                    btn:SetScript("OnClick", onClick)
 
                     return btn
                 end
@@ -668,34 +716,19 @@ local function CreateCustomTrackersPage(parent)
                 end
 
                 -- Remove button (styled to match chevrons)
-                local removeBtn = CreateFrame("Button", nil, entryFrame, "BackdropTemplate")
-                removeBtn:SetSize(22, 22)
-                local pxRemove = QUICore:GetPixelSize(removeBtn)
-                removeBtn:SetBackdrop({
-                    bgFile = "Interface\\Buttons\\WHITE8x8",
-                    edgeFile = "Interface\\Buttons\\WHITE8x8",
-                    edgeSize = pxRemove,
-                })
-                removeBtn:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-                removeBtn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-                local xText = removeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-                xText:SetPoint("CENTER", 0, 0)
-                xText:SetText("X")
-                xText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 0.7)
-                removeBtn:SetScript("OnEnter", function(self)
-                    self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-                    xText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
-                end)
-                removeBtn:SetScript("OnLeave", function(self)
-                    self:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-                    xText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 0.7)
-                end)
-                removeBtn:SetScript("OnClick", function()
+                local removeBtn = CreateTrackerSurfaceButton(entryFrame, 22, 22, function()
                     if QUICore and QUICore.CustomTrackers then
                         QUICore.CustomTrackers:RemoveEntry(barConfig.id, entry.type, entry.id, nil)
                     end
                     RefreshEntryList()
-                end)
+                end, {
+                    text = "X",
+                    textColor = {C.accent[1], C.accent[2], C.accent[3], 0.7},
+                    hoverTextColor = {C.accent[1], C.accent[2], C.accent[3], 1},
+                    bgColor = {0.1, 0.1, 0.1, 0.8},
+                    borderColor = {0.3, 0.3, 0.3, 1},
+                    hoverBorderColor = {C.accent[1], C.accent[2], C.accent[3], 1},
+                })
                 removeBtn:SetPoint("LEFT", downBtn, "RIGHT", 4, 0)
 
                 listY = listY - 30
@@ -841,10 +874,10 @@ local function CreateCustomTrackersPage(parent)
             local currentPos = barConfig.lockedToPlayer and barConfig.lockPosition or nil
             for pos, btn in pairs(lockButtons) do
                 if pos == currentPos then
-                    btn:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                    SetTrackerSurfaceBorderColor(btn, C.accent[1], C.accent[2], C.accent[3], 1)
                     btn.textObj:SetText("Unlock " .. btn.label)
                 else
-                    btn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
+                    SetTrackerSurfaceBorderColor(btn, C.border[1], C.border[2], C.border[3], 1)
                     btn.textObj:SetText(btn.label)
                 end
             end
@@ -899,27 +932,22 @@ local function CreateCustomTrackersPage(parent)
 
         -- Helper to create lock button
         local function CreateLockButton(parent, label, corner)
-            local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
-            btn:SetSize(75, 22)
-            local pxLock = QUICore:GetPixelSize(btn)
-            btn:SetBackdrop({
-                bgFile = "Interface\\Buttons\\WHITE8x8",
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = pxLock,
+            local btn = CreateTrackerSurfaceButton(parent, 75, 22, function()
+                LockToPlayer(corner)
+            end, {
+                text = label,
+                textColor = {C.text[1], C.text[2], C.text[3], 1},
+                bgColor = {0.15, 0.15, 0.15, 1},
+                borderColor = {C.border[1], C.border[2], C.border[3], 1},
+                hoverBorderColor = {C.accent[1], C.accent[2], C.accent[3], 1},
             })
-            btn:SetBackdropColor(0.15, 0.15, 0.15, 1)
-            btn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
-            local text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            text:SetPoint("CENTER")
-            text:SetText(label)
-            text:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
             btn.label = label
-            btn.textObj = text
-            btn:SetScript("OnClick", function() LockToPlayer(corner) end)
-            btn:SetScript("OnEnter", function(self) self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1) end)
-            btn:SetScript("OnLeave", function(self)
+            btn.textObj = btn.text
+            btn:HookScript("OnLeave", function(self)
                 if not (barConfig.lockedToPlayer and barConfig.lockPosition == corner) then
-                    self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
+                    SetTrackerSurfaceBorderColor(self, C.border[1], C.border[2], C.border[3], 1)
+                else
+                    SetTrackerSurfaceBorderColor(self, C.accent[1], C.accent[2], C.accent[3], 1)
                 end
             end)
             lockButtons[corner] = btn
@@ -980,10 +1008,10 @@ local function CreateCustomTrackersPage(parent)
             local currentPos = barConfig.lockedToTarget and barConfig.targetLockPosition or nil
             for pos, btn in pairs(targetLockButtons) do
                 if pos == currentPos then
-                    btn:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                    SetTrackerSurfaceBorderColor(btn, C.accent[1], C.accent[2], C.accent[3], 1)
                     btn.textObj:SetText("Unlock " .. btn.label)
                 else
-                    btn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
+                    SetTrackerSurfaceBorderColor(btn, C.border[1], C.border[2], C.border[3], 1)
                     btn.textObj:SetText(btn.label)
                 end
             end
@@ -1033,27 +1061,22 @@ local function CreateCustomTrackersPage(parent)
         end
 
         local function CreateTargetLockButton(parent, label, corner)
-            local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
-            btn:SetSize(75, 22)
-            local pxTLock = QUICore:GetPixelSize(btn)
-            btn:SetBackdrop({
-                bgFile = "Interface\\Buttons\\WHITE8x8",
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = pxTLock,
+            local btn = CreateTrackerSurfaceButton(parent, 75, 22, function()
+                LockToTarget(corner)
+            end, {
+                text = label,
+                textColor = {C.text[1], C.text[2], C.text[3], 1},
+                bgColor = {0.15, 0.15, 0.15, 1},
+                borderColor = {C.border[1], C.border[2], C.border[3], 1},
+                hoverBorderColor = {C.accent[1], C.accent[2], C.accent[3], 1},
             })
-            btn:SetBackdropColor(0.15, 0.15, 0.15, 1)
-            btn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
-            local text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            text:SetPoint("CENTER")
-            text:SetText(label)
-            text:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
             btn.label = label
-            btn.textObj = text
-            btn:SetScript("OnClick", function() LockToTarget(corner) end)
-            btn:SetScript("OnEnter", function(self) self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1) end)
-            btn:SetScript("OnLeave", function(self)
+            btn.textObj = btn.text
+            btn:HookScript("OnLeave", function(self)
                 if not (barConfig.lockedToTarget and barConfig.targetLockPosition == corner) then
-                    self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
+                    SetTrackerSurfaceBorderColor(self, C.border[1], C.border[2], C.border[3], 1)
+                else
+                    SetTrackerSurfaceBorderColor(self, C.accent[1], C.accent[2], C.accent[3], 1)
                 end
             end)
             targetLockButtons[corner] = btn
@@ -1685,10 +1708,14 @@ local function CreateCustomTrackersPage(parent)
                     local enabled = scanner.ToggleScanMode()
                     if enabled then
                         self.text:SetText("Disable")
-                        self:SetBackdropColor(0.2, 0.6, 0.2, 1)
+                        if self.SetFieldBackgroundColor then
+                            self:SetFieldBackgroundColor(0.2, 0.6, 0.2, 1)
+                        end
                     else
                         self.text:SetText("Enable")
-                        self:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 1)
+                        if self.SetFieldBackgroundColor then
+                            self:SetFieldBackgroundColor(C.bg[1], C.bg[2], C.bg[3], 1)
+                        end
                     end
                 end
             end)
@@ -1696,7 +1723,9 @@ local function CreateCustomTrackersPage(parent)
             -- Set initial state
             if scanner and scanner.scanMode then
                 scanBtn.text:SetText("Disable")
-                scanBtn:SetBackdropColor(0.2, 0.6, 0.2, 1)
+                if scanBtn.SetFieldBackgroundColor then
+                    scanBtn:SetFieldBackgroundColor(0.2, 0.6, 0.2, 1)
+                end
             end
 
             y = y - FORM_ROW
@@ -1754,17 +1783,8 @@ local function CreateCustomTrackersPage(parent)
                     iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
                     -- Name display (input-box style background)
-                    local nameBg = CreateFrame("Frame", nil, entryFrame, "BackdropTemplate")
+                    local nameBg = CreateTrackerSurfaceFrame(entryFrame, 200, 22, {0.05, 0.05, 0.05, 0.4}, {0.25, 0.25, 0.25, 0.6})
                     nameBg:SetPoint("LEFT", iconTex, "RIGHT", 6, 0)
-                    nameBg:SetSize(200, 22)
-                    local pxNameBg = QUICore:GetPixelSize(nameBg)
-                    nameBg:SetBackdrop({
-                        bgFile = "Interface\\Buttons\\WHITE8x8",
-                        edgeFile = "Interface\\Buttons\\WHITE8x8",
-                        edgeSize = pxNameBg,
-                    })
-                    nameBg:SetBackdropColor(0.05, 0.05, 0.05, 0.4)
-                    nameBg:SetBackdropBorderColor(0.25, 0.25, 0.25, 0.6)
 
                     local nameText = nameBg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
                     nameText:SetPoint("LEFT", 6, 0)
@@ -1776,24 +1796,7 @@ local function CreateCustomTrackersPage(parent)
                     nameText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
 
                     -- Delete button (X) - matches Tracked Items style
-                    local removeBtn = CreateFrame("Button", nil, entryFrame, "BackdropTemplate")
-                    removeBtn:SetSize(22, 22)
-                    removeBtn:SetPoint("LEFT", nameBg, "RIGHT", 6, 0)
-                    local pxDelBtn = QUICore:GetPixelSize(removeBtn)
-                    removeBtn:SetBackdrop({
-                        bgFile = "Interface\\Buttons\\WHITE8x8",
-                        edgeFile = "Interface\\Buttons\\WHITE8x8",
-                        edgeSize = pxDelBtn,
-                    })
-                    removeBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
-                    removeBtn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-
-                    local removeText = removeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-                    removeText:SetPoint("CENTER", 0, 0)
-                    removeText:SetText("X")
-                    removeText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
-
-                    removeBtn:SetScript("OnClick", function()
+                    local removeBtn = CreateTrackerSurfaceButton(entryFrame, 22, 22, function()
                         if scannerDB then
                             if isItem then
                                 scannerDB.items[id] = nil
@@ -1802,13 +1805,15 @@ local function CreateCustomTrackersPage(parent)
                             end
                             RefreshScannedList()
                         end
-                    end)
-                    removeBtn:SetScript("OnEnter", function(self)
-                        self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-                    end)
-                    removeBtn:SetScript("OnLeave", function(self)
-                        self:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-                    end)
+                    end, {
+                        text = "X",
+                        textColor = {C.accent[1], C.accent[2], C.accent[3], 1},
+                        hoverTextColor = {C.accent[1], C.accent[2], C.accent[3], 1},
+                        bgColor = {0.15, 0.15, 0.15, 1},
+                        borderColor = {0.3, 0.3, 0.3, 1},
+                        hoverBorderColor = {C.accent[1], C.accent[2], C.accent[3], 1},
+                    })
+                    removeBtn:SetPoint("LEFT", nameBg, "RIGHT", 6, 0)
 
                     listY = listY - rowHeight
                 end

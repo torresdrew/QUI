@@ -7,6 +7,7 @@ local QUI = ns.QUI or {}
 ns.QUI = QUI
 local QUICore = ns.Addon
 local Helpers = ns.Helpers
+local UIKit = ns.UIKit
 
 ---------------------------------------------------------------------------
 -- Local references
@@ -24,6 +25,7 @@ local editBoxState = Helpers.CreateStateTable()        -- editBox -> { styled, t
 local tabBackdrops = Helpers.CreateStateTable()        -- tab -> backdrop frame
 local copyButtonHookState = Helpers.CreateStateTable() -- chatFrame -> true (hover mode hooked)
 local _chatButtonsHidden = Helpers.CreateStateTable()  -- frame -> true/false (flag for hide-on-show hooks)
+local surfaceState, GetSurfaceState = Helpers.CreateStateTable() -- backdrop/popup frame -> { bg, border }
 
 -- Localized table functions for performance
 local tinsert = table.insert
@@ -66,6 +68,34 @@ local function GetSettings()
     return Helpers.GetModuleDB("chat")
 end
 
+local function ApplySurfaceStyle(frame, bgColor, borderColor, borderSizePixels)
+    if not frame then return end
+
+    local state = GetSurfaceState(frame)
+    if not state.bg then
+        state.bg = frame:CreateTexture(nil, "BACKGROUND")
+        state.bg:SetAllPoints()
+        state.bg:SetTexture("Interface\\Buttons\\WHITE8x8")
+        if UIKit and UIKit.DisablePixelSnap then
+            UIKit.DisablePixelSnap(state.bg)
+        end
+    end
+
+    state.bg:SetVertexColor(bgColor[1] or 0, bgColor[2] or 0, bgColor[3] or 0, bgColor[4] or 1)
+
+    if UIKit and UIKit.CreateBackdropBorder then
+        state.border = UIKit.CreateBackdropBorder(
+            frame,
+            borderSizePixels or 1,
+            borderColor[1] or 0,
+            borderColor[2] or 0,
+            borderColor[3] or 0,
+            borderColor[4] or 1
+        )
+        state.border:SetFrameLevel(frame:GetFrameLevel() + 1)
+    end
+end
+
 ---------------------------------------------------------------------------
 -- Strip Blizzard default textures from chat frame
 ---------------------------------------------------------------------------
@@ -91,24 +121,17 @@ local function CreateGlassBackdrop(chatFrame)
 
     -- Create or update backdrop (stored in local weak table, NOT on frame)
     if not chatBackdrops[chatFrame] then
-        local backdrop = CreateFrame("Frame", nil, chatFrame, "BackdropTemplate")
+        local backdrop = CreateFrame("Frame", nil, chatFrame)
         backdrop:SetFrameLevel(math.max(1, chatFrame:GetFrameLevel() - 1))
         backdrop:SetPoint("TOPLEFT", -8, 2)
         backdrop:SetPoint("BOTTOMRIGHT", 8, -8)
-        local px = QUICore and QUICore:GetPixelSize(backdrop) or 1
-        backdrop:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = px,
-        })
         chatBackdrops[chatFrame] = backdrop
     end
 
     -- Apply color and transparency
     local alpha = settings.glass.bgAlpha or 0.25
     local bgColor = settings.glass.bgColor or {0, 0, 0}
-    chatBackdrops[chatFrame]:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], alpha)
-    chatBackdrops[chatFrame]:SetBackdropBorderColor(bgColor[1], bgColor[2], bgColor[3], alpha)
+    ApplySurfaceStyle(chatBackdrops[chatFrame], {bgColor[1], bgColor[2], bgColor[3], alpha}, {bgColor[1], bgColor[2], bgColor[3], alpha}, 1)
     chatBackdrops[chatFrame]:Show()
 end
 
@@ -200,19 +223,11 @@ end
 local function CreateCopyPopup()
     if urlPopup then return urlPopup end
 
-    urlPopup = CreateFrame("Frame", "QUI_ChatCopyPopup", UIParent, "BackdropTemplate")
+    urlPopup = CreateFrame("Frame", "QUI_ChatCopyPopup", UIParent)
     urlPopup:SetSize(420, 90)
     urlPopup:SetPoint("CENTER")
     urlPopup:SetFrameStrata("DIALOG")
-    local px = QUICore and QUICore:GetPixelSize(urlPopup) or 1
-    urlPopup:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 2 * px,
-    })
-    -- QUI color scheme
-    urlPopup:SetBackdropColor(QUI_COLORS.bg[1], QUI_COLORS.bg[2], QUI_COLORS.bg[3], QUI_COLORS.bg[4])
-    urlPopup:SetBackdropBorderColor(QUI_COLORS.accent[1], QUI_COLORS.accent[2], QUI_COLORS.accent[3], QUI_COLORS.accent[4])
+    ApplySurfaceStyle(urlPopup, QUI_COLORS.bg, QUI_COLORS.accent, 2)
     urlPopup:EnableMouse(true)
     urlPopup:SetMovable(true)
     urlPopup:RegisterForDrag("LeftButton")
@@ -391,18 +406,11 @@ end
 local function CreateChatCopyFrame()
     if chatCopyFrame then return chatCopyFrame end
 
-    chatCopyFrame = CreateFrame("Frame", "QUI_ChatCopyFrame", UIParent, "BackdropTemplate")
+    chatCopyFrame = CreateFrame("Frame", "QUI_ChatCopyFrame", UIParent)
     chatCopyFrame:SetSize(500, 400)
     chatCopyFrame:SetPoint("CENTER")
     chatCopyFrame:SetFrameStrata("DIALOG")
-    local px = QUICore and QUICore:GetPixelSize(chatCopyFrame) or 1
-    chatCopyFrame:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 2 * px,
-    })
-    chatCopyFrame:SetBackdropColor(QUI_COLORS.bg[1], QUI_COLORS.bg[2], QUI_COLORS.bg[3], QUI_COLORS.bg[4])
-    chatCopyFrame:SetBackdropBorderColor(QUI_COLORS.accent[1], QUI_COLORS.accent[2], QUI_COLORS.accent[3], QUI_COLORS.accent[4])
+    ApplySurfaceStyle(chatCopyFrame, QUI_COLORS.bg, QUI_COLORS.accent, 2)
     chatCopyFrame:EnableMouse(true)
     chatCopyFrame:SetMovable(true)
     chatCopyFrame:SetResizable(true)
@@ -965,13 +973,7 @@ local function StyleEditBox(chatFrame)
     -- Create glass backdrop for edit box (once per chatFrame, stored in local table)
     -- Parent to chatFrame (not editBox) so we can control visibility independently
     if not editBoxBackdrops[chatFrame] then
-        local backdrop = CreateFrame("Frame", nil, chatFrame, "BackdropTemplate")
-        local ebPx = QUICore and QUICore:GetPixelSize(backdrop) or 1
-        backdrop:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = ebPx,
-        })
+        local backdrop = CreateFrame("Frame", nil, chatFrame)
         editBoxBackdrops[chatFrame] = backdrop
     end
 
@@ -986,8 +988,7 @@ local function StyleEditBox(chatFrame)
         backdrop:SetPoint("BOTTOMLEFT", chatFrame, "TOPLEFT", -8, 0)
         backdrop:SetPoint("BOTTOMRIGHT", chatFrame, "TOPRIGHT", 8, 0)
         backdrop:SetHeight(24)
-        backdrop:SetBackdropColor(0, 0, 0, 1)
-        backdrop:SetBackdropBorderColor(0, 0, 0, 1)
+        ApplySurfaceStyle(backdrop, {0, 0, 0, 1}, {0, 0, 0, 1}, 1)
 
         -- Anchor editbox to CENTER of backdrop (vertically centered, full width)
         editBox:ClearAllPoints()
@@ -1031,8 +1032,7 @@ local function StyleEditBox(chatFrame)
         -- Apply user-configured opacity
         local alpha = settings.editBox.bgAlpha or 0.25
         local bgColor = settings.editBox.bgColor or {0, 0, 0}
-        backdrop:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], alpha)
-        backdrop:SetBackdropBorderColor(bgColor[1], bgColor[2], bgColor[3], alpha)
+        ApplySurfaceStyle(backdrop, {bgColor[1], bgColor[2], bgColor[3], alpha}, {bgColor[1], bgColor[2], bgColor[3], alpha}, 1)
 
         -- Anchor editbox to backdrop (same as top mode for consistent alignment)
         -- Left offset of -8 aligns text with chat messages
@@ -1078,12 +1078,10 @@ local function UpdateTabColors(tab)
 
     if isSelected then
         -- Selected: mint accent border
-        tabBackdrops[tab]:SetBackdropColor(0, 0, 0, alpha + 0.2)
-        tabBackdrops[tab]:SetBackdropBorderColor(QUI_COLORS.accent[1], QUI_COLORS.accent[2], QUI_COLORS.accent[3], 1)
+        ApplySurfaceStyle(tabBackdrops[tab], {0, 0, 0, alpha + 0.2}, QUI_COLORS.accent, 1)
     else
         -- Unselected: standard glass
-        tabBackdrops[tab]:SetBackdropColor(0, 0, 0, alpha)
-        tabBackdrops[tab]:SetBackdropBorderColor(0, 0, 0, alpha)
+        ApplySurfaceStyle(tabBackdrops[tab], {0, 0, 0, alpha}, {0, 0, 0, alpha}, 1)
     end
 end
 
@@ -1111,16 +1109,10 @@ local function StyleChatTab(tab)
 
     -- Create glass backdrop (once, stored in local table NOT on tab frame)
     if not tabBackdrops[tab] then
-        local backdrop = CreateFrame("Frame", nil, tab, "BackdropTemplate")
+        local backdrop = CreateFrame("Frame", nil, tab)
         backdrop:SetFrameLevel(math.max(1, tab:GetFrameLevel() - 1))
         backdrop:SetPoint("TOPLEFT", 2, -4)
         backdrop:SetPoint("BOTTOMRIGHT", -2, 2)
-        local tabPx = QUICore and QUICore:GetPixelSize(backdrop) or 1
-        backdrop:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = tabPx,
-        })
         tabBackdrops[tab] = backdrop
     end
 

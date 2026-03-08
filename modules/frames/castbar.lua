@@ -609,7 +609,7 @@ end
 
 local function UpdateStatusBarPosition(anchorFrame, castSettings, barHeight, iconSize, iconScale, borderSize)
     local statusBar = anchorFrame.statusBar
-    local border = statusBar and statusBar.Border
+    local border = anchorFrame and anchorFrame.Border
 
     if not statusBar then return end
 
@@ -636,34 +636,19 @@ local function UpdateStatusBarPosition(anchorFrame, castSettings, barHeight, ico
         statusBar:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", -borderSize, borderSize)
     end
     
+    local r, g, b, a = GetSafeColor(castSettings.borderColor, {0, 0, 0, 1})
+    if UIKit and UIKit.CreateBackdropBorder then
+        border = UIKit.CreateBackdropBorder(anchorFrame, castSettings.borderSize or 1, r, g, b, a)
+        anchorFrame.Border = border
+        statusBar.Border = border
+    end
+
     if border then
         border:SetFrameLevel(statusBar:GetFrameLevel() - 1)
-        border:ClearAllPoints()
-        border:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", 0, 0)
-        border:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 0, 0)
 
-        -- Only show border if borderSize > 0 (edgeSize=0 causes WoW to use texture's natural size)
-        local core = GetCore()
-        local SSB = core and core.SafeSetBackdrop
         if borderSize > 0 then
-            local backdropInfo = {
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = borderSize,
-            }
-            local r, g, b, a = GetSafeColor(castSettings.borderColor, {0, 0, 0, 1})
-            if SSB then
-                SSB(border, backdropInfo, { r, g, b, a })
-            else
-                border:SetBackdrop(backdropInfo)
-                border:SetBackdropBorderColor(r, g, b, a)
-            end
             border:Show()
         else
-            if SSB then
-                SSB(border, nil)
-            else
-                border:SetBackdrop(nil)
-            end
             border:Hide()
         end
     end
@@ -1853,7 +1838,8 @@ function QUI_Castbar:CreateCastbar(unitFrame, unit, unitKey)
     local statusBar = CreateStatusBar(anchorFrame)
 
     local br, bg_, bb, ba = GetSafeColor(castSettings.borderColor, {0, 0, 0, 1})
-    UIKit.CreateBackdropBorder(statusBar, castSettings.borderSize or 1, br, bg_, bb, ba)
+    UIKit.CreateBackdropBorder(anchorFrame, castSettings.borderSize or 1, br, bg_, bb, ba)
+    statusBar.Border = anchorFrame.Border
     statusBar.Border:SetFrameLevel(statusBar:GetFrameLevel() - 1)
 
     local bgBar = UIKit.CreateBackground(statusBar)
@@ -2989,7 +2975,8 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
 
     -- Create border for status bar (parented to statusBar)
     local br, bg_, bb, ba = GetSafeColor(castSettings.borderColor, {0, 0, 0, 1})
-    UIKit.CreateBackdropBorder(statusBar, castSettings.borderSize or 1, br, bg_, bb, ba)
+    UIKit.CreateBackdropBorder(anchorFrame, castSettings.borderSize or 1, br, bg_, bb, ba)
+    statusBar.Border = anchorFrame.Border
     statusBar.Border:SetFrameLevel(statusBar:GetFrameLevel() - 1)
 
     local bgBar = UIKit.CreateBackground(statusBar)
@@ -3644,24 +3631,37 @@ local function CreateCastbarNudgeButton(parent, direction, deltaX, deltaY, unitK
 end
 
 -- Create edit mode overlay for a castbar (visual indicator that it can be moved)
+local function SetCastbarEditOverlayStyle(overlay, bgColor, borderColor)
+    if not overlay then return end
+
+    if not overlay.Background then
+        overlay.Background = UIKit.CreateBackground(overlay, bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+    else
+        overlay.Background:SetVertexColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+    end
+
+    if UIKit and UIKit.CreateBackdropBorder then
+        overlay.Border = UIKit.CreateBackdropBorder(
+            overlay,
+            2,
+            borderColor[1],
+            borderColor[2],
+            borderColor[3],
+            borderColor[4] or 1
+        )
+    end
+end
+
 local function CreateCastbarEditOverlay(castbar, unitKey)
     if not castbar then return end
     if castbar.editOverlay then return castbar.editOverlay end
 
-    local overlay = CreateFrame("Frame", nil, castbar, "BackdropTemplate")
+    local overlay = CreateFrame("Frame", nil, castbar)
     overlay:SetAllPoints()
     -- Use HIGH strata so overlay appears above most frames
     overlay:SetFrameStrata("HIGH")
     overlay:SetFrameLevel(castbar:GetFrameLevel() + 50)
-    local overlayPx = QUICore:GetPixelSize(overlay)
-    overlay:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 2 * overlayPx,
-        insets = { left = 2 * overlayPx, right = 2 * overlayPx, top = 2 * overlayPx, bottom = 2 * overlayPx },
-    })
-    overlay:SetBackdropColor(0.2, 0.8, 1, 0.25)  -- Cyan highlight
-    overlay:SetBackdropBorderColor(0.2, 0.8, 1, 0.9)
+    SetCastbarEditOverlayStyle(overlay, {0.2, 0.8, 1, 0.25}, {0.2, 0.8, 1, 0.9})
 
     -- Store unitKey for selection system
     overlay.elementKey = unitKey
@@ -3763,8 +3763,7 @@ local function ShowCastbarEditOverlay(unitKey)
     -- Update display based on whether castbar is anchored
     if isAnchored then
         -- Anchored: show lock indicator, hide nudge buttons
-        overlay:SetBackdropColor(0.5, 0.5, 0.5, 0.25)  -- Gray tint for locked
-        overlay:SetBackdropBorderColor(0.6, 0.6, 0.6, 0.9)
+        SetCastbarEditOverlayStyle(overlay, {0.5, 0.5, 0.5, 0.25}, {0.6, 0.6, 0.6, 0.9})
 
         local anchorName = GetAnchorDisplayName(castSettings.anchor)
         local displayName = unitKey == "player" and "Player Castbar" or
@@ -3785,8 +3784,7 @@ local function ShowCastbarEditOverlay(unitKey)
         overlay._isAnchored = true
     else
         -- Free-floating: normal cyan color, nudge buttons available
-        overlay:SetBackdropColor(0.2, 0.8, 1, 0.25)
-        overlay:SetBackdropBorderColor(0.2, 0.8, 1, 0.9)
+        SetCastbarEditOverlayStyle(overlay, {0.2, 0.8, 1, 0.25}, {0.2, 0.8, 1, 0.9})
 
         local displayName = unitKey == "player" and "Player Castbar" or
                             unitKey == "target" and "Target Castbar" or

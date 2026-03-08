@@ -467,6 +467,9 @@ function QUICore:ApplyUIScale()
     self.uiscale = UIParent:GetScale()
     self.screenWidth, self.screenHeight = GetScreenWidth(), GetScreenHeight()
     self:RefreshAllFonts()  -- Re-snap all registered fonts to new pixel grid
+    if ns.UIKit and ns.UIKit.RefreshScaleBoundWidgets then
+        ns.UIKit.RefreshScaleBoundWidgets()
+    end
 end
 
 --------------------------------------------------------------------------------

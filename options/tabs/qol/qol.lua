@@ -890,70 +890,37 @@ local function BuildGeneralTab(tabContent)
         actionYOffsetSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
 
-        local blocklistContainer = CreateFrame("Frame", nil, tabContent)
-        blocklistContainer:SetHeight(FORM_ROW)
-        blocklistContainer:SetPoint("TOPLEFT", PADDING, y)
-        blocklistContainer:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        local blocklistField = GUI:CreateFormEditBox(
+            tabContent,
+            "Spell Blocklist IDs",
+            "blocklistText",
+            actionTrackerDB,
+            function()
+                RefreshActionTracker()
+            end,
+            {
+                maxLetters = 300,
+                live = true,
+                onEditFocusGained = function(self)
+                    self:HighlightText()
+                end,
+            }
+        )
+        blocklistField:SetPoint("TOPLEFT", PADDING, y)
+        blocklistField:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
 
-        local blocklistLabel = blocklistContainer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        blocklistLabel:SetPoint("LEFT", 0, 0)
-        blocklistLabel:SetText("Spell Blocklist IDs")
-        blocklistLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-
-        local blocklistBg = CreateFrame("Frame", nil, blocklistContainer, "BackdropTemplate")
-        blocklistBg:SetPoint("LEFT", blocklistContainer, "LEFT", 180, 0)
-        blocklistBg:SetPoint("RIGHT", blocklistContainer, "RIGHT", 0, 0)
-        blocklistBg:SetHeight(24)
-        local pxBlock = 1
-        if QUICore and type(QUICore.GetPixelSize) == "function" then
-            pxBlock = QUICore:GetPixelSize(blocklistBg)
-        end
-        blocklistBg:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = pxBlock,
-        })
-        blocklistBg:SetBackdropColor(0.08, 0.08, 0.08, 1)
-        blocklistBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-
-        local blocklistInput = CreateFrame("EditBox", nil, blocklistBg)
-        blocklistInput:SetPoint("LEFT", 8, 0)
-        blocklistInput:SetPoint("RIGHT", -8, 0)
-        blocklistInput:SetHeight(22)
-        blocklistInput:SetAutoFocus(false)
-        blocklistInput:SetMaxLetters(300)
-        blocklistInput:SetFont(GUI.FONT_PATH, 11, "")
-        blocklistInput:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-        blocklistInput:SetText(actionTrackerDB.blocklistText or "")
-
-        local blocklistPlaceholder = blocklistBg:CreateFontString(nil, "OVERLAY", "GameFontDisable")
-        blocklistPlaceholder:SetPoint("LEFT", blocklistInput, "LEFT", 0, 0)
+        local blocklistPlaceholder = blocklistField.field:CreateFontString(nil, "OVERLAY")
+        blocklistPlaceholder:SetFont(GUI.FONT_PATH, 11, "")
+        blocklistPlaceholder:SetPoint("LEFT", blocklistField.editBox, "LEFT", 0, 0)
         blocklistPlaceholder:SetText("Example: 61304, 75, 133")
         blocklistPlaceholder:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 0.7)
-        blocklistPlaceholder:SetShown((actionTrackerDB.blocklistText or "") == "")
 
-        blocklistInput:SetScript("OnEscapePressed", function(self)
-            self:SetText(actionTrackerDB.blocklistText or "")
-            self:ClearFocus()
-            blocklistPlaceholder:SetShown((actionTrackerDB.blocklistText or "") == "")
-        end)
-        blocklistInput:SetScript("OnEnterPressed", function(self)
-            self:ClearFocus()
-        end)
-        blocklistInput:SetScript("OnEditFocusGained", function(self)
-            blocklistBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-            self:HighlightText()
-        end)
-        blocklistInput:SetScript("OnEditFocusLost", function()
-            blocklistBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-        end)
-        blocklistInput:SetScript("OnTextChanged", function(self, userInput)
-            if not userInput then return end
-            local value = self:GetText() or ""
-            actionTrackerDB.blocklistText = value
-            blocklistPlaceholder:SetShown(value == "")
-            RefreshActionTracker()
-        end)
+        local function UpdateBlocklistPlaceholder()
+            blocklistPlaceholder:SetShown((blocklistField.editBox:GetText() or "") == "")
+        end
+
+        blocklistField.editBox:HookScript("OnTextChanged", UpdateBlocklistPlaceholder)
+        UpdateBlocklistPlaceholder()
         y = y - FORM_ROW
 
         local blocklistHelp = GUI:CreateLabel(tabContent,
@@ -1448,70 +1415,37 @@ local function BuildGeneralTab(tabContent)
         focusEnableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
 
-        local textContainer = CreateFrame("Frame", nil, tabContent)
-        textContainer:SetHeight(FORM_ROW)
-        textContainer:SetPoint("TOPLEFT", PADDING, y)
-        textContainer:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+        local textField = GUI:CreateFormEditBox(
+            tabContent,
+            "Alert Text",
+            "text",
+            focusAlertDB,
+            function()
+                RefreshFocusCastAlert()
+            end,
+            {
+                maxLetters = 200,
+                live = true,
+                onEditFocusGained = function(self)
+                    self:HighlightText()
+                end,
+            }
+        )
+        textField:SetPoint("TOPLEFT", PADDING, y)
+        textField:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
 
-        local textLabel = textContainer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        textLabel:SetPoint("LEFT", 0, 0)
-        textLabel:SetText("Alert Text")
-        textLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-
-        local textInputBg = CreateFrame("Frame", nil, textContainer, "BackdropTemplate")
-        textInputBg:SetPoint("LEFT", textContainer, "LEFT", 180, 0)
-        textInputBg:SetPoint("RIGHT", textContainer, "RIGHT", 0, 0)
-        textInputBg:SetHeight(24)
-        local pxText = 1
-        if QUICore and type(QUICore.GetPixelSize) == "function" then
-            pxText = QUICore:GetPixelSize(textInputBg)
-        end
-        textInputBg:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = pxText,
-        })
-        textInputBg:SetBackdropColor(0.08, 0.08, 0.08, 1)
-        textInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-
-        local textInput = CreateFrame("EditBox", nil, textInputBg)
-        textInput:SetPoint("LEFT", 8, 0)
-        textInput:SetPoint("RIGHT", -8, 0)
-        textInput:SetHeight(22)
-        textInput:SetAutoFocus(false)
-        textInput:SetMaxLetters(200)
-        textInput:SetFont(GUI.FONT_PATH, 11, "")
-        textInput:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
-        textInput:SetText(focusAlertDB.text or "")
-
-        local textPlaceholder = textInputBg:CreateFontString(nil, "OVERLAY", "GameFontDisable")
-        textPlaceholder:SetPoint("LEFT", textInput, "LEFT", 0, 0)
+        local textPlaceholder = textField.field:CreateFontString(nil, "OVERLAY")
+        textPlaceholder:SetFont(GUI.FONT_PATH, 11, "")
+        textPlaceholder:SetPoint("LEFT", textField.editBox, "LEFT", 0, 0)
         textPlaceholder:SetText("Example: {unit} is casting {spell}. Kick!")
         textPlaceholder:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 0.7)
-        textPlaceholder:SetShown((focusAlertDB.text or "") == "")
 
-        textInput:SetScript("OnEscapePressed", function(self)
-            self:SetText(focusAlertDB.text or "")
-            self:ClearFocus()
-            textPlaceholder:SetShown((focusAlertDB.text or "") == "")
-        end)
-        textInput:SetScript("OnEnterPressed", function(self)
-            self:ClearFocus()
-        end)
-        textInput:SetScript("OnEditFocusGained", function(self)
-            textInputBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-            self:HighlightText()
-        end)
-        textInput:SetScript("OnEditFocusLost", function()
-            textInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-        end)
-        textInput:SetScript("OnTextChanged", function(self, userInput)
-            if not userInput then return end
-            local value = self:GetText() or ""
-            focusAlertDB.text = value
-            textPlaceholder:SetShown(value == "")
-            RefreshFocusCastAlert()
-        end)
+        local function UpdateTextPlaceholder()
+            textPlaceholder:SetShown((textField.editBox:GetText() or "") == "")
+        end
+
+        textField.editBox:HookScript("OnTextChanged", UpdateTextPlaceholder)
+        UpdateTextPlaceholder()
         y = y - FORM_ROW
 
         local placeholderHelp = GUI:CreateLabel(

@@ -7,7 +7,6 @@ local Shared = ns.QUI_Options
 local CreateScrollableContent = Shared.CreateScrollableContent
 local CreateWrappedLabel = Shared.CreateWrappedLabel
 local CreateLinkItem = Shared.CreateLinkItem
-local SafeGetPixelSize = Shared.SafeGetPixelSize
 local PADDING = Shared.PADDING or 15
 
 --------------------------------------------------------------------------------
@@ -150,56 +149,17 @@ local function CreateWelcomePage(parent)
 
     local BOX_HEIGHT = 80
 
-    local boxContainer = CreateFrame("Frame", nil, content, "BackdropTemplate")
+    local boxContainer = GUI:CreateScrollableTextBox(content, BOX_HEIGHT, editModeString, {
+        bgColor = {0.05, 0.07, 0.1, 0.9},
+        borderColor = C.border,
+        fontSize = 11,
+    })
     boxContainer:SetPoint("TOPLEFT", PADDING, y)
     boxContainer:SetPoint("RIGHT", content, "RIGHT", -PADDING, 0)
-    boxContainer:SetHeight(BOX_HEIGHT)
-    local px = SafeGetPixelSize(boxContainer)
-    boxContainer:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
-    boxContainer:SetBackdropColor(0.05, 0.07, 0.1, 0.9)
-    boxContainer:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
-
-    local scrollFrame = CreateFrame("ScrollFrame", nil, boxContainer, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", 6, -6)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -26, 6)
-
-    local scrollBar = scrollFrame.ScrollBar or _G[scrollFrame:GetName() .. "ScrollBar"]
-    if scrollBar then
-        scrollBar:ClearAllPoints()
-        scrollBar:SetPoint("TOPRIGHT", boxContainer, "TOPRIGHT", -4, -18)
-        scrollBar:SetPoint("BOTTOMRIGHT", boxContainer, "BOTTOMRIGHT", -4, 18)
-
-        local thumb = scrollBar:GetThumbTexture()
-        if thumb then
-            thumb:SetColorTexture(0.35, 0.45, 0.5, 0.8)
-        end
-
-        local scrollUp = scrollBar.ScrollUpButton or scrollBar.Back
-        local scrollDown = scrollBar.ScrollDownButton or scrollBar.Forward
-        if scrollUp then scrollUp:Hide(); scrollUp:SetAlpha(0) end
-        if scrollDown then scrollDown:Hide(); scrollDown:SetAlpha(0) end
-    end
-
-    local editBox = CreateFrame("EditBox", nil, scrollFrame)
-    editBox:SetMultiLine(true)
-    editBox:SetAutoFocus(false)
-    editBox:SetFontObject(GameFontHighlightSmall)
-    editBox:SetWidth(scrollFrame:GetWidth() or 400)
-    editBox:SetText(editModeString)
-    editBox:SetCursorPosition(0)
-    editBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    editBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
-
-    boxContainer:SetScript("OnSizeChanged", function(self)
-        editBox:SetWidth(self:GetWidth() - 36)
+    local editBox = boxContainer.editBox
+    editBox:HookScript("OnEditFocusGained", function(self)
+        self:HighlightText()
     end)
-
-    scrollFrame:SetScrollChild(editBox)
-    ns.ApplyScrollWheel(scrollFrame)
 
     y = y - BOX_HEIGHT - 8
 

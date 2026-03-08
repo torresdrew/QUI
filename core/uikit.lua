@@ -11,6 +11,20 @@ ns.UIKit = UIKit
 local LSM = LibStub("LibSharedMedia-3.0", true)
 local Helpers = ns.Helpers
 local DEFAULT_FONT = "Fonts\\FRIZQT__.TTF"
+local floor = math.floor
+local max = math.max
+local next = next
+local pairs = pairs
+local pcall = pcall
+local type = type
+local unpack = unpack or table.unpack
+local InCombatLockdown = InCombatLockdown
+
+local scaleRefreshRegistry = (Helpers and Helpers.CreateStateTable and Helpers.CreateStateTable()) or setmetatable({}, { __mode = "k" })
+local borderLineState = (Helpers and Helpers.CreateStateTable and Helpers.CreateStateTable()) or setmetatable({}, { __mode = "k" })
+local backdropBorderState = (Helpers and Helpers.CreateStateTable and Helpers.CreateStateTable()) or setmetatable({}, { __mode = "k" })
+local iconState = (Helpers and Helpers.CreateStateTable and Helpers.CreateStateTable()) or setmetatable({}, { __mode = "k" })
+local accentCheckboxState = (Helpers and Helpers.CreateStateTable and Helpers.CreateStateTable()) or setmetatable({}, { __mode = "k" })
 
 -- Shared fallback color table for checkboxes (avoids per-widget allocation)
 local DEFAULT_CHECKBOX_COLORS = {
@@ -22,6 +36,287 @@ local DEFAULT_CHECKBOX_COLORS = {
 --- Lazily resolve QUICore (safe if called before main.lua loads)
 local function GetCore()
     return ns.Addon
+end
+
+local function Round(value)
+    return floor((value or 0) + 0.5)
+end
+
+local function GetPixelSize(frame)
+    local core = GetCore()
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
+local function Pixels(value, frame)
+    local core = GetCore()
+    if core and core.Pixels then
+        return core:Pixels(Round(value or 0), frame)
+    end
+    return Round(value or 0)
+end
+
+local function SetRegionSizePx(region, widthPixels, heightPixels, contextFrame)
+    if not region then return end
+    local frame = contextFrame or region
+    if widthPixels and heightPixels then
+        region:SetSize(Pixels(widthPixels, frame), Pixels(heightPixels, frame))
+    elseif widthPixels then
+        region:SetWidth(Pixels(widthPixels, frame))
+    elseif heightPixels then
+        region:SetHeight(Pixels(heightPixels, frame))
+    end
+end
+
+local function ApplyColorTexture(texture, r, g, b, a)
+    if not texture then return end
+    texture:SetColorTexture(r or 0, g or 0, b or 0, a or 1)
+    UIKit.DisablePixelSnap(texture)
+end
+
+local function RefreshBorderLines(frame)
+    local state = borderLineState[frame]
+    if not state or not state.edges then return end
+
+    if state.hidden or (state.sizePixels or 0) <= 0 then
+        for _, line in pairs(state.edges) do
+            line:Hide()
+        end
+        return
+    end
+
+    local size = max(GetPixelSize(frame), Pixels(state.sizePixels or 1, frame))
+    local color = state.color or { 0, 0, 0, 1 }
+    local top = state.edges.top
+    local bottom = state.edges.bottom
+    local left = state.edges.left
+    local right = state.edges.right
+
+    top:ClearAllPoints()
+    top:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+    top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    top:SetHeight(size)
+    ApplyColorTexture(top, color[1], color[2], color[3], color[4] or 1)
+
+    bottom:ClearAllPoints()
+    bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    bottom:SetHeight(size)
+    ApplyColorTexture(bottom, color[1], color[2], color[3], color[4] or 1)
+
+    left:ClearAllPoints()
+    left:SetPoint("TOPLEFT", top, "BOTTOMLEFT", 0, 0)
+    left:SetPoint("BOTTOMLEFT", bottom, "TOPLEFT", 0, 0)
+    left:SetWidth(size)
+    ApplyColorTexture(left, color[1], color[2], color[3], color[4] or 1)
+
+    right:ClearAllPoints()
+    right:SetPoint("TOPRIGHT", top, "BOTTOMRIGHT", 0, 0)
+    right:SetPoint("BOTTOMRIGHT", bottom, "TOPRIGHT", 0, 0)
+    right:SetWidth(size)
+    ApplyColorTexture(right, color[1], color[2], color[3], color[4] or 1)
+
+    for _, line in pairs(state.edges) do
+        line:Show()
+    end
+end
+
+local function ApplyBackdropBorderLayout(borderFrame)
+    local state = backdropBorderState[borderFrame]
+    if not state or not state.parent then return end
+
+    if state.hidden or (state.sizePixels or 0) <= 0 then
+        borderFrame:Hide()
+    else
+        borderFrame:Show()
+    end
+
+    UIKit.SetInsetPointsPx(
+        borderFrame,
+        state.parent,
+        -(state.sizePixels or 1),
+        -(state.sizePixels or 1),
+        -(state.sizePixels or 1),
+        -(state.sizePixels or 1)
+    )
+
+    local color = state.color or { 0, 0, 0, 1 }
+    UIKit.UpdateBorderLines(
+        borderFrame,
+        state.sizePixels or 1,
+        color[1],
+        color[2],
+        color[3],
+        color[4] or 1,
+        state.hidden
+    )
+end
+
+local function ApplyBackdropBorderState(borderFrame)
+    local state = backdropBorderState[borderFrame]
+    if not state then return end
+    ApplyBackdropBorderLayout(borderFrame)
+end
+
+local function RefreshIconLayout(iconFrame)
+    local state = iconState[iconFrame]
+    if not state then return end
+
+    UIKit.SetSizePx(iconFrame, state.sizePixels or 0, state.sizePixels or 0)
+
+    if state.borderTexture then
+        state.borderTexture:SetAllPoints(iconFrame)
+        ApplyColorTexture(state.borderTexture, unpack(state.color or { 0, 0, 0, 1 }))
+    end
+
+    if state.texture then
+        UIKit.SetInsetPointsPx(state.texture, iconFrame, state.borderSizePixels or 1)
+        local core = GetCore()
+        if core and core.ApplyPixelSnapping then
+            core:ApplyPixelSnapping(state.texture)
+        end
+    end
+end
+
+local function RefreshAccentCheckboxLayout(checkbox)
+    local state = accentCheckboxState[checkbox]
+    if not state then return end
+
+    UIKit.SetSizePx(checkbox, state.sizePixels or 16, state.sizePixels or 16)
+
+    local leftWidth = max(4, floor((state.sizePixels or 16) * 0.31))
+    local rightWidth = max(6, floor((state.sizePixels or 16) * 0.5))
+    SetRegionSizePx(checkbox.checkLeft, leftWidth, 2, checkbox)
+    SetRegionSizePx(checkbox.checkRight, rightWidth, 2, checkbox)
+    UIKit.SetPointPx(checkbox.checkLeft, "CENTER", checkbox, "CENTER", -2, -1)
+    UIKit.SetPointPx(checkbox.checkRight, "CENTER", checkbox, "CENTER", 2, 0)
+end
+
+---------------------------------------------------------------------------
+-- SCALE-BOUND REGISTRY
+---------------------------------------------------------------------------
+
+function UIKit.RegisterScaleRefresh(owner, key, refreshFn)
+    if not owner then return end
+    if type(key) == "function" and refreshFn == nil then
+        refreshFn = key
+        key = refreshFn
+    end
+    if type(refreshFn) ~= "function" then return end
+
+    local callbacks = scaleRefreshRegistry[owner]
+    if not callbacks then
+        callbacks = {}
+        scaleRefreshRegistry[owner] = callbacks
+    end
+    callbacks[key or refreshFn] = refreshFn
+end
+
+function UIKit.UnregisterScaleRefresh(owner, key)
+    local callbacks = owner and scaleRefreshRegistry[owner]
+    if not callbacks then return end
+    callbacks[key] = nil
+    if not next(callbacks) then
+        scaleRefreshRegistry[owner] = nil
+    end
+end
+
+function UIKit.RefreshScaleBoundWidgets()
+    for owner, callbacks in pairs(scaleRefreshRegistry) do
+        for _, refreshFn in pairs(callbacks) do
+            pcall(refreshFn, owner)
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- PIXEL HELPERS
+---------------------------------------------------------------------------
+
+function UIKit.Pixels(value, frame)
+    return Pixels(value, frame)
+end
+
+function UIKit.DisablePixelSnap(obj)
+    if not obj then return end
+    if obj.SetSnapToPixelGrid then obj:SetSnapToPixelGrid(false) end
+    if obj.SetTexelSnappingBias then obj:SetTexelSnappingBias(0) end
+
+    if obj.GetStatusBarTexture then
+        local ok, tex = pcall(obj.GetStatusBarTexture, obj)
+        if ok and tex then
+            if tex.SetSnapToPixelGrid then tex:SetSnapToPixelGrid(false) end
+            if tex.SetTexelSnappingBias then tex:SetTexelSnappingBias(0) end
+        end
+    end
+end
+
+function UIKit.SetSizePx(frame, widthPixels, heightPixels)
+    if not frame then return end
+    local core = GetCore()
+    if core and core.SetPixelPerfectSize then
+        core:SetPixelPerfectSize(frame, widthPixels, heightPixels)
+        return
+    end
+    SetRegionSizePx(frame, widthPixels, heightPixels, frame)
+end
+
+function UIKit.SetWidthPx(frame, widthPixels)
+    if not frame then return end
+    local core = GetCore()
+    if core and core.SetPixelPerfectWidth then
+        core:SetPixelPerfectWidth(frame, widthPixels)
+        return
+    end
+    SetRegionSizePx(frame, widthPixels, nil, frame)
+end
+
+function UIKit.SetHeightPx(frame, heightPixels)
+    if not frame then return end
+    local core = GetCore()
+    if core and core.SetPixelPerfectHeight then
+        core:SetPixelPerfectHeight(frame, heightPixels)
+        return
+    end
+    SetRegionSizePx(frame, nil, heightPixels, frame)
+end
+
+function UIKit.SetPointPx(frame, point, relativeTo, relativePoint, xPixels, yPixels)
+    if not frame then return end
+    local core = GetCore()
+    if core and core.SetPixelPerfectPoint then
+        core:SetPixelPerfectPoint(frame, point, relativeTo, relativePoint, xPixels, yPixels)
+        return
+    end
+    frame:SetPoint(point, relativeTo, relativePoint, Pixels(xPixels or 0, frame), Pixels(yPixels or 0, frame))
+end
+
+function UIKit.SetInsetPointsPx(frame, anchor, leftPixels, rightPixels, topPixels, bottomPixels)
+    if not frame then return end
+    anchor = anchor or frame:GetParent()
+    if not anchor then return end
+
+    if rightPixels == nil and topPixels == nil and bottomPixels == nil then
+        rightPixels = leftPixels or 0
+        topPixels = leftPixels or 0
+        bottomPixels = leftPixels or 0
+    else
+        rightPixels = rightPixels or 0
+        topPixels = topPixels or 0
+        bottomPixels = bottomPixels or 0
+    end
+
+    local px = GetPixelSize(frame)
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPLEFT", anchor, "TOPLEFT", Round(leftPixels or 0) * px, -Round(topPixels) * px)
+    frame:SetPoint("BOTTOMRIGHT", anchor, "BOTTOMRIGHT", -Round(rightPixels) * px, Round(bottomPixels) * px)
+end
+
+function UIKit.SetOutsidePx(frame, anchor, leftPixels, rightPixels, topPixels, bottomPixels)
+    if rightPixels == nil and topPixels == nil and bottomPixels == nil then
+        UIKit.SetInsetPointsPx(frame, anchor, -(leftPixels or 0), -(leftPixels or 0), -(leftPixels or 0), -(leftPixels or 0))
+        return
+    end
+    UIKit.SetInsetPointsPx(frame, anchor, -(leftPixels or 0), -(rightPixels or 0), -(topPixels or 0), -(bottomPixels or 0))
 end
 
 ---------------------------------------------------------------------------
@@ -53,17 +348,15 @@ end
 --- @param frame Frame|nil               Reference frame for pixel scaling
 --- @return table Backdrop info suitable for SetBackdrop()
 function UIKit.GetBackdropInfo(borderTextureName, borderSizePixels, frame)
-    local QUICore = GetCore()
     local edgeFile = nil
     local edgeSize = 0
 
     if borderTextureName and borderTextureName ~= "None" and LSM then
         edgeFile = LSM:Fetch("border", borderTextureName)
-        local rawSize = borderSizePixels or 1
-        edgeSize = QUICore and QUICore:Pixels(rawSize, frame) or rawSize
+        edgeSize = Pixels(borderSizePixels or 1, frame)
     end
 
-    local px = QUICore and QUICore:GetPixelSize(frame) or 1
+    local px = GetPixelSize(frame)
     return {
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = edgeFile,
@@ -79,40 +372,38 @@ end
 ---------------------------------------------------------------------------
 
 --- Create 4 OVERLAY textures for solid pixel borders around a frame.
---- Stores the result on frame.borderLines; no-ops if already created.
+--- Stores the result in a weak registry; no-ops if already created.
 --- @param frame Frame  The frame to add borders to
 --- @return table  { top, bottom, left, right } texture handles
 function UIKit.CreateBorderLines(frame)
-    if frame.borderLines then return frame.borderLines end
+    local state = borderLineState[frame]
+    if state and state.edges then return state.edges end
 
-    local borders = {}
+    local borders = {
+        top = frame:CreateTexture(nil, "OVERLAY", nil, 7),
+        bottom = frame:CreateTexture(nil, "OVERLAY", nil, 7),
+        left = frame:CreateTexture(nil, "OVERLAY", nil, 7),
+        right = frame:CreateTexture(nil, "OVERLAY", nil, 7),
+    }
 
-    borders.top = frame:CreateTexture(nil, "OVERLAY")
-    borders.top:SetColorTexture(0, 0, 0, 1)
-    borders.top:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-    borders.top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, 0)
+    for _, line in pairs(borders) do
+        ApplyColorTexture(line, 0, 0, 0, 1)
+    end
 
-    borders.bottom = frame:CreateTexture(nil, "OVERLAY")
-    borders.bottom:SetColorTexture(0, 0, 0, 1)
-    borders.bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 1)
-    borders.bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 1)
+    borderLineState[frame] = {
+        edges = borders,
+        sizePixels = 1,
+        color = { 0, 0, 0, 1 },
+        hidden = false,
+    }
 
-    borders.left = frame:CreateTexture(nil, "OVERLAY")
-    borders.left:SetColorTexture(0, 0, 0, 1)
-    borders.left:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
-    borders.left:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 1)
-
-    borders.right = frame:CreateTexture(nil, "OVERLAY")
-    borders.right:SetColorTexture(0, 0, 0, 1)
-    borders.right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
-    borders.right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 1)
-
-    frame.borderLines = borders
+    UIKit.RegisterScaleRefresh(frame, "borderLines", RefreshBorderLines)
+    RefreshBorderLines(frame)
     return borders
 end
 
 --- Size, color, and show/hide pixel border lines.
---- @param frame Frame             Frame with .borderLines
+--- @param frame Frame             Frame with border lines created via CreateBorderLines
 --- @param sizePixels number       Border thickness in physical pixels
 --- @param r number                Red (0-1)
 --- @param g number                Green (0-1)
@@ -120,32 +411,17 @@ end
 --- @param a number|nil            Alpha (0-1), defaults to 1
 --- @param hide boolean|nil        Force-hide all borders
 function UIKit.UpdateBorderLines(frame, sizePixels, r, g, b, a, hide)
-    local borders = frame.borderLines
-    if not borders then return end
-
-    if hide or sizePixels <= 0 then
-        for _, line in pairs(borders) do
-            line:Hide()
-        end
-        return
+    local state = borderLineState[frame]
+    if not state then
+        UIKit.CreateBorderLines(frame)
+        state = borderLineState[frame]
     end
+    if not state then return end
 
-    local QUICore = GetCore()
-    local pxSize = QUICore and QUICore:Pixels(sizePixels, frame) or sizePixels
-
-    borders.top:SetHeight(pxSize)
-    borders.bottom:SetHeight(pxSize)
-    borders.left:SetWidth(pxSize)
-    borders.right:SetWidth(pxSize)
-
-    borders.top:SetColorTexture(r or 0, g or 0, b or 0, a or 1)
-    borders.bottom:SetColorTexture(r or 0, g or 0, b or 0, a or 1)
-    borders.left:SetColorTexture(r or 0, g or 0, b or 0, a or 1)
-    borders.right:SetColorTexture(r or 0, g or 0, b or 0, a or 1)
-
-    for _, line in pairs(borders) do
-        line:Show()
-    end
+    state.sizePixels = sizePixels or state.sizePixels or 1
+    state.color = { r or 0, g or 0, b or 0, a or 1 }
+    state.hidden = hide or (state.sizePixels or 0) <= 0
+    RefreshBorderLines(frame)
 end
 
 ---------------------------------------------------------------------------
@@ -161,9 +437,14 @@ end
 --- @return FontString
 function UIKit.CreateText(parent, fontSize, fontPath, fontOutline, layer)
     local text = parent:CreateFontString(nil, layer or "OVERLAY")
-    local path = fontPath or (Helpers and Helpers.GetGeneralFont and Helpers.GetGeneralFont()) or DEFAULT_FONT
+    local path = fontPath or UIKit.ResolveFontPath()
     local outline = fontOutline or (Helpers and Helpers.GetGeneralFontOutline and Helpers.GetGeneralFontOutline()) or "OUTLINE"
-    text:SetFont(path, fontSize, outline)
+    local core = GetCore()
+    if core and core.ApplyFont then
+        core:ApplyFont(text, parent, fontSize, path, outline)
+    else
+        text:SetFont(path, fontSize, outline)
+    end
     text:SetTextColor(1, 1, 1, 1)
     text:SetWordWrap(false)
     return text
@@ -186,6 +467,7 @@ function UIKit.CreateBackground(parent, r, g, b, a)
     bg:SetAllPoints()
     bg:SetTexture("Interface\\Buttons\\WHITE8x8")
     bg:SetVertexColor(r or 0.149, g or 0.149, b or 0.149, a or 1)
+    UIKit.DisablePixelSnap(bg)
     return bg
 end
 
@@ -193,9 +475,7 @@ end
 -- BACKDROP BORDER
 ---------------------------------------------------------------------------
 
---- Create a BackdropTemplate frame used as a solid border around a parent.
---- The border frame is positioned to surround the parent with the given inset.
---- Callers may reposition or adjust frame level after creation.
+--- Create a pixel-perfect border frame that surrounds the parent.
 --- @param parent Frame            Parent frame
 --- @param borderSizePixels number Border thickness in physical pixels
 --- @param r number|nil            Red (default 0)
@@ -204,19 +484,52 @@ end
 --- @param a number|nil            Alpha (default 1)
 --- @return Frame  The border frame (also stored as parent.Border)
 function UIKit.CreateBackdropBorder(parent, borderSizePixels, r, g, b, a)
-    local QUICore = GetCore()
-    local borderSize = QUICore and QUICore:Pixels(borderSizePixels, parent) or borderSizePixels
+    local border = parent.Border
+    if not border or not backdropBorderState[border] then
+        border = CreateFrame("Frame", nil, parent)
+        border:SetFrameStrata(parent:GetFrameStrata())
+        border:SetFrameLevel(parent:GetFrameLevel() + 1)
+        UIKit.CreateBorderLines(border)
+        backdropBorderState[border] = { parent = parent }
+        UIKit.RegisterScaleRefresh(border, "backdropBorder", ApplyBackdropBorderLayout)
 
-    local border = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    border:SetPoint("TOPLEFT", parent, -borderSize, borderSize)
-    border:SetPoint("BOTTOMRIGHT", parent, borderSize, -borderSize)
-    border:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = borderSize,
-    })
-    border:SetBackdropBorderColor(r or 0, g or 0, b or 0, a or 1)
+        function border:SetBackdrop(backdrop)
+            local state = backdropBorderState[self]
+            if not state then return end
+            if not backdrop then
+                state.hidden = true
+                ApplyBackdropBorderState(self)
+                return
+            end
+
+            local edgeSize = backdrop.edgeSize or 0
+            local pixelSize = GetPixelSize(self)
+            local sizePixels = edgeSize > 0 and max(0, Round(edgeSize / pixelSize)) or 0
+            state.sizePixels = sizePixels
+            state.hidden = sizePixels <= 0
+            ApplyBackdropBorderState(self)
+        end
+
+        function border:SetBackdropBorderColor(br, bg_, bb, ba)
+            local state = backdropBorderState[self]
+            if not state then return end
+            state.color = { br or 0, bg_ or 0, bb or 0, ba or 1 }
+            ApplyBackdropBorderState(self)
+        end
+
+        function border:SetBackdropColor()
+            -- Manual border frames do not render a backdrop fill.
+        end
+    end
+
+    local state = backdropBorderState[border]
+    state.parent = parent
+    state.sizePixels = borderSizePixels or 1
+    state.color = { r or 0, g or 0, b or 0, a or 1 }
+    state.hidden = (borderSizePixels or 0) <= 0
 
     parent.Border = border
+    ApplyBackdropBorderLayout(border)
     return border
 end
 
@@ -245,50 +558,50 @@ function UIKit.CreateAccentCheckbox(parent, options)
     end
     colors = colors or DEFAULT_CHECKBOX_COLORS
 
-    local checkbox = CreateFrame("Button", nil, parent, "BackdropTemplate")
-    checkbox:SetSize(size, size)
-    local QUICore = GetCore()
-    local px = (QUICore and QUICore.GetPixelSize and QUICore:GetPixelSize(checkbox)) or 1
-    checkbox:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
+    local checkbox = CreateFrame("Button", nil, parent)
+    accentCheckboxState[checkbox] = { sizePixels = size }
+    UIKit.SetSizePx(checkbox, size, size)
+
+    checkbox.bg = UIKit.CreateBackground(checkbox)
+    UIKit.CreateBorderLines(checkbox)
 
     checkbox.checkLeft = checkbox:CreateTexture(nil, "OVERLAY")
-    checkbox.checkLeft:SetColorTexture(colors.accent[1], colors.accent[2], colors.accent[3], 0.7)
-    checkbox.checkLeft:SetSize(math.max(4, math.floor(size * 0.31)), 2)
-    checkbox.checkLeft:SetPoint("CENTER", checkbox, "CENTER", -2, -1)
+    ApplyColorTexture(checkbox.checkLeft, colors.accent[1], colors.accent[2], colors.accent[3], 0.7)
     checkbox.checkLeft:SetRotation(math.rad(-45))
 
     checkbox.checkRight = checkbox:CreateTexture(nil, "OVERLAY")
-    checkbox.checkRight:SetColorTexture(colors.accent[1], colors.accent[2], colors.accent[3], 0.7)
-    checkbox.checkRight:SetSize(math.max(6, math.floor(size * 0.5)), 2)
-    checkbox.checkRight:SetPoint("CENTER", checkbox, "CENTER", 2, 0)
+    ApplyColorTexture(checkbox.checkRight, colors.accent[1], colors.accent[2], colors.accent[3], 0.7)
     checkbox.checkRight:SetRotation(math.rad(45))
 
     local hovered = false
     local function UpdateVisual()
         if checked then
-            checkbox:SetBackdropColor(colors.accent[1], colors.accent[2], colors.accent[3], 0.15)
+            checkbox.bg:SetVertexColor(colors.accent[1], colors.accent[2], colors.accent[3], 0.15)
             if hovered then
-                checkbox:SetBackdropBorderColor(colors.accentHover[1], colors.accentHover[2], colors.accentHover[3], 1)
+                UIKit.UpdateBorderLines(checkbox, 1, colors.accentHover[1], colors.accentHover[2], colors.accentHover[3], 1)
             else
-                checkbox:SetBackdropBorderColor(colors.accent[1] * 0.8, colors.accent[2] * 0.8, colors.accent[3] * 0.8, 1)
+                UIKit.UpdateBorderLines(checkbox, 1, colors.accent[1] * 0.8, colors.accent[2] * 0.8, colors.accent[3] * 0.8, 1)
             end
             checkbox.checkLeft:Show()
             checkbox.checkRight:Show()
         else
-            checkbox:SetBackdropColor(colors.toggleOff[1], colors.toggleOff[2], colors.toggleOff[3], 1)
+            checkbox.bg:SetVertexColor(colors.toggleOff[1], colors.toggleOff[2], colors.toggleOff[3], 1)
             if hovered then
-                checkbox:SetBackdropBorderColor(0.25, 0.28, 0.35, 1)
+                UIKit.UpdateBorderLines(checkbox, 1, 0.25, 0.28, 0.35, 1)
             else
-                checkbox:SetBackdropBorderColor(0.12, 0.14, 0.18, 1)
+                UIKit.UpdateBorderLines(checkbox, 1, 0.12, 0.14, 0.18, 1)
             end
             checkbox.checkLeft:Hide()
             checkbox.checkRight:Hide()
         end
     end
+
+    checkbox._RefreshVisual = UpdateVisual
+    UIKit.RegisterScaleRefresh(checkbox, "accentCheckbox", function(owner)
+        RefreshAccentCheckboxLayout(owner)
+        if owner._RefreshVisual then owner:_RefreshVisual() end
+    end)
+    RefreshAccentCheckboxLayout(checkbox)
 
     function checkbox:GetChecked()
         return checked
@@ -331,7 +644,7 @@ end
 
 --- Create an icon frame with a border texture and cropped artwork.
 --- @param parent Frame            Parent/anchor frame
---- @param size number             Icon dimensions in virtual coords (width = height)
+--- @param size number             Icon dimensions in physical pixels (width = height)
 --- @param borderSizePixels number Border inset in physical pixels
 --- @param r number|nil            Border red (default 0)
 --- @param g number|nil            Border green (default 0)
@@ -339,25 +652,32 @@ end
 --- @param a number|nil            Border alpha (default 1)
 --- @return Frame  The icon frame; also sets parent.icon, parent.iconTexture, parent.iconBorder
 function UIKit.CreateIcon(parent, size, borderSizePixels, r, g, b, a)
-    local QUICore = GetCore()
-    local borderSize = QUICore and QUICore:Pixels(borderSizePixels, parent) or borderSizePixels
-
     local iconFrame = CreateFrame("Frame", nil, parent)
-    iconFrame:SetSize(size, size)
+    UIKit.SetSizePx(iconFrame, size, size)
     iconFrame:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0)
 
-    -- Border fills the iconFrame (background layer)
     local border = iconFrame:CreateTexture(nil, "BACKGROUND", nil, -8)
-    border:SetColorTexture(r or 0, g or 0, b or 0, a or 1)
     border:SetAllPoints(iconFrame)
+    ApplyColorTexture(border, r or 0, g or 0, b or 0, a or 1)
     iconFrame.border = border
 
-    -- Icon texture inset by borderSize so border shows around it
     local iconTexture = iconFrame:CreateTexture(nil, "ARTWORK")
-    iconTexture:SetPoint("TOPLEFT", iconFrame, "TOPLEFT", borderSize, -borderSize)
-    iconTexture:SetPoint("BOTTOMRIGHT", iconFrame, "BOTTOMRIGHT", -borderSize, borderSize)
+    UIKit.SetInsetPointsPx(iconTexture, iconFrame, borderSizePixels or 1)
     iconTexture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    local core = GetCore()
+    if core and core.ApplyPixelSnapping then
+        core:ApplyPixelSnapping(iconTexture)
+    end
     iconFrame.texture = iconTexture
+
+    iconState[iconFrame] = {
+        sizePixels = size,
+        borderSizePixels = borderSizePixels or 1,
+        color = { r or 0, g or 0, b or 0, a or 1 },
+        texture = iconTexture,
+        borderTexture = border,
+    }
+    UIKit.RegisterScaleRefresh(iconFrame, "iconLayout", RefreshIconLayout)
 
     parent.icon = iconFrame
     parent.iconTexture = iconTexture
