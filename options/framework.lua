@@ -2035,6 +2035,112 @@ local CHEVRON_BG_ALPHA = 0.15
 local CHEVRON_BG_ALPHA_HOVER = 0.25
 local CHEVRON_TEXT_ALPHA = 0.7
 
+---------------------------------------------------------------------------
+-- DROPDOWN SHARED: Position menu above or below dropdown based on screen space,
+-- add scroll frame + scrollbar when content exceeds max visible height.
+---------------------------------------------------------------------------
+local DROPDOWN_MAX_VISIBLE_ITEMS = 10
+local DROPDOWN_ITEM_HEIGHT = 22
+local DROPDOWN_SCROLLBAR_WIDTH = 6
+
+-- Position the menu frame above or below the dropdown button.
+-- Uses GetCursorPosition() as a reliable screen-space reference (the cursor
+-- is always on the dropdown button when clicked). Compares cursor Y against
+-- screen height to decide whether to open up or down.
+local function PositionDropdownMenu(menuFrame, dropdown, menuHeight)
+    menuFrame:ClearAllPoints()
+    local uiScale = UIParent:GetEffectiveScale()
+    -- GetCursorPosition returns raw screen pixels; divide by UIParent scale
+    -- to get UIParent-space coordinates (which menuFrame uses as its parent).
+    local _, cursorY = GetCursorPosition()
+    cursorY = cursorY / uiScale
+    -- Check against the QUI options panel bottom, not the screen bottom,
+    -- since the menu is parented to UIParent but should stay within the panel.
+    local panelBottom = 0
+    if GUI.MainFrame and GUI.MainFrame:IsShown() then
+        local pb = GUI.MainFrame:GetBottom()
+        if pb then
+            local panelScale = GUI.MainFrame:GetEffectiveScale()
+            panelBottom = pb * panelScale / uiScale
+        end
+    end
+    -- Open upward if the menu would extend below the options panel
+    if cursorY - menuHeight < panelBottom + 10 then
+        menuFrame:SetPoint("BOTTOMLEFT", dropdown, "TOPLEFT", 0, 2)
+        menuFrame:SetPoint("BOTTOMRIGHT", dropdown, "TOPRIGHT", 0, 2)
+    else
+        menuFrame:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 0, -2)
+        menuFrame:SetPoint("TOPRIGHT", dropdown, "BOTTOMRIGHT", 0, -2)
+    end
+end
+
+-- Create a scrollable menu body inside a menuFrame.
+-- Returns scrollFrame, scrollContent, scrollBar (thumb-only, styled), UpdateThumb.
+-- Uses a custom mouse-wheel handler that also updates the scrollbar thumb,
+-- since bare ScrollFrames don't fire OnVerticalScroll/OnScrollRangeChanged reliably.
+local function CreateDropdownScrollBody(menuFrame)
+    local scrollFrame = CreateFrame("ScrollFrame", nil, menuFrame)
+    scrollFrame:SetPoint("TOPLEFT", 0, 0)
+    scrollFrame:SetPoint("BOTTOMRIGHT", 0, 0)
+
+    local scrollContent = CreateFrame("Frame", nil, scrollFrame)
+    scrollContent:SetWidth(200)
+    scrollFrame:SetScrollChild(scrollContent)
+
+    -- Minimal styled scrollbar (thin thumb, no arrows)
+    local scrollBar = CreateFrame("Frame", nil, menuFrame)
+    scrollBar:SetWidth(DROPDOWN_SCROLLBAR_WIDTH)
+    scrollBar:SetPoint("TOPRIGHT", menuFrame, "TOPRIGHT", -1, -2)
+    scrollBar:SetPoint("BOTTOMRIGHT", menuFrame, "BOTTOMRIGHT", -1, 2)
+    scrollBar:Hide()
+
+    local thumb = scrollBar:CreateTexture(nil, "OVERLAY")
+    thumb:SetWidth(DROPDOWN_SCROLLBAR_WIDTH)
+    thumb:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], 0.5)
+    scrollBar.thumb = thumb
+
+    -- Update thumb position/size based on current scroll state
+    local function UpdateThumb()
+        local contentH = scrollContent:GetHeight()
+        local frameH = scrollFrame:GetHeight()
+        if contentH <= frameH or frameH <= 0 then
+            scrollBar:Hide()
+            return
+        end
+        scrollBar:Show()
+        local trackH = scrollBar:GetHeight()
+        if trackH <= 0 then return end
+        local thumbH = math.max(20, (frameH / contentH) * trackH)
+        thumb:SetHeight(thumbH)
+        local scrollMax = contentH - frameH
+        local okScroll, scrollCur = pcall(scrollFrame.GetVerticalScroll, scrollFrame)
+        scrollCur = (okScroll and scrollCur) or 0
+        local ratio = (scrollMax > 0) and (scrollCur / scrollMax) or 0
+        local yOff = -ratio * (trackH - thumbH)
+        thumb:ClearAllPoints()
+        thumb:SetPoint("TOP", scrollBar, "TOP", 0, yOff)
+    end
+
+    -- Custom mouse wheel handler that scrolls AND updates thumb
+    local SCROLL_STEP = 22  -- one item per scroll tick
+    scrollFrame:EnableMouseWheel(true)
+    scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local okCur, currentScroll = pcall(self.GetVerticalScroll, self)
+        if not okCur then return end
+        local contentH = scrollContent:GetHeight()
+        local frameH = self:GetHeight()
+        local maxScroll = math.max(0, contentH - frameH)
+        local newScroll = math.max(0, math.min(currentScroll - (delta * SCROLL_STEP), maxScroll))
+        pcall(self.SetVerticalScroll, self, newScroll)
+        UpdateThumb()
+    end)
+
+    -- Also try to catch scroll range changes (works on some WoW versions)
+    scrollFrame:SetScript("OnScrollRangeChanged", function() UpdateThumb() end)
+
+    return scrollFrame, scrollContent, scrollBar, UpdateThumb
+end
+
 function GUI:CreateDropdown(parent, label, options, dbKey, dbTable, onChange)
     local container = CreateFrame("Frame", nil, parent)
     container:SetHeight(60)  -- Match slider height for vertical alignment
@@ -2165,10 +2271,8 @@ function GUI:CreateDropdown(parent, label, options, dbKey, dbTable, onChange)
     -- Initialize with current value
     SetValue(GetValue(), true)
     
-    -- Dropdown menu frame (created once, reused)
-    local menuFrame = CreateFrame("Frame", nil, dropdown, "BackdropTemplate")
-    menuFrame:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 0, -2)
-    menuFrame:SetPoint("TOPRIGHT", dropdown, "BOTTOMRIGHT", 0, -2)
+    -- Dropdown menu frame (parented to UIParent to avoid scroll frame clipping)
+    local menuFrame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
     menuFrame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -2177,28 +2281,34 @@ function GUI:CreateDropdown(parent, label, options, dbKey, dbTable, onChange)
     menuFrame:SetBackdropColor(0.08, 0.08, 0.08, 0.98)
     menuFrame:SetBackdropBorderColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a)
     menuFrame:SetFrameStrata("TOOLTIP")
+    menuFrame:SetClipsChildren(true)
     menuFrame:Hide()
-    
+
+    -- Hide menu when dropdown becomes hidden (tab switch, panel close, etc.)
+    dropdown:HookScript("OnHide", function() menuFrame:Hide() end)
+
+    -- Scroll body for long option lists
+    local scrollFrame, scrollContent, scrollBar, updateThumb = CreateDropdownScrollBody(menuFrame)
+
     local menuButtons = {}
-    local buttonHeight = 22
-    
+    local buttonHeight = DROPDOWN_ITEM_HEIGHT
+
     for i, opt in ipairs(container.options) do
-        local btn = CreateFrame("Button", nil, menuFrame, "BackdropTemplate")
+        local btn = CreateFrame("Button", nil, scrollContent, "BackdropTemplate")
         btn:SetHeight(buttonHeight)
         btn:SetPoint("TOPLEFT", 2, -2 - (i-1) * buttonHeight)
         btn:SetPoint("TOPRIGHT", -2, -2 - (i-1) * buttonHeight)
-        
+
         btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         SetFont(btn.text, 11, "", C.text)
         btn.text:SetText(opt.text)
         btn.text:SetPoint("LEFT", 8, 0)
-        
+
         btn:SetScript("OnEnter", function(self)
             pcall(function()
                 self:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8"})
                 self:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], 0.25)
             end)
-            -- Keep text white
         end)
         btn:SetScript("OnLeave", function(self)
             pcall(function()
@@ -2209,76 +2319,64 @@ function GUI:CreateDropdown(parent, label, options, dbKey, dbTable, onChange)
             SetValue(opt.value)
             menuFrame:Hide()
         end)
-        
+
         menuButtons[i] = btn
     end
-    
-    menuFrame:SetHeight(4 + #container.options * buttonHeight)
-    
+
+    local totalHeight = 4 + #container.options * buttonHeight
+    local maxHeight = 4 + DROPDOWN_MAX_VISIBLE_ITEMS * buttonHeight
+    scrollContent:SetHeight(totalHeight)
+    menuFrame:SetHeight(math.min(totalHeight, maxHeight))
+
+    -- Adjust scroll content right edge when scrollbar is visible
+    local function UpdateScrollInset()
+        if scrollBar:IsShown() then
+            scrollFrame:SetPoint("BOTTOMRIGHT", -(DROPDOWN_SCROLLBAR_WIDTH + 2), 0)
+        else
+            scrollFrame:SetPoint("BOTTOMRIGHT", 0, 0)
+        end
+    end
+
     -- Toggle menu on click
     dropdown:SetScript("OnClick", function()
         if menuFrame:IsShown() then
             menuFrame:Hide()
         else
+            PositionDropdownMenu(menuFrame, dropdown, menuFrame:GetHeight())
+            scrollContent:SetWidth(dropdown:GetWidth() - 4)
             menuFrame:Show()
+            C_Timer.After(0, function() updateThumb(); UpdateScrollInset() end)
         end
     end)
-    
+
     -- Close menu when clicking elsewhere (with delay to handle gap)
     local closeTimer = 0
     local CLOSE_DELAY = 0.15  -- 150ms grace period
-    
-    menuFrame:SetScript("OnShow", function()
+
+    menuFrame:HookScript("OnShow", function()
         closeTimer = 0
         menuFrame.__checkElapsed = 0
         menuFrame:SetScript("OnUpdate", function(self, elapsed)
-            -- Throttle checks to ~15 FPS (66ms) for CPU efficiency
-            self.__checkElapsed = self.__checkElapsed + elapsed
+            self.__checkElapsed = (self.__checkElapsed or 0) + elapsed
             if self.__checkElapsed < 0.066 then return end
             local deltaTime = self.__checkElapsed
             self.__checkElapsed = 0
 
-            -- Check if mouse is over dropdown button OR menu (with tolerance)
             local isOverDropdown = dropdown:IsMouseOver()
             local isOverMenu = self:IsMouseOver()
 
-            -- Also check if mouse is in the gap between them
-            local scale = dropdown:GetEffectiveScale()
-            local mouseX, mouseY = GetCursorPosition()
-            mouseX, mouseY = mouseX / scale, mouseY / scale
-
-            local dLeft, dBottom, dWidth, dHeight = dropdown:GetRect()
-            local mLeft, mBottom, mWidth, mHeight = self:GetRect()
-
-            if dLeft and mLeft then
-                -- Check if mouse X is within the dropdown/menu horizontal bounds
-                local inHorizontalBounds = mouseX >= dLeft and mouseX <= (dLeft + dWidth)
-                -- Check if mouse Y is between the bottom of dropdown and top of menu (the gap)
-                local inGap = mouseY >= mBottom and mouseY <= (dBottom + dHeight) and inHorizontalBounds
-
-                if isOverDropdown or isOverMenu or inGap then
-                    closeTimer = 0
-                else
-                    closeTimer = closeTimer + deltaTime
-                    if closeTimer > CLOSE_DELAY then
-                        self:Hide()
-                    end
+            if not isOverDropdown and not isOverMenu then
+                closeTimer = closeTimer + deltaTime
+                if closeTimer > CLOSE_DELAY then
+                    self:Hide()
                 end
             else
-                -- Fallback if GetRect fails
-                if not isOverDropdown and not isOverMenu then
-                    closeTimer = closeTimer + deltaTime
-                    if closeTimer > CLOSE_DELAY then
-                        self:Hide()
-                    end
-                else
-                    closeTimer = 0
-                end
+                closeTimer = 0
             end
         end)
     end)
-    
-    menuFrame:SetScript("OnHide", function()
+
+    menuFrame:HookScript("OnHide", function()
         menuFrame:SetScript("OnUpdate", nil)
         closeTimer = 0
     end)
@@ -2415,10 +2513,8 @@ function GUI:CreateDropdownFullWidth(parent, label, options, dbKey, dbTable, onC
     container.SetValue = SetValue
     SetValue(GetValue(), true)
     
-    -- Dropdown menu
-    local menuFrame = CreateFrame("Frame", nil, dropdown, "BackdropTemplate")
-    menuFrame:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 0, -2)
-    menuFrame:SetPoint("TOPRIGHT", dropdown, "BOTTOMRIGHT", 0, -2)
+    -- Dropdown menu (parented to UIParent to avoid scroll frame clipping)
+    local menuFrame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
     menuFrame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -2427,26 +2523,32 @@ function GUI:CreateDropdownFullWidth(parent, label, options, dbKey, dbTable, onC
     menuFrame:SetBackdropColor(0.08, 0.08, 0.08, 0.98)
     menuFrame:SetBackdropBorderColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a)
     menuFrame:SetFrameStrata("TOOLTIP")
+    menuFrame:SetClipsChildren(true)
     menuFrame:Hide()
-    
-    local buttonHeight = 22
+
+    -- Hide menu when dropdown becomes hidden (tab switch, panel close, etc.)
+    dropdown:HookScript("OnHide", function() menuFrame:Hide() end)
+
+    -- Scroll body for long option lists
+    local scrollFrame, scrollContent, scrollBar, updateThumb = CreateDropdownScrollBody(menuFrame)
+
+    local buttonHeight = DROPDOWN_ITEM_HEIGHT
     for i, opt in ipairs(container.options) do
-        local btn = CreateFrame("Button", nil, menuFrame, "BackdropTemplate")
+        local btn = CreateFrame("Button", nil, scrollContent, "BackdropTemplate")
         btn:SetHeight(buttonHeight)
         btn:SetPoint("TOPLEFT", 2, -2 - (i-1) * buttonHeight)
         btn:SetPoint("TOPRIGHT", -2, -2 - (i-1) * buttonHeight)
-        
+
         btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         SetFont(btn.text, 11, "", C.text)
         btn.text:SetText(opt.text)
         btn.text:SetPoint("LEFT", 8, 0)
-        
+
         btn:SetScript("OnEnter", function(self)
             pcall(function()
                 self:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8"})
                 self:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], 0.25)
             end)
-            -- Keep text white
         end)
         btn:SetScript("OnLeave", function(self)
             pcall(function() self:SetBackdrop(nil) end)
@@ -2456,25 +2558,38 @@ function GUI:CreateDropdownFullWidth(parent, label, options, dbKey, dbTable, onC
             menuFrame:Hide()
         end)
     end
-    
-    menuFrame:SetHeight(4 + #container.options * buttonHeight)
-    
+
+    local totalHeight = 4 + #container.options * buttonHeight
+    local maxHeight = 4 + DROPDOWN_MAX_VISIBLE_ITEMS * buttonHeight
+    scrollContent:SetHeight(totalHeight)
+    menuFrame:SetHeight(math.min(totalHeight, maxHeight))
+
+    local function UpdateScrollInset()
+        if scrollBar:IsShown() then
+            scrollFrame:SetPoint("BOTTOMRIGHT", -(DROPDOWN_SCROLLBAR_WIDTH + 2), 0)
+        else
+            scrollFrame:SetPoint("BOTTOMRIGHT", 0, 0)
+        end
+    end
+
     dropdown:SetScript("OnClick", function()
         if menuFrame:IsShown() then
             menuFrame:Hide()
         else
+            PositionDropdownMenu(menuFrame, dropdown, menuFrame:GetHeight())
+            scrollContent:SetWidth(dropdown:GetWidth() - 4)
             menuFrame:Show()
+            C_Timer.After(0, function() updateThumb(); UpdateScrollInset() end)
         end
     end)
-    
+
     -- Close menu when clicking elsewhere
     local closeTimer = 0
-    menuFrame:SetScript("OnShow", function()
+    menuFrame:HookScript("OnShow", function()
         closeTimer = 0
         menuFrame.__checkElapsed = 0
         menuFrame:SetScript("OnUpdate", function(self, elapsed)
-            -- Throttle checks to ~15 FPS (66ms) for CPU efficiency
-            self.__checkElapsed = self.__checkElapsed + elapsed
+            self.__checkElapsed = (self.__checkElapsed or 0) + elapsed
             if self.__checkElapsed < 0.066 then return end
             local deltaTime = self.__checkElapsed
             self.__checkElapsed = 0
@@ -2492,7 +2607,7 @@ function GUI:CreateDropdownFullWidth(parent, label, options, dbKey, dbTable, onC
         end)
     end)
 
-    menuFrame:SetScript("OnHide", function()
+    menuFrame:HookScript("OnHide", function()
         menuFrame:SetScript("OnUpdate", nil)
         closeTimer = 0
     end)
@@ -3216,10 +3331,8 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
         chevronRight:SetColorTexture(C.accent[1], C.accent[2], C.accent[3], CHEVRON_TEXT_ALPHA)
     end)
 
-    -- Menu frame
-    local menuFrame = CreateFrame("Frame", nil, dropdown, "BackdropTemplate")
-    menuFrame:SetPoint("TOPLEFT", dropdown, "BOTTOMLEFT", 0, -2)
-    menuFrame:SetPoint("TOPRIGHT", dropdown, "BOTTOMRIGHT", 0, -2)
+    -- Menu frame (parented to UIParent to avoid scroll frame clipping)
+    local menuFrame = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
     menuFrame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -3231,22 +3344,12 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
     menuFrame:SetClipsChildren(true)
     menuFrame:Hide()
 
-    -- Scroll frame for long option lists
-    local scrollFrame = CreateFrame("ScrollFrame", nil, menuFrame)
-    scrollFrame:SetPoint("TOPLEFT", 0, 0)
-    scrollFrame:SetPoint("BOTTOMRIGHT", 0, 0)
-    -- Scroll content (child frame)
-    local scrollContent = CreateFrame("Frame", nil, scrollFrame)
-    scrollContent:SetWidth(menuFrame:GetWidth() or 200)
-    scrollFrame:SetScrollChild(scrollContent)
+    -- Hide menu when dropdown becomes hidden (tab switch, panel close, etc.)
+    dropdown:HookScript("OnHide", function() menuFrame:Hide() end)
+
+    -- Scroll body with scrollbar
+    local scrollFrame, scrollContent, scrollBar, updateThumb = CreateDropdownScrollBody(menuFrame)
     menuFrame.scrollContent = scrollContent
-
-    ns.ApplyScrollWheel(scrollFrame)
-
-    -- Update scroll content width when menu opens
-    menuFrame:SetScript("OnShow", function(self)
-        scrollContent:SetWidth(self:GetWidth() - 2)
-    end)
 
     container.dropdown = dropdown
     container.menuFrame = menuFrame
@@ -3275,24 +3378,26 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
         if not skipOnChange and onChange then onChange(val) end
     end
 
+    local function UpdateScrollInset()
+        if scrollBar:IsShown() then
+            scrollFrame:SetPoint("BOTTOMRIGHT", -(DROPDOWN_SCROLLBAR_WIDTH + 2), 0)
+        else
+            scrollFrame:SetPoint("BOTTOMRIGHT", 0, 0)
+        end
+    end
+
     local function BuildMenu()
         -- Clear existing children from scroll content
-        local scrollContent = menuFrame.scrollContent
-        if scrollContent then
-            for _, child in ipairs({scrollContent:GetChildren()}) do child:Hide() end
-        end
+        for _, child in ipairs({scrollContent:GetChildren()}) do child:Hide() end
 
         local yOff = -4
         local itemHeight = 20
         local headerHeight = 18
-        local maxVisibleItems = 8
-        local numItems = #container.options
+        local maxVisibleItems = DROPDOWN_MAX_VISIBLE_ITEMS
 
         for i, opt in ipairs(container.options) do
             if opt.isHeader then
-                -- Non-clickable category header
-                local header = CreateFrame("Frame", nil, scrollContent or menuFrame)
-                -- Add top spacing before headers (except the first item)
+                local header = CreateFrame("Frame", nil, scrollContent)
                 if i > 1 then yOff = yOff - 4 end
                 header:SetHeight(headerHeight)
                 header:SetPoint("TOPLEFT", 4, yOff)
@@ -3303,7 +3408,7 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
                 headerText:SetPoint("LEFT", 4, 0)
                 yOff = yOff - headerHeight
             else
-                local btn = CreateFrame("Button", nil, scrollContent or menuFrame)
+                local btn = CreateFrame("Button", nil, scrollContent)
                 btn:SetHeight(itemHeight)
                 btn:SetPoint("TOPLEFT", 4, yOff)
                 btn:SetPoint("TOPRIGHT", -4, yOff)
@@ -3324,12 +3429,8 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
         local totalHeight = math.abs(yOff) + 4
         local maxHeight = (maxVisibleItems * itemHeight) + 8
 
-        -- Update scroll content height
-        if scrollContent then
-            scrollContent:SetHeight(totalHeight)
-        end
-
-        -- Set menu height (capped at maxHeight)
+        scrollContent:SetHeight(totalHeight)
+        scrollContent:SetWidth(dropdown:GetWidth() - 4)
         menuFrame:SetHeight(math.min(totalHeight, maxHeight))
     end
 
@@ -3338,8 +3439,39 @@ function GUI:CreateFormDropdown(parent, label, options, dbKey, dbTable, onChange
             menuFrame:Hide()
         else
             BuildMenu()
+            PositionDropdownMenu(menuFrame, dropdown, menuFrame:GetHeight())
             menuFrame:Show()
+            C_Timer.After(0, function() updateThumb(); UpdateScrollInset() end)
         end
+    end)
+
+    -- Close menu when clicking elsewhere
+    local closeTimer = 0
+    menuFrame:HookScript("OnShow", function()
+        closeTimer = 0
+        menuFrame.__checkElapsed = 0
+        menuFrame:SetScript("OnUpdate", function(self, elapsed)
+            self.__checkElapsed = (self.__checkElapsed or 0) + elapsed
+            if self.__checkElapsed < 0.066 then return end
+            local deltaTime = self.__checkElapsed
+            self.__checkElapsed = 0
+
+            local isOverDropdown = dropdown:IsMouseOver()
+            local isOverMenu = self:IsMouseOver()
+            if not isOverDropdown and not isOverMenu then
+                closeTimer = closeTimer + deltaTime
+                if closeTimer > 0.15 then
+                    self:Hide()
+                end
+            else
+                closeTimer = 0
+            end
+        end)
+    end)
+
+    menuFrame:HookScript("OnHide", function()
+        menuFrame:SetScript("OnUpdate", nil)
+        closeTimer = 0
     end)
 
     local function SetOptions(newOptions)
