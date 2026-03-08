@@ -3642,6 +3642,62 @@ end
 ---------------------------------------------------------------------------
 -- SEARCH FUNCTIONALITY
 ---------------------------------------------------------------------------
+---------------------------------------------------------------------------
+-- Scrollable read-only text box (used by Welcome and Import tabs)
+---------------------------------------------------------------------------
+function GUI:CreateScrollableTextBox(parent, height, text, options)
+    options = options or {}
+    local bgColor = options.bgColor or {0.05, 0.07, 0.1, 0.9}
+    local borderColor = options.borderColor or C.border
+    local fontSize = options.fontSize or 11
+
+    local container = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    container:SetHeight(height)
+
+    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(container) or 1
+    container:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = px,
+    })
+    container:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+    container:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4] or 1)
+
+    -- ScrollFrame to hold the EditBox
+    local scrollFrame = CreateFrame("ScrollFrame", nil, container)
+    scrollFrame:SetPoint("TOPLEFT", 6, -4)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -6, 4)
+
+    local editBox = CreateFrame("EditBox", nil, scrollFrame)
+    editBox:SetMultiLine(true)
+    editBox:SetAutoFocus(false)
+    editBox:SetFont(GetFontPath(), fontSize, "")
+    editBox:SetTextColor(0.7, 0.75, 0.8, 1)
+    editBox:SetWidth(scrollFrame:GetWidth() or 400)
+    editBox:SetText(text or "")
+    editBox:SetCursorPosition(0)
+
+    scrollFrame:SetScrollChild(editBox)
+
+    -- Keep editBox width in sync with scrollFrame
+    scrollFrame:SetScript("OnSizeChanged", function(self, w)
+        editBox:SetWidth(w)
+    end)
+
+    -- Mouse wheel scrolling
+    scrollFrame:EnableMouseWheel(true)
+    scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local current = self:GetVerticalScroll()
+        local maxScroll = math.max(0, editBox:GetHeight() - self:GetHeight())
+        local newScroll = math.min(maxScroll, math.max(0, current - delta * 20))
+        self:SetVerticalScroll(newScroll)
+    end)
+
+    container.editBox = editBox
+    container.scrollFrame = scrollFrame
+    return container
+end
+
 local SEARCH_DEBOUNCE = 0.15  -- 150ms debounce
 local SEARCH_MIN_CHARS = 2    -- Minimum characters before searching
 local SEARCH_MAX_RESULTS = 30 -- Cap results to prevent UI overload
