@@ -201,28 +201,34 @@ local function UpdateFrameIndicators(frame)
     local maxIcons = ai.maxIndicators or 5
     local anchor = ai.anchor or "TOPLEFT"
 
-    -- Build a set of active auras on the unit
+    -- Build a set of active auras on the unit from shared cache
     local activeAuras = {} -- [spellID] = auraData
-    local GetUnitAuras = C_UnitAuras.GetUnitAuras
-    if GetUnitAuras then
-        for _, filter in ipairs({"HELPFUL", "HARMFUL"}) do
-            local auras = GetUnitAuras(unit, filter, 40)
-            if auras then
-                for _, auraData in ipairs(auras) do
-                    local spellID = SafeValue(auraData.spellId, nil)
-                    if spellID then activeAuras[spellID] = auraData end
-                end
+    local GFA = ns.QUI_GroupFrameAuras
+    local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
+    if cache then
+        if cache.helpful then
+            for _, auraData in ipairs(cache.helpful) do
+                local spellID = SafeValue(auraData.spellId, nil)
+                if spellID then activeAuras[spellID] = auraData end
+            end
+        end
+        if cache.harmful then
+            for _, auraData in ipairs(cache.harmful) do
+                local spellID = SafeValue(auraData.spellId, nil)
+                if spellID then activeAuras[spellID] = auraData end
             end
         end
     else
-        for _, filter in ipairs({"HELPFUL", "HARMFUL"}) do
-            local idx = 1
-            while idx <= 80 do
-                local ok, auraData = pcall(C_UnitAuras.GetAuraDataByIndex, unit, idx, filter)
-                if not ok or not auraData then break end
-                local spellID = SafeValue(auraData.spellId, nil)
-                if spellID then activeAuras[spellID] = auraData end
-                idx = idx + 1
+        -- Fallback: direct scan if cache not populated
+        if C_UnitAuras and C_UnitAuras.GetUnitAuras then
+            for _, filter in ipairs({"HELPFUL", "HARMFUL"}) do
+                local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit, filter, 40)
+                if ok and auras then
+                    for _, auraData in ipairs(auras) do
+                        local spellID = SafeValue(auraData.spellId, nil)
+                        if spellID then activeAuras[spellID] = auraData end
+                    end
+                end
             end
         end
     end
@@ -238,94 +244,102 @@ local function UpdateFrameIndicators(frame)
     local container = EnsureContainer(frame)
     PositionContainer(frame)
 
+    -- Expose active indicator auraInstanceIDs for buff deduplication
+    if not frame._indicatorAuraIDs then frame._indicatorAuraIDs = {} end
+    wipe(frame._indicatorAuraIDs)
+
     local count = 0
     for _, spellID in ipairs(trackedSpells) do
         if count >= maxIcons then break end
 
         local auraData = activeAuras[spellID]
         if auraData then
-            count = count + 1
-            local icon = AcquireIcon(container)
-            icon:SetSize(iconSize, iconSize)
+            -- Skip if already shown as a defensive indicator
+            local defIDs = frame._defensiveAuraIDs
+            if not (defIDs and auraData.auraInstanceID and defIDs[auraData.auraInstanceID]) then
+                -- Track for buff dedup
+                if auraData.auraInstanceID then
+                    frame._indicatorAuraIDs[auraData.auraInstanceID] = true
+                end
+                count = count + 1
+                local icon = AcquireIcon(container)
+                icon:SetSize(iconSize, iconSize)
 
-            -- Position in row
-            icon:ClearAllPoints()
-            -- First icon anchor: vertical from container anchor, horizontal from grow direction
-            local vertPart = anchor:find("TOP") and "TOP" or (anchor:find("BOTTOM") and "BOTTOM" or "")
-            local firstHoriz = growDir == "LEFT" and "RIGHT" or "LEFT"
-            local firstAnchor = vertPart .. firstHoriz
+                -- Position in row
+                icon:ClearAllPoints()
+                local vertPart = anchor:find("TOP") and "TOP" or (anchor:find("BOTTOM") and "BOTTOM" or "")
+                local firstHoriz = growDir == "LEFT" and "RIGHT" or "LEFT"
+                local firstAnchor = vertPart .. firstHoriz
 
-            if count == 1 then
-                icon:SetPoint(firstAnchor, container, firstAnchor, 0, 0)
-            else
-                local prev = state.icons[count - 1]
-                if prev then
-                    if growDir == "LEFT" then
-                        icon:SetPoint("RIGHT", prev, "LEFT", -spacing, 0)
-                    else
-                        icon:SetPoint("LEFT", prev, "RIGHT", spacing, 0)
+                if count == 1 then
+                    icon:SetPoint(firstAnchor, container, firstAnchor, 0, 0)
+                else
+                    local prev = state.icons[count - 1]
+                    if prev then
+                        if growDir == "LEFT" then
+                            icon:SetPoint("RIGHT", prev, "LEFT", -spacing, 0)
+                        else
+                            icon:SetPoint("LEFT", prev, "RIGHT", spacing, 0)
+                        end
                     end
                 end
-            end
 
-            -- Icon texture (C-side handles secret values)
-            if icon.icon and auraData.icon then
-                icon.icon:SetTexture(auraData.icon)
-            end
+                -- Icon texture (C-side handles secret values)
+                if icon.icon and auraData.icon then
+                    icon.icon:SetTexture(auraData.icon)
+                end
 
-            -- Cooldown swipe
-            if icon.cooldown and auraData then
-                local dur = auraData.duration
-                local expTime = auraData.expirationTime
-                if dur and expTime then
-                    if unit and auraData.auraInstanceID
-                       and C_UnitAuras and C_UnitAuras.GetAuraDuration
-                       and icon.cooldown.SetCooldownFromDurationObject then
-                        local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraData.auraInstanceID)
-                        if ok and durationObj then
-                            pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durationObj)
+                -- Cooldown swipe
+                if icon.cooldown and auraData then
+                    local dur = auraData.duration
+                    local expTime = auraData.expirationTime
+                    if dur and expTime then
+                        if unit and auraData.auraInstanceID
+                           and C_UnitAuras and C_UnitAuras.GetAuraDuration
+                           and icon.cooldown.SetCooldownFromDurationObject then
+                            local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraData.auraInstanceID)
+                            if ok and durationObj then
+                                pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, durationObj)
+                            elseif icon.cooldown.SetCooldownFromExpirationTime then
+                                pcall(icon.cooldown.SetCooldownFromExpirationTime, icon.cooldown, expTime, dur)
+                            else
+                                pcall(function() icon.cooldown:SetCooldown(expTime - dur, dur) end)
+                            end
                         elseif icon.cooldown.SetCooldownFromExpirationTime then
                             pcall(icon.cooldown.SetCooldownFromExpirationTime, icon.cooldown, expTime, dur)
                         else
                             pcall(function() icon.cooldown:SetCooldown(expTime - dur, dur) end)
                         end
-                    elseif icon.cooldown.SetCooldownFromExpirationTime then
-                        pcall(icon.cooldown.SetCooldownFromExpirationTime, icon.cooldown, expTime, dur)
-                    else
-                        pcall(function() icon.cooldown:SetCooldown(expTime - dur, dur) end)
                     end
                 end
-            end
 
-            -- Stacks
-            if icon.stackText and auraData then
-                local stacks = SafeToNumber(auraData.applications, 0)
-                icon.stackText:SetText(stacks > 1 and stacks or "")
-            end
+                -- Stacks
+                if icon.stackText and auraData then
+                    local stacks = SafeToNumber(auraData.applications, 0)
+                    icon.stackText:SetText(stacks > 1 and stacks or "")
+                end
 
-            icon:Show()
-            state.icons[count] = icon
+                icon:Show()
+                state.icons[count] = icon
+            end
         end
     end
 end
 
 ---------------------------------------------------------------------------
 -- EVENT HOOKUP
+-- UNIT_AURA is driven by the shared aura scan in groupframes_auras.lua
+-- (FlushPendingAuras calls GFI:RefreshFrame) to ensure indicators update
+-- before buffs, enabling buff deduplication.
 ---------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("UNIT_AURA")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     local GF = ns.QUI_GroupFrames
     if not GF or not GF.initialized then return end
 
-    if event == "UNIT_AURA" then
-        local frame = GF.unitFrameMap[arg1]
-        if frame then
-            UpdateFrameIndicators(frame)
-        end
-    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+    if event == "PLAYER_SPECIALIZATION_CHANGED" then
         QUI_GFI:RefreshAll()
     end
 end)

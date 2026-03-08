@@ -729,10 +729,48 @@ local function UpdateFrameAuras(frame)
         end
 
         wipe(sortedAuras)
+        local hidePermanent = auraSettings.buffHidePermanent
+        local dedup = auraSettings.buffDeduplicateDefensives ~= false
+
+        -- Build dedup set from defensives + aura indicators (reuse per frame)
+        local dedupSet
+        if dedup then
+            local defIDs = frame._defensiveAuraIDs
+            local indIDs = frame._indicatorAuraIDs
+            local hasDef = defIDs and next(defIDs)
+            local hasInd = indIDs and next(indIDs)
+            if hasDef and hasInd then
+                if not frame._buffDedupSet then frame._buffDedupSet = {} end
+                wipe(frame._buffDedupSet)
+                for id in pairs(defIDs) do frame._buffDedupSet[id] = true end
+                for id in pairs(indIDs) do frame._buffDedupSet[id] = true end
+                dedupSet = frame._buffDedupSet
+            elseif hasDef then
+                dedupSet = defIDs
+            elseif hasInd then
+                dedupSet = indIDs
+            end
+        end
+
         local cache = unitAuraCache[unit]
         if cache and cache.helpful then
             for _, auraData in ipairs(cache.helpful) do
                 local dominated = false
+
+                -- Dedup: skip buffs already shown as defensives or indicators
+                if not dominated and dedupSet and auraData.auraInstanceID then
+                    if dedupSet[auraData.auraInstanceID] then
+                        dominated = true
+                    end
+                end
+
+                -- Hide permanent (duration 0) buffs
+                if not dominated and hidePermanent then
+                    local dur = SafeToNumber(auraData.duration, -1)
+                    if dur == 0 then
+                        dominated = true
+                    end
+                end
 
                 -- "Only My Buffs" filter
                 if onlyMine and not dominated then
@@ -856,10 +894,14 @@ local function FlushPendingAuras()
         if frame then
             -- Single scan populates shared cache
             ScanUnitAuras(unit)
-            -- All consumers read from cache — no redundant API calls
-            UpdateFrameAuras(frame)
+            -- Defensives + indicators first so buff dedup set is populated
             if GF.UpdateDispelOverlay then GF:UpdateDispelOverlay(frame) end
             if GF.UpdateDefensiveIndicator then GF:UpdateDefensiveIndicator(frame) end
+            -- Aura indicators (tracked spells) before buffs for dedup
+            local GFI = ns.QUI_GroupFrameIndicators
+            if GFI and GFI.RefreshFrame then GFI:RefreshFrame(frame) end
+            -- Buff/debuff icons last — can deduplicate against defensives + indicators
+            UpdateFrameAuras(frame)
         end
     end
     wipe(pendingAuraUnits)

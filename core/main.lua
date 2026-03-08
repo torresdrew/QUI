@@ -2512,6 +2512,8 @@ local defaults = {
                 -- Aura filtering
                 filterMode = "off",           -- "off" | "classification" | "whitelist" | "blacklist"
                 buffFilterOnlyMine = false,   -- only show player-cast buffs
+                buffHidePermanent = false,    -- hide permanent (duration 0) buffs
+                buffDeduplicateDefensives = true, -- hide buffs already shown as defensives/indicators
                 buffClassifications = {
                     raid = false,
                     cancelable = false,

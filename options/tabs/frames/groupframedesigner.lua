@@ -1542,6 +1542,8 @@ local function BuildBuffsSettings(content, gfdb, onChange)
 
     local onlyMineCheck = GUI:CreateFormCheckbox(content, "Only My Buffs", "buffFilterOnlyMine", auras, onChange)
     L:Row(onlyMineCheck, FORM_ROW, cond)
+    L:Row(GUI:CreateFormCheckbox(content, "Hide Permanent Buffs", "buffHidePermanent", auras, onChange), FORM_ROW, cond)
+    L:Row(GUI:CreateFormCheckbox(content, "Deduplicate Defensives/Indicators", "buffDeduplicateDefensives", auras, onChange), FORM_ROW, cond)
 
     local classCond = function() return auras.showBuffs and (auras.filterMode or "off") == "classification" end
     L:Row(classificationContainer, FORM_ROW * 3, classCond)

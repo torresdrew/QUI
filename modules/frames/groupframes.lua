@@ -1233,6 +1233,13 @@ local function UpdateDefensiveIndicator(frame)
     local growFn = DEFENSIVE_GROWTH_OFFSETS[growDir] or DEFENSIVE_GROWTH_OFFSETS.RIGHT
     local stepX, stepY = growFn(iconSize, spacing)
 
+    -- Expose active defensive auraInstanceIDs for buff deduplication
+    if not frame._defensiveAuraIDs then frame._defensiveAuraIDs = {} end
+    wipe(frame._defensiveAuraIDs)
+    for id in pairs(seen) do
+        frame._defensiveAuraIDs[id] = true
+    end
+
     for i, defIcon in ipairs(frame.defensiveIcons) do
         local aura = foundAuras[i]
         if aura then

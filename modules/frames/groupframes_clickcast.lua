@@ -82,11 +82,14 @@ end
 ---------------------------------------------------------------------------
 -- SECURE HANDLER: Keyboard binding infrastructure
 ---------------------------------------------------------------------------
--- A single SecureHandlerBaseTemplate header owns all keyboard override
--- bindings.  Each group frame gets WrapScript hooks that call
--- SetBindingClick on the header during OnEnter and ClearBindings on
--- OnLeave.  This runs in the restricted (secure) environment so it
--- works during combat.
+-- The header (SecureHandlerBaseTemplate) owns all override bindings.
+-- WrapScript hooks on each frame use `owner` (the header) to call
+-- SetBindingClick/ClearBindings — the frame itself does NOT need
+-- SecureHandlerBaseTemplate methods.
+--
+-- On hover: header reads key count + key/vbtn attributes, calls
+-- SetBindingClick to route each key to the hovered frame's virtual button.
+-- On leave: header clears all override bindings.
 ---------------------------------------------------------------------------
 local bindingHeader
 
@@ -97,49 +100,47 @@ local function GetBindingHeader()
     return bindingHeader
 end
 
--- Secure OnEnter snippet: reads key count and key mappings from the header,
--- then calls SetBindingClick for each to route key presses to the hovered
--- frame's virtual button attributes (type-QUIKeyN / macrotext-QUIKeyN).
+-- WrapScript pre-body for OnEnter.
+-- `self` = the hovered frame, `owner` = the header (SecureHandlerBaseTemplate).
+-- The header owns and manages all override bindings.
 local ENTER_SNIPPET = [[
-    local header = self:GetFrameRef("clickCastHeader")
-    if not header then return end
-    if not header:GetAttribute("clickcast-enabled") then return end
-
-    local count = header:GetAttribute("clickcast-keycount") or 0
+    owner:ClearBindings()
+    local count = owner:GetAttribute("clickcast-keycount") or 0
     if count == 0 then return end
 
     local frameName = self:GetName()
     if not frameName then return end
 
     for i = 1, count do
-        local key = header:GetAttribute("clickcast-key" .. i)
-        if key then
-            header:SetBindingClick(true, key, frameName, "QUIKey" .. i)
+        local key = owner:GetAttribute("clickcast-key" .. i)
+        local vBtn = owner:GetAttribute("clickcast-vbtn" .. i)
+        if key and vBtn then
+            owner:SetBindingClick(true, key, frameName, vBtn)
         end
     end
 ]]
 
--- Secure OnLeave snippet: clear all override bindings set by the header.
+-- WrapScript pre-body for OnLeave.
 local LEAVE_SNIPPET = [[
-    local header = self:GetFrameRef("clickCastHeader")
-    if header then
-        header:ClearBindings()
-    end
+    owner:ClearBindings()
 ]]
 
--- Wrap a frame's OnEnter/OnLeave with the secure header snippets.
+-- Wrap a frame's OnEnter/OnLeave with secure handler snippets.
 -- Only called once per frame (tracked by secureWrappedFrames).
 local function WrapFrameSecureHandlers(frame)
     if secureWrappedFrames[frame] then return end
     if InCombatLockdown() then return end
 
     local header = GetBindingHeader()
-    frame:SetFrameRef("clickCastHeader", header)
-
     SecureHandlerWrapScript(frame, "OnEnter", header, ENTER_SNIPPET)
     SecureHandlerWrapScript(frame, "OnLeave", header, LEAVE_SNIPPET)
 
     secureWrappedFrames[frame] = true
+end
+
+-- Build virtual button name from a binding's modifiers + key.
+local function GetVirtualButtonName(binding)
+    return "key" .. (binding.modifiers or ""):gsub("%-", "") .. binding.key:lower()
 end
 
 -- Update the header's key-mapping attributes (shared across all frames).
@@ -147,28 +148,30 @@ local function UpdateHeaderKeyAttributes()
     local header = GetBindingHeader()
     if InCombatLockdown() then return end
 
-    -- Clear old key attributes
+    -- Clear old attributes
     local oldCount = header:GetAttribute("clickcast-keycount") or 0
     for i = 1, oldCount do
         header:SetAttribute("clickcast-key" .. i, nil)
+        header:SetAttribute("clickcast-vbtn" .. i, nil)
     end
 
-    -- Set new key attributes
+    -- Set new attributes
     header:SetAttribute("clickcast-keycount", #keyboardBindings)
-    header:SetAttribute("clickcast-enabled", isEnabled)
 
     for i, binding in ipairs(keyboardBindings) do
         local modPrefix = ModifiersToBindingPrefix(binding.modifiers)
-        local fullKey = modPrefix .. binding.key
+        local fullKey = modPrefix .. binding.key:upper()
+        local vBtn = GetVirtualButtonName(binding)
         header:SetAttribute("clickcast-key" .. i, fullKey)
+        header:SetAttribute("clickcast-vbtn" .. i, vBtn)
     end
 end
 
 -- Set virtual-button action attributes on a frame for keyboard bindings.
 local function SetFrameKeyAttributes(frame)
     if InCombatLockdown() then return end
-    for i, binding in ipairs(keyboardBindings) do
-        local vBtn = "QUIKey" .. i
+    for _, binding in ipairs(keyboardBindings) do
+        local vBtn = GetVirtualButtonName(binding)
         local actionType = binding.actionType or "spell"
 
         if actionType == "spell" then
@@ -193,9 +196,8 @@ end
 -- Clear virtual-button attributes from a frame.
 local function ClearFrameKeyAttributes(frame)
     if InCombatLockdown() then return end
-    local maxKeys = math.max(#keyboardBindings, 20)
-    for i = 1, maxKeys do
-        local vBtn = "QUIKey" .. i
+    for _, binding in ipairs(keyboardBindings) do
+        local vBtn = GetVirtualButtonName(binding)
         frame:SetAttribute("type-" .. vBtn, nil)
         frame:SetAttribute("macrotext-" .. vBtn, nil)
     end
