@@ -341,8 +341,8 @@ end
 ---------------------------------------------------------------------------
 -- FAKE DATA for preview
 ---------------------------------------------------------------------------
-local FAKE_BUFF_ICONS = { 136034, 135940, 136081 }
-local FAKE_DEBUFF_ICONS = { 136207, 136130 }
+local FAKE_BUFF_ICONS = { 136034, 135940, 136081, 135932, 136063, 135987, 136070, 135864 }
+local FAKE_DEBUFF_ICONS = { 136207, 136130, 135813, 136118, 135959, 136066, 136133, 135835 }
 local FAKE_CLASS = "PALADIN"
 local FAKE_NAME = "Healena"
 local FAKE_HP_PCT = 65
@@ -655,6 +655,7 @@ local function CreateDesignerPreview(container, previewType, childRefs)
         local maxBuffs = auraDB.maxBuffs or 3
 
         local buffContainer = CreateFrame("Frame", nil, frame)
+        buffContainer:SetFrameLevel(frame:GetFrameLevel() + 8)
         local buffCount = math.min(maxBuffs, #FAKE_BUFF_ICONS)
         local buffContainerW = buffCount * buffSize + math.max(buffCount - 1, 0) * buffSpacing
         buffContainer:SetSize(math.max(buffContainerW, 1), buffSize)
@@ -693,6 +694,7 @@ local function CreateDesignerPreview(container, previewType, childRefs)
         local maxDebuffs = auraDB.maxDebuffs or 3
 
         local debuffContainer = CreateFrame("Frame", nil, frame)
+        debuffContainer:SetFrameLevel(frame:GetFrameLevel() + 8)
         local debuffCount = math.min(maxDebuffs, #FAKE_DEBUFF_ICONS)
         local debuffContainerW = debuffCount * debuffSize + math.max(debuffCount - 1, 0) * debuffSpacing
         debuffContainer:SetSize(math.max(debuffContainerW, 1), debuffSize)
@@ -716,31 +718,51 @@ local function CreateDesignerPreview(container, previewType, childRefs)
         childRefs.debuffContainer = nil
     end
 
-    -- Absorb overlay (semi-transparent bar on health)
+    -- Absorb + Heal prediction overlays (adjacent at the health fill edge)
     local absorbDB = db.absorbs or {}
+    local healDB = db.healPrediction or {}
+    local fillRight = w * (healthPct / 100)
+    local absorbW = w * 0.12
+    local healW = w * 0.08
+
+    -- Resolve class color for absorb/heal prediction
+    local previewCC = RAID_CLASS_COLORS[classToken]
+    local ccR, ccG, ccB = previewCC and previewCC.r or 1, previewCC and previewCC.g or 1, previewCC and previewCC.b or 1
+
     if absorbDB.enabled ~= false then
-        local absorbOverlay = healthBar:CreateTexture(nil, "OVERLAY")
-        absorbOverlay:SetTexture(texturePath)
-        absorbOverlay:SetPoint("TOPRIGHT", healthBar:GetStatusBarTexture(), "TOPRIGHT", 0, 0)
-        absorbOverlay:SetPoint("BOTTOMRIGHT", healthBar:GetStatusBarTexture(), "BOTTOMRIGHT", 0, 0)
-        absorbOverlay:SetWidth(w * 0.12)
-        local ac = absorbDB.color or {1, 1, 1, 1}
-        absorbOverlay:SetVertexColor(ac[1], ac[2], ac[3], absorbDB.opacity or 0.3)
+        local ac
+        if absorbDB.useClassColor then
+            ac = { ccR, ccG, ccB, 1 }
+        else
+            ac = absorbDB.color or {1, 1, 1, 1}
+        end
+        local aa = absorbDB.opacity or 0.3
+        local absorbOverlay = healthBar:CreateTexture(nil, "OVERLAY", nil, 1)
+        absorbOverlay:SetTexture("Interface\\RaidFrame\\Shield-Fill")
+        absorbOverlay:SetVertexColor(ac[1], ac[2], ac[3], aa)
+        absorbOverlay:SetPoint("TOPLEFT", healthBar, "TOPLEFT", fillRight, 0)
+        absorbOverlay:SetPoint("BOTTOMLEFT", healthBar, "BOTTOMLEFT", fillRight, 0)
+        absorbOverlay:SetWidth(absorbW)
         childRefs.absorbOverlay = absorbOverlay
     else
         childRefs.absorbOverlay = nil
     end
 
-    -- Heal prediction overlay
-    local healDB = db.healPrediction or {}
     if healDB.enabled ~= false then
-        local healOverlay = healthBar:CreateTexture(nil, "OVERLAY")
+        local hc
+        if healDB.useClassColor then
+            hc = { ccR, ccG, ccB, 1 }
+        else
+            hc = healDB.color or {0.2, 1, 0.2}
+        end
+        local ha = healDB.opacity or 0.5
+        local healOverlay = healthBar:CreateTexture(nil, "OVERLAY", nil, 1)
         healOverlay:SetTexture(texturePath)
-        healOverlay:SetPoint("TOPLEFT", healthBar:GetStatusBarTexture(), "TOPRIGHT", 0, 0)
-        healOverlay:SetPoint("BOTTOMLEFT", healthBar:GetStatusBarTexture(), "BOTTOMRIGHT", 0, 0)
-        healOverlay:SetWidth(w * 0.08)
-        local hc = healDB.color or {0.2, 1, 0.2}
-        healOverlay:SetVertexColor(hc[1], hc[2], hc[3], healDB.opacity or 0.5)
+        healOverlay:SetVertexColor(hc[1], hc[2], hc[3], ha)
+        local healStart = fillRight + (absorbDB.enabled ~= false and absorbW or 0)
+        healOverlay:SetPoint("TOPLEFT", healthBar, "TOPLEFT", healStart, 0)
+        healOverlay:SetPoint("BOTTOMLEFT", healthBar, "BOTTOMLEFT", healStart, 0)
+        healOverlay:SetWidth(healW)
         childRefs.healOverlay = healOverlay
     else
         childRefs.healOverlay = nil
@@ -750,20 +772,104 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     local healerDB = db.healer or {}
 
     -- Dispel overlay (colored border indicating a dispellable debuff)
+    -- Only visible in preview when healer tab is selected
     local dispelDB = healerDB.dispelOverlay or {}
-    local dispelFrame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    dispelFrame:SetAllPoints()
-    dispelFrame:SetFrameLevel(frame:GetFrameLevel() + 4)
-    dispelFrame:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px * 2,
-    })
-    local dc = dispelDB.color or { 0.26, 0.54, 1, 0.8 }
-    dispelFrame:SetBackdropBorderColor(dc[1], dc[2], dc[3], dispelDB.opacity or 0.8)
-    if dispelDB.enabled == false then
-        dispelFrame:Hide()
+    local dispelBorderPx = (dispelDB.borderSize or 3) * PREVIEW_SCALE
+    local dispelFrame = CreateFrame("Frame", nil, frame)
+    dispelFrame:SetAllPoints(frame)
+    dispelFrame:SetFrameLevel(frame:GetFrameLevel() + 9)
+
+    -- Use Magic color as the sample preview color
+    local dispelColors = dispelDB.colors or {}
+    local dc = dispelColors.Magic or { 0.2, 0.6, 1.0, 1 }
+    local dOpacity = dispelDB.opacity or 0.8
+
+    -- 4-edge border bars (matches runtime pattern)
+    local function MakePreviewDispelBorder(parent)
+        local bar = parent:CreateTexture(nil, "OVERLAY")
+        bar:SetColorTexture(dc[1], dc[2], dc[3], dOpacity)
+        return bar
     end
-    childRefs.dispelOverlay = dispelFrame
+    local bTop = MakePreviewDispelBorder(dispelFrame)
+    bTop:SetPoint("TOPLEFT", dispelFrame, "TOPLEFT", 0, 0)
+    bTop:SetPoint("TOPRIGHT", dispelFrame, "TOPRIGHT", 0, 0)
+    bTop:SetHeight(dispelBorderPx)
+    local bBottom = MakePreviewDispelBorder(dispelFrame)
+    bBottom:SetPoint("BOTTOMLEFT", dispelFrame, "BOTTOMLEFT", 0, 0)
+    bBottom:SetPoint("BOTTOMRIGHT", dispelFrame, "BOTTOMRIGHT", 0, 0)
+    bBottom:SetHeight(dispelBorderPx)
+    local bLeft = MakePreviewDispelBorder(dispelFrame)
+    bLeft:SetPoint("TOPLEFT", dispelFrame, "TOPLEFT", 0, 0)
+    bLeft:SetPoint("BOTTOMLEFT", dispelFrame, "BOTTOMLEFT", 0, 0)
+    bLeft:SetWidth(dispelBorderPx)
+    local bRight = MakePreviewDispelBorder(dispelFrame)
+    bRight:SetPoint("TOPRIGHT", dispelFrame, "TOPRIGHT", 0, 0)
+    bRight:SetPoint("BOTTOMRIGHT", dispelFrame, "BOTTOMRIGHT", 0, 0)
+    bRight:SetWidth(dispelBorderPx)
+
+    -- Fill texture
+    local dFillOpacity = dispelDB.fillOpacity or 0
+    if dFillOpacity > 0 then
+        local fill = dispelFrame:CreateTexture(nil, "BACKGROUND")
+        fill:SetAllPoints(dispelFrame)
+        fill:SetColorTexture(dc[1], dc[2], dc[3], dFillOpacity)
+    end
+
+    -- Hidden by default — shown only when healer tab is selected
+    dispelFrame:Hide()
+    if dispelDB.enabled == false then
+        childRefs.dispelOverlay = nil
+    else
+        childRefs.dispelOverlay = dispelFrame
+    end
+
+    -- Threat border (colored border when unit has aggro)
+    -- Only visible in preview when indicators tab is selected
+    local indDB = db.indicators or {}
+    local threatBorderPx = (indDB.threatBorderSize or 3) * PREVIEW_SCALE
+    local threatFrame = CreateFrame("Frame", nil, frame)
+    threatFrame:SetAllPoints(frame)
+    threatFrame:SetFrameLevel(frame:GetFrameLevel() + 9)
+
+    local threatColor = indDB.threatColor or { 1, 0, 0, 0.8 }
+    local threatOpacity = threatColor[4] or 0.8
+
+    local function MakePreviewThreatBorder(parent)
+        local bar = parent:CreateTexture(nil, "OVERLAY")
+        bar:SetColorTexture(threatColor[1], threatColor[2], threatColor[3], threatOpacity)
+        return bar
+    end
+    local tTop = MakePreviewThreatBorder(threatFrame)
+    tTop:SetPoint("TOPLEFT", threatFrame, "TOPLEFT", 0, 0)
+    tTop:SetPoint("TOPRIGHT", threatFrame, "TOPRIGHT", 0, 0)
+    tTop:SetHeight(threatBorderPx)
+    local tBottom = MakePreviewThreatBorder(threatFrame)
+    tBottom:SetPoint("BOTTOMLEFT", threatFrame, "BOTTOMLEFT", 0, 0)
+    tBottom:SetPoint("BOTTOMRIGHT", threatFrame, "BOTTOMRIGHT", 0, 0)
+    tBottom:SetHeight(threatBorderPx)
+    local tLeft = MakePreviewThreatBorder(threatFrame)
+    tLeft:SetPoint("TOPLEFT", threatFrame, "TOPLEFT", 0, 0)
+    tLeft:SetPoint("BOTTOMLEFT", threatFrame, "BOTTOMLEFT", 0, 0)
+    tLeft:SetWidth(threatBorderPx)
+    local tRight = MakePreviewThreatBorder(threatFrame)
+    tRight:SetPoint("TOPRIGHT", threatFrame, "TOPRIGHT", 0, 0)
+    tRight:SetPoint("BOTTOMRIGHT", threatFrame, "BOTTOMRIGHT", 0, 0)
+    tRight:SetWidth(threatBorderPx)
+
+    -- Fill
+    local threatFillOpacity = indDB.threatFillOpacity or 0
+    if threatFillOpacity > 0 then
+        local tFill = threatFrame:CreateTexture(nil, "BACKGROUND")
+        tFill:SetAllPoints(threatFrame)
+        tFill:SetColorTexture(threatColor[1], threatColor[2], threatColor[3], threatFillOpacity)
+    end
+
+    threatFrame:Hide()
+    if indDB.showThreatBorder == false then
+        childRefs.threatBorder = nil
+    else
+        childRefs.threatBorder = threatFrame
+    end
 
     -- Target highlight (white/colored border when targeting this unit)
     local targetDB = healerDB.targetHighlight or {}
@@ -813,12 +919,12 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     local paMax = paDB.maxPerFrame or 2
 
     local paContainer = CreateFrame("Frame", nil, frame)
-    local paCount = math.min(paMax, 2)
+    local paCount = paMax
     local paContainerW = paCount * paSize + math.max(paCount - 1, 0) * paSpacing
     paContainer:SetSize(math.max(paContainerW, 1), paSize)
     paContainer:SetPoint(paAnchor, frame, paAnchor, paOffX, PreviewBottomPadY(paAnchor, paOffY))
 
-    for i = 1, math.min(paMax, 2) do
+    for i = 1, paMax do
         local iconFrame = CreateFrame("Frame", nil, paContainer)
         iconFrame:SetSize(paSize, paSize)
         if i == 1 then
@@ -891,7 +997,7 @@ local function CreateDesignerPreview(container, previewType, childRefs)
 
     -- Fallback: generic placeholder icons
     if #sampleSpells == 0 then
-        sampleSpells = { 136034, 135940, 136081 } -- reuse buff icon IDs as texture fallback
+        sampleSpells = { 136034, 135940, 136081, 135932, 136063, 135987, 136070, 135864, 136207, 136130 }
     end
 
     for i = 1, math.min(aiMax, #sampleSpells) do
@@ -1091,6 +1197,8 @@ local function BuildPowerSettings(content, gfdb, onChange)
 
     L:Row(GUI:CreateFormCheckbox(content, "Show Power Bar", "showPowerBar", power, onChange), FORM_ROW)
     L:Row(GUI:CreateFormSlider(content, "Height", 1, 12, 1, "powerBarHeight", power, onChange), SLIDER_HEIGHT, cond)
+    L:Row(GUI:CreateFormCheckbox(content, "Only Show for Healers", "powerBarOnlyHealers", power, onChange), FORM_ROW, cond)
+    L:Row(GUI:CreateFormCheckbox(content, "Only Show for Tanks", "powerBarOnlyTanks", power, onChange), FORM_ROW, cond)
     L:Row(GUI:CreateFormCheckbox(content, "Use Power Type Color", "powerBarUsePowerColor", power, onChange), FORM_ROW, cond)
     L:Row(GUI:CreateFormColorPicker(content, "Custom Color", "powerBarColor", power, onChange), FORM_ROW, cond)
     L:Finish()
@@ -1577,6 +1685,7 @@ local function BuildIndicatorsSettings(content, gfdb, onChange)
     L:Header(GUI:CreateSectionHeader(content, "Threat"))
     L:Row(GUI:CreateFormCheckbox(content, "Show Threat Border", "showThreatBorder", ind, onChange), FORM_ROW)
     local threatCond = function() return ind.showThreatBorder end
+    L:Row(GUI:CreateFormSlider(content, "Border Size", 1, 16, 1, "threatBorderSize", ind, onChange), SLIDER_HEIGHT, threatCond)
     L:Row(GUI:CreateFormColorPicker(content, "Threat Color", "threatColor", ind, onChange), FORM_ROW, threatCond)
     L:Row(GUI:CreateFormSlider(content, "Threat Fill Opacity", 0, 0.5, 0.05, "threatFillOpacity", ind, onChange), SLIDER_HEIGHT, threatCond)
 
@@ -1591,6 +1700,16 @@ local function BuildHealerSettings(content, gfdb, onChange)
 
     local dispel = healer.dispelOverlay
     if not dispel then healer.dispelOverlay = {} dispel = healer.dispelOverlay end
+    local dispelColors = dispel.colors
+    if not dispelColors then
+        dispel.colors = {
+            Magic   = { 0.2, 0.6, 1.0, 1 },
+            Curse   = { 0.6, 0.0, 1.0, 1 },
+            Disease = { 0.6, 0.4, 0.0, 1 },
+            Poison  = { 0.0, 0.6, 0.0, 1 },
+        }
+        dispelColors = dispel.colors
+    end
 
     local targetHL = healer.targetHighlight
     if not targetHL then healer.targetHighlight = {} targetHL = healer.targetHighlight end
@@ -1601,13 +1720,17 @@ local function BuildHealerSettings(content, gfdb, onChange)
 
     -- Dispel overlay
     L:Header(GUI:CreateSectionHeader(content, "Dispel Overlay"))
-    local dispelDesc = GUI:CreateLabel(content, "Colors the frame border when a dispellable debuff is active (Magic, Curse, Disease, Poison).", 11, C.textMuted)
+    local dispelDesc = GUI:CreateLabel(content, "Colors the frame border when a dispellable debuff is active. Each dispel type has its own color.", 11, C.textMuted)
     dispelDesc:SetJustifyH("LEFT")
     L:Row(dispelDesc, 26)
     L:Row(GUI:CreateFormCheckbox(content, "Enable Dispel Overlay", "enabled", dispel, onChange), FORM_ROW)
-    L:Row(GUI:CreateFormColorPicker(content, "Dispel Color", "color", dispel, onChange), FORM_ROW, dispelCond)
+    L:Row(GUI:CreateFormSlider(content, "Border Size", 1, 16, 1, "borderSize", dispel, onChange), SLIDER_HEIGHT, dispelCond)
     L:Row(GUI:CreateFormSlider(content, "Border Opacity", 0.1, 1, 0.05, "opacity", dispel, onChange), SLIDER_HEIGHT, dispelCond)
     L:Row(GUI:CreateFormSlider(content, "Fill Opacity", 0, 0.5, 0.05, "fillOpacity", dispel, onChange), SLIDER_HEIGHT, dispelCond)
+    L:Row(GUI:CreateFormColorPicker(content, "Magic Color", "Magic", dispelColors, onChange), FORM_ROW, dispelCond)
+    L:Row(GUI:CreateFormColorPicker(content, "Curse Color", "Curse", dispelColors, onChange), FORM_ROW, dispelCond)
+    L:Row(GUI:CreateFormColorPicker(content, "Disease Color", "Disease", dispelColors, onChange), FORM_ROW, dispelCond)
+    L:Row(GUI:CreateFormColorPicker(content, "Poison Color", "Poison", dispelColors, onChange), FORM_ROW, dispelCond)
 
     -- Target highlight
     L:Header(GUI:CreateSectionHeader(content, "Target Highlight"))
@@ -1701,7 +1824,8 @@ local function BuildAuraIndicatorsSettings(content, gfdb, onChange)
         return -(content:GetHeight() - 10)
     end
 
-    local spellListEndY, spellListContainer = BuildSpellListSection(
+    local spellListEndY, spellListContainer
+    spellListEndY, spellListContainer = BuildSpellListSection(
         content,
         function() return ai.trackedSpells end,
         function()
@@ -1730,11 +1854,14 @@ local function BuildAbsorbsSettings(content, gfdb, onChange)
 
     L:Header(GUI:CreateSectionHeader(content, "Absorb Shield"))
     L:Row(GUI:CreateFormCheckbox(content, "Show Absorb Shield", "enabled", absorbs, onChange), FORM_ROW)
-    L:Row(GUI:CreateFormColorPicker(content, "Absorb Color", "color", absorbs, onChange), FORM_ROW, absorbCond)
+    L:Row(GUI:CreateFormCheckbox(content, "Use Class Color", "useClassColor", absorbs, onChange), FORM_ROW, absorbCond)
+    L:Row(GUI:CreateFormColorPicker(content, "Absorb Color", "color", absorbs, onChange), FORM_ROW, function() return absorbs.enabled and not absorbs.useClassColor end)
     L:Row(GUI:CreateFormSlider(content, "Absorb Opacity", 0.1, 1, 0.05, "opacity", absorbs, onChange), SLIDER_HEIGHT, absorbCond)
 
     L:Header(GUI:CreateSectionHeader(content, "Heal Prediction"))
     L:Row(GUI:CreateFormCheckbox(content, "Show Heal Prediction", "enabled", healPred, onChange), FORM_ROW)
+    L:Row(GUI:CreateFormCheckbox(content, "Use Class Color", "useClassColor", healPred, onChange), FORM_ROW, healCond)
+    L:Row(GUI:CreateFormColorPicker(content, "Heal Prediction Color", "color", healPred, onChange), FORM_ROW, function() return healPred.enabled and not healPred.useClassColor end)
     L:Row(GUI:CreateFormSlider(content, "Heal Prediction Opacity", 0.1, 1, 0.05, "opacity", healPred, onChange), SLIDER_HEIGHT, healCond)
 
     L:Finish()
@@ -2767,7 +2894,8 @@ local function BuildDesignerView(tabContent, previewType)
     local childRefs = {}
     state.childRefs = childRefs
 
-    local function RebuildPreview()
+    local rebuildTimer = nil
+    local function RebuildPreviewImmediate()
         if state.previewWrapper then
             state.previewWrapper:Hide()
             state.previewWrapper:SetParent(nil)
@@ -2895,7 +3023,7 @@ local function BuildDesignerView(tabContent, previewType)
                     self._dragDBTbl = nil
 
                     -- Rebuild preview + refresh live frames
-                    RebuildPreview()
+                    RebuildPreviewImmediate()
                     RefreshGF()
 
                     -- Refresh settings panel to show new slider values
@@ -2908,7 +3036,6 @@ local function BuildDesignerView(tabContent, previewType)
                     for pKey, panel in pairs(state.settingsPanels) do
                         panel:Hide()
                     end
-                    state.selectedElement = nil
                     if state.selectElement then state.selectElement(panelKey) end
                 end)
                 overlay:SetScript("OnUpdate", function(self)
@@ -2966,11 +3093,27 @@ local function BuildDesignerView(tabContent, previewType)
                     if so then so.highlight:Show() end
                 end
             end
+            -- Show dispel overlay if healer tab is active
+            if sel == "healer" and childRefs.dispelOverlay then
+                childRefs.dispelOverlay:Show()
+            end
+            -- Show threat border if indicators tab is active
+            if sel == "indicators" and childRefs.threatBorder then
+                childRefs.threatBorder:Show()
+            end
         end
     end
 
+    local function RebuildPreview()
+        if rebuildTimer then return end
+        rebuildTimer = C_Timer.After(0.05, function()
+            rebuildTimer = nil
+            RebuildPreviewImmediate()
+        end)
+    end
+
     state._previewY = y
-    RebuildPreview()
+    RebuildPreviewImmediate()
 
     local previewH = state.previewWrapper and state.previewWrapper:GetHeight() or 100
     y = y - previewH - 10
@@ -3014,6 +3157,15 @@ local function BuildDesignerView(tabContent, previewType)
             SetOverlayHighlights(state.selectedElement, false)
             local prevPanel = state.settingsPanels[state.selectedElement]
             if prevPanel then prevPanel:Hide() end
+
+            -- Hide dispel overlay when leaving healer tab
+            if state.selectedElement == "healer" and childRefs.dispelOverlay then
+                childRefs.dispelOverlay:Hide()
+            end
+            -- Hide threat border when leaving indicators tab
+            if state.selectedElement == "indicators" and childRefs.threatBorder then
+                childRefs.threatBorder:Hide()
+            end
         end
 
         state.selectedElement = key
@@ -3023,6 +3175,15 @@ local function BuildDesignerView(tabContent, previewType)
         if btn then
             btn:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
             btn:SetBackdropColor(C.accent[1] * 0.2, C.accent[2] * 0.2, C.accent[3] * 0.2, 1)
+        end
+
+        -- Show dispel overlay when selecting healer tab
+        if key == "healer" and childRefs.dispelOverlay then
+            childRefs.dispelOverlay:Show()
+        end
+        -- Show threat border when selecting indicators tab
+        if key == "indicators" and childRefs.threatBorder then
+            childRefs.threatBorder:Show()
         end
 
         -- Highlight overlay(s)

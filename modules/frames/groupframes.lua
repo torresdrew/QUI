@@ -51,8 +51,8 @@ local COLOR_DEAD = { 0.5, 0.5, 0.5, 1 }
 local COLOR_OFFLINE = { 0.4, 0.4, 0.4, 1 }
 local COLOR_GHOST = { 0.6, 0.6, 0.6, 1 }
 
--- Dispel type → color mapping
-local DISPEL_COLORS = {
+-- Dispel type → color defaults (used when DB colors not set)
+local DEFAULT_DISPEL_COLORS = {
     Magic   = { 0.2, 0.6, 1.0, 1 },  -- Blue
     Curse   = { 0.6, 0.0, 1.0, 1 },  -- Purple
     Disease = { 0.6, 0.4, 0.0, 1 },  -- Brown
@@ -60,17 +60,16 @@ local DISPEL_COLORS = {
     Bleed   = { 0.8, 0.0, 0.0, 1 },  -- Red
 }
 
+-- Forward declaration; body defined after GetHealerSettings
+local GetDispelColors
+
 -- Dispel type enum values (WoW 12.0+, from SpellDispelType DB2)
 local ALL_DISPEL_ENUMS = {1, 2, 3, 4, 9, 11}
 
--- Map enum → color (reuses existing DISPEL_COLORS values)
-local DISPEL_ENUM_COLORS = {
-    [1] = DISPEL_COLORS.Magic,
-    [2] = DISPEL_COLORS.Curse,
-    [3] = DISPEL_COLORS.Disease,
-    [4] = DISPEL_COLORS.Poison,
-    [9] = DISPEL_COLORS.Bleed,   -- Enrage uses Bleed color
-    [11] = DISPEL_COLORS.Bleed,
+-- Enum → dispel type name mapping
+local DISPEL_ENUM_NAMES = {
+    [1] = "Magic", [2] = "Curse", [3] = "Disease", [4] = "Poison",
+    [9] = "Bleed", [11] = "Bleed",
 }
 
 local dispelColorCurve = nil
@@ -78,11 +77,13 @@ local dispelColorCurve = nil
 local function GetDispelColorCurve(opacity)
     if dispelColorCurve then return dispelColorCurve end
     if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
+    local colors = GetDispelColors()
     local curve = C_CurveUtil.CreateColorCurve()
     curve:SetType(Enum.LuaCurveType.Step)
     curve:AddPoint(0, CreateColor(0, 0, 0, 0))  -- None = invisible
     for _, enumVal in ipairs(ALL_DISPEL_ENUMS) do
-        local c = DISPEL_ENUM_COLORS[enumVal]
+        local typeName = DISPEL_ENUM_NAMES[enumVal]
+        local c = typeName and colors[typeName]
         if c then
             curve:AddPoint(enumVal, CreateColor(c[1], c[2], c[3], opacity or 0.8))
         end
@@ -196,6 +197,19 @@ end
 local function GetHealerSettings()
     local db = GetDB()
     return db and db.healer
+end
+
+GetDispelColors = function()
+    local hs = GetHealerSettings()
+    local dbColors = hs and hs.dispelOverlay and hs.dispelOverlay.colors
+    if not dbColors then return DEFAULT_DISPEL_COLORS end
+    return {
+        Magic   = dbColors.Magic   or DEFAULT_DISPEL_COLORS.Magic,
+        Curse   = dbColors.Curse   or DEFAULT_DISPEL_COLORS.Curse,
+        Disease = dbColors.Disease or DEFAULT_DISPEL_COLORS.Disease,
+        Poison  = dbColors.Poison  or DEFAULT_DISPEL_COLORS.Poison,
+        Bleed   = dbColors.Bleed   or DEFAULT_DISPEL_COLORS.Bleed,
+    }
 end
 
 local function GetRangeSettings()
@@ -541,6 +555,18 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Power
 ---------------------------------------------------------------------------
+local function ShouldShowPowerForUnit(unit)
+    local ps = GetPowerSettings()
+    if not ps then return true end
+    local onlyHealers = ps.powerBarOnlyHealers
+    local onlyTanks = ps.powerBarOnlyTanks
+    if not onlyHealers and not onlyTanks then return true end
+    local role = UnitGroupRolesAssigned(unit)
+    if onlyHealers and role == "HEALER" then return true end
+    if onlyTanks and role == "TANK" then return true end
+    return false
+end
+
 local function UpdatePower(frame)
     if not frame or not frame.unit or not frame.powerBar then return end
     local unit = frame.unit
@@ -549,6 +575,15 @@ local function UpdatePower(frame)
         frame.powerBar:SetValue(0)
         return
     end
+
+    -- Role-based filtering
+    if not ShouldShowPowerForUnit(unit) then
+        frame.powerBar:Hide()
+        if frame._powerSeparator then frame._powerSeparator:Hide() end
+        return
+    end
+    frame.powerBar:Show()
+    if frame._powerSeparator then frame._powerSeparator:Show() end
 
     local power = UnitPower(unit)
     local maxPower = UnitPowerMax(unit)
@@ -649,7 +684,14 @@ local function UpdateAbsorbs(frame)
     frame.absorbBar:SetMinMaxValues(0, maxHP)
     frame.absorbBar:SetValue(absorbAmount)
 
-    local ac = db.absorbs.color or COLOR_WHITE
+    local ac
+    if db.absorbs.useClassColor then
+        local _, class = UnitClass(unit)
+        local cc = class and RAID_CLASS_COLORS[class]
+        ac = cc and { cc.r, cc.g, cc.b, 1 } or COLOR_WHITE
+    else
+        ac = db.absorbs.color or COLOR_WHITE
+    end
     local aa = db.absorbs.opacity or 0.3
     frame.absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
     frame.absorbBar:Show()
@@ -708,6 +750,17 @@ local function UpdateHealPrediction(frame)
     -- C-side SetMinMaxValues/SetValue handle secret values natively — no pcall needed
     frame.healPredictionBar:SetMinMaxValues(0, maxHP)
     frame.healPredictionBar:SetValue(incomingHeals)
+
+    local pc
+    if db.healPrediction.useClassColor then
+        local _, class = UnitClass(unit)
+        local cc = class and RAID_CLASS_COLORS[class]
+        pc = cc and { cc.r, cc.g, cc.b, 1 } or { 0.2, 1, 0.2 }
+    else
+        pc = db.healPrediction.color or { 0.2, 1, 0.2 }
+    end
+    local pa = db.healPrediction.opacity or 0.5
+    frame.healPredictionBar:SetStatusBarColor(pc[1], pc[2], pc[3], pa)
     frame.healPredictionBar:Show()
 end
 
@@ -964,7 +1017,7 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Dispel Overlay
 ---------------------------------------------------------------------------
--- Helper: apply color to all 4 StatusBar borders
+-- Helper: apply color to all 4 StatusBar borders + fill
 local function SetDispelBorderColor(overlay, r, g, b, a)
     for _, key in ipairs({"borderTop", "borderBottom", "borderLeft", "borderRight"}) do
         local border = overlay[key]
@@ -972,9 +1025,13 @@ local function SetDispelBorderColor(overlay, r, g, b, a)
             border:GetStatusBarTexture():SetVertexColor(r, g, b, a)
         end
     end
+    if overlay.fill then
+        local fillA = overlay._fillOpacity or 0
+        overlay.fill:SetVertexColor(r, g, b, fillA)
+    end
 end
 
--- Helper: apply a ColorMixin (secret-safe) to all 4 StatusBar borders
+-- Helper: apply a ColorMixin (secret-safe) to all 4 StatusBar borders + fill
 local function SetDispelBorderColorMixin(overlay, color)
     for _, key in ipairs({"borderTop", "borderBottom", "borderLeft", "borderRight"}) do
         local border = overlay[key]
@@ -983,6 +1040,12 @@ local function SetDispelBorderColorMixin(overlay, color)
             -- GetRGBA() returns secret values; SetVertexColor is C-side and handles them
             tex:SetVertexColor(color:GetRGBA())
         end
+    end
+    if overlay.fill then
+        -- Use the same RGB but with the fill opacity
+        local fillA = overlay._fillOpacity or 0
+        overlay.fill:SetVertexColor(color:GetRGBA())
+        overlay.fill:SetAlpha(fillA)
     end
 end
 
@@ -1029,13 +1092,14 @@ local function UpdateDispelOverlay(frame)
 
     -- Fallback: check shared aura cache (avoids redundant slot-scanning)
     local dispelType = nil
+    local colors = GetDispelColors()
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
     if cache and cache.harmful then
         for _, auraData in ipairs(cache.harmful) do
             if auraData.isHarmful and auraData.dispelName then
                 local dType = SafeValue(auraData.dispelName, nil)
-                if dType and DISPEL_COLORS[dType] then
+                if dType and colors[dType] then
                     dispelType = dType
                     break
                 end
@@ -1044,7 +1108,7 @@ local function UpdateDispelOverlay(frame)
     end
 
     if dispelType then
-        local c = DISPEL_COLORS[dispelType]
+        local c = colors[dispelType]
         local fallbackOpacity = healerSettings.dispelOverlay.opacity or 0.8
         SetDispelBorderColor(overlay, c[1], c[2], c[3], fallbackOpacity)
         overlay:Show()
@@ -1548,12 +1612,16 @@ local function DecorateGroupFrame(frame)
     frame.phaseIcon = phaseIcon
 
     -- Threat border (overlay frame)
+    local indDB = db.indicators or {}
+    local threatBorderPx = px * (indDB.threatBorderSize or 3)
     local threatBorder = frame.threatBorder or CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    threatBorder:SetAllPoints()
+    threatBorder:ClearAllPoints()
+    threatBorder:SetPoint("TOPLEFT", -px, px)
+    threatBorder:SetPoint("BOTTOMRIGHT", px, -px)
     threatBorder:SetFrameLevel(frame:GetFrameLevel() + 5)
     threatBorder:SetBackdrop({
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = borderSize > 0 and borderSize * 2 or px * 2,
+        edgeSize = threatBorderPx,
     })
     threatBorder:Hide()
     frame.threatBorder = threatBorder
@@ -1574,11 +1642,11 @@ local function DecorateGroupFrame(frame)
     -- Dispel overlay (StatusBar borders for secret-value-safe SetVertexColor)
     local dispelOverlay = frame.dispelOverlay or CreateFrame("Frame", nil, frame)
     dispelOverlay:ClearAllPoints()
-    dispelOverlay:SetPoint("TOPLEFT", -px, px)
-    dispelOverlay:SetPoint("BOTTOMRIGHT", px, -px)
+    dispelOverlay:SetAllPoints(frame)
     dispelOverlay:SetFrameLevel(frame:GetFrameLevel() + 6)
 
-    local dispelBorderSize = px * 3
+    local dispelSettings = db.healer and db.healer.dispelOverlay
+    local dispelBorderSize = px * (dispelSettings and dispelSettings.borderSize or 3)
     local function MakeDispelBorder(parent)
         local sb = CreateFrame("StatusBar", nil, parent)
         sb:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
@@ -1614,6 +1682,17 @@ local function DecorateGroupFrame(frame)
     bRight:SetPoint("BOTTOMRIGHT", dispelOverlay, "BOTTOMRIGHT", 0, 0)
     bRight:SetWidth(dispelBorderSize)
     dispelOverlay.borderRight = bRight
+
+    -- Fill texture (full-frame tint behind borders)
+    local dispelFill = dispelOverlay.fill
+    if not dispelFill then
+        dispelFill = dispelOverlay:CreateTexture(nil, "BACKGROUND")
+        dispelOverlay.fill = dispelFill
+    end
+    dispelFill:SetAllPoints(dispelOverlay)
+    dispelFill:SetColorTexture(1, 1, 1, 1)
+    dispelFill:SetVertexColor(0, 0, 0, 0) -- colored dynamically by SetDispelBorderColor
+    dispelOverlay._fillOpacity = dispelSettings and dispelSettings.fillOpacity or 0
 
     dispelOverlay:Hide()
     frame.dispelOverlay = dispelOverlay

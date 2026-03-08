@@ -2444,6 +2444,8 @@ local defaults = {
                 powerBarHeight = 4,
                 powerBarUsePowerColor = true,
                 powerBarColor = { 0.2, 0.4, 0.8, 1 },
+                powerBarOnlyHealers = false,
+                powerBarOnlyTanks = false,
             },
 
             -- Name text
@@ -2478,7 +2480,15 @@ local defaults = {
 
             -- Healer features
             healer = {
-                dispelOverlay = { enabled = true, opacity = 0.8, fillOpacity = 0.18, color = { 0.26, 0.54, 1, 0.8 } },
+                dispelOverlay = {
+                    enabled = true, opacity = 0.8, fillOpacity = 0.18, borderSize = 3,
+                    colors = {
+                        Magic   = { 0.2, 0.6, 1.0, 1 },
+                        Curse   = { 0.6, 0.0, 1.0, 1 },
+                        Disease = { 0.6, 0.4, 0.0, 1 },
+                        Poison  = { 0.0, 0.6, 0.0, 1 },
+                    },
+                },
                 targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
                 defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0 },
             },
