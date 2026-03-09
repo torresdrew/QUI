@@ -1169,6 +1169,9 @@ end
 -- BUTTON SKINNING
 ---------------------------------------------------------------------------
 
+local FadeHideEffects
+local FadeShowEffects
+
 -- Apply QUI skin to a single button
 local function SkinButton(button, settings)
     if not button or not settings or not settings.skinEnabled then return end
@@ -1270,6 +1273,7 @@ local function SkinButton(button, settings)
         if state.backdrop and state.backdrop:IsShown() then state.backdrop:Hide(); state._fhBg = true end
         if state.normal and state.normal:IsShown() then state.normal:Hide(); state._fhNorm = true end
         if state.gloss and state.gloss:IsShown() then state.gloss:Hide(); state._fhGloss = true end
+        FadeHideEffects(button, state)
     end
 
     ActionBars.skinnedButtons[button] = true
@@ -1467,8 +1471,120 @@ end
 -- invisible (bar faded to alpha 0, or hidden empty slot).
 ---------------------------------------------------------------------------
 
+FadeHideEffects = function(button, state)
+    if not button then return end
+
+    local cooldown = button.cooldown or button.Cooldown
+    if cooldown then
+        if not state._fhCooldownShowHooked and cooldown.HookScript then
+            state._fhCooldownShowHooked = true
+            cooldown:HookScript("OnShow", function(self)
+                local st = GetFrameState(button)
+                if st and st.fadeHidden then
+                    self:Hide()
+                end
+            end)
+        end
+
+        if cooldown:IsShown() then
+            state._fhCooldownFrameShown = true
+            cooldown:Hide()
+        end
+        if state._fhCooldownSwipe == nil and cooldown.GetDrawSwipe then
+            state._fhCooldownSwipe = cooldown:GetDrawSwipe()
+        end
+        if state._fhCooldownEdge == nil and cooldown.GetDrawEdge then
+            state._fhCooldownEdge = cooldown:GetDrawEdge()
+        end
+        if cooldown.SetDrawSwipe then cooldown:SetDrawSwipe(false) end
+        if cooldown.SetDrawEdge then cooldown:SetDrawEdge(false) end
+    end
+
+    local spellActivation = button.SpellActivationAlert
+    if spellActivation then
+        if not state._fhSpellActivationShowHooked and spellActivation.HookScript then
+            state._fhSpellActivationShowHooked = true
+            spellActivation:HookScript("OnShow", function(self)
+                local st = GetFrameState(button)
+                if st and st.fadeHidden then
+                    self:Hide()
+                end
+            end)
+        end
+        if spellActivation:IsShown() then
+            spellActivation:Hide()
+            state._fhSpellActivationAlert = true
+        end
+    end
+    local overlayGlow = button.OverlayGlow
+    if overlayGlow then
+        if not state._fhOverlayGlowShowHooked and overlayGlow.HookScript then
+            state._fhOverlayGlowShowHooked = true
+            overlayGlow:HookScript("OnShow", function(self)
+                local st = GetFrameState(button)
+                if st and st.fadeHidden then
+                    self:Hide()
+                end
+            end)
+        end
+        if overlayGlow:IsShown() then
+            overlayGlow:Hide()
+            state._fhOverlayGlow = true
+        end
+    end
+    local buttonGlow = button._ButtonGlow
+    if buttonGlow then
+        if not state._fhButtonGlowShowHooked and buttonGlow.HookScript then
+            state._fhButtonGlowShowHooked = true
+            buttonGlow:HookScript("OnShow", function(self)
+                local st = GetFrameState(button)
+                if st and st.fadeHidden then
+                    self:Hide()
+                end
+            end)
+        end
+        if buttonGlow:IsShown() then
+            buttonGlow:Hide()
+            state._fhButtonGlow = true
+        end
+    end
+end
+
+FadeShowEffects = function(button, state)
+    if not button then return end
+
+    local cooldown = button.cooldown or button.Cooldown
+    if cooldown then
+        if state._fhCooldownSwipe ~= nil and cooldown.SetDrawSwipe then
+            cooldown:SetDrawSwipe(state._fhCooldownSwipe)
+        end
+        if state._fhCooldownEdge ~= nil and cooldown.SetDrawEdge then
+            cooldown:SetDrawEdge(state._fhCooldownEdge)
+        end
+        if state._fhCooldownFrameShown and cooldown.Show then
+            cooldown:Show()
+        end
+    end
+    state._fhCooldownFrameShown = nil
+    state._fhCooldownSwipe = nil
+    state._fhCooldownEdge = nil
+
+    if state._fhSpellActivationAlert and button.SpellActivationAlert then
+        button.SpellActivationAlert:Show()
+    end
+    if state._fhOverlayGlow and button.OverlayGlow then
+        button.OverlayGlow:Show()
+    end
+    if state._fhButtonGlow and button._ButtonGlow then
+        button._ButtonGlow:Show()
+    end
+    state._fhSpellActivationAlert = nil
+    state._fhOverlayGlow = nil
+    state._fhButtonGlow = nil
+end
+
 -- Hide QUI textures on a button, saving which were visible for later restore.
-local function FadeHideTextures(state)
+local function FadeHideTextures(state, button)
     if state.fadeHidden then return end
     state.fadeHidden = true
     if state.tintOverlay and state.tintOverlay:IsShown() then
@@ -1483,10 +1599,11 @@ local function FadeHideTextures(state)
     if state.gloss and state.gloss:IsShown() then
         state.gloss:Hide(); state._fhGloss = true
     end
+    FadeHideEffects(button, state)
 end
 
 -- Restore QUI textures that were hidden by FadeHideTextures.
-local function FadeShowTextures(state)
+local function FadeShowTextures(state, button)
     if not state.fadeHidden then return end
     state.fadeHidden = nil
     if state._fhTint and state.tintOverlay then state.tintOverlay:Show() end
@@ -1495,6 +1612,7 @@ local function FadeShowTextures(state)
     if state._fhGloss and state.gloss then state.gloss:Show() end
     state._fhTint = nil; state._fhBg = nil
     state._fhNorm = nil; state._fhGloss = nil
+    FadeShowEffects(button, state)
 end
 
 ---------------------------------------------------------------------------
@@ -1532,7 +1650,7 @@ local function UpdateEmptySlotVisibility(button, settings)
     if barKey == "stance" or barKey == "pet" then
         if state.hiddenEmpty then
             state.hiddenEmpty = nil
-            FadeShowTextures(state)
+            FadeShowTextures(state, button)
         end
         button:SetAlpha(targetAlpha)
         return
@@ -1543,7 +1661,7 @@ local function UpdateEmptySlotVisibility(button, settings)
         if state.hiddenEmpty then
             button:SetAlpha(targetAlpha)
             state.hiddenEmpty = nil
-            FadeShowTextures(state)
+            FadeShowTextures(state, button)
         end
         return
     end
@@ -1556,7 +1674,7 @@ local function UpdateEmptySlotVisibility(button, settings)
             button:SetAlpha(targetAlpha)
             if state.hiddenEmpty then
                 state.hiddenEmpty = nil
-                FadeShowTextures(state)
+                FadeShowTextures(state, button)
             end
         else
             -- Show at preview alpha while dragging a placeable action
@@ -1567,7 +1685,7 @@ local function UpdateEmptySlotVisibility(button, settings)
             end
             if not state.hiddenEmpty then
                 state.hiddenEmpty = true
-                FadeHideTextures(state)
+                FadeHideTextures(state, button)
             end
         end
     end
@@ -2240,9 +2358,9 @@ local function SetBarAlpha(barKey, alpha)
         -- the button is at alpha 0.
         local hidden = alpha <= 0 or (hideEmptyEnabled and state.hiddenEmpty)
         if hidden then
-            FadeHideTextures(state)
+            FadeHideTextures(state, button)
         elseif state.fadeHidden then
-            FadeShowTextures(state)
+            FadeShowTextures(state, button)
         end
     end
 
@@ -2816,6 +2934,31 @@ local function SkinBar(barKey)
                 local LibKeyBound = LibStub("LibKeyBound-1.0", true)
                 if LibKeyBound and LibKeyBound:IsShown() then
                     LibKeyBound:Set(self)
+                end
+            end)
+        end
+
+        -- Keep cooldown swipes/proc glows from rendering on hidden buttons.
+        -- This also covers pet/stance visibility toggles where Blizzard hides
+        -- the button frame entirely (no alpha transition through SetBarAlpha).
+        if not state.visibilityEffectsHooked then
+            state.visibilityEffectsHooked = true
+            button:HookScript("OnHide", function(self)
+                local st = GetFrameState(self)
+                FadeHideTextures(st, self)
+            end)
+            button:HookScript("OnShow", function(self)
+                local st = GetFrameState(self)
+                local key = GetBarKeyFromButton(self)
+                local fadeState = key and ActionBars.fadeState and ActionBars.fadeState[key]
+                local hideEmptyEnabled = GetGlobalSettings() and GetGlobalSettings().hideEmptySlots
+                local shouldStayHidden = (fadeState and fadeState.currentAlpha and fadeState.currentAlpha <= 0)
+                    or (hideEmptyEnabled and st.hiddenEmpty)
+
+                if shouldStayHidden then
+                    FadeHideTextures(st, self)
+                else
+                    FadeShowTextures(st, self)
                 end
             end)
         end
