@@ -339,15 +339,12 @@ local function GetUnitClassColor(unit)
         return 0.5, 0.5, 0.5, 1
     end
 
-    -- Only use class color for actual players
-    local isPlayer = UnitIsPlayer(unit)
-    if isPlayer then
-        local _, class = UnitClass(unit)
-        if class then
-            local color = RAID_CLASS_COLORS[class]
-            if color then
-                return color.r, color.g, color.b, 1
-            end
+    -- Use class color for players AND NPC party members (follower dungeon companions)
+    local _, class = UnitClass(unit)
+    if class then
+        local color = RAID_CLASS_COLORS[class]
+        if color then
+            return color.r, color.g, color.b, 1
         end
     end
 
@@ -606,29 +603,26 @@ local function GetHealthBarColor(unit, settings)
     end
 
     if useClassColor then
-        local isPlayer = UnitIsPlayer(unit)
-        if type(isPlayer) == "boolean" and isPlayer then
-            -- Unit is a player - use their class color
-            local _, class = UnitClass(unit)
-            if type(class) == "string" then
-                local color = RAID_CLASS_COLORS[class]
+        -- Try class color for the unit (works for players AND NPC party members
+        -- like follower dungeon companions who have assigned classes)
+        local _, class = UnitClass(unit)
+        if type(class) == "string" then
+            local color = RAID_CLASS_COLORS[class]
+            if color then
+                return color.r, color.g, color.b, 1
+            end
+        end
+
+        -- Fallback: pet uses owner's (player's) class color
+        local petCheck = UnitIsUnit(unit, "pet")
+        local playerPetCheck = UnitIsUnit(unit, "playerpet")
+        local isPet = (not IsSecretValue(petCheck) and petCheck == true) or (not IsSecretValue(playerPetCheck) and playerPetCheck == true)
+        if isPet then
+            local _, pClass = UnitClass("player")
+            if type(pClass) == "string" then
+                local color = RAID_CLASS_COLORS[pClass]
                 if color then
                     return color.r, color.g, color.b, 1
-                end
-            end
-        else
-            -- Unit is not a player (pet, NPC, etc.) - use owner's class color for pets
-            local petCheck = UnitIsUnit(unit, "pet")
-            local playerPetCheck = UnitIsUnit(unit, "playerpet")
-            local isPet = (not IsSecretValue(petCheck) and petCheck == true) or (not IsSecretValue(playerPetCheck) and playerPetCheck == true)
-            if isPet then
-                -- Pet: use player's class color
-                local _, class = UnitClass("player")
-                if type(class) == "string" then
-                    local color = RAID_CLASS_COLORS[class]
-                    if color then
-                        return color.r, color.g, color.b, 1
-                    end
                 end
             end
         end

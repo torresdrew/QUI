@@ -726,17 +726,23 @@ local function LayoutContainer(trackerKey)
     if isVertical then
         vs.cdmRow1Width = maxRowWidth
         vs.cdmBottomRowWidth = maxRowWidth
+        vs.cdmRawRow1Width = rawContentWidth
+        vs.cdmRawBottomRowWidth = rawContentWidth
         vs.cdmPotentialRow1Width = maxRowWidth
         vs.cdmPotentialBottomRowWidth = maxRowWidth
     else
-        local row1Width = rowWidths[1] or maxRowWidth
-        local bottomRowWidth = rowWidths[#rows] or maxRowWidth
+        local rawRow1Width = rowWidths[1] or rawContentWidth
+        local rawBottomRowWidth = rowWidths[#rows] or rawContentWidth
+        local row1Width = rawRow1Width
+        local bottomRowWidth = rawBottomRowWidth
         if applyHUDMinWidth then
             row1Width = math.max(row1Width, minWidth)
             bottomRowWidth = math.max(bottomRowWidth, minWidth)
         end
         vs.cdmRow1Width = row1Width
         vs.cdmBottomRowWidth = bottomRowWidth
+        vs.cdmRawRow1Width = rawRow1Width
+        vs.cdmRawBottomRowWidth = rawBottomRowWidth
         vs.cdmPotentialRow1Width = potentialRow1Width
         vs.cdmPotentialBottomRowWidth = potentialBottomRowWidth
     end
@@ -917,6 +923,8 @@ local function GetViewerState(viewer)
     snap.totalHeight            = vs.cdmTotalHeight
     snap.row1Width              = vs.cdmRow1Width
     snap.bottomRowWidth         = vs.cdmBottomRowWidth
+    snap.rawRow1Width           = vs.cdmRawRow1Width
+    snap.rawBottomRowWidth      = vs.cdmRawBottomRowWidth
     snap.potentialRow1Width     = vs.cdmPotentialRow1Width
     snap.potentialBottomRowWidth = vs.cdmPotentialBottomRowWidth
     snap.row1IconHeight         = vs.cdmRow1IconHeight
@@ -1287,6 +1295,19 @@ function ownedEngine:Initialize()
         end
 
         RefreshAll()
+
+        -- After staggered layout timers complete (~0.10s), reapply frame
+        -- anchoring overrides so resource bars and other anchored frames
+        -- pick up the newly computed CDM container dimensions.
+        C_Timer.After(0.25, function()
+            if _G.QUI_UpdateCDMAnchorProxyFrames then
+                _G.QUI_UpdateCDMAnchorProxyFrames()
+            end
+            if _G.QUI_ApplyAllFrameAnchors then
+                _G.QUI_ApplyAllFrameAnchors()
+            end
+            UpdateAllLockedBars()
+        end)
 
         -- Apply HUD visibility now that containers exist (covers /reload while mounted).
         -- Containers start at alpha=0 (CreateContainer). Set the correct target

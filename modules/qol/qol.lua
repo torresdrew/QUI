@@ -661,6 +661,44 @@ hooksecurefunc("StaticPopup_Show", function(which)
 end)
 
 ---------------------------------------------------------------------------
+-- AUCTION HOUSE EXPANSION FILTER
+---------------------------------------------------------------------------
+
+local ahFilterHooked = false
+
+local function SetupAuctionHouseFilter()
+    if ahFilterHooked then return end
+    if not C_AuctionHouse or not C_AuctionHouse.SendBrowseQuery then return end
+
+    ahFilterHooked = true
+
+    -- Pre-hook the C API to inject the expansion filter into every browse query.
+    -- Writing to Blizzard's FilterButton.filters table taints the frame hierarchy,
+    -- so we inject at the API boundary instead — the query table is ephemeral and
+    -- the C function consumes it without taint propagation.
+    local origSendBrowseQuery = C_AuctionHouse.SendBrowseQuery
+    C_AuctionHouse.SendBrowseQuery = function(query)
+        local settings = GetSettings()
+        if settings and settings.auctionHouseExpansionFilter and query then
+            if not query.filters then
+                query.filters = {}
+            end
+            local found = false
+            for _, f in ipairs(query.filters) do
+                if f == Enum.AuctionHouseFilter.CurrentExpansionOnly then
+                    found = true
+                    break
+                end
+            end
+            if not found then
+                tinsert(query.filters, Enum.AuctionHouseFilter.CurrentExpansionOnly)
+            end
+        end
+        return origSendBrowseQuery(query)
+    end
+end
+
+---------------------------------------------------------------------------
 -- EVENT REGISTRATION
 ---------------------------------------------------------------------------
 
@@ -710,11 +748,13 @@ qolFrame:SetScript("OnEvent", function(self, event, ...)
         local loadedAddon = ...
         if loadedAddon == addonName then
             C_Timer.After(0, RefreshPopupBlocker)
+            C_Timer.After(0, SetupAuctionHouseFilter)
             return
         end
         if type(loadedAddon) == "string" and string.find(loadedAddon, "Blizzard_", 1, true) == 1 then
             -- Retry hooks when Blizzard UI modules load lazily.
             C_Timer.After(0, RefreshPopupBlocker)
+            SetupAuctionHouseFilter()
         end
     end
 end)

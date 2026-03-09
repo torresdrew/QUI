@@ -119,6 +119,7 @@ local function SetupPrivateAuras(frame)
     local anchor = settings.anchor or "RIGHT"
     local offsetX = settings.anchorOffsetX or -2
     local offsetY = settings.anchorOffsetY or 0
+    if anchor:find("BOTTOM") then offsetY = offsetY + (frame._bottomPad or 0) end
     local showCountdown = settings.showCountdown ~= false
     local showNumbers = settings.showCountdownNumbers ~= false
 
@@ -367,6 +368,7 @@ function QUI_GFPA:SetupTestFrame(frame)
     local anchor = settings.anchor or "RIGHT"
     local offsetX = settings.anchorOffsetX or -2
     local offsetY = settings.anchorOffsetY or 0
+    if anchor:find("BOTTOM") then offsetY = offsetY + (frame._bottomPad or 0) end
 
     for i = 1, maxSlots do
         local icon = CreatePlaceholderIcon(frame, iconSize)

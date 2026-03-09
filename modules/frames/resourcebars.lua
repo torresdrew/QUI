@@ -92,6 +92,27 @@ local function GetViewerState(viewer)
     return nil
 end
 
+-- Helper: Get raw content width from viewer state (before HUD min-width
+-- inflation).  Resource bar content should match the actual icon content
+-- span; the proxy handles min-width inflation independently.
+local function GetRawContentWidth(vs)
+    if not vs then return nil end
+    return vs.rawContentWidth or vs.iconWidth
+end
+
+-- Helper: Get raw row width from viewer state (before HUD min-width inflation).
+-- Row-specific raw widths are used when sizing resource bars that are locked
+-- to a specific CDM viewer row.
+local function GetRawRow1Width(vs)
+    if not vs then return nil end
+    return vs.rawRow1Width or vs.row1Width or vs.rawContentWidth or vs.iconWidth
+end
+
+local function GetRawBottomRowWidth(vs)
+    if not vs then return nil end
+    return vs.rawBottomRowWidth or vs.bottomRowWidth or vs.rawContentWidth or vs.iconWidth
+end
+
 -- Helper: Get last-known CDM viewer dimensions from DB.
 -- Used as fallback when viewer state is temporarily nil (Edit Mode exit, etc.).
 local function GetSavedViewerDims(viewerKey)
@@ -1082,6 +1103,16 @@ local function CreatePowerBarNudgeButton(parent, direction, deltaX, deltaY, barK
 end
 
 -- Create edit mode overlay for a power bar
+-- Helper: resolve the anchor proxy for a power bar (used for Edit Mode overlay sizing).
+-- The proxy includes HUD min-width inflation so the overlay covers the full
+-- proxy bounds, matching what downstream frames (unit frames) see.
+local function GetPowerBarProxy(barKey)
+    local getProxy = _G.QUI_GetCDMAnchorProxyFrame
+    if not getProxy then return nil end
+    local proxyKey = (barKey == "primary") and "primaryPower" or "secondaryPower"
+    return getProxy(proxyKey)
+end
+
 local function SetPowerBarEditOverlayStyle(overlay, bgColor, borderColor)
     if not overlay then return end
 
@@ -1170,6 +1201,20 @@ function QUICore:EnablePowerBarEditMode()
 
             -- Create and show overlay
             CreatePowerBarEditOverlay(bar, barKey)
+
+            -- Size overlay to the proxy bounds (includes HUD min-width inflation)
+            -- so the Edit Mode overlay shows the full area that downstream frames
+            -- (unit frames, castbars) see as the resource bar's anchor footprint.
+            local proxy = GetPowerBarProxy(barKey)
+            if proxy and proxy:GetWidth() > 1 then
+                bar.editOverlay:ClearAllPoints()
+                bar.editOverlay:SetPoint("CENTER", bar, "CENTER", 0, 0)
+                bar.editOverlay:SetSize(proxy:GetWidth(), proxy:GetHeight())
+            else
+                bar.editOverlay:ClearAllPoints()
+                bar.editOverlay:SetAllPoints(bar)
+            end
+
             bar.editOverlay:Show()
 
             -- Check if this bar is locked by the anchoring system
@@ -1306,9 +1351,11 @@ function QUICore:DisablePowerBarEditMode()
 
     for _, bar in ipairs(bars) do
         if bar then
-            -- Hide overlay
+            -- Hide overlay and restore to bar-relative sizing
             if bar.editOverlay then
                 bar.editOverlay:Hide()
+                bar.editOverlay:ClearAllPoints()
+                bar.editOverlay:SetAllPoints(bar)
             end
 
             -- Disable dragging, click handlers, and keyboard
@@ -1355,13 +1402,14 @@ function QUICore:GetPowerBar()
     -- Calculate width - use configured width or fallback.
     -- Avoid reading essentialViewer:GetWidth() here: at creation time CDM
     -- LayoutViewer has not run yet, so the Blizzard frame width is stale/wrong.
-    -- Use the safe chain: viewer state → saved width from DB → fallback.
+    -- Use raw content width (before HUD min-width inflation) so bars match
+    -- the actual icon span, not the inflated proxy bounds.
     local width = cfg.width or 0
     if width <= 0 then
         local essentialViewer = _G.QUI_GetCDMViewerFrame("essential")
         if essentialViewer then
             local evs = GetViewerState(essentialViewer)
-            width = (evs and evs.iconWidth) or 0
+            width = GetRawContentWidth(evs) or 0
         end
         if width <= 0 then
             width = QUICore.db and QUICore.db.profile and QUICore.db.profile.ncdm
@@ -1494,14 +1542,16 @@ function QUICore:UpdatePowerBar()
     -- Apply orientation to StatusBar
     bar.StatusBar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
 
-    -- Calculate width - use configured width, or fall back to Essential width
+    -- Calculate width - use configured width, or fall back to Essential width.
+    -- Use raw content width (before HUD min-width inflation) so bars match
+    -- the actual icon span, not the inflated proxy bounds.
     local width = cfg.width
     if not width or width <= 0 then
         -- Try to get Essential Cooldowns width
         local essentialViewer = _G.QUI_GetCDMViewerFrame("essential")
         if essentialViewer then
             local evs = GetViewerState(essentialViewer)
-            width = evs and evs.iconWidth
+            width = GetRawContentWidth(evs)
         end
         if width and width > 0 then
             -- Persist for next reload so bars don't flash at stale/fallback width.
@@ -1846,8 +1896,9 @@ _G.QUI_UpdateLockedPowerBar = function()
             newOffsetY = math.floor(essentialCenterY - screenCenterY + 0.5)
         end
     else
-        -- Horizontal CDM: bar below, width matches row width (current behavior)
-        local rowWidth = (evs and evs.row1Width) or (evs and evs.iconWidth) or savedW
+        -- Horizontal CDM: bar below, width matches raw row content width
+        -- (before HUD min-width inflation) so bar matches actual icon span.
+        local rowWidth = GetRawRow1Width(evs) or savedW
         if not rowWidth or rowWidth <= 0 then return end
 
         local row1BorderSize = (evs and evs.row1BorderSize) or 0
@@ -1867,10 +1918,11 @@ _G.QUI_UpdateLockedPowerBar = function()
     -- Debug: log locked power bar calculation during Edit Mode
     local isEditMode = Helpers.IsEditModeActive()
     if isEditMode and QUI and QUI.DebugPrint then
-        QUI:DebugPrint(format("|cffFF9900PowerBar|r UpdateLockedPowerBar: newW=%s vsIconW=%s vsRow1W=%s logicalW=%.0f",
+        QUI:DebugPrint(format("|cffFF9900PowerBar|r UpdateLockedPowerBar: newW=%s vsIconW=%s vsRow1W=%s rawRow1W=%s logicalW=%.0f",
             tostring(newWidth or "nil"),
             tostring(evs and evs.iconWidth or "nil"),
             tostring(evs and evs.row1Width or "nil"),
+            tostring(evs and evs.rawRow1Width or "nil"),
             Helpers.SafeValue(essentialViewer:GetWidth(), 0)))
     end
 
@@ -1950,8 +2002,8 @@ _G.QUI_UpdateLockedPowerBarToUtility = function()
             newOffsetY = math.floor(utilityCenterY - screenCenterY + 0.5)
         end
     else
-        -- Horizontal CDM: bar below, width matches row width (current behavior)
-        local rowWidth = (uvs and uvs.bottomRowWidth) or (uvs and uvs.iconWidth) or savedW
+        -- Horizontal CDM: bar below, width matches raw row content width
+        local rowWidth = GetRawBottomRowWidth(uvs) or savedW
         if not rowWidth or rowWidth <= 0 then return end
 
         local bottomRowBorderSize = (uvs and uvs.bottomRowBorderSize) or 0
@@ -2052,8 +2104,8 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
             newOffsetY = math.floor(essentialCenterY - screenCenterY + 0.5)
         end
     else
-        -- Horizontal CDM: bar above, width matches row width (current behavior)
-        local rowWidth = (evs and evs.row1Width) or (evs and evs.iconWidth) or savedW
+        -- Horizontal CDM: bar above, width matches raw row content width
+        local rowWidth = GetRawRow1Width(evs) or savedW
         if not rowWidth or rowWidth <= 0 then return end
 
         local row1BorderSize = (evs and evs.row1BorderSize) or 0
@@ -2153,8 +2205,8 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
             newOffsetY = math.floor(utilityCenterY - screenCenterY + 0.5)
         end
     else
-        -- Horizontal CDM: bar below, width matches row width (current behavior)
-        local rowWidth = (uvs and uvs.bottomRowWidth) or (uvs and uvs.iconWidth) or savedW
+        -- Horizontal CDM: bar below, width matches raw row content width
+        local rowWidth = GetRawBottomRowWidth(uvs) or savedW
         if not rowWidth or rowWidth <= 0 then return end
 
         local bottomRowBorderSize = (uvs and uvs.bottomRowBorderSize) or 0
@@ -2225,13 +2277,14 @@ function QUICore:GetSecondaryPowerBar()
     -- Calculate width - use configured width or fallback.
     -- Avoid reading essentialViewer:GetWidth() here: at creation time CDM
     -- LayoutViewer has not run yet, so the Blizzard frame width is stale/wrong.
-    -- Use the safe chain: viewer state → saved width from DB → fallback.
+    -- Use raw content width (before HUD min-width inflation) so bars match
+    -- the actual icon span, not the inflated proxy bounds.
     local width = cfg.width or 0
     if width <= 0 then
         local essentialViewer = _G.QUI_GetCDMViewerFrame("essential")
         if essentialViewer then
             local evs = GetViewerState(essentialViewer)
-            width = (evs and evs.iconWidth) or 0
+            width = GetRawContentWidth(evs) or 0
         end
         if width <= 0 then
             width = QUICore.db and QUICore.db.profile and QUICore.db.profile.ncdm
@@ -3163,12 +3216,13 @@ function QUICore:UpdateSecondaryPowerBar()
                 -- User has set a manual width override
                 width = cfg.width
             else
-                -- Auto-detect from Essential Cooldowns or Primary bar
+                -- Auto-detect from Essential Cooldowns or Primary bar.
+                -- Use raw content width so bar matches actual icon span.
                 if self.powerBar and self.powerBar:IsShown() then
                     width = self.powerBar:GetWidth()
                 elseif anchor then
                     local avs = GetViewerState(anchor)
-                    width = avs and avs.iconWidth
+                    width = GetRawContentWidth(avs)
                 end
                 if not width or width <= 0 then
                     -- Use saved width from last NCDM layout (persists across reloads)
@@ -3205,14 +3259,14 @@ function QUICore:UpdateSecondaryPowerBar()
         -- Manual positioning (or fallback when autoAttach has no valid anchor)
         if not cfg.autoAttach or (cfg.autoAttach and not ((self.powerBar and self.powerBar:IsShown()) or anchor)) then
             -- Manual positioning - anchor to center of screen
-            -- Default width to Essential Cooldowns width if not manually set
+            -- Default width to Essential Cooldowns raw content width if not manually set
             width = cfg.width
             if not width or width <= 0 then
-                -- Try to get Essential Cooldowns width
+                -- Try to get Essential Cooldowns width (raw, before min-width inflation)
                 local essentialViewer = _G.QUI_GetCDMViewerFrame("essential")
                 if essentialViewer then
                     local evs = GetViewerState(essentialViewer)
-                    width = evs and evs.iconWidth
+                    width = GetRawContentWidth(evs)
                 end
                 if width and width > 0 then
                     -- Persist for next reload so bars don't flash at stale/fallback width.

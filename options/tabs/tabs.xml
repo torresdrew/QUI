@@ -24,7 +24,7 @@
     <Script file="cooldowns/cdm.lua"/>
     <Script file="trackers/customtrackers.lua"/>
     <Script file="frames/unitframes.lua"/>
-    <Script file="frames/groupframes.lua"/>
+    <Script file="frames/groupframedesigner.lua"/>
     <Script file="frames/actionbars.lua"/>
     <Script file="utility/anchoring.lua"/>
     <Script file="utility/dandersframes.lua"/>

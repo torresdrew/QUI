@@ -111,7 +111,7 @@ local function BuildPartyRaidframesTab(tabContent)
     local core = GetCore()
     local quiGFEnabled = core and core.db and core.db.profile and core.db.profile.quiGroupFrames and core.db.profile.quiGroupFrames.enabled
     if quiGFEnabled then
-        local notice = GUI:CreateLabel(tabContent, "QUI native Group Frames are enabled. DandersFrames party/raid anchoring is inactive while QUI frames are active. Disable QUI Group Frames in the Group Frames tab to use DandersFrames anchoring.", 12, {1, 0.8, 0.2, 1})
+        local notice = GUI:CreateLabel(tabContent, "QUI native Group Frames are enabled. DandersFrames party/raid anchoring is inactive while QUI frames are active. Disable QUI Group Frames in the Group Frame Designer tab to use DandersFrames anchoring.", 12, {1, 0.8, 0.2, 1})
         notice:SetPoint("TOPLEFT", PAD, y)
         notice:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         notice:SetJustifyH("LEFT")

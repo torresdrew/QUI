@@ -2,7 +2,8 @@
     QUI Group Frames - Click-Casting Framework
     Native click-casting that works independently of Clique.
     Features: modifier combos, smart resurrection, per-spec profiles,
-    Clique coexistence, binding tooltip on frame hover.
+    Clique coexistence, binding tooltip on frame hover,
+    keyboard key bindings for pseudo-mouseover casting.
 ]]
 
 local ADDON_NAME, ns = ...
@@ -18,7 +19,9 @@ ns.QUI_GroupFrameClickCast = QUI_GFCC
 -- Track registered frames
 local registeredFrames = setmetatable({}, { __mode = "k" })
 local hookedFrames = setmetatable({}, { __mode = "k" }) -- Tracks frames with OnEnter/OnLeave hooks (permanent)
-local activeBindings = {} -- Resolved bindings for current spec
+local secureWrappedFrames = setmetatable({}, { __mode = "k" }) -- Tracks frames with secure WrapScript (permanent)
+local activeBindings = {} -- Resolved mouse bindings for current spec
+local keyboardBindings = {} -- Resolved keyboard bindings for current spec
 local isEnabled = false
 
 ---------------------------------------------------------------------------
@@ -42,6 +45,15 @@ local MODIFIER_LABELS = {
     ["ctrl-alt"]    = "Ctrl+Alt+",
     ["shift-ctrl-alt"] = "Shift+Ctrl+Alt+",
 }
+
+---------------------------------------------------------------------------
+-- KEYBOARD KEY HELPERS
+---------------------------------------------------------------------------
+-- Convert our modifier format ("shift", "ctrl-alt") to WoW binding prefix ("SHIFT-", "CTRL-ALT-")
+local function ModifiersToBindingPrefix(mods)
+    if not mods or mods == "" then return "" end
+    return mods:upper() .. "-"
+end
 
 ---------------------------------------------------------------------------
 -- RESURRECTION SPELLS: Per-class res spell IDs
@@ -68,10 +80,135 @@ local function GetResurrectionSpellName()
 end
 
 ---------------------------------------------------------------------------
+-- SECURE HANDLER: Keyboard binding infrastructure
+---------------------------------------------------------------------------
+-- The header (SecureHandlerBaseTemplate) owns all override bindings.
+-- WrapScript hooks on each frame use `owner` (the header) to call
+-- SetBindingClick/ClearBindings — the frame itself does NOT need
+-- SecureHandlerBaseTemplate methods.
+--
+-- On hover: header reads key count + key/vbtn attributes, calls
+-- SetBindingClick to route each key to the hovered frame's virtual button.
+-- On leave: header clears all override bindings.
+---------------------------------------------------------------------------
+local bindingHeader
+
+local function GetBindingHeader()
+    if not bindingHeader then
+        bindingHeader = CreateFrame("Frame", "QUI_ClickCastHeader", UIParent, "SecureHandlerBaseTemplate")
+    end
+    return bindingHeader
+end
+
+-- WrapScript pre-body for OnEnter.
+-- `self` = the hovered frame, `owner` = the header (SecureHandlerBaseTemplate).
+-- The header owns and manages all override bindings.
+local ENTER_SNIPPET = [[
+    owner:ClearBindings()
+    local count = owner:GetAttribute("clickcast-keycount") or 0
+    if count == 0 then return end
+
+    local frameName = self:GetName()
+    if not frameName then return end
+
+    for i = 1, count do
+        local key = owner:GetAttribute("clickcast-key" .. i)
+        local vBtn = owner:GetAttribute("clickcast-vbtn" .. i)
+        if key and vBtn then
+            owner:SetBindingClick(true, key, frameName, vBtn)
+        end
+    end
+]]
+
+-- WrapScript pre-body for OnLeave.
+local LEAVE_SNIPPET = [[
+    owner:ClearBindings()
+]]
+
+-- Wrap a frame's OnEnter/OnLeave with secure handler snippets.
+-- Only called once per frame (tracked by secureWrappedFrames).
+local function WrapFrameSecureHandlers(frame)
+    if secureWrappedFrames[frame] then return end
+    if InCombatLockdown() then return end
+
+    local header = GetBindingHeader()
+    SecureHandlerWrapScript(frame, "OnEnter", header, ENTER_SNIPPET)
+    SecureHandlerWrapScript(frame, "OnLeave", header, LEAVE_SNIPPET)
+
+    secureWrappedFrames[frame] = true
+end
+
+-- Build virtual button name from a binding's modifiers + key.
+local function GetVirtualButtonName(binding)
+    return "key" .. (binding.modifiers or ""):gsub("%-", "") .. binding.key:lower()
+end
+
+-- Update the header's key-mapping attributes (shared across all frames).
+local function UpdateHeaderKeyAttributes()
+    local header = GetBindingHeader()
+    if InCombatLockdown() then return end
+
+    -- Clear old attributes
+    local oldCount = header:GetAttribute("clickcast-keycount") or 0
+    for i = 1, oldCount do
+        header:SetAttribute("clickcast-key" .. i, nil)
+        header:SetAttribute("clickcast-vbtn" .. i, nil)
+    end
+
+    -- Set new attributes
+    header:SetAttribute("clickcast-keycount", #keyboardBindings)
+
+    for i, binding in ipairs(keyboardBindings) do
+        local modPrefix = ModifiersToBindingPrefix(binding.modifiers)
+        local fullKey = modPrefix .. binding.key:upper()
+        local vBtn = GetVirtualButtonName(binding)
+        header:SetAttribute("clickcast-key" .. i, fullKey)
+        header:SetAttribute("clickcast-vbtn" .. i, vBtn)
+    end
+end
+
+-- Set virtual-button action attributes on a frame for keyboard bindings.
+local function SetFrameKeyAttributes(frame)
+    if InCombatLockdown() then return end
+    for _, binding in ipairs(keyboardBindings) do
+        local vBtn = GetVirtualButtonName(binding)
+        local actionType = binding.actionType or "spell"
+
+        if actionType == "spell" then
+            frame:SetAttribute("type-" .. vBtn, "macro")
+            frame:SetAttribute("macrotext-" .. vBtn,
+                "/cast [@mouseover,help,nodead] " .. binding.spell
+                .. "; [@mouseover,harm,nodead] " .. binding.spell
+                .. "; [@mouseover] " .. binding.spell)
+        elseif actionType == "macro" then
+            frame:SetAttribute("type-" .. vBtn, "macro")
+            frame:SetAttribute("macrotext-" .. vBtn, binding.macro)
+        elseif actionType == "target" then
+            frame:SetAttribute("type-" .. vBtn, "target")
+        elseif actionType == "focus" then
+            frame:SetAttribute("type-" .. vBtn, "focus")
+        elseif actionType == "assist" then
+            frame:SetAttribute("type-" .. vBtn, "assist")
+        end
+    end
+end
+
+-- Clear virtual-button attributes from a frame.
+local function ClearFrameKeyAttributes(frame)
+    if InCombatLockdown() then return end
+    for _, binding in ipairs(keyboardBindings) do
+        local vBtn = GetVirtualButtonName(binding)
+        frame:SetAttribute("type-" .. vBtn, nil)
+        frame:SetAttribute("macrotext-" .. vBtn, nil)
+    end
+end
+
+---------------------------------------------------------------------------
 -- BINDING RESOLUTION: Build active binding set for current spec
 ---------------------------------------------------------------------------
 local function ResolveBindings()
     wipe(activeBindings)
+    wipe(keyboardBindings)
 
     local db = GetDB()
     if not db or not db.clickCast or not db.clickCast.enabled then return end
@@ -92,7 +229,17 @@ local function ResolveBindings()
     end
 
     for _, binding in ipairs(bindings) do
-        if binding.button and binding.spell then
+        if binding.key and binding.spell then
+            -- Keyboard binding
+            table.insert(keyboardBindings, {
+                key = binding.key,
+                modifiers = binding.modifiers or "",
+                spell = binding.spell,
+                macro = binding.macro,
+                actionType = binding.actionType,
+            })
+        elseif binding.button and binding.spell then
+            -- Mouse binding
             table.insert(activeBindings, {
                 button = binding.button,
                 modifiers = binding.modifiers or "",
@@ -125,7 +272,7 @@ local function SetupFrameClickCast(frame)
     local db = GetDB()
     if not db or not db.clickCast or not db.clickCast.enabled then return end
 
-    -- Set secure attributes for each binding
+    -- Set secure attributes for each mouse binding
     for _, binding in ipairs(activeBindings) do
         local prefix = ""
         local mods = binding.modifiers or ""
@@ -154,6 +301,12 @@ local function SetupFrameClickCast(frame)
         elseif actionType == "assist" then
             frame:SetAttribute(prefix .. "type" .. btnNum, "assist")
         end
+    end
+
+    -- Set up keyboard bindings: wrap with secure handlers + set virtual button attributes
+    if #keyboardBindings > 0 then
+        WrapFrameSecureHandlers(frame)
+        SetFrameKeyAttributes(frame)
     end
 
     registeredFrames[frame] = true
@@ -212,11 +365,11 @@ local function SetupFrameClickCast(frame)
             end
         end
 
-        -- Tooltip showing available bindings
+        -- Tooltip showing available bindings (mouse + keyboard)
         if db.clickCast.showTooltip then
             frame:HookScript("OnEnter", function(self)
                 if not isEnabled then return end
-                if #activeBindings == 0 then return end
+                if #activeBindings == 0 and #keyboardBindings == 0 then return end
 
                 -- Check if we should show tooltip (avoid conflict with unit tooltip)
                 local existingOwner = GameTooltip:GetOwner()
@@ -230,6 +383,16 @@ local function SetupFrameClickCast(frame)
                         local spellLabel = binding.spell or binding.actionType or "?"
                         GameTooltip:AddDoubleLine(
                             modLabel .. buttonLabel,
+                            spellLabel,
+                            0.8, 0.8, 0.8, 1, 1, 1
+                        )
+                    end
+                    for _, binding in ipairs(keyboardBindings) do
+                        local modLabel = MODIFIER_LABELS[binding.modifiers or ""] or ""
+                        local keyLabel = binding.key or "?"
+                        local spellLabel = binding.spell or binding.actionType or "?"
+                        GameTooltip:AddDoubleLine(
+                            modLabel .. keyLabel,
                             spellLabel,
                             0.8, 0.8, 0.8, 1, 1, 1
                         )
@@ -248,7 +411,7 @@ local function ClearFrameClickCast(frame)
     if not frame or not registeredFrames[frame] then return end
     if InCombatLockdown() then return end
 
-    -- Clear all click-cast attributes for every button/modifier combo
+    -- Clear all mouse click-cast attributes for every button/modifier combo
     local modPrefixes = { "", "shift-", "ctrl-", "alt-", "shift-ctrl-", "shift-alt-", "ctrl-alt-", "shift-ctrl-alt-" }
     for _, prefix in ipairs(modPrefixes) do
         for _, btnNum in pairs(BUTTON_NUMBERS) do
@@ -256,6 +419,9 @@ local function ClearFrameClickCast(frame)
             frame:SetAttribute(prefix .. "macrotext" .. btnNum, nil)
         end
     end
+
+    -- Clear keyboard virtual-button attributes
+    ClearFrameKeyAttributes(frame)
 
     -- Restore default target/menu behavior
     frame:SetAttribute("type1", "target")
@@ -281,6 +447,7 @@ function QUI_GFCC:Initialize()
     end
 
     ResolveBindings()
+    UpdateHeaderKeyAttributes()
     isEnabled = true
 end
 
@@ -314,6 +481,7 @@ function QUI_GFCC:RefreshBindings()
 
     -- Re-resolve and re-apply
     ResolveBindings()
+    UpdateHeaderKeyAttributes()
     self:RegisterAllFrames()
 end
 
@@ -323,6 +491,10 @@ end
 
 function QUI_GFCC:GetActiveBindings()
     return activeBindings
+end
+
+function QUI_GFCC:GetKeyboardBindings()
+    return keyboardBindings
 end
 
 function QUI_GFCC:GetEditableBindings()
@@ -344,15 +516,20 @@ function QUI_GFCC:GetEditableBindings()
 end
 
 function QUI_GFCC:AddBinding(binding)
-    if not binding or not binding.button then return false, "No button specified" end
+    if not binding then return false, "No binding specified" end
+    if not binding.button and not binding.key then return false, "No button or key specified" end
 
     local bindings = self:GetEditableBindings()
     local mod = binding.modifiers or ""
 
-    -- Duplicate detection: same button+modifier combo
+    -- Duplicate detection: same trigger+modifier combo
     for _, existing in ipairs(bindings) do
-        if existing.button == binding.button and (existing.modifiers or "") == mod then
-            return false, "A binding for " .. (MODIFIER_LABELS[mod] or "") .. (BUTTON_NAMES[binding.button] or binding.button) .. " already exists"
+        if (existing.modifiers or "") == mod then
+            if binding.key and existing.key and existing.key == binding.key then
+                return false, "A binding for " .. (MODIFIER_LABELS[mod] or "") .. binding.key .. " already exists"
+            elseif binding.button and existing.button and existing.button == binding.button then
+                return false, "A binding for " .. (MODIFIER_LABELS[mod] or "") .. (BUTTON_NAMES[binding.button] or binding.button) .. " already exists"
+            end
         end
     end
 

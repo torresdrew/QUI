@@ -51,8 +51,8 @@ local COLOR_DEAD = { 0.5, 0.5, 0.5, 1 }
 local COLOR_OFFLINE = { 0.4, 0.4, 0.4, 1 }
 local COLOR_GHOST = { 0.6, 0.6, 0.6, 1 }
 
--- Dispel type → color mapping
-local DISPEL_COLORS = {
+-- Dispel type → color defaults (used when DB colors not set)
+local DEFAULT_DISPEL_COLORS = {
     Magic   = { 0.2, 0.6, 1.0, 1 },  -- Blue
     Curse   = { 0.6, 0.0, 1.0, 1 },  -- Purple
     Disease = { 0.6, 0.4, 0.0, 1 },  -- Brown
@@ -60,17 +60,16 @@ local DISPEL_COLORS = {
     Bleed   = { 0.8, 0.0, 0.0, 1 },  -- Red
 }
 
+-- Forward declaration; body defined after GetHealerSettings
+local GetDispelColors
+
 -- Dispel type enum values (WoW 12.0+, from SpellDispelType DB2)
 local ALL_DISPEL_ENUMS = {1, 2, 3, 4, 9, 11}
 
--- Map enum → color (reuses existing DISPEL_COLORS values)
-local DISPEL_ENUM_COLORS = {
-    [1] = DISPEL_COLORS.Magic,
-    [2] = DISPEL_COLORS.Curse,
-    [3] = DISPEL_COLORS.Disease,
-    [4] = DISPEL_COLORS.Poison,
-    [9] = DISPEL_COLORS.Bleed,   -- Enrage uses Bleed color
-    [11] = DISPEL_COLORS.Bleed,
+-- Enum → dispel type name mapping
+local DISPEL_ENUM_NAMES = {
+    [1] = "Magic", [2] = "Curse", [3] = "Disease", [4] = "Poison",
+    [9] = "Bleed", [11] = "Bleed",
 }
 
 local dispelColorCurve = nil
@@ -78,11 +77,13 @@ local dispelColorCurve = nil
 local function GetDispelColorCurve(opacity)
     if dispelColorCurve then return dispelColorCurve end
     if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
+    local colors = GetDispelColors()
     local curve = C_CurveUtil.CreateColorCurve()
     curve:SetType(Enum.LuaCurveType.Step)
     curve:AddPoint(0, CreateColor(0, 0, 0, 0))  -- None = invisible
     for _, enumVal in ipairs(ALL_DISPEL_ENUMS) do
-        local c = DISPEL_ENUM_COLORS[enumVal]
+        local typeName = DISPEL_ENUM_NAMES[enumVal]
+        local c = typeName and colors[typeName]
         if c then
             curve:AddPoint(enumVal, CreateColor(c[1], c[2], c[3], opacity or 0.8))
         end
@@ -196,6 +197,19 @@ end
 local function GetHealerSettings()
     local db = GetDB()
     return db and db.healer
+end
+
+GetDispelColors = function()
+    local hs = GetHealerSettings()
+    local dbColors = hs and hs.dispelOverlay and hs.dispelOverlay.colors
+    if not dbColors then return DEFAULT_DISPEL_COLORS end
+    return {
+        Magic   = dbColors.Magic   or DEFAULT_DISPEL_COLORS.Magic,
+        Curse   = dbColors.Curse   or DEFAULT_DISPEL_COLORS.Curse,
+        Disease = dbColors.Disease or DEFAULT_DISPEL_COLORS.Disease,
+        Poison  = dbColors.Poison  or DEFAULT_DISPEL_COLORS.Poison,
+        Bleed   = dbColors.Bleed   or DEFAULT_DISPEL_COLORS.Bleed,
+    }
 end
 
 local function GetRangeSettings()
@@ -541,6 +555,37 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Power
 ---------------------------------------------------------------------------
+local function ShouldShowPowerForUnit(unit)
+    local ps = GetPowerSettings()
+    if not ps then return true end
+    local onlyHealers = ps.powerBarOnlyHealers
+    local onlyTanks = ps.powerBarOnlyTanks
+    if not onlyHealers and not onlyTanks then return true end
+    local role = UnitGroupRolesAssigned(unit)
+    if onlyHealers and role == "HEALER" then return true end
+    if onlyTanks and role == "TANK" then return true end
+    return false
+end
+
+local function ResizeHealthForPower(frame, showPowerForUnit)
+    if not frame.healthBar then return end
+    local general = GetGeneralSettings()
+    local borderPx = general and general.borderSize or 1
+    local borderSize = borderPx > 0 and (QUICore.Pixels and QUICore:Pixels(borderPx, frame) or borderPx) or 0
+    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
+
+    local bottomPad = borderSize
+    if showPowerForUnit then
+        local powerSettings = GetPowerSettings()
+        local powerHeight = QUICore.PixelRound and QUICore:PixelRound(powerSettings.powerBarHeight or 4, frame) or 4
+        bottomPad = borderSize + powerHeight + px
+    end
+
+    frame.healthBar:ClearAllPoints()
+    frame.healthBar:SetPoint("TOPLEFT", frame, "TOPLEFT", borderSize, -borderSize)
+    frame.healthBar:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -borderSize, bottomPad)
+end
+
 local function UpdatePower(frame)
     if not frame or not frame.unit or not frame.powerBar then return end
     local unit = frame.unit
@@ -549,6 +594,19 @@ local function UpdatePower(frame)
         frame.powerBar:SetValue(0)
         return
     end
+
+    -- Role-based filtering
+    if not ShouldShowPowerForUnit(unit) then
+        frame.powerBar:Hide()
+        if frame._powerSeparator then frame._powerSeparator:Hide() end
+        if frame._powerBg then frame._powerBg:Hide() end
+        ResizeHealthForPower(frame, false)
+        return
+    end
+    frame.powerBar:Show()
+    if frame._powerSeparator then frame._powerSeparator:Show() end
+    if frame._powerBg then frame._powerBg:Show() end
+    ResizeHealthForPower(frame, true)
 
     local power = UnitPower(unit)
     local maxPower = UnitPowerMax(unit)
@@ -649,7 +707,14 @@ local function UpdateAbsorbs(frame)
     frame.absorbBar:SetMinMaxValues(0, maxHP)
     frame.absorbBar:SetValue(absorbAmount)
 
-    local ac = db.absorbs.color or COLOR_WHITE
+    local ac
+    if db.absorbs.useClassColor then
+        local _, class = UnitClass(unit)
+        local cc = class and RAID_CLASS_COLORS[class]
+        ac = cc and { cc.r, cc.g, cc.b, 1 } or COLOR_WHITE
+    else
+        ac = db.absorbs.color or COLOR_WHITE
+    end
     local aa = db.absorbs.opacity or 0.3
     frame.absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
     frame.absorbBar:Show()
@@ -708,6 +773,17 @@ local function UpdateHealPrediction(frame)
     -- C-side SetMinMaxValues/SetValue handle secret values natively — no pcall needed
     frame.healPredictionBar:SetMinMaxValues(0, maxHP)
     frame.healPredictionBar:SetValue(incomingHeals)
+
+    local pc
+    if db.healPrediction.useClassColor then
+        local _, class = UnitClass(unit)
+        local cc = class and RAID_CLASS_COLORS[class]
+        pc = cc and { cc.r, cc.g, cc.b, 1 } or { 0.2, 1, 0.2 }
+    else
+        pc = db.healPrediction.color or { 0.2, 1, 0.2 }
+    end
+    local pa = db.healPrediction.opacity or 0.5
+    frame.healPredictionBar:SetStatusBarColor(pc[1], pc[2], pc[3], pa)
     frame.healPredictionBar:Show()
 end
 
@@ -720,6 +796,12 @@ local ROLE_ATLAS = {
     DAMAGER = "roleicon-tiny-dps",
 }
 
+local ROLE_TOGGLE_KEY = {
+    TANK    = "showRoleTank",
+    HEALER  = "showRoleHealer",
+    DAMAGER = "showRoleDPS",
+}
+
 local function UpdateRoleIcon(frame)
     if not frame or not frame.unit or not frame.roleIcon then return end
     local indSettings = GetIndicatorSettings()
@@ -729,6 +811,13 @@ local function UpdateRoleIcon(frame)
     end
 
     local role = UnitGroupRolesAssigned(frame.unit)
+    -- Check per-role toggle
+    local toggleKey = ROLE_TOGGLE_KEY[role]
+    if toggleKey and indSettings[toggleKey] == false then
+        frame.roleIcon:Hide()
+        return
+    end
+
     local atlas = ROLE_ATLAS[role]
     if atlas then
         frame.roleIcon:SetAtlas(atlas)
@@ -845,7 +934,8 @@ local function UpdateTargetMarker(frame)
 
     local index = GetRaidTargetIndex(frame.unit)
     if index then
-        frame.targetMarker:SetAtlas("raidtargetingicon_" .. index)
+        frame.targetMarker:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
+        SetRaidTargetIconTexture(frame.targetMarker, index)
         frame.targetMarker:Show()
     else
         frame.targetMarker:Hide()
@@ -950,7 +1040,7 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Dispel Overlay
 ---------------------------------------------------------------------------
--- Helper: apply color to all 4 StatusBar borders
+-- Helper: apply color to all 4 StatusBar borders + fill
 local function SetDispelBorderColor(overlay, r, g, b, a)
     for _, key in ipairs({"borderTop", "borderBottom", "borderLeft", "borderRight"}) do
         local border = overlay[key]
@@ -958,9 +1048,13 @@ local function SetDispelBorderColor(overlay, r, g, b, a)
             border:GetStatusBarTexture():SetVertexColor(r, g, b, a)
         end
     end
+    if overlay.fill then
+        local fillA = overlay._fillOpacity or 0
+        overlay.fill:SetVertexColor(r, g, b, fillA)
+    end
 end
 
--- Helper: apply a ColorMixin (secret-safe) to all 4 StatusBar borders
+-- Helper: apply a ColorMixin (secret-safe) to all 4 StatusBar borders + fill
 local function SetDispelBorderColorMixin(overlay, color)
     for _, key in ipairs({"borderTop", "borderBottom", "borderLeft", "borderRight"}) do
         local border = overlay[key]
@@ -969,6 +1063,12 @@ local function SetDispelBorderColorMixin(overlay, color)
             -- GetRGBA() returns secret values; SetVertexColor is C-side and handles them
             tex:SetVertexColor(color:GetRGBA())
         end
+    end
+    if overlay.fill then
+        -- Use the same RGB but with the fill opacity
+        local fillA = overlay._fillOpacity or 0
+        overlay.fill:SetVertexColor(color:GetRGBA())
+        overlay.fill:SetAlpha(fillA)
     end
 end
 
@@ -1015,13 +1115,14 @@ local function UpdateDispelOverlay(frame)
 
     -- Fallback: check shared aura cache (avoids redundant slot-scanning)
     local dispelType = nil
+    local colors = GetDispelColors()
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
     if cache and cache.harmful then
         for _, auraData in ipairs(cache.harmful) do
             if auraData.isHarmful and auraData.dispelName then
                 local dType = SafeValue(auraData.dispelName, nil)
-                if dType and DISPEL_COLORS[dType] then
+                if dType and colors[dType] then
                     dispelType = dType
                     break
                 end
@@ -1030,7 +1131,7 @@ local function UpdateDispelOverlay(frame)
     end
 
     if dispelType then
-        local c = DISPEL_COLORS[dispelType]
+        local c = colors[dispelType]
         local fallbackOpacity = healerSettings.dispelOverlay.opacity or 0.8
         SetDispelBorderColor(overlay, c[1], c[2], c[3], fallbackOpacity)
         overlay:Show()
@@ -1042,103 +1143,143 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Defensive Indicator
 ---------------------------------------------------------------------------
+-- Growth direction offsets for multi-icon layout
+local DEFENSIVE_GROWTH_OFFSETS = {
+    RIGHT = function(size, spacing) return size + spacing, 0 end,
+    LEFT  = function(size, spacing) return -(size + spacing), 0 end,
+    UP    = function(size, spacing) return 0, size + spacing end,
+    DOWN  = function(size, spacing) return 0, -(size + spacing) end,
+}
+
 local function UpdateDefensiveIndicator(frame)
-    if not frame or not frame.unit or not frame.defensiveIcon then return end
+    if not frame or not frame.unit or not frame.defensiveIcons then return end
 
     local healerSettings = GetHealerSettings()
     if not healerSettings or not healerSettings.defensiveIndicator
        or not healerSettings.defensiveIndicator.enabled then
-        frame.defensiveIcon:Hide()
+        for _, icon in ipairs(frame.defensiveIcons) do icon:Hide() end
         return
     end
 
     local unit = frame.unit
     if not UnitExists(unit) or UnitIsDeadOrGhost(unit) then
-        frame.defensiveIcon:Hide()
+        for _, icon in ipairs(frame.defensiveIcons) do icon:Hide() end
         return
     end
 
-    -- Try WoW 12.0+ AuraUtil.AuraFilters first (C-side, secret-safe, 1 result each)
-    local foundAura = nil
+    local defSettings = healerSettings.defensiveIndicator
+    local maxIcons = defSettings.maxIcons or 3
+
+    -- Collect defensive auras (deduplicated by auraInstanceID)
+    local foundAuras = {}
+    local seen = {}
+
     if C_UnitAuras and C_UnitAuras.GetUnitAuras then
         -- BIG_DEFENSIVE filter
         if AuraUtil and AuraUtil.AuraFilters and AuraUtil.AuraFilters.BigDefensive then
             local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit,
-                "HELPFUL|" .. AuraUtil.AuraFilters.BigDefensive, 1)
-            if ok and auras and auras[1] then
-                foundAura = auras[1]
+                "HELPFUL|" .. AuraUtil.AuraFilters.BigDefensive, maxIcons)
+            if ok and auras then
+                for _, aura in ipairs(auras) do
+                    if aura.auraInstanceID and not seen[aura.auraInstanceID] then
+                        seen[aura.auraInstanceID] = true
+                        foundAuras[#foundAuras + 1] = aura
+                    end
+                end
             end
         end
-        -- EXTERNAL_DEFENSIVE filter (if no big defensive found)
-        if not foundAura and AuraUtil and AuraUtil.AuraFilters
+        -- EXTERNAL_DEFENSIVE filter
+        if #foundAuras < maxIcons and AuraUtil and AuraUtil.AuraFilters
            and AuraUtil.AuraFilters.ExternalDefensive then
             local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit,
-                "HELPFUL|" .. AuraUtil.AuraFilters.ExternalDefensive, 1)
-            if ok and auras and auras[1] then
-                foundAura = auras[1]
+                "HELPFUL|" .. AuraUtil.AuraFilters.ExternalDefensive, maxIcons - #foundAuras)
+            if ok and auras then
+                for _, aura in ipairs(auras) do
+                    if aura.auraInstanceID and not seen[aura.auraInstanceID] then
+                        seen[aura.auraInstanceID] = true
+                        foundAuras[#foundAuras + 1] = aura
+                        if #foundAuras >= maxIcons then break end
+                    end
+                end
             end
         end
         -- Fallback: check shared aura cache for known defensive spell IDs
-        -- (cache populated by groupframes_auras.lua — avoids redundant bulk scan)
-        if not foundAura then
+        if #foundAuras < maxIcons then
             local GFA = ns.QUI_GroupFrameAuras
             local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
             if cache and cache.helpful then
                 for _, auraData in ipairs(cache.helpful) do
                     local spellID = SafeValue(auraData.spellId, nil)
                     if spellID and DEFENSIVE_SPELL_IDS[spellID] then
-                        foundAura = auraData
-                        break
+                        local instID = auraData.auraInstanceID
+                        if not instID or not seen[instID] then
+                            if instID then seen[instID] = true end
+                            foundAuras[#foundAuras + 1] = auraData
+                            if #foundAuras >= maxIcons then break end
+                        end
                     end
                 end
             end
         end
     end
 
-    if not foundAura then
-        frame.defensiveIcon:Hide()
-        return
-    end
-
-    -- Update icon texture (C-side SetTexture handles secret values)
-    if foundAura.icon and frame.defensiveIcon.icon then
-        pcall(frame.defensiveIcon.icon.SetTexture, frame.defensiveIcon.icon, foundAura.icon)
-    end
-
-    -- Update cooldown swipe
-    local cd = frame.defensiveIcon.cooldown
-    if cd and foundAura.duration and foundAura.expirationTime then
-        if foundAura.auraInstanceID and C_UnitAuras.GetAuraDuration
-           and cd.SetCooldownFromDurationObject then
-            local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, foundAura.auraInstanceID)
-            if ok and durationObj then
-                pcall(cd.SetCooldownFromDurationObject, cd, durationObj)
-            elseif cd.SetCooldownFromExpirationTime then
-                pcall(cd.SetCooldownFromExpirationTime, cd, foundAura.expirationTime, foundAura.duration)
-            end
-        elseif cd.SetCooldownFromExpirationTime then
-            pcall(cd.SetCooldownFromExpirationTime, cd, foundAura.expirationTime, foundAura.duration)
-        else
-            pcall(function()
-                cd:SetCooldown(foundAura.expirationTime - foundAura.duration, foundAura.duration)
-            end)
-        end
-    elseif cd then
-        cd:Clear()
-    end
-
-    -- Size and position
-    local defSettings = healerSettings.defensiveIndicator
+    -- Layout settings
     local iconSize = defSettings.iconSize or 16
     local position = defSettings.position or "CENTER"
     local offsetX = defSettings.offsetX or 0
     local offsetY = defSettings.offsetY or 0
-    frame.defensiveIcon:SetSize(iconSize, iconSize)
-    frame.defensiveIcon:ClearAllPoints()
-    frame.defensiveIcon:SetPoint(position, frame, position, offsetX, offsetY)
-    frame.defensiveIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
+    local spacing = defSettings.spacing or 2
+    local growDir = defSettings.growDirection or "RIGHT"
+    local growFn = DEFENSIVE_GROWTH_OFFSETS[growDir] or DEFENSIVE_GROWTH_OFFSETS.RIGHT
+    local stepX, stepY = growFn(iconSize, spacing)
 
-    frame.defensiveIcon:Show()
+    -- Expose active defensive auraInstanceIDs for buff deduplication
+    if not frame._defensiveAuraIDs then frame._defensiveAuraIDs = {} end
+    wipe(frame._defensiveAuraIDs)
+    for id in pairs(seen) do
+        frame._defensiveAuraIDs[id] = true
+    end
+
+    for i, defIcon in ipairs(frame.defensiveIcons) do
+        local aura = foundAuras[i]
+        if aura then
+            -- Update icon texture
+            if aura.icon and defIcon.icon then
+                pcall(defIcon.icon.SetTexture, defIcon.icon, aura.icon)
+            end
+
+            -- Update cooldown swipe
+            local cd = defIcon.cooldown
+            if cd and aura.duration and aura.expirationTime then
+                if aura.auraInstanceID and C_UnitAuras.GetAuraDuration
+                   and cd.SetCooldownFromDurationObject then
+                    local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, aura.auraInstanceID)
+                    if ok and durationObj then
+                        pcall(cd.SetCooldownFromDurationObject, cd, durationObj)
+                    elseif cd.SetCooldownFromExpirationTime then
+                        pcall(cd.SetCooldownFromExpirationTime, cd, aura.expirationTime, aura.duration)
+                    end
+                elseif cd.SetCooldownFromExpirationTime then
+                    pcall(cd.SetCooldownFromExpirationTime, cd, aura.expirationTime, aura.duration)
+                else
+                    pcall(function()
+                        cd:SetCooldown(aura.expirationTime - aura.duration, aura.duration)
+                    end)
+                end
+            elseif cd then
+                cd:Clear()
+            end
+
+            -- Position: first icon at anchor, subsequent offset by growth direction
+            defIcon:SetSize(iconSize, iconSize)
+            defIcon:ClearAllPoints()
+            defIcon:SetPoint(position, frame, position, offsetX + stepX * (i - 1), offsetY + stepY * (i - 1))
+            defIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
+            defIcon:Show()
+        else
+            defIcon:Hide()
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -1373,6 +1514,10 @@ local function DecorateGroupFrame(frame)
     statusText:Hide()
     frame.statusText = statusText
 
+    -- Bottom-anchor offset: push elements above power bar + separator
+    local bottomPad = powerHeight + separatorHeight + borderSize
+    frame._bottomPad = bottomPad
+
     -- Name text
     local fontPath = GetFontPath()
     local fontOutline = GetFontOutline()
@@ -1381,14 +1526,16 @@ local function DecorateGroupFrame(frame)
     local nameAnchor = GetTextAnchorInfo(nameSettings and nameSettings.nameAnchor or "LEFT")
     local nameOffsetX = nameSettings and nameSettings.nameOffsetX or 4
     local nameOffsetY = nameSettings and nameSettings.nameOffsetY or 0
+    local nameBottomPad = nameAnchor.point:find("BOTTOM") and bottomPad or 0
 
     local nameText = frame.nameText or textFrame:CreateFontString(nil, "OVERLAY")
     nameText:ClearAllPoints()
     nameText:SetFont(fontPath, nameFontSize, fontOutline)
     local namePadX = math.abs(nameOffsetX)
-    nameText:SetPoint(nameAnchor.leftPoint, frame, nameAnchor.leftPoint, namePadX, nameOffsetY)
-    nameText:SetPoint(nameAnchor.rightPoint, frame, nameAnchor.rightPoint, -namePadX, nameOffsetY)
-    nameText:SetJustifyH(nameAnchor.justify)
+    nameText:SetPoint(nameAnchor.leftPoint, frame, nameAnchor.leftPoint, namePadX, nameOffsetY + nameBottomPad)
+    nameText:SetPoint(nameAnchor.rightPoint, frame, nameAnchor.rightPoint, -namePadX, nameOffsetY + nameBottomPad)
+    local nameJustify = nameSettings and nameSettings.nameJustify or nameAnchor.justify
+    nameText:SetJustifyH(nameJustify)
     nameText:SetJustifyV(nameAnchor.justifyV)
     nameText:SetTextColor(1, 1, 1, 1)
     nameText:SetWordWrap(false)
@@ -1400,28 +1547,40 @@ local function DecorateGroupFrame(frame)
     local healthAnchor = GetTextAnchorInfo(healthSettings and healthSettings.healthAnchor or "RIGHT")
     local healthOffsetX = healthSettings and healthSettings.healthOffsetX or -4
     local healthOffsetY = healthSettings and healthSettings.healthOffsetY or 0
+    local healthBottomPad = healthAnchor.point:find("BOTTOM") and bottomPad or 0
 
     local healthText = frame.healthText or textFrame:CreateFontString(nil, "OVERLAY")
     healthText:ClearAllPoints()
     healthText:SetFont(fontPath, healthFontSize, fontOutline)
     local healthPadX = math.abs(healthOffsetX)
-    healthText:SetPoint(healthAnchor.leftPoint, frame, healthAnchor.leftPoint, healthPadX, healthOffsetY)
-    healthText:SetPoint(healthAnchor.rightPoint, frame, healthAnchor.rightPoint, -healthPadX, healthOffsetY)
-    healthText:SetJustifyH(healthAnchor.justify)
+    healthText:SetPoint(healthAnchor.leftPoint, frame, healthAnchor.leftPoint, healthPadX, healthOffsetY + healthBottomPad)
+    healthText:SetPoint(healthAnchor.rightPoint, frame, healthAnchor.rightPoint, -healthPadX, healthOffsetY + healthBottomPad)
+    local healthJustify = healthSettings and healthSettings.healthJustify or healthAnchor.justify
+    healthText:SetJustifyH(healthJustify)
     healthText:SetJustifyV(healthAnchor.justifyV)
     healthText:SetTextColor(1, 1, 1, 1)
     healthText:SetWordWrap(false)
     frame.healthText = healthText
 
+    -- Read indicator positioning from DB
+    local indDB = GetIndicatorSettings() or {}
+
+    -- Helper: add bottomPad to Y offset for any BOTTOM* anchor
+    local function BottomPadY(anchor, offY)
+        if anchor:find("BOTTOM") then return offY + bottomPad end
+        return offY
+    end
+
     -- Role icon
-    local indSettings = GetIndicatorSettings()
-    local roleIconSize = indSettings and indSettings.roleIconSize or 12
-    local roleAnchor = indSettings and indSettings.roleIconAnchor or "TOPLEFT"
+    local roleIconSize = indDB.roleIconSize or 12
+    local roleAnchor = indDB.roleIconAnchor or "TOPLEFT"
+    local roleOffX = indDB.roleIconOffsetX or 2
+    local roleOffY = indDB.roleIconOffsetY or -2
 
     local roleIcon = frame.roleIcon or textFrame:CreateTexture(nil, "OVERLAY")
     roleIcon:ClearAllPoints()
     roleIcon:SetSize(roleIconSize, roleIconSize)
-    roleIcon:SetPoint(roleAnchor, frame, roleAnchor, 2, -2)
+    roleIcon:SetPoint(roleAnchor, frame, roleAnchor, roleOffX, BottomPadY(roleAnchor, roleOffY))
     roleIcon:Hide()
     frame.roleIcon = roleIcon
 
@@ -1429,7 +1588,8 @@ local function DecorateGroupFrame(frame)
     local readyCheckIcon = frame.readyCheckIcon or textFrame:CreateTexture(nil, "OVERLAY")
     readyCheckIcon:ClearAllPoints()
     readyCheckIcon:SetSize(16, 16)
-    readyCheckIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    local rcAnchor = indDB.readyCheckAnchor or "CENTER"
+    readyCheckIcon:SetPoint(rcAnchor, frame, rcAnchor, indDB.readyCheckOffsetX or 0, BottomPadY(rcAnchor, indDB.readyCheckOffsetY or 0))
     readyCheckIcon:Hide()
     frame.readyCheckIcon = readyCheckIcon
 
@@ -1437,8 +1597,8 @@ local function DecorateGroupFrame(frame)
     local resIcon = frame.resIcon or textFrame:CreateTexture(nil, "OVERLAY")
     resIcon:ClearAllPoints()
     resIcon:SetSize(16, 16)
-    resIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
-    resIcon:SetAtlas("nameplates-icon-flag-horde") -- Placeholder, will be proper res icon
+    local resAnchor = indDB.resurrectionAnchor or "CENTER"
+    resIcon:SetPoint(resAnchor, frame, resAnchor, indDB.resurrectionOffsetX or 0, BottomPadY(resAnchor, indDB.resurrectionOffsetY or 0))
     resIcon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
     resIcon:Hide()
     frame.resIcon = resIcon
@@ -1447,8 +1607,9 @@ local function DecorateGroupFrame(frame)
     local summonIcon = frame.summonIcon or textFrame:CreateTexture(nil, "OVERLAY")
     summonIcon:ClearAllPoints()
     summonIcon:SetSize(16, 16)
-    summonIcon:SetPoint("CENTER", frame, "CENTER", 16, 0)
-    summonIcon:SetAtlas("Raid-Icon-SummonPending")
+    local sumAnchor = indDB.summonAnchor or "CENTER"
+    summonIcon:SetPoint(sumAnchor, frame, sumAnchor, indDB.summonOffsetX or 16, BottomPadY(sumAnchor, indDB.summonOffsetY or 0))
+    summonIcon:SetAtlas("RaidFrame-Icon-SummonPending")
     summonIcon:Hide()
     frame.summonIcon = summonIcon
 
@@ -1456,7 +1617,8 @@ local function DecorateGroupFrame(frame)
     local leaderIcon = frame.leaderIcon or textFrame:CreateTexture(nil, "OVERLAY")
     leaderIcon:ClearAllPoints()
     leaderIcon:SetSize(12, 12)
-    leaderIcon:SetPoint("TOP", frame, "TOP", 0, 6)
+    local ldrAnchor = indDB.leaderAnchor or "TOP"
+    leaderIcon:SetPoint(ldrAnchor, frame, ldrAnchor, indDB.leaderOffsetX or 0, BottomPadY(ldrAnchor, indDB.leaderOffsetY or 6))
     leaderIcon:Hide()
     frame.leaderIcon = leaderIcon
 
@@ -1464,7 +1626,8 @@ local function DecorateGroupFrame(frame)
     local targetMarker = frame.targetMarker or textFrame:CreateTexture(nil, "OVERLAY")
     targetMarker:ClearAllPoints()
     targetMarker:SetSize(14, 14)
-    targetMarker:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -2, -2)
+    local tmAnchor = indDB.targetMarkerAnchor or "TOPRIGHT"
+    targetMarker:SetPoint(tmAnchor, frame, tmAnchor, indDB.targetMarkerOffsetX or -2, BottomPadY(tmAnchor, indDB.targetMarkerOffsetY or -2))
     targetMarker:Hide()
     frame.targetMarker = targetMarker
 
@@ -1472,19 +1635,23 @@ local function DecorateGroupFrame(frame)
     local phaseIcon = frame.phaseIcon or textFrame:CreateTexture(nil, "OVERLAY")
     phaseIcon:ClearAllPoints()
     phaseIcon:SetSize(16, 16)
-    phaseIcon:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 2, 2)
-    phaseIcon:SetAtlas("nameplates-icon-flag-horde") -- Placeholder
+    local phAnchor = indDB.phaseAnchor or "BOTTOMLEFT"
+    phaseIcon:SetPoint(phAnchor, frame, phAnchor, indDB.phaseOffsetX or 2, BottomPadY(phAnchor, indDB.phaseOffsetY or 2))
     phaseIcon:SetTexture("Interface\\TargetingFrame\\UI-PhasingIcon")
     phaseIcon:Hide()
     frame.phaseIcon = phaseIcon
 
     -- Threat border (overlay frame)
+    local indDB = db.indicators or {}
+    local threatBorderPx = px * (indDB.threatBorderSize or 3)
     local threatBorder = frame.threatBorder or CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    threatBorder:SetAllPoints()
+    threatBorder:ClearAllPoints()
+    threatBorder:SetPoint("TOPLEFT", -px, px)
+    threatBorder:SetPoint("BOTTOMRIGHT", px, -px)
     threatBorder:SetFrameLevel(frame:GetFrameLevel() + 5)
     threatBorder:SetBackdrop({
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = borderSize > 0 and borderSize * 2 or px * 2,
+        edgeSize = threatBorderPx,
     })
     threatBorder:Hide()
     frame.threatBorder = threatBorder
@@ -1505,11 +1672,11 @@ local function DecorateGroupFrame(frame)
     -- Dispel overlay (StatusBar borders for secret-value-safe SetVertexColor)
     local dispelOverlay = frame.dispelOverlay or CreateFrame("Frame", nil, frame)
     dispelOverlay:ClearAllPoints()
-    dispelOverlay:SetPoint("TOPLEFT", -px, px)
-    dispelOverlay:SetPoint("BOTTOMRIGHT", px, -px)
+    dispelOverlay:SetAllPoints(frame)
     dispelOverlay:SetFrameLevel(frame:GetFrameLevel() + 6)
 
-    local dispelBorderSize = px * 3
+    local dispelSettings = db.healer and db.healer.dispelOverlay
+    local dispelBorderSize = px * (dispelSettings and dispelSettings.borderSize or 3)
     local function MakeDispelBorder(parent)
         local sb = CreateFrame("StatusBar", nil, parent)
         sb:SetStatusBarTexture("Interface\\Buttons\\WHITE8x8")
@@ -1546,43 +1713,59 @@ local function DecorateGroupFrame(frame)
     bRight:SetWidth(dispelBorderSize)
     dispelOverlay.borderRight = bRight
 
+    -- Fill texture (full-frame tint behind borders)
+    local dispelFill = dispelOverlay.fill
+    if not dispelFill then
+        dispelFill = dispelOverlay:CreateTexture(nil, "BACKGROUND")
+        dispelOverlay.fill = dispelFill
+    end
+    dispelFill:SetAllPoints(dispelOverlay)
+    dispelFill:SetColorTexture(1, 1, 1, 1)
+    dispelFill:SetVertexColor(0, 0, 0, 0) -- colored dynamically by SetDispelBorderColor
+    dispelOverlay._fillOpacity = dispelSettings and dispelSettings.fillOpacity or 0
+
     dispelOverlay:Hide()
     frame.dispelOverlay = dispelOverlay
 
-    -- Defensive indicator icon (centered, high frame level)
-    local defensiveIcon = frame.defensiveIcon or CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    defensiveIcon:SetSize(16, 16)
-    defensiveIcon:ClearAllPoints()
-    defensiveIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
-    defensiveIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
+    -- Defensive indicator icons (pool of up to MAX_DEFENSIVE_ICONS)
+    local MAX_DEFENSIVE_ICONS = 5
+    if not frame.defensiveIcons then frame.defensiveIcons = {} end
+    for i = 1, MAX_DEFENSIVE_ICONS do
+        local defIcon = frame.defensiveIcons[i] or CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        defIcon:SetSize(16, 16)
+        defIcon:ClearAllPoints()
+        defIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+        defIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
 
-    local defTex = defensiveIcon.icon or defensiveIcon:CreateTexture(nil, "ARTWORK")
-    defTex:SetAllPoints()
-    defTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    defensiveIcon.icon = defTex
+        local defTex = defIcon.icon or defIcon:CreateTexture(nil, "ARTWORK")
+        defTex:SetAllPoints()
+        defTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        defIcon.icon = defTex
 
-    defensiveIcon:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
-    defensiveIcon:SetBackdropBorderColor(0, 0.8, 0, 1)
+        defIcon:SetBackdrop({
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = px,
+        })
+        defIcon:SetBackdropBorderColor(0, 0.8, 0, 1)
 
-    local defCD = defensiveIcon.cooldown or CreateFrame("Cooldown", nil, defensiveIcon, "CooldownFrameTemplate")
-    defCD:SetAllPoints(defTex)
-    defCD:SetDrawEdge(false)
-    defCD:SetDrawSwipe(true)
-    defCD:SetReverse(true)
-    defCD:SetHideCountdownNumbers(false)
-    defensiveIcon.cooldown = defCD
+        local defCD = defIcon.cooldown or CreateFrame("Cooldown", nil, defIcon, "CooldownFrameTemplate")
+        defCD:SetAllPoints(defTex)
+        defCD:SetDrawEdge(false)
+        defCD:SetDrawSwipe(true)
+        defCD:SetReverse(true)
+        defCD:SetHideCountdownNumbers(false)
+        defIcon.cooldown = defCD
 
-    -- Disable mouse on the icon so clicks pass through to the unit frame
-    if defensiveIcon.SetMouseClickEnabled then
-        defensiveIcon:SetMouseClickEnabled(false)
+        if defIcon.SetMouseClickEnabled then
+            defIcon:SetMouseClickEnabled(false)
+        end
+        defIcon:EnableMouse(false)
+
+        defIcon:Hide()
+        frame.defensiveIcons[i] = defIcon
     end
-    defensiveIcon:EnableMouse(false)
-
-    defensiveIcon:Hide()
-    frame.defensiveIcon = defensiveIcon
+    -- Keep backward compat alias for single-icon references
+    frame.defensiveIcon = frame.defensiveIcons[1]
 
     -- Portrait (optional, side-attached)
     local portraitSettings = GetPortraitSettings()
@@ -1890,7 +2073,15 @@ local function CreateHeaders()
     local raidCount = math.max(IsInRaid() and GetNumGroupMembers() or 25, 5)
     local raidW, raidH = CalculateHeaderSize(db, raidCount)
     raidHeader:SetSize(raidW, raidH)
-    raidHeader:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+
+    -- When not unified, raid gets its own position
+    local raidOffX, raidOffY = offsetX, offsetY
+    if not db.unifiedPosition then
+        local raidPos = db.raidPosition
+        raidOffX = raidPos and raidPos.offsetX or -400
+        raidOffY = raidPos and raidPos.offsetY or 0
+    end
+    raidHeader:SetPoint("CENTER", UIParent, "CENTER", raidOffX, raidOffY)
     raidHeader:SetMovable(true)
     raidHeader:SetClampedToScreen(true)
 
