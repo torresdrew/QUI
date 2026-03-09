@@ -201,6 +201,13 @@ local function ShowPanelEditPopup(panelConfig, panelIndex)
     numSlotsSlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
     y = y - FORM_ROW
 
+    local lockCheck = GUI:CreateFormCheckbox(content, "Lock Position", "locked", panelConfig, function()
+        RefreshDatapanels()
+    end)
+    lockCheck:SetPoint("TOPLEFT", PAD, y)
+    lockCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
     local bgOpacitySlider = GUI:CreateFormSlider(content, "Background Opacity", 0, 100, 5, "bgOpacity", panelConfig, RefreshDatapanels)
     bgOpacitySlider:SetPoint("TOPLEFT", PAD, y)
     bgOpacitySlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
@@ -1586,6 +1593,10 @@ BuildDatatextTab = function(tabContent)
 
         if #panels > 0 then
             for i, panelConfig in ipairs(panels) do
+                if panelConfig.locked == nil then
+                    panelConfig.locked = false
+                end
+
                 local panelFrame = CreateFrame("Frame", nil, tabContent, "BackdropTemplate")
                 panelFrame:SetHeight(60)
                 panelFrame:SetPoint("TOPLEFT", PAD, y)
@@ -1600,16 +1611,14 @@ BuildDatatextTab = function(tabContent)
                 panelFrame:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
 
                 -- Panel name
-                local nameLabel = panelFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                local nameLabel = GUI:CreateLabel(panelFrame, "", 12, C.accentLight)
                 nameLabel:SetPoint("TOPLEFT", 10, -10)
                 nameLabel:SetText(string.format("Panel %d: %s", i, panelConfig.name or ("Panel " .. i)))
-                nameLabel:SetTextColor(C.accentLight[1], C.accentLight[2], C.accentLight[3], 1)
 
                 -- Status (simplified - just slot count)
-                local statusLabel = panelFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                local statusLabel = GUI:CreateLabel(panelFrame, "", 11, C.textMuted)
                 statusLabel:SetPoint("TOPLEFT", 10, -30)
                 statusLabel:SetText(string.format("%d slots", panelConfig.numSlots or 3))
-                statusLabel:SetTextColor(0.7, 0.7, 0.7, 1)
 
                 -- Edit button - opens configuration popup
                 local editBtn = GUI:CreateButton(panelFrame, "Edit", 60, 22, function()
@@ -1623,7 +1632,13 @@ BuildDatatextTab = function(tabContent)
                         QUICore.Datapanels:UpdatePanel(panelConfig.id)
                     end
                 end)
-                enableCheck:SetPoint("RIGHT", -80, 0)
+                enableCheck:SetPoint("LEFT", panelFrame, "LEFT", 120, 0)
+
+                -- Lock toggle
+                local lockCheck = GUI:CreateCheckbox(panelFrame, "Lock", "locked", panelConfig, function()
+                    RefreshDatapanels()
+                end)
+                lockCheck:SetPoint("LEFT", enableCheck, "RIGHT", 70, 0)
 
                 -- Delete button (with confirmation)
                 local delBtn = GUI:CreateButton(panelFrame, "Delete", 60, 22, function()
