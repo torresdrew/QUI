@@ -144,6 +144,7 @@ GUI.WidgetInstances = {}
 -- Nested format: SectionRegistry[tabIndex * 10000 + subTabIndex][sectionName] -> {frame, scrollParent}
 GUI.SectionRegistry = {}
 GUI.SectionRegistryOrder = {}
+GUI.SectionNavigateHandlers = {}
 
 -- Sidebar tree animation/layout config
 GUI._sidebarAnimDuration = 0.16
@@ -245,6 +246,25 @@ local function GetSectionRegistryKey(tabIndex, subTabIndex)
     return (tabIndex or 0) * 10000 + (subTabIndex or 0)
 end
 
+function GUI:RegisterSectionNavigateHandler(tabIndex, subTabIndex, sectionName, handler)
+    if not tabIndex or not subTabIndex or not sectionName or sectionName == "" then return end
+    if type(handler) ~= "function" then return end
+    local key = GetSectionRegistryKey(tabIndex, subTabIndex)
+    self.SectionNavigateHandlers[key] = self.SectionNavigateHandlers[key] or {}
+    self.SectionNavigateHandlers[key][sectionName] = handler
+end
+
+function GUI:RunSectionNavigateHandler(tabIndex, subTabIndex, sectionName)
+    if not tabIndex or not subTabIndex or not sectionName or sectionName == "" then return false end
+    local key = GetSectionRegistryKey(tabIndex, subTabIndex)
+    local handlers = self.SectionNavigateHandlers[key]
+    local handler = handlers and handlers[sectionName]
+    if type(handler) ~= "function" then return false end
+    local ok, handled = pcall(handler)
+    if not ok then return false end
+    return handled ~= false
+end
+
 function GUI:GetOrderedSections(tabIndex, subTabIndex)
     local key = GetSectionRegistryKey(tabIndex, subTabIndex)
     local order = self.SectionRegistryOrder[key] or {}
@@ -320,10 +340,15 @@ function GUI:NavigateTo(tabIndex, subTabIndex, sectionName)
                 page._subTabGroup.SelectTab(subTabIndex)
             end
             if sectionName and sectionName ~= "" then
-                C_Timer.After(0.05, function()
-                    self:ScrollToSection(tabIndex, subTabIndex, sectionName)
+                local handled = self:RunSectionNavigateHandler(tabIndex, subTabIndex, sectionName)
+                if handled then
                     frame._sidebarPendingSectionSelection = nil
-                end)
+                else
+                    C_Timer.After(0.05, function()
+                        self:ScrollToSection(tabIndex, subTabIndex, sectionName)
+                        frame._sidebarPendingSectionSelection = nil
+                    end)
+                end
             else
                 frame._sidebarPendingSectionSelection = nil
             end
@@ -1194,11 +1219,38 @@ end
 -- WIDGET: SUB-TABS (Buttons in sticky bar, content frames in page)
 ---------------------------------------------------------------------------
 function GUI:CreateSubTabs(parent, tabs)
+    local UIKit = ns.UIKit
+    local function RoundVirtual(value, frame)
+        if QUICore and QUICore.PixelRound then
+            return QUICore:PixelRound(value or 0, frame)
+        end
+        return value or 0
+    end
+    local function SetSnappedPoint(frame, point, relativeTo, relativePoint, xOffset, yOffset)
+        if QUICore and QUICore.SetSnappedPoint then
+            QUICore:SetSnappedPoint(frame, point, relativeTo, relativePoint, xOffset, yOffset)
+        else
+            frame:SetPoint(point, relativeTo, relativePoint, xOffset or 0, yOffset or 0)
+        end
+    end
+    local function ApplyPixelBackdrop(frame)
+        if QUICore and QUICore.SetPixelPerfectBackdrop then
+            QUICore:SetPixelPerfectBackdrop(frame, 1, "Interface\\Buttons\\WHITE8x8")
+            return
+        end
+        local px = QUICore:GetPixelSize(frame)
+        frame:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8x8",
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = px,
+        })
+    end
+
     -- Content container stays in the page (parent = scroll content)
     local container = CreateFrame("Frame", nil, parent)
     container:SetPoint("TOPLEFT", 0, 0)
     container:SetPoint("TOPRIGHT", 0, 0)
-    container:SetHeight(28)  -- Minimal height - content frames anchor below
+    container:SetHeight(RoundVirtual(28, container))  -- Minimal height - content frames anchor below
 
     -- Button group goes in the sticky sub-tab bar
     local mainFrame = self.MainFrame
@@ -1220,16 +1272,17 @@ function GUI:CreateSubTabs(parent, tabs)
 
         -- Tab button (parented to buttonGroup in sticky bar)
         local btn = CreateFrame("Button", nil, buttonGroup, "BackdropTemplate")
-        btn:SetSize(90, 24)
-        btn:SetPoint("TOPLEFT", 10 + (i-1) * (90 + spacing), -3)
-        local px = QUICore:GetPixelSize(btn)
-        btn:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = px,
-        })
+        btn:SetSize(RoundVirtual(90, btn), RoundVirtual(24, btn))
+        SetSnappedPoint(btn, "TOPLEFT", buttonGroup, "TOPLEFT", 10 + (i-1) * (90 + spacing), -3)
+        ApplyPixelBackdrop(btn)
         btn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         btn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+        if UIKit and UIKit.RegisterScaleRefresh then
+            UIKit.RegisterScaleRefresh(btn, "subTabPixelBackdrop", function(owner)
+                owner:SetHeight(RoundVirtual(24, owner))
+                ApplyPixelBackdrop(owner)
+            end)
+        end
 
         btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         SetFont(btn.text, 10, "", C.text)
@@ -1341,6 +1394,7 @@ function GUI:CreateSubTabs(parent, tabs)
             local totalRowSpacing = math.max(0, #rowBtnIndices - 1) * spacing + rowSepCount * separatorSpacing
             local rowBtnWidth = math.floor((availableWidth - totalRowSpacing) / #rowBtnIndices)
             rowBtnWidth = math.max(rowBtnWidth, 50)
+            rowBtnWidth = RoundVirtual(rowBtnWidth, buttonGroup)
 
             local xOffset = 10
             local yOffset = -(topPad + (rowIdx - 1) * (rowHeight + rowGap))
@@ -1348,12 +1402,13 @@ function GUI:CreateSubTabs(parent, tabs)
             for j, btnIdx in ipairs(rowBtnIndices) do
                 local btn = tabButtons[btnIdx]
                 btn:SetWidth(rowBtnWidth)
+                btn:SetHeight(RoundVirtual(rowHeight, btn))
                 btn:ClearAllPoints()
-                btn:SetPoint("TOPLEFT", xOffset, yOffset)
-                xOffset = xOffset + rowBtnWidth + spacing
+                SetSnappedPoint(btn, "TOPLEFT", buttonGroup, "TOPLEFT", xOffset, yOffset)
+                xOffset = RoundVirtual(xOffset + rowBtnWidth + spacing, buttonGroup)
 
                 if tabs[btnIdx] and tabs[btnIdx].isSeparator and j < #rowBtnIndices then
-                    xOffset = xOffset + separatorSpacing
+                    xOffset = RoundVirtual(xOffset + separatorSpacing, buttonGroup)
                 end
             end
         end
@@ -1361,11 +1416,16 @@ function GUI:CreateSubTabs(parent, tabs)
         -- Adjust the sub-tab bar height to fit all rows
         local totalBarHeight = topPad + numRows * rowHeight + math.max(0, numRows - 1) * rowGap + 3
         if mainFrame.subTabBar then
-            mainFrame.subTabBar:SetHeight(totalBarHeight)
+            mainFrame.subTabBar:SetHeight(RoundVirtual(totalBarHeight, mainFrame.subTabBar))
         end
     end
 
     buttonGroup:SetScript("OnSizeChanged", RelayoutSubTabs)
+    if UIKit and UIKit.RegisterScaleRefresh then
+        UIKit.RegisterScaleRefresh(buttonGroup, "subTabLayout", function()
+            RelayoutSubTabs()
+        end)
+    end
 
     -- Tab selection function
     local function SelectSubTab(index)
@@ -2970,6 +3030,248 @@ end
 function GUI:CreateFormCheckboxInverted(parent, label, dbKey, dbTable, onChange)
     -- Redirect to toggle inverted for the premium look
     return GUI:CreateFormToggleInverted(parent, label, dbKey, dbTable, onChange)
+end
+
+function GUI:CreateFormEditBox(parent, label, dbKey, dbTable, onChange, options, registryInfo)
+    if parent._hasContent ~= nil then parent._hasContent = true end
+    options = options or {}
+    local UIKit = ns.UIKit
+
+    local container = CreateFrame("Frame", nil, parent)
+    container:SetHeight(FORM_ROW_HEIGHT)
+
+    local text = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    SetFont(text, 12, "", C.text)
+    text:SetText(label or "Text")
+    text:SetPoint("LEFT", 0, 0)
+    text:SetWidth(170)
+    text:SetWordWrap(true)
+    text:SetJustifyH("LEFT")
+
+    local field = CreateFrame("Frame", nil, container)
+    field:SetHeight(24)
+    field:SetPoint("LEFT", container, "LEFT", 180, 0)
+    if options.width and options.width > 0 then
+        field:SetWidth(options.width)
+    else
+        field:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+    end
+
+    local fieldBg
+    if UIKit and UIKit.CreateBackground then
+        fieldBg = UIKit.CreateBackground(field, 0.08, 0.08, 0.08, 1)
+    else
+        fieldBg = field:CreateTexture(nil, "BACKGROUND")
+        fieldBg:SetAllPoints()
+        fieldBg:SetTexture("Interface\\Buttons\\WHITE8x8")
+        fieldBg:SetVertexColor(0.08, 0.08, 0.08, 1)
+    end
+
+    local function UpdateFallbackBorder(r, g, b, a)
+        if not field._fallbackBorder then
+            field._fallbackBorder = {
+                top = field:CreateTexture(nil, "OVERLAY"),
+                bottom = field:CreateTexture(nil, "OVERLAY"),
+                left = field:CreateTexture(nil, "OVERLAY"),
+                right = field:CreateTexture(nil, "OVERLAY"),
+            }
+            for _, edge in pairs(field._fallbackBorder) do
+                edge:SetTexture("Interface\\Buttons\\WHITE8x8")
+            end
+        end
+
+        local px = (QUICore and QUICore.GetPixelSize and QUICore:GetPixelSize(field)) or 1
+        local border = field._fallbackBorder
+        border.top:ClearAllPoints()
+        border.top:SetPoint("TOPLEFT", field, "TOPLEFT", 0, 0)
+        border.top:SetPoint("TOPRIGHT", field, "TOPRIGHT", 0, 0)
+        border.top:SetHeight(px)
+
+        border.bottom:ClearAllPoints()
+        border.bottom:SetPoint("BOTTOMLEFT", field, "BOTTOMLEFT", 0, 0)
+        border.bottom:SetPoint("BOTTOMRIGHT", field, "BOTTOMRIGHT", 0, 0)
+        border.bottom:SetHeight(px)
+
+        border.left:ClearAllPoints()
+        border.left:SetPoint("TOPLEFT", border.top, "BOTTOMLEFT", 0, 0)
+        border.left:SetPoint("BOTTOMLEFT", border.bottom, "TOPLEFT", 0, 0)
+        border.left:SetWidth(px)
+
+        border.right:ClearAllPoints()
+        border.right:SetPoint("TOPRIGHT", border.top, "BOTTOMRIGHT", 0, 0)
+        border.right:SetPoint("BOTTOMRIGHT", border.bottom, "TOPRIGHT", 0, 0)
+        border.right:SetWidth(px)
+
+        for _, edge in pairs(border) do
+            edge:SetVertexColor(r or 0.35, g or 0.35, b or 0.35, a or 1)
+        end
+    end
+
+    local function SetFieldBorderColor(r, g, b, a)
+        if UIKit and UIKit.UpdateBorderLines then
+            if not field._pixelBorderReady and UIKit.CreateBorderLines then
+                UIKit.CreateBorderLines(field)
+                field._pixelBorderReady = true
+            end
+            UIKit.UpdateBorderLines(field, 1, r, g, b, a, false)
+        else
+            UpdateFallbackBorder(r, g, b, a)
+        end
+    end
+    SetFieldBorderColor(0.35, 0.35, 0.35, 1)
+
+    local editBox = CreateFrame("EditBox", nil, field)
+    editBox:SetPoint("TOPLEFT", field, "TOPLEFT", 6, -2)
+    editBox:SetPoint("BOTTOMRIGHT", field, "BOTTOMRIGHT", -6, 2)
+    editBox:SetAutoFocus(false)
+    editBox:SetFont(GetFontPath(), 11, "")
+    editBox:SetTextColor(C_text_r, C_text_g, C_text_b, C_text_a)
+    editBox:SetJustifyH("LEFT")
+
+    if options.maxLetters and options.maxLetters > 0 then
+        editBox:SetMaxLetters(options.maxLetters)
+    end
+
+    container.label = text
+    container.field = field
+    container.editBox = editBox
+
+    local commitOnEnter = options.commitOnEnter ~= false
+    local commitOnFocusLost = options.commitOnFocusLost ~= false
+    local liveUpdate = options.live == true
+    local initialValue = options.value
+    local isSyncingVisual = false
+
+    local function GetValue()
+        if dbTable and dbKey then
+            local v = dbTable[dbKey]
+            if v == nil then
+                return initialValue or ""
+            end
+            return tostring(v)
+        end
+        if container.value == nil then
+            return initialValue or ""
+        end
+        return tostring(container.value)
+    end
+
+    local function UpdateVisual(val)
+        isSyncingVisual = true
+        editBox:SetText(val or "")
+        isSyncingVisual = false
+    end
+
+    local function SetValue(val, skipOnChange, source)
+        local nextVal = val or ""
+        if type(nextVal) ~= "string" then
+            nextVal = tostring(nextVal)
+        end
+
+        container.value = nextVal
+        if dbTable and dbKey then
+            dbTable[dbKey] = nextVal
+        end
+
+        if source ~= editBox then
+            UpdateVisual(nextVal)
+        end
+
+        BroadcastToSiblings(container, nextVal)
+        if onChange and not skipOnChange then
+            onChange(nextVal)
+        end
+    end
+
+    container.GetValue = GetValue
+    container.SetValue = SetValue
+    container.UpdateVisual = UpdateVisual
+
+    RegisterWidgetInstance(container, dbTable, dbKey)
+    SetValue(GetValue(), true)
+
+    editBox:SetScript("OnTextChanged", function(self, userInput)
+        if isSyncingVisual then return end
+        if options.onTextChanged then
+            options.onTextChanged(self, userInput)
+        end
+        if liveUpdate and userInput then
+            SetValue(self:GetText(), false, self)
+        end
+    end)
+
+    editBox:SetScript("OnEnterPressed", function(self)
+        if commitOnEnter then
+            SetValue(self:GetText(), false, self)
+        end
+        if options.onEnterPressed then
+            options.onEnterPressed(self)
+        else
+            self:ClearFocus()
+        end
+    end)
+
+    editBox:SetScript("OnEscapePressed", function(self)
+        if options.onEscapePressed then
+            options.onEscapePressed(self)
+        else
+            self:ClearFocus()
+        end
+    end)
+
+    editBox:SetScript("OnEditFocusGained", function(self)
+        SetFieldBorderColor(C_accent_r, C_accent_g, C_accent_b, C_accent_a)
+        if options.onEditFocusGained then
+            options.onEditFocusGained(self)
+        end
+    end)
+
+    editBox:SetScript("OnEditFocusLost", function(self)
+        SetFieldBorderColor(0.35, 0.35, 0.35, 1)
+        if commitOnFocusLost then
+            SetValue(self:GetText(), false, self)
+        end
+        if options.onEditFocusLost then
+            options.onEditFocusLost(self)
+        end
+    end)
+
+    container.SetEnabled = function(self, enabled)
+        self.isEnabled = enabled and true or false
+        editBox:SetEnabled(enabled)
+        editBox:EnableMouse(enabled)
+        field:SetAlpha(enabled and 1 or 0.6)
+        self:SetAlpha(enabled and 1 or 0.6)
+        if not enabled then
+            editBox:ClearFocus()
+        end
+    end
+    container.isEnabled = true
+
+    if GUI._searchContext.tabIndex and label and not GUI._suppressSearchRegistration then
+        local regKey = label .. "_" .. (GUI._searchContext.tabIndex or 0) .. "_" .. (GUI._searchContext.subTabIndex or 0) .. "_" .. (GUI._searchContext.sectionName or "")
+        if not GUI.SettingsRegistryKeys[regKey] then
+            GUI.SettingsRegistryKeys[regKey] = true
+            local entry = {
+                label = label,
+                widgetType = "editbox",
+                tabIndex = GUI._searchContext.tabIndex,
+                tabName = GUI._searchContext.tabName,
+                subTabIndex = GUI._searchContext.subTabIndex,
+                subTabName = GUI._searchContext.subTabName,
+                sectionName = GUI._searchContext.sectionName,
+                widgetBuilder = function(p)
+                    return GUI:CreateFormEditBox(p, label, dbKey, dbTable, onChange, options)
+                end,
+            }
+            if registryInfo and registryInfo.keywords then
+                entry.keywords = registryInfo.keywords
+            end
+            table.insert(GUI.SettingsRegistry, entry)
+        end
+    end
+
+    return container
 end
 
 function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onChange, options, registryInfo)
@@ -4746,6 +5048,7 @@ function GUI:CreateMainFrame()
     -- from leaking into the current options tree.
     self.SectionRegistry = {}
     self.SectionRegistryOrder = {}
+    self.SectionNavigateHandlers = {}
     self:ClearSearchContext()
 
     -- Initialize accent colors from saved DB before creating any widgets

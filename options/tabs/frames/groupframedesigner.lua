@@ -23,6 +23,78 @@ local DROP_ROW = 52
 local SLIDER_HEIGHT = 65
 local PAD = 10
 local PREVIEW_SCALE = 2
+local UIKit = ns.UIKit
+
+local function SetSizePx(frame, widthPixels, heightPixels)
+    if UIKit and UIKit.SetSizePx then
+        UIKit.SetSizePx(frame, widthPixels, heightPixels)
+    elseif QUICore and QUICore.SetPixelPerfectSize then
+        QUICore:SetPixelPerfectSize(frame, widthPixels, heightPixels)
+    else
+        frame:SetSize(widthPixels or 0, heightPixels or 0)
+    end
+end
+
+local function SetHeightPx(frame, heightPixels)
+    if UIKit and UIKit.SetHeightPx then
+        UIKit.SetHeightPx(frame, heightPixels)
+    elseif QUICore and QUICore.SetPixelPerfectHeight then
+        QUICore:SetPixelPerfectHeight(frame, heightPixels)
+    else
+        frame:SetHeight(heightPixels or 0)
+    end
+end
+
+local function SetPointPx(frame, point, relativeTo, relativePoint, xPixels, yPixels)
+    if UIKit and UIKit.SetPointPx then
+        UIKit.SetPointPx(frame, point, relativeTo, relativePoint, xPixels, yPixels)
+    elseif QUICore and QUICore.SetPixelPerfectPoint then
+        QUICore:SetPixelPerfectPoint(frame, point, relativeTo, relativePoint, xPixels, yPixels)
+    else
+        frame:SetPoint(point, relativeTo, relativePoint, xPixels or 0, yPixels or 0)
+    end
+end
+
+local function RoundVirtual(value, frame)
+    if QUICore and QUICore.PixelRound then
+        return QUICore:PixelRound(value or 0, frame)
+    end
+    return value or 0
+end
+
+local function SetSnappedPoint(frame, point, relativeTo, relativePoint, xOffset, yOffset)
+    if QUICore and QUICore.SetSnappedPoint then
+        QUICore:SetSnappedPoint(frame, point, relativeTo, relativePoint, xOffset, yOffset)
+    else
+        frame:SetPoint(point, relativeTo, relativePoint, xOffset or 0, yOffset or 0)
+    end
+end
+
+local function SetOutsidePx(frame, anchor, sizePixels)
+    if UIKit and UIKit.SetOutsidePx then
+        UIKit.SetOutsidePx(frame, anchor, sizePixels or 1)
+    else
+        local offset = sizePixels or 1
+        SetPointPx(frame, "TOPLEFT", anchor, "TOPLEFT", -offset, offset)
+        SetPointPx(frame, "BOTTOMRIGHT", anchor, "BOTTOMRIGHT", offset, -offset)
+    end
+end
+
+local function ApplyPixelBackdrop(frame, borderPixels, withBackground)
+    if not frame or not frame.SetBackdrop then return end
+    if QUICore and QUICore.SetPixelPerfectBackdrop then
+        QUICore:SetPixelPerfectBackdrop(frame, borderPixels or 1, withBackground and "Interface\\Buttons\\WHITE8x8" or nil)
+        return
+    end
+
+    local px = QUICore and QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
+    local edgeSize = (borderPixels or 1) * px
+    frame:SetBackdrop({
+        bgFile = withBackground and "Interface\\Buttons\\WHITE8x8" or nil,
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = edgeSize,
+    })
+end
 
 ---------------------------------------------------------------------------
 -- HELPERS
@@ -36,6 +108,17 @@ local function RefreshGF()
     if _G.QUI_RefreshGroupFrames then
         _G.QUI_RefreshGroupFrames()
     end
+end
+
+local function FindNearestScrollFrame(frame)
+    local current = frame
+    while current do
+        if current.GetVerticalScroll and current.SetVerticalScroll then
+            return current
+        end
+        current = current:GetParent()
+    end
+    return nil
 end
 
 ---------------------------------------------------------------------------
@@ -384,6 +467,7 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     local frame = CreateFrame("Frame", nil, wrapper, "BackdropTemplate")
     frame:SetSize(w, h)
     frame:SetPoint("CENTER", wrapper, "CENTER", 0, 0)
+
     local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
     local borderSize = (general.borderSize or 1) * px
     frame:SetBackdrop({
@@ -874,15 +958,18 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     -- Target highlight (white/colored border when targeting this unit)
     local targetDB = healerDB.targetHighlight or {}
     local targetFrame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-    targetFrame:SetPoint("TOPLEFT", -1, 1)
-    targetFrame:SetPoint("BOTTOMRIGHT", 1, -1)
+    SetOutsidePx(targetFrame, frame, 1)
     targetFrame:SetFrameLevel(frame:GetFrameLevel() + 3)
-    targetFrame:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px * 3,
-    })
+    ApplyPixelBackdrop(targetFrame, 3, false)
     local tc = targetDB.color or { 1, 1, 1, 0.6 }
     targetFrame:SetBackdropBorderColor(tc[1], tc[2], tc[3], tc[4] or 0.6)
+    if UIKit and UIKit.RegisterScaleRefresh then
+        UIKit.RegisterScaleRefresh(targetFrame, "targetHighlightBorder", function(owner)
+            SetOutsidePx(owner, frame, 1)
+            ApplyPixelBackdrop(owner, 3, false)
+            owner:SetBackdropBorderColor(tc[1], tc[2], tc[3], tc[4] or 0.6)
+        end)
+    end
     if targetDB.enabled == false then
         targetFrame:Hide()
     end
@@ -1062,13 +1149,9 @@ local function CreateHitOverlay(parent, previewFrame, elementKey, anchorFrame, m
     end
 
     -- Mint highlight border
-    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(overlay) or 1
     local highlight = CreateFrame("Frame", nil, overlay, "BackdropTemplate")
     highlight:SetAllPoints()
-    highlight:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px * 2,
-    })
+    ApplyPixelBackdrop(highlight, 2, false)
     highlight:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
     highlight:Hide()
     overlay.highlight = highlight
@@ -1263,41 +1346,49 @@ end
 -- Create a mini toggle matching QUI's pill-style toggle (reusable across rebuilds)
 local function CreateMiniToggle(parent)
     local track = CreateFrame("Button", nil, parent, "BackdropTemplate")
-    track:SetSize(32, 16)
-    local px = QUICore:GetPixelSize(track)
-    track:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
+    SetSizePx(track, 32, 16)
+    ApplyPixelBackdrop(track, 1, true)
 
     local thumb = CreateFrame("Frame", nil, track, "BackdropTemplate")
-    thumb:SetSize(12, 12)
-    thumb:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
+    SetSizePx(thumb, 12, 12)
+    ApplyPixelBackdrop(thumb, 1, true)
     thumb:SetBackdropColor(C.toggleThumb[1], C.toggleThumb[2], C.toggleThumb[3], 1)
     thumb:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)
     thumb:SetFrameLevel(track:GetFrameLevel() + 1)
 
     track.thumb = thumb
 
-    function track:SetToggleState(on)
-        if on then
-            self:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], 1)
-            self:SetBackdropBorderColor(C.accent[1] * 0.8, C.accent[2] * 0.8, C.accent[3] * 0.8, 1)
-            thumb:ClearAllPoints()
-            thumb:SetPoint("RIGHT", self, "RIGHT", -2, 0)
+    local function RefreshMiniToggleLayout(owner)
+        SetSizePx(owner, 32, 16)
+        ApplyPixelBackdrop(owner, 1, true)
+        SetSizePx(thumb, 12, 12)
+        ApplyPixelBackdrop(thumb, 1, true)
+        thumb:SetBackdropColor(C.toggleThumb[1], C.toggleThumb[2], C.toggleThumb[3], 1)
+        thumb:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)
+        thumb:ClearAllPoints()
+        if owner._toggleOn then
+            SetPointPx(thumb, "RIGHT", owner, "RIGHT", -2, 0)
         else
-            self:SetBackdropColor(C.toggleOff[1], C.toggleOff[2], C.toggleOff[3], 1)
-            self:SetBackdropBorderColor(0.12, 0.14, 0.18, 1)
-            thumb:ClearAllPoints()
-            thumb:SetPoint("LEFT", self, "LEFT", 2, 0)
+            SetPointPx(thumb, "LEFT", owner, "LEFT", 2, 0)
         end
     end
 
+    function track:SetToggleState(on)
+        self._toggleOn = on and true or false
+        if self._toggleOn then
+            self:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], 1)
+            self:SetBackdropBorderColor(C.accent[1] * 0.8, C.accent[2] * 0.8, C.accent[3] * 0.8, 1)
+        else
+            self:SetBackdropColor(C.toggleOff[1], C.toggleOff[2], C.toggleOff[3], 1)
+            self:SetBackdropBorderColor(0.12, 0.14, 0.18, 1)
+        end
+        RefreshMiniToggleLayout(self)
+    end
+
+    if UIKit and UIKit.RegisterScaleRefresh then
+        UIKit.RegisterScaleRefresh(track, "miniToggleLayout", RefreshMiniToggleLayout)
+    end
+    track:SetToggleState(false)
     return track
 end
 
@@ -2349,11 +2440,10 @@ local function BuildClickCastSettings(content, gfdb, onChange)
 
     -- Drop zone for spellbook drag
     local dropZone = CreateFrame("Button", nil, addContainer, "BackdropTemplate")
-    dropZone:SetHeight(68)
+    SetHeightPx(dropZone, 68)
     dropZone:SetPoint("TOPLEFT", 0, ay)
     dropZone:SetPoint("RIGHT", addContainer, "RIGHT", 0, 0)
-    local pxDrop = QUICore:GetPixelSize(dropZone)
-    dropZone:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxDrop })
+    ApplyPixelBackdrop(dropZone, 1, true)
     dropZone:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 0.8)
     dropZone:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.5)
 
@@ -2441,9 +2531,8 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     local keyCaptureBtn = CreateFrame("Button", nil, keyCaptureContainer, "BackdropTemplate")
     keyCaptureBtn:SetPoint("LEFT", keyCaptureContainer, "LEFT", 180, 0)
     keyCaptureBtn:SetPoint("RIGHT", keyCaptureContainer, "RIGHT", 0, 0)
-    keyCaptureBtn:SetHeight(26)
-    local pxKey = QUICore:GetPixelSize(keyCaptureBtn)
-    keyCaptureBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxKey })
+    SetHeightPx(keyCaptureBtn, 26)
+    ApplyPixelBackdrop(keyCaptureBtn, 1, true)
     keyCaptureBtn:SetBackdropColor(0.08, 0.08, 0.08, 1)
     keyCaptureBtn:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
 
@@ -2524,9 +2613,8 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     local spellInputBg = CreateFrame("Frame", nil, spellInputContainer, "BackdropTemplate")
     spellInputBg:SetPoint("LEFT", spellInputContainer, "LEFT", 180, 0)
     spellInputBg:SetPoint("RIGHT", spellInputContainer, "RIGHT", 0, 0)
-    spellInputBg:SetHeight(24)
-    local pxSpell = QUICore:GetPixelSize(spellInputBg)
-    spellInputBg:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxSpell })
+    SetHeightPx(spellInputBg, 24)
+    ApplyPixelBackdrop(spellInputBg, 1, true)
     spellInputBg:SetBackdropColor(0.08, 0.08, 0.08, 1)
     spellInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
 
@@ -2560,9 +2648,8 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     local macroInputBg = CreateFrame("Frame", nil, macroInputContainer, "BackdropTemplate")
     macroInputBg:SetPoint("LEFT", macroInputContainer, "LEFT", 180, 0)
     macroInputBg:SetPoint("RIGHT", macroInputContainer, "RIGHT", 0, 0)
-    macroInputBg:SetHeight(24)
-    local pxMacro = QUICore:GetPixelSize(macroInputBg)
-    macroInputBg:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxMacro })
+    SetHeightPx(macroInputBg, 24)
+    ApplyPixelBackdrop(macroInputBg, 1, true)
     macroInputBg:SetBackdropColor(0.08, 0.08, 0.08, 1)
     macroInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
 
@@ -2579,6 +2666,44 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     macroInput:SetScript("OnTextChanged", function(self) addState.macroText = self:GetText() end)
     macroInput:SetScript("OnEditFocusGained", function() macroInputBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1) end)
     macroInput:SetScript("OnEditFocusLost", function() macroInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1) end)
+
+    local function RefreshClickCastPixelFrames()
+        SetHeightPx(dropZone, 68)
+        ApplyPixelBackdrop(dropZone, 1, true)
+        dropZone:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 0.8)
+        if GetCursorInfo() == "spell" then
+            dropZone:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+        else
+            dropZone:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.5)
+        end
+
+        SetHeightPx(keyCaptureBtn, 26)
+        ApplyPixelBackdrop(keyCaptureBtn, 1, true)
+        keyCaptureBtn:SetBackdropColor(0.08, 0.08, 0.08, 1)
+        if keyCaptureBtn.isCapturing then
+            keyCaptureBtn:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+        else
+            keyCaptureBtn:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+        end
+
+        SetHeightPx(spellInputBg, 24)
+        ApplyPixelBackdrop(spellInputBg, 1, true)
+        spellInputBg:SetBackdropColor(0.08, 0.08, 0.08, 1)
+        if spellInput and spellInput:HasFocus() then
+            spellInputBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+        else
+            spellInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+        end
+
+        SetHeightPx(macroInputBg, 24)
+        ApplyPixelBackdrop(macroInputBg, 1, true)
+        macroInputBg:SetBackdropColor(0.08, 0.08, 0.08, 1)
+        if macroInput and macroInput:HasFocus() then
+            macroInputBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+        else
+            macroInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+        end
+    end
 
     -- Add Binding button
     local addBtnY = ay - FORM_ROW
@@ -2677,9 +2802,8 @@ local function BuildClickCastSettings(content, gfdb, onChange)
                 spellText:SetText(displayName)
                 spellText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
                 local removeBtn = CreateFrame("Button", nil, row, "BackdropTemplate")
-                removeBtn:SetSize(22, 22)
-                local pxRm = QUICore:GetPixelSize(removeBtn)
-                removeBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxRm })
+                SetSizePx(removeBtn, 22, 22)
+                ApplyPixelBackdrop(removeBtn, 1, true)
                 removeBtn:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
                 removeBtn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
                 local xText = removeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -2701,6 +2825,13 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     end
 
     RefreshBindingList()
+    RefreshClickCastPixelFrames()
+    if UIKit and UIKit.RegisterScaleRefresh then
+        UIKit.RegisterScaleRefresh(content, "clickCastPixelFrames", function()
+            RefreshClickCastPixelFrames()
+            if RefreshBindingList then RefreshBindingList() end
+        end)
+    end
 
     perSpecCheck.track:HookScript("OnClick", function()
         C_Timer.After(0.05, function() RefreshBindingList() end)
@@ -2793,23 +2924,17 @@ local function CreateWidgetBar(container, selectElementFunc, state, elementKeys)
     bar:SetPoint("RIGHT", container, "RIGHT", 0, 0)
 
     local buttons = {}
+    local orderedButtons = {}
     local fontPath = GUI.FONT_PATH or "Fonts\\FRIZQT__.TTF"
-    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(bar) or 1
     local btnHeight = 24
     local btnSpacing = 4
     local rowGap = 4
 
-    local x, y = 0, 0
-
     for _, key in ipairs(elementKeys) do
         local label = ELEMENT_LABELS[key]
         local btn = CreateFrame("Button", nil, bar, "BackdropTemplate")
-        btn:SetHeight(btnHeight)
-        btn:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = px,
-        })
+        btn:SetHeight(RoundVirtual(btnHeight, btn))
+        ApplyPixelBackdrop(btn, 1, true)
         btn:SetBackdropColor(0.12, 0.12, 0.12, 1)
         btn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
 
@@ -2818,22 +2943,10 @@ local function CreateWidgetBar(container, selectElementFunc, state, elementKeys)
         text:SetTextColor(C.text[1], C.text[2], C.text[3])
         text:SetText(label)
         text:SetPoint("CENTER")
-
-        local textWidth = text:GetStringWidth() or 40
-        btn:SetWidth(textWidth + 16)
-
-        -- Wrap to next row if needed
-        local barWidth = container:GetWidth() - (PADDING * 2)
-        if barWidth < 100 then barWidth = 700 end
-        if x + btn:GetWidth() > barWidth and x > 0 then
-            x = 0
-            y = y - (btnHeight + rowGap)
-        end
-
-        btn:SetPoint("TOPLEFT", bar, "TOPLEFT", x, y)
-        x = x + btn:GetWidth() + btnSpacing
+        btn:SetWidth(RoundVirtual((text:GetStringWidth() or 40) + 16, btn))
 
         btn.elementKey = key
+        btn.text = text
         btn:SetScript("OnClick", function()
             selectElementFunc(key)
         end)
@@ -2850,10 +2963,48 @@ local function CreateWidgetBar(container, selectElementFunc, state, elementKeys)
         end)
 
         buttons[key] = btn
+        orderedButtons[#orderedButtons + 1] = btn
     end
 
-    local totalHeight = math.abs(y) + btnHeight
-    bar:SetHeight(totalHeight)
+    local function RelayoutWidgetBar()
+        local x, y = 0, 0
+        local barWidth = container:GetWidth() - (PADDING * 2)
+        if barWidth < 100 then barWidth = 700 end
+        barWidth = RoundVirtual(barWidth, bar)
+
+        for _, btn in ipairs(orderedButtons) do
+            local btnWidth = RoundVirtual((btn.text:GetStringWidth() or 40) + 16, btn)
+            if x + btnWidth > barWidth and x > 0 then
+                x = 0
+                y = RoundVirtual(y - (btnHeight + rowGap), bar)
+            end
+
+            btn:SetWidth(btnWidth)
+            btn:ClearAllPoints()
+            SetSnappedPoint(btn, "TOPLEFT", bar, "TOPLEFT", x, y)
+            x = RoundVirtual(x + btnWidth + btnSpacing, bar)
+        end
+
+        local totalHeight = RoundVirtual(math.abs(y) + btnHeight, bar)
+        bar:SetHeight(totalHeight)
+        return totalHeight
+    end
+
+    local totalHeight = RelayoutWidgetBar()
+    bar:SetScript("OnSizeChanged", function()
+        totalHeight = RelayoutWidgetBar()
+    end)
+
+    if UIKit and UIKit.RegisterScaleRefresh then
+        UIKit.RegisterScaleRefresh(bar, "widgetBarBorders", function(owner)
+            for _, btn in ipairs(orderedButtons) do
+                btn:SetHeight(RoundVirtual(btnHeight, btn))
+                ApplyPixelBackdrop(btn, 1, true)
+            end
+            totalHeight = RelayoutWidgetBar()
+            owner:SetHeight(totalHeight)
+        end)
+    end
 
     state.widgetBarButtons = buttons
     return bar, totalHeight
@@ -2990,8 +3141,11 @@ local function BuildDesignerView(tabContent, previewType)
                     local ghost = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
                     ghost:SetFrameStrata("TOOLTIP")
                     local ow, oh = self:GetSize()
-                    ghost:SetSize(math.max(ow, 8), math.max(oh, 8))
-                    ghost:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+                    local sourcePx = QUICore and QUICore.GetPixelSize and QUICore:GetPixelSize(self) or 1
+                    local ghostWidthPx = math.max((ow or 0) / sourcePx, 8)
+                    local ghostHeightPx = math.max((oh or 0) / sourcePx, 8)
+                    SetSizePx(ghost, ghostWidthPx, ghostHeightPx)
+                    ApplyPixelBackdrop(ghost, 1, false)
                     ghost:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.8)
                     local olCX, olCY = self:GetCenter()
                     ghost:SetPoint("CENTER", UIParent, "BOTTOMLEFT", olCX, olCY)
@@ -3116,9 +3270,8 @@ local function BuildDesignerView(tabContent, previewType)
 
     state._previewY = y
     RebuildPreviewImmediate()
-
     local previewH = state.previewWrapper and state.previewWrapper:GetHeight() or 100
-    y = y - previewH - 10
+    y = y - previewH - 40
 
     ---------------------------------------------------------------------------
     -- WIDGET BAR
@@ -3234,7 +3387,7 @@ local function BuildDesignerView(tabContent, previewType)
     ---------------------------------------------------------------------------
     -- SETTINGS AREA (inner scroll — preview + widget bar stay fixed above)
     ---------------------------------------------------------------------------
-    local outerScroll = tabContent:GetParent():GetParent():GetParent()
+    local outerScroll = FindNearestScrollFrame(tabContent)
 
     local settingsScroll = CreateFrame("ScrollFrame", nil, tabContent, "UIPanelScrollFrameTemplate")
     settingsScroll:SetPoint("TOPLEFT", PAD, y)
@@ -3290,7 +3443,7 @@ local function BuildDesignerView(tabContent, previewType)
     -- Dynamically size the inner scroll to fill remaining viewport space
     local fixedHeaderH = math.abs(y)
     local function ResizeSettingsScroll()
-        local viewH = outerScroll:GetHeight()
+        local viewH = outerScroll and outerScroll.GetHeight and outerScroll:GetHeight() or nil
         if viewH and viewH > 0 then
             settingsScroll:SetHeight(math.max(viewH - fixedHeaderH - 10, 200))
         end
@@ -3300,7 +3453,9 @@ local function BuildDesignerView(tabContent, previewType)
         end
         RefreshScrollBar()
     end
-    outerScroll:HookScript("OnSizeChanged", ResizeSettingsScroll)
+    if outerScroll and outerScroll.HookScript then
+        outerScroll:HookScript("OnSizeChanged", ResizeSettingsScroll)
+    end
     settingsScroll:HookScript("OnShow", ResizeSettingsScroll)
     C_Timer.After(0, ResizeSettingsScroll)
 
@@ -3411,40 +3566,137 @@ local function BuildSettingsView(tabContent)
 end
 
 ---------------------------------------------------------------------------
+-- FRAME COMPOSER VIEW BUILDER (for Party/Raid designer switcher)
+---------------------------------------------------------------------------
+local function BuildFrameComposerView(tabContent)
+    local gfdb = GetGFDB()
+    if not gfdb then
+        local info = GUI:CreateLabel(tabContent, "Group frame settings not available.", 12, C.textMuted)
+        info:SetPoint("TOPLEFT", PAD, -10)
+        tabContent:SetHeight(100)
+        return
+    end
+
+    local GROUP_FRAMES_TAB_INDEX = 6
+    local FRAME_COMPOSER_SUBTAB_INDEX = 2
+
+    local y = -10
+
+    local desc = GUI:CreateDescription(tabContent, "Build and preview Party and Raid layouts from a single composer view.")
+    desc:SetPoint("TOPLEFT", PAD, y)
+    desc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+    y = y - 26
+
+    local modeHost = CreateFrame("Frame", nil, tabContent)
+    modeHost:SetPoint("TOPLEFT", PAD, y)
+    modeHost:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+    modeHost:SetHeight(820)
+
+    local modeFrames = {}
+    local activeMode = "party"
+
+    local function EnsureModeFrame(mode)
+        local frame = modeFrames[mode]
+        if frame then return frame end
+        frame = CreateFrame("Frame", nil, modeHost)
+        frame:SetAllPoints(modeHost)
+        BuildDesignerView(frame, mode)
+        modeFrames[mode] = frame
+        return frame
+    end
+
+    local function ApplyModeSelection()
+        for mode, frame in pairs(modeFrames) do
+            frame:SetShown(mode == activeMode)
+        end
+    end
+
+    local function SelectMode(mode)
+        if mode ~= "party" and mode ~= "raid" then return false end
+        activeMode = mode
+        EnsureModeFrame(mode)
+        ApplyModeSelection()
+        if GUI.MainFrame and GUI.MainFrame.activeTab == GROUP_FRAMES_TAB_INDEX then
+            local sectionName = (mode == "party") and "Party" or "Raid"
+            GUI.MainFrame._sidebarActiveSectionKey = GROUP_FRAMES_TAB_INDEX .. ":" .. FRAME_COMPOSER_SUBTAB_INDEX .. ":" .. sectionName
+            GUI:RefreshSidebarTree(GUI.MainFrame)
+        end
+        return true
+    end
+
+    -- Register Party/Raid as third-level entries under Frame Composer in the sidebar tree.
+    local key = GROUP_FRAMES_TAB_INDEX * 10000 + FRAME_COMPOSER_SUBTAB_INDEX
+    GUI.SectionRegistryOrder[key] = { "Party", "Raid" }
+    GUI.SectionRegistry[key] = {
+        Party = { frame = modeHost, scrollParent = nil, contentParent = tabContent },
+        Raid = { frame = modeHost, scrollParent = nil, contentParent = tabContent },
+    }
+    if GUI.RegisterSectionNavigateHandler then
+        GUI:RegisterSectionNavigateHandler(GROUP_FRAMES_TAB_INDEX, FRAME_COMPOSER_SUBTAB_INDEX, "Party", function()
+            return SelectMode("party")
+        end)
+        GUI:RegisterSectionNavigateHandler(GROUP_FRAMES_TAB_INDEX, FRAME_COMPOSER_SUBTAB_INDEX, "Raid", function()
+            return SelectMode("raid")
+        end)
+    end
+
+    local outerScroll = FindNearestScrollFrame(tabContent)
+    local function ResizeComposerHost()
+        local viewH = outerScroll and outerScroll.GetHeight and outerScroll:GetHeight() or nil
+        if viewH and viewH > 0 then
+            local targetH = math.max(420, viewH - math.abs(y) - 20)
+            modeHost:SetHeight(targetH)
+            tabContent:SetHeight(math.abs(y) + targetH + 20)
+        else
+            tabContent:SetHeight(900)
+        end
+    end
+    if outerScroll and outerScroll.HookScript then
+        outerScroll:HookScript("OnSizeChanged", ResizeComposerHost)
+    end
+
+    SelectMode("party")
+    C_Timer.After(0, function()
+        ResizeComposerHost()
+        if GUI.MainFrame then
+            GUI:RefreshSidebarTree(GUI.MainFrame)
+        end
+    end)
+end
+
+---------------------------------------------------------------------------
 -- MAIN ENTRY POINT
 ---------------------------------------------------------------------------
 local function CreateDesignerPage(parent)
     local scroll, content = CreateScrollableContent(parent)
 
     GUI:CreateSubTabs(content, {
-        { name = "Party",    builder = function(tc) BuildDesignerView(tc, "party") end },
-        { name = "Raid",     builder = function(tc) BuildDesignerView(tc, "raid") end },
-        { name = "Settings", builder = BuildSettingsView },
+        { name = "General settings", builder = BuildSettingsView },
+        { name = "Frame Composer", isDesigner = true, builder = BuildFrameComposerView },
     })
 
-    -- Party/Raid tabs use an inner scroll for settings, so disable outer
-    -- scrolling by matching scroll child height to viewport. Settings tab
+    -- Designer tabs use an inner scroll for settings, so disable outer
+    -- scrolling by matching scroll child height to viewport. General settings
     -- keeps normal outer scrolling.
     local subTabGroup = GUI._lastSubTabGroup
     if subTabGroup then
         local origOnSelect = subTabGroup._onSelect
         subTabGroup._onSelect = function(index, tabInfo)
             if origOnSelect then origOnSelect(index, tabInfo) end
-            if index <= 2 then
+            if tabInfo and tabInfo.isDesigner then
                 -- Designer tabs: no outer scroll (inner scroll handles settings)
                 local viewH = scroll:GetHeight()
                 content:SetHeight(viewH > 0 and viewH or 1)
             else
-                -- Settings tab: normal outer scroll
+                -- General settings tab: normal outer scroll
                 content:SetHeight(800)
             end
         end
     end
 
-    -- Initial state: Party tab selected, disable outer scroll
+    -- Initial state: General settings tab selected.
     C_Timer.After(0, function()
-        local viewH = scroll:GetHeight()
-        content:SetHeight(viewH > 0 and viewH or 1)
+        content:SetHeight(800)
     end)
 end
 
