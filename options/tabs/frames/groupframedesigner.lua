@@ -3660,6 +3660,15 @@ local function BuildFrameComposerView(tabContent)
     local modeFrames = {}
     local activeMode = "party"
 
+    local function EnsureComposerSidebarEntries()
+        local key = GROUP_FRAMES_TAB_INDEX * 10000 + FRAME_COMPOSER_SUBTAB_INDEX
+        GUI.SectionRegistryOrder[key] = { "Party", "Raid" }
+        GUI.SectionRegistry[key] = {
+            Party = { frame = modeHost, scrollParent = nil, contentParent = tabContent },
+            Raid = { frame = modeHost, scrollParent = nil, contentParent = tabContent },
+        }
+    end
+
     local function EnsureModeFrame(mode)
         local frame = modeFrames[mode]
         if frame then return frame end
@@ -3680,6 +3689,7 @@ local function BuildFrameComposerView(tabContent)
         if mode ~= "party" and mode ~= "raid" then return false end
         activeMode = mode
         EnsureModeFrame(mode)
+        EnsureComposerSidebarEntries()
         ApplyModeSelection()
         if GUI.MainFrame and GUI.MainFrame.activeTab == GROUP_FRAMES_TAB_INDEX then
             local sectionName = (mode == "party") and "Party" or "Raid"
@@ -3689,13 +3699,8 @@ local function BuildFrameComposerView(tabContent)
         return true
     end
 
-    -- Register Party/Raid as third-level entries under Frame Composer in the sidebar tree.
-    local key = GROUP_FRAMES_TAB_INDEX * 10000 + FRAME_COMPOSER_SUBTAB_INDEX
-    GUI.SectionRegistryOrder[key] = { "Party", "Raid" }
-    GUI.SectionRegistry[key] = {
-        Party = { frame = modeHost, scrollParent = nil, contentParent = tabContent },
-        Raid = { frame = modeHost, scrollParent = nil, contentParent = tabContent },
-    }
+    -- Register Party/Raid as the only third-level entries under Frame Composer.
+    EnsureComposerSidebarEntries()
     if GUI.RegisterSectionNavigateHandler then
         GUI:RegisterSectionNavigateHandler(GROUP_FRAMES_TAB_INDEX, FRAME_COMPOSER_SUBTAB_INDEX, "Party", function()
             return SelectMode("party")
@@ -3722,6 +3727,7 @@ local function BuildFrameComposerView(tabContent)
 
     SelectMode("party")
     C_Timer.After(0, function()
+        EnsureComposerSidebarEntries()
         ResizeComposerHost()
         if GUI.MainFrame then
             GUI:RefreshSidebarTree(GUI.MainFrame)
@@ -3786,32 +3792,6 @@ local function RegisterDesignerSearchNavigation()
         subTabName = composerBase.subTabName,
         sectionName = "Raid Frame Designer",
     })
-
-    for _, key in ipairs(VISUAL_ELEMENT_KEYS) do
-        local label = ELEMENT_LABELS[key]
-        if label and label ~= "" then
-            GUI:RegisterNavigationItem("section", {
-                tabIndex = composerBase.tabIndex,
-                tabName = composerBase.tabName,
-                subTabIndex = composerBase.subTabIndex,
-                subTabName = composerBase.subTabName,
-                sectionName = label,
-            })
-        end
-    end
-
-    for _, key in ipairs(CONFIG_ELEMENT_KEYS) do
-        local label = ELEMENT_LABELS[key]
-        if label and label ~= "" then
-            GUI:RegisterNavigationItem("section", {
-                tabIndex = SEARCH_TAB_INDEX,
-                tabName = SEARCH_TAB_NAME,
-                subTabIndex = SEARCH_SUBTAB_GENERAL_INDEX,
-                subTabName = SEARCH_SUBTAB_GENERAL_NAME,
-                sectionName = label,
-            })
-        end
-    end
 end
 
 ---------------------------------------------------------------------------
@@ -3825,6 +3805,9 @@ local function CreateDesignerPage(parent)
         { name = "Frame Composer", isDesigner = true, builder = BuildFrameComposerView },
     })
     RegisterDesignerSearchNavigation()
+    if GUI.SetSidebarSubTabSectionsHidden and GUI.MainFrame then
+        GUI:SetSidebarSubTabSectionsHidden(GUI.MainFrame, SEARCH_TAB_INDEX, SEARCH_SUBTAB_GENERAL_INDEX, true)
+    end
 
     -- Designer tabs use an inner scroll for settings, so disable outer
     -- scrolling by matching scroll child height to viewport. General settings

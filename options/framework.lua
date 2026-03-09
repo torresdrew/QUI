@@ -4706,6 +4706,22 @@ function GUI:GetSidebarSubTabs(frame, tabIndex)
     return {}
 end
 
+function GUI:IsSidebarSubTabSectionsHidden(frame, tabIndex, subTabIndex)
+    if not frame or not tabIndex or not subTabIndex then return false end
+    return frame._sidebarHiddenSections
+        and frame._sidebarHiddenSections[tabIndex]
+        and frame._sidebarHiddenSections[tabIndex][subTabIndex]
+        and true or false
+end
+
+function GUI:SetSidebarSubTabSectionsHidden(frame, tabIndex, subTabIndex, hidden)
+    if not frame or not tabIndex or not subTabIndex then return end
+    frame._sidebarHiddenSections = frame._sidebarHiddenSections or {}
+    frame._sidebarHiddenSections[tabIndex] = frame._sidebarHiddenSections[tabIndex] or {}
+    frame._sidebarHiddenSections[tabIndex][subTabIndex] = hidden and true or nil
+    self:RefreshSidebarTree(frame)
+end
+
 function GUI:RelayoutSidebarBottomItems(frame)
     if not frame or not frame.sidebar then return end
     local itemStride = 28
@@ -5115,8 +5131,9 @@ function GUI:RefreshSidebarTree(frame)
                     subRow.activeBg:Hide()
                 end
 
-                local sectionNames = self:GetOrderedSections(tab.index, subDef.index)
-                local hasSections = #sectionNames > 0
+                local sectionsHidden = self:IsSidebarSubTabSectionsHidden(frame, tab.index, subDef.index)
+                local sectionNames = sectionsHidden and {} or self:GetOrderedSections(tab.index, subDef.index)
+                local hasSections = (not sectionsHidden) and (#sectionNames > 0)
                 if hasSections then
                     local isExpanded = expandedSubs[subDef.index] and true or false
                     if subRow._lastCaretExpanded ~= isExpanded then
