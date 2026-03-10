@@ -60,15 +60,22 @@ end
 -- Re-entry guard: SetAlpha(1) re-triggers the hooksecurefunc that calls
 -- ForceAlpha, which would schedule another redundant timer without this.
 local _forceAlphaActive = {}
+local _forceAlphaCallbacks = setmetatable({}, { __mode = "k" })
+
 local function ForceAlpha(frame)
     if _forceAlphaActive[frame] then return end
-    C_Timer.After(0, function()
-        if frame and frame.SetAlpha and frame:GetAlpha() ~= 1 then
-            _forceAlphaActive[frame] = true
-            frame:SetAlpha(1)
-            _forceAlphaActive[frame] = nil
+    local cb = _forceAlphaCallbacks[frame]
+    if not cb then
+        cb = function()
+            if frame and frame.SetAlpha and frame:GetAlpha() ~= 1 then
+                _forceAlphaActive[frame] = true
+                frame:SetAlpha(1)
+                _forceAlphaActive[frame] = nil
+            end
         end
-    end)
+        _forceAlphaCallbacks[frame] = cb
+    end
+    C_Timer.After(0, cb)
 end
 
 --- Create QUI-styled backdrop for alert frames
