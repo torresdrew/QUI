@@ -50,20 +50,10 @@ local state = {
     lastA = nil,
 }
 
--- Melee range abilities (5 yards only)
-local MELEE_RANGE_ABILITIES = {
-    96231, 6552, 1766, 116705, 183752,
-    228478, 263642, 49143, 55090, 206930,
-    100780, 100784, 107428,
-    5221, 3252, 1822, 22568, 22570,
-    33917, 6807,
-}
-
--- Mid-range abilities (25 yards)
-local MID_RANGE_ABILITIES = {
-    361469, 356995, 382266, 357211, 355913, 360995, 364343, 366155,
-    473662, 1226019, 473728,
-}
+---------------------------------------------------------------------------
+-- Range checking via shared RangeUtils (cached action bar scan)
+---------------------------------------------------------------------------
+local RangeUtils  -- resolved after PLAYER_LOGIN (core loads before modules)
 
 local function GetSettings()
     local settings = Helpers.GetModuleSettings("rangeCheck", DEFAULT_SETTINGS)
@@ -77,96 +67,18 @@ local function GetSettings()
 end
 
 local function HasAttackableTarget()
-    if not UnitExists("target") then return false end
-    if not UnitCanAttack("player", "target") then return false end
-    if UnitIsDeadOrGhost("target") then return false end
-    return true
+    if not RangeUtils then RangeUtils = ns.RangeUtils end
+    return RangeUtils.HasAttackableTarget()
 end
 
 local function IsOutOfMeleeRange()
-    if not HasAttackableTarget() then return false end
-
-    if IsActionInRange then
-        for slot = 1, 180 do
-            local actionType, id, subType = GetActionInfo(slot)
-            if id and (actionType == "spell" or (actionType == "macro" and subType == "spell")) then
-                for _, abilityID in ipairs(MELEE_RANGE_ABILITIES) do
-                    if id == abilityID then
-                        local inRange = IsActionInRange(slot)
-                        if inRange == true then
-                            return false
-                        elseif inRange == false then
-                            return true
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    if IsSpellInRange then
-        local attackInRange = IsSpellInRange("Attack", "target")
-        if attackInRange == 1 then
-            return false
-        elseif attackInRange == 0 then
-            return true
-        end
-    end
-
-    if C_Spell and C_Spell.IsSpellInRange then
-        for _, spellID in ipairs(MELEE_RANGE_ABILITIES) do
-            if IsSpellKnown and IsSpellKnown(spellID) then
-                local inRange = C_Spell.IsSpellInRange(spellID, "target")
-                if inRange == true then
-                    return false
-                elseif inRange == false then
-                    return true
-                end
-            end
-        end
-    end
-
-    return false
+    if not RangeUtils then RangeUtils = ns.RangeUtils end
+    return RangeUtils.IsOutOfMeleeRange()
 end
 
 local function IsOutOfMidRange()
-    if not HasAttackableTarget() then return false end
-
-    if IsActionInRange then
-        local foundInRange, foundOutOfRange = false, false
-        for slot = 1, 180 do
-            local actionType, id, subType = GetActionInfo(slot)
-            if id and (actionType == "spell" or (actionType == "macro" and subType == "spell")) then
-                for _, abilityID in ipairs(MID_RANGE_ABILITIES) do
-                    if id == abilityID then
-                        local inRange = IsActionInRange(slot)
-                        if inRange == false then
-                            foundOutOfRange = true
-                        elseif inRange == true then
-                            foundInRange = true
-                        end
-                    end
-                end
-            end
-        end
-        if foundOutOfRange then return true end
-        if foundInRange then return false end
-    end
-
-    if C_Spell and C_Spell.IsSpellInRange then
-        for _, spellID in ipairs(MID_RANGE_ABILITIES) do
-            if IsPlayerSpell and IsPlayerSpell(spellID) then
-                local inRange = C_Spell.IsSpellInRange(spellID, "target")
-                if inRange == true then
-                    return false
-                elseif inRange == false then
-                    return true
-                end
-            end
-        end
-    end
-
-    return false
+    if not RangeUtils then RangeUtils = ns.RangeUtils end
+    return RangeUtils.IsOutOfMidRange()
 end
 
 local function GetFallbackRange()
