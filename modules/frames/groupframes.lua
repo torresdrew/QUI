@@ -159,44 +159,55 @@ local function GetSettings()
     return GetDB()
 end
 
-local function GetGeneralSettings()
+-- Returns the party or raid visual settings sub-table
+local function GetVisualDB(isRaid)
     local db = GetDB()
-    return db and db.general
+    if not db then return nil end
+    if isRaid then
+        return db.raid or db
+    else
+        return db.party or db
+    end
 end
 
-local function GetLayoutSettings()
-    local db = GetDB()
-    return db and db.layout
+local function GetGeneralSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.general
 end
 
-local function GetDimensionSettings()
-    local db = GetDB()
-    return db and db.dimensions
+local function GetLayoutSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.layout
 end
 
-local function GetHealthSettings()
-    local db = GetDB()
-    return db and db.health
+local function GetDimensionSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.dimensions
 end
 
-local function GetPowerSettings()
-    local db = GetDB()
-    return db and db.power
+local function GetHealthSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.health
 end
 
-local function GetNameSettings()
-    local db = GetDB()
-    return db and db.name
+local function GetPowerSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.power
 end
 
-local function GetIndicatorSettings()
-    local db = GetDB()
-    return db and db.indicators
+local function GetNameSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.name
 end
 
-local function GetHealerSettings()
-    local db = GetDB()
-    return db and db.healer
+local function GetIndicatorSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.indicators
+end
+
+local function GetHealerSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.healer
 end
 
 GetDispelColors = function()
@@ -212,35 +223,35 @@ GetDispelColors = function()
     }
 end
 
-local function GetRangeSettings()
-    local db = GetDB()
-    return db and db.range
+local function GetRangeSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.range
 end
 
-local function GetAuraSettings()
-    local db = GetDB()
-    return db and db.auras
+local function GetAuraSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.auras
 end
 
-local function GetPortraitSettings()
-    local db = GetDB()
-    return db and db.portrait
+local function GetPortraitSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.portrait
 end
 
 ---------------------------------------------------------------------------
 -- HELPERS: Font and texture
 ---------------------------------------------------------------------------
-local function GetFontPath()
+local function GetFontPath(isRaid)
     if cachedFontPath then return cachedFontPath end
-    local general = GetGeneralSettings()
+    local general = GetGeneralSettings(isRaid)
     local fontName = general and general.font or "Quazii"
     cachedFontPath = LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
     return cachedFontPath
 end
 
-local function GetFontOutline()
+local function GetFontOutline(isRaid)
     if cachedFontOutline then return cachedFontOutline end
-    local general = GetGeneralSettings()
+    local general = GetGeneralSettings(isRaid)
     cachedFontOutline = general and general.fontOutline or "OUTLINE"
     return cachedFontOutline
 end
@@ -331,7 +342,8 @@ local function GetGroupMode()
 end
 
 local function GetFrameDimensions(mode)
-    local dims = GetDimensionSettings()
+    local isRaid = (mode ~= "party")
+    local dims = GetDimensionSettings(isRaid)
     if not dims then return 200, 40 end
 
     if mode == "party" then
@@ -351,7 +363,9 @@ end
 local function CalculateHeaderSize(db, memberCount)
     if not db or not memberCount or memberCount <= 0 then return 100, 40 end
 
-    local layout = db.layout
+    local isRaid = memberCount > 5
+    local vdb = isRaid and (db.raid or db) or (db.party or db)
+    local layout = vdb.layout or (isRaid and db.raidLayout or db.partyLayout) or db.layout
     local spacing = layout and layout.spacing or 2
     local groupSpacing = layout and layout.groupSpacing or 10
     local grow = layout and layout.growDirection or "DOWN"
@@ -384,15 +398,16 @@ local function CalculateHeaderSize(db, memberCount)
     return math.max(totalW, 100), math.max(totalH, 40)
 end
 
--- Expose for editmode module
+-- Expose for sub-modules
+QUI_GF.GetVisualDB = GetVisualDB
 QUI_GF.CalculateHeaderSize = CalculateHeaderSize
 
 ---------------------------------------------------------------------------
 -- HELPERS: Unit tooltip
 ---------------------------------------------------------------------------
 local function ShowUnitTooltip(frame)
-    local db = GetSettings()
-    if not db or not db.general or db.general.showTooltips == false then return end
+    local general = GetGeneralSettings(frame._isRaid)
+    if not general or general.showTooltips == false then return end
     local unit = frame.unit
     if not unit or not UnitExists(unit) then return end
     GameTooltip:SetOwner(frame, "ANCHOR_RIGHT")
@@ -408,7 +423,8 @@ end
 -- HELPERS: Health bar color
 ---------------------------------------------------------------------------
 local function GetHealthBarColor(unit)
-    local general = GetGeneralSettings()
+    local unitFrame = QUI_GF.unitFrameMap[unit]
+    local general = GetGeneralSettings(unitFrame and unitFrame._isRaid)
     if general and general.darkMode then
         local c = general.darkModeHealthColor or { 0.15, 0.15, 0.15, 1 }
         return c[1], c[2], c[3], c[4] or 1
@@ -431,7 +447,9 @@ end
 -- HELPERS: Power bar color
 ---------------------------------------------------------------------------
 local function GetPowerBarColor(unit)
-    local db = GetPowerSettings()
+    local unitFrame = QUI_GF.unitFrameMap[unit]
+    local isRaid = unitFrame and unitFrame._isRaid or false
+    local db = GetPowerSettings(isRaid)
     if db and not db.powerBarUsePowerColor then
         local c = db.powerBarColor or { 0.2, 0.4, 0.8, 1 }
         return c[1], c[2], c[3], c[4] or 1
@@ -502,7 +520,8 @@ local function UpdateHealth(frame)
     end
 
     -- Health text — use SetFormattedText (C-side) which handles secret values natively
-    local healthSettings = GetHealthSettings()
+    local isRaid = frame._isRaid
+    local healthSettings = GetHealthSettings(isRaid)
     if frame.healthText and healthSettings and healthSettings.showHealthText ~= false then
         if not isConnected then
             frame.healthText:SetText("")
@@ -556,7 +575,9 @@ end
 -- UPDATE: Power
 ---------------------------------------------------------------------------
 local function ShouldShowPowerForUnit(unit)
-    local ps = GetPowerSettings()
+    local unitFrame = QUI_GF.unitFrameMap[unit]
+    local isRaid = unitFrame and unitFrame._isRaid or false
+    local ps = GetPowerSettings(isRaid)
     if not ps then return true end
     local onlyHealers = ps.powerBarOnlyHealers
     local onlyTanks = ps.powerBarOnlyTanks
@@ -569,14 +590,15 @@ end
 
 local function ResizeHealthForPower(frame, showPowerForUnit)
     if not frame.healthBar then return end
-    local general = GetGeneralSettings()
+    local isRaid = frame._isRaid
+    local general = GetGeneralSettings(isRaid)
     local borderPx = general and general.borderSize or 1
     local borderSize = borderPx > 0 and (QUICore.Pixels and QUICore:Pixels(borderPx, frame) or borderPx) or 0
     local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
 
     local bottomPad = borderSize
     if showPowerForUnit then
-        local powerSettings = GetPowerSettings()
+        local powerSettings = GetPowerSettings(isRaid)
         local powerHeight = QUICore.PixelRound and QUICore:PixelRound(powerSettings.powerBarHeight or 4, frame) or 4
         bottomPad = borderSize + powerHeight + px
     end
@@ -638,7 +660,8 @@ local function UpdateName(frame)
         return
     end
 
-    local nameSettings = GetNameSettings()
+    local isRaid = frame._isRaid
+    local nameSettings = GetNameSettings(isRaid)
     if nameSettings and nameSettings.showName == false then
         frame.nameText:SetText("")
         return
@@ -675,8 +698,9 @@ end
 ---------------------------------------------------------------------------
 local function UpdateAbsorbs(frame)
     if not frame or not frame.unit or not frame.absorbBar then return end
-    local db = GetSettings()
-    if not db or not db.absorbs or db.absorbs.enabled == false then
+    local isRaid = frame._isRaid
+    local vdb = GetVisualDB(isRaid)
+    if not vdb or not vdb.absorbs or vdb.absorbs.enabled == false then
         frame.absorbBar:Hide()
         return
     end
@@ -708,14 +732,14 @@ local function UpdateAbsorbs(frame)
     frame.absorbBar:SetValue(absorbAmount)
 
     local ac
-    if db.absorbs.useClassColor then
+    if vdb.absorbs.useClassColor then
         local _, class = UnitClass(unit)
         local cc = class and RAID_CLASS_COLORS[class]
         ac = cc and { cc.r, cc.g, cc.b, 1 } or COLOR_WHITE
     else
-        ac = db.absorbs.color or COLOR_WHITE
+        ac = vdb.absorbs.color or COLOR_WHITE
     end
-    local aa = db.absorbs.opacity or 0.3
+    local aa = vdb.absorbs.opacity or 0.3
     frame.absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
     frame.absorbBar:Show()
 end
@@ -725,8 +749,9 @@ end
 ---------------------------------------------------------------------------
 local function UpdateHealPrediction(frame)
     if not frame or not frame.unit or not frame.healPredictionBar then return end
-    local db = GetSettings()
-    if not db or not db.healPrediction or db.healPrediction.enabled == false then
+    local isRaid = frame._isRaid
+    local vdb = GetVisualDB(isRaid)
+    if not vdb or not vdb.healPrediction or vdb.healPrediction.enabled == false then
         frame.healPredictionBar:Hide()
         return
     end
@@ -775,14 +800,14 @@ local function UpdateHealPrediction(frame)
     frame.healPredictionBar:SetValue(incomingHeals)
 
     local pc
-    if db.healPrediction.useClassColor then
+    if vdb.healPrediction.useClassColor then
         local _, class = UnitClass(unit)
         local cc = class and RAID_CLASS_COLORS[class]
         pc = cc and { cc.r, cc.g, cc.b, 1 } or { 0.2, 1, 0.2 }
     else
-        pc = db.healPrediction.color or { 0.2, 1, 0.2 }
+        pc = vdb.healPrediction.color or { 0.2, 1, 0.2 }
     end
-    local pa = db.healPrediction.opacity or 0.5
+    local pa = vdb.healPrediction.opacity or 0.5
     frame.healPredictionBar:SetStatusBarColor(pc[1], pc[2], pc[3], pa)
     frame.healPredictionBar:Show()
 end
@@ -804,7 +829,8 @@ local ROLE_TOGGLE_KEY = {
 
 local function UpdateRoleIcon(frame)
     if not frame or not frame.unit or not frame.roleIcon then return end
-    local indSettings = GetIndicatorSettings()
+    local isRaid = frame._isRaid
+    local indSettings = GetIndicatorSettings(isRaid)
     if not indSettings or indSettings.showRoleIcon == false then
         frame.roleIcon:Hide()
         return
@@ -838,7 +864,8 @@ local READY_CHECK_TEXTURES = {
 
 local function UpdateReadyCheck(frame)
     if not frame or not frame.unit or not frame.readyCheckIcon then return end
-    local indSettings = GetIndicatorSettings()
+    local isRaid = frame._isRaid
+    local indSettings = GetIndicatorSettings(isRaid)
     if not indSettings or indSettings.showReadyCheck == false then
         frame.readyCheckIcon:Hide()
         return
@@ -867,7 +894,8 @@ end
 ---------------------------------------------------------------------------
 local function UpdateResurrection(frame)
     if not frame or not frame.unit or not frame.resIcon then return end
-    local indSettings = GetIndicatorSettings()
+    local isRaid = frame._isRaid
+    local indSettings = GetIndicatorSettings(isRaid)
     if not indSettings or indSettings.showResurrection == false then
         frame.resIcon:Hide()
         return
@@ -886,7 +914,8 @@ end
 ---------------------------------------------------------------------------
 local function UpdateSummonPending(frame)
     if not frame or not frame.unit or not frame.summonIcon then return end
-    local indSettings = GetIndicatorSettings()
+    local isRaid = frame._isRaid
+    local indSettings = GetIndicatorSettings(isRaid)
     if not indSettings or indSettings.showSummonPending == false then
         frame.summonIcon:Hide()
         return
@@ -905,7 +934,8 @@ end
 ---------------------------------------------------------------------------
 local function UpdateThreat(frame)
     if not frame or not frame.unit or not frame.threatBorder then return end
-    local indSettings = GetIndicatorSettings()
+    local isRaid = frame._isRaid
+    local indSettings = GetIndicatorSettings(isRaid)
     if not indSettings or indSettings.showThreatBorder == false then
         frame.threatBorder:Hide()
         return
@@ -926,7 +956,8 @@ end
 ---------------------------------------------------------------------------
 local function UpdateTargetMarker(frame)
     if not frame or not frame.unit or not frame.targetMarker then return end
-    local indSettings = GetIndicatorSettings()
+    local isRaid = frame._isRaid
+    local indSettings = GetIndicatorSettings(isRaid)
     if not indSettings or indSettings.showTargetMarker == false then
         frame.targetMarker:Hide()
         return
@@ -947,7 +978,8 @@ end
 ---------------------------------------------------------------------------
 local function UpdateLeaderIcon(frame)
     if not frame or not frame.unit or not frame.leaderIcon then return end
-    local indSettings = GetIndicatorSettings()
+    local isRaid = frame._isRaid
+    local indSettings = GetIndicatorSettings(isRaid)
     if not indSettings or indSettings.showLeaderIcon == false then
         frame.leaderIcon:Hide()
         return
@@ -973,7 +1005,8 @@ end
 ---------------------------------------------------------------------------
 local function UpdatePhaseIcon(frame)
     if not frame or not frame.unit or not frame.phaseIcon then return end
-    local indSettings = GetIndicatorSettings()
+    local isRaid = frame._isRaid
+    local indSettings = GetIndicatorSettings(isRaid)
     if not indSettings or indSettings.showPhaseIcon == false then
         frame.phaseIcon:Hide()
         return
@@ -1022,7 +1055,8 @@ end
 ---------------------------------------------------------------------------
 local function UpdateTargetHighlight(frame)
     if not frame or not frame.targetHighlight then return end
-    local healerSettings = GetHealerSettings()
+    local isRaid = frame._isRaid
+    local healerSettings = GetHealerSettings(isRaid)
     if not healerSettings or not healerSettings.targetHighlight or healerSettings.targetHighlight.enabled == false then
         frame.targetHighlight:Hide()
         return
@@ -1074,7 +1108,8 @@ end
 
 local function UpdateDispelOverlay(frame)
     if not frame or not frame.unit or not frame.dispelOverlay then return end
-    local healerSettings = GetHealerSettings()
+    local isRaid = frame._isRaid
+    local healerSettings = GetHealerSettings(isRaid)
     if not healerSettings or not healerSettings.dispelOverlay or healerSettings.dispelOverlay.enabled == false then
         frame.dispelOverlay:Hide()
         return
@@ -1154,7 +1189,8 @@ local DEFENSIVE_GROWTH_OFFSETS = {
 local function UpdateDefensiveIndicator(frame)
     if not frame or not frame.unit or not frame.defensiveIcons then return end
 
-    local healerSettings = GetHealerSettings()
+    local isRaid = frame._isRaid
+    local healerSettings = GetHealerSettings(isRaid)
     if not healerSettings or not healerSettings.defensiveIndicator
        or not healerSettings.defensiveIndicator.enabled then
         for _, icon in ipairs(frame.defensiveIcons) do icon:Hide() end
@@ -1287,7 +1323,8 @@ end
 ---------------------------------------------------------------------------
 local function UpdatePortrait(frame)
     if not frame or not frame.unit then return end
-    local portraitSettings = GetPortraitSettings()
+    local isRaid = frame._isRaid
+    local portraitSettings = GetPortraitSettings(isRaid)
 
     if not portraitSettings or not portraitSettings.showPortrait then
         if frame.portrait then frame.portrait:Hide() end
@@ -1321,7 +1358,7 @@ end
 ---------------------------------------------------------------------------
 local function UpdateDarkModeVisuals(frame)
     if not frame then return end
-    local general = GetGeneralSettings()
+    local general = GetGeneralSettings(frame._isRaid)
     local bgColor, healthOpacity, bgOpacity
     if general and general.darkMode then
         bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
@@ -1370,9 +1407,13 @@ local function DecorateGroupFrame(frame)
     if not frame or frame._quiDecorated then return end
     frame._quiDecorated = true
 
+    -- Tag frame with party/raid context for settings resolution
+    local parent = frame:GetParent()
+    frame._isRaid = (parent == QUI_GF.headers.raid)
+    local isRaid = frame._isRaid
 
     local db = GetSettings()
-    local general = GetGeneralSettings()
+    local general = GetGeneralSettings(isRaid)
     local mode = GetGroupMode()
     local frameWidth, frameHeight = GetFrameDimensions(mode)
 
@@ -1404,7 +1445,7 @@ local function DecorateGroupFrame(frame)
     end
 
     -- Power bar height calculation
-    local powerSettings = GetPowerSettings()
+    local powerSettings = GetPowerSettings(isRaid)
     local showPower = powerSettings and powerSettings.showPowerBar ~= false
     local powerHeight = showPower and (QUICore.PixelRound and QUICore:PixelRound(powerSettings.powerBarHeight or 4, frame) or 4) or 0
     local separatorHeight = showPower and px or 0
@@ -1429,7 +1470,8 @@ local function DecorateGroupFrame(frame)
     end
 
     -- Heal prediction bar (overlays health bar, peeks out beyond health fill)
-    local predSettings = db and db.healPrediction
+    local vdb = GetVisualDB(isRaid)
+    local predSettings = vdb and vdb.healPrediction
     local healPredictionBar = frame.healPredictionBar or CreateFrame("StatusBar", nil, healthBar)
     healPredictionBar:SetStatusBarTexture(GetTexturePath())
     healPredictionBar:SetFrameLevel(healthBar:GetFrameLevel() + 1)
@@ -1444,7 +1486,7 @@ local function DecorateGroupFrame(frame)
     frame.healPredictionBar = healPredictionBar
 
     -- Absorb bar (overlays health bar, reverse-fills from right)
-    local absorbSettings = db and db.absorbs
+    local absorbSettings = vdb and vdb.absorbs
     local absorbBar = frame.absorbBar
     if not absorbBar then
         absorbBar = CreateFrame("StatusBar", nil, healthBar)
@@ -1521,7 +1563,7 @@ local function DecorateGroupFrame(frame)
     -- Name text
     local fontPath = GetFontPath()
     local fontOutline = GetFontOutline()
-    local nameSettings = GetNameSettings()
+    local nameSettings = GetNameSettings(isRaid)
     local nameFontSize = nameSettings and nameSettings.nameFontSize or 12
     local nameAnchor = GetTextAnchorInfo(nameSettings and nameSettings.nameAnchor or "LEFT")
     local nameOffsetX = nameSettings and nameSettings.nameOffsetX or 4
@@ -1542,7 +1584,7 @@ local function DecorateGroupFrame(frame)
     frame.nameText = nameText
 
     -- Health text
-    local healthSettings = GetHealthSettings()
+    local healthSettings = GetHealthSettings(isRaid)
     local healthFontSize = healthSettings and healthSettings.healthFontSize or 12
     local healthAnchor = GetTextAnchorInfo(healthSettings and healthSettings.healthAnchor or "RIGHT")
     local healthOffsetX = healthSettings and healthSettings.healthOffsetX or -4
@@ -1563,7 +1605,7 @@ local function DecorateGroupFrame(frame)
     frame.healthText = healthText
 
     -- Read indicator positioning from DB
-    local indDB = GetIndicatorSettings() or {}
+    local indDB = GetIndicatorSettings(isRaid) or {}
 
     -- Helper: add bottomPad to Y offset for any BOTTOM* anchor
     local function BottomPadY(anchor, offY)
@@ -1642,7 +1684,7 @@ local function DecorateGroupFrame(frame)
     frame.phaseIcon = phaseIcon
 
     -- Threat border (overlay frame)
-    local indDB = db.indicators or {}
+    indDB = GetIndicatorSettings(isRaid) or {}
     local threatBorderPx = px * (indDB.threatBorderSize or 3)
     local threatBorder = frame.threatBorder or CreateFrame("Frame", nil, frame, "BackdropTemplate")
     threatBorder:ClearAllPoints()
@@ -1675,7 +1717,8 @@ local function DecorateGroupFrame(frame)
     dispelOverlay:SetAllPoints(frame)
     dispelOverlay:SetFrameLevel(frame:GetFrameLevel() + 6)
 
-    local dispelSettings = db.healer and db.healer.dispelOverlay
+    local healerDB = GetHealerSettings(isRaid)
+    local dispelSettings = healerDB and healerDB.dispelOverlay
     local dispelBorderSize = px * (dispelSettings and dispelSettings.borderSize or 3)
     local function MakeDispelBorder(parent)
         local sb = CreateFrame("StatusBar", nil, parent)
@@ -1768,7 +1811,7 @@ local function DecorateGroupFrame(frame)
     frame.defensiveIcon = frame.defensiveIcons[1]
 
     -- Portrait (optional, side-attached)
-    local portraitSettings = GetPortraitSettings()
+    local portraitSettings = GetPortraitSettings(isRaid)
     if portraitSettings and portraitSettings.showPortrait then
         local portraitSizePx = portraitSettings.portraitSize or 30
         local portraitSizeRound = QUICore.PixelRound and QUICore:PixelRound(portraitSizePx, frame) or portraitSizePx
@@ -1877,7 +1920,7 @@ end
 -- HEADER: Configure secure header attributes
 ---------------------------------------------------------------------------
 local function ConfigurePartyHeader(header)
-    local layout = GetLayoutSettings()
+    local layout = GetLayoutSettings(false)
     if not layout then return end
 
     header:SetAttribute("showParty", true)
@@ -1927,7 +1970,7 @@ local function ConfigurePartyHeader(header)
 end
 
 local function ConfigureRaidHeader(header)
-    local layout = GetLayoutSettings()
+    local layout = GetLayoutSettings(true)
     if not layout then return end
 
     header:SetAttribute("showRaid", true)
@@ -2013,7 +2056,6 @@ end
 local function CreateHeaders()
     local db = GetSettings()
     if not db then return end
-    local layout = GetLayoutSettings()
     local position = db.position
 
     -- initialConfigFunction runs in secure context for each new child
@@ -2118,7 +2160,8 @@ local function UpdateHeaderSizes()
     local partyHdr = QUI_GF.headers.party
     if partyHdr then
         local count = IsInGroup() and not IsInRaid() and GetNumGroupMembers() or 5
-        if db.layout and db.layout.showPlayer ~= false then
+        local partyVDB = db.party or db
+        if partyVDB.layout and partyVDB.layout.showPlayer ~= false then
             count = math.max(count, 1)  -- showPlayer adds the player
         end
         local w, h = CalculateHeaderSize(db, count)
@@ -2229,10 +2272,10 @@ local function UpdateFrameScaling(forceUpdate)
                 child:SetSize(w, h)
                 -- Re-layout health/power bars
                 if child.healthBar and child.powerBar then
-                    local general = GetGeneralSettings()
+                    local general = GetGeneralSettings(child._isRaid)
                     local borderPx = general and general.borderSize or 1
                     local borderSize = borderPx > 0 and (QUICore.Pixels and QUICore:Pixels(borderPx, child) or borderPx) or 0
-                    local powerSettings = GetPowerSettings()
+                    local powerSettings = GetPowerSettings(child._isRaid)
                     local powerHeight = powerSettings and powerSettings.showPowerBar ~= false and
                         (QUICore.PixelRound and QUICore:PixelRound(powerSettings.powerBarHeight or 4, child) or 4) or 0
                     local px = QUICore.GetPixelSize and QUICore:GetPixelSize(child) or 1
@@ -2451,23 +2494,28 @@ local function CheckUnitRange(unit)
 end
 
 local function DoRangeCheck()
-    local rangeSettings = GetRangeSettings()
-    if not rangeSettings or rangeSettings.enabled == false then return end
-
-    local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
+    -- Range check uses per-frame isRaid for settings, but we need at least
+    -- one enabled check. Check both party and raid settings.
+    local partyRange = GetRangeSettings(false)
+    local raidRange = GetRangeSettings(true)
+    if (not partyRange or partyRange.enabled == false) and (not raidRange or raidRange.enabled == false) then return end
 
     for unit, frame in pairs(QUI_GF.unitFrameMap) do
         if frame and frame:IsShown() then
-            local inRange = CheckUnitRange(unit)
-            local state = GetFrameState(frame)
+            local rangeSettings = GetRangeSettings(frame._isRaid)
+            if rangeSettings and rangeSettings.enabled ~= false then
+                local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
+                local inRange = CheckUnitRange(unit)
+                local state = GetFrameState(frame)
 
-            if rangeCache[unit] ~= inRange then
-                rangeCache[unit] = inRange
-                state.outOfRange = not inRange
-                frame:SetAlpha(inRange and 1 or outAlpha)
-            elseif state.outOfRange == nil then
-                state.outOfRange = not inRange
-                frame:SetAlpha(inRange and 1 or outAlpha)
+                if rangeCache[unit] ~= inRange then
+                    rangeCache[unit] = inRange
+                    state.outOfRange = not inRange
+                    frame:SetAlpha(inRange and 1 or outAlpha)
+                elseif state.outOfRange == nil then
+                    state.outOfRange = not inRange
+                    frame:SetAlpha(inRange and 1 or outAlpha)
+                end
             end
         end
     end
@@ -2475,8 +2523,10 @@ end
 
 local function StartRangeCheck()
     if rangeCheckTicker then return end
-    local rangeSettings = GetRangeSettings()
-    if not rangeSettings or rangeSettings.enabled == false then return end
+    -- Start if either party or raid has range checking enabled
+    local partyRange = GetRangeSettings(false)
+    local raidRange = GetRangeSettings(true)
+    if (not partyRange or partyRange.enabled == false) and (not raidRange or raidRange.enabled == false) then return end
 
     -- Ensure spells are resolved before starting
     if not rangeSpell and not resSpell then
@@ -2730,8 +2780,9 @@ end
 ---------------------------------------------------------------------------
 local function UpdateSelectiveEvents()
     local db = GetSettings()
-    local powerSettings = GetPowerSettings()
     local mode = GetGroupMode()
+    -- Large raids use raid power settings
+    local powerSettings = GetPowerSettings(mode ~= "party")
 
     if mode == "large" and (not powerSettings or powerSettings.showPowerBar == false) then
         eventFrame:UnregisterEvent("UNIT_POWER_UPDATE")

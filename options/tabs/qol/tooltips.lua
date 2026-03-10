@@ -80,6 +80,35 @@ local function BuildTooltipTab(tabContent)
         tooltip.cursorOffsetY = -16
     end
 
+    -- SECTION: Engine Selection
+    GUI:SetSearchSection("Tooltip Engine")
+    local engineHeader = GUI:CreateSectionHeader(tabContent, "Tooltip Engine")
+    engineHeader:SetPoint("TOPLEFT", PADDING, y)
+    y = y - engineHeader.gap
+
+    local engineOptions = {
+        {value = "owned", text = "Owned (Taint-Free)"},
+        {value = "classic", text = "Classic (Hook-Based)"},
+    }
+    local engineDropdown = GUI:CreateFormDropdown(tabContent, "Tooltip Engine", engineOptions, "engine", tooltip, function()
+        GUI:ShowConfirmation({
+            title = "Reload UI?",
+            message = "Engine changes require a reload to take effect.",
+            acceptText = "Reload",
+            cancelText = "Later",
+            onAccept = function() QUI:SafeReload() end,
+        })
+    end)
+    engineDropdown:SetPoint("TOPLEFT", PADDING, y)
+    engineDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    y = y - FORM_ROW
+
+    local engineInfo = GUI:CreateLabel(tabContent, "Owned creates addon-owned tooltip frames (zero taint). Classic hooks Blizzard tooltips (legacy).", 10, C.textMuted)
+    engineInfo:SetPoint("TOPLEFT", PADDING, y)
+    engineInfo:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    engineInfo:SetJustifyH("LEFT")
+    y = y - 20
+
     -- SECTION: Enable/Disable
     GUI:SetSearchSection("Enable/Disable")
     local enableHeader = GUI:CreateSectionHeader(tabContent, "Enable/Disable QUI Tooltip Module")
@@ -244,6 +273,18 @@ local function BuildTooltipTab(tabContent)
     classColorInfo:SetPoint("TOPLEFT", PADDING, y)
     classColorInfo:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
     classColorInfo:SetJustifyH("LEFT")
+    y = y - FORM_ROW
+
+    if tooltip.hideDelay == nil then tooltip.hideDelay = 0 end
+    local hideDelaySlider = GUI:CreateFormSlider(tabContent, "Hide Delay", 0, 2, 0.1, "hideDelay", tooltip, RefreshTooltips, {precision = 1})
+    hideDelaySlider:SetPoint("TOPLEFT", PADDING, y)
+    hideDelaySlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    y = y - FORM_ROW
+
+    local hideDelayInfo = GUI:CreateLabel(tabContent, "Seconds before tooltip fades out after mouse leaves (0 = instant hide).", 10, C.textMuted)
+    hideDelayInfo:SetPoint("TOPLEFT", PADDING, y)
+    hideDelayInfo:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    hideDelayInfo:SetJustifyH("LEFT")
     y = y - 20
 
     -- SECTION: Cursor Anchor

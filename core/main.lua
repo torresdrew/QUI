@@ -1333,6 +1333,7 @@ local defaults = {
 
         -- Tooltip Management
         tooltip = {
+            engine = "owned",                  -- "classic" (hook-based) or "owned" (taint-free)
             enabled = true,                    -- Master toggle for tooltip module
             anchorToCursor = true,             -- Follow cursor vs default anchor
             cursorAnchor = "TOPLEFT",          -- Tooltip point anchored to cursor
@@ -1350,6 +1351,7 @@ local defaults = {
             borderUseClassColor = false,       -- Use player class color for border
             borderUseAccentColor = false,      -- Use addon accent color for border
             showSpellIDs = false,              -- Show spell ID and icon ID on buff/debuff tooltips
+            hideDelay = 0,                     -- Seconds before tooltip hides after mouse leaves (0 = instant, >0 = fade out)
             -- Per-Context Visibility (SHOW/HIDE/SHIFT/CTRL/ALT)
             visibility = {
                 npcs = "SHOW",                 -- NPCs/players in world
@@ -2390,210 +2392,312 @@ local defaults = {
         quiGroupFrames = {
             enabled = false,          -- Disabled by default (opt-in feature)
 
-            -- General appearance
-            general = {
-                useClassColor = true,
-                texture = "Quazii v5",
-                borderSize = 1,
-                font = "Quazii",
-                fontSize = 12,
-                fontOutline = "OUTLINE",
-                showTooltips = true,
-                darkMode = false,
-                darkModeHealthColor = { 0.15, 0.15, 0.15, 1 },
-                darkModeBgColor = { 0.25, 0.25, 0.25, 1 },
-                darkModeHealthOpacity = 1.0,
-                darkModeBgOpacity = 1.0,
-                defaultBgColor = { 0, 0, 0, 1 },
-                defaultHealthOpacity = 1.0,
-                defaultBgOpacity = 1.0,
-            },
-
-            -- Layout
-            layout = {
-                growDirection = "DOWN",          -- DOWN, UP
-                groupGrowDirection = "RIGHT",    -- RIGHT, LEFT (raid columns)
-                spacing = 2,                     -- Gap between frames
-                groupSpacing = 10,               -- Gap between raid groups
-                showPlayer = true,               -- Include player in group
-                sortMethod = "INDEX",            -- INDEX, NAME
-                sortByRole = true,               -- Tank > Healer > Melee > Ranged
-                groupBy = "GROUP",               -- GROUP, ROLE, CLASS
-            },
-
-            -- Unified dimensions (auto-scale by group size)
-            dimensions = {
-                partyWidth = 200, partyHeight = 40,
-                smallRaidWidth = 180, smallRaidHeight = 36,
-                mediumRaidWidth = 160, mediumRaidHeight = 30,
-                largeRaidWidth = 140, largeRaidHeight = 24,
-            },
-
-            -- Position
+            -- Position (shared)
             unifiedPosition = true,   -- true = party & raid share one position; false = separate movers
             position = { offsetX = -400, offsetY = 0 },
             raidPosition = { offsetX = -400, offsetY = 0 },  -- only used when unifiedPosition = false
 
-            -- Health bar
-            health = {
-                showHealthText = true,
-                healthDisplayStyle = "percent",   -- percent, absolute, both, deficit
-                healthFontSize = 12,
-                healthAnchor = "RIGHT",
-                healthJustify = "RIGHT",
-                healthOffsetX = -4,
-                healthOffsetY = 0,
-                healthTextColor = { 1, 1, 1, 1 },
-            },
-
-            -- Power bar
-            power = {
-                showPowerBar = true,
-                powerBarHeight = 4,
-                powerBarUsePowerColor = true,
-                powerBarColor = { 0.2, 0.4, 0.8, 1 },
-                powerBarOnlyHealers = false,
-                powerBarOnlyTanks = false,
-            },
-
-            -- Name text
-            name = {
-                showName = true,
-                nameFontSize = 12,
-                nameAnchor = "LEFT",
-                nameJustify = "LEFT",
-                nameOffsetX = 4,
-                nameOffsetY = 0,
-                maxNameLength = 10,
-                nameTextUseClassColor = false,
-                nameTextColor = { 1, 1, 1, 1 },
-            },
-
-            -- Absorbs + heal prediction
-            absorbs = { enabled = true, color = { 1, 1, 1, 1 }, opacity = 0.3 },
-            healPrediction = { enabled = true, color = { 0.2, 1, 0.2 }, opacity = 0.5 },
-
-            -- Indicators
-            indicators = {
-                showRoleIcon = true, roleIconSize = 12, roleIconAnchor = "TOPLEFT", roleIconOffsetX = 2, roleIconOffsetY = -2,
-                showRoleTank = true, showRoleHealer = true, showRoleDPS = true,
-                showReadyCheck = true, readyCheckAnchor = "CENTER", readyCheckOffsetX = 0, readyCheckOffsetY = 0,
-                showResurrection = true, resurrectionAnchor = "CENTER", resurrectionOffsetX = 0, resurrectionOffsetY = 0,
-                showSummonPending = true, summonAnchor = "CENTER", summonOffsetX = 16, summonOffsetY = 0,
-                showLeaderIcon = true, leaderAnchor = "TOP", leaderOffsetX = 0, leaderOffsetY = 6,
-                showTargetMarker = true, targetMarkerAnchor = "TOPRIGHT", targetMarkerOffsetX = -2, targetMarkerOffsetY = -2,
-                showThreatBorder = true, threatColor = { 1, 0, 0, 0.8 }, threatFillOpacity = 0.15,
-                showPhaseIcon = true, phaseAnchor = "BOTTOMLEFT", phaseOffsetX = 2, phaseOffsetY = 2,
-            },
-
-            -- Healer features
-            healer = {
-                dispelOverlay = {
-                    enabled = true, opacity = 0.8, fillOpacity = 0.18, borderSize = 3,
-                    colors = {
-                        Magic   = { 0.2, 0.6, 1.0, 1 },
-                        Curse   = { 0.6, 0.0, 1.0, 1 },
-                        Disease = { 0.6, 0.4, 0.0, 1 },
-                        Poison  = { 0.0, 0.6, 0.0, 1 },
+            -------------------------------------------------------------------
+            -- Party visual settings
+            -------------------------------------------------------------------
+            party = {
+                general = {
+                    useClassColor = true,
+                    texture = "Quazii v5",
+                    borderSize = 1,
+                    font = "Quazii",
+                    fontSize = 12,
+                    fontOutline = "OUTLINE",
+                    showTooltips = true,
+                    darkMode = false,
+                    darkModeHealthColor = { 0.15, 0.15, 0.15, 1 },
+                    darkModeBgColor = { 0.25, 0.25, 0.25, 1 },
+                    darkModeHealthOpacity = 1.0,
+                    darkModeBgOpacity = 1.0,
+                    defaultBgColor = { 0, 0, 0, 1 },
+                    defaultHealthOpacity = 1.0,
+                    defaultBgOpacity = 1.0,
+                },
+                layout = {
+                    growDirection = "DOWN",
+                    spacing = 2,
+                    showPlayer = true,
+                    sortMethod = "INDEX",
+                    sortByRole = true,
+                    groupBy = "GROUP",
+                },
+                health = {
+                    showHealthText = true,
+                    healthDisplayStyle = "percent",
+                    healthFontSize = 12,
+                    healthAnchor = "RIGHT",
+                    healthJustify = "RIGHT",
+                    healthOffsetX = -4,
+                    healthOffsetY = 0,
+                    healthTextColor = { 1, 1, 1, 1 },
+                },
+                power = {
+                    showPowerBar = true,
+                    powerBarHeight = 4,
+                    powerBarUsePowerColor = true,
+                    powerBarColor = { 0.2, 0.4, 0.8, 1 },
+                    powerBarOnlyHealers = false,
+                    powerBarOnlyTanks = false,
+                },
+                name = {
+                    showName = true,
+                    nameFontSize = 12,
+                    nameAnchor = "LEFT",
+                    nameJustify = "LEFT",
+                    nameOffsetX = 4,
+                    nameOffsetY = 0,
+                    maxNameLength = 10,
+                    nameTextUseClassColor = false,
+                    nameTextColor = { 1, 1, 1, 1 },
+                },
+                absorbs = { enabled = true, color = { 1, 1, 1, 1 }, opacity = 0.3 },
+                healPrediction = { enabled = true, color = { 0.2, 1, 0.2 }, opacity = 0.5 },
+                indicators = {
+                    showRoleIcon = true, roleIconSize = 12, roleIconAnchor = "TOPLEFT", roleIconOffsetX = 2, roleIconOffsetY = -2,
+                    showRoleTank = true, showRoleHealer = true, showRoleDPS = true,
+                    showReadyCheck = true, readyCheckAnchor = "CENTER", readyCheckOffsetX = 0, readyCheckOffsetY = 0,
+                    showResurrection = true, resurrectionAnchor = "CENTER", resurrectionOffsetX = 0, resurrectionOffsetY = 0,
+                    showSummonPending = true, summonAnchor = "CENTER", summonOffsetX = 16, summonOffsetY = 0,
+                    showLeaderIcon = true, leaderAnchor = "TOP", leaderOffsetX = 0, leaderOffsetY = 6,
+                    showTargetMarker = true, targetMarkerAnchor = "TOPRIGHT", targetMarkerOffsetX = -2, targetMarkerOffsetY = -2,
+                    showThreatBorder = true, threatColor = { 1, 0, 0, 0.8 }, threatFillOpacity = 0.15,
+                    showPhaseIcon = true, phaseAnchor = "BOTTOMLEFT", phaseOffsetX = 2, phaseOffsetY = 2,
+                },
+                healer = {
+                    dispelOverlay = {
+                        enabled = true, opacity = 0.8, fillOpacity = 0.18, borderSize = 3,
+                        colors = {
+                            Magic   = { 0.2, 0.6, 1.0, 1 },
+                            Curse   = { 0.6, 0.0, 1.0, 1 },
+                            Disease = { 0.6, 0.4, 0.0, 1 },
+                            Poison  = { 0.0, 0.6, 0.0, 1 },
+                        },
                     },
+                    targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
+                    defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0 },
                 },
-                targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
-                defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0 },
-            },
-
-            -- Class power pips
-            classPower = { enabled = false, height = 4, spacing = 1 },
-
-            -- Range check
-            range = { enabled = true, outOfRangeAlpha = 0.4 },
-
-            -- Auras (compact)
-            auras = {
-                showDebuffs = true, maxDebuffs = 3, debuffIconSize = 16,
-                debuffAnchor = "BOTTOMRIGHT", debuffGrowDirection = "LEFT",
-                debuffSpacing = 2, debuffOffsetX = -2, debuffOffsetY = -18,
-                showBuffs = false, maxBuffs = 0, buffIconSize = 14,
-                buffAnchor = "TOPLEFT", buffGrowDirection = "RIGHT",
-                buffSpacing = 2, buffOffsetX = 2, buffOffsetY = 16,
-                showDurationColor = true,
-                showExpiringPulse = true,
-                -- Aura filtering
-                filterMode = "off",           -- "off" | "classification" | "whitelist" | "blacklist"
-                buffFilterOnlyMine = false,   -- only show player-cast buffs
-                buffHidePermanent = false,    -- hide permanent (duration 0) buffs
-                buffDeduplicateDefensives = true, -- hide buffs already shown as defensives/indicators
-                buffClassifications = {
-                    raid = false,
-                    cancelable = false,
-                    important = false,
+                classPower = { enabled = false, height = 4, spacing = 1 },
+                range = { enabled = true, outOfRangeAlpha = 0.4 },
+                auras = {
+                    showDebuffs = true, maxDebuffs = 3, debuffIconSize = 16,
+                    debuffAnchor = "BOTTOMRIGHT", debuffGrowDirection = "LEFT",
+                    debuffSpacing = 2, debuffOffsetX = -2, debuffOffsetY = -18,
+                    showBuffs = false, maxBuffs = 0, buffIconSize = 14,
+                    buffAnchor = "TOPLEFT", buffGrowDirection = "RIGHT",
+                    buffSpacing = 2, buffOffsetX = 2, buffOffsetY = 16,
+                    showDurationColor = true,
+                    showExpiringPulse = true,
+                    filterMode = "off",
+                    buffFilterOnlyMine = false,
+                    buffHidePermanent = false,
+                    buffDeduplicateDefensives = true,
+                    buffClassifications = { raid = false, cancelable = false, important = false },
+                    debuffClassifications = { raid = true, crowdControl = true, important = true },
+                    buffWhitelist = {},
+                    buffBlacklist = {},
+                    debuffWhitelist = {},
+                    debuffBlacklist = {},
                 },
-                debuffClassifications = {
-                    raid = true,
-                    crowdControl = true,
-                    important = true,
+                privateAuras = {
+                    enabled = true,
+                    maxPerFrame = 2,
+                    iconSize = 20,
+                    growDirection = "RIGHT",
+                    spacing = 2,
+                    anchor = "RIGHT",
+                    anchorOffsetX = -2,
+                    anchorOffsetY = 0,
+                    showCountdown = true,
+                    showCountdownNumbers = true,
                 },
-                -- Spell-based whitelist/blacklist: { [spellID] = true }
-                buffWhitelist = {},
-                buffBlacklist = {},
-                debuffWhitelist = {},
-                debuffBlacklist = {},
+                auraIndicators = {
+                    enabled = false,
+                    iconSize = 14,
+                    anchor = "TOPLEFT",
+                    anchorOffsetX = 0,
+                    anchorOffsetY = 0,
+                    growDirection = "RIGHT",
+                    spacing = 2,
+                    maxIndicators = 5,
+                    trackedSpells = {},
+                },
+                castbar = { enabled = false, height = 8, showIcon = false, showText = false },
+                portrait = { showPortrait = false, portraitSide = "LEFT", portraitSize = 30 },
+                pets = {
+                    enabled = false,
+                    width = 100, height = 20,
+                    showPowerBar = false,
+                    showAuras = false,
+                    anchorTo = "BOTTOM",
+                    anchorGap = 2,
+                },
+                dimensions = {
+                    partyWidth = 200, partyHeight = 40,
+                },
             },
 
-            -- Private auras (boss debuffs displayed by Blizzard)
-            privateAuras = {
-                enabled = true,
-                maxPerFrame = 2,
-                iconSize = 20,
-                growDirection = "RIGHT",
-                spacing = 2,
-                anchor = "RIGHT",
-                anchorOffsetX = -2,
-                anchorOffsetY = 0,
-                showCountdown = true,
-                showCountdownNumbers = true,
+            -------------------------------------------------------------------
+            -- Raid visual settings
+            -------------------------------------------------------------------
+            raid = {
+                general = {
+                    useClassColor = true,
+                    texture = "Quazii v5",
+                    borderSize = 1,
+                    font = "Quazii",
+                    fontSize = 12,
+                    fontOutline = "OUTLINE",
+                    showTooltips = true,
+                    darkMode = false,
+                    darkModeHealthColor = { 0.15, 0.15, 0.15, 1 },
+                    darkModeBgColor = { 0.25, 0.25, 0.25, 1 },
+                    darkModeHealthOpacity = 1.0,
+                    darkModeBgOpacity = 1.0,
+                    defaultBgColor = { 0, 0, 0, 1 },
+                    defaultHealthOpacity = 1.0,
+                    defaultBgOpacity = 1.0,
+                },
+                layout = {
+                    growDirection = "DOWN",
+                    groupGrowDirection = "RIGHT",
+                    spacing = 2,
+                    groupSpacing = 10,
+                    sortMethod = "INDEX",
+                    sortByRole = true,
+                    groupBy = "GROUP",
+                },
+                health = {
+                    showHealthText = true,
+                    healthDisplayStyle = "percent",
+                    healthFontSize = 12,
+                    healthAnchor = "RIGHT",
+                    healthJustify = "RIGHT",
+                    healthOffsetX = -4,
+                    healthOffsetY = 0,
+                    healthTextColor = { 1, 1, 1, 1 },
+                },
+                power = {
+                    showPowerBar = true,
+                    powerBarHeight = 4,
+                    powerBarUsePowerColor = true,
+                    powerBarColor = { 0.2, 0.4, 0.8, 1 },
+                    powerBarOnlyHealers = false,
+                    powerBarOnlyTanks = false,
+                },
+                name = {
+                    showName = true,
+                    nameFontSize = 12,
+                    nameAnchor = "LEFT",
+                    nameJustify = "LEFT",
+                    nameOffsetX = 4,
+                    nameOffsetY = 0,
+                    maxNameLength = 10,
+                    nameTextUseClassColor = false,
+                    nameTextColor = { 1, 1, 1, 1 },
+                },
+                absorbs = { enabled = true, color = { 1, 1, 1, 1 }, opacity = 0.3 },
+                healPrediction = { enabled = true, color = { 0.2, 1, 0.2 }, opacity = 0.5 },
+                indicators = {
+                    showRoleIcon = true, roleIconSize = 12, roleIconAnchor = "TOPLEFT", roleIconOffsetX = 2, roleIconOffsetY = -2,
+                    showRoleTank = true, showRoleHealer = true, showRoleDPS = true,
+                    showReadyCheck = true, readyCheckAnchor = "CENTER", readyCheckOffsetX = 0, readyCheckOffsetY = 0,
+                    showResurrection = true, resurrectionAnchor = "CENTER", resurrectionOffsetX = 0, resurrectionOffsetY = 0,
+                    showSummonPending = true, summonAnchor = "CENTER", summonOffsetX = 16, summonOffsetY = 0,
+                    showLeaderIcon = true, leaderAnchor = "TOP", leaderOffsetX = 0, leaderOffsetY = 6,
+                    showTargetMarker = true, targetMarkerAnchor = "TOPRIGHT", targetMarkerOffsetX = -2, targetMarkerOffsetY = -2,
+                    showThreatBorder = true, threatColor = { 1, 0, 0, 0.8 }, threatFillOpacity = 0.15,
+                    showPhaseIcon = true, phaseAnchor = "BOTTOMLEFT", phaseOffsetX = 2, phaseOffsetY = 2,
+                },
+                healer = {
+                    dispelOverlay = {
+                        enabled = true, opacity = 0.8, fillOpacity = 0.18, borderSize = 3,
+                        colors = {
+                            Magic   = { 0.2, 0.6, 1.0, 1 },
+                            Curse   = { 0.6, 0.0, 1.0, 1 },
+                            Disease = { 0.6, 0.4, 0.0, 1 },
+                            Poison  = { 0.0, 0.6, 0.0, 1 },
+                        },
+                    },
+                    targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
+                    defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0 },
+                },
+                classPower = { enabled = false, height = 4, spacing = 1 },
+                range = { enabled = true, outOfRangeAlpha = 0.4 },
+                auras = {
+                    showDebuffs = true, maxDebuffs = 3, debuffIconSize = 16,
+                    debuffAnchor = "BOTTOMRIGHT", debuffGrowDirection = "LEFT",
+                    debuffSpacing = 2, debuffOffsetX = -2, debuffOffsetY = -18,
+                    showBuffs = false, maxBuffs = 0, buffIconSize = 14,
+                    buffAnchor = "TOPLEFT", buffGrowDirection = "RIGHT",
+                    buffSpacing = 2, buffOffsetX = 2, buffOffsetY = 16,
+                    showDurationColor = true,
+                    showExpiringPulse = true,
+                    filterMode = "off",
+                    buffFilterOnlyMine = false,
+                    buffHidePermanent = false,
+                    buffDeduplicateDefensives = true,
+                    buffClassifications = { raid = false, cancelable = false, important = false },
+                    debuffClassifications = { raid = true, crowdControl = true, important = true },
+                    buffWhitelist = {},
+                    buffBlacklist = {},
+                    debuffWhitelist = {},
+                    debuffBlacklist = {},
+                },
+                privateAuras = {
+                    enabled = true,
+                    maxPerFrame = 2,
+                    iconSize = 20,
+                    growDirection = "RIGHT",
+                    spacing = 2,
+                    anchor = "RIGHT",
+                    anchorOffsetX = -2,
+                    anchorOffsetY = 0,
+                    showCountdown = true,
+                    showCountdownNumbers = true,
+                },
+                auraIndicators = {
+                    enabled = false,
+                    iconSize = 14,
+                    anchor = "TOPLEFT",
+                    anchorOffsetX = 0,
+                    anchorOffsetY = 0,
+                    growDirection = "RIGHT",
+                    spacing = 2,
+                    maxIndicators = 5,
+                    trackedSpells = {},
+                },
+                castbar = { enabled = false, height = 8, showIcon = false, showText = false },
+                portrait = { showPortrait = false, portraitSide = "LEFT", portraitSize = 30 },
+                pets = {
+                    enabled = false,
+                    width = 100, height = 20,
+                    showPowerBar = false,
+                    showAuras = false,
+                    anchorTo = "BOTTOM",
+                    anchorGap = 2,
+                },
+                dimensions = {
+                    smallRaidWidth = 180, smallRaidHeight = 36,
+                    mediumRaidWidth = 160, mediumRaidHeight = 30,
+                    largeRaidWidth = 140, largeRaidHeight = 24,
+                },
+                spotlight = {
+                    enabled = false,
+                    byRole = {},
+                    byName = {},
+                    position = { offsetX = -400, offsetY = 200 },
+                    growDirection = "DOWN",
+                    spacing = 2,
+                    useMainFrameStyle = true,
+                },
             },
 
-            -- Aura indicators (icon row, same pattern as buffs/debuffs)
-            auraIndicators = {
-                enabled = false,
-                iconSize = 14,
-                anchor = "TOPLEFT",
-                anchorOffsetX = 0,
-                anchorOffsetY = 0,
-                growDirection = "RIGHT",
-                spacing = 2,
-                maxIndicators = 5,
-                trackedSpells = {},   -- [spellID] = true/false, toggled via Designer
-            },
-
-            -- Spotlight (pin specific members to a separate group)
-            spotlight = {
-                enabled = false,
-                byRole = {},          -- e.g., { "TANK" } to auto-spotlight all tanks
-                byName = {},          -- e.g., { "Healername" } for specific players
-                position = { offsetX = -400, offsetY = 200 },
-                growDirection = "DOWN",
-                spacing = 2,
-                useMainFrameStyle = true,
-            },
-
-            -- Castbar (optional, off by default for performance)
-            castbar = { enabled = false, height = 8, showIcon = false, showText = false },
-
-            -- Portrait (optional, off by default)
-            portrait = { showPortrait = false, portraitSide = "LEFT", portraitSize = 30 },
-
-            -- Pet frames
-            pets = {
-                enabled = false,
-                width = 100, height = 20,
-                showPowerBar = false,
-                showAuras = false,
-                anchorTo = "BOTTOM",
-                anchorGap = 2,
-            },
-
-            -- Click-casting
+            -- Click-casting (shared)
             clickCast = {
                 enabled = false,
                 bindings = {},
@@ -2602,7 +2706,7 @@ local defaults = {
                 showTooltip = true,
             },
 
-            -- Test/preview mode
+            -- Test/preview mode (shared)
             testMode = {
                 partyCount = 5,
                 raidCount = 25,
@@ -3696,6 +3800,84 @@ function QUICore:OnInitialize()
     migrateToShowLogic(profile.cdmVisibility)
     migrateToShowLogic(profile.unitframesVisibility)
 
+    -- Migrate flat group frame visual settings → party/raid containers
+    local gf = profile.quiGroupFrames
+    if gf then
+        -- Keys that should live under party/raid containers
+        local VISUAL_KEYS = {
+            "general", "layout", "health", "power", "name", "absorbs", "healPrediction",
+            "indicators", "healer", "classPower", "range", "auras",
+            "privateAuras", "auraIndicators", "castbar", "portrait", "pets",
+        }
+        -- Also handle the previous partyLayout/raidLayout migration
+        local needsMigration = false
+        for _, key in ipairs(VISUAL_KEYS) do
+            if gf[key] then needsMigration = true break end
+        end
+        if gf.partyLayout or gf.raidLayout then needsMigration = true end
+
+        if needsMigration then
+            if not gf.party then gf.party = {} end
+            if not gf.raid then gf.raid = {} end
+
+            -- Deep-copy helper for migration
+            local function deepCopy(src)
+                if type(src) ~= "table" then return src end
+                local copy = {}
+                for k, v in pairs(src) do copy[k] = deepCopy(v) end
+                return copy
+            end
+
+            -- Copy each flat visual key into both party and raid
+            for _, key in ipairs(VISUAL_KEYS) do
+                if gf[key] then
+                    if not gf.party[key] then gf.party[key] = deepCopy(gf[key]) end
+                    if not gf.raid[key] then gf.raid[key] = deepCopy(gf[key]) end
+                    gf[key] = nil
+                end
+            end
+
+            -- Handle partyLayout/raidLayout from the intermediate migration
+            if gf.partyLayout then
+                if not gf.party.layout then gf.party.layout = gf.partyLayout
+                else
+                    for k, v in pairs(gf.partyLayout) do
+                        if gf.party.layout[k] == nil then gf.party.layout[k] = v end
+                    end
+                end
+                gf.partyLayout = nil
+            end
+            if gf.raidLayout then
+                if not gf.raid.layout then gf.raid.layout = gf.raidLayout
+                else
+                    for k, v in pairs(gf.raidLayout) do
+                        if gf.raid.layout[k] == nil then gf.raid.layout[k] = v end
+                    end
+                end
+                gf.raidLayout = nil
+            end
+        end
+
+        -- Migrate shared dimensions → party/raid containers
+        if gf.dimensions then
+            local function deepCopyDims(src)
+                if type(src) ~= "table" then return src end
+                local copy = {}
+                for k, v in pairs(src) do copy[k] = deepCopyDims(v) end
+                return copy
+            end
+            if not gf.party.dimensions then gf.party.dimensions = deepCopyDims(gf.dimensions) end
+            if not gf.raid.dimensions then gf.raid.dimensions = deepCopyDims(gf.dimensions) end
+            gf.dimensions = nil
+        end
+
+        -- Migrate shared spotlight → raid-only
+        if gf.spotlight then
+            if not gf.raid.spotlight then gf.raid.spotlight = gf.spotlight end
+            gf.spotlight = nil
+        end
+    end
+
     -- Initialize preserved scale - will be properly set in OnEnable after UI scale is applied
     self._preservedUIScale = nil
 
@@ -3707,6 +3889,9 @@ function QUICore:OnInitialize()
 
     -- Track CDM engine so profile switches to a different engine trigger reload
     self._lastKnownEngine = self.db.profile.ncdm and self.db.profile.ncdm.engine or "owned"
+
+    -- Track tooltip engine so profile switches to a different engine trigger reload
+    self._lastKnownTooltipEngine = self.db.profile.tooltip and self.db.profile.tooltip.engine or "owned"
 
     self.db.RegisterCallback(self, "OnProfileChanged", "OnProfileChanged")
     self.db.RegisterCallback(self, "OnProfileCopied",  "OnProfileChanged")
@@ -3775,6 +3960,14 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     local newEngine = self.db.profile.ncdm and self.db.profile.ncdm.engine or "owned"
     if newEngine ~= self._lastKnownEngine then
         self._lastKnownEngine = newEngine
+        self:SafeReload()
+        return
+    end
+
+    -- Check if tooltip engine changed — requires reload since engines can't hot-swap
+    local newTooltipEngine = self.db.profile.tooltip and self.db.profile.tooltip.engine or "owned"
+    if newTooltipEngine ~= self._lastKnownTooltipEngine then
+        self._lastKnownTooltipEngine = newTooltipEngine
         self:SafeReload()
         return
     end

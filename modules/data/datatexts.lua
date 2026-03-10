@@ -614,7 +614,7 @@ Datatexts:Register("system", {
         frame.Update = Update
         Datatexts:RegisterSharedTicker(frame, Update)
 
-        -- Tooltip with latency details
+        -- Tooltip with latency details and addon memory usage
         slotFrame:EnableMouse(true)
         slotFrame:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -627,11 +627,85 @@ Datatexts:Register("system", {
 
             -- Performance stats
             local currentFps = floor(GetFramerate() + 0.5)
-            local _, _, homePing, worldPing = GetNetStats()
+            local bandIn, bandOut, homePing, worldPing = GetNetStats()
 
             GameTooltip:AddDoubleLine("Framerate:", format("%d fps", currentFps), 0.8, 0.8, 0.8, ar, ag, ab)
             GameTooltip:AddDoubleLine("Home Latency:", format("%d ms", floor(homePing or 0)), 0.8, 0.8, 0.8, ar, ag, ab)
             GameTooltip:AddDoubleLine("World Latency:", format("%d ms", floor(worldPing or 0)), 0.8, 0.8, 0.8, ar, ag, ab)
+
+            -- Bandwidth (only shown when actively downloading)
+            if GetAvailableBandwidth then
+                local avail = GetAvailableBandwidth()
+                if avail and avail > 0 then
+                    GameTooltip:AddDoubleLine("Bandwidth:", format("%.2f Mbps", avail), 0.8, 0.8, 0.8, ar, ag, ab)
+                    if GetDownloadedPercentage then
+                        local pct = GetDownloadedPercentage()
+                        if pct and pct > 0 and pct < 1 then
+                            GameTooltip:AddDoubleLine("Downloaded:", format("%d%%", pct * 100), 0.8, 0.8, 0.8, ar, ag, ab)
+                        end
+                    end
+                end
+            end
+
+            -- Protocol info
+            if GetNetIpTypes then
+                local homeType, worldType = GetNetIpTypes()
+                if homeType or worldType then
+                    local homeProto = (homeType and homeType == 1) and "IPv6" or "IPv4"
+                    local worldProto = (worldType and worldType == 1) and "IPv6" or "IPv4"
+                    GameTooltip:AddDoubleLine("Protocol:", format("Home %s / World %s", homeProto, worldProto), 0.8, 0.8, 0.8, 0.6, 0.6, 0.6)
+                end
+            end
+
+            -- Addon memory usage
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine("AddOn Memory", 1, 1, 1)
+
+            UpdateAddOnMemoryUsage()
+            local addons = {}
+            local totalMem = 0
+            for i = 1, C_AddOns.GetNumAddOns() do
+                local ok, loaded = pcall(C_AddOns.IsAddOnLoaded, i)
+                if ok and loaded then
+                    local mem = GetAddOnMemoryUsage(i)
+                    totalMem = totalMem + mem
+                    local name = C_AddOns.GetAddOnInfo(i)
+                    addons[#addons + 1] = { name = name, mem = mem }
+                end
+            end
+
+            -- Sort by memory usage (highest first)
+            table.sort(addons, function(a, b) return a.mem > b.mem end)
+
+            -- Show top addons (limit to avoid massive tooltip)
+            local maxDisplay = 20
+            for i = 1, min(#addons, maxDisplay) do
+                local a = addons[i]
+                local memStr
+                if a.mem >= 1024 then
+                    memStr = format("%.1f MB", a.mem / 1024)
+                else
+                    memStr = format("%.0f KB", a.mem)
+                end
+                -- Color: red for heavy (>10MB), yellow for moderate (>1MB), green for light
+                local mr, mg, mb
+                if a.mem >= 10240 then
+                    mr, mg, mb = 1, 0.3, 0.3
+                elseif a.mem >= 1024 then
+                    mr, mg, mb = 1, 0.82, 0.2
+                else
+                    mr, mg, mb = 0.6, 0.8, 0.6
+                end
+                GameTooltip:AddDoubleLine(a.name, memStr, 0.8, 0.8, 0.8, mr, mg, mb)
+            end
+            if #addons > maxDisplay then
+                GameTooltip:AddLine(format("  ... and %d more", #addons - maxDisplay), 0.5, 0.5, 0.5)
+            end
+
+            -- Total
+            GameTooltip:AddLine(" ")
+            local totalStr = totalMem >= 1024 and format("%.1f MB", totalMem / 1024) or format("%.0f KB", totalMem)
+            GameTooltip:AddDoubleLine("Total:", totalStr, 1, 1, 1, ar, ag, ab)
 
             GameTooltip:Show()
         end)

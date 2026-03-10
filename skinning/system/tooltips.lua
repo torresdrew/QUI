@@ -575,8 +575,15 @@ local function SetupEmbeddedTooltipHooks()
     end
 end
 
--- List of tooltips to skin
-local tooltipsToSkin = {
+-- Check if the owned tooltip engine is active (owned handles its own styling).
+-- Reads directly from DB rather than relying on provider initialization timing.
+local function IsOwnedEngineActive()
+    local settings = GetSettings()
+    return settings and settings.engine == "owned"
+end
+
+-- GameTooltip-family frames — skipped when owned engine is active (we own those frames)
+local gameTooltipFamily = {
     "GameTooltip",
     "ItemRefTooltip",
     "ItemRefShoppingTooltip1",
@@ -589,8 +596,11 @@ local tooltipsToSkin = {
     "WorldMapCompareTooltip2",
     "SmallTextTooltip",
     "ReputationParagonTooltip",
-    -- NOTE: NamePlateTooltip intentionally omitted. Skinning it taints the frame
-    -- in Midnight's taint model, causing nameplate errors.
+    "NamePlateTooltip",
+}
+
+-- Specialized frames with custom layouts — always skinned (no taint risk)
+local specializedTooltips = {
     "QueueStatusFrame",
     "FloatingGarrisonFollowerTooltip",
     "FloatingGarrisonFollowerAbilityTooltip",
@@ -605,6 +615,25 @@ local tooltipsToSkin = {
     "FloatingPetBattleAbilityTooltip",
     "IMECandidatesFrame",
 }
+
+-- Build the active tooltip list based on engine selection
+local tooltipsToSkin = {}
+local function RebuildTooltipList()
+    wipe(tooltipsToSkin)
+    -- Always skin specialized frames
+    for _, name in ipairs(specializedTooltips) do
+        tooltipsToSkin[#tooltipsToSkin + 1] = name
+    end
+    -- Only skin GameTooltip family when classic engine is active
+    if not IsOwnedEngineActive() then
+        for _, name in ipairs(gameTooltipFamily) do
+            -- NamePlateTooltip still excluded in classic mode (causes taint)
+            if name ~= "NamePlateTooltip" then
+                tooltipsToSkin[#tooltipsToSkin + 1] = name
+            end
+        end
+    end
+end
 
 -- Skin all known tooltips
 local function SkinAllTooltips()
@@ -865,49 +894,51 @@ eventFrame:SetScript("OnEvent", function(self, event)
             -- work during combat (InCombatLockdown guard).
             -----------------------------------------------------------------
 
+            -- Build the tooltip list based on active engine
+            RebuildTooltipList()
+
             -----------------------------------------------------------------
             -- GameTooltip visibility watcher (OnUpdate on a SEPARATE frame).
-            -- We cannot install any hooks on GameTooltip itself (see
-            -- HookTooltipOnShow comment). Instead, a helper frame watches
-            -- GameTooltip's visibility and re-applies skin + font sizing
-            -- when it transitions to shown. The helper frame's OnUpdate
-            -- does not taint GameTooltip's dispatch tables.
-            -- Created unconditionally so it works when skinning is enabled
-            -- later without a reload.
+            -- When owned engine is active, the owned engine handles
+            -- GameTooltip visibility — skip skinning watcher entirely.
             -----------------------------------------------------------------
-            local gtWatcher = CreateFrame("Frame")
-            local gtWasShown = GameTooltip:IsShown()
-            gtWatcher:SetScript("OnUpdate", function()
-                local shown = GameTooltip:IsShown()
-                if shown and not gtWasShown then
-                    -- GameTooltip just became visible
-                    if InCombatLockdown() then
-                        QueueCombatTooltipSkin(GameTooltip)
-                    elseif IsEnabled() then
-                        if not skinnedTooltips[GameTooltip] then
-                            pcall(SkinTooltip, GameTooltip)
-                        else
-                            pcall(ReapplySkin, GameTooltip)
-                        end
-                        -- Defer font sizing to avoid tainting FontString metrics
-                        -- while Blizzard's tooltip chain is still running.
-                        C_Timer.After(0, function()
-                            if GameTooltip:IsShown() then
-                                pcall(ApplyTooltipFontSizeToFrame, GameTooltip)
+            if not IsOwnedEngineActive() then
+                local gtWatcher = CreateFrame("Frame")
+                local gtWasShown = GameTooltip:IsShown()
+                gtWatcher:SetScript("OnUpdate", function()
+                    local shown = GameTooltip:IsShown()
+                    if shown and not gtWasShown then
+                        -- GameTooltip just became visible
+                        if InCombatLockdown() then
+                            QueueCombatTooltipSkin(GameTooltip)
+                        elseif IsEnabled() then
+                            if not skinnedTooltips[GameTooltip] then
+                                pcall(SkinTooltip, GameTooltip)
+                            else
+                                pcall(ReapplySkin, GameTooltip)
                             end
-                        end)
+                            -- Defer font sizing to avoid tainting FontString metrics
+                            -- while Blizzard's tooltip chain is still running.
+                            C_Timer.After(0, function()
+                                if GameTooltip:IsShown() then
+                                    pcall(ApplyTooltipFontSizeToFrame, GameTooltip)
+                                end
+                            end)
+                        end
                     end
-                end
-                gtWasShown = shown
-            end)
+                    gtWasShown = shown
+                end)
+            end
 
             -- All tooltip modifications gated by master toggle + skinTooltips
             if not IsEnabled() then
                 -- Still hook Show so enabling live takes effect on next show
                 HookAllTooltips()
-                SetupEmbeddedTooltipHooks()
+                if not IsOwnedEngineActive() then
+                    SetupEmbeddedTooltipHooks()
+                    SetupHealthBarHook()
+                end
                 SetupTooltipPostProcessor()
-                SetupHealthBarHook()
                 return
             end
 
@@ -915,14 +946,14 @@ eventFrame:SetScript("OnEvent", function(self, event)
             HookAllTooltips()
             SkinAllTooltips()
 
-            -- Strip embedded item tooltip border (World Quest item rewards)
-            SetupEmbeddedTooltipHooks()
+            -- Embedded tooltip and health bar hooks only needed for classic engine
+            if not IsOwnedEngineActive() then
+                SetupEmbeddedTooltipHooks()
+                SetupHealthBarHook()
+            end
 
             -- Post processor handles both skinning and health bar
             SetupTooltipPostProcessor()
-
-            -- Health bar hook works independently of skinning
-            SetupHealthBarHook()
         end)
     end
 end)

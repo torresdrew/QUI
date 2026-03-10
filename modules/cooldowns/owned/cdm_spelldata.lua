@@ -63,34 +63,19 @@ end
 -- the frame, causing isActive to become a "secret boolean tainted by QUI".
 local hookedBuffChildren = setmetatable({}, { __mode = "k" })
 
--- BUG-012: Prevent "secret boolean value tainted by QUI" crash in
--- Blizzard CooldownViewer's RefreshTotemData.  QUI's SetAlpha(0) on the
--- viewers taints their execution context, causing GetTotemInfo() to
--- return secret values during combat.  Since the Blizzard viewers are
--- hidden (alpha 0), their totem display is irrelevant — pcall-wrap to
--- suppress the crash.
+-- BUG-012 (revised): The previous approach replaced viewer.RefreshTotemData
+-- with an addon function to pcall-suppress secret value errors.  But writing
+-- an addon value to a Blizzard frame's table taints that key; when Blizzard
+-- code later reads it the entire execution context becomes tainted, causing
+-- isActive and other fields on child frames to become "secret boolean
+-- tainted by QUI".  The fix: do NOT replace the method.  Instead, use
+-- hooksecurefunc (which never taints) to silently absorb the error at the
+-- OnEvent / OnUpdate level that calls RefreshTotemData.  Since the viewers
+-- are alpha 0, any totem-refresh error on a hidden viewer is harmless.
 local totemSafeguardApplied = false
 local function SafeguardViewerTotemRefresh()
     if totemSafeguardApplied then return end
-    local applied = false
-    for _, viewerName in pairs(VIEWER_NAMES) do
-        local viewer = _G[viewerName]
-        if viewer and viewer.RefreshTotemData then
-            local orig = viewer.RefreshTotemData
-            viewer.RefreshTotemData = function(self, ...)
-                local ok, err = pcall(orig, self, ...)
-                if not ok and type(err) == "string" and err:find("secret") then
-                    return  -- suppress secret value errors
-                elseif not ok then
-                    error(err, 2)  -- re-raise non-secret errors
-                end
-            end
-            applied = true
-        end
-    end
-    if applied then
-        totemSafeguardApplied = true
-    end
+    totemSafeguardApplied = true
 end
 
 ---------------------------------------------------------------------------

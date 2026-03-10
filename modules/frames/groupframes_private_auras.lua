@@ -40,9 +40,11 @@ local reanchorTimer = nil
 ---------------------------------------------------------------------------
 -- HELPERS
 ---------------------------------------------------------------------------
-local function GetSettings()
+local function GetSettings(isRaid)
     local db = GetDB()
-    return db and db.privateAuras
+    if not db then return nil end
+    local vdb = (isRaid and db.raid or db.party) or db
+    return vdb.privateAuras
 end
 
 local function AcquireContainer(parent)
@@ -91,7 +93,7 @@ end
 -- CORE: Setup private auras on a single frame
 ---------------------------------------------------------------------------
 local function SetupPrivateAuras(frame)
-    local settings = GetSettings()
+    local settings = GetSettings(frame._isRaid)
     if not settings or not settings.enabled then return end
 
     local unit = frame.unit or frame:GetAttribute("unit")
@@ -196,7 +198,7 @@ end
 -- CORE: Reanchor — unit token changed, rebuild anchors (reuse containers)
 ---------------------------------------------------------------------------
 local function ReanchorPrivateAuras(frame)
-    local settings = GetSettings()
+    local settings = GetSettings(frame._isRaid)
     if not settings or not settings.enabled then return end
 
     local unit = frame.unit or frame:GetAttribute("unit")
@@ -266,12 +268,12 @@ function QUI_GFPA:SetupAll()
     local GF = ns.QUI_GroupFrames
     if not GF or not GF.initialized then return end
 
-    local settings = GetSettings()
-    if not settings or not settings.enabled then return end
-
     for _, frame in pairs(GF.unitFrameMap) do
         if frame and frame:IsShown() then
-            SetupPrivateAuras(frame)
+            local settings = GetSettings(frame._isRaid)
+            if settings and settings.enabled then
+                SetupPrivateAuras(frame)
+            end
         end
     end
 end
@@ -281,15 +283,14 @@ function QUI_GFPA:ReanchorAll()
     local GF = ns.QUI_GroupFrames
     if not GF or not GF.initialized then return end
 
-    local settings = GetSettings()
-    if not settings or not settings.enabled then
-        self:CleanupAll()
-        return
-    end
-
     for _, frame in pairs(GF.unitFrameMap) do
         if frame and frame:IsShown() then
-            ReanchorPrivateAuras(frame)
+            local settings = GetSettings(frame._isRaid)
+            if settings and settings.enabled then
+                ReanchorPrivateAuras(frame)
+            else
+                ClearPrivateAuras(frame)
+            end
         end
     end
 end
@@ -304,19 +305,13 @@ end
 
 --- Full refresh — tear down and rebuild everything
 function QUI_GFPA:RefreshAll()
-    local settings = GetSettings()
-    if not settings or not settings.enabled then
-        self:CleanupAll()
-        return
-    end
-
     -- Clear existing anchors
     for frame in pairs(frameState) do
         ClearPrivateAuras(frame)
     end
     wipe(frameState)
 
-    -- Rebuild
+    -- Rebuild (SetupAll checks per-frame context)
     self:SetupAll()
 end
 
@@ -348,7 +343,7 @@ end
 
 --- Attach placeholder icons to a test/preview frame
 function QUI_GFPA:SetupTestFrame(frame)
-    local settings = GetSettings()
+    local settings = GetSettings(frame._isRaid)
     if not settings or not settings.enabled then return end
 
     -- Clean up any existing placeholders on this frame

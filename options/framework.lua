@@ -4183,6 +4183,220 @@ function GUI:CreateFormColorPicker(parent, label, dbKey, dbTable, onChange, opti
 end
 
 ---------------------------------------------------------------------------
+-- FORM EDIT BOX (single-line text input with label and DB binding)
+---------------------------------------------------------------------------
+function GUI:CreateFormEditBox(parent, label, dbKey, dbTable, onChange, options)
+    options = options or {}
+    if parent._hasContent ~= nil then parent._hasContent = true end
+    local container = CreateFrame("Frame", nil, parent)
+    container:SetHeight(FORM_ROW_HEIGHT)
+
+    -- Label on left (off-white text)
+    local text = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    SetFont(text, 12, "", C.text)
+    text:SetText(label or "Input")
+    text:SetPoint("LEFT", 0, 0)
+    text:SetWidth(170)
+    text:SetWordWrap(true)
+    text:SetJustifyH("LEFT")
+    container.label = text
+
+    -- Edit box aligned with other widgets (starts at 180px from left)
+    local editBox = CreateFrame("EditBox", nil, container, "BackdropTemplate")
+    editBox:SetHeight(22)
+    editBox:SetPoint("LEFT", container, "LEFT", 180, 0)
+    editBox:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+    local px = QUICore:GetPixelSize(editBox)
+    editBox:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = px,
+    })
+    editBox:SetBackdropColor(0.08, 0.08, 0.08, 1)
+    editBox:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
+    editBox:SetFont(GetFontPath(), 11, "")
+    editBox:SetTextColor(C_text_r, C_text_g, C_text_b, C_text_a)
+    editBox:SetJustifyH("LEFT")
+    editBox:SetAutoFocus(false)
+    editBox:SetTextInsets(6, 6, 0, 0)
+
+    if options.maxLetters then
+        editBox:SetMaxLetters(options.maxLetters)
+    end
+
+    -- Initialize from DB
+    local currentValue = (dbTable and dbKey) and dbTable[dbKey] or ""
+    editBox:SetText(currentValue or "")
+
+    container.editBox = editBox
+
+    -- Commit function
+    local function Commit()
+        local val = editBox:GetText()
+        if dbTable and dbKey then
+            dbTable[dbKey] = val
+        end
+        if onChange then onChange(val) end
+    end
+
+    if options.live then
+        -- Live mode: commit on every keystroke
+        editBox:SetScript("OnTextChanged", function(self, userInput)
+            if userInput then Commit() end
+        end)
+    end
+
+    editBox:SetScript("OnEnterPressed", function(self)
+        Commit()
+        self:ClearFocus()
+    end)
+    editBox:SetScript("OnEscapePressed", function(self)
+        -- Revert to DB value
+        local val = (dbTable and dbKey) and dbTable[dbKey] or ""
+        self:SetText(val or "")
+        self:ClearFocus()
+    end)
+
+    -- Optional focus callback
+    if options.onEditFocusGained then
+        editBox:SetScript("OnEditFocusGained", options.onEditFocusGained)
+    end
+
+    -- Border hover effect
+    editBox:SetScript("OnEnter", function(self) pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a) end)
+    editBox:SetScript("OnLeave", function(self)
+        if not self:HasFocus() then
+            pcall(self.SetBackdropBorderColor, self, 0.25, 0.25, 0.25, 1)
+        end
+    end)
+    editBox:HookScript("OnEditFocusGained", function(self) pcall(self.SetBackdropBorderColor, self, C_accent_r, C_accent_g, C_accent_b, C_accent_a) end)
+    editBox:HookScript("OnEditFocusLost", function(self)
+        if not options.live then Commit() end
+        pcall(self.SetBackdropBorderColor, self, 0.25, 0.25, 0.25, 1)
+    end)
+
+    -- Enable/disable (for conditional UI)
+    container.SetEnabled = function(self, enabled)
+        if enabled then
+            editBox:EnableMouse(true)
+            editBox:EnableKeyboard(true)
+            container:SetAlpha(1)
+        else
+            editBox:EnableMouse(false)
+            editBox:EnableKeyboard(false)
+            editBox:ClearFocus()
+            container:SetAlpha(0.4)
+        end
+    end
+
+    -- Refresh from DB (for profile switches)
+    container.Refresh = function(self)
+        local val = (dbTable and dbKey) and dbTable[dbKey] or ""
+        editBox:SetText(val or "")
+    end
+
+    -- Auto-register for search
+    if GUI._searchContext.tabIndex and label and not GUI._suppressSearchRegistration then
+        local regKey = label .. "_" .. (GUI._searchContext.tabIndex or 0) .. "_" .. (GUI._searchContext.subTabIndex or 0) .. "_" .. (GUI._searchContext.sectionName or "")
+        if not GUI.SettingsRegistryKeys[regKey] then
+            GUI.SettingsRegistryKeys[regKey] = true
+            table.insert(GUI.SettingsRegistry, {
+                label = label,
+                widgetType = "editbox",
+                tabIndex = GUI._searchContext.tabIndex,
+                tabName = GUI._searchContext.tabName,
+                subTabIndex = GUI._searchContext.subTabIndex,
+                subTabName = GUI._searchContext.subTabName,
+                sectionName = GUI._searchContext.sectionName,
+                widgetBuilder = function(p)
+                    return GUI:CreateFormEditBox(p, label, dbKey, dbTable, onChange, options)
+                end,
+            })
+        end
+    end
+
+    return container
+end
+
+---------------------------------------------------------------------------
+-- Inline edit box (lightweight, no label, used inside custom list entries)
+---------------------------------------------------------------------------
+function GUI:CreateInlineEditBox(parent, options)
+    options = options or {}
+    local w = options.width or 120
+    local h = options.height or 22
+    local editH = options.editHeight or (h - 2)
+    local inset = options.textInset or 6
+    local bg = options.bgColor or {0.08, 0.08, 0.08, 1}
+    local border = options.borderColor or {0.25, 0.25, 0.25, 1}
+    local activeBorder = options.activeBorderColor or C.accent
+
+    -- Background frame with backdrop
+    local bgFrame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    bgFrame:SetSize(w, h)
+    local px = QUICore:GetPixelSize(bgFrame)
+    bgFrame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = px,
+    })
+    bgFrame:SetBackdropColor(bg[1], bg[2], bg[3], bg[4] or 1)
+    bgFrame:SetBackdropBorderColor(border[1], border[2], border[3], border[4] or 1)
+
+    -- Helper for callers to update border color (used by CDM position fields)
+    bgFrame.SetFieldBorderColor = function(self, r, g, b, a)
+        pcall(self.SetBackdropBorderColor, self, r, g, b, a or 1)
+    end
+
+    -- Edit box inside
+    local editBox = CreateFrame("EditBox", nil, bgFrame)
+    editBox:SetHeight(editH)
+    editBox:SetPoint("LEFT", inset, 0)
+    editBox:SetPoint("RIGHT", -inset, 0)
+    editBox:SetFont(GetFontPath(), options.fontSize or 11, "")
+    editBox:SetTextColor(C_text_r, C_text_g, C_text_b, C_text_a)
+    editBox:SetJustifyH(options.justifyH or "LEFT")
+    editBox:SetAutoFocus(false)
+
+    if options.maxLetters then
+        editBox:SetMaxLetters(options.maxLetters)
+    end
+
+    if options.text then
+        editBox:SetText(options.text)
+    end
+
+    -- Border hover/focus effects
+    editBox:SetScript("OnEnter", function(self)
+        pcall(bgFrame.SetBackdropBorderColor, bgFrame, activeBorder[1], activeBorder[2], activeBorder[3], activeBorder[4] or 1)
+    end)
+    editBox:SetScript("OnLeave", function(self)
+        if not self:HasFocus() then
+            pcall(bgFrame.SetBackdropBorderColor, bgFrame, border[1], border[2], border[3], border[4] or 1)
+        end
+    end)
+
+    editBox:HookScript("OnEditFocusGained", function(self)
+        pcall(bgFrame.SetBackdropBorderColor, bgFrame, activeBorder[1], activeBorder[2], activeBorder[3], activeBorder[4] or 1)
+        if options.onEditFocusGained then options.onEditFocusGained(self) end
+    end)
+    editBox:HookScript("OnEditFocusLost", function(self)
+        pcall(bgFrame.SetBackdropBorderColor, bgFrame, border[1], border[2], border[3], border[4] or 1)
+    end)
+
+    editBox:SetScript("OnEnterPressed", function(self)
+        if options.onEnterPressed then options.onEnterPressed(self) end
+        self:ClearFocus()
+    end)
+    editBox:SetScript("OnEscapePressed", function(self)
+        if options.onEscapePressed then options.onEscapePressed(self) end
+        self:ClearFocus()
+    end)
+
+    return bgFrame, editBox
+end
+
+---------------------------------------------------------------------------
 -- SEARCH FUNCTIONALITY
 ---------------------------------------------------------------------------
 ---------------------------------------------------------------------------

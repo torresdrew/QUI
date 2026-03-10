@@ -28,7 +28,8 @@ local POOL_SIZE = 40
 
 local function GetFontPath()
     local db = GetDB()
-    local general = db and db.general
+    local vdb = db and (db.party or db)
+    local general = vdb and vdb.general
     local fontName = general and general.font or "Quazii"
     return LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
 end
@@ -91,13 +92,15 @@ end
 ---------------------------------------------------------------------------
 -- GET TRACKED SPELL IDS from DB
 ---------------------------------------------------------------------------
-local function GetTrackedSpellIDs()
+local function GetTrackedSpellIDs(isRaid)
     local db = GetDB()
-    if not db or not db.auraIndicators or not db.auraIndicators.enabled then
+    if not db then return nil end
+    local vdb = (isRaid and db.raid or db.party) or db
+    if not vdb.auraIndicators or not vdb.auraIndicators.enabled then
         return nil
     end
 
-    local tracked = db.auraIndicators.trackedSpells
+    local tracked = vdb.auraIndicators.trackedSpells
     if not tracked then return nil end
 
     -- Build list of enabled spell IDs
@@ -141,7 +144,10 @@ end
 
 local function PositionContainer(frame)
     local db = GetDB()
-    local ai = db and db.auraIndicators
+    if not db then return end
+    local isRaid = frame._isRaid
+    local vdb = (isRaid and db.raid or db.party) or db
+    local ai = vdb.auraIndicators
     if not ai then return end
 
     local state = GetIndicatorState(frame)
@@ -176,7 +182,8 @@ end
 local function UpdateFrameIndicators(frame)
     if not frame or not frame.unit then return end
 
-    local trackedSpells = GetTrackedSpellIDs()
+    local isRaid = frame._isRaid
+    local trackedSpells = GetTrackedSpellIDs(isRaid)
     if not trackedSpells then
         ClearIndicators(frame)
         return
@@ -189,7 +196,12 @@ local function UpdateFrameIndicators(frame)
     end
 
     local db = GetDB()
-    local ai = db and db.auraIndicators
+    if not db then
+        ClearIndicators(frame)
+        return
+    end
+    local vdb = (isRaid and db.raid or db.party) or db
+    local ai = vdb.auraIndicators
     if not ai then
         ClearIndicators(frame)
         return

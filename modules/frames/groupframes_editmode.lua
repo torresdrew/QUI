@@ -80,6 +80,9 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     local GF = ns.QUI_GroupFrames
     if not GF then return nil end
 
+    local isRaid = totalCount > 5
+    local vdb = isRaid and (db.raid or db) or (db.party or db)
+
     local mode
     if totalCount <= 5 then mode = "party"
     elseif totalCount <= 15 then mode = "small"
@@ -87,19 +90,19 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     else mode = "large"
     end
 
-    local dims = db.dimensions
+    local dims = vdb and vdb.dimensions
     local w, h
-    if mode == "party" then w, h = dims.partyWidth or 200, dims.partyHeight or 40
-    elseif mode == "small" then w, h = dims.smallRaidWidth or 180, dims.smallRaidHeight or 36
-    elseif mode == "medium" then w, h = dims.mediumRaidWidth or 160, dims.mediumRaidHeight or 30
-    else w, h = dims.largeRaidWidth or 140, dims.largeRaidHeight or 24
+    if mode == "party" then w, h = dims and dims.partyWidth or 200, dims and dims.partyHeight or 40
+    elseif mode == "small" then w, h = dims and dims.smallRaidWidth or 180, dims and dims.smallRaidHeight or 36
+    elseif mode == "medium" then w, h = dims and dims.mediumRaidWidth or 160, dims and dims.mediumRaidHeight or 30
+    else w, h = dims and dims.largeRaidWidth or 140, dims and dims.largeRaidHeight or 24
     end
 
     local frame = CreateFrame("Frame", "QUI_TestFrame" .. index, parent, "BackdropTemplate")
     frame:SetSize(w, h)
 
     -- Visuals matching DecorateGroupFrame
-    local general = db.general
+    local general = vdb.general
     local borderPx = general and general.borderSize or 1
     local borderSize = borderPx > 0 and (QUICore.Pixels and QUICore:Pixels(borderPx, frame) or borderPx) or 0
     local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
@@ -127,7 +130,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     end
 
     -- Power bar
-    local powerSettings = db.power
+    local powerSettings = vdb.power
     local showPower = powerSettings and powerSettings.showPowerBar ~= false
     local powerHeight = showPower and (powerSettings.powerBarHeight or 4) or 0
     local separatorHeight = showPower and px or 0
@@ -207,7 +210,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     }
 
     -- Name text
-    local nameSettings = db.name
+    local nameSettings = vdb.name
     if not nameSettings or nameSettings.showName ~= false then
         local nameAnchorInfo = ANCHOR_MAP[nameSettings and nameSettings.nameAnchor or "LEFT"] or ANCHOR_MAP.LEFT
         local nameOffsetX = nameSettings and nameSettings.nameOffsetX or 4
@@ -245,7 +248,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     end
 
     -- Health text
-    local healthSettings = db.health
+    local healthSettings = vdb.health
     if not healthSettings or healthSettings.showHealthText ~= false then
         local healthAnchorInfo = ANCHOR_MAP[healthSettings and healthSettings.healthAnchor or "RIGHT"] or ANCHOR_MAP.RIGHT
         local healthOffsetX = healthSettings and healthSettings.healthOffsetX or -4
@@ -298,7 +301,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     end
 
     -- Role icon
-    local indSettings = db.indicators
+    local indSettings = vdb.indicators
     if indSettings and indSettings.showRoleIcon ~= false then
         local roleIcon = textFrame:CreateTexture(nil, "OVERLAY")
         roleIcon:SetSize(indSettings.roleIconSize or 12, indSettings.roleIconSize or 12)
@@ -392,7 +395,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     end
 
     -- Healer overlays
-    local healerSettings = db.healer
+    local healerSettings = vdb.healer
     if prev and healerSettings then
         -- Target Highlight — edge + tinted fill
         if prev.targetHighlight then
@@ -436,7 +439,6 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
 
     -- Defensive indicator preview (shows up to maxIcons)
     if prev and prev.defensiveIndicator then
-        local healerSettings = db.healer
         local defSettings = healerSettings and healerSettings.defensiveIndicator
         if defSettings and defSettings.enabled ~= false then
             local iconSize = defSettings.iconSize or 16
@@ -478,7 +480,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     end
 
     -- Aura icons (buffs & debuffs; matches runtime: frame + 8)
-    local auraSettings = db.auras
+    local auraSettings = vdb.auras
     if prev and auraSettings then
         local auraLevel = baseLevel + 8
 
@@ -608,7 +610,9 @@ function QUI_GFEM:EnableTestMode(previewType)
     table.insert(testFrames, container)
 
     -- Create test frames
-    local layout = db.layout
+    local isRaid = previewType == "raid"
+    local vdb = isRaid and (db.raid or db) or (db.party or db)
+    local layout = vdb.layout
     local spacing = layout and layout.spacing or 2
     local grow = layout and layout.growDirection or "DOWN"
     local groupGrowRight = (layout and layout.groupGrowDirection or "RIGHT") == "RIGHT"
@@ -626,12 +630,12 @@ function QUI_GFEM:EnableTestMode(previewType)
     else mode = "large"
     end
 
-    local dims = db.dimensions
+    local dims = vdb and vdb.dimensions
     local frameW, frameH
-    if mode == "party" then frameW, frameH = dims.partyWidth or 200, dims.partyHeight or 40
-    elseif mode == "small" then frameW, frameH = dims.smallRaidWidth or 180, dims.smallRaidHeight or 36
-    elseif mode == "medium" then frameW, frameH = dims.mediumRaidWidth or 160, dims.mediumRaidHeight or 30
-    else frameW, frameH = dims.largeRaidWidth or 140, dims.largeRaidHeight or 24
+    if mode == "party" then frameW, frameH = dims and dims.partyWidth or 200, dims and dims.partyHeight or 40
+    elseif mode == "small" then frameW, frameH = dims and dims.smallRaidWidth or 180, dims and dims.smallRaidHeight or 36
+    elseif mode == "medium" then frameW, frameH = dims and dims.mediumRaidWidth or 160, dims and dims.mediumRaidHeight or 30
+    else frameW, frameH = dims and dims.largeRaidWidth or 140, dims and dims.largeRaidHeight or 24
     end
 
     for g = 1, numGroups do
@@ -797,8 +801,10 @@ local function GetHeaderBounds(header, db)
 
     if childCount == 0 then return 0, 0 end
 
-    local layout = db and db.layout
-    local dims = db and db.dimensions
+    local isRaid = childCount > 5
+    local vdb = db and (isRaid and (db.raid or db) or (db.party or db))
+    local layout = vdb and vdb.layout
+    local dims = vdb and vdb.dimensions
     local spacing = layout and layout.spacing or 2
     local groupSpacing = layout and layout.groupSpacing or 10
 
@@ -1444,9 +1450,20 @@ function QUI_GFEM:EnableEditMode(previewType)
         if not raidMover then
             raidMover = CreateGroupMover("raid")
         end
-        local pX, pY = PositionMover(groupMover, "party")
-        local rX, rY = PositionMover(raidMover, "raid")
-        QUI:DebugPrint(("[GF] EnableEditMode(split): party=(%d,%d) raid=(%d,%d)"):format(pX, pY, rX, rY))
+        -- Only show the mover for the requested context
+        if wantType == "party" then
+            local pX, pY = PositionMover(groupMover, "party")
+            raidMover:Hide()
+            QUI:DebugPrint(("[GF] EnableEditMode(split): party=(%d,%d)"):format(pX, pY))
+        elseif wantType == "raid" then
+            local rX, rY = PositionMover(raidMover, "raid")
+            groupMover:Hide()
+            QUI:DebugPrint(("[GF] EnableEditMode(split): raid=(%d,%d)"):format(rX, rY))
+        else
+            local pX, pY = PositionMover(groupMover, "party")
+            local rX, rY = PositionMover(raidMover, "raid")
+            QUI:DebugPrint(("[GF] EnableEditMode(split): party=(%d,%d) raid=(%d,%d)"):format(pX, pY, rX, rY))
+        end
     end
 
     -- Size the mover(s) and anchor all content
@@ -1627,7 +1644,8 @@ end
 ---------------------------------------------------------------------------
 function QUI_GFEM:CreateSpotlightHeader()
     local db = GetDB()
-    if not db or not db.spotlight or not db.spotlight.enabled then return end
+    local spot = db and db.raid and db.raid.spotlight
+    if not spot or not spot.enabled then return end
     if InCombatLockdown() then return end
 
     if spotlightHeader then return spotlightHeader end
@@ -1648,25 +1666,25 @@ function QUI_GFEM:CreateSpotlightHeader()
     spotlightHeader:SetAttribute("showParty", true)
 
     -- Filter by role
-    local roles = db.spotlight.byRole
+    local roles = spot.byRole
     if roles and #roles > 0 then
         spotlightHeader:SetAttribute("groupBy", "ASSIGNEDROLE")
         spotlightHeader:SetAttribute("groupingOrder", table.concat(roles, ","))
     end
 
-    -- Dimensions
-    local dims = db.dimensions
-    local w = dims and dims.partyWidth or 200
-    local h = dims and dims.partyHeight or 40
-    if not db.spotlight.useMainFrameStyle then
+    -- Dimensions: use raid dimensions for spotlight
+    local raidDims = db.raid and db.raid.dimensions
+    local w = raidDims and raidDims.smallRaidWidth or 180
+    local h = raidDims and raidDims.smallRaidHeight or 36
+    if not spot.useMainFrameStyle then
         -- Could have separate dimensions, for now use main
     end
     spotlightHeader:SetAttribute("_initialAttribute-unit-width", w)
     spotlightHeader:SetAttribute("_initialAttribute-unit-height", h)
 
     -- Grow direction
-    local spacing = db.spotlight.spacing or 2
-    local grow = db.spotlight.growDirection or "DOWN"
+    local spacing = spot.spacing or 2
+    local grow = spot.growDirection or "DOWN"
     if grow == "DOWN" then
         spotlightHeader:SetAttribute("point", "TOP")
         spotlightHeader:SetAttribute("yOffset", -spacing)
@@ -1676,7 +1694,7 @@ function QUI_GFEM:CreateSpotlightHeader()
     end
 
     -- Position
-    local pos = db.spotlight.position
+    local pos = spot.position
     spotlightHeader:SetPoint("CENTER", UIParent, "CENTER",
         pos and pos.offsetX or -400, pos and pos.offsetY or 200)
     spotlightHeader:SetMovable(true)

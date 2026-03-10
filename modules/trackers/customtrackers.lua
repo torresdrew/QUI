@@ -2811,6 +2811,19 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
 
         -- Small delay to ensure spec info is fully updated
         C_Timer.After(0.1, function()
+            -- RefreshAll calls Hide() which is protected — defer if in combat
+            if InCombatLockdown() then
+                local f = CreateFrame("Frame")
+                f:RegisterEvent("PLAYER_REGEN_ENABLED")
+                f:SetScript("OnEvent", function(s)
+                    s:UnregisterAllEvents()
+                    for _, bar in pairs(CustomTrackers.activeBars) do
+                        if bar then RebuildActiveSet(bar) end
+                    end
+                    CustomTrackers:RefreshAll()
+                end)
+                return
+            end
             -- Rebuild active icon sets for all bars (performance optimization)
             for _, bar in pairs(CustomTrackers.activeBars) do
                 if bar then

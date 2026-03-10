@@ -183,23 +183,26 @@ end
 -- ELEMENT DEFINITIONS
 ---------------------------------------------------------------------------
 -- Visual elements shown on Party/Raid designer sub-tabs (preview + widget bar)
-local VISUAL_ELEMENT_KEYS = {
-    "frame", "health", "power", "name", "healthText",
+-- Visual elements shown in Party/Raid Composer (preview + widget bar)
+local COMPOSER_ELEMENT_KEYS = {
+    "health", "power", "name",
     "buffs", "debuffs", "role", "indicators",
     "healer", "defensive", "auraIndicators", "privateAuras", "absorbs",
 }
 
--- Configuration sections shown on the Settings sub-tab
-local CONFIG_ELEMENT_KEYS = {
-    "general", "layout", "dimensions", "clickCast", "misc",
+-- General sub-tab elements (shared, not per-context)
+local GENERAL_ELEMENT_KEYS = {
+    "general", "clickCast",
 }
+
+-- Legacy alias used by search pre-build and overlay click routing
+local VISUAL_ELEMENT_KEYS = COMPOSER_ELEMENT_KEYS
 
 local ELEMENT_LABELS = {
     frame = "Frame",
     health = "Health",
     power = "Power",
     name = "Name",
-    healthText = "HP Text",
     buffs = "Buffs",
     debuffs = "Debuffs",
     role = "Role",
@@ -213,15 +216,49 @@ local ELEMENT_LABELS = {
     layout = "Layout",
     dimensions = "Dimensions",
     clickCast = "Click-Cast",
-    misc = "Misc",
 }
+
+-- Keys that live under party/raid sub-tables in the DB
+local VISUAL_DB_KEYS = {
+    general = true, layout = true, health = true, power = true, name = true,
+    absorbs = true, healPrediction = true, indicators = true,
+    healer = true, classPower = true, range = true, auras = true,
+    privateAuras = true, auraIndicators = true, castbar = true,
+    portrait = true, pets = true, dimensions = true, spotlight = true,
+}
+
+-- Creates a proxy table that routes visual keys to the party or raid sub-table.
+-- Shared keys (position, enabled, etc.) pass through to the real gfdb table.
+local function CreateVisualProxy(gfdb, mode)
+    local ctx = mode == "raid" and gfdb.raid or gfdb.party
+    if not ctx then return gfdb end
+    local proxy = setmetatable({}, {
+        __index = function(_, key)
+            if VISUAL_DB_KEYS[key] then
+                return ctx[key]
+            end
+            return gfdb[key]
+        end,
+        __newindex = function(_, key, value)
+            if VISUAL_DB_KEYS[key] then
+                ctx[key] = value
+            else
+                gfdb[key] = value
+            end
+        end,
+    })
+    rawset(proxy, "_composerMode", mode)
+    return proxy
+end
 
 local SEARCH_TAB_INDEX = 6
 local SEARCH_TAB_NAME = "Group Frames"
 local SEARCH_SUBTAB_GENERAL_INDEX = 1
-local SEARCH_SUBTAB_GENERAL_NAME = "General settings"
-local SEARCH_SUBTAB_COMPOSER_INDEX = 2
-local SEARCH_SUBTAB_COMPOSER_NAME = "Frame Composer"
+local SEARCH_SUBTAB_GENERAL_NAME = "General"
+local SEARCH_SUBTAB_PARTY_INDEX = 2
+local SEARCH_SUBTAB_PARTY_NAME = "Party"
+local SEARCH_SUBTAB_RAID_INDEX = 3
+local SEARCH_SUBTAB_RAID_NAME = "Raid"
 
 local function SetGeneralSearchContext(sectionName)
     GUI:SetSearchContext({
@@ -233,12 +270,32 @@ local function SetGeneralSearchContext(sectionName)
     })
 end
 
+local function SetPartySearchContext(sectionName)
+    GUI:SetSearchContext({
+        tabIndex = SEARCH_TAB_INDEX,
+        tabName = SEARCH_TAB_NAME,
+        subTabIndex = SEARCH_SUBTAB_PARTY_INDEX,
+        subTabName = SEARCH_SUBTAB_PARTY_NAME,
+        sectionName = sectionName,
+    })
+end
+
+local function SetRaidSearchContext(sectionName)
+    GUI:SetSearchContext({
+        tabIndex = SEARCH_TAB_INDEX,
+        tabName = SEARCH_TAB_NAME,
+        subTabIndex = SEARCH_SUBTAB_RAID_INDEX,
+        subTabName = SEARCH_SUBTAB_RAID_NAME,
+        sectionName = sectionName,
+    })
+end
+
 local function SetComposerSearchContext(sectionName)
     GUI:SetSearchContext({
         tabIndex = SEARCH_TAB_INDEX,
         tabName = SEARCH_TAB_NAME,
-        subTabIndex = SEARCH_SUBTAB_COMPOSER_INDEX,
-        subTabName = SEARCH_SUBTAB_COMPOSER_NAME,
+        subTabIndex = SEARCH_SUBTAB_PARTY_INDEX,
+        subTabName = SEARCH_SUBTAB_PARTY_NAME,
         sectionName = sectionName,
     })
 end
@@ -464,7 +521,7 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     local gfdb = GetGFDB()
     if not gfdb then return nil end
 
-    local db = gfdb
+    local db = CreateVisualProxy(gfdb, previewType)
     local general = db.general or {}
     local dims = db.dimensions or {}
 
@@ -1210,90 +1267,31 @@ local DRAG_CONFIG = {
 -- ELEMENT SETTINGS BUILDERS
 ---------------------------------------------------------------------------
 
--- FRAME settings
-local function BuildFrameSettings(content, gfdb, onChange)
-    local y = -10
-    SetComposerSearchContext("Frame")
-
-    local general = gfdb.general
-    if not general then gfdb.general = {} general = gfdb.general end
-
-    local borderSlider = GUI:CreateFormSlider(content, "Border Size", 0, 3, 1, "borderSize", general, onChange)
-    borderSlider:SetPoint("TOPLEFT", PAD, y)
-    borderSlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local texDrop = GUI:CreateFormDropdown(content, "Texture", GetTextureList(), "texture", general, onChange)
-    texDrop:SetPoint("TOPLEFT", PAD, y)
-    texDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - DROP_ROW
-
-    local darkCheck = GUI:CreateFormCheckbox(content, "Dark Mode", "darkMode", general, onChange)
-    darkCheck:SetPoint("TOPLEFT", PAD, y)
-    darkCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    local classColorCheck = GUI:CreateFormCheckbox(content, "Use Class Color", "useClassColor", general, onChange)
-    classColorCheck:SetPoint("TOPLEFT", PAD, y)
-    classColorCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    local bgColor = GUI:CreateFormColorPicker(content, "Background Color", "defaultBgColor", general, onChange)
-    bgColor:SetPoint("TOPLEFT", PAD, y)
-    bgColor:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    local bgOpacity = GUI:CreateFormSlider(content, "Background Opacity", 0, 1, 0.05, "defaultBgOpacity", general, onChange)
-    bgOpacity:SetPoint("TOPLEFT", PAD, y)
-    bgOpacity:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    -- Dark mode colors section
-    local dmHeader = GUI:CreateSectionHeader(content, "Dark Mode Colors")
-    dmHeader:SetPoint("TOPLEFT", PAD, y)
-    y = y - dmHeader.gap
-
-    local dmHealthColor = GUI:CreateFormColorPicker(content, "Health Color", "darkModeHealthColor", general, onChange)
-    dmHealthColor:SetPoint("TOPLEFT", PAD, y)
-    dmHealthColor:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    local dmHealthOpacity = GUI:CreateFormSlider(content, "Health Opacity", 0, 1, 0.05, "darkModeHealthOpacity", general, onChange)
-    dmHealthOpacity:SetPoint("TOPLEFT", PAD, y)
-    dmHealthOpacity:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local dmBgColor = GUI:CreateFormColorPicker(content, "Dark Mode BG Color", "darkModeBgColor", general, onChange)
-    dmBgColor:SetPoint("TOPLEFT", PAD, y)
-    dmBgColor:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    local dmBgOpacity = GUI:CreateFormSlider(content, "Dark Mode BG Opacity", 0, 1, 0.05, "darkModeBgOpacity", general, onChange)
-    dmBgOpacity:SetPoint("TOPLEFT", PAD, y)
-    dmBgOpacity:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    content:SetHeight(math.abs(y) + 10)
-end
-
 -- HEALTH settings
 local function BuildHealthSettings(content, gfdb, onChange)
-    local y = -10
     SetComposerSearchContext("Health")
 
     local general = gfdb.general or {}
+    local health = gfdb.health
+    if not health then gfdb.health = {} health = gfdb.health end
 
-    local texDrop = GUI:CreateFormDropdown(content, "Health Texture", GetTextureList(), "texture", general, onChange)
-    texDrop:SetPoint("TOPLEFT", PAD, y)
-    texDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - DROP_ROW
+    local L = CreateDynamicLayout(content)
+    local cond = function() return health.showHealthText end
 
-    local healthOpacity = GUI:CreateFormSlider(content, "Health Opacity", 0, 1, 0.05, "defaultHealthOpacity", general, onChange)
-    healthOpacity:SetPoint("TOPLEFT", PAD, y)
-    healthOpacity:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
+    L:Row(GUI:CreateFormDropdown(content, "Health Texture", GetTextureList(), "texture", general, onChange), DROP_ROW)
+    L:Row(GUI:CreateFormSlider(content, "Health Opacity", 0, 1, 0.05, "defaultHealthOpacity", general, onChange), SLIDER_HEIGHT)
 
-    content:SetHeight(math.abs(y) + 10)
+    local htHeader = GUI:CreateSectionHeader(content, "Health Text")
+    L:Row(htHeader, htHeader.gap)
+    L:Row(GUI:CreateFormCheckbox(content, "Show Health Text", "showHealthText", health, onChange), FORM_ROW)
+    L:Row(GUI:CreateFormDropdown(content, "Display Style", HEALTH_DISPLAY_OPTIONS, "healthDisplayStyle", health, onChange), DROP_ROW, cond)
+    L:Row(GUI:CreateFormSlider(content, "Font Size", 6, 24, 1, "healthFontSize", health, onChange), SLIDER_HEIGHT, cond)
+    L:Row(GUI:CreateFormDropdown(content, "Anchor", NINE_POINT_OPTIONS, "healthAnchor", health, onChange), DROP_ROW, cond)
+    L:Row(GUI:CreateFormDropdown(content, "Text Justify", TEXT_JUSTIFY_OPTIONS, "healthJustify", health, onChange), DROP_ROW, cond)
+    L:Row(GUI:CreateFormSlider(content, "X Offset", -100, 100, 1, "healthOffsetX", health, onChange), SLIDER_HEIGHT, cond)
+    L:Row(GUI:CreateFormSlider(content, "Y Offset", -100, 100, 1, "healthOffsetY", health, onChange), SLIDER_HEIGHT, cond)
+    L:Row(GUI:CreateFormColorPicker(content, "Text Color", "healthTextColor", health, onChange), FORM_ROW, cond)
+    L:Finish()
 end
 
 -- POWER settings
@@ -1335,25 +1333,6 @@ local function BuildNameSettings(content, gfdb, onChange)
     L:Finish()
 end
 
--- HEALTH TEXT settings
-local function BuildHealthTextSettings(content, gfdb, onChange)
-    SetComposerSearchContext("HP Text")
-    local health = gfdb.health
-    if not health then gfdb.health = {} health = gfdb.health end
-
-    local L = CreateDynamicLayout(content)
-    local cond = function() return health.showHealthText end
-
-    L:Row(GUI:CreateFormCheckbox(content, "Show Health Text", "showHealthText", health, onChange), FORM_ROW)
-    L:Row(GUI:CreateFormDropdown(content, "Display Style", HEALTH_DISPLAY_OPTIONS, "healthDisplayStyle", health, onChange), DROP_ROW, cond)
-    L:Row(GUI:CreateFormSlider(content, "Font Size", 6, 24, 1, "healthFontSize", health, onChange), SLIDER_HEIGHT, cond)
-    L:Row(GUI:CreateFormDropdown(content, "Anchor", NINE_POINT_OPTIONS, "healthAnchor", health, onChange), DROP_ROW, cond)
-    L:Row(GUI:CreateFormDropdown(content, "Text Justify", TEXT_JUSTIFY_OPTIONS, "healthJustify", health, onChange), DROP_ROW, cond)
-    L:Row(GUI:CreateFormSlider(content, "X Offset", -100, 100, 1, "healthOffsetX", health, onChange), SLIDER_HEIGHT, cond)
-    L:Row(GUI:CreateFormSlider(content, "Y Offset", -100, 100, 1, "healthOffsetY", health, onChange), SLIDER_HEIGHT, cond)
-    L:Row(GUI:CreateFormColorPicker(content, "Text Color", "healthTextColor", health, onChange), FORM_ROW, cond)
-    L:Finish()
-end
 
 ---------------------------------------------------------------------------
 -- SPELL LIST UI: Shared helper for whitelist/blacklist management
@@ -2050,145 +2029,12 @@ local function BuildGeneralSettings(content, gfdb, onChange)
     infoText:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
     y = y - 40
 
-    -- Test Mode section
-    local testHeader = GUI:CreateSectionHeader(content, "Test / Preview")
-    testHeader:SetPoint("TOPLEFT", PAD, y)
-    y = y - testHeader.gap
-
-    local testDesc = GUI:CreateLabel(content, "Preview group frames when solo. Also available via /qui grouptest", 11, C.textMuted)
-    testDesc:SetPoint("TOPLEFT", PAD, y)
-    testDesc:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    testDesc:SetJustifyH("LEFT")
-    y = y - 24
-
-    local partyTestBtn = GUI:CreateButton(content, "Party Preview (5)", 150, 28, function()
-        local editMode = ns.QUI_GroupFrameEditMode
-        if editMode then editMode:ToggleTestMode("party") end
-    end)
-    partyTestBtn:SetPoint("TOPLEFT", PAD, y)
-
-    local partyEditBtn = GUI:CreateButton(content, "Edit Party", 120, 28, function()
-        local editMode = ns.QUI_GroupFrameEditMode
-        if not editMode then return end
-        if editMode:IsEditMode() and editMode._lastTestPreviewType == "party" then
-            editMode:DisableEditMode()
-        else
-            editMode:EnableEditMode("party")
-        end
-    end)
-    partyEditBtn:SetPoint("LEFT", partyTestBtn, "RIGHT", 10, 0)
-    y = y - 36
-
-    local raidTestBtn = GUI:CreateButton(content, "Raid Preview (25)", 150, 28, function()
-        local editMode = ns.QUI_GroupFrameEditMode
-        if editMode then editMode:ToggleTestMode("raid") end
-    end)
-    raidTestBtn:SetPoint("TOPLEFT", PAD, y)
-
-    local raidEditBtn = GUI:CreateButton(content, "Edit Raid", 120, 28, function()
-        local editMode = ns.QUI_GroupFrameEditMode
-        if not editMode then return end
-        if editMode:IsEditMode() and editMode._lastTestPreviewType == "raid" then
-            editMode:DisableEditMode()
-        else
-            editMode:EnableEditMode("raid")
-        end
-    end)
-    raidEditBtn:SetPoint("LEFT", raidTestBtn, "RIGHT", 10, 0)
-    y = y - 40
-
-    -- Appearance section
-    local appearHeader = GUI:CreateSectionHeader(content, "Appearance")
-    appearHeader:SetPoint("TOPLEFT", PAD, y)
-    y = y - appearHeader.gap
-
-    local general = gfdb.general
-    if not general then gfdb.general = {} general = gfdb.general end
-
-    local classColorCheck = GUI:CreateFormCheckbox(content, "Use Class Colors", "useClassColor", general, onChange)
-    classColorCheck:SetPoint("TOPLEFT", PAD, y)
-    classColorCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    local defBgColor = GUI:CreateFormColorPicker(content, "Default Background Color", "defaultBgColor", general, onChange, { noAlpha = true })
-    defBgColor:SetPoint("TOPLEFT", PAD, y)
-    defBgColor:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    local defHealthOpacity = GUI:CreateFormSlider(content, "Health Opacity", 0.1, 1.0, 0.01, "defaultHealthOpacity", general, onChange)
-    defHealthOpacity:SetPoint("TOPLEFT", PAD, y)
-    defHealthOpacity:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local defBgOpacity = GUI:CreateFormSlider(content, "Background Opacity", 0.1, 1.0, 0.01, "defaultBgOpacity", general, onChange)
-    defBgOpacity:SetPoint("TOPLEFT", PAD, y)
-    defBgOpacity:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local darkModeCheck = GUI:CreateFormCheckbox(content, "Dark Mode", "darkMode", general, onChange)
-    darkModeCheck:SetPoint("TOPLEFT", PAD, y)
-    darkModeCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    local dmHealthColor = GUI:CreateFormColorPicker(content, "Darkmode Health Color", "darkModeHealthColor", general, onChange, { noAlpha = true })
-    dmHealthColor:SetPoint("TOPLEFT", PAD, y)
-    dmHealthColor:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    local dmBgColor = GUI:CreateFormColorPicker(content, "Darkmode Background Color", "darkModeBgColor", general, onChange, { noAlpha = true })
-    dmBgColor:SetPoint("TOPLEFT", PAD, y)
-    dmBgColor:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    local dmHealthOpacity = GUI:CreateFormSlider(content, "Darkmode Health Opacity", 0.1, 1.0, 0.01, "darkModeHealthOpacity", general, onChange)
-    dmHealthOpacity:SetPoint("TOPLEFT", PAD, y)
-    dmHealthOpacity:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local dmBgOpacity = GUI:CreateFormSlider(content, "Darkmode Background Opacity", 0.1, 1.0, 0.01, "darkModeBgOpacity", general, onChange)
-    dmBgOpacity:SetPoint("TOPLEFT", PAD, y)
-    dmBgOpacity:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local textureDrop = GUI:CreateDropdown(content, "Health Bar Texture", GetTextureList(), "texture", general, onChange)
-    textureDrop:SetPoint("TOPLEFT", PAD, y)
-    textureDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - DROP_ROW
-
-    local borderSlider = GUI:CreateFormSlider(content, "Border Size", 0, 3, 1, "borderSize", general, onChange)
-    borderSlider:SetPoint("TOPLEFT", PAD, y)
-    borderSlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local fontDrop = GUI:CreateDropdown(content, "Font", GetFontList(), "font", general, onChange)
-    fontDrop:SetPoint("TOPLEFT", PAD, y)
-    fontDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - DROP_ROW
-
-    local fontSizeSlider = GUI:CreateFormSlider(content, "Font Size", 8, 20, 1, "fontSize", general, onChange)
-    fontSizeSlider:SetPoint("TOPLEFT", PAD, y)
-    fontSizeSlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local tooltipCheck = GUI:CreateFormCheckbox(content, "Show Tooltips on Hover", "showTooltips", general, onChange)
-    tooltipCheck:SetPoint("TOPLEFT", PAD, y)
-    tooltipCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    content:SetHeight(math.abs(y) + 10)
-end
-
----------------------------------------------------------------------------
--- LAYOUT SETTINGS
----------------------------------------------------------------------------
-local function BuildLayoutSettings(content, gfdb, onChange)
-    local y = -10
-    SetGeneralSearchContext("Layout")
-
-    local layout = gfdb.layout
-    if not layout then gfdb.layout = {} layout = gfdb.layout end
-    local position = gfdb.position
-    if not position then gfdb.position = {} position = gfdb.position end
+    ---------------------------------------------------------------------------
+    -- Position
+    ---------------------------------------------------------------------------
+    local posHeader = GUI:CreateSectionHeader(content, "Position")
+    posHeader:SetPoint("TOPLEFT", PAD, y)
+    y = y - posHeader.gap
 
     local unifiedCheck = GUI:CreateFormCheckbox(content, "Unified Party & Raid Position", "unifiedPosition", gfdb, function()
         GUI:ShowConfirmation({
@@ -2211,50 +2057,321 @@ local function BuildLayoutSettings(content, gfdb, onChange)
     unifiedHint:SetJustifyH("LEFT")
     y = y - 20
 
+    content:SetHeight(math.abs(y) + 10)
+end
+
+---------------------------------------------------------------------------
+-- APPEARANCE SETTINGS (per-context: party/raid)
+-- Frame appearance + font + portrait + tooltips
+---------------------------------------------------------------------------
+local function BuildAppearanceSettings(content, gfdb, onChange)
+    local y = -10
+    local isRaid = rawget(gfdb, "_composerMode") == "raid"
+    if isRaid then SetRaidSearchContext("Appearance") else SetPartySearchContext("Appearance") end
+
+    ---------------------------------------------------------------------------
+    -- Preview & Edit
+    ---------------------------------------------------------------------------
+    local previewDesc = GUI:CreateLabel(content,
+        "Preview group frames when solo. Also available via /qui grouptest", 11, C.textMuted)
+    previewDesc:SetPoint("TOPLEFT", PAD, y)
+    previewDesc:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    previewDesc:SetJustifyH("LEFT")
+    y = y - 24
+
+    if not isRaid then
+        local previewBtn = GUI:CreateButton(content, "Party Preview (5)", 150, 28, function()
+            local editMode = ns.QUI_GroupFrameEditMode
+            if editMode then editMode:ToggleTestMode("party") end
+        end)
+        previewBtn:SetPoint("TOPLEFT", PAD, y)
+        local editBtn = GUI:CreateButton(content, "Edit Party", 120, 28, function()
+            local editMode = ns.QUI_GroupFrameEditMode
+            if not editMode then return end
+            if editMode:IsEditMode() and editMode._lastTestPreviewType == "party" then
+                editMode:DisableEditMode()
+            else
+                editMode:EnableEditMode("party")
+            end
+        end)
+        editBtn:SetPoint("LEFT", previewBtn, "RIGHT", 10, 0)
+        y = y - 36
+    else
+        local previewBtn = GUI:CreateButton(content, "Raid Preview (25)", 150, 28, function()
+            local editMode = ns.QUI_GroupFrameEditMode
+            if editMode then editMode:ToggleTestMode("raid") end
+        end)
+        previewBtn:SetPoint("TOPLEFT", PAD, y)
+        local editBtn = GUI:CreateButton(content, "Edit Raid", 120, 28, function()
+            local editMode = ns.QUI_GroupFrameEditMode
+            if not editMode then return end
+            if editMode:IsEditMode() and editMode._lastTestPreviewType == "raid" then
+                editMode:DisableEditMode()
+            else
+                editMode:EnableEditMode("raid")
+            end
+        end)
+        editBtn:SetPoint("LEFT", previewBtn, "RIGHT", 10, 0)
+        y = y - 36
+    end
+
+    ---------------------------------------------------------------------------
+    -- Frame Appearance
+    ---------------------------------------------------------------------------
+    local general = gfdb.general
+    if not general then gfdb.general = {} general = gfdb.general end
+
+    -- Border & Texture
+    local borderSlider = GUI:CreateFormSlider(content, "Border Size", 0, 3, 1, "borderSize", general, onChange)
+    borderSlider:SetPoint("TOPLEFT", PAD, y)
+    borderSlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - SLIDER_HEIGHT
+
+    local texDrop = GUI:CreateFormDropdown(content, "Texture", GetTextureList(), "texture", general, onChange)
+    texDrop:SetPoint("TOPLEFT", PAD, y)
+    texDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - DROP_ROW
+
+    -- Dark Mode & Colors
+    local darkCheck = GUI:CreateFormCheckbox(content, "Dark Mode", "darkMode", general, onChange)
+    darkCheck:SetPoint("TOPLEFT", PAD, y)
+    darkCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
+    local classColorCheck = GUI:CreateFormCheckbox(content, "Use Class Color", "useClassColor", general, onChange)
+    classColorCheck:SetPoint("TOPLEFT", PAD, y)
+    classColorCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
+    local bgColor = GUI:CreateFormColorPicker(content, "Background Color", "defaultBgColor", general, onChange)
+    bgColor:SetPoint("TOPLEFT", PAD, y)
+    bgColor:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
+    local bgOpacity = GUI:CreateFormSlider(content, "Background Opacity", 0, 1, 0.05, "defaultBgOpacity", general, onChange)
+    bgOpacity:SetPoint("TOPLEFT", PAD, y)
+    bgOpacity:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - SLIDER_HEIGHT
+
+    -- Dark mode colors section
+    local dmHeader = GUI:CreateSectionHeader(content, "Dark Mode Colors")
+    dmHeader:SetPoint("TOPLEFT", PAD, y)
+    y = y - dmHeader.gap
+
+    local dmHealthColor = GUI:CreateFormColorPicker(content, "Health Color", "darkModeHealthColor", general, onChange)
+    dmHealthColor:SetPoint("TOPLEFT", PAD, y)
+    dmHealthColor:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
+    local dmHealthOpacity = GUI:CreateFormSlider(content, "Health Opacity", 0, 1, 0.05, "darkModeHealthOpacity", general, onChange)
+    dmHealthOpacity:SetPoint("TOPLEFT", PAD, y)
+    dmHealthOpacity:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - SLIDER_HEIGHT
+
+    local dmBgColor = GUI:CreateFormColorPicker(content, "Dark Mode BG Color", "darkModeBgColor", general, onChange)
+    dmBgColor:SetPoint("TOPLEFT", PAD, y)
+    dmBgColor:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
+    local dmBgOpacity = GUI:CreateFormSlider(content, "Dark Mode BG Opacity", 0, 1, 0.05, "darkModeBgOpacity", general, onChange)
+    dmBgOpacity:SetPoint("TOPLEFT", PAD, y)
+    dmBgOpacity:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - SLIDER_HEIGHT
+
+    ---------------------------------------------------------------------------
+    -- Font
+    ---------------------------------------------------------------------------
+    local fontHeader = GUI:CreateSectionHeader(content, "Font")
+    fontHeader:SetPoint("TOPLEFT", PAD, y)
+    y = y - fontHeader.gap
+
+    local fontDrop = GUI:CreateDropdown(content, "Font", GetFontList(), "font", general, onChange)
+    fontDrop:SetPoint("TOPLEFT", PAD, y)
+    fontDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - DROP_ROW
+
+    local fontSizeSlider = GUI:CreateFormSlider(content, "Font Size", 8, 20, 1, "fontSize", general, onChange)
+    fontSizeSlider:SetPoint("TOPLEFT", PAD, y)
+    fontSizeSlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - SLIDER_HEIGHT
+
+    ---------------------------------------------------------------------------
+    -- Tooltips
+    ---------------------------------------------------------------------------
+    local tooltipCheck = GUI:CreateFormCheckbox(content, "Show Tooltips on Hover", "showTooltips", general, onChange)
+    tooltipCheck:SetPoint("TOPLEFT", PAD, y)
+    tooltipCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
+    ---------------------------------------------------------------------------
+    -- Portrait
+    ---------------------------------------------------------------------------
+    local portrait = gfdb.portrait
+    if not portrait then gfdb.portrait = {} portrait = gfdb.portrait end
+
+    local portraitHeader = GUI:CreateSectionHeader(content, "Portrait")
+    portraitHeader:SetPoint("TOPLEFT", PAD, y)
+    y = y - portraitHeader.gap
+
+    local portraitCheck = GUI:CreateFormCheckbox(content, "Show Portrait", "showPortrait", portrait, onChange)
+    portraitCheck:SetPoint("TOPLEFT", PAD, y)
+    portraitCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
+    if portrait.showPortrait then
+        local portraitSide = GUI:CreateDropdown(content, "Portrait Side", ANCHOR_SIDE_OPTIONS, "portraitSide", portrait, onChange)
+        portraitSide:SetPoint("TOPLEFT", PAD, y)
+        portraitSide:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
+
+        local portraitSize = GUI:CreateFormSlider(content, "Portrait Size", 16, 60, 1, "portraitSize", portrait, onChange)
+        portraitSize:SetPoint("TOPLEFT", PAD, y)
+        portraitSize:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+    end
+
+    content:SetHeight(math.abs(y) + 10)
+end
+
+---------------------------------------------------------------------------
+-- CONTEXT SETTINGS (per-context: party/raid)
+-- Layout + Dimensions + Range + Pets + Spotlight(raid) + Preview/Copy
+---------------------------------------------------------------------------
+local function BuildContextSettings(content, gfdb, onChange)
+    local y = -10
+    local isRaid = rawget(gfdb, "_composerMode") == "raid"
+    if isRaid then SetRaidSearchContext("Settings") else SetPartySearchContext("Settings") end
+
+    ---------------------------------------------------------------------------
+    -- Layout
+    ---------------------------------------------------------------------------
+    local layout = gfdb.layout
+    if not layout then gfdb.layout = {} layout = gfdb.layout end
+    local position = gfdb.position
+    if not position then gfdb.position = {} position = gfdb.position end
+
+    local layoutHeader = GUI:CreateSectionHeader(content, "Layout")
+    layoutHeader:SetPoint("TOPLEFT", PAD, y)
+    y = y - layoutHeader.gap
+
     local growDrop = GUI:CreateDropdown(content, "Grow Direction", GROW_OPTIONS, "growDirection", layout, onChange)
     growDrop:SetPoint("TOPLEFT", PAD, y)
     growDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
     y = y - DROP_ROW
 
-    local groupGrowDrop = GUI:CreateDropdown(content, "Group Grow Direction (Raid)", GROUP_GROW_OPTIONS, "groupGrowDirection", layout, onChange)
-    groupGrowDrop:SetPoint("TOPLEFT", PAD, y)
-    groupGrowDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - DROP_ROW
+    if isRaid then
+        local groupGrowDrop = GUI:CreateDropdown(content, "Group Grow Direction", GROUP_GROW_OPTIONS, "groupGrowDirection", layout, onChange)
+        groupGrowDrop:SetPoint("TOPLEFT", PAD, y)
+        groupGrowDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
+    end
 
     local spacingSlider = GUI:CreateFormSlider(content, "Frame Spacing", 0, 10, 1, "spacing", layout, onChange)
     spacingSlider:SetPoint("TOPLEFT", PAD, y)
     spacingSlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
     y = y - SLIDER_HEIGHT
 
-    local groupSpacingSlider = GUI:CreateFormSlider(content, "Group Spacing (Raid)", 0, 30, 1, "groupSpacing", layout, onChange)
-    groupSpacingSlider:SetPoint("TOPLEFT", PAD, y)
-    groupSpacingSlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
+    if isRaid then
+        local groupSpacingSlider = GUI:CreateFormSlider(content, "Group Spacing", 0, 30, 1, "groupSpacing", layout, onChange)
+        groupSpacingSlider:SetPoint("TOPLEFT", PAD, y)
+        groupSpacingSlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+    end
 
-    local showPlayerCheck = GUI:CreateFormCheckbox(content, "Show Player in Group", "showPlayer", layout, onChange)
-    showPlayerCheck:SetPoint("TOPLEFT", PAD, y)
-    showPlayerCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
+    if not isRaid then
+        local showPlayerCheck = GUI:CreateFormCheckbox(content, "Show Player in Group", "showPlayer", layout, onChange)
+        showPlayerCheck:SetPoint("TOPLEFT", PAD, y)
+        showPlayerCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+    end
 
-    local sortHeader = GUI:CreateSectionHeader(content, "Sorting")
-    sortHeader:SetPoint("TOPLEFT", PAD, y)
-    y = y - sortHeader.gap
+    -- Sorting (raid only)
+    if isRaid then
+        local sortHeader = GUI:CreateSectionHeader(content, "Sorting")
+        sortHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - sortHeader.gap
 
-    local groupByDrop = GUI:CreateDropdown(content, "Group By", GROUP_BY_OPTIONS, "groupBy", layout, onChange)
-    groupByDrop:SetPoint("TOPLEFT", PAD, y)
-    groupByDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - DROP_ROW
+        local groupByDrop = GUI:CreateDropdown(content, "Group By", GROUP_BY_OPTIONS, "groupBy", layout, onChange)
+        groupByDrop:SetPoint("TOPLEFT", PAD, y)
+        groupByDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
 
-    local sortDrop = GUI:CreateDropdown(content, "Sort Method", SORT_OPTIONS, "sortMethod", layout, onChange)
-    sortDrop:SetPoint("TOPLEFT", PAD, y)
-    sortDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - DROP_ROW
+        local sortDrop = GUI:CreateDropdown(content, "Sort Method", SORT_OPTIONS, "sortMethod", layout, onChange)
+        sortDrop:SetPoint("TOPLEFT", PAD, y)
+        sortDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
 
-    local roleSortCheck = GUI:CreateFormCheckbox(content, "Sort by Role (Tank > Healer > DPS)", "sortByRole", layout, onChange)
-    roleSortCheck:SetPoint("TOPLEFT", PAD, y)
-    roleSortCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
+        local roleSortCheck = GUI:CreateFormCheckbox(content, "Sort by Role (Tank > Healer > DPS)", "sortByRole", layout, onChange)
+        roleSortCheck:SetPoint("TOPLEFT", PAD, y)
+        roleSortCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+    end
 
+    ---------------------------------------------------------------------------
+    -- Dimensions
+    ---------------------------------------------------------------------------
+    local dims = gfdb.dimensions
+    if not dims then gfdb.dimensions = {} dims = gfdb.dimensions end
+
+    local dimsHeader = GUI:CreateSectionHeader(content, "Dimensions")
+    dimsHeader:SetPoint("TOPLEFT", PAD, y)
+    y = y - dimsHeader.gap
+
+    if not isRaid then
+        local partyW = GUI:CreateFormSlider(content, "Width", 80, 400, 1, "partyWidth", dims, onChange)
+        partyW:SetPoint("TOPLEFT", PAD, y)
+        partyW:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local partyH = GUI:CreateFormSlider(content, "Height", 16, 80, 1, "partyHeight", dims, onChange)
+        partyH:SetPoint("TOPLEFT", PAD, y)
+        partyH:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+    else
+        local smallHeader = GUI:CreateSectionHeader(content, "Small Raid (6-15 players)")
+        smallHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - smallHeader.gap
+
+        local smallW = GUI:CreateFormSlider(content, "Width", 60, 400, 1, "smallRaidWidth", dims, onChange)
+        smallW:SetPoint("TOPLEFT", PAD, y)
+        smallW:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local smallH = GUI:CreateFormSlider(content, "Height", 14, 100, 1, "smallRaidHeight", dims, onChange)
+        smallH:SetPoint("TOPLEFT", PAD, y)
+        smallH:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local medHeader = GUI:CreateSectionHeader(content, "Medium Raid (16-25 players)")
+        medHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - medHeader.gap
+
+        local medW = GUI:CreateFormSlider(content, "Width", 50, 300, 1, "mediumRaidWidth", dims, onChange)
+        medW:SetPoint("TOPLEFT", PAD, y)
+        medW:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local medH = GUI:CreateFormSlider(content, "Height", 12, 100, 1, "mediumRaidHeight", dims, onChange)
+        medH:SetPoint("TOPLEFT", PAD, y)
+        medH:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local largeHeader = GUI:CreateSectionHeader(content, "Large Raid (26-40 players)")
+        largeHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - largeHeader.gap
+
+        local largeW = GUI:CreateFormSlider(content, "Width", 40, 250, 1, "largeRaidWidth", dims, onChange)
+        largeW:SetPoint("TOPLEFT", PAD, y)
+        largeW:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local largeH = GUI:CreateFormSlider(content, "Height", 10, 100, 1, "largeRaidHeight", dims, onChange)
+        largeH:SetPoint("TOPLEFT", PAD, y)
+        largeH:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+    end
+
+    -- Position
     local posHeader = GUI:CreateSectionHeader(content, "Position")
     posHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - posHeader.gap
@@ -2269,77 +2386,134 @@ local function BuildLayoutSettings(content, gfdb, onChange)
     ySlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
     y = y - SLIDER_HEIGHT
 
-    content:SetHeight(math.abs(y) + 10)
+    ---------------------------------------------------------------------------
+    -- Range Check
+    ---------------------------------------------------------------------------
+    local range = gfdb.range
+    if not range then gfdb.range = {} range = gfdb.range end
+
+    local rangeHeader = GUI:CreateSectionHeader(content, "Range Check")
+    rangeHeader:SetPoint("TOPLEFT", PAD, y)
+    y = y - rangeHeader.gap
+
+    local rangeCheck = GUI:CreateFormCheckbox(content, "Enable Range Check (dim out-of-range members)", "enabled", range, onChange)
+    rangeCheck:SetPoint("TOPLEFT", PAD, y)
+    rangeCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
+    if range.enabled then
+        local rangeAlpha = GUI:CreateFormSlider(content, "Out-of-Range Alpha", 0.1, 0.8, 0.05, "outOfRangeAlpha", range, onChange)
+        rangeAlpha:SetPoint("TOPLEFT", PAD, y)
+        rangeAlpha:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+    end
+
+    ---------------------------------------------------------------------------
+    -- Pet Frames
+    ---------------------------------------------------------------------------
+    local pets = gfdb.pets
+    if not pets then gfdb.pets = {} pets = gfdb.pets end
+
+    local petHeader = GUI:CreateSectionHeader(content, "Pet Frames")
+    petHeader:SetPoint("TOPLEFT", PAD, y)
+    y = y - petHeader.gap
+
+    local petCheck = GUI:CreateFormCheckbox(content, "Enable Pet Frames", "enabled", pets, onChange)
+    petCheck:SetPoint("TOPLEFT", PAD, y)
+    petCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
+    if pets.enabled then
+        local petWidth = GUI:CreateFormSlider(content, "Pet Frame Width", 40, 200, 1, "width", pets, onChange)
+        petWidth:SetPoint("TOPLEFT", PAD, y)
+        petWidth:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local petHeight = GUI:CreateFormSlider(content, "Pet Frame Height", 10, 40, 1, "height", pets, onChange)
+        petHeight:SetPoint("TOPLEFT", PAD, y)
+        petHeight:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local petAnchor = GUI:CreateDropdown(content, "Pet Anchor", PET_ANCHOR_OPTIONS, "anchorTo", pets, onChange)
+        petAnchor:SetPoint("TOPLEFT", PAD, y)
+        petAnchor:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - DROP_ROW
+    end
+
+    ---------------------------------------------------------------------------
+    -- Spotlight (raid only)
+    ---------------------------------------------------------------------------
+    if isRaid then
+        local spot = gfdb.spotlight
+        if not spot then gfdb.spotlight = {} spot = gfdb.spotlight end
+
+        local spotHeader = GUI:CreateSectionHeader(content, "Spotlight")
+        spotHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - spotHeader.gap
+
+        local spotDesc = GUI:CreateLabel(content, "Pin specific raid members (by role or name) to a separate highlighted group for tank-watch or healing assignment awareness.", 11, C.textMuted)
+        spotDesc:SetPoint("TOPLEFT", PAD, y)
+        spotDesc:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        spotDesc:SetJustifyH("LEFT")
+        y = y - 30
+
+        local spotCheck = GUI:CreateFormCheckbox(content, "Enable Spotlight", "enabled", spot, onChange)
+        spotCheck:SetPoint("TOPLEFT", PAD, y)
+        spotCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        if spot.enabled then
+            local spotGrow = GUI:CreateDropdown(content, "Spotlight Grow Direction", GROW_OPTIONS, "growDirection", spot, onChange)
+            spotGrow:SetPoint("TOPLEFT", PAD, y)
+            spotGrow:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+            y = y - DROP_ROW
+
+            local spotSpacing = GUI:CreateFormSlider(content, "Spotlight Spacing", 0, 10, 1, "spacing", spot, onChange)
+            spotSpacing:SetPoint("TOPLEFT", PAD, y)
+            spotSpacing:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+            y = y - SLIDER_HEIGHT
+        end
+    end
+
+    ---------------------------------------------------------------------------
+    -- Copy All
+    ---------------------------------------------------------------------------
+    local srcLabel = isRaid and "Raid" or "Party"
+    local dstLabel = isRaid and "Party" or "Raid"
+
+    local copyAllBtn = GUI:CreateButton(content, "Copy All: " .. srcLabel .. " -> " .. dstLabel, 220, 28, function()
+        GUI:ShowConfirmation({
+            title = "Copy All Settings",
+            message = "This will overwrite ALL " .. dstLabel .. " visual settings (layout, health, power, auras, indicators, etc.) with " .. srcLabel .. " settings. Continue?",
+            acceptText = "Copy All",
+            cancelText = "Cancel",
+            isDestructive = true,
+            onAccept = function()
+                local src = gfdb.party
+                local dst = gfdb.raid
+                if isRaid then src, dst = dst, src end
+                if not src or not dst then return end
+                local function deepCopy(s)
+                    if type(s) ~= "table" then return s end
+                    local copy = {}
+                    for k, v in pairs(s) do copy[k] = deepCopy(v) end
+                    return copy
+                end
+                for key in pairs(VISUAL_DB_KEYS) do
+                    if src[key] then
+                        dst[key] = deepCopy(src[key])
+                    end
+                end
+                RefreshGF()
+            end,
+        })
+    end)
+    copyAllBtn:SetPoint("TOPLEFT", PAD, y)
+    y = y - 36
+
+    content:SetHeight(math.abs(y) + 20)
 end
 
----------------------------------------------------------------------------
--- DIMENSIONS SETTINGS
----------------------------------------------------------------------------
-local function BuildDimensionsSettings(content, gfdb, onChange)
-    local y = -10
-    SetGeneralSearchContext("Dimensions")
-
-    local dims = gfdb.dimensions
-    if not dims then gfdb.dimensions = {} dims = gfdb.dimensions end
-
-    local partyHeader = GUI:CreateSectionHeader(content, "Party (1-5 players)")
-    partyHeader:SetPoint("TOPLEFT", PAD, y)
-    y = y - partyHeader.gap
-
-    local partyW = GUI:CreateFormSlider(content, "Width", 80, 400, 1, "partyWidth", dims, onChange)
-    partyW:SetPoint("TOPLEFT", PAD, y)
-    partyW:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local partyH = GUI:CreateFormSlider(content, "Height", 16, 80, 1, "partyHeight", dims, onChange)
-    partyH:SetPoint("TOPLEFT", PAD, y)
-    partyH:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local smallHeader = GUI:CreateSectionHeader(content, "Small Raid (6-15 players)")
-    smallHeader:SetPoint("TOPLEFT", PAD, y)
-    y = y - smallHeader.gap
-
-    local smallW = GUI:CreateFormSlider(content, "Width", 60, 400, 1, "smallRaidWidth", dims, onChange)
-    smallW:SetPoint("TOPLEFT", PAD, y)
-    smallW:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local smallH = GUI:CreateFormSlider(content, "Height", 14, 100, 1, "smallRaidHeight", dims, onChange)
-    smallH:SetPoint("TOPLEFT", PAD, y)
-    smallH:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local medHeader = GUI:CreateSectionHeader(content, "Medium Raid (16-25 players)")
-    medHeader:SetPoint("TOPLEFT", PAD, y)
-    y = y - medHeader.gap
-
-    local medW = GUI:CreateFormSlider(content, "Width", 50, 300, 1, "mediumRaidWidth", dims, onChange)
-    medW:SetPoint("TOPLEFT", PAD, y)
-    medW:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local medH = GUI:CreateFormSlider(content, "Height", 12, 100, 1, "mediumRaidHeight", dims, onChange)
-    medH:SetPoint("TOPLEFT", PAD, y)
-    medH:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local largeHeader = GUI:CreateSectionHeader(content, "Large Raid (26-40 players)")
-    largeHeader:SetPoint("TOPLEFT", PAD, y)
-    y = y - largeHeader.gap
-
-    local largeW = GUI:CreateFormSlider(content, "Width", 40, 250, 1, "largeRaidWidth", dims, onChange)
-    largeW:SetPoint("TOPLEFT", PAD, y)
-    largeW:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local largeH = GUI:CreateFormSlider(content, "Height", 10, 100, 1, "largeRaidHeight", dims, onChange)
-    largeH:SetPoint("TOPLEFT", PAD, y)
-    largeH:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    content:SetHeight(math.abs(y) + 10)
-end
 
 ---------------------------------------------------------------------------
 -- CLICK-CAST SETTINGS
@@ -2390,6 +2564,7 @@ local function BuildClickCastSettings(content, gfdb, onChange)
         { value = "target", text = "Target Unit" },
         { value = "focus",  text = "Set Focus" },
         { value = "assist", text = "Assist" },
+        { value = "menu",   text = "Unit Menu" },
     }
     local BINDING_TYPE_OPTIONS = {
         { value = "mouse", text = "Mouse Button" },
@@ -2417,6 +2592,7 @@ local function BuildClickCastSettings(content, gfdb, onChange)
         focus  = "Interface\\Icons\\Ability_TrickShot",
         assist = "Interface\\Icons\\Ability_Hunter_MasterMarksman",
         macro  = "Interface\\Icons\\INV_Misc_Note_01",
+        menu   = "Interface\\Icons\\INV_Misc_GroupNeedMore",
     }
 
     -- Spec context label
@@ -2825,7 +3001,8 @@ local function BuildClickCastSettings(content, gfdb, onChange)
                 spellText:SetWidth(140)
                 spellText:SetJustifyH("LEFT")
                 local displayName = binding.spell or actionType
-                if actionType == "macro" then displayName = "Macro" end
+                if actionType == "macro" then displayName = "Macro"
+                elseif actionType == "menu" then displayName = "Unit Menu" end
                 spellText:SetText(displayName)
                 spellText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
                 local removeBtn = CreateFrame("Button", nil, row, "BackdropTemplate")
@@ -2868,63 +3045,18 @@ end
 ---------------------------------------------------------------------------
 -- MISC SETTINGS (Range, Portrait, Pets, Spotlight)
 ---------------------------------------------------------------------------
-local function BuildMiscSettings(content, gfdb, onChange)
-    SetGeneralSearchContext("Misc")
-
-    local range = gfdb.range
-    if not range then gfdb.range = {} range = gfdb.range end
-    local portrait = gfdb.portrait
-    if not portrait then gfdb.portrait = {} portrait = gfdb.portrait end
-    local pets = gfdb.pets
-    if not pets then gfdb.pets = {} pets = gfdb.pets end
-    local spot = gfdb.spotlight
-    if not spot then gfdb.spotlight = {} spot = gfdb.spotlight end
-
-    local L = CreateDynamicLayout(content)
-    local rangeCond = function() return range.enabled end
-    local portraitCond = function() return portrait.showPortrait end
-    local petCond = function() return pets.enabled end
-    local spotCond = function() return spot.enabled end
-
-    -- Range check
-    L:Header(GUI:CreateSectionHeader(content, "Range Check"))
-    L:Row(GUI:CreateFormCheckbox(content, "Enable Range Check (dim out-of-range members)", "enabled", range, onChange), FORM_ROW)
-    L:Row(GUI:CreateFormSlider(content, "Out-of-Range Alpha", 0.1, 0.8, 0.05, "outOfRangeAlpha", range, onChange), SLIDER_HEIGHT, rangeCond)
-
-    -- Portrait
-    L:Header(GUI:CreateSectionHeader(content, "Portrait"))
-    L:Row(GUI:CreateFormCheckbox(content, "Show Portrait", "showPortrait", portrait, onChange), FORM_ROW)
-    L:Row(GUI:CreateDropdown(content, "Portrait Side", ANCHOR_SIDE_OPTIONS, "portraitSide", portrait, onChange), DROP_ROW, portraitCond)
-    L:Row(GUI:CreateFormSlider(content, "Portrait Size", 16, 60, 1, "portraitSize", portrait, onChange), SLIDER_HEIGHT, portraitCond)
-
-    -- Pet frames
-    L:Header(GUI:CreateSectionHeader(content, "Pet Frames"))
-    L:Row(GUI:CreateFormCheckbox(content, "Enable Pet Frames", "enabled", pets, onChange), FORM_ROW)
-    L:Row(GUI:CreateFormSlider(content, "Pet Frame Width", 40, 200, 1, "width", pets, onChange), SLIDER_HEIGHT, petCond)
-    L:Row(GUI:CreateFormSlider(content, "Pet Frame Height", 10, 40, 1, "height", pets, onChange), SLIDER_HEIGHT, petCond)
-    L:Row(GUI:CreateDropdown(content, "Pet Anchor", PET_ANCHOR_OPTIONS, "anchorTo", pets, onChange), DROP_ROW, petCond)
-
-    -- Spotlight
-    L:Header(GUI:CreateSectionHeader(content, "Spotlight"))
-    local spotDesc = GUI:CreateLabel(content, "Pin specific raid members (by role or name) to a separate highlighted group for tank-watch or healing assignment awareness.", 11, C.textMuted)
-    spotDesc:SetJustifyH("LEFT")
-    L:Row(spotDesc, 30)
-    L:Row(GUI:CreateFormCheckbox(content, "Enable Spotlight", "enabled", spot, onChange), FORM_ROW)
-    L:Row(GUI:CreateDropdown(content, "Spotlight Grow Direction", GROW_OPTIONS, "growDirection", spot, onChange), DROP_ROW, spotCond)
-    L:Row(GUI:CreateFormSlider(content, "Spotlight Spacing", 0, 10, 1, "spacing", spot, onChange), SLIDER_HEIGHT, spotCond)
-
-    L:Finish()
-end
 
 ---------------------------------------------------------------------------
 -- ELEMENT BUILDERS TABLE
 ---------------------------------------------------------------------------
+---------------------------------------------------------------------------
+-- PREVIEW SETTINGS (context-aware: party vs raid)
+
 local ELEMENT_BUILDERS = {
-    frame = BuildFrameSettings,
+    -- Composer elements (visual preview-driven)
     health = BuildHealthSettings,
     power = BuildPowerSettings,
     name = BuildNameSettings,
-    healthText = BuildHealthTextSettings,
     buffs = BuildBuffsSettings,
     debuffs = BuildDebuffsSettings,
     role = BuildRoleSettings,
@@ -2934,11 +3066,12 @@ local ELEMENT_BUILDERS = {
     auraIndicators = BuildAuraIndicatorsSettings,
     privateAuras = BuildPrivateAurasSettings,
     absorbs = BuildAbsorbsSettings,
+    -- General elements
     general = BuildGeneralSettings,
-    layout = BuildLayoutSettings,
-    dimensions = BuildDimensionsSettings,
     clickCast = BuildClickCastSettings,
-    misc = BuildMiscSettings,
+    -- Context elements (appearance / settings)
+    appearance = BuildAppearanceSettings,
+    contextSettings = BuildContextSettings,
 }
 
 ---------------------------------------------------------------------------
@@ -3104,6 +3237,8 @@ local function BuildDesignerView(tabContent, previewType)
 
         -- Map sub-element keys to the widget bar tab they should select
         local CLICK_TARGET = {
+            frame = "health",
+            healthText = "health",
             readyCheck = "indicators", resurrection = "indicators",
             summon = "indicators", leader = "indicators",
             targetMarker = "indicators", phase = "indicators",
@@ -3143,7 +3278,8 @@ local function BuildDesignerView(tabContent, previewType)
                     self._dragFired = true
                     local gfdb = GetGFDB()
                     if not gfdb then return end
-                    local dbTbl = gfdb[dragCfg.sub]
+                    local proxy = CreateVisualProxy(gfdb, previewType)
+                    local dbTbl = proxy[dragCfg.sub]
                     if not dbTbl then return end
                     if dragCfg.nested then dbTbl = dbTbl[dragCfg.nested] end
                     if not dbTbl then return end
@@ -3295,6 +3431,9 @@ local function BuildDesignerView(tabContent, previewType)
         end)
     end
 
+    -- Expose RebuildPreview so sibling sections (Appearance, Settings) can trigger it
+    tabContent._rebuildPreview = RebuildPreview
+
     state._previewY = y
     RebuildPreviewImmediate()
     local previewH = state.previewWrapper and state.previewWrapper:GetHeight() or 100
@@ -3387,8 +3526,18 @@ local function BuildDesignerView(tabContent, previewType)
                     RefreshGF()
                     RebuildPreview()
                 end
-                builder(panel, currentGFDB, onChangeHandler)
+                GUI._suppressSearchRegistration = true
+                builder(panel, CreateVisualProxy(currentGFDB, previewType), onChangeHandler)
+                GUI._suppressSearchRegistration = false
             end
+
+            -- Keep scroll child height in sync when panel relayouts change height
+            panel:HookScript("OnSizeChanged", function(self, w, h)
+                if self:IsShown() and h and h > 0 then
+                    state.settingsArea:SetHeight(h)
+                    if state.refreshScrollBar then state.refreshScrollBar() end
+                end
+            end)
 
             state.settingsPanels[key] = panel
         end
@@ -3467,12 +3616,18 @@ local function BuildDesignerView(tabContent, previewType)
 
     state.refreshScrollBar = RefreshScrollBar
 
-    -- Dynamically size the inner scroll to fill remaining viewport space
+    -- Dynamically size the inner scroll to fill remaining space in the parent
     local fixedHeaderH = math.abs(y)
     local function ResizeSettingsScroll()
-        local viewH = outerScroll and outerScroll.GetHeight and outerScroll:GetHeight() or nil
-        if viewH and viewH > 0 then
-            settingsScroll:SetHeight(math.max(viewH - fixedHeaderH - 10, 200))
+        -- Use the immediate parent's height (section frame inside sectionHost),
+        -- not the outer scroll viewport, since the Composer may be nested inside
+        -- a sectionHost that is shorter than the full viewport.
+        local parentH = tabContent:GetHeight()
+        if (not parentH or parentH <= 0) and outerScroll then
+            parentH = outerScroll:GetHeight()
+        end
+        if parentH and parentH > 0 then
+            settingsScroll:SetHeight(math.max(parentH - fixedHeaderH - 10, 200))
         end
         local sw = settingsScroll:GetWidth()
         if sw and sw > 0 then
@@ -3483,16 +3638,26 @@ local function BuildDesignerView(tabContent, previewType)
     if outerScroll and outerScroll.HookScript then
         outerScroll:HookScript("OnSizeChanged", ResizeSettingsScroll)
     end
+    -- Re-size when the Composer section frame itself resizes (e.g. sectionHost changed)
+    tabContent:HookScript("OnSizeChanged", ResizeSettingsScroll)
     settingsScroll:HookScript("OnShow", ResizeSettingsScroll)
     C_Timer.After(0, ResizeSettingsScroll)
 
     -- Select first element by default
-    SelectElement("frame")
+    SelectElement("health")
 
     -- Build all designer setting panels once so every option is indexed by search,
     -- even if the user never clicks each widget-bar element manually.
+    -- Suppress sidebar section auto-registration so section headers within
+    -- element builders don't pollute the sidebar (only Composer/Appearance/Settings).
     local currentGFDB = GetGFDB()
     if currentGFDB then
+        local proxyGFDB = CreateVisualProxy(currentGFDB, previewType)
+        local function preBuildOnChange()
+            RefreshGF()
+            RebuildPreview()
+        end
+        GUI._suppressSearchRegistration = true
         for _, key in ipairs(VISUAL_ELEMENT_KEYS) do
             if not state.settingsPanels[key] then
                 local builder = ELEMENT_BUILDERS[key]
@@ -3500,19 +3665,20 @@ local function BuildDesignerView(tabContent, previewType)
                     local panel = CreateFrame("Frame", nil, state.settingsArea)
                     panel:SetPoint("TOPLEFT", 0, 0)
                     panel:SetPoint("RIGHT", state.settingsArea, "RIGHT", 0, 0)
-                    builder(panel, currentGFDB, RefreshGF)
+                    builder(panel, proxyGFDB, preBuildOnChange)
                     panel:Hide()
                     state.settingsPanels[key] = panel
                 end
             end
         end
+        GUI._suppressSearchRegistration = false
     end
 end
 
 ---------------------------------------------------------------------------
--- SETTINGS VIEW BUILDER (for the Settings sub-tab)
+-- GENERAL VIEW BUILDER (for the General sub-tab)
 ---------------------------------------------------------------------------
-local function BuildSettingsView(tabContent)
+local function BuildGeneralView(tabContent)
     local gfdb = GetGFDB()
     if not gfdb then
         local info = GUI:CreateLabel(tabContent, "Group frame settings not available.", 12, C.textMuted)
@@ -3532,13 +3698,13 @@ local function BuildSettingsView(tabContent)
     local y = -10
 
     -- Description
-    local desc = GUI:CreateDescription(tabContent, "Global group frame settings shared across Party and Raid layouts.")
+    local desc = GUI:CreateDescription(tabContent, "Global group frame settings shared between party and raid.")
     desc:SetPoint("TOPLEFT", PAD, y)
     desc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
     y = y - 26
 
     ---------------------------------------------------------------------------
-    -- WIDGET BAR (config elements only)
+    -- WIDGET BAR (general elements only)
     ---------------------------------------------------------------------------
     local function SelectElement(key)
         -- Deselect previous
@@ -3591,7 +3757,7 @@ local function BuildSettingsView(tabContent)
         tabContent:SetHeight(totalY)
     end
 
-    local widgetBar, widgetBarHeight = CreateWidgetBar(tabContent, SelectElement, state, CONFIG_ELEMENT_KEYS)
+    local widgetBar, widgetBarHeight = CreateWidgetBar(tabContent, SelectElement, state, GENERAL_ELEMENT_KEYS)
     widgetBar:SetPoint("TOPLEFT", PAD, y)
     state._widgetBarHeight = widgetBarHeight
     y = y - widgetBarHeight - 10
@@ -3605,14 +3771,13 @@ local function BuildSettingsView(tabContent)
     settingsArea:SetHeight(300)
     state.settingsArea = settingsArea
 
-    -- Select first config element by default
+    -- Select first element by default
     SelectElement("general")
 
     -- Build all general-settings panels once so their controls are searchable
-    -- without requiring users to click each category first.
     local currentGFDB = GetGFDB()
     if currentGFDB then
-        for _, key in ipairs(CONFIG_ELEMENT_KEYS) do
+        for _, key in ipairs(GENERAL_ELEMENT_KEYS) do
             if not state.settingsPanels[key] then
                 local builder = ELEMENT_BUILDERS[key]
                 if builder then
@@ -3631,9 +3796,10 @@ local function BuildSettingsView(tabContent)
 end
 
 ---------------------------------------------------------------------------
--- FRAME COMPOSER VIEW BUILDER (for Party/Raid designer switcher)
+-- CONTEXT VIEW BUILDER (for Party or Raid sub-tab)
+-- Each context has 3 sidebar sections: Composer, Appearance, Settings
 ---------------------------------------------------------------------------
-local function BuildFrameComposerView(tabContent)
+local function BuildContextView(tabContent, contextMode)
     local gfdb = GetGFDB()
     if not gfdb then
         local info = GUI:CreateLabel(tabContent, "Group frame settings not available.", 12, C.textMuted)
@@ -3642,93 +3808,138 @@ local function BuildFrameComposerView(tabContent)
         return
     end
 
-    local GROUP_FRAMES_TAB_INDEX = SEARCH_TAB_INDEX
-    local FRAME_COMPOSER_SUBTAB_INDEX = SEARCH_SUBTAB_COMPOSER_INDEX
+    local SUBTAB_INDEX = contextMode == "raid" and SEARCH_SUBTAB_RAID_INDEX or SEARCH_SUBTAB_PARTY_INDEX
+    local contextLabel = contextMode == "raid" and "Raid" or "Party"
 
     local y = -10
 
-    local desc = GUI:CreateDescription(tabContent, "Build and preview Party and Raid layouts from a single composer view.")
+    local desc = GUI:CreateDescription(tabContent, contextLabel .. " frame settings. Use the sidebar to switch between Composer, Appearance, and Settings.")
     desc:SetPoint("TOPLEFT", PAD, y)
     desc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
     y = y - 26
 
-    local modeHost = CreateFrame("Frame", nil, tabContent)
-    modeHost:SetPoint("TOPLEFT", PAD, y)
-    modeHost:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-    modeHost:SetHeight(820)
+    -- Host frame for section content
+    local sectionHost = CreateFrame("Frame", nil, tabContent)
+    sectionHost:SetPoint("TOPLEFT", 0, y)
+    sectionHost:SetPoint("RIGHT", tabContent, "RIGHT", 0, 0)
+    sectionHost:SetHeight(820)
 
-    local modeFrames = {}
-    local activeMode = "party"
+    local sectionFrames = {}
+    local activeSection = nil
 
-    local function EnsureComposerSidebarEntries()
-        local key = GROUP_FRAMES_TAB_INDEX * 10000 + FRAME_COMPOSER_SUBTAB_INDEX
-        GUI.SectionRegistryOrder[key] = { "Party", "Raid" }
-        GUI.SectionRegistry[key] = {
-            Party = { frame = modeHost, scrollParent = nil, contentParent = tabContent },
-            Raid = { frame = modeHost, scrollParent = nil, contentParent = tabContent },
-        }
-    end
-
-    local function EnsureModeFrame(mode)
-        local frame = modeFrames[mode]
-        if frame then return frame end
-        frame = CreateFrame("Frame", nil, modeHost)
-        frame:SetAllPoints(modeHost)
-        BuildDesignerView(frame, mode)
-        modeFrames[mode] = frame
-        return frame
-    end
-
-    local function ApplyModeSelection()
-        for mode, frame in pairs(modeFrames) do
-            frame:SetShown(mode == activeMode)
+    -- onChange that refreshes live frames AND the composer preview
+    local function onChangeWithPreview()
+        RefreshGF()
+        -- Rebuild composer preview if it has been built
+        local composerFrame = sectionFrames["Composer"]
+        if composerFrame and composerFrame._rebuildPreview then
+            composerFrame._rebuildPreview()
         end
     end
 
-    local function SelectMode(mode)
-        if mode ~= "party" and mode ~= "raid" then return false end
-        activeMode = mode
-        EnsureModeFrame(mode)
-        EnsureComposerSidebarEntries()
-        ApplyModeSelection()
-        if GUI.MainFrame and GUI.MainFrame.activeTab == GROUP_FRAMES_TAB_INDEX then
-            local sectionName = (mode == "party") and "Party" or "Raid"
-            GUI.MainFrame._sidebarActiveSectionKey = GROUP_FRAMES_TAB_INDEX .. ":" .. FRAME_COMPOSER_SUBTAB_INDEX .. ":" .. sectionName
+    local function EnsureSectionFrame(section)
+        if sectionFrames[section] then return sectionFrames[section] end
+        local frame = CreateFrame("Frame", nil, sectionHost)
+        if section == "Composer" then
+            -- Composer manages its own inner scroll — fill the host
+            frame:SetAllPoints(sectionHost)
+        else
+            -- Appearance/Settings: anchor top+right, let builder set height
+            frame:SetPoint("TOPLEFT", sectionHost, "TOPLEFT", 0, 0)
+            frame:SetPoint("RIGHT", sectionHost, "RIGHT", 0, 0)
+        end
+
+        if section == "Composer" then
+            BuildDesignerView(frame, contextMode)
+        elseif section == "Appearance" then
+            -- Suppress section header sidebar registration (only Composer/Appearance/Settings should be sidebar entries)
+            GUI._suppressSearchRegistration = true
+            local proxy = CreateVisualProxy(gfdb, contextMode)
+            BuildAppearanceSettings(frame, proxy, onChangeWithPreview)
+            GUI._suppressSearchRegistration = false
+        elseif section == "Settings" then
+            GUI._suppressSearchRegistration = true
+            local proxy = CreateVisualProxy(gfdb, contextMode)
+            BuildContextSettings(frame, proxy, onChangeWithPreview)
+            GUI._suppressSearchRegistration = false
+        end
+
+        sectionFrames[section] = frame
+        return frame
+    end
+
+    local sectionNames = { "Composer", "Appearance", "Settings" }
+
+    local function EnsureSidebarEntries()
+        local key = SEARCH_TAB_INDEX * 10000 + SUBTAB_INDEX
+        GUI.SectionRegistryOrder[key] = sectionNames
+        local reg = {}
+        for _, name in ipairs(sectionNames) do
+            reg[name] = { frame = sectionHost, scrollParent = nil, contentParent = tabContent }
+        end
+        GUI.SectionRegistry[key] = reg
+    end
+
+    local outerScroll = FindNearestScrollFrame(tabContent)
+
+    -- Size the host and tabContent based on the active section.
+    -- Composer has its own inner scroll so it fills the viewport.
+    -- Appearance/Settings set their own height — let the outer scroll handle overflow.
+    local function ResizeForSection(section)
+        local viewH = outerScroll and outerScroll.GetHeight and outerScroll:GetHeight() or nil
+        if section == "Composer" then
+            if viewH and viewH > 0 then
+                local targetH = math.max(420, viewH - math.abs(y) - 20)
+                sectionHost:SetHeight(targetH)
+                tabContent:SetHeight(math.abs(y) + targetH + 20)
+            else
+                sectionHost:SetHeight(820)
+                tabContent:SetHeight(900)
+            end
+        else
+            -- Use the section frame's content height
+            local frame = sectionFrames[section]
+            local contentH = frame and frame:GetHeight() or 600
+            if contentH < 100 then contentH = 600 end
+            sectionHost:SetHeight(contentH)
+            tabContent:SetHeight(math.abs(y) + contentH + 20)
+        end
+    end
+
+    local function SelectSection(section)
+        activeSection = section
+        EnsureSectionFrame(section)
+        for name, frame in pairs(sectionFrames) do
+            frame:SetShown(name == section)
+        end
+        ResizeForSection(section)
+        if GUI.MainFrame and GUI.MainFrame.activeTab == SEARCH_TAB_INDEX then
+            GUI.MainFrame._sidebarActiveSectionKey = SEARCH_TAB_INDEX .. ":" .. SUBTAB_INDEX .. ":" .. section
             GUI:RefreshSidebarTree(GUI.MainFrame)
         end
         return true
     end
 
-    -- Register Party/Raid as the only third-level entries under Frame Composer.
-    EnsureComposerSidebarEntries()
+    -- Register sidebar sections
+    EnsureSidebarEntries()
     if GUI.RegisterSectionNavigateHandler then
-        GUI:RegisterSectionNavigateHandler(GROUP_FRAMES_TAB_INDEX, FRAME_COMPOSER_SUBTAB_INDEX, "Party", function()
-            return SelectMode("party")
-        end)
-        GUI:RegisterSectionNavigateHandler(GROUP_FRAMES_TAB_INDEX, FRAME_COMPOSER_SUBTAB_INDEX, "Raid", function()
-            return SelectMode("raid")
-        end)
-    end
-
-    local outerScroll = FindNearestScrollFrame(tabContent)
-    local function ResizeComposerHost()
-        local viewH = outerScroll and outerScroll.GetHeight and outerScroll:GetHeight() or nil
-        if viewH and viewH > 0 then
-            local targetH = math.max(420, viewH - math.abs(y) - 20)
-            modeHost:SetHeight(targetH)
-            tabContent:SetHeight(math.abs(y) + targetH + 20)
-        else
-            tabContent:SetHeight(900)
+        for _, section in ipairs(sectionNames) do
+            GUI:RegisterSectionNavigateHandler(SEARCH_TAB_INDEX, SUBTAB_INDEX, section, function()
+                return SelectSection(section)
+            end)
         end
     end
+
     if outerScroll and outerScroll.HookScript then
-        outerScroll:HookScript("OnSizeChanged", ResizeComposerHost)
+        outerScroll:HookScript("OnSizeChanged", function()
+            if activeSection then ResizeForSection(activeSection) end
+        end)
     end
 
-    SelectMode("party")
+    SelectSection("Composer")
     C_Timer.After(0, function()
-        EnsureComposerSidebarEntries()
-        ResizeComposerHost()
+        EnsureSidebarEntries()
+        ResizeForSection(activeSection or "Composer")
         if GUI.MainFrame then
             GUI:RefreshSidebarTree(GUI.MainFrame)
         end
@@ -3738,6 +3949,7 @@ end
 local function RegisterDesignerSearchNavigation()
     if not GUI or not GUI.RegisterNavigationItem then return end
 
+    -- Register 3 sub-tabs: General, Party, Raid
     GUI:RegisterNavigationItem("subtab", {
         tabIndex = SEARCH_TAB_INDEX,
         tabName = SEARCH_TAB_NAME,
@@ -3747,51 +3959,32 @@ local function RegisterDesignerSearchNavigation()
     GUI:RegisterNavigationItem("subtab", {
         tabIndex = SEARCH_TAB_INDEX,
         tabName = SEARCH_TAB_NAME,
-        subTabIndex = SEARCH_SUBTAB_COMPOSER_INDEX,
-        subTabName = SEARCH_SUBTAB_COMPOSER_NAME,
+        subTabIndex = SEARCH_SUBTAB_PARTY_INDEX,
+        subTabName = SEARCH_SUBTAB_PARTY_NAME,
     })
-
-    local composerBase = {
+    GUI:RegisterNavigationItem("subtab", {
         tabIndex = SEARCH_TAB_INDEX,
         tabName = SEARCH_TAB_NAME,
-        subTabIndex = SEARCH_SUBTAB_COMPOSER_INDEX,
-        subTabName = SEARCH_SUBTAB_COMPOSER_NAME,
-    }
-    GUI:RegisterNavigationItem("section", {
-        tabIndex = composerBase.tabIndex,
-        tabName = composerBase.tabName,
-        subTabIndex = composerBase.subTabIndex,
-        subTabName = composerBase.subTabName,
-        sectionName = "Party",
+        subTabIndex = SEARCH_SUBTAB_RAID_INDEX,
+        subTabName = SEARCH_SUBTAB_RAID_NAME,
     })
-    GUI:RegisterNavigationItem("section", {
-        tabIndex = composerBase.tabIndex,
-        tabName = composerBase.tabName,
-        subTabIndex = composerBase.subTabIndex,
-        subTabName = composerBase.subTabName,
-        sectionName = "Raid",
-    })
-    GUI:RegisterNavigationItem("section", {
-        tabIndex = composerBase.tabIndex,
-        tabName = composerBase.tabName,
-        subTabIndex = composerBase.subTabIndex,
-        subTabName = composerBase.subTabName,
-        sectionName = "Frame Designer",
-    })
-    GUI:RegisterNavigationItem("section", {
-        tabIndex = composerBase.tabIndex,
-        tabName = composerBase.tabName,
-        subTabIndex = composerBase.subTabIndex,
-        subTabName = composerBase.subTabName,
-        sectionName = "Party Frame Designer",
-    })
-    GUI:RegisterNavigationItem("section", {
-        tabIndex = composerBase.tabIndex,
-        tabName = composerBase.tabName,
-        subTabIndex = composerBase.subTabIndex,
-        subTabName = composerBase.subTabName,
-        sectionName = "Raid Frame Designer",
-    })
+
+    -- Register sidebar sections for Party and Raid
+    local sectionNames = { "Composer", "Appearance", "Settings" }
+    for _, ctx in ipairs({
+        { index = SEARCH_SUBTAB_PARTY_INDEX, name = SEARCH_SUBTAB_PARTY_NAME },
+        { index = SEARCH_SUBTAB_RAID_INDEX, name = SEARCH_SUBTAB_RAID_NAME },
+    }) do
+        for _, section in ipairs(sectionNames) do
+            GUI:RegisterNavigationItem("section", {
+                tabIndex = SEARCH_TAB_INDEX,
+                tabName = SEARCH_TAB_NAME,
+                subTabIndex = ctx.index,
+                subTabName = ctx.name,
+                sectionName = section,
+            })
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -3801,8 +3994,9 @@ local function CreateDesignerPage(parent)
     local scroll, content = CreateScrollableContent(parent)
 
     GUI:CreateSubTabs(content, {
-        { name = "General settings", builder = BuildSettingsView },
-        { name = "Frame Composer", isDesigner = true, builder = BuildFrameComposerView },
+        { name = "General", builder = BuildGeneralView },
+        { name = "Party", isDesigner = true, builder = function(tc) BuildContextView(tc, "party") end },
+        { name = "Raid", isDesigner = true, builder = function(tc) BuildContextView(tc, "raid") end },
     })
     RegisterDesignerSearchNavigation()
     if GUI.SetSidebarSubTabSectionsHidden and GUI.MainFrame then
@@ -3810,7 +4004,7 @@ local function CreateDesignerPage(parent)
     end
 
     -- Designer tabs use an inner scroll for settings, so disable outer
-    -- scrolling by matching scroll child height to viewport. General settings
+    -- scrolling by matching scroll child height to viewport. General tab
     -- keeps normal outer scrolling.
     local subTabGroup = GUI._lastSubTabGroup
     if subTabGroup then
@@ -3818,17 +4012,15 @@ local function CreateDesignerPage(parent)
         subTabGroup._onSelect = function(index, tabInfo)
             if origOnSelect then origOnSelect(index, tabInfo) end
             if tabInfo and tabInfo.isDesigner then
-                -- Designer tabs: no outer scroll (inner scroll handles settings)
                 local viewH = scroll:GetHeight()
                 content:SetHeight(viewH > 0 and viewH or 1)
             else
-                -- General settings tab: normal outer scroll
                 content:SetHeight(800)
             end
         end
     end
 
-    -- Initial state: General settings tab selected.
+    -- Initial state: General tab selected.
     C_Timer.After(0, function()
         content:SetHeight(800)
     end)
