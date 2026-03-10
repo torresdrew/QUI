@@ -2613,19 +2613,18 @@ local function OnEvent(self, event, arg1, ...)
         -- after READY_CHECK_FINISHED, which would hide icons immediately.
         -- Icons already show the correct state from READY_CHECK_CONFIRM events.
         -- Just schedule hiding after persist delay (QUI pattern).
-        for _, frame in pairs(QUI_GF.unitFrameMap) do
-            -- Cancel any existing timer for this frame
-            if frame._readyCheckHideTimer then
-                frame._readyCheckHideTimer:Cancel()
-                frame._readyCheckHideTimer = nil
-            end
-            frame._readyCheckHideTimer = C_Timer.NewTimer(6, function()
-                if frame.readyCheckIcon then
-                    frame.readyCheckIcon:Hide()
-                end
-                frame._readyCheckHideTimer = nil
-            end)
+        -- Single timer hides all icons at once (avoids N closures + N timers).
+        if QUI_GF._readyCheckHideTimer then
+            QUI_GF._readyCheckHideTimer:Cancel()
         end
+        QUI_GF._readyCheckHideTimer = C_Timer.NewTimer(6, function()
+            for _, f in pairs(QUI_GF.unitFrameMap) do
+                if f.readyCheckIcon then
+                    f.readyCheckIcon:Hide()
+                end
+            end
+            QUI_GF._readyCheckHideTimer = nil
+        end)
 
     elseif event == "RAID_TARGET_UPDATE" then
         for _, frame in pairs(QUI_GF.unitFrameMap) do
