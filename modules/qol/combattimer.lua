@@ -9,6 +9,8 @@ local QUICore = ns.Addon
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
 local CreateOnUpdateThrottle = Helpers and Helpers.CreateOnUpdateThrottle
+local floor = math.floor
+local format = string.format
 
 ---------------------------------------------------------------------------
 -- State tracking
@@ -74,10 +76,15 @@ end
 ---------------------------------------------------------------------------
 -- Format elapsed time as MM:SS
 ---------------------------------------------------------------------------
+local _lastTimerSecs = -1
+local _lastTimerText = "00:00"
+
 local function FormatTime(seconds)
-    local mins = math.floor(seconds / 60)
-    local secs = math.floor(seconds % 60)
-    return string.format("%02d:%02d", mins, secs)
+    local total = floor(seconds)
+    if total == _lastTimerSecs then return _lastTimerText end
+    _lastTimerSecs = total
+    _lastTimerText = format("%02d:%02d", floor(total / 60), total % 60)
+    return _lastTimerText
 end
 
 ---------------------------------------------------------------------------
