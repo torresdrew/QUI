@@ -80,8 +80,103 @@ local function SetOutsidePx(frame, anchor, sizePixels)
     end
 end
 
+local function EnsurePixelBackdropCompat(frame)
+    if not frame then return nil end
+    local uikit = ns.UIKit or UIKit
+    if frame._quiPixelBackdropCompat then
+        return frame._quiPixelBackdropCompat
+    end
+
+    local state = {
+        borderPixels = 1,
+        withBackground = false,
+        bgColor = { 0, 0, 0, 1 },
+        borderColor = { 1, 1, 1, 1 },
+        originalSetBackdropColor = frame.SetBackdropColor,
+        originalSetBackdropBorderColor = frame.SetBackdropBorderColor,
+    }
+
+    if uikit and uikit.CreateBackground then
+        state.bg = uikit.CreateBackground(frame, 0, 0, 0, 0)
+        if state.bg and state.bg.Hide then
+            state.bg:Hide()
+        end
+    end
+
+    if frame.SetBackdrop then
+        pcall(frame.SetBackdrop, frame, nil)
+    end
+
+    if uikit and uikit.CreateBorderLines and uikit.UpdateBorderLines then
+        uikit.CreateBorderLines(frame)
+    end
+
+    frame.SetBackdropColor = function(self, r, g, b, a)
+        local compat = self and self._quiPixelBackdropCompat
+        if not compat then return end
+        compat.bgColor[1], compat.bgColor[2], compat.bgColor[3], compat.bgColor[4] = r or 0, g or 0, b or 0, a or 1
+
+        if compat.bg and compat.bg.SetVertexColor then
+            compat.bg:SetVertexColor(compat.bgColor[1], compat.bgColor[2], compat.bgColor[3], compat.bgColor[4])
+            if compat.withBackground then
+                compat.bg:Show()
+            else
+                compat.bg:Hide()
+            end
+        elseif compat.originalSetBackdropColor then
+            pcall(compat.originalSetBackdropColor, self, compat.bgColor[1], compat.bgColor[2], compat.bgColor[3], compat.bgColor[4])
+        end
+    end
+
+    frame.SetBackdropBorderColor = function(self, r, g, b, a)
+        local compat = self and self._quiPixelBackdropCompat
+        if not compat then return end
+        compat.borderColor[1], compat.borderColor[2], compat.borderColor[3], compat.borderColor[4] = r or 0, g or 0, b or 0, a or 1
+
+        if uikit and uikit.UpdateBorderLines then
+            uikit.UpdateBorderLines(self, compat.borderPixels or 1, compat.borderColor[1], compat.borderColor[2], compat.borderColor[3], compat.borderColor[4], false)
+        elseif compat.originalSetBackdropBorderColor then
+            pcall(compat.originalSetBackdropBorderColor, self, compat.borderColor[1], compat.borderColor[2], compat.borderColor[3], compat.borderColor[4])
+        end
+    end
+
+    if uikit and uikit.RegisterScaleRefresh then
+        uikit.RegisterScaleRefresh(frame, "groupFrameDesignerBackdropCompat", function(owner)
+            local compat = owner and owner._quiPixelBackdropCompat
+            if not compat then return end
+            if compat.bg and compat.bg.SetVertexColor then
+                compat.bg:SetVertexColor(compat.bgColor[1], compat.bgColor[2], compat.bgColor[3], compat.bgColor[4])
+                if compat.withBackground then
+                    compat.bg:Show()
+                else
+                    compat.bg:Hide()
+                end
+            end
+            if uikit and uikit.UpdateBorderLines then
+                uikit.UpdateBorderLines(owner, compat.borderPixels or 1, compat.borderColor[1], compat.borderColor[2], compat.borderColor[3], compat.borderColor[4], false)
+            end
+        end)
+    end
+
+    frame._quiPixelBackdropCompat = state
+    return state
+end
+
 local function ApplyPixelBackdrop(frame, borderPixels, withBackground)
-    if not frame or not frame.SetBackdrop then return end
+    if not frame then return end
+    local uikit = ns.UIKit or UIKit
+
+    if uikit and uikit.CreateBorderLines and uikit.UpdateBorderLines and uikit.CreateBackground then
+        local compat = EnsurePixelBackdropCompat(frame)
+        if not compat then return end
+        compat.borderPixels = borderPixels or 1
+        compat.withBackground = withBackground and true or false
+        frame:SetBackdropColor(compat.bgColor[1], compat.bgColor[2], compat.bgColor[3], compat.bgColor[4])
+        frame:SetBackdropBorderColor(compat.borderColor[1], compat.borderColor[2], compat.borderColor[3], compat.borderColor[4])
+        return
+    end
+
+    if not frame.SetBackdrop then return end
     if QUICore and QUICore.SetPixelPerfectBackdrop then
         QUICore:SetPixelPerfectBackdrop(frame, borderPixels or 1, withBackground and "Interface\\Buttons\\WHITE8x8" or nil)
         return
@@ -552,13 +647,10 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     frame:SetSize(w, h)
     frame:SetPoint("CENTER", wrapper, "CENTER", 0, 0)
 
+    local borderPixels = general.borderSize or 1
+    ApplyPixelBackdrop(frame, borderPixels, true)
     local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
-    local borderSize = (general.borderSize or 1) * px
-    frame:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = borderSize,
-    })
+    local borderSize = borderPixels * px
 
     -- Background color
     local bgR, bgG, bgB, bgA = 0.08, 0.08, 0.08, 0.9
@@ -2185,7 +2277,7 @@ local function BuildAppearanceSettings(content, gfdb, onChange)
     fontHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - fontHeader.gap
 
-    local fontDrop = GUI:CreateDropdown(content, "Font", GetFontList(), "font", general, onChange)
+    local fontDrop = GUI:CreateFormDropdown(content, "Font", GetFontList(), "font", general, onChange)
     fontDrop:SetPoint("TOPLEFT", PAD, y)
     fontDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
     y = y - DROP_ROW
@@ -2219,7 +2311,7 @@ local function BuildAppearanceSettings(content, gfdb, onChange)
     y = y - FORM_ROW
 
     if portrait.showPortrait then
-        local portraitSide = GUI:CreateDropdown(content, "Portrait Side", ANCHOR_SIDE_OPTIONS, "portraitSide", portrait, onChange)
+        local portraitSide = GUI:CreateFormDropdown(content, "Portrait Side", ANCHOR_SIDE_OPTIONS, "portraitSide", portrait, onChange)
         portraitSide:SetPoint("TOPLEFT", PAD, y)
         portraitSide:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
         y = y - DROP_ROW
@@ -2254,13 +2346,13 @@ local function BuildContextSettings(content, gfdb, onChange)
     layoutHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - layoutHeader.gap
 
-    local growDrop = GUI:CreateDropdown(content, "Grow Direction", GROW_OPTIONS, "growDirection", layout, onChange)
+    local growDrop = GUI:CreateFormDropdown(content, "Grow Direction", GROW_OPTIONS, "growDirection", layout, onChange)
     growDrop:SetPoint("TOPLEFT", PAD, y)
     growDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
     y = y - DROP_ROW
 
     if isRaid then
-        local groupGrowDrop = GUI:CreateDropdown(content, "Group Grow Direction", GROUP_GROW_OPTIONS, "groupGrowDirection", layout, onChange)
+        local groupGrowDrop = GUI:CreateFormDropdown(content, "Group Grow Direction", GROUP_GROW_OPTIONS, "groupGrowDirection", layout, onChange)
         groupGrowDrop:SetPoint("TOPLEFT", PAD, y)
         groupGrowDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
         y = y - DROP_ROW
@@ -2291,12 +2383,12 @@ local function BuildContextSettings(content, gfdb, onChange)
         sortHeader:SetPoint("TOPLEFT", PAD, y)
         y = y - sortHeader.gap
 
-        local groupByDrop = GUI:CreateDropdown(content, "Group By", GROUP_BY_OPTIONS, "groupBy", layout, onChange)
+        local groupByDrop = GUI:CreateFormDropdown(content, "Group By", GROUP_BY_OPTIONS, "groupBy", layout, onChange)
         groupByDrop:SetPoint("TOPLEFT", PAD, y)
         groupByDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
         y = y - DROP_ROW
 
-        local sortDrop = GUI:CreateDropdown(content, "Sort Method", SORT_OPTIONS, "sortMethod", layout, onChange)
+        local sortDrop = GUI:CreateFormDropdown(content, "Sort Method", SORT_OPTIONS, "sortMethod", layout, onChange)
         sortDrop:SetPoint("TOPLEFT", PAD, y)
         sortDrop:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
         y = y - DROP_ROW
@@ -2434,7 +2526,7 @@ local function BuildContextSettings(content, gfdb, onChange)
         petHeight:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
         y = y - SLIDER_HEIGHT
 
-        local petAnchor = GUI:CreateDropdown(content, "Pet Anchor", PET_ANCHOR_OPTIONS, "anchorTo", pets, onChange)
+        local petAnchor = GUI:CreateFormDropdown(content, "Pet Anchor", PET_ANCHOR_OPTIONS, "anchorTo", pets, onChange)
         petAnchor:SetPoint("TOPLEFT", PAD, y)
         petAnchor:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
         y = y - DROP_ROW
@@ -2463,7 +2555,7 @@ local function BuildContextSettings(content, gfdb, onChange)
         y = y - FORM_ROW
 
         if spot.enabled then
-            local spotGrow = GUI:CreateDropdown(content, "Spotlight Grow Direction", GROW_OPTIONS, "growDirection", spot, onChange)
+            local spotGrow = GUI:CreateFormDropdown(content, "Spotlight Grow Direction", GROW_OPTIONS, "growDirection", spot, onChange)
             spotGrow:SetPoint("TOPLEFT", PAD, y)
             spotGrow:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
             y = y - DROP_ROW
