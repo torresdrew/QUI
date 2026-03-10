@@ -20,6 +20,64 @@ local hiddenFrames = {}
 local strippedFrames = {}
 local watcherFrame = nil
 
+local function IsFrameVisible(frame)
+    if not frame then return false end
+    if frame.IsShown and not frame:IsShown() then return false end
+    if frame.GetAlpha and frame:GetAlpha() <= 0 then return false end
+    return true
+end
+
+local function AnyPartyFrameVisible()
+    if IsFrameVisible(CompactPartyFrame) or IsFrameVisible(PartyFrame) then
+        return true
+    end
+
+    for i = 1, 5 do
+        local mf = _G["CompactPartyFrameMember" .. i]
+        if IsFrameVisible(mf) then
+            return true
+        end
+    end
+
+    for i = 1, 4 do
+        local pf = _G["PartyMemberFrame" .. i]
+        if IsFrameVisible(pf) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function AnyRaidFrameVisible()
+    if IsFrameVisible(CompactRaidFrameContainer)
+        or IsFrameVisible(CompactRaidFrameManager)
+    then
+        return true
+    end
+
+    for i = 1, 40 do
+        local rf = _G["CompactRaidFrame" .. i]
+        if IsFrameVisible(rf) then
+            return true
+        end
+    end
+
+    for group = 1, 8 do
+        if IsFrameVisible(_G["CompactRaidGroup" .. group]) then
+            return true
+        end
+        for member = 1, 5 do
+            local rf = _G["CompactRaidGroup" .. group .. "Member" .. member]
+            if IsFrameVisible(rf) then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
 ---------------------------------------------------------------------------
 -- HELPERS: Safe alpha hide
 ---------------------------------------------------------------------------
@@ -193,6 +251,11 @@ end
 local function HideBlizzardPartyFrames()
     if InCombatLockdown() then return end
 
+    -- Modern PartyFrame container (some Blizzard layouts use this wrapper)
+    if PartyFrame then
+        SafeHideFrame(PartyFrame)
+    end
+
     -- CompactPartyFrame (Retail party frames)
     if CompactPartyFrame then
         SafeHideFrame(CompactPartyFrame)
@@ -334,22 +397,16 @@ function QUI_GFB:StartWatcher()
         local db = GetDB()
         if not db or not db.enabled then return end
 
-        -- Re-hide CompactPartyFrame and children if Blizzard restored them
-        if CompactPartyFrame and CompactPartyFrame:GetAlpha() > 0 then
+        -- Re-hide party frames if Blizzard restored any parent/member frame.
+        if AnyPartyFrameVisible() then
             C_Timer.After(0, function()
                 if InCombatLockdown() then return end
                 HideBlizzardPartyFrames()
             end)
         end
 
-        -- Re-hide raid frames if restored
-        if CompactRaidFrameManager and CompactRaidFrameManager:GetAlpha() > 0 then
-            C_Timer.After(0, function()
-                if InCombatLockdown() then return end
-                HideBlizzardRaidFrames()
-            end)
-        end
-        if CompactRaidFrameContainer and CompactRaidFrameContainer:GetAlpha() > 0 then
+        -- Re-hide raid frames if any parent/member frame is restored.
+        if AnyRaidFrameVisible() then
             C_Timer.After(0, function()
                 if InCombatLockdown() then return end
                 HideBlizzardRaidFrames()
@@ -380,4 +437,35 @@ combatFrame:SetScript("OnEvent", function()
         QUI_GFB.pendingRestore = false
         QUI_GFB:RestoreBlizzardFrames()
     end
+end)
+
+---------------------------------------------------------------------------
+-- EVENTS: Re-apply hide rules when Blizzard group frames are rebuilt
+---------------------------------------------------------------------------
+local blizzardEventFrame = CreateFrame("Frame")
+blizzardEventFrame:RegisterEvent("ADDON_LOADED")
+blizzardEventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+blizzardEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+blizzardEventFrame:SetScript("OnEvent", function(_, event, addonName)
+    if event == "ADDON_LOADED" and addonName ~= "Blizzard_CompactRaidFrames" then
+        return
+    end
+
+    local db = GetDB()
+    if not db or not db.enabled then
+        return
+    end
+
+    if InCombatLockdown() then
+        QUI_GFB.pendingHide = true
+        return
+    end
+
+    C_Timer.After(0, function()
+        if InCombatLockdown() then
+            QUI_GFB.pendingHide = true
+            return
+        end
+        QUI_GFB:HideBlizzardFrames()
+    end)
 end)
