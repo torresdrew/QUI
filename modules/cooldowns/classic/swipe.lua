@@ -382,9 +382,10 @@ end
 local function ProcessViewer(viewer, settings)
     if not viewer then return end
 
-    local children = {viewer:GetChildren()}
     settings = settings or GetSettings()
-    for _, icon in ipairs(children) do
+    local numChildren = select("#", viewer:GetChildren())
+    for i = 1, numChildren do
+        local icon = select(i, viewer:GetChildren())
         if icon and icon.Cooldown then
             ApplySettingsToIcon(icon, settings)
         end
