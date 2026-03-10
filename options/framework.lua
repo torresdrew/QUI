@@ -587,9 +587,8 @@ function GUI:StartBackgroundIndexBuild()
         return
     end
 
-    -- Build one tab per tick (every frame via C_Timer.After(0))
-    -- Using chained C_Timer.After(0) instead of a ticker so each tab build
-    -- completes before the next is scheduled (no frame stacking).
+    -- Build one tab per tick using chained C_Timer.NewTimer(0) so each
+    -- handle is cancellable and only one tab builds per frame.
     local function BuildNextTick()
         -- Abort if panel was destroyed/rebuilt
         if not self.MainFrame or self.MainFrame ~= frame then
@@ -600,7 +599,7 @@ function GUI:StartBackgroundIndexBuild()
         local built = self:BuildNextTabIndex()
         if built then
             -- Schedule next tab for next frame
-            self._searchIndexTicker = C_Timer.After(0, BuildNextTick)
+            self._searchIndexTicker = C_Timer.NewTimer(0, BuildNextTick)
         else
             -- All done
             self._searchIndexBuilt = true
@@ -609,7 +608,7 @@ function GUI:StartBackgroundIndexBuild()
     end
 
     -- Start after a short delay so login/reload UI work completes first
-    self._searchIndexTicker = C_Timer.After(0.5, BuildNextTick)
+    self._searchIndexTicker = C_Timer.NewTimer(0.5, BuildNextTick)
 end
 
 -- Force-complete any remaining unbuilt tabs synchronously.
@@ -617,7 +616,8 @@ end
 function GUI:ForceLoadAllTabs()
     -- Cancel background builder if running
     if self._searchIndexTicker then
-        -- C_Timer handles can't be cancelled, but we guard with the _searchIndexBuilt flag
+        self._searchIndexTicker:Cancel()
+        self._searchIndexTicker = nil
     end
 
     local frame = self.MainFrame
@@ -628,7 +628,6 @@ function GUI:ForceLoadAllTabs()
     while self:BuildNextTabIndex() do end  -- Build all remaining
 
     self._searchIndexBuilt = true
-    self._searchIndexTicker = nil
 end
 
 ---------------------------------------------------------------------------

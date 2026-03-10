@@ -2604,6 +2604,11 @@ local function OnEvent(self, event, arg1, ...)
         -- READY_CHECK fires with arg1=initiatorName (not a unit token).
         -- READY_CHECK_CONFIRM fires per-unit but we refresh all frames to
         -- avoid relying on unitFrameMap lookup which can miss stale tokens.
+        -- Cancel any pending hide timer from a previous ready check
+        if event == "READY_CHECK" and QUI_GF._readyCheckHideTimer then
+            QUI_GF._readyCheckHideTimer:Cancel()
+            QUI_GF._readyCheckHideTimer = nil
+        end
         for _, frame in pairs(QUI_GF.unitFrameMap) do
             UpdateReadyCheck(frame)
         end

@@ -972,6 +972,9 @@ function QUI_GFA:RefreshAll()
 
     -- Force layout recalculation on explicit refresh
     layoutVersion = layoutVersion + 1
+    -- Sync cached setting from DB
+    local db = GetDB()
+    cachedShowDurationColor = db and db.auras and db.auras.showDurationColor ~= false
 
     for unit, frame in pairs(GF.unitFrameMap) do
         if frame and frame:IsShown() then

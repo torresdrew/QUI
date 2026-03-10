@@ -32,6 +32,9 @@ SpellScanner.autoScan = false
 -- Callback for UI refresh when spell is scanned (set by options panel)
 SpellScanner.onScanCallback = nil
 
+-- Forward declarations
+local EnsureCleanupTicker
+
 ---------------------------------------------------------------------------
 -- DATABASE ACCESS
 -- Uses QUI.db.global.spellScanner for cross-character persistence
@@ -290,7 +293,7 @@ local function CleanupExpiredBuffs()
     end
 end
 
-local function EnsureCleanupTicker()
+EnsureCleanupTicker = function()
     if not SpellScanner.cleanupTicker then
         SpellScanner.cleanupTicker = C_Timer.NewTicker(1, CleanupExpiredBuffs)
     end
