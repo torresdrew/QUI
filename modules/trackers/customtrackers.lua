@@ -2291,6 +2291,13 @@ end
 -- BAR FRAME POOL (reuse frames instead of leaking orphans)
 ---------------------------------------------------------------------------
 local _barFramePool = {}  -- [barID] = frame (hidden, ready for reuse)
+local _pendingBarDeletes = {}  -- [barID] = true (queued during combat lockdown)
+local _pendingRefreshAll = false
+
+local function BarHasSecureChildren(bar)
+    local firstIcon = bar and bar.icons and bar.icons[1]
+    return firstIcon and firstIcon.clickButton ~= nil
+end
 
 ---------------------------------------------------------------------------
 -- BAR CREATION (reuses existing frame if available)
@@ -2369,6 +2376,14 @@ end
 function CustomTrackers:DeleteBar(barID)
     local bar = self.activeBars[barID]
     if bar then
+        -- Bars with secure click children cannot be fully torn down in combat.
+        -- Defer teardown to PLAYER_REGEN_ENABLED to avoid protected Hide/SetParent calls.
+        if InCombatLockdown() and BarHasSecureChildren(bar) then
+            _pendingBarDeletes[barID] = true
+            return
+        end
+
+        _pendingBarDeletes[barID] = nil
         if bar.ticker then
             bar.ticker:Cancel()
             bar.ticker = nil
@@ -2432,13 +2447,43 @@ end
 -- REFRESH ALL BARS
 ---------------------------------------------------------------------------
 function CustomTrackers:RefreshAll()
+    local db = GetDB()
+
+    -- Refreshing can delete/recreate secure frames (clickable icons), which is forbidden
+    -- during combat lockdown. Queue one refresh pass for after combat ends.
+    if InCombatLockdown() then
+        local hasSecureWork = false
+
+        for _, bar in pairs(self.activeBars) do
+            if BarHasSecureChildren(bar) then
+                hasSecureWork = true
+                break
+            end
+        end
+
+        if not hasSecureWork and db and db.bars then
+            for _, barConfig in ipairs(db.bars) do
+                if barConfig and barConfig.clickableIcons and not barConfig.dynamicLayout then
+                    hasSecureWork = true
+                    break
+                end
+            end
+        end
+
+        if hasSecureWork then
+            _pendingRefreshAll = true
+            return
+        end
+    end
+
+    _pendingRefreshAll = false
+
     -- Delete all existing bars
     for barID in pairs(self.activeBars) do
         self:DeleteBar(barID)
     end
 
     -- Recreate from DB
-    local db = GetDB()
     if not db or not db.bars then return end
 
     for _, barConfig in ipairs(db.bars) do
@@ -2466,6 +2511,21 @@ function CustomTrackers:RefreshAll()
     end
     if _G.QUI_RefreshCustomTrackersVisibility then
         _G.QUI_RefreshCustomTrackersVisibility()
+    end
+end
+
+local function ProcessPendingBarOperations()
+    if InCombatLockdown() then return end
+
+    if _pendingRefreshAll then
+        _pendingRefreshAll = false
+        CustomTrackers:RefreshAll()
+        return
+    end
+
+    for barID in pairs(_pendingBarDeletes) do
+        _pendingBarDeletes[barID] = nil
+        CustomTrackers:DeleteBar(barID)
     end
 end
 
@@ -2823,6 +2883,7 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
                 end
             end
             wipe(pendingActiveSetRebuilds)
+            ProcessPendingBarOperations()
         end
 
         for _, bar in pairs(CustomTrackers.activeBars) do
@@ -3356,6 +3417,7 @@ visibilityEventFrame:SetScript("OnEvent", function(self, event, ...)
         -- Combat ended: update visibility and process any pending secure button updates
         UpdateCustomTrackersVisibility()
         ProcessPendingSecureUpdates()
+        ProcessPendingBarOperations()
         if CustomTrackersVisibility.pendingPreviewSync then
             CustomTrackersVisibility.pendingPreviewSync = false
             if CustomTrackersVisibility.anchoringPreviewAll then
