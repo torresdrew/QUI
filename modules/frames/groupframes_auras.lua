@@ -129,16 +129,18 @@ local function GetDurationColor(remaining, duration)
 end
 
 local timerElapsed = 0
-sharedTimerFrame:SetScript("OnUpdate", function(self, dt)
+local cachedShowDurationColor = true
+
+local function SharedTimerOnUpdate(self, dt)
     timerElapsed = timerElapsed + dt
     if timerElapsed < TIMER_INTERVAL then return end
     timerElapsed = 0
 
     local now = GetTime()
-    local db = GetDB()
-    local showDurationColor = db and db.auras and db.auras.showDurationColor ~= false
+    local hasAny = false
 
     for icon, state in pairs(timerIcons) do
+        hasAny = true
         if icon:IsShown() and state.expirationTime then
             local expTime = SafeToNumber(state.expirationTime, 0)
             local dur = SafeToNumber(state.duration, 0)
@@ -147,7 +149,7 @@ sharedTimerFrame:SetScript("OnUpdate", function(self, dt)
             if remaining > 0 then
                 if icon.durationText then
                     icon.durationText:SetText(FormatDuration(remaining))
-                    if showDurationColor then
+                    if cachedShowDurationColor then
                         local r, g, b = GetDurationColor(remaining, dur)
                         icon.durationText:SetTextColor(r, g, b, 1)
                     else
@@ -163,10 +165,23 @@ sharedTimerFrame:SetScript("OnUpdate", function(self, dt)
             timerIcons[icon] = nil
         end
     end
-end)
+
+    -- Auto-disable when no icons remain
+    if not hasAny then
+        self:SetScript("OnUpdate", nil)
+    end
+end
+
+-- Start disabled — no icons at init
+sharedTimerFrame:SetScript("OnUpdate", nil)
 
 local function RegisterIconTimer(icon, state)
+    local wasEmpty = next(timerIcons) == nil
     timerIcons[icon] = state
+    if wasEmpty then
+        timerElapsed = 0
+        sharedTimerFrame:SetScript("OnUpdate", SharedTimerOnUpdate)
+    end
 end
 
 local function UnregisterIconTimer(icon)
@@ -943,6 +958,9 @@ end)
 ---------------------------------------------------------------------------
 function QUI_GFA:InvalidateLayout()
     layoutVersion = layoutVersion + 1
+    -- Refresh cached setting for shared timer
+    local db = GetDB()
+    cachedShowDurationColor = db and db.auras and db.auras.showDurationColor ~= false
 end
 
 ---------------------------------------------------------------------------
