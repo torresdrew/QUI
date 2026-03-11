@@ -2460,13 +2460,13 @@ local defaults = {
                 indicators = {
                     showRoleIcon = true, roleIconSize = 12, roleIconAnchor = "TOPLEFT", roleIconOffsetX = 2, roleIconOffsetY = -2,
                     showRoleTank = true, showRoleHealer = true, showRoleDPS = true,
-                    showReadyCheck = true, readyCheckAnchor = "CENTER", readyCheckOffsetX = 0, readyCheckOffsetY = 0,
-                    showResurrection = true, resurrectionAnchor = "CENTER", resurrectionOffsetX = 0, resurrectionOffsetY = 0,
-                    showSummonPending = true, summonAnchor = "CENTER", summonOffsetX = 16, summonOffsetY = 0,
-                    showLeaderIcon = true, leaderAnchor = "TOP", leaderOffsetX = 0, leaderOffsetY = 6,
-                    showTargetMarker = true, targetMarkerAnchor = "TOPRIGHT", targetMarkerOffsetX = -2, targetMarkerOffsetY = -2,
-                    showThreatBorder = true, threatColor = { 1, 0, 0, 0.8 }, threatFillOpacity = 0.15,
-                    showPhaseIcon = true, phaseAnchor = "BOTTOMLEFT", phaseOffsetX = 2, phaseOffsetY = 2,
+                    showReadyCheck = true, readyCheckSize = 16, readyCheckAnchor = "CENTER", readyCheckOffsetX = 0, readyCheckOffsetY = 0,
+                    showResurrection = true, resurrectionSize = 16, resurrectionAnchor = "CENTER", resurrectionOffsetX = 0, resurrectionOffsetY = 0,
+                    showSummonPending = true, summonSize = 20, summonAnchor = "CENTER", summonOffsetX = 16, summonOffsetY = 0,
+                    showLeaderIcon = true, leaderSize = 12, leaderAnchor = "TOP", leaderOffsetX = 0, leaderOffsetY = 6,
+                    showTargetMarker = true, targetMarkerSize = 14, targetMarkerAnchor = "TOPRIGHT", targetMarkerOffsetX = -2, targetMarkerOffsetY = -2,
+                    showThreatBorder = true, threatBorderSize = 3, threatColor = { 1, 0, 0, 0.8 }, threatFillOpacity = 0.15,
+                    showPhaseIcon = true, phaseSize = 16, phaseAnchor = "BOTTOMLEFT", phaseOffsetX = 2, phaseOffsetY = 2,
                 },
                 healer = {
                     dispelOverlay = {
@@ -2605,13 +2605,13 @@ local defaults = {
                 indicators = {
                     showRoleIcon = true, roleIconSize = 12, roleIconAnchor = "TOPLEFT", roleIconOffsetX = 2, roleIconOffsetY = -2,
                     showRoleTank = true, showRoleHealer = true, showRoleDPS = true,
-                    showReadyCheck = true, readyCheckAnchor = "CENTER", readyCheckOffsetX = 0, readyCheckOffsetY = 0,
-                    showResurrection = true, resurrectionAnchor = "CENTER", resurrectionOffsetX = 0, resurrectionOffsetY = 0,
-                    showSummonPending = true, summonAnchor = "CENTER", summonOffsetX = 16, summonOffsetY = 0,
-                    showLeaderIcon = true, leaderAnchor = "TOP", leaderOffsetX = 0, leaderOffsetY = 6,
-                    showTargetMarker = true, targetMarkerAnchor = "TOPRIGHT", targetMarkerOffsetX = -2, targetMarkerOffsetY = -2,
-                    showThreatBorder = true, threatColor = { 1, 0, 0, 0.8 }, threatFillOpacity = 0.15,
-                    showPhaseIcon = true, phaseAnchor = "BOTTOMLEFT", phaseOffsetX = 2, phaseOffsetY = 2,
+                    showReadyCheck = true, readyCheckSize = 16, readyCheckAnchor = "CENTER", readyCheckOffsetX = 0, readyCheckOffsetY = 0,
+                    showResurrection = true, resurrectionSize = 16, resurrectionAnchor = "CENTER", resurrectionOffsetX = 0, resurrectionOffsetY = 0,
+                    showSummonPending = true, summonSize = 20, summonAnchor = "CENTER", summonOffsetX = 16, summonOffsetY = 0,
+                    showLeaderIcon = true, leaderSize = 12, leaderAnchor = "TOP", leaderOffsetX = 0, leaderOffsetY = 6,
+                    showTargetMarker = true, targetMarkerSize = 14, targetMarkerAnchor = "TOPRIGHT", targetMarkerOffsetX = -2, targetMarkerOffsetY = -2,
+                    showThreatBorder = true, threatBorderSize = 3, threatColor = { 1, 0, 0, 0.8 }, threatFillOpacity = 0.15,
+                    showPhaseIcon = true, phaseSize = 16, phaseAnchor = "BOTTOMLEFT", phaseOffsetX = 2, phaseOffsetY = 2,
                 },
                 healer = {
                     dispelOverlay = {

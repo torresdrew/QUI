@@ -945,6 +945,9 @@ local function UpdateThreat(frame)
     if ok and status and status >= 2 then
         local tc = indSettings.threatColor or { 1, 0, 0, 0.8 }
         frame.threatBorder:SetBackdropBorderColor(tc[1], tc[2], tc[3], tc[4] or 0.8)
+        -- Keep threat border below icons/indicators — re-level in case frame
+        -- base level shifted since decoration (secure header can re-level children)
+        frame.threatBorder:SetFrameLevel(frame:GetFrameLevel() + 3)
         frame.threatBorder:Show()
     else
         frame.threatBorder:Hide()
@@ -1629,7 +1632,8 @@ local function DecorateGroupFrame(frame)
     -- Ready check icon
     local readyCheckIcon = frame.readyCheckIcon or textFrame:CreateTexture(nil, "OVERLAY")
     readyCheckIcon:ClearAllPoints()
-    readyCheckIcon:SetSize(16, 16)
+    local rcSize = indDB.readyCheckSize or 16
+    readyCheckIcon:SetSize(rcSize, rcSize)
     local rcAnchor = indDB.readyCheckAnchor or "CENTER"
     readyCheckIcon:SetPoint(rcAnchor, frame, rcAnchor, indDB.readyCheckOffsetX or 0, BottomPadY(rcAnchor, indDB.readyCheckOffsetY or 0))
     readyCheckIcon:Hide()
@@ -1638,7 +1642,8 @@ local function DecorateGroupFrame(frame)
     -- Resurrection icon
     local resIcon = frame.resIcon or textFrame:CreateTexture(nil, "OVERLAY")
     resIcon:ClearAllPoints()
-    resIcon:SetSize(16, 16)
+    local resSize = indDB.resurrectionSize or 16
+    resIcon:SetSize(resSize, resSize)
     local resAnchor = indDB.resurrectionAnchor or "CENTER"
     resIcon:SetPoint(resAnchor, frame, resAnchor, indDB.resurrectionOffsetX or 0, BottomPadY(resAnchor, indDB.resurrectionOffsetY or 0))
     resIcon:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
@@ -1648,7 +1653,8 @@ local function DecorateGroupFrame(frame)
     -- Summon pending icon
     local summonIcon = frame.summonIcon or textFrame:CreateTexture(nil, "OVERLAY")
     summonIcon:ClearAllPoints()
-    summonIcon:SetSize(16, 16)
+    local sumSize = indDB.summonSize or 20
+    summonIcon:SetSize(sumSize, sumSize)
     local sumAnchor = indDB.summonAnchor or "CENTER"
     summonIcon:SetPoint(sumAnchor, frame, sumAnchor, indDB.summonOffsetX or 16, BottomPadY(sumAnchor, indDB.summonOffsetY or 0))
     summonIcon:SetAtlas("RaidFrame-Icon-SummonPending")
@@ -1658,7 +1664,8 @@ local function DecorateGroupFrame(frame)
     -- Leader icon
     local leaderIcon = frame.leaderIcon or textFrame:CreateTexture(nil, "OVERLAY")
     leaderIcon:ClearAllPoints()
-    leaderIcon:SetSize(12, 12)
+    local ldrSize = indDB.leaderSize or 12
+    leaderIcon:SetSize(ldrSize, ldrSize)
     local ldrAnchor = indDB.leaderAnchor or "TOP"
     leaderIcon:SetPoint(ldrAnchor, frame, ldrAnchor, indDB.leaderOffsetX or 0, BottomPadY(ldrAnchor, indDB.leaderOffsetY or 6))
     leaderIcon:Hide()
@@ -1667,7 +1674,8 @@ local function DecorateGroupFrame(frame)
     -- Target marker (raid icon)
     local targetMarker = frame.targetMarker or textFrame:CreateTexture(nil, "OVERLAY")
     targetMarker:ClearAllPoints()
-    targetMarker:SetSize(14, 14)
+    local tmSize = indDB.targetMarkerSize or 14
+    targetMarker:SetSize(tmSize, tmSize)
     local tmAnchor = indDB.targetMarkerAnchor or "TOPRIGHT"
     targetMarker:SetPoint(tmAnchor, frame, tmAnchor, indDB.targetMarkerOffsetX or -2, BottomPadY(tmAnchor, indDB.targetMarkerOffsetY or -2))
     targetMarker:Hide()
@@ -1676,7 +1684,8 @@ local function DecorateGroupFrame(frame)
     -- Phase icon
     local phaseIcon = frame.phaseIcon or textFrame:CreateTexture(nil, "OVERLAY")
     phaseIcon:ClearAllPoints()
-    phaseIcon:SetSize(16, 16)
+    local phSize = indDB.phaseSize or 16
+    phaseIcon:SetSize(phSize, phSize)
     local phAnchor = indDB.phaseAnchor or "BOTTOMLEFT"
     phaseIcon:SetPoint(phAnchor, frame, phAnchor, indDB.phaseOffsetX or 2, BottomPadY(phAnchor, indDB.phaseOffsetY or 2))
     phaseIcon:SetTexture("Interface\\TargetingFrame\\UI-PhasingIcon")
@@ -1690,7 +1699,7 @@ local function DecorateGroupFrame(frame)
     threatBorder:ClearAllPoints()
     threatBorder:SetPoint("TOPLEFT", -px, px)
     threatBorder:SetPoint("BOTTOMRIGHT", px, -px)
-    threatBorder:SetFrameLevel(frame:GetFrameLevel() + 5)
+    threatBorder:SetFrameLevel(frame:GetFrameLevel() + 3)
     threatBorder:SetBackdrop({
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = threatBorderPx,

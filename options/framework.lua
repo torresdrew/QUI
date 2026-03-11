@@ -1107,10 +1107,15 @@ end
 -- Auto-detects if first element in panel (no top margin) vs subsequent (12px margin)
 ---------------------------------------------------------------------------
 function GUI:CreateSectionHeader(parent, text)
+    -- Capture suppression state at creation time so the SetPoint hook below
+    -- doesn't accidentally register this header when relayout repositions it
+    -- after suppression has been lifted.
+    local suppressedAtCreation = self._suppressSearchRegistration
+
     -- Automatically set search section so widgets created after this header
     -- are associated with this section (no need for manual SetSearchSection calls)
     -- This also registers the section as a navigation item for search
-    if text and not self._suppressSearchRegistration then
+    if text and not suppressedAtCreation then
         self:SetSearchSection(text)
     end
 
@@ -1160,7 +1165,7 @@ function GUI:CreateSectionHeader(parent, text)
             end
 
             -- Register section header for scroll-to-section navigation (after positioning)
-            if not GUI._suppressSearchRegistration and GUI._searchContext.tabIndex and text then
+            if not suppressedAtCreation and not GUI._suppressSearchRegistration and GUI._searchContext.tabIndex and text then
                 local tabIndex = GUI._searchContext.tabIndex
                 local subTabIndex = GUI._searchContext.subTabIndex or 0
                 local numKey = tabIndex * 10000 + subTabIndex

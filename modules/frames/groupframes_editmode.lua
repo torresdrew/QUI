@@ -37,7 +37,9 @@ local FAKE_ROLES = { "TANK", "HEALER", "DAMAGER", "DAMAGER", "DAMAGER" }
 local FAKE_RAID_ROLES = { "TANK", "TANK", "HEALER", "HEALER", "HEALER", "HEALER",
     "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER",
     "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER",
-    "DAMAGER", "DAMAGER", "DAMAGER" }
+    "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER",
+    "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER", "DAMAGER",
+    "DAMAGER", "DAMAGER" }
 
 local FAKE_BUFF_ICONS = {
     136034,  -- Spell_Holy_Renew
@@ -52,7 +54,7 @@ local FAKE_DEBUFF_ICONS = {
 
 -- Distribution tables — keyed by party frame index (1–5).
 -- Each entry lists what preview indicators that frame should show.
--- Only used for party (first 5 frames); raid frames get no extras.
+-- Cycled via modulo for both party and raid frames.
 local PREVIEW_INDICATORS = {
     [1] = { leader = true, targetHighlight = true, threatBorder = true, buffs = 1 },
     [2] = { readyCheck = true, raidMarker = 1, debuffs = 2, buffs = 1 },
@@ -126,7 +128,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     local bgAlpha = (bgColor[4] or 1) * bgOpacity
     frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
     if borderSize > 0 then
-        frame:SetBackdropBorderColor(0, 0, 0, 1)
+        frame:SetBackdropBorderColor(0.15, 0.15, 0.15, 1)
     end
 
     -- Power bar
@@ -172,7 +174,12 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         powerBar:SetStatusBarTexture(texturePath)
         powerBar:SetMinMaxValues(0, 100)
         powerBar:SetValue(100)
-        powerBar:SetStatusBarColor(0, 0.5, 1, 1)
+        if powerSettings.powerBarUsePowerColor then
+            powerBar:SetStatusBarColor(0.2, 0.4, 0.8, 1)
+        else
+            local pc = powerSettings.powerBarColor or {0.2, 0.4, 0.8, 1}
+            powerBar:SetStatusBarColor(pc[1], pc[2], pc[3], pc[4] or 1)
+        end
 
         local powerBg = powerBar:CreateTexture(nil, "BACKGROUND")
         powerBg:SetAllPoints()
@@ -303,23 +310,27 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     -- Role icon
     local indSettings = vdb.indicators
     if indSettings and indSettings.showRoleIcon ~= false then
-        local roleIcon = textFrame:CreateTexture(nil, "OVERLAY")
-        roleIcon:SetSize(indSettings.roleIconSize or 12, indSettings.roleIconSize or 12)
-        roleIcon:SetPoint(indSettings.roleIconAnchor or "TOPLEFT", frame, indSettings.roleIconAnchor or "TOPLEFT", 2, -2)
-        local ROLE_ATLAS = { TANK = "roleicon-tiny-tank", HEALER = "roleicon-tiny-healer", DAMAGER = "roleicon-tiny-dps" }
-        local atlas = ROLE_ATLAS[role]
-        if atlas then
-            roleIcon:SetAtlas(atlas)
-        else
-            roleIcon:Hide()
+        local ROLE_TOGGLE_KEY = { TANK = "showRoleTank", HEALER = "showRoleHealer", DAMAGER = "showRoleDPS" }
+        local toggleKey = ROLE_TOGGLE_KEY[role]
+        if not toggleKey or indSettings[toggleKey] ~= false then
+            local roleIcon = textFrame:CreateTexture(nil, "OVERLAY")
+            roleIcon:SetSize(indSettings.roleIconSize or 12, indSettings.roleIconSize or 12)
+            local roleAnchor = indSettings.roleIconAnchor or "TOPLEFT"
+            roleIcon:SetPoint(roleAnchor, frame, roleAnchor, indSettings.roleIconOffsetX or 2, indSettings.roleIconOffsetY or -2)
+            local ROLE_ATLAS = { TANK = "roleicon-tiny-tank", HEALER = "roleicon-tiny-healer", DAMAGER = "roleicon-tiny-dps" }
+            local atlas = ROLE_ATLAS[role]
+            if atlas then
+                roleIcon:SetAtlas(atlas)
+            else
+                roleIcon:Hide()
+            end
         end
     end
 
     ---------------------------------------------------------------------------
     -- PREVIEW INDICATORS / OVERLAYS / AURAS
-    -- Only rendered for party-size previews (first 5 frames).
     ---------------------------------------------------------------------------
-    local prev = totalCount <= 5 and PREVIEW_INDICATORS[index]
+    local prev = PREVIEW_INDICATORS[((index - 1) % #PREVIEW_INDICATORS) + 1]
     local baseLevel = frame:GetFrameLevel()
 
     if prev and indSettings then
@@ -332,7 +343,8 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         -- Ready Check icon
         if prev.readyCheck and indSettings.showReadyCheck ~= false then
             local rc = textFrame:CreateTexture(nil, "OVERLAY")
-            rc:SetSize(16, 16)
+            local rcSize = indSettings.readyCheckSize or 16
+            rc:SetSize(rcSize, rcSize)
             IndPoint(rc, "readyCheckAnchor", "readyCheckOffsetX", "readyCheckOffsetY", "CENTER", 0, 0)
             rc:SetTexture("INTERFACE\\RAIDFRAME\\ReadyCheck-Ready")
         end
@@ -340,7 +352,8 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         -- Resurrection icon
         if prev.resurrection and indSettings.showResurrection ~= false then
             local ri = textFrame:CreateTexture(nil, "OVERLAY")
-            ri:SetSize(16, 16)
+            local riSize = indSettings.resurrectionSize or 16
+            ri:SetSize(riSize, riSize)
             IndPoint(ri, "resurrectionAnchor", "resurrectionOffsetX", "resurrectionOffsetY", "CENTER", 0, 0)
             ri:SetTexture("Interface\\RaidFrame\\Raid-Icon-Rez")
         end
@@ -348,7 +361,8 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         -- Summon Pending icon
         if prev.summonPending and indSettings.showSummonPending ~= false then
             local si = textFrame:CreateTexture(nil, "OVERLAY")
-            si:SetSize(20, 20)
+            local siSize = indSettings.summonSize or 20
+            si:SetSize(siSize, siSize)
             IndPoint(si, "summonAnchor", "summonOffsetX", "summonOffsetY", "CENTER", 16, 0)
             si:SetAtlas("RaidFrame-Icon-SummonPending")
         end
@@ -356,7 +370,8 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         -- Leader icon
         if prev.leader and indSettings.showLeaderIcon ~= false then
             local li = textFrame:CreateTexture(nil, "OVERLAY")
-            li:SetSize(12, 12)
+            local liSize = indSettings.leaderSize or 12
+            li:SetSize(liSize, liSize)
             IndPoint(li, "leaderAnchor", "leaderOffsetX", "leaderOffsetY", "TOP", 0, 6)
             li:SetAtlas("groupfinder-icon-leader")
         end
@@ -364,7 +379,8 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         -- Raid Target Marker
         if prev.raidMarker and indSettings.showTargetMarker ~= false then
             local rm = textFrame:CreateTexture(nil, "OVERLAY")
-            rm:SetSize(14, 14)
+            local rmSize = indSettings.targetMarkerSize or 14
+            rm:SetSize(rmSize, rmSize)
             IndPoint(rm, "targetMarkerAnchor", "targetMarkerOffsetX", "targetMarkerOffsetY", "TOPRIGHT", -2, -2)
             rm:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons")
             SetRaidTargetIconTexture(rm, prev.raidMarker)
@@ -373,7 +389,8 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         -- Phase icon
         if prev.phaseIcon and indSettings.showPhaseIcon ~= false then
             local pi = textFrame:CreateTexture(nil, "OVERLAY")
-            pi:SetSize(16, 16)
+            local piSize = indSettings.phaseSize or 16
+            pi:SetSize(piSize, piSize)
             IndPoint(pi, "phaseAnchor", "phaseOffsetX", "phaseOffsetY", "BOTTOMLEFT", 2, 2)
             pi:SetTexture("Interface\\TargetingFrame\\UI-PhasingIcon")
         end
@@ -382,12 +399,13 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
         if prev.threatBorder and indSettings.showThreatBorder ~= false then
             local threatOverlay = CreateFrame("Frame", nil, frame, "BackdropTemplate")
             threatOverlay:SetAllPoints()
-            threatOverlay:SetFrameLevel(baseLevel + 5)
+            threatOverlay:SetFrameLevel(baseLevel + 3)
             local tc = indSettings.threatColor or { 1, 0, 0, 0.8 }
+            local threatBorderPx = px * (indSettings.threatBorderSize or 3)
             threatOverlay:SetBackdrop({
                 bgFile = "Interface\\Buttons\\WHITE8x8",
                 edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = borderSize > 0 and borderSize * 2 or px * 2,
+                edgeSize = threatBorderPx > 0 and threatBorderPx or px * 2,
             })
             threatOverlay:SetBackdropColor(tc[1], tc[2], tc[3], indSettings.threatFillOpacity or 0.15)
             threatOverlay:SetBackdropBorderColor(tc[1], tc[2], tc[3], tc[4] or 0.8)
@@ -426,10 +444,11 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
                 dispel:SetFrameLevel(baseLevel + 6)
                 local dc = dsp.color or { 0.26, 0.54, 1, 0.8 }
                 local opacity = dsp.opacity or 0.8
+                local dispelBorderPx = px * (dsp.borderSize or 3)
                 dispel:SetBackdrop({
                     bgFile = "Interface\\Buttons\\WHITE8x8",
                     edgeFile = "Interface\\Buttons\\WHITE8x8",
-                    edgeSize = px * 3,
+                    edgeSize = dispelBorderPx > 0 and dispelBorderPx or px * 3,
                 })
                 dispel:SetBackdropColor(dc[1], dc[2], dc[3], dsp.fillOpacity or 0.18)
                 dispel:SetBackdropBorderColor(dc[1], dc[2], dc[3], opacity)
@@ -447,7 +466,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
             local offsetY = defSettings.offsetY or 0
             local spacing = defSettings.spacing or 2
             local growDir = defSettings.growDirection or "RIGHT"
-            local maxIcons = math.min(defSettings.maxIcons or 3, prev.defensiveIndicator == true and 2 or (prev.defensiveIndicator or 2))
+            local maxIcons = defSettings.maxIcons or 3
 
             -- Growth direction offsets
             local stepX, stepY = 0, 0
@@ -458,7 +477,7 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
             end
 
             -- Sample defensive textures for preview
-            local previewTextures = { 135936, 135987, 136120 } -- Ironbark, Shield Wall, Barkskin
+            local previewTextures = { 135936, 135987, 136120, 135874, 236220 }
 
             for i = 1, maxIcons do
                 local defIcon = CreateFrame("Frame", nil, frame, "BackdropTemplate")
@@ -484,15 +503,34 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
     if prev and auraSettings then
         local auraLevel = baseLevel + 8
 
-        -- Debuff icons (anchored BOTTOMRIGHT, growing LEFT)
+        -- Debuff icons
         if prev.debuffs and auraSettings.showDebuffs ~= false then
             local count = math.min(prev.debuffs, auraSettings.maxDebuffs or 3)
             local size = auraSettings.debuffIconSize or 16
+            local debuffAnchor = auraSettings.debuffAnchor or "BOTTOMRIGHT"
+            local debuffGrow = auraSettings.debuffGrowDirection or "LEFT"
+            local debuffSpacing = auraSettings.debuffSpacing or 2
+            local debuffOffX = auraSettings.debuffOffsetX or -2
+            local debuffOffY = auraSettings.debuffOffsetY or -18
+            if debuffAnchor:find("BOTTOM") then debuffOffY = debuffOffY + powerHeight end
+
+            local prevDebuff
             for i = 1, count do
                 local iconFrame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
                 iconFrame:SetSize(size, size)
                 iconFrame:SetFrameLevel(auraLevel)
-                iconFrame:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -((i - 1) * (size + 1)) - 1, 1)
+
+                if i == 1 then
+                    iconFrame:SetPoint(debuffAnchor, frame, debuffAnchor, debuffOffX, debuffOffY)
+                elseif prevDebuff then
+                    if debuffGrow == "LEFT" then
+                        iconFrame:SetPoint("RIGHT", prevDebuff, "LEFT", -debuffSpacing, 0)
+                    elseif debuffGrow == "RIGHT" then
+                        iconFrame:SetPoint("LEFT", prevDebuff, "RIGHT", debuffSpacing, 0)
+                    end
+                end
+                prevDebuff = iconFrame
+
                 iconFrame:SetBackdrop({
                     bgFile = "Interface\\Buttons\\WHITE8x8",
                     edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -517,15 +555,34 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
             end
         end
 
-        -- Buff icons (anchored TOPLEFT, growing RIGHT)
+        -- Buff icons
         if prev.buffs and auraSettings.showBuffs then
             local count = math.min(prev.buffs, auraSettings.maxBuffs or 3)
             local size = auraSettings.buffIconSize or 14
+            local buffAnchor = auraSettings.buffAnchor or "TOPLEFT"
+            local buffGrow = auraSettings.buffGrowDirection or "RIGHT"
+            local buffSpacing = auraSettings.buffSpacing or 2
+            local buffOffX = auraSettings.buffOffsetX or 2
+            local buffOffY = auraSettings.buffOffsetY or 16
+            if buffAnchor:find("BOTTOM") then buffOffY = buffOffY + powerHeight end
+
+            local prevBuff
             for i = 1, count do
                 local iconFrame = CreateFrame("Frame", nil, frame, "BackdropTemplate")
                 iconFrame:SetSize(size, size)
                 iconFrame:SetFrameLevel(auraLevel)
-                iconFrame:SetPoint("TOPLEFT", frame, "TOPLEFT", ((i - 1) * (size + 1)) + 1, -1)
+
+                if i == 1 then
+                    iconFrame:SetPoint(buffAnchor, frame, buffAnchor, buffOffX, buffOffY)
+                elseif prevBuff then
+                    if buffGrow == "LEFT" then
+                        iconFrame:SetPoint("RIGHT", prevBuff, "LEFT", -buffSpacing, 0)
+                    elseif buffGrow == "RIGHT" then
+                        iconFrame:SetPoint("LEFT", prevBuff, "RIGHT", buffSpacing, 0)
+                    end
+                end
+                prevBuff = iconFrame
+
                 iconFrame:SetBackdrop({
                     bgFile = "Interface\\Buttons\\WHITE8x8",
                     edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -541,6 +598,101 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
                 icon:SetTexture(FAKE_BUFF_ICONS[((i - 1) % #FAKE_BUFF_ICONS) + 1])
             end
         end
+    end
+
+    -- Aura indicators (tracked spell icons)
+    local aiSettings = vdb.auraIndicators
+    if aiSettings and aiSettings.enabled then
+        local aiIconSize = aiSettings.iconSize or 14
+        local aiAnchor = aiSettings.anchor or "TOPLEFT"
+        local aiGrow = aiSettings.growDirection or "RIGHT"
+        local aiSpacing = aiSettings.spacing or 2
+        local aiMax = aiSettings.maxIndicators or 5
+        local aiOffX = aiSettings.anchorOffsetX or 0
+        local aiOffY = aiSettings.anchorOffsetY or 0
+
+        local aiContainer = CreateFrame("Frame", nil, frame)
+        aiContainer:SetSize(1, 1)
+        aiContainer:SetFrameLevel(baseLevel + 8)
+        if aiAnchor:find("BOTTOM") then aiOffY = aiOffY + powerHeight end
+        aiContainer:SetPoint(aiAnchor, frame, aiAnchor, aiOffX, aiOffY)
+
+        local aiSampleIcons = { 136034, 135940, 136081, 135932, 136063 }
+        local vertPart = aiAnchor:find("TOP") and "TOP" or (aiAnchor:find("BOTTOM") and "BOTTOM" or "")
+        local firstHoriz = aiGrow == "LEFT" and "RIGHT" or "LEFT"
+        local firstAnchor = vertPart .. firstHoriz
+
+        local prevAiIcon
+        for i = 1, math.min(aiMax, #aiSampleIcons) do
+            local aiFrame = CreateFrame("Frame", nil, aiContainer, "BackdropTemplate")
+            aiFrame:SetSize(aiIconSize, aiIconSize)
+            aiFrame:SetFrameLevel(baseLevel + 8)
+            aiFrame:SetBackdrop({
+                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                edgeSize = px,
+            })
+            aiFrame:SetBackdropBorderColor(0, 0, 0, 1)
+
+            if i == 1 then
+                aiFrame:SetPoint(firstAnchor, aiContainer, firstAnchor, 0, 0)
+            elseif prevAiIcon then
+                if aiGrow == "LEFT" then
+                    aiFrame:SetPoint("RIGHT", prevAiIcon, "LEFT", -aiSpacing, 0)
+                else
+                    aiFrame:SetPoint("LEFT", prevAiIcon, "RIGHT", aiSpacing, 0)
+                end
+            end
+            prevAiIcon = aiFrame
+
+            local aiTex = aiFrame:CreateTexture(nil, "ARTWORK")
+            aiTex:SetAllPoints()
+            aiTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            aiTex:SetTexture(aiSampleIcons[i])
+        end
+    end
+
+    -- Absorb + Heal prediction overlays (clamped to remaining health bar space)
+    local absorbSettings = vdb.absorbs
+    local healPredSettings = vdb.healPrediction
+    local fillRight = w * (healthPct / 100)
+    local remaining = w - fillRight
+    local absorbW = math.min(w * 0.12, remaining)
+    local healPredW = math.min(w * 0.08, math.max(remaining - absorbW, 0))
+
+    local previewCC = RAID_CLASS_COLORS[classToken]
+    local ccR, ccG, ccB = previewCC and previewCC.r or 1, previewCC and previewCC.g or 1, previewCC and previewCC.b or 1
+
+    if absorbSettings and absorbSettings.enabled ~= false and absorbW > 0 then
+        local ac
+        if absorbSettings.useClassColor then
+            ac = { ccR, ccG, ccB, 1 }
+        else
+            ac = absorbSettings.color or {1, 1, 1, 1}
+        end
+        local aa = absorbSettings.opacity or 0.3
+        local absorbOverlay = healthBar:CreateTexture(nil, "OVERLAY", nil, 1)
+        absorbOverlay:SetTexture("Interface\\RaidFrame\\Shield-Fill")
+        absorbOverlay:SetVertexColor(ac[1], ac[2], ac[3], aa)
+        absorbOverlay:SetPoint("TOPLEFT", healthBar, "TOPLEFT", fillRight, 0)
+        absorbOverlay:SetPoint("BOTTOMLEFT", healthBar, "BOTTOMLEFT", fillRight, 0)
+        absorbOverlay:SetWidth(absorbW)
+    end
+
+    if healPredSettings and healPredSettings.enabled ~= false and healPredW > 0 then
+        local hc
+        if healPredSettings.useClassColor then
+            hc = { ccR, ccG, ccB, 1 }
+        else
+            hc = healPredSettings.color or {0.2, 1, 0.2}
+        end
+        local ha = healPredSettings.opacity or 0.5
+        local healOverlay = healthBar:CreateTexture(nil, "OVERLAY", nil, 1)
+        healOverlay:SetTexture(texturePath)
+        healOverlay:SetVertexColor(hc[1], hc[2], hc[3], ha)
+        local healStart = fillRight + (absorbSettings and absorbSettings.enabled ~= false and absorbW or 0)
+        healOverlay:SetPoint("TOPLEFT", healthBar, "TOPLEFT", healStart, 0)
+        healOverlay:SetPoint("BOTTOMLEFT", healthBar, "BOTTOMLEFT", healStart, 0)
+        healOverlay:SetWidth(healPredW)
     end
 
     frame:Show()
@@ -732,6 +884,11 @@ function QUI_GFEM:IsTestMode()
 end
 
 function QUI_GFEM:ToggleTestMode(previewType)
+    -- If edit mode is active, exit it first — preview is a standalone toggle
+    if isEditMode then
+        self:DisableEditMode()
+    end
+
     if isTestMode then
         if self._lastTestPreviewType == previewType then
             -- Same type — toggle off
@@ -1391,13 +1548,6 @@ function QUI_GFEM:EnableEditMode(previewType)
     if not GF then return end
     GF.editMode = true
 
-    -- If not in a group, show test frames so there's something to see.
-    if not IsInGroup() and not IsInRaid() then
-        if not isTestMode or self._lastTestPreviewType ~= wantType then
-            self:EnableTestMode(wantType)
-        end
-    end
-
     local db = GetDB()
     local unified = not db or db.unifiedPosition ~= false
 
@@ -1463,6 +1613,15 @@ function QUI_GFEM:EnableEditMode(previewType)
             local pX, pY = PositionMover(groupMover, "party")
             local rX, rY = PositionMover(raidMover, "raid")
             QUI:DebugPrint(("[GF] EnableEditMode(split): party=(%d,%d) raid=(%d,%d)"):format(pX, pY, rX, rY))
+        end
+    end
+
+    -- If not in a group, show test frames so there's something to see.
+    -- This must happen AFTER movers are created so test containers can
+    -- anchor to the correct mover and SyncMoverToContent can size it.
+    if not IsInGroup() and not IsInRaid() then
+        if not isTestMode or self._lastTestPreviewType ~= wantType then
+            self:EnableTestMode(wantType)
         end
     end
 

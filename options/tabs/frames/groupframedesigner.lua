@@ -281,8 +281,8 @@ end
 -- Visual elements shown in Party/Raid Composer (preview + widget bar)
 local COMPOSER_ELEMENT_KEYS = {
     "health", "power", "name",
-    "buffs", "debuffs", "role", "indicators",
-    "healer", "defensive", "auraIndicators", "privateAuras", "absorbs",
+    "buffs", "debuffs", "indicators",
+    "healer", "defensive", "auraIndicators", "privateAuras",
 }
 
 -- General sub-tab elements (shared, not per-context)
@@ -300,13 +300,11 @@ local ELEMENT_LABELS = {
     name = "Name",
     buffs = "Buffs",
     debuffs = "Debuffs",
-    role = "Role",
     indicators = "Indicators",
     healer = "Healer",
     defensive = "Defensive",
     auraIndicators = "Aura Ind.",
     privateAuras = "Priv. Auras",
-    absorbs = "Absorbs",
     general = "General",
     layout = "Layout",
     dimensions = "Dimensions",
@@ -589,6 +587,46 @@ for _, preset in ipairs(AURA_FILTER_PRESETS) do
         break
     end
 end
+
+---------------------------------------------------------------------------
+-- BLACKLIST PRESETS: Curated spell lists for buff/debuff blacklisting
+---------------------------------------------------------------------------
+local BUFF_BLACKLIST_PRESETS = {
+    {
+        name = "Raid Buffs",
+        spells = {
+            { id = 1459,   name = "Arcane Intellect" },
+            { id = 6673,   name = "Battle Shout" },
+            { id = 21562,  name = "Power Word: Fortitude" },
+            { id = 1126,   name = "Mark of the Wild" },
+            { id = 381753, name = "Skyfury" },
+            { id = 381748, name = "Blessing of the Bronze" },
+            { id = 369459, name = "Source of Magic" },
+        },
+    },
+}
+
+local DEBUFF_BLACKLIST_PRESETS = {
+    {
+        name = "Sated / Exhaustion",
+        spells = {
+            { id = 57723,  name = "Exhaustion" },
+            { id = 57724,  name = "Sated" },
+            { id = 80354,  name = "Temporal Displacement" },
+            { id = 95809,  name = "Insanity" },
+            { id = 160455, name = "Fatigued" },
+            { id = 264689, name = "Fatigued" },
+            { id = 390435, name = "Exhaustion" },
+        },
+    },
+    {
+        name = "Deserter",
+        spells = {
+            { id = 26013,  name = "Deserter" },
+            { id = 71041,  name = "Dungeon Deserter" },
+        },
+    },
+}
 
 -- Get current player specID
 local function GetPlayerSpecID()
@@ -950,6 +988,7 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     if auraDB.showDebuffs ~= false then
         local debuffSize = (auraDB.debuffIconSize or 16) * PREVIEW_SCALE
         local debuffAnchor = auraDB.debuffAnchor or "BOTTOMRIGHT"
+        local debuffGrow = auraDB.debuffGrowDirection or "LEFT"
         local debuffSpacing = (auraDB.debuffSpacing or 2) * PREVIEW_SCALE
         local maxDebuffs = auraDB.maxDebuffs or 3
 
@@ -968,10 +1007,22 @@ local function CreateDesignerPreview(container, previewType, childRefs)
             icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
             icon:SetTexture(FAKE_DEBUFF_ICONS[i])
             if i == 1 then
-                icon:SetPoint("RIGHT", debuffContainer, "RIGHT", 0, 0)
+                local startAnchor = debuffGrow == "LEFT" and "RIGHT" or "LEFT"
+                icon:SetPoint(startAnchor, debuffContainer, startAnchor, 0, 0)
             else
-                icon:SetPoint("RIGHT", debuffContainer, "RIGHT", -(i - 1) * (debuffSize + debuffSpacing), 0)
+                local prevIcon = debuffContainer["icon" .. (i - 1)]
+                if prevIcon then
+                    if debuffGrow == "LEFT" then
+                        icon:SetPoint("RIGHT", prevIcon, "LEFT", -debuffSpacing, 0)
+                    else
+                        icon:SetPoint("LEFT", prevIcon, "RIGHT", debuffSpacing, 0)
+                    end
+                else
+                    local startAnchor = debuffGrow == "LEFT" and "RIGHT" or "LEFT"
+                    icon:SetPoint(startAnchor, debuffContainer, startAnchor, (i - 1) * (debuffSize + debuffSpacing) * (debuffGrow == "LEFT" and -1 or 1), 0)
+                end
             end
+            debuffContainer["icon" .. i] = icon
         end
         childRefs.debuffContainer = debuffContainer
     else
@@ -1151,25 +1202,42 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     end
     childRefs.targetHighlight = targetFrame
 
-    -- Defensive indicator (icon on frame, e.g. external CD)
+    -- Defensive indicator (icons on frame, e.g. external CDs)
     local defDB = healerDB.defensiveIndicator or {}
     local defSize = (defDB.iconSize or 16) * PREVIEW_SCALE
     local defPos = defDB.position or "CENTER"
     local defOffX = (defDB.offsetX or 0) * PREVIEW_SCALE
     local defOffY = (defDB.offsetY or 0) * PREVIEW_SCALE
-
-    local defFrame = CreateFrame("Frame", nil, frame)
-    defFrame:SetSize(defSize, defSize)
-    defFrame:SetPoint(defPos, frame, defPos, defOffX, defOffY)
-    defFrame:SetFrameLevel(frame:GetFrameLevel() + 5)
-    local defIcon = defFrame:CreateTexture(nil, "OVERLAY")
-    defIcon:SetAllPoints()
-    defIcon:SetTexture(136120) -- Pain Suppression icon
-    defIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    if defDB.enabled == false then
-        defFrame:Hide()
+    local defMaxIcons = defDB.maxIcons or 3
+    local defSpacing = (defDB.spacing or 2) * PREVIEW_SCALE
+    local defGrowDir = defDB.growDirection or "RIGHT"
+    local defStepX, defStepY = 0, 0
+    if defGrowDir == "RIGHT" then defStepX = defSize + defSpacing
+    elseif defGrowDir == "LEFT" then defStepX = -(defSize + defSpacing)
+    elseif defGrowDir == "UP" then defStepY = defSize + defSpacing
+    elseif defGrowDir == "DOWN" then defStepY = -(defSize + defSpacing)
     end
-    childRefs.defIcon = defFrame
+
+    local defTextures = { 135936, 135987, 136120, 135874, 236220 }
+    local defContainer = CreateFrame("Frame", nil, frame)
+    defContainer:SetSize(1, 1)
+    defContainer:SetPoint(defPos, frame, defPos, defOffX, defOffY)
+    defContainer:SetFrameLevel(frame:GetFrameLevel() + 5)
+
+    for i = 1, defMaxIcons do
+        local defIconFrame = CreateFrame("Frame", nil, defContainer)
+        defIconFrame:SetSize(defSize, defSize)
+        defIconFrame:SetPoint(defPos, defContainer, defPos, defStepX * (i - 1), defStepY * (i - 1))
+        local defIcon = defIconFrame:CreateTexture(nil, "OVERLAY")
+        defIcon:SetAllPoints()
+        defIcon:SetTexture(defTextures[((i - 1) % #defTextures) + 1])
+        defIcon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    end
+
+    if defDB.enabled == false then
+        defContainer:Hide()
+    end
+    childRefs.defIcon = defContainer
 
     -- Private auras (boss debuff placeholders)
     local paDB = db.privateAuras or {}
@@ -1366,9 +1434,15 @@ local function BuildHealthSettings(content, gfdb, onChange)
     local general = gfdb.general or {}
     local health = gfdb.health
     if not health then gfdb.health = {} health = gfdb.health end
+    local absorbs = gfdb.absorbs
+    if not absorbs then gfdb.absorbs = {} absorbs = gfdb.absorbs end
+    local healPred = gfdb.healPrediction
+    if not healPred then gfdb.healPrediction = {} healPred = gfdb.healPrediction end
 
     local L = CreateDynamicLayout(content)
     local cond = function() return health.showHealthText end
+    local absorbCond = function() return absorbs.enabled end
+    local healCond = function() return healPred.enabled end
 
     L:Row(GUI:CreateFormDropdown(content, "Health Texture", GetTextureList(), "texture", general, onChange), DROP_ROW)
     L:Row(GUI:CreateFormSlider(content, "Health Opacity", 0, 1, 0.05, "defaultHealthOpacity", general, onChange), SLIDER_HEIGHT)
@@ -1383,6 +1457,19 @@ local function BuildHealthSettings(content, gfdb, onChange)
     L:Row(GUI:CreateFormSlider(content, "X Offset", -100, 100, 1, "healthOffsetX", health, onChange), SLIDER_HEIGHT, cond)
     L:Row(GUI:CreateFormSlider(content, "Y Offset", -100, 100, 1, "healthOffsetY", health, onChange), SLIDER_HEIGHT, cond)
     L:Row(GUI:CreateFormColorPicker(content, "Text Color", "healthTextColor", health, onChange), FORM_ROW, cond)
+
+    L:Header(GUI:CreateSectionHeader(content, "Absorb Shield"))
+    L:Row(GUI:CreateFormCheckbox(content, "Show Absorb Shield", "enabled", absorbs, onChange), FORM_ROW)
+    L:Row(GUI:CreateFormCheckbox(content, "Use Class Color", "useClassColor", absorbs, onChange), FORM_ROW, absorbCond)
+    L:Row(GUI:CreateFormColorPicker(content, "Absorb Color", "color", absorbs, onChange), FORM_ROW, function() return absorbs.enabled and not absorbs.useClassColor end)
+    L:Row(GUI:CreateFormSlider(content, "Absorb Opacity", 0.1, 1, 0.05, "opacity", absorbs, onChange), SLIDER_HEIGHT, absorbCond)
+
+    L:Header(GUI:CreateSectionHeader(content, "Heal Prediction"))
+    L:Row(GUI:CreateFormCheckbox(content, "Show Heal Prediction", "enabled", healPred, onChange), FORM_ROW)
+    L:Row(GUI:CreateFormCheckbox(content, "Use Class Color", "useClassColor", healPred, onChange), FORM_ROW, healCond)
+    L:Row(GUI:CreateFormColorPicker(content, "Heal Prediction Color", "color", healPred, onChange), FORM_ROW, function() return healPred.enabled and not healPred.useClassColor end)
+    L:Row(GUI:CreateFormSlider(content, "Heal Prediction Opacity", 0.1, 1, 0.05, "opacity", healPred, onChange), SLIDER_HEIGHT, healCond)
+
     L:Finish()
 end
 
@@ -1660,36 +1747,41 @@ end
 -- Build the spell list section with spec-detected toggle rows
 -- getListTable: function returning the currently active spell list table
 -- Returns final y position and the spell list container frame
-local function BuildSpellListSection(parent, getListTable, onChange, y)
+local function BuildSpellListSection(parent, getListTable, onChange, y, customPresets)
     -- Spell list entries container
     local spellListContainer = CreateFrame("Frame", nil, parent)
     spellListContainer:SetPoint("TOPLEFT", PAD, y)
     spellListContainer:SetPoint("RIGHT", parent, "RIGHT", -PAD, 0)
     spellListContainer:SetHeight(1)
 
-    -- Determine which presets to show based on player spec
-    local function GetPresetsForPlayer()
-        local presets = {}
-        local specID = GetPlayerSpecID()
-        if specID and SPEC_TO_PRESET[specID] then
-            table.insert(presets, SPEC_TO_PRESET[specID])
-        end
-        -- Always include common defensives
-        if COMMON_DEFENSIVES_PRESET then
-            table.insert(presets, COMMON_DEFENSIVES_PRESET)
-        end
-        -- If no spec match, show all spec presets
-        if #presets <= 1 then
-            for _, preset in ipairs(AURA_FILTER_PRESETS) do
-                if preset.specID then
-                    table.insert(presets, preset)
+    local presets
+    if customPresets then
+        presets = customPresets
+    else
+        -- Determine which presets to show based on player spec
+        local function GetPresetsForPlayer()
+            local p = {}
+            local specID = GetPlayerSpecID()
+            if specID and SPEC_TO_PRESET[specID] then
+                table.insert(p, SPEC_TO_PRESET[specID])
+            end
+            -- Always include common defensives
+            if COMMON_DEFENSIVES_PRESET then
+                table.insert(p, COMMON_DEFENSIVES_PRESET)
+            end
+            -- If no spec match, show all spec presets
+            if #p <= 1 then
+                for _, preset in ipairs(AURA_FILTER_PRESETS) do
+                    if preset.specID then
+                        table.insert(p, preset)
+                    end
                 end
             end
+            return p
         end
-        return presets
+        presets = GetPresetsForPlayer()
     end
 
-    local presets = GetPresetsForPlayer()
     spellListContainer._presets = presets
     RebuildSpellToggleRows(spellListContainer, getListTable(), presets, onChange)
 
@@ -1759,7 +1851,50 @@ local function BuildBuffsSettings(content, gfdb, onChange)
 
     classificationContainer:SetHeight(math.abs(classY))
 
-    relayoutRef.fn = L:Finish()
+    -- Blacklist section (always visible when buffs enabled)
+    L:Header(GUI:CreateSectionHeader(content, "Blacklisted Buffs"))
+    local blDesc = GUI:CreateLabel(content, "Blacklisted buffs are always hidden regardless of filter mode.", 11, C.textMuted)
+    blDesc:SetJustifyH("LEFT")
+    L:Row(blDesc, 30, cond)
+
+    local relayout = L:Finish()
+
+    -- Blacklist spell list (appended after dynamic layout)
+    if not auras.buffBlacklist then auras.buffBlacklist = {} end
+
+    local blEndY, blContainer = BuildSpellListSection(
+        content,
+        function() return auras.buffBlacklist end,
+        function()
+            if not blContainer then return end
+            local newY = -(content:GetHeight() - 10)
+            blContainer:ClearAllPoints()
+            blContainer:SetPoint("TOPLEFT", PAD, newY)
+            blContainer:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+            local listH = blContainer:GetHeight()
+            content:SetHeight(math.abs(newY) + listH + 10)
+            if onChange then onChange() end
+        end,
+        -(content:GetHeight() - 10),
+        BUFF_BLACKLIST_PRESETS
+    )
+
+    local function RepositionBlacklist()
+        local newY = -(content:GetHeight() - 10)
+        blContainer:ClearAllPoints()
+        blContainer:SetPoint("TOPLEFT", PAD, newY)
+        blContainer:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        local listH = blContainer:GetHeight()
+        content:SetHeight(math.abs(newY) + listH + 10)
+    end
+
+    -- Wrap relayout so blacklist repositions when filter mode changes
+    relayoutRef.fn = function()
+        relayout()
+        RepositionBlacklist()
+    end
+
+    RepositionBlacklist()
 end
 
 -- DEBUFFS settings
@@ -1825,30 +1960,54 @@ local function BuildDebuffsSettings(content, gfdb, onChange)
 
     classificationContainer:SetHeight(math.abs(classY))
 
-    relayoutRef.fn = L:Finish()
+    -- Blacklist section (always visible when debuffs enabled)
+    L:Header(GUI:CreateSectionHeader(content, "Blacklisted Debuffs"))
+    local blDesc = GUI:CreateLabel(content, "Blacklisted debuffs are always hidden regardless of filter mode.", 11, C.textMuted)
+    blDesc:SetJustifyH("LEFT")
+    L:Row(blDesc, 30, cond)
+
+    local relayout = L:Finish()
+
+    -- Blacklist spell list (appended after dynamic layout)
+    if not auras.debuffBlacklist then auras.debuffBlacklist = {} end
+
+    local blEndY, blContainer = BuildSpellListSection(
+        content,
+        function() return auras.debuffBlacklist end,
+        function()
+            if not blContainer then return end
+            local newY = -(content:GetHeight() - 10)
+            blContainer:ClearAllPoints()
+            blContainer:SetPoint("TOPLEFT", PAD, newY)
+            blContainer:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+            local listH = blContainer:GetHeight()
+            content:SetHeight(math.abs(newY) + listH + 10)
+            if onChange then onChange() end
+        end,
+        -(content:GetHeight() - 10),
+        DEBUFF_BLACKLIST_PRESETS
+    )
+
+    local function RepositionBlacklist()
+        if not blContainer then return end
+        local newY = -(content:GetHeight() - 10)
+        blContainer:ClearAllPoints()
+        blContainer:SetPoint("TOPLEFT", PAD, newY)
+        blContainer:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        local listH = blContainer:GetHeight()
+        content:SetHeight(math.abs(newY) + listH + 10)
+    end
+
+    -- Wrap relayout so blacklist repositions when filter mode changes
+    relayoutRef.fn = function()
+        relayout()
+        RepositionBlacklist()
+    end
+
+    RepositionBlacklist()
 end
 
--- ROLE settings
-local function BuildRoleSettings(content, gfdb, onChange)
-    SetComposerSearchContext("Role")
-    local ind = gfdb.indicators
-    if not ind then gfdb.indicators = {} ind = gfdb.indicators end
-
-    local L = CreateDynamicLayout(content)
-    local cond = function() return ind.showRoleIcon end
-
-    L:Row(GUI:CreateFormCheckbox(content, "Show Role Icon", "showRoleIcon", ind, onChange), FORM_ROW)
-    L:Row(GUI:CreateFormCheckbox(content, "Show Tank", "showRoleTank", ind, onChange), FORM_ROW, cond)
-    L:Row(GUI:CreateFormCheckbox(content, "Show Healer", "showRoleHealer", ind, onChange), FORM_ROW, cond)
-    L:Row(GUI:CreateFormCheckbox(content, "Show DPS", "showRoleDPS", ind, onChange), FORM_ROW, cond)
-    L:Row(GUI:CreateFormSlider(content, "Icon Size", 6, 24, 1, "roleIconSize", ind, onChange), SLIDER_HEIGHT, cond)
-    L:Row(GUI:CreateFormDropdown(content, "Anchor", NINE_POINT_OPTIONS, "roleIconAnchor", ind, onChange), DROP_ROW, cond)
-    L:Row(GUI:CreateFormSlider(content, "X Offset", -100, 100, 1, "roleIconOffsetX", ind, onChange), SLIDER_HEIGHT, cond)
-    L:Row(GUI:CreateFormSlider(content, "Y Offset", -100, 100, 1, "roleIconOffsetY", ind, onChange), SLIDER_HEIGHT, cond)
-    L:Finish()
-end
-
--- INDICATORS settings
+-- INDICATORS settings (includes role icon)
 local function BuildIndicatorsSettings(content, gfdb, onChange)
     SetComposerSearchContext("Indicators")
     local ind = gfdb.indicators
@@ -1856,21 +2015,34 @@ local function BuildIndicatorsSettings(content, gfdb, onChange)
 
     local L = CreateDynamicLayout(content)
 
-    local function AddIndicator(label, showKey, anchorKey, offXKey, offYKey)
+    -- Role Icon section
+    local roleCond = function() return ind.showRoleIcon end
+    L:Header(GUI:CreateSectionHeader(content, "Role Icon"))
+    L:Row(GUI:CreateFormCheckbox(content, "Show Role Icon", "showRoleIcon", ind, onChange), FORM_ROW)
+    L:Row(GUI:CreateFormCheckbox(content, "Show Tank", "showRoleTank", ind, onChange), FORM_ROW, roleCond)
+    L:Row(GUI:CreateFormCheckbox(content, "Show Healer", "showRoleHealer", ind, onChange), FORM_ROW, roleCond)
+    L:Row(GUI:CreateFormCheckbox(content, "Show DPS", "showRoleDPS", ind, onChange), FORM_ROW, roleCond)
+    L:Row(GUI:CreateFormSlider(content, "Icon Size", 6, 24, 1, "roleIconSize", ind, onChange), SLIDER_HEIGHT, roleCond)
+    L:Row(GUI:CreateFormDropdown(content, "Anchor", NINE_POINT_OPTIONS, "roleIconAnchor", ind, onChange), DROP_ROW, roleCond)
+    L:Row(GUI:CreateFormSlider(content, "X Offset", -100, 100, 1, "roleIconOffsetX", ind, onChange), SLIDER_HEIGHT, roleCond)
+    L:Row(GUI:CreateFormSlider(content, "Y Offset", -100, 100, 1, "roleIconOffsetY", ind, onChange), SLIDER_HEIGHT, roleCond)
+
+    local function AddIndicator(label, showKey, sizeKey, defSize, anchorKey, offXKey, offYKey)
         L:Header(GUI:CreateSectionHeader(content, label))
         L:Row(GUI:CreateFormCheckbox(content, "Enable", showKey, ind, onChange), FORM_ROW)
         local cond = function() return ind[showKey] end
+        L:Row(GUI:CreateFormSlider(content, "Icon Size", 6, 32, 1, sizeKey, ind, onChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormDropdown(content, "Anchor", NINE_POINT_OPTIONS, anchorKey, ind, onChange), DROP_ROW, cond)
         L:Row(GUI:CreateFormSlider(content, "X Offset", -100, 100, 1, offXKey, ind, onChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormSlider(content, "Y Offset", -100, 100, 1, offYKey, ind, onChange), SLIDER_HEIGHT, cond)
     end
 
-    AddIndicator("Ready Check", "showReadyCheck", "readyCheckAnchor", "readyCheckOffsetX", "readyCheckOffsetY")
-    AddIndicator("Resurrection", "showResurrection", "resurrectionAnchor", "resurrectionOffsetX", "resurrectionOffsetY")
-    AddIndicator("Summon Pending", "showSummonPending", "summonAnchor", "summonOffsetX", "summonOffsetY")
-    AddIndicator("Leader Icon", "showLeaderIcon", "leaderAnchor", "leaderOffsetX", "leaderOffsetY")
-    AddIndicator("Raid Target Marker", "showTargetMarker", "targetMarkerAnchor", "targetMarkerOffsetX", "targetMarkerOffsetY")
-    AddIndicator("Phase Icon", "showPhaseIcon", "phaseAnchor", "phaseOffsetX", "phaseOffsetY")
+    AddIndicator("Ready Check", "showReadyCheck", "readyCheckSize", 16, "readyCheckAnchor", "readyCheckOffsetX", "readyCheckOffsetY")
+    AddIndicator("Resurrection", "showResurrection", "resurrectionSize", 16, "resurrectionAnchor", "resurrectionOffsetX", "resurrectionOffsetY")
+    AddIndicator("Summon Pending", "showSummonPending", "summonSize", 20, "summonAnchor", "summonOffsetX", "summonOffsetY")
+    AddIndicator("Leader Icon", "showLeaderIcon", "leaderSize", 12, "leaderAnchor", "leaderOffsetX", "leaderOffsetY")
+    AddIndicator("Raid Target Marker", "showTargetMarker", "targetMarkerSize", 14, "targetMarkerAnchor", "targetMarkerOffsetX", "targetMarkerOffsetY")
+    AddIndicator("Phase Icon", "showPhaseIcon", "phaseSize", 16, "phaseAnchor", "phaseOffsetX", "phaseOffsetY")
 
     -- Threat section
     L:Header(GUI:CreateSectionHeader(content, "Threat"))
@@ -1944,7 +2116,10 @@ local function BuildDefensiveSettings(content, gfdb, onChange)
     local cond = function() return def.enabled end
 
     L:Row(GUI:CreateFormCheckbox(content, "Enable Defensive Indicator", "enabled", def, onChange), FORM_ROW)
+    L:Row(GUI:CreateFormSlider(content, "Max Icons", 1, 5, 1, "maxIcons", def, onChange), SLIDER_HEIGHT, cond)
     L:Row(GUI:CreateFormSlider(content, "Icon Size", 8, 32, 1, "iconSize", def, onChange), SLIDER_HEIGHT, cond)
+    L:Row(GUI:CreateFormDropdown(content, "Grow Direction", AURA_GROW_OPTIONS, "growDirection", def, onChange), DROP_ROW, cond)
+    L:Row(GUI:CreateFormSlider(content, "Spacing", 0, 8, 1, "spacing", def, onChange), SLIDER_HEIGHT, cond)
     L:Row(GUI:CreateFormDropdown(content, "Position", NINE_POINT_OPTIONS, "position", def, onChange), DROP_ROW, cond)
     L:Row(GUI:CreateFormSlider(content, "X Offset", -100, 100, 1, "offsetX", def, onChange), SLIDER_HEIGHT, cond)
     L:Row(GUI:CreateFormSlider(content, "Y Offset", -100, 100, 1, "offsetY", def, onChange), SLIDER_HEIGHT, cond)
@@ -2032,31 +2207,6 @@ local function BuildAuraIndicatorsSettings(content, gfdb, onChange)
 end
 
 -- ABSORBS settings
-local function BuildAbsorbsSettings(content, gfdb, onChange)
-    SetComposerSearchContext("Absorbs")
-    local absorbs = gfdb.absorbs
-    if not absorbs then gfdb.absorbs = {} absorbs = gfdb.absorbs end
-    local healPred = gfdb.healPrediction
-    if not healPred then gfdb.healPrediction = {} healPred = gfdb.healPrediction end
-
-    local L = CreateDynamicLayout(content)
-    local absorbCond = function() return absorbs.enabled end
-    local healCond = function() return healPred.enabled end
-
-    L:Header(GUI:CreateSectionHeader(content, "Absorb Shield"))
-    L:Row(GUI:CreateFormCheckbox(content, "Show Absorb Shield", "enabled", absorbs, onChange), FORM_ROW)
-    L:Row(GUI:CreateFormCheckbox(content, "Use Class Color", "useClassColor", absorbs, onChange), FORM_ROW, absorbCond)
-    L:Row(GUI:CreateFormColorPicker(content, "Absorb Color", "color", absorbs, onChange), FORM_ROW, function() return absorbs.enabled and not absorbs.useClassColor end)
-    L:Row(GUI:CreateFormSlider(content, "Absorb Opacity", 0.1, 1, 0.05, "opacity", absorbs, onChange), SLIDER_HEIGHT, absorbCond)
-
-    L:Header(GUI:CreateSectionHeader(content, "Heal Prediction"))
-    L:Row(GUI:CreateFormCheckbox(content, "Show Heal Prediction", "enabled", healPred, onChange), FORM_ROW)
-    L:Row(GUI:CreateFormCheckbox(content, "Use Class Color", "useClassColor", healPred, onChange), FORM_ROW, healCond)
-    L:Row(GUI:CreateFormColorPicker(content, "Heal Prediction Color", "color", healPred, onChange), FORM_ROW, function() return healPred.enabled and not healPred.useClassColor end)
-    L:Row(GUI:CreateFormSlider(content, "Heal Prediction Opacity", 0.1, 1, 0.05, "opacity", healPred, onChange), SLIDER_HEIGHT, healCond)
-
-    L:Finish()
-end
 
 ---------------------------------------------------------------------------
 -- ADDITIONAL DROPDOWN OPTIONS (for non-visual settings)
@@ -2189,7 +2339,24 @@ local function BuildAppearanceSettings(content, gfdb, onChange)
         editBtn:SetPoint("LEFT", previewBtn, "RIGHT", 10, 0)
         y = y - 36
     else
-        local previewBtn = GUI:CreateButton(content, "Raid Preview (25)", 150, 28, function()
+        local db = GetGFDB()
+        local testMode = db and db.testMode
+        if not testMode then
+            if db then db.testMode = {} end
+            testMode = db and db.testMode or {}
+        end
+
+        local raidSizeSlider = GUI:CreateFormSlider(content, "Raid Size", 10, 40, 5, "raidCount", testMode, function()
+            local editMode = ns.QUI_GroupFrameEditMode
+            if editMode and (editMode:IsTestMode() or editMode:IsEditMode()) and editMode._lastTestPreviewType == "raid" then
+                editMode:RefreshTestMode()
+            end
+        end)
+        raidSizeSlider:SetPoint("TOPLEFT", PAD, y)
+        raidSizeSlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - SLIDER_HEIGHT
+
+        local previewBtn = GUI:CreateButton(content, "Raid Preview", 150, 28, function()
             local editMode = ns.QUI_GroupFrameEditMode
             if editMode then editMode:ToggleTestMode("raid") end
         end)
@@ -3151,13 +3318,11 @@ local ELEMENT_BUILDERS = {
     name = BuildNameSettings,
     buffs = BuildBuffsSettings,
     debuffs = BuildDebuffsSettings,
-    role = BuildRoleSettings,
     indicators = BuildIndicatorsSettings,
     healer = BuildHealerSettings,
     defensive = BuildDefensiveSettings,
     auraIndicators = BuildAuraIndicatorsSettings,
     privateAuras = BuildPrivateAurasSettings,
-    absorbs = BuildAbsorbsSettings,
     -- General elements
     general = BuildGeneralSettings,
     clickCast = BuildClickCastSettings,
@@ -3331,6 +3496,8 @@ local function BuildDesignerView(tabContent, previewType)
         local CLICK_TARGET = {
             frame = "health",
             healthText = "health",
+            absorbs = "health",
+            role = "indicators",
             readyCheck = "indicators", resurrection = "indicators",
             summon = "indicators", leader = "indicators",
             targetMarker = "indicators", phase = "indicators",
@@ -3497,7 +3664,7 @@ local function BuildDesignerView(tabContent, previewType)
             local o = state.hitOverlays[sel]
             if o then o.highlight:Show() end
             -- Also highlight sub-element overlays belonging to this tab
-            local INDICATOR_SUBS = { "readyCheck", "resurrection", "summon", "leader", "targetMarker", "phase" }
+            local INDICATOR_SUBS = { "role", "readyCheck", "resurrection", "summon", "leader", "targetMarker", "phase" }
             if sel == "indicators" then
                 for _, subKey in ipairs(INDICATOR_SUBS) do
                     local so = state.hitOverlays[subKey]
@@ -3617,6 +3784,10 @@ local function BuildDesignerView(tabContent, previewType)
                 local function onChangeHandler()
                     RefreshGF()
                     RebuildPreview()
+                    local editMode = ns.QUI_GroupFrameEditMode
+                    if editMode and (editMode:IsTestMode() or editMode:IsEditMode()) then
+                        editMode:RefreshTestMode()
+                    end
                 end
                 GUI._suppressSearchRegistration = true
                 builder(panel, CreateVisualProxy(currentGFDB, previewType), onChangeHandler)
@@ -3661,6 +3832,7 @@ local function BuildDesignerView(tabContent, previewType)
     settingsScroll:SetPoint("TOPLEFT", PAD, y)
     settingsScroll:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
     settingsScroll:SetHeight(300) -- resized dynamically below
+    settingsScroll:SetClipsChildren(true)
 
     local settingsChild = CreateFrame("Frame", nil, settingsScroll)
     settingsChild:SetWidth(settingsScroll:GetWidth() or 400)
@@ -3919,13 +4091,18 @@ local function BuildContextView(tabContent, contextMode)
     local sectionFrames = {}
     local activeSection = nil
 
-    -- onChange that refreshes live frames AND the composer preview
+    -- onChange that refreshes live frames, composer preview, AND edit mode test frames
     local function onChangeWithPreview()
         RefreshGF()
         -- Rebuild composer preview if it has been built
         local composerFrame = sectionFrames["Composer"]
         if composerFrame and composerFrame._rebuildPreview then
             composerFrame._rebuildPreview()
+        end
+        -- Refresh edit mode test frames so changes are reflected in real-time
+        local editMode = ns.QUI_GroupFrameEditMode
+        if editMode and (editMode:IsTestMode() or editMode:IsEditMode()) then
+            editMode:RefreshTestMode()
         end
     end
 

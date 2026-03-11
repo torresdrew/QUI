@@ -55,6 +55,25 @@ local function FrameAlreadyAtPosition(frame, pt, relativeTo, relPt, x, y)
     return math.abs((cx or 0) - (x or 0)) < 0.1 and math.abs((cy or 0) - (y or 0)) < 0.1
 end
 
+-- Smooth SetPoint: update an existing anchor in place when the point name
+-- matches, avoiding the ClearAllPoints→SetPoint gap that causes a single-
+-- frame visual "jiggle" (frame has no position between clear and set).
+-- Falls back to ClearAllPoints+SetPoint when the point name differs or the
+-- frame has multiple anchors.
+local function SmoothSetPoint(frame, pt, relativeTo, relPt, x, y)
+    local numPts = frame:GetNumPoints()
+    if numPts == 1 then
+        local cp = frame:GetPoint(1)
+        if cp == pt then
+            -- Same point name — update in place, no ClearAllPoints needed
+            frame:SetPoint(pt, relativeTo, relPt, x, y)
+            return
+        end
+    end
+    frame:ClearAllPoints()
+    frame:SetPoint(pt, relativeTo, relPt, x, y)
+end
+
 ---------------------------------------------------------------------------
 -- SECURE TAINT CLEANER for Edit Mode system frames
 -- When addon code calls ClearAllPoints/SetPoint on Blizzard Edit Mode
@@ -2256,10 +2275,7 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
 
                     if not FrameAlreadyAtPosition(resolved, "CENTER", gpFrame, "CENTER", totalCX, totalCY) then
                         _editModeReapplyGuard = true
-                        pcall(function()
-                            resolved:ClearAllPoints()
-                            resolved:SetPoint("CENTER", gpFrame, "CENTER", totalCX, totalCY)
-                        end)
+                        pcall(SmoothSetPoint, resolved, "CENTER", gpFrame, "CENTER", totalCX, totalCY)
                         _editModeReapplyGuard = false
                     end
                     if isBlizzEditModeSystem then
@@ -2313,10 +2329,7 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
             -- Skip ClearAllPoints+SetPoint if frame is already at the right position
             if not FrameAlreadyAtPosition(frame, targetPt, parentFrame, targetRelPt, targetX, targetY) then
                 _editModeReapplyGuard = true
-                pcall(function()
-                    frame:ClearAllPoints()
-                    frame:SetPoint(targetPt, parentFrame, targetRelPt, targetX, targetY)
-                end)
+                pcall(SmoothSetPoint, frame, targetPt, parentFrame, targetRelPt, targetX, targetY)
                 _editModeReapplyGuard = false
             end
             if frameIsEditMode then
@@ -2358,10 +2371,7 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
             end
         else
             _editModeReapplyGuard = true
-            local ok = pcall(function()
-                resolved:ClearAllPoints()
-                resolved:SetPoint("CENTER", parentFrame, "CENTER", centerX, centerY)
-            end)
+            local ok = pcall(SmoothSetPoint, resolved, "CENTER", parentFrame, "CENTER", centerX, centerY)
             _editModeReapplyGuard = false
             if editDbg then
                 AnchorDebug(format("ApplyFrameAnchor(%s): SET CENTER parent=%s cx=%.1f cy=%.1f ok=%s",
@@ -2381,10 +2391,7 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
             end
         else
             _editModeReapplyGuard = true
-            local ok = pcall(function()
-                resolved:ClearAllPoints()
-                resolved:SetPoint(point, parentFrame, relative, offsetX, offsetY)
-            end)
+            local ok = pcall(SmoothSetPoint, resolved, point, parentFrame, relative, offsetX, offsetY)
             _editModeReapplyGuard = false
             if editDbg then
                 AnchorDebug(format("ApplyFrameAnchor(%s): SET %s->%s parent=%s ox=%.1f oy=%.1f ok=%s",

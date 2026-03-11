@@ -33,6 +33,15 @@ local FLAT_TEXTURE = "Interface\\Buttons\\WHITE8x8"
 local OwnedEngine = {}
 
 ---------------------------------------------------------------------------
+-- DEBUG
+---------------------------------------------------------------------------
+local function TipDebug(...)
+    if QUI and QUI.DEBUG_MODE then
+        QUI:Print("|cff34D399[Tooltip]|r", ...)
+    end
+end
+
+---------------------------------------------------------------------------
 -- FRAME REGISTRY
 -- Maps Blizzard tooltip → owned replacement
 ---------------------------------------------------------------------------
@@ -93,18 +102,17 @@ end
 -- ReadEmbeddedContent — we should NOT create a separate owned frame for it.
 local function IsEmbeddedSubTooltip(blizzTip)
     if embeddedSubTooltip[blizzTip] then return true end
-    -- Check if this is GameTooltip.ItemTooltip.Tooltip — even if the flag was
-    -- cleared (race during rapid hide/show cycles), treat it as embedded whenever
-    -- GameTooltip is actively being handled or its ItemTooltip is shown.
-    local gt = GameTooltip
-    if gt and gt.ItemTooltip and gt.ItemTooltip.Tooltip == blizzTip then
-        -- If GameTooltip is actively being handled, this sub-tooltip is embedded
-        if activelyHandling[gt] then return true end
-        local gtOwned = tooltipPairs[gt]
-        if gtOwned and gtOwned:IsShown() then return true end
-        local okShown, isShown = pcall(gt.ItemTooltip.IsShown, gt.ItemTooltip)
-        if okShown and isShown then
-            return true
+    -- Check if this frame is an ItemTooltip.Tooltip sub-frame of any
+    -- actively handled parent tooltip. This covers GameTooltip and any
+    -- third-party tooltips that use the same embedded item pattern.
+    for parentBlizz in pairs(tooltipPairs) do
+        local it = parentBlizz.ItemTooltip
+        if it and it.Tooltip == blizzTip then
+            if activelyHandling[parentBlizz] then return true end
+            local parentOwned = tooltipPairs[parentBlizz]
+            if parentOwned and parentOwned:IsShown() then return true end
+            local okShown, isShown = pcall(it.IsShown, it)
+            if okShown and isShown then return true end
         end
     end
     return false
@@ -1199,17 +1207,12 @@ local function AnchorShoppingTooltips(mainOwnedTip, aboutToShow)
     -- `aboutToShow` is an owned tooltip that's about to be shown (not yet
     -- IsShown) but should be included in the chain — prevents a 1-frame
     -- flash at the wrong position before the tooltip is anchored.
+    -- Iterates all registered tooltip pairs to catch both Blizzard and
+    -- external shopping frames (e.g., third-party comparison tooltips).
     local shoppingFrames = {}
-    local shoppingBlizzNames = {
-        "ShoppingTooltip1", "ShoppingTooltip2",
-        "ItemRefShoppingTooltip1", "ItemRefShoppingTooltip2",
-        "WorldMapCompareTooltip1", "WorldMapCompareTooltip2",
-    }
-    for _, name in ipairs(shoppingBlizzNames) do
-        local blizz = _G[name]
-        if blizz then
-            local owned = tooltipPairs[blizz]
-            if owned and (owned:IsShown() or owned == aboutToShow) then
+    for _, owned in ipairs(ownedFrames) do
+        if owned._isShoppingTooltip then
+            if owned:IsShown() or owned == aboutToShow then
                 shoppingFrames[#shoppingFrames + 1] = owned
             end
         end
@@ -1258,8 +1261,21 @@ local function AnchorOwnedTooltip(ownedTip, blizzTip, settings)
     -- Shopping/comparison tooltips: re-anchor all visible ones as a chain
     -- beside the main tooltip. Don't use Blizzard's anchor points — they're
     -- relative to GameTooltip which is off-screen at -10000.
+    -- Dynamically resolve the parent: use the static _parentOwnedTip if shown,
+    -- otherwise find any visible non-shopping owned tooltip as the anchor.
     if ownedTip._isShoppingTooltip then
-        AnchorShoppingTooltips(ownedTip._parentOwnedTip, ownedTip)
+        local parent = ownedTip._parentOwnedTip
+        if not parent or not parent:IsShown() then
+            for _, candidate in ipairs(ownedFrames) do
+                if not candidate._isShoppingTooltip and candidate:IsShown() then
+                    parent = candidate
+                    break
+                end
+            end
+        end
+        if parent then
+            AnchorShoppingTooltips(parent, ownedTip)
+        end
         return
     end
 
@@ -1323,6 +1339,36 @@ local function SetupCursorFollow()
             -- Skip shopping tooltips — they anchor to the main tooltip, not cursor
             if ownedTip:IsShown() and not ownedTip._isShoppingTooltip then
                 Provider:PositionTooltipAtCursor(ownedTip, settings)
+            end
+        end
+    end)
+end
+
+---------------------------------------------------------------------------
+-- MODIFIER STATE WATCHER
+-- Hide shopping tooltips when Shift is released. Third-party addons
+-- (world quest lists, etc.) toggle comparison tooltips via Shift but
+-- may not fire a hide signal our engine can catch.
+---------------------------------------------------------------------------
+local modifierFrame = nil
+
+local function SetupModifierWatcher()
+    if modifierFrame then return end
+    modifierFrame = CreateFrame("Frame")
+    modifierFrame:RegisterEvent("MODIFIER_STATE_CHANGED")
+    modifierFrame:SetScript("OnEvent", function(_, _, key, down)
+        if down == 1 then return end -- only care about key release
+        -- Check if any shift key was released
+        if key ~= "LSHIFT" and key ~= "RSHIFT" then return end
+        -- Hide all visible shopping tooltips
+        for blizz, owned in pairs(tooltipPairs) do
+            if owned._isShoppingTooltip and owned:IsShown() then
+                owned:Hide()
+                owned._contentFingerprint = nil
+                owned._contentHash = nil
+                owned._shoppingLastRefresh = nil
+                activelyHandling[blizz] = nil
+                pendingPopulate[blizz] = nil
             end
         end
     end)
@@ -1537,6 +1583,8 @@ local function SetupVisibilityWatcher()
                 local delay = ownedTip:IsShown() and 0.15 or 0.3
                 local canRefresh = (now - lastRefresh) >= delay
                 if okBlizzShown and blizzShown and canRefresh then
+                    local blizzName = blizzTip.GetName and blizzTip:GetName() or "?"
+                    TipDebug("Shopping check:", blizzName, "shown:", tostring(blizzShown), "ownedShown:", tostring(ownedTip:IsShown()))
                     local curLines = ReadAllContent(blizzTip)
                     if #curLines > 0 then
                         -- Build a content hash from all line texts to detect
@@ -1804,6 +1852,7 @@ function OwnedEngine:Initialize()
             end
             tooltipPairs[blizzFrame] = ownedFrame
             ownedFrames[#ownedFrames + 1] = ownedFrame
+            TipDebug("Registered:", def.blizz, "->", def.name, def.shopping and "(shopping)" or "")
 
             -- Prepare frame for conditional suppression.
             -- SetClampedToScreen(false) allows off-screen positioning when active.
@@ -1871,7 +1920,16 @@ function OwnedEngine:Initialize()
                     -- uses this to trigger a deferred re-read even when the
                     -- tooltip stays continuously shown (e.g., moving between
                     -- adjacent buttons without a hide/show gap).
-                    ownerChanged[self] = true
+                    -- Only flag as changed when the owner actually differs —
+                    -- Blizzard's UpdateTooltip re-calls SetOwner with the SAME
+                    -- pin every ~0.2s. Treating each call as new content causes
+                    -- repeated re-reads that surface accumulating widget frames
+                    -- (widget set cleanup fails due to taint on the suppressed
+                    -- tooltip), making the owned tooltip grow indefinitely.
+                    local prev = blizzOwnerCache[self]
+                    if not prev or prev.owner ~= owner then
+                        ownerChanged[self] = true
+                    end
                     -- Cache the owner and anchor type for positioning when
                     -- anchorToCursor is off. SetOwner with ANCHOR_* types
                     -- positions via C-side code (no Lua SetPoint fires), so
@@ -1917,24 +1975,31 @@ function OwnedEngine:Initialize()
                     end
                     -- Claim this tooltip for our engine
                     activelyHandling[self] = true
+                    TipDebug("OnShow claimed:", def.blizz, isShopping and "(shopping)" or "")
                     pcall(self.StopAnimating, self)
                     if UIFrameFadeRemoveFrame then pcall(UIFrameFadeRemoveFrame, self) end
                     pcall(self.SetAlpha, self, 0)
-
-                    if not isShopping then
-                        pcall(self.ClearAllPoints, self)
-                        pcall(self.SetPoint, self, "TOP", UIParent, "BOTTOM", 0, -10000)
+                    -- Move ALL tooltips offscreen (including shopping). Alpha=0
+                    -- alone is insufficient — Blizzard's comparison manager and
+                    -- backdrop styling can reset alpha between hook calls, making
+                    -- the frame flash. Offscreen + alpha=0 ensures invisibility.
+                    -- IsShown() still returns true (comparison logic satisfied).
+                    if isShopping then
+                        pcall(self.SetClampedToScreen, self, false)
                     end
+                    pcall(self.ClearAllPoints, self)
+                    pcall(self.SetPoint, self, "TOP", UIParent, "BOTTOM", 0, -10000)
                 end)
                 pcall(blizzFrame.HookScript, blizzFrame, "OnUpdate", function(self)
                     if not ShouldSuppressBlizz(self) then return end
                     local s = Provider and Provider:GetSettings()
                     if not s or not s.enabled then return end
                     pcall(self.SetAlpha, self, 0)
-                    if not isShopping then
-                        pcall(self.ClearAllPoints, self)
-                        pcall(self.SetPoint, self, "TOP", UIParent, "BOTTOM", 0, -10000)
+                    if isShopping then
+                        pcall(self.SetClampedToScreen, self, false)
                     end
+                    pcall(self.ClearAllPoints, self)
+                    pcall(self.SetPoint, self, "TOP", UIParent, "BOTTOM", 0, -10000)
                 end)
                 -- OnHide: immediately hide our owned tooltip and clear state.
                 -- This is more reliable than the watcher's frame-rate-dependent
@@ -2056,7 +2121,11 @@ function OwnedEngine:Initialize()
     -------------------------------------------------------------------
     for _, tooltipType in ipairs(tooltipTypes) do
         TooltipDataProcessor.AddTooltipPreCall(tooltipType, function(blizzTip, data)
-            if not tooltipPairs[blizzTip] then return end
+            if not tooltipPairs[blizzTip] then
+                local tipName = blizzTip and blizzTip.GetName and blizzTip:GetName() or "anonymous"
+                TipDebug("|cffFFFF00PreCall UNREGISTERED|r:", tipName, "type:", tostring(tooltipType))
+                return
+            end
             -- Skip embedded sub-tooltips — suppress them silently.
             if IsEmbeddedSubTooltip(blizzTip) then
                 pcall(blizzTip.SetAlpha, blizzTip, 0)
@@ -2246,6 +2315,9 @@ function OwnedEngine:Initialize()
     -- Cursor follow
     SetupCursorFollow()
 
+    -- Modifier state watcher (hides shopping tooltips on Shift release)
+    SetupModifierWatcher()
+
     -- Event handlers (modifier key, combat)
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("MODIFIER_STATE_CHANGED")
@@ -2320,11 +2392,15 @@ function OwnedEngine:Initialize()
     -- for Blizzard tooltips suppress the addon's frame and let the
     -- watcher read its content into an owned replacement.
     -------------------------------------------------------------------
-    local function RegisterExternalTooltip(extFrame)
+    local function RegisterExternalTooltip(extFrame, isShopping, parentOwnedTip)
         if not extFrame or tooltipPairs[extFrame] then return end
 
         local frameName = extFrame:GetName() or "QUI_ExternalTooltip"
         local ownedFrame = CreateOwnedTooltip("QUI_" .. frameName)
+        if isShopping then
+            ownedFrame._isShoppingTooltip = true
+            ownedFrame._parentOwnedTip = parentOwnedTip or mainTip
+        end
         tooltipPairs[extFrame] = ownedFrame
         ownedFrames[#ownedFrames + 1] = ownedFrame
 
@@ -2370,7 +2446,10 @@ function OwnedEngine:Initialize()
 
         -- SetOwner: cache owner for anchor mirroring, trigger re-read
         hooksecurefunc(extFrame, "SetOwner", function(self, owner, anchorType, offsetX, offsetY)
-            ownerChanged[self] = true
+            local prev = blizzOwnerCache[self]
+            if not prev or prev.owner ~= owner then
+                ownerChanged[self] = true
+            end
             blizzOwnerCache[self] = { owner = owner, anchorType = anchorType, offsetX = offsetX, offsetY = offsetY }
             blizzAnchorCache[self] = nil
             if ShouldSuppressBlizz(self) then
@@ -2390,9 +2469,13 @@ function OwnedEngine:Initialize()
             local s = Provider and Provider:GetSettings()
             if not s or not s.enabled then return end
             activelyHandling[self] = true
+            TipDebug("Ext OnShow:", frameName, isShopping and "(shopping)" or "")
             pcall(self.StopAnimating, self)
             if UIFrameFadeRemoveFrame then pcall(UIFrameFadeRemoveFrame, self) end
             pcall(self.SetAlpha, self, 0)
+            if isShopping then
+                pcall(self.SetClampedToScreen, self, false)
+            end
             pcall(self.ClearAllPoints, self)
             pcall(self.SetPoint, self, "TOP", UIParent, "BOTTOM", 0, -10000)
         end)
@@ -2403,12 +2486,19 @@ function OwnedEngine:Initialize()
             local s = Provider and Provider:GetSettings()
             if not s or not s.enabled then return end
             pcall(self.SetAlpha, self, 0)
+            if isShopping then
+                pcall(self.SetClampedToScreen, self, false)
+            end
             pcall(self.ClearAllPoints, self)
             pcall(self.SetPoint, self, "TOP", UIParent, "BOTTOM", 0, -10000)
         end)
 
-        -- OnHide: hide owned tooltip
+        -- OnHide: hide owned tooltip.
+        -- Shopping tooltips: don't hide via OnHide — Blizzard's comparison
+        -- system cycles them through hide/show. Their lifetime is tied to
+        -- the main tooltip hide.
         pcall(extFrame.HookScript, extFrame, "OnHide", function(self)
+            if isShopping then return end
             C_Timer.After(0, function()
                 local okShown, shown = pcall(self.IsShown, self)
                 if okShown and shown then return end
@@ -2422,6 +2512,28 @@ function OwnedEngine:Initialize()
                 pendingPopulate[self] = nil
                 blizzAnchorCache[self] = nil
                 blizzOwnerCache[self] = nil
+
+                -- Clean up all shopping tooltips — they chain beside
+                -- whichever tooltip was active, so hide them all when
+                -- any non-shopping tooltip hides.
+                for blizz, shoppingOwned in pairs(tooltipPairs) do
+                    if shoppingOwned._isShoppingTooltip and shoppingOwned:IsShown() then
+                        shoppingOwned:Hide()
+                        shoppingOwned._contentFingerprint = nil
+                        shoppingOwned._contentHash = nil
+                        shoppingOwned._shoppingLastRefresh = nil
+                        activelyHandling[blizz] = nil
+                        pendingPopulate[blizz] = nil
+                    end
+                end
+
+                -- Also clean up embedded sub-tooltip state
+                if self.ItemTooltip and self.ItemTooltip.Tooltip then
+                    embeddedSubTooltip[self.ItemTooltip.Tooltip] = nil
+                    activelyHandling[self.ItemTooltip.Tooltip] = nil
+                    local subOwned = tooltipPairs[self.ItemTooltip.Tooltip]
+                    if subOwned then subOwned:Hide() end
+                end
             end)
         end)
     end
@@ -2430,11 +2542,69 @@ function OwnedEngine:Initialize()
     -- all addons have loaded. If the addon isn't installed, the global
     -- is nil and registration is silently skipped.
     C_Timer.After(1, function()
-        -- Map pin addon tooltip (private GameTooltipTemplate frame that
-        -- shadows the local GameTooltip variable, bypassing the real one)
-        local extTip = _G["WQL" .. "AreaPOI" .. "Tooltip"]
-        if extTip then
-            RegisterExternalTooltip(extTip)
+        -- Third-party tooltip frames that fire TooltipDataProcessor events.
+        -- Register all known frames so they get owned replacements.
+        -- Names are constructed to avoid referencing addon names directly.
+        -- { globalName, isShopping }
+        local wqlPrefix = "WQL"
+        -- Register main tooltips first so we can resolve parent owned frames
+        local wqlMainNames = {
+            wqlPrefix .. "Tooltip",
+            wqlPrefix .. "AreaPOI" .. "Tooltip",
+            -- Do NOT register AreaPOITooltipTooltip — it's embedded content
+            -- read by ReadEmbeddedContent, merged into the parent tooltip.
+        }
+        for _, name in ipairs(wqlMainNames) do
+            local extTip = _G[name]
+            if extTip then
+                RegisterExternalTooltip(extTip)
+                TipDebug("External registered:", name)
+            end
+        end
+
+        -- Register shopping/comparison frames with the correct parent.
+        -- These chain beside the POI tooltip (their shoppingTooltips owner).
+        local wqlPoiTip = _G[wqlPrefix .. "AreaPOI" .. "Tooltip"]
+        local wqlPoiOwned = wqlPoiTip and tooltipPairs[wqlPoiTip]
+        local wqlShoppingNames = {
+            wqlPrefix .. "Tooltip" .. "ItemRef1",
+            wqlPrefix .. "Tooltip" .. "ItemRef2",
+        }
+        for _, name in ipairs(wqlShoppingNames) do
+            local extTip = _G[name]
+            if extTip then
+                RegisterExternalTooltip(extTip, true, wqlPoiOwned)
+                TipDebug("External registered:", name, "(shopping)")
+            end
+        end
+    end)
+
+    -- Debug: scan for tooltip-like globals we might be missing
+    C_Timer.After(2, function()
+        if not (QUI and QUI.DEBUG_MODE) then return end
+        local known = {}
+        for blizz in pairs(tooltipPairs) do
+            local name = blizz.GetName and blizz:GetName()
+            if name then known[name] = true end
+        end
+        local suspects = {
+            "GameTooltip", "ItemRefTooltip", "NamePlateTooltip",
+            "GameTooltipTooltip", "WorldMapTooltip", "SmallTextTooltip",
+            "ReputationParagonTooltip",
+            "ShoppingTooltip1", "ShoppingTooltip2",
+            "ItemRefShoppingTooltip1", "ItemRefShoppingTooltip2",
+            "WorldMapCompareTooltip1", "WorldMapCompareTooltip2",
+            "EmbeddedItemTooltip", "QuestScrollFrame.StoryTooltip",
+            "BattlePetTooltip", "FloatingBattlePetTooltip",
+            "PetJournalPrimaryAbilityTooltip", "PetJournalSecondaryAbilityTooltip",
+            "FloatingGarrisonFollowerTooltip", "GarrisonFollowerTooltipContents",
+            "LibDBIconTooltip", "FriendsTooltip",
+        }
+        for _, name in ipairs(suspects) do
+            local frame = _G[name]
+            if frame and not known[name] then
+                TipDebug("|cffFF6666UNREGISTERED|r tooltip frame:", name)
+            end
         end
     end)
 end

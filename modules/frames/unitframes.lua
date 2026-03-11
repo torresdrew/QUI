@@ -1289,13 +1289,16 @@ local function UpdateLeaderIcon(frame)
     -- Check if unit is leader or assistant
     -- Note: Assistants only exist in raids, not parties
     if UnitIsGroupLeader(frame.unit) then
-        frame.leaderIcon:SetTexture([[Interface\GroupFrame\UI-Group-LeaderIcon]])
+        frame.leaderIcon:SetAtlas("groupfinder-icon-leader")
+        frame.leaderIcon:SetAlpha(1)
         frame.leaderIcon:Show()
     elseif IsInRaid() and UnitIsGroupAssistant(frame.unit) then
-        frame.leaderIcon:SetTexture([[Interface\GroupFrame\UI-Group-AssistantIcon]])
+        frame.leaderIcon:SetAtlas("groupfinder-icon-leader")
+        frame.leaderIcon:SetAlpha(0.6)
         frame.leaderIcon:Show()
     else
         frame.leaderIcon:Hide()
+        frame.leaderIcon:SetAlpha(1)
     end
 end
 

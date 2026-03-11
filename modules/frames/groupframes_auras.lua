@@ -530,12 +530,13 @@ local function RebuildFilterCacheForContext(cache, auraSettings)
         if bwl and next(bwl) then cache.buffWhitelist = bwl end
         local dwl = auraSettings.debuffWhitelist
         if dwl and next(dwl) then cache.debuffWhitelist = dwl end
-    elseif cache.filterMode == "blacklist" then
-        local bbl = auraSettings.buffBlacklist
-        if bbl and next(bbl) then cache.buffBlacklist = bbl end
-        local dbl = auraSettings.debuffBlacklist
-        if dbl and next(dbl) then cache.debuffBlacklist = dbl end
     end
+
+    -- Blacklist always applies regardless of filter mode (additive filter)
+    local bbl = auraSettings.buffBlacklist
+    if bbl and next(bbl) then cache.buffBlacklist = bbl end
+    local dbl = auraSettings.debuffBlacklist
+    if dbl and next(dbl) then cache.debuffBlacklist = dbl end
 end
 
 local function RebuildFilterCache()
@@ -675,7 +676,6 @@ local function UpdateFrameAuras(frame)
     local fCache = GetFilterCache(isRaid)
     local useClassification = fCache.filterMode == "classification"
     local useWhitelist = fCache.filterMode == "whitelist"
-    local useBlacklist = fCache.filterMode == "blacklist"
     local onlyMine = fCache.onlyMine
     local playerUnit = "player"
 
@@ -702,12 +702,15 @@ local function UpdateFrameAuras(frame)
                     dominated = true
                 end
 
-                -- Whitelist/blacklist filter
+                -- Whitelist filter
                 if not dominated and useWhitelist and fCache.debuffWhitelist then
                     if not AuraPassesSpellFilter(auraData, fCache.debuffWhitelist, nil) then
                         dominated = true
                     end
-                elseif not dominated and useBlacklist and fCache.debuffBlacklist then
+                end
+
+                -- Blacklist filter (always applies)
+                if not dominated and fCache.debuffBlacklist then
                     if not AuraPassesSpellFilter(auraData, nil, fCache.debuffBlacklist) then
                         dominated = true
                     end
@@ -844,12 +847,15 @@ local function UpdateFrameAuras(frame)
                     end
                 end
 
-                -- Whitelist/blacklist filter
+                -- Whitelist filter
                 if not dominated and useWhitelist and fCache.buffWhitelist then
                     if not AuraPassesSpellFilter(auraData, fCache.buffWhitelist, nil) then
                         dominated = true
                     end
-                elseif not dominated and useBlacklist and fCache.buffBlacklist then
+                end
+
+                -- Blacklist filter (always applies)
+                if not dominated and fCache.buffBlacklist then
                     if not AuraPassesSpellFilter(auraData, nil, fCache.buffBlacklist) then
                         dominated = true
                     end
