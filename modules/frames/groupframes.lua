@@ -12,6 +12,7 @@ local Helpers = ns.Helpers
 local IsSecretValue = Helpers.IsSecretValue
 local SafeValue = Helpers.SafeValue
 local SafeToNumber = Helpers.SafeToNumber
+local issecretvalue = _G.issecretvalue
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
 local GetCore = Helpers.GetCore
@@ -2449,6 +2450,11 @@ local function CheckUnitRange(unit)
     if UnitIsUnit(unit, "player") then return true end
     if not UnitExists(unit) then return true end
 
+    -- Phased units are always out of range
+    if UnitPhaseReason and UnitPhaseReason(unit) then
+        return false
+    end
+
     local connected = UnitIsConnected(unit)
     if IsSecretValue(connected) then connected = true end
     if not connected then
@@ -2464,8 +2470,15 @@ local function CheckUnitRange(unit)
     -- IsSpellInRange returns true/false/nil (normal booleans, not secret values)
     if rangeSpell and not isDead then
         local result = C_Spell.IsSpellInRange(rangeSpell, unit)
-        if result ~= nil then
-            return result
+        if result == true then
+            return true
+        elseif result == false then
+            -- OR with CheckInteractDistance out of combat for leniency
+            -- (avoids false OOR from spec/talent edge cases)
+            if not InCombatLockdown() and CheckInteractDistance(unit, 4) then
+                return true
+            end
+            return false
         else
             spellReturnedNil = true
         end
@@ -2479,7 +2492,7 @@ local function CheckUnitRange(unit)
 
     -- Out of combat: interact distance (~28 yards)
     if not InCombatLockdown() then
-        return CheckInteractDistance(unit, 4)
+        return CheckInteractDistance(unit, 4) and true or false
     end
 
     -- NIL-ON-ALIVE: friendly spell returned nil on alive connected target in
@@ -2488,18 +2501,29 @@ local function CheckUnitRange(unit)
         return false
     end
 
-    -- In-combat last resort: UnitInRange (Warrior/DH/Hunter with no friendly spell)
+    -- In-combat last resort: UnitInRange (DK/DH/Hunter/Warrior with no friendly spell)
+    -- Returns secret booleans in Midnight+ — propagate them downstream.
+    -- SetAlphaFromBoolean handles secret booleans natively (C-side resolves them).
     if UnitInRange then
-        local inRange, checked = UnitInRange(unit)
-        -- Guard against secret values (Midnight+)
-        if IsSecretValue(inRange) or IsSecretValue(checked) then
-            return true  -- Can't trust secret values, assume in range
+        local inRange = UnitInRange(unit)
+        if issecretvalue and issecretvalue(inRange) then
+            return inRange  -- Secret boolean, handled by SetAlphaFromBoolean downstream
         end
-        if checked and not inRange then return false end
+        if inRange ~= nil then return inRange end
     end
 
     -- No method available — assume in range
     return true
+end
+
+local function ApplyRangeAlpha(frame, inRange, outAlpha)
+    -- SetAlphaFromBoolean handles secret booleans natively (Midnight+ C-side API).
+    -- When UnitInRange returns a secret boolean, this resolves it correctly.
+    if frame.SetAlphaFromBoolean then
+        frame:SetAlphaFromBoolean(inRange, 1, outAlpha)
+    else
+        frame:SetAlpha(inRange and 1 or outAlpha)
+    end
 end
 
 local function DoRangeCheck()
@@ -2517,13 +2541,18 @@ local function DoRangeCheck()
                 local inRange = CheckUnitRange(unit)
                 local state = GetFrameState(frame)
 
-                if rangeCache[unit] ~= inRange then
+                -- Secret values (from UnitInRange fallback) can't be compared
+                -- with ==, so always update when secrets are involved.
+                local cached = rangeCache[unit]
+                local isSecret = issecretvalue and (issecretvalue(inRange) or issecretvalue(cached))
+
+                if isSecret or cached ~= inRange or state.outOfRange == nil then
                     rangeCache[unit] = inRange
-                    state.outOfRange = not inRange
-                    frame:SetAlpha(inRange and 1 or outAlpha)
-                elseif state.outOfRange == nil then
-                    state.outOfRange = not inRange
-                    frame:SetAlpha(inRange and 1 or outAlpha)
+                    -- outOfRange state: secret booleans can't be negated in Lua,
+                    -- so store the raw inRange and let alpha application handle it.
+                    state.outOfRange = true  -- Mark as range-managed
+                    state.inRange = inRange  -- Store raw value (may be secret)
+                    ApplyRangeAlpha(frame, inRange, outAlpha)
                 end
             end
         end

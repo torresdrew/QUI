@@ -33,15 +33,6 @@ local FLAT_TEXTURE = "Interface\\Buttons\\WHITE8x8"
 local OwnedEngine = {}
 
 ---------------------------------------------------------------------------
--- DEBUG
----------------------------------------------------------------------------
-local function TipDebug(...)
-    if QUI and QUI.DEBUG_MODE then
-        QUI:Print("|cff34D399[Tooltip]|r", ...)
-    end
-end
-
----------------------------------------------------------------------------
 -- FRAME REGISTRY
 -- Maps Blizzard tooltip → owned replacement
 ---------------------------------------------------------------------------
@@ -312,8 +303,12 @@ local function CreateOwnedTooltip(name)
     frame:SetFrameStrata("TOOLTIP")
     frame:SetFrameLevel(100)
     frame:SetClampedToScreen(true)
-    -- Propagate mouse motion to frames below so owned tooltips don't block
-    -- OnHyperlinkLeave, OnLeave, etc. on underlying frames (chat, map pins).
+    -- Click-through: tooltips should never block clicks on underlying frames
+    -- (buttons, action bars, map pins). Propagate mouse motion so OnLeave/
+    -- OnHyperlinkLeave still fire on frames below.
+    if frame.SetMouseClickEnabled then
+        frame:SetMouseClickEnabled(false)
+    end
     if frame.SetPropagateMouseMotion then
         frame:SetPropagateMouseMotion(true)
     end
@@ -1583,8 +1578,6 @@ local function SetupVisibilityWatcher()
                 local delay = ownedTip:IsShown() and 0.15 or 0.3
                 local canRefresh = (now - lastRefresh) >= delay
                 if okBlizzShown and blizzShown and canRefresh then
-                    local blizzName = blizzTip.GetName and blizzTip:GetName() or "?"
-                    TipDebug("Shopping check:", blizzName, "shown:", tostring(blizzShown), "ownedShown:", tostring(ownedTip:IsShown()))
                     local curLines = ReadAllContent(blizzTip)
                     if #curLines > 0 then
                         -- Build a content hash from all line texts to detect
@@ -1852,7 +1845,6 @@ function OwnedEngine:Initialize()
             end
             tooltipPairs[blizzFrame] = ownedFrame
             ownedFrames[#ownedFrames + 1] = ownedFrame
-            TipDebug("Registered:", def.blizz, "->", def.name, def.shopping and "(shopping)" or "")
 
             -- Prepare frame for conditional suppression.
             -- SetClampedToScreen(false) allows off-screen positioning when active.
@@ -1975,7 +1967,6 @@ function OwnedEngine:Initialize()
                     end
                     -- Claim this tooltip for our engine
                     activelyHandling[self] = true
-                    TipDebug("OnShow claimed:", def.blizz, isShopping and "(shopping)" or "")
                     pcall(self.StopAnimating, self)
                     if UIFrameFadeRemoveFrame then pcall(UIFrameFadeRemoveFrame, self) end
                     pcall(self.SetAlpha, self, 0)
@@ -2121,11 +2112,7 @@ function OwnedEngine:Initialize()
     -------------------------------------------------------------------
     for _, tooltipType in ipairs(tooltipTypes) do
         TooltipDataProcessor.AddTooltipPreCall(tooltipType, function(blizzTip, data)
-            if not tooltipPairs[blizzTip] then
-                local tipName = blizzTip and blizzTip.GetName and blizzTip:GetName() or "anonymous"
-                TipDebug("|cffFFFF00PreCall UNREGISTERED|r:", tipName, "type:", tostring(tooltipType))
-                return
-            end
+            if not tooltipPairs[blizzTip] then return end
             -- Skip embedded sub-tooltips — suppress them silently.
             if IsEmbeddedSubTooltip(blizzTip) then
                 pcall(blizzTip.SetAlpha, blizzTip, 0)
@@ -2367,12 +2354,11 @@ function OwnedEngine:Initialize()
         end
     end)
     mainTip:EnableMouse(true)
-    -- Allow mouse clicks (hyperlinks) but don't intercept mouse motion.
-    -- SetMouseMotionEnabled(false) prevents Enter/Leave on this frame, but
-    -- still CONSUMES motion events — frames below never see them. This
-    -- blocks OnHyperlinkLeave on chat frames when the tooltip overlaps,
-    -- causing stuck tooltips. SetPropagateMouseMotion(true) actually lets
-    -- motion pass through so underlying frames receive their events.
+    -- Allow hyperlink interaction but let clicks pass through to frames
+    -- below (buttons, action bars, etc.) when the tooltip overlaps them.
+    if mainTip.SetMouseClickEnabled then
+        mainTip:SetMouseClickEnabled(false)
+    end
     if mainTip.SetMouseMotionEnabled then
         mainTip:SetMouseMotionEnabled(false)
     end
@@ -2469,7 +2455,6 @@ function OwnedEngine:Initialize()
             local s = Provider and Provider:GetSettings()
             if not s or not s.enabled then return end
             activelyHandling[self] = true
-            TipDebug("Ext OnShow:", frameName, isShopping and "(shopping)" or "")
             pcall(self.StopAnimating, self)
             if UIFrameFadeRemoveFrame then pcall(UIFrameFadeRemoveFrame, self) end
             pcall(self.SetAlpha, self, 0)
@@ -2558,7 +2543,6 @@ function OwnedEngine:Initialize()
             local extTip = _G[name]
             if extTip then
                 RegisterExternalTooltip(extTip)
-                TipDebug("External registered:", name)
             end
         end
 
@@ -2574,36 +2558,6 @@ function OwnedEngine:Initialize()
             local extTip = _G[name]
             if extTip then
                 RegisterExternalTooltip(extTip, true, wqlPoiOwned)
-                TipDebug("External registered:", name, "(shopping)")
-            end
-        end
-    end)
-
-    -- Debug: scan for tooltip-like globals we might be missing
-    C_Timer.After(2, function()
-        if not (QUI and QUI.DEBUG_MODE) then return end
-        local known = {}
-        for blizz in pairs(tooltipPairs) do
-            local name = blizz.GetName and blizz:GetName()
-            if name then known[name] = true end
-        end
-        local suspects = {
-            "GameTooltip", "ItemRefTooltip", "NamePlateTooltip",
-            "GameTooltipTooltip", "WorldMapTooltip", "SmallTextTooltip",
-            "ReputationParagonTooltip",
-            "ShoppingTooltip1", "ShoppingTooltip2",
-            "ItemRefShoppingTooltip1", "ItemRefShoppingTooltip2",
-            "WorldMapCompareTooltip1", "WorldMapCompareTooltip2",
-            "EmbeddedItemTooltip", "QuestScrollFrame.StoryTooltip",
-            "BattlePetTooltip", "FloatingBattlePetTooltip",
-            "PetJournalPrimaryAbilityTooltip", "PetJournalSecondaryAbilityTooltip",
-            "FloatingGarrisonFollowerTooltip", "GarrisonFollowerTooltipContents",
-            "LibDBIconTooltip", "FriendsTooltip",
-        }
-        for _, name in ipairs(suspects) do
-            local frame = _G[name]
-            if frame and not known[name] then
-                TipDebug("|cffFF6666UNREGISTERED|r tooltip frame:", name)
             end
         end
     end)
