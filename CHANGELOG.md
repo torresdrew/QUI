@@ -78,6 +78,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.49.1 - 2026-03-11
+
+### Added
+- added indicator sizing controls, improved edit mode fidelity for group frames, added a blacklist filter
+- extended click-casting support to unit frames and fixed tooltip height estimation
+
+### Changed
+- replaced mixin-level tooltip overrides with a frame-level external registration approach
+
+### Fixed
+- fixed secret value handling for UnitInRange booleans and made tooltips click-through
 ## v2.49.0 - 2026-03-11
 
 ### Added
