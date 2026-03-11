@@ -1143,22 +1143,21 @@ local function PopulateTooltip(ownedTip, lines, tooltipType, tooltipData, blizzT
         local okBot, anchorBottom = pcall(prevAnchor.GetBottom, prevAnchor)
         anchorBottom = okBot and Helpers.SafeToNumber(anchorBottom, nil) or nil
         frameTop = Helpers.SafeToNumber(frameTop, nil)
-        if frameTop and anchorBottom then
+        if frameTop and anchorBottom and frameTop > anchorBottom then
             local contentHeight = frameTop - anchorBottom + padding
             if healthBar and healthBar:IsShown() then
                 contentHeight = contentHeight + 8
             end
             ownedTip:SetHeight(math_max(contentHeight, 40))
         else
-            -- Anchor measurement tainted — fall back to Blizzard's height
-            -- (C-side SetHeight handles secret values natively).
-            if blizzTip then
-                pcall(ownedTip.SetHeight, ownedTip, blizzTip:GetHeight())
-            else
-                local estHeight = headerSize + ((#lines - 1) * (fontSize + lineGap)) + padding * 2
-                if healthBar and healthBar:IsShown() then estHeight = estHeight + 8 end
-                ownedTip:SetHeight(math_max(estHeight, 40))
-            end
+            -- Anchor measurement failed (frame not yet laid out on first display,
+            -- or tainted). Blizzard's height doesn't account for our merged
+            -- embedded content — use a line-count estimate instead.
+            -- Add fontSize as buffer for word-wrapped lines (long stat descriptions,
+            -- quest reward text, etc. that wrap to 2+ visual rows).
+            local estHeight = headerSize + ((#lines - 1) * (fontSize + lineGap)) + padding * 2 + fontSize
+            if healthBar and healthBar:IsShown() then estHeight = estHeight + 8 end
+            ownedTip:SetHeight(math_max(estHeight, 40))
         end
     elseif blizzTip then
         -- Blizzard's height covers its own lines.  If we appended extra lines
@@ -1793,6 +1792,7 @@ local function HandleTooltipData(blizzTip, tooltipData, tooltipType)
                 local lateExtra = AppendSpellIDLines(lateLines, settings, tooltipData, tooltipType)
                 if #lateLines > lastDeferredCount then
                     lastDeferredCount = #lateLines
+                    ownedTip._hasEmbeddedContent = lateHasExtra
                     ownedTip._extraLines = lateExtra
                     ApplyClassColorName(lateLines, settings, blizzTip, tooltipType)
                     PopulateTooltip(ownedTip, lateLines, tooltipType, tooltipData, blizzTip)

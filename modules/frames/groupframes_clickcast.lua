@@ -1,6 +1,8 @@
 --[[
-    QUI Group Frames - Click-Casting Framework
+    QUI Click-Casting Framework
     Native click-casting that works independently of Clique.
+    Supports group frames (party/raid) and individual unit frames
+    (player, target, focus, pet, boss).
     Features: modifier combos, smart resurrection, per-spec profiles,
     Clique coexistence, binding tooltip on frame hover,
     keyboard key bindings for pseudo-mouseover casting.
@@ -474,6 +476,30 @@ function QUI_GFCC:RegisterAllFrames()
     end
 end
 
+function QUI_GFCC:RegisterUnitFrames()
+    if not isEnabled then return end
+    local db = GetDB()
+    if not db or not db.clickCast then return end
+
+    local ufSettings = db.clickCast.unitFrames
+    if not ufSettings then return end
+
+    local UF = ns.QUI_UnitFrames
+    if not UF or not UF.frames then return end
+
+    for unitKey, frame in pairs(UF.frames) do
+        -- Boss frames: boss1-boss5 all use the "boss" setting
+        local settingKey = unitKey:match("^boss%d$") and "boss" or unitKey
+        if ufSettings[settingKey] then
+            SetupFrameClickCast(frame)
+            -- Also register portrait if it exists
+            if frame.portrait and frame.portrait.GetAttribute then
+                SetupFrameClickCast(frame.portrait)
+            end
+        end
+    end
+end
+
 function QUI_GFCC:RefreshBindings()
     if InCombatLockdown() then return end
 
@@ -487,6 +513,7 @@ function QUI_GFCC:RefreshBindings()
     ResolveBindings()
     UpdateHeaderKeyAttributes()
     self:RegisterAllFrames()
+    self:RegisterUnitFrames()
 end
 
 function QUI_GFCC:IsEnabled()

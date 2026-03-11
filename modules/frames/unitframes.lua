@@ -3665,9 +3665,19 @@ initFrame:SetScript("OnEvent", function(self, event)
             QUI_UF:Initialize()
             -- Hook Blizzard Edit Mode after frames are created
             QUI_UF:HookBlizzardEditMode()
-            -- Register frames with Clique after creation
+            -- Register frames with Clique and click-cast after creation
             C_Timer.After(0.5, function()
                 QUI_UF:RegisterWithClique()
+                local GFCC = ns.QUI_GroupFrameClickCast
+                if GFCC then
+                    -- Initialize if not already done (e.g. group frames disabled)
+                    if not GFCC:IsEnabled() then
+                        GFCC:Initialize()
+                    end
+                    if GFCC:IsEnabled() then
+                        GFCC:RegisterUnitFrames()
+                    end
+                end
             end)
         end)
     elseif event == "PLAYER_ENTERING_WORLD" then

@@ -2704,6 +2704,11 @@ local defaults = {
                 perSpec = true,
                 smartRes = true,
                 showTooltip = true,
+                unitFrames = {
+                    player = false,
+                    focus = false,
+                    pet = false,
+                },
             },
 
             -- Test/preview mode (shared)

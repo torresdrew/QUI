@@ -2815,6 +2815,34 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     tooltipCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
     y = y - FORM_ROW
 
+    -- Unit Frame click-cast toggles
+    if not cc.unitFrames then cc.unitFrames = {} end
+    local ufLabel = GUI:CreateLabel(content, "Also apply click-casting to unit frames:", 11, C.textMuted)
+    ufLabel:SetPoint("TOPLEFT", PAD, y)
+    ufLabel:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    ufLabel:SetJustifyH("LEFT")
+    y = y - 22
+
+    local ufFrames = {
+        { key = "player",  label = "Player" },
+        { key = "focus",   label = "Focus" },
+        { key = "pet",     label = "Pet" },
+    }
+
+    local refreshClickCast = function()
+        local GFCC_ref = ns.QUI_GroupFrameClickCast
+        if GFCC_ref and GFCC_ref:IsEnabled() and not InCombatLockdown() then
+            GFCC_ref:RefreshBindings()
+        end
+    end
+
+    for _, info in ipairs(ufFrames) do
+        local ufCheck = GUI:CreateFormCheckbox(content, info.label, info.key, cc.unitFrames, refreshClickCast)
+        ufCheck:SetPoint("TOPLEFT", PAD, y)
+        ufCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+    end
+
     local GFCC = ns.QUI_GroupFrameClickCast
 
     local ACTION_TYPE_OPTIONS = {
