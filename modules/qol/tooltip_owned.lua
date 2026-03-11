@@ -1533,7 +1533,10 @@ local function BuildContentFingerprint(lines)
     local n = #lines
     if n == 0 then return "" end
     local first = lines[1].leftText or ""
-    -- pcall in case text is a secret value
+    -- Secret values propagate through tostring — check before converting
+    if type(issecretvalue) == "function" and issecretvalue(first) then
+        return "?"
+    end
     local okFirst, firstStr = pcall(tostring, first)
     if not okFirst then firstStr = "?" end
     return firstStr
@@ -1681,7 +1684,8 @@ local function SetupVisibilityWatcher()
                                 local lateLines, lateHasExtra = ReadAllContent(blizzTip)
                                 if #lateLines == 0 then return end
                                 local lateHash = BuildContentHash(lateLines)
-                                if lateHash ~= ownedTip._contentHash then
+                                local okH, hDiff = pcall(function() return lateHash ~= ownedTip._contentHash end)
+                                if not okH or hDiff then
                                     ownedTip._contentHash = lateHash
                                     ownedTip._hasEmbeddedContent = lateHasExtra
                                     ApplyClassColorName(lateLines, settings, blizzTip)
@@ -1717,10 +1721,13 @@ local function SetupVisibilityWatcher()
                         local contentHash = BuildContentHash(curLines)
 
                         local curFP = BuildContentFingerprint(curLines)
-                        local itemChanged = curFP ~= (ownedTip._contentFingerprint or "")
+                        local okCmp, itemChanged = pcall(function() return curFP ~= (ownedTip._contentFingerprint or "") end)
+                        if not okCmp then itemChanged = true end
+                        local okHash, hashChanged = pcall(function() return contentHash ~= ownedTip._contentHash end)
+                        if not okHash then hashChanged = true end
                         local needsUpdate = not ownedTip:IsShown()
                             or itemChanged
-                            or contentHash ~= ownedTip._contentHash
+                            or hashChanged
 
                         if needsUpdate then
                             local wasHidden = not ownedTip:IsShown()
@@ -1846,7 +1853,9 @@ local function HandleTooltipData(blizzTip, tooltipData, tooltipType)
         local lines = ReadAllContent(blizzTip)
         if #lines > 0 then
             local fp = BuildContentFingerprint(lines)
-            if fp ~= ownedTip._contentFingerprint then
+            local okCmp, fpChanged = pcall(function() return fp ~= ownedTip._contentFingerprint end)
+            if not okCmp then fpChanged = true end
+            if fpChanged then
                 ownedTip._contentFingerprint = fp
                 ownedTip._contentHash = nil
                 ownedTip._shoppingLastRefresh = GetTime()
@@ -1869,7 +1878,8 @@ local function HandleTooltipData(blizzTip, tooltipData, tooltipType)
     if ownedTip:IsShown() then
         local lines = ReadAllContent(blizzTip)
         local fp = BuildContentFingerprint(lines)
-        if fp ~= (ownedTip._contentFingerprint or "") then
+        local okCmp, fpDiff = pcall(function() return fp ~= (ownedTip._contentFingerprint or "") end)
+        if not okCmp or fpDiff then
             ownedTip:Hide()
         end
     end
@@ -1937,7 +1947,8 @@ local function HandleTooltipData(blizzTip, tooltipData, tooltipType)
                 if #lateLines == 0 then return end
                 local lateExtra = AppendSpellIDLines(lateLines, settings, tooltipData, tooltipType)
                 local lateHash = BuildContentHash(lateLines)
-                if lateHash ~= ownedTip._contentHash then
+                local okH, hDiff = pcall(function() return lateHash ~= ownedTip._contentHash end)
+                if not okH or hDiff then
                     ownedTip._contentHash = lateHash
                     ownedTip._hasEmbeddedContent = lateHasExtra
                     ownedTip._extraLines = lateExtra
