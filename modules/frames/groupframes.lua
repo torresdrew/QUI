@@ -12,7 +12,6 @@ local Helpers = ns.Helpers
 local IsSecretValue = Helpers.IsSecretValue
 local SafeValue = Helpers.SafeValue
 local SafeToNumber = Helpers.SafeToNumber
-local issecretvalue = _G.issecretvalue
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
 local GetCore = Helpers.GetCore
@@ -2404,7 +2403,6 @@ local RES_SPELLS = {
 local playerClass = nil
 local rangeSpell = nil   -- Resolved friendly spell ID for living targets
 local resSpell = nil     -- Resolved rez spell ID for dead targets
-local rangeCache = {}    -- unit → boolean (change detection, avoids redundant SetAlpha)
 
 local function ResolveRangeSpells()
     if not playerClass then
@@ -2412,7 +2410,6 @@ local function ResolveRangeSpells()
     end
 
     -- Clear cache — spells changed, previous results may be stale
-    wipe(rangeCache)
 
     -- Resolve primary range spell (spec-based first, then class fallback)
     rangeSpell = nil
@@ -2502,28 +2499,17 @@ local function CheckUnitRange(unit)
     end
 
     -- In-combat last resort: UnitInRange (DK/DH/Hunter/Warrior with no friendly spell)
-    -- Returns secret booleans in Midnight+ — propagate them downstream.
-    -- SetAlphaFromBoolean handles secret booleans natively (C-side resolves them).
+    -- May return secret booleans in Midnight+ — pass through directly.
+    -- SetAlphaFromBoolean handles them natively on the C side.
     if UnitInRange then
         local inRange = UnitInRange(unit)
-        if issecretvalue and issecretvalue(inRange) then
-            return inRange  -- Secret boolean, handled by SetAlphaFromBoolean downstream
-        end
+        -- Secret booleans are non-nil; nil means API unavailable for this unit
+        if IsSecretValue(inRange) then return inRange end
         if inRange ~= nil then return inRange end
     end
 
     -- No method available — assume in range
     return true
-end
-
-local function ApplyRangeAlpha(frame, inRange, outAlpha)
-    -- SetAlphaFromBoolean handles secret booleans natively (Midnight+ C-side API).
-    -- When UnitInRange returns a secret boolean, this resolves it correctly.
-    if frame.SetAlphaFromBoolean then
-        frame:SetAlphaFromBoolean(inRange, 1, outAlpha)
-    else
-        frame:SetAlpha(inRange and 1 or outAlpha)
-    end
 end
 
 local function DoRangeCheck()
@@ -2539,21 +2525,12 @@ local function DoRangeCheck()
             if rangeSettings and rangeSettings.enabled ~= false then
                 local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
                 local inRange = CheckUnitRange(unit)
-                local state = GetFrameState(frame)
 
-                -- Secret values (from UnitInRange fallback) can't be compared
-                -- with ==, so always update when secrets are involved.
-                local cached = rangeCache[unit]
-                local isSecret = issecretvalue and (issecretvalue(inRange) or issecretvalue(cached))
-
-                if isSecret or cached ~= inRange or state.outOfRange == nil then
-                    rangeCache[unit] = inRange
-                    -- outOfRange state: secret booleans can't be negated in Lua,
-                    -- so store the raw inRange and let alpha application handle it.
-                    state.outOfRange = true  -- Mark as range-managed
-                    state.inRange = inRange  -- Store raw value (may be secret)
-                    ApplyRangeAlpha(frame, inRange, outAlpha)
-                end
+                -- Pass directly to C-side. SetAlphaFromBoolean handles both
+                -- normal booleans and secret booleans natively — no need to
+                -- detect, cache, or compare. C-side resolves the conditional.
+                GetFrameState(frame).outOfRange = true
+                frame:SetAlphaFromBoolean(inRange, 1, outAlpha)
             end
         end
     end
@@ -2581,7 +2558,6 @@ local function StopRangeCheck()
         rangeCheckTicker:Cancel()
         rangeCheckTicker = nil
     end
-    wipe(rangeCache)
 end
 
 ---------------------------------------------------------------------------
@@ -2733,13 +2709,11 @@ local function OnEvent(self, event, arg1, ...)
         -- Combat started: clear range cache so stale OOC values
         -- (CheckInteractDistance) don't persist into combat where
         -- that API is unavailable. (QUI pattern)
-        wipe(rangeCache)
-
+    
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Combat ended: clear range cache so combat-era results
         -- don't prevent OOC methods from updating.
-        wipe(rangeCache)
-
+    
         -- Process deferred operations
         if pendingResize then
             pendingResize = false
