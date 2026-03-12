@@ -6,7 +6,6 @@
     <Script file="consumablecheck.lua"/>
     <Script file="tooltip_provider.lua"/>
     <Script file="tooltip_classic.lua"/>
-    <Script file="tooltip_owned.lua"/>
     <Script file="combattimer.lua"/>
     <Script file="actiontracker.lua"/>
     <Script file="crosshair.lua"/>

@@ -80,35 +80,6 @@ local function BuildTooltipTab(tabContent)
         tooltip.cursorOffsetY = -16
     end
 
-    -- SECTION: Engine Selection
-    GUI:SetSearchSection("Tooltip Engine")
-    local engineHeader = GUI:CreateSectionHeader(tabContent, "Tooltip Engine")
-    engineHeader:SetPoint("TOPLEFT", PADDING, y)
-    y = y - engineHeader.gap
-
-    local engineOptions = {
-        {value = "owned", text = "Owned (Taint-Free)"},
-        {value = "classic", text = "Classic (Hook-Based)"},
-    }
-    local engineDropdown = GUI:CreateFormDropdown(tabContent, "Tooltip Engine", engineOptions, "engine", tooltip, function()
-        GUI:ShowConfirmation({
-            title = "Reload UI?",
-            message = "Engine changes require a reload to take effect.",
-            acceptText = "Reload",
-            cancelText = "Later",
-            onAccept = function() QUI:SafeReload() end,
-        })
-    end)
-    engineDropdown:SetPoint("TOPLEFT", PADDING, y)
-    engineDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-    y = y - FORM_ROW
-
-    local engineInfo = GUI:CreateLabel(tabContent, "Owned creates addon-owned tooltip frames (zero taint). Classic hooks Blizzard tooltips (legacy).", 10, C.textMuted)
-    engineInfo:SetPoint("TOPLEFT", PADDING, y)
-    engineInfo:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-    engineInfo:SetJustifyH("LEFT")
-    y = y - 20
-
     -- SECTION: Enable/Disable
     GUI:SetSearchSection("Enable/Disable")
     local enableHeader = GUI:CreateSectionHeader(tabContent, "Enable/Disable QUI Tooltip Module")

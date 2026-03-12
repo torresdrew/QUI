@@ -1,9 +1,7 @@
 --[[
     QUI Tooltip Provider
-    Abstraction layer that lets multiple tooltip engine implementations coexist.
-    Only one engine initializes at runtime based on db.profile.tooltip.engine.
-
-    Load order: tooltip_provider.lua → tooltips.lua (classic) → tooltip_owned.lua (owned)
+    Abstraction layer for the tooltip engine.
+    Load order: tooltip_provider.lua → tooltip_classic.lua
     Engine files call RegisterEngine() at load time.
     Provider calls Initialize() on the selected engine after PLAYER_LOGIN.
 ]]
@@ -17,7 +15,7 @@ local Helpers = ns.Helpers
 local TooltipProvider = {
     engines = {},           -- name → engine table
     activeEngine = nil,     -- the initialized engine table
-    activeEngineName = nil, -- "classic" or "owned"
+    activeEngineName = nil, -- "classic"
     initialized = false,
 }
 
@@ -26,7 +24,7 @@ local TooltipProvider = {
 ---------------------------------------------------------------------------
 
 --- Register a tooltip engine implementation.
---- @param name string  Engine identifier ("classic" or "owned")
+--- @param name string  Engine identifier ("classic")
 --- @param engine table  Table with contract methods (Initialize, Refresh, etc.)
 function TooltipProvider:RegisterEngine(name, engine)
     self.engines[name] = engine
@@ -295,9 +293,9 @@ function TooltipProvider:InitializeEngine()
     if self.initialized then return end
 
     local QUICore = ns.Addon
-    local engineName = "owned"
+    local engineName = "classic"
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.tooltip then
-        engineName = QUICore.db.profile.tooltip.engine or "owned"
+        engineName = QUICore.db.profile.tooltip.engine or "classic"
     end
 
     local engine = self.engines[engineName]
