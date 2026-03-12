@@ -23,6 +23,7 @@ local pcall = pcall
 local tinsert = tinsert
 local wipe = wipe
 local math_max = math.max
+local math_min = math.min
 local math_abs = math.abs
 
 local FLAT_TEXTURE = "Interface\\Buttons\\WHITE8x8"
@@ -330,6 +331,53 @@ local function CreateOwnedTooltip(name)
     return frame
 end
 
+local TOOLTIP_MIN_WIDTH = 180
+local TOOLTIP_MAX_WIDTH = 420
+local TOOLTIP_SINGLE_LINE_SOFT_CAP = 320
+local TOOLTIP_DOUBLE_LINE_GAP = 12
+local TOOLTIP_WIDTH_OVERSIZE_TOLERANCE = 40
+
+local function ClampTooltipWidth(width)
+    width = Helpers.SafeToNumber(width, nil)
+    if not width then return nil end
+    return math_min(math_max(width, TOOLTIP_MIN_WIDTH), TOOLTIP_MAX_WIDTH)
+end
+
+local function MeasureFontStringWidth(fontString, text, softCap)
+    if not fontString or text == nil then return nil end
+    if type(issecretvalue) == "function" and issecretvalue(text) then return nil end
+
+    local width = nil
+    if fontString.GetUnboundedStringWidth then
+        local ok, value = pcall(fontString.GetUnboundedStringWidth, fontString)
+        width = ok and Helpers.SafeToNumber(value, nil) or nil
+    end
+    if not width then
+        local ok, value = pcall(fontString.GetStringWidth, fontString)
+        width = ok and Helpers.SafeToNumber(value, nil) or nil
+    end
+    if width and softCap then
+        width = math_min(width, softCap)
+    end
+    return width
+end
+
+local function ResolveTooltipWidth(blizzWidth, measuredWidth)
+    local finalWidth = ClampTooltipWidth(blizzWidth) or 250
+    measuredWidth = ClampTooltipWidth(measuredWidth)
+    if not measuredWidth then
+        return finalWidth
+    end
+
+    if finalWidth < measuredWidth then
+        return measuredWidth
+    end
+    if finalWidth > (measuredWidth + TOOLTIP_WIDTH_OVERSIZE_TOLERANCE) then
+        return measuredWidth
+    end
+    return finalWidth
+end
+
 ---------------------------------------------------------------------------
 -- DATA EXTRACTION
 ---------------------------------------------------------------------------
@@ -488,15 +536,96 @@ local function ReadEmbeddedContent(blizzTip)
         end -- if okShown and isShown
     end
 
-    -- Progress bars (StatusBar children — world quest objectives, etc.)
-    -- Skip the tooltip's own health StatusBar (named "GameTooltipStatusBar" etc.)
+    -- Money frames and progress bars live as child frames of the tooltip.
     local okChildren, children = pcall(function() return { blizzTip:GetChildren() } end)
     if okChildren and children then
         for _, child in ipairs(children) do
+            local okShown, childShown = pcall(child.IsShown, child)
+            if okShown and childShown then
+
+            -- Money frames: Blizzard creates these via SetMoneyAmount / AddMoneyLine.
+            -- They contain gold/silver/copper sub-frames with icon textures and
+            -- amount FontStrings. Read the visible coin values and emit a formatted
+            -- text line with inline coin texture escapes.
+            local isMoney = false
+            local okMF, _ = pcall(function()
+                -- Money frames have a staticMoney or info field set by Blizzard
+                if child.staticMoney ~= nil or child.info ~= nil then
+                    isMoney = true
+                end
+            end)
+            if not isMoney then
+                -- Fallback: check by name pattern (e.g., "GameTooltipMoneyFrame1")
+                local childName = child:GetName() or ""
+                if childName:find("MoneyFrame") then
+                    isMoney = true
+                end
+            end
+
+            if isMoney then
+                -- Extract the copper amount and format with GetCoinTextureString.
+                -- Blizzard's MoneyFrame stores the total in staticMoney, or we
+                -- can reconstruct from the named GoldButton/SilverButton/CopperButton
+                -- sub-frames (each has a FontString showing the denomination amount).
+                local copperTotal
+                local moneyText
+
+                -- Method 1: staticMoney field (set by MoneyFrame_Update)
+                pcall(function()
+                    if child.staticMoney and type(child.staticMoney) == "number" and child.staticMoney > 0 then
+                        copperTotal = child.staticMoney
+                    end
+                end)
+
+                -- Method 2: reconstruct from named sub-buttons
+                if not copperTotal then
+                    pcall(function()
+                        local frameName = child:GetName()
+                        if frameName then
+                            local gold, silver, copper = 0, 0, 0
+                            local gBtn = _G[frameName .. "GoldButton"]
+                            local sBtn = _G[frameName .. "SilverButton"]
+                            local cBtn = _G[frameName .. "CopperButton"]
+                            if gBtn and gBtn:IsShown() then
+                                local gText = _G[frameName .. "GoldButtonText"]
+                                if gText then gold = tonumber(gText:GetText()) or 0 end
+                            end
+                            if sBtn and sBtn:IsShown() then
+                                local sText = _G[frameName .. "SilverButtonText"]
+                                if sText then silver = tonumber(sText:GetText()) or 0 end
+                            end
+                            if cBtn and cBtn:IsShown() then
+                                local cText = _G[frameName .. "CopperButtonText"]
+                                if cText then copper = tonumber(cText:GetText()) or 0 end
+                            end
+                            local total = gold * 10000 + silver * 100 + copper
+                            if total > 0 then
+                                copperTotal = total
+                            end
+                        end
+                    end)
+                end
+
+                -- Format using Blizzard's coin texture helper
+                if copperTotal and GetCoinTextureString then
+                    pcall(function()
+                        moneyText = GetCoinTextureString(copperTotal)
+                    end)
+                end
+
+                if moneyText then
+                    embedded[#embedded + 1] = {
+                        leftText = moneyText,
+                        lr = 1, lg = 1, lb = 1,
+                        rr = 1, rg = 1, rb = 1,
+                    }
+                end
+            end
+
+            -- Progress bars (StatusBar children — world quest objectives, etc.)
+            -- Skip the tooltip's own health StatusBar (named "GameTooltipStatusBar" etc.)
             local okType, isBar = pcall(child.IsObjectType, child, "StatusBar")
             if okType and isBar then
-                local okBarShown, barShown = pcall(child.IsShown, child)
-                if okBarShown and barShown then
                     local barName = child:GetName()
                     -- Skip the tooltip's built-in health status bar
                     if not barName or not barName:find("StatusBar$") then
@@ -542,8 +671,9 @@ local function ReadEmbeddedContent(blizzTip)
                             }
                         end
                     end
-                end
             end
+
+            end -- if childShown
         end
     end
 
@@ -748,6 +878,14 @@ local function FindWidgetIcon(frame)
     return nil  -- no suitable icon found
 end
 
+local function IsWidgetContainerFrame(frame)
+    if not frame then return false end
+    if frame.shownWidgetCount ~= nil then return true end
+    if frame.widgetFrames ~= nil then return true end
+    if frame.widgetPool ~= nil then return true end
+    return false
+end
+
 -- Returns an array of widget entry groups, each { yPos, lines[] }.
 -- ONE entry per tooltip child container (not per sub-child). Each blank
 -- spacer block in the text lines corresponds to one container child.
@@ -769,7 +907,7 @@ local function ReadWidgetContent(blizzTip)
             -- skip — handled by ReadEmbeddedContent
         else
             local okShown, shown = pcall(child.IsShown, child)
-            if okShown and shown then
+            if okShown and shown and IsWidgetContainerFrame(child) then
                 -- Collect all sub-children content, sorted by vertical position.
                 -- Each sub-child's content is gathered, then sorted and merged
                 -- into a single entry for this container.
@@ -891,6 +1029,7 @@ local function ReadAllContent(blizzTip)
         local merged = {}
         local widgetIdx = 1
         local i = 1
+        local replacedWidgetBlock = false
         while i <= #lines do
             local text = lines[i].leftText
             local okMatch, hasContent = pcall(string.match, text, "%S")
@@ -910,6 +1049,7 @@ local function ReadAllContent(blizzTip)
                     for _, wLine in ipairs(widgetEntries[widgetIdx].lines) do
                         merged[#merged + 1] = wLine
                     end
+                    replacedWidgetBlock = true
                     widgetIdx = widgetIdx + 1
                 end
             else
@@ -920,7 +1060,7 @@ local function ReadAllContent(blizzTip)
         end
 
         -- Any remaining widget entries that didn't match a blank block
-        while widgetIdx <= #widgetEntries do
+        while widgetIdx <= #widgetEntries and (replacedWidgetBlock or #lines == 0) do
             merged[#merged + 1] = { leftText = " ", lr = 1, lg = 1, lb = 1 }
             for _, wLine in ipairs(widgetEntries[widgetIdx].lines) do
                 merged[#merged + 1] = wLine
@@ -998,14 +1138,12 @@ local function PopulateTooltip(ownedTip, lines, tooltipType, tooltipData, blizzT
     local lineGap = ownedTip._lineGap
     local fontPath = Helpers.GetGeneralFont and Helpers.GetGeneralFont() or STANDARD_TEXT_FONT
     local fontFlags = Helpers.GetGeneralFontOutline and Helpers.GetGeneralFontOutline() or ""
+    local blizzWidth = blizzTip and ClampTooltipWidth(blizzTip:GetWidth()) or nil
 
-    -- Pass Blizzard tooltip width straight through via C-side SetWidth —
-    -- handles secret values natively. No arithmetic on Blizzard values.
-    if blizzTip then
-        pcall(ownedTip.SetWidth, ownedTip, blizzTip:GetWidth())
-    else
-        ownedTip:SetWidth(250)
-    end
+    -- Start from Blizzard's width, then refine it after we've measured the lines
+    -- we actually render. This trims oversized backdrops from overlay/widget
+    -- widths while still preserving Blizzard's wrap width as a fallback.
+    ownedTip:SetWidth(blizzWidth or 250)
 
     -- Single pass: set text and position using RELATIVE ANCHORING.
     -- Each line anchors to the BOTTOM of the previous line. Word-wrapped text
@@ -1013,6 +1151,7 @@ local function PopulateTooltip(ownedTip, lines, tooltipType, tooltipData, blizzT
     -- Secret text values pass straight through to C-side SetText/SetTextColor.
     local textIdx = 0
     local barIdx = 0
+    local measuredMaxWidth = 0
     local prevAnchor = nil  -- the region to anchor below (nil = first line, anchor to frame top)
 
     for i, lineData in ipairs(lines) do
@@ -1039,6 +1178,7 @@ local function PopulateTooltip(ownedTip, lines, tooltipType, tooltipData, blizzT
                 bar._label:Hide()
             end
             bar:Show()
+            measuredMaxWidth = math_max(measuredMaxWidth, 220)
             prevAnchor = bar
         else
             textIdx = textIdx + 1
@@ -1050,6 +1190,16 @@ local function PopulateTooltip(ownedTip, lines, tooltipType, tooltipData, blizzT
             left:SetFont(fontPath, size, fontFlags)
             right:SetFont(fontPath, size, fontFlags)
 
+            local rightWidth = nil
+            if lineData.rightText then
+                right:SetText(lineData.rightText)
+                right:SetTextColor(lineData.rr, lineData.rg, lineData.rb)
+                rightWidth = MeasureFontStringWidth(right, lineData.rightText)
+            else
+                right:SetText("")
+                right:Hide()
+            end
+
             -- Blindly pass text and colors through — C-side handles secret values.
             left:SetText(lineData.leftText)
             left:SetTextColor(lineData.lr, lineData.lg, lineData.lb)
@@ -1059,22 +1209,34 @@ local function PopulateTooltip(ownedTip, lines, tooltipType, tooltipData, blizzT
             else
                 left:SetPoint("TOPLEFT", ownedTip, "TOPLEFT", padding, -padding)
             end
-            left:SetPoint("RIGHT", ownedTip, "RIGHT", -padding, 0)
+            if lineData.rightText then
+                local reserve = (rightWidth and (rightWidth + TOOLTIP_DOUBLE_LINE_GAP)) or 90
+                left:SetPoint("RIGHT", ownedTip, "RIGHT", -(padding + reserve), 0)
+            else
+                left:SetPoint("RIGHT", ownedTip, "RIGHT", -padding, 0)
+            end
             left:Show()
 
             if lineData.rightText then
-                right:SetText(lineData.rightText)
-                right:SetTextColor(lineData.rr, lineData.rg, lineData.rb)
                 right:ClearAllPoints()
-                if prevAnchor then
-                    right:SetPoint("TOPRIGHT", prevAnchor, "BOTTOMRIGHT", 0, -lineGap)
-                else
-                    right:SetPoint("TOPRIGHT", ownedTip, "TOPRIGHT", -padding, -padding)
-                end
+                right:SetPoint("TOP", left, "TOP", 0, 0)
+                right:SetPoint("RIGHT", ownedTip, "RIGHT", -padding, 0)
                 right:Show()
+            end
+
+            local leftWidth = MeasureFontStringWidth(left, lineData.leftText, lineData.rightText and nil or TOOLTIP_SINGLE_LINE_SOFT_CAP)
+            local lineWidth = nil
+            if lineData.rightText then
+                if leftWidth and rightWidth then
+                    lineWidth = leftWidth + TOOLTIP_DOUBLE_LINE_GAP + rightWidth
+                else
+                    lineWidth = leftWidth or rightWidth
+                end
             else
-                right:SetText("")
-                right:Hide()
+                lineWidth = leftWidth
+            end
+            if lineWidth then
+                measuredMaxWidth = math_max(measuredMaxWidth, lineWidth)
             end
 
             prevAnchor = left
@@ -1082,6 +1244,12 @@ local function PopulateTooltip(ownedTip, lines, tooltipType, tooltipData, blizzT
     end
 
     ownedTip._activeLines = #lines
+
+    local measuredWidth = nil
+    if measuredMaxWidth > 0 then
+        measuredWidth = measuredMaxWidth + padding * 2
+    end
+    ownedTip:SetWidth(ResolveTooltipWidth(blizzWidth, measuredWidth))
 
     -- Health bar for unit tooltips
     local healthBar = ownedTip._healthBar
@@ -1252,6 +1420,33 @@ local OWNER_ANCHOR_MAP = {
 local function AnchorOwnedTooltip(ownedTip, blizzTip, settings)
     if not ownedTip or not blizzTip then return end
 
+    -- Child tooltips (addon-created GameTooltip frames parented to a tracked
+    -- tooltip): anchor beside the parent owned tooltip. Their Blizzard anchor
+    -- points are relative to an intermediate frame that's now off-screen.
+    if ownedTip._isChildTooltip then
+        local parent = ownedTip._parentOwnedTip
+        if not parent or not parent:IsShown() then
+            for _, candidate in ipairs(ownedFrames) do
+                if not candidate._isShoppingTooltip and not candidate._isChildTooltip and candidate:IsShown() then
+                    parent = candidate
+                    break
+                end
+            end
+        end
+        if parent then
+            local parentLeft = parent:GetLeft() or 0
+            local screenWidth = GetScreenWidth() or 1920
+            local anchorRight = (Helpers.SafeToNumber(parentLeft, 0) < (screenWidth / 2))
+            ownedTip:ClearAllPoints()
+            if anchorRight then
+                ownedTip:SetPoint("TOPLEFT", parent, "TOPRIGHT", 2, 0)
+            else
+                ownedTip:SetPoint("TOPRIGHT", parent, "TOPLEFT", -2, 0)
+            end
+        end
+        return
+    end
+
     -- Shopping/comparison tooltips: re-anchor all visible ones as a chain
     -- beside the main tooltip. Don't use Blizzard's anchor points — they're
     -- relative to GameTooltip which is off-screen at -10000.
@@ -1330,8 +1525,8 @@ local function SetupCursorFollow()
         if not settings or not settings.anchorToCursor then return end
 
         for _, ownedTip in ipairs(ownedFrames) do
-            -- Skip shopping tooltips — they anchor to the main tooltip, not cursor
-            if ownedTip:IsShown() and not ownedTip._isShoppingTooltip then
+            -- Skip shopping and child tooltips — they anchor to the main tooltip, not cursor
+            if ownedTip:IsShown() and not ownedTip._isShoppingTooltip and not ownedTip._isChildTooltip then
                 Provider:PositionTooltipAtCursor(ownedTip, settings)
             end
         end
@@ -1420,10 +1615,30 @@ local function BuildContentFingerprint(lines)
     local n = #lines
     if n == 0 then return "" end
     local first = lines[1].leftText or ""
-    -- pcall in case text is a secret value
+    -- Secret values propagate through tostring — check before converting
+    if type(issecretvalue) == "function" and issecretvalue(first) then
+        return "?"
+    end
     local okFirst, firstStr = pcall(tostring, first)
     if not okFirst then firstStr = "?" end
     return firstStr
+end
+
+--- Build a full content hash from all line texts. Used to detect content
+--- changes even when line count stays the same (e.g., external addons
+--- replacing blank lines with data, or async stat comparisons arriving).
+local function BuildContentHash(lines)
+    local parts = {}
+    for i, l in ipairs(lines) do
+        local lt = l.leftText
+        if lt and type(issecretvalue) == "function" and issecretvalue(lt) then
+            parts[i] = "~"
+        else
+            local okS, s = pcall(tostring, lt or "")
+            parts[i] = okS and s or "~"
+        end
+    end
+    return table.concat(parts, "|")
 end
 
 ---------------------------------------------------------------------------
@@ -1523,6 +1738,28 @@ local function SetupVisibilityWatcher()
                         if IsEmbeddedSubTooltip(blizzTip) then return end
                         local okStill, still = pcall(blizzTip.IsShown, blizzTip)
                         if not okStill or not still then return end
+
+                        -- Visibility check: same logic as HandleTooltipData.
+                        -- If this context should be hidden, suppress both Blizzard
+                        -- and owned tooltips — the user wants no tooltip at all.
+                        if not ownedTip._isShoppingTooltip then
+                            local owner = nil
+                            local okOwner
+                            okOwner, owner = pcall(blizzTip.GetOwner, blizzTip)
+                            if not okOwner then owner = nil end
+                            local context = Provider:GetTooltipContext(owner)
+                            if not Provider:ShouldShowTooltip(context) then
+                                return
+                            end
+                            if Provider:IsOwnerFadedOut(owner) then
+                                return
+                            end
+                        end
+
+                        -- Discover child tooltips created by other addons
+                        if OwnedEngine._discoverChildTooltips then
+                            OwnedEngine._discoverChildTooltips(blizzTip)
+                        end
                         local lines, hasExtra = ReadAllContent(blizzTip)
                         if #lines > 0 then
                             ownedTip._hasEmbeddedContent = hasExtra
@@ -1531,23 +1768,25 @@ local function SetupVisibilityWatcher()
                             AnchorOwnedTooltip(ownedTip, blizzTip, settings)
                             ownedTip:Show()
                         end
-                        -- Late content re-checks — widget content and embedded items
-                        -- load asynchronously. Widget containers (renown, world events)
-                        -- may add children after the initial show. Check at increasing
-                        -- delays to capture late-arriving content.
-                        local lastLineCount = #lines
+                        -- Late content re-checks — widget content, embedded
+                        -- items, and async addon additions. Use content hash
+                        -- instead of line count to catch modifications to
+                        -- existing lines (not just additions).
+                        local baseHash = BuildContentHash(lines)
+                        ownedTip._contentHash = baseHash
                         local delays = { 0.2, 0.5 }
                         for _, delay in ipairs(delays) do
                             C_Timer.After(delay, function()
-                                -- Re-check embedded status — the tooltip may
-                                -- have been identified as embedded after the
-                                -- initial watcher pass created this timer.
+                                if pendingPopulate[blizzTip] then return end
                                 if IsEmbeddedSubTooltip(blizzTip) then return end
                                 local okS, s = pcall(blizzTip.IsShown, blizzTip)
                                 if not okS or not s then return end
                                 local lateLines, lateHasExtra = ReadAllContent(blizzTip)
-                                if #lateLines > lastLineCount then
-                                    lastLineCount = #lateLines
+                                if #lateLines == 0 then return end
+                                local lateHash = BuildContentHash(lateLines)
+                                local okH, hDiff = pcall(function() return lateHash ~= ownedTip._contentHash end)
+                                if not okH or hDiff then
+                                    ownedTip._contentHash = lateHash
                                     ownedTip._hasEmbeddedContent = lateHasExtra
                                     ApplyClassColorName(lateLines, settings, blizzTip)
                                     PopulateTooltip(ownedTip, lateLines, nil, nil, blizzTip)
@@ -1579,25 +1818,16 @@ local function SetupVisibilityWatcher()
                 if okBlizzShown and blizzShown and canRefresh then
                     local curLines = ReadAllContent(blizzTip)
                     if #curLines > 0 then
-                        -- Build a content hash from all line texts to detect
-                        -- changes even when line count stays the same.
-                        local hashParts = {}
-                        for hi, hl in ipairs(curLines) do
-                            local ht = hl.leftText
-                            if ht and type(issecretvalue) == "function" and issecretvalue(ht) then
-                                hashParts[hi] = "~"
-                            else
-                                local okS, s = pcall(tostring, ht or "")
-                                hashParts[hi] = okS and s or "~"
-                            end
-                        end
-                        local contentHash = table.concat(hashParts, "|")
+                        local contentHash = BuildContentHash(curLines)
 
                         local curFP = BuildContentFingerprint(curLines)
-                        local itemChanged = curFP ~= (ownedTip._contentFingerprint or "")
+                        local okCmp, itemChanged = pcall(function() return curFP ~= (ownedTip._contentFingerprint or "") end)
+                        if not okCmp then itemChanged = true end
+                        local okHash, hashChanged = pcall(function() return contentHash ~= ownedTip._contentHash end)
+                        if not okHash then hashChanged = true end
                         local needsUpdate = not ownedTip:IsShown()
                             or itemChanged
-                            or contentHash ~= ownedTip._contentHash
+                            or hashChanged
 
                         if needsUpdate then
                             local wasHidden = not ownedTip:IsShown()
@@ -1712,21 +1942,18 @@ local function HandleTooltipData(blizzTip, tooltipData, tooltipType)
         end
     end
 
-    -- IMMEDIATE POPULATE: Read lines now and show the owned tooltip right away.
-    -- Always repopulate even if already shown — during rapid tooltip transitions
-    -- (hover item A → item B), the deferred OnHide hasn't fired yet so the owned
-    -- tip still shows stale content from the previous tooltip. Updating immediately
-    -- prevents a 1-frame flash of old content.
-    local lines, hasExtra = ReadAllContent(blizzTip)
-    if #lines > 0 then
-        if ownedTip._isShoppingTooltip then
-            -- Defer shopping tooltips to the watcher — Blizzard adds stat
-            -- comparison lines asynchronously, so showing partial content here
-            -- causes a visible flash. Only reset state when the item changes
-            -- (fingerprint differs). HandleTooltipData fires every frame —
-            -- resetting _shoppingLastRefresh each time would starve the watcher.
+    -- Shopping tooltips defer entirely to the watcher — Blizzard adds stat
+    -- comparison lines asynchronously, so showing partial content causes a
+    -- visible flash. Only reset state when the item changes (fingerprint
+    -- differs). HandleTooltipData fires every frame for shopping tooltips —
+    -- resetting _shoppingLastRefresh each time would starve the watcher.
+    if ownedTip._isShoppingTooltip then
+        local lines = ReadAllContent(blizzTip)
+        if #lines > 0 then
             local fp = BuildContentFingerprint(lines)
-            if fp ~= ownedTip._contentFingerprint then
+            local okCmp, fpChanged = pcall(function() return fp ~= ownedTip._contentFingerprint end)
+            if not okCmp then fpChanged = true end
+            if fpChanged then
                 ownedTip._contentFingerprint = fp
                 ownedTip._contentHash = nil
                 ownedTip._shoppingLastRefresh = GetTime()
@@ -1734,19 +1961,29 @@ local function HandleTooltipData(blizzTip, tooltipData, tooltipType)
                     ownedTip:Hide()
                 end
             end
-            return
         end
-
-        ownedTip._hasEmbeddedContent = hasExtra
-        local extraLines = AppendSpellIDLines(lines, settings, tooltipData, tooltipType)
-        ownedTip._extraLines = extraLines
-        ApplyClassColorName(lines, settings, blizzTip, tooltipType)
-        PopulateTooltip(ownedTip, lines, tooltipType, tooltipData, blizzTip)
-        AnchorOwnedTooltip(ownedTip, blizzTip, settings)
-        ownedTip:Show()
+        return
     end
 
-    -- Token-based deferred re-populate: captures other addons' AddLine() calls.
+    -- DEFERRED POPULATE: Don't show the owned tooltip immediately. External
+    -- addons hook OnTooltipSetItem (which fires after PostCall) and call
+    -- AddLine + Show on the Blizzard tooltip. If we populate now, the owned
+    -- tooltip flashes with incomplete content for 1 frame before the deferred
+    -- re-read catches the added lines. Instead, defer to next frame so all
+    -- synchronous hooks have already run by the time we read content.
+    -- During rapid transitions (hover item A → B), hide stale content from
+    -- the previous tooltip immediately to avoid a flash of old content.
+    if ownedTip:IsShown() then
+        local lines = ReadAllContent(blizzTip)
+        local fp = BuildContentFingerprint(lines)
+        local okCmp, fpDiff = pcall(function() return fp ~= (ownedTip._contentFingerprint or "") end)
+        if not okCmp or fpDiff then
+            ownedTip:Hide()
+        end
+    end
+
+    -- Token-based deferred populate: captures other addons' AddLine() calls
+    -- that fire synchronously after PostCall (e.g., OnTooltipSetItem hooks).
     -- Each new tooltip data supersedes the previous deferred call (rapid mouse-
     -- over changes: the old callback sees a stale token and bails out).
     pendingPopulate[blizzTip] = (pendingPopulate[blizzTip] or 0) + 1
@@ -1764,7 +2001,16 @@ local function HandleTooltipData(blizzTip, tooltipData, tooltipType)
             return
         end
 
-        -- Re-read all content (text lines + embedded items + widgets)
+        -- Discover child tooltips created by other addons in response to
+        -- TooltipDataProcessor events. They fire AFTER OnShow, so the
+        -- child frame didn't exist when OnShow ran. By this deferred
+        -- callback, the external addon has created and parented it.
+        if OwnedEngine._discoverChildTooltips then
+            OwnedEngine._discoverChildTooltips(blizzTip)
+        end
+
+        -- Read all content (text lines + embedded items + widgets).
+        -- By now, all synchronous hooks (OnTooltipSetItem etc.) have run.
         local updatedLines, hasExtra = ReadAllContent(blizzTip)
         if #updatedLines == 0 then
             ownedTip:Hide()
@@ -1779,19 +2025,29 @@ local function HandleTooltipData(blizzTip, tooltipData, tooltipType)
         AnchorOwnedTooltip(ownedTip, blizzTip, settings)
         ownedTip:Show()
 
-        -- Late content re-checks — widget content and embedded items load
-        -- asynchronously. Check at increasing delays to capture additions.
-        local lastDeferredCount = #updatedLines
+        -- Store content hash for late re-checks. Use hash instead of line
+        -- count so we also catch external addons that modify existing lines
+        -- or use C_Timer to add content asynchronously.
+        local baseHash = BuildContentHash(updatedLines)
+        ownedTip._contentFingerprint = BuildContentFingerprint(updatedLines)
+        ownedTip._contentHash = baseHash
+
+        -- Late content re-checks — widget content, embedded items, and
+        -- async addon additions. Check at increasing delays; only update
+        -- when the content hash actually changed.
         local deferDelays = { 0.2, 0.5 }
         for _, delay in ipairs(deferDelays) do
             C_Timer.After(delay, function()
+                if pendingPopulate[blizzTip] then return end
                 local okStill2, still2 = pcall(blizzTip.IsShown, blizzTip)
                 if not okStill2 or not still2 then return end
                 local lateLines, lateHasExtra = ReadAllContent(blizzTip)
-                -- Account for our appended lines when comparing counts
+                if #lateLines == 0 then return end
                 local lateExtra = AppendSpellIDLines(lateLines, settings, tooltipData, tooltipType)
-                if #lateLines > lastDeferredCount then
-                    lastDeferredCount = #lateLines
+                local lateHash = BuildContentHash(lateLines)
+                local okH, hDiff = pcall(function() return lateHash ~= ownedTip._contentHash end)
+                if not okH or hDiff then
+                    ownedTip._contentHash = lateHash
                     ownedTip._hasEmbeddedContent = lateHasExtra
                     ownedTip._extraLines = lateExtra
                     ApplyClassColorName(lateLines, settings, blizzTip, tooltipType)
@@ -1965,6 +2221,13 @@ function OwnedEngine:Initialize()
                         pcall(self.SetPoint, self, "TOP", UIParent, "BOTTOM", 0, -10000)
                         return
                     end
+                    -- Lazy child tooltip discovery: addons may create
+                    -- GameTooltip-type children after init (e.g., on first
+                    -- hover over a group listing). Scan and register now.
+                    if OwnedEngine._discoverChildTooltips then
+                        OwnedEngine._discoverChildTooltips(self)
+                    end
+
                     -- Claim this tooltip for our engine
                     activelyHandling[self] = true
                     pcall(self.StopAnimating, self)
@@ -2012,7 +2275,9 @@ function OwnedEngine:Initialize()
                     C_Timer.After(0, function()
                         -- If Blizzard re-showed the tooltip (refresh cycle), don't hide
                         local okShown, shown = pcall(self.IsShown, self)
-                        if okShown and shown then return end
+                        if okShown and shown then
+                            return
+                        end
                         local ownedTip = tooltipPairs[self]
                         if ownedTip then
                             local s = Provider and Provider:GetSettings()
@@ -2048,9 +2313,9 @@ function OwnedEngine:Initialize()
                                 end
                             end
 
-                            -- Hide all shopping/comparison owned tooltips.
-                            -- Their Blizzard counterparts are torn down by
-                            -- TooltipComparisonManager when GameTooltip hides.
+                            -- Hide all shopping/comparison and child owned tooltips.
+                            -- Their Blizzard counterparts are torn down or hidden
+                            -- when GameTooltip hides (children follow parent).
                             for blizz, owned in pairs(tooltipPairs) do
                                 if owned._isShoppingTooltip then
                                     owned:Hide()
@@ -2059,6 +2324,19 @@ function OwnedEngine:Initialize()
                                     owned._shoppingLastRefresh = nil
                                     activelyHandling[blizz] = nil
                                     pendingPopulate[blizz] = nil
+                                elseif owned._isChildTooltip then
+                                    owned:Hide()
+                                    owned._contentHash = nil
+                                    owned._contentFingerprint = nil
+                                    activelyHandling[blizz] = nil
+                                    pendingPopulate[blizz] = nil
+                                    -- Explicitly hide the Blizzard child frame so
+                                    -- the addon's next Show() triggers OnShow and
+                                    -- the watcher detects a wasShown transition.
+                                    -- Without this, IsShown() stays true (we only
+                                    -- suppressed with alpha=0) and subsequent hovers
+                                    -- never refresh the child's content.
+                                    pcall(blizz.Hide, blizz)
                                 end
                             end
                         end
@@ -2521,6 +2799,43 @@ function OwnedEngine:Initialize()
                 end
             end)
         end)
+
+        -- If the frame is already shown (discovered mid-display), suppress
+        -- it immediately and trigger a deferred populate so the watcher
+        -- picks it up on the next frame.
+        local okShown, isShown = pcall(extFrame.IsShown, extFrame)
+        if okShown and isShown then
+            activelyHandling[extFrame] = true
+            pcall(extFrame.StopAnimating, extFrame)
+            if UIFrameFadeRemoveFrame then pcall(UIFrameFadeRemoveFrame, extFrame) end
+            pcall(extFrame.SetAlpha, extFrame, 0)
+            pcall(extFrame.SetClampedToScreen, extFrame, false)
+            pcall(extFrame.ClearAllPoints, extFrame)
+            pcall(extFrame.SetPoint, extFrame, "TOP", UIParent, "BOTTOM", 0, -10000)
+
+            -- Deferred populate: read the already-populated content next frame
+            pendingPopulate[extFrame] = (pendingPopulate[extFrame] or 0) + 1
+            local myToken = pendingPopulate[extFrame]
+            C_Timer.After(0, function()
+                if pendingPopulate[extFrame] ~= myToken then return end
+                pendingPopulate[extFrame] = nil
+                local okS, s = pcall(extFrame.IsShown, extFrame)
+                if not okS or not s then return end
+                local lines, hasExtra = ReadAllContent(extFrame)
+                if #lines > 0 then
+                    local settings = Provider:GetSettings()
+                    ownedFrame._hasEmbeddedContent = hasExtra
+                    ApplyClassColorName(lines, settings, extFrame)
+                    PopulateTooltip(ownedFrame, lines, nil, nil, extFrame)
+                    AnchorOwnedTooltip(ownedFrame, extFrame, settings)
+                    ownedFrame:Show()
+
+                    -- Store hash for late re-checks
+                    ownedFrame._contentHash = BuildContentHash(lines)
+                    ownedFrame._contentFingerprint = BuildContentFingerprint(lines)
+                end
+            end)
+        end
     end
 
     -- Deferred discovery: register third-party tooltip frames after
@@ -2559,6 +2874,56 @@ function OwnedEngine:Initialize()
             if extTip then
                 RegisterExternalTooltip(extTip, true, wqlPoiOwned)
             end
+        end
+
+        -- Generic child tooltip discovery: scan all tracked tooltips for
+        -- child frames that are GameTooltip-type (inherit GameTooltipTemplate).
+        -- Addons commonly parent their tooltip frames to GameTooltip so they
+        -- follow its position. These child tooltips fire TooltipDataProcessor
+        -- events but we skip them because they're not in tooltipPairs.
+        -- Discover and register them automatically.
+        local function DiscoverChildTooltips(parentBlizz, rootOwned)
+            -- rootOwned: the owned tooltip for the top-level tracked frame.
+            -- Passed through recursion so nested children (e.g., tooltip
+            -- parented to anchor frame parented to GameTooltip) still
+            -- resolve to the correct parent for anchoring.
+            local resolvedOwned = rootOwned or tooltipPairs[parentBlizz] or mainTip
+            local children = { parentBlizz:GetChildren() }
+            for _, child in ipairs(children) do
+                if not tooltipPairs[child] then
+                    local okType, cType = pcall(child.GetObjectType, child)
+                    if okType and cType == "GameTooltip" then
+                        -- This is a GameTooltipTemplate child — register it
+                        local okName, cName = pcall(child.GetName, child)
+                        local name = okName and cName or nil
+                        if name then
+                            RegisterExternalTooltip(child)
+                            -- Mark as child tooltip so anchoring chains it
+                            -- beside the parent owned tooltip instead of
+                            -- mirroring its (now off-screen) Blizzard anchor.
+                            local childOwned = tooltipPairs[child]
+                            if childOwned then
+                                childOwned._isChildTooltip = true
+                                childOwned._parentOwnedTip = resolvedOwned
+                            end
+                        end
+                    end
+                    -- Recurse: the tooltip might be nested (e.g., parented
+                    -- to an anchor frame that's parented to GameTooltip)
+                    local okGC = pcall(child.GetChildren, child)
+                    if okGC then
+                        DiscoverChildTooltips(child, resolvedOwned)
+                    end
+                end
+            end
+        end
+
+        -- Store for lazy discovery from OnShow hooks
+        OwnedEngine._discoverChildTooltips = DiscoverChildTooltips
+        OwnedEngine._registerExternalTooltip = RegisterExternalTooltip
+
+        for trackedBlizz in pairs(tooltipPairs) do
+            DiscoverChildTooltips(trackedBlizz)
         end
     end)
 end
