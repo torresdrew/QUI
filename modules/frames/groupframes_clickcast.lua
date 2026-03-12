@@ -54,6 +54,21 @@ local BUTTON_NAMES = {
     MiddleButton = "Middle Click",
     Button4 = "Button 4",
     Button5 = "Button 5",
+    ScrollUp = "Scroll Up",
+    ScrollDown = "Scroll Down",
+}
+
+-- Scroll wheel buttons use override bindings (like keyboard keys),
+-- not the SetAttribute("typeN") system used by regular mouse buttons.
+local SCROLL_WHEEL_KEYS = {
+    ScrollUp = "MOUSEWHEELUP",
+    ScrollDown = "MOUSEWHEELDOWN",
+}
+
+-- Friendly display names for binding keys shown in tooltips
+local KEY_DISPLAY_NAMES = {
+    MOUSEWHEELUP = "Scroll Up",
+    MOUSEWHEELDOWN = "Scroll Down",
 }
 
 local MODIFIER_LABELS = {
@@ -265,14 +280,26 @@ local function ResolveBindings()
                 actionType = binding.actionType,
             })
         elseif binding.button and binding.spell then
-            -- Mouse binding
-            table.insert(activeBindings, {
-                button = binding.button,
-                modifiers = binding.modifiers or "",
-                spell = binding.spell,
-                macro = binding.macro,
-                actionType = binding.actionType,
-            })
+            local scrollKey = SCROLL_WHEEL_KEYS[binding.button]
+            if scrollKey then
+                -- Scroll wheel uses override bindings (same path as keyboard keys)
+                table.insert(keyboardBindings, {
+                    key = scrollKey,
+                    modifiers = binding.modifiers or "",
+                    spell = binding.spell,
+                    macro = binding.macro,
+                    actionType = binding.actionType,
+                })
+            else
+                -- Mouse binding
+                table.insert(activeBindings, {
+                    button = binding.button,
+                    modifiers = binding.modifiers or "",
+                    spell = binding.spell,
+                    macro = binding.macro,
+                    actionType = binding.actionType,
+                })
+            end
         end
     end
 end
@@ -431,7 +458,7 @@ local function SetupFrameClickCast(frame)
                 end
                 for _, binding in ipairs(keyboardBindings) do
                     local modLabel = MODIFIER_LABELS[binding.modifiers or ""] or ""
-                    local keyLabel = binding.key or "?"
+                    local keyLabel = KEY_DISPLAY_NAMES[binding.key] or binding.key or "?"
                     local at = binding.actionType or "spell"
                     local spellLabel = PING_LABELS[at] or binding.spell or at or "?"
                     GameTooltip:AddDoubleLine(
