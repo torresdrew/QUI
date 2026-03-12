@@ -3224,6 +3224,7 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     local addBtnY = ay - FORM_ROW
     local addBtn = GUI:CreateButton(addContainer, "Add Binding", 130, 26, function()
         local actionType = addState.actionType
+        if type(actionType) ~= "string" then print("|cFFFF5555[QUI]|r Invalid action type. Please re-select.") return end
         local newBinding = { modifiers = addState.modifiers, actionType = actionType }
         if addState.bindingType == "key" then
             if not addState.key or addState.key == "" then print("|cFFFF5555[QUI]|r Press a key to bind first.") return end
@@ -3281,6 +3282,10 @@ local function BuildClickCastSettings(content, gfdb, onChange)
             listY = -28
         else
             for i, binding in ipairs(bindings) do
+                local actionType = binding.actionType
+                if type(actionType) ~= "string" then actionType = "spell" end
+                local spellName = binding.spell
+                if type(spellName) ~= "string" then spellName = nil end
                 local row = CreateFrame("Frame", nil, bindingListFrame)
                 row:SetSize(400, 28)
                 row:SetPoint("TOPLEFT", 0, listY)
@@ -3288,9 +3293,8 @@ local function BuildClickCastSettings(content, gfdb, onChange)
                 iconTex:SetSize(24, 24)
                 iconTex:SetPoint("LEFT", 0, 0)
                 iconTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-                local actionType = binding.actionType or "spell"
-                if actionType == "spell" and binding.spell then
-                    local spellID = C_Spell.GetSpellIDForSpellIdentifier(binding.spell)
+                if actionType == "spell" and spellName then
+                    local spellID = C_Spell.GetSpellIDForSpellIdentifier(spellName)
                     if spellID then
                         local info = C_Spell.GetSpellInfo(spellID)
                         iconTex:SetTexture(info and info.iconID or "Interface\\Icons\\INV_Misc_QuestionMark")
@@ -3312,7 +3316,7 @@ local function BuildClickCastSettings(content, gfdb, onChange)
                 spellText:SetPoint("LEFT", comboText, "RIGHT", 8, 0)
                 spellText:SetWidth(140)
                 spellText:SetJustifyH("LEFT")
-                local displayName = binding.spell or actionType
+                local displayName = spellName or actionType
                 if actionType == "macro" then displayName = "Macro"
                 elseif actionType == "menu" then displayName = "Unit Menu" end
                 spellText:SetText(displayName)
