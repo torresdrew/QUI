@@ -140,15 +140,6 @@ local function InstallShowHook(frame)
             self:EnableMouse(false)
         end)
     end)
-    -- Also catch SetAlpha restores (Blizzard may call SetAlpha(1) without Show)
-    hooksecurefunc(frame, "SetAlpha", function(self, alpha)
-        if not ShouldHide() then return end
-        if alpha and alpha > 0 then
-            pcall(function()
-                self:SetAlpha(0)
-            end)
-        end
-    end)
     hookedFrames[frame] = true
 end
 
