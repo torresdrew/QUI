@@ -9,13 +9,12 @@ local SkinBase = ns.SkinBase
 -- TOOLTIP SKINNING
 -- Applies QUI theme to Blizzard tooltips (GameTooltip, ItemRefTooltip, etc.)
 --
--- Since WoW 9.1.5, GameTooltip (via SharedTooltipTemplate) no longer
--- inherits BackdropTemplate. tooltip:SetBackdrop() is nil.
--- Instead, tooltips use a NineSlice sub-frame for their appearance.
--- We skin tooltips by manipulating the NineSlice directly:
---   NineSlice:SetCenterColor(r, g, b, a)  — background
---   NineSlice:SetBorderColor(r, g, b, a)  — border
--- And by applying flat textures to the NineSlice pieces for the QUI look.
+-- TAINT-SAFE OVERLAY APPROACH: Blizzard's NineSlice sub-frame is hidden
+-- via SetAlpha(0) (C-side, no geometry taint). A QUI-owned BackdropTemplate
+-- overlay frame renders the flat border/background instead. This avoids
+-- writing geometry (SetSize/SetPoint) to Blizzard NineSlice pieces, which
+-- would taint their dimensions and cause secret-value arithmetic errors
+-- in Blizzard code (e.g. EmbeddedItemTooltip_UpdateSize → GetWidth()).
 ---------------------------------------------------------------------------
 
 local FLAT_TEXTURE = "Interface\\Buttons\\WHITE8x8"
@@ -206,130 +205,51 @@ local function GetEffectiveBorderThickness()
 end
 
 ---------------------------------------------------------------------------
--- NineSlice-based tooltip skinning
--- Works with modern WoW tooltips that use NineSlice instead of BackdropTemplate.
--- Also falls back to SetBackdrop for any tooltips that still support it.
+-- Overlay-based tooltip skinning
+-- Blizzard's NineSlice is hidden (SetAlpha 0) and a QUI-owned
+-- BackdropTemplate frame renders the flat border/background instead.
+-- This avoids writing geometry to Blizzard frames (taint-safe).
+-- Falls back to SetBackdrop for tooltips that still use BackdropTemplate.
 ---------------------------------------------------------------------------
 
 -- TAINT SAFETY: Track skinned state in local tables, NOT on Blizzard frames.
 local skinnedTooltips = Helpers.CreateStateTable()   -- tooltip → true
 local hookedTooltips = Helpers.CreateStateTable()    -- tooltip → true (OnShow hooked)
 
--- NineSlice piece names used by Blizzard tooltips
-local NINE_SLICE_PIECES = {
-    "TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner",
-    "TopEdge", "BottomEdge", "LeftEdge", "RightEdge", "Center",
-}
+-- QUI-owned overlay frames for tooltip skinning (weak-keyed to allow GC)
+local skinFrames = Helpers.CreateStateTable()
 
--- NineSlice color locking state (weak-keyed to avoid preventing GC)
-local colorLockedNineSlices = Helpers.CreateStateTable()
-local isApplyingLockedColors = false
-
--- Apply flat QUI textures to all NineSlice pieces
-local function ApplyFlatNineSlice(nineSlice, edgeSize)
+-- Hide Blizzard's NineSlice visually without modifying its geometry.
+-- SetAlpha is C-side and doesn't taint frame dimensions.
+local function HideNineSlice(nineSlice)
     if not nineSlice then return end
-    if nineSlice.IsForbidden and nineSlice:IsForbidden() then return end
-
-    local px = SkinBase.GetPixelSize(nineSlice, 1)
-    local edge = (edgeSize or 1) * px
-
-    for _, pieceName in ipairs(NINE_SLICE_PIECES) do
-        local piece = nineSlice[pieceName]
-        if piece and piece.SetTexture then
-            piece:SetTexture(FLAT_TEXTURE)
-            piece:SetTexCoord(0, 1, 0, 1)
-        end
-    end
-
-    -- Size the corners and edges to match our border thickness
-    local tl = nineSlice.TopLeftCorner
-    local tr = nineSlice.TopRightCorner
-    local bl = nineSlice.BottomLeftCorner
-    local br = nineSlice.BottomRightCorner
-
-    if tl then tl:SetSize(edge, edge) end
-    if tr then tr:SetSize(edge, edge) end
-    if bl then bl:SetSize(edge, edge) end
-    if br then br:SetSize(edge, edge) end
-
-    -- Edge thickness
-    local te = nineSlice.TopEdge
-    local be = nineSlice.BottomEdge
-    local le = nineSlice.LeftEdge
-    local re = nineSlice.RightEdge
-
-    if te then te:SetHeight(edge) end
-    if be then be:SetHeight(edge) end
-    if le then le:SetWidth(edge) end
-    if re then re:SetWidth(edge) end
-
-    -- Inset the center piece so the background doesn't bleed past the border.
-    -- By default Blizzard anchors Center to fill between corners, but with thin
-    -- borders the background can extend beyond the visible edge.
-    local center = nineSlice.Center
-    if center then
-        center:ClearAllPoints()
-        center:SetPoint("TOPLEFT", nineSlice, "TOPLEFT", edge, -edge)
-        center:SetPoint("BOTTOMRIGHT", nineSlice, "BOTTOMRIGHT", -edge, edge)
-    end
+    pcall(nineSlice.SetAlpha, nineSlice, 0)
 end
 
--- Apply QUI skin colors to a tooltip's NineSlice
-local function ApplyNineSliceColors(nineSlice, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not nineSlice then return end
-
-    isApplyingLockedColors = true
-
-    -- Background (center piece)
-    if nineSlice.SetCenterColor then
-        nineSlice:SetCenterColor(bgr, bgg, bgb, bga)
-    elseif nineSlice.Center then
-        nineSlice.Center:SetVertexColor(bgr, bgg, bgb, bga)
-    end
-
-    -- Border (edge + corner pieces)
-    if nineSlice.SetBorderColor then
-        nineSlice:SetBorderColor(sr, sg, sb, sa)
-    else
-        -- Manual fallback: color each border piece individually
-        for _, pieceName in ipairs(NINE_SLICE_PIECES) do
-            if pieceName ~= "Center" then
-                local piece = nineSlice[pieceName]
-                if piece and piece.SetVertexColor then
-                    piece:SetVertexColor(sr, sg, sb, sa)
-                end
-            end
-        end
-    end
-
-    isApplyingLockedColors = false
+-- Get or create a QUI-owned BackdropTemplate overlay frame for a tooltip.
+-- Addon-owned frames are never taint-restricted.
+local function GetOrCreateSkinFrame(tooltip)
+    if skinFrames[tooltip] then return skinFrames[tooltip] end
+    local frame = CreateFrame("Frame", nil, tooltip, "BackdropTemplate")
+    frame:SetAllPoints(tooltip)
+    -- Level 0 ensures backdrop renders below tooltip content (text at ARTWORK,
+    -- backdrop bg at BACKGROUND / edges at BORDER).
+    frame:SetFrameLevel(0)
+    skinFrames[tooltip] = frame
+    return frame
 end
 
--- Lock NineSlice colors so Blizzard overrides (e.g. quality-colored borders
--- for rare/epic items) get immediately reverted to QUI's skin colors.
-local function LockNineSliceColors(nineSlice)
-    if not nineSlice or colorLockedNineSlices[nineSlice] then return end
-    colorLockedNineSlices[nineSlice] = true
-
-    if nineSlice.SetCenterColor then
-        hooksecurefunc(nineSlice, "SetCenterColor", function(self)
-            if isApplyingLockedColors or not IsEnabled() then return end
-            isApplyingLockedColors = true
-            local _, _, _, _, bgr, bgg, bgb, bga = GetEffectiveColors()
-            pcall(self.SetCenterColor, self, bgr, bgg, bgb, bga)
-            isApplyingLockedColors = false
-        end)
-    end
-
-    if nineSlice.SetBorderColor then
-        hooksecurefunc(nineSlice, "SetBorderColor", function(self)
-            if isApplyingLockedColors or not IsEnabled() then return end
-            isApplyingLockedColors = true
-            local sr, sg, sb, sa = GetEffectiveColors()
-            pcall(self.SetBorderColor, self, sr, sg, sb, sa)
-            isApplyingLockedColors = false
-        end)
-    end
+-- Apply QUI backdrop to an overlay frame.
+-- Reuses the cached backdrop table (updated in-place) for zero allocation.
+local function ApplyOverlayBackdrop(skinFrame, edgeSize, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    _cachedBackdrop.edgeSize = edgeSize
+    _cachedBackdropInsets.left = edgeSize
+    _cachedBackdropInsets.right = edgeSize
+    _cachedBackdropInsets.top = edgeSize
+    _cachedBackdropInsets.bottom = edgeSize
+    skinFrame:SetBackdrop(_cachedBackdrop)
+    skinFrame:SetBackdropColor(bgr, bgg, bgb, bga)
+    skinFrame:SetBackdropBorderColor(sr, sg, sb, sa)
 end
 
 -- Full skin application for a tooltip (called outside combat only)
@@ -347,24 +267,21 @@ local function SkinTooltip(tooltip)
         -- re-application of default styles during tooltip resize/re-layout.
         -- TAINT SAFETY: Only clear on the NineSlice sub-frame, NEVER on the
         -- tooltip frame itself. Writing to tooltip.layoutType/layoutTextureKit
-        -- taints the GameTooltip frame. During combat, Blizzard's widget code
-        -- (GameTooltip_AddWidgetSet → RegisterForWidgetSet → ProcessWidget →
-        -- UIWidgetTemplateTextWithState:Setup) reads tainted keys, propagating
-        -- taint to the execution context. GetStringHeight() then returns a
-        -- secret value, breaking widget arithmetic. The SharedTooltip_SetBackdropStyle
-        -- hook and OnShow hook handle re-styling without needing tooltip-level clears.
+        -- taints the GameTooltip frame.
         ns.layoutType = nil
         ns.layoutTextureKit = nil
         ns.backdropInfo = nil
 
-        -- NineSlice path (modern WoW 9.1.5+)
-        ApplyFlatNineSlice(ns, thickness)
-        ApplyNineSliceColors(ns, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        LockNineSliceColors(ns)
-        pcall(ns.Show, ns)
+        -- Hide Blizzard's NineSlice (no geometry modification — avoids taint)
+        HideNineSlice(ns)
+
+        -- Create QUI-owned overlay with BackdropTemplate
+        local skinFrame = GetOrCreateSkinFrame(tooltip)
+        local px = SkinBase.GetPixelSize(ns, 1)
+        local edge = (thickness or 1) * px
+        ApplyOverlayBackdrop(skinFrame, edge, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     elseif tooltip.SetBackdrop then
         -- Legacy BackdropTemplate path (fallback)
-        -- Memory optimization: reuse cached backdrop table (updated in-place)
         local px = SkinBase.GetPixelSize(tooltip, 1)
         local edge = thickness * px
         _cachedBackdrop.edgeSize = edge
@@ -393,13 +310,15 @@ local function ReapplySkin(tooltip)
 
     local ns = tooltip.NineSlice
     if ns then
-        -- Re-apply flat textures/geometry every show because Blizzard can restore
-        -- default rounded NineSlice piece settings between tooltip displays.
-        ApplyFlatNineSlice(ns, thickness)
-        ApplyNineSliceColors(ns, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        pcall(ns.Show, ns)
+        -- Re-hide NineSlice every show (Blizzard may restore styles between displays)
+        HideNineSlice(ns)
+
+        -- Update overlay backdrop and colors
+        local skinFrame = GetOrCreateSkinFrame(tooltip)
+        local px = SkinBase.GetPixelSize(ns, 1)
+        local edge = (thickness or 1) * px
+        ApplyOverlayBackdrop(skinFrame, edge, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     elseif tooltip.SetBackdrop then
-        -- Memory optimization: reuse cached backdrop table (updated in-place)
         local px = SkinBase.GetPixelSize(tooltip, 1)
         local edge = thickness * px
         _cachedBackdrop.edgeSize = edge
@@ -414,85 +333,29 @@ local function ReapplySkin(tooltip)
 end
 
 ---------------------------------------------------------------------------
--- Cached pixel size for combat-safe NineSlice geometry.
--- GetEffectiveScale() returns secret values during combat, so
--- SkinBase.GetPixelSize() falls back to 1 (wrong — makes borders huge).
--- We cache the correct pixel size on UI_SCALE_CHANGED (same pattern as
--- the cached UIParent scale in tooltip_provider.lua). NineSlice inherits
--- UIParent's scale chain (tooltips don't use custom SetScale), so using
--- UIParent-based pixel size is correct.
----------------------------------------------------------------------------
-local cachedPixelSize = 1
-
-local function UpdateCachedPixelSize()
-    local core = GetCore()
-    if core and core.GetPixelSize then
-        local px = core:GetPixelSize() -- nil frame → UIParent scale
-        if type(px) == "number" and px > 0 then
-            cachedPixelSize = px
-        end
-    end
-end
-
-local pixelCacheFrame = CreateFrame("Frame")
-pixelCacheFrame:RegisterEvent("UI_SCALE_CHANGED")
-pixelCacheFrame:RegisterEvent("DISPLAY_SIZE_CHANGED")
-pixelCacheFrame:RegisterEvent("ADDON_LOADED")
-pixelCacheFrame:SetScript("OnEvent", UpdateCachedPixelSize)
-
----------------------------------------------------------------------------
--- Combat-safe reapply: full NineSlice skin using cached pixel size.
--- All operations are C-side visual calls on the NineSlice sub-frame
--- (not on GameTooltip itself), so they don't propagate taint to widget
--- containers. Geometry uses cachedPixelSize instead of live
--- GetEffectiveScale() to avoid secret values.
+-- Combat-safe reapply: re-hide NineSlice and refresh overlay colors.
+-- All operations target either the NineSlice (SetAlpha — C-side) or the
+-- QUI-owned overlay frame (addon frames are never taint-restricted).
+-- No geometry writes to Blizzard frames, no pixel size math needed.
 ---------------------------------------------------------------------------
 local function CombatSafeReapply(tooltip)
     if not tooltip then return end
     if tooltip.IsForbidden and tooltip:IsForbidden() then return end
     if not IsEnabled() then return end
 
+    -- Re-hide Blizzard NineSlice (C-side, taint-safe)
     local ns = tooltip.NineSlice
-    if not ns then return end
-
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetEffectiveColors()
-    local thickness = GetEffectiveBorderThickness()
-    local edge = (thickness or 1) * cachedPixelSize
-
-    -- Flat textures (Blizzard may have re-applied default textures via
-    -- SharedTooltip_SetBackdropStyle between tooltip shows)
-    for _, pieceName in ipairs(NINE_SLICE_PIECES) do
-        local piece = ns[pieceName]
-        if piece and piece.SetTexture then
-            pcall(piece.SetTexture, piece, FLAT_TEXTURE)
-            pcall(piece.SetTexCoord, piece, 0, 1, 0, 1)
-        end
+    if ns then
+        pcall(ns.SetAlpha, ns, 0)
     end
 
-    -- Geometry (corners, edges, center inset)
-    local tl, tr = ns.TopLeftCorner, ns.TopRightCorner
-    local bl, br = ns.BottomLeftCorner, ns.BottomRightCorner
-    if tl then pcall(tl.SetSize, tl, edge, edge) end
-    if tr then pcall(tr.SetSize, tr, edge, edge) end
-    if bl then pcall(bl.SetSize, bl, edge, edge) end
-    if br then pcall(br.SetSize, br, edge, edge) end
-
-    local te, be = ns.TopEdge, ns.BottomEdge
-    local le, re = ns.LeftEdge, ns.RightEdge
-    if te then pcall(te.SetHeight, te, edge) end
-    if be then pcall(be.SetHeight, be, edge) end
-    if le then pcall(le.SetWidth, le, edge) end
-    if re then pcall(re.SetWidth, re, edge) end
-
-    local center = ns.Center
-    if center then
-        pcall(center.ClearAllPoints, center)
-        pcall(center.SetPoint, center, "TOPLEFT", ns, "TOPLEFT", edge, -edge)
-        pcall(center.SetPoint, center, "BOTTOMRIGHT", ns, "BOTTOMRIGHT", -edge, edge)
+    -- Refresh overlay colors (addon-owned frame, always safe)
+    local skinFrame = skinFrames[tooltip]
+    if skinFrame then
+        local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetEffectiveColors()
+        skinFrame:SetBackdropColor(bgr, bgg, bgb, bga)
+        skinFrame:SetBackdropBorderColor(sr, sg, sb, sa)
     end
-
-    -- Colors
-    ApplyNineSliceColors(ns, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 end
 
 ---------------------------------------------------------------------------
@@ -547,12 +410,10 @@ local function SetupEmbeddedTooltipHooks()
                 -- SetAlpha is C-side, safe in combat.
                 StripEmbeddedBorder(tooltip)
             elseif InCombatLockdown() then
-                -- Combat: textures + colors only (no geometry — GetEffectiveScale
-                -- can return secret values). These are C-side visual ops on the
-                -- NineSlice sub-frame, not on GameTooltip itself.
+                -- Combat: re-hide NineSlice + refresh overlay colors only.
                 pcall(CombatSafeReapply, tooltip)
             elseif skinnedTooltips[tooltip] then
-                -- Out of combat: full reapply including geometry.
+                -- Out of combat: full reapply (overlay backdrop + colors).
                 pcall(ReapplySkin, tooltip)
             end
         end)
@@ -709,9 +570,7 @@ local function HookTooltipOnShow(tooltip)
         if not IsEnabled() then return end
 
         if InCombatLockdown() then
-            -- Combat: textures + colors only (C-side visual ops on NineSlice).
-            -- Skip geometry (GetEffectiveScale can return secret values) and
-            -- font sizing (modifying FontStrings propagates taint).
+            -- Combat: re-hide NineSlice + refresh overlay colors only.
             pcall(CombatSafeReapply, self)
             return
         end
@@ -906,8 +765,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
                     if not IsEnabled() then
                         -- nothing
                     elseif InCombatLockdown() then
-                        -- Combat: textures + colors only (C-side ops on NineSlice).
-                        -- Skip geometry and font sizing during combat.
+                        -- Combat: re-hide NineSlice + refresh overlay colors only.
                         pcall(CombatSafeReapply, GameTooltip)
                     else
                         if not skinnedTooltips[GameTooltip] then

@@ -3059,6 +3059,8 @@ local function BuildClickCastSettings(content, gfdb, onChange)
         { value = "MiddleButton", text = "Middle Click" },
         { value = "Button4",      text = "Button 4" },
         { value = "Button5",      text = "Button 5" },
+        { value = "ScrollUp",     text = "Scroll Up" },
+        { value = "ScrollDown",   text = "Scroll Down" },
     }
     local MOD_OPTIONS = {
         { value = "",              text = "None" },
