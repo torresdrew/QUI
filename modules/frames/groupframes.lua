@@ -3116,6 +3116,11 @@ function QUI_GF:Initialize()
     local GFCC = ns.QUI_GroupFrameClickCast
     if GFCC then
         GFCC:Initialize()
+        -- Group frames were pre-created before GFCC was initialized,
+        -- so they missed registration — catch up now.
+        if GFCC:IsEnabled() then
+            GFCC:RegisterAllFrames()
+        end
     end
 
     -- Hide Blizzard group frames

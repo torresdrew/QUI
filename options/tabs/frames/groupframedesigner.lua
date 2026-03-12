@@ -3001,7 +3001,8 @@ local function BuildClickCastSettings(content, gfdb, onChange)
             keyText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
         end)
         captureBtn:SetScript("OnKeyDown", function(self, key)
-            if not self.isCapturing then return end
+            if not self.isCapturing then self:SetPropagateKeyboardInput(true) return end
+            self:SetPropagateKeyboardInput(false)
             if key == "ESCAPE" then
                 self.isCapturing = false
                 self:EnableKeyboard(false)
@@ -3038,7 +3039,13 @@ local function BuildClickCastSettings(content, gfdb, onChange)
             if not self.isCapturing then self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.7) end
         end)
         captureBtn:SetScript("OnLeave", function(self)
-            if not self.isCapturing then self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1) end
+            if self.isCapturing then
+                -- Cancel capture when mouse leaves — prevents stuck keyboard capture
+                self.isCapturing = false
+                self:EnableKeyboard(false)
+                UpdateKeyText()
+            end
+            self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
         end)
 
         return row
@@ -3223,6 +3230,9 @@ local function BuildClickCastSettings(content, gfdb, onChange)
 
     dropZone:SetScript("OnReceiveDrag", HandleCursorDrop)
     dropZone:SetScript("OnClick", function()
+        -- Clear any lingering editbox focus
+        if spellInput then spellInput:ClearFocus() end
+        if macroInput then macroInput:ClearFocus() end
         if GetCursorInfo() then HandleCursorDrop() end
     end)
     dropZone:SetScript("OnEnter", function(self)
@@ -3319,7 +3329,19 @@ local function BuildClickCastSettings(content, gfdb, onChange)
         if not self.isCapturing then self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.7) end
     end)
     keyCaptureBtn:SetScript("OnLeave", function(self)
-        if not self.isCapturing then self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1) end
+        if self.isCapturing then
+            -- Cancel capture when mouse leaves — prevents stuck keyboard capture
+            self.isCapturing = false
+            self:EnableKeyboard(false)
+            if addState.key then
+                keyCaptureText:SetText(addState.key)
+                keyCaptureText:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+            else
+                keyCaptureText:SetText("Click to bind a key")
+                keyCaptureText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+            end
+        end
+        self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
     end)
     ay = ay - FORM_ROW
 
@@ -3406,6 +3428,17 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     macroInput:SetScript("OnTextChanged", function(self) addState.macroText = self:GetText() end)
     macroInput:SetScript("OnEditFocusGained", function() macroInputBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1) end)
     macroInput:SetScript("OnEditFocusLost", function() macroInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1) end)
+
+    -- Clear editbox focus when the content is hidden (tab change / panel close)
+    -- to prevent stuck keyboard capture from editboxes.
+    content:HookScript("OnHide", function()
+        if spellInput then spellInput:ClearFocus() end
+        if macroInput then macroInput:ClearFocus() end
+        if keyCaptureBtn and keyCaptureBtn.isCapturing then
+            keyCaptureBtn.isCapturing = false
+            keyCaptureBtn:EnableKeyboard(false)
+        end
+    end)
 
     local function RefreshClickCastPixelFrames()
         SetHeightPx(dropZone, 68)

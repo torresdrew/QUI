@@ -83,12 +83,36 @@ local MODIFIER_LABELS = {
 }
 
 ---------------------------------------------------------------------------
--- KEYBOARD KEY HELPERS
+-- MODIFIER HELPERS
 ---------------------------------------------------------------------------
--- Convert our modifier format ("shift", "ctrl-alt") to WoW binding prefix ("SHIFT-", "CTRL-ALT-")
+-- Parse modifier string into canonical alphabetical order (alt-ctrl-shift-)
+-- for WoW's SecureButton attribute system.
+local function ModifiersToAttributePrefix(mods)
+    if not mods or mods == "" then return "" end
+    local lower = mods:lower()
+    local hasAlt   = lower:find("alt") ~= nil
+    local hasCtrl  = lower:find("ctrl") ~= nil
+    local hasShift = lower:find("shift") ~= nil
+    local result = ""
+    if hasAlt   then result = result .. "alt-" end
+    if hasCtrl  then result = result .. "ctrl-" end
+    if hasShift then result = result .. "shift-" end
+    return result
+end
+
+-- Convert our modifier format to WoW binding prefix ("SHIFT-", "CTRL-ALT-")
+-- Binding keys use UPPERCASE, same alphabetical order.
 local function ModifiersToBindingPrefix(mods)
     if not mods or mods == "" then return "" end
-    return mods:upper() .. "-"
+    local lower = mods:lower()
+    local hasAlt   = lower:find("alt") ~= nil
+    local hasCtrl  = lower:find("ctrl") ~= nil
+    local hasShift = lower:find("shift") ~= nil
+    local result = ""
+    if hasAlt   then result = result .. "ALT-" end
+    if hasCtrl  then result = result .. "CTRL-" end
+    if hasShift then result = result .. "SHIFT-" end
+    return result
 end
 
 ---------------------------------------------------------------------------
@@ -161,7 +185,14 @@ local LEAVE_SNIPPET = [[
     owner:ClearBindings()
 ]]
 
--- Wrap a frame's OnEnter/OnLeave with secure handler snippets.
+-- WrapScript pre-body for OnHide — clears override bindings when the frame
+-- hides while still hovered (e.g. group member leaves, unit watch hides frame).
+-- Without this, keyboard override bindings linger on a hidden frame.
+local HIDE_SNIPPET = [[
+    owner:ClearBindings()
+]]
+
+-- Wrap a frame's OnEnter/OnLeave/OnHide with secure handler snippets.
 -- Only called once per frame (tracked by secureWrappedFrames).
 local function WrapFrameSecureHandlers(frame)
     if secureWrappedFrames[frame] then return end
@@ -170,6 +201,7 @@ local function WrapFrameSecureHandlers(frame)
     local header = GetBindingHeader()
     SecureHandlerWrapScript(frame, "OnEnter", header, ENTER_SNIPPET)
     SecureHandlerWrapScript(frame, "OnLeave", header, LEAVE_SNIPPET)
+    SecureHandlerWrapScript(frame, "OnHide", header, HIDE_SNIPPET)
 
     secureWrappedFrames[frame] = true
 end
@@ -270,16 +302,21 @@ local function ResolveBindings()
     end
 
     for _, binding in ipairs(bindings) do
-        if binding.key and binding.spell then
+        -- A binding needs a trigger (key or button) and either a spell, macro,
+        -- or a non-spell action type (target/focus/assist/menu/ping).
+        local actionType = binding.actionType or "spell"
+        local hasAction = binding.spell or binding.macro or actionType ~= "spell"
+
+        if binding.key and hasAction then
             -- Keyboard binding
             table.insert(keyboardBindings, {
                 key = binding.key,
                 modifiers = binding.modifiers or "",
                 spell = binding.spell,
                 macro = binding.macro,
-                actionType = binding.actionType,
+                actionType = actionType,
             })
-        elseif binding.button and binding.spell then
+        elseif binding.button and hasAction then
             local scrollKey = SCROLL_WHEEL_KEYS[binding.button]
             if scrollKey then
                 -- Scroll wheel uses override bindings (same path as keyboard keys)
@@ -288,7 +325,7 @@ local function ResolveBindings()
                     modifiers = binding.modifiers or "",
                     spell = binding.spell,
                     macro = binding.macro,
-                    actionType = binding.actionType,
+                    actionType = actionType,
                 })
             else
                 -- Mouse binding
@@ -297,7 +334,7 @@ local function ResolveBindings()
                     modifiers = binding.modifiers or "",
                     spell = binding.spell,
                     macro = binding.macro,
-                    actionType = binding.actionType,
+                    actionType = actionType,
                 })
             end
         end
@@ -327,12 +364,7 @@ local function SetupFrameClickCast(frame)
 
     -- Set secure attributes for each mouse binding
     for _, binding in ipairs(activeBindings) do
-        local prefix = ""
-        local mods = binding.modifiers or ""
-        if mods ~= "" then
-            -- Convert "shift" to "shift-", "shift-ctrl" to "shift-ctrl-", etc.
-            prefix = mods:gsub("%-$", "") .. "-"
-        end
+        local prefix = ModifiersToAttributePrefix(binding.modifiers)
 
         local btnNum = BUTTON_NUMBERS[binding.button] or "1"
         local actionType = binding.actionType or "spell"
@@ -361,10 +393,13 @@ local function SetupFrameClickCast(frame)
         end
     end
 
-    -- Set up keyboard bindings: wrap with secure handlers + set virtual button attributes
+    -- Set up keyboard bindings (includes scroll wheel):
+    -- wrap with secure handlers + set virtual button attributes
     if #keyboardBindings > 0 then
         WrapFrameSecureHandlers(frame)
         SetFrameKeyAttributes(frame)
+        -- Enable mouse wheel on the frame so scroll bindings generate events
+        frame:EnableMouseWheel(true)
     end
 
     registeredFrames[frame] = true
@@ -481,7 +516,8 @@ local function ClearFrameClickCast(frame)
     if InCombatLockdown() then return end
 
     -- Clear all mouse click-cast attributes for every button/modifier combo
-    local modPrefixes = { "", "shift-", "ctrl-", "alt-", "shift-ctrl-", "shift-alt-", "ctrl-alt-", "shift-ctrl-alt-" }
+    -- Prefixes in canonical alphabetical order (alt-ctrl-shift) to match WoW's secure template
+    local modPrefixes = { "", "alt-", "ctrl-", "shift-", "alt-ctrl-", "alt-shift-", "ctrl-shift-", "alt-ctrl-shift-" }
     for _, prefix in ipairs(modPrefixes) do
         for _, btnNum in pairs(BUTTON_NUMBERS) do
             frame:SetAttribute(prefix .. "type" .. btnNum, nil)

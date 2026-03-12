@@ -4142,21 +4142,109 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     -- instead of 7 separate cascading timers (0.2, 0.3, 0.4, 0.45, 0.47, 0.5)
     C_Timer.After(0.2, function()
         -- Cache _G function lookups at point of use (avoid repeated _G hash lookups)
+        -- Frames & Layout
+        local ApplyAllFrameAnchors = _G.QUI_ApplyAllFrameAnchors
         local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
+        local RefreshGroupFrames = _G.QUI_RefreshGroupFrames
+        local RefreshActionBars = _G.QUI_RefreshActionBars
+        local RefreshBuffBar = _G.QUI_RefreshBuffBar
+        local RefreshBuffBorders = _G.QUI_RefreshBuffBorders
+        local RefreshRaidBuffs = _G.QUI_RefreshRaidBuffs
+        local RefreshTotemBar = _G.QUI_RefreshTotemBar
+        local RefreshUIHider = _G.QUI_RefreshUIHider
+        if ApplyAllFrameAnchors then ApplyAllFrameAnchors() end
+        if RefreshUnitFrames then RefreshUnitFrames() end
+        if RefreshGroupFrames then RefreshGroupFrames() end
+        if RefreshActionBars then RefreshActionBars() end
+        if RefreshBuffBar then RefreshBuffBar() end
+        if RefreshBuffBorders then RefreshBuffBorders() end
+        if RefreshRaidBuffs then RefreshRaidBuffs() end
+        if RefreshTotemBar then RefreshTotemBar() end
+        if RefreshUIHider then RefreshUIHider() end
+
+        -- Cooldowns
         local RefreshNCDM = _G.QUI_RefreshNCDM
         local RefreshCDMVisibility = _G.QUI_RefreshCDMVisibility
         local RefreshCooldownSwipe = _G.QUI_RefreshCooldownSwipe
-        local RefreshReticle = _G.QUI_RefreshReticle
-        local RefreshCustomTrackers = _G.QUI_RefreshCustomTrackers
-        local ApplyAllFrameAnchors = _G.QUI_ApplyAllFrameAnchors
-        if ApplyAllFrameAnchors then ApplyAllFrameAnchors() end
-        if RefreshUnitFrames then RefreshUnitFrames() end
         if RefreshNCDM then RefreshNCDM() end
         if RefreshCDMVisibility then RefreshCDMVisibility() end
         if RefreshCooldownSwipe then RefreshCooldownSwipe() end
+
+        -- QoL modules
+        local RefreshReticle = _G.QUI_RefreshReticle
+        local RefreshCrosshair = _G.QUI_RefreshCrosshair
+        local RefreshXPTracker = _G.QUI_RefreshXPTracker
+        local RefreshSkyriding = _G.QUI_RefreshSkyriding
+        local RefreshFocusCastAlert = _G.QUI_RefreshFocusCastAlert
+        local RefreshPetWarning = _G.QUI_RefreshPetWarning
+        local RefreshRangeCheck = _G.QUI_RefreshRangeCheck
         if RefreshReticle then RefreshReticle() end
+        if RefreshCrosshair then RefreshCrosshair() end
+        if RefreshXPTracker then RefreshXPTracker() end
+        if RefreshSkyriding then RefreshSkyriding() end
+        if RefreshFocusCastAlert then RefreshFocusCastAlert() end
+        if RefreshPetWarning then RefreshPetWarning() end
+        if RefreshRangeCheck then RefreshRangeCheck() end
+
+        -- Combat
+        local RefreshCombatText = _G.QUI_RefreshCombatText
+        if RefreshCombatText then RefreshCombatText() end
+
+        -- Trackers
+        local RefreshCustomTrackers = _G.QUI_RefreshCustomTrackers
         if RefreshCustomTrackers then RefreshCustomTrackers() end
+
+        -- Data & Chat
+        local RefreshDatapanels = _G.QUI_RefreshDatapanels
+        local RefreshChat = _G.QUI_RefreshChat
+        if RefreshDatapanels then RefreshDatapanels() end
+        if RefreshChat then RefreshChat() end
+
+        -- Character
+        local RefreshCharacterPane = _G.QUI_RefreshCharacterPane
+        if RefreshCharacterPane then RefreshCharacterPane() end
+
+        -- Keybinds
+        local RefreshKeybinds = _G.QUI_RefreshKeybinds
+        if RefreshKeybinds then RefreshKeybinds() end
+
+        -- Dungeon
+        local RefreshKeyTracker = _G.QUI_RefreshKeyTracker
+        local RefreshBrezCounter = _G.QUI_RefreshBrezCounter
+        if RefreshKeyTracker then RefreshKeyTracker() end
+        if RefreshBrezCounter then RefreshBrezCounter() end
+
         self:ShowProfileChangeNotification()
+    end)
+
+    -- Skinning refreshes: slightly later to avoid stacking too much work at 0.2s
+    C_Timer.After(0.5, function()
+        local RefreshCharacterFrameColors = _G.QUI_RefreshCharacterFrameColors
+        local RefreshInspectColors = _G.QUI_RefreshInspectColors
+        local RefreshInstanceFramesColors = _G.QUI_RefreshInstanceFramesColors
+        local RefreshOverrideActionBarColors = _G.QUI_RefreshOverrideActionBarColors
+        local RefreshGameMenuColors = _G.QUI_RefreshGameMenuColors
+        local RefreshGameMenuFontSize = _G.QUI_RefreshGameMenuFontSize
+        local RefreshReadyCheckColors = _G.QUI_RefreshReadyCheckColors
+        local RefreshKeystoneColors = _G.QUI_RefreshKeystoneColors
+        local RefreshAlertColors = _G.QUI_RefreshAlertColors
+        local RefreshLootColors = _G.QUI_RefreshLootColors
+        local RefreshMPlusTimerColors = _G.QUI_RefreshMPlusTimerColors
+        local RefreshObjectiveTracker = _G.QUI_RefreshObjectiveTracker
+        local RefreshPowerBarAltColors = _G.QUI_RefreshPowerBarAltColors
+        if RefreshCharacterFrameColors then RefreshCharacterFrameColors() end
+        if RefreshInspectColors then RefreshInspectColors() end
+        if RefreshInstanceFramesColors then RefreshInstanceFramesColors() end
+        if RefreshOverrideActionBarColors then RefreshOverrideActionBarColors() end
+        if RefreshGameMenuColors then RefreshGameMenuColors() end
+        if RefreshGameMenuFontSize then RefreshGameMenuFontSize() end
+        if RefreshReadyCheckColors then RefreshReadyCheckColors() end
+        if RefreshKeystoneColors then RefreshKeystoneColors() end
+        if RefreshAlertColors then RefreshAlertColors() end
+        if RefreshLootColors then RefreshLootColors() end
+        if RefreshMPlusTimerColors then RefreshMPlusTimerColors() end
+        if RefreshObjectiveTracker then RefreshObjectiveTracker() end
+        if RefreshPowerBarAltColors then RefreshPowerBarAltColors() end
     end)
 end
 
