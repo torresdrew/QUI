@@ -442,7 +442,10 @@ local function UpdateBackdrop()
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
     if not backdrop then CreateBackdrop() end
-    
+
+    -- Ensure backdrop is visible (may have been hidden by HUD detection or disabled state)
+    backdropFrame:Show()
+
     -- Border shows on all 4 sides, so we need size + (borderSize * 2)
     local fullSize = settings.size + (settings.borderSize * 2)
     backdrop:SetSize(fullSize, fullSize)
@@ -2947,10 +2950,11 @@ local function CheckExternalHud()
     local currentAlpha = Minimap:GetEffectiveAlpha()
     local currentWidth = Minimap:GetWidth()
 
+    -- QUI reparents Minimap to UIParent, so check against UIParent (not MinimapCluster)
     local hudDetected = (currentScale > expectedScale * 2.0)
         or (currentAlpha < 0.5)
         or (currentWidth > expectedSize * 2.0)
-        or (Minimap:GetParent() ~= MinimapCluster)
+        or (Minimap:GetParent() ~= UIParent)
 
     -- Fallback: check actual rendered pixel size via GetRect() which bypasses
     -- metatable overrides that some HUD addons use to hide their changes
