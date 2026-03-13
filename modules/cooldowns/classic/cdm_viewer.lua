@@ -1299,7 +1299,9 @@ local function LayoutViewer(viewerName, trackerKey)
     local baseTotalHeight = totalHeight
     local proxyTotalHeight = totalHeight
     vs.cdmProxyYOffset = 0
-    local growUp = not isVertical and (settings.growthDirection == "UP")
+    local growReverse = (settings.growthDirection == "UP")
+    local growUp = not isVertical and growReverse
+    local growLeft = isVertical and growReverse
     if not isVertical and numRowsUsed > 0 then
         local pos = growUp and (-baseTotalHeight / 2) or (baseTotalHeight / 2)
         local actualTop = growUp and (baseTotalHeight / 2) or pos
@@ -1344,7 +1346,7 @@ local function LayoutViewer(viewerName, trackerKey)
     -- Loop safety: we no longer call SetSize on the viewer, and OnSizeChanged
     -- no longer calls LayoutViewer, so CENTER anchoring cannot create loops.
     local currentY = growUp and (-baseTotalHeight / 2) or (baseTotalHeight / 2)
-    local currentX = -totalWidth / 2  -- Start from left (negative X from center) for vertical
+    local currentX = growLeft and (totalWidth / 2) or (-totalWidth / 2)
 
     for rowNum, rowConfig in ipairs(rows) do
         local rowIcons = {}
@@ -1371,8 +1373,7 @@ local function LayoutViewer(viewerName, trackerKey)
 
             if isVertical then
                 -- Vertical: icons stack top-to-bottom within each column
-                -- Columns stack left-to-right
-                local colCenterX = currentX + (iconWidth / 2)
+                local colCenterX = growLeft and (currentX - iconWidth / 2) or (currentX + iconWidth / 2)
                 local colStartY = baseTotalHeight / 2 - iconHeight / 2
                 y = colStartY - ((i - 1) * (iconHeight + rowConfig.padding)) + rowConfig.yOffset
                 x = colCenterX + (rowConfig.xOffset or 0)
@@ -1441,7 +1442,11 @@ local function LayoutViewer(viewerName, trackerKey)
         end
 
         if isVertical then
-            currentX = currentX + iconWidth + rowGap
+            if growLeft then
+                currentX = currentX - iconWidth - rowGap
+            else
+                currentX = currentX + iconWidth + rowGap
+            end
         else
             if growUp then
                 currentY = currentY + iconHeight + rowGap

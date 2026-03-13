@@ -1371,19 +1371,23 @@ local function CreateCDMSetupPage(parent)
                 {value = "HORIZONTAL", text = "Horizontal"},
                 {value = "VERTICAL", text = "Vertical"},
             }
-            local directionDropdown = GUI:CreateFormDropdown(tabContent, "Layout Direction", directionOptions, "layoutDirection", ess, RefreshNCDM)
+            local directionDropdown = GUI:CreateFormDropdown(tabContent, "Layout Direction", directionOptions, "layoutDirection", ess, function()
+                RefreshNCDM()
+                rebuildEssential()
+            end)
             directionDropdown:SetPoint("TOPLEFT", PAD, y)
             directionDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
             y = y - FORM_ROW
             tabContent._currentY = y
 
-            -- Row Growth Direction dropdown
+            -- Growth Direction dropdown (labels change based on layout direction)
             ess.growthDirection = ess.growthDirection or "DOWN"
+            local isVert = (ess.layoutDirection == "VERTICAL")
             local growthOptions = {
-                {value = "DOWN", text = "Down (default)"},
-                {value = "UP", text = "Up"},
+                {value = "DOWN", text = isVert and "Right (default)" or "Down (default)"},
+                {value = "UP", text = isVert and "Left" or "Up"},
             }
-            local growthDropdown = GUI:CreateFormDropdown(tabContent, "Row Growth Direction", growthOptions, "growthDirection", ess, RefreshNCDM)
+            local growthDropdown = GUI:CreateFormDropdown(tabContent, "Growth Direction", growthOptions, "growthDirection", ess, RefreshNCDM)
             growthDropdown:SetPoint("TOPLEFT", PAD, y)
             growthDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
             y = y - FORM_ROW
@@ -1482,19 +1486,23 @@ local function CreateCDMSetupPage(parent)
                 {value = "HORIZONTAL", text = "Horizontal"},
                 {value = "VERTICAL", text = "Vertical"},
             }
-            local directionDropdown = GUI:CreateFormDropdown(tabContent, "Layout Direction", directionOptions, "layoutDirection", util, RefreshNCDM)
+            local directionDropdown = GUI:CreateFormDropdown(tabContent, "Layout Direction", directionOptions, "layoutDirection", util, function()
+                RefreshNCDM()
+                rebuildUtility()
+            end)
             directionDropdown:SetPoint("TOPLEFT", PAD, y)
             directionDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
             y = y - FORM_ROW
             tabContent._currentY = y
 
-            -- Row Growth Direction dropdown
+            -- Growth Direction dropdown (labels change based on layout direction)
             util.growthDirection = util.growthDirection or "DOWN"
+            local isVert = (util.layoutDirection == "VERTICAL")
             local growthOptions = {
-                {value = "DOWN", text = "Down (default)"},
-                {value = "UP", text = "Up"},
+                {value = "DOWN", text = isVert and "Right (default)" or "Down (default)"},
+                {value = "UP", text = isVert and "Left" or "Up"},
             }
-            local growthDropdown = GUI:CreateFormDropdown(tabContent, "Row Growth Direction", growthOptions, "growthDirection", util, RefreshNCDM)
+            local growthDropdown = GUI:CreateFormDropdown(tabContent, "Growth Direction", growthOptions, "growthDirection", util, RefreshNCDM)
             growthDropdown:SetPoint("TOPLEFT", PAD, y)
             growthDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
             y = y - FORM_ROW

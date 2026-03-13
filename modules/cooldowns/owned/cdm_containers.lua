@@ -603,7 +603,9 @@ local function LayoutContainer(trackerKey)
     local baseTotalHeight = totalHeight
     local proxyTotalHeight = totalHeight
     vs.cdmProxyYOffset = 0
-    local growUp = not isVertical and (settings.growthDirection == "UP")
+    local growReverse = (settings.growthDirection == "UP")
+    local growUp = not isVertical and growReverse
+    local growLeft = isVertical and growReverse
     if not isVertical and numRowsUsed > 0 then
         local pos = growUp and (-baseTotalHeight / 2) or (baseTotalHeight / 2)
         local actualTop = growUp and (baseTotalHeight / 2) or pos
@@ -643,7 +645,7 @@ local function LayoutContainer(trackerKey)
 
     -- Position icons using CENTER-based anchoring
     local currentY = growUp and (-baseTotalHeight / 2) or (baseTotalHeight / 2)
-    local currentX = -totalWidth / 2
+    local currentX = growLeft and (totalWidth / 2) or (-totalWidth / 2)
 
     for rowNum, rowConfig in ipairs(rows) do
         local rowIcons = {}
@@ -669,7 +671,7 @@ local function LayoutContainer(trackerKey)
             local x, y
 
             if isVertical then
-                local colCenterX = currentX + (iconWidth / 2)
+                local colCenterX = growLeft and (currentX - iconWidth / 2) or (currentX + iconWidth / 2)
                 local colStartY = baseTotalHeight / 2 - iconHeight / 2
                 y = colStartY - ((i - 1) * (iconHeight + rowConfig.padding)) + rowConfig.yOffset
                 x = colCenterX + (rowConfig.xOffset or 0)
@@ -707,7 +709,11 @@ local function LayoutContainer(trackerKey)
         end
 
         if isVertical then
-            currentX = currentX + iconWidth + ROW_GAP
+            if growLeft then
+                currentX = currentX - iconWidth - ROW_GAP
+            else
+                currentX = currentX + iconWidth + ROW_GAP
+            end
         else
             if growUp then
                 currentY = currentY + iconHeight + ROW_GAP
