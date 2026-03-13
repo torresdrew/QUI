@@ -643,24 +643,25 @@ local function UpdateStatusBarPosition(anchorFrame, castSettings, barHeight, ico
     statusBar:SetHeight(barHeight)
     statusBar:ClearAllPoints()
 
-    -- Inset statusBar by borderSize so border is visible around it (like unit frames)
+    -- The shared border helper renders outside the parent frame, so the cast fill
+    -- should use the full anchorFrame bounds. Insetting here creates a visible gap.
     if ShouldShowIcon(anchorFrame, castSettings) then
         local iconSizePx = iconSize * iconScale
         local iconSpacing = QUICore:PixelRound(castSettings.iconSpacing or 0, anchorFrame)
         local iconAnchor = castSettings.iconAnchor or "TOPLEFT"
         if iconAnchor:find("LEFT") then
-            statusBar:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", iconSizePx + iconSpacing + borderSize, -borderSize)
-            statusBar:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", -borderSize, borderSize)
+            statusBar:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", iconSizePx + iconSpacing, 0)
+            statusBar:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 0, 0)
         elseif iconAnchor:find("RIGHT") then
-            statusBar:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", borderSize, -borderSize)
-            statusBar:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", -iconSizePx - iconSpacing - borderSize, borderSize)
+            statusBar:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", 0, 0)
+            statusBar:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", -iconSizePx - iconSpacing, 0)
         else
-            statusBar:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", borderSize, -borderSize)
-            statusBar:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", -borderSize, borderSize)
+            statusBar:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", 0, 0)
+            statusBar:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 0, 0)
         end
     else
-        statusBar:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", borderSize, -borderSize)
-        statusBar:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", -borderSize, borderSize)
+        statusBar:SetPoint("TOPLEFT", anchorFrame, "TOPLEFT", 0, 0)
+        statusBar:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT", 0, 0)
     end
     
     local r, g, b, a = GetSafeColor(castSettings.borderColor, {0, 0, 0, 1})
@@ -671,7 +672,7 @@ local function UpdateStatusBarPosition(anchorFrame, castSettings, barHeight, ico
     end
 
     if border then
-        border:SetFrameLevel(statusBar:GetFrameLevel() - 1)
+        border:SetFrameLevel(statusBar:GetFrameLevel() + 1)
 
         if borderSize > 0 then
             border:Show()
@@ -1867,7 +1868,7 @@ function QUI_Castbar:CreateCastbar(unitFrame, unit, unitKey)
     local br, bg_, bb, ba = GetSafeColor(castSettings.borderColor, {0, 0, 0, 1})
     UIKit.CreateBackdropBorder(anchorFrame, castSettings.borderSize or 1, br, bg_, bb, ba)
     statusBar.Border = anchorFrame.Border
-    statusBar.Border:SetFrameLevel(statusBar:GetFrameLevel() - 1)
+    statusBar.Border:SetFrameLevel(statusBar:GetFrameLevel() + 1)
 
     local bgBar = UIKit.CreateBackground(statusBar)
     anchorFrame.bgBar = bgBar
@@ -3198,7 +3199,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
     local br, bg_, bb, ba = GetSafeColor(castSettings.borderColor, {0, 0, 0, 1})
     UIKit.CreateBackdropBorder(anchorFrame, castSettings.borderSize or 1, br, bg_, bb, ba)
     statusBar.Border = anchorFrame.Border
-    statusBar.Border:SetFrameLevel(statusBar:GetFrameLevel() - 1)
+    statusBar.Border:SetFrameLevel(statusBar:GetFrameLevel() + 1)
 
     local bgBar = UIKit.CreateBackground(statusBar)
     anchorFrame.bgBar = bgBar
