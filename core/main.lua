@@ -1351,6 +1351,15 @@ local defaults = {
             borderUseClassColor = false,       -- Use player class color for border
             borderUseAccentColor = false,      -- Use addon accent color for border
             showSpellIDs = false,              -- Show spell ID and icon ID on buff/debuff tooltips
+            showPlayerItemLevel = false,       -- Show inspected player item level on player tooltips
+            colorPlayerItemLevel = true,       -- Color tooltip player item level by configured ilvl brackets
+            itemLevelBrackets = {
+                white = 245,                   -- White bracket starts here (below = grey)
+                green = 255,                   -- Green bracket starts here
+                blue = 265,                    -- Blue bracket starts here
+                purple = 275,                  -- Purple bracket starts here
+                orange = 285,                  -- Orange bracket starts here
+            },
             hideDelay = 0,                     -- Seconds before tooltip hides after mouse leaves (0 = instant, >0 = fade out)
             -- Per-Context Visibility (SHOW/HIDE/SHIFT/CTRL/ALT)
             visibility = {
