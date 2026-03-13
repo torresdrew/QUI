@@ -2876,18 +2876,18 @@ local function SetupMinimapDragging()
         MinimapCluster:EnableMouse(false)
     end
     
-    -- Setup dragging - MUST enable mouse for drag to work
+    -- Setup dragging - only movable during Edit Mode
     Minimap:EnableMouse(true)
-    Minimap:SetMovable(not settings.lock)
+    Minimap:SetMovable(false)
     Minimap:SetClampedToScreen(true)
     Minimap:RegisterForDrag("LeftButton")
-    
+
     Minimap:SetScript("OnDragStart", function(self)
         if self:IsMovable() then
             self:StartMoving()
         end
     end)
-    
+
     Minimap:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
         local point, _, relPoint, x, y = QUICore:SnapFramePosition(self)
@@ -2983,10 +2983,7 @@ end
 --- EDIT MODE SUPPORT
 ---=================================================================================
 
--- Track original lock state for Edit Mode restoration
-local editModeWasLocked = nil
-
--- Enable minimap movement during Edit Mode (ignore lock setting)
+-- Enable minimap movement during Edit Mode (respects lock setting)
 function QUICore:EnableMinimapEditMode()
     local settings = GetSettings()
     if not settings then return end
@@ -2997,25 +2994,13 @@ function QUICore:EnableMinimapEditMode()
         return
     end
 
-    -- Remember lock state
-    editModeWasLocked = settings.lock
-
-    -- Temporarily enable movement (ignore lock during Edit Mode)
-    Minimap:SetMovable(true)
+    -- Allow movement during Edit Mode unless locked
+    Minimap:SetMovable(not settings.lock)
 end
 
--- Disable minimap Edit Mode (restore lock setting)
+-- Disable minimap Edit Mode (always lock outside Edit Mode)
 function QUICore:DisableMinimapEditMode()
-    local settings = GetSettings()
-    if not settings then return end
-
-    -- Restore original lock state
-    if editModeWasLocked ~= nil then
-        Minimap:SetMovable(not editModeWasLocked)
-        editModeWasLocked = nil
-    else
-        Minimap:SetMovable(not settings.lock)
-    end
+    Minimap:SetMovable(false)
 end
 
 ---=================================================================================
@@ -3311,18 +3296,18 @@ function Minimap_Module:Refresh()
     RefreshButtonDrawer()
     UpdateDungeonEyePosition()
 
-    -- Update lock/movable state and ensure drag is registered
-    Minimap:SetMovable(not settings.lock)
+    -- Update movable state - only movable during Edit Mode, never outside it
+    Minimap:SetMovable(false)
     Minimap:EnableMouse(true)
     Minimap:RegisterForDrag("LeftButton")
-    
+
     -- Re-setup drag scripts (may have been lost)
     Minimap:SetScript("OnDragStart", function(self)
         if self:IsMovable() then
             self:StartMoving()
         end
     end)
-    
+
     Minimap:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
         local point, _, relPoint, x, y = QUICore:SnapFramePosition(self)
