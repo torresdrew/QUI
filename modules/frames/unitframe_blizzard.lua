@@ -240,9 +240,40 @@ function QUI_UF:HideBlizzardFrames()
         KillBlizzardFrame(TargetFrameToT)
     end
 
-    -- Hide Pet frame
-    if db.pet and db.pet.enabled then
+    -- Hide Pet frame. Nil all four heal prediction bar references so
+    -- UnitFrameHealPredictionBars_Update hits its early return:
+    --   if (not myHealPredictionBar and not otherHealPredictionBar
+    --       and not healAbsorbBar and not totalAbsorbBar) then return end
+    -- Blizzard's managed frame system can re-initialize PetFrame after our
+    -- kill, so a persistent watcher keeps these nil.
+    if db.pet and db.pet.enabled and PetFrame then
+        if PetFrame.healthbar then
+            PetFrame.healthbar:UnregisterAllEvents()
+            PetFrame.healthbar:SetScript("OnUpdate", nil)
+        end
+        if PetFrame.manabar then
+            PetFrame.manabar:UnregisterAllEvents()
+            PetFrame.manabar:SetScript("OnUpdate", nil)
+        end
+        PetFrame.myHealPredictionBar = nil
+        PetFrame.otherHealPredictionBar = nil
+        PetFrame.healAbsorbBar = nil
+        PetFrame.totalAbsorbBar = nil
         KillBlizzardFrame(PetFrame)
+        -- Persistent watcher: re-nil heal prediction refs if Blizzard restores them
+        if not _blizzFrameGuards.petHealPredKill then
+            _blizzFrameGuards.petHealPredKill = true
+            local watcher = CreateFrame("Frame", nil, UIParent)
+            watcher:SetScript("OnUpdate", function()
+                if PetFrame.myHealPredictionBar or PetFrame.otherHealPredictionBar
+                    or PetFrame.healAbsorbBar or PetFrame.totalAbsorbBar then
+                    PetFrame.myHealPredictionBar = nil
+                    PetFrame.otherHealPredictionBar = nil
+                    PetFrame.healAbsorbBar = nil
+                    PetFrame.totalAbsorbBar = nil
+                end
+            end)
+        end
     end
 
     -- Hide Focus frame visuals (always hide Blizzard focus frame when QUI unit frames are enabled)

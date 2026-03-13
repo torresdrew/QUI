@@ -3952,6 +3952,19 @@ end
 
 function QUICore:OnProfileChanged(event, db, profileKey)
 
+    -- Debug: profile change tracking (uses QUI.DEBUG_MODE runtime flag from /qui debug)
+    local _profileDebug = QUI and QUI.DEBUG_MODE
+    local _profileChangeStart = debugprofilestop and debugprofilestop() or 0
+    local function ProfileDebug(msg)
+        if _profileDebug then
+            local elapsed = debugprofilestop and (debugprofilestop() - _profileChangeStart) or 0
+            print(format("|cFF30D1FFQUI Profile Debug|r [+%.0fms] %s", elapsed, msg))
+        end
+    end
+    ProfileDebug(format("OnProfileChanged: event=%s profile=%s spec=%s combat=%s",
+        tostring(event), tostring(profileKey),
+        tostring(GetSpecialization()), tostring(InCombatLockdown())))
+
     -- Invalidate cached profile reference FIRST — AceDB already swapped db.profile
     -- so any code reading settings must see the new profile, not the stale cache.
     if ns.Helpers and ns.Helpers.InvalidateProfileCache then
@@ -3970,9 +3983,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
             or (C_ChallengeMode.GetActiveChallengeMapID and C_ChallengeMode.GetActiveChallengeMapID() ~= nil)
     end
     if inChallengeMode then
-        -- We're in a challenge mode dungeon - skip profile changes entirely during M+
-        -- The protected state during keystone activation doesn't play nice with SetScale
-        -- Profile will be applied correctly on next /reload or when leaving the dungeon
+        ProfileDebug("SKIPPED: in challenge mode dungeon")
         return
     end
 
@@ -3980,8 +3991,10 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     -- LibDualSpec triggers profile switch even when already on correct profile
     local currentProfile = self.db:GetCurrentProfile()
     if profileKey == self._lastKnownProfile and profileKey == currentProfile then
+        ProfileDebug(format("SKIPPED: same profile (%s)", tostring(profileKey)))
         return  -- No actual change happening - skip all UI modifications
     end
+    ProfileDebug(format("Profile switching: %s -> %s", tostring(self._lastKnownProfile), tostring(profileKey)))
     self._lastKnownProfile = profileKey
 
     -- Update spec tracking (kept for reference)
@@ -4091,8 +4104,8 @@ function QUICore:OnProfileChanged(event, db, profileKey)
 
     -- Invalidate options panel — cached widgets hold stale profile table references
     if QUI.GUI and QUI.GUI.MainFrame then
-        QUI.GUI.MainFrame:Hide()
-        QUI.GUI.MainFrame:SetParent(nil)
+        pcall(QUI.GUI.MainFrame.Hide, QUI.GUI.MainFrame)
+        pcall(QUI.GUI.MainFrame.SetParent, QUI.GUI.MainFrame, nil)
         QUI.GUI.MainFrame = nil
         QUI.GUI._searchIndexBuilt = false
         QUI.GUI._allTabsAdded = false
@@ -4101,7 +4114,10 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     end
 
     if self.RefreshAll then
-        self:RefreshAll()
+        local ok, err = pcall(self.RefreshAll, self)
+        if not ok then
+            print("|cFFFF6666QUI:|r RefreshAll error: " .. tostring(err))
+        end
     end
     
     -- Refresh Minimap module on profile change
@@ -4140,190 +4156,121 @@ function QUICore:OnProfileChanged(event, db, profileKey)
 
     -- Consolidated profile-change refresh: single 0.2s delay for all module refreshes
     -- instead of 7 separate cascading timers (0.2, 0.3, 0.4, 0.45, 0.47, 0.5)
+    -- Each call is pcall-wrapped so one module error cannot prevent the rest from refreshing.
     C_Timer.After(0.2, function()
-        -- Cache _G function lookups at point of use (avoid repeated _G hash lookups)
+        ProfileDebug("0.2s refresh timer fired — starting module refreshes")
+        local function SafeCall(fn)
+            if fn then
+                local ok, err = pcall(fn)
+                if not ok then
+                    print("|cFFFF6666QUI:|r Profile refresh error: " .. tostring(err))
+                end
+            end
+        end
+
         -- Frames & Layout
-        local ApplyAllFrameAnchors = _G.QUI_ApplyAllFrameAnchors
-        local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
-        local RefreshGroupFrames = _G.QUI_RefreshGroupFrames
-        local RefreshActionBars = _G.QUI_RefreshActionBars
-        local RefreshBuffBar = _G.QUI_RefreshBuffBar
-        local RefreshBuffBorders = _G.QUI_RefreshBuffBorders
-        local RefreshRaidBuffs = _G.QUI_RefreshRaidBuffs
-        local RefreshTotemBar = _G.QUI_RefreshTotemBar
-        local RefreshUIHider = _G.QUI_RefreshUIHider
-        if ApplyAllFrameAnchors then ApplyAllFrameAnchors() end
-        if RefreshUnitFrames then RefreshUnitFrames() end
-        if RefreshGroupFrames then RefreshGroupFrames() end
-        if RefreshActionBars then RefreshActionBars() end
-        if RefreshBuffBar then RefreshBuffBar() end
-        if RefreshBuffBorders then RefreshBuffBorders() end
-        if RefreshRaidBuffs then RefreshRaidBuffs() end
-        if RefreshTotemBar then RefreshTotemBar() end
-        if RefreshUIHider then RefreshUIHider() end
+        SafeCall(_G.QUI_ApplyAllFrameAnchors)
+        SafeCall(_G.QUI_RefreshUnitFrames)
+        SafeCall(_G.QUI_RefreshGroupFrames)
+        SafeCall(_G.QUI_RefreshActionBars)
+        SafeCall(_G.QUI_RefreshBuffBar)
+        SafeCall(_G.QUI_RefreshBuffBorders)
+        SafeCall(_G.QUI_RefreshRaidBuffs)
+        SafeCall(_G.QUI_RefreshTotemBar)
+        SafeCall(_G.QUI_RefreshUIHider)
 
         -- Cooldowns
-        local RefreshNCDM = _G.QUI_RefreshNCDM
-        local RefreshCDMVisibility = _G.QUI_RefreshCDMVisibility
-        local RefreshCooldownSwipe = _G.QUI_RefreshCooldownSwipe
-        if RefreshNCDM then RefreshNCDM() end
-        if RefreshCDMVisibility then RefreshCDMVisibility() end
-        if RefreshCooldownSwipe then RefreshCooldownSwipe() end
+        SafeCall(_G.QUI_RefreshNCDM)
+        SafeCall(_G.QUI_RefreshCDMVisibility)
+        SafeCall(_G.QUI_RefreshCooldownSwipe)
 
         -- QoL modules
-        local RefreshReticle = _G.QUI_RefreshReticle
-        local RefreshCrosshair = _G.QUI_RefreshCrosshair
-        local RefreshXPTracker = _G.QUI_RefreshXPTracker
-        local RefreshSkyriding = _G.QUI_RefreshSkyriding
-        local RefreshFocusCastAlert = _G.QUI_RefreshFocusCastAlert
-        local RefreshPetWarning = _G.QUI_RefreshPetWarning
-        local RefreshRangeCheck = _G.QUI_RefreshRangeCheck
-        if RefreshReticle then RefreshReticle() end
-        if RefreshCrosshair then RefreshCrosshair() end
-        if RefreshXPTracker then RefreshXPTracker() end
-        if RefreshSkyriding then RefreshSkyriding() end
-        if RefreshFocusCastAlert then RefreshFocusCastAlert() end
-        if RefreshPetWarning then RefreshPetWarning() end
-        if RefreshRangeCheck then RefreshRangeCheck() end
+        SafeCall(_G.QUI_RefreshReticle)
+        SafeCall(_G.QUI_RefreshCrosshair)
+        SafeCall(_G.QUI_RefreshXPTracker)
+        SafeCall(_G.QUI_RefreshSkyriding)
+        SafeCall(_G.QUI_RefreshFocusCastAlert)
+        SafeCall(_G.QUI_RefreshPetWarning)
+        SafeCall(_G.QUI_RefreshRangeCheck)
 
         -- Combat
-        local RefreshCombatText = _G.QUI_RefreshCombatText
-        if RefreshCombatText then RefreshCombatText() end
+        SafeCall(_G.QUI_RefreshCombatText)
 
         -- Trackers
-        local RefreshCustomTrackers = _G.QUI_RefreshCustomTrackers
-        if RefreshCustomTrackers then RefreshCustomTrackers() end
+        SafeCall(_G.QUI_RefreshCustomTrackers)
 
         -- Data & Chat
-        local RefreshDatapanels = _G.QUI_RefreshDatapanels
-        local RefreshChat = _G.QUI_RefreshChat
-        if RefreshDatapanels then RefreshDatapanels() end
-        if RefreshChat then RefreshChat() end
+        SafeCall(_G.QUI_RefreshDatapanels)
+        SafeCall(_G.QUI_RefreshChat)
 
         -- Character
-        local RefreshCharacterPane = _G.QUI_RefreshCharacterPane
-        if RefreshCharacterPane then RefreshCharacterPane() end
+        SafeCall(_G.QUI_RefreshCharacterPane)
 
         -- Keybinds
-        local RefreshKeybinds = _G.QUI_RefreshKeybinds
-        if RefreshKeybinds then RefreshKeybinds() end
+        SafeCall(_G.QUI_RefreshKeybinds)
 
         -- Dungeon
-        local RefreshKeyTracker = _G.QUI_RefreshKeyTracker
-        local RefreshBrezCounter = _G.QUI_RefreshBrezCounter
-        if RefreshKeyTracker then RefreshKeyTracker() end
-        if RefreshBrezCounter then RefreshBrezCounter() end
+        SafeCall(_G.QUI_RefreshKeyTracker)
+        SafeCall(_G.QUI_RefreshBrezCounter)
 
+        ProfileDebug("0.2s refresh complete — showing notification")
         self:ShowProfileChangeNotification()
     end)
 
     -- Skinning refreshes: slightly later to avoid stacking too much work at 0.2s
+    -- pcall-wrapped like the 0.2s block above.
     C_Timer.After(0.5, function()
-        local RefreshCharacterFrameColors = _G.QUI_RefreshCharacterFrameColors
-        local RefreshInspectColors = _G.QUI_RefreshInspectColors
-        local RefreshInstanceFramesColors = _G.QUI_RefreshInstanceFramesColors
-        local RefreshOverrideActionBarColors = _G.QUI_RefreshOverrideActionBarColors
-        local RefreshGameMenuColors = _G.QUI_RefreshGameMenuColors
-        local RefreshGameMenuFontSize = _G.QUI_RefreshGameMenuFontSize
-        local RefreshReadyCheckColors = _G.QUI_RefreshReadyCheckColors
-        local RefreshKeystoneColors = _G.QUI_RefreshKeystoneColors
-        local RefreshAlertColors = _G.QUI_RefreshAlertColors
-        local RefreshLootColors = _G.QUI_RefreshLootColors
-        local RefreshMPlusTimerColors = _G.QUI_RefreshMPlusTimerColors
-        local RefreshObjectiveTracker = _G.QUI_RefreshObjectiveTracker
-        local RefreshPowerBarAltColors = _G.QUI_RefreshPowerBarAltColors
-        if RefreshCharacterFrameColors then RefreshCharacterFrameColors() end
-        if RefreshInspectColors then RefreshInspectColors() end
-        if RefreshInstanceFramesColors then RefreshInstanceFramesColors() end
-        if RefreshOverrideActionBarColors then RefreshOverrideActionBarColors() end
-        if RefreshGameMenuColors then RefreshGameMenuColors() end
-        if RefreshGameMenuFontSize then RefreshGameMenuFontSize() end
-        if RefreshReadyCheckColors then RefreshReadyCheckColors() end
-        if RefreshKeystoneColors then RefreshKeystoneColors() end
-        if RefreshAlertColors then RefreshAlertColors() end
-        if RefreshLootColors then RefreshLootColors() end
-        if RefreshMPlusTimerColors then RefreshMPlusTimerColors() end
-        if RefreshObjectiveTracker then RefreshObjectiveTracker() end
-        if RefreshPowerBarAltColors then RefreshPowerBarAltColors() end
+        ProfileDebug("0.5s skinning refresh timer fired")
+        local function SafeCall(fn)
+            if fn then
+                local ok, err = pcall(fn)
+                if not ok then
+                    print("|cFFFF6666QUI:|r Profile skin refresh error: " .. tostring(err))
+                end
+            end
+        end
+        SafeCall(_G.QUI_RefreshCharacterFrameColors)
+        SafeCall(_G.QUI_RefreshInspectColors)
+        SafeCall(_G.QUI_RefreshInstanceFramesColors)
+        SafeCall(_G.QUI_RefreshOverrideActionBarColors)
+        SafeCall(_G.QUI_RefreshGameMenuColors)
+        SafeCall(_G.QUI_RefreshGameMenuFontSize)
+        SafeCall(_G.QUI_RefreshReadyCheckColors)
+        SafeCall(_G.QUI_RefreshKeystoneColors)
+        SafeCall(_G.QUI_RefreshAlertColors)
+        SafeCall(_G.QUI_RefreshLootColors)
+        SafeCall(_G.QUI_RefreshMPlusTimerColors)
+        SafeCall(_G.QUI_RefreshObjectiveTracker)
+        SafeCall(_G.QUI_RefreshPowerBarAltColors)
     end)
 
-    -- Safety re-anchor pass: Blizzard's Edit Mode system re-applies per-spec
+    -- Safety re-position pass: Blizzard's Edit Mode system re-applies per-spec
     -- layouts on spec change (EDIT_MODE_LAYOUTS_UPDATED), which can override
-    -- QUI's frame positions set at 0.2s. The anchoring module handles the
-    -- event directly, but this later pass catches any edge cases where
-    -- Blizzard's layout application is delayed beyond the event handler.
+    -- QUI's frame positions set at 0.2s. Re-apply both anchoring overrides AND
+    -- unit frame positions to catch any Blizzard layout passes that fired late.
     C_Timer.After(1.0, function()
+        ProfileDebug(format("1.0s safety pass — combat=%s editMode=%s",
+            tostring(InCombatLockdown()), tostring(ns.Helpers.IsEditModeActive())))
         if not InCombatLockdown() then
             local ApplyAnchors = _G.QUI_ApplyAllFrameAnchors
-            if ApplyAnchors then ApplyAnchors() end
+            if ApplyAnchors then pcall(ApplyAnchors) end
+            local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
+            if RefreshUnitFrames then pcall(RefreshUnitFrames) end
+            local RefreshGroupFrames = _G.QUI_RefreshGroupFrames
+            if RefreshGroupFrames then pcall(RefreshGroupFrames) end
+            ProfileDebug("1.0s safety pass complete")
+        else
+            ProfileDebug("1.0s safety pass SKIPPED (combat)")
         end
     end)
 end
 
 function QUICore:ShowProfileChangeNotification()
-    -- Create a simple popup frame if it doesn't exist
-    if not self.profileChangePopup then
-        local popup = CreateFrame("Frame", "QUICore_ProfileChangePopup", UIParent, "BackdropTemplate")
-        popup:SetSize(400, 120)
-        popup:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-        popup:SetFrameStrata("DIALOG")
-        popup:SetFrameLevel(1000)
-        popup:SetBackdrop({
-            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-            tile = true,
-            tileSize = 32,
-            edgeSize = 32,
-            insets = { left = 8, right = 8, top = 8, bottom = 8 }
-        })
-        popup:SetBackdropColor(0, 0, 0, 0.9)
-        popup:Hide()
-        
-        -- Title
-        local title = popup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-        title:SetPoint("TOP", popup, "TOP", 0, -20)
-        title:SetText("Profile Changed")
-        popup.title = title
-        
-        -- Message
-        local message = popup:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        message:SetPoint("CENTER", popup, "CENTER", 0, -10)
-        message:SetWidth(360)
-        message:SetJustifyH("CENTER")
-        message:SetText("Profile changed please open edit mode for unit frame position updates")
-        popup.message = message
-        
-        -- Close button (opens edit mode)
-        local closeButton = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
-        closeButton:SetSize(100, 30)
-        closeButton:SetPoint("BOTTOM", popup, "BOTTOM", 0, 15)
-        closeButton:SetText("OK")
-        closeButton:SetScript("OnClick", function(self)
-            self:GetParent():Hide()
-            -- Open edit mode the same way as the config button
-            DEFAULT_CHAT_FRAME.editBox:SetText("/editmode")
-            ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
-        end)
-        popup.closeButton = closeButton
-        
-        self.profileChangePopup = popup
-    end
-    
-    -- Show the popup
-    if self.profileChangePopup then
-        self.profileChangePopup:Show()
-        -- Auto-hide after 10 seconds if not manually closed.
-        -- Generation counter: each new Show() increments the counter so stale timers
-        -- from rapid profile changes become no-ops instead of hiding the fresh popup early.
-        self._popupTimerGeneration = (self._popupTimerGeneration or 0) + 1
-        local gen = self._popupTimerGeneration
-        C_Timer.After(10, function()
-            if self._popupTimerGeneration ~= gen then return end  -- stale timer, skip
-            if self.profileChangePopup and self.profileChangePopup:IsShown() then
-                self.profileChangePopup:Hide()
-            end
-        end)
-    end
+    -- Simple chat notification instead of a popup that forces Edit Mode entry.
+    -- The popup was causing an ApplyAllFrameAnchors feedback loop by entering
+    -- Edit Mode during the profile transition.
+    local profileName = self.db and self.db:GetCurrentProfile() or "Unknown"
+    print(format("|cff34D399QUI:|r Profile switched to |cFFFFD700%s|r. Use |cFFFFD700/editmode|r to adjust frame positions.", profileName))
 end
 
 -- ============================================================================

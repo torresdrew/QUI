@@ -831,6 +831,17 @@ local function RefreshAll(forceSync)
     applying["utility"] = false
     applying["buff"] = false
 
+    -- Restore container positions from the (possibly new) profile DB.
+    -- LayoutContainer only sizes containers and positions icons within them —
+    -- it never calls SetPoint on the container itself. Without this, containers
+    -- keep the previous profile's screen position after a profile/spec switch.
+    for _, trackerKey in ipairs({"essential", "utility", "buff", "trackedBar"}) do
+        local container = containers[trackerKey]
+        if container then
+            RestoreContainerPosition(container, trackerKey)
+        end
+    end
+
     -- Buff fingerprint is NOT reset here. ForceScan() above already refreshed
     -- the spell lists — if the buff set actually changed, the fingerprint
     -- comparison in LayoutContainer("buff") will detect the difference and

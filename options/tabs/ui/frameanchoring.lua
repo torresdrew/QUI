@@ -34,17 +34,18 @@ local NINE_POINT_OPTIONS = {
 }
 
 local DEFAULTS = {
-    enabled      = false,
-    parent       = "screen",
-    point        = "CENTER",
-    relative     = "CENTER",
-    offsetX      = 0,
-    offsetY      = 0,
-    sizeStable   = true,
-    autoWidth    = false,
-    widthAdjust  = 0,
-    autoHeight   = false,
-    heightAdjust = 0,
+    enabled        = false,
+    parent         = "screen",
+    point          = "CENTER",
+    relative       = "CENTER",
+    offsetX        = 0,
+    offsetY        = 0,
+    sizeStable     = true,
+    autoWidth      = false,
+    widthAdjust    = 0,
+    autoHeight     = false,
+    heightAdjust   = 0,
+    hideWithParent = false,
 }
 
 ---------------------------------------------------------------------------
@@ -185,6 +186,13 @@ local function BuildFrameEntry(tabContent, frameDef, y)
         heightAdjust:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
     end
+
+    -- Hide With Anchor toggle — hides this frame when its anchor parent hides
+    -- instead of falling back to another anchor target
+    local hideToggle = GUI:CreateFormToggle(tabContent, "Hide With Anchor", "hideWithParent", frameDB, OnChange)
+    hideToggle:SetPoint("TOPLEFT", PAD + 10, y)
+    hideToggle:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
 
     y = y - 2  -- Small spacing between frame entries (header already adds separation)
     return y

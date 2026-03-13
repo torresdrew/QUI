@@ -285,11 +285,20 @@ local function CreateSpecProfilesPage(parent)
     if factoryBtn.text then
         factoryBtn.text:SetTextColor(0.9, 0.3, 0.3, 1)
     end
-    factoryBtn:SetScript("OnEnter", function(self)
-        self:SetFieldBorderColor(0.9, 0.3, 0.3, 1)
+    local UIKit = ns.UIKit
+    factoryBtn:SetScript("OnEnter", function(btn)
+        if UIKit and UIKit.UpdateBorderLines then
+            UIKit.UpdateBorderLines(btn, 1, 0.9, 0.3, 0.3, 1, false)
+        else
+            pcall(btn.SetBackdropBorderColor, btn, 0.9, 0.3, 0.3, 1)
+        end
     end)
-    factoryBtn:SetScript("OnLeave", function(self)
-        self:SetFieldBorderColor(C.border[1], C.border[2], C.border[3], 1)
+    factoryBtn:SetScript("OnLeave", function(btn)
+        if UIKit and UIKit.UpdateBorderLines then
+            UIKit.UpdateBorderLines(btn, 1, C.border[1], C.border[2], C.border[3], 1, false)
+        else
+            pcall(btn.SetBackdropBorderColor, btn, C.border[1], C.border[2], C.border[3], 1)
+        end
     end)
     y = y - FORM_ROW - 10
 

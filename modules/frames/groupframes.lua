@@ -2288,11 +2288,13 @@ local function UpdateHeaderSizes()
         -- Resize existing child
         local child = selfHdr:GetAttribute("child1")
         if child then child:SetSize(sw, sh) end
-        -- Anchor above the active header
-        selfHdr:ClearAllPoints()
-        local anchor = IsInRaid() and raidHdr or partyHdr
-        if anchor then
-            selfHdr:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 4)
+        -- Anchor above the active header (skip when anchoring override owns the frame)
+        if not _G.QUI_IsFrameOverridden(selfHdr) then
+            selfHdr:ClearAllPoints()
+            local anchor = IsInRaid() and raidHdr or partyHdr
+            if anchor then
+                selfHdr:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 4)
+            end
         end
     end
 end
@@ -3024,6 +3026,32 @@ function QUI_GF:RefreshSettings()
     if InCombatLockdown() then
         pendingResize = true
         return
+    end
+
+    -- Restore header positions from the (possibly new) profile DB.
+    -- Positions are only set during CreateHeaders — without this, headers
+    -- keep the previous profile's screen position after a profile/spec switch.
+    -- Skip repositioning when the anchoring override system owns the frame —
+    -- ClearAllPoints/SetPoint here would fight the override and cause jumping.
+    local position = db.position
+    if self.headers.party and not _G.QUI_IsFrameOverridden(self.headers.party) then
+        local offsetX = position and position.offsetX or -400
+        local offsetY = position and position.offsetY or 0
+        self.headers.party:ClearAllPoints()
+        self.headers.party:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+    end
+    if self.headers.raid and not _G.QUI_IsFrameOverridden(self.headers.raid) then
+        local raidOffX, raidOffY
+        if db.unifiedPosition then
+            raidOffX = position and position.offsetX or -400
+            raidOffY = position and position.offsetY or 0
+        else
+            local raidPos = db.raidPosition
+            raidOffX = raidPos and raidPos.offsetX or -400
+            raidOffY = raidPos and raidPos.offsetY or 0
+        end
+        self.headers.raid:ClearAllPoints()
+        self.headers.raid:SetPoint("CENTER", UIParent, "CENTER", raidOffX, raidOffY)
     end
 
     -- Re-configure headers
