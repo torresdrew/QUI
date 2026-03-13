@@ -2746,7 +2746,7 @@ end
 local _anchorThrottleFrame = nil
 local _anchorThrottlePending = false
 
-function QUI_Anchoring:ApplyAllFrameAnchors()
+function QUI_Anchoring:ApplyAllFrameAnchors(force)
     if not QUICore or not QUICore.db or not QUICore.db.profile then return end
     local anchoringDB = QUICore.db.profile.frameAnchoring
     if not anchoringDB then
@@ -2755,7 +2755,7 @@ function QUI_Anchoring:ApplyAllFrameAnchors()
     end
 
     -- Throttle: if already applied this frame, defer to next frame
-    if _anchorThrottlePending then return end
+    if not force and _anchorThrottlePending then return end
     _anchorThrottlePending = true
     if not _anchorThrottleFrame then
         _anchorThrottleFrame = CreateFrame("Frame")
@@ -2795,9 +2795,9 @@ end
 -- should be locked in place (same underlying check as IsFrameOverridden).
 _G.QUI_IsFrameLocked = _G.QUI_IsFrameOverridden
 
-_G.QUI_ApplyAllFrameAnchors = function()
+_G.QUI_ApplyAllFrameAnchors = function(force)
     if QUI_Anchoring then
-        QUI_Anchoring:ApplyAllFrameAnchors()
+        QUI_Anchoring:ApplyAllFrameAnchors(force)
     end
 end
 

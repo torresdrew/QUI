@@ -4079,6 +4079,13 @@ function QUICore:OnProfileChanged(event, db, profileKey)
             self.db.profile.general.uiScale = scaleToUse
             ApplyUIScale(scaleToUse)
         else
+            -- Scale change invalidates all stored frame offsets — force reload
+            local currentScale = UIParent:GetScale()
+            if currentScale and math.abs(newProfileScale - currentScale) > 0.001 then
+                self._preservedUIScale = newProfileScale
+                self:SafeReload()
+                return
+            end
             -- Existing profile has a saved scale - apply it
             ApplyUIScale(newProfileScale)
             -- Only update preserved scale when switching to a profile with a valid saved scale
@@ -4168,8 +4175,12 @@ function QUICore:OnProfileChanged(event, db, profileKey)
             end
         end
 
-        -- Frames & Layout
-        SafeCall(_G.QUI_ApplyAllFrameAnchors)
+        -- Cooldowns first (CDM containers must exist before anchoring runs)
+        SafeCall(_G.QUI_RefreshNCDM)
+        SafeCall(_G.QUI_RefreshCDMVisibility)
+        SafeCall(_G.QUI_RefreshCooldownSwipe)
+
+        -- Frames
         SafeCall(_G.QUI_RefreshUnitFrames)
         SafeCall(_G.QUI_RefreshGroupFrames)
         SafeCall(_G.QUI_RefreshActionBars)
@@ -4178,11 +4189,6 @@ function QUICore:OnProfileChanged(event, db, profileKey)
         SafeCall(_G.QUI_RefreshRaidBuffs)
         SafeCall(_G.QUI_RefreshTotemBar)
         SafeCall(_G.QUI_RefreshUIHider)
-
-        -- Cooldowns
-        SafeCall(_G.QUI_RefreshNCDM)
-        SafeCall(_G.QUI_RefreshCDMVisibility)
-        SafeCall(_G.QUI_RefreshCooldownSwipe)
 
         -- QoL modules
         SafeCall(_G.QUI_RefreshReticle)
@@ -4212,6 +4218,9 @@ function QUICore:OnProfileChanged(event, db, profileKey)
         -- Dungeon
         SafeCall(_G.QUI_RefreshKeyTracker)
         SafeCall(_G.QUI_RefreshBrezCounter)
+
+        -- Anchoring LAST (all modules have restored positions above)
+        SafeCall(_G.QUI_ApplyAllFrameAnchors)
 
         ProfileDebug("0.2s refresh complete — showing notification")
         self:ShowProfileChangeNotification()
@@ -4253,7 +4262,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
             tostring(InCombatLockdown()), tostring(ns.Helpers.IsEditModeActive())))
         if not InCombatLockdown() then
             local ApplyAnchors = _G.QUI_ApplyAllFrameAnchors
-            if ApplyAnchors then pcall(ApplyAnchors) end
+            if ApplyAnchors then pcall(ApplyAnchors, true) end
             local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
             if RefreshUnitFrames then pcall(RefreshUnitFrames) end
             local RefreshGroupFrames = _G.QUI_RefreshGroupFrames
