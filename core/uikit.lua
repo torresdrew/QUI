@@ -747,6 +747,7 @@ function UIKit.CreateAnchorProxy(sourceFrame, opts)
     local currentSource = sourceFrame
     local lastWidth, lastHeight = 0, 0
     local lastAnchorSource = nil
+    local cachedSourceScale, cachedProxyScale
 
     function proxy:Sync()
         local source = currentSource
@@ -769,16 +770,31 @@ function UIKit.CreateAnchorProxy(sourceFrame, opts)
         if sizeResolver then
             w, h = sizeResolver(source)
         else
-            w = source:GetWidth() or 0
-            h = source:GetHeight() or 0
+            w = Helpers and Helpers.SafeToNumber(source:GetWidth(), 0) or (source:GetWidth() or 0)
+            h = Helpers and Helpers.SafeToNumber(source:GetHeight(), 0) or (source:GetHeight() or 0)
         end
         w = math.max(1, w or 0)
         h = math.max(1, h or 0)
         -- Scale conversion: sizeResolver dimensions are in the source frame's
         -- coordinate space, but the proxy is parented to UIParent.  Convert
         -- so the proxy's screen-space size matches the actual source content.
-        local sourceScale = source:GetEffectiveScale()
-        local proxyScale = self:GetEffectiveScale()
+        -- Cache effective scale — GetEffectiveScale can return secret values
+        -- during combat which cannot be used in Lua arithmetic.
+        local rawSrcScale = source:GetEffectiveScale()
+        local rawPxyScale = self:GetEffectiveScale()
+        local sourceScale, proxyScale
+        if rawSrcScale and not (issecretvalue and issecretvalue(rawSrcScale)) then
+            sourceScale = rawSrcScale
+            cachedSourceScale = rawSrcScale
+        else
+            sourceScale = cachedSourceScale
+        end
+        if rawPxyScale and not (issecretvalue and issecretvalue(rawPxyScale)) then
+            proxyScale = rawPxyScale
+            cachedProxyScale = rawPxyScale
+        else
+            proxyScale = cachedProxyScale
+        end
         if sourceScale and proxyScale and proxyScale > 0 and sourceScale ~= proxyScale then
             local scaleFactor = sourceScale / proxyScale
             w = w * scaleFactor
@@ -788,15 +804,26 @@ function UIKit.CreateAnchorProxy(sourceFrame, opts)
         -- slightly different floats than what was passed to SetSize,
         -- causing infinite SetSize→OnSizeChanged→SetSize loops.
         if math.abs(lastWidth - w) > 0.5 or math.abs(lastHeight - h) > 0.5 then
-            self:SetSize(w, h)
-            lastWidth, lastHeight = w, h
+            -- pcall: if protection somehow propagated to the proxy (e.g.
+            -- brief window at combat boundary), silently defer rather than
+            -- throwing ADDON_ACTION_BLOCKED.
+            local ok = pcall(self.SetSize, self, w, h)
+            if ok then
+                lastWidth, lastHeight = w, h
+            else
+                combatPending = true
+            end
         end
         if anchorResolver then
             anchorResolver(self, source)
             lastAnchorSource = source
         elseif lastAnchorSource ~= source then
-            self:ClearAllPoints()
-            self:SetPoint("CENTER", source, "CENTER", 0, 0)
+            -- pcall: anchoring to source can propagate protection from
+            -- Blizzard frames; if the proxy became protected, ClearAllPoints
+            -- and SetPoint would be blocked during combat.
+            if pcall(self.ClearAllPoints, self) then
+                pcall(self.SetPoint, self, "CENTER", source, "CENTER", 0, 0)
+            end
             lastAnchorSource = source
         end
         initialized = true
