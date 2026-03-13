@@ -112,7 +112,7 @@ QUI_HelpContent.FeatureGuides = {
         description = "QUI includes many small quality-of-life improvements: auto-repair, auto-sell junk, improved tooltips, chat enhancements, a crosshair overlay, skyriding helpers, and more.",
         tips = {
             "Most QoL features can be toggled individually in the General & QoL tab.",
-            "Tooltip enhancements add item level, spec, and other useful data to mouseover tooltips.",
+            "Tooltip enhancements include class-colored names, spell IDs, and an optional player item level line on player tooltips.",
             "The combat timer shows elapsed encounter time during boss fights.",
             "Chat improvements include link copying, URL detection, and timestamp formatting.",
         },

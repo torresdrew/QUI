@@ -12,6 +12,20 @@ local C = GUI.Colors
 local Shared = ns.QUI_Options
 local TOOLTIP_FONT_SIZE_MIN = 8
 local TOOLTIP_FONT_SIZE_MAX = 24
+local DEFAULT_PLAYER_ILVL_BRACKETS = {
+    white = 245,
+    green = 255,
+    blue = 265,
+    purple = 275,
+    orange = 285,
+}
+local PLAYER_ILVL_BRACKET_FIELDS = {
+    {key = "white", label = "White", color = {1, 1, 1, 1}},
+    {key = "green", label = "Green", color = {0, 1, 0, 1}},
+    {key = "blue", label = "Blue", color = {0, 0.44, 0.87, 1}},
+    {key = "purple", label = "Purple", color = {0.64, 0.21, 0.93, 1}},
+    {key = "orange", label = "Orange", color = {1, 0.5, 0, 1}},
+}
 
 local function BuildTooltipTab(tabContent)
     local y = -10
@@ -40,6 +54,16 @@ local function BuildTooltipTab(tabContent)
 
     local tooltip = db and db.tooltip
     if not tooltip then return end
+    if tooltip.colorPlayerItemLevel == nil then
+        tooltip.colorPlayerItemLevel = true
+    end
+    if type(tooltip.itemLevelBrackets) ~= "table" then
+        tooltip.itemLevelBrackets = {}
+    end
+    for key, defaultValue in pairs(DEFAULT_PLAYER_ILVL_BRACKETS) do
+        local value = tonumber(tooltip.itemLevelBrackets[key])
+        tooltip.itemLevelBrackets[key] = value and math.floor(value) or defaultValue
+    end
 
     -- Visibility dropdown options
     local visibilityOptions = {
@@ -245,6 +269,151 @@ local function BuildTooltipTab(tabContent)
     classColorInfo:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
     classColorInfo:SetJustifyH("LEFT")
     y = y - FORM_ROW
+
+    local RefreshPlayerItemLevelBracketInputs
+    local playerILvlCheck = GUI:CreateFormCheckbox(tabContent, "Show Player Item Level", "showPlayerItemLevel", tooltip, function()
+        RefreshPlayerItemLevelBracketInputs()
+        RefreshTooltips()
+    end)
+    playerILvlCheck:SetPoint("TOPLEFT", PADDING, y)
+    playerILvlCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    y = y - FORM_ROW
+
+    local playerILvlInfo = GUI:CreateLabel(tabContent, "Show average equipped item level on player tooltips. Remote players may populate after a short inspect delay.", 10, C.textMuted)
+    playerILvlInfo:SetPoint("TOPLEFT", PADDING, y)
+    playerILvlInfo:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    playerILvlInfo:SetJustifyH("LEFT")
+    y = y - FORM_ROW
+
+    local itemLevelColorFields = {}
+    local itemLevelColorLabels = {}
+    local itemLevelBracketHeader
+    local itemLevelBracketInfo
+
+    RefreshPlayerItemLevelBracketInputs = function()
+        local enabled = tooltip.showPlayerItemLevel and tooltip.colorPlayerItemLevel
+
+        if itemLevelBracketHeader then
+            itemLevelBracketHeader:SetTextColor(enabled and C.text[1] or C.textMuted[1], enabled and C.text[2] or C.textMuted[2], enabled and C.text[3] or C.textMuted[3], 1)
+        end
+        if itemLevelBracketInfo then
+            itemLevelBracketInfo:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], enabled and 1 or 0.6)
+        end
+
+        for _, label in ipairs(itemLevelColorLabels) do
+            label:SetAlpha(enabled and 1 or 0.6)
+        end
+
+        for _, fieldInfo in ipairs(itemLevelColorFields) do
+            fieldInfo.input:SetEnabled(enabled)
+            fieldInfo.input:EnableMouse(enabled)
+            fieldInfo.frame:SetAlpha(enabled and 1 or 0.6)
+        end
+    end
+
+    local playerILvlColorCheck = GUI:CreateFormCheckbox(tabContent, "Color Player Item Level by Bracket", "colorPlayerItemLevel", tooltip, function()
+        RefreshPlayerItemLevelBracketInputs()
+        RefreshTooltips()
+    end)
+    playerILvlColorCheck:SetPoint("TOPLEFT", PADDING, y)
+    playerILvlColorCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    y = y - FORM_ROW
+
+    local playerILvlColorInfo = GUI:CreateLabel(tabContent, "Use WoW-style grey, white, green, blue, purple, and orange brackets when coloring the player item level line.", 10, C.textMuted)
+    playerILvlColorInfo:SetPoint("TOPLEFT", PADDING, y)
+    playerILvlColorInfo:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    playerILvlColorInfo:SetJustifyH("LEFT")
+    y = y - 24
+
+    local bracketRow = CreateFrame("Frame", nil, tabContent)
+    bracketRow:SetHeight(44)
+    bracketRow:SetPoint("TOPLEFT", PADDING, y)
+    bracketRow:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+
+    itemLevelBracketHeader = bracketRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    itemLevelBracketHeader:SetPoint("LEFT", bracketRow, "LEFT", 0, 0)
+    itemLevelBracketHeader:SetWidth(170)
+    itemLevelBracketHeader:SetJustifyH("LEFT")
+    itemLevelBracketHeader:SetText("Bracket Breakpoints")
+    itemLevelBracketHeader:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+
+    local inputsAnchor = CreateFrame("Frame", nil, bracketRow)
+    inputsAnchor:SetPoint("TOPLEFT", bracketRow, "TOPLEFT", 180, 2)
+    inputsAnchor:SetPoint("BOTTOMRIGHT", bracketRow, "BOTTOMRIGHT", 0, -2)
+
+    local fieldWidth = 52
+    local fieldSpacing = 8
+    local previousGroup = nil
+
+    local function CommitBracketValue(fieldKey, editBox)
+        local currentValue = tonumber(tooltip.itemLevelBrackets[fieldKey]) or DEFAULT_PLAYER_ILVL_BRACKETS[fieldKey]
+        local parsedValue = tonumber(editBox:GetText())
+        if parsedValue then
+            parsedValue = math.max(0, math.floor(parsedValue))
+            tooltip.itemLevelBrackets[fieldKey] = parsedValue
+            editBox:SetText(tostring(parsedValue))
+            RefreshTooltips()
+        else
+            editBox:SetText(tostring(currentValue))
+        end
+        editBox:SetCursorPosition(0)
+    end
+
+    for _, field in ipairs(PLAYER_ILVL_BRACKET_FIELDS) do
+        local group = CreateFrame("Frame", nil, inputsAnchor)
+        group:SetSize(fieldWidth, 40)
+        group:SetPoint("TOPLEFT", previousGroup or inputsAnchor, previousGroup and "TOPRIGHT" or "TOPLEFT", previousGroup and fieldSpacing or 0, 0)
+
+        local label = inputsAnchor:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        label:SetText(field.label)
+        label:SetTextColor(field.color[1], field.color[2], field.color[3], 1)
+        label:SetPoint("TOP", group, "TOP", 0, 0)
+        table.insert(itemLevelColorLabels, label)
+
+        local fieldBg, input = GUI:CreateInlineEditBox(group, {
+            width = fieldWidth,
+            height = 22,
+            textInset = 6,
+            text = tostring(tooltip.itemLevelBrackets[field.key]),
+            justifyH = "CENTER",
+            maxLetters = 3,
+            bgColor = {0.05, 0.05, 0.05, 0.5},
+            borderColor = field.color,
+            activeBorderColor = field.color,
+            onEnterPressed = function(self)
+                CommitBracketValue(field.key, self)
+            end,
+            onEscapePressed = function(self)
+                self:SetText(tostring(tooltip.itemLevelBrackets[field.key]))
+                self:SetCursorPosition(0)
+            end,
+            onEditFocusGained = function(self)
+                self:HighlightText()
+            end,
+        })
+        fieldBg:SetPoint("TOP", label, "BOTTOM", 0, -2)
+
+        input:HookScript("OnEditFocusLost", function(self)
+            CommitBracketValue(field.key, self)
+        end)
+
+        table.insert(itemLevelColorFields, {
+            frame = fieldBg,
+            input = input,
+        })
+
+        previousGroup = group
+    end
+
+    y = y - 48
+
+    itemLevelBracketInfo = GUI:CreateLabel(tabContent, "Inclusive starts for each color bracket. Values below White use the grey bracket.", 10, C.textMuted)
+    itemLevelBracketInfo:SetPoint("TOPLEFT", PADDING, y)
+    itemLevelBracketInfo:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
+    itemLevelBracketInfo:SetJustifyH("LEFT")
+    y = y - FORM_ROW
+
+    RefreshPlayerItemLevelBracketInputs()
 
     if tooltip.hideDelay == nil then tooltip.hideDelay = 0 end
     local hideDelaySlider = GUI:CreateFormSlider(tabContent, "Hide Delay", 0, 2, 0.1, "hideDelay", tooltip, RefreshTooltips, {precision = 1})
