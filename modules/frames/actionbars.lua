@@ -788,6 +788,7 @@ local extraButtonMoversVisible = false
 local hookingSetPoint = false
 local extraActionSetPointHooked = false
 local zoneAbilitySetPointHooked = false
+local hookingSetParent = false
 local pageArrowShowHooked = false
 
 -- Get settings for a specific extra button type
@@ -963,6 +964,9 @@ local function CreateExtraButtonHolder(buttonType, displayName)
     return holder, mover
 end
 
+-- Original parents for managed frames (saved before reparenting)
+local extraButtonOriginalParents = {}
+
 -- Apply settings (scale, position, artwork) to an extra button frame
 local function ApplyExtraButtonSettings(buttonType)
     if InCombatLockdown() then
@@ -994,8 +998,21 @@ local function ApplyExtraButtonSettings(buttonType)
     local offsetX = settings.offsetX or 0
     local offsetY = settings.offsetY or 0
 
-    -- Keep Blizzard parent/manager chain intact to avoid managed-frame taint.
-    -- Only override the anchor when we're outside combat.
+    -- TAINT SAFETY: Reparent the Blizzard frame to our holder, removing it
+    -- from the UIParent managed frame container's layout chain.  Calling
+    -- ClearAllPoints/SetPoint on managed frames from addon code permanently
+    -- taints their position data; when Blizzard's secure UseAction chain
+    -- later calls UIParent_ManageFramePositions, the taint propagates to
+    -- all managed containers (including UIParentRightManagedFrameContainer),
+    -- causing ADDON_ACTION_BLOCKED.  Reparenting removes the frame from the
+    -- managed container entirely so its position is never read by the secure
+    -- layout system.
+    if not extraButtonOriginalParents[buttonType] then
+        extraButtonOriginalParents[buttonType] = blizzFrame:GetParent()
+    end
+    hookingSetParent = true
+    blizzFrame:SetParent(holder)
+    hookingSetParent = false
     hookingSetPoint = true
     blizzFrame:ClearAllPoints()
     blizzFrame:SetPoint("CENTER", holder, "CENTER", offsetX, offsetY)
@@ -1056,10 +1073,11 @@ local function QueueExtraButtonReanchor(buttonType)
     end)
 end
 
--- Hook Blizzard frames to prevent them from repositioning
+-- Hook Blizzard frames to prevent them from repositioning.
+-- After reparenting, the managed container won't reposition these frames,
+-- but other Blizzard code (e.g. ability grant, zone transition) may call
+-- SetPoint directly.  The hooks re-anchor to our holder after each attempt.
 local function HookExtraButtonPositioning()
-    -- TAINT SAFETY: Defer to break taint chain from secure Blizzard context.
-    -- Hook ExtraActionBarFrame
     if ExtraActionBarFrame and not extraActionSetPointHooked then
         extraActionSetPointHooked = true
         hooksecurefunc(ExtraActionBarFrame, "SetPoint", function(self)
@@ -1074,7 +1092,6 @@ local function HookExtraButtonPositioning()
         end)
     end
 
-    -- Hook ZoneAbilityFrame
     if ZoneAbilityFrame and not zoneAbilitySetPointHooked then
         zoneAbilitySetPointHooked = true
         hooksecurefunc(ZoneAbilityFrame, "SetPoint", function(self)
@@ -1089,11 +1106,27 @@ local function HookExtraButtonPositioning()
         end)
     end
 
-    -- NOTE: Previously attempted to remove ExtraAbilityContainer from UIParentBottomManagedFrameContainer.showingFrames
-    -- to prevent Edit Mode interference. However, modifying Blizzard's internal showingFrames table spreads taint
-    -- to the entire UIParent frame management system, causing ADDON_ACTION_BLOCKED errors during combat
-    -- when PetActionBar or other secure frames update. The Edit Mode interference is a minor cosmetic issue;
-    -- the combat taint errors are game-breaking. Removed the problematic code.
+    -- Hook SetParent to reclaim frames if Blizzard reparents them back to
+    -- a managed container (e.g. during Edit Mode layout recalculation).
+    local function HookSetParentForType(blizzFrame, buttonType, holder)
+        if not blizzFrame then return end
+        hooksecurefunc(blizzFrame, "SetParent", function(self, newParent)
+            if hookingSetParent then return end
+            if newParent == holder then return end  -- already ours
+            C_Timer.After(0, function()
+                if hookingSetParent or InCombatLockdown() then return end
+                local settings = GetExtraButtonDB(buttonType)
+                if holder and settings and settings.enabled then
+                    hookingSetParent = true
+                    blizzFrame:SetParent(holder)
+                    hookingSetParent = false
+                    QueueExtraButtonReanchor(buttonType)
+                end
+            end)
+        end)
+    end
+    HookSetParentForType(ExtraActionBarFrame, "extraActionButton", extraActionHolder)
+    HookSetParentForType(ZoneAbilityFrame, "zoneAbility", zoneAbilityHolder)
 end
 
 -- Show/hide mover overlays
@@ -3303,14 +3336,10 @@ end
 function ActionBars:Initialize()
     if ActionBars.initialized then return end
 
-    -- Defer initialization if in combat (protects SetScale calls on action bars)
-    if InCombatLockdown() then
-        ActionBars.pendingInitialize = true
+    local db = GetDB()
+    if not db or not db.enabled then
         return
     end
-
-    local db = GetDB()
-    if not db or not db.enabled then return end
 
     ActionBars.initialized = true
     ActionBars.levelSuppressionActive = ShouldSuppressMouseoverHideForLevel()
@@ -3341,6 +3370,24 @@ function ActionBars:Initialize()
 
     -- Apply bar layout settings (scale, lock, range indicator, empty slots)
     ApplyBarLayoutSettings()
+
+    -- Hook Blizzard's Layout() on each bar frame to reapply QUI button
+    -- spacing after Blizzard's Edit Mode recalculates container positions.
+    -- Without this, Edit Mode layout overwrites QUI spacing on reload.
+    local _layoutHookGuard = false
+    for barKey, _ in pairs(BUTTON_PATTERNS) do
+        if barKey ~= "pet" and barKey ~= "stance" then
+            local barFrame = GetBarFrame(barKey)
+            if barFrame and barFrame.Layout then
+                hooksecurefunc(barFrame, "Layout", function()
+                    if _layoutHookGuard or not ActionBars.initialized or InCombatLockdown() then return end
+                    _layoutHookGuard = true
+                    ApplyButtonSpacing(barKey)
+                    _layoutHookGuard = false
+                end)
+            end
+        end
+    end
 
     -- Keep bars visible while Spellbook UI is open (optional setting).
     HookSpellBookVisibilityFrames()
@@ -3423,7 +3470,6 @@ local function QueueAllButtonVisualRefresh(delay)
 end
 
 local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 eventFrame:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
 eventFrame:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
@@ -3441,11 +3487,16 @@ eventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
 eventFrame:RegisterEvent("ADDON_LOADED")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
-    if event == "PLAYER_LOGIN" then
-        -- Delay initialization to ensure all frames exist
-        C_Timer.After(0.5, function()
+    if event == "ADDON_LOADED" then
+        local addonName = ...
+        if addonName == ADDON_NAME then
             ActionBars:Initialize()
-        end)
+        end
+        HandleSpellBookAddonLoaded(addonName)
+        if addonName == "Blizzard_ActionBar" then
+            HookSpellFlyoutSkinning()
+            C_Timer.After(0, SkinSpellFlyoutButtons)
+        end
 
     elseif event == "ACTIONBAR_SLOT_CHANGED" then
         -- Defer slot-change processing during combat to avoid taint
@@ -3512,6 +3563,16 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
+        local isLogin, isReload = ...
+        if isReload then
+            if not InCombatLockdown() then
+                -- Second spacing pass during combat /reload safe window.
+                ApplyAllBarSpacing()
+            end
+            -- Safety net: Blizzard's Layout() may fire after safe window
+            -- closes. Mark pending so PLAYER_REGEN_ENABLED reapplies.
+            ActionBars.pendingSpacing = true
+        end
         if UpdateLevelSuppressionState() then
             if type(_G.QUI_RefreshActionBars) == "function" then
                 _G.QUI_RefreshActionBars()
@@ -3530,20 +3591,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             SetupBarMouseover("bar1")
         end)
 
-    elseif event == "ADDON_LOADED" then
-        local addonName = ...
-        HandleSpellBookAddonLoaded(addonName)
-        if addonName == "Blizzard_ActionBar" then
-            HookSpellFlyoutSkinning()
-            C_Timer.After(0, SkinSpellFlyoutButtons)
-        end
-
     elseif event == "PLAYER_REGEN_ENABLED" then
-        -- Process pending initialization (from /reload during combat)
-        if ActionBars.pendingInitialize then
-            ActionBars.pendingInitialize = false
-            ActionBars:Initialize()
-        end
         -- Process any pending refresh operations
         if ActionBars.pendingRefresh then
             ActionBars.pendingRefresh = false

@@ -39,11 +39,16 @@ local coordsTicker = nil
 local pendingMinimapRefresh = false
 local pendingDrawerSetup = false
 local middleClickMenuHooked = false
+local middleClickBlockerOverlay = nil
 local microMenuShowHooked = false
 local bagsBarShowHooked = false
 local originalMicroMenuParent = nil
 local originalBagsBarParent = nil
 local minimapOriginalOnMouseUp = nil
+
+-- External HUD overlay detection
+local externalHudActive = false
+local quiUpdatingMinimap = false
 
 ---=================================================================================
 --- BLIZZARD LAYOUT NO-OPS
@@ -438,7 +443,10 @@ local function UpdateBackdrop()
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
     if not backdrop then CreateBackdrop() end
-    
+
+    -- Ensure backdrop is visible (may have been hidden by HUD detection or disabled state)
+    backdropFrame:Show()
+
     -- Border shows on all 4 sides, so we need size + (borderSize * 2)
     local fullSize = settings.size + (settings.borderSize * 2)
     backdrop:SetSize(fullSize, fullSize)
@@ -1711,16 +1719,22 @@ local function SetupMiddleClickMenu()
     if middleClickMenuHooked then return end
     middleClickMenuHooked = true
 
-    -- TAINT SAFETY: Use HookScript instead of SetScript so Blizzard's
-    -- original OnMouseUp handler keeps running in secure context.
-    -- SetScript would replace the handler, causing PingLocation() to
-    -- execute in QUI's addon context → ADDON_ACTION_FORBIDDEN.
-    Minimap:HookScript("OnMouseUp", function(self, button)
-        local settings = GetSettings()
-        if settings and settings.enabled and settings.middleClickMenuEnabled and button == "MiddleButton" then
-            ShowMiddleClickMenu()
-        end
-    end)
+    -- Use a transparent overlay to intercept MiddleButton clicks before they
+    -- reach the Minimap. This prevents Blizzard's OnMouseUp from firing a ping.
+    -- The overlay only registers MiddleButton — all other clicks pass through.
+    if not middleClickBlockerOverlay then
+        middleClickBlockerOverlay = CreateFrame("Button", nil, Minimap)
+        middleClickBlockerOverlay:SetAllPoints(Minimap)
+        middleClickBlockerOverlay:SetFrameLevel(Minimap:GetFrameLevel() + 5)
+        middleClickBlockerOverlay:RegisterForClicks("MiddleButtonUp")
+        middleClickBlockerOverlay:SetPassThroughButtons("LeftButton", "RightButton")
+        middleClickBlockerOverlay:SetScript("OnClick", function(self, button)
+            local settings = GetSettings()
+            if settings and settings.enabled and settings.middleClickMenuEnabled and button == "MiddleButton" then
+                ShowMiddleClickMenu()
+            end
+        end)
+    end
 end
 
 ---=================================================================================
@@ -2804,6 +2818,17 @@ local function RefreshButtonDrawer()
         StyleDrawerFrame()
         LayoutDrawerButtons()
         UpdateDrawerAnchor()
+
+        -- Apply auto-hide toggle state immediately
+        if drawerToggleButton then
+            if settings.buttonDrawer.autoHideToggle then
+                if not Minimap:IsMouseOver() and not IsMouseOverDrawer() then
+                    drawerToggleButton:SetAlpha(0)
+                end
+            else
+                drawerToggleButton:SetAlpha(1)
+            end
+        end
     else
         SetupButtonDrawer()
     end
@@ -2818,11 +2843,11 @@ local function UpdateMinimapSize()
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
     
-    -- Set minimap size
+    -- Set minimap size (guard flag prevents external HUD false positives)
+    quiUpdatingMinimap = true
     Minimap:SetSize(settings.size, settings.size)
-
-    -- Apply scale multiplier
     Minimap:SetScale(settings.scale or 1.0)
+    quiUpdatingMinimap = false
 
     -- Force render update by toggling zoom.
     -- Use SetZoom API instead of ZoomIn/ZoomOut:Click() — clicking protected
@@ -2847,7 +2872,6 @@ local function UpdateMinimapSize()
 end
 
 local function SetupMinimapDragging()
-    if InCombatLockdown() then return end
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
     
@@ -2869,19 +2893,21 @@ local function SetupMinimapDragging()
         MinimapCluster:EnableMouse(false)
     end
     
-    -- Setup dragging - MUST enable mouse for drag to work
+    -- Setup dragging - only movable during Edit Mode
     Minimap:EnableMouse(true)
-    Minimap:SetMovable(not settings.lock)
+    Minimap:SetMovable(false)
     Minimap:SetClampedToScreen(true)
     Minimap:RegisterForDrag("LeftButton")
-    
+
     Minimap:SetScript("OnDragStart", function(self)
+        if InCombatLockdown() then return end
         if self:IsMovable() then
             self:StartMoving()
         end
     end)
-    
+
     Minimap:SetScript("OnDragStop", function(self)
+        if InCombatLockdown() then return end
         self:StopMovingOrSizing()
         local point, _, relPoint, x, y = QUICore:SnapFramePosition(self)
         if point then
@@ -2911,13 +2937,72 @@ local function SetupMinimapDragging()
 end
 
 ---=================================================================================
+--- EXTERNAL HUD DETECTION
+--- Detects when an external addon scales up / fades out the Minimap for a
+--- full-screen HUD overlay, and hides all QUI decorations so they don't
+--- appear as opaque artifacts on top of the transparent overlay.
+---=================================================================================
+
+local function HideAllDecorations()
+    if backdropFrame then backdropFrame:Hide() end
+    if clockFrame then clockFrame:Hide() end
+    if coordsFrame then coordsFrame:Hide() end
+    if zoneTextFrame then zoneTextFrame:Hide() end
+    if datatextFrame then datatextFrame:Hide() end
+    if drawerToggleButton then drawerToggleButton:Hide() end
+    if drawerFrame then drawerFrame:Hide() end
+    if clockTicker then clockTicker:Cancel(); clockTicker = nil end
+    if coordsTicker then coordsTicker:Cancel(); coordsTicker = nil end
+end
+
+local function CheckExternalHud()
+    if quiUpdatingMinimap then return end
+
+    local settings = GetSettings()
+    if not settings or not settings.enabled then return end
+
+    local expectedScale = settings.scale or 1.0
+    local expectedSize = settings.size or 140
+
+    -- Primary checks: API-reported values (may be overridden by external addons)
+    local currentScale = Minimap:GetScale()
+    local currentAlpha = Minimap:GetEffectiveAlpha()
+    local currentWidth = Minimap:GetWidth()
+
+    -- QUI reparents Minimap to UIParent, so check against UIParent (not MinimapCluster)
+    local hudDetected = (currentScale > expectedScale * 2.0)
+        or (currentAlpha < 0.5)
+        or (currentWidth > expectedSize * 2.0)
+        or (Minimap:GetParent() ~= UIParent)
+
+    -- Fallback: check actual rendered pixel size via GetRect() which bypasses
+    -- metatable overrides that some HUD addons use to hide their changes
+    if not hudDetected then
+        local left, bottom, width, height = Minimap:GetRect()
+        if left and width then
+            local uiScale = UIParent:GetEffectiveScale()
+            local renderedSize = width * Minimap:GetEffectiveScale()
+            local expectedPixels = expectedSize * expectedScale * uiScale
+            if renderedSize > expectedPixels * 2.0 then
+                hudDetected = true
+            end
+        end
+    end
+
+    if hudDetected and not externalHudActive then
+        externalHudActive = true
+        HideAllDecorations()
+    elseif not hudDetected and externalHudActive then
+        externalHudActive = false
+        Minimap_Module:Refresh()
+    end
+end
+
+---=================================================================================
 --- EDIT MODE SUPPORT
 ---=================================================================================
 
--- Track original lock state for Edit Mode restoration
-local editModeWasLocked = nil
-
--- Enable minimap movement during Edit Mode (ignore lock setting)
+-- Enable minimap movement during Edit Mode (respects lock setting)
 function QUICore:EnableMinimapEditMode()
     local settings = GetSettings()
     if not settings then return end
@@ -2928,25 +3013,13 @@ function QUICore:EnableMinimapEditMode()
         return
     end
 
-    -- Remember lock state
-    editModeWasLocked = settings.lock
-
-    -- Temporarily enable movement (ignore lock during Edit Mode)
-    Minimap:SetMovable(true)
+    -- Allow movement during Edit Mode unless locked
+    Minimap:SetMovable(not settings.lock)
 end
 
--- Disable minimap Edit Mode (restore lock setting)
+-- Disable minimap Edit Mode (always lock outside Edit Mode)
 function QUICore:DisableMinimapEditMode()
-    local settings = GetSettings()
-    if not settings then return end
-
-    -- Restore original lock state
-    if editModeWasLocked ~= nil then
-        Minimap:SetMovable(not editModeWasLocked)
-        editModeWasLocked = nil
-    else
-        Minimap:SetMovable(not settings.lock)
-    end
+    Minimap:SetMovable(false)
 end
 
 ---=================================================================================
@@ -3052,12 +3125,12 @@ end
 function Minimap_Module:Initialize()
     local settings = GetSettings()
     if not settings then return end
-    
+
     if not settings.enabled then
         -- If disabled, make sure we don't interfere
         return
     end
-    
+
     -- Set shape first (affects other elements)
     SetMinimapShape(settings.shape)
     
@@ -3093,6 +3166,33 @@ function Minimap_Module:Initialize()
     SetupMouseWheelZoom()
     SetupMiddleClickMenu()
     SetupAutoZoom()
+
+    -- Detect external HUD overlays that scale up / fade out / resize the Minimap
+    hooksecurefunc(Minimap, "SetScale", function()
+        C_Timer.After(0, CheckExternalHud)
+    end)
+    hooksecurefunc(Minimap, "SetAlpha", function()
+        C_Timer.After(0, CheckExternalHud)
+    end)
+    hooksecurefunc(Minimap, "SetSize", function()
+        C_Timer.After(0, CheckExternalHud)
+    end)
+    hooksecurefunc(Minimap, "SetParent", function()
+        C_Timer.After(0, CheckExternalHud)
+    end)
+    hooksecurefunc(Minimap, "SetWidth", function()
+        C_Timer.After(0, CheckExternalHud)
+    end)
+    hooksecurefunc(Minimap, "SetHeight", function()
+        C_Timer.After(0, CheckExternalHud)
+    end)
+    hooksecurefunc(Minimap, "SetPoint", function()
+        C_Timer.After(0, CheckExternalHud)
+    end)
+
+    -- Periodic fallback: some HUD addons use metatable manipulation that bypasses
+    -- hooksecurefunc. Check every 2 seconds as a safety net.
+    C_Timer.NewTicker(2, CheckExternalHud)
 
     -- Start performance-optimized ticker updates
     StartUpdateTickers()
@@ -3192,6 +3292,12 @@ function Minimap_Module:Refresh()
         return
     end
 
+    -- If an external HUD overlay is active, keep decorations hidden
+    if externalHudActive then
+        HideAllDecorations()
+        return
+    end
+
     -- Restart tickers with potentially new intervals
     StartUpdateTickers()
 
@@ -3208,26 +3314,6 @@ function Minimap_Module:Refresh()
     SetupAddonButtonHiding()
     RefreshButtonDrawer()
     UpdateDungeonEyePosition()
-
-    -- Update lock/movable state and ensure drag is registered
-    Minimap:SetMovable(not settings.lock)
-    Minimap:EnableMouse(true)
-    Minimap:RegisterForDrag("LeftButton")
-    
-    -- Re-setup drag scripts (may have been lost)
-    Minimap:SetScript("OnDragStart", function(self)
-        if self:IsMovable() then
-            self:StartMoving()
-        end
-    end)
-    
-    Minimap:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        local point, _, relPoint, x, y = QUICore:SnapFramePosition(self)
-        if point then
-            settings.position = {point, relPoint, x, y}
-        end
-    end)
 
     -- Restore saved position from profile — skip if the frame anchoring system owns this frame
     if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(Minimap)) then
@@ -3248,22 +3334,20 @@ end
 ---=================================================================================
 
 local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
-    if event == "ADDON_LOADED" and arg1 == "Blizzard_HybridMinimap" then
-        -- Handle HybridMinimap loading (Delves/scenarios)
-        local settings = GetSettings()
-        if settings and settings.enabled then
-            SetMinimapShape(settings.shape)
-        end
-    elseif event == "PLAYER_LOGIN" then
-        -- Delay initialization slightly to ensure all frames exist
-        C_Timer.After(0.5, function()
+    if event == "ADDON_LOADED" then
+        if arg1 == ADDON_NAME then
             Minimap_Module:Initialize()
-        end)
+        elseif arg1 == "Blizzard_HybridMinimap" then
+            -- Handle HybridMinimap loading (Delves/scenarios)
+            local settings = GetSettings()
+            if settings and settings.enabled then
+                SetMinimapShape(settings.shape)
+            end
+        end
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Combat ended: run deferred drawer setup if one was requested during combat
         if pendingDrawerSetup then

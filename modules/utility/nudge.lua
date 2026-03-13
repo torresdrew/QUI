@@ -1825,6 +1825,7 @@ function QUICore.StartClusterSizeWatcher()
     _editModeMoving = true
 
     if not Minimap then return end
+    if InCombatLockdown() then return end
 
     -- Snapshot minimap DB state so we can revert on exit-without-saving.
     -- Deep-copy the position array so nudge writes don't mutate our snapshot.
@@ -1868,6 +1869,7 @@ function QUICore.StopClusterSizeWatcher()
     _editModeMoving = false
 
     if not Minimap then return end
+    if InCombatLockdown() then return end
     local settings = QUICore.db and QUICore.db.profile and QUICore.db.profile.minimap
 
     if not _editModeSaved and _preEditMinimapPosition then

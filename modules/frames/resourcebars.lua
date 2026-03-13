@@ -305,9 +305,14 @@ do
 
     -- Event frame: only active for Fury Warriors
     local wwFrame = CreateFrame("Frame")
-    wwFrame:RegisterEvent("PLAYER_LOGIN")
+    wwFrame:RegisterEvent("ADDON_LOADED")
     wwFrame:SetScript("OnEvent", function(self, event, ...)
-        if event == "PLAYER_LOGIN" or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED"
+        if event == "ADDON_LOADED" then
+            local addonName = ...
+            if addonName ~= ADDON_NAME then return end
+            self:UnregisterEvent("ADDON_LOADED")
+        end
+        if event == "ADDON_LOADED" or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED"
             or event == "PLAYER_SPECIALIZATION_CHANGED" then
             local _, class = UnitClass("player")
             local spec = GetSpecialization()
@@ -429,9 +434,14 @@ do
     end
 
     local tipFrame = CreateFrame("Frame")
-    tipFrame:RegisterEvent("PLAYER_LOGIN")
+    tipFrame:RegisterEvent("ADDON_LOADED")
     tipFrame:SetScript("OnEvent", function(self, event, ...)
-        if event == "PLAYER_LOGIN" or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED"
+        if event == "ADDON_LOADED" then
+            local addonName = ...
+            if addonName ~= ADDON_NAME then return end
+            self:UnregisterEvent("ADDON_LOADED")
+        end
+        if event == "ADDON_LOADED" or event == "ACTIVE_PLAYER_SPECIALIZATION_CHANGED"
             or event == "PLAYER_SPECIALIZATION_CHANGED" then
             local _, class = UnitClass("player")
             local spec = GetSpecialization()
@@ -3619,22 +3629,6 @@ local function InitializeResourceBars(self)
         return
     end
 
-    if InCombatLockdown() then
-        -- RegisterEvent itself can be forbidden in combat in tainted flows.
-        -- Retry initialization via timer until combat ends.
-        if not self._resourceBarsInitRetryPending then
-            self._resourceBarsInitRetryPending = true
-            C_Timer.After(1, function()
-                self._resourceBarsInitRetryPending = false
-                if not self._resourceBarsInitialized then
-                    InitializeResourceBars(self)
-                end
-            end)
-        end
-        return
-    end
-
-    self._resourceBarsInitRetryPending = false
     self._resourceBarsInitialized = true
 
     -- Register additional events

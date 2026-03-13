@@ -1049,6 +1049,46 @@ anchoredFramesCombatFrame:SetScript("OnEvent", function()
     end)
 end)
 
+-- Re-apply QUI anchors when Blizzard re-applies its Edit Mode layout.
+-- This fires on spec change (Blizzard swaps per-spec Edit Mode layouts),
+-- login, and any other scenario where Blizzard repositions system frames.
+-- Without this, Blizzard's layout pass can override QUI's frame positions.
+local layoutUpdateFrame = CreateFrame("Frame")
+layoutUpdateFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
+local _layoutUpdatePending = false
+layoutUpdateFrame:SetScript("OnEvent", function()
+    if _layoutUpdatePending then return end
+    _layoutUpdatePending = true
+    -- Delay to let Blizzard finish its full layout pass before we re-stamp
+    C_Timer.After(0.3, function()
+        _layoutUpdatePending = false
+        -- Debug logging
+        local _debug = _G.QUI and _G.QUI.DEBUG_MODE
+        if _debug then
+            print(format("|cFF30D1FFQUI Profile Debug|r EDIT_MODE_LAYOUTS_UPDATED +0.3s — combat=%s editMode=%s profile=%s",
+                tostring(InCombatLockdown()), tostring(nsHelpers.IsEditModeActive()),
+                tostring(QUICore.db and QUICore.db:GetCurrentProfile())))
+        end
+        if InCombatLockdown() then
+            pendingAnchoredFrameUpdateAfterCombat = true
+            return
+        end
+        if not nsHelpers.IsEditModeActive() then
+            if QUI_Anchoring then
+                QUI_Anchoring:ApplyAllFrameAnchors()
+            end
+            -- Also re-position unit frames — Blizzard's per-spec layout pass
+            -- overwrites QUI's positions for frames not in the anchoring system
+            local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
+            if RefreshUnitFrames then pcall(RefreshUnitFrames) end
+        else
+            if _debug then
+                print("|cFF30D1FFQUI Profile Debug|r EDIT_MODE_LAYOUTS_UPDATED: SKIPPED (Edit Mode active)")
+            end
+        end
+    end)
+end)
+
 -- Update frames anchored to a specific anchor target
 function QUI_Anchoring:UpdateFramesForTarget(anchorTargetName)
     if InCombatLockdown() then
@@ -1396,9 +1436,19 @@ local ANCHOR_PROXY_SOURCES = {
     buffBar        = { resolver = function() return _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame("buffBar") end,   cdm = true },
     primaryPower   = { resolver = function() return QUICore and QUICore.powerBar end, hudMinWidth = true },
     secondaryPower = { resolver = function() return QUICore and QUICore.secondaryPowerBar end, hudMinWidth = true },
+    -- Unit Frame proxies: combat-safe anchor targets for frames dependent on
+    -- unit frames that may hide during combat (pet dies, target clears, etc.)
+    playerFrame    = { resolver = function() return ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames and ns.QUI_UnitFrames.frames.player end, unitFrame = true },
+    targetFrame    = { resolver = function() return ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames and ns.QUI_UnitFrames.frames.target end, unitFrame = true },
+    focusFrame     = { resolver = function() return ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames and ns.QUI_UnitFrames.frames.focus end, unitFrame = true },
+    petFrame       = { resolver = function() return ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames and ns.QUI_UnitFrames.frames.pet end, unitFrame = true },
+    totFrame       = { resolver = function() return ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames and ns.QUI_UnitFrames.frames.targettarget end, unitFrame = true },
+    bossFrames     = { resolver = function() return ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames and ns.QUI_UnitFrames.frames.boss1 end, unitFrame = true },
 }
 local cdmAnchorProxies = {}
 local cdmAnchorProxyPendingAfterCombat = {}
+local hideWithParentHidden = {}  -- keys hidden because their anchor parent is hidden
+local FRAME_ANCHOR_FALLBACKS    -- forward-declared; table populated below GetCDMAnchorProxy
 local HUD_MIN_WIDTH_DEFAULT = (ns.Helpers and ns.Helpers.HUD_MIN_WIDTH_DEFAULT) or 200
 
 local function GetHUDMinWidthSettings()
@@ -1429,18 +1479,18 @@ local function CDMSizeResolver(source)
         width = (vs and vs.iconWidth) or 0
         height = (vs and vs.totalHeight) or 0
         if width < 2 or height < 2 then
-            width = source:GetWidth() or 0
-            height = source:GetHeight() or 0
+            width = nsHelpers.SafeToNumber(source:GetWidth(), 0)
+            height = nsHelpers.SafeToNumber(source:GetHeight(), 0)
         end
     else
-        width = (vs and vs.iconWidth) or source:GetWidth() or 0
-        height = (vs and vs.totalHeight) or source:GetHeight() or 0
+        width = (vs and vs.iconWidth) or nsHelpers.SafeToNumber(source:GetWidth(), 0)
+        height = (vs and vs.totalHeight) or nsHelpers.SafeToNumber(source:GetHeight(), 0)
     end
     -- Viewer state stores logical (un-scaled) dimensions.  Return
     -- source-local values so proxy Sync's effective-scale conversion
     -- produces the correct visual-space proxy size.
     -- Min-width is in visual (UIParent) space, so compare there.
-    local scale = source:GetScale() or 1
+    local scale = nsHelpers.SafeToNumber(source:GetScale(), 1)
     if scale <= 0 then scale = 1 end
     local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
     if minWidthEnabled and IsHUDAnchoredToCDM() then
@@ -1457,8 +1507,8 @@ end
 -- width regardless of whether they anchor to CDM or to a resource bar).
 -- Falls back to the resource bar's own width with min-width floor.
 local function HUDMinWidthSizeResolver(source)
-    local width = source:GetWidth() or 0
-    local height = source:GetHeight() or 0
+    local width = nsHelpers.SafeToNumber(source:GetWidth(), 0)
+    local height = nsHelpers.SafeToNumber(source:GetHeight(), 0)
 
     -- Find the CDM proxy this resource bar is anchored to and mirror its width.
     local anchoringDB = QUICore and QUICore.db and QUICore.db.profile
@@ -1491,7 +1541,7 @@ local function HUDMinWidthSizeResolver(source)
     -- Fallback: apply min-width floor independently
     local minWidthEnabled, minWidth = GetHUDMinWidthSettings()
     if minWidthEnabled and IsHUDAnchoredToCDM() then
-        local scale = source:GetScale() or 1
+        local scale = nsHelpers.SafeToNumber(source:GetScale(), 1)
         if scale <= 0 then scale = 1 end
         local visualW = width * scale
         if visualW < minWidth then
@@ -1515,26 +1565,82 @@ local function CDMAnchorResolver(proxy, source)
     local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(source)
     local yOff = (vs and vs.proxyYOffset) or 0
 
-    -- Some Blizzard CDM frames can become protected in combat, which propagates
-    -- protection to anchored proxies. Mutating points in that state triggers
-    -- ADDON_ACTION_BLOCKED on ClearAllPoints/SetPoint.
-    if InCombatLockdown() and (IsFrameProtectedSafe(proxy) or IsFrameProtectedSafe(source)) then
-        return
+    -- Position relative to UIParent using absolute screen coordinates.
+    -- Anchoring directly to the source propagates Blizzard frame protection
+    -- to the proxy, blocking SetSize/SetPoint during combat.  UIParent-relative
+    -- positioning keeps the proxy non-protected so sizing always works.
+    local absX, absY
+    local ok, cx, cy = pcall(source.GetCenter, source)
+    if ok and cx and cy
+        and not (issecretvalue and (issecretvalue(cx) or issecretvalue(cy)))
+    then
+        absX = cx
+        absY = cy + yOff
+        proxy._cachedAbsX = absX
+        proxy._cachedAbsY = absY
+    elseif proxy._cachedAbsX then
+        absX = proxy._cachedAbsX
+        absY = proxy._cachedAbsY
+    else
+        return  -- no position data available yet
     end
 
     -- Avoid redundant point churn.
     if proxy:GetNumPoints() == 1 then
         local pt, relTo, relPt, ox, oy = proxy:GetPoint(1)
-        if pt == "CENTER" and relTo == source and relPt == "CENTER"
-            and math.abs((ox or 0) - 0) < 0.1
-            and math.abs((oy or 0) - (yOff or 0)) < 0.1
+        if pt == "CENTER" and relTo == UIParent and relPt == "BOTTOMLEFT"
+            and math.abs((ox or 0) - absX) < 0.1
+            and math.abs((oy or 0) - absY) < 0.1
         then
             return
         end
     end
 
     proxy:ClearAllPoints()
-    proxy:SetPoint("CENTER", source, "CENTER", 0, yOff)
+    proxy:SetPoint("CENTER", UIParent, "BOTTOMLEFT", absX, absY)
+end
+
+local unitFrameProxyHooked = {}
+
+-- Macro conditionals for unit frame state drivers.
+-- These let secure code switch anchor targets during combat when a
+-- unit appears/disappears (pet summoned, target acquired, etc.).
+local UNIT_FRAME_STATE_CONDITIONALS = {
+    petFrame   = "[@pet,exists]",
+    targetFrame = "[@target,exists]",
+    focusFrame  = "[@focus,exists]",
+    totFrame    = "[@target,exists]",  -- tot only matters when target exists
+    bossFrames  = "[@boss1,exists]",
+}
+
+local function HookUnitFrameProxyVisibility(proxy, sourceFrame, parentKey)
+    if unitFrameProxyHooked[sourceFrame] then return end
+    unitFrameProxyHooked[sourceFrame] = true
+
+    local function onVisibilityChanged()
+        -- Defer out of secure/restricted execution context — state drivers
+        -- trigger Show/Hide in a restricted environment where even addon-
+        -- owned frame mutations (SetSize, SetPoint) are blocked.
+        C_Timer.After(0, function()
+            local srcVisible = sourceFrame.IsShown and sourceFrame:IsShown()
+            proxy._sourceHidden = not srcVisible
+            -- Anchor/size handled by state driver during combat (two-point anchoring).
+            -- Only Sync outside combat for non-state-driver cases.
+            -- pcall guards the brief window between PLAYER_REGEN_ENABLED and
+            -- full protection release where InCombatLockdown() returns false
+            -- but protected frame mutations may still be blocked.
+            if not InCombatLockdown() then
+                pcall(proxy.Sync, proxy)
+            end
+            if proxy:NeedsCombatRefresh() then
+                cdmAnchorProxyPendingAfterCombat[parentKey] = true
+            end
+            DebouncedReapplyOverrides()
+        end)
+    end
+
+    sourceFrame:HookScript("OnShow", onVisibilityChanged)
+    sourceFrame:HookScript("OnHide", onVisibilityChanged)
 end
 
 local function GetCDMAnchorProxy(parentKey)
@@ -1554,16 +1660,99 @@ local function GetCDMAnchorProxy(parentKey)
     if proxy then
         proxy:SetSourceFrame(sourceFrame)
     else
-        proxy = UIKit.CreateAnchorProxy(sourceFrame, {
-            deferCreation = true,
-            -- CDM + HUD proxy frames are addon-owned and safe to resize/anchor in combat.
-            -- Keeping them live avoids stale bounds when CDM reflows during combat.
-            combatFreeze = false,
-            sizeResolver = sourceInfo.cdm and CDMSizeResolver
-                or sourceInfo.hudMinWidth and HUDMinWidthSizeResolver
-                or nil,
-            anchorResolver = sourceInfo.cdm and CDMAnchorResolver or nil,
-        })
+        if sourceInfo.unitFrame then
+            -- Unit frame proxies use SecureHandlerStateTemplate so
+            -- Blizzard's own secure code can switch the anchor target
+            -- during combat (pet summoned, target acquired, etc.).
+            -- Addon code cannot call SetPoint/SetSize on secure frames
+            -- during combat, but state driver snippets can.
+            local fallbackKey = FRAME_ANCHOR_FALLBACKS[parentKey]
+            local macroConditional = UNIT_FRAME_STATE_CONDITIONALS[parentKey]
+            local fallbackFrame
+            if fallbackKey then
+                local fbInfo = ANCHOR_PROXY_SOURCES[fallbackKey]
+                fallbackFrame = fbInfo and fbInfo.resolver()
+            end
+
+            if InCombatLockdown() then
+                cdmAnchorProxyPendingAfterCombat[parentKey] = true
+                return nil
+            end
+
+            proxy = CreateFrame("Frame", nil, UIParent, "SecureHandlerStateTemplate")
+            proxy:SetClampedToScreen(false)
+            proxy:Show()
+
+            -- Two-point anchoring: proxy inherits target dimensions automatically
+            proxy:ClearAllPoints()
+            proxy:SetPoint("TOPLEFT", sourceFrame, "TOPLEFT", 0, 0)
+            proxy:SetPoint("BOTTOMRIGHT", sourceFrame, "BOTTOMRIGHT", 0, 0)
+
+            -- State driver: secure code switches anchor when unit exists/disappears
+            if macroConditional and fallbackFrame then
+                proxy:SetFrameRef("sourceFrame", sourceFrame)
+                proxy:SetFrameRef("fallbackFrame", fallbackFrame)
+                proxy:SetAttribute("_onstate-unitanchor", [[
+                    local source = self:GetFrameRef("sourceFrame")
+                    local fallback = self:GetFrameRef("fallbackFrame")
+                    local target = (newstate == "source") and source or (fallback or source)
+                    if target then
+                        self:ClearAllPoints()
+                        self:SetPoint("TOPLEFT", target, "TOPLEFT", 0, 0)
+                        self:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", 0, 0)
+                    end
+                ]])
+                RegisterStateDriver(proxy, "unitanchor", macroConditional .. " source; fallback")
+                proxy._hasStateDriver = true
+            end
+
+            -- Compatible interface for the anchoring system
+            local combatPending = false
+            local localSource = sourceFrame
+            local localFallback = fallbackFrame
+
+            function proxy:Sync()
+                if InCombatLockdown() then
+                    combatPending = true
+                    return false
+                end
+                local active = localSource
+                if active and active.IsShown and not active:IsShown() then
+                    active = localFallback or localSource
+                end
+                if active then
+                    self:ClearAllPoints()
+                    self:SetPoint("TOPLEFT", active, "TOPLEFT", 0, 0)
+                    self:SetPoint("BOTTOMRIGHT", active, "BOTTOMRIGHT", 0, 0)
+                end
+                combatPending = false
+                return true
+            end
+
+            function proxy:IsFrozen() return InCombatLockdown() end
+            function proxy:NeedsCombatRefresh() return combatPending end
+            function proxy:ClearCombatPending() combatPending = false end
+            function proxy:SetSourceFrame(frame)
+                if localSource == frame then return end
+                localSource = frame
+                if not InCombatLockdown() then
+                    pcall(self.SetFrameRef, self, "sourceFrame", frame)
+                end
+            end
+            function proxy:GetSourceFrame() return localSource end
+
+            proxy._sourceHidden = not (sourceFrame.IsShown and sourceFrame:IsShown())
+            HookUnitFrameProxyVisibility(proxy, sourceFrame, parentKey)
+        else
+            proxy = UIKit.CreateAnchorProxy(sourceFrame, {
+                deferCreation = true,
+                combatFreeze = false,
+                sizeResolver = sourceInfo.cdm and CDMSizeResolver
+                    or sourceInfo.hudMinWidth and HUDMinWidthSizeResolver
+                    or nil,
+                anchorResolver = sourceInfo.cdm and CDMAnchorResolver or nil,
+            })
+        end
         if not proxy then
             cdmAnchorProxyPendingAfterCombat[parentKey] = true
             return nil
@@ -1571,7 +1760,9 @@ local function GetCDMAnchorProxy(parentKey)
         cdmAnchorProxies[parentKey] = proxy
     end
 
-    proxy:Sync()
+    -- pcall: during the REGEN_ENABLED→protection-release transition,
+    -- Sync's SetSize/SetPoint may still be blocked on protected proxies.
+    pcall(proxy.Sync, proxy)
     if proxy:NeedsCombatRefresh() then
         cdmAnchorProxyPendingAfterCombat[parentKey] = true
     end
@@ -1594,6 +1785,12 @@ local function GetCDMAnchorProxy(parentKey)
                 cdmUtility      = { 1.0, 0.6, 0.2 },
                 primaryPower    = { 0.2, 0.6, 1.0 },
                 secondaryPower  = { 1.0, 0.2, 0.6 },
+                playerFrame     = { 0.2, 0.8, 0.2 },
+                targetFrame     = { 0.8, 0.2, 0.2 },
+                focusFrame      = { 0.8, 0.8, 0.2 },
+                petFrame        = { 0.2, 0.8, 0.8 },
+                totFrame        = { 0.8, 0.5, 0.2 },
+                bossFrames      = { 0.8, 0.2, 0.8 },
             }
             local c = colors[parentKey] or { 1, 1, 0 }
             proxy._debugBorder:SetBackdropBorderColor(c[1], c[2], c[3], 1)
@@ -1607,6 +1804,12 @@ local function GetCDMAnchorProxy(parentKey)
                 cdmUtility      = "Utility Proxy",
                 primaryPower    = "Primary Power Proxy",
                 secondaryPower  = "Secondary Power Proxy",
+                playerFrame     = "Player Proxy",
+                targetFrame     = "Target Proxy",
+                focusFrame      = "Focus Proxy",
+                petFrame        = "Pet Proxy",
+                totFrame        = "ToT Proxy",
+                bossFrames      = "Boss Proxy",
             }
             label:SetText(labels[parentKey] or parentKey)
         end
@@ -1629,6 +1832,12 @@ local ANCHOR_PROXY_DEFAULT_ORDER = {
     "cdmUtility",
     "buffIcon",
     "buffBar",
+    "playerFrame",
+    "targetFrame",
+    "focusFrame",
+    "petFrame",
+    "totFrame",
+    "bossFrames",
 }
 local function UpdateCDMAnchorProxies()
     -- Try to derive order from the anchor configuration so that proxy
@@ -1662,8 +1871,10 @@ end
 
 -- Fallback anchor targets for when a resolved frame is unavailable (nil or hidden).
 -- e.g. classes without a secondary resource should fall back to the primary bar.
-local FRAME_ANCHOR_FALLBACKS = {
+FRAME_ANCHOR_FALLBACKS = {
     secondaryPower = "primaryPower",
+    petFrame = "playerFrame",
+    totFrame = "targetFrame",
 }
 
 -- Helper: resolve a single key to a visible frame (nil if unavailable)
@@ -2225,7 +2436,45 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         return
     end
 
-    local parentFrame = ResolveParentFrame(settings.parent)
+    -- hideWithParent: skip fallback chain, hide child when direct parent is hidden
+    local parentFrame
+    if settings.hideWithParent then
+        local directParent = ResolveFrameForKey(settings.parent)
+        local directVisible = directParent and directParent.IsShown and directParent:IsShown()
+        -- Unit frame proxies stay visible in fallback mode; treat
+        -- _sourceHidden as "parent gone" for hideWithParent purposes.
+        local sourceGone = directParent and directParent._sourceHidden
+        if not directVisible or sourceGone then
+            -- Parent hidden/missing — hide the child frame
+            local canMutate = not InCombatLockdown()
+                or not (resolved.IsProtected and resolved:IsProtected())
+            if canMutate then
+                if type(resolved) == "table" and not resolved.GetObjectType then
+                    for _, frame in ipairs(resolved) do pcall(frame.Hide, frame) end
+                else
+                    pcall(resolved.Hide, resolved)
+                end
+            end
+            hideWithParentHidden[key] = true
+            return
+        end
+        -- Direct parent visible — restore child if we previously hid it
+        if hideWithParentHidden[key] then
+            local canMutate = not InCombatLockdown()
+                or not (resolved.IsProtected and resolved:IsProtected())
+            if canMutate then
+                if type(resolved) == "table" and not resolved.GetObjectType then
+                    for _, frame in ipairs(resolved) do pcall(frame.Show, frame) end
+                else
+                    pcall(resolved.Show, resolved)
+                end
+            end
+            hideWithParentHidden[key] = nil
+        end
+        parentFrame = directParent
+    else
+        parentFrame = ResolveParentFrame(settings.parent)
+    end
 
     if editDbg then
         local parentName = settings.parent or "nil"
@@ -2311,6 +2560,13 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         -- (SetSize in CDMBars:LayoutBars).  Size-stable CENTER anchoring causes
         -- bidirectional growth; raw point anchoring (e.g. BOTTOM→TOP) keeps the
         -- growth edge fixed so bars stack in the configured direction.
+        useSizeStable = false
+    end
+    if parentFrame and parentFrame._hasStateDriver then
+        -- Parent is a unit frame proxy whose dimensions change during combat
+        -- (state driver switches between source/fallback targets).  CENTER
+        -- offsets computed at anchor-time become stale when the proxy resizes.
+        -- Raw point anchoring (TOP→BOTTOM etc.) tracks correctly regardless.
         useSizeStable = false
     end
 
@@ -2485,7 +2741,12 @@ ComputeAnchorApplyOrder = function(anchoringDB)
 end
 
 -- Apply all saved frame anchor overrides (dependency-ordered)
-function QUI_Anchoring:ApplyAllFrameAnchors()
+-- Throttle: prevent ApplyAllFrameAnchors from running more than once per frame.
+-- CDM bounds changes and PowerBar updates can trigger cascading re-anchor calls.
+local _anchorThrottleFrame = nil
+local _anchorThrottlePending = false
+
+function QUI_Anchoring:ApplyAllFrameAnchors(force)
     if not QUICore or not QUICore.db or not QUICore.db.profile then return end
     local anchoringDB = QUICore.db.profile.frameAnchoring
     if not anchoringDB then
@@ -2493,11 +2754,29 @@ function QUI_Anchoring:ApplyAllFrameAnchors()
         return
     end
 
+    -- Throttle: if already applied this frame, defer to next frame
+    if not force and _anchorThrottlePending then return end
+    _anchorThrottlePending = true
+    if not _anchorThrottleFrame then
+        _anchorThrottleFrame = CreateFrame("Frame")
+        _anchorThrottleFrame:SetScript("OnUpdate", function(self)
+            _anchorThrottlePending = false
+            self:Hide()
+        end)
+    end
+    _anchorThrottleFrame:Show()
+
+    -- Clear all runtime state before re-applying from current profile.
+    -- Prevents stale overrides and anchor relationships from a previous
+    -- profile leaking across profile/spec switches.
+    wipe(self.overriddenFrames)
+    wipe(self.anchoredFrames)
+
     local sorted = ComputeAnchorApplyOrder(anchoringDB)
-    local inEditMode = nsHelpers.IsEditModeActive()
-    -- if inEditMode and not _editModeTickerSilent then
-    --     AnchorDebug(format("ApplyAllFrameAnchors: %d keys in order: %s", #sorted, table.concat(sorted, ", ")))
-    -- end
+    if _G.QUI and _G.QUI.DEBUG_MODE then
+        print(format("|cFF30D1FFQUI Profile Debug|r ApplyAllFrameAnchors: %d keys, profile=%s",
+            #sorted, tostring(QUICore.db:GetCurrentProfile())))
+    end
     for _, key in ipairs(sorted) do
         self:ApplyFrameAnchor(key, anchoringDB[key])
     end
@@ -2516,9 +2795,9 @@ end
 -- should be locked in place (same underlying check as IsFrameOverridden).
 _G.QUI_IsFrameLocked = _G.QUI_IsFrameOverridden
 
-_G.QUI_ApplyAllFrameAnchors = function()
+_G.QUI_ApplyAllFrameAnchors = function(force)
     if QUI_Anchoring then
-        QUI_Anchoring:ApplyAllFrameAnchors()
+        QUI_Anchoring:ApplyAllFrameAnchors(force)
     end
 end
 
@@ -2555,6 +2834,9 @@ _G.QUI_ReanchorFramePositionOnly = function(key)
     local offsetY = settings.offsetY or 0
     local useSizeStable = IsSizeStableAnchoringEnabled(settings)
     if CASTBAR_ANCHOR_KEYS[key] or key == "buffBar" then
+        useSizeStable = false
+    end
+    if parentFrame and parentFrame._hasStateDriver then
         useSizeStable = false
     end
 
@@ -2594,6 +2876,9 @@ _G.QUI_AnchorOverlayToParent = function(overlayFrame, key, overlayW, overlayH)
     local offsetY = settings.offsetY or 0
     local useSizeStable = IsSizeStableAnchoringEnabled(settings)
     if CASTBAR_ANCHOR_KEYS[key] or key == "buffBar" then
+        useSizeStable = false
+    end
+    if parentFrame and parentFrame._hasStateDriver then
         useSizeStable = false
     end
 

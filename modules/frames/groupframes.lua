@@ -150,7 +150,6 @@ end
 -- Pending combat-deferred operations
 local pendingResize = false
 local pendingVisibilityUpdate = false
-local pendingInitialize = false
 local pendingRegisterClicks = false
 
 ---------------------------------------------------------------------------
@@ -1200,10 +1199,11 @@ end
 ---------------------------------------------------------------------------
 -- Growth direction offsets for multi-icon layout
 local DEFENSIVE_GROWTH_OFFSETS = {
-    RIGHT = function(size, spacing) return size + spacing, 0 end,
-    LEFT  = function(size, spacing) return -(size + spacing), 0 end,
-    UP    = function(size, spacing) return 0, size + spacing end,
-    DOWN  = function(size, spacing) return 0, -(size + spacing) end,
+    RIGHT  = function(size, spacing) return size + spacing, 0 end,
+    LEFT   = function(size, spacing) return -(size + spacing), 0 end,
+    CENTER = function(size, spacing) return size + spacing, 0 end,
+    UP     = function(size, spacing) return 0, size + spacing end,
+    DOWN   = function(size, spacing) return 0, -(size + spacing) end,
 }
 
 local function UpdateDefensiveIndicator(frame)
@@ -1289,6 +1289,14 @@ local function UpdateDefensiveIndicator(frame)
     local growFn = DEFENSIVE_GROWTH_OFFSETS[growDir] or DEFENSIVE_GROWTH_OFFSETS.RIGHT
     local stepX, stepY = growFn(iconSize, spacing)
 
+    -- CENTER: calculate centering offset based on visible count
+    local centerOffX = 0
+    if growDir == "CENTER" then
+        local visibleCount = math.min(#foundAuras, #frame.defensiveIcons)
+        local totalSpan = visibleCount * iconSize + math.max(visibleCount - 1, 0) * spacing
+        centerOffX = -totalSpan / 2
+    end
+
     -- Expose active defensive auraInstanceIDs for buff deduplication
     if not frame._defensiveAuraIDs then frame._defensiveAuraIDs = {} end
     wipe(frame._defensiveAuraIDs)
@@ -1329,7 +1337,7 @@ local function UpdateDefensiveIndicator(frame)
             -- Position: first icon at anchor, subsequent offset by growth direction
             defIcon:SetSize(iconSize, iconSize)
             defIcon:ClearAllPoints()
-            defIcon:SetPoint(position, frame, position, offsetX + stepX * (i - 1), offsetY + stepY * (i - 1))
+            defIcon:SetPoint(position, frame, position, offsetX + centerOffX + stepX * (i - 1), offsetY + stepY * (i - 1))
             defIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
             defIcon:Show()
         else
@@ -2724,11 +2732,13 @@ local function OnEvent(self, event, arg1, ...)
     if not db or not db.enabled then return end
 
     -- Unit-specific events — dispatch via lookup map
-    local frame = arg1 and QUI_GF.unitFrameMap[arg1]
+    -- Guard: arg1 is a unit string for unit events, but a boolean for
+    -- PLAYER_ENTERING_WORLD (isInitialLogin) — only index the map with strings.
+    local frame = (type(arg1) == "string") and QUI_GF.unitFrameMap[arg1]
 
     -- Self-healing: rebuild map on lookup miss (QUI pattern)
     -- Handles stale maps from combat zone transitions or delayed header updates
-    if arg1 and not frame and (arg1:match("^party%d") or arg1:match("^raid%d") or arg1 == "player") then
+    if type(arg1) == "string" and not frame and (arg1:match("^party%d") or arg1:match("^raid%d") or arg1 == "player") then
         local now = GetTime()
         if not QUI_GF.lastMapRebuild or (now - QUI_GF.lastMapRebuild) > 1.0 then
             QUI_GF.lastMapRebuild = now
@@ -2877,10 +2887,6 @@ local function OnEvent(self, event, arg1, ...)
         if pendingVisibilityUpdate then
             pendingVisibilityUpdate = false
             UpdateHeaderVisibility()
-        end
-        if pendingInitialize then
-            pendingInitialize = false
-            QUI_GF:Initialize()
         end
         if pendingRegisterClicks then
             pendingRegisterClicks = false
@@ -3077,11 +3083,6 @@ function QUI_GF:Initialize()
     local db = GetSettings()
     if not db or not db.enabled then return end
 
-    if InCombatLockdown() then
-        pendingInitialize = true
-        return
-    end
-
     -- Create headers
     CreateHeaders()
 
@@ -3105,6 +3106,11 @@ function QUI_GF:Initialize()
     local GFCC = ns.QUI_GroupFrameClickCast
     if GFCC then
         GFCC:Initialize()
+        -- Group frames were pre-created before GFCC was initialized,
+        -- so they missed registration — catch up now.
+        if GFCC:IsEnabled() then
+            GFCC:RegisterAllFrames()
+        end
     end
 
     -- Hide Blizzard group frames
@@ -3148,18 +3154,18 @@ function QUI_GF:Disable()
 end
 
 ---------------------------------------------------------------------------
--- STARTUP: Init on PLAYER_LOGIN
+-- STARTUP: Init on ADDON_LOADED
 ---------------------------------------------------------------------------
 local initFrame = CreateFrame("Frame")
-initFrame:RegisterEvent("PLAYER_LOGIN")
+initFrame:RegisterEvent("ADDON_LOADED")
 initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 initFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
-initFrame:SetScript("OnEvent", function(self, event)
-    if event == "PLAYER_LOGIN" then
-        C_Timer.After(0.5, function()
-            QUI_GF:Initialize()
-        end)
+initFrame:SetScript("OnEvent", function(self, event, arg1)
+    if event == "ADDON_LOADED" then
+        if arg1 ~= ADDON_NAME then return end
+        self:UnregisterEvent("ADDON_LOADED")
+        QUI_GF:Initialize()
     elseif event == "PLAYER_ENTERING_WORLD" then
         if QUI_GF.initialized then
             C_Timer.After(1.0, function()
@@ -3167,11 +3173,6 @@ initFrame:SetScript("OnEvent", function(self, event)
                 UpdateFrameScaling(true)
                 QUI_GF:RefreshAllFrames()
             end)
-        end
-    elseif event == "PLAYER_REGEN_ENABLED" then
-        if pendingInitialize then
-            pendingInitialize = false
-            QUI_GF:Initialize()
         end
     end
 end)
