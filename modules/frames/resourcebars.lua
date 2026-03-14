@@ -1028,6 +1028,97 @@ local function GetSecondaryResourceValue(resource)
     return max, current, current, "number"
 end
 
+local function GetCurrentSpecID()
+    local spec = GetSpecialization()
+    if not spec then return 0 end
+    return GetSpecializationInfo(spec) or 0
+end
+
+local function SanitizeIndicatorValues(values, maxValue)
+    if type(values) ~= "table" or not maxValue or maxValue <= 0 then
+        return {}
+    end
+
+    local dedupe = {}
+    local sanitized = {}
+    for _, rawValue in ipairs(values) do
+        local value = tonumber(rawValue)
+        if value and value > 0 and value < maxValue then
+            -- Round to 3 decimals to avoid floating-point duplicate noise.
+            value = math.floor((value * 1000) + 0.5) / 1000
+            local dedupeKey = string.format("%.3f", value)
+            if not dedupe[dedupeKey] then
+                dedupe[dedupeKey] = true
+                table.insert(sanitized, value)
+            end
+        end
+    end
+
+    table.sort(sanitized)
+    while #sanitized > 3 do
+        table.remove(sanitized)
+    end
+
+    return sanitized
+end
+
+local function GetIndicatorValuesForCurrentSpec(indicatorCfg, maxValue)
+    if type(indicatorCfg) ~= "table" or not indicatorCfg.enabled then
+        return {}
+    end
+
+    local perSpec = indicatorCfg.perSpec
+    if type(perSpec) ~= "table" then
+        return {}
+    end
+
+    local specID = GetCurrentSpecID()
+    local specValues = perSpec[specID] or perSpec[tostring(specID)]
+    return SanitizeIndicatorValues(specValues, maxValue)
+end
+
+local function UpdateBarIndicatorLines(bar, indicatorPool, values, maxValue, thickness, color, isVertical)
+    for _, indicator in ipairs(indicatorPool) do
+        indicator:Hide()
+    end
+
+    if #values == 0 or not maxValue or maxValue <= 0 then
+        return
+    end
+
+    local width = bar:GetWidth()
+    local height = bar:GetHeight()
+    if width <= 0 or height <= 0 then
+        return
+    end
+
+    local lineThickness = QUICore:Pixels(thickness or 1, bar)
+    local lineColor = color or { 1, 1, 1, 1 }
+
+    for i, value in ipairs(values) do
+        local indicator = indicatorPool[i]
+        if not indicator then
+            indicator = bar:CreateTexture(nil, "OVERLAY")
+            indicatorPool[i] = indicator
+        end
+
+        indicator:SetColorTexture(lineColor[1] or 1, lineColor[2] or 1, lineColor[3] or 1, lineColor[4] or 1)
+        indicator:ClearAllPoints()
+
+        if isVertical then
+            local y = (value / maxValue) * height
+            indicator:SetPoint("BOTTOM", bar.StatusBar, "BOTTOM", 0, QUICore:PixelRound(y - (lineThickness / 2), bar))
+            indicator:SetSize(width, lineThickness)
+        else
+            local x = (value / maxValue) * width
+            indicator:SetPoint("LEFT", bar.StatusBar, "LEFT", QUICore:PixelRound(x - (lineThickness / 2), bar), 0)
+            indicator:SetSize(lineThickness, height)
+        end
+
+        indicator:Show()
+    end
+end
+
 
 -- EDIT MODE HELPERS
 
@@ -1464,6 +1555,7 @@ function QUICore:GetPowerBar()
 
     -- TICKS
     bar.ticks = {}
+    bar.indicatorLines = {}
 
     bar:Hide()
 
@@ -1771,6 +1863,7 @@ function QUICore:UpdatePowerBar()
 
     -- Update ticks if this is a ticked power type
     self:UpdatePowerBarTicks(bar, resource, max)
+    self:UpdatePowerBarIndicators(bar, max, isVertical)
 
     bar:SetAlpha(1)
     SafeShow(bar)
@@ -1845,6 +1938,19 @@ function QUICore:UpdatePowerBarTicks(bar, resource, max)
             bar.ticks[i]:Hide()
         end
     end
+end
+
+function QUICore:UpdatePowerBarIndicators(bar, max, isVertical)
+    if not bar then return end
+    bar.indicatorLines = bar.indicatorLines or {}
+
+    local cfg = self.db and self.db.profile and self.db.profile.powerBar
+    local indicatorCfg = cfg and cfg.indicators
+    local values = GetIndicatorValuesForCurrentSpec(indicatorCfg, max)
+    local thickness = indicatorCfg and indicatorCfg.thickness or 1
+    local color = indicatorCfg and indicatorCfg.color or { 1, 1, 1, 1 }
+
+    UpdateBarIndicatorLines(bar, bar.indicatorLines, values, max, thickness, color, isVertical)
 end
 
 -- Global callback for NCDM to update locked power bar width and position
@@ -2350,6 +2456,7 @@ function QUICore:GetSecondaryPowerBar()
 
     -- TICKS
     bar.ticks = {}
+    bar.indicatorLines = {}
 
     bar:Hide()
 
@@ -2899,6 +3006,19 @@ function QUICore:UpdateSecondaryPowerBarTicks(bar, resource, max)
             bar.ticks[i]:Hide()
         end
     end
+end
+
+function QUICore:UpdateSecondaryPowerBarIndicators(bar, max, isVertical)
+    if not bar then return end
+    bar.indicatorLines = bar.indicatorLines or {}
+
+    local cfg = self.db and self.db.profile and self.db.profile.secondaryPowerBar
+    local indicatorCfg = cfg and cfg.indicators
+    local values = GetIndicatorValuesForCurrentSpec(indicatorCfg, max)
+    local thickness = indicatorCfg and indicatorCfg.thickness or 1
+    local color = indicatorCfg and indicatorCfg.color or { 1, 1, 1, 1 }
+
+    UpdateBarIndicatorLines(bar, bar.indicatorLines, values, max, thickness, color, isVertical)
 end
 
 
@@ -3506,6 +3626,7 @@ end
     if not fragmentedPowerTypes[resource] then
         self:UpdateSecondaryPowerBarTicks(bar, resource, max)
     end
+    self:UpdateSecondaryPowerBarIndicators(bar, max, isVertical)
 
     -- Hide legacy decimal overlay (no longer used - decimals now rendered via string.format)
     if bar.SoulShardDecimal then

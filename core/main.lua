@@ -1023,6 +1023,12 @@ local defaults = {
             showTicks         = false,    -- Show tick marks for segmented resources (Holy Power, Chi, etc.)
             tickThickness     = 2,        -- Thickness of tick marks in pixels
             tickColor         = { 0, 0, 0, 1 },  -- Color of tick marks (default black)
+            indicators        = {
+                enabled   = false,        -- Show custom breakpoint indicator lines
+                thickness = 2,            -- Indicator line thickness in pixels
+                color     = { 1, 1, 1, 0.9 }, -- Indicator line color
+                perSpec   = {},           -- [specID] = { value1, value2, value3 }
+            },
             lockedToEssential = false,  -- Auto-resize width when Essential CDM changes
             lockedToUtility   = false,  -- Auto-resize width when Utility CDM changes
             snapGap           = 5,      -- Gap when snapped to CDM
@@ -1099,6 +1105,12 @@ local defaults = {
             showTicks     = true,     -- Show tick marks for segmented resources (Holy Power, Chi, etc.)
             tickThickness = 2,        -- Thickness of tick marks in pixels
             tickColor     = { 0, 0, 0, 1 },  -- Color of tick marks (default black)
+            indicators    = {
+                enabled   = false,        -- Show custom breakpoint indicator lines
+                thickness = 2,            -- Indicator line thickness in pixels
+                color     = { 1, 1, 1, 0.9 }, -- Indicator line color
+                perSpec   = {},           -- [specID] = { value1, value2, value3 }
+            },
             lockedToEssential = false,  -- Auto-resize width when Essential CDM changes
             lockedToUtility   = false,  -- Auto-resize width when Utility CDM changes
             lockedToPrimary   = true,   -- Position above + match Primary bar width

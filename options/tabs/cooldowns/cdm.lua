@@ -2465,6 +2465,211 @@ local function CreateCDMSetupPage(parent)
         return y
     end
 
+    local function GetCurrentSpecContext()
+        local spec = GetSpecialization()
+        if not spec then
+            return 0, "No Specialization"
+        end
+
+        local specID, specName = GetSpecializationInfo(spec)
+        return specID or 0, specName or ("Spec " .. tostring(spec))
+    end
+
+    local function NormalizeIndicatorValues(values)
+        if type(values) ~= "table" then
+            return {}
+        end
+
+        local normalized = {}
+        local seen = {}
+        for _, rawValue in ipairs(values) do
+            local value = tonumber(rawValue)
+            if value and value > 0 then
+                value = math.floor((value * 1000) + 0.5) / 1000
+                local key = string.format("%.3f", value)
+                if not seen[key] then
+                    seen[key] = true
+                    table.insert(normalized, value)
+                end
+            end
+            if #normalized >= 3 then
+                break
+            end
+        end
+
+        table.sort(normalized)
+        return normalized
+    end
+
+    local function EnsureIndicatorConfig(barConfig)
+        barConfig.indicators = barConfig.indicators or {}
+        local indicators = barConfig.indicators
+        if indicators.enabled == nil then indicators.enabled = false end
+        if indicators.thickness == nil then indicators.thickness = 2 end
+        if indicators.color == nil then indicators.color = {1, 1, 1, 0.9} end
+        if type(indicators.perSpec) ~= "table" then indicators.perSpec = {} end
+        return indicators
+    end
+
+    local function EnsureSpecIndicatorValues(indicatorCfg)
+        indicatorCfg.perSpec = indicatorCfg.perSpec or {}
+        local specID = GetCurrentSpecContext()
+        local stringKey = tostring(specID)
+        local values = indicatorCfg.perSpec[specID]
+
+        if type(values) ~= "table" then
+            values = indicatorCfg.perSpec[stringKey]
+        end
+        if type(values) ~= "table" then
+            values = {}
+        end
+
+        -- Normalize storage to numeric specID key.
+        indicatorCfg.perSpec[specID] = values
+        indicatorCfg.perSpec[stringKey] = nil
+        return specID, values
+    end
+
+    local function BuildIndicatorConfigSection(tabContent, ctx, y, barConfig)
+        local PAD = ctx.PAD
+        local FORM_ROW = ctx.FORM_ROW
+        local RefreshPowerBars = ctx.RefreshPowerBars
+
+        local indicatorCfg = EnsureIndicatorConfig(barConfig)
+        local valueInputs = {}
+        local specInfoLabel
+
+        local function SyncSpecLabel()
+            if not specInfoLabel then return end
+            local _, specName = GetCurrentSpecContext()
+            specInfoLabel:SetText(string.format("Values are saved per spec. Current: %s", specName))
+        end
+
+        local function LoadInputsFromSpec()
+            local specID, values = EnsureSpecIndicatorValues(indicatorCfg)
+            local normalized = NormalizeIndicatorValues(values)
+            -- Persist sanitized list back immediately so bad legacy data is cleaned.
+            indicatorCfg.perSpec[specID] = normalized
+            for i = 1, 3 do
+                local input = valueInputs[i]
+                local value = normalized[i]
+                if input then
+                    input:SetText(type(value) == "number" and tostring(value) or "")
+                    input:SetCursorPosition(0)
+                end
+            end
+        end
+
+        local function SaveInputsToSpec()
+            local specID = GetCurrentSpecContext()
+            local nextValues = {}
+            for i = 1, 3 do
+                local input = valueInputs[i]
+                local text = input and input:GetText() or ""
+                local numericValue = tonumber(text)
+                if numericValue and numericValue > 0 then
+                    table.insert(nextValues, numericValue)
+                end
+            end
+
+            indicatorCfg.perSpec[specID] = NormalizeIndicatorValues(nextValues)
+            RefreshPowerBars()
+        end
+
+        local function CommitIndicatorInputs()
+            SaveInputsToSpec()
+            LoadInputsFromSpec()
+        end
+
+        -- Keep this as a visual header only (do not register a sidebar section entry).
+        local prevSuppress = GUI._suppressSearchRegistration
+        GUI._suppressSearchRegistration = true
+        local indicatorHeader = GUI:CreateSectionHeader(tabContent, "Breakpoint Indicators")
+        GUI._suppressSearchRegistration = prevSuppress
+        indicatorHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - indicatorHeader.gap
+
+        specInfoLabel = GUI:CreateLabel(tabContent, "", 11, C.textMuted)
+        specInfoLabel:SetPoint("TOPLEFT", PAD, y)
+        specInfoLabel:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        specInfoLabel:SetJustifyH("LEFT")
+        y = y - 18
+        SyncSpecLabel()
+
+        local enabledCheck = GUI:CreateFormCheckbox(tabContent, "Enable Breakpoint Indicators", "enabled", indicatorCfg, RefreshPowerBars)
+        enabledCheck:SetPoint("TOPLEFT", PAD, y)
+        enabledCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local thicknessSlider = GUI:CreateFormSlider(tabContent, "Indicator Thickness", 1, 6, 1, "thickness", indicatorCfg, RefreshPowerBars)
+        thicknessSlider:SetPoint("TOPLEFT", PAD, y)
+        thicknessSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local colorPicker = GUI:CreateFormColorPicker(tabContent, "Indicator Color", "color", indicatorCfg, RefreshPowerBars)
+        colorPicker:SetPoint("TOPLEFT", PAD, y)
+        colorPicker:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - FORM_ROW
+
+        local valuesRow = CreateFrame("Frame", nil, tabContent)
+        valuesRow:SetHeight(FORM_ROW)
+        valuesRow:SetPoint("TOPLEFT", PAD, y)
+        valuesRow:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+
+        local valuesLabel = valuesRow:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        valuesLabel:SetPoint("LEFT", valuesRow, "LEFT", 0, 0)
+        valuesLabel:SetWidth(170)
+        valuesLabel:SetJustifyH("LEFT")
+        valuesLabel:SetText("Indicator Values")
+        valuesLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+
+        local inputsAnchor = CreateFrame("Frame", nil, valuesRow)
+        inputsAnchor:SetPoint("TOPLEFT", valuesRow, "TOPLEFT", 180, 0)
+        inputsAnchor:SetPoint("BOTTOMRIGHT", valuesRow, "BOTTOMRIGHT", 0, 0)
+
+        local fieldWidth = 58
+        local fieldSpacing = 8
+
+        for i = 1, 3 do
+            local fieldBg, input = GUI:CreateInlineEditBox(inputsAnchor, {
+                width = fieldWidth,
+                height = 22,
+                textInset = 6,
+                text = "",
+                justifyH = "CENTER",
+                maxLetters = 6,
+                bgColor = {0.05, 0.05, 0.05, 0.5},
+                borderColor = {0.25, 0.25, 0.25, 1},
+                activeBorderColor = C.accent,
+                onEnterPressed = function(self)
+                    CommitIndicatorInputs()
+                    self:ClearFocus()
+                end,
+                onEscapePressed = function(self)
+                    LoadInputsFromSpec()
+                    self:ClearFocus()
+                end,
+                onEditFocusGained = function(self)
+                    self:HighlightText()
+                end,
+            })
+
+            local xOffset = (i - 1) * (fieldWidth + fieldSpacing)
+            fieldBg:SetPoint("TOPLEFT", inputsAnchor, "TOPLEFT", xOffset, -5)
+            input:HookScript("OnEditFocusLost", function()
+                CommitIndicatorInputs()
+            end)
+
+            valueInputs[i] = input
+        end
+
+        y = y - FORM_ROW
+
+        LoadInputsFromSpec()
+
+        return y
+    end
+
     -- Build Primary power bar configuration sub-section
     local function BuildPrimaryPowerbarConfig(tabContent, ctx, y)
         local PAD = ctx.PAD
@@ -2959,6 +3164,9 @@ local function CreateCDMSetupPage(parent)
         texturePrimary:SetPoint("TOPLEFT", PAD, y)
         texturePrimary:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
+
+        y = BuildIndicatorConfigSection(tabContent, ctx, y, primary)
+        y = y - 6
 
         return y
     end
@@ -3596,6 +3804,9 @@ local function CreateCDMSetupPage(parent)
         textureSecondary:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
+        y = BuildIndicatorConfigSection(tabContent, ctx, y, secondary)
+        y = y - 6
+
         return y
     end
 
@@ -3963,6 +4174,11 @@ local function CreateCDMSetupPage(parent)
         if primary.borderSize == nil then primary.borderSize = 1 end
         if primary.orientation == nil then primary.orientation = "AUTO" end
         if primary.snapGap == nil then primary.snapGap = 5 end
+        if not primary.indicators then primary.indicators = {} end
+        if primary.indicators.enabled == nil then primary.indicators.enabled = false end
+        if primary.indicators.thickness == nil then primary.indicators.thickness = 2 end
+        if primary.indicators.color == nil then primary.indicators.color = {1, 1, 1, 0.9} end
+        if not primary.indicators.perSpec then primary.indicators.perSpec = {} end
 
         local secondary = db.secondaryPowerBar
         if secondary.enabled == nil then secondary.enabled = true end
@@ -3992,6 +4208,11 @@ local function CreateCDMSetupPage(parent)
         if secondary.snapGap == nil then secondary.snapGap = 5 end
         if secondary.swapToPrimaryPosition == nil then secondary.swapToPrimaryPosition = false end
         if secondary.hidePrimaryOnSwap == nil then secondary.hidePrimaryOnSwap = false end
+        if not secondary.indicators then secondary.indicators = {} end
+        if secondary.indicators.enabled == nil then secondary.indicators.enabled = false end
+        if secondary.indicators.thickness == nil then secondary.indicators.thickness = 2 end
+        if secondary.indicators.color == nil then secondary.indicators.color = {1, 1, 1, 0.9} end
+        if not secondary.indicators.perSpec then secondary.indicators.perSpec = {} end
         if not secondary.swapSpecs then
             secondary.swapSpecs = { [66]=true, [70]=true, [102]=true, [251]=true, [263]=true, [265]=true, [266]=true, [267]=true, [1467]=true, [1473]=true }
         end
