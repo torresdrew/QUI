@@ -88,7 +88,7 @@ function GUI:InitializeOptions()
     -- Sidebar tabs (short names for vertical layout)
     GUI:AddTab(frame, "Welcome", ns.QUI_WelcomeOptions.CreateWelcomePage)
     local generalTab = GUI:AddTab(frame, "General & QoL", ns.QUI_GeneralOptions.CreateGeneralQoLPage)
-    local anchoringTab = GUI:AddTab(frame, "Anchoring & Layout", ns.QUI_FrameAnchoringOptions.CreateFrameAnchoringPage)
+    local anchoringTab = GUI:AddTab(frame, "Frame Positioning", ns.QUI_FrameAnchoringOptions.CreateFrameAnchoringPage)
     local cdmTab = GUI:AddTab(frame, "Cooldown Manager", ns.QUI_NCDMOptions.CreateCDMSetupPage)
     local unitFramesTab = GUI:AddTab(frame, "Unit Frames", ns.QUI_UnitFramesOptions.CreateUnitFramesPage)
     local groupFramesTab = GUI:AddTab(frame, "Group Frames", ns.QUI_GroupFramesOptions.CreateGroupFramesPage)
@@ -133,10 +133,18 @@ function GUI:InitializeOptions()
         end
     end)
 
-    GUI:AddActionButton(frame, "Edit Mode", function()
+    GUI:AddActionButton(frame, "Blizz Edit Mode", function()
         if InCombatLockdown() then return end
         if EditModeManagerFrame then
             ShowUIPanel(EditModeManagerFrame)
+        end
+    end)
+
+    GUI:AddActionButton(frame, "QUI Edit Mode", function()
+        if InCombatLockdown() then return end
+        if _G.QUI_ToggleLayoutMode then
+            GUI:Hide()
+            _G.QUI_ToggleLayoutMode()
         end
     end)
 

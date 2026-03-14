@@ -3528,3 +3528,47 @@ _G.QUI_RefreshCustomTrackerKeybinds = function()
         end
     end
 end
+
+---------------------------------------------------------------------------
+-- UNLOCK MODE ELEMENT REGISTRATION
+---------------------------------------------------------------------------
+do
+    local function RegisterLayoutModeElements()
+        local um = ns.QUI_LayoutMode
+        if not um then return end
+
+        local function GetTrackerDB()
+            local core = ns.Helpers.GetCore()
+            return core and core.db and core.db.profile and core.db.profile.customTrackers
+        end
+
+        -- Register each active tracker bar
+        for barID, bar in pairs(CustomTrackers.activeBars or {}) do
+            if bar and bar.frame then
+                um:RegisterElement({
+                    key = "customTracker:" .. barID,
+                    label = bar.config and bar.config.name or ("Tracker " .. barID),
+                    group = "Custom Trackers",
+                    order = barID,
+                    isOwned = true,
+                    isEnabled = function()
+                        local db = GetTrackerDB()
+                        local bars = db and db.bars
+                        return bars and bars[barID] and bars[barID].enabled ~= false
+                    end,
+                    setEnabled = function(val)
+                        local db = GetTrackerDB()
+                        local bars = db and db.bars
+                        if bars and bars[barID] then bars[barID].enabled = val end
+                    end,
+                    getFrame = function()
+                        local b = CustomTrackers.activeBars and CustomTrackers.activeBars[barID]
+                        return b and b.frame
+                    end,
+                })
+            end
+        end
+    end
+
+    C_Timer.After(3, RegisterLayoutModeElements)
+end

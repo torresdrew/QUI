@@ -335,6 +335,34 @@ function Helpers.IsHUDAnchoredToCDM(profile)
 end
 
 ---------------------------------------------------------------------------
+-- EDIT / UNLOCK MODE STATE HELPERS
+---------------------------------------------------------------------------
+
+--- Check if QUI Layout Mode is currently active
+--- @return boolean
+function Helpers.IsLayoutModeActive()
+    return ns.QUI_LayoutMode and ns.QUI_LayoutMode.isActive or false
+end
+
+--- Check if Blizzard Edit Mode is currently active
+--- @return boolean
+function Helpers.IsEditModeActive()
+    if EditModeManagerFrame then
+        if type(EditModeManagerFrame.IsEditModeActive) == "function" then
+            return EditModeManagerFrame:IsEditModeActive()
+        end
+        return not not EditModeManagerFrame.editModeActive
+    end
+    return false
+end
+
+--- Check if any positioning mode is active (Layout Mode or Blizzard Edit Mode)
+--- @return boolean
+function Helpers.IsAnyEditModeActive()
+    return Helpers.IsLayoutModeActive() or Helpers.IsEditModeActive()
+end
+
+---------------------------------------------------------------------------
 -- FONT HELPERS
 -- Centralized font fetching from general settings
 ---------------------------------------------------------------------------
@@ -1014,6 +1042,41 @@ function Helpers.SafeHide(frame)
         return false
     end
     return pcall(frame.Hide, frame)
+end
+
+---------------------------------------------------------------------------
+-- FORM LAYOUT HELPERS
+---------------------------------------------------------------------------
+
+--- Place a form widget in a standard row layout (TOPLEFT + RIGHT anchors)
+--- and advance the Y cursor by FORM_ROW (default 32).
+--- @param widget table The widget frame to position
+--- @param body table The parent body frame
+--- @param sy number Current Y offset
+--- @param rowHeight number|nil Optional row height (default 32)
+--- @return number New Y offset after this row
+function Helpers.PlaceRow(widget, body, sy, rowHeight)
+    widget:SetPoint("TOPLEFT", 0, sy)
+    widget:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+    return sy - (rowHeight or 32)
+end
+
+--- Apply default values to a table for any keys that are nil.
+--- @param tbl table The target table
+--- @param defaults table Key-value pairs of defaults to apply
+function Helpers.EnsureDefaults(tbl, defaults)
+    for k, v in pairs(defaults) do
+        if tbl[k] == nil then
+            if type(v) == "table" then
+                -- Shallow-copy table defaults so instances don't share a reference
+                local copy = {}
+                for tk, tv in pairs(v) do copy[tk] = tv end
+                tbl[k] = copy
+            else
+                tbl[k] = v
+            end
+        end
+    end
 end
 
 ns.InvalidateProfileCache = Helpers.InvalidateProfileCache

@@ -71,7 +71,7 @@ end
 local scaleEventFrame = CreateFrame("Frame")
 scaleEventFrame:RegisterEvent("UI_SCALE_CHANGED")
 scaleEventFrame:RegisterEvent("DISPLAY_SIZE_CHANGED")
-scaleEventFrame:RegisterEvent("PLAYER_LOGIN")
+scaleEventFrame:RegisterEvent("ADDON_LOADED")
 scaleEventFrame:SetScript("OnEvent", function()
     UpdateCachedUIScale()
 end)
@@ -103,7 +103,10 @@ function TooltipProvider:IsFrameBlockingMouse()
     local focus = self:GetTopMouseFrame()
     if not focus then return false end
     if focus == WorldFrame then return false end
-    return focus:IsVisible()
+    -- Some frames (e.g. PingListenerFrame) are forbidden objects
+    -- where IsVisible() cannot be called from addon code.
+    local ok, visible = pcall(focus.IsVisible, focus)
+    return ok and visible
 end
 
 ---------------------------------------------------------------------------
@@ -339,16 +342,14 @@ function TooltipProvider:InitializeEngine()
 end
 
 ---------------------------------------------------------------------------
--- PLAYER_LOGIN TRIGGER
+-- ADDON_LOADED TRIGGER
 ---------------------------------------------------------------------------
 local providerEventFrame = CreateFrame("Frame")
-providerEventFrame:RegisterEvent("PLAYER_LOGIN")
-providerEventFrame:SetScript("OnEvent", function(self, event)
-    if event == "PLAYER_LOGIN" then
-        self:UnregisterEvent("PLAYER_LOGIN")
-        C_Timer.After(0.5, function()
-            TooltipProvider:InitializeEngine()
-        end)
+providerEventFrame:RegisterEvent("ADDON_LOADED")
+providerEventFrame:SetScript("OnEvent", function(self, event, arg1)
+    if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
+        self:UnregisterEvent("ADDON_LOADED")
+        TooltipProvider:InitializeEngine()
     end
 end)
 

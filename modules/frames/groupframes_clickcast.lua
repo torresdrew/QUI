@@ -54,6 +54,21 @@ local BUTTON_NAMES = {
     MiddleButton = "Middle Click",
     Button4 = "Button 4",
     Button5 = "Button 5",
+    ScrollUp = "Scroll Up",
+    ScrollDown = "Scroll Down",
+}
+
+-- Scroll wheel buttons use override bindings (like keyboard keys),
+-- not the SetAttribute("typeN") system used by regular mouse buttons.
+local SCROLL_WHEEL_KEYS = {
+    ScrollUp = "MOUSEWHEELUP",
+    ScrollDown = "MOUSEWHEELDOWN",
+}
+
+-- Friendly display names for binding keys shown in tooltips
+local KEY_DISPLAY_NAMES = {
+    MOUSEWHEELUP = "Scroll Up",
+    MOUSEWHEELDOWN = "Scroll Down",
 }
 
 local MODIFIER_LABELS = {
@@ -68,12 +83,36 @@ local MODIFIER_LABELS = {
 }
 
 ---------------------------------------------------------------------------
--- KEYBOARD KEY HELPERS
+-- MODIFIER HELPERS
 ---------------------------------------------------------------------------
--- Convert our modifier format ("shift", "ctrl-alt") to WoW binding prefix ("SHIFT-", "CTRL-ALT-")
+-- Parse modifier string into canonical alphabetical order (alt-ctrl-shift-)
+-- for WoW's SecureButton attribute system.
+local function ModifiersToAttributePrefix(mods)
+    if not mods or mods == "" then return "" end
+    local lower = mods:lower()
+    local hasAlt   = lower:find("alt") ~= nil
+    local hasCtrl  = lower:find("ctrl") ~= nil
+    local hasShift = lower:find("shift") ~= nil
+    local result = ""
+    if hasAlt   then result = result .. "alt-" end
+    if hasCtrl  then result = result .. "ctrl-" end
+    if hasShift then result = result .. "shift-" end
+    return result
+end
+
+-- Convert our modifier format to WoW binding prefix ("SHIFT-", "CTRL-ALT-")
+-- Binding keys use UPPERCASE, same alphabetical order.
 local function ModifiersToBindingPrefix(mods)
     if not mods or mods == "" then return "" end
-    return mods:upper() .. "-"
+    local lower = mods:lower()
+    local hasAlt   = lower:find("alt") ~= nil
+    local hasCtrl  = lower:find("ctrl") ~= nil
+    local hasShift = lower:find("shift") ~= nil
+    local result = ""
+    if hasAlt   then result = result .. "ALT-" end
+    if hasCtrl  then result = result .. "CTRL-" end
+    if hasShift then result = result .. "SHIFT-" end
+    return result
 end
 
 ---------------------------------------------------------------------------
@@ -146,7 +185,14 @@ local LEAVE_SNIPPET = [[
     owner:ClearBindings()
 ]]
 
--- Wrap a frame's OnEnter/OnLeave with secure handler snippets.
+-- WrapScript pre-body for OnHide — clears override bindings when the frame
+-- hides while still hovered (e.g. group member leaves, unit watch hides frame).
+-- Without this, keyboard override bindings linger on a hidden frame.
+local HIDE_SNIPPET = [[
+    owner:ClearBindings()
+]]
+
+-- Wrap a frame's OnEnter/OnLeave/OnHide with secure handler snippets.
 -- Only called once per frame (tracked by secureWrappedFrames).
 local function WrapFrameSecureHandlers(frame)
     if secureWrappedFrames[frame] then return end
@@ -155,6 +201,7 @@ local function WrapFrameSecureHandlers(frame)
     local header = GetBindingHeader()
     SecureHandlerWrapScript(frame, "OnEnter", header, ENTER_SNIPPET)
     SecureHandlerWrapScript(frame, "OnLeave", header, LEAVE_SNIPPET)
+    SecureHandlerWrapScript(frame, "OnHide", header, HIDE_SNIPPET)
 
     secureWrappedFrames[frame] = true
 end
@@ -255,24 +302,41 @@ local function ResolveBindings()
     end
 
     for _, binding in ipairs(bindings) do
-        if binding.key and binding.spell then
+        -- A binding needs a trigger (key or button) and either a spell, macro,
+        -- or a non-spell action type (target/focus/assist/menu/ping).
+        local actionType = binding.actionType or "spell"
+        local hasAction = binding.spell or binding.macro or actionType ~= "spell"
+
+        if binding.key and hasAction then
             -- Keyboard binding
             table.insert(keyboardBindings, {
                 key = binding.key,
                 modifiers = binding.modifiers or "",
                 spell = binding.spell,
                 macro = binding.macro,
-                actionType = binding.actionType,
+                actionType = actionType,
             })
-        elseif binding.button and binding.spell then
-            -- Mouse binding
-            table.insert(activeBindings, {
-                button = binding.button,
-                modifiers = binding.modifiers or "",
-                spell = binding.spell,
-                macro = binding.macro,
-                actionType = binding.actionType,
-            })
+        elseif binding.button and hasAction then
+            local scrollKey = SCROLL_WHEEL_KEYS[binding.button]
+            if scrollKey then
+                -- Scroll wheel uses override bindings (same path as keyboard keys)
+                table.insert(keyboardBindings, {
+                    key = scrollKey,
+                    modifiers = binding.modifiers or "",
+                    spell = binding.spell,
+                    macro = binding.macro,
+                    actionType = actionType,
+                })
+            else
+                -- Mouse binding
+                table.insert(activeBindings, {
+                    button = binding.button,
+                    modifiers = binding.modifiers or "",
+                    spell = binding.spell,
+                    macro = binding.macro,
+                    actionType = actionType,
+                })
+            end
         end
     end
 end
@@ -300,12 +364,7 @@ local function SetupFrameClickCast(frame)
 
     -- Set secure attributes for each mouse binding
     for _, binding in ipairs(activeBindings) do
-        local prefix = ""
-        local mods = binding.modifiers or ""
-        if mods ~= "" then
-            -- Convert "shift" to "shift-", "shift-ctrl" to "shift-ctrl-", etc.
-            prefix = mods:gsub("%-$", "") .. "-"
-        end
+        local prefix = ModifiersToAttributePrefix(binding.modifiers)
 
         local btnNum = BUTTON_NUMBERS[binding.button] or "1"
         local actionType = binding.actionType or "spell"
@@ -334,10 +393,13 @@ local function SetupFrameClickCast(frame)
         end
     end
 
-    -- Set up keyboard bindings: wrap with secure handlers + set virtual button attributes
+    -- Set up keyboard bindings (includes scroll wheel):
+    -- wrap with secure handlers + set virtual button attributes
     if #keyboardBindings > 0 then
         WrapFrameSecureHandlers(frame)
         SetFrameKeyAttributes(frame)
+        -- Enable mouse wheel on the frame so scroll bindings generate events
+        frame:EnableMouseWheel(true)
     end
 
     registeredFrames[frame] = true
@@ -348,95 +410,101 @@ local function SetupFrameClickCast(frame)
     if not hookedFrames[frame] then
         hookedFrames[frame] = true
 
-        -- Smart resurrection: hook to swap spell when target is dead
-        if db.clickCast.smartRes then
-            local resSpell = GetResurrectionSpellName()
-            if resSpell then
-                local resMacro = "/cast [@mouseover] " .. resSpell
-                frame:HookScript("OnEnter", function(self)
-                    if not isEnabled then return end
-                    if InCombatLockdown() then return end
-                    local unit = self:GetAttribute("unit")
-                    if unit and UnitIsDeadOrGhost(unit) and (UnitIsConnected(unit) or not UnitIsPlayer(unit)) then
-                        -- Swap left click to res
-                        self:SetAttribute("type1", "macro")
-                        self:SetAttribute("macrotext1", resMacro)
-                    end
-                end)
-                frame:HookScript("OnLeave", function(self)
-                    if not isEnabled then return end
-                    if InCombatLockdown() then return end
-                    -- Restore normal binding
-                    local normalBinding = nil
-                    for _, b in ipairs(activeBindings) do
-                        if b.button == "LeftButton" and (b.modifiers or "") == "" then
-                            normalBinding = b
-                            break
-                        end
-                    end
-                    if normalBinding then
-                        local actionType = normalBinding.actionType or "spell"
-                        if actionType == "spell" then
-                            self:SetAttribute("type1", "macro")
-                            self:SetAttribute("macrotext1",
-                                "/cast [@mouseover,help,nodead] " .. normalBinding.spell
-                                .. "; [@mouseover,harm,nodead] " .. normalBinding.spell
-                                .. "; [@mouseover] " .. normalBinding.spell)
-                        elseif actionType == "macro" then
-                            self:SetAttribute("type1", "macro")
-                            self:SetAttribute("macrotext1", normalBinding.macro)
-                        elseif actionType:match("^ping") then
-                            self:SetAttribute("type1", "macro")
-                            self:SetAttribute("macrotext1", PING_MACROS[actionType] or "/ping [@mouseover]")
-                        else
-                            self:SetAttribute("type1", actionType)
-                        end
-                    else
-                        -- Default: target
-                        self:SetAttribute("type1", "target")
-                    end
-                end)
-            end
-        end
-
-        -- Tooltip showing available bindings (mouse + keyboard)
-        if db.clickCast.showTooltip then
+        -- Smart resurrection: hook to swap spell when target is dead.
+        -- Always install the hook — check db.clickCast.smartRes at runtime
+        -- so toggling the setting takes effect without reload.
+        local resSpell = GetResurrectionSpellName()
+        if resSpell then
+            local resMacro = "/cast [@mouseover] " .. resSpell
             frame:HookScript("OnEnter", function(self)
                 if not isEnabled then return end
-                if #activeBindings == 0 and #keyboardBindings == 0 then return end
-
-                -- Check if we should show tooltip (avoid conflict with unit tooltip)
-                local existingOwner = GameTooltip:GetOwner()
-                if existingOwner == self then
-                    -- Append to existing unit tooltip
-                    GameTooltip:AddLine(" ")
-                    GameTooltip:AddLine("Click-Cast Bindings:", 0.2, 0.83, 0.6)
-                    for _, binding in ipairs(activeBindings) do
-                        local modLabel = MODIFIER_LABELS[binding.modifiers or ""] or ""
-                        local buttonLabel = BUTTON_NAMES[binding.button] or binding.button
-                        local at = binding.actionType or "spell"
-                        local spellLabel = PING_LABELS[at] or binding.spell or at or "?"
-                        GameTooltip:AddDoubleLine(
-                            modLabel .. buttonLabel,
-                            spellLabel,
-                            0.8, 0.8, 0.8, 1, 1, 1
-                        )
+                local ccdb = GetDB()
+                if not ccdb or not ccdb.clickCast or not ccdb.clickCast.smartRes then return end
+                if InCombatLockdown() then return end
+                local unit = self:GetAttribute("unit")
+                if unit and UnitIsDeadOrGhost(unit) and (UnitIsConnected(unit) or not UnitIsPlayer(unit)) then
+                    -- Swap left click to res
+                    self:SetAttribute("type1", "macro")
+                    self:SetAttribute("macrotext1", resMacro)
+                end
+            end)
+            frame:HookScript("OnLeave", function(self)
+                if not isEnabled then return end
+                local ccdb = GetDB()
+                if not ccdb or not ccdb.clickCast or not ccdb.clickCast.smartRes then return end
+                if InCombatLockdown() then return end
+                -- Restore normal binding
+                local normalBinding = nil
+                for _, b in ipairs(activeBindings) do
+                    if b.button == "LeftButton" and (b.modifiers or "") == "" then
+                        normalBinding = b
+                        break
                     end
-                    for _, binding in ipairs(keyboardBindings) do
-                        local modLabel = MODIFIER_LABELS[binding.modifiers or ""] or ""
-                        local keyLabel = binding.key or "?"
-                        local at = binding.actionType or "spell"
-                        local spellLabel = PING_LABELS[at] or binding.spell or at or "?"
-                        GameTooltip:AddDoubleLine(
-                            modLabel .. keyLabel,
-                            spellLabel,
-                            0.8, 0.8, 0.8, 1, 1, 1
-                        )
+                end
+                if normalBinding then
+                    local actionType = normalBinding.actionType or "spell"
+                    if actionType == "spell" then
+                        self:SetAttribute("type1", "macro")
+                        self:SetAttribute("macrotext1",
+                            "/cast [@mouseover,help,nodead] " .. normalBinding.spell
+                            .. "; [@mouseover,harm,nodead] " .. normalBinding.spell
+                            .. "; [@mouseover] " .. normalBinding.spell)
+                    elseif actionType == "macro" then
+                        self:SetAttribute("type1", "macro")
+                        self:SetAttribute("macrotext1", normalBinding.macro)
+                    elseif actionType:match("^ping") then
+                        self:SetAttribute("type1", "macro")
+                        self:SetAttribute("macrotext1", PING_MACROS[actionType] or "/ping [@mouseover]")
+                    else
+                        self:SetAttribute("type1", actionType)
                     end
-                    GameTooltip:Show()
+                else
+                    -- Default: target
+                    self:SetAttribute("type1", "target")
                 end
             end)
         end
+
+        -- Tooltip showing available bindings (mouse + keyboard).
+        -- Always install the hook — check db.clickCast.showTooltip at runtime
+        -- so toggling the setting takes effect without reload.
+        frame:HookScript("OnEnter", function(self)
+            if not isEnabled then return end
+            local ccdb = GetDB()
+            if not ccdb or not ccdb.clickCast or not ccdb.clickCast.showTooltip then return end
+            if #activeBindings == 0 and #keyboardBindings == 0 then return end
+
+            -- Check if we should show tooltip (avoid conflict with unit tooltip)
+            local existingOwner = GameTooltip:GetOwner()
+            if existingOwner == self then
+                -- Append to existing unit tooltip
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("Click-Cast Bindings:", 0.2, 0.83, 0.6)
+                for _, binding in ipairs(activeBindings) do
+                    local modLabel = MODIFIER_LABELS[binding.modifiers or ""] or ""
+                    local buttonLabel = BUTTON_NAMES[binding.button] or binding.button
+                    local at = binding.actionType or "spell"
+                    local spellLabel = PING_LABELS[at] or binding.spell or at or "?"
+                    GameTooltip:AddDoubleLine(
+                        modLabel .. buttonLabel,
+                        spellLabel,
+                        0.8, 0.8, 0.8, 1, 1, 1
+                    )
+                end
+                for _, binding in ipairs(keyboardBindings) do
+                    local modLabel = MODIFIER_LABELS[binding.modifiers or ""] or ""
+                    local keyLabel = KEY_DISPLAY_NAMES[binding.key] or binding.key or "?"
+                    local at = binding.actionType or "spell"
+                    local spellLabel = PING_LABELS[at] or binding.spell or at or "?"
+                    GameTooltip:AddDoubleLine(
+                        modLabel .. keyLabel,
+                        spellLabel,
+                        0.8, 0.8, 0.8, 1, 1, 1
+                    )
+                end
+                GameTooltip:Show()
+            end
+        end)
     end
 end
 
@@ -448,7 +516,8 @@ local function ClearFrameClickCast(frame)
     if InCombatLockdown() then return end
 
     -- Clear all mouse click-cast attributes for every button/modifier combo
-    local modPrefixes = { "", "shift-", "ctrl-", "alt-", "shift-ctrl-", "shift-alt-", "ctrl-alt-", "shift-ctrl-alt-" }
+    -- Prefixes in canonical alphabetical order (alt-ctrl-shift) to match WoW's secure template
+    local modPrefixes = { "", "alt-", "ctrl-", "shift-", "alt-ctrl-", "alt-shift-", "ctrl-shift-", "alt-ctrl-shift-" }
     for _, prefix in ipairs(modPrefixes) do
         for _, btnNum in pairs(BUTTON_NUMBERS) do
             frame:SetAttribute(prefix .. "type" .. btnNum, nil)
@@ -499,10 +568,19 @@ end
 function QUI_GFCC:RegisterAllFrames()
     if not isEnabled then return end
     local GF = ns.QUI_GroupFrames
-    if not GF then return end
+    if not GF or not GF.headers then return end
 
-    for _, frame in pairs(GF.unitFrameMap) do
-        SetupFrameClickCast(frame)
+    -- Walk header children directly rather than relying on a cached list.
+    -- This always gets current children regardless of creation timing.
+    for _, headerKey in ipairs({"party", "raid", "self"}) do
+        local header = GF.headers[headerKey]
+        if header then
+            for i = 1, 40 do
+                local child = header:GetAttribute("child" .. i)
+                if not child then break end
+                SetupFrameClickCast(child)
+            end
+        end
     end
 end
 
@@ -533,13 +611,26 @@ end
 function QUI_GFCC:RefreshBindings()
     if InCombatLockdown() then return end
 
+    local db = GetDB()
+    local enabled = db and db.clickCast and db.clickCast.enabled
+
     -- Clear all existing bindings
     for frame in pairs(registeredFrames) do
         ClearFrameClickCast(frame)
     end
     wipe(registeredFrames)
 
-    -- Re-resolve and re-apply
+    if not enabled then
+        -- Disable: clear bindings and mark as disabled
+        wipe(activeBindings)
+        wipe(keyboardBindings)
+        UpdateHeaderKeyAttributes()
+        isEnabled = false
+        return
+    end
+
+    -- Enable/refresh: resolve bindings and re-apply
+    isEnabled = true
     ResolveBindings()
     UpdateHeaderKeyAttributes()
     self:RegisterAllFrames()
@@ -626,26 +717,9 @@ function QUI_GFCC:GetModifierLabels()
     return MODIFIER_LABELS
 end
 
----------------------------------------------------------------------------
--- GLOBAL PING BUTTONS: SecureActionButtons for Bindings.xml keybinds.
--- Created once at load time with fixed macrotext so they work in combat.
--- Mouseover fallback to target covers nameplates, world frames, and
--- targeted units with no hover.
----------------------------------------------------------------------------
-local PING_BUTTONS = {
-    { name = "QUI_PingButton_Contextual", macro = "/ping [@mouseover,exists][@target,exists]" },
-    { name = "QUI_PingButton_Assist",     macro = "/ping [@mouseover,exists] assist; [@target,exists] assist" },
-    { name = "QUI_PingButton_Attack",     macro = "/ping [@mouseover,exists] attack; [@target,exists] attack" },
-    { name = "QUI_PingButton_Warning",    macro = "/ping [@mouseover,exists] warning; [@target,exists] warning" },
-    { name = "QUI_PingButton_OnMyWay",    macro = "/ping [@mouseover,exists] onmyway; [@target,exists] onmyway" },
-}
-
-for _, def in ipairs(PING_BUTTONS) do
-    local btn = CreateFrame("Button", def.name, UIParent, "SecureActionButtonTemplate")
-    btn:SetAttribute("type", "macro")
-    btn:SetAttribute("macrotext", def.macro)
-    btn:Hide()
-end
+-- Global ping keybinds use Blizzard's native binding actions directly
+-- (TOGGLEPINGLISTENER, PINGATTACK, PINGWARNING, PINGONMYWAY, PINGASSIST).
+-- No SecureActionButtons needed — the UI binds keys to these native actions.
 
 ---------------------------------------------------------------------------
 -- EVENTS: Spec change and combat end
@@ -653,8 +727,50 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
 eventFrame:SetScript("OnEvent", function(self, event)
+    if event == "PLAYER_ENTERING_WORLD" then
+        -- Migrate old QUI ping bindings (CLICK format and QUI_PING_* action
+        -- names) to Blizzard's native ping actions.
+        local OLD_TO_NATIVE = {
+            ["CLICK QUI_PingButton_Contextual:LeftButton"] = "TOGGLEPINGLISTENER",
+            ["CLICK QUI_PingButton_Assist:LeftButton"]     = "PINGASSIST",
+            ["CLICK QUI_PingButton_Attack:LeftButton"]     = "PINGATTACK",
+            ["CLICK QUI_PingButton_Warning:LeftButton"]    = "PINGWARNING",
+            ["CLICK QUI_PingButton_OnMyWay:LeftButton"]    = "PINGONMYWAY",
+            ["QUI_PING"]         = "TOGGLEPINGLISTENER",
+            ["QUI_PING_ASSIST"]  = "PINGASSIST",
+            ["QUI_PING_ATTACK"]  = "PINGATTACK",
+            ["QUI_PING_WARNING"] = "PINGWARNING",
+            ["QUI_PING_ONMYWAY"] = "PINGONMYWAY",
+        }
+        local didMigrate = false
+        for oldBinding, nativeAction in pairs(OLD_TO_NATIVE) do
+            local key1, key2 = GetBindingKey(oldBinding)
+            if key1 then SetBinding(key1, nativeAction); didMigrate = true end
+            if key2 then SetBinding(key2, nativeAction); didMigrate = true end
+        end
+        if didMigrate then SaveBindings(GetCurrentBindingSet()) end
+
+        -- After /reload or zone transition, re-register all frames.
+        -- Spec data and group composition may not be fully available during
+        -- ADDON_LOADED, so this catch-up ensures bindings are applied.
+        if not isEnabled then
+            -- Try to initialize if not done yet (covers case where
+            -- ADDON_LOADED ran before DB was ready)
+            QUI_GFCC:Initialize()
+        end
+        if isEnabled and not InCombatLockdown() then
+            C_Timer.After(1.0, function()
+                if not InCombatLockdown() then
+                    QUI_GFCC:RefreshBindings()
+                end
+            end)
+        end
+        return
+    end
+
     if not isEnabled then return end
 
     if event == "PLAYER_SPECIALIZATION_CHANGED" then

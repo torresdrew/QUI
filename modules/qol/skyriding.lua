@@ -45,6 +45,7 @@ local fadeStartAlpha = 1
 local fadeTargetAlpha = 1
 local inCombat = false
 local hasThrillOfTheSkiesBuff = false
+local isPreviewMode = false
 
 -- Smooth animation state
 local targetBarValue = 0
@@ -876,6 +877,9 @@ local function UpdateVisibility()
     local settings = GetSettings()
     if not settings or not skyridingFrame then return end
 
+    -- Don't hide during preview mode
+    if isPreviewMode then return end
+
     if not settings.enabled then
         skyridingFrame:Hide()
         return
@@ -1042,7 +1046,13 @@ local function OnUpdate(self, delta)
     elapsed = 0
 
     local settings = GetSettings()
-    if not settings or not settings.enabled then return end
+    if not settings or not settings.enabled then
+        -- Still allow preview mode even when disabled
+        if not isPreviewMode then return end
+    end
+
+    -- Skip data-driven updates in preview mode
+    if isPreviewMode then return end
 
     -- Track grounded time for auto-fade
     local gliding, canGlideNow, _ = GetGlidingInfo()
@@ -1172,7 +1182,7 @@ end
 -- Event Handling
 ---------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 eventFrame:RegisterEvent("PLAYER_CAN_GLIDE_CHANGED")
@@ -1186,15 +1196,15 @@ eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterUnitEvent("UNIT_AURA", "player")  -- Only player auras (Thrill of the Skies buff)
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
-    if event == "PLAYER_LOGIN" then
-        C_Timer.After(1, function()
-            CreateSkyridingFrame()
-            ApplySettings()
-            -- Start OnUpdate for animations
-            if skyridingFrame then
-                skyridingFrame:SetScript("OnUpdate", OnUpdate)
-            end
-        end)
+    if event == "ADDON_LOADED" then
+        if arg1 ~= ADDON_NAME then return end
+        self:UnregisterEvent("ADDON_LOADED")
+        CreateSkyridingFrame()
+        ApplySettings()
+        -- Start OnUpdate for animations
+        if skyridingFrame then
+            skyridingFrame:SetScript("OnUpdate", OnUpdate)
+        end
     elseif event == "PLAYER_ENTERING_WORLD" then
         RefreshSkyridingState()
         -- Loading screens can briefly preserve the pre-instance mount/glide state.
@@ -1249,9 +1259,66 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
 end)
 
 ---------------------------------------------------------------------------
+-- Toggle Preview Mode (for Unlock/Edit Mode)
+---------------------------------------------------------------------------
+local function ToggleSkyridingPreview(enable)
+    CreateSkyridingFrame()
+    if not skyridingFrame then return end
+
+    isPreviewMode = enable
+
+    if enable then
+        -- Show preview with simulated vigor data
+        ApplySettings()
+        skyridingFrame:SetAlpha(1)
+        fadeStart = 0
+
+        -- Simulated bar: 3/6 charges (50% fill)
+        vigorBar:SetMinMaxValues(0, 1)
+        vigorBar:SetValue(0.5)
+        currentBarValue = 0.5
+        targetBarValue = 0.5
+        UpdateSegmentMarkers(6)
+
+        -- Vigor text
+        local settings = GetSettings()
+        if settings and settings.showVigorText ~= false then
+            local format = settings and settings.vigorTextFormat or "FRACTION"
+            if format == "FRACTION" then
+                vigorText:SetText("3/6")
+            else
+                vigorText:SetText("3")
+            end
+            vigorText:Show()
+        end
+
+        -- Speed text
+        if settings and settings.showSpeed then
+            speedText:SetText("100%")
+            speedText:Show()
+        end
+
+        -- Hide recharge overlay in preview
+        rechargeOverlay:Hide()
+
+        skyridingFrame:Show()
+    else
+        -- Exit preview
+        local settings = GetSettings()
+        if settings and settings.enabled then
+            -- Re-apply live state
+            RefreshSkyridingState()
+        else
+            skyridingFrame:Hide()
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- Global Refresh Function for GUI
 ---------------------------------------------------------------------------
 _G.QUI_RefreshSkyriding = ApplySettings
+_G.QUI_ToggleSkyridingPreview = ToggleSkyridingPreview
 
 ---------------------------------------------------------------------------
 -- Public API
@@ -1260,4 +1327,5 @@ QUI.Skyriding = {
     Refresh = ApplySettings,
     Create = CreateSkyridingFrame,
     UpdateVisibility = UpdateVisibility,
+    TogglePreview = ToggleSkyridingPreview,
 }

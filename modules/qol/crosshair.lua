@@ -267,10 +267,12 @@ local function UpdateCrosshair()
     local strata = settings.strata or "HIGH"
     local onlyInCombat = settings.onlyInCombat
     
-    -- Apply strata and position
+    -- Apply strata and position (skip if anchoring engine manages this frame)
     crosshairFrame:SetFrameStrata(strata)
-    crosshairFrame:ClearAllPoints()
-    crosshairFrame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+    if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(crosshairFrame)) then
+        crosshairFrame:ClearAllPoints()
+        crosshairFrame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+    end
     
     -- Size the border textures (slightly larger than main lines)
     horizBorder:SetSize((size * 2) + borderSize * 2, thickness + borderSize * 2)
@@ -377,14 +379,15 @@ end
 ---------------------------------------------------------------------------
 -- Initialize
 ---------------------------------------------------------------------------
-eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:SetScript("OnEvent", function(self, event, ...)
-    if event == "PLAYER_LOGIN" then
-        C_Timer.After(1, function()
-            CreateCrosshair()
-            UpdateCrosshair()
-            UpdateEventRegistrations()
-        end)
+    if event == "ADDON_LOADED" then
+        local addonName = ...
+        if addonName ~= ADDON_NAME then return end
+        self:UnregisterEvent("ADDON_LOADED")
+        CreateCrosshair()
+        UpdateCrosshair()
+        UpdateEventRegistrations()
     elseif event == "PLAYER_REGEN_DISABLED" then
         OnCombatStart()
     elseif event == "PLAYER_REGEN_ENABLED" then

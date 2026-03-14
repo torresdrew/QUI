@@ -128,32 +128,7 @@ local function BuildDragonridingTab(tabContent)
     textureDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
     y = y - FORM_ROW
 
-    -- SECTION: Position
-    GUI:SetSearchSection("Position")
-    local posHeader = GUI:CreateSectionHeader(tabContent, "Position")
-    posHeader:SetPoint("TOPLEFT", PADDING, y)
-    y = y - posHeader.gap
-
-    local lockCheck = GUI:CreateFormCheckbox(tabContent, "Lock Position", "locked", sr, RefreshSkyriding)
-    lockCheck:SetPoint("TOPLEFT", PADDING, y)
-    lockCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-    y = y - FORM_ROW
-
-    local lockInfo = GUI:CreateLabel(tabContent, "Uncheck to drag the bar to a new position.", 10, C.textMuted)
-    lockInfo:SetPoint("TOPLEFT", PADDING, y)
-    lockInfo:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-    lockInfo:SetJustifyH("LEFT")
-    y = y - 20
-
-    local xSlider = GUI:CreateFormSlider(tabContent, "X Offset", -1000, 1000, 1, "offsetX", sr, RefreshSkyriding)
-    xSlider:SetPoint("TOPLEFT", PADDING, y)
-    xSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-    y = y - FORM_ROW
-
-    local ySlider = GUI:CreateFormSlider(tabContent, "Y Offset", -1000, 1000, 1, "offsetY", sr, RefreshSkyriding)
-    ySlider:SetPoint("TOPLEFT", PADDING, y)
-    ySlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-    y = y - FORM_ROW
+    -- Skyriding positioning moved to Edit Mode.
 
     -- SECTION: Fill Colors
     GUI:SetSearchSection("Fill Colors")

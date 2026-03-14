@@ -11,6 +11,7 @@ local nsHelpers = ns.Helpers
 local UIKit = ns.UIKit
 local IsSecretValue = nsHelpers.IsSecretValue
 local SafeValue = nsHelpers.SafeValue
+local EnsureDefaults = nsHelpers.EnsureDefaults
 
 local GetCore = nsHelpers.GetCore
 
@@ -213,9 +214,11 @@ local function UpdateThrottledText(castbar, elapsed, text, value)
 end
 
 local function InitializeDefaultSettings(castSettings, unitKey)
-    if castSettings.iconAnchor == nil then castSettings.iconAnchor = "LEFT" end
-    if castSettings.iconSpacing == nil then castSettings.iconSpacing = 0 end
-    if castSettings.showIcon == nil then castSettings.showIcon = true end
+    EnsureDefaults(castSettings, {
+        iconAnchor = "LEFT",
+        iconSpacing = 0,
+        showIcon = true,
+    })
     if unitKey == "player" and castSettings.showGCD == nil then castSettings.showGCD = false end
     if unitKey == "player" and castSettings.showGCDReverse == nil then castSettings.showGCDReverse = false end
     if unitKey == "player" and castSettings.showGCDMelee == nil then
@@ -241,31 +244,34 @@ local function InitializeDefaultSettings(castSettings, unitKey)
     elseif not castSettings.iconBorderColor[4] then
         castSettings.iconBorderColor[4] = 1
     end
-    if castSettings.iconBorderSize == nil then
-        castSettings.iconBorderSize = 2
-    end
+    EnsureDefaults(castSettings, {
+        iconBorderSize = 2,
+        statusBarAnchor = "BOTTOMRIGHT",
+    })
     
-    if castSettings.statusBarAnchor == nil then castSettings.statusBarAnchor = "BOTTOMRIGHT" end
+    EnsureDefaults(castSettings, {
+        spellTextAnchor = "LEFT",
+        spellTextOffsetX = 4,
+        spellTextOffsetY = 0,
+        showSpellText = true,
+    })
     
-    if castSettings.spellTextAnchor == nil then castSettings.spellTextAnchor = "LEFT" end
-    if castSettings.spellTextOffsetX == nil then castSettings.spellTextOffsetX = 4 end
-    if castSettings.spellTextOffsetY == nil then castSettings.spellTextOffsetY = 0 end
-    if castSettings.showSpellText == nil then castSettings.showSpellText = true end
-    
-    if castSettings.timeTextAnchor == nil then castSettings.timeTextAnchor = "RIGHT" end
-    if castSettings.timeTextOffsetX == nil then castSettings.timeTextOffsetX = -4 end
-    if castSettings.timeTextOffsetY == nil then castSettings.timeTextOffsetY = 0 end
-    if castSettings.showTimeText == nil then castSettings.showTimeText = true end
-    if castSettings.notInterruptibleColor == nil then
-        castSettings.notInterruptibleColor = {0.7, 0.2, 0.2, 1}
-    end
+    EnsureDefaults(castSettings, {
+        timeTextAnchor = "RIGHT",
+        timeTextOffsetX = -4,
+        timeTextOffsetY = 0,
+        showTimeText = true,
+        notInterruptibleColor = {0.7, 0.2, 0.2, 1},
+    })
 
     -- Empowered cast settings
-    if castSettings.empoweredLevelTextAnchor == nil then castSettings.empoweredLevelTextAnchor = "CENTER" end
-    if castSettings.empoweredLevelTextOffsetX == nil then castSettings.empoweredLevelTextOffsetX = 0 end
-    if castSettings.empoweredLevelTextOffsetY == nil then castSettings.empoweredLevelTextOffsetY = 0 end
-    if castSettings.showEmpoweredLevel == nil then castSettings.showEmpoweredLevel = false end
-    if castSettings.hideTimeTextOnEmpowered == nil then castSettings.hideTimeTextOnEmpowered = false end
+    EnsureDefaults(castSettings, {
+        empoweredLevelTextAnchor = "CENTER",
+        empoweredLevelTextOffsetX = 0,
+        empoweredLevelTextOffsetY = 0,
+        showEmpoweredLevel = false,
+        hideTimeTextOnEmpowered = false,
+    })
 
     local defaultShowChannelTicks = (unitKey == "player")
     if castSettings.showChannelTicks == nil then castSettings.showChannelTicks = defaultShowChannelTicks end
@@ -506,12 +512,6 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
         local widthAdj = QUICore:PixelRound(castSettings.widthAdjustment or 0, anchorFrame)
         local viewer = _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame("essential")
         if viewer then
-            -- Use the CDM anchor proxy for edge-based dual anchoring. The proxy has
-            -- frozen dimensions during combat so the castbar width stays stable when
-            -- Blizzard resizes the actual viewer (icon count changes). The proxy tracks
-            -- the viewer's CENTER position, so its edges represent QUI's expected bounds.
-            local anchorTarget = (_G.QUI_GetCDMAnchorProxyFrame and _G.QUI_GetCDMAnchorProxyFrame("cdmEssential")) or viewer
-
             -- Keep castbar spacing visually consistent with the active bottom CDM row.
             -- In horizontal CDM layouts, row yOffset can move the visible bottom row
             -- without changing the viewer frame bounds.
@@ -520,8 +520,8 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
             if (vs and vs.layoutDir) ~= "VERTICAL" then
                 bottomRowYOffset = QUICore:PixelRound((vs and vs.bottomRowYOffset) or 0, anchorFrame)
             end
-            anchorFrame:SetPoint("TOPLEFT", anchorTarget, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
-            anchorFrame:SetPoint("TOPRIGHT", anchorTarget, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPLEFT", viewer, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPRIGHT", viewer, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
         else
             if unitFrame then
                 anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX, offsetY)
@@ -535,17 +535,14 @@ local function PositionCastbarByAnchor(anchorFrame, castSettings, unitFrame, bar
         local widthAdj = QUICore:PixelRound(castSettings.widthAdjustment or 0, anchorFrame)
         local viewer = _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame("utility")
         if viewer then
-            -- Use the CDM anchor proxy (same reasoning as Essential above).
-            local anchorTarget = (_G.QUI_GetCDMAnchorProxyFrame and _G.QUI_GetCDMAnchorProxyFrame("cdmUtility")) or viewer
-
             -- Mirror Essential logic so Utility-anchored castbars behave consistently.
             local bottomRowYOffset = 0
             local vs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(viewer)
             if (vs and vs.layoutDir) ~= "VERTICAL" then
                 bottomRowYOffset = QUICore:PixelRound((vs and vs.bottomRowYOffset) or 0, anchorFrame)
             end
-            anchorFrame:SetPoint("TOPLEFT", anchorTarget, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
-            anchorFrame:SetPoint("TOPRIGHT", anchorTarget, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPLEFT", viewer, "BOTTOMLEFT", offsetX - widthAdj, offsetY + bottomRowYOffset)
+            anchorFrame:SetPoint("TOPRIGHT", viewer, "BOTTOMRIGHT", offsetX + widthAdj, offsetY + bottomRowYOffset)
         else
             if unitFrame then
                 anchorFrame:SetPoint("TOPLEFT", unitFrame, "BOTTOMLEFT", offsetX, offsetY)
@@ -3529,13 +3526,19 @@ _G.QUI_HideCastbarPreview = function(unitKey)
     if not settings or not settings.castbar then
         return
     end
-    
+
     settings.castbar.previewMode = false
-    
+
     -- Refresh the frame to clear preview
     local QUI_UF = QUI_Castbar.unitFramesModule
     if QUI_UF then
         QUI_UF:RefreshFrame(unitKey)
+    end
+
+    -- Explicitly hide the castbar frame in case refresh didn't (e.g. castbar disabled)
+    local castbar = QUI_Castbar.castbars and QUI_Castbar.castbars[unitKey]
+    if castbar and castbar:IsShown() then
+        castbar:Hide()
     end
 end
 
@@ -3726,497 +3729,61 @@ end
 _G.QUI_Castbars = QUI_Castbar.castbars
 
 ---------------------------------------------------------------------------
--- BLIZZARD EDIT MODE INTEGRATION
--- When Edit Mode is active and player castbar anchor is "none" (free-floating),
--- show the castbar in preview mode so it can be dragged to position.
--- Also respects the "Cast Bar" checkbox in Edit Mode's visibility settings.
+-- EDIT MODE STUBS (old overlay system removed — Layout Mode handles replace)
 ---------------------------------------------------------------------------
-local EditModeState = {
-    active = false,
-    showedPreviews = {},  -- Track which unit castbars we showed preview for
-    castBarCheckboxEnabled = true,  -- Track the Edit Mode "Cast Bar" checkbox state
-    restorePending = false,  -- Debounce flag for overlay restoration
-}
 
--- Units that support free-floating castbars (anchor == "none")
-local EDIT_MODE_CASTBAR_UNITS = {"player", "target", "focus"}
+-- No-op stub: called from unitframes.lua RefreshFrame but edit mode overlays are gone.
+function QUI_Castbar:RestoreEditOverlaysIfNeeded() end
 
--- Check if the "Cast Bar" checkbox is enabled in Edit Mode
-local function IsCastBarEnabledInEditMode()
-    -- PlayerCastingBarFrame has the Edit Mode visibility setting
-    -- All access wrapped in pcall — frame can be forbidden in 12.0.x beta
-    if PlayerCastingBarFrame then
-        local ok, shown = pcall(function()
-            if PlayerCastingBarFrame.IsInDefaultPosition and PlayerCastingBarFrame.GetSettingValue then
-                return PlayerCastingBarFrame:IsShownInMode()
-            end
-            return nil
-        end)
-        if ok and shown ~= nil then return shown end
-    end
-    -- Default to enabled if we can't determine
-    return EditModeState.castBarCheckboxEnabled
-end
 
--- Create nudge button for castbar (arrow button to nudge position)
--- Matches the unit frame nudge button style with dark background
-local function CreateCastbarNudgeButton(parent, direction, deltaX, deltaY, unitKey)
-    local btn = CreateFrame("Button", nil, parent)
-    btn:SetSize(18, 18)
-    -- Use HIGH strata so nudge buttons appear above all other frames
-    btn:SetFrameStrata("HIGH")
-    btn:SetFrameLevel(100)
+---------------------------------------------------------------------------
+-- UNLOCK MODE ELEMENT REGISTRATION
+---------------------------------------------------------------------------
+do
+    local function RegisterLayoutModeElements()
+        local um = ns.QUI_LayoutMode
+        if not um then return end
 
-    -- Background - dark grey at 70% for visibility over any game content
-    local bg = btn:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetTexture("Interface\\Buttons\\WHITE8x8")
-    bg:SetVertexColor(0.1, 0.1, 0.1, 0.7)
-    btn.bg = bg
+        local CASTBAR_ELEMENTS = {
+            { key = "playerCastbar", label = "Player Castbar", unit = "player", order = 1 },
+            { key = "targetCastbar", label = "Target Castbar", unit = "target", order = 2 },
+            { key = "focusCastbar",  label = "Focus Castbar",  unit = "focus",  order = 3 },
+        }
 
-    -- Chevron lines - white for high contrast
-    local line1 = btn:CreateTexture(nil, "ARTWORK")
-    line1:SetColorTexture(1, 1, 1, 0.9)
-    line1:SetSize(7, 2)
-    local line2 = btn:CreateTexture(nil, "ARTWORK")
-    line2:SetColorTexture(1, 1, 1, 0.9)
-    line2:SetSize(7, 2)
-
-    -- Direction-specific positioning
-    if direction == "DOWN" then
-        line1:SetPoint("CENTER", btn, "CENTER", -2, 1)
-        line1:SetRotation(math.rad(-45))
-        line2:SetPoint("CENTER", btn, "CENTER", 2, 1)
-        line2:SetRotation(math.rad(45))
-    elseif direction == "UP" then
-        line1:SetPoint("CENTER", btn, "CENTER", -2, -1)
-        line1:SetRotation(math.rad(45))
-        line2:SetPoint("CENTER", btn, "CENTER", 2, -1)
-        line2:SetRotation(math.rad(-45))
-    elseif direction == "LEFT" then
-        line1:SetPoint("CENTER", btn, "CENTER", -1, -2)
-        line1:SetRotation(math.rad(-45))
-        line2:SetPoint("CENTER", btn, "CENTER", -1, 2)
-        line2:SetRotation(math.rad(45))
-    elseif direction == "RIGHT" then
-        line1:SetPoint("CENTER", btn, "CENTER", 1, -2)
-        line1:SetRotation(math.rad(45))
-        line2:SetPoint("CENTER", btn, "CENTER", 1, 2)
-        line2:SetRotation(math.rad(-45))
-    end
-    btn.line1 = line1
-    btn.line2 = line2
-
-    -- Hover effect (mint green like other QUI elements)
-    btn:SetScript("OnEnter", function(self)
-        self.line1:SetColorTexture(0.204, 0.827, 0.6, 1)
-        self.line2:SetColorTexture(0.204, 0.827, 0.6, 1)
-    end)
-    btn:SetScript("OnLeave", function(self)
-        self.line1:SetColorTexture(1, 1, 1, 0.9)
-        self.line2:SetColorTexture(1, 1, 1, 0.9)
-    end)
-
-    btn:SetScript("OnClick", function()
-        local settings = GetUnitSettings(unitKey)
-        if not settings or not settings.castbar then return end
-        local castSettings = settings.castbar
-
-        local shift = IsShiftKeyDown()
-        local step = shift and 10 or 1
-        castSettings.offsetX = (castSettings.offsetX or 0) + (deltaX * step)
-        castSettings.offsetY = (castSettings.offsetY or 0) + (deltaY * step)
-
-        -- Also update free offset storage
-        castSettings.freeOffsetX = castSettings.offsetX
-        castSettings.freeOffsetY = castSettings.offsetY
-
-        -- Update castbar position directly (don't use RefreshFrame which would destroy the overlay)
-        local castbar = QUI_Castbar.castbars and QUI_Castbar.castbars[unitKey]
-        if castbar then
-            castbar:ClearAllPoints()
-            castbar:SetPoint("CENTER", UIParent, "CENTER", castSettings.offsetX, castSettings.offsetY)
-
-            -- Update info text
-            if castbar.editOverlay and castbar.editOverlay.infoText then
-                local displayName = unitKey == "player" and "Player" or
-                                    unitKey == "target" and "Target" or
-                                    unitKey == "focus" and "Focus" or "Castbar"
-                castbar.editOverlay.infoText:SetText(string.format("%s Castbar  X:%d Y:%d",
-                    displayName, castSettings.offsetX or 0, castSettings.offsetY or 0))
-            end
-        end
-    end)
-
-    return btn
-end
-
--- Create edit mode overlay for a castbar (visual indicator that it can be moved)
-local function SetCastbarEditOverlayStyle(overlay, bgColor, borderColor)
-    if not overlay then return end
-
-    if not overlay.Background then
-        overlay.Background = UIKit.CreateBackground(overlay, bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
-    else
-        overlay.Background:SetVertexColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
-    end
-
-    if UIKit and UIKit.CreateBackdropBorder then
-        overlay.Border = UIKit.CreateBackdropBorder(
-            overlay,
-            2,
-            borderColor[1],
-            borderColor[2],
-            borderColor[3],
-            borderColor[4] or 1
-        )
-    end
-end
-
-local function CreateCastbarEditOverlay(castbar, unitKey)
-    if not castbar then return end
-    if castbar.editOverlay then return castbar.editOverlay end
-
-    local overlay = CreateFrame("Frame", nil, castbar)
-    overlay:SetAllPoints()
-    -- Use HIGH strata so overlay appears above most frames
-    overlay:SetFrameStrata("HIGH")
-    overlay:SetFrameLevel(castbar:GetFrameLevel() + 50)
-    SetCastbarEditOverlayStyle(overlay, {0.2, 0.8, 1, 0.25}, {0.2, 0.8, 1, 0.9})
-
-    -- Store unitKey for selection system
-    overlay.elementKey = unitKey
-
-    -- Nudge buttons (only for non-anchored castbars)
-    overlay.nudgeLeft = CreateCastbarNudgeButton(overlay, "LEFT", -1, 0, unitKey)
-    overlay.nudgeLeft:SetPoint("RIGHT", overlay, "LEFT", -4, 0)
-
-    overlay.nudgeRight = CreateCastbarNudgeButton(overlay, "RIGHT", 1, 0, unitKey)
-    overlay.nudgeRight:SetPoint("LEFT", overlay, "RIGHT", 4, 0)
-
-    overlay.nudgeUp = CreateCastbarNudgeButton(overlay, "UP", 0, 1, unitKey)
-    overlay.nudgeUp:SetPoint("BOTTOM", overlay, "TOP", 0, 4)
-
-    overlay.nudgeDown = CreateCastbarNudgeButton(overlay, "DOWN", 0, -1, unitKey)
-    overlay.nudgeDown:SetPoint("TOP", overlay, "BOTTOM", 0, -4)
-
-    -- Info text above UP arrow (shows position or anchor info)
-    local infoText = overlay:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    infoText:SetPoint("BOTTOM", overlay.nudgeUp, "TOP", 0, 2)
-    infoText:SetTextColor(0.7, 0.7, 0.7, 1)
-    overlay.infoText = infoText
-
-    -- Label showing which castbar this is (shown centered when anchored)
-    local label = overlay:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetPoint("CENTER", overlay, "CENTER", 0, 0)
-    local displayName = unitKey == "player" and "Player Castbar" or
-                        unitKey == "target" and "Target Castbar" or
-                        unitKey == "focus" and "Focus Castbar" or
-                        "Castbar"
-    label:SetText(displayName)
-    label:SetTextColor(1, 1, 1, 1)
-    overlay.label = label
-
-    -- Hide nudge buttons initially (shown on selection)
-    overlay.nudgeLeft:Hide()
-    overlay.nudgeRight:Hide()
-    overlay.nudgeUp:Hide()
-    overlay.nudgeDown:Hide()
-    infoText:Hide()
-
-    -- Enable mouse for click-to-select
-    overlay:EnableMouse(true)
-    overlay:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" then
-            -- Select this castbar element
-            if QUICore and QUICore.SelectEditModeElement then
-                QUICore:SelectEditModeElement("castbar", unitKey)
-            end
-        end
-    end)
-
-    overlay:Hide()
-    castbar.editOverlay = overlay
-    return overlay
-end
-
--- Get anchor display name for locked castbars
-local function GetAnchorDisplayName(anchor)
-    if anchor == "unitframe" then return "Unit Frame"
-    elseif anchor == "essential" then return "Essential Cooldowns"
-    elseif anchor == "utility" then return "Utility Cooldowns"
-    else return nil
-    end
-end
-
-local function ShowCastbarEditOverlay(unitKey)
-    local castbar = QUI_Castbar.castbars and QUI_Castbar.castbars[unitKey]
-    if not castbar then return end
-
-    local settings = GetUnitSettings(unitKey)
-    local castSettings = settings and settings.castbar
-    local isAnchored = castSettings and castSettings.anchor and castSettings.anchor ~= "none"
-
-    -- Check if overlay exists and is still valid (parent might have been recreated)
-    if castbar.editOverlay and castbar.editOverlay:GetParent() ~= castbar then
-        -- Overlay's parent changed (castbar was recreated), need to recreate overlay
-        castbar.editOverlay:Hide()
-        castbar.editOverlay = nil
-    end
-
-    CreateCastbarEditOverlay(castbar, unitKey)
-    local overlay = castbar.editOverlay
-    if not overlay then return end
-
-    -- Ensure overlay is interactive for re-selection
-    overlay:EnableMouse(true)
-    overlay:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" then
-            if QUICore and QUICore.SelectEditModeElement then
-                QUICore:SelectEditModeElement("castbar", unitKey)
-            end
-        end
-    end)
-
-    -- Keyboard handling is centralized in EditModeKeyHandler (core/main.lua).
-    -- Per-castbar EnableKeyboard is removed to prevent input blocking.
-
-    -- Update display based on whether castbar is anchored
-    if isAnchored then
-        -- Anchored: show lock indicator, hide nudge buttons
-        SetCastbarEditOverlayStyle(overlay, {0.5, 0.5, 0.5, 0.25}, {0.6, 0.6, 0.6, 0.9})
-
-        local anchorName = GetAnchorDisplayName(castSettings.anchor)
-        local displayName = unitKey == "player" and "Player Castbar" or
-                            unitKey == "target" and "Target Castbar" or
-                            unitKey == "focus" and "Focus Castbar" or "Castbar"
-        if anchorName then
-            overlay.label:SetText(displayName .. "\n|cff888888Locked to " .. anchorName .. "|r")
-        else
-            overlay.label:SetText(displayName .. "\n|cff888888(Anchored)|r")
+        local function GetCastbarDB(unit)
+            local core = ns.Helpers.GetCore()
+            local ufdb = core and core.db and core.db.profile and core.db.profile.quiUnitFrames
+            return ufdb and ufdb[unit] and ufdb[unit].castbar
         end
 
-        -- Permanently hide nudge buttons for anchored castbars
-        overlay.nudgeLeft:Hide()
-        overlay.nudgeRight:Hide()
-        overlay.nudgeUp:Hide()
-        overlay.nudgeDown:Hide()
-        overlay.infoText:Hide()
-        overlay._isAnchored = true
-    else
-        -- Free-floating: normal cyan color, nudge buttons available
-        SetCastbarEditOverlayStyle(overlay, {0.2, 0.8, 1, 0.25}, {0.2, 0.8, 1, 0.9})
-
-        local displayName = unitKey == "player" and "Player Castbar" or
-                            unitKey == "target" and "Target Castbar" or
-                            unitKey == "focus" and "Focus Castbar" or "Castbar"
-        overlay.label:SetText(displayName)
-
-        -- Update info text with current position
-        local displayShort = unitKey == "player" and "Player" or
-                             unitKey == "target" and "Target" or
-                             unitKey == "focus" and "Focus" or "Castbar"
-        overlay.infoText:SetText(string.format("%s Castbar  X:%d Y:%d",
-            displayShort, castSettings.offsetX or 0, castSettings.offsetY or 0))
-
-        overlay._isAnchored = false
-    end
-
-    overlay:Show()
-end
-
-local function HideCastbarEditOverlay(unitKey)
-    local castbar = QUI_Castbar.castbars and QUI_Castbar.castbars[unitKey]
-    if castbar then
-        -- Disable keyboard
-        castbar:EnableKeyboard(false)
-        castbar:SetScript("OnKeyDown", nil)
-
-        if castbar.editOverlay then
-            -- Hide nudge buttons
-            if QUICore and QUICore.HideNudgeButtons then
-                QUICore:HideNudgeButtons(castbar.editOverlay)
-            end
-            castbar.editOverlay:Hide()
-        end
-    end
-end
-
-local function UpdateCastbarVisibilityForEditMode()
-    if not EditModeState.active then return end
-    if InCombatLockdown() then return end
-
-    local QUI_UF = QUI_Castbar.unitFramesModule
-    local castBarEnabled = IsCastBarEnabledInEditMode()
-
-    for _, unitKey in ipairs(EDIT_MODE_CASTBAR_UNITS) do
-        local settings = GetUnitSettings(unitKey)
-        if not settings or not settings.castbar then
-            -- Skip if no castbar settings
-        elseif settings.castbar.anchor == "none" then
-            -- Free-floating castbar: needs preview mode to be visible
-            if castBarEnabled then
-                -- Show preview if not already showing
-                if not settings.castbar.previewMode then
-                    settings.castbar.previewMode = true
-                    EditModeState.showedPreviews[unitKey] = true
-                    if QUI_UF then
-                        QUI_UF:RefreshFrame(unitKey)
-                    end
-                end
-                -- Show edit overlay after a short delay (castbar needs to be refreshed first)
-                C_Timer.After(0.1, function()
-                    if EditModeState.active and EditModeState.showedPreviews[unitKey] then
-                        ShowCastbarEditOverlay(unitKey)
-                    end
-                end)
-            else
-                -- Hide preview and overlay
-                HideCastbarEditOverlay(unitKey)
-                if EditModeState.showedPreviews[unitKey] then
-                    settings.castbar.previewMode = false
-                    EditModeState.showedPreviews[unitKey] = nil
-                    if QUI_UF then
-                        QUI_UF:RefreshFrame(unitKey)
-                    end
-                end
-            end
-        else
-            -- Anchored castbar: also needs preview mode to be visible (castbar only shows during casts)
-            -- Show it with "locked" indicator and without nudge buttons
-            if castBarEnabled then
-                -- Enable preview mode so the castbar is visible
-                if not settings.castbar.previewMode then
-                    settings.castbar.previewMode = true
-                    EditModeState.showedPreviews[unitKey] = "anchored"
-                    if QUI_UF then
-                        QUI_UF:RefreshFrame(unitKey)
-                    end
-                end
-                -- Show edit overlay after a short delay (castbar needs to be refreshed first)
-                C_Timer.After(0.15, function()
-                    if EditModeState.active and EditModeState.showedPreviews[unitKey] then
-                        ShowCastbarEditOverlay(unitKey)
-                    end
-                end)
-            else
-                -- Hide preview and overlay
-                HideCastbarEditOverlay(unitKey)
-                if EditModeState.showedPreviews[unitKey] then
-                    settings.castbar.previewMode = false
-                    EditModeState.showedPreviews[unitKey] = nil
-                    if QUI_UF then
-                        QUI_UF:RefreshFrame(unitKey)
-                    end
-                end
-            end
-        end
-    end
-end
-
-local function EnableCastbarEditMode()
-    if InCombatLockdown() then return end
-    EditModeState.active = true
-    EditModeState.castBarCheckboxEnabled = true  -- Assume enabled on enter
-
-    UpdateCastbarVisibilityForEditMode()
-end
-
-local function DisableCastbarEditMode()
-    EditModeState.active = false
-
-    local QUI_UF = QUI_Castbar.unitFramesModule
-
-    -- Clear Edit Mode selection if a castbar was selected
-    if QUICore and QUICore.ClearEditModeSelection then
-        local sel = QUICore.EditModeSelection
-        if sel and sel.selectedType == "castbar" then
-            QUICore:ClearEditModeSelection()
+        for _, info in ipairs(CASTBAR_ELEMENTS) do
+            um:RegisterElement({
+                key = info.key,
+                label = info.label,
+                group = "Castbars",
+                order = info.order,
+                isOwned = true,
+                isEnabled = function()
+                    local cb = GetCastbarDB(info.unit)
+                    return cb and cb.enabled ~= false
+                end,
+                setEnabled = function(val)
+                    local cb = GetCastbarDB(info.unit)
+                    if cb then cb.enabled = val end
+                    if _G.QUI_RefreshCastbar then _G.QUI_RefreshCastbar(info.unit) end
+                end,
+                getFrame = function()
+                    return QUI_Castbar.castbars and QUI_Castbar.castbars[info.unit]
+                end,
+                onOpen = function()
+                    if _G.QUI_ShowCastbarPreview then _G.QUI_ShowCastbarPreview(info.unit) end
+                end,
+                onClose = function()
+                    if _G.QUI_HideCastbarPreview then _G.QUI_HideCastbarPreview(info.unit) end
+                end,
+            })
         end
     end
 
-    -- Hide all edit overlays and previews
-    for unitKey, showed in pairs(EditModeState.showedPreviews) do
-        if showed then
-            HideCastbarEditOverlay(unitKey)
-            -- Disable preview mode for any castbar that Edit Mode turned on.
-            -- showedPreviews only tracks units we explicitly enabled, so this won't
-            -- override user-enabled preview states from outside Edit Mode.
-            local settings = GetUnitSettings(unitKey)
-            if settings and settings.castbar then
-                settings.castbar.previewMode = false
-                if QUI_UF then
-                    QUI_UF:RefreshFrame(unitKey)
-                end
-            end
-        end
-    end
-
-    -- Also hide overlays for any castbars that might have them
-    for _, unitKey in ipairs(EDIT_MODE_CASTBAR_UNITS) do
-        HideCastbarEditOverlay(unitKey)
-    end
-
-    wipe(EditModeState.showedPreviews)
-end
-
--- Use central Edit Mode dispatcher to avoid taint from multiple hooksecurefunc
--- callbacks on EnterEditMode/ExitEditMode.
-QUICore:RegisterEditModeEnter(function()
-    if not InCombatLockdown() then
-        EnableCastbarEditMode()
-    end
-end)
-QUICore:RegisterEditModeExit(function()
-    if not InCombatLockdown() then
-        DisableCastbarEditMode()
-    end
-end)
-
--- Monitor PlayerCastingBarFrame visibility changes for Edit Mode sync
--- TAINT SAFETY: Do NOT use hooksecurefunc on PlayerCastingBarFrame (secure frame).
--- Even deferred callbacks execute addon code in the secure context, tainting the
--- execution chain and causing ADDON_ACTION_FORBIDDEN / secret number errors.
--- Instead, use an OnUpdate watcher to poll IsShown() from a UIParent-child frame.
-C_Timer.After(0.5, function()
-    if not QUICore._castbarEditModeHooked then
-        QUICore._castbarEditModeHooked = true
-
-        if PlayerCastingBarFrame then
-            local castbarWatcher = CreateFrame("Frame", nil, UIParent)
-            local wasCastbarShown = PlayerCastingBarFrame:IsShown()
-            castbarWatcher:SetScript("OnUpdate", function()
-                if not EditModeState.active then return end
-                local isShown = PlayerCastingBarFrame:IsShown()
-                if isShown ~= wasCastbarShown then
-                    wasCastbarShown = isShown
-                    EditModeState.castBarCheckboxEnabled = isShown
-                    UpdateCastbarVisibilityForEditMode()
-                end
-            end)
-        end
-
-        -- Check if Edit Mode is already active (e.g., /reload while in Edit Mode)
-        if nsHelpers.IsEditModeActive() and not InCombatLockdown() then
-            EnableCastbarEditMode()
-        end
-    end
-end)
-
--- Method to restore edit overlays after castbar refresh (called after RefreshFrame during Edit Mode)
-function QUI_Castbar:RestoreEditOverlaysIfNeeded(unitKey)
-    if not EditModeState.active then return end
-    if InCombatLockdown() then return end
-
-    -- Debounce: if a restore is already pending, don't schedule another
-    if EditModeState.restorePending then return end
-    EditModeState.restorePending = true
-
-    -- Delay to allow the castbar to be fully recreated, then refresh edit mode visibility
-    -- This re-runs the full edit mode setup which ensures preview mode and overlays are correct
-    C_Timer.After(0.2, function()
-        EditModeState.restorePending = false
-        if not EditModeState.active then return end
-        UpdateCastbarVisibilityForEditMode()
-    end)
+    C_Timer.After(2, RegisterLayoutModeElements)
 end

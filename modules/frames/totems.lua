@@ -337,6 +337,9 @@ local function PositionTotemFrame()
     if not tf then return end
     if InCombatLockdown() then return end
 
+    -- Skip if anchoring engine manages this frame
+    if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(tf) then return end
+
     local db = GetDB()
     if not db then return end
 

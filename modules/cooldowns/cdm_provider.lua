@@ -117,22 +117,12 @@ end
 function CDMProvider:InitializeEngine()
     if self.initialized then return end
 
-    -- Read engine selection from profile
-    local QUICore = ns.Addon
+    -- Only "owned" engine exists
     local engineName = "owned"
-    if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.ncdm then
-        engineName = QUICore.db.profile.ncdm.engine or "owned"
-    end
-
     local engine = self.engines[engineName]
-    if not engine then
-        -- Fallback to classic if selected engine isn't registered
-        engine = self.engines["classic"]
-        engineName = "classic"
-    end
 
     if not engine then
-        return  -- No engines registered at all
+        return  -- Engine not registered yet
     end
 
     self.activeEngine = engine

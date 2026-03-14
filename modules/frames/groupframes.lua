@@ -17,6 +17,9 @@ local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
 local GetCore = Helpers.GetCore
 
+-- ADDON_LOADED safe window flag for combat /reload support
+local inInitSafeWindow = false
+
 ---------------------------------------------------------------------------
 -- MODULE TABLE
 ---------------------------------------------------------------------------
@@ -150,7 +153,6 @@ end
 -- Pending combat-deferred operations
 local pendingResize = false
 local pendingVisibilityUpdate = false
-local pendingInitialize = false
 local pendingRegisterClicks = false
 
 ---------------------------------------------------------------------------
@@ -1200,10 +1202,11 @@ end
 ---------------------------------------------------------------------------
 -- Growth direction offsets for multi-icon layout
 local DEFENSIVE_GROWTH_OFFSETS = {
-    RIGHT = function(size, spacing) return size + spacing, 0 end,
-    LEFT  = function(size, spacing) return -(size + spacing), 0 end,
-    UP    = function(size, spacing) return 0, size + spacing end,
-    DOWN  = function(size, spacing) return 0, -(size + spacing) end,
+    RIGHT  = function(size, spacing) return size + spacing, 0 end,
+    LEFT   = function(size, spacing) return -(size + spacing), 0 end,
+    CENTER = function(size, spacing) return size + spacing, 0 end,
+    UP     = function(size, spacing) return 0, size + spacing end,
+    DOWN   = function(size, spacing) return 0, -(size + spacing) end,
 }
 
 local function UpdateDefensiveIndicator(frame)
@@ -1289,6 +1292,14 @@ local function UpdateDefensiveIndicator(frame)
     local growFn = DEFENSIVE_GROWTH_OFFSETS[growDir] or DEFENSIVE_GROWTH_OFFSETS.RIGHT
     local stepX, stepY = growFn(iconSize, spacing)
 
+    -- CENTER: calculate centering offset based on visible count
+    local centerOffX = 0
+    if growDir == "CENTER" then
+        local visibleCount = math.min(#foundAuras, #frame.defensiveIcons)
+        local totalSpan = visibleCount * iconSize + math.max(visibleCount - 1, 0) * spacing
+        centerOffX = -totalSpan / 2
+    end
+
     -- Expose active defensive auraInstanceIDs for buff deduplication
     if not frame._defensiveAuraIDs then frame._defensiveAuraIDs = {} end
     wipe(frame._defensiveAuraIDs)
@@ -1329,7 +1340,7 @@ local function UpdateDefensiveIndicator(frame)
             -- Position: first icon at anchor, subsequent offset by growth direction
             defIcon:SetSize(iconSize, iconSize)
             defIcon:ClearAllPoints()
-            defIcon:SetPoint(position, frame, position, offsetX + stepX * (i - 1), offsetY + stepY * (i - 1))
+            defIcon:SetPoint(position, frame, position, offsetX + centerOffX + stepX * (i - 1), offsetY + stepY * (i - 1))
             defIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
             defIcon:Show()
         else
@@ -2163,13 +2174,10 @@ local function CreateHeaders()
     local raidW, raidH = CalculateHeaderSize(db, raidCount)
     raidHeader:SetSize(raidW, raidH)
 
-    -- When not unified, raid gets its own position
-    local raidOffX, raidOffY = offsetX, offsetY
-    if not db.unifiedPosition then
-        local raidPos = db.raidPosition
-        raidOffX = raidPos and raidPos.offsetX or -400
-        raidOffY = raidPos and raidPos.offsetY or 0
-    end
+    -- Raid always uses its own position
+    local raidPos = db.raidPosition
+    local raidOffX = raidPos and raidPos.offsetX or -400
+    local raidOffY = raidPos and raidPos.offsetY or 0
     raidHeader:SetPoint("CENTER", UIParent, "CENTER", raidOffX, raidOffY)
     raidHeader:SetMovable(true)
     raidHeader:SetClampedToScreen(true)
@@ -2242,7 +2250,7 @@ end
 -- HEADER: Update header sizes based on current roster
 ---------------------------------------------------------------------------
 local function UpdateHeaderSizes()
-    if InCombatLockdown() then return end
+    if InCombatLockdown() and not inInitSafeWindow then return end
     local db = GetSettings()
     if not db then return end
 
@@ -2279,11 +2287,13 @@ local function UpdateHeaderSizes()
         -- Resize existing child
         local child = selfHdr:GetAttribute("child1")
         if child then child:SetSize(sw, sh) end
-        -- Anchor above the active header
-        selfHdr:ClearAllPoints()
-        local anchor = IsInRaid() and raidHdr or partyHdr
-        if anchor then
-            selfHdr:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 4)
+        -- Anchor above the active header (skip when anchoring override owns the frame)
+        if not _G.QUI_IsFrameOverridden(selfHdr) then
+            selfHdr:ClearAllPoints()
+            local anchor = IsInRaid() and raidHdr or partyHdr
+            if anchor then
+                selfHdr:SetPoint("BOTTOMLEFT", anchor, "TOPLEFT", 0, 4)
+            end
         end
     end
 end
@@ -2312,7 +2322,7 @@ end
 -- HEADER: Show/hide based on group status
 ---------------------------------------------------------------------------
 local function UpdateHeaderVisibility()
-    if InCombatLockdown() then
+    if InCombatLockdown() and not inInitSafeWindow then
         pendingVisibilityUpdate = true
         return
     end
@@ -2384,7 +2394,7 @@ local function UpdateFrameScaling(forceUpdate)
     if not forceUpdate and mode == lastMode then return end
     lastMode = mode
 
-    if InCombatLockdown() then
+    if InCombatLockdown() and not inInitSafeWindow then
         pendingResize = true
         return
     end
@@ -2724,11 +2734,13 @@ local function OnEvent(self, event, arg1, ...)
     if not db or not db.enabled then return end
 
     -- Unit-specific events — dispatch via lookup map
-    local frame = arg1 and QUI_GF.unitFrameMap[arg1]
+    -- Guard: arg1 is a unit string for unit events, but a boolean for
+    -- PLAYER_ENTERING_WORLD (isInitialLogin) — only index the map with strings.
+    local frame = (type(arg1) == "string") and QUI_GF.unitFrameMap[arg1]
 
     -- Self-healing: rebuild map on lookup miss (QUI pattern)
     -- Handles stale maps from combat zone transitions or delayed header updates
-    if arg1 and not frame and (arg1:match("^party%d") or arg1:match("^raid%d") or arg1 == "player") then
+    if type(arg1) == "string" and not frame and (arg1:match("^party%d") or arg1:match("^raid%d") or arg1 == "player") then
         local now = GetTime()
         if not QUI_GF.lastMapRebuild or (now - QUI_GF.lastMapRebuild) > 1.0 then
             QUI_GF.lastMapRebuild = now
@@ -2878,10 +2890,6 @@ local function OnEvent(self, event, arg1, ...)
             pendingVisibilityUpdate = false
             UpdateHeaderVisibility()
         end
-        if pendingInitialize then
-            pendingInitialize = false
-            QUI_GF:Initialize()
-        end
         if pendingRegisterClicks then
             pendingRegisterClicks = false
             DecorateHeaderChildren(QUI_GF.headers.party)
@@ -3010,9 +3018,29 @@ function QUI_GF:RefreshSettings()
         return
     end
 
-    if InCombatLockdown() then
+    if InCombatLockdown() and not inInitSafeWindow then
         pendingResize = true
         return
+    end
+
+    -- Restore header positions from the (possibly new) profile DB.
+    -- Positions are only set during CreateHeaders — without this, headers
+    -- keep the previous profile's screen position after a profile/spec switch.
+    -- Skip repositioning when the anchoring override system owns the frame —
+    -- ClearAllPoints/SetPoint here would fight the override and cause jumping.
+    local position = db.position
+    if self.headers.party and not _G.QUI_IsFrameOverridden(self.headers.party) then
+        local offsetX = position and position.offsetX or -400
+        local offsetY = position and position.offsetY or 0
+        self.headers.party:ClearAllPoints()
+        self.headers.party:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+    end
+    if self.headers.raid and not _G.QUI_IsFrameOverridden(self.headers.raid) then
+        local raidPos = db.raidPosition
+        local raidOffX = raidPos and raidPos.offsetX or -400
+        local raidOffY = raidPos and raidPos.offsetY or 0
+        self.headers.raid:ClearAllPoints()
+        self.headers.raid:SetPoint("CENTER", UIParent, "CENTER", raidOffX, raidOffY)
     end
 
     -- Re-configure headers
@@ -3077,10 +3105,9 @@ function QUI_GF:Initialize()
     local db = GetSettings()
     if not db or not db.enabled then return end
 
-    if InCombatLockdown() then
-        pendingInitialize = true
-        return
-    end
+    -- ADDON_LOADED safe window: protected calls are allowed even though
+    -- InCombatLockdown() returns true during a combat /reload.
+    inInitSafeWindow = true
 
     -- Create headers
     CreateHeaders()
@@ -3105,6 +3132,11 @@ function QUI_GF:Initialize()
     local GFCC = ns.QUI_GroupFrameClickCast
     if GFCC then
         GFCC:Initialize()
+        -- Group frames were pre-created before GFCC was initialized,
+        -- so they missed registration — catch up now.
+        if GFCC:IsEnabled() then
+            GFCC:RegisterAllFrames()
+        end
     end
 
     -- Hide Blizzard group frames
@@ -3116,6 +3148,8 @@ function QUI_GF:Initialize()
     C_Timer.After(1.5, function()
         self:RefreshAllFrames()
     end)
+
+    inInitSafeWindow = false
 end
 
 ---------------------------------------------------------------------------
@@ -3148,18 +3182,18 @@ function QUI_GF:Disable()
 end
 
 ---------------------------------------------------------------------------
--- STARTUP: Init on PLAYER_LOGIN
+-- STARTUP: Init on ADDON_LOADED
 ---------------------------------------------------------------------------
 local initFrame = CreateFrame("Frame")
-initFrame:RegisterEvent("PLAYER_LOGIN")
+initFrame:RegisterEvent("ADDON_LOADED")
 initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 initFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
-initFrame:SetScript("OnEvent", function(self, event)
-    if event == "PLAYER_LOGIN" then
-        C_Timer.After(0.5, function()
-            QUI_GF:Initialize()
-        end)
+initFrame:SetScript("OnEvent", function(self, event, arg1)
+    if event == "ADDON_LOADED" then
+        if arg1 ~= ADDON_NAME then return end
+        self:UnregisterEvent("ADDON_LOADED")
+        QUI_GF:Initialize()
     elseif event == "PLAYER_ENTERING_WORLD" then
         if QUI_GF.initialized then
             C_Timer.After(1.0, function()
@@ -3167,11 +3201,6 @@ initFrame:SetScript("OnEvent", function(self, event)
                 UpdateFrameScaling(true)
                 QUI_GF:RefreshAllFrames()
             end)
-        end
-    elseif event == "PLAYER_REGEN_ENABLED" then
-        if pendingInitialize then
-            pendingInitialize = false
-            QUI_GF:Initialize()
         end
     end
 end)

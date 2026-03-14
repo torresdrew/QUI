@@ -17,7 +17,7 @@ QUI_HelpContent.GettingStarted = {
     {num = "3.", text = "Import a QUI profile from the |cff34D399Import & Export Strings|r tab for a recommended starting layout, then |cff34D399/rl|r to apply."},
     {num = "4.", text = "Customize individual modules — unit frames, action bars, cooldowns, and more — from their respective tabs."},
     {num = "5.", text = "Use |cff34D399/kb|r to set up keybinds by hovering over action buttons and pressing a key."},
-    {num = "6.", text = "Fine-tune element positions with the |cff34D399Anchoring & Layout|r tab or Blizzard Edit Mode (|cff34D399/qui editmode|r)."},
+    {num = "6.", text = "Fine-tune element positions with |cff34D399/qui layout|r (Layout Mode) or the |cff34D399Frame Positioning|r tab."},
 }
 
 ---------------------------------------------------------------------------
@@ -29,7 +29,8 @@ QUI_HelpContent.SlashCommands = {
     {command = "/cdm",          description = "Open Cooldown Manager settings (Blizzard's CooldownViewer panel)"},
     {command = "/rl",           description = "Reload the UI — applies changes and resets frame state"},
     {command = "/qui debug",    description = "Toggle debug mode — enables verbose logging for one session"},
-    {command = "/qui editmode", description = "Open Blizzard Edit Mode for repositioning default frames"},
+    {command = "/qui layout",   description = "Open Layout Mode — drag to reposition all QUI frames"},
+    {command = "/qui editmode", description = "Alias for /qui layout (backward compatibility)"},
     {command = "/pull <sec>",   description = "Start a pull timer countdown (requires BigWigs or DBM)"},
 }
 
@@ -44,7 +45,7 @@ QUI_HelpContent.FeatureGuides = {
             "Set all Blizzard Edit Mode frame sizes to 100% for best results with QUI skinning.",
             "Aura filtering, icon size, and layout are configured per unit in the Unit Frames tab.",
             "Party and raid frames support class colors, role icons, and incoming heal predictions.",
-            "Use the Anchoring & Layout tab to fine-tune frame positions relative to each other.",
+            "Use the Frame Positioning tab to fine-tune frame positions relative to each other.",
         },
     },
     {
@@ -78,13 +79,13 @@ QUI_HelpContent.FeatureGuides = {
         },
     },
     {
-        title = "Anchoring & Layout",
+        title = "Frame Positioning",
         description = "The anchoring system lets you position QUI elements relative to each other or to screen anchor points. This provides pixel-perfect control over your UI layout without needing Blizzard Edit Mode.",
         tips = {
             "Each element can be anchored to another element or to a screen corner/edge.",
             "Use the Nudge tool for fine-grained pixel adjustments to any anchored element.",
             "Anchoring respects the pixel-perfect scaling system for crisp edges at any resolution.",
-            "Reset an element's position by clearing its anchor in the Anchoring & Layout tab.",
+            "Reset an element's position by clearing its anchor in the Frame Positioning tab.",
         },
     },
     {
@@ -184,9 +185,9 @@ QUI_HelpContent.Links = {
 ---------------------------------------------------------------------------
 QUI_HelpContent.ContextualHelp = {
     ["Cooldown Manager"] = "Configure which abilities appear in your cooldown bars, adjust glow effects, and customize the swipe overlay. Use /cdm to open Blizzard's viewer layout settings.",
-    ["Unit Frames"] = "Customize player, target, focus, party, and raid frames. Set Blizzard Edit Mode frame sizes to 100% for best results. Use Anchoring & Layout for fine positioning.",
+    ["Unit Frames"] = "Customize player, target, focus, party, and raid frames. Set Blizzard Edit Mode frame sizes to 100% for best results. Use Frame Positioning for fine positioning.",
     ["Action Bars"] = "Style your action bars with consistent appearance. Per-bar overrides let you customize individual bars. Keybind display settings are in the Cooldown Manager tab.",
-    ["Anchoring & Layout"] = "Position QUI elements relative to each other or screen edges. Use the Nudge tool for pixel-perfect adjustments. Clear an anchor to reset an element's position.",
+    ["Frame Positioning"] = "Position QUI elements relative to each other or screen edges. Use the Nudge tool for pixel-perfect adjustments. Clear an anchor to reset an element's position.",
     ["Custom Trackers"] = "Create tracker bars to monitor specific spells, items, or buffs. Each bar supports multiple spells and shows cooldown or duration info. Import/export via the strings tab.",
     ["Skinning & Autohide"] = "Control which Blizzard frames are skinned and which UI elements are hidden. Most changes apply immediately without a reload.",
 }

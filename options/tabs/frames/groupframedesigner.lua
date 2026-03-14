@@ -414,6 +414,7 @@ local ANCHOR_MAP = {
 local AURA_GROW_OPTIONS = {
     { value = "LEFT", text = "Left" },
     { value = "RIGHT", text = "Right" },
+    { value = "CENTER", text = "Center" },
     { value = "UP", text = "Up" },
     { value = "DOWN", text = "Down" },
 }
@@ -1242,8 +1243,16 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     local defStepX, defStepY = 0, 0
     if defGrowDir == "RIGHT" then defStepX = defSize + defSpacing
     elseif defGrowDir == "LEFT" then defStepX = -(defSize + defSpacing)
+    elseif defGrowDir == "CENTER" then defStepX = defSize + defSpacing
     elseif defGrowDir == "UP" then defStepY = defSize + defSpacing
     elseif defGrowDir == "DOWN" then defStepY = -(defSize + defSpacing)
+    end
+
+    -- Centering offset for CENTER grow direction
+    local defCenterOff = 0
+    if defGrowDir == "CENTER" then
+        local totalSpan = defMaxIcons * defSize + math.max(defMaxIcons - 1, 0) * defSpacing
+        defCenterOff = -totalSpan / 2
     end
 
     local defTextures = { 135936, 135987, 136120, 135874, 236220 }
@@ -1255,7 +1264,7 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     for i = 1, defMaxIcons do
         local defIconFrame = CreateFrame("Frame", nil, defContainer)
         defIconFrame:SetSize(defSize, defSize)
-        defIconFrame:SetPoint(defPos, defContainer, defPos, defStepX * (i - 1), defStepY * (i - 1))
+        defIconFrame:SetPoint(defPos, defContainer, defPos, defCenterOff + defStepX * (i - 1), defStepY * (i - 1))
         local defIcon = defIconFrame:CreateTexture(nil, "OVERLAY")
         defIcon:SetAllPoints()
         defIcon:SetTexture(defTextures[((i - 1) % #defTextures) + 1])
@@ -1373,21 +1382,29 @@ local function CreateDesignerPreview(container, previewType, childRefs)
         icon:SetTexture(spellTex or 134400)
 
         -- Determine first-icon anchor from container anchor + grow direction
-        -- Vertical: match anchor (TOP/BOTTOM/center)
-        -- Horizontal: match grow direction (LEFT grows leftward from RIGHT, RIGHT grows rightward from LEFT)
         local vertPart = aiAnchor:find("TOP") and "TOP" or (aiAnchor:find("BOTTOM") and "BOTTOM" or "")
-        local firstHoriz = aiGrow == "LEFT" and "RIGHT" or "LEFT"
-        local firstAnchor = vertPart .. firstHoriz
 
-        if i == 1 then
-            icon:SetPoint(firstAnchor, aiContainer, firstAnchor, 0, 0)
+        if aiGrow == "CENTER" then
+            -- Center icons around the container's anchor point
+            local aiCount = math.min(aiMax, #sampleSpells)
+            local totalSpan = aiCount * aiIconSize + math.max(aiCount - 1, 0) * aiSpacing
+            local startX = -totalSpan / 2
+            local iconPoint = vertPart == "" and "LEFT" or (vertPart .. "LEFT")
+            icon:SetPoint(iconPoint, aiContainer, aiAnchor, startX + (i - 1) * (aiIconSize + aiSpacing), 0)
         else
-            local prevIcon = aiContainer["icon" .. (i - 1)]
-            if prevIcon then
-                if aiGrow == "LEFT" then
-                    icon:SetPoint("RIGHT", prevIcon, "LEFT", -aiSpacing, 0)
-                else
-                    icon:SetPoint("LEFT", prevIcon, "RIGHT", aiSpacing, 0)
+            local firstHoriz = aiGrow == "LEFT" and "RIGHT" or "LEFT"
+            local firstAnchor = vertPart .. firstHoriz
+
+            if i == 1 then
+                icon:SetPoint(firstAnchor, aiContainer, firstAnchor, 0, 0)
+            else
+                local prevIcon = aiContainer["icon" .. (i - 1)]
+                if prevIcon then
+                    if aiGrow == "LEFT" then
+                        icon:SetPoint("RIGHT", prevIcon, "LEFT", -aiSpacing, 0)
+                    else
+                        icon:SetPoint("LEFT", prevIcon, "RIGHT", aiSpacing, 0)
+                    end
                 end
             end
         end
@@ -2308,25 +2325,11 @@ local function BuildGeneralSettings(content, gfdb, onChange)
     posHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - posHeader.gap
 
-    local unifiedCheck = GUI:CreateFormCheckbox(content, "Unified Party & Raid Position", "unifiedPosition", gfdb, function()
-        GUI:ShowConfirmation({
-            title = "Reload Required",
-            message = "Changing group frame positioning mode requires a UI reload to take effect.",
-            acceptText = "Reload Now",
-            cancelText = "Later",
-            isDestructive = false,
-            onAccept = function() QUI:SafeReload() end,
-        })
-    end)
-    unifiedCheck:SetPoint("TOPLEFT", PAD, y)
-    unifiedCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
-
-    local unifiedHint = GUI:CreateLabel(content,
-        "When disabled, party and raid frames have separate movers and can be positioned independently.", 10, C.textMuted)
-    unifiedHint:SetPoint("TOPLEFT", PAD + 4, y + 4)
-    unifiedHint:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    unifiedHint:SetJustifyH("LEFT")
+    local posHint = GUI:CreateLabel(content,
+        "Party and raid frames have separate movers and can be positioned independently via Edit Mode.", 10, C.textMuted)
+    posHint:SetPoint("TOPLEFT", PAD + 4, y + 4)
+    posHint:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    posHint:SetJustifyH("LEFT")
     y = y - 20
 
     content:SetHeight(math.abs(y) + 10)
@@ -2691,20 +2694,7 @@ local function BuildContextSettings(content, gfdb, onChange)
         y = y - SLIDER_HEIGHT
     end
 
-    -- Position
-    local posHeader = GUI:CreateSectionHeader(content, "Position")
-    posHeader:SetPoint("TOPLEFT", PAD, y)
-    y = y - posHeader.gap
-
-    local xSlider = GUI:CreateFormSlider(content, "X Offset", -800, 800, 1, "offsetX", position, onChange)
-    xSlider:SetPoint("TOPLEFT", PAD, y)
-    xSlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
-
-    local ySlider = GUI:CreateFormSlider(content, "Y Offset", -500, 500, 1, "offsetY", position, onChange)
-    ySlider:SetPoint("TOPLEFT", PAD, y)
-    ySlider:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    y = y - SLIDER_HEIGHT
+    -- Group frame positioning moved to Edit Mode.
 
     ---------------------------------------------------------------------------
     -- Range Check
@@ -2845,12 +2835,14 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     local cc = gfdb.clickCast
     if not cc then gfdb.clickCast = {} cc = gfdb.clickCast end
 
-    local enableCheck = GUI:CreateFormCheckbox(content, "Enable Click-Casting", "enabled", cc, function()
-        RefreshGF()
-        if cc.enabled then
-            print("|cFF34D399[QUI]|r Click-casting enabled. Reload recommended.")
+    local refreshClickCast = function()
+        local GFCC_ref = ns.QUI_GroupFrameClickCast
+        if GFCC_ref and not InCombatLockdown() then
+            GFCC_ref:RefreshBindings()
         end
-    end)
+    end
+
+    local enableCheck = GUI:CreateFormCheckbox(content, "Enable Click-Casting", "enabled", cc, refreshClickCast)
     enableCheck:SetPoint("TOPLEFT", PAD, y)
     enableCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
     y = y - FORM_ROW
@@ -2861,7 +2853,7 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     cliqueNote:SetJustifyH("LEFT")
     y = y - 30
 
-    local perSpecCheck = GUI:CreateFormCheckbox(content, "Per-Spec Bindings", "perSpec", cc, RefreshGF)
+    local perSpecCheck = GUI:CreateFormCheckbox(content, "Per-Spec Bindings", "perSpec", cc, refreshClickCast)
     perSpecCheck:SetPoint("TOPLEFT", PAD, y)
     perSpecCheck:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
     y = y - FORM_ROW
@@ -2892,13 +2884,6 @@ local function BuildClickCastSettings(content, gfdb, onChange)
         { key = "pet",          label = "Pet" },
     }
 
-    local refreshClickCast = function()
-        local GFCC_ref = ns.QUI_GroupFrameClickCast
-        if GFCC_ref and GFCC_ref:IsEnabled() and not InCombatLockdown() then
-            GFCC_ref:RefreshBindings()
-        end
-    end
-
     for _, info in ipairs(ufFrames) do
         local ufCheck = GUI:CreateFormCheckbox(content, info.label, info.key, cc.unitFrames, refreshClickCast)
         ufCheck:SetPoint("TOPLEFT", PAD, y)
@@ -2920,13 +2905,25 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     pingNote:SetJustifyH("LEFT")
     y = y - 30
 
+    -- Bind directly to Blizzard's native ping binding actions — these
+    -- call C_Ping.TogglePingListener / C_Ping.SendMacroPing in secure
+    -- context. No SecureActionButtons or /ping macros needed.
     local PING_KEYBIND_ENTRIES = {
-        { binding = "QUI_PING",         label = "Ping (Contextual)" },
-        { binding = "QUI_PING_ASSIST",  label = "Ping: Assist" },
-        { binding = "QUI_PING_ATTACK",  label = "Ping: Attack" },
-        { binding = "QUI_PING_WARNING", label = "Ping: Warning" },
-        { binding = "QUI_PING_ONMYWAY", label = "Ping: On My Way" },
+        { binding = "TOGGLEPINGLISTENER", label = "Ping (Contextual)" },
+        { binding = "PINGASSIST",         label = "Ping: Assist" },
+        { binding = "PINGATTACK",         label = "Ping: Attack" },
+        { binding = "PINGWARNING",        label = "Ping: Warning" },
+        { binding = "PINGONMYWAY",        label = "Ping: On My Way" },
     }
+
+    local refreshAllPingRows  -- forward declaration; populated after rows are created
+    local pingRowUpdaters = {}
+    local pingCaptureButtons = {} -- track capture buttons for OnHide cleanup
+    -- Shared state for suspending/restoring ping bindings during capture.
+    -- Only one capture can be active at a time, so one set of saved
+    -- bindings is sufficient.
+    local suspendedPingBindings = {}
+    local isPingSuspended = false
 
     local function CreatePingKeybindRow(parent, entry, yPos)
         local row = CreateFrame("Frame", nil, parent)
@@ -2961,6 +2958,7 @@ local function BuildClickCastSettings(content, gfdb, onChange)
                 keyText:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
             end
         end
+        table.insert(pingRowUpdaters, UpdateKeyText)
         UpdateKeyText()
 
         local clearBtn = GUI:CreateButton(row, "Clear", 50, 24, function()
@@ -2968,51 +2966,53 @@ local function BuildClickCastSettings(content, gfdb, onChange)
             if key1 then SetBinding(key1) end
             if key2 then SetBinding(key2) end
             SaveBindings(GetCurrentBindingSet())
-            UpdateKeyText()
+            if refreshAllPingRows then refreshAllPingRows() else UpdateKeyText() end
         end)
         clearBtn:SetPoint("LEFT", captureBtn, "RIGHT", 6, 0)
 
         captureBtn.isCapturing = false
         captureBtn:EnableKeyboard(false)
-        captureBtn:SetScript("OnClick", function(self)
-            if self.isCapturing then
-                self.isCapturing = false
-                self:EnableKeyboard(false)
-                self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-                UpdateKeyText()
-                return
-            end
-            self.isCapturing = true
-            self:EnableKeyboard(true)
-            self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
-            keyText:SetText("Press a key...")
-            keyText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
-        end)
-        captureBtn:SetScript("OnKeyDown", function(self, key)
-            if not self.isCapturing then return end
-            if key == "ESCAPE" then
-                self.isCapturing = false
-                self:EnableKeyboard(false)
-                self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-                UpdateKeyText()
-                return
-            end
-            -- Ignore bare modifier keys
-            if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL"
-               or key == "LALT" or key == "RALT" then
-                return
-            end
-            -- Build full key string with modifiers
-            local mods = ""
-            if IsShiftKeyDown() then mods = mods .. "SHIFT-" end
-            if IsControlKeyDown() then mods = mods .. "CTRL-" end
-            if IsAltKeyDown() then mods = mods .. "ALT-" end
-            local fullKey = mods .. key
+        captureBtn:RegisterForClicks("AnyDown")
+        captureBtn:EnableMouseWheel(true)
+        table.insert(pingCaptureButtons, captureBtn)
 
-            -- Clear any previous binding for this action
-            local oldKey1, oldKey2 = GetBindingKey(entry.binding)
-            if oldKey1 then SetBinding(oldKey1) end
-            if oldKey2 then SetBinding(oldKey2) end
+        local function SuspendPingBindings()
+            if isPingSuspended then return end
+            wipe(suspendedPingBindings)
+            for _, other in ipairs(PING_KEYBIND_ENTRIES) do
+                local key1, key2 = GetBindingKey(other.binding)
+                if key1 or key2 then
+                    suspendedPingBindings[other.binding] = { key1, key2 }
+                    if key1 then SetBinding(key1) end
+                    if key2 then SetBinding(key2) end
+                end
+            end
+            isPingSuspended = true
+        end
+
+        local function RestorePingBindings()
+            if not isPingSuspended then return end
+            for action, keys in pairs(suspendedPingBindings) do
+                if keys[1] then SetBinding(keys[1], action) end
+                if keys[2] then SetBinding(keys[2], action) end
+            end
+            wipe(suspendedPingBindings)
+            isPingSuspended = false
+        end
+
+        local function FinishCapture(self, fullKey)
+            -- Restore other bindings (except the key we're about to use)
+            for _, other in ipairs(PING_KEYBIND_ENTRIES) do
+                if other.binding ~= entry.binding then
+                    local keys = suspendedPingBindings[other.binding]
+                    if keys then
+                        if keys[1] and keys[1] ~= fullKey then SetBinding(keys[1], other.binding) end
+                        if keys[2] and keys[2] ~= fullKey then SetBinding(keys[2], other.binding) end
+                    end
+                end
+            end
+            wipe(suspendedPingBindings)
+            isPingSuspended = false
 
             SetBinding(fullKey, entry.binding)
             SaveBindings(GetCurrentBindingSet())
@@ -3020,13 +3020,90 @@ local function BuildClickCastSettings(content, gfdb, onChange)
             self.isCapturing = false
             self:EnableKeyboard(false)
             self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+            -- Dismiss any stuck ping listener
+            -- Update ALL rows since we may have cleared another entry's key
+            if refreshAllPingRows then refreshAllPingRows() end
+        end
+
+        local function CancelCapture(self)
+            -- Restore all bindings that were suspended
+            RestorePingBindings()
+            self.isCapturing = false
+            self:EnableKeyboard(false)
+            self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+            -- Dismiss any stuck ping listener
             UpdateKeyText()
+        end
+
+        local function GetModifierPrefix()
+            local mods = ""
+            if IsAltKeyDown() then mods = mods .. "ALT-" end
+            if IsControlKeyDown() then mods = mods .. "CTRL-" end
+            if IsShiftKeyDown() then mods = mods .. "SHIFT-" end
+            return mods
+        end
+
+        -- Mouse button names to WoW binding names
+        local MOUSE_BIND_NAMES = {
+            LeftButton = "BUTTON1", RightButton = "BUTTON2",
+            MiddleButton = "BUTTON3", Button4 = "BUTTON4", Button5 = "BUTTON5",
+        }
+
+        captureBtn:SetScript("OnClick", function(self, button)
+            if not self.isCapturing then
+                -- Start capture on left click
+                if button == "LeftButton" then
+                    -- Suspend all ping bindings first so they don't fire
+                    -- when the user presses the key they want to rebind
+                    SuspendPingBindings()
+                    self.isCapturing = true
+                    self:EnableKeyboard(true)
+                    self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                    keyText:SetText("Press a key or click...")
+                    keyText:SetTextColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                end
+                return
+            end
+            -- Capturing: bind the mouse button (except unmodified left which toggles)
+            local bindName = MOUSE_BIND_NAMES[button]
+            if not bindName then return end
+            local mods = GetModifierPrefix()
+            -- Unmodified left click cancels capture instead of binding
+            if button == "LeftButton" and mods == "" then
+                CancelCapture(self)
+                return
+            end
+            FinishCapture(self, mods .. bindName)
+        end)
+        captureBtn:SetScript("OnMouseWheel", function(self, delta)
+            if not self.isCapturing then return end
+            local scrollKey = delta > 0 and "MOUSEWHEELUP" or "MOUSEWHEELDOWN"
+            FinishCapture(self, GetModifierPrefix() .. scrollKey)
+        end)
+        captureBtn:SetScript("OnKeyDown", function(self, key)
+            if not self.isCapturing then self:SetPropagateKeyboardInput(true) return end
+            self:SetPropagateKeyboardInput(false)
+            if key == "ESCAPE" then
+                CancelCapture(self)
+                return
+            end
+            -- Ignore bare modifier keys
+            if key == "LSHIFT" or key == "RSHIFT" or key == "LCTRL" or key == "RCTRL"
+               or key == "LALT" or key == "RALT" then
+                return
+            end
+            FinishCapture(self, GetModifierPrefix() .. key)
         end)
         captureBtn:SetScript("OnEnter", function(self)
             if not self.isCapturing then self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.7) end
         end)
         captureBtn:SetScript("OnLeave", function(self)
-            if not self.isCapturing then self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1) end
+            -- Don't cancel capture on leave — the user may move
+            -- the mouse while pressing a key. Capture ends on key
+            -- press or Escape.
+            if not self.isCapturing then
+                self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+            end
         end)
 
         return row
@@ -3035,6 +3112,13 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     for _, entry in ipairs(PING_KEYBIND_ENTRIES) do
         CreatePingKeybindRow(content, entry, y)
         y = y - 30
+    end
+
+    -- Wire up cross-row refresh (called when a binding is set/cleared to update all rows)
+    refreshAllPingRows = function()
+        for _, updater in ipairs(pingRowUpdaters) do
+            updater()
+        end
     end
 
     y = y - 5
@@ -3064,6 +3148,8 @@ local function BuildClickCastSettings(content, gfdb, onChange)
         { value = "MiddleButton", text = "Middle Click" },
         { value = "Button4",      text = "Button 4" },
         { value = "Button5",      text = "Button 5" },
+        { value = "ScrollUp",     text = "Scroll Up" },
+        { value = "ScrollDown",   text = "Scroll Down" },
     }
     local MOD_OPTIONS = {
         { value = "",              text = "None" },
@@ -3209,6 +3295,9 @@ local function BuildClickCastSettings(content, gfdb, onChange)
 
     dropZone:SetScript("OnReceiveDrag", HandleCursorDrop)
     dropZone:SetScript("OnClick", function()
+        -- Clear any lingering editbox focus
+        if spellInput then spellInput:ClearFocus() end
+        if macroInput then macroInput:ClearFocus() end
         if GetCursorInfo() then HandleCursorDrop() end
     end)
     dropZone:SetScript("OnEnter", function(self)
@@ -3305,7 +3394,12 @@ local function BuildClickCastSettings(content, gfdb, onChange)
         if not self.isCapturing then self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 0.7) end
     end)
     keyCaptureBtn:SetScript("OnLeave", function(self)
-        if not self.isCapturing then self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1) end
+        -- Don't cancel capture on leave — the user may move
+        -- the mouse while pressing a key. Capture ends on key
+        -- press or Escape.
+        if not self.isCapturing then
+            self:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
+        end
     end)
     ay = ay - FORM_ROW
 
@@ -3392,6 +3486,40 @@ local function BuildClickCastSettings(content, gfdb, onChange)
     macroInput:SetScript("OnTextChanged", function(self) addState.macroText = self:GetText() end)
     macroInput:SetScript("OnEditFocusGained", function() macroInputBg:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1) end)
     macroInput:SetScript("OnEditFocusLost", function() macroInputBg:SetBackdropBorderColor(0.35, 0.35, 0.35, 1) end)
+
+    -- Clear editbox focus and cancel any active key captures when the
+    -- content is hidden (tab change / panel close) to prevent stuck
+    -- keyboard capture.
+    content:HookScript("OnHide", function()
+        if spellInput then spellInput:ClearFocus() end
+        if macroInput then macroInput:ClearFocus() end
+        if keyCaptureBtn and keyCaptureBtn.isCapturing then
+            keyCaptureBtn.isCapturing = false
+            keyCaptureBtn:EnableKeyboard(false)
+        end
+        for _, btn in ipairs(pingCaptureButtons) do
+            if btn.isCapturing then
+                btn.isCapturing = false
+                btn:EnableKeyboard(false)
+            end
+        end
+        -- Restore suspended ping bindings after the secure call chain
+        -- completes — SetBinding is protected and can't run inside
+        -- the securecall(CloseWindows) → OnHide chain.
+        if isPingSuspended then
+            local saved = {}
+            for k, v in pairs(suspendedPingBindings) do saved[k] = v end
+            wipe(suspendedPingBindings)
+            isPingSuspended = false
+            C_Timer.After(0, function()
+                for action, keys in pairs(saved) do
+                    if keys[1] then SetBinding(keys[1], action) end
+                    if keys[2] then SetBinding(keys[2], action) end
+                end
+                SaveBindings(GetCurrentBindingSet())
+            end)
+        end
+    end)
 
     local function RefreshClickCastPixelFrames()
         SetHeightPx(dropZone, 68)

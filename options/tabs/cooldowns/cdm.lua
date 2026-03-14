@@ -2135,12 +2135,7 @@ local function CreateCDMSetupPage(parent)
             if widthSlider then
                 widthSlider:SetAlpha(autoWidthActive and 0.4 or 1.0)
             end
-            -- Owned engine always respects growUp directly (no anchor override),
-            -- so only force-disable the dropdown for the classic (Blizzard) engine.
-            local isOwnedEngine = db.ncdm and db.ncdm.engine == "owned"
-            local forceGrowth = not isOwnedEngine
-                and (placementMode == "onTop" or placementMode == "below" or placementMode == "onTopResourceBars"
-                    or ((trackedData.orientation == "vertical") and (placementMode == "left" or placementMode == "right")))
+            local forceGrowth = false
             growthDropdown:SetAlpha(forceGrowth and 0.4 or 1.0)
             stackTip:SetAlpha(forceGrowth and 0.4 or 1.0)
             if growthDropdown.SetEnabled then
@@ -2877,11 +2872,6 @@ local function CreateCDMSetupPage(parent)
         yOffsetPrimarySlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
-        -- Register sliders for real-time sync during Edit Mode
-        if QUICore and QUICore.RegisterPowerBarEditModeSliders then
-            QUICore:RegisterPowerBarEditModeSliders("primary", xOffsetPrimarySlider, yOffsetPrimarySlider)
-        end
-
         -- Text sliders
         local textSizePrimary = GUI:CreateFormSlider(tabContent, "Text Size", 8, 50, 1, "textSize", primary, RefreshPowerBars)
         textSizePrimary:SetPoint("TOPLEFT", PAD, y)
@@ -3513,11 +3503,6 @@ local function CreateCDMSetupPage(parent)
         yOffsetSecondarySlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
-        -- Register sliders for real-time sync during Edit Mode
-        if QUICore and QUICore.RegisterPowerBarEditModeSliders then
-            QUICore:RegisterPowerBarEditModeSliders("secondary", xOffsetSecondarySlider, yOffsetSecondarySlider)
-        end
-
         -- Text sliders
         local textSizeSecondary = GUI:CreateFormSlider(tabContent, "Text Size", 8, 50, 1, "textSize", secondary, RefreshPowerBars)
         textSizeSecondary:SetPoint("TOPLEFT", PAD, y)
@@ -4082,59 +4067,20 @@ local function CreateCDMSetupPage(parent)
         tabContent:SetHeight(math.abs(y) + 60)
     end
 
-    -- Engine selection dropdown (above sub-tabs)
     local PAD = 10
-    local ENGINE_ROW = 32
     local engineY = -8
 
     GUI:SetSearchContext({tabIndex = 4, tabName = "Cooldown Manager"})
 
-    local engineOptions = {
-        {value = "owned", text = "QUI CDM Engine"},
-        {value = "classic", text = "Classic (Blizzard Hooks)"},
-    }
-    local engineDropdown = GUI:CreateFormDropdown(content, "CDM Engine", engineOptions, "engine", db.ncdm, function()
-        QUI:SafeReload()
-    end)
-    engineDropdown:SetPoint("TOPLEFT", PAD, engineY)
-    engineDropdown:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    engineY = engineY - ENGINE_ROW
+    -- All CDM settings have been migrated to Layout Mode panels
+    local infoLabel = content:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    infoLabel:SetPoint("TOPLEFT", PAD, engineY)
+    infoLabel:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+    infoLabel:SetJustifyH("LEFT")
+    infoLabel:SetText("All Cooldown Manager settings are now available in Layout Mode.\n\nRight-click any CDM mover to configure that element directly.")
+    infoLabel:SetTextColor(0.7, 0.7, 0.7, 1)
 
-    local reloadHint = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    reloadHint:SetPoint("TOPLEFT", PAD, engineY)
-    reloadHint:SetTextColor(0.5, 0.5, 0.5, 1)
-    reloadHint:SetText("Changing the engine requires a UI reload.")
-    engineY = engineY - 18
-
-    -- Host frame for sub-tabs, offset below the engine dropdown
-    local subTabHost = CreateFrame("Frame", nil, content)
-    subTabHost:SetPoint("TOPLEFT", 0, engineY)
-    subTabHost:SetPoint("BOTTOMRIGHT", 0, 0)
-
-    -- Create sub-tabs
-    local subTabs = {
-        {name = "Essential", builder = BuildEssentialTab},
-        {name = "Utility", builder = BuildUtilityTab},
-        {name = "Custom Entries", builder = BuildCustomEntriesTab},
-        {name = "Buff", builder = BuildBuffTab},
-        {name = "Class Resource Bar", builder = BuildPowerbarTab},
-    }
-
-    if ns.QUI_CDMEffectsOptions and ns.QUI_CDMEffectsOptions.BuildEffectsTab then
-        table.insert(subTabs, {name = "Effects", builder = ns.QUI_CDMEffectsOptions.BuildEffectsTab, isSeparator = true})
-    end
-
-    if ns.QUI_KeybindsOptions and ns.QUI_KeybindsOptions.BuildKeybindsTab then
-        table.insert(subTabs, {name = "Keybinds", builder = ns.QUI_KeybindsOptions.BuildKeybindsTab})
-    end
-
-    if ns.QUI_KeybindsOptions and ns.QUI_KeybindsOptions.BuildRotationAssistTab then
-        table.insert(subTabs, {name = "Rotation Assist", builder = ns.QUI_KeybindsOptions.BuildRotationAssistTab})
-    end
-
-    GUI:CreateSubTabs(subTabHost, subTabs)
-
-    content:SetHeight(760)
+    content:SetHeight(200)
 end
 
 --------------------------------------------------------------------------------

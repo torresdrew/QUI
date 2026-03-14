@@ -304,15 +304,7 @@ local function BuildCrosshairTab(tabContent)
         strataDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
         y = y - FORM_ROW
 
-        local xOffsetSlider = GUI:CreateFormSlider(tabContent, "X-Offset", -500, 500, 1, "offsetX", ch, Shared.RefreshCrosshair)
-        xOffsetSlider:SetPoint("TOPLEFT", PADDING, y)
-        xOffsetSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
-
-        local yOffsetSlider = GUI:CreateFormSlider(tabContent, "Y-Offset", -500, 500, 1, "offsetY", ch, Shared.RefreshCrosshair)
-        yOffsetSlider:SetPoint("TOPLEFT", PADDING, y)
-        yOffsetSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PADDING, 0)
-        y = y - FORM_ROW
+        -- Crosshair positioning moved to Edit Mode.
     end
 
     tabContent:SetHeight(math.abs(y) + 50)

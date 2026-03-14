@@ -108,7 +108,7 @@ local function CreateWelcomePage(parent)
 
     y = CreateQA(content,
         "How do I move and resize frames?",
-        "Open Blizzard Edit Mode (Escape > Edit Mode, or type /qui editmode) to reposition the default Blizzard frames. For best results with QUI's skinning, anchoring, and auto-sizing features, set all frames to 100% size in Edit Mode. QUI's own frame anchoring is under the Anchoring & Layout tab in /qui.",
+        "Open Blizzard Edit Mode (Escape > Edit Mode, or type /qui editmode) to reposition the default Blizzard frames. For best results with QUI's skinning, anchoring, and auto-sizing features, set all frames to 100% size in Edit Mode. QUI's own frame anchoring is under the Frame Positioning tab in /qui, and in each frame's own options panel.",
         y, contentWidth)
 
     y = CreateQA(content,

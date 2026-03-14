@@ -60,7 +60,7 @@ function QUI:OnInitialize()
     self:RegisterChatCommand("rl", "SlashCommandReload")
     self:RegisterChatCommand("qpull", "SlashCommandPull")
     self:RegisterChatCommand("quipull", "SlashCommandPull")
-    
+
     -- Register our media files with LibSharedMedia
     self:CheckMediaRegistration()
 end
@@ -93,12 +93,12 @@ function QUI:SlashCommandOpen(input)
     if input and input == "debug" then
         self.db.char.debug.reload = true
         QUI:SafeReload()
-    elseif input and input == "editmode" then
-        -- Toggle Unit Frames Edit Mode
-        if _G.QUI_ToggleUnitFrameEditMode then
-            _G.QUI_ToggleUnitFrameEditMode()
+    elseif input and (input == "layout" or input == "unlock" or input == "editmode") then
+        -- Toggle Layout Mode (with backward compat aliases)
+        if _G.QUI_ToggleLayoutMode then
+            _G.QUI_ToggleLayoutMode()
         else
-            print("|cFF56D1FFQUI:|r Unit Frames module not loaded.")
+            print("|cff34D399QUI:|r Layout Mode not loaded yet.")
         end
         return
     elseif input and input:find("^grouptest") then
@@ -149,6 +149,11 @@ function QUI:SlashCommandPull(input)
 end
 
 function QUI:OnEnable()
+    -- Run backward-compatibility migrations now that QUICore:OnInitialize()
+    -- has created the real profile database (QUIDB → QUI.db).
+    -- OnEnable runs after all OnInitialize calls but still during ADDON_LOADED.
+    self:BackwardsCompat()
+
     self:RegisterEvent("PLAYER_ENTERING_WORLD")
     self:RegisterEvent("ADDON_LOADED")
     self:RegisterOptionalPullAlias()
@@ -161,8 +166,8 @@ function QUI:OnEnable()
             print("|cFF30D1FFQUI REMINDER:|r")
             print("|cFF34D3991.|r ENABLE |cFFFFFF00Cooldown Manager|r in Options > Gameplay Enhancement")
             print("|cFF34D3992.|r Action Bars & Menu Bar |cFFFFFF00HIDDEN|r on mouseover |cFFFFFF00by default|r. Go to |cFFFFFF00'Actionbars'|r tab in |cFFFFFF00/qui|r to unhide.")
-            print("|cFF34D3993.|r Use |cFFFFFF00100% Icon Size|r on CDM Essential & Utility bars via |cFFFFFF00Edit Mode|r for best results.")
-            print("|cFF34D3994.|r Position your |cFFFFFF00CDM bars|r in |cFFFFFF00Edit Mode|r and click |cFFFFFF00Save|r before exiting.")
+            print("|cFF34D3993.|r Use |cFFFFFF00100% Icon Size|r on CDM Essential & Utility bars for best results.")
+            print("|cFF34D3994.|r Use |cFFFFFF00/qui layout|r to position frames, then click |cFFFFFF00Save|r.")
         end
     end
 end
@@ -204,8 +209,6 @@ function QUI:ADDON_LOADED(_, addonName)
 end
 
 function QUI:PLAYER_ENTERING_WORLD(_, isInitialLogin, isReloadingUi)
-    QUI:BackwardsCompat()
-
     -- Ensure debug table exists
     if not self.db.char.debug then
         self.db.char.debug = { reload = false }

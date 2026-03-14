@@ -1368,6 +1368,7 @@ local defaults = {
         -- QUI Action Bars - Button Skinning and Fade System
         actionBars = {
             enabled = true,
+            engine = "owned",       -- "blizzard" or "owned"
             -- Global settings (apply to all bars)
             global = {
                 skinEnabled = true,         -- Apply button skinning
@@ -1432,6 +1433,17 @@ local defaults = {
                 bar1 = {
                     enabled = true, fadeEnabled = nil, fadeOutAlpha = nil, alwaysShow = false,
                     hidePageArrow = true,
+                    ownedPosition = nil,  -- { point, relPoint, x, y } for owned engine
+                    -- Owned engine layout (independent of Blizzard Edit Mode)
+                    ownedLayout = {
+                        orientation = "horizontal", -- "horizontal" or "vertical"
+                        columns = 12,               -- buttons per row (horizontal) or per column (vertical)
+                        iconCount = 12,             -- visible button count (1-12)
+                        buttonSize = nil,           -- nil = use Blizzard size, number = override
+                        buttonSpacing = nil,        -- nil = use global, number = override
+                        growUp = false,             -- rows grow bottom-to-top
+                        growLeft = false,           -- columns grow right-to-left
+                    },
                     -- Style overrides (nil = use global)
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1445,6 +1457,11 @@ local defaults = {
                 },
                 bar2 = {
                     enabled = true, fadeEnabled = nil, fadeOutAlpha = nil, alwaysShow = false,
+                    ownedPosition = nil,
+                    ownedLayout = {
+                        orientation = "horizontal", columns = 12, iconCount = 12,
+                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                    },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
                     showGloss = nil, glossAlpha = 0,
@@ -1457,6 +1474,11 @@ local defaults = {
                 },
                 bar3 = {
                     enabled = true, fadeEnabled = nil, fadeOutAlpha = nil, alwaysShow = false,
+                    ownedPosition = nil,
+                    ownedLayout = {
+                        orientation = "horizontal", columns = 12, iconCount = 12,
+                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                    },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
                     showGloss = nil, glossAlpha = 0,
@@ -1469,6 +1491,11 @@ local defaults = {
                 },
                 bar4 = {
                     enabled = true, fadeEnabled = nil, fadeOutAlpha = nil, alwaysShow = false,
+                    ownedPosition = nil,
+                    ownedLayout = {
+                        orientation = "horizontal", columns = 6, iconCount = 12,
+                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                    },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
                     showGloss = nil, glossAlpha = 0,
@@ -1481,6 +1508,11 @@ local defaults = {
                 },
                 bar5 = {
                     enabled = true, fadeEnabled = nil, fadeOutAlpha = nil, alwaysShow = false,
+                    ownedPosition = nil,
+                    ownedLayout = {
+                        orientation = "horizontal", columns = 6, iconCount = 12,
+                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                    },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
                     showGloss = nil, glossAlpha = 0,
@@ -1493,6 +1525,11 @@ local defaults = {
                 },
                 bar6 = {
                     enabled = true, fadeEnabled = nil, fadeOutAlpha = nil, alwaysShow = false,
+                    ownedPosition = nil,
+                    ownedLayout = {
+                        orientation = "horizontal", columns = 12, iconCount = 12,
+                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                    },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
                     showGloss = nil, glossAlpha = 0,
@@ -1505,6 +1542,11 @@ local defaults = {
                 },
                 bar7 = {
                     enabled = true, fadeEnabled = nil, fadeOutAlpha = nil, alwaysShow = false,
+                    ownedPosition = nil,
+                    ownedLayout = {
+                        orientation = "horizontal", columns = 12, iconCount = 12,
+                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                    },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
                     showGloss = nil, glossAlpha = 0,
@@ -1517,6 +1559,11 @@ local defaults = {
                 },
                 bar8 = {
                     enabled = true, fadeEnabled = nil, fadeOutAlpha = nil, alwaysShow = false,
+                    ownedPosition = nil,
+                    ownedLayout = {
+                        orientation = "horizontal", columns = 12, iconCount = 12,
+                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                    },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
                     showGloss = nil, glossAlpha = 0,
@@ -2392,10 +2439,9 @@ local defaults = {
         quiGroupFrames = {
             enabled = false,          -- Disabled by default (opt-in feature)
 
-            -- Position (shared)
-            unifiedPosition = true,   -- true = party & raid share one position; false = separate movers
-            position = { offsetX = -400, offsetY = 0 },
-            raidPosition = { offsetX = -400, offsetY = 0 },  -- only used when unifiedPosition = false
+            -- Position
+            position = { offsetX = -400, offsetY = 0 },      -- party position
+            raidPosition = { offsetX = -400, offsetY = 0 },   -- raid position (always separate)
 
             -- Self-first (shared) — shows player in a separate header above party/raid
             selfFirst = false,
@@ -3904,9 +3950,182 @@ function QUICore:OnInitialize()
         end
     end
 
+    -- Migrate unifiedPosition → always separate party/raid positions
+    if gf and gf.unifiedPosition ~= nil then
+        if gf.unifiedPosition and gf.position then
+            -- User had unified mode: copy shared position to raidPosition
+            if not gf.raidPosition then
+                gf.raidPosition = { offsetX = gf.position.offsetX, offsetY = gf.position.offsetY }
+            end
+        end
+        gf.unifiedPosition = nil
+    end
+
     -- Migrate tooltip engine: "owned" engine removed, force to "classic"
     if profile.tooltip and profile.tooltip.engine == "owned" then
         profile.tooltip.engine = "classic"
+    end
+
+    -- Migrate CDM engine: classic engine removed, force to "owned"
+    if profile.ncdm and profile.ncdm.engine and profile.ncdm.engine ~= "owned" then
+        profile.ncdm.engine = "owned"
+    end
+
+    -- Migrate action bar engine: classic engine removed, force to "owned"
+    if profile.actionBars and profile.actionBars.engine == "classic" then
+        profile.actionBars.engine = "owned"
+    end
+
+    ---------------------------------------------------------------------------
+    -- Anchoring unification migration: remove enabled field, migrate inline
+    -- offsets to frameAnchoring as the single source of truth.
+    ---------------------------------------------------------------------------
+    if not profile._anchoringMigrationVersion then
+        if not profile.frameAnchoring then
+            profile.frameAnchoring = {}
+        end
+        local fa = profile.frameAnchoring
+
+        -- 2a: Remove enabled field from existing entries
+        for key, settings in pairs(fa) do
+            if type(settings) == "table" and settings.enabled ~= nil then
+                if settings.enabled == false then
+                    -- User never configured this — delete the entry
+                    fa[key] = nil
+                else
+                    -- Was enabled — remove the field (now implicit)
+                    settings.enabled = nil
+                end
+            end
+        end
+
+        -- 2b: Migrate inline offsets → frameAnchoring (only if not already set)
+        local function MigrateInlineOffsets(sourceTable, targetKey)
+            if not sourceTable then return end
+            local ox = sourceTable.offsetX
+            local oy = sourceTable.offsetY
+            if ox == nil and oy == nil then return end
+            if fa[targetKey] then return end  -- Already has anchoring config
+            fa[targetKey] = {
+                parent = "screen",
+                point = "CENTER",
+                relative = "CENTER",
+                offsetX = ox or 0,
+                offsetY = oy or 0,
+                sizeStable = true,
+            }
+        end
+
+        -- Unit frames
+        local uf = profile.quiUnitFrames
+        if uf then
+            MigrateInlineOffsets(uf.player, "playerFrame")
+            MigrateInlineOffsets(uf.target, "targetFrame")
+            MigrateInlineOffsets(uf.targettarget, "totFrame")
+            MigrateInlineOffsets(uf.focus, "focusFrame")
+            MigrateInlineOffsets(uf.pet, "petFrame")
+            MigrateInlineOffsets(uf.boss, "bossFrames")
+        end
+
+        -- Action bar special buttons
+        local bars = profile.actionBars and profile.actionBars.bars
+        if bars then
+            MigrateInlineOffsets(bars.extraActionButton, "extraActionButton")
+            MigrateInlineOffsets(bars.zoneAbility, "zoneAbility")
+        end
+
+        -- Other modules
+        MigrateInlineOffsets(profile.totemBar, "totemBar")
+        MigrateInlineOffsets(profile.xpTracker, "xpTracker")
+        MigrateInlineOffsets(profile.skyriding, "skyriding")
+        MigrateInlineOffsets(profile.crosshair, "crosshair")
+
+        -- Group frames
+        local gf = profile.quiGroupFrames
+        if gf then
+            local pos = gf.position
+            if pos and (pos.offsetX or pos.offsetY) and not fa.partyFrames then
+                fa.partyFrames = {
+                    parent = "screen",
+                    point = "CENTER",
+                    relative = "CENTER",
+                    offsetX = pos.offsetX or 0,
+                    offsetY = pos.offsetY or 0,
+                    sizeStable = true,
+                }
+            end
+            local raidPos = gf.raidPosition
+            if raidPos and (raidPos.offsetX or raidPos.offsetY) and not fa.raidFrames then
+                fa.raidFrames = {
+                    parent = "screen",
+                    point = "CENTER",
+                    relative = "CENTER",
+                    offsetX = raidPos.offsetX or 0,
+                    offsetY = raidPos.offsetY or 0,
+                    sizeStable = true,
+                }
+            end
+        end
+
+        -- 2c: Migrate castbar anchor modes → frameAnchoring
+        if uf then
+            local castbarMigrations = {
+                { unitKey = "player", targetKey = "playerCastbar", parentFrameKey = "playerFrame" },
+                { unitKey = "target", targetKey = "targetCastbar", parentFrameKey = "targetFrame" },
+                { unitKey = "focus",  targetKey = "focusCastbar",  parentFrameKey = "focusFrame" },
+            }
+            for _, cm in ipairs(castbarMigrations) do
+                local unitSettings = uf[cm.unitKey]
+                local castDB = unitSettings and unitSettings.castbar
+                if castDB and not fa[cm.targetKey] then
+                    local anchor = castDB.anchor or "none"
+                    local parent, ox, oy
+                    if anchor == "none" then
+                        parent = "screen"
+                        ox = castDB.freeOffsetX or castDB.offsetX or 0
+                        oy = castDB.freeOffsetY or castDB.offsetY or 0
+                    elseif anchor == "unitframe" then
+                        parent = cm.parentFrameKey
+                        ox = castDB.lockedOffsetX or castDB.offsetX or 0
+                        oy = castDB.lockedOffsetY or castDB.offsetY or 0
+                    elseif anchor == "essential" then
+                        parent = "cdmEssential"
+                        ox = castDB.lockedOffsetX or castDB.offsetX or 0
+                        oy = castDB.lockedOffsetY or castDB.offsetY or 0
+                    elseif anchor == "utility" then
+                        parent = "cdmUtility"
+                        ox = castDB.lockedOffsetX or castDB.offsetX or 0
+                        oy = castDB.lockedOffsetY or castDB.offsetY or 0
+                    else
+                        parent = "screen"
+                        ox = castDB.offsetX or 0
+                        oy = castDB.offsetY or 0
+                    end
+
+                    local entry = {
+                        parent = parent,
+                        point = "CENTER",
+                        relative = "CENTER",
+                        offsetX = ox,
+                        offsetY = oy,
+                        sizeStable = true,
+                    }
+                    -- Migrate width adjustment
+                    if castDB.widthAdjustment and castDB.widthAdjustment ~= 0 then
+                        entry.widthAdjust = castDB.widthAdjustment
+                    end
+                    -- Auto-width when locked to a parent
+                    if anchor ~= "none" then
+                        entry.autoWidth = true
+                    end
+                    fa[cm.targetKey] = entry
+                end
+            end
+        end
+
+        -- 2d: Leave inline fields intact for backup (don't delete)
+
+        profile._anchoringMigrationVersion = 1
     end
 
     -- Initialize preserved scale - will be properly set in OnEnable after UI scale is applied
@@ -3918,8 +4137,8 @@ function QUICore:OnInitialize()
     -- Track current profile to detect same-profile "switches" during M+ entry
     self._lastKnownProfile = self.db:GetCurrentProfile()
 
-    -- Track CDM engine so profile switches to a different engine trigger reload
-    self._lastKnownEngine = self.db.profile.ncdm and self.db.profile.ncdm.engine or "owned"
+    -- CDM only has "owned" engine now — no need for engine change reload tracking
+    self._lastKnownEngine = "owned"
 
     -- Track tooltip engine so profile switches to a different engine trigger reload
     self._lastKnownTooltipEngine = self.db.profile.tooltip and self.db.profile.tooltip.engine or "classic"
@@ -3952,6 +4171,19 @@ end
 
 function QUICore:OnProfileChanged(event, db, profileKey)
 
+    -- Debug: profile change tracking (uses QUI.DEBUG_MODE runtime flag from /qui debug)
+    local _profileDebug = QUI and QUI.DEBUG_MODE
+    local _profileChangeStart = debugprofilestop and debugprofilestop() or 0
+    local function ProfileDebug(msg)
+        if _profileDebug then
+            local elapsed = debugprofilestop and (debugprofilestop() - _profileChangeStart) or 0
+            print(format("|cFF30D1FFQUI Profile Debug|r [+%.0fms] %s", elapsed, msg))
+        end
+    end
+    ProfileDebug(format("OnProfileChanged: event=%s profile=%s spec=%s combat=%s",
+        tostring(event), tostring(profileKey),
+        tostring(GetSpecialization()), tostring(InCombatLockdown())))
+
     -- Invalidate cached profile reference FIRST — AceDB already swapped db.profile
     -- so any code reading settings must see the new profile, not the stale cache.
     if ns.Helpers and ns.Helpers.InvalidateProfileCache then
@@ -3970,9 +4202,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
             or (C_ChallengeMode.GetActiveChallengeMapID and C_ChallengeMode.GetActiveChallengeMapID() ~= nil)
     end
     if inChallengeMode then
-        -- We're in a challenge mode dungeon - skip profile changes entirely during M+
-        -- The protected state during keystone activation doesn't play nice with SetScale
-        -- Profile will be applied correctly on next /reload or when leaving the dungeon
+        ProfileDebug("SKIPPED: in challenge mode dungeon")
         return
     end
 
@@ -3980,20 +4210,16 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     -- LibDualSpec triggers profile switch even when already on correct profile
     local currentProfile = self.db:GetCurrentProfile()
     if profileKey == self._lastKnownProfile and profileKey == currentProfile then
+        ProfileDebug(format("SKIPPED: same profile (%s)", tostring(profileKey)))
         return  -- No actual change happening - skip all UI modifications
     end
+    ProfileDebug(format("Profile switching: %s -> %s", tostring(self._lastKnownProfile), tostring(profileKey)))
     self._lastKnownProfile = profileKey
 
     -- Update spec tracking (kept for reference)
     self._lastKnownSpec = GetSpecialization() or 0
 
-    -- Check if CDM engine changed — requires reload since engines can't hot-swap
-    local newEngine = self.db.profile.ncdm and self.db.profile.ncdm.engine or "owned"
-    if newEngine ~= self._lastKnownEngine then
-        self._lastKnownEngine = newEngine
-        self:SafeReload()
-        return
-    end
+    -- CDM only has "owned" engine — no engine change check needed
 
     -- Tooltip engine change detection (legacy — only "classic" engine remains)
     local newTooltipEngine = self.db.profile.tooltip and self.db.profile.tooltip.engine or "classic"
@@ -4066,6 +4292,15 @@ function QUICore:OnProfileChanged(event, db, profileKey)
             self.db.profile.general.uiScale = scaleToUse
             ApplyUIScale(scaleToUse)
         else
+            -- Scale change invalidates all stored frame offsets — force reload
+            local currentScale = UIParent:GetScale()
+            if currentScale and math.abs(newProfileScale - currentScale) > 0.001 then
+                self._preservedUIScale = newProfileScale
+                C_Timer.After(0, function()
+                    QUICore:SafeReload()
+                end)
+                return
+            end
             -- Existing profile has a saved scale - apply it
             ApplyUIScale(newProfileScale)
             -- Only update preserved scale when switching to a profile with a valid saved scale
@@ -4091,8 +4326,8 @@ function QUICore:OnProfileChanged(event, db, profileKey)
 
     -- Invalidate options panel — cached widgets hold stale profile table references
     if QUI.GUI and QUI.GUI.MainFrame then
-        QUI.GUI.MainFrame:Hide()
-        QUI.GUI.MainFrame:SetParent(nil)
+        pcall(QUI.GUI.MainFrame.Hide, QUI.GUI.MainFrame)
+        pcall(QUI.GUI.MainFrame.SetParent, QUI.GUI.MainFrame, nil)
         QUI.GUI.MainFrame = nil
         QUI.GUI._searchIndexBuilt = false
         QUI.GUI._allTabsAdded = false
@@ -4101,7 +4336,10 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     end
 
     if self.RefreshAll then
-        self:RefreshAll()
+        local ok, err = pcall(self.RefreshAll, self)
+        if not ok then
+            print("|cFFFF6666QUI:|r RefreshAll error: " .. tostring(err))
+        end
     end
     
     -- Refresh Minimap module on profile change
@@ -4140,487 +4378,139 @@ function QUICore:OnProfileChanged(event, db, profileKey)
 
     -- Consolidated profile-change refresh: single 0.2s delay for all module refreshes
     -- instead of 7 separate cascading timers (0.2, 0.3, 0.4, 0.45, 0.47, 0.5)
+    -- Each call is pcall-wrapped so one module error cannot prevent the rest from refreshing.
     C_Timer.After(0.2, function()
-        -- Cache _G function lookups at point of use (avoid repeated _G hash lookups)
-        local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
-        local RefreshNCDM = _G.QUI_RefreshNCDM
-        local RefreshCDMVisibility = _G.QUI_RefreshCDMVisibility
-        local RefreshCooldownSwipe = _G.QUI_RefreshCooldownSwipe
-        local RefreshReticle = _G.QUI_RefreshReticle
-        local RefreshCustomTrackers = _G.QUI_RefreshCustomTrackers
-        local ApplyAllFrameAnchors = _G.QUI_ApplyAllFrameAnchors
-        if ApplyAllFrameAnchors then ApplyAllFrameAnchors() end
-        if RefreshUnitFrames then RefreshUnitFrames() end
-        if RefreshNCDM then RefreshNCDM() end
-        if RefreshCDMVisibility then RefreshCDMVisibility() end
-        if RefreshCooldownSwipe then RefreshCooldownSwipe() end
-        if RefreshReticle then RefreshReticle() end
-        if RefreshCustomTrackers then RefreshCustomTrackers() end
+        ProfileDebug("0.2s refresh timer fired — starting module refreshes")
+        local function SafeCall(fn)
+            if fn then
+                local ok, err = pcall(fn)
+                if not ok then
+                    print("|cFFFF6666QUI:|r Profile refresh error: " .. tostring(err))
+                end
+            end
+        end
+
+        -- Cooldowns first (CDM containers must exist before anchoring runs)
+        SafeCall(_G.QUI_RefreshNCDM)
+        SafeCall(_G.QUI_RefreshCDMVisibility)
+        SafeCall(_G.QUI_RefreshCooldownSwipe)
+
+        -- Frames
+        SafeCall(_G.QUI_RefreshUnitFrames)
+        SafeCall(_G.QUI_RefreshGroupFrames)
+        SafeCall(_G.QUI_RefreshActionBars)
+        SafeCall(_G.QUI_RefreshBuffBar)
+        SafeCall(_G.QUI_RefreshBuffBorders)
+        SafeCall(_G.QUI_RefreshRaidBuffs)
+        SafeCall(_G.QUI_RefreshTotemBar)
+        SafeCall(_G.QUI_RefreshUIHider)
+
+        -- QoL modules
+        SafeCall(_G.QUI_RefreshReticle)
+        SafeCall(_G.QUI_RefreshCrosshair)
+        SafeCall(_G.QUI_RefreshXPTracker)
+        SafeCall(_G.QUI_RefreshSkyriding)
+        SafeCall(_G.QUI_RefreshFocusCastAlert)
+        SafeCall(_G.QUI_RefreshPetWarning)
+        SafeCall(_G.QUI_RefreshRangeCheck)
+
+        -- Combat
+        SafeCall(_G.QUI_RefreshCombatText)
+
+        -- Trackers
+        SafeCall(_G.QUI_RefreshCustomTrackers)
+
+        -- Data & Chat
+        SafeCall(_G.QUI_RefreshDatapanels)
+        SafeCall(_G.QUI_RefreshChat)
+
+        -- Character
+        SafeCall(_G.QUI_RefreshCharacterPane)
+
+        -- Keybinds
+        SafeCall(_G.QUI_RefreshKeybinds)
+
+        -- Dungeon
+        SafeCall(_G.QUI_RefreshKeyTracker)
+        SafeCall(_G.QUI_RefreshBrezCounter)
+
+        -- Anchoring LAST (all modules have restored positions above)
+        SafeCall(_G.QUI_ApplyAllFrameAnchors)
+
+        ProfileDebug("0.2s refresh complete — showing notification")
         self:ShowProfileChangeNotification()
+    end)
+
+    -- Skinning refreshes: slightly later to avoid stacking too much work at 0.2s
+    -- pcall-wrapped like the 0.2s block above.
+    C_Timer.After(0.5, function()
+        ProfileDebug("0.5s skinning refresh timer fired")
+        local function SafeCall(fn)
+            if fn then
+                local ok, err = pcall(fn)
+                if not ok then
+                    print("|cFFFF6666QUI:|r Profile skin refresh error: " .. tostring(err))
+                end
+            end
+        end
+        SafeCall(_G.QUI_RefreshCharacterFrameColors)
+        SafeCall(_G.QUI_RefreshInspectColors)
+        SafeCall(_G.QUI_RefreshInstanceFramesColors)
+        SafeCall(_G.QUI_RefreshOverrideActionBarColors)
+        SafeCall(_G.QUI_RefreshGameMenuColors)
+        SafeCall(_G.QUI_RefreshGameMenuFontSize)
+        SafeCall(_G.QUI_RefreshReadyCheckColors)
+        SafeCall(_G.QUI_RefreshKeystoneColors)
+        SafeCall(_G.QUI_RefreshAlertColors)
+        SafeCall(_G.QUI_RefreshLootColors)
+        SafeCall(_G.QUI_RefreshMPlusTimerColors)
+        SafeCall(_G.QUI_RefreshObjectiveTracker)
+        SafeCall(_G.QUI_RefreshPowerBarAltColors)
+    end)
+
+    -- Safety re-position pass: Blizzard's Edit Mode system re-applies per-spec
+    -- layouts on spec change (EDIT_MODE_LAYOUTS_UPDATED), which can override
+    -- QUI's frame positions set at 0.2s. Re-apply both anchoring overrides AND
+    -- unit frame positions to catch any Blizzard layout passes that fired late.
+    C_Timer.After(1.0, function()
+        ProfileDebug(format("1.0s safety pass — combat=%s editMode=%s",
+            tostring(InCombatLockdown()), tostring(ns.Helpers.IsEditModeActive())))
+        if not InCombatLockdown() then
+            local ApplyAnchors = _G.QUI_ApplyAllFrameAnchors
+            if ApplyAnchors then pcall(ApplyAnchors, true) end
+            local RefreshUnitFrames = _G.QUI_RefreshUnitFrames
+            if RefreshUnitFrames then pcall(RefreshUnitFrames) end
+            local RefreshGroupFrames = _G.QUI_RefreshGroupFrames
+            if RefreshGroupFrames then pcall(RefreshGroupFrames) end
+            ProfileDebug("1.0s safety pass complete")
+        else
+            ProfileDebug("1.0s safety pass SKIPPED (combat)")
+        end
     end)
 end
 
 function QUICore:ShowProfileChangeNotification()
-    -- Create a simple popup frame if it doesn't exist
-    if not self.profileChangePopup then
-        local popup = CreateFrame("Frame", "QUICore_ProfileChangePopup", UIParent, "BackdropTemplate")
-        popup:SetSize(400, 120)
-        popup:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-        popup:SetFrameStrata("DIALOG")
-        popup:SetFrameLevel(1000)
-        popup:SetBackdrop({
-            bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
-            edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
-            tile = true,
-            tileSize = 32,
-            edgeSize = 32,
-            insets = { left = 8, right = 8, top = 8, bottom = 8 }
-        })
-        popup:SetBackdropColor(0, 0, 0, 0.9)
-        popup:Hide()
-        
-        -- Title
-        local title = popup:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-        title:SetPoint("TOP", popup, "TOP", 0, -20)
-        title:SetText("Profile Changed")
-        popup.title = title
-        
-        -- Message
-        local message = popup:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-        message:SetPoint("CENTER", popup, "CENTER", 0, -10)
-        message:SetWidth(360)
-        message:SetJustifyH("CENTER")
-        message:SetText("Profile changed please open edit mode for unit frame position updates")
-        popup.message = message
-        
-        -- Close button (opens edit mode)
-        local closeButton = CreateFrame("Button", nil, popup, "UIPanelButtonTemplate")
-        closeButton:SetSize(100, 30)
-        closeButton:SetPoint("BOTTOM", popup, "BOTTOM", 0, 15)
-        closeButton:SetText("OK")
-        closeButton:SetScript("OnClick", function(self)
-            self:GetParent():Hide()
-            -- Open edit mode the same way as the config button
-            DEFAULT_CHAT_FRAME.editBox:SetText("/editmode")
-            ChatEdit_SendText(DEFAULT_CHAT_FRAME.editBox, 0)
-        end)
-        popup.closeButton = closeButton
-        
-        self.profileChangePopup = popup
-    end
-    
-    -- Show the popup
-    if self.profileChangePopup then
-        self.profileChangePopup:Show()
-        -- Auto-hide after 10 seconds if not manually closed.
-        -- Generation counter: each new Show() increments the counter so stale timers
-        -- from rapid profile changes become no-ops instead of hiding the fresh popup early.
-        self._popupTimerGeneration = (self._popupTimerGeneration or 0) + 1
-        local gen = self._popupTimerGeneration
-        C_Timer.After(10, function()
-            if self._popupTimerGeneration ~= gen then return end  -- stale timer, skip
-            if self.profileChangePopup and self.profileChangePopup:IsShown() then
-                self.profileChangePopup:Hide()
-            end
-        end)
-    end
+    -- Simple chat notification instead of a popup that forces Edit Mode entry.
+    -- The popup was causing an ApplyAllFrameAnchors feedback loop by entering
+    -- Edit Mode during the profile transition.
+    local profileName = self.db and self.db:GetCurrentProfile() or "Unknown"
+    print(format("|cff34D399QUI:|r Profile switched to |cFFFFD700%s|r. Use |cFFFFD700/editmode|r to adjust frame positions.", profileName))
 end
+
+-- Old Edit Mode selection/nudge system removed — Layout Mode handles replace these.
+-- (See git history for SelectEditModeElement, ShowSelectionArrows,
+-- HideCurrentSelectionArrows, NudgeSelectedElement, EditModeKeyHandler)
+
+-- Stub: prevent nil method errors from any remaining callers.
+QUICore.EditModeSelection = {}
+function QUICore:SelectEditModeElement() end
+function QUICore:ClearEditModeSelection() end
 
 -- ============================================================================
--- EDIT MODE SELECTION MANAGER
--- Tracks which element is currently selected for nudge arrows
--- ============================================================================
-
-QUICore.EditModeSelection = {
-    selectedType = nil,  -- "unitframe", "powerbar", "cdm"
-    selectedKey = nil,   -- "player", "primary", "EssentialCooldownViewer", etc.
-}
-
--- Select an element and show its nudge arrows (hides arrows on previous selection)
-function QUICore:SelectEditModeElement(elementType, elementKey)
-    -- Skip if already selected
-    if self.EditModeSelection.selectedType == elementType and self.EditModeSelection.selectedKey == elementKey then
-        return
-    end
-
-    -- Hide arrows on previously selected element
-    self:HideCurrentSelectionArrows()
-
-    -- Update selection
-    self.EditModeSelection.selectedType = elementType
-    self.EditModeSelection.selectedKey = elementKey
-
-    -- Show arrows on newly selected element
-    self:ShowSelectionArrows(elementType, elementKey)
-end
-
--- Clear selection (called when exiting Edit Mode)
-function QUICore:ClearEditModeSelection()
-    self:HideCurrentSelectionArrows()
-    self.EditModeSelection.selectedType = nil
-    self.EditModeSelection.selectedKey = nil
-end
-
--- Hide nudge arrows on the currently selected element
-function QUICore:HideCurrentSelectionArrows()
-    local sel = self.EditModeSelection
-    if not sel.selectedType then return end
-
-    if sel.selectedType == "unitframe" then
-        -- Unit frames store their overlay on the frame itself
-        if ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames then
-            local frame = ns.QUI_UnitFrames.frames[sel.selectedKey]
-            if frame and frame.editOverlay then
-                self:HideNudgeButtons(frame.editOverlay)
-            end
-        end
-    elseif sel.selectedType == "powerbar" then
-        local bar = (sel.selectedKey == "primary") and self.powerBar or self.secondaryPowerBar
-        if bar and bar.editOverlay then
-            self:HideNudgeButtons(bar.editOverlay)
-        end
-    elseif sel.selectedType == "cdm" then
-        if self.cdmOverlays and self.cdmOverlays[sel.selectedKey] then
-            self:HideNudgeButtons(self.cdmOverlays[sel.selectedKey])
-        end
-    elseif sel.selectedType == "blizzard" then
-        if self.blizzardOverlays and self.blizzardOverlays[sel.selectedKey] then
-            self:HideNudgeButtons(self.blizzardOverlays[sel.selectedKey])
-        end
-    elseif sel.selectedType == "minimap" then
-        if self.minimapOverlay then
-            self:HideNudgeButtons(self.minimapOverlay)
-        end
-    elseif sel.selectedType == "castbar" then
-        -- Castbars store their overlay on the castbar frame itself
-        if ns.QUI_Castbar and ns.QUI_Castbar.castbars then
-            local castbar = ns.QUI_Castbar.castbars[sel.selectedKey]
-            if castbar and castbar.editOverlay then
-                self:HideNudgeButtons(castbar.editOverlay)
-            end
-        end
-    elseif sel.selectedType == "groupframes" then
-        -- Group frame mover manages its own nudge button visibility
-    end
-end
-
--- Show nudge arrows on the specified element
-function QUICore:ShowSelectionArrows(elementType, elementKey)
-    -- Resolve the actual frame so we can check if it's locked
-    local resolvedFrame
-    if elementType == "unitframe" then
-        resolvedFrame = ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames and ns.QUI_UnitFrames.frames[elementKey]
-    elseif elementType == "powerbar" then
-        resolvedFrame = (elementKey == "primary") and self.powerBar or self.secondaryPowerBar
-    elseif elementType == "cdm" then
-        resolvedFrame = ResolveCDMViewerByName(elementKey)
-    elseif elementType == "blizzard" then
-        resolvedFrame = _G[elementKey]
-    elseif elementType == "minimap" then
-        resolvedFrame = _G["Minimap"]
-    elseif elementType == "castbar" then
-        resolvedFrame = ns.QUI_Castbar and ns.QUI_Castbar.castbars and ns.QUI_Castbar.castbars[elementKey]
-    end
-
-    -- Don't show nudge arrows on locked frames
-    if resolvedFrame and _G.QUI_IsFrameLocked and _G.QUI_IsFrameLocked(resolvedFrame) then
-        return
-    end
-
-    if elementType == "unitframe" then
-        if ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames then
-            local frame = ns.QUI_UnitFrames.frames[elementKey]
-            if frame and frame.editOverlay then
-                self:ShowNudgeButtons(frame.editOverlay)
-            end
-        end
-    elseif elementType == "powerbar" then
-        local bar = (elementKey == "primary") and self.powerBar or self.secondaryPowerBar
-        if bar and bar.editOverlay then
-            self:ShowNudgeButtons(bar.editOverlay)
-        end
-    elseif elementType == "cdm" then
-        if self.cdmOverlays and self.cdmOverlays[elementKey] then
-            self:ShowNudgeButtons(self.cdmOverlays[elementKey])
-        end
-    elseif elementType == "blizzard" then
-        if self.blizzardOverlays and self.blizzardOverlays[elementKey] then
-            self:ShowNudgeButtons(self.blizzardOverlays[elementKey])
-        end
-    elseif elementType == "minimap" then
-        if self.minimapOverlay then
-            self:ShowNudgeButtons(self.minimapOverlay)
-            -- Update info text with current position
-            local settings = self.db and self.db.profile and self.db.profile.minimap
-            if settings and settings.position and self.minimapOverlay.infoText then
-                self.minimapOverlay.infoText:SetText(string.format("Minimap  X:%d Y:%d",
-                    math.floor(settings.position[3] or 0),
-                    math.floor(settings.position[4] or 0)))
-            end
-        end
-    elseif elementType == "castbar" then
-        if ns.QUI_Castbar and ns.QUI_Castbar.castbars then
-            local castbar = ns.QUI_Castbar.castbars[elementKey]
-            if castbar and castbar.editOverlay then
-                -- Only show nudge buttons if not anchored
-                if not castbar.editOverlay._isAnchored then
-                    self:ShowNudgeButtons(castbar.editOverlay)
-                end
-            end
-        end
-    elseif elementType == "groupframes" then
-        -- Group frame mover manages its own nudge button visibility
-    end
-end
-
--- Helper to show nudge buttons on an overlay
-function QUICore:ShowNudgeButtons(overlay)
-    if not overlay then return end
-    if overlay.nudgeUp then overlay.nudgeUp:Show() end
-    if overlay.nudgeDown then overlay.nudgeDown:Show() end
-    if overlay.nudgeLeft then overlay.nudgeLeft:Show() end
-    if overlay.nudgeRight then overlay.nudgeRight:Show() end
-    if overlay.infoText then overlay.infoText:Show() end
-end
-
--- Helper to hide nudge buttons on an overlay
-function QUICore:HideNudgeButtons(overlay)
-    if not overlay then return end
-    if overlay.nudgeUp then overlay.nudgeUp:Hide() end
-    if overlay.nudgeDown then overlay.nudgeDown:Hide() end
-    if overlay.nudgeLeft then overlay.nudgeLeft:Hide() end
-    if overlay.nudgeRight then overlay.nudgeRight:Hide() end
-    if overlay.infoText then overlay.infoText:Hide() end
-end
-
--- ============================================================================
--- ARROW KEY NUDGING
--- When an element is selected in Edit Mode, arrow keys nudge its position
--- ============================================================================
-
-local EditModeKeyHandler = CreateFrame("Frame", "QUIEditModeKeyHandler", UIParent)
-EditModeKeyHandler:EnableKeyboard(false)
-EditModeKeyHandler:SetPropagateKeyboardInput(true)
-
-local function SetKeyPropagationSafe(frame, propagate)
-    if InCombatLockdown() then return end
-    frame:SetPropagateKeyboardInput(propagate)
-end
-
--- Nudge the currently selected element by deltaX, deltaY
-function QUICore:NudgeSelectedElement(deltaX, deltaY)
-    local sel = self.EditModeSelection
-    if not sel or not sel.selectedType or not sel.selectedKey then return false end
-    if InCombatLockdown() then return false end
-
-    local shift = IsShiftKeyDown()
-    local step = shift and 10 or 1
-    local dx = deltaX * step
-    local dy = deltaY * step
-
-    if sel.selectedType == "unitframe" then
-        if ns.QUI_UnitFrames and ns.QUI_UnitFrames.frames then
-            local frame = ns.QUI_UnitFrames.frames[sel.selectedKey]
-            local settingsKey = sel.selectedKey
-            if settingsKey and settingsKey:match("^boss%d+$") then
-                settingsKey = "boss"
-            end
-            -- Unit frames database is stored at quiUnitFrames
-            local ufdb = self.db and self.db.profile and self.db.profile.quiUnitFrames
-            local settings = ufdb and ufdb[settingsKey]
-
-            -- Block nudging for anchored frames
-            local isAnchored = settings and settings.anchorTo and settings.anchorTo ~= "disabled"
-            if isAnchored and (settingsKey == "player" or settingsKey == "target") then
-                return false
-            end
-
-            if settings and frame then
-                settings.offsetX = (settings.offsetX or 0) + dx
-                settings.offsetY = (settings.offsetY or 0) + dy
-                frame:ClearAllPoints()
-                frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX, settings.offsetY)
-                -- Update info text
-                if frame.editOverlay and frame.editOverlay.infoText then
-                    frame.editOverlay.infoText:SetText(string.format("%s  X:%d Y:%d",
-                        sel.selectedKey, settings.offsetX, settings.offsetY))
-                end
-                -- Notify options panel
-                if ns.QUI_UnitFrames and ns.QUI_UnitFrames.NotifyPositionChanged then
-                    ns.QUI_UnitFrames:NotifyPositionChanged(settingsKey, settings.offsetX, settings.offsetY)
-                end
-                -- Update anchored frames to follow nudged element
-                if _G.QUI_UpdateAnchoredFrames then
-                    _G.QUI_UpdateAnchoredFrames()
-                end
-                return true
-            end
-        end
-    elseif sel.selectedType == "powerbar" then
-        local cfg = (sel.selectedKey == "primary") and self.db.profile.powerBar or self.db.profile.secondaryPowerBar
-        local bar = (sel.selectedKey == "primary") and self.powerBar or self.secondaryPowerBar
-        if cfg and bar then
-            cfg.offsetX = (cfg.offsetX or 0) + dx
-            cfg.offsetY = (cfg.offsetY or 0) + dy
-            cfg.autoAttach = false
-            cfg.useRawPixels = true
-            bar:ClearAllPoints()
-            bar:SetPoint("CENTER", UIParent, "CENTER", cfg.offsetX, cfg.offsetY)
-            -- Update info text
-            if bar.editOverlay and bar.editOverlay.infoText then
-                local label = (sel.selectedKey == "primary") and "Primary" or "Secondary"
-                bar.editOverlay.infoText:SetText(string.format("%s  X:%d Y:%d", label, cfg.offsetX, cfg.offsetY))
-            end
-            -- Notify options panel
-            self:NotifyPowerBarPositionChanged(sel.selectedKey, cfg.offsetX, cfg.offsetY)
-            -- Update anchored frames to follow nudged element
-            if _G.QUI_UpdateAnchoredFrames then
-                _G.QUI_UpdateAnchoredFrames()
-            end
-            return true
-        end
-    elseif sel.selectedType == "castbar" then
-        if ns.QUI_Castbar and ns.QUI_Castbar.castbars then
-            local castbar = ns.QUI_Castbar.castbars[sel.selectedKey]
-            -- Castbar settings are stored within unit frame settings at quiUnitFrames
-            local ufdb = self.db and self.db.profile and self.db.profile.quiUnitFrames
-            local settings = ufdb and ufdb[sel.selectedKey]
-            local castSettings = settings and settings.castbar
-            -- Only nudge if not anchored
-            if castSettings and castSettings.anchor == "none" and castbar then
-                castSettings.offsetX = (castSettings.offsetX or 0) + dx
-                castSettings.offsetY = (castSettings.offsetY or 0) + dy
-                castSettings.freeOffsetX = castSettings.offsetX
-                castSettings.freeOffsetY = castSettings.offsetY
-                castbar:ClearAllPoints()
-                castbar:SetPoint("CENTER", UIParent, "CENTER", castSettings.offsetX, castSettings.offsetY)
-                -- Update info text
-                if castbar.editOverlay and castbar.editOverlay.infoText then
-                    local displayName = sel.selectedKey == "player" and "Player" or
-                                        sel.selectedKey == "target" and "Target" or
-                                        sel.selectedKey == "focus" and "Focus" or "Castbar"
-                    castbar.editOverlay.infoText:SetText(string.format("%s Castbar  X:%d Y:%d",
-                        displayName, castSettings.offsetX, castSettings.offsetY))
-                end
-                -- Update anchored frames to follow nudged element
-                if _G.QUI_UpdateAnchoredFrames then
-                    _G.QUI_UpdateAnchoredFrames()
-                end
-                return true
-            end
-        end
-    elseif sel.selectedType == "groupframes" then
-        local gfem = ns.QUI_GroupFrameEditMode
-        if gfem then
-            -- Route to the correct mover based on which was selected
-            local nudgeKey = sel.selectedKey or "party"
-            gfem:NudgeHeader(nudgeKey, dx, dy)
-            return true
-        end
-    end
-    return false
-end
-
-EditModeKeyHandler:SetScript("OnKeyDown", function(self, key)
-    if InCombatLockdown() then
-        return
-    end
-
-    if not QUICore.EditModeSelection or not QUICore.EditModeSelection.selectedType then
-        SetKeyPropagationSafe(self, true)
-        return
-    end
-
-    local handled = false
-    if key == "UP" then
-        handled = QUICore:NudgeSelectedElement(0, 1)
-    elseif key == "DOWN" then
-        handled = QUICore:NudgeSelectedElement(0, -1)
-    elseif key == "LEFT" then
-        handled = QUICore:NudgeSelectedElement(-1, 0)
-    elseif key == "RIGHT" then
-        handled = QUICore:NudgeSelectedElement(1, 0)
-    end
-
-    if handled then
-        SetKeyPropagationSafe(self, false)
-    else
-        SetKeyPropagationSafe(self, true)
-    end
-end)
-
-EditModeKeyHandler:SetScript("OnKeyUp", function(self, key)
-    SetKeyPropagationSafe(self, true)
-end)
-
-local function IsAnyEditModeActive()
-    local blizzardActive = false
-    if EditModeManagerFrame then
-        if type(EditModeManagerFrame.IsEditModeActive) == "function" then
-            blizzardActive = EditModeManagerFrame:IsEditModeActive()
-        else
-            blizzardActive = not not EditModeManagerFrame.editModeActive
-        end
-    end
-
-    local unitFrameEditActive = ns
-        and ns.QUI_UnitFrames
-        and ns.QUI_UnitFrames.editModeActive
-
-    local groupFrameEditActive = ns
-        and ns.QUI_GroupFrameEditMode
-        and ns.QUI_GroupFrameEditMode:IsEditMode()
-
-    return blizzardActive or unitFrameEditActive or groupFrameEditActive
-end
-
--- Enable/disable keyboard handling based on edit mode state
-function QUICore:UpdateEditModeKeyHandler()
-    if InCombatLockdown() then
-        EditModeKeyHandler:EnableKeyboard(false)
-        return
-    end
-
-    -- If edit mode is not actually active anymore, clear stale selection state.
-    if self.EditModeSelection and self.EditModeSelection.selectedType and not IsAnyEditModeActive() then
-        self:ClearEditModeSelection()
-        return
-    end
-
-    -- Enable keyboard whenever edit mode is active (not just on selection).
-    -- Individual frames no longer call EnableKeyboard — this is the sole handler.
-    -- Arrow keys only nudge when something is selected (OnKeyDown propagates otherwise).
-    if IsAnyEditModeActive() then
-        EditModeKeyHandler:EnableKeyboard(true)
-    else
-        EditModeKeyHandler:EnableKeyboard(false)
-    end
-end
-
-local EditModeKeyHandlerCombatWatcher = CreateFrame("Frame")
-EditModeKeyHandlerCombatWatcher:RegisterEvent("PLAYER_REGEN_DISABLED")
-EditModeKeyHandlerCombatWatcher:RegisterEvent("PLAYER_REGEN_ENABLED")
-EditModeKeyHandlerCombatWatcher:SetScript("OnEvent", function()
-    QUICore:UpdateEditModeKeyHandler()
-end)
-
--- Hook into selection changes to enable/disable key handler
-local origSelectEditModeElement = QUICore.SelectEditModeElement
-function QUICore:SelectEditModeElement(elementType, elementKey)
-    origSelectEditModeElement(self, elementType, elementKey)
-    self:UpdateEditModeKeyHandler()
-end
-
-local origClearEditModeSelection = QUICore.ClearEditModeSelection
-function QUICore:ClearEditModeSelection()
-    origClearEditModeSelection(self)
-    self:UpdateEditModeKeyHandler()
-end
-
--- ============================================================================
--- EDIT MODE CALLBACK REGISTRY
--- Modules call RegisterEditModeEnter/Exit to receive notifications when
--- Edit Mode is toggled, dispatched from the hooksecurefunc hooks below.
+-- UNLOCK MODE / EDIT MODE CALLBACK REGISTRY
+-- Modules call RegisterEditModeEnter/Exit to register callbacks.
+-- These now forward to QUI_LayoutMode (layoutmode.lua) and fire when
+-- Layout Mode opens/closes rather than Blizzard Edit Mode.
 -- ============================================================================
 
 QUICore._editModeEnterCallbacks = {}
@@ -4629,11 +4519,40 @@ QUICore._postInitializeCallbacks = QUICore._postInitializeCallbacks or {}
 QUICore._postEnableCallbacks = QUICore._postEnableCallbacks or {}
 
 function QUICore:RegisterEditModeEnter(callback)
-    table.insert(self._editModeEnterCallbacks, callback)
+    -- Forward to Layout Mode if available, otherwise queue for later bridging
+    local um = ns.QUI_LayoutMode
+    if um then
+        um:RegisterEnterCallback(callback)
+    else
+        table.insert(self._editModeEnterCallbacks, callback)
+    end
 end
 
 function QUICore:RegisterEditModeExit(callback)
-    table.insert(self._editModeExitCallbacks, callback)
+    local um = ns.QUI_LayoutMode
+    if um then
+        um:RegisterExitCallback(callback)
+    else
+        table.insert(self._editModeExitCallbacks, callback)
+    end
+end
+
+function QUICore:RegisterLayoutModeEnter(callback)
+    local um = ns.QUI_LayoutMode
+    if um then
+        um:RegisterEnterCallback(callback)
+    else
+        table.insert(self._editModeEnterCallbacks, callback)
+    end
+end
+
+function QUICore:RegisterLayoutModeExit(callback)
+    local um = ns.QUI_LayoutMode
+    if um then
+        um:RegisterExitCallback(callback)
+    else
+        table.insert(self._editModeExitCallbacks, callback)
+    end
 end
 
 function QUICore:RegisterPostInitialize(callback)
@@ -4693,14 +4612,6 @@ function QUICore:OnEnable()
     self._preservedPanelScale = self.db.profile.configPanelScale
     self._preservedPanelAlpha = self.db.profile.configPanelAlpha
 
-    -- DEFERRED 0.1s: Hook setup (spreads work across frames)
-    C_Timer.After(0.1, function()
-        if not InCombatLockdown() then
-            self:HookViewers()
-            self:HookEditMode()
-        end
-    end)
-
     -- Helper: apply frame anchoring overrides — marks frames in the gatekeeper set
     -- and positions them. Called after each init stage to catch newly created frames.
     local function ApplyFrameOverrides()
@@ -4708,6 +4619,19 @@ function QUICore:OnEnable()
             ns.QUI_Anchoring:ApplyAllFrameAnchors()
         end
     end
+
+    -- IMMEDIATE: Apply frame anchoring synchronously during ADDON_LOADED
+    -- safe window. Uses raw-point mode (size-stable CENTER conversion is
+    -- deferred to later timers when UIParent dimensions have settled).
+    ApplyFrameOverrides()
+
+    -- DEFERRED 0.1s: Hook setup (spreads work across frames)
+    C_Timer.After(0.1, function()
+        if not InCombatLockdown() then
+            self:HookViewers()
+            self:HookEditMode()
+        end
+    end)
 
     -- DEFERRED 0.5s: Unit frames (secure APIs now safe) + global font override + alerts
     C_Timer.After(0.5, function()
@@ -4723,7 +4647,9 @@ function QUICore:OnEnable()
             self:ApplyGlobalFont()
         end
         -- Mark newly created frames + position overrides (gatekeeper blocks later module repositioning)
-        ApplyFrameOverrides()
+        if not InCombatLockdown() then
+            ApplyFrameOverrides()
+        end
     end)
 
     -- DEFERRED 1.0s: First viewer reskin + UI hider + buff borders
@@ -4740,23 +4666,27 @@ function QUICore:OnEnable()
         if RefreshBuffBorders then
             RefreshBuffBorders()
         end
-        ApplyFrameOverrides()
+        if not InCombatLockdown() then
+            ApplyFrameOverrides()
+        end
     end)
 
     -- DEFERRED 2.0s: Safety retry for late-loading frames
     C_Timer.After(2.0, function()
         if not InCombatLockdown() then
             self:ForceReskinAllViewers()
+            ApplyFrameOverrides()
         end
-        ApplyFrameOverrides()
     end)
 
     -- DEFERRED 3.0s: Register all frames as anchor targets + final override apply
     C_Timer.After(3.0, function()
-        if ns.QUI_Anchoring then
-            ns.QUI_Anchoring:RegisterAllFrameTargets()
+        if not InCombatLockdown() then
+            if ns.QUI_Anchoring then
+                ns.QUI_Anchoring:RegisterAllFrameTargets()
+            end
+            ApplyFrameOverrides()
         end
-        ApplyFrameOverrides()
     end)
 
     self:SetupEncounterWarningsSecretValuePatch()
@@ -4793,15 +4723,15 @@ function QUICore:CreateMinimapButton()
             if button == "LeftButton" then
                 self:OpenConfig()
             elseif button == "RightButton" then
-                -- Right click could toggle something or show a menu
-                -- For now, just open config
-                self:OpenConfig()
+                if _G.QUI_ToggleLayoutMode then
+                    _G.QUI_ToggleLayoutMode()
+                end
             end
         end,
         OnTooltipShow = function(tooltip)
             tooltip:SetText("|cFF30D1FFQUI|r")
             tooltip:AddLine("Left-click to open configuration", 1, 1, 1)
-            tooltip:AddLine("Right-click to open configuration", 1, 1, 1)
+            tooltip:AddLine("Right-click to toggle Edit Mode", 1, 1, 1)
         end,
     })
     
@@ -4865,16 +4795,69 @@ function QUICore:HookEditMode()
         -- Track whether we've already hooked BossTargetFrameContainer.GetScaledSelectionSides
         local _bossContainerScaledSidesHooked = false
 
-        -- Hook when Edit Mode is entered
+        -- Blizzard Edit Mode movers to suppress for frames QUI replaces.
+        -- Hook HighlightSystem/SelectSystem on each so the blue selection overlay never appears.
+        local _editModeSuppressionInstalled = false
+        local _editModeSuppressedFrameNames = {
+            -- Unit frames
+            "PlayerFrame", "PetFrame", "PartyFrame",
+            "BossTargetFrameContainer",
+            -- Aura frames
+            "BuffFrame", "DebuffFrame",
+            -- Action bars
+            "StanceBar", "MicroMenuContainer", "BagsBar",
+            "PetActionBar", "ExtraAbilityContainer",
+            -- Cooldown viewers
+            "EssentialCooldownViewer", "UtilityCooldownViewer",
+            "BuffIconCooldownViewer", "BuffBarCooldownViewer",
+            -- Objective tracker
+            "ObjectiveTrackerFrame",
+            -- Cast bar
+            "PlayerCastingBarFrame",
+        }
+
+        local function InstallEditModeSuppression()
+            if _editModeSuppressionInstalled then return end
+            _editModeSuppressionInstalled = true
+            for _, name in ipairs(_editModeSuppressedFrameNames) do
+                local frame = _G[name]
+                if frame and frame.HighlightSystem then
+                    hooksecurefunc(frame, "HighlightSystem", function(f)
+                        if f.ClearHighlight then f:ClearHighlight() end
+                    end)
+                    if frame.SelectSystem then
+                        hooksecurefunc(frame, "SelectSystem", function(f)
+                            if f.ClearHighlight then f:ClearHighlight() end
+                        end)
+                    end
+                end
+            end
+        end
+
+        -- Install on PLAYER_ENTERING_WORLD (all frames exist by then)
+        local suppressFrame = CreateFrame("Frame")
+        suppressFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+        suppressFrame:SetScript("OnEvent", function(f)
+            f:UnregisterAllEvents()
+            InstallEditModeSuppression()
+        end)
+
+        -- Hook when Edit Mode is entered (minimal — no callback dispatch)
         hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
-            -- Dispatch registered enter callbacks
+            _ScheduleReskin(self, 0.1)
+
+            -- Ensure hooks are installed (fallback if PEW hasn't fired yet)
+            InstallEditModeSuppression()
+            -- Deferred force-clear: Blizzard's ShowSystemSelections iterates frames
+            -- via secureexecuterange after EnterEditMode, so clear on next frame
             C_Timer.After(0, function()
-                for _, cb in ipairs(self._editModeEnterCallbacks) do
-                    pcall(cb)
+                for _, name in ipairs(_editModeSuppressedFrameNames) do
+                    local frame = _G[name]
+                    if frame and frame.ClearHighlight then
+                        pcall(frame.ClearHighlight, frame)
+                    end
                 end
             end)
-
-            _ScheduleReskin(self, 0.1)
 
             -- TAINT NOTE: Direct method replacement on secure frame. Required to prevent nil crash
             -- when GetRect() returns nil during Edit Mode. Edit Mode is combat-exclusive, so this
@@ -4895,21 +4878,8 @@ function QUICore:HookEditMode()
             end
         end)
         
-        -- Hook when Edit Mode is exited
-        local _exitCallbacksFired = false
-        local function FireExitCallbacks()
-            if _exitCallbacksFired then return end
-            _exitCallbacksFired = true
-            for _, cb in ipairs(self._editModeExitCallbacks) do
-                pcall(cb)
-            end
-        end
-
+        -- Hook when Edit Mode is exited (minimal — no callback dispatch)
         hooksecurefunc(EditModeManagerFrame, "ExitEditMode", function()
-            _exitCallbacksFired = false
-            -- Dispatch registered exit callbacks
-            C_Timer.After(0, FireExitCallbacks)
-
             C_Timer.After(0.1, function()
                 if not _reskinPending then
                     _reskinPending = true
@@ -4929,36 +4899,6 @@ function QUICore:HookEditMode()
                     end
                 end)
             end)
-        end)
-
-        -- Safety net: OnUpdate watcher detects Edit Mode has closed even if
-        -- the hooksecurefunc hook didn't fire (e.g. ExitEditMode errored out
-        -- due to taint in CompactUnitFrame_UpdateHealthColor or similar).
-        -- Performance: only runs while Edit Mode is active, stops once exit is detected.
-        local editModeExitWatcher = CreateFrame("Frame", nil, UIParent)
-        local _editWatcherElapsed = 0
-        editModeExitWatcher:Hide()  -- start hidden (inactive)
-
-        local function StartEditModeWatcher()
-            _editWatcherElapsed = 0
-            editModeExitWatcher:SetScript("OnUpdate", function(self, delta)
-                _editWatcherElapsed = _editWatcherElapsed + (delta or 0)
-                if _editWatcherElapsed < 0.5 then return end
-                _editWatcherElapsed = 0
-                if not EditModeManagerFrame:IsShown() then
-                    -- Edit Mode closed — stop watcher and fire exit callbacks
-                    self:SetScript("OnUpdate", nil)
-                    self:Hide()
-                    C_Timer.After(0, FireExitCallbacks)
-                end
-            end)
-            editModeExitWatcher:Show()
-        end
-
-        -- Start watcher when entering Edit Mode
-        hooksecurefunc(EditModeManagerFrame, "EnterEditMode", function()
-            _exitCallbacksFired = false
-            StartEditModeWatcher()
         end)
     end
             
