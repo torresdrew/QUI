@@ -355,7 +355,7 @@ local function SetupTooltipHook()
         end
     end)
 
-    -- Spell ID tracking
+    -- Spell ID tracking (per-tooltip dedupe signature)
     local tooltipSpellIDAdded = setmetatable({}, {__mode = "k"})
 
     -- TAINT SAFETY: Use a separate watcher frame to detect GameTooltip
@@ -371,14 +371,52 @@ local function SetupTooltipHook()
         gtSpellIDWasShown = shown
     end)
 
-    local function AddSpellIDToTooltip(tooltip, spellID, skipShow)
+    local function ResolveSpellIDFromTooltipData(tooltip, data)
+        if data then
+            local fromID = data.id
+            if type(fromID) == "number" then
+                if not (type(issecretvalue) == "function" and issecretvalue(fromID)) then
+                    return fromID
+                end
+            end
+
+            local fromSpellID = data.spellID
+            if type(fromSpellID) == "number" then
+                if not (type(issecretvalue) == "function" and issecretvalue(fromSpellID)) then
+                    return fromSpellID
+                end
+            end
+        end
+
+        if tooltip and tooltip.GetSpell then
+            local ok, a, b, c, d = pcall(tooltip.GetSpell, tooltip)
+            if ok then
+                if type(d) == "number" then return d end
+                if type(c) == "number" then return c end
+                if type(b) == "number" then return b end
+                if type(a) == "number" then return a end
+            end
+        end
+
+        return nil
+    end
+
+    local function BuildSpellIDDedupeKey(data, spellID)
+        if not data or type(data.dataInstanceID) ~= "number" then
+            return "spell:" .. tostring(spellID)
+        end
+        return tostring(data.dataInstanceID) .. ":" .. tostring(spellID)
+    end
+
+    local function AddSpellIDToTooltip(tooltip, spellID, data, skipShow)
         if not spellID then return end
         local settings = Provider:GetSettings()
         if not settings or not settings.enabled or not settings.showSpellIDs then return end
         if type(spellID) ~= "number" then return end
         if type(issecretvalue) == "function" and issecretvalue(spellID) then return end
-        if tooltipSpellIDAdded[tooltip] then return end
-        tooltipSpellIDAdded[tooltip] = true
+        local dedupeKey = BuildSpellIDDedupeKey(data, spellID)
+        if tooltipSpellIDAdded[tooltip] == dedupeKey then return end
+        tooltipSpellIDAdded[tooltip] = dedupeKey
 
         local iconID = nil
         if C_Spell and C_Spell.GetSpellTexture then
@@ -402,18 +440,21 @@ local function SetupTooltipHook()
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Spell, function(tooltip, data)
         if InCombatLockdown() then return end
         pcall(function()
-            if data and data.id and type(data.id) == "number" then
-                AddSpellIDToTooltip(tooltip, data.id)
+            local spellID = ResolveSpellIDFromTooltipData(tooltip, data)
+            if spellID then
+                AddSpellIDToTooltip(tooltip, spellID, data)
             end
         end)
     end)
 
-    if Enum.TooltipDataType.Aura then
-        TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Aura, function(tooltip, data)
+    local auraTooltipType = Enum.TooltipDataType.UnitAura or Enum.TooltipDataType.Aura
+    if auraTooltipType then
+        TooltipDataProcessor.AddTooltipPostCall(auraTooltipType, function(tooltip, data)
             if InCombatLockdown() then return end
             pcall(function()
-                if data and data.id and type(data.id) == "number" then
-                    AddSpellIDToTooltip(tooltip, data.id, false)
+                local spellID = ResolveSpellIDFromTooltipData(tooltip, data)
+                if spellID then
+                    AddSpellIDToTooltip(tooltip, spellID, data, false)
                 end
             end)
         end)
