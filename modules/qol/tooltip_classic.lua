@@ -88,7 +88,7 @@ end
 ---------------------------------------------------------------------------
 -- DEBOUNCE STATE
 ---------------------------------------------------------------------------
-local pendingSetUnit = nil
+local pendingSetUnitToken = 0
 local tooltipPlayerItemLevelGUID = setmetatable({}, {__mode = "k"})
 local DEFAULT_PLAYER_ILVL_BRACKETS = {
     white = 245,
@@ -105,6 +105,30 @@ local function RefreshTooltipLayout(tooltip)
         pcall(tooltip.UpdateTooltipSize, tooltip)
     end
     pcall(tooltip.Show, tooltip)
+end
+
+local function InvalidatePendingSetUnit()
+    pendingSetUnitToken = pendingSetUnitToken + 1
+end
+
+local function ShouldHideOwnedTooltip(tooltip)
+    local owner = tooltip and tooltip.GetOwner and tooltip:GetOwner() or nil
+    if not owner then
+        return false
+    end
+    if Provider:IsTransientTooltipOwner(owner) then
+        return false
+    end
+    if Provider:IsOwnerFadedOut(owner) then
+        return true
+    end
+    if not InCombatLockdown() then
+        local context = Provider:GetTooltipContext(owner)
+        if context and not Provider:ShouldShowTooltip(context) then
+            return true
+        end
+    end
+    return false
 end
 
 local function ResolveTooltipUnit(tooltip)
@@ -234,13 +258,15 @@ local function SetupTooltipHook()
         local settings = Provider:GetSettings()
         if not settings or not settings.enabled then return end
 
+        InvalidatePendingSetUnit()
+
         -- Visibility/context checks call methods on Blizzard frames (GetName,
         -- GetAttribute, GetActionInfo) which can taint the execution context
         -- during combat. Skip them — combat hiding is handled by the SetUnit
         -- hook and OnCombatStateChanged instead.
         if not InCombatLockdown() then
             local context = Provider:GetTooltipContext(parent)
-            if not Provider:ShouldShowTooltip(context) then
+            if context and not Provider:ShouldShowTooltip(context) then
                 tooltip:Hide()
                 tooltip:SetOwner(UIParent, "ANCHOR_NONE")
                 tooltip:ClearLines()
@@ -279,11 +305,19 @@ local function SetupTooltipHook()
             end
         end
 
-        if pendingSetUnit then return end
-        pendingSetUnit = C_Timer.After(0.1, function()
-            pendingSetUnit = nil
+        local owner = tooltip:GetOwner()
+        local token = pendingSetUnitToken + 1
+        pendingSetUnitToken = token
+        C_Timer.After(0.1, function()
+            if token ~= pendingSetUnitToken then return end
             if tooltip.IsForbidden and tooltip:IsForbidden() then return end
-            if tooltip:GetOwner() == UIParent and Provider:IsFrameBlockingMouse() then
+            if not tooltip:IsShown() then return end
+            if tooltip:GetOwner() ~= owner then return end
+            if owner ~= UIParent then return end
+            local unit = ResolveTooltipUnit(tooltip)
+            if unit and UnitExists(unit) then return end
+            if UnitExists("mouseover") then return end
+            if Provider:IsFrameBlockingMouse() then
                 tooltip:Hide()
             end
         end)
@@ -366,6 +400,7 @@ local function SetupTooltipHook()
     gtSpellIDWatcher:SetScript("OnUpdate", function()
         local shown = GameTooltip:IsShown()
         if gtSpellIDWasShown and not shown then
+            InvalidatePendingSetUnit()
             tooltipSpellIDAdded[GameTooltip] = nil
         end
         gtSpellIDWasShown = shown
@@ -433,16 +468,9 @@ local function SetupTooltipHook()
         if tooltip.IsForbidden and tooltip:IsForbidden() then return end
         local settings = Provider:GetSettings()
         if not settings or not settings.enabled then return end
-        local owner = tooltip:GetOwner()
-        if Provider:IsOwnerFadedOut(owner) then
+        InvalidatePendingSetUnit()
+        if ShouldHideOwnedTooltip(tooltip) then
             tooltip:Hide()
-            return
-        end
-        if not InCombatLockdown() then
-            local context = Provider:GetTooltipContext(owner)
-            if not Provider:ShouldShowTooltip(context) then
-                tooltip:Hide()
-            end
         end
     end)
 
@@ -451,16 +479,9 @@ local function SetupTooltipHook()
         if tooltip.IsForbidden and tooltip:IsForbidden() then return end
         local settings = Provider:GetSettings()
         if not settings or not settings.enabled then return end
-        local owner = tooltip:GetOwner()
-        if Provider:IsOwnerFadedOut(owner) then
+        InvalidatePendingSetUnit()
+        if ShouldHideOwnedTooltip(tooltip) then
             tooltip:Hide()
-            return
-        end
-        if not InCombatLockdown() then
-            local context = Provider:GetTooltipContext(owner)
-            if not Provider:ShouldShowTooltip(context) then
-                tooltip:Hide()
-            end
         end
     end)
 
@@ -490,7 +511,7 @@ local function OnModifierStateChanged()
     if not settings or not settings.enabled then return end
     local owner = GameTooltip:GetOwner()
     local context = Provider:GetTooltipContext(owner)
-    if not Provider:ShouldShowTooltip(context) then
+    if context and not Provider:ShouldShowTooltip(context) then
         GameTooltip:Hide()
     end
 end

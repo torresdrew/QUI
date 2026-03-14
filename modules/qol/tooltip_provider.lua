@@ -54,6 +54,41 @@ local strmatch = string.match
 local GetMouseFoci = GetMouseFoci
 local WorldFrame = WorldFrame
 
+local function GetFrameName(frame)
+    if not frame or not frame.GetName then
+        return ""
+    end
+    local ok, name = pcall(frame.GetName, frame)
+    if not ok or type(name) ~= "string" then
+        return ""
+    end
+    return name
+end
+
+local function IsOPieFrameName(name)
+    if name == "" then
+        return false
+    end
+    return strmatch(name, "^OneRing") or
+       strmatch(name, "^ORL_") or
+       strmatch(name, "^ORLOpen")
+end
+
+local function IsOPieFrame(frame)
+    local depth = 0
+    while frame and depth < 5 do
+        if IsOPieFrameName(GetFrameName(frame)) then
+            return true
+        end
+        if frame == UIParent then
+            break
+        end
+        frame = frame.GetParent and frame:GetParent() or nil
+        depth = depth + 1
+    end
+    return false
+end
+
 ---------------------------------------------------------------------------
 -- Cached UI Scale
 -- GetEffectiveScale() can return secret values during combat.
@@ -109,6 +144,7 @@ function TooltipProvider:IsFrameBlockingMouse()
     local focus = self:GetTopMouseFrame()
     if not focus then return false end
     if focus == WorldFrame then return false end
+    if IsOPieFrame(focus) then return false end
     return focus:IsVisible()
 end
 
@@ -134,8 +170,16 @@ local FADED_ALPHA_THRESHOLD = 0.5
 
 function TooltipProvider:IsOwnerFadedOut(owner)
     if not owner or not owner.GetEffectiveAlpha then return false end
+    if IsOPieFrame(owner) then return false end
     local alpha = Helpers.SafeToNumber(owner:GetEffectiveAlpha(), 1)
     return alpha < FADED_ALPHA_THRESHOLD
+end
+
+function TooltipProvider:IsTransientTooltipOwner(owner)
+    if not owner then
+        return false
+    end
+    return owner == UIParent or IsOPieFrame(owner)
 end
 
 ---------------------------------------------------------------------------
@@ -145,6 +189,8 @@ end
 function TooltipProvider:GetTooltipContext(owner)
     if not owner then return "npcs" end
     if owner.IsForbidden and owner:IsForbidden() then return "npcs" end
+    if owner == WorldFrame then return "npcs" end
+    if self:IsTransientTooltipOwner(owner) then return nil end
 
     -- CDM: Check for skinned CDM icons
     local getIS = _G.QUI_GetCDMIconState
@@ -229,7 +275,7 @@ function TooltipProvider:GetTooltipContext(owner)
         return "frames"
     end
 
-    return "npcs"
+    return nil
 end
 
 ---------------------------------------------------------------------------
