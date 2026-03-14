@@ -16,6 +16,7 @@ local CACHE_TTL = 600
 local CACHE_MAX_SIZE = 200
 local REQUEST_DELAY = 0.05
 local REQUEST_TIMEOUT = 1.5
+local SUPPRESSED_GUID_TTL = 120
 
 local cache = {}
 local cacheSize = 0
@@ -24,9 +25,32 @@ local activeRequest = nil
 local activeTimeout = nil
 local queuedRequest = nil
 local refreshCallback = nil
+local suppressedGUIDs = {}
 
 local function GetInspectFrame()
     return _G.InspectFrame
+end
+
+local function IsTooltipPlayerItemLevelEnabled()
+    local tooltipSettings = Helpers.GetModuleDB and Helpers.GetModuleDB("tooltip")
+    return tooltipSettings and tooltipSettings.enabled and tooltipSettings.showPlayerItemLevel
+end
+
+local function IsSafeGUID(guid)
+    return guid and not Helpers.IsSecretValue(guid)
+end
+
+local function IsUnitGUIDMatch(unit, expectedGUID)
+    if not unit or not UnitExists(unit) or not IsSafeGUID(expectedGUID) then
+        return false
+    end
+
+    local unitGUID = UnitGUID(unit)
+    if not IsSafeGUID(unitGUID) then
+        return false
+    end
+
+    return unitGUID == expectedGUID
 end
 
 local COUNTED_SLOTS = {
@@ -51,6 +75,22 @@ local COUNTED_SLOTS = {
 local function TouchCacheEntry(entry)
     accessCounter = accessCounter + 1
     entry.lastAccess = accessCounter
+end
+
+local function MarkGUIDSuppressed(guid)
+    if not guid then return end
+    suppressedGUIDs[guid] = GetTime()
+end
+
+local function IsGUIDSuppressed(guid)
+    if not guid then return false end
+    local suppressedAt = suppressedGUIDs[guid]
+    if not suppressedAt then return false end
+    if (GetTime() - suppressedAt) > SUPPRESSED_GUID_TTL then
+        suppressedGUIDs[guid] = nil
+        return false
+    end
+    return true
 end
 
 local function RemoveCacheEntry(guid)
@@ -94,7 +134,12 @@ end
 
 local function StoreCacheEntry(guid, data)
     if not guid or type(data) ~= "table" then return end
-    if not data.itemLevel or data.itemLevel <= 0 then return end
+    if Helpers.IsSecretValue(data.itemLevel) then
+        return
+    end
+
+    local itemLevel = tonumber(data.itemLevel)
+    if not itemLevel or itemLevel <= 0 then return end
 
     local entry = cache[guid]
     if not entry then
@@ -103,13 +148,14 @@ local function StoreCacheEntry(guid, data)
         cacheSize = cacheSize + 1
     end
 
-    entry.itemLevel = data.itemLevel
+    entry.itemLevel = itemLevel
     entry.specName = data.specName
     entry.className = data.className
     entry.classToken = data.classToken
     entry.timestamp = GetTime()
     TouchCacheEntry(entry)
     PruneCache()
+    suppressedGUIDs[guid] = nil
 end
 
 local function ResolveTooltipUnit(tooltip)
@@ -126,30 +172,34 @@ local function ResolveTooltipUnit(tooltip)
 end
 
 local function ResolveLiveUnit(guid, preferredUnit)
-    if preferredUnit and UnitExists(preferredUnit) and UnitGUID(preferredUnit) == guid then
+    if not IsSafeGUID(guid) then
+        return nil
+    end
+
+    if preferredUnit and IsUnitGUIDMatch(preferredUnit, guid) then
         return preferredUnit
     end
 
     local tooltipUnit = ResolveTooltipUnit(GameTooltip)
-    if tooltipUnit and UnitGUID(tooltipUnit) == guid then
+    if tooltipUnit and IsUnitGUIDMatch(tooltipUnit, guid) then
         return tooltipUnit
     end
 
     local inspectFrame = GetInspectFrame()
     local inspectUnit = inspectFrame and inspectFrame.unit
-    if inspectUnit and UnitExists(inspectUnit) and UnitGUID(inspectUnit) == guid then
+    if inspectUnit and IsUnitGUIDMatch(inspectUnit, guid) then
         return inspectUnit
     end
 
-    if UnitExists("mouseover") and UnitGUID("mouseover") == guid then
+    if IsUnitGUIDMatch("mouseover", guid) then
         return "mouseover"
     end
 
-    if UnitExists("target") and UnitGUID("target") == guid then
+    if IsUnitGUIDMatch("target", guid) then
         return "target"
     end
 
-    if UnitExists("focus") and UnitGUID("focus") == guid then
+    if IsUnitGUIDMatch("focus", guid) then
         return "focus"
     end
 
@@ -173,28 +223,39 @@ local function CalculateFallbackItemLevel(unit)
     local totalItemLevel = 0
     local slotCount = 0
     local is2H = IsMainHand2H(unit)
+    local sawSecretValue = false
 
     for slotId in pairs(COUNTED_SLOTS) do
         if slotId == INVSLOT_OFFHAND and is2H then
             local mainHandLevel = getSlotItemLevel(unit, INVSLOT_MAINHAND)
-            if mainHandLevel and mainHandLevel > 0 then
-                totalItemLevel = totalItemLevel + mainHandLevel
-                slotCount = slotCount + 1
+            if Helpers.IsSecretValue(mainHandLevel) then
+                sawSecretValue = true
+            else
+                local mainHandItemLevel = tonumber(mainHandLevel)
+                if mainHandItemLevel and mainHandItemLevel > 0 then
+                    totalItemLevel = totalItemLevel + mainHandItemLevel
+                    slotCount = slotCount + 1
+                end
             end
         else
             local itemLevel = getSlotItemLevel(unit, slotId)
-            if itemLevel and itemLevel > 0 then
-                totalItemLevel = totalItemLevel + itemLevel
-                slotCount = slotCount + 1
+            if Helpers.IsSecretValue(itemLevel) then
+                sawSecretValue = true
+            else
+                local slotItemLevel = tonumber(itemLevel)
+                if slotItemLevel and slotItemLevel > 0 then
+                    totalItemLevel = totalItemLevel + slotItemLevel
+                    slotCount = slotCount + 1
+                end
             end
         end
     end
 
     if slotCount > 0 then
-        return totalItemLevel / slotCount
+        return totalItemLevel / slotCount, false
     end
 
-    return nil
+    return nil, sawSecretValue
 end
 
 local function ReadInspectedItemLevel(unit)
@@ -204,8 +265,14 @@ local function ReadInspectedItemLevel(unit)
         local ok, itemLevel = pcall(function()
             return C_PaperDollInfo.GetInspectItemLevel(unit)
         end)
-        if ok and itemLevel and itemLevel > 0 then
-            return itemLevel
+        if ok and itemLevel then
+            if Helpers.IsSecretValue(itemLevel) then
+                return nil, true
+            end
+            local inspectedItemLevel = tonumber(itemLevel)
+            if inspectedItemLevel and inspectedItemLevel > 0 then
+                return inspectedItemLevel, false
+            end
         end
     end
 
@@ -250,6 +317,9 @@ local function GetSpecName(unit, useInspectData)
 end
 
 local function BuildPlayerData(unit, itemLevel, useInspectData)
+    if Helpers.IsSecretValue(itemLevel) then return nil end
+
+    itemLevel = tonumber(itemLevel)
     if not itemLevel or itemLevel <= 0 then return nil end
 
     local className, classToken = GetClassData(unit)
@@ -273,7 +343,7 @@ end
 local ProcessQueuedRequest
 
 local function FinalizeRequest(matchingGUID)
-    if activeRequest and activeRequest.guid == matchingGUID then
+    if activeRequest and IsSafeGUID(activeRequest.guid) and IsSafeGUID(matchingGUID) and activeRequest.guid == matchingGUID then
         if type(ClearInspectPlayer) == "function" then
             pcall(ClearInspectPlayer)
         end
@@ -287,13 +357,20 @@ function TooltipInspect:RegisterRefreshCallback(callback)
 end
 
 function TooltipInspect:GetCachedPlayerData(unit)
+    if not IsTooltipPlayerItemLevelEnabled() then return nil end
     if not unit or not UnitExists(unit) then return nil end
 
     local guid = UnitGUID(unit)
-    if not guid then return nil end
+    if not IsSafeGUID(guid) then return nil end
+    if IsGUIDSuppressed(guid) then return nil end
 
     if UnitIsUnit(unit, "player") then
         local _, equipped = GetAverageItemLevel()
+        if Helpers.IsSecretValue(equipped) then
+            equipped = nil
+        else
+            equipped = tonumber(equipped)
+        end
         if equipped and equipped > 0 then
             local playerData = BuildPlayerData(unit, equipped, false)
             if playerData then
@@ -312,11 +389,13 @@ function TooltipInspect:GetCachedItemLevel(unit)
 end
 
 function TooltipInspect:QueueInspect(unit)
+    if not IsTooltipPlayerItemLevelEnabled() then return false end
     if not unit or not UnitExists(unit) or InCombatLockdown() then return false end
     if not UnitIsPlayer(unit) or UnitIsUnit(unit, "player") then return false end
 
     local guid = UnitGUID(unit)
-    if not guid or GetCacheEntry(guid) then return false end
+    if not IsSafeGUID(guid) or GetCacheEntry(guid) then return false end
+    if IsGUIDSuppressed(guid) then return false end
 
     -- Avoid competing with the dedicated inspect pane's own NotifyInspect flow.
     local inspectFrame = GetInspectFrame()
@@ -362,9 +441,10 @@ ProcessQueuedRequest = function()
 
         local unit = request.unit
         local guid = request.guid
-        if not unit or not guid then return end
-        if not UnitExists(unit) or UnitGUID(unit) ~= guid then return end
+        if not unit or not IsSafeGUID(guid) then return end
+        if not IsUnitGUIDMatch(unit, guid) then return end
         if InCombatLockdown() then return end
+        if not IsTooltipPlayerItemLevelEnabled() then return end
 
         local ok, canInspect = pcall(function()
             return CanInspect(unit)
@@ -390,17 +470,28 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("INSPECT_READY")
 eventFrame:SetScript("OnEvent", function(_, event, guid)
-    if event ~= "INSPECT_READY" or not guid then return end
+    if event ~= "INSPECT_READY" or not IsSafeGUID(guid) then
+        if activeRequest and IsSafeGUID(activeRequest.guid) then
+            FinalizeRequest(activeRequest.guid)
+        end
+        return
+    end
 
-    local preferredUnit = activeRequest and activeRequest.guid == guid and activeRequest.unit or nil
+    if not IsTooltipPlayerItemLevelEnabled() then
+        FinalizeRequest(guid)
+        return
+    end
+
+    local preferredUnit = activeRequest and IsSafeGUID(activeRequest.guid) and activeRequest.guid == guid and activeRequest.unit or nil
     local unit = ResolveLiveUnit(guid, preferredUnit)
     if unit then
-        local itemLevel = ReadInspectedItemLevel(unit)
-        if itemLevel and itemLevel > 0 then
-            local playerData = BuildPlayerData(unit, itemLevel, true)
-            if playerData then
-                StoreCacheEntry(guid, playerData)
-            end
+        local itemLevel, isRestricted = ReadInspectedItemLevel(unit)
+        if isRestricted then
+            MarkGUIDSuppressed(guid)
+        end
+        local playerData = BuildPlayerData(unit, itemLevel, true)
+        if playerData then
+            StoreCacheEntry(guid, playerData)
             if refreshCallback then
                 refreshCallback(guid, playerData)
             end

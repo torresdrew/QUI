@@ -145,6 +145,15 @@ local function ResolveTooltipUnit(tooltip)
 end
 
 local function GetPlayerItemLevelColor(itemLevel)
+    if Helpers.IsSecretValue(itemLevel) then
+        return 1, 1, 1
+    end
+
+    itemLevel = tonumber(itemLevel)
+    if not itemLevel then
+        return 1, 1, 1
+    end
+
     local settings = Provider and Provider:GetSettings()
     if not settings or settings.colorPlayerItemLevel == false then
         return 1, 1, 1
@@ -217,7 +226,7 @@ local function AddPlayerItemLevelToTooltip(tooltip, unit, skipShow)
     if InCombatLockdown() then return false end
 
     local playerData = TooltipInspect:GetCachedPlayerData(unit)
-    if not playerData or not playerData.itemLevel or playerData.itemLevel <= 0 then
+    if not playerData or not playerData.itemLevel then
         if not InCombatLockdown() then
             TooltipInspect:QueueInspect(unit)
         end
@@ -229,7 +238,15 @@ local function AddPlayerItemLevelToTooltip(tooltip, unit, skipShow)
         return false
     end
 
-    local itemLevel = playerData.itemLevel
+    if Helpers.IsSecretValue(playerData.itemLevel) then
+        return false
+    end
+
+    local itemLevel = tonumber(playerData.itemLevel)
+    if not itemLevel or itemLevel <= 0 then
+        return false
+    end
+
     local label = GetPlayerItemLevelLabel(playerData)
     local labelR, labelG, labelB = GetPlayerClassColor(playerData.classToken)
     local valueR, valueG, valueB = GetPlayerItemLevelColor(itemLevel)
