@@ -1,6 +1,6 @@
 --[[
     QUI Options - 3rd Party Addons Anchoring
-    Anchoring controls for BigWigs and DandersFrames integrations.
+    Anchoring controls for BigWigs, DandersFrames, and AbilityTimeline integrations.
 ]]
 
 local ADDON_NAME, ns = ...
@@ -25,6 +25,21 @@ local ANCHOR_POINTS = {
 }
 
 local FORM_ROW = 32
+
+local function FilterAnchorOptions(anchorOptions, excludedValue)
+    if not anchorOptions or not excludedValue then
+        return anchorOptions
+    end
+
+    local filtered = {}
+    for _, option in ipairs(anchorOptions) do
+        -- Keep headers (value=nil) and every non-excluded option.
+        if option.value == nil or option.value ~= excludedValue then
+            table.insert(filtered, option)
+        end
+    end
+    return filtered
+end
 
 local function BuildAnchorSection(content, label, cfg, y, anchorOptions, onChange)
     local PAD = PADDING
@@ -162,6 +177,56 @@ local function BuildDandersSection(tabContent, y)
     return y
 end
 
+local function BuildAbilityTimelineSection(tabContent, y)
+    local PAD = PADDING
+
+    local header = GUI:CreateSectionHeader(tabContent, "AbilityTimeline")
+    header:SetPoint("TOPLEFT", PAD, y)
+    y = y - header.gap
+
+    if not (ns.QUI_AbilityTimeline and ns.QUI_AbilityTimeline:IsAvailable()) then
+        local info = GUI:CreateLabel(tabContent, "AbilityTimeline not detected. Install and enable AbilityTimeline to use these anchors.", 11, C.textMuted)
+        info:SetPoint("TOPLEFT", PAD, y)
+        info:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        info:SetJustifyH("LEFT")
+        return y - 26
+    end
+
+    local core = GetCore()
+    local db = core and core.db and core.db.profile and core.db.profile.abilityTimeline
+    if not db then
+        local errorLabel = GUI:CreateLabel(tabContent, "AbilityTimeline anchor database not loaded. Please reload UI.", 12, {1, 0.3, 0.3, 1})
+        errorLabel:SetPoint("TOPLEFT", PAD, y)
+        return y - 24
+    end
+
+    local info = GUI:CreateLabel(tabContent, "Anchor AbilityTimeline frames to QUI elements. This controls the timeline and big icon frame positions.", 11, C.textMuted)
+    info:SetPoint("TOPLEFT", PAD, y)
+    info:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+    info:SetJustifyH("LEFT")
+    y = y - 28
+
+    local anchorOptions = ns.QUI_AbilityTimeline:BuildAnchorOptions()
+    local ownTargetByKey = {
+        timeline = "abilityTimelineTimeline",
+        bigIcon = "abilityTimelineBigIcon",
+    }
+    local keys = {
+        {key = "timeline", label = "Timeline Frame"},
+        {key = "bigIcon", label = "Big Icon Frame"},
+    }
+
+    for _, entry in ipairs(keys) do
+        local cfg = db[entry.key]
+        local entryAnchorOptions = FilterAnchorOptions(anchorOptions, ownTargetByKey[entry.key])
+        y = BuildAnchorSection(tabContent, entry.label, cfg, y, entryAnchorOptions, function()
+            ns.QUI_AbilityTimeline:ApplyPosition(entry.key)
+        end)
+    end
+
+    return y
+end
+
 local function BuildThirdPartyTab(tabContent)
     local y = -10
     local PAD = PADDING
@@ -177,6 +242,8 @@ local function BuildThirdPartyTab(tabContent)
     y = BuildBigWigsSection(tabContent, y)
     y = y - 4
     y = BuildDandersSection(tabContent, y)
+    y = y - 4
+    y = BuildAbilityTimelineSection(tabContent, y)
 
     tabContent:SetHeight(math.abs(y) + 30)
 end

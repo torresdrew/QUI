@@ -3661,6 +3661,26 @@ local defaults = {
             },
         },
 
+        -- AbilityTimeline Integration: Anchor timeline and big icon frames to QUI elements
+        abilityTimeline = {
+            timeline = {
+                enabled = false,
+                anchorTo = "disabled",
+                sourcePoint = "TOP",
+                targetPoint = "BOTTOM",
+                offsetX = 0,
+                offsetY = -5,
+            },
+            bigIcon = {
+                enabled = false,
+                anchorTo = "disabled",
+                sourcePoint = "TOP",
+                targetPoint = "BOTTOM",
+                offsetX = 0,
+                offsetY = -5,
+            },
+        },
+
         -- BigWigs Integration: Anchor BigWigs normal/emphasized bars to QUI elements
         bigWigs = {
             backupPositions = {},

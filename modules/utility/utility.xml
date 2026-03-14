@@ -5,4 +5,5 @@
     <Script file="anchoring.lua"/>
     <Script file="bigwigs.lua"/>
     <Script file="dandersframes.lua"/>
+    <Script file="abilitytimeline.lua"/>
 </Ui>

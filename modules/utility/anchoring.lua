@@ -1308,7 +1308,7 @@ local FRAME_RESOLVERS = {
     buffFrame = function() return _G["BuffFrame"] end,
     debuffFrame = function() return _G["DebuffFrame"] end,
     chatFrame1 = function() return _G["ChatFrame1"] end,
-    -- External (DandersFrames)
+    -- External (DandersFrames, AbilityTimeline)
     dandersParty = function()
         if ns.QUI_DandersFrames and ns.QUI_DandersFrames:IsAvailable() then
             local frames = ns.QUI_DandersFrames:GetContainerFrames("party")
@@ -1320,6 +1320,12 @@ local FRAME_RESOLVERS = {
             local frames = ns.QUI_DandersFrames:GetContainerFrames("raid")
             return frames and frames[1]
         end
+    end,
+    abilityTimelineTimeline = function()
+        return _G["AbilityTimelineFrame"]
+    end,
+    abilityTimelineBigIcon = function()
+        return _G["AbilityTimelineBigIconFrame"]
     end,
 }
 
@@ -1433,6 +1439,8 @@ local FRAME_ANCHOR_INFO = {
     chatFrame1      = { displayName = "Chat Frame",            category = "Display",           order = 5 },
     dandersParty    = { displayName = "DandersFrames Party",   category = "External",          order = 1 },
     dandersRaid     = { displayName = "DandersFrames Raid",    category = "External",          order = 2 },
+    abilityTimelineTimeline = { displayName = "AbilityTimeline Timeline", category = "External", order = 3 },
+    abilityTimelineBigIcon = { displayName = "AbilityTimeline Big Icon", category = "External", order = 4 },
 }
 
 -- Virtual anchor proxy parents.
