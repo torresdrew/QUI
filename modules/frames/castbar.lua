@@ -634,6 +634,65 @@ local function UpdateIconPosition(anchorFrame, castSettings, iconSize, iconScale
     end
 end
 
+local function ApplyCastbarLayerOrder(anchorFrame)
+    if not anchorFrame or anchorFrame._quiApplyingLayerOrder then return end
+
+    local statusBar = anchorFrame.statusBar
+    if not statusBar then return end
+
+    anchorFrame._quiApplyingLayerOrder = true
+
+    local anchorLevel = anchorFrame:GetFrameLevel() or 0
+    local desiredStatusBarLevel = anchorLevel + 1
+    if statusBar:GetFrameLevel() ~= desiredStatusBarLevel then
+        statusBar:SetFrameLevel(desiredStatusBarLevel)
+    end
+
+    local border = anchorFrame.Border or statusBar.Border
+    if border then
+        local desiredBorderLevel = statusBar:GetFrameLevel() + 1
+        if border:GetFrameLevel() ~= desiredBorderLevel then
+            border:SetFrameLevel(desiredBorderLevel)
+        end
+    end
+
+    local iconFrame = anchorFrame.icon
+    if iconFrame then
+        local iconBaseLevel = border and border:GetFrameLevel() or (statusBar:GetFrameLevel() + 1)
+        local desiredIconLevel = iconBaseLevel + 1
+        if iconFrame:GetFrameLevel() ~= desiredIconLevel then
+            iconFrame:SetFrameLevel(desiredIconLevel)
+        end
+    end
+
+    anchorFrame._quiApplyingLayerOrder = nil
+end
+
+local function InstallCastbarLayeringSafety(anchorFrame)
+    if not anchorFrame or anchorFrame._quiLayeringSafetyInstalled then return end
+    local statusBar = anchorFrame.statusBar
+    if not statusBar then return end
+
+    anchorFrame._quiLayeringSafetyInstalled = true
+
+    hooksecurefunc(anchorFrame, "SetFrameLevel", function(frame)
+        ApplyCastbarLayerOrder(frame)
+    end)
+
+    hooksecurefunc(statusBar, "SetFrameLevel", function()
+        ApplyCastbarLayerOrder(anchorFrame)
+    end)
+
+    local border = anchorFrame.Border or statusBar.Border
+    if border then
+        hooksecurefunc(border, "SetFrameLevel", function()
+            ApplyCastbarLayerOrder(anchorFrame)
+        end)
+    end
+
+    ApplyCastbarLayerOrder(anchorFrame)
+end
+
 local function UpdateStatusBarPosition(anchorFrame, castSettings, barHeight, iconSize, iconScale, borderSize)
     local statusBar = anchorFrame.statusBar
     local border = anchorFrame and anchorFrame.Border
@@ -672,14 +731,15 @@ local function UpdateStatusBarPosition(anchorFrame, castSettings, barHeight, ico
     end
 
     if border then
-        border:SetFrameLevel(statusBar:GetFrameLevel() + 1)
-
         if borderSize > 0 then
             border:Show()
         else
             border:Hide()
         end
     end
+
+    InstallCastbarLayeringSafety(anchorFrame)
+    ApplyCastbarLayerOrder(anchorFrame)
 end
 
 local VALID_TEXT_ANCHORS = {
