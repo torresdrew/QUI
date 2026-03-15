@@ -1226,6 +1226,55 @@ local DEFENSIVE_GROWTH_OFFSETS = {
     DOWN   = function(size, spacing) return 0, -(size + spacing) end,
 }
 
+local function AuraMatchesDefensiveClassification(unit, auraInstanceID, classification)
+    if not unit or not classification or not auraInstanceID or IsSecretValue(auraInstanceID) then
+        return false
+    end
+    if not C_UnitAuras or not C_UnitAuras.IsAuraFilteredOutByInstanceID then
+        return false
+    end
+
+    local ok, filteredOut = pcall(
+        C_UnitAuras.IsAuraFilteredOutByInstanceID,
+        unit,
+        auraInstanceID,
+        "HELPFUL|" .. classification
+    )
+    if not ok or IsSecretValue(filteredOut) then
+        return false
+    end
+
+    return not filteredOut
+end
+
+local function IsVerifiedDefensiveAura(unit, auraData)
+    if not unit or not auraData then
+        return false
+    end
+
+    -- Fast path: known spell IDs in the fallback allow-list.
+    local spellID = SafeValue(auraData.spellId, nil)
+    if spellID and DEFENSIVE_SPELL_IDS[spellID] then
+        return true
+    end
+
+    -- Fail closed when aura data is obfuscated (common when units are far away).
+    local auraInstanceID = auraData.auraInstanceID
+    local filters = AuraUtil and AuraUtil.AuraFilters
+    if not auraInstanceID or not filters then
+        return false
+    end
+
+    if AuraMatchesDefensiveClassification(unit, auraInstanceID, filters.BigDefensive) then
+        return true
+    end
+    if AuraMatchesDefensiveClassification(unit, auraInstanceID, filters.ExternalDefensive) then
+        return true
+    end
+
+    return false
+end
+
 local function UpdateDefensiveIndicator(frame)
     if not frame or not frame.unit or not frame.defensiveIcons then return end
 
@@ -1257,7 +1306,9 @@ local function UpdateDefensiveIndicator(frame)
                 "HELPFUL|" .. AuraUtil.AuraFilters.BigDefensive, maxIcons)
             if ok and auras then
                 for _, aura in ipairs(auras) do
-                    if aura.auraInstanceID and not seen[aura.auraInstanceID] then
+                    if IsVerifiedDefensiveAura(unit, aura)
+                       and aura.auraInstanceID
+                       and not seen[aura.auraInstanceID] then
                         seen[aura.auraInstanceID] = true
                         foundAuras[#foundAuras + 1] = aura
                     end
@@ -1271,7 +1322,9 @@ local function UpdateDefensiveIndicator(frame)
                 "HELPFUL|" .. AuraUtil.AuraFilters.ExternalDefensive, maxIcons - #foundAuras)
             if ok and auras then
                 for _, aura in ipairs(auras) do
-                    if aura.auraInstanceID and not seen[aura.auraInstanceID] then
+                    if IsVerifiedDefensiveAura(unit, aura)
+                       and aura.auraInstanceID
+                       and not seen[aura.auraInstanceID] then
                         seen[aura.auraInstanceID] = true
                         foundAuras[#foundAuras + 1] = aura
                         if #foundAuras >= maxIcons then break end
@@ -1285,8 +1338,7 @@ local function UpdateDefensiveIndicator(frame)
             local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
             if cache and cache.helpful then
                 for _, auraData in ipairs(cache.helpful) do
-                    local spellID = SafeValue(auraData.spellId, nil)
-                    if spellID and DEFENSIVE_SPELL_IDS[spellID] then
+                    if IsVerifiedDefensiveAura(unit, auraData) then
                         local instID = auraData.auraInstanceID
                         if not instID or not seen[instID] then
                             if instID then seen[instID] = true end
