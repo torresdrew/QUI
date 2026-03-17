@@ -240,6 +240,13 @@ local function CreateCustomIcon(parent, entry, initialSize)
     icon:SetScript("OnEnter", function(self)
         local e = self._customCDMEntry
         if not e then return end
+        local tooltipProvider = ns.TooltipProvider
+        if tooltipProvider and tooltipProvider.ShouldShowTooltip then
+            if not tooltipProvider:ShouldShowTooltip("cdm") then
+                pcall(GameTooltip.Hide, GameTooltip)
+                return
+            end
+        end
 
         pcall(function()
             local core = GetCore()

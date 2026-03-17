@@ -901,6 +901,14 @@ local function CreateTrackerIcon(parent, clickable)
         if GameTooltip.IsForbidden and GameTooltip:IsForbidden() then return end
         if iconFrame:GetAlpha() == 0 then return end  -- Don't show tooltip when visually hidden
         if iconFrame.entry then
+            local tooltipProvider = ns.TooltipProvider
+            if tooltipProvider and tooltipProvider.ShouldShowTooltip then
+                if not tooltipProvider:ShouldShowTooltip("customTrackers") then
+                    pcall(GameTooltip.Hide, GameTooltip)
+                    return
+                end
+            end
+
             -- Respect tooltip anchor setting
             local core = GetCore()
             local tooltipSettings = core and core.db and core.db.profile and core.db.profile.tooltip

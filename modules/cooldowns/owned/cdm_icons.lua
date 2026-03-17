@@ -752,6 +752,13 @@ local function CreateIcon(parent, spellEntry)
         if GameTooltip.IsForbidden and GameTooltip:IsForbidden() then return end
         local entry = self._spellEntry
         if not entry then return end
+        local tooltipProvider = ns.TooltipProvider
+        if tooltipProvider and tooltipProvider.ShouldShowTooltip then
+            if not tooltipProvider:ShouldShowTooltip("cdm") then
+                pcall(GameTooltip.Hide, GameTooltip)
+                return
+            end
+        end
         local tooltipSettings = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.tooltip
         if tooltipSettings and tooltipSettings.anchorToCursor then
             local anchorTooltip = ns.QUI_AnchorTooltipToCursor
