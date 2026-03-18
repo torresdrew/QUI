@@ -91,6 +91,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.53.2 - 2026-03-19
+
+### Changed
+- cache GetPixelSize() in hot loops in buff bars, resource bars and group frames
 ## v2.53.1 - 2026-03-19
 
 ### Added
