@@ -1140,6 +1140,28 @@ local hiddenActionBarParent = CreateFrame("Frame")
 hiddenActionBarParent:Hide()
 hiddenActionBarParent.Layout = function() end
 
+-- Blizzard has used multiple difficulty indicator frames across versions.
+-- Keep compatibility by iterating all known variants.
+local function ForEachDifficultyFrame(callback)
+    if type(callback) ~= "function" then return end
+
+    local seen = {}
+    local function handle(frame)
+        if frame and not seen[frame] then
+            seen[frame] = true
+            callback(frame)
+        end
+    end
+
+    if MinimapCluster and MinimapCluster.InstanceDifficulty then
+        handle(MinimapCluster.InstanceDifficulty)
+    end
+
+    handle(_G.MiniMapInstanceDifficulty)
+    handle(_G.GuildInstanceDifficulty)
+    handle(_G.MiniMapChallengeMode)
+end
+
 -- Hook Show() on zoom buttons to prevent Blizzard from re-showing them
 -- Use local guard variables instead of writing properties to Blizzard frames
 local zoomInShowHooked = false
@@ -1283,8 +1305,7 @@ local function UpdateButtonVisibility()
     end
     
     -- Difficulty indicator - position at top left
-    if MinimapCluster and MinimapCluster.InstanceDifficulty then
-        local diffFrame = MinimapCluster.InstanceDifficulty
+    ForEachDifficultyFrame(function(diffFrame)
         if settings.showDifficulty then
             diffFrame:SetParent(Minimap)
             diffFrame:ClearAllPoints()
@@ -1292,7 +1313,7 @@ local function UpdateButtonVisibility()
         else
             diffFrame:SetParent(hiddenButtonParent)
         end
-    end
+    end)
     
     -- Expansion landing page button (garrison/missions) - position at left side
     -- In WoW 12.0+, Blizzard only shows this button for characters with old
@@ -3356,6 +3377,31 @@ function Minimap_Module:RefreshDatatext()
     UpdateDatatextPanel()
 end
 
+local function RefreshMinimapButtonsAfterTransition()
+    local settings = GetSettings()
+    if not settings or not settings.enabled then return end
+
+    if InCombatLockdown() then
+        pendingMinimapRefresh = true
+        return
+    end
+
+    -- Instance indicators can get laid out on the next frame(s) after zoning.
+    C_Timer.After(0, function()
+        local s = GetSettings()
+        if s and s.enabled and not InCombatLockdown() then
+            UpdateButtonVisibility()
+        end
+    end)
+
+    C_Timer.After(1, function()
+        local s = GetSettings()
+        if s and s.enabled and not InCombatLockdown() then
+            UpdateButtonVisibility()
+        end
+    end)
+end
+
 ---=================================================================================
 --- EVENT HANDLING
 ---=================================================================================
@@ -3363,6 +3409,10 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+eventFrame:RegisterEvent("PLAYER_DIFFICULTY_CHANGED")
+eventFrame:RegisterEvent("UPDATE_INSTANCE_INFO")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
@@ -3386,6 +3436,11 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             pendingMinimapRefresh = false
             Minimap_Module:Refresh()
         end
+    elseif event == "PLAYER_ENTERING_WORLD"
+        or event == "ZONE_CHANGED_NEW_AREA"
+        or event == "PLAYER_DIFFICULTY_CHANGED"
+        or event == "UPDATE_INSTANCE_INFO" then
+        RefreshMinimapButtonsAfterTransition()
     end
 end)
 
