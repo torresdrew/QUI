@@ -41,6 +41,12 @@ local function GetUtilityViewer() return _G.QUI_GetCDMViewerFrame("utility") end
 
 local floor = math.floor
 
+-- Pixel-snap with pre-computed pixel size (avoids per-call GetEffectiveScale in loops)
+local function snapPx(value, px)
+    if value == 0 then return 0 end
+    return floor(value / px + 0.5) * px
+end
+
 -- TAINT SAFETY: Store per-frame state in local weak-keyed tables instead of
 -- writing custom properties to Blizzard CDM viewer frames and their children.
 local iconBuffState   = Helpers.CreateStateTable()  -- icon → { setup, border, borderSize, aspectRatioCrop, atlasHooked, atlasDisabled }
@@ -1934,15 +1940,18 @@ LayoutBuffIcons = function()
     -- Determine if vertical or horizontal layout
     local isVertical = (growthDirection == "UP" or growthDirection == "DOWN")
 
+    -- Cache pixel size once for the layout pass (avoids repeated GetEffectiveScale in loops)
+    local px = QUICore:GetPixelSize()
+
     -- Calculate total size using our settings
     local totalWidth, totalHeight
     if isVertical then
         totalWidth = iconWidth
         totalHeight = (targetCount * iconHeight) + ((targetCount - 1) * padding)
-        totalHeight = QUICore:PixelRound(totalHeight)
+        totalHeight = snapPx(totalHeight, px)
     else
         totalWidth = (targetCount * iconWidth) + ((targetCount - 1) * padding)
-        totalWidth = QUICore:PixelRound(totalWidth)
+        totalWidth = snapPx(totalWidth, px)
         totalHeight = iconHeight
     end
 
@@ -1959,11 +1968,11 @@ LayoutBuffIcons = function()
             -- Grow down: icon 1 at top of stack, icons stack downward
             startY = (totalHeight / 2) - iconHeight / 2
         end
-        startY = QUICore:PixelRound(startY)
+        startY = snapPx(startY, px)
     else
         -- Horizontal: centered both ways
         startX = -totalWidth / 2 + iconWidth / 2
-        startX = QUICore:PixelRound(startX)
+        startX = snapPx(startX, px)
         startY = 0
     end
 
@@ -1974,9 +1983,9 @@ LayoutBuffIcons = function()
         if isVertical then
             local expectedY
             if growthDirection == "UP" then
-                expectedY = QUICore:PixelRound(startY + (i - 1) * (iconHeight + padding))
+                expectedY = snapPx(startY + (i - 1) * (iconHeight + padding), px)
             else -- DOWN
-                expectedY = QUICore:PixelRound(startY - (i - 1) * (iconHeight + padding))
+                expectedY = snapPx(startY - (i - 1) * (iconHeight + padding), px)
             end
             local point, _, _, xOfs, yOfs = icon:GetPoint(1)
             if not point or point ~= "CENTER" or abs((yOfs or 0) - expectedY) > 2 then
@@ -1984,7 +1993,7 @@ LayoutBuffIcons = function()
                 break
             end
         else
-            local expectedX = QUICore:PixelRound(startX + (i - 1) * (iconWidth + padding))
+            local expectedX = snapPx(startX + (i - 1) * (iconWidth + padding), px)
             if not PositionMatchesTolerance(icon, expectedX, 2) then
                 needsReposition = true
                 break
@@ -2009,10 +2018,10 @@ LayoutBuffIcons = function()
                 else -- DOWN
                     y = startY - (i - 1) * (iconHeight + padding)
                 end
-                icon:SetPoint("CENTER", viewer, "CENTER", 0, QUICore:PixelRound(y))
+                icon:SetPoint("CENTER", viewer, "CENTER", 0, snapPx(y, px))
             else
                 local x = startX + (i - 1) * (iconWidth + padding)
-                icon:SetPoint("CENTER", viewer, "CENTER", QUICore:PixelRound(x), QUICore:PixelRound(startY))
+                icon:SetPoint("CENTER", viewer, "CENTER", snapPx(x, px), snapPx(startY, px))
             end
         end
     else
@@ -2263,6 +2272,7 @@ LayoutBuffBars = function()
 
         -- COMBAT PASS 2: Position bars and apply alpha LAST so QUI spacing
         -- overrides any positions Blizzard's Layout() set during styling.
+        local combatPx = QUICore:GetPixelSize()
         for index, frame in ipairs(bars) do
             pcall(function()
                 frame:ClearAllPoints()
@@ -2270,19 +2280,19 @@ LayoutBuffBars = function()
                 if isVertical then
                     local x
                     if growFromBottom then
-                        x = QUICore:PixelRound(offsetIndex * (effectiveBarWidth + spacing))
+                        x = snapPx(offsetIndex * (effectiveBarWidth + spacing), combatPx)
                         frame:SetPoint("LEFT", viewer, "LEFT", x, 0)
                     else
-                        x = QUICore:PixelRound(-offsetIndex * (effectiveBarWidth + spacing))
+                        x = snapPx(-offsetIndex * (effectiveBarWidth + spacing), combatPx)
                         frame:SetPoint("RIGHT", viewer, "RIGHT", x, 0)
                     end
                 else
                     local y
                     if growFromBottom then
-                        y = QUICore:PixelRound(offsetIndex * (effectiveBarHeight + spacing))
+                        y = snapPx(offsetIndex * (effectiveBarHeight + spacing), combatPx)
                         frame:SetPoint("BOTTOM", viewer, "BOTTOM", 0, y)
                     else
-                        y = QUICore:PixelRound(-offsetIndex * (effectiveBarHeight + spacing))
+                        y = snapPx(-offsetIndex * (effectiveBarHeight + spacing), combatPx)
                         frame:SetPoint("TOP", viewer, "TOP", 0, y)
                     end
                 end
@@ -2433,6 +2443,9 @@ LayoutBuffBars = function()
     barState.lastBarHeight = effectiveBarHeight
     barState.lastSpacing = spacing
 
+    -- Cache pixel size once for layout loops (avoids repeated GetEffectiveScale calls)
+    local px = QUICore:GetPixelSize()
+
     -- Total size of the stack (height for horizontal bars, width for vertical)
     local totalSize
     if isVertical then
@@ -2440,7 +2453,7 @@ LayoutBuffBars = function()
     else
         totalSize = (count * effectiveBarHeight) + ((count - 1) * spacing)
     end
-    totalSize = QUICore:PixelRound(totalSize)
+    totalSize = snapPx(totalSize, px)
 
     -- PASS 1: Apply visual styling and frame strata/level FIRST.
     -- ApplyBarStyle calls SetHeight/SetWidth which can trigger Blizzard's Layout()
@@ -2483,9 +2496,9 @@ LayoutBuffBars = function()
         if isVertical then
             local expectedX
             if growFromBottom then
-                expectedX = QUICore:PixelRound(offsetIndex * (effectiveBarWidth + spacing))
+                expectedX = snapPx(offsetIndex * (effectiveBarWidth + spacing), px)
             else
-                expectedX = QUICore:PixelRound(-offsetIndex * (effectiveBarWidth + spacing))
+                expectedX = snapPx(-offsetIndex * (effectiveBarWidth + spacing), px)
             end
             local point, _, _, xOfs = bar:GetPoint(1)
             if not point or abs((xOfs or 0) - expectedX) > 2 then
@@ -2495,9 +2508,9 @@ LayoutBuffBars = function()
         else
             local expectedY
             if growFromBottom then
-                expectedY = QUICore:PixelRound(offsetIndex * (effectiveBarHeight + spacing))
+                expectedY = snapPx(offsetIndex * (effectiveBarHeight + spacing), px)
             else
-                expectedY = QUICore:PixelRound(-offsetIndex * (effectiveBarHeight + spacing))
+                expectedY = snapPx(-offsetIndex * (effectiveBarHeight + spacing), px)
             end
             local point, _, _, _, yOfs = bar:GetPoint(1)
             if not point or abs((yOfs or 0) - expectedY) > 2 then
@@ -2522,12 +2535,12 @@ LayoutBuffBars = function()
                 if growFromBottom then
                     -- Grow Right: bar 1 at LEFT edge, stacks rightward
                     x = offsetIndex * (effectiveBarWidth + spacing)
-                    x = QUICore:PixelRound(x)
+                    x = snapPx(x, px)
                     bar:SetPoint("LEFT", viewer, "LEFT", x, 0)
                 else
                     -- Grow Left: bar 1 at RIGHT edge, stacks leftward
                     x = -offsetIndex * (effectiveBarWidth + spacing)
-                    x = QUICore:PixelRound(x)
+                    x = snapPx(x, px)
                     bar:SetPoint("RIGHT", viewer, "RIGHT", x, 0)
                 end
             else
@@ -2535,11 +2548,11 @@ LayoutBuffBars = function()
                 local y
                 if growFromBottom then
                     y = offsetIndex * (effectiveBarHeight + spacing)
-                    y = QUICore:PixelRound(y)
+                    y = snapPx(y, px)
                     bar:SetPoint("BOTTOM", viewer, "BOTTOM", 0, y)
                 else
                     y = -offsetIndex * (effectiveBarHeight + spacing)
-                    y = QUICore:PixelRound(y)
+                    y = snapPx(y, px)
                     bar:SetPoint("TOP", viewer, "TOP", 0, y)
                 end
             end

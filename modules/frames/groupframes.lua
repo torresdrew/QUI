@@ -16,6 +16,13 @@ local issecretvalue = _G.issecretvalue
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
 local GetCore = Helpers.GetCore
+local floor = math.floor
+
+-- Pixel-snap with pre-computed pixel size (avoids per-call GetEffectiveScale in loops)
+local function snapPx(value, px)
+    if value == 0 then return 0 end
+    return floor(value / px + 0.5) * px
+end
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -2756,6 +2763,8 @@ local function UpdateFrameScaling(forceUpdate)
             header:SetAttribute("_initialAttribute-unit-height", h)
 
             -- Resize existing children
+            -- Cache pixel size once — all children share the same effective scale
+            local headerPx = (QUICore.GetPixelSize and QUICore:GetPixelSize(header)) or 1
             local i = 1
             while true do
                 local child = header:GetAttribute("child" .. i)
@@ -2765,12 +2774,11 @@ local function UpdateFrameScaling(forceUpdate)
                 if child.healthBar and child.powerBar then
                     local general = GetGeneralSettings(child._isRaid)
                     local borderPx = general and general.borderSize or 1
-                    local borderSize = borderPx > 0 and (QUICore.Pixels and QUICore:Pixels(borderPx, child) or borderPx) or 0
+                    local borderSize = borderPx > 0 and (borderPx * headerPx) or 0
                     local powerSettings = GetPowerSettings(child._isRaid)
                     local powerHeight = powerSettings and powerSettings.showPowerBar ~= false and
-                        (QUICore.PixelRound and QUICore:PixelRound(powerSettings.powerBarHeight or 4, child) or 4) or 0
-                    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(child) or 1
-                    local sepH = powerHeight > 0 and px or 0
+                        snapPx(powerSettings.powerBarHeight or 4, headerPx) or 0
+                    local sepH = powerHeight > 0 and headerPx or 0
 
                     child.healthBar:ClearAllPoints()
                     child.healthBar:SetPoint("TOPLEFT", child, "TOPLEFT", borderSize, -borderSize)

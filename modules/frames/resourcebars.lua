@@ -5,6 +5,13 @@ local UIKit = ns.UIKit
 
 local Helpers = ns.Helpers
 local GetCore = Helpers.GetCore
+local floor = math.floor
+
+-- Pixel-snap with pre-computed pixel size (avoids per-call GetEffectiveScale in loops)
+local function snapPx(value, px)
+    if value == 0 then return 0 end
+    return floor(value / px + 0.5) * px
+end
 
 -- Pre-create named frames so Edit Mode layout anchoring can resolve
 -- "QUIPowerBar" / "QUISecondaryPowerBar" before full initialization.
@@ -1092,7 +1099,8 @@ local function UpdateBarIndicatorLines(bar, indicatorPool, values, maxValue, thi
         return
     end
 
-    local lineThickness = QUICore:Pixels(thickness or 1, bar)
+    local px = QUICore:GetPixelSize(bar)
+    local lineThickness = (thickness or 1) * px
     local lineColor = color or { 1, 1, 1, 1 }
 
     for i, value in ipairs(values) do
@@ -1107,11 +1115,11 @@ local function UpdateBarIndicatorLines(bar, indicatorPool, values, maxValue, thi
 
         if isVertical then
             local y = (value / maxValue) * height
-            indicator:SetPoint("BOTTOM", bar.StatusBar, "BOTTOM", 0, QUICore:PixelRound(y - (lineThickness / 2), bar))
+            indicator:SetPoint("BOTTOM", bar.StatusBar, "BOTTOM", 0, snapPx(y - (lineThickness / 2), px))
             indicator:SetSize(width, lineThickness)
         else
             local x = (value / maxValue) * width
-            indicator:SetPoint("LEFT", bar.StatusBar, "LEFT", QUICore:PixelRound(x - (lineThickness / 2), bar), 0)
+            indicator:SetPoint("LEFT", bar.StatusBar, "LEFT", snapPx(x - (lineThickness / 2), px), 0)
             indicator:SetSize(lineThickness, height)
         end
 
@@ -1906,7 +1914,8 @@ function QUICore:UpdatePowerBarTicks(bar, resource, max)
         end
     end
 
-    local tickThickness = QUICore:Pixels(cfg.tickThickness or 1, bar)
+    local tickPx = QUICore:GetPixelSize(bar)
+    local tickThickness = (cfg.tickThickness or 1) * tickPx
     local tc = cfg.tickColor or { 0, 0, 0, 1 }
     local needed = max - 1
     for i = 1, needed do
@@ -1921,12 +1930,12 @@ function QUICore:UpdatePowerBarTicks(bar, resource, max)
         if isVertical then
             -- Vertical bar: ticks go along height (Y axis)
             local y = (i / max) * height
-            tick:SetPoint("BOTTOM", bar.StatusBar, "BOTTOM", 0, QUICore:PixelRound(y - (tickThickness / 2), bar))
+            tick:SetPoint("BOTTOM", bar.StatusBar, "BOTTOM", 0, snapPx(y - (tickThickness / 2), tickPx))
             tick:SetSize(width, tickThickness)
         else
             -- Horizontal bar: ticks go along width (X axis)
             local x = (i / max) * width
-            tick:SetPoint("LEFT", bar.StatusBar, "LEFT", QUICore:PixelRound(x - (tickThickness / 2), bar), 0)
+            tick:SetPoint("LEFT", bar.StatusBar, "LEFT", snapPx(x - (tickThickness / 2), tickPx), 0)
             tick:SetSize(tickThickness, height)
         end
         tick:Show()
@@ -2652,7 +2661,8 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
         
         -- Add ticks between rune segments if enabled (pixel-perfect)
         if cfg.showTicks then
-            local tickThickness = QUICore:Pixels(cfg.tickThickness or 1, bar)
+            local runeTickPx = QUICore:GetPixelSize(bar)
+            local tickThickness = (cfg.tickThickness or 1) * runeTickPx
             local tc = cfg.tickColor or { 0, 0, 0, 1 }
             for i = 1, maxPower - 1 do
                 local tick = bar.ticks[i]
@@ -2665,11 +2675,11 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
                 tick:ClearAllPoints()
                 if isVertical then
                     local y = i * fragmentedBarHeight
-                    tick:SetPoint("BOTTOM", bar, "BOTTOM", 0, QUICore:PixelRound(y - (tickThickness / 2), bar))
+                    tick:SetPoint("BOTTOM", bar, "BOTTOM", 0, snapPx(y - (tickThickness / 2), runeTickPx))
                     tick:SetSize(barWidth, tickThickness)
                 else
                     local x = i * fragmentedBarWidth
-                    tick:SetPoint("LEFT", bar, "LEFT", QUICore:PixelRound(x - (tickThickness / 2), bar), 0)
+                    tick:SetPoint("LEFT", bar, "LEFT", snapPx(x - (tickThickness / 2), runeTickPx), 0)
                     tick:SetSize(tickThickness, barHeight)
                 end
                 tick:Show()
@@ -2782,7 +2792,8 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
 
         -- Ticks between essence segments
         if cfg.showTicks then
-            local tickThickness = QUICore:Pixels(cfg.tickThickness or 1, bar)
+            local essTickPx = QUICore:GetPixelSize(bar)
+            local tickThickness = (cfg.tickThickness or 1) * essTickPx
             local tc = cfg.tickColor or { 0, 0, 0, 1 }
             for i = 1, maxPower - 1 do
                 local tick = bar.ticks[i]
@@ -2795,11 +2806,11 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
                 tick:ClearAllPoints()
                 if isVertical then
                     local y = i * fragmentedBarHeight
-                    tick:SetPoint("BOTTOM", bar, "BOTTOM", 0, QUICore:PixelRound(y - (tickThickness / 2), bar))
+                    tick:SetPoint("BOTTOM", bar, "BOTTOM", 0, snapPx(y - (tickThickness / 2), essTickPx))
                     tick:SetSize(barWidth, tickThickness)
                 else
                     local x = i * fragmentedBarWidth
-                    tick:SetPoint("LEFT", bar, "LEFT", QUICore:PixelRound(x - (tickThickness / 2), bar), 0)
+                    tick:SetPoint("LEFT", bar, "LEFT", snapPx(x - (tickThickness / 2), essTickPx), 0)
                     tick:SetSize(tickThickness, barHeight)
                 end
                 tick:Show()
@@ -2974,7 +2985,8 @@ function QUICore:UpdateSecondaryPowerBarTicks(bar, resource, max)
         displayMax = UnitPowerMax("player", resource) -- non-fractional max (usually 5)
     end
 
-    local tickThickness = QUICore:Pixels(cfg.tickThickness or 1, bar)
+    local genTickPx = QUICore:GetPixelSize(bar)
+    local tickThickness = (cfg.tickThickness or 1) * genTickPx
     local tc = cfg.tickColor or { 0, 0, 0, 1 }
     local needed = displayMax - 1
     for i = 1, needed do
@@ -2989,12 +3001,12 @@ function QUICore:UpdateSecondaryPowerBarTicks(bar, resource, max)
         if isVertical then
             -- Vertical bar: ticks go along height (Y axis)
             local y = (i / displayMax) * height
-            tick:SetPoint("BOTTOM", bar.StatusBar, "BOTTOM", 0, QUICore:PixelRound(y - (tickThickness / 2), bar))
+            tick:SetPoint("BOTTOM", bar.StatusBar, "BOTTOM", 0, snapPx(y - (tickThickness / 2), genTickPx))
             tick:SetSize(width, tickThickness)
         else
             -- Horizontal bar: ticks go along width (X axis)
             local x = (i / displayMax) * width
-            tick:SetPoint("LEFT", bar.StatusBar, "LEFT", QUICore:PixelRound(x - (tickThickness / 2), bar), 0)
+            tick:SetPoint("LEFT", bar.StatusBar, "LEFT", snapPx(x - (tickThickness / 2), genTickPx), 0)
             tick:SetSize(tickThickness, height)
         end
         tick:Show()

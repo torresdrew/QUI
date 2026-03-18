@@ -11,8 +11,15 @@ local nsHelpers = ns.Helpers
 local UIKit = ns.UIKit
 local IsSecretValue = nsHelpers.IsSecretValue
 local SafeValue = nsHelpers.SafeValue
+local floor = math.floor
 
 local GetCore = nsHelpers.GetCore
+
+-- Pixel-snap with pre-computed pixel size (avoids per-call GetEffectiveScale in loops)
+local function snapPx(value, px)
+    if value == 0 then return 0 end
+    return floor(value / px + 0.5) * px
+end
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -1336,12 +1343,13 @@ local function ApplyChannelTickPositions(bar, positions, castSettings)
 
     EnsureChannelTickTextures(bar, #positions)
     local color = castSettings and castSettings.channelTickColor or CHANNEL_TICK_DEFAULT_COLOR
-    local thickness = QUICore:Pixels((castSettings and castSettings.channelTickThickness) or 1, bar.statusBar)
-    thickness = math.max(QUICore:Pixels(1, bar.statusBar), thickness)
+    local tickPx = QUICore:GetPixelSize(bar.statusBar)
+    local thickness = ((castSettings and castSettings.channelTickThickness) or 1) * tickPx
+    thickness = math.max(tickPx, thickness)
 
     for i, position in ipairs(positions) do
         local marker = bar.channelTickMarkers[i]
-        local x = QUICore:PixelRound((barWidth * position) - (thickness / 2), bar.statusBar)
+        local x = snapPx((barWidth * position) - (thickness / 2), tickPx)
         marker:SetColorTexture(color[1] or 1, color[2] or 1, color[3] or 1, color[4] or 0.9)
         marker:ClearAllPoints()
         marker:SetPoint("LEFT", bar.statusBar, "LEFT", x, 0)
