@@ -5,6 +5,12 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
+local Helpers = ns.Helpers
+
+-- Upvalue caching for hot-path performance
+local ipairs, pcall = ipairs, pcall
+local CreateFrame = CreateFrame
+local GetTime = GetTime
 
 -- QUI_UF is created in unitframes.lua and exported to ns.QUI_UnitFrames.
 -- This file loads after unitframes.lua, so the reference is available.
@@ -43,7 +49,7 @@ local PREVIEW_AURAS = {
 local AURA_THROTTLE = 0.15  -- Update every 150ms max
 local lastAuraUpdate = {}
 
--- Expose for QUI_RefreshAuras in unitframes.lua
+-- Expose for aura refresh in unitframes.lua
 QUI_UF._lastAuraUpdate = lastAuraUpdate
 
 ---------------------------------------------------------------------------
@@ -53,7 +59,7 @@ QUI_UF._lastAuraUpdate = lastAuraUpdate
 -- directly on the Frame object taints the frame and propagates through
 -- Blizzard's CooldownViewer → tContains → "attempt to compare secret".
 -- A plain Lua side-table keeps the value off the frame entirely.
-local auraIconState = setmetatable({}, { __mode = "k" })
+local auraIconState = Helpers.CreateStateTable()
 
 ---------------------------------------------------------------------------
 -- AURA ICON SETTINGS
@@ -288,6 +294,7 @@ local function UpdateAuras(frame)
     local debuffAnchor = auraSettings.debuffAnchor or "TOPLEFT"
     local debuffGrow = auraSettings.debuffGrow or "RIGHT"
     local debuffMaxIcons = auraSettings.debuffMaxIcons or 16
+    local debuffMaxPerRow = auraSettings.debuffMaxPerRow or 0
     local debuffOffsetX = auraSettings.debuffOffsetX or 0
     local debuffOffsetY = auraSettings.debuffOffsetY or 2
     local debuffSpacing = auraSettings.debuffSpacing or auraSettings.iconSpacing or 2
@@ -296,6 +303,7 @@ local function UpdateAuras(frame)
     local buffAnchor = auraSettings.buffAnchor or "BOTTOMLEFT"
     local buffGrow = auraSettings.buffGrow or "RIGHT"
     local buffMaxIcons = auraSettings.buffMaxIcons or 16
+    local buffMaxPerRow = auraSettings.buffMaxPerRow or 0
     local buffOffsetX = auraSettings.buffOffsetX or 0
     local buffOffsetY = auraSettings.buffOffsetY or -2
     local buffSpacing = auraSettings.buffSpacing or auraSettings.iconSpacing or 2
@@ -438,17 +446,27 @@ local function UpdateAuras(frame)
                 icon.count:Hide()
             end
 
-            -- Calculate position based on anchor and single grow direction
+            -- Calculate position based on anchor and grow direction with optional row wrapping
             local idx = debuffCount - 1
+            local col = idx
+            local row = 0
+            if debuffMaxPerRow > 0 then
+                col = idx % debuffMaxPerRow
+                row = math.floor(idx / debuffMaxPerRow)
+            end
             local xPos, yPos = debuffOffsetX, debuffOffsetY
             if debuffGrow == "RIGHT" then
-                xPos = xPos + idx * (iconSize + debuffSpacing)
+                xPos = xPos + col * (iconSize + debuffSpacing)
+                yPos = yPos + row * (iconSize + debuffSpacing)
             elseif debuffGrow == "LEFT" then
-                xPos = xPos - idx * (iconSize + debuffSpacing)
+                xPos = xPos - col * (iconSize + debuffSpacing)
+                yPos = yPos + row * (iconSize + debuffSpacing)
             elseif debuffGrow == "UP" then
-                yPos = yPos + idx * (iconSize + debuffSpacing)
+                yPos = yPos + col * (iconSize + debuffSpacing)
+                xPos = xPos + row * (iconSize + debuffSpacing)
             elseif debuffGrow == "DOWN" then
-                yPos = yPos - idx * (iconSize + debuffSpacing)
+                yPos = yPos - col * (iconSize + debuffSpacing)
+                xPos = xPos + row * (iconSize + debuffSpacing)
             end
 
             -- Map user anchor to frame anchor points (flip vertical only for outside positioning)
@@ -516,17 +534,27 @@ local function UpdateAuras(frame)
                 icon.count:Hide()
             end
 
-            -- Calculate position based on anchor and single grow direction
+            -- Calculate position based on anchor and grow direction with optional row wrapping
             local idx = buffCount - 1
+            local col = idx
+            local row = 0
+            if buffMaxPerRow > 0 then
+                col = idx % buffMaxPerRow
+                row = math.floor(idx / buffMaxPerRow)
+            end
             local xPos, yPos = buffOffsetX, buffOffsetY
             if buffGrow == "RIGHT" then
-                xPos = xPos + idx * (buffIconSize + buffSpacing)
+                xPos = xPos + col * (buffIconSize + buffSpacing)
+                yPos = yPos - row * (buffIconSize + buffSpacing)
             elseif buffGrow == "LEFT" then
-                xPos = xPos - idx * (buffIconSize + buffSpacing)
+                xPos = xPos - col * (buffIconSize + buffSpacing)
+                yPos = yPos - row * (buffIconSize + buffSpacing)
             elseif buffGrow == "UP" then
-                yPos = yPos + idx * (buffIconSize + buffSpacing)
+                yPos = yPos + col * (buffIconSize + buffSpacing)
+                xPos = xPos + row * (buffIconSize + buffSpacing)
             elseif buffGrow == "DOWN" then
-                yPos = yPos - idx * (buffIconSize + buffSpacing)
+                yPos = yPos - col * (buffIconSize + buffSpacing)
+                xPos = xPos + row * (buffIconSize + buffSpacing)
             end
 
             -- Map user anchor to frame anchor points (flip vertical only for outside positioning)

@@ -8,12 +8,18 @@
 
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
-local LSM = LibStub("LibSharedMedia-3.0")
+local LSM = ns.LSM
 local QUICore = ns.Addon
 local IsSecretValue = Helpers.IsSecretValue
 local SafeValue = Helpers.SafeValue
 local SafeToNumber = Helpers.SafeToNumber
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
+
+-- Upvalue caching for hot-path performance
+local pairs, ipairs, type, pcall = pairs, ipairs, type, pcall
+local CreateFrame = CreateFrame
+local wipe = wipe
+local tinsert = table.insert
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -280,7 +286,7 @@ end
 ---------------------------------------------------------------------------
 -- INDICATOR STATE per frame
 ---------------------------------------------------------------------------
-local frameIndicatorState = setmetatable({}, { __mode = "k" })
+local frameIndicatorState = Helpers.CreateStateTable()
 
 local function GetIndicatorState(frame)
     local state = frameIndicatorState[frame]

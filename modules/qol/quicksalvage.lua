@@ -1,6 +1,12 @@
 local addonName, ns = ...
 local Helpers = ns.Helpers
 
+-- Upvalue caching for hot-path performance
+local pairs, ipairs, type, pcall = pairs, ipairs, type, pcall
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local GetTime, InCombatLockdown = GetTime, InCombatLockdown
+local wipe = wipe
+
 ---------------------------------------------------------------------------
 -- QUICK SALVAGE: One-click Milling, Prospecting, Disenchanting
 ---------------------------------------------------------------------------
@@ -715,9 +721,9 @@ end)
 TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, OnTooltipSetItem)
 
 ---------------------------------------------------------------------------
--- GLOBAL REFRESH FUNCTION
+-- REFRESH
 ---------------------------------------------------------------------------
-function _G.QUI_RefreshQuickSalvage()
+local function RefreshQuickSalvage()
     if not InCombatLockdown() then
         SalvageButton:UpdateAttributeDriver()
     end
@@ -725,4 +731,12 @@ end
 
 -- Export for other modules
 QuickSalvage.Button = SalvageButton
-QuickSalvage.Refresh = _G.QUI_RefreshQuickSalvage
+QuickSalvage.Refresh = RefreshQuickSalvage
+
+if ns.Registry then
+    ns.Registry:Register("quickSalvage", {
+        refresh = RefreshQuickSalvage,
+        priority = 55,
+        group = "qol",
+    })
+end

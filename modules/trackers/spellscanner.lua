@@ -8,6 +8,12 @@
 local ADDON_NAME, _ = ...
 local QUI = QUI
 
+-- Upvalue caching for hot-path performance
+local pairs, type, pcall = pairs, type, pcall
+local format = string.format
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local GetTime, InCombatLockdown = GetTime, InCombatLockdown
+
 ---------------------------------------------------------------------------
 -- MODULE STATE
 ---------------------------------------------------------------------------
@@ -199,7 +205,7 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
 
             -- Notify user in scan mode
             if SpellScanner.scanMode then
-                print(string.format("|cff00ff00QUI:|r Scanned: %s = %.1fs",
+                print(format("|cff00ff00QUI:|r Scanned: %s = %.1fs",
                     bestMatch.name, bestMatch.duration))
             end
 
@@ -436,20 +442,20 @@ SlashCmdList["QUISCANNED"] = function()
     print("|cff00ff00QUI Scanned Spells:|r")
     local spellCount = 0
     for spellID, data in pairs(db.spells or {}) do
-        print(string.format("  [%d] %s = %.1fs", spellID, data.name or "?", data.duration or 0))
+        print(format("  [%d] %s = %.1fs", spellID, data.name or "?", data.duration or 0))
         spellCount = spellCount + 1
     end
     if spellCount == 0 then
         print("  |cff888888(none)|r")
     else
-        print(string.format("  |cff888888Total: %d spells|r", spellCount))
+        print(format("  |cff888888Total: %d spells|r", spellCount))
     end
 
     print("|cff00ff00QUI Scanned Items:|r")
     local itemCount = 0
     for itemID, data in pairs(db.items or {}) do
         local itemName = C_Item.GetItemNameByID(itemID) or "Item " .. itemID
-        print(string.format("  [%d] %s = %.1fs", itemID, itemName, data.duration or 0))
+        print(format("  [%d] %s = %.1fs", itemID, itemName, data.duration or 0))
         itemCount = itemCount + 1
     end
     if itemCount == 0 then
@@ -462,7 +468,7 @@ SlashCmdList["QUISCANNED"] = function()
         pendingCount = pendingCount + 1
     end
     if pendingCount > 0 then
-        print(string.format("|cffff8800Pending scanning: %d spells|r", pendingCount))
+        print(format("|cffff8800Pending scanning: %d spells|r", pendingCount))
     end
 
     -- Show active buffs
@@ -470,7 +476,7 @@ SlashCmdList["QUISCANNED"] = function()
     for _ in pairs(SpellScanner.activeBuffs) do
         activeCount = activeCount + 1
     end
-    print(string.format("|cff888888Active buffs tracked: %d|r", activeCount))
+    print(format("|cff888888Active buffs tracked: %d|r", activeCount))
 end
 
 -- /quiclearspell <spellID> - Remove a scanned spell
@@ -486,8 +492,8 @@ SlashCmdList["QUICLEARSPELL"] = function(msg)
     if db and db.spells and db.spells[spellID] then
         local name = db.spells[spellID].name or "Unknown"
         db.spells[spellID] = nil
-        print(string.format("|cff00ff00QUI:|r Cleared spell: %s [%d]", name, spellID))
+        print(format("|cff00ff00QUI:|r Cleared spell: %s [%d]", name, spellID))
     else
-        print(string.format("|cffff8800QUI:|r Spell %d not found in scanned list", spellID))
+        print(format("|cffff8800QUI:|r Spell %d not found in scanned list", spellID))
     end
 end

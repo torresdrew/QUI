@@ -10,6 +10,15 @@ local QUICore = ns.Addon
 
 local GetCore = ns.Helpers.GetCore
 
+-- Upvalue caching for hot-path performance
+local pairs, ipairs, type, pcall = pairs, ipairs, type, pcall
+local floor = math.floor
+local format = string.format
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local InCombatLockdown = InCombatLockdown
+local tinsert = table.insert
+local wipe = wipe
+
 ---------------------------------------------------------------------------
 -- COMBAT DEFERRAL — CharacterFrame is a managed panel; SetScale,
 -- ClearAllPoints, SetPoint on it or its children are protected during
@@ -120,7 +129,7 @@ local EQUIPMENT_SLOTS = {
 local C = {
     bg = { 0.067, 0.094, 0.153, 0.95 },        -- Deep Cool Grey
     bgLight = { 0.122, 0.161, 0.216, 1 },      -- Dark Slate
-    accent = { 0.204, 0.827, 0.6, 1 },         -- Soft Mint
+    accent = { 0.376, 0.647, 0.980, 1 },         -- Sky Blue
     text = { 0.953, 0.957, 0.965, 1 },         -- Off-White
     textMuted = { 0.6, 0.65, 0.7, 1 },         -- Grey
     border = { 0.2, 0.25, 0.3, 1 },            -- Cool Grey
@@ -134,7 +143,7 @@ local C = {
     versatility = { 0.024, 0.714, 0.831, 1 },  -- Cyan
 
     -- Status colors
-    enchanted = { 0.204, 0.827, 0.6, 1 },      -- Green/Mint (enchanted)
+    enchanted = { 0.376, 0.647, 0.980, 1 },      -- Sky Blue (enchanted)
     missing = { 0.6, 0.6, 0.6, 0.7 },          -- Muted grey (missing enchant)
 }
 
@@ -219,6 +228,311 @@ local trackedItemNameFonts = {}  -- For item name text (line 1)
 ---------------------------------------------------------------------------
 local function GetGlobalFont()
     return Helpers.GetGeneralFont()
+end
+
+---------------------------------------------------------------------------
+-- Shared styling helpers (character panel widgets)
+---------------------------------------------------------------------------
+local styledScrollBars = Helpers.CreateStateTable()
+local styledCloseButtons = Helpers.CreateStateTable()
+local closeButtonBorders = Helpers.CreateStateTable()
+local closeButtonLabels = Helpers.CreateStateTable()
+local sidebarTabBorders = Helpers.CreateStateTable()
+local sidebarTabHooked = Helpers.CreateStateTable()
+local sidebarTabBaseWidth = nil
+local sidebarTabBaseHeight = nil
+
+local function ApplyOnePixelBorder(frame, withBackground)
+    if not frame or not frame.SetBackdrop then return end
+    local px = QUICore:GetPixelSize(frame)
+    local backdrop = {
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = px,
+    }
+
+    if withBackground then
+        backdrop.bgFile = "Interface\\Buttons\\WHITE8x8"
+        backdrop.insets = { left = px, right = px, top = px, bottom = px }
+    end
+
+    frame:SetBackdrop(backdrop)
+end
+
+local function GetCharacterBorderColor()
+    local globalQUI = _G.QUI
+    if globalQUI and globalQUI.GetSkinColor then
+        local r, g, b, a = globalQUI:GetSkinColor()
+        if r and g and b then
+            return r, g, b, a or 1
+        end
+    end
+    return C.border[1], C.border[2], C.border[3], 1
+end
+
+local function GetCharacterAccentColor()
+    local globalQUI = _G.QUI
+    if globalQUI and globalQUI.GetSkinColor then
+        local r, g, b, a = globalQUI:GetSkinColor()
+        if r and g and b then
+            return r, g, b, a or 1
+        end
+    end
+    return C.accent[1], C.accent[2], C.accent[3], 1
+end
+
+local function ApplyScrollBarSkin(scrollBar)
+    if not scrollBar then return end
+    local ar, ag, ab = GetCharacterAccentColor()
+
+    if scrollBar.Track then scrollBar.Track:SetAlpha(0) end
+    if scrollBar.Background then scrollBar.Background:SetAlpha(0) end
+
+    local thumb = scrollBar.ThumbTexture or (scrollBar.GetThumbTexture and scrollBar:GetThumbTexture()) or scrollBar.Thumb
+    if thumb then
+        thumb:SetColorTexture(ar, ag, ab, 0.78)
+        thumb:SetWidth(QUICore:Pixels(8, scrollBar))
+        QUICore:ApplyPixelSnapping(thumb)
+    end
+
+    local scrollUp = scrollBar.ScrollUpButton or scrollBar.Back
+    local scrollDown = scrollBar.ScrollDownButton or scrollBar.Forward
+    if scrollUp then scrollUp:SetAlpha(0) scrollUp:SetSize(1, 1) end
+    if scrollDown then scrollDown:SetAlpha(0) scrollDown:SetSize(1, 1) end
+end
+
+local function StyleCharacterScrollBar(scrollFrame)
+    if not scrollFrame then return end
+    local scrollBar = scrollFrame.ScrollBar or (scrollFrame.GetName and _G[scrollFrame:GetName() .. "ScrollBar"])
+    if not scrollBar then return end
+
+    ApplyScrollBarSkin(scrollBar)
+    if styledScrollBars[scrollBar] then return end
+
+    scrollBar:HookScript("OnShow", function(self)
+        ApplyScrollBarSkin(self)
+    end)
+    styledScrollBars[scrollBar] = true
+end
+
+local function StyleCloseButton(button)
+    if not button then return end
+
+    if button.Border then button.Border:SetAlpha(0) end
+    if button.GetNormalTexture and button:GetNormalTexture() then button:GetNormalTexture():SetAlpha(0) end
+    if button.GetPushedTexture and button:GetPushedTexture() then button:GetPushedTexture():SetAlpha(0) end
+    if button.GetHighlightTexture and button:GetHighlightTexture() then button:GetHighlightTexture():SetAlpha(0) end
+    if button.GetDisabledTexture and button:GetDisabledTexture() then button:GetDisabledTexture():SetAlpha(0) end
+
+    local border = closeButtonBorders[button]
+    if not border then
+        border = CreateFrame("Frame", nil, button, "BackdropTemplate")
+        border:SetPoint("TOPLEFT", button, "TOPLEFT", 2, -2)
+        border:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
+        border:SetFrameLevel(math.max(button:GetFrameLevel() - 1, 1))
+        border:EnableMouse(false)
+        ApplyOnePixelBorder(border, true)
+        closeButtonBorders[button] = border
+    end
+    border:SetFrameLevel(math.max(button:GetFrameLevel() - 1, 1))
+    ApplyOnePixelBorder(border, true)
+
+    local br, bg, bb = GetCharacterBorderColor()
+    border:SetBackdropColor(0.08, 0.10, 0.14, 0.96)
+    border:SetBackdropBorderColor(br, bg, bb, 1)
+
+    local label = closeButtonLabels[button]
+    if not label then
+        label = button:CreateFontString(nil, "OVERLAY")
+        label:SetPoint("CENTER", button, "CENTER", 0, 0)
+        if label.SetDrawLayer then
+            label:SetDrawLayer("OVERLAY", 7)
+        end
+        closeButtonLabels[button] = label
+    end
+    label:SetFont(GetGlobalFont(), 11, "OUTLINE")
+    label:SetText("X")
+    label:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+
+    if styledCloseButtons[button] then return end
+    button:HookScript("OnEnter", function(self)
+        local r, g, b = GetCharacterAccentColor()
+        local bd = closeButtonBorders[self]
+        if bd then bd:SetBackdropBorderColor(r, g, b, 1) end
+    end)
+    button:HookScript("OnLeave", function(self)
+        local r, g, b = GetCharacterBorderColor()
+        local bd = closeButtonBorders[self]
+        if bd then bd:SetBackdropBorderColor(r, g, b, 1) end
+    end)
+    styledCloseButtons[button] = true
+end
+
+local function GetSidebarTabIcon(tab, index)
+    if not tab then return nil end
+    if tab.Icon then
+        return tab.Icon
+    end
+
+    if index then
+        local explicitIcon = _G["PaperDollSidebarTab" .. index .. "Icon"]
+        if explicitIcon then
+            return explicitIcon
+        end
+    end
+
+    local name = tab.GetName and tab:GetName()
+    local namedIcon = name and _G[name .. "Icon"]
+    return namedIcon or tab.icon or (tab.GetNormalTexture and tab:GetNormalTexture())
+end
+
+local function IsSidebarTabActive(tab)
+    if not tab then return false end
+    if tab.GetChecked and tab:GetChecked() then return true end
+    if tab.IsSelected and tab:IsSelected() then return true end
+    if tab.SelectedTexture and tab.SelectedTexture.IsShown and tab.SelectedTexture:IsShown() then return true end
+    return false
+end
+
+local function UpdateSidebarTabBorder(tab)
+    local border = tab and sidebarTabBorders[tab]
+    if not border then return end
+
+    if IsSidebarTabActive(tab) then
+        local r, g, b = GetCharacterAccentColor()
+        border:SetBackdropBorderColor(r, g, b, 1)
+    else
+        local r, g, b = GetCharacterBorderColor()
+        border:SetBackdropBorderColor(r, g, b, 1)
+    end
+end
+
+local function FixSidebarTabRegionCoords(tex, x1)
+    if x1 ~= 0.16001 then
+        tex:SetTexCoord(0.16001, 0.86, 0.16, 0.86)
+    end
+end
+
+local function StyleSidebarTab(tab, index, uniformWidth, uniformHeight)
+    if not tab then return end
+
+    -- Keep tab sizing consistent with tab 1 (ElvUI-style).
+    if uniformWidth and uniformHeight and uniformWidth > 0 and uniformHeight > 0 then
+        QUICore:SetPixelPerfectSize(tab, uniformWidth, uniformHeight)
+    end
+
+    local icon = GetSidebarTabIcon(tab, index)
+    if icon then
+        icon:ClearAllPoints()
+        icon:SetAllPoints()
+        QUICore:ApplyPixelSnapping(icon)
+    end
+
+    if tab.Highlight then
+        tab.Highlight:SetColorTexture(1, 1, 1, 0.3)
+        tab.Highlight:ClearAllPoints()
+        tab.Highlight:SetAllPoints(tab)
+    end
+
+    if tab.Hider then
+        tab.Hider:SetColorTexture(0, 0, 0, 0.8)
+    end
+
+    if tab.TabBg and tab.TabBg.Hide then
+        tab.TabBg:Hide()
+    end
+
+    local border = sidebarTabBorders[tab]
+    if not border then
+        border = CreateFrame("Frame", nil, tab, "BackdropTemplate")
+        border:SetFrameLevel(tab:GetFrameLevel() + 15)
+        border:EnableMouse(false)
+        ApplyOnePixelBorder(border, false)
+        sidebarTabBorders[tab] = border
+    end
+    border:ClearAllPoints()
+    border:SetPoint("TOPLEFT", tab, "TOPLEFT", -1, 1)
+    border:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", 1, -1)
+
+    if tab.Hider then
+        tab.Hider:ClearAllPoints()
+        tab.Hider:SetAllPoints(border)
+    end
+
+    ApplyOnePixelBorder(border, false)
+    UpdateSidebarTabBorder(tab)
+
+    -- Match ElvUI behavior: first tab's native regions keep fixed texcoords.
+    if index == 1 and not (frameState[tab] or EMPTY).sidebarTexCoordHooked then
+        for _, region in next, { tab:GetRegions() } do
+            if region and region.SetTexCoord then
+                region:SetTexCoord(0.16, 0.86, 0.16, 0.86)
+                hooksecurefunc(region, "SetTexCoord", FixSidebarTabRegionCoords)
+            end
+        end
+        GetState(tab).sidebarTexCoordHooked = true
+    end
+
+    if sidebarTabHooked[tab] then return end
+    tab:HookScript("OnEnter", function(self)
+        local r, g, b = GetCharacterAccentColor()
+        local bd = sidebarTabBorders[self]
+        if bd then bd:SetBackdropBorderColor(r, g, b, 1) end
+    end)
+    tab:HookScript("OnLeave", function(self)
+        UpdateSidebarTabBorder(self)
+    end)
+    tab:HookScript("OnClick", function()
+        C_Timer.After(0, function()
+            for i = 1, 3 do
+                UpdateSidebarTabBorder(_G["PaperDollSidebarTab" .. i])
+            end
+        end)
+    end)
+    sidebarTabHooked[tab] = true
+end
+
+local function StyleSidebarTabs()
+    local tabs = { _G.PaperDollSidebarTab1, _G.PaperDollSidebarTab2, _G.PaperDollSidebarTab3 }
+
+    -- Determine and cache a stable one-time reference size to prevent
+    -- cumulative shrink when Blizzard refreshes sidebar tabs on click.
+    if not sidebarTabBaseWidth or not sidebarTabBaseHeight then
+        local refTab = tabs[1]
+        if refTab and refTab.GetWidth and refTab.GetHeight then
+            sidebarTabBaseWidth = math.floor((refTab:GetWidth() or 24) + 0.5)
+            sidebarTabBaseHeight = math.floor((refTab:GetHeight() or 24) + 0.5)
+        else
+            sidebarTabBaseWidth, sidebarTabBaseHeight = 24, 24
+        end
+    end
+
+    -- Force a centered, stable layout over the stats column.
+    -- Stats panel center is approximately -38px from CharacterFrame TOPRIGHT.
+    if CharacterFrame and sidebarTabBaseWidth and sidebarTabBaseHeight then
+        local spacing = 0
+        local totalWidth = (sidebarTabBaseWidth * 3) + (spacing * 2)
+        local leftX = -38 - math.floor(totalWidth / 2)
+        local topY = -40
+
+        for index, tab in ipairs(tabs) do
+            if tab then
+                tab:ClearAllPoints()
+                tab:SetPoint("TOPLEFT", CharacterFrame, "TOPRIGHT", leftX + ((index - 1) * (sidebarTabBaseWidth + spacing)), topY)
+            end
+        end
+
+        if PaperDollSidebarTabs and tabs[1] and tabs[3] then
+            PaperDollSidebarTabs:ClearAllPoints()
+            PaperDollSidebarTabs:SetPoint("TOPLEFT", tabs[1], "TOPLEFT", 0, 0)
+            PaperDollSidebarTabs:SetPoint("BOTTOMRIGHT", tabs[3], "BOTTOMRIGHT", 0, 0)
+        end
+    end
+
+    for index, tab in ipairs(tabs) do
+        if tab then
+            StyleSidebarTab(tab, index, sidebarTabBaseWidth, sidebarTabBaseHeight)
+        end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -922,15 +1236,17 @@ local function HideBlizzardDecorations()
     if PaperDollSidebarTabs then
         if PaperDollSidebarTabs.DecorLeft then PaperDollSidebarTabs.DecorLeft:Hide() end
         if PaperDollSidebarTabs.DecorRight then PaperDollSidebarTabs.DecorRight:Hide() end
-        -- Move sidebar tabs 30px right to align with extended panel
+        -- Sidebar tab positions are normalized in StyleSidebarTabs().
         PaperDollSidebarTabs:ClearAllPoints()
-        PaperDollSidebarTabs:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", 50, -30)
+        PaperDollSidebarTabs:SetPoint("TOP", CharacterFrame, "TOPRIGHT", -38, -30)
+        StyleSidebarTabs()
     end
 
     -- Move close button 30px right to align with extended panel
     if CharacterFrame.CloseButton then
         CharacterFrame.CloseButton:ClearAllPoints()
         CharacterFrame.CloseButton:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", 52, -5)
+        StyleCloseButton(CharacterFrame.CloseButton)
     end
 
     -- Move bottom tabs (Character/Reputation/Currency) down 50px
@@ -1336,7 +1652,7 @@ local function PositionStatsPanelForLayout()
     if statsPanel then
         statsPanel:ClearAllPoints()
         statsPanel:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", 42, -70)
-        statsPanel:SetPoint("BOTTOMRIGHT", CharacterFrame, "BOTTOMRIGHT", 42, -35)
+        statsPanel:SetPoint("BOTTOMRIGHT", CharacterFrame, "BOTTOMRIGHT", 42, -45)
         statsPanel:SetWidth(160)
         statsPanel:SetFrameLevel(10)
         statsPanel:Show()
@@ -1491,11 +1807,13 @@ CreateStatsPanel = function(parent, unit)
     local scrollFrame = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
     scrollFrame:SetPoint("TOPLEFT", 5, -5)
     scrollFrame:SetPoint("BOTTOMRIGHT", -25, 5)
+    StyleCharacterScrollBar(scrollFrame)
 
     local scrollChild = CreateFrame("Frame", nil, scrollFrame)
     scrollChild:SetSize(130, 1)  -- Width matches scroll area (160 - 30 padding), height set dynamically
     scrollFrame:SetScrollChild(scrollChild)
 
+    panel.scrollFrame = scrollFrame
     panel.scrollChild = scrollChild
     panel.unit = unit
 
@@ -1533,10 +1851,10 @@ local function RefreshCharacterPanelFonts()
         if classColor then
             headerColor = {classColor.r, classColor.g, classColor.b}
         else
-            headerColor = settings.headerColor or {0.204, 0.827, 0.6}
+            headerColor = settings.headerColor or {0.376, 0.647, 0.980}
         end
     else
-        headerColor = settings.headerColor or {0.204, 0.827, 0.6}
+        headerColor = settings.headerColor or {0.376, 0.647, 0.980}
     end
 
     -- Clean up invalid references
@@ -1591,16 +1909,16 @@ local function RefreshCharacterPanelFonts()
         if classColor then
             enchantColor = {classColor.r, classColor.g, classColor.b}
         else
-            enchantColor = settings.enchantTextColor or {0.204, 0.827, 0.6}
+            enchantColor = settings.enchantTextColor or {0.376, 0.647, 0.980}
         end
     else
-        enchantColor = settings.enchantTextColor or {0.204, 0.827, 0.6}
+        enchantColor = settings.enchantTextColor or {0.376, 0.647, 0.980}
     end
 
     -- Enchant font: use custom font if specified, otherwise global font
     local enchantFont = font
     if settings.enchantFont then
-        local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
+        local LSM = ns.LSM
         if LSM then
             local fontPath = LSM:Fetch("font", settings.enchantFont)
             if fontPath then
@@ -1651,8 +1969,6 @@ local function RefreshCharacterPanelFonts()
     trackedEnchantFonts = validEnchants
 end
 
--- Expose globally for settings panel
-_G.QUI_RefreshCharacterPanelFonts = RefreshCharacterPanelFonts
 
 ---------------------------------------------------------------------------
 -- Show stat tooltip (similar to Blizzard's PaperDollStatTooltip)
@@ -1736,10 +2052,10 @@ local function CreateSectionHeader(parent, text, yOffset)
         if classColor then
             headerColor = {classColor.r, classColor.g, classColor.b}
         else
-            headerColor = settings.headerColor or {0.204, 0.827, 0.6}
+            headerColor = settings.headerColor or {0.376, 0.647, 0.980}
         end
     else
-        headerColor = settings.headerColor or {0.204, 0.827, 0.6}
+        headerColor = settings.headerColor or {0.376, 0.647, 0.980}
     end
 
     local header = parent:CreateFontString(nil, "OVERLAY")
@@ -2142,6 +2458,64 @@ local function UpdateStatsPanel(panel, unit)
 
     y = y - 5
 
+    -- TERTIARY
+    _, headerHeight = CreateSectionHeader(scrollChild, "Tertiary", y)
+    y = y - headerHeight
+
+    local leech = SafeGetStat(GetLifesteal)
+    local speed = SafeGetStat(GetSpeed)
+    local avoidance = 0
+    if GetAvoidance then
+        avoidance = SafeGetStat(GetAvoidance)
+    elseif GetCombatRatingBonus and CR_AVOIDANCE then
+        avoidance = SafeGetStat(GetCombatRatingBonus, CR_AVOIDANCE)
+    end
+
+    local tertiaryStats = {
+        { label = "Avoidance", value = FormatPercent(avoidance), statKey = "AVOIDANCE" },
+        { label = "Leech", value = FormatPercent(leech), statKey = "LIFESTEAL" },
+        { label = "Speed", value = FormatPercent(speed), statKey = "SPEED" },
+    }
+
+    for _, stat in ipairs(tertiaryStats) do
+        row = CreateStatRow(scrollChild, y)
+        row.label:SetText(stat.label)
+        row.value:SetText(stat.value)
+        
+        -- Set tooltips (Blizzard format)
+        if stat.statKey == "AVOIDANCE" then
+            local avoidanceValue = 0
+            if GetAvoidance then
+                avoidanceValue = GetAvoidance() or 0
+            elseif GetCombatRatingBonus and CR_AVOIDANCE then
+                avoidanceValue = GetCombatRatingBonus(CR_AVOIDANCE) or 0
+            end
+
+            local avoidanceLabel = _G.STAT_AVOIDANCE or "Avoidance"
+            row.tooltip = HIGHLIGHT_FONT_COLOR_CODE .. format(PAPERDOLLFRAME_TOOLTIP_FORMAT, avoidanceLabel) .. " " .. format("%.2F%%", avoidanceValue) .. FONT_COLOR_CODE_CLOSE
+
+            local avoidanceRating = (GetCombatRating and CR_AVOIDANCE) and (GetCombatRating(CR_AVOIDANCE) or 0) or 0
+            local avoidanceBonus = (GetCombatRatingBonus and CR_AVOIDANCE) and (GetCombatRatingBonus(CR_AVOIDANCE) or avoidanceValue) or avoidanceValue
+            if _G.CR_AVOIDANCE_TOOLTIP then
+                row.tooltip2 = format(CR_AVOIDANCE_TOOLTIP, BreakUpLargeNumbers(avoidanceRating), avoidanceBonus)
+            else
+                row.tooltip2 = format("Reduces damage taken from area effects by %.2F%%.", avoidanceBonus)
+            end
+        elseif stat.statKey == "LIFESTEAL" then
+            local lifesteal = GetLifesteal()
+            row.tooltip = HIGHLIGHT_FONT_COLOR_CODE .. format(PAPERDOLLFRAME_TOOLTIP_FORMAT, STAT_LIFESTEAL) .. " " .. format("%.2F%%", lifesteal) .. FONT_COLOR_CODE_CLOSE
+            row.tooltip2 = format(CR_LIFESTEAL_TOOLTIP, BreakUpLargeNumbers(GetCombatRating(CR_LIFESTEAL)), GetCombatRatingBonus(CR_LIFESTEAL))
+        elseif stat.statKey == "SPEED" then
+            local speedValue = GetSpeed()
+            row.tooltip = HIGHLIGHT_FONT_COLOR_CODE .. format(PAPERDOLLFRAME_TOOLTIP_FORMAT, STAT_SPEED) .. " " .. format("%.2F%%", speedValue) .. FONT_COLOR_CODE_CLOSE
+            row.tooltip2 = format(CR_SPEED_TOOLTIP, BreakUpLargeNumbers(GetCombatRating(CR_SPEED)), GetCombatRatingBonus(CR_SPEED))
+        end
+        
+        y = y - ROW_HEIGHT
+    end
+
+    y = y - 5
+
     -- ATTACK
     _, headerHeight = CreateSectionHeader(scrollChild, "Attack", y)
     y = y - headerHeight
@@ -2194,6 +2568,31 @@ local function UpdateStatsPanel(panel, unit)
     local dodge = SafeGetStat(GetDodgeChance)
     local parry = SafeGetStat(GetParryChance)
     local block = SafeGetStat(GetBlockChance)
+    local staggerPercent = 0
+    local _, classTag = UnitClass(unit)
+    local isBrewmaster = false
+
+    if classTag == "MONK" and unit == "player" and GetSpecialization and GetSpecializationInfo then
+        local specIndex = GetSpecialization()
+        if specIndex then
+            local specID = select(1, GetSpecializationInfo(specIndex))
+            isBrewmaster = (specID == 268)
+        end
+    end
+
+    if isBrewmaster then
+        if C_PaperDollInfo and C_PaperDollInfo.GetStaggerPercentage then
+            staggerPercent = SafeGetStat(C_PaperDollInfo.GetStaggerPercentage, unit)
+        elseif GetStaggerPercentage then
+            staggerPercent = SafeGetStat(GetStaggerPercentage, unit)
+        elseif UnitStagger then
+            local staggerAmount = SafeGetStat(UnitStagger, unit)
+            local maxHealth = SafeGetStat(UnitHealthMax, unit)
+            if maxHealth > 0 then
+                staggerPercent = (staggerAmount / maxHealth) * 100
+            end
+        end
+    end
 
     local defenseStats = {
         { label = "Armor", value = FormatNumber(effectiveArmor or 0), statKey = "ARMOR" },
@@ -2201,6 +2600,10 @@ local function UpdateStatsPanel(panel, unit)
         { label = "Parry", value = FormatPercent(parry), statKey = "PARRY" },
         { label = "Block", value = FormatPercent(block), statKey = "BLOCK" },
     }
+
+    if isBrewmaster then
+        tinsert(defenseStats, { label = "Stagger", value = FormatPercent(staggerPercent), statKey = "STAGGER" })
+    end
 
     for _, stat in ipairs(defenseStats) do
         row = CreateStatRow(scrollChild, y)
@@ -2242,39 +2645,10 @@ local function UpdateStatsPanel(panel, unit)
                     end
                 end
             end
-        end
-        
-        y = y - ROW_HEIGHT
-    end
-
-    y = y - 5
-
-    -- GENERAL
-    _, headerHeight = CreateSectionHeader(scrollChild, "General", y)
-    y = y - headerHeight
-
-    local leech = SafeGetStat(GetLifesteal)
-    local speed = SafeGetStat(GetSpeed)
-
-    local generalStats = {
-        { label = "Leech", value = FormatPercent(leech), statKey = "LIFESTEAL" },
-        { label = "Speed", value = FormatPercent(speed), statKey = "SPEED" },
-    }
-
-    for _, stat in ipairs(generalStats) do
-        row = CreateStatRow(scrollChild, y)
-        row.label:SetText(stat.label)
-        row.value:SetText(stat.value)
-        
-        -- Set tooltips (Blizzard format)
-        if stat.statKey == "LIFESTEAL" then
-            local lifesteal = GetLifesteal()
-            row.tooltip = HIGHLIGHT_FONT_COLOR_CODE .. format(PAPERDOLLFRAME_TOOLTIP_FORMAT, STAT_LIFESTEAL) .. " " .. format("%.2F%%", lifesteal) .. FONT_COLOR_CODE_CLOSE
-            row.tooltip2 = format(CR_LIFESTEAL_TOOLTIP, BreakUpLargeNumbers(GetCombatRating(CR_LIFESTEAL)), GetCombatRatingBonus(CR_LIFESTEAL))
-        elseif stat.statKey == "SPEED" then
-            local speedValue = GetSpeed()
-            row.tooltip = HIGHLIGHT_FONT_COLOR_CODE .. format(PAPERDOLLFRAME_TOOLTIP_FORMAT, STAT_SPEED) .. " " .. format("%.2F%%", speedValue) .. FONT_COLOR_CODE_CLOSE
-            row.tooltip2 = format(CR_SPEED_TOOLTIP, BreakUpLargeNumbers(GetCombatRating(CR_SPEED)), GetCombatRatingBonus(CR_SPEED))
+        elseif stat.statKey == "STAGGER" then
+            local staggerLabel = _G.STAT_STAGGER or "Stagger"
+            row.tooltip = HIGHLIGHT_FONT_COLOR_CODE .. format(PAPERDOLLFRAME_TOOLTIP_FORMAT, staggerLabel) .. " " .. format("%.2F%%", staggerPercent) .. FONT_COLOR_CODE_CLOSE
+            row.tooltip2 = _G.STAT_STAGGER_TOOLTIP or "Percentage of incoming Physical damage delayed by Stagger."
         end
         
         y = y - ROW_HEIGHT
@@ -2596,6 +2970,19 @@ local function HookCharacterFrame()
                 end
             end)
         end)
+    end
+
+    -- Re-apply sidebar tab skin when Blizzard refreshes tab visuals.
+    if type(_G.PaperDollFrame_UpdateSidebarTabs) == "function" and not (frameState[CharacterFrame] or EMPTY).sidebarSkinHooked then
+        hooksecurefunc("PaperDollFrame_UpdateSidebarTabs", function()
+            C_Timer.After(0, function()
+                local settings = GetSettings()
+                if settings.enabled and CharacterFrame and CharacterFrame:IsShown() and PaperDollFrame and PaperDollFrame:IsShown() then
+                    StyleSidebarTabs()
+                end
+            end)
+        end)
+        GetState(CharacterFrame).sidebarSkinHooked = true
     end
 
     -- Equipment Manager tab: Reparent to floating popup (Blizzard native appearance)
@@ -2924,16 +3311,12 @@ local function HookCharacterFrame()
     -- Create gear icon (more prominent position in title bar)
     if not (frameState[CharacterFrame] or EMPTY).gearBtn then
         gearBtn = CreateFrame("Button", "QUI_CharacterSettingsBtn", CharacterFrame, "BackdropTemplate")
-        gearBtn:SetSize(70, 20)
-        gearBtn:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", 20, -5)
-        local gearPx = QUICore:GetPixelSize(gearBtn)
-        gearBtn:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = gearPx,
-        })
+        QUICore:SetPixelPerfectSize(gearBtn, 70, 20)
+        QUICore:SetPixelPerfectPoint(gearBtn, "TOPRIGHT", CharacterFrame, "TOPRIGHT", 20, -6)
+        local br, bg, bb = GetCharacterBorderColor()
+        ApplyOnePixelBorder(gearBtn, true)
         gearBtn:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-        gearBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
+        gearBtn:SetBackdropBorderColor(br, bg, bb, 1)
         gearBtn:SetFrameStrata("HIGH")
         gearBtn:SetFrameLevel(100)
 
@@ -2951,10 +3334,12 @@ local function HookCharacterFrame()
 
         -- Hover effect
         gearBtn:SetScript("OnEnter", function(self)
-            self:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+            local r, g, b = GetCharacterAccentColor()
+            self:SetBackdropBorderColor(r, g, b, 1)
         end)
         gearBtn:SetScript("OnLeave", function(self)
-            self:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
+            local r, g, b = GetCharacterBorderColor()
+            self:SetBackdropBorderColor(r, g, b, 1)
         end)
 
         GetState(CharacterFrame).gearBtn = gearBtn
@@ -2987,6 +3372,7 @@ local function HookCharacterFrame()
         local closeBtn = CreateFrame("Button", nil, settingsPanel, "UIPanelCloseButton")
         closeBtn:SetPoint("TOPRIGHT", -3, -3)
         closeBtn:SetScript("OnClick", function() settingsPanel:Hide() end)
+        StyleCloseButton(closeBtn)
 
         -- Scroll frame for settings
         local scrollFrame = CreateFrame("ScrollFrame", nil, settingsPanel, "UIPanelScrollFrameTemplate")
@@ -3004,6 +3390,7 @@ local function HookCharacterFrame()
             scrollBar:SetPoint("TOPLEFT", scrollFrame, "TOPRIGHT", 2, -16)
             scrollBar:SetPoint("BOTTOMLEFT", scrollFrame, "BOTTOMRIGHT", 2, 16)
         end
+        StyleCharacterScrollBar(scrollFrame)
 
         -- Get GUI reference and settings
         local GUI = _G.QUI and _G.QUI.GUI
@@ -3018,9 +3405,7 @@ local function HookCharacterFrame()
 
         -- Refresh callback for overlay toggles
         local function RefreshAll()
-            if _G.QUI_RefreshCharacterPanelFonts then
-                _G.QUI_RefreshCharacterPanelFonts()
-            end
+            ns.Registry:Refresh("character", "fonts")
             ScheduleUpdate()
         end
 
@@ -3056,9 +3441,7 @@ local function HookCharacterFrame()
                     customBg:SetBackdropColor(col[1], col[2], col[3], col[4] or 0.95)
                 end
                 -- Also refresh skinning module if it's active
-                if _G.QUI_RefreshCharacterFrameColors then
-                    _G.QUI_RefreshCharacterFrameColors()
-                end
+                ns.Registry:Refresh("skinCharacter")
             end)
             bgColorPicker:SetPoint("TOPLEFT", PAD, y)
             bgColorPicker:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
@@ -3254,9 +3637,9 @@ local function HookCharacterFrame()
             charDB.statsTextSize = 12
             charDB.statsTextColor = {0.953, 0.957, 0.965}
             charDB.headerClassColor = true
-            charDB.headerColor = {0.204, 0.827, 0.6}
+            charDB.headerColor = {0.376, 0.647, 0.980}
             charDB.enchantClassColor = true
-            charDB.enchantTextColor = {0.204, 0.827, 0.6}
+            charDB.enchantTextColor = {0.376, 0.647, 0.980}
             charDB.noEnchantTextColor = {0.5, 0.5, 0.5}
             charDB.upgradeTrackColor = {0.98, 0.60, 0.35, 1}
 
@@ -3325,10 +3708,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     end
 end)
 
----------------------------------------------------------------------------
--- Global refresh function
----------------------------------------------------------------------------
-_G.QUI_RefreshCharacterPane = function()
+local function RefreshCharacterPane()
     ScheduleUpdate()
 end
 
@@ -3366,3 +3746,15 @@ QUI.CharacterShared = {
     GetILvlColor = GetILvlColor,
     AbbreviateClassName = AbbreviateClassName,
 }
+
+if ns.Registry then
+    ns.Registry:Register("character", {
+        refresh = {
+            all = RefreshCharacterPane,
+            fonts = RefreshCharacterPanelFonts,
+        },
+        priority = 45,
+        group = "character",
+        importCategories = { "skinning" },
+    })
+end

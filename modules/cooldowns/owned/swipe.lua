@@ -6,12 +6,16 @@
 local _, ns = ...
 local Helpers = ns.Helpers
 
+-- Upvalue caching for hot-path performance
+local pcall = pcall
+
 -- Default settings
 local DEFAULTS = {
     showBuffSwipe = true,
     showBuffIconSwipe = false,
     showGCDSwipe = true,
     showCooldownSwipe = true,
+    showRechargeEdge = false,
     -- Overlay color: shown when spell/buff is ACTIVE (aura duration)
     overlayColorMode = "default",  -- "default" | "class" | "accent" | "custom"
     overlayColor = {1, 1, 1, 1},
@@ -47,7 +51,7 @@ local function ResolveColor(mode, colorTable)
             local r, g, b = QUI:GetSkinColor()
             return r, g, b, 0.8
         end
-        return 0.2, 1.0, 0.6, 0.8  -- fallback mint
+        return 0.376, 0.647, 0.980, 0.8  -- fallback sky blue
     elseif mode == "custom" then
         local c = colorTable or {}
         return c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1
@@ -79,14 +83,8 @@ local function ApplySwipeToIcon(icon, settings)
         mode = "aura"
     elseif not isBuffIcon then
         -- Detect active auras on essential/utility icons.
-        -- Primary: check Blizzard's wasSetFromAura property on the viewer
-        -- child frame (set by Blizzard internally, works in combat).
-        -- Fallback 1: buff pool cross-reference (combat-safe).
-        -- Fallback 2: aura API queries (out of combat only).
-        local blizzChild = entry._blizzChild
-        if blizzChild and blizzChild.wasSetFromAura then
-            mode = "aura"
-        end
+        -- Primary: buff pool cross-reference (combat-safe).
+        -- Fallback: aura API queries (out of combat only).
         if not mode then
             local sid = entry.overrideSpellID or entry.spellID
             if sid then
@@ -140,7 +138,8 @@ local function ApplySwipeToIcon(icon, settings)
     end
 
     icon.Cooldown:SetDrawSwipe(showSwipe)
-    icon.Cooldown:SetDrawEdge(showSwipe and mode == "aura")
+    local showEdge = showSwipe and (mode == "aura" or (mode == "cooldown" and settings.showRechargeEdge))
+    icon.Cooldown:SetDrawEdge(showEdge)
 
     -- Apply color and texture based on mode
     if mode == "aura" then

@@ -1,6 +1,9 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
+-- Upvalue caching for hot-path performance
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+
 ---------------------------------------------------------------------------
 -- PET WARNING
 -- Warns pet-spec players when pet is missing or on passive
@@ -11,9 +14,7 @@ local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 local eventFrame = CreateFrame("Frame")
 local combatEventsRegistered = false
 
-local function GetSettings()
-    return Helpers.GetModuleDB("general")
-end
+local GetSettings = Helpers.CreateDBGetter("general")
 
 ---------------------------------------------------------------------------
 -- PET SPEC DETECTION
@@ -120,7 +121,7 @@ PetWarningFrame.dismissedThisFight = false
 
 local function PositionPetWarningFrame()
     -- Skip if anchoring system has overridden this frame
-    if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(PetWarningFrame) then return end
+    if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("petWarning") then return end
 
     local settings = GetSettings()
     local xOffset = (settings and settings.petWarningOffsetX) or 0
@@ -289,7 +290,8 @@ end)
 ---------------------------------------------------------------------------
 
 _G.QUI_RepositionPetWarning = PositionPetWarningFrame
-_G.QUI_RefreshPetWarning = function()
+
+local function RefreshPetWarning()
     PositionPetWarningFrame()
     UpdatePetWarningEventRegistration()
     if InCombatLockdown() and combatEventsRegistered then
@@ -316,4 +318,13 @@ _G.QUI_TogglePetWarningPreview = function(show)
             PetWarningFrame.glowActive = false
         end
     end
+end
+
+if ns.Registry then
+    ns.Registry:Register("petWarning", {
+        refresh = RefreshPetWarning,
+        priority = 30,
+        group = "qol",
+        importCategories = { "qol" },
+    })
 end

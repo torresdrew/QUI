@@ -25,3 +25,10 @@ end
 ns.QUI_AutohidesOptions = {
     CreateAutohidesPage = CreateAutohidesPage,
 }
+
+ns.Registry:RegisterOptions("skinningAutohide", {
+    label = "Skinning & Autohide",
+    order = 60,
+    pageBuilder = CreateAutohidesPage,
+    hasSubTabs = true,
+})

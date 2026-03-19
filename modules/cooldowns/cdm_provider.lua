@@ -11,6 +11,9 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
+-- Upvalue caching for hot-path performance
+local type = type
+
 ---------------------------------------------------------------------------
 -- PROVIDER STATE
 ---------------------------------------------------------------------------
@@ -117,21 +120,12 @@ end
 function CDMProvider:InitializeEngine()
     if self.initialized then return end
 
-    -- Read engine selection from profile
-    local QUICore = ns.Addon
+    -- Only "owned" engine exists
     local engineName = "owned"
-    if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.ncdm then
-        engineName = QUICore.db.profile.ncdm.engine or "owned"
-    end
     local engine = self.engines[engineName]
-    if not engine then
-        -- Fallback to classic if selected engine isn't registered
-        engine = self.engines["classic"]
-        engineName = "classic"
-    end
 
     if not engine then
-        return  -- No engines registered at all
+        return  -- Engine not registered yet
     end
 
     self.activeEngine = engine
@@ -145,6 +139,15 @@ function CDMProvider:InitializeEngine()
 
     -- Wire globals from the active engine (only for globals the engine provides)
     WireGlobals(engine)
+
+    if ns.Registry then
+        ns.Registry:Register("ncdm", {
+            refresh = function(...) return engine:Refresh(...) end,
+            priority = 10,
+            group = "cooldowns",
+            importCategories = { "cdm" },
+        })
+    end
 
     -- Wire ns.NCDM for backward compat
     if engine.GetNCDM then

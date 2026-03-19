@@ -6,6 +6,10 @@ local addonName, ns = ...
 -- Uses shared dungeon data from qui_dungeon_data.lua
 ---------------------------------------------------------------------------
 
+-- Upvalue caching for hot-path performance
+local ipairs = ipairs
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+
 local Helpers = ns.Helpers
 local GetCore = Helpers.GetCore
 

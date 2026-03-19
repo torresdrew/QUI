@@ -6,6 +6,10 @@
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 
+-- Upvalue caching for hot-path performance
+local type = type
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+
 ---------------------------------------------------------------------------
 -- MODULE TABLE
 ---------------------------------------------------------------------------

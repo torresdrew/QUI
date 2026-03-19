@@ -14,6 +14,12 @@ local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
+-- Upvalue caching for hot-path performance
+local pairs, pcall = pairs, pcall
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local InCombatLockdown = InCombatLockdown
+local wipe = wipe
+
 ---------------------------------------------------------------------------
 -- MODULE TABLE
 ---------------------------------------------------------------------------

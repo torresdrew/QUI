@@ -87,6 +87,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+
+
+
+
+## v2.53.2 - 2026-03-19
+
+### Changed
+- cache GetPixelSize() in hot loops in buff bars, resource bars and group frames
+## v2.53.1 - 2026-03-19
+
+### Added
+- added option for spec-specific custom CDM entries
+- added "always show me first" option for raid frames
+
+### Fixed
+- fixed dungeon difficulty icon anchoring
+- fixed raid frames randomly resizing
+- fixed raid frame sorting
+- fixed several tooltip taint vectors
+## v2.53.0 - 2026-03-18
+
+### Added
+- added partial profile imports
+- added avoidance and stagger to character stats plus some skinning improvements
+
+### Fixed
+- fix tooltip combat visibility for custom trackers and CDM viewers
+- hopefully fixed tooltips breaking when BtWQuests taints values
+- fixed raid tooltip taint
+- fixed totem bar taint issue
+## v2.52.1 - 2026-03-15
+
+### Added
+- added guild rank to tooltip
+
+### Fixed
+- fixed targetName comparison taint
+## v2.52.0 - 2026-03-15
+
+### Added
+- added customizable colors to CDM buff bars
+- added mount, target, m+ rating to tooltip information options
+
+### Fixed
+- fix group frames defensives would show random buffs when players are out of range
+- fix contained tooltips showing their own backdrops and borders
+- fix castbar border frame strata
 ## v2.51.1 - 2026-03-14
 
 ### Added

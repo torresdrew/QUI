@@ -85,32 +85,15 @@ end
 function GUI:InitializeOptions()
     local frame = self:CreateMainFrame()
 
-    -- Sidebar tabs (short names for vertical layout)
-    GUI:AddTab(frame, "Welcome", ns.QUI_WelcomeOptions.CreateWelcomePage)
-    local generalTab = GUI:AddTab(frame, "General & QoL", ns.QUI_GeneralOptions.CreateGeneralQoLPage)
-    local anchoringTab = GUI:AddTab(frame, "Anchoring & Layout", ns.QUI_FrameAnchoringOptions.CreateFrameAnchoringPage)
-    local cdmTab = GUI:AddTab(frame, "Cooldown Manager", ns.QUI_NCDMOptions.CreateCDMSetupPage)
-    local unitFramesTab = GUI:AddTab(frame, "Unit Frames", ns.QUI_UnitFramesOptions.CreateUnitFramesPage)
-    local groupFramesTab = GUI:AddTab(frame, "Group Frames", ns.QUI_GroupFramesOptions.CreateGroupFramesPage)
-    local actionBarsTab = GUI:AddTab(frame, "Action Bars", ns.QUI_ActionBarsOptions.CreateActionBarsPage)
-    local minimapTab = GUI:AddTab(frame, "Minimap & Datatext", ns.QUI_MinimapPageOptions.CreateMinimapPage)
-    local skinningTab = GUI:AddTab(frame, "Skinning & Autohide", ns.QUI_AutohidesOptions.CreateAutohidesPage)
-    local customTrackersTab = GUI:AddTab(frame, "Custom Trackers", ns.QUI_CustomTrackersOptions.CreateCustomTrackersPage)
-    GUI:AddTab(frame, "Frame Levels", ns.QUI_HUDLayeringOptions.CreateHUDLayeringPage)
-    GUI:AddTab(frame, "Profiles", ns.QUI_ProfilesOptions.CreateSpecProfilesPage)
-    local importExportTab = GUI:AddTab(frame, "Import & Export Strings", ns.QUI_ImportOptions.CreateImportExportPage)
+    -- Registry-driven content tabs (ordered by registration order field)
+    local pages = ns.Registry:GetOrderedOptions()
+    for _, def in ipairs(pages) do
+        local tab = GUI:AddTab(frame, def.label, def.pageBuilder)
+        if def.hasSubTabs then
+            tab._hasSubTabsHint = true
+        end
+    end
 
-    -- Hint caret visibility on first load for tabs that have level-2 entries.
-    generalTab._hasSubTabsHint = true
-    anchoringTab._hasSubTabsHint = true
-    cdmTab._hasSubTabsHint = true
-    unitFramesTab._hasSubTabsHint = true
-    groupFramesTab._hasSubTabsHint = true
-    actionBarsTab._hasSubTabsHint = true
-    minimapTab._hasSubTabsHint = true
-    skinningTab._hasSubTabsHint = true
-    customTrackersTab._hasSubTabsHint = true
-    importExportTab._hasSubTabsHint = true
     -- Bottom sidebar items (Search tab, Help tab, action buttons)
     local searchTab = GUI:AddTab(frame, "Search", CreateSearchPage, true)  -- isBottomItem = true
     GUI._searchTabIndex = #frame.tabs
@@ -133,10 +116,18 @@ function GUI:InitializeOptions()
         end
     end)
 
-    GUI:AddActionButton(frame, "Edit Mode", function()
+    GUI:AddActionButton(frame, "Blizz Edit Mode", function()
         if InCombatLockdown() then return end
         if EditModeManagerFrame then
             ShowUIPanel(EditModeManagerFrame)
+        end
+    end)
+
+    GUI:AddActionButton(frame, "QUI Edit Mode", function()
+        if InCombatLockdown() then return end
+        if _G.QUI_ToggleLayoutMode then
+            GUI:Hide()
+            _G.QUI_ToggleLayoutMode()
         end
     end)
 

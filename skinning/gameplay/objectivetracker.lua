@@ -4,17 +4,23 @@ local Helpers = ns.Helpers
 local GetCore = Helpers.GetCore
 local SkinBase = ns.SkinBase
 
+-- Upvalue caching for hot-path performance
+local pairs, ipairs, type = pairs, ipairs, type
+local abs, max = math.abs, math.max
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local InCombatLockdown = InCombatLockdown
+local hooksecurefunc = hooksecurefunc
+
 ---------------------------------------------------------------------------
 -- OBJECTIVE TRACKER SKINNING
 -- Applies QUI color scheme with dynamic content-height backdrop
 ---------------------------------------------------------------------------
 
-local function GetFontFlags()
-    return Helpers.GetGeneralFontOutline()
-end
+local GetFontFlags = Helpers.GetGeneralFontOutline
 
 -- Debounce flag to prevent multiple concurrent backdrop updates
 local pendingBackdropUpdate = false
+local pendingProtectedLayoutUpdate = false
 
 -- Get settings
 local function GetSettings()
@@ -30,10 +36,7 @@ local function SafeSetTextColor(fontString, colorTable)
     fontString:SetTextColor(colorTable[1] or 1, colorTable[2] or 1, colorTable[3] or 1, colorTable[4] or 1)
 end
 
--- Get font path from user profile via Helpers
-local function GetFontPath()
-    return Helpers.GetGeneralFont()
-end
+local GetFontPath = Helpers.GetGeneralFont
 
 -- Apply font and color to a single line (objective text)
 -- Returns true if line height was changed (callers use this to avoid unnecessary repositioning)
@@ -452,6 +455,47 @@ local function HidePOIButtonGlows()
     end
 end
 
+-- Lightweight width enforcement — re-applies QUI width to tracker and modules
+-- without the full ApplyMaxWidth overhead (minimize button styling, hooks, etc.)
+-- Called from the debounced update to catch any Blizzard width resets.
+local function EnforceWidth()
+    local TrackerFrame = _G.ObjectiveTrackerFrame
+    if not TrackerFrame then return end
+    if type(InCombatLockdown) == "function" and InCombatLockdown() then
+        pendingProtectedLayoutUpdate = true
+        return
+    end
+
+    local settings = GetSettings()
+    if not settings or not settings.skinObjectiveTracker then return end
+
+    local maxWidth
+    if IsScenarioActive() then
+        maxWidth = 260
+    else
+        maxWidth = settings.objectiveTrackerWidth or 260
+    end
+
+    -- Only set if different to avoid OnSizeChanged loops
+    if abs(TrackerFrame:GetWidth() - maxWidth) > 0.5 then
+        TrackerFrame:SetWidth(maxWidth)
+    end
+    if TrackerFrame.Header and abs(TrackerFrame.Header:GetWidth() - maxWidth) > 0.5 then
+        TrackerFrame.Header:SetWidth(maxWidth)
+    end
+    for _, trackerName in ipairs(trackerModules) do
+        local tracker = _G[trackerName]
+        if tracker then
+            if abs(tracker:GetWidth() - maxWidth) > 0.5 then
+                tracker:SetWidth(maxWidth)
+            end
+            if tracker.Header and abs(tracker.Header:GetWidth() - maxWidth) > 0.5 then
+                tracker.Header:SetWidth(maxWidth)
+            end
+        end
+    end
+end
+
 -- Debounced backdrop update to prevent multiple concurrent timers
 -- 0.15s delay allows Blizzard's layout pass to complete before we measure
 local function ScheduleBackdropUpdate()
@@ -459,13 +503,13 @@ local function ScheduleBackdropUpdate()
     pendingBackdropUpdate = true
     C_Timer.After(0.15, function()
         pendingBackdropUpdate = false
+        EnforceWidth()
         UpdateBackdropAnchors()
         HidePOIButtonGlows()
     end)
 end
 
 -- Combat-safe gate for ObjectiveTracker layout mutations (width/height/size)
-local pendingProtectedLayoutUpdate = false
 local protectedLayoutEventFrame = CreateFrame("Frame")
 protectedLayoutEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 protectedLayoutEventFrame:SetScript("OnEvent", function()
@@ -570,7 +614,7 @@ local function ApplyQUIBackdrop(trackerFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga
     local backdrop = SkinBase.GetFrameData(trackerFrame, "backdrop")
     if not backdrop then
         backdrop = CreateFrame("Frame", nil, trackerFrame, "BackdropTemplate")
-        backdrop:SetFrameLevel(math.max(trackerFrame:GetFrameLevel() - 1, 0))
+        backdrop:SetFrameLevel(max(trackerFrame:GetFrameLevel() - 1, 0))
         backdrop:EnableMouse(false)
         SkinBase.SetFrameData(trackerFrame, "backdrop", backdrop)
     end
@@ -799,9 +843,13 @@ local function SkinObjectiveTracker()
 
     -- Also update on size changes (with guard to prevent multiple hooks)
     -- TAINT SAFETY: Defer to break taint chain from secure context.
+    -- EnforceWidth catches Blizzard resetting width back to 260 (template default)
     if not SkinBase.GetFrameData(TrackerFrame, "sizeChangedHooked") then
         TrackerFrame:HookScript("OnSizeChanged", function()
-            C_Timer.After(0, UpdateBackdropAnchors)
+            C_Timer.After(0, function()
+                EnforceWidth()
+                UpdateBackdropAnchors()
+            end)
         end)
         SkinBase.SetFrameData(TrackerFrame, "sizeChangedHooked", true)
     end
@@ -827,16 +875,24 @@ local function SkinObjectiveTracker()
     -- (ScheduleBackdropUpdate also calls HidePOIButtonGlows at 0.15s)
     C_Timer.After(0.5, HidePOIButtonGlows)
 
+    -- Click-through: make the objective tracker non-interactive so clicks pass to the game world
+    if settings.objectiveTrackerClickThrough then
+        TrackerFrame:EnableMouse(false)
+    end
+
     SkinBase.MarkSkinned(TrackerFrame)
 end
 
 -- Refresh/update settings (called from options panel)
 local function RefreshObjectiveTracker()
     local settings = GetSettings()
-    if not settings or not settings.skinObjectiveTracker then return end
-
     local TrackerFrame = _G.ObjectiveTrackerFrame
     if not TrackerFrame then return end
+    if not settings or not settings.skinObjectiveTracker then
+        -- Restore default interaction when skinning is disabled.
+        TrackerFrame:EnableMouse(true)
+        return
+    end
 
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
 
@@ -887,11 +943,22 @@ local function RefreshObjectiveTracker()
 
     -- Ensure hooks are in place
     HookLineCreation()
+
+    -- Click-through toggle
+    local TrackerFrame = _G.ObjectiveTrackerFrame
+    if TrackerFrame then
+        TrackerFrame:EnableMouse(not settings.objectiveTrackerClickThrough)
+    end
 end
 
--- Expose refresh function globally
-_G.QUI_RefreshObjectiveTracker = RefreshObjectiveTracker
-_G.QUI_RefreshObjectiveTrackerColors = RefreshObjectiveTracker
+if ns.Registry then
+    ns.Registry:Register("skinObjectiveTracker", {
+        refresh = RefreshObjectiveTracker,
+        priority = 80,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+end
 
 ---------------------------------------------------------------------------
 -- INITIALIZATION

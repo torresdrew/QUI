@@ -6,12 +6,20 @@
 
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
-local LSM = LibStub("LibSharedMedia-3.0")
+local LSM = ns.LSM
 local QUICore = ns.Addon
 local IsSecretValue = Helpers.IsSecretValue
 local SafeValue = Helpers.SafeValue
 local SafeToNumber = Helpers.SafeToNumber
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
+
+-- Upvalue caching for hot-path performance
+local pairs, ipairs, pcall = pairs, ipairs, pcall
+local max, min = math.max, math.min
+local CreateFrame = CreateFrame
+local GetTime, InCombatLockdown = GetTime, InCombatLockdown
+local wipe = wipe
+local tinsert = table.insert
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -20,11 +28,11 @@ local QUI_GFA = {}
 ns.QUI_GroupFrameAuras = QUI_GFA
 
 -- Weak-keyed state for aura icons (taint safety)
-local auraIconState = setmetatable({}, { __mode = "k" })
+local auraIconState = Helpers.CreateStateTable()
 
 -- Layout versioning: only reposition icons when settings change
 local layoutVersion = 0
-local frameLayoutVersions = setmetatable({}, { __mode = "k" })
+local frameLayoutVersions = Helpers.CreateStateTable()
 
 -- UNIT_AURA throttling: coalesce rapid events per unit
 local AURA_THROTTLE = 0.05 -- 50ms coalesce window
@@ -149,16 +157,27 @@ local function SharedTimerOnUpdate(self, dt)
 
             if remaining > 0 then
                 if icon.durationText then
-                    icon.durationText:SetText(FormatDuration(remaining))
                     -- Determine context from icon's parent unit frame
                     local isRaid = icon.unitFrame and icon.unitFrame._isRaid
                     local vdb = db and (isRaid and db.raid or db.party) or db
-                    local showDurationColor = vdb and vdb.auras and vdb.auras.showDurationColor ~= false
-                    if showDurationColor then
-                        local r, g, b = GetDurationColor(remaining, dur)
-                        icon.durationText:SetTextColor(r, g, b, 1)
+                    local auraSettings = vdb and vdb.auras
+                    local isBuff = icon._auraKind == "buff"
+                    local showDurationTextKey = isBuff and "buffShowDurationText" or "debuffShowDurationText"
+                    local showDurationColorKey = isBuff and "buffShowDurationColor" or "debuffShowDurationColor"
+                    local showDurationText = not auraSettings
+                        or ((auraSettings[showDurationTextKey] ~= nil and auraSettings[showDurationTextKey] or auraSettings.showDurationText) ~= false)
+                    if showDurationText then
+                        icon.durationText:SetText(FormatDuration(remaining))
+                        local showDurationColor = not auraSettings
+                            or ((auraSettings[showDurationColorKey] ~= nil and auraSettings[showDurationColorKey] or auraSettings.showDurationColor) ~= false)
+                        if showDurationColor then
+                            local r, g, b = GetDurationColor(remaining, dur)
+                            icon.durationText:SetTextColor(r, g, b, 1)
+                        else
+                            icon.durationText:SetTextColor(1, 1, 1, 1)
+                        end
                     else
-                        icon.durationText:SetTextColor(1, 1, 1, 1)
+                        icon.durationText:SetText("")
                     end
                 end
             else
@@ -427,7 +446,9 @@ local function UpdateAuraIcon(icon, auraData, unit)
     local db = GetDB()
     local isRaid = icon.unitFrame and icon.unitFrame._isRaid
     local vdb = db and (isRaid and db.raid or db.party) or db
-    local showPulse = vdb and vdb.auras and vdb.auras.showExpiringPulse ~= false
+    local auraSettings = vdb and vdb.auras
+    local pulseKey = (icon._auraKind == "buff") and "buffShowExpiringPulse" or "debuffShowExpiringPulse"
+    local showPulse = auraSettings and ((auraSettings[pulseKey] ~= nil and auraSettings[pulseKey] or auraSettings.showExpiringPulse) ~= false)
     if showPulse and safeDur > 0 then
         local safeExp = SafeToNumber(displayData.expirationTime, 0)
         local remaining = safeExp - GetTime()
@@ -753,8 +774,14 @@ local function UpdateFrameAuras(frame)
                 frame.debuffIcons[i]:ClearAllPoints()
                 frame.debuffIcons[i]:SetPoint(dAnchor, frame, dAnchor, dOffX + offX, dOffY + offY)
                 frame.debuffIcons[i]:SetSize(iconSize, iconSize)
+                -- Apply duration font size from settings
+                if frame.debuffIcons[i].durationText then
+                    local dfs = auraSettings.debuffDurationFontSize or auraSettings.durationFontSize or 9
+                    frame.debuffIcons[i].durationText:SetFont(GetFontPath(), dfs, "OUTLINE")
+                end
             end
             if entry then
+                frame.debuffIcons[i]._auraKind = "debuff"
                 UpdateAuraIcon(frame.debuffIcons[i], entry.auraData, unit)
             else
                 frame.debuffIcons[i]:Hide()
@@ -895,8 +922,14 @@ local function UpdateFrameAuras(frame)
                 frame.buffIcons[i]:ClearAllPoints()
                 frame.buffIcons[i]:SetPoint(bAnchor, frame, bAnchor, bOffX + offX, bOffY + offY)
                 frame.buffIcons[i]:SetSize(iconSize, iconSize)
+                -- Apply duration font size from settings
+                if frame.buffIcons[i].durationText then
+                    local bfs = auraSettings.buffDurationFontSize or auraSettings.durationFontSize or 9
+                    frame.buffIcons[i].durationText:SetFont(GetFontPath(), bfs, "OUTLINE")
+                end
             end
             if entry then
+                frame.buffIcons[i]._auraKind = "buff"
                 UpdateAuraIcon(frame.buffIcons[i], entry.auraData, unit)
             else
                 frame.buffIcons[i]:Hide()

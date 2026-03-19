@@ -5,6 +5,10 @@ local SkinBase = ns.SkinBase
 
 local GetCore = ns.Helpers.GetCore
 
+-- Upvalue caching for hot-path performance
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local hooksecurefunc = hooksecurefunc
+
 ---------------------------------------------------------------------------
 -- CHARACTER FRAME SKINNING
 -- Skins CharacterFrame including Character, Reputation, and Currency tabs
@@ -12,8 +16,6 @@ local GetCore = ns.Helpers.GetCore
 
 -- Module reference
 local CharacterSkinning = {}
-QUICore.CharacterSkinning = CharacterSkinning
-
 -- Configuration constants (centralized for easy adjustment)
 local CONFIG = {
     PANEL_WIDTH_EXTENSION = 55,   -- Extra width for stats panel
@@ -38,19 +40,29 @@ local titleHighlights = Helpers.CreateStateTable()   -- button → highlight tex
 ---------------------------------------------------------------------------
 -- Helper: Get skin colors from QUI system
 ---------------------------------------------------------------------------
-local function GetSkinColors()
-    local core = GetCore()
-    local settings = core and core.db and core.db.profile and core.db.profile.general
-    local sr, sg, sb, sa = Helpers.GetSkinBorderColor(settings, "characterFrame")
-    local bgr, bgg, bgb, bga = Helpers.GetSkinBgColor()
-    return sr, sg, sb, sa, bgr, bgg, bgb, bga
-end
+local GetSkinColors = Helpers.CreateSkinColorGetter("characterFrame")
+
+local GetFontPath = Helpers.GetGeneralFont
 
 ---------------------------------------------------------------------------
--- Helper: Get font path from settings
+-- Helper: Style a thin QUI scrollbar
 ---------------------------------------------------------------------------
-local function GetFontPath()
-    return Helpers.GetGeneralFont()
+local function StyleThinScrollBar(scrollBar, r, g, b)
+    if not scrollBar then return end
+
+    if scrollBar.Track then scrollBar.Track:SetAlpha(0) end
+    if scrollBar.Background then scrollBar.Background:SetAlpha(0) end
+
+    local thumb = scrollBar.ThumbTexture or (scrollBar.GetThumbTexture and scrollBar:GetThumbTexture()) or scrollBar.Thumb
+    if thumb then
+        thumb:SetColorTexture(r, g, b, 0.78)
+        thumb:SetWidth(8 * QUICore:GetPixelSize(scrollBar))
+    end
+
+    local upBtn = scrollBar.ScrollUpButton or scrollBar.Back
+    local downBtn = scrollBar.ScrollDownButton or scrollBar.Forward
+    if upBtn then upBtn:SetAlpha(0) upBtn:SetSize(1, 1) end
+    if downBtn then downBtn:SetAlpha(0) downBtn:SetSize(1, 1) end
 end
 
 ---------------------------------------------------------------------------
@@ -604,6 +616,10 @@ local function SkinEquipmentManager()
         pane.ScrollBox:ForEachFrame(SkinEquipmentSetEntry)
     end
 
+    if pane then
+        StyleThinScrollBar(pane.ScrollBar or (pane.ScrollBox and pane.ScrollBox.ScrollBar), sr, sg, sb)
+    end
+
     -- Skin buttons
     StyleEquipMgrButton(PaperDollFrameEquipSet)
     StyleEquipMgrButton(PaperDollFrameSaveSet)
@@ -642,6 +658,9 @@ RefreshEquipmentManagerColors = function()
                 entry.HighlightBar:SetColorTexture(sr, sg, sb, 0.15)
             end
         end)
+    end
+    if pane then
+        StyleThinScrollBar(pane.ScrollBar or (pane.ScrollBox and pane.ScrollBox.ScrollBar), sr, sg, sb)
     end
 
     -- Update buttons
@@ -756,15 +775,7 @@ local function SkinTitleManagerPane()
     end
 
     -- Style scrollbar
-    if pane.ScrollBar then
-        local scrollBar = pane.ScrollBar
-        if scrollBar.Track then
-            scrollBar.Track:SetAlpha(0.3)
-        end
-        if scrollBar.Thumb then
-            scrollBar.Thumb:SetAlpha(0.5)
-        end
-    end
+    StyleThinScrollBar(pane.ScrollBar or (pane.ScrollBox and pane.ScrollBox.ScrollBar), sr, sg, sb)
 
     skinnedEntries[pane] = true
 end
@@ -803,6 +814,7 @@ RefreshTitlePaneColors = function()
             end
         end)
     end
+    StyleThinScrollBar(pane.ScrollBar or (pane.ScrollBox and pane.ScrollBox.ScrollBar), sr, sg, sb)
 end
 
 -- Hook setup function (called from initialization after CharacterFrame loads)
@@ -832,13 +844,14 @@ _G.QUI_CharacterFrameSkinning = {
     SkinTitleManager = SkinTitleManagerPane,
 }
 
--- Legacy compatibility aliases (deprecated - use QUI_CharacterFrameSkinning table)
-_G.QUI_RefreshCharacterFrameColors = RefreshCharacterFrameColors
-
--- Legacy global function aliases for qui_character.lua
-_G.QUI_SkinEquipmentManager = SkinEquipmentManager
-_G.QUI_SkinTitleManager = SkinTitleManagerPane
-_G.QUI_SetCharacterFrameBgExtended = SetCharacterFrameBgExtended
+if ns.Registry then
+    ns.Registry:Register("skinCharacter", {
+        refresh = RefreshCharacterFrameColors,
+        priority = 80,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+end
 
 ---------------------------------------------------------------------------
 -- INITIALIZATION

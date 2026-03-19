@@ -8,6 +8,10 @@ local QUICore = ns.Addon
 local UIKit = ns.UIKit
 local Helpers = ns.Helpers
 
+-- Upvalue caching for hot-path performance
+local type, pcall = type, pcall
+local C_Timer = C_Timer
+
 ---------------------------------------------------------------------------
 -- MODULE TABLE
 ---------------------------------------------------------------------------
@@ -116,9 +120,6 @@ local function EnsureProxy(key, anchorFrame)
     return proxy
 end
 
-function QUI_BigWigs:GetProxyFrame(key)
-    return proxies[key]
-end
 
 local function QueueRetry()
     if retryTimer then

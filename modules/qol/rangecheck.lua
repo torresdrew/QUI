@@ -9,6 +9,12 @@ local Helpers = ns.Helpers
 local UIKit = ns.UIKit
 local RangeLib = LibStub("LibRangeCheck-3.0", true)
 
+-- Upvalue caching for hot-path performance
+local type, pcall = type, pcall
+local format = string.format
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local InCombatLockdown = InCombatLockdown
+
 local DEFAULT_SETTINGS = {
     enabled = false,
     combatOnly = false,
@@ -227,7 +233,7 @@ local function ApplyAppearance()
     state.frame:SetFrameStrata(settings.strata or "MEDIUM")
     state.text:SetFont(fontPath, fontSize, "OUTLINE")
 
-    if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(state.frame)) then
+    if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("rangeCheck")) then
         state.frame:ClearAllPoints()
         state.frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX or 0, settings.offsetY or -190)
     end
@@ -389,10 +395,18 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     SyncTickerState()
 end)
 
-_G.QUI_RefreshRangeCheck = RefreshRangeCheck
 _G.QUI_ToggleRangeCheckPreview = TogglePreview
 _G.QUI_IsRangeCheckPreviewMode = function()
     return state.preview == true
+end
+
+if ns.Registry then
+    ns.Registry:Register("rangecheck", {
+        refresh = RefreshRangeCheck,
+        priority = 30,
+        group = "qol",
+        importCategories = { "castBars" },
+    })
 end
 
 if QUI then

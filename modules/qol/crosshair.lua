@@ -8,6 +8,10 @@ ns.QUI = QUI
 local Helpers = ns.Helpers
 local CreateOnUpdateThrottle = Helpers and Helpers.CreateOnUpdateThrottle
 
+-- Upvalue caching for hot-path performance
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local InCombatLockdown = InCombatLockdown
+
 local crosshairFrame, horizLine, vertLine, horizBorder, vertBorder
 
 -- Separate frame for range checking (always visible so OnUpdate runs even when crosshair is hidden)
@@ -25,9 +29,7 @@ local UpdateEventRegistrations
 ---------------------------------------------------------------------------
 -- Get settings from database
 ---------------------------------------------------------------------------
-local function GetSettings()
-    return Helpers.GetModuleDB("crosshair")
-end
+local GetSettings = Helpers.CreateDBGetter("crosshair")
 
 ---------------------------------------------------------------------------
 -- Range checking via shared RangeUtils (cached action bar scan)
@@ -267,10 +269,12 @@ local function UpdateCrosshair()
     local strata = settings.strata or "HIGH"
     local onlyInCombat = settings.onlyInCombat
     
-    -- Apply strata and position
+    -- Apply strata and position (skip if anchoring engine manages this frame)
     crosshairFrame:SetFrameStrata(strata)
-    crosshairFrame:ClearAllPoints()
-    crosshairFrame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+    if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("crosshair")) then
+        crosshairFrame:ClearAllPoints()
+        crosshairFrame:SetPoint("CENTER", UIParent, "CENTER", offsetX, offsetY)
+    end
     
     -- Size the border textures (slightly larger than main lines)
     horizBorder:SetSize((size * 2) + borderSize * 2, thickness + borderSize * 2)
@@ -395,10 +399,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
----------------------------------------------------------------------------
--- Global refresh function for GUI
----------------------------------------------------------------------------
-_G.QUI_RefreshCrosshair = UpdateCrosshair
+if ns.Registry then
+    ns.Registry:Register("crosshair", {
+        refresh = UpdateCrosshair,
+        priority = 30,
+        group = "qol",
+        importCategories = { "castBars" },
+    })
+end
 
 QUI.Crosshair = {
     Update = UpdateCrosshair,
