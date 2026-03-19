@@ -55,6 +55,7 @@ local defaults = {
             objectiveTrackerTitleColor = { 1.0, 1.0, 1.0, 1.0 },  -- Quest title color (white)
             objectiveTrackerTextColor = { 0.8, 0.8, 0.8, 1.0 },  -- Objective text color (light gray)
             skinInstanceFrames = false,  -- Skin PVE/Dungeon/PVP frames (opt-in)
+            skinAuctionHouse = false,  -- Skin Auction House frame (opt-in)
             skinBgColor = { 0.008, 0.008, 0.008, 1 },  -- Skinning background color (with alpha)
             skinAlerts = true,  -- Skin alert/toast frames
             skinCharacterFrame = true,  -- Skin Character Frame (Character, Reputation, Currency tabs)

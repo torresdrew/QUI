@@ -2190,27 +2190,6 @@ function ownedEngine:Initialize()
         })
     end
 
-    if ns.Registry then
-        ns.Registry:Register("cooldownEffects", {
-            refresh = _G.QUI_RefreshCooldownEffects,
-            priority = 10,
-            group = "cooldowns",
-            importCategories = { "cdm" },
-        })
-        ns.Registry:Register("cooldownSwipe", {
-            refresh = _G.QUI_RefreshCooldownSwipe,
-            priority = 10,
-            group = "cooldowns",
-            importCategories = { "cdm" },
-        })
-        ns.Registry:Register("cooldownGlows", {
-            refresh = _G.QUI_RefreshCustomGlows,
-            priority = 10,
-            group = "cooldowns",
-            importCategories = { "cdm" },
-        })
-    end
-
     -- Bootstrap spell data harvesting
     if ns.CDMSpellData then
         ns.CDMSpellData:Initialize()

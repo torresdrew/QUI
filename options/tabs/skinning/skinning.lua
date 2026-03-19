@@ -292,6 +292,16 @@ local function BuildSkinningTab(tabContent)
         P(GUI:CreateFormCheckbox(body, "Skin Instance Frames (Req. Reload)", "skinInstanceFrames", general, ReloadConfirm), body, sy)
     end)
 
+    ---------------------------------------------------------------------------
+    -- Auction House
+    ---------------------------------------------------------------------------
+    if general.skinAuctionHouse == nil then general.skinAuctionHouse = false end
+
+    CreateCollapsible("Auction House", 1 * FORM_ROW + 8, function(body)
+        local sy = -4
+        P(GUI:CreateFormCheckbox(body, "Skin Auction House (Req. Reload)", "skinAuctionHouse", general, ReloadConfirm), body, sy)
+    end)
+
     relayout()
 end
 

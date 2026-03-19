@@ -2,10 +2,8 @@
 -- QUI Layout Mode — Shared Provider Utilities
 -- Canonical implementations of CreateCollapsible, StandardRelayout,
 -- BuildPositionCollapsible, and PlaceRow used by all settings providers.
--- Deferred: loaded on first Layout Mode Open().
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
-ns.RegisterDeferredInit("layoutmode", function()
 local Helpers = ns.Helpers
 local LSM = ns.LSM
 
@@ -211,4 +209,3 @@ function Utils.BuildBackdropBorderSection(content, db, sections, relayout, Refre
     end, sections, relayout)
 end
 
-end) -- RegisterDeferredInit("layoutmode")

@@ -779,12 +779,9 @@ local function RefreshAuctionHouseColors()
     end
 end
 
--- Expose refresh function globally
-_G.QUI_RefreshAuctionHouseColors = RefreshAuctionHouseColors
-
 if ns.Registry then
     ns.Registry:Register("skinAuctionHouse", {
-        refresh = _G.QUI_RefreshAuctionHouseColors,
+        refresh = RefreshAuctionHouseColors,
         priority = 80,
         group = "skinning",
         importCategories = { "skinning", "theme" },

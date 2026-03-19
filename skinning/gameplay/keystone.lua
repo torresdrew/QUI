@@ -245,15 +245,6 @@ if ns.Registry then
     })
 end
 
-if ns.Registry then
-    ns.Registry:Register("skinKeystone", {
-        refresh = _G.QUI_RefreshKeystoneColors,
-        priority = 80,
-        group = "skinning",
-        importCategories = { "skinning", "theme" },
-    })
-end
-
 ---------------------------------------------------------------------------
 -- INITIALIZATION
 ---------------------------------------------------------------------------

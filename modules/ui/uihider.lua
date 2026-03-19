@@ -861,15 +861,6 @@ if ns.Registry then
     })
 end
 
-if ns.Registry then
-    ns.Registry:Register("uiHider", {
-        refresh = _G.QUI_RefreshUIHider,
-        priority = 60,
-        group = "ui",
-        importCategories = { "qol" },
-    })
-end
-
 ---------------------------------------------------------------------------
 -- EDIT MODE INTEGRATION
 -- Temporarily restore hidden frames during Edit Mode so they remain visible

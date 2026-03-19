@@ -66,27 +66,6 @@ local function StyleThinScrollBar(scrollBar, r, g, b)
 end
 
 ---------------------------------------------------------------------------
--- Helper: Style a thin QUI scrollbar
----------------------------------------------------------------------------
-local function StyleThinScrollBar(scrollBar, r, g, b)
-    if not scrollBar then return end
-
-    if scrollBar.Track then scrollBar.Track:SetAlpha(0) end
-    if scrollBar.Background then scrollBar.Background:SetAlpha(0) end
-
-    local thumb = scrollBar.ThumbTexture or (scrollBar.GetThumbTexture and scrollBar:GetThumbTexture()) or scrollBar.Thumb
-    if thumb then
-        thumb:SetColorTexture(r, g, b, 0.78)
-        thumb:SetWidth(8 * QUICore:GetPixelSize(scrollBar))
-    end
-
-    local upBtn = scrollBar.ScrollUpButton or scrollBar.Back
-    local downBtn = scrollBar.ScrollDownButton or scrollBar.Forward
-    if upBtn then upBtn:SetAlpha(0) upBtn:SetSize(1, 1) end
-    if downBtn then downBtn:SetAlpha(0) downBtn:SetSize(1, 1) end
-end
-
----------------------------------------------------------------------------
 -- Helper: Check if skinning is enabled
 ---------------------------------------------------------------------------
 local function IsSkinningEnabled()

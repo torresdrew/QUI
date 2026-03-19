@@ -47,10 +47,12 @@ end
 local FRAME_WIDTH = 640
 local FRAME_HEIGHT = 700
 local NAV_WIDTH = 120
-local ENTRY_ROW_HEIGHT = 34
-local ENTRY_ICON_SIZE = 28
-local ADD_ROW_HEIGHT = 30
-local FORM_ROW = 32
+local GRID_CELL_SIZE = 36
+local GRID_ICON_SIZE = 28
+local GRID_GAP = 2
+local GRID_CELL_STRIDE = GRID_CELL_SIZE + GRID_GAP  -- 38
+local SECTION_HEADER_HEIGHT = 20
+local FORM_ROW = 36
 local TAB_HEIGHT = 26
 
 local CONTAINER_LABELS = {
@@ -101,8 +103,9 @@ local TYPE_TAGS = {
 ---------------------------------------------------------------------------
 local composerFrame = nil      -- singleton
 local activeContainer = nil    -- current container key
-local entryRows = {}           -- pooled entry row frames
-local addRows = {}             -- pooled add-source row frames
+local entryCells = {}          -- pooled entry grid cells
+local addCells = {}            -- pooled add-source grid cells
+local sectionHeaders = {}      -- pooled section header frames
 local expandedOverride = nil   -- spellID of expanded override panel (or nil)
 local previewIcons = {}        -- preview icon textures
 local previewBars = {}         -- preview bar frames (for auraBar containers)
@@ -828,18 +831,44 @@ end
 -- PER-ENTRY OVERRIDE PANEL
 ---------------------------------------------------------------------------
 local overridePanel = nil
+local HideOverridePanel  -- forward declaration
 
-local function BuildOverridePanel(parent)
-    -- Parent to the composer frame (not the scroll child) so the panel
-    -- renders above the scroll area at the correct strata/level.
-    local panelParent = composerFrame or parent
-    local panel = CreateBackdropFrame(panelParent, 210)
+local function BuildOverridePanel()
+    local panel = CreateFrame("Frame", "QUI_CDMOverridePanel", UIParent, "BackdropTemplate")
     panel:SetHeight(180)
     panel:SetFrameStrata("TOOLTIP")
-    panel:SetFrameLevel(210)
+    panel:SetFrameLevel(500)
     SetSimpleBackdrop(panel, 0.06, 0.06, 0.08, 0.98, ACCENT_R * 0.5, ACCENT_G * 0.5, ACCENT_B * 0.5, 0.8)
-    panel:Hide()
+    panel:EnableMouse(true)
+    panel:SetMovable(true)
+    panel:RegisterForDrag("LeftButton")
+    panel:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    panel:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
 
+    -- Close button (X) in upper-right
+    local closeBtn = CreateFrame("Button", nil, panel)
+    closeBtn:SetSize(20, 20)
+    closeBtn:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -2, -2)
+    closeBtn:SetFrameLevel(panel:GetFrameLevel() + 10)
+    closeBtn:RegisterForClicks("AnyUp")
+    local closeText = closeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    closeText:SetPoint("CENTER")
+    closeText:SetText("X")
+    closeText:SetTextColor(0.6, 0.6, 0.6, 1)
+    closeBtn:SetScript("OnClick", function() HideOverridePanel(true) end)
+    closeBtn:SetScript("OnEnter", function() closeText:SetTextColor(0.9, 0.3, 0.3, 1) end)
+    closeBtn:SetScript("OnLeave", function() closeText:SetTextColor(0.6, 0.6, 0.6, 1) end)
+    panel._closeBtn = closeBtn
+
+    -- ESC to close
+    if not tContains(UISpecialFrames, "QUI_CDMOverridePanel") then
+        tinsert(UISpecialFrames, "QUI_CDMOverridePanel")
+    end
+
+    -- Clear expandedOverride state when hidden by any means
+    panel:SetScript("OnHide", function() expandedOverride = nil end)
+
+    panel:Hide()
     overridePanel = panel
     return panel
 end
@@ -847,15 +876,19 @@ end
 local function ShowOverridePanel(parentRow, containerKey, entry, entryIndex)
     if not overridePanel or not entry then return end
 
-    -- Clear old contents
+    -- Clear old contents — preserve close button
+    local closeBtn = overridePanel._closeBtn
     local children = { overridePanel:GetChildren() }
     for _, child in ipairs(children) do
-        child:Hide()
-        child:SetParent(nil)
+        if child ~= closeBtn then
+            child:Hide()
+            child:SetParent(nil)
+        end
     end
+    -- Hide dynamically created font strings only (not backdrop textures)
     local regions = { overridePanel:GetRegions() }
     for _, region in ipairs(regions) do
-        if region ~= overridePanel.NineSlice and region.Hide and (not region.IsObjectType or not region:IsObjectType("Texture")) then
+        if region:IsObjectType("FontString") then
             region:Hide()
         end
     end
@@ -895,7 +928,15 @@ local function ShowOverridePanel(parentRow, containerKey, entry, entryIndex)
         C_Timer.After(0.05, RefreshPreview)
     end
 
-    local sy = -6
+    -- Spell name title
+    local titleLabel = overridePanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    titleLabel:SetPoint("TOPLEFT", overridePanel, "TOPLEFT", 8, -6)
+    titleLabel:SetPoint("RIGHT", overridePanel, "RIGHT", -24, 0)
+    titleLabel:SetJustifyH("LEFT")
+    titleLabel:SetText(GetEntryName(entry))
+    titleLabel:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
+
+    local sy = -24
     local function PlaceWidget(widget)
         widget:SetPoint("TOPLEFT", overridePanel, "TOPLEFT", 8, sy)
         widget:SetPoint("RIGHT", overridePanel, "RIGHT", -8, 0)
@@ -911,7 +952,6 @@ local function ShowOverridePanel(parentRow, containerKey, entry, entryIndex)
     PlaceWidget(glowCheck)
 
     -- Glow color
-    -- For color pickers, we need a real table reference. Use a temp table synced back.
     local glowColorDB = { glowColor = overrides.glowColor or { ACCENT_R, ACCENT_G, ACCENT_B, 1 } }
     local glowColorPicker = GUI:CreateFormColorPicker(overridePanel, "Glow Color", "glowColor", glowColorDB, function()
         spellData:SetSpellOverride(containerKey, spellID, "glowColor", glowColorDB.glowColor)
@@ -923,31 +963,69 @@ local function ShowOverridePanel(parentRow, containerKey, entry, entryIndex)
     local durCheck = GUI:CreateFormCheckbox(overridePanel, "Hide Duration Text", "hideDurationText", proxyDB, OnOverrideChange)
     PlaceWidget(durCheck)
 
-    -- Size override slider
-    local sizeDB = { sizeOverride = overrides.sizeOverride or 0 }
-    local sizeSlider = GUI:CreateFormSlider(overridePanel, "Size Override", 0, 80, 1, "sizeOverride", sizeDB, function()
-        if sizeDB.sizeOverride == 0 then
+    -- Size override (editbox, 0 = default, 1-80 = px)
+    local sizeRow = CreateFrame("Frame", nil, overridePanel)
+    sizeRow:SetHeight(FORM_ROW)
+    local sizeLabel = sizeRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    sizeLabel:SetPoint("LEFT", 0, 0)
+    sizeLabel:SetText("Size Override")
+    sizeLabel:SetTextColor(0.85, 0.85, 0.85, 1)
+
+    local sizeHint = sizeRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    sizeHint:SetPoint("LEFT", sizeLabel, "RIGHT", 6, 0)
+    sizeHint:SetText("(0-80, 0 = default)")
+    sizeHint:SetTextColor(0.45, 0.45, 0.45, 1)
+
+    local sizeBox = CreateFrame("EditBox", nil, sizeRow, "BackdropTemplate")
+    sizeBox:SetSize(48, 20)
+    sizeBox:SetPoint("RIGHT", sizeRow, "RIGHT", 0, 0)
+    SetSimpleBackdrop(sizeBox, 0.1, 0.1, 0.12, 1, 0.3, 0.3, 0.3, 1)
+    sizeBox:SetFontObject("GameFontNormalSmall")
+    sizeBox:SetTextInsets(4, 4, 0, 0)
+    sizeBox:SetAutoFocus(false)
+    sizeBox:SetMaxLetters(3)
+    sizeBox:SetNumeric(true)
+    sizeBox:SetText(tostring(overrides.sizeOverride or 0))
+    sizeBox:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()
+        local val = tonumber(self:GetText()) or 0
+        if val < 0 then val = 0 end
+        if val > 80 then val = 80 end
+        self:SetText(tostring(val))
+        if val == 0 then
             spellData:ClearSpellOverride(containerKey, spellID, "sizeOverride")
         else
-            spellData:SetSpellOverride(containerKey, spellID, "sizeOverride", sizeDB.sizeOverride)
+            spellData:SetSpellOverride(containerKey, spellID, "sizeOverride", val)
         end
         OnOverrideChange()
     end)
-    PlaceWidget(sizeSlider)
+    sizeBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    sizeBox:SetScript("OnEditFocusGained", function(self)
+        self:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
+    end)
+    sizeBox:SetScript("OnEditFocusLost", function(self)
+        self:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+    end)
+    PlaceWidget(sizeRow)
 
-    local totalHeight = math_abs(sy) + 8
+    local totalHeight = math_abs(sy) + 32
     overridePanel:SetHeight(totalHeight)
 
-    -- Position below parent row
+    -- Position at cursor location
     overridePanel:ClearAllPoints()
-    overridePanel:SetPoint("TOPLEFT", parentRow, "BOTTOMLEFT", 0, -2)
-    overridePanel:SetPoint("RIGHT", parentRow, "RIGHT", 0, 0)
+    overridePanel:SetWidth(270)
+    overridePanel:SetClampedToScreen(true)
+
+    local uiScale = UIParent:GetEffectiveScale()
+    local cursorX, cursorY = GetCursorPosition()
+    overridePanel:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT",
+        cursorX / uiScale, cursorY / uiScale)
     overridePanel:Show()
 
     return totalHeight + 4
 end
 
-local function HideOverridePanel(clearState)
+HideOverridePanel = function(clearState)
     if overridePanel then
         overridePanel:Hide()
     end
@@ -990,12 +1068,229 @@ local function IsBuiltInContainer(containerKey)
 end
 
 ---------------------------------------------------------------------------
+-- CONTEXT MENUS (right-click on entry/add rows)
+---------------------------------------------------------------------------
+local function ShowEntryContextMenu(anchorRow, entry, entryIndex, isDormant)
+    if _G.QUI_EntryContextMenu then
+        _G.QUI_EntryContextMenu:Hide()
+    end
+
+    local spellData = GetCDMSpellData()
+    if not spellData then return end
+
+    local isCooldown = (ResolveContainerType(activeContainer) == "cooldown")
+    local db = GetContainerDB(activeContainer)
+    if not db then return end
+
+    -- Build menu items
+    local items = {}
+    if isDormant then
+        items[1] = { label = "Restore", color = { ACCENT_R, ACCENT_G, ACCENT_B }, action = function()
+            if InCombatLockdown() then return end
+            spellData:RestoreRemovedEntry(activeContainer, entry.id or entry)
+            C_Timer.After(0.02, function()
+                RefreshEntryList()
+                RefreshPreview()
+            end)
+        end }
+    else
+        -- Settings
+        items[#items + 1] = { label = "Settings", color = { ACCENT_R, ACCENT_G, ACCENT_B }, action = function()
+            if expandedOverride == entry.id then
+                HideOverridePanel(true)
+            else
+                expandedOverride = entry.id
+                if not overridePanel then
+                    BuildOverridePanel()
+                end
+                ShowOverridePanel(anchorRow, activeContainer, entry, entryIndex)
+            end
+        end }
+
+        -- Row cycle (cooldown containers with 2+ rows)
+        if isCooldown then
+            local activeRowNums = {}
+            for r = 1, 3 do
+                local rd = db["row" .. r]
+                if rd and rd.iconCount and rd.iconCount > 0 then
+                    activeRowNums[#activeRowNums + 1] = r
+                end
+            end
+            if #activeRowNums > 1 then
+                local curRow = entry.row or activeRowNums[1]
+                local nextRow = activeRowNums[1]
+                for ri, rn in ipairs(activeRowNums) do
+                    if rn == curRow and activeRowNums[ri + 1] then
+                        nextRow = activeRowNums[ri + 1]
+                        break
+                    end
+                end
+                items[#items + 1] = { label = "Move to Row " .. nextRow .. "  (R" .. curRow .. ")", color = { ACCENT_R, ACCENT_G, ACCENT_B }, action = function()
+                    if InCombatLockdown() then return end
+                    spellData:SetEntryRow(activeContainer, entryIndex, nextRow)
+                    C_Timer.After(0.02, function()
+                        RefreshCDM()
+                        RefreshEntryList()
+                        RefreshPreview()
+                    end)
+                end }
+            end
+        end
+
+        -- Move to next container
+        local allTabKeys = GetAllTabKeys()
+        local ci = 0
+        for j, key in ipairs(allTabKeys) do
+            if key == activeContainer then ci = j break end
+        end
+        local targetKey = allTabKeys[(ci % #allTabKeys) + 1]
+        items[#items + 1] = { label = "Move to " .. GetContainerLabel(targetKey), color = { ACCENT_R, ACCENT_G, ACCENT_B }, action = function()
+            if InCombatLockdown() then return end
+            spellData:MoveEntryBetweenContainers(activeContainer, targetKey, entryIndex)
+            C_Timer.After(0.02, function()
+                RefreshCDM()
+                RefreshEntryList()
+                RefreshPreview()
+            end)
+        end }
+
+        -- Remove
+        items[#items + 1] = { label = "Remove", color = { 0.9, 0.3, 0.3 }, action = function()
+            if InCombatLockdown() then return end
+            spellData:RemoveEntry(activeContainer, entryIndex)
+            C_Timer.After(0.02, function()
+                RefreshCDM()
+                RefreshEntryList()
+                RefreshPreview()
+            end)
+        end }
+    end
+
+    local itemHeight = 24
+    local menuWidth = 180
+    local menuHeight = #items * itemHeight + 4
+
+    local menu = CreateFrame("Frame", "QUI_EntryContextMenu", UIParent, "BackdropTemplate")
+    menu:SetSize(menuWidth, menuHeight)
+    menu:SetFrameStrata("TOOLTIP")
+    menu:SetFrameLevel(300)
+    menu:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    menu:SetBackdropColor(0.08, 0.08, 0.1, 0.98)
+    menu:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+    menu:EnableMouse(true)
+    menu:SetPoint("TOPLEFT", anchorRow, "BOTTOMLEFT", 0, -2)
+    menu:SetClampedToScreen(true)
+
+    for i, item in ipairs(items) do
+        local btn = CreateFrame("Button", nil, menu)
+        btn:SetSize(menuWidth - 4, itemHeight)
+        btn:SetPoint("TOPLEFT", 2, -(2 + (i - 1) * itemHeight))
+        local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        label:SetPoint("LEFT", 8, 0)
+        label:SetText(item.label)
+        local c = item.color or { 0.8, 0.8, 0.8 }
+        label:SetTextColor(c[1], c[2], c[3], 1)
+        btn:SetScript("OnClick", function()
+            menu:Hide()
+            if item.action then item.action() end
+        end)
+        btn:SetScript("OnEnter", function() label:SetTextColor(1, 1, 1, 1) end)
+        btn:SetScript("OnLeave", function() label:SetTextColor(c[1], c[2], c[3], 1) end)
+    end
+
+    menu:SetScript("OnUpdate", function(self)
+        if not MouseIsOver(self) and (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) then
+            self:Hide()
+        end
+    end)
+
+    menu:Show()
+end
+
+local function ShowAddContextMenu(anchorRow, sourceEntry)
+    if _G.QUI_AddContextMenu then
+        _G.QUI_AddContextMenu:Hide()
+    end
+
+    local spellData = GetCDMSpellData()
+    if not spellData then return end
+
+    local menu = CreateFrame("Frame", "QUI_AddContextMenu", UIParent, "BackdropTemplate")
+    menu:SetSize(160, 28)
+    menu:SetFrameStrata("TOOLTIP")
+    menu:SetFrameLevel(300)
+    menu:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    menu:SetBackdropColor(0.08, 0.08, 0.1, 0.98)
+    menu:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+    menu:EnableMouse(true)
+    menu:SetPoint("TOPLEFT", anchorRow, "BOTTOMLEFT", 0, -2)
+    menu:SetClampedToScreen(true)
+
+    local btn = CreateFrame("Button", nil, menu)
+    btn:SetSize(156, 24)
+    btn:SetPoint("TOPLEFT", 2, -2)
+    local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetPoint("LEFT", 8, 0)
+    label:SetText("Add to " .. GetContainerLabel(activeContainer))
+    label:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
+    btn:SetScript("OnClick", function()
+        menu:Hide()
+        if InCombatLockdown() then return end
+
+        local addType = sourceEntry._entryType or "spell"
+        local addID = sourceEntry._entryID or sourceEntry.spellID
+
+        local containerDB = GetContainerDB(activeContainer)
+        if containerDB and containerDB.removedSpells and addID then
+            containerDB.removedSpells[addID] = nil
+        end
+
+        if addType == "slot" and sourceEntry._slotID then
+            if containerDB and containerDB.removedSpells then
+                containerDB.removedSpells[sourceEntry._slotID] = nil
+            end
+            spellData:AddTrinketSlot(activeContainer, sourceEntry._slotID)
+        elseif addType == "item" then
+            spellData:AddItem(activeContainer, addID)
+        else
+            spellData:AddSpell(activeContainer, addID)
+        end
+
+        C_Timer.After(0.02, function()
+            RefreshCDM()
+            RefreshEntryList()
+            RefreshPreview()
+            RefreshAddList()
+        end)
+    end)
+    btn:SetScript("OnEnter", function() label:SetTextColor(1, 1, 1, 1) end)
+    btn:SetScript("OnLeave", function() label:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B, 1) end)
+
+    menu:SetScript("OnUpdate", function(self)
+        if not MouseIsOver(self) and (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) then
+            self:Hide()
+        end
+    end)
+
+    menu:Show()
+end
+
+
+---------------------------------------------------------------------------
 -- ENTRY LIST (Bottom Section)
 ---------------------------------------------------------------------------
 local entryListScroll = nil
 local entryListContent = nil
 
--- Drag state (must be before BuildEntryListSection and GetOrCreateEntryRow)
+-- Drag state (must be before BuildEntryListSection and GetOrCreateEntryCell)
 local dragState = {
     active = false,
     fromIndex = nil,
@@ -1023,7 +1318,7 @@ local function BuildEntryListSection(parent)
     entryListScroll = scrollF
     entryListContent = content
 
-    -- Catch mouse-up on scroll frame to stop drag even if cursor leaves a row
+    -- Catch mouse-up on scroll frame to stop drag even if cursor leaves a cell
     scrollF:EnableMouse(true)
     scrollF:SetScript("OnMouseUp", function(_, button)
         if button == "LeftButton" and dragState.active then
@@ -1036,110 +1331,72 @@ local function BuildEntryListSection(parent)
     return container
 end
 
-local function GetOrCreateEntryRow(index)
-    if entryRows[index] then return entryRows[index] end
+local function GetOrCreateEntryCell(index)
+    if entryCells[index] then return entryCells[index] end
 
-    local row = CreateFrame("Frame", nil, entryListContent, "BackdropTemplate")
-    row:SetHeight(ENTRY_ROW_HEIGHT)
+    local cell = CreateFrame("Button", nil, entryListContent, "BackdropTemplate")
+    cell:SetSize(GRID_CELL_SIZE, GRID_CELL_SIZE)
+    cell:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    cell:RegisterForDrag("LeftButton")
 
-    -- Background
-    row:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8" })
-    row:SetBackdropColor(0.08, 0.08, 0.1, (index % 2 == 0) and 0.4 or 0.2)
+    -- Border (dim by default)
+    SetSimpleBackdrop(cell, 0, 0, 0, 0, 0.2, 0.2, 0.2, 0.5)
 
-    -- Icon (anchored after drag handle creation below)
-    row._icon = row:CreateTexture(nil, "ARTWORK")
-    row._icon:SetSize(ENTRY_ICON_SIZE, ENTRY_ICON_SIZE)
-    row._icon:SetPoint("LEFT", 14, 0)
-    row._icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    -- Icon
+    cell._icon = cell:CreateTexture(nil, "ARTWORK")
+    cell._icon:SetSize(GRID_ICON_SIZE, GRID_ICON_SIZE)
+    cell._icon:SetPoint("CENTER")
+    cell._icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-    -- Name
-    row._name = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    row._name:SetPoint("LEFT", row._icon, "RIGHT", 6, 2)
-    row._name:SetWidth(250)
-    row._name:SetJustifyH("LEFT")
-    row._name:SetTextColor(0.9, 0.9, 0.9, 1)
+    -- Highlight overlay
+    cell._highlight = cell:CreateTexture(nil, "HIGHLIGHT")
+    cell._highlight:SetAllPoints()
+    cell._highlight:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.15)
 
-    -- Type tag
-    row._typeTag = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    row._typeTag:SetPoint("LEFT", row._icon, "RIGHT", 6, -10)
-    row._typeTag:SetJustifyH("LEFT")
-    row._typeTag:SetTextColor(0.5, 0.5, 0.5, 1)
-
-    -- Buttons (right side)
-    row._gearBtn = CreateSmallButton(row, "*", 22, 20)
-    row._gearBtn:SetPoint("RIGHT", row, "RIGHT", -78, 0)
-
-    row._moveBtn = CreateSmallButton(row, ">", 22, 20)
-    row._moveBtn:SetPoint("RIGHT", row, "RIGHT", -52, 0)
-
-    row._removeBtn = CreateSmallButton(row, "X", 22, 20)
-    row._removeBtn:SetPoint("RIGHT", row, "RIGHT", -26, 0)
-    row._removeBtn._label:SetTextColor(0.9, 0.3, 0.3, 1)
-
-    -- Row cycle button (only visible for cooldown containers)
-    row._rowCycleBtn = CreateSmallButton(row, "R1", 26, 20)
-    row._rowCycleBtn:SetPoint("RIGHT", row._gearBtn, "LEFT", -2, 0)
-    row._rowCycleBtn:Hide()
-
-    -- Row assignment (anchored to row cycle button)
-    row._rowAssign = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    row._rowAssign:SetPoint("RIGHT", row._rowCycleBtn, "LEFT", -4, 0)
-    row._rowAssign:SetJustifyH("RIGHT")
-    row._rowAssign:SetTextColor(0.4, 0.4, 0.4, 1)
-
-    -- Drag handle: grip indicator left of the icon.
-    -- Three horizontal lines that highlight on hover. Only the handle
-    -- initiates drag, so buttons on the right remain clickable.
-    local handle = CreateFrame("Frame", nil, row)
-    handle:SetSize(12, ENTRY_ROW_HEIGHT)
-    handle:SetPoint("LEFT", 0, 0)
-    handle:EnableMouse(true)
-    handle:RegisterForDrag("LeftButton")
-
-    -- Three grip lines
-    local lineColor = { 0.35, 0.35, 0.35, 0.8 }
-    local hoverColor = { ACCENT_R, ACCENT_G, ACCENT_B, 1 }
-    local gripLines = {}
-    for li = 1, 3 do
-        local line = handle:CreateTexture(nil, "OVERLAY")
-        line:SetSize(8, 1)
-        line:SetPoint("CENTER", handle, "CENTER", 0, (2 - li) * 3)
-        line:SetColorTexture(lineColor[1], lineColor[2], lineColor[3], lineColor[4])
-        gripLines[li] = line
-    end
-
-    handle:SetScript("OnEnter", function()
-        for _, line in ipairs(gripLines) do
-            line:SetColorTexture(hoverColor[1], hoverColor[2], hoverColor[3], hoverColor[4])
+    -- Tooltip + border highlight on hover
+    cell:SetScript("OnEnter", function(self)
+        if not self._entry then return end
+        self:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 0.8)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetFrameStrata("TOOLTIP")
+        GameTooltip:SetFrameLevel(250)
+        local name = GetEntryName(self._entry)
+        GameTooltip:AddLine(name, 1, 1, 1)
+        if self._isDormant then
+            GameTooltip:AddLine("Not Learned (Dormant)", 0.9, 0.6, 0.2)
+            GameTooltip:AddLine("Right-click to restore", 0.5, 0.5, 0.5)
+        else
+            GameTooltip:AddLine("Drag to reorder", 0.5, 0.5, 0.5)
+            GameTooltip:AddLine("Right-click for options", 0.5, 0.5, 0.5)
         end
+        GameTooltip:Show()
     end)
-    handle:SetScript("OnLeave", function()
-        if not dragState.active then
-            for _, line in ipairs(gripLines) do
-                line:SetColorTexture(lineColor[1], lineColor[2], lineColor[3], lineColor[4])
-            end
-        end
+    cell:SetScript("OnLeave", function(self)
+        self:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
+        GameTooltip:Hide()
     end)
-    row._dragHandle = handle
 
-    -- Button tooltips
-    AddButtonTooltip(row._gearBtn, "Per-Spell Settings")
-    AddButtonTooltip(row._removeBtn, "Remove")
-    AddButtonTooltip(row._rowCycleBtn, "Click to move to next row")
+    entryCells[index] = cell
+    return cell
+end
 
-    -- Restore button (hidden by default, for dormant entries)
-    row._restoreBtn = CreateAccentButton(row, "Restore", 60, 20)
-    row._restoreBtn:SetPoint("RIGHT", row, "RIGHT", -26, 0)
-    row._restoreBtn:Hide()
+local function GetOrCreateSectionHeader(index)
+    if sectionHeaders[index] then return sectionHeaders[index] end
 
-    entryRows[index] = row
-    return row
+    local f = CreateFrame("Frame", nil, entryListContent, "BackdropTemplate")
+    f:SetHeight(SECTION_HEADER_HEIGHT)
+    f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8" })
+
+    f._label = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    f._label:SetPoint("LEFT", 6, 0)
+    f._label:SetJustifyH("LEFT")
+
+    sectionHeaders[index] = f
+    return f
 end
 
 ---------------------------------------------------------------------------
--- DRAG AND DROP REORDERING
--- Entry rows are draggable. A drop indicator line shows where the entry
--- will land. On mouse-up, ReorderEntry moves the spell to the new position.
+-- DRAG AND DROP REORDERING (adapted for icon grid)
 ---------------------------------------------------------------------------
 local dropIndicator = nil
 
@@ -1147,44 +1404,38 @@ local function GetOrCreateDropIndicator()
     if dropIndicator then return dropIndicator end
     if not entryListContent then return nil end
     local line = entryListContent:CreateTexture(nil, "OVERLAY")
-    line:SetHeight(2)
+    line:SetWidth(2)
+    line:SetHeight(GRID_CELL_SIZE)
     line:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.9)
     line:Hide()
     dropIndicator = line
     return line
 end
 
--- Find which entry index the cursor is over in the entry list
+-- Find which entry index the cursor is nearest in the grid
 local function GetDropTargetIndex()
     if not entryListContent then return nil end
     local scale = entryListContent:GetEffectiveScale()
-    local _, cursorY = GetCursorPosition()
+    local cursorX, cursorY = GetCursorPosition()
+    cursorX = cursorX / scale
     cursorY = cursorY / scale
 
-    local contentTop = entryListContent:GetTop()
-    if not contentTop then return nil end
-
-    -- Walk visible rows to find insertion point
     local bestIdx = nil
     local bestDist = math.huge
-    for i, row in ipairs(entryRows) do
-        if row:IsShown() and row._entryIndex then
-            local rowTop = row:GetTop()
-            local rowBot = row:GetBottom()
-            if rowTop and rowBot then
-                local rowMid = (rowTop + rowBot) / 2
-                -- Above midpoint = insert before, below = insert after
-                if cursorY >= rowMid then
-                    local dist = math.abs(cursorY - rowTop)
-                    if dist < bestDist then
-                        bestDist = dist
-                        bestIdx = row._entryIndex
-                    end
-                else
-                    local dist = math.abs(cursorY - rowBot)
-                    if dist < bestDist then
-                        bestDist = dist
-                        bestIdx = row._entryIndex + 1
+    for i, cell in ipairs(entryCells) do
+        if cell:IsShown() and cell._entryIndex then
+            local cl = cell:GetLeft()
+            local ct = cell:GetTop()
+            if cl and ct then
+                local cx = cl + GRID_CELL_SIZE / 2
+                local cy = ct - GRID_CELL_SIZE / 2
+                local dist = (cursorX - cx) * (cursorX - cx) + (cursorY - cy) * (cursorY - cy)
+                if dist < bestDist then
+                    bestDist = dist
+                    if cursorX < cx then
+                        bestIdx = cell._entryIndex
+                    else
+                        bestIdx = cell._entryIndex + 1
                     end
                 end
             end
@@ -1206,30 +1457,30 @@ local function UpdateDropIndicator()
         return
     end
 
-    -- Find the row at or just before targetIdx to position the line
-    local anchorRow = nil
-    local anchorBelow = false
-    for i, row in ipairs(entryRows) do
-        if row:IsShown() and row._entryIndex then
-            if row._entryIndex == targetIdx then
-                anchorRow = row
-                anchorBelow = false  -- line goes above this row
+    -- Find anchor cell: the cell at targetIdx (line goes to its left)
+    -- or the cell at targetIdx-1 (line goes to its right)
+    local anchorCell = nil
+    local anchorRight = false
+    for i, cell in ipairs(entryCells) do
+        if cell:IsShown() and cell._entryIndex then
+            if cell._entryIndex == targetIdx then
+                anchorCell = cell
+                anchorRight = false
                 break
-            elseif row._entryIndex == targetIdx - 1 then
-                anchorRow = row
-                anchorBelow = true  -- line goes below this row
+            elseif cell._entryIndex == targetIdx - 1 then
+                anchorCell = cell
+                anchorRight = true
             end
         end
     end
 
-    if anchorRow then
+    if anchorCell then
         indicator:ClearAllPoints()
-        indicator:SetPoint("LEFT", entryListContent, "LEFT", 0, 0)
-        indicator:SetPoint("RIGHT", entryListContent, "RIGHT", 0, 0)
-        if anchorBelow then
-            indicator:SetPoint("TOP", anchorRow, "BOTTOM", 0, 0)
+        indicator:SetHeight(GRID_CELL_SIZE)
+        if anchorRight then
+            indicator:SetPoint("LEFT", anchorCell, "RIGHT", 0, 0)
         else
-            indicator:SetPoint("BOTTOM", anchorRow, "TOP", 0, 0)
+            indicator:SetPoint("RIGHT", anchorCell, "LEFT", 0, 0)
         end
         indicator:Show()
     else
@@ -1239,19 +1490,17 @@ end
 
 local StopDrag  -- forward declaration
 
-local function StartDrag(row, entryIndex)
+local function StartDrag(cell, entryIndex)
     if InCombatLockdown() then return end
     dragState.active = true
     dragState.fromIndex = entryIndex
-    dragState.fromRow = row
-    -- Highlight the dragged row with accent border
-    row:SetBackdropColor(ACCENT_R * 0.15, ACCENT_G * 0.15, ACCENT_B * 0.15, 0.8)
+    dragState.fromRow = cell
+    -- Highlight the dragged cell
+    cell:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
 
-    -- Use an OnUpdate to track cursor position and detect mouse release
     if entryListContent then
         entryListContent:SetScript("OnUpdate", function()
             if not dragState.active then return end
-            -- Detect mouse button release (OnDragStop may not fire if cursor leaves handle)
             if not IsMouseButtonDown("LeftButton") then
                 StopDrag()
                 return
@@ -1264,33 +1513,28 @@ end
 StopDrag = function()
     if not dragState.active then return end
     local fromIdx = dragState.fromIndex
-    local row = dragState.fromRow
+    local cell = dragState.fromRow
 
-    -- Restore row appearance
-    if row then
-        row:SetBackdropColor(0.08, 0.08, 0.1, 0.3)
+    -- Restore cell border
+    if cell then
+        cell:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
     end
 
-    -- Hide indicator
     if dropIndicator then dropIndicator:Hide() end
 
-    -- Stop OnUpdate
     if entryListContent then
         entryListContent:SetScript("OnUpdate", nil)
     end
 
-    -- Determine drop target
     local targetIdx = GetDropTargetIndex()
     dragState.active = false
     dragState.fromIndex = nil
     dragState.fromRow = nil
 
     if not targetIdx or not fromIdx or targetIdx == fromIdx or targetIdx == fromIdx + 1 then
-        return  -- no move needed (dropped in same position)
+        return
     end
 
-    -- Adjust target: if dropping after the dragged item's original position,
-    -- account for the item being removed first
     local adjustedTarget = targetIdx
     if targetIdx > fromIdx then
         adjustedTarget = targetIdx - 1
@@ -1312,6 +1556,8 @@ RefreshEntryList = function()
 
     HideOverridePanel()
 
+    if _G.QUI_EntryContextMenu then _G.QUI_EntryContextMenu:Hide() end
+
     local db = GetContainerDB(activeContainer)
     if not db then return end
 
@@ -1321,26 +1567,162 @@ RefreshEntryList = function()
     local dormant = db.dormantSpells
     if type(dormant) ~= "table" then dormant = {} end
 
-    -- Search filter
     local filterText = searchBox and searchBox:GetText() or ""
     local lowerFilter = string_lower(filterText)
     local hasFilter = (filterText ~= "")
 
     local spellData = GetCDMSpellData()
 
-    -- Hide all existing rows
-    for _, row in ipairs(entryRows) do
-        row:Hide()
-        row:ClearAllPoints()
+    -- Hide all existing cells and headers
+    for _, cell in ipairs(entryCells) do
+        cell:Hide()
+        cell:ClearAllPoints()
+    end
+    for _, hdr in ipairs(sectionHeaders) do
+        hdr:Hide()
+        hdr:ClearAllPoints()
     end
 
+    local contentWidth = entryListContent:GetWidth()
+    if contentWidth < GRID_CELL_STRIDE then
+        C_Timer.After(0.01, RefreshEntryList)
+        return
+    end
+    local cols = math_floor(contentWidth / GRID_CELL_STRIDE)
+    if cols < 1 then cols = 1 end
+
     local sy = 0
-    local visibleCount = 0
+    local cellIndex = 0
+    local headerIndex = 0
+    local colPos = 0
 
     local isCooldown = (ResolveContainerType(activeContainer) == "cooldown")
 
-    -- For cooldown containers, group entries by row with permanent section headers.
-    -- For non-cooldown containers, flat list.
+    -- Grid placement helpers
+    local function FinishRow()
+        if colPos > 0 then
+            colPos = 0
+            sy = sy - GRID_CELL_STRIDE
+        end
+    end
+
+    local function PlaceCell(cell)
+        cell:ClearAllPoints()
+        cell:SetSize(GRID_CELL_SIZE, GRID_CELL_SIZE)
+        cell:SetPoint("TOPLEFT", entryListContent, "TOPLEFT",
+            colPos * GRID_CELL_STRIDE, sy)
+        cell:Show()
+        colPos = colPos + 1
+        if colPos >= cols then
+            colPos = 0
+            sy = sy - GRID_CELL_STRIDE
+        end
+    end
+
+    local function RenderSectionHeader(label, isEmpty)
+        FinishRow()
+        headerIndex = headerIndex + 1
+        local hdr = GetOrCreateSectionHeader(headerIndex)
+        hdr:SetParent(entryListContent)
+        hdr:ClearAllPoints()
+        hdr:SetPoint("TOPLEFT", entryListContent, "TOPLEFT", 0, sy)
+        hdr:SetPoint("RIGHT", entryListContent, "RIGHT", 0, 0)
+        hdr:SetBackdropColor(ACCENT_R * 0.1, ACCENT_G * 0.1, ACCENT_B * 0.1, 0.8)
+        hdr._label:SetText(label)
+        if isEmpty then
+            hdr._label:SetTextColor(0.4, 0.4, 0.4, 1)
+        else
+            hdr._label:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
+        end
+        hdr:Show()
+        sy = sy - SECTION_HEADER_HEIGHT
+        colPos = 0
+    end
+
+    local function RenderEntryCell(entry, idx)
+        local entryName = GetEntryName(entry)
+        if hasFilter and not string_find(string_lower(entryName), lowerFilter, 1, true) then
+            return
+        end
+
+        cellIndex = cellIndex + 1
+        local cell = GetOrCreateEntryCell(cellIndex)
+        cell:SetParent(entryListContent)
+        cell._entry = entry
+        cell._entryIndex = idx
+        cell._isDormant = false
+
+        cell._icon:SetTexture(GetEntryIcon(entry))
+        cell._icon:SetDesaturated(false)
+        cell._icon:Show()
+        cell:SetAlpha(1)
+
+        -- Wire drag
+        cell:SetScript("OnDragStart", function()
+            StartDrag(cell, idx)
+        end)
+        cell:SetScript("OnDragStop", function()
+            StopDrag()
+        end)
+
+        -- OnClick handles both drag-stop (left) and context menu (right)
+        cell:SetScript("OnClick", function(self, button)
+            if button == "LeftButton" and dragState.active then
+                StopDrag()
+            elseif button == "RightButton" and self._entry then
+                ShowEntryContextMenu(self, self._entry, self._entryIndex, false)
+            end
+        end)
+
+        PlaceCell(cell)
+    end
+
+    local function RenderDormantCell(spellID)
+        local entryName = ""
+        if C_Spell and C_Spell.GetSpellInfo then
+            local ok, info = pcall(C_Spell.GetSpellInfo, spellID)
+            if ok and info then entryName = info.name or "" end
+        end
+        if entryName == "" then entryName = "Spell #" .. tostring(spellID) end
+
+        if hasFilter and not string_find(string_lower(entryName), lowerFilter, 1, true) then
+            return
+        end
+
+        cellIndex = cellIndex + 1
+        local cell = GetOrCreateEntryCell(cellIndex)
+        cell:SetParent(entryListContent)
+
+        -- Dormant entries store as { id = spellID, type = "spell" } for context menu
+        cell._entry = { id = spellID, type = "spell" }
+        cell._entryIndex = nil
+        cell._isDormant = true
+
+        local icon = "Interface\\Icons\\INV_Misc_QuestionMark"
+        if C_Spell and C_Spell.GetSpellInfo then
+            local ok, info = pcall(C_Spell.GetSpellInfo, spellID)
+            if ok and info and info.iconID then icon = info.iconID end
+        end
+        cell._icon:SetTexture(icon)
+        cell._icon:SetDesaturated(true)
+        cell._icon:Show()
+        cell:SetAlpha(0.6)
+
+        -- No drag for dormant
+        cell:SetScript("OnDragStart", nil)
+        cell:SetScript("OnDragStop", nil)
+
+        -- Right-click: restore
+        cell:SetScript("OnClick", function(self, button)
+            if button == "RightButton" then
+                ShowEntryContextMenu(self, self._entry, nil, true)
+            end
+        end)
+
+        PlaceCell(cell)
+    end
+
+    -- Build row grouping for cooldown containers
     local activeRowNums = {}
     if isCooldown then
         for r = 1, 3 do
@@ -1351,8 +1733,7 @@ RefreshEntryList = function()
         end
     end
 
-    -- Build row→entries map for cooldown containers
-    local rowEntries = {}  -- rowEntries[rowNum] = { {entry, idx}, ... }
+    local rowEntries = {}
     if isCooldown and #activeRowNums > 0 then
         for i, entry in ipairs(entries) do
             if entry then
@@ -1363,310 +1744,58 @@ RefreshEntryList = function()
         end
     end
 
-    -- Helper to render a section header
-    local function RenderSectionHeader(label, isEmpty)
-        visibleCount = visibleCount + 1
-        local sepRow = GetOrCreateEntryRow(visibleCount)
-        sepRow:SetParent(entryListContent)
-        sepRow:ClearAllPoints()
-        sepRow:SetPoint("TOPLEFT", entryListContent, "TOPLEFT", 0, sy)
-        sepRow:SetPoint("RIGHT", entryListContent, "RIGHT", 0, 0)
-        sepRow:SetHeight(20)
-        sepRow:SetBackdropColor(ACCENT_R * 0.1, ACCENT_G * 0.1, ACCENT_B * 0.1, 0.8)
-        sepRow._icon:Hide()
-        if sepRow._dragHandle then sepRow._dragHandle:Hide() end
-        sepRow._name:SetText(label)
-        if isEmpty then
-            sepRow._name:SetTextColor(0.4, 0.4, 0.4, 1)
-        else
-            sepRow._name:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
-        end
-        sepRow._typeTag:SetText("")
-        sepRow._rowAssign:SetText("")
-        sepRow._entryIndex = nil
-        sepRow._gearBtn:Hide()
-        sepRow._moveBtn:Hide()
-        sepRow._removeBtn:Hide()
-        sepRow._restoreBtn:Hide()
-        if sepRow._rowCycleBtn then sepRow._rowCycleBtn:Hide() end
-        sepRow:Show()
-        sy = sy - 20
-    end
-
-    -- Helper to render a single entry row
-    local function RenderEntryRow(entry, idx, rowNum)
-        local entryName = GetEntryName(entry)
-        if hasFilter and not string_find(string_lower(entryName), lowerFilter, 1, true) then
-            return
-        end
-
-        visibleCount = visibleCount + 1
-        local row = GetOrCreateEntryRow(visibleCount)
-        row:SetParent(entryListContent)
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", entryListContent, "TOPLEFT", 0, sy)
-        row:SetPoint("RIGHT", entryListContent, "RIGHT", 0, 0)
-        row:SetBackdropColor(0.08, 0.08, 0.1, (visibleCount % 2 == 0) and 0.4 or 0.2)
-        row:SetHeight(ENTRY_ROW_HEIGHT)
-
-        row._icon:SetTexture(GetEntryIcon(entry))
-        row._icon:Show()
-        row._icon:SetDesaturated(false)
-        if row._dragHandle then row._dragHandle:Show() end
-        row._name:SetText(entryName)
-        row._name:SetTextColor(0.9, 0.9, 0.9, 1)
-        row._typeTag:SetText(TYPE_TAGS[entry.type] or "[?]")
-        row._rowAssign:SetText("")
-
-        -- Button visibility
-        row._gearBtn:Show()
-        row._moveBtn:Show()
-        row._removeBtn:Show()
-        row._restoreBtn:Hide()
-        if row._rowCycleBtn then
-            -- Row cycle button: cycles entry between rows
-            if isCooldown and #activeRowNums > 1 then
-                local curRow = entry.row or activeRowNums[1]
-                row._rowCycleBtn._label:SetText("R" .. curRow)
-                row._rowCycleBtn._label:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
-                row._rowCycleBtn:Show()
-
-                local entryIdx_local = idx
-                row._rowCycleBtn:SetScript("OnClick", function()
-                    if InCombatLockdown() or not spellData then return end
-                    local curDB = GetContainerDB(activeContainer)
-                    if not curDB then return end
-                    local clickRowNums = {}
-                    for r = 1, 3 do
-                        local rd = curDB["row" .. r]
-                        if rd and rd.iconCount and rd.iconCount > 0 then
-                            clickRowNums[#clickRowNums + 1] = r
-                        end
-                    end
-                    if #clickRowNums < 2 then return end
-                    local curEntry = curDB.ownedSpells and curDB.ownedSpells[entryIdx_local]
-                    local curAssign = (curEntry and curEntry.row) or clickRowNums[1]
-                    local nextRow = clickRowNums[1]
-                    for ri, rn in ipairs(clickRowNums) do
-                        if rn == curAssign and clickRowNums[ri + 1] then
-                            nextRow = clickRowNums[ri + 1]
-                            break
-                        end
-                    end
-                    spellData:SetEntryRow(activeContainer, entryIdx_local, nextRow)
-                    C_Timer.After(0.02, function()
-                        RefreshCDM()
-                        RefreshEntryList()
-                        RefreshPreview()
-                    end)
-                end)
-            else
-                row._rowCycleBtn:Hide()
-            end
-        end
-
-        -- Store entry index for drag-and-drop
-        row._entryIndex = idx
-        if row._dragHandle then
-            row._dragHandle:SetScript("OnDragStart", function()
-                StartDrag(row, idx)
-            end)
-            row._dragHandle:SetScript("OnDragStop", function()
-                StopDrag()
-            end)
-            row._dragHandle:SetScript("OnMouseUp", function(_, button)
-                if button == "LeftButton" and dragState.active then
-                    StopDrag()
-                end
-            end)
-        end
-
-        row._removeBtn:SetScript("OnClick", function()
-            if InCombatLockdown() or not spellData then return end
-            spellData:RemoveEntry(activeContainer, idx)
-            C_Timer.After(0.02, function()
-                RefreshCDM()
-                RefreshEntryList()
-                RefreshPreview()
-            end)
-        end)
-        row._gearBtn:SetScript("OnClick", function()
-            if expandedOverride == entry.id then
-                HideOverridePanel(true)  -- close + clear state
-            else
-                expandedOverride = entry.id
-            end
-            C_Timer.After(0.02, RefreshEntryList)
-        end)
-
-        -- Move to another container
-        row._moveBtn:SetScript("OnClick", function()
-            if InCombatLockdown() or not spellData then return end
-            local allTabKeys = GetAllTabKeys()
-            local ci = 0
-            for j, key in ipairs(allTabKeys) do
-                if key == activeContainer then ci = j break end
-            end
-            local targetKey = allTabKeys[(ci % #allTabKeys) + 1]
-            spellData:MoveEntryBetweenContainers(activeContainer, targetKey, idx)
-            C_Timer.After(0.02, function()
-                RefreshCDM()
-                RefreshEntryList()
-                RefreshPreview()
-            end)
-        end)
-        row._moveBtn:SetScript("OnEnter", function(self)
-            self:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetFrameStrata("TOOLTIP")
-            GameTooltip:SetFrameLevel(250)
-            local allTabKeys = GetAllTabKeys()
-            local ci = 0
-            for j, key in ipairs(allTabKeys) do
-                if key == activeContainer then ci = j break end
-            end
-            local targetKey = allTabKeys[(ci % #allTabKeys) + 1]
-            GameTooltip:SetText("Move to " .. GetContainerLabel(targetKey), 1, 1, 1)
-            GameTooltip:Show()
-        end)
-        row._moveBtn:SetScript("OnLeave", function(self)
-            self:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-            GameTooltip:Hide()
-        end)
-
-        row:Show()
-        sy = sy - ENTRY_ROW_HEIGHT
-
-        -- Show override panel if expanded
-        if expandedOverride and expandedOverride == entry.id then
-            if not overridePanel then
-                BuildOverridePanel(entryListContent)
-            end
-            local extraH = ShowOverridePanel(row, activeContainer, entry, idx) or 0
-            sy = sy - extraH
-        end
-    end
-
-    -- Render entries grouped by row (cooldown containers) or flat (aura containers)
+    -- Render
     if isCooldown and #activeRowNums > 0 then
         for _, rowNum in ipairs(activeRowNums) do
             local rowItems = rowEntries[rowNum]
             local count = rowItems and #rowItems or 0
             RenderSectionHeader("Row " .. rowNum .. "  (" .. count .. ")", count == 0)
             if count == 0 then
-                -- Empty row indicator
-                visibleCount = visibleCount + 1
-                local emptyRow = GetOrCreateEntryRow(visibleCount)
-                emptyRow:SetParent(entryListContent)
-                emptyRow:ClearAllPoints()
-                emptyRow:SetPoint("TOPLEFT", entryListContent, "TOPLEFT", 0, sy)
-                emptyRow:SetPoint("RIGHT", entryListContent, "RIGHT", 0, 0)
-                emptyRow:SetHeight(22)
-                emptyRow:SetBackdropColor(0.06, 0.06, 0.08, 0.3)
-                emptyRow._icon:Hide()
-                if emptyRow._dragHandle then emptyRow._dragHandle:Hide() end
-                emptyRow._name:SetText("  (empty — use R# button to assign spells here)")
-                emptyRow._name:SetTextColor(0.35, 0.35, 0.35, 1)
-                emptyRow._typeTag:SetText("")
-                emptyRow._rowAssign:SetText("")
-                emptyRow._entryIndex = nil
-                emptyRow._gearBtn:Hide()
-                emptyRow._moveBtn:Hide()
-                emptyRow._removeBtn:Hide()
-                emptyRow._restoreBtn:Hide()
-                if emptyRow._rowCycleBtn then emptyRow._rowCycleBtn:Hide() end
-                emptyRow:Show()
-                sy = sy - 22
+                -- Empty hint
+                headerIndex = headerIndex + 1
+                local hdr = GetOrCreateSectionHeader(headerIndex)
+                hdr:SetParent(entryListContent)
+                hdr:ClearAllPoints()
+                hdr:SetPoint("TOPLEFT", entryListContent, "TOPLEFT", 0, sy)
+                hdr:SetPoint("RIGHT", entryListContent, "RIGHT", 0, 0)
+                hdr:SetHeight(18)
+                hdr:SetBackdropColor(0.06, 0.06, 0.08, 0.3)
+                hdr._label:SetText("  (empty — right-click icons to move between rows)")
+                hdr._label:SetTextColor(0.35, 0.35, 0.35, 1)
+                hdr:Show()
+                sy = sy - 18
             else
                 for _, item in ipairs(rowItems) do
-                    RenderEntryRow(item.entry, item.idx, rowNum)
+                    RenderEntryCell(item.entry, item.idx)
                 end
+                FinishRow()
             end
         end
     else
-        -- Non-cooldown: flat list
         for i, entry in ipairs(entries) do
             if entry then
-                RenderEntryRow(entry, i, nil)
+                RenderEntryCell(entry, i)
             end
         end
+        FinishRow()
     end
 
-    -- Dormant entries (greyed out) — dormant is a map: { [spellID] = savedSlot }
+    -- Dormant entries
+    local hasDormant = false
     for spellID, _ in pairs(dormant) do
         if type(spellID) == "number" then
-            local entryName = ""
-            if C_Spell and C_Spell.GetSpellInfo then
-                local ok, info = pcall(C_Spell.GetSpellInfo, spellID)
-                if ok and info then entryName = info.name or "" end
+            if not hasDormant then
+                hasDormant = true
+                RenderSectionHeader("Dormant", false)
             end
-            if entryName == "" then entryName = "Spell #" .. tostring(spellID) end
-
-            local show = true
-            if hasFilter and not string_find(string_lower(entryName), lowerFilter, 1, true) then
-                show = false
-            end
-
-            if show then
-                visibleCount = visibleCount + 1
-                local row = GetOrCreateEntryRow(visibleCount)
-                row:SetParent(entryListContent)
-                row:ClearAllPoints()
-                row:SetPoint("TOPLEFT", entryListContent, "TOPLEFT", 0, sy)
-                row:SetPoint("RIGHT", entryListContent, "RIGHT", 0, 0)
-                row:SetBackdropColor(0.05, 0.05, 0.07, 0.3)
-
-                local icon = "Interface\\Icons\\INV_Misc_QuestionMark"
-                if C_Spell and C_Spell.GetSpellInfo then
-                    local ok, info = pcall(C_Spell.GetSpellInfo, spellID)
-                    if ok and info and info.iconID then icon = info.iconID end
-                end
-                row._icon:SetTexture(icon)
-                row._icon:SetDesaturated(true)
-                row._name:SetText(entryName .. " (Dormant)")
-                row._name:SetTextColor(0.5, 0.5, 0.5, 1)
-                row._typeTag:SetText("[Spell]  Not Learned")
-                row._rowAssign:SetText("")
-
-                row._entryIndex = nil  -- not draggable
-                if row._dragHandle then row._dragHandle:Hide() end
-                row._gearBtn:Hide()
-                row._moveBtn:Hide()
-                row._removeBtn:Hide()
-
-                row._restoreBtn:Show()
-                local sid = spellID
-                row._restoreBtn:SetScript("OnClick", function()
-                    if InCombatLockdown() then return end
-                    if spellData then
-                        spellData:RestoreRemovedEntry(activeContainer, sid)
-                        C_Timer.After(0.02, function()
-                            RefreshEntryList()
-                            RefreshPreview()
-                        end)
-                    end
-                end)
-
-                row:Show()
-                sy = sy - ENTRY_ROW_HEIGHT
-            end
+            RenderDormantCell(spellID)
         end
     end
+    if hasDormant then FinishRow() end
 
-    entryListContent:SetHeight(math_abs(sy) + 8)
+    entryListContent:SetHeight(math_max(8, math_abs(sy) + 8))
     if entryListContent._updateScroll then
         entryListContent._updateScroll()
-    end
-
-    -- Reset icon desaturation for active entries (was set on dormant rows)
-    for i = 1, visibleCount do
-        local row = entryRows[i]
-        if row and row:IsShown() then
-            local nameText = row._name:GetText() or ""
-            if not string_find(nameText, "(Dormant)", 1, true) then
-                row._icon:SetDesaturated(false)
-            end
-        end
     end
 end
 
@@ -1684,70 +1813,82 @@ local function BuildAddSection(parent)
 
     local title = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     title:SetPoint("TOPLEFT", 8, -6)
-    title:SetText("Add Entries")
+    title:SetText("Add Spells")
     title:SetTextColor(0.6, 0.6, 0.6, 1)
 
-    -- Tab bar
-    local tabBar = CreateFrame("Frame", nil, container)
-    tabBar:SetHeight(TAB_HEIGHT)
-    tabBar:SetPoint("TOPLEFT", 4, -22)
-    tabBar:SetPoint("RIGHT", container, "RIGHT", -4, 0)
-    container._tabBar = tabBar
+    -- Search box
+    addSearchBox = CreateSearchBox(container, 200, "Filter / spell ID...")
+    addSearchBox:SetPoint("TOPRIGHT", container, "TOPRIGHT", -8, -4)
 
-    -- Search box for add list
-    addSearchBox = CreateSearchBox(container, 180, "Search to add...")
-    addSearchBox:SetPoint("TOPRIGHT", container, "TOPRIGHT", -8, -22)
-
-    -- Scroll area
     local scrollF, content = CreateScrollArea(container, 10, 10)
-    scrollF:SetPoint("TOPLEFT", 4, -52)
+    scrollF:SetPoint("TOPLEFT", 4, -54) -- leave room for tabs
     scrollF:SetPoint("BOTTOMRIGHT", container, "BOTTOMRIGHT", -4, 4)
 
     addListScroll = scrollF
     addListContent = content
-    container._scrollFrame = scrollF
-    container._content = content
-
     addPanel = container
+
     return container
 end
 
-local function GetOrCreateAddRow(index)
-    if addRows[index] then return addRows[index] end
+local function GetOrCreateAddCell(index)
+    if addCells[index] then return addCells[index] end
 
-    local row = CreateFrame("Frame", nil, addListContent, "BackdropTemplate")
-    row:SetHeight(ADD_ROW_HEIGHT)
-    row:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8" })
-    row:SetBackdropColor(0.06, 0.06, 0.08, (index % 2 == 0) and 0.3 or 0.15)
+    local cell = CreateFrame("Button", nil, addListContent, "BackdropTemplate")
+    cell:SetSize(GRID_CELL_SIZE, GRID_CELL_SIZE)
+    cell:RegisterForClicks("RightButtonUp")
 
-    row._icon = row:CreateTexture(nil, "ARTWORK")
-    row._icon:SetSize(22, 22)
-    row._icon:SetPoint("LEFT", 4, 0)
-    row._icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    SetSimpleBackdrop(cell, 0, 0, 0, 0, 0.2, 0.2, 0.2, 0.5)
 
-    row._name = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    row._name:SetPoint("LEFT", row._icon, "RIGHT", 6, 0)
-    row._name:SetWidth(300)
-    row._name:SetJustifyH("LEFT")
-    row._name:SetTextColor(0.85, 0.85, 0.85, 1)
+    cell._icon = cell:CreateTexture(nil, "ARTWORK")
+    cell._icon:SetSize(GRID_ICON_SIZE, GRID_ICON_SIZE)
+    cell._icon:SetPoint("CENTER")
+    cell._icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-    row._addBtn = CreateAccentButton(row, "+ Add", 54, 20)
-    row._addBtn:SetPoint("RIGHT", row, "RIGHT", -6, 0)
+    cell._highlight = cell:CreateTexture(nil, "HIGHLIGHT")
+    cell._highlight:SetAllPoints()
+    cell._highlight:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.15)
 
-    addRows[index] = row
-    return row
+    cell:SetScript("OnEnter", function(self)
+        if not self._sourceEntry then return end
+        self:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 0.8)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetFrameStrata("TOOLTIP")
+        GameTooltip:SetFrameLevel(250)
+        local name = self._sourceEntry.name or ""
+        GameTooltip:AddLine(name, 1, 1, 1)
+        local sid = self._sourceEntry.spellID or self._sourceEntry._entryID or ""
+        if sid ~= "" then
+            GameTooltip:AddLine("ID: " .. tostring(sid), 0.5, 0.5, 0.5)
+        end
+        if self._isOwned then
+            GameTooltip:AddLine("Already added", 0.6, 0.6, 0.6)
+        else
+            GameTooltip:AddLine("Right-click to add", 0.5, 0.5, 0.5)
+        end
+        GameTooltip:Show()
+    end)
+    cell:SetScript("OnLeave", function(self)
+        self:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
+        GameTooltip:Hide()
+    end)
+
+    addCells[index] = cell
+    return cell
 end
 
 local function RefreshAddList()
     if not addListContent or not activeContainer then return end
 
+    if _G.QUI_AddContextMenu then _G.QUI_AddContextMenu:Hide() end
+
     local spellData = GetCDMSpellData()
     if not spellData then return end
 
-    -- Hide all existing add rows
-    for _, row in ipairs(addRows) do
-        row:Hide()
-        row:ClearAllPoints()
+    -- Hide all existing add cells
+    for _, cell in ipairs(addCells) do
+        cell:Hide()
+        cell:ClearAllPoints()
     end
 
     local filterText = addSearchBox and addSearchBox:GetText() or ""
@@ -1757,18 +1898,13 @@ local function RefreshAddList()
     local sourceEntries = {}
     local containerType = ResolveContainerType(activeContainer) or "cooldown"
 
-    -- Build owned set for duplicate detection within the same type family.
-    -- Cooldown containers (essential/utility) deduplicate against each other,
-    -- and aura containers (buff/trackedBar) deduplicate against each other,
-    -- but a spell can exist in both a cooldown and an aura container
-    -- (e.g., Death's Advance tracked as a cooldown AND as a buff).
+    -- Build owned set for duplicate detection within the same type family
     local isAuraType = (containerType == "aura" or containerType == "auraBar")
     local ownedSet = {}
     local allTabKeys = GetAllTabKeys()
     for _, cKey in ipairs(allTabKeys) do
         local cType = ResolveContainerType(cKey) or "cooldown"
         local cIsAura = (cType == "aura" or cType == "auraBar")
-        -- Only deduplicate within the same type family
         if cIsAura == isAuraType then
             local cDB = GetContainerDB(cKey)
             if cDB and type(cDB.ownedSpells) == "table" then
@@ -1784,7 +1920,6 @@ local function RefreshAddList()
     end
 
     if activeAddTab == "cdm_spells" or not activeAddTab then
-        -- Available spells from Blizzard CDM data
         sourceEntries = spellData:GetAvailableSpells(activeContainer) or {}
 
     elseif activeAddTab == "all_cooldowns" then
@@ -1824,7 +1959,6 @@ local function RefreshAddList()
         end
 
     elseif activeAddTab == "by_spell_id" then
-        -- Manual spell ID entry (handled via search box only)
         if hasFilter then
             local asNum = tonumber(filterText)
             if asNum then
@@ -1845,15 +1979,23 @@ local function RefreshAddList()
         end
     end
 
-    -- Filter and display
+    -- Grid layout
+    local contentWidth = addListContent:GetWidth()
+    if contentWidth < GRID_CELL_STRIDE then
+        C_Timer.After(0.01, RefreshAddList)
+        return
+    end
+    local cols = math_floor(contentWidth / GRID_CELL_STRIDE)
+    if cols < 1 then cols = 1 end
+
     local sy = 0
-    local visibleCount = 0
+    local colPos = 0
+    local cellIndex = 0
 
     for _, entry in ipairs(sourceEntries) do
         local entryName = entry.name or ""
         local show = true
         if hasFilter and not string_find(string_lower(entryName), lowerFilter, 1, true) then
-            -- Also check spell ID as string
             local sidStr = tostring(entry.spellID or "")
             if not string_find(sidStr, filterText, 1, true) then
                 show = false
@@ -1861,75 +2003,54 @@ local function RefreshAddList()
         end
 
         if show then
-            -- Check if already owned
             local entryKey = (entry._entryType or "spell") .. ":" .. (entry._entryID or entry.spellID or 0)
             local isOwned = ownedSet[entryKey]
-            -- Also check spell type by default
             if not isOwned and entry.spellID then
                 isOwned = ownedSet["spell:" .. entry.spellID]
             end
 
-            visibleCount = visibleCount + 1
-            local row = GetOrCreateAddRow(visibleCount)
-            row:SetParent(addListContent)
-            row:ClearAllPoints()
-            row:SetPoint("TOPLEFT", addListContent, "TOPLEFT", 0, sy)
-            row:SetPoint("RIGHT", addListContent, "RIGHT", 0, 0)
-            row:SetBackdropColor(0.06, 0.06, 0.08, (visibleCount % 2 == 0) and 0.3 or 0.15)
+            cellIndex = cellIndex + 1
+            local cell = GetOrCreateAddCell(cellIndex)
+            cell:SetParent(addListContent)
+            cell._sourceEntry = entry
+            cell._isOwned = isOwned
 
-            row._icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+            cell._icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
             if isOwned then
-                row._name:SetText(entryName .. "  |cff666666(added)|r")
-                row._name:SetTextColor(0.4, 0.4, 0.4, 1)
-                row._icon:SetDesaturated(true)
+                cell._icon:SetDesaturated(true)
+                cell:SetAlpha(0.4)
             else
-                row._name:SetText(entryName .. "  |cff666666(" .. tostring(entry.spellID or "?") .. ")|r")
-                row._name:SetTextColor(0.85, 0.85, 0.85, 1)
-                row._icon:SetDesaturated(false)
+                cell._icon:SetDesaturated(false)
+                cell:SetAlpha(1)
             end
 
-            local entryRef = entry
-            row._addBtn:SetScript("OnClick", function()
-                if InCombatLockdown() then return end
-                if not spellData then return end
-
-                local addType = entryRef._entryType or "spell"
-                local addID = entryRef._entryID or entryRef.spellID
-
-                -- Clear from removedSpells so reconciliation doesn't re-remove
-                local containerDB = GetContainerDB(activeContainer)
-                if containerDB and containerDB.removedSpells and addID then
-                    containerDB.removedSpells[addID] = nil
-                end
-
-                if addType == "slot" and entryRef._slotID then
-                    if containerDB and containerDB.removedSpells then
-                        containerDB.removedSpells[entryRef._slotID] = nil
+            -- Right-click to add
+            if isOwned then
+                cell:SetScript("OnClick", nil)
+            else
+                local entryRef = entry
+                cell:SetScript("OnClick", function(self, button)
+                    if button == "RightButton" then
+                        ShowAddContextMenu(self, entryRef)
                     end
-                    spellData:AddTrinketSlot(activeContainer, entryRef._slotID)
-                elseif addType == "item" then
-                    spellData:AddItem(activeContainer, addID)
-                else
-                    spellData:AddSpell(activeContainer, addID)
-                end
-
-                C_Timer.After(0.02, function()
-                    RefreshCDM()
-                    RefreshEntryList()
-                    RefreshPreview()
-                    RefreshAddList()
                 end)
-            end)
-            if isOwned then
-                row._addBtn:SetScript("OnClick", nil)
-                row._addBtn:SetAlpha(0.3)
-            else
-                row._addBtn:SetAlpha(1)
             end
 
-            row:Show()
-            sy = sy - ADD_ROW_HEIGHT
+            cell:ClearAllPoints()
+            cell:SetPoint("TOPLEFT", addListContent, "TOPLEFT",
+                colPos * GRID_CELL_STRIDE, sy)
+            cell:Show()
+            colPos = colPos + 1
+            if colPos >= cols then
+                colPos = 0
+                sy = sy - GRID_CELL_STRIDE
+            end
         end
+    end
+
+    -- Finish last row
+    if colPos > 0 then
+        sy = sy - GRID_CELL_STRIDE
     end
 
     addListContent:SetHeight(math_max(8, math_abs(sy) + 8))
@@ -2609,8 +2730,8 @@ local function CreateComposerFrame()
     footer:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", NAV_WIDTH, 4)
     footer:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 4)
 
-    -- Override panel (created lazily, parented to entry content)
-    BuildOverridePanel(entryListContent)
+    -- Override panel (created lazily, parented to UIParent)
+    BuildOverridePanel()
 
     -- Wire search callbacks
     if searchBox then
@@ -2716,7 +2837,8 @@ end
 local originalEditModeExitCDM = _G.QUI_OnEditModeExitCDM
 
 _G.QUI_OnEditModeExitCDM = function()
-    -- Close the Composer when exiting layout mode
+    -- Close the override panel and Composer when exiting layout mode
+    HideOverridePanel(true)
     if composerFrame and composerFrame:IsShown() then
         composerFrame:Hide()
     end

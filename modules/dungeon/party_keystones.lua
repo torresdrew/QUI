@@ -535,15 +535,6 @@ if ns.Registry then
     })
 end
 
-if ns.Registry then
-    ns.Registry:Register("keyTracker", {
-        refresh = _G.QUI_RefreshKeyTracker,
-        priority = 55,
-        group = "data",
-        importCategories = { "minimapDatatexts" },
-    })
-end
-
 ---------------------------------------------------------------------------
 -- REQUEST FUNCTIONS
 ---------------------------------------------------------------------------

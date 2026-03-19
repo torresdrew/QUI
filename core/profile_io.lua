@@ -332,6 +332,7 @@ local PROFILE_SKINNING_GENERAL_KEYS = {
     "objectiveTrackerTitleColor",
     "objectiveTrackerTextColor",
     "skinInstanceFrames",
+    "skinAuctionHouse",
     "skinBgColor",
     "skinAlerts",
     "skinCharacterFrame",

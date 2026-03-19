@@ -1765,12 +1765,4 @@ if QUI.Registry then
     })
 end
 
-if QUI.Registry then
-    QUI.Registry:Register("keybinds", {
-        refresh = _G.QUI_RefreshKeybinds,
-        priority = 50,
-        group = "utility",
-        importCategories = { "cdm", "customTrackers" },
-    })
-end
 

@@ -347,21 +347,6 @@ if ns.Registry then
     })
 end
 
-if ns.Registry then
-    ns.Registry:Register("skinGameMenu", {
-        refresh = _G.QUI_RefreshGameMenuColors,
-        priority = 80,
-        group = "skinning",
-        importCategories = { "skinning", "theme" },
-    })
-    ns.Registry:Register("skinGameMenuFonts", {
-        refresh = _G.QUI_RefreshGameMenuFontSize,
-        priority = 80,
-        group = "skinning",
-        importCategories = { "skinning", "theme" },
-    })
-end
-
 ---------------------------------------------------------------------------
 -- QUAZII UI STANDALONE BUTTON (parented to UIParent, NOT GameMenuFrame)
 ---------------------------------------------------------------------------

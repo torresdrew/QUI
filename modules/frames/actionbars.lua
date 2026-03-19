@@ -5129,6 +5129,29 @@ local function RefreshActionBars()
 end
 
 ---------------------------------------------------------------------------
+-- INITIALIZATION
+---------------------------------------------------------------------------
+
+local initFrame = CreateFrame("Frame")
+initFrame:RegisterEvent("ADDON_LOADED")
+initFrame:SetScript("OnEvent", function(self, event, addonName)
+    if addonName == ADDON_NAME then
+        local db = GetDB()
+        if not db or not db.enabled then return end
+        ActionBarsOwned:Initialize()
+    elseif addonName == "Blizzard_ActionBar" then
+        HookSpellFlyoutSkinning()
+        C_Timer.After(0, SkinSpellFlyoutButtons)
+        local db = GetDB()
+        if db and db.bars and db.bars.bar1 then
+            C_Timer.After(0, function()
+                ApplyPageArrowVisibility(db.bars.bar1.hidePageArrow)
+            end)
+        end
+    end
+end)
+
+---------------------------------------------------------------------------
 -- UNLOCK MODE ELEMENT REGISTRATION
 ---------------------------------------------------------------------------
 do

@@ -90,15 +90,6 @@ charCombatFrame:SetScript("OnEvent", function()
     end
 end)
 
---- Safe wrapper: set CharacterFrame scale, deferring during combat.
-local function SafeSetCharScale(scale)
-    if InCombatLockdown() then
-        pendingCharScale = scale
-    else
-        CharacterFrame:SetScale(scale)
-    end
-end
-
 ---------------------------------------------------------------------------
 -- COMBAT DEFERRAL — CharacterFrame is a managed panel; SetScale,
 -- ClearAllPoints, SetPoint on it or its children are protected during

@@ -1050,10 +1050,6 @@ function QUI_GFEM:DisableTestMode(switching, onlyType)
     end
 end
 
-function QUI_GFEM:IsTestMode()
-    return isTestMode
-end
-
 function QUI_GFEM:ToggleTestMode(previewType)
     -- If edit mode is active, exit it first — preview is a standalone toggle
     if isEditMode then

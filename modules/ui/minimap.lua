@@ -1150,28 +1150,6 @@ local function ForEachDifficultyFrame(callback)
     handle(_G.MiniMapChallengeMode)
 end
 
--- Blizzard has used multiple difficulty indicator frames across versions.
--- Keep compatibility by iterating all known variants.
-local function ForEachDifficultyFrame(callback)
-    if type(callback) ~= "function" then return end
-
-    local seen = {}
-    local function handle(frame)
-        if frame and not seen[frame] then
-            seen[frame] = true
-            callback(frame)
-        end
-    end
-
-    if MinimapCluster and MinimapCluster.InstanceDifficulty then
-        handle(MinimapCluster.InstanceDifficulty)
-    end
-
-    handle(_G.MiniMapInstanceDifficulty)
-    handle(_G.GuildInstanceDifficulty)
-    handle(_G.MiniMapChallengeMode)
-end
-
 -- Hook Show() on zoom buttons to prevent Blizzard from re-showing them
 -- Use local guard variables instead of writing properties to Blizzard frames
 local zoomInShowHooked = false
@@ -3334,31 +3312,6 @@ function Minimap_Module:Refresh()
     end
 end
 
-
-local function RefreshMinimapButtonsAfterTransition()
-    local settings = GetSettings()
-    if not settings or not settings.enabled then return end
-
-    if InCombatLockdown() then
-        pendingMinimapRefresh = true
-        return
-    end
-
-    -- Instance indicators can get laid out on the next frame(s) after zoning.
-    C_Timer.After(0, function()
-        local s = GetSettings()
-        if s and s.enabled and not InCombatLockdown() then
-            UpdateButtonVisibility()
-        end
-    end)
-
-    C_Timer.After(1, function()
-        local s = GetSettings()
-        if s and s.enabled and not InCombatLockdown() then
-            UpdateButtonVisibility()
-        end
-    end)
-end
 
 local function RefreshMinimapButtonsAfterTransition()
     local settings = GetSettings()

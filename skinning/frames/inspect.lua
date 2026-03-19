@@ -219,15 +219,6 @@ if ns.Registry then
     })
 end
 
-if ns.Registry then
-    ns.Registry:Register("skinInspect", {
-        refresh = _G.QUI_RefreshInspectColors,
-        priority = 80,
-        group = "skinning",
-        importCategories = { "skinning", "theme" },
-    })
-end
-
 ---------------------------------------------------------------------------
 -- INITIALIZATION
 ---------------------------------------------------------------------------

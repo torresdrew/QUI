@@ -2,10 +2,8 @@
 -- QUI Layout Mode — Settings Panel
 -- Context-aware settings panel that appears when a mover is selected
 -- in Layout Mode. Modules register providers for their frame keys.
--- Deferred: loaded on first Layout Mode Open().
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
-ns.RegisterDeferredInit("layoutmode", function()
 local Helpers = ns.Helpers
 
 local QUI_LayoutMode_Settings = {}
@@ -587,11 +585,6 @@ function QUI_LayoutMode_Settings:Hide()
     end
 end
 
-function QUI_LayoutMode_Settings:Reset()
-    self:Hide()
-    self._currentKey = nil
-end
-
 function QUI_LayoutMode_Settings:IsShown()
     return self._panel and self._panel:IsShown()
 end
@@ -615,4 +608,3 @@ function QUI_LayoutMode_Settings:Reset()
     end
 end
 
-end) -- RegisterDeferredInit("layoutmode")

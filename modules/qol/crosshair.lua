@@ -408,15 +408,6 @@ if ns.Registry then
     })
 end
 
-if ns.Registry then
-    ns.Registry:Register("crosshair", {
-        refresh = _G.QUI_RefreshCrosshair,
-        priority = 30,
-        group = "qol",
-        importCategories = { "castBars" },
-    })
-end
-
 QUI.Crosshair = {
     Update = UpdateCrosshair,
     Create = CreateCrosshair,
