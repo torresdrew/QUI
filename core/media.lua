@@ -1,7 +1,8 @@
 -- QUI Media Registration
 -- This file handles the registration of fonts and textures with LibSharedMedia
 
-local LSM = LibStub("LibSharedMedia-3.0")
+local ADDON_NAME, ns = ...
+local LSM = ns.LSM
 
 -- Media types from LibSharedMedia
 local MediaType = LSM.MediaType
@@ -45,6 +46,10 @@ local squareTexturePath = "Interface\\AddOns\\QUI\\assets\\Square.tga"
 LSM:Register(BACKGROUND, "Square", squareTexturePath)
 LSM:Register(STATUSBAR, "Square", squareTexturePath)
 LSM:Register(BORDER, "Square", squareTexturePath)
+
+-- Register a deterministic flat statusbar so profiles using "Flat" do not
+-- depend on another addon/media pack having registered that name first.
+LSM:Register(STATUSBAR, "Flat", "Interface\\Buttons\\WHITE8X8")
 
 -- Register Quazii v2 texture
 local quaziiV2TexturePath = "Interface\\AddOns\\QUI\\assets\\Quazii_v2.tga"

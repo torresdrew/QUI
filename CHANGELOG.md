@@ -4,84 +4,66 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+## v2.51.1 - 2026-03-14
+
+### Added
+- added option to track Power Infusion on group frames
+
+### Fixed
+- fixed skyriding bar rendering
+- fixed stance bar skinning issue
+- fixed tooltip inspect functions running in unsafe environment
+## v2.51.0 - 2026-03-14
+
+### Added
+- added configurable breakpoint indicators to resource bars
+- added balance druid and frost dk to secondary resource bar swap group
+- added options to omit % signs on health text and power text on unit frames
+- added x- and y-offset for loot window relative to mouse cursor
+
+### Fixed
+- fixed paging arrow showing even when turned off
+## v2.50.2 - 2026-03-14
+
+### Added
+- added anchoring support for AbilityTimeline / Better Timeline addon
+
+### Fixed
+- fixed tooltips disappearing when OPie is enabled
+- fixed tooltips not showing spellIDs and iconIDs anymore
+- fixed mouseover tooltips on the minimap
+- fixed defensives growth direction 'center' not working as intended
+## v2.50.1 - 2026-03-14
+
+### Fixed
+- fixed own frame being rendered twice with "solo mode" enabled and in a group
+- fixed 'show me first' to take precedence over other sorting options
+- fixed party frame anchoring when 'show me first' is enabled
+## v2.50.0 - 2026-03-13
+
+### Added
+- added row growth direction options for horizontal and vertical layouts
+- added spec and item level information of players in tooltips
+- added CENTER growth direction for all group frame icon layouts
+- added scroll wheel click-casting
+
+### Fixed
+- fixed tooltip cursor anchoring and border rendering
+- fixed gap between castbar border and castbar progress bar
+- fixed SetBorderColor issue on profiles page
+- fix: defer SafeReload on profile scale change to next frame
+- fix: profile switch refresh order and anchoring force bypass
+- refactor: remove unnecessary combat-deferred initialization from modules
+- fix: combat guards for minimap dragging and edit mode watcher
+- fix: minimap middle-click overlay to prevent ping taint, auto-hide toggle refresh
+- refactor: strip NineSlice approach for tooltips, comprehensive profile refresh, click-cast fixes
+- fix: correct minimap HUD parent check, ensure backdrop visibility
+- fix: zero-write tooltip skinning, fix minimap ticker cancel
+- fix: strengthen external HUD detection with GetRect fallback and hooks
+- refactor: overlay-based tooltip skinning
+- fix: improve external HUD detection with size and parent checks
+- fix: make click-cast settings live-toggleable without reload
+- refactor: migrate all modules from PLAYER_LOGIN to ADDON_LOADED
 ## v2.49.4 - 2026-03-12
 
 ### Added
@@ -557,8 +539,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 - added target unitframe to DandersFrames anchor targets
 - added option to only have action bars mouseover hide work for chars at max level
-
-
 ### Changed
 - updated castbars text clamping logic
 - made spacing of castbars anchored to cdm visually consistent between one-row and multi-row layouts
@@ -650,12 +630,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - added message history feature for chat input
 - added option to swap primary and secondary resource bar positions for some specs, and also to hide primary when they are swapped
 - added position mover for bnet notification toasts
-
-
 ### Changed
 - dynamically shortening castbar spelltexts if bar is too short
-
-
 ### Fixed
 - fixed stack text being overlayed by swipe texture on unitframe buffs and debuffs
 - fixed global font setting not being honored by the loot window
@@ -668,13 +644,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - added a defensive patch for Blizzard's EncounterWarning text throwing errors
-
-
 ### Changed
 - reworked parts of custom trackers to fix issues with dynamic layouts and clickable icons. **this makes 'dynamic layout' and 'clickable icons' mutually exclusive options for custom trackers.**
 - renamed 'Import' menu to 'Import & Export Strings'
-
-
 ### Fixed
 - fixed resource bar visibility setting overriding CDM visibility setting in some cases
 ## v2.27.0 - 2026-02-07

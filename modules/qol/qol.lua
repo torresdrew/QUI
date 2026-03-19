@@ -6,9 +6,7 @@ addonName = addonName or "QUI"
 -- QOL AUTOMATION FEATURES
 ---------------------------------------------------------------------------
 
-local function GetSettings()
-    return Helpers.GetModuleDB("general")
-end
+local GetSettings = Helpers.CreateDBGetter("general")
 
 local qolFrame = CreateFrame("Frame")
 
@@ -290,6 +288,15 @@ local function RefreshPopupBlocker()
 end
 
 _G.QUI_RefreshPopupBlocker = RefreshPopupBlocker
+
+if ns.Registry then
+    ns.Registry:Register("popupBlocker", {
+        refresh = _G.QUI_RefreshPopupBlocker,
+        priority = 30,
+        group = "qol",
+        importCategories = { "qol" },
+    })
+end
 
 ---------------------------------------------------------------------------
 -- MERCHANT: SELL JUNK + AUTO REPAIR

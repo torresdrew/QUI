@@ -9,9 +9,7 @@ local SkinBase = ns.SkinBase
 -- Applies QUI color scheme with dynamic content-height backdrop
 ---------------------------------------------------------------------------
 
-local function GetFontFlags()
-    return Helpers.GetGeneralFontOutline()
-end
+local GetFontFlags = Helpers.GetGeneralFontOutline
 
 -- Debounce flag to prevent multiple concurrent backdrop updates
 local pendingBackdropUpdate = false
@@ -30,10 +28,7 @@ local function SafeSetTextColor(fontString, colorTable)
     fontString:SetTextColor(colorTable[1] or 1, colorTable[2] or 1, colorTable[3] or 1, colorTable[4] or 1)
 end
 
--- Get font path from user profile via Helpers
-local function GetFontPath()
-    return Helpers.GetGeneralFont()
-end
+local GetFontPath = Helpers.GetGeneralFont
 
 -- Apply font and color to a single line (objective text)
 -- Returns true if line height was changed (callers use this to avoid unnecessary repositioning)
@@ -869,6 +864,11 @@ local function SkinObjectiveTracker()
     -- (ScheduleBackdropUpdate also calls HidePOIButtonGlows at 0.15s)
     C_Timer.After(0.5, HidePOIButtonGlows)
 
+    -- Click-through: make the objective tracker non-interactive so clicks pass to the game world
+    if settings.objectiveTrackerClickThrough then
+        TrackerFrame:EnableMouse(false)
+    end
+
     SkinBase.MarkSkinned(TrackerFrame)
 end
 
@@ -929,11 +929,25 @@ local function RefreshObjectiveTracker()
 
     -- Ensure hooks are in place
     HookLineCreation()
+
+    -- Click-through toggle
+    local TrackerFrame = _G.ObjectiveTrackerFrame
+    if TrackerFrame then
+        TrackerFrame:EnableMouse(not settings.objectiveTrackerClickThrough)
+    end
 end
 
 -- Expose refresh function globally
 _G.QUI_RefreshObjectiveTracker = RefreshObjectiveTracker
-_G.QUI_RefreshObjectiveTrackerColors = RefreshObjectiveTracker
+
+if ns.Registry then
+    ns.Registry:Register("skinObjectiveTracker", {
+        refresh = _G.QUI_RefreshObjectiveTracker,
+        priority = 80,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+end
 
 ---------------------------------------------------------------------------
 -- INITIALIZATION

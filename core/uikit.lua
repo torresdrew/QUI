@@ -8,7 +8,7 @@ local ADDON_NAME, ns = ...
 local UIKit = {}
 ns.UIKit = UIKit
 
-local LSM = LibStub("LibSharedMedia-3.0", true)
+local LSM = ns.LSM
 local Helpers = ns.Helpers
 local DEFAULT_FONT = "Fonts\\FRIZQT__.TTF"
 local floor = math.floor
@@ -28,15 +28,12 @@ local accentCheckboxState = (Helpers and Helpers.CreateStateTable and Helpers.Cr
 
 -- Shared fallback color table for checkboxes (avoids per-widget allocation)
 local DEFAULT_CHECKBOX_COLORS = {
-    accent = {0.204, 0.827, 0.600},
-    accentHover = {0.431, 0.906, 0.718},
+    accent = {0.376, 0.647, 0.980},
+    accentHover = {0.506, 0.737, 1.0},
     toggleOff = {0.18, 0.18, 0.20},
 }
 
---- Lazily resolve QUICore (safe if called before main.lua loads)
-local function GetCore()
-    return ns.Addon
-end
+local GetCore = Helpers.GetCore
 
 local function Round(value)
     return floor((value or 0) + 0.5)
@@ -211,15 +208,6 @@ function UIKit.RegisterScaleRefresh(owner, key, refreshFn)
     callbacks[key or refreshFn] = refreshFn
 end
 
-function UIKit.UnregisterScaleRefresh(owner, key)
-    local callbacks = owner and scaleRefreshRegistry[owner]
-    if not callbacks then return end
-    callbacks[key] = nil
-    if not next(callbacks) then
-        scaleRefreshRegistry[owner] = nil
-    end
-end
-
 function UIKit.RefreshScaleBoundWidgets()
     for owner, callbacks in pairs(scaleRefreshRegistry) do
         for _, refreshFn in pairs(callbacks) do
@@ -231,10 +219,6 @@ end
 ---------------------------------------------------------------------------
 -- PIXEL HELPERS
 ---------------------------------------------------------------------------
-
-function UIKit.Pixels(value, frame)
-    return Pixels(value, frame)
-end
 
 function UIKit.DisablePixelSnap(obj)
     if not obj then return end
@@ -258,16 +242,6 @@ function UIKit.SetSizePx(frame, widthPixels, heightPixels)
         return
     end
     SetRegionSizePx(frame, widthPixels, heightPixels, frame)
-end
-
-function UIKit.SetWidthPx(frame, widthPixels)
-    if not frame then return end
-    local core = GetCore()
-    if core and core.SetPixelPerfectWidth then
-        core:SetPixelPerfectWidth(frame, widthPixels)
-        return
-    end
-    SetRegionSizePx(frame, widthPixels, nil, frame)
 end
 
 function UIKit.SetHeightPx(frame, heightPixels)
@@ -332,10 +306,7 @@ function UIKit.ResolveFontPath(fontName)
         local path = LSM:Fetch("font", fontName)
         if path then return path end
     end
-    if Helpers and Helpers.GetGeneralFont then
-        return Helpers.GetGeneralFont()
-    end
-    return DEFAULT_FONT
+    return Helpers.GetGeneralFont()
 end
 
 ---------------------------------------------------------------------------

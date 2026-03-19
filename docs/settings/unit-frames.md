@@ -417,6 +417,10 @@ A standalone power bar that attaches to CDM frames. Stored at `QUI.db.profile.po
 | `powerBar.showTicks` | boolean | `false` | Show tick marks for segmented resources |
 | `powerBar.tickThickness` | number | `2` | Tick mark thickness |
 | `powerBar.tickColor` | color | `{0, 0, 0, 1}` | Tick mark color |
+| `powerBar.indicators.enabled` | boolean | `false` | Enable custom breakpoint indicator lines |
+| `powerBar.indicators.thickness` | number | `2` | Breakpoint indicator thickness |
+| `powerBar.indicators.color` | color | `{1, 1, 1, 0.9}` | Breakpoint indicator color |
+| `powerBar.indicators.perSpec` | table | `{}` | Per-spec breakpoint values (`[specID] = {v1, v2, v3}`) |
 | `powerBar.orientation` | string | `"HORIZONTAL"` | Bar orientation |
 | `powerBar.visibility` | string | `"always"` | Visibility: `"always"`, `"combat"`, `"hostile"` |
 | `powerBar.lockedToEssential` | boolean | `false` | Auto-resize width to match Essential CDM |
@@ -489,12 +493,18 @@ A secondary resource bar (e.g., Holy Power, Soul Shards, Combo Points) that can 
 | `secondaryPowerBar.showTicks` | boolean | `true` | Show tick marks for segmented resources |
 | `secondaryPowerBar.tickThickness` | number | `2` | Tick mark thickness |
 | `secondaryPowerBar.tickColor` | color | `{0, 0, 0, 1}` | Tick mark color |
+| `secondaryPowerBar.indicators.enabled` | boolean | `false` | Enable custom breakpoint indicator lines |
+| `secondaryPowerBar.indicators.thickness` | number | `2` | Breakpoint indicator thickness |
+| `secondaryPowerBar.indicators.color` | color | `{1, 1, 1, 0.9}` | Breakpoint indicator color |
+| `secondaryPowerBar.indicators.perSpec` | table | `{}` | Per-spec breakpoint values (`[specID] = {v1, v2, v3}`) |
 | `secondaryPowerBar.lockedToPrimary` | boolean | `true` | Position above primary power bar and match width |
 | `secondaryPowerBar.swapToPrimaryPosition` | boolean | `false` | Swap to primary bar position (supported specs) |
 | `secondaryPowerBar.hidePrimaryOnSwap` | boolean | `false` | Auto-hide primary bar when swapped |
 | `secondaryPowerBar.showFragmentedPowerBarText` | boolean | `false` | Show text on fragmented power bars |
 | `secondaryPowerBar.orientation` | string | `"AUTO"` | Bar orientation |
 | `secondaryPowerBar.visibility` | string | `"always"` | Visibility rule |
+
+Breakpoint indicators support up to 3 values per bar, and values are saved separately for each specialization.
 
 ---
 

@@ -1,13 +1,14 @@
 --[[
     QUI Tooltip Provider
     Abstraction layer for the tooltip engine.
-    Load order: tooltip_provider.lua → tooltip_classic.lua
+    Load order: tooltip_provider.lua → tooltip.lua
     Engine files call RegisterEngine() at load time.
     Provider calls Initialize() on the selected engine after PLAYER_LOGIN.
 ]]
 
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
+local GetCore = Helpers.GetCore
 
 ---------------------------------------------------------------------------
 -- PROVIDER STATE
@@ -15,7 +16,7 @@ local Helpers = ns.Helpers
 local TooltipProvider = {
     engines = {},           -- name → engine table
     activeEngine = nil,     -- the initialized engine table
-    activeEngineName = nil, -- "classic"
+    activeEngineName = nil, -- "default"
     initialized = false,
 }
 
@@ -24,7 +25,7 @@ local TooltipProvider = {
 ---------------------------------------------------------------------------
 
 --- Register a tooltip engine implementation.
---- @param name string  Engine identifier ("classic")
+--- @param name string  Engine identifier ("default")
 --- @param engine table  Table with contract methods (Initialize, Refresh, etc.)
 function TooltipProvider:RegisterEngine(name, engine)
     self.engines[name] = engine
@@ -37,7 +38,7 @@ function TooltipProvider:GetActiveEngineName()
 end
 
 ---------------------------------------------------------------------------
--- SHARED UTILITIES (engine-agnostic, used by both engines)
+-- SHARED UTILITIES (engine-agnostic)
 ---------------------------------------------------------------------------
 
 -- Locals for performance
@@ -53,6 +54,41 @@ local strmatch = string.match
 local GetMouseFoci = GetMouseFoci
 local WorldFrame = WorldFrame
 
+local function GetFrameName(frame)
+    if not frame or not frame.GetName then
+        return ""
+    end
+    local ok, name = pcall(frame.GetName, frame)
+    if not ok or type(name) ~= "string" then
+        return ""
+    end
+    return name
+end
+
+local function IsOPieFrameName(name)
+    if name == "" then
+        return false
+    end
+    return strmatch(name, "^OneRing") or
+       strmatch(name, "^ORL_") or
+       strmatch(name, "^ORLOpen")
+end
+
+local function IsOPieFrame(frame)
+    local depth = 0
+    while frame and depth < 5 do
+        if IsOPieFrameName(GetFrameName(frame)) then
+            return true
+        end
+        if frame == UIParent then
+            break
+        end
+        frame = frame.GetParent and frame:GetParent() or nil
+        depth = depth + 1
+    end
+    return false
+end
+
 ---------------------------------------------------------------------------
 -- Cached UI Scale
 -- GetEffectiveScale() can return secret values during combat.
@@ -62,6 +98,11 @@ local WorldFrame = WorldFrame
 local cachedUIScale = 1
 
 local function UpdateCachedUIScale()
+    local core = GetCore and GetCore()
+    if core and type(core.uiscale) == "number" and core.uiscale > 0 then
+        cachedUIScale = core.uiscale
+        return
+    end
     local ok, scale = pcall(UIParent.GetEffectiveScale, UIParent)
     if ok and scale and type(scale) == "number" and scale > 0 then
         cachedUIScale = scale
@@ -131,8 +172,16 @@ local FADED_ALPHA_THRESHOLD = 0.5
 
 function TooltipProvider:IsOwnerFadedOut(owner)
     if not owner or not owner.GetEffectiveAlpha then return false end
+    if IsOPieFrame(owner) then return false end
     local alpha = Helpers.SafeToNumber(owner:GetEffectiveAlpha(), 1)
     return alpha < FADED_ALPHA_THRESHOLD
+end
+
+function TooltipProvider:IsTransientTooltipOwner(owner)
+    if not owner then
+        return false
+    end
+    return owner == UIParent or IsOPieFrame(owner)
 end
 
 ---------------------------------------------------------------------------
@@ -142,6 +191,8 @@ end
 function TooltipProvider:GetTooltipContext(owner)
     if not owner then return "npcs" end
     if owner.IsForbidden and owner:IsForbidden() then return "npcs" end
+    if owner == WorldFrame then return "npcs" end
+    if self:IsTransientTooltipOwner(owner) then return nil end
 
     -- CDM: Check for skinned CDM icons
     local getIS = _G.QUI_GetCDMIconState
@@ -226,7 +277,7 @@ function TooltipProvider:GetTooltipContext(owner)
         return "frames"
     end
 
-    return "npcs"
+    return nil
 end
 
 ---------------------------------------------------------------------------
@@ -303,11 +354,53 @@ function TooltipProvider:PositionTooltipAtCursor(tooltip, settings)
 
     -- Use cached scale (updated on UI_SCALE_CHANGED) to avoid calling
     -- GetEffectiveScale() during combat where it may return secret values.
+    local core = GetCore and GetCore()
     local scale = cachedUIScale
+    if core and type(core.uiscale) == "number" and core.uiscale > 0 then
+        scale = core.uiscale
+    end
+    if scale <= 0 then
+        scale = 1
+    end
     local anchor, offsetX, offsetY = self:GetCursorAnchorConfig(settings)
+    local x = (cursorX / scale) + offsetX
+    local y = (cursorY / scale) + offsetY
+
+    -- Snap the final tooltip rect to the pixel grid so the existing 1px border
+    -- math in the skinning layer does not land on fractional screen coordinates.
+    -- Use the cached UIParent scale path here rather than frame:GetEffectiveScale()
+    -- so cursor anchoring stays combat-safe.
+    if core and core.GetPixelPerfectScale and scale > 0 then
+        local px = core:GetPixelPerfectScale() / scale
+        if px > 0 then
+            x = math.floor((x / px) + 0.5) * px
+            y = math.floor((y / px) + 0.5) * px
+        end
+    end
+
     tooltip:ClearAllPoints()
-    tooltip:SetPoint(anchor, UIParent, "BOTTOMLEFT", (cursorX / scale) + offsetX, (cursorY / scale) + offsetY)
+    tooltip:SetPoint(anchor, UIParent, "BOTTOMLEFT", x, y)
 end
+
+---------------------------------------------------------------------------
+-- TOOLTIP ANCHOR (fixed position when not cursor-anchored)
+---------------------------------------------------------------------------
+
+local tooltipAnchor = CreateFrame("Frame", "QUI_TooltipAnchor", UIParent)
+tooltipAnchor:SetSize(200, 40)
+tooltipAnchor:SetPoint("BOTTOMRIGHT", UIParent, "BOTTOMRIGHT", -200, 100)
+tooltipAnchor:SetClampedToScreen(true)
+
+--- Position the tooltip at the fixed anchor frame.
+function TooltipProvider:PositionTooltipAtAnchor(tooltip, settings)
+    if not tooltip then return end
+    tooltip:ClearAllPoints()
+    tooltip:SetPoint("BOTTOMRIGHT", tooltipAnchor, "BOTTOMRIGHT", 0, 0)
+end
+
+--- Legacy position helpers removed — frameAnchoring system handles positioning.
+--- RestoreAnchorPosition kept as no-op for any remaining callers.
+function TooltipProvider:RestoreAnchorPosition() end
 
 ---------------------------------------------------------------------------
 -- INITIALIZATION
@@ -317,15 +410,15 @@ function TooltipProvider:InitializeEngine()
     if self.initialized then return end
 
     local QUICore = ns.Addon
-    local engineName = "classic"
+    local engineName = "default"
     if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.tooltip then
-        engineName = QUICore.db.profile.tooltip.engine or "classic"
+        engineName = QUICore.db.profile.tooltip.engine or "default"
     end
 
     local engine = self.engines[engineName]
     if not engine then
-        engine = self.engines["classic"]
-        engineName = "classic"
+        engine = self.engines["default"]
+        engineName = "default"
     end
 
     if not engine then
@@ -339,6 +432,9 @@ function TooltipProvider:InitializeEngine()
     if engine.Initialize then
         engine:Initialize()
     end
+
+    -- Restore saved tooltip anchor position
+    self:RestoreAnchorPosition()
 end
 
 ---------------------------------------------------------------------------
