@@ -9,10 +9,15 @@ local QUICore = ns.Addon
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
 
+-- Upvalue caching for hot-path performance
+local pairs, ipairs, type, pcall = pairs, ipairs, type, pcall
+local format = string.format
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+
 ---------------------------------------------------------------------------
 -- Local references
 ---------------------------------------------------------------------------
-local LSM = LibStub("LibSharedMedia-3.0", true)
+local LSM = ns.LSM
 local skinnedFrames = {}        -- Track which frames have been styled
 local urlPopup = nil            -- Copy popup frame (created on demand)
 local chatCopyFrame = nil       -- Chat history copy frame (created on demand)
@@ -58,16 +63,14 @@ local EDITBOX_TEXTURES = {
 -- QUI Color palette for popup styling
 local QUI_COLORS = {
     bg = {0.067, 0.094, 0.153, 0.97},
-    accent = {0.204, 0.827, 0.6, 1},
+    accent = {0.376, 0.647, 0.980, 1},
     text = {0.953, 0.957, 0.965, 1},
 }
 
 ---------------------------------------------------------------------------
 -- Get settings from database
 ---------------------------------------------------------------------------
-local function GetSettings()
-    return Helpers.GetModuleDB("chat")
-end
+local GetSettings = Helpers.CreateDBGetter("chat")
 
 local function ApplySurfaceStyle(frame, bgColor, borderColor, borderSizePixels)
     if not frame then return end
@@ -798,7 +801,7 @@ end
 -- Flag + hook + hide pattern used by all chat button frames.
 -- Can't use Helpers.DeferredHideOnShow because the _chatButtonsHidden
 -- guard allows toggling visibility back on at runtime.
-local _chatButtonHooked = setmetatable({}, { __mode = "k" })
+local _chatButtonHooked = Helpers.CreateStateTable()
 local function HideChatButtonOnShow(frame)
     _chatButtonsHidden[frame] = true
     if not _chatButtonHooked[frame] then
@@ -1442,6 +1445,28 @@ local function HookNewChatWindows()
     end)
 end
 
+local runtimeInitDone = false
+local openChatHooked = false
+
+local function EnsureChatRuntimeInit()
+    if runtimeInitDone then return end
+
+    SetupURLClickHandler()
+    InstallMessageFilters()
+
+    if not openChatHooked then
+        hooksecurefunc("ChatFrame_OpenChat", function(text, chatFrame)
+            C_Timer.After(0.1, function()
+                InitializeChatFrameHistory(chatFrame)
+            end)
+        end)
+        openChatHooked = true
+    end
+
+    HookNewChatWindows()
+    runtimeInitDone = true
+end
+
 ---------------------------------------------------------------------------
 -- Refresh all chat styling (called from options)
 ---------------------------------------------------------------------------
@@ -1486,6 +1511,7 @@ local function RefreshAll()
 
     -- Re-apply all styling if enabled
     if settings and settings.enabled then
+        EnsureChatRuntimeInit()
         SkinAllChatFrames()
         StyleAllChatTabs()
     end
@@ -1510,37 +1536,27 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
 
         if not settings or not settings.enabled then return end
 
-        -- Setup URL click handler (once)
-        SetupURLClickHandler()
-
-        -- Install chat message filters (timestamps + URLs) via safe API
-        InstallMessageFilters()
-
-        -- Hook chat frame opening to ensure edit box gets history initialization
-        hooksecurefunc("ChatFrame_OpenChat", function(text, chatFrame)
-            C_Timer.After(0.1, function()
-                InitializeChatFrameHistory(chatFrame)
-            end)
-        end)
+        EnsureChatRuntimeInit()
 
         -- Skin existing chat frames
         SkinAllChatFrames()
 
         -- Style chat tabs
         StyleAllChatTabs()
-
-        -- Hook for new chat windows
-        HookNewChatWindows()
     end
 end)
-
----------------------------------------------------------------------------
--- Global refresh function for GUI
----------------------------------------------------------------------------
-_G.QUI_RefreshChat = RefreshAll
 
 QUI.Chat = {
     Refresh = RefreshAll,
     SkinFrame = SkinChatFrame,
     SkinAll = SkinAllChatFrames,
 }
+
+if ns.Registry then
+    ns.Registry:Register("chat", {
+        refresh = RefreshAll,
+        priority = 45,
+        group = "chat",
+        importCategories = { "chat" },
+    })
+end

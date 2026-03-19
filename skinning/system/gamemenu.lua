@@ -4,6 +4,12 @@ local Helpers = ns.Helpers
 local GetCore = Helpers.GetCore
 local SkinBase = ns.SkinBase
 
+-- Upvalue caching for hot-path performance
+local pairs, unpack = pairs, unpack
+local min = math.min
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local hooksecurefunc = hooksecurefunc
+
 ---------------------------------------------------------------------------
 -- GAME MENU (ESC MENU) SKINNING + QUAZII UI BUTTON
 --
@@ -67,9 +73,9 @@ local function GetOrCreateButtonOverlay(button, sr, sg, sb, sa, bgr, bgg, bgb, b
     overlay:SetFrameLevel(button:GetFrameLevel() + 1)
     overlay:EnableMouse(false)
 
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
+    local btnBgR = min(bgr + 0.07, 1)
+    local btnBgG = min(bgg + 0.07, 1)
+    local btnBgB = min(bgb + 0.07, 1)
 
     info = {
         overlay = overlay,
@@ -89,17 +95,8 @@ local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local info = GetOrCreateButtonOverlay(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local overlay = info.overlay
 
-    local px = SkinBase.GetPixelSize(overlay, 1)
-    overlay:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-        insets = { left = px, right = px, top = px, bottom = px }
-    })
-
     local btnBgR, btnBgG, btnBgB = info.bgColor[1], info.bgColor[2], info.bgColor[3]
-    overlay:SetBackdropColor(btnBgR, btnBgG, btnBgB, 1)
-    overlay:SetBackdropBorderColor(sr, sg, sb, sa)
+    SkinBase.ApplyFullBackdrop(overlay, sr, sg, sb, sa, btnBgR, btnBgG, btnBgB, 1)
 
     -- Hide default textures (these are reads + method calls, not property writes)
     if button.Left then button.Left:SetAlpha(0) end
@@ -119,8 +116,7 @@ local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     -- Style button text (SetFont on fontstring child is safe)
     local text = button:GetFontString()
     if text then
-        local QUI = _G.QUI
-        local fontPath = QUI and QUI.GetGlobalFont and QUI:GetGlobalFont() or STANDARD_TEXT_FONT
+        local fontPath = Helpers.GetGeneralFont()
         local fontSize = GetGameMenuFontSize()
         text:SetFont(fontPath, fontSize, FONT_FLAGS)
         text:SetTextColor(unpack(COLORS.text))
@@ -142,9 +138,9 @@ local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             local ov = binfo.overlay
             if not ov then return end
             local r, g, b, a = unpack(binfo.bgColor)
-            ov:SetBackdropColor(math.min(r + 0.30, 1), math.min(g + 0.30, 1), math.min(b + 0.30, 1), a)
+            ov:SetBackdropColor(min(r + 0.30, 1), min(g + 0.30, 1), min(b + 0.30, 1), a)
             local sr2, sg2, sb2, sa2 = unpack(binfo.skinColor)
-            ov:SetBackdropBorderColor(math.min(sr2 * 1.6, 1), math.min(sg2 * 1.6, 1), math.min(sb2 * 1.6, 1), sa2)
+            ov:SetBackdropBorderColor(min(sr2 * 1.6, 1), min(sg2 * 1.6, 1), min(sb2 * 1.6, 1), sa2)
             local txt = button:GetFontString()
             if txt then txt:SetTextColor(1, 1, 1, 1) end
             if binfo.overlayText then binfo.overlayText:SetTextColor(1, 1, 1, 1) end
@@ -170,9 +166,9 @@ local function UpdateButtonColors(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local info = buttonOverlays[button]
     if not info or not info.overlay then return end
 
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
+    local btnBgR = min(bgr + 0.07, 1)
+    local btnBgG = min(bgg + 0.07, 1)
+    local btnBgB = min(bgb + 0.07, 1)
     info.overlay:SetBackdropColor(btnBgR, btnBgG, btnBgB, 1)
     info.overlay:SetBackdropBorderColor(sr, sg, sb, sa)
     info.skinColor = { sr, sg, sb, sa }
@@ -224,8 +220,7 @@ local function HideDimBehindGameMenu()
     end
 end
 
--- Expose for settings toggle
-_G.QUI_RefreshGameMenuDim = function()
+local function RefreshGameMenuDim()
     local core = GetCore()
     local settings = core and core.db and core.db.profile and core.db.profile.general
 
@@ -256,15 +251,7 @@ local function UpdateMenuBackdrop(sr, sg, sb, sa, bgr, bgg, bgb, bga)
         CreateMenuBackdrop(sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end
 
-    local px = SkinBase.GetPixelSize(menuBackdrop, 1)
-    menuBackdrop:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-        insets = { left = px, right = px, top = px, bottom = px },
-    })
-    menuBackdrop:SetBackdropColor(bgr, bgg, bgb, bga)
-    menuBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
+    SkinBase.ApplyFullBackdrop(menuBackdrop, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 end
 
 ---------------------------------------------------------------------------
@@ -322,8 +309,7 @@ local function RefreshGameMenuFontSize()
     if not GameMenuFrame then return end
 
     local fontSize = GetGameMenuFontSize()
-    local QUI = _G.QUI
-    local fontPath = QUI and QUI.GetGlobalFont and QUI:GetGlobalFont() or STANDARD_TEXT_FONT
+    local fontPath = Helpers.GetGeneralFont()
 
     if GameMenuFrame.buttonPool then
         for button in GameMenuFrame.buttonPool:EnumerateActive() do
@@ -343,9 +329,23 @@ local function RefreshGameMenuFontSize()
     end
 end
 
--- Expose refresh functions globally
-_G.QUI_RefreshGameMenuColors = RefreshGameMenuColors
-_G.QUI_RefreshGameMenuFontSize = RefreshGameMenuFontSize
+if ns.Registry then
+    ns.Registry:Register("skinGameMenu", {
+        refresh = {
+            all = RefreshGameMenuColors,
+            dim = RefreshGameMenuDim,
+        },
+        priority = 80,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+    ns.Registry:Register("skinGameMenuFonts", {
+        refresh = RefreshGameMenuFontSize,
+        priority = 80,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+end
 
 ---------------------------------------------------------------------------
 -- QUAZII UI STANDALONE BUTTON (parented to UIParent, NOT GameMenuFrame)
@@ -436,8 +436,7 @@ local function PositionStandaloneButton()
                 ot:SetJustifyV("MIDDLE")
                 info.overlayText = ot
             end
-            local QUI2 = _G.QUI
-            local fp = QUI2 and QUI2.GetGlobalFont and QUI2:GetGlobalFont() or STANDARD_TEXT_FONT
+            local fp = Helpers.GetGeneralFont()
             local fs = GetGameMenuFontSize()
             info.overlayText:SetFont(fp, fs, FONT_FLAGS)
             info.overlayText:SetText("QUI")

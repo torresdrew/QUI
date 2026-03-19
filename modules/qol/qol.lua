@@ -6,9 +6,12 @@ addonName = addonName or "QUI"
 -- QOL AUTOMATION FEATURES
 ---------------------------------------------------------------------------
 
-local function GetSettings()
-    return Helpers.GetModuleDB("general")
-end
+local GetSettings = Helpers.CreateDBGetter("general")
+
+-- Upvalue caching for hot-path performance
+local pairs, ipairs, type = pairs, ipairs, type
+local C_Timer = C_Timer
+local CreateFrame = CreateFrame
 
 local qolFrame = CreateFrame("Frame")
 
@@ -289,7 +292,14 @@ local function RefreshPopupBlocker()
     HideTalentReminderAlerts()
 end
 
-_G.QUI_RefreshPopupBlocker = RefreshPopupBlocker
+if ns.Registry then
+    ns.Registry:Register("popupBlocker", {
+        refresh = RefreshPopupBlocker,
+        priority = 30,
+        group = "qol",
+        importCategories = { "qol" },
+    })
+end
 
 ---------------------------------------------------------------------------
 -- MERCHANT: SELL JUNK + AUTO REPAIR

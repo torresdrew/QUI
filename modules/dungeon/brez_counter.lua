@@ -10,6 +10,12 @@ local Helpers = ns.Helpers
 local QUICore = ns.Addon
 local UIKit = ns.UIKit
 
+-- Upvalue caching for hot-path performance
+local format = string.format
+local GetTime = GetTime
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local wipe = wipe
+
 ---------------------------------------------------------------------------
 -- Constants
 ---------------------------------------------------------------------------
@@ -61,9 +67,7 @@ local BrezState = {
 ---------------------------------------------------------------------------
 -- Get settings from database
 ---------------------------------------------------------------------------
-local function GetSettings()
-    return Helpers.GetModuleDB("brzCounter")
-end
+local GetSettings = Helpers.CreateDBGetter("brzCounter")
 
 local function GetClassColor()
     local r, g, b = Helpers.GetPlayerClassColor()
@@ -169,7 +173,7 @@ local function CreateBrezFrame()
     frame:SetScript("OnDragStart", function(self)
         local settings = GetSettings()
         local locked = settings and settings.locked ~= false
-        local isOverridden = _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(self)
+        local isOverridden = _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("brezCounter")
         if settings and not locked and not isOverridden and not InCombatLockdown() then
             self:StartMoving()
         end
@@ -331,7 +335,7 @@ local function UpdateAppearance()
     -- Update position (skip if anchoring system has overridden this frame)
     local xOffset = settings.xOffset or 500
     local yOffset = settings.yOffset or -50
-    if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(frame)) then
+    if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("brezCounter")) then
         frame:ClearAllPoints()
         frame:SetPoint("CENTER", UIParent, "CENTER", xOffset, yOffset)
     end
@@ -633,15 +637,19 @@ end)
 -- own internal dispatch without calling RegisterEvent.
 EventRegistry:RegisterCallback("COMBAT_LOG_EVENT_UNFILTERED", OnCombatLogEvent, eventFrame)
 
----------------------------------------------------------------------------
--- Global functions for GUI
----------------------------------------------------------------------------
-_G.QUI_RefreshBrezCounter = RefreshBrezCounter
 _G.QUI_ToggleBrezCounterPreview = TogglePreview
-_G.QUI_IsBrezCounterPreviewMode = IsPreviewMode
 
 QUI.BrezCounter = {
     Refresh = RefreshBrezCounter,
     TogglePreview = TogglePreview,
     IsPreviewMode = IsPreviewMode,
 }
+
+if ns.Registry then
+    ns.Registry:Register("brezCounter", {
+        refresh = RefreshBrezCounter,
+        priority = 40,
+        group = "trackers",
+        importCategories = { "trackersTimers" },
+    })
+end

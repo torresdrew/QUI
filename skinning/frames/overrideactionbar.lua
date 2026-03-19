@@ -2,6 +2,12 @@ local addonName, ns = ...
 local QUICore = ns.Addon
 local SkinBase = ns.SkinBase
 
+-- Upvalue caching for hot-path performance
+local type = type
+local max = math.max
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local InCombatLockdown = InCombatLockdown
+
 ---------------------------------------------------------------------------
 -- OVERRIDE ACTION BAR SKINNING (Compact style)
 ---------------------------------------------------------------------------
@@ -326,8 +332,14 @@ local function RefreshOverrideActionBarColors()
     end
 end
 
--- Expose refresh function globally
-_G.QUI_RefreshOverrideActionBarColors = RefreshOverrideActionBarColors
+if ns.Registry then
+    ns.Registry:Register("skinOverrideActionBar", {
+        refresh = RefreshOverrideActionBarColors,
+        priority = 80,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+end
 
 ---------------------------------------------------------------------------
 -- INITIALIZATION
@@ -336,6 +348,14 @@ _G.QUI_RefreshOverrideActionBarColors = RefreshOverrideActionBarColors
 local function SetupOverrideBarHooks()
     local bar = _G.OverrideActionBar
     if not bar or SkinBase.GetFrameData(bar, "hooked") then return end
+
+    -- Only install hooks when skinning is enabled. These hooks taint the
+    -- protected OverrideActionBar frame (addon code runs on its scripts),
+    -- which causes ADDON_ACTION_BLOCKED when Blizzard tries Show()/Hide()
+    -- during combat. Without skinning there is nothing to recover from,
+    -- so skip the hooks entirely to keep the frame untainted.
+    local settings = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.general
+    if not settings or not settings.skinOverrideActionBar then return end
 
     -- Hook OnShow with delay to let Blizzard finish setup
     bar:HookScript("OnShow", function(self)

@@ -5,6 +5,12 @@
 local _, ns = ...
 local Helpers = ns.Helpers
 
+-- Upvalue caching for hot-path performance
+local ipairs, type = ipairs, type
+local C_Timer = C_Timer
+local InCombatLockdown = InCombatLockdown
+local CreateFrame = CreateFrame
+
 -- Default settings
 local DEFAULTS = {
     hideObjectiveTrackerAlways = false,
@@ -757,6 +763,12 @@ eventFrame:RegisterEvent("PLAYER_ROLES_ASSIGNED")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("CHALLENGE_MODE_START")
 eventFrame:RegisterEvent("CHALLENGE_MODE_RESET")
+eventFrame:RegisterEvent("UNIT_ENTERED_VEHICLE")
+eventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
+if C_PetBattles then
+    eventFrame:RegisterEvent("PET_BATTLE_OPENING_START")
+    eventFrame:RegisterEvent("PET_BATTLE_CLOSE")
+end
 eventFrame:SetScript("OnEvent", function(self, event, addon)
     local settings = GetSettings()
 
@@ -764,8 +776,8 @@ eventFrame:SetScript("OnEvent", function(self, event, addon)
     -- Apply TalkingHeadFrame mouse fix when it loads
     if event == "ADDON_LOADED" and addon == "Blizzard_TalkingHeadUI" then
         -- Re-apply settings now that TalkingHeadFrame exists
-        if settings then
-            _G.QUI_RefreshUIHider()
+        if settings and ns.Registry and ns.Registry.Refresh then
+            ns.Registry:Refresh("uiHider")
         end
         return
     end
@@ -794,6 +806,40 @@ eventFrame:SetScript("OnEvent", function(self, event, addon)
         return
     end
 
+    -- Vehicle/pet battle data bar hiding
+    if event == "UNIT_ENTERED_VEHICLE" or event == "UNIT_EXITED_VEHICLE" then
+        local unit = addon  -- first arg is unit for these events
+        if unit ~= "player" then return end
+        if settings and settings.hideDataBarsInVehicle and StatusTrackingBarManager then
+            C_Timer.After(0, function()
+                if UnitInVehicle("player") then
+                    StatusTrackingBarManager:Hide()
+                else
+                    StatusTrackingBarManager:Show()
+                    ApplyHideSettings()
+                end
+            end)
+        end
+        return
+    end
+
+    if event == "PET_BATTLE_OPENING_START" then
+        if settings and settings.hideDataBarsInPetBattle and StatusTrackingBarManager then
+            StatusTrackingBarManager:Hide()
+        end
+        return
+    end
+
+    if event == "PET_BATTLE_CLOSE" then
+        if settings and settings.hideDataBarsInPetBattle and StatusTrackingBarManager then
+            C_Timer.After(0.1, function()
+                StatusTrackingBarManager:Show()
+                ApplyHideSettings()
+            end)
+        end
+        return
+    end
+
     -- Refresh all hide settings when entering new zones/instances
     -- This ensures hooks are properly set up for ObjectiveTrackerFrame and other elements
     if settings then
@@ -806,9 +852,13 @@ QUI.UIHider = {
     ApplySettings = ApplyHideSettings,
 }
 
--- Global function for config panel to call
-_G.QUI_RefreshUIHider = function()
-    ApplyHideSettings()
+if ns.Registry then
+    ns.Registry:Register("uiHider", {
+        refresh = ApplyHideSettings,
+        priority = 60,
+        group = "ui",
+        importCategories = { "qol" },
+    })
 end
 
 ---------------------------------------------------------------------------

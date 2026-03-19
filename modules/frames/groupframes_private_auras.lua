@@ -13,6 +13,11 @@ if not C_UnitAuras or not C_UnitAuras.AddPrivateAuraAnchor then return end
 local Helpers = ns.Helpers
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
+-- Upvalue caching for hot-path performance
+local pairs, ipairs, pcall = pairs, ipairs, pcall
+local CreateFrame = CreateFrame
+local tinsert = table.insert
+
 ---------------------------------------------------------------------------
 -- MODULE TABLE
 ---------------------------------------------------------------------------
@@ -26,7 +31,7 @@ local AddPrivateAuraAnchor = C_UnitAuras.AddPrivateAuraAnchor
 local RemovePrivateAuraAnchor = C_UnitAuras.RemovePrivateAuraAnchor
 
 -- Weak-keyed state: frameState[frame] = { containers={}, anchorIDs={}, unit="" }
-local frameState = setmetatable({}, { __mode = "k" })
+local frameState = Helpers.CreateStateTable()
 
 -- Container pool
 local containerPool = {}

@@ -9,6 +9,13 @@ local Helpers = ns.Helpers
 
 local GetCore = ns.Helpers.GetCore
 
+-- Upvalue caching for hot-path performance
+local pairs, ipairs, type = pairs, ipairs, type
+local floor, max, min = math.floor, math.max, math.min
+local format = string.format
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local InCombatLockdown = InCombatLockdown
+
 ---------------------------------------------------------------------------
 -- Module Constants
 ---------------------------------------------------------------------------
@@ -219,17 +226,13 @@ end
 
 local function SavePosition(point, relPoint, x, y)
     local core = GetCore()
-    if core and core.db and core.db.profile then
-        if not core.db.profile.mplusTimer then
-            core.db.profile.mplusTimer = {}
-        end
-        core.db.profile.mplusTimer.position = {
-            point = point,
-            relPoint = relPoint,
-            x = x,
-            y = y
-        }
-    end
+    if not (core and core.db and core.db.profile and core.db.profile.mplusTimer) then return end
+    core.db.profile.mplusTimer.position = {
+        point = point or "CENTER",
+        relPoint = relPoint or "CENTER",
+        x = x or 0,
+        y = y or 0,
+    }
 end
 
 local function IsEnabled()
@@ -275,14 +278,6 @@ local function FormatTime(seconds)
     return negative and ("-" .. str) or str
 end
 
-local function FormatTimeMs(ms)
-    if not ms then return "0:00.000" end
-    local seconds = ms / 1000
-    local mins = math.floor(seconds / 60)
-    local secs = seconds % 60
-    return string.format("%d:%06.3f", mins, secs)
-end
-
 local function DeepCopy(orig)
     local copy
     if type(orig) == 'table' then
@@ -296,9 +291,7 @@ local function DeepCopy(orig)
     return copy
 end
 
-local function Clamp(value, min, max)
-    return math.max(min, math.min(max, value))
-end
+local Clamp = Helpers.Clamp
 
 -- Format pace offset for display: "+1:24" or "-0:45"
 local function FormatPaceOffset(seconds)
@@ -325,10 +318,15 @@ function MPlusTimer:CreateFrames()
     root:SetClampedToScreen(true)
     root:Hide()
 
-    local pos = GetPosition()
-    root:SetPoint(pos.point, UIParent, pos.relPoint, pos.x, pos.y)
+    if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("mplusTimer")) then
+        local pos = GetPosition()
+        root:SetPoint(pos.point, UIParent, pos.relPoint, pos.x, pos.y)
+    end
 
     self.frames.root = root
+    if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("mplusTimer") and _G.QUI_ApplyFrameAnchor then
+        _G.QUI_ApplyFrameAnchor("mplusTimer")
+    end
 
     -- Dungeon name (top, centered)
     local dungeonText = root:CreateFontString(nil, "ARTWORK")
@@ -522,20 +520,15 @@ function MPlusTimer:CreateFrames()
     root:RegisterForDrag("LeftButton")
 
     root:SetScript("OnDragStart", function(self)
-        if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(self) then return end
+        if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("mplusTimer") then return end
         self:StartMoving()
     end)
 
     root:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
-        local core = GetCore()
-        local point, _, relPoint, x, y
-        if core and type(core.SnapFramePosition) == "function" then
-            point, _, relPoint, x, y = core:SnapFramePosition(self)
-        else
-            point, _, relPoint, x, y = self:GetPoint()
-        end
-        if point then
+        if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("mplusTimer") then return end
+        local point, _, relPoint, x, y = self:GetPoint()
+        if point and relPoint and x and y then
             SavePosition(point, relPoint, x, y)
         end
     end)
@@ -1812,14 +1805,17 @@ function MPlusTimer:OnTimerTick(elapsed)
     self:RenderTimer()
 end
 
+-- Named OnUpdate handler avoids closure allocation per StartTimerLoop call
+local function MPlusTimer_OnUpdate(_, elapsed)
+    MPlusTimer:OnTimerTick(elapsed)
+end
+
 function MPlusTimer:StartTimerLoop()
     if self.state.timerLoopRunning then return end
     self.state.timerLoopRunning = true
     sinceLastUpdate = 0
 
-    self.frames.root:SetScript("OnUpdate", function(_, elapsed)
-        MPlusTimer:OnTimerTick(elapsed)
-    end)
+    self.frames.root:SetScript("OnUpdate", MPlusTimer_OnUpdate)
 end
 
 function MPlusTimer:StopTimerLoop()
@@ -1930,7 +1926,7 @@ function MPlusTimer:ApplyScale()
     self.frames.root:SetScale(scale)
 
     -- Re-anchor to maintain visual position (skip if anchoring system controls this frame)
-    if point and not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(self.frames.root)) then
+    if point and not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("mplusTimer")) then
         self.frames.root:ClearAllPoints()
         self.frames.root:SetPoint(point, UIParent, relPoint, x, y)
     end
@@ -1940,7 +1936,8 @@ end
 -- Show/Hide
 ---------------------------------------------------------------------------
 function MPlusTimer:Show()
-    if not self.frames.root then
+    local justCreated = not self.frames.root
+    if justCreated then
         self:CreateFrames()
     end
 
@@ -1948,6 +1945,13 @@ function MPlusTimer:Show()
     self:ApplyScale()
     self:RenderAll()
     self.frames.root:Show()
+
+    -- Newly created frame needs anchoring applied — CreateFrames skips
+    -- SetPoint when QUI_HasFrameAnchor is true, but the anchoring system
+    -- may not have positioned this frame yet.
+    if justCreated and _G.QUI_ApplyFrameAnchor then
+        _G.QUI_ApplyFrameAnchor("mplusTimer")
+    end
 
     -- Trigger skin application
     if _G.QUI_ApplyMPlusTimerSkin then
@@ -1977,7 +1981,6 @@ end
 ---------------------------------------------------------------------------
 function MPlusTimer:EnableDemoMode()
     if self.state.inChallenge then
-        print("|cFF34D4E8[QUI M+ Timer]|r Can't enable demo mode during active M+!")
         return
     end
 
@@ -2005,7 +2008,6 @@ function MPlusTimer:EnableDemoMode()
     self:Show()
     self:StartTimerLoop()
 
-    print("|cFF34D4E8[QUI M+ Timer]|r Demo mode enabled. Type /qmpt demo to disable.")
 end
 
 function MPlusTimer:DisableDemoMode()
@@ -2015,7 +2017,6 @@ function MPlusTimer:DisableDemoMode()
     self:Hide()
     self:ResetState()
 
-    print("|cFF34D4E8[QUI M+ Timer]|r Demo mode disabled.")
 end
 
 function MPlusTimer:ToggleDemoMode()
@@ -2223,11 +2224,6 @@ SlashCmdList["QUIIMPLUSTIMER"] = function(msg)
         MPlusTimer:Show()
     elseif cmd == "hide" then
         MPlusTimer:Hide()
-    else
-        print("|cFF34D4E8[QUI M+ Timer]|r Commands:")
-        print("  /qmpt demo - Toggle demo mode")
-        print("  /qmpt show - Show timer")
-        print("  /qmpt hide - Hide timer")
     end
 end
 

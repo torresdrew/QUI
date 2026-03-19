@@ -207,6 +207,27 @@ local function ValidateSpellScannerPayload(data)
     return true
 end
 
+local function IsOldSchemaProfile(profile)
+    if type(profile) ~= "table" then return false end
+    -- New-schema profiles always have the anchoring migration marker
+    if profile._anchoringMigrationVersion then
+        return false
+    end
+    -- Positive signals: keys that only exist in old schema
+    if profile.castBar or profile.targetCastBar or profile.focusCastBar then
+        return true
+    end
+    local gf = profile.quiGroupFrames
+    if type(gf) == "table" and (gf.general or gf.layout or gf.health or gf.power) then
+        return true
+    end
+    -- Fallback: has module data but no migration marker
+    if type(profile.general) == "table" or profile.quiUnitFrames or profile.ncdm then
+        return true
+    end
+    return false
+end
+
 local SUPPORTED_PROFILE_IMPORT_PREFIXES = {
     QUI1 = true,
     CDM1 = true,
@@ -733,8 +754,8 @@ local PROFILE_IMPORT_CATEGORIES = {
     },
     {
         id = "customTrackers",
-        label = "Custom Trackers",
-        description = "Custom tracker bar settings and individual imported tracker bars.",
+        label = "Custom CDM Bars",
+        description = "Custom CDM bar settings and individual imported bars.",
         recommended = true,
         topLevelKeys = { "customTrackersVisibility", "keybindOverridesEnabledTrackers" },
         paths = {
@@ -745,7 +766,7 @@ local PROFILE_IMPORT_CATEGORIES = {
             {
                 id = "customTrackersShared",
                 label = "Shared Settings",
-                description = "Tracker keybind display and shared visibility settings.",
+                description = "CDM bar keybind display and shared visibility settings.",
                 topLevelKeys = { "customTrackersVisibility", "keybindOverridesEnabledTrackers" },
                 paths = {
                     "customTrackers.keybinds",
@@ -1251,17 +1272,15 @@ function QUICore:ExportProfileToString()
     return "QUI1:" .. encoded
 end
 
-function QUICore:GetProfileImportCategories()
-    return BuildProfileImportPreview({}, "QUI1").categories or {}
-end
-
 function QUICore:AnalyzeProfileImportString(str)
     local ok, payloadOrErr, prefix = ParseProfileImportString(self, str)
     if not ok then
         return false, payloadOrErr
     end
 
-    return true, BuildProfileImportPreview(payloadOrErr, prefix)
+    local preview = BuildProfileImportPreview(payloadOrErr, prefix)
+    preview.isOldSchema = IsOldSchemaProfile(payloadOrErr)
+    return true, preview
 end
 
 function QUICore:ImportProfileFromString(str)
@@ -1322,7 +1341,7 @@ function QUICore:ImportProfileSelectionFromString(str, selectedCategoryIDs)
                 local importedBars = payloadOrErr.customTrackers and payloadOrErr.customTrackers.bars
                 local importedBar = type(importedBars) == "table" and importedBars[barIndex] or nil
                 local barName = type(importedBar) == "table" and importedBar.name or ("Bar " .. barIndex)
-                selectedLabels[#selectedLabels + 1] = ("Custom Trackers > %s"):format(tostring(barName))
+                selectedLabels[#selectedLabels + 1] = ("Custom CDM Bars > %s"):format(tostring(barName))
             end
         end
     end
@@ -1402,11 +1421,84 @@ function QUICore:ImportProfileSelectionFromString(str, selectedCategoryIDs)
         RestoreDatatextPanelLayout(profile, previousProfile)
     end
 
-    if self.RefreshAll then
+    if ns.Registry then
+        ns.Registry:RefreshByCategories(selectedCategoryIDs)
+    elseif self.RefreshAll then
         self:RefreshAll()
     end
 
     return true, ("Imported %s."):format(table.concat(selectedLabels, ", "))
+end
+
+---=================================================================================
+--- OLD QUI PROFILE IMPORT (alias / upgrade path)
+---=================================================================================
+
+function QUICore:GetOldQUIProfiles()
+    local sourceDB = _G.QUI_DB
+    if type(sourceDB) ~= "table" or type(sourceDB.profiles) ~= "table" then
+        return nil
+    end
+
+    local profiles = {}
+    for name, data in pairs(sourceDB.profiles) do
+        if type(data) == "table" and next(data) ~= nil then
+            profiles[#profiles + 1] = name
+        end
+    end
+
+    table.sort(profiles)
+    return #profiles > 0 and profiles or nil
+end
+
+function QUICore:ImportProfileFromOldDB(profileName)
+    local sourceDB = _G.QUI_DB
+    if type(sourceDB) ~= "table" or type(sourceDB.profiles) ~= "table" then
+        return false, "No old QUI profiles found."
+    end
+
+    local sourceProfile = sourceDB.profiles[profileName]
+    if type(sourceProfile) ~= "table" then
+        return false, "Profile not found: " .. tostring(profileName)
+    end
+
+    local valid, err = ValidateImportTree(sourceProfile, "profile")
+    if not valid then
+        return false, FormatTreeValidationError(err, "profile")
+    end
+
+    local db = self.db
+    if not db then
+        return false, "No addon database available."
+    end
+
+    -- Generate unique target name
+    local targetName = "[QUI] " .. profileName
+    local existingList = {}
+    db:GetProfiles(existingList)
+    local nameExists = {}
+    for _, name in ipairs(existingList) do
+        nameExists[name] = true
+    end
+    if nameExists[targetName] then
+        local suffix = 2
+        while nameExists[targetName .. " (" .. suffix .. ")"] do
+            suffix = suffix + 1
+        end
+        targetName = targetName .. " (" .. suffix .. ")"
+    end
+
+    -- Create and switch to new profile, then deep-copy old data
+    db:SetProfile(targetName)
+    local profile = db.profile
+    for key in pairs(profile) do
+        profile[key] = nil
+    end
+    for key, value in pairs(sourceProfile) do
+        profile[key] = CloneValue(value)
+    end
+
+    return true, targetName
 end
 
 ---=================================================================================
@@ -1661,7 +1753,7 @@ function QUICore:ImportAllTrackerBars(str, replaceExisting)
         end
     end
 
-    return true, "Tracker bars imported successfully."
+    return true, "CDM bars imported successfully."
 end
 
 ---=================================================================================

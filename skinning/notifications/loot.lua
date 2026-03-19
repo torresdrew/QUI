@@ -6,9 +6,17 @@ local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
-local LSM = LibStub("LibSharedMedia-3.0")
+local LSM = ns.LSM
 
 local tinsert, tremove = tinsert, tremove
+
+-- Upvalue caching for hot-path performance
+local pairs, ipairs, pcall = pairs, ipairs, pcall
+local tonumber = tonumber
+local CreateFrame, C_Timer = CreateFrame, C_Timer
+local InCombatLockdown, GetTime = InCombatLockdown, GetTime
+local unpack = unpack
+local hooksecurefunc = hooksecurefunc
 
 -- Module reference
 local Loot = {}
@@ -100,6 +108,35 @@ end
 
 local function GetDB()
     return QUICore.db and QUICore.db.profile or {}
+end
+
+local function SaveFrameAnchorPoint(anchorKey, point, relPoint, x, y)
+    local profile = QUICore and QUICore.db and QUICore.db.profile
+    if not profile or not anchorKey then return end
+    if not profile.frameAnchoring then profile.frameAnchoring = {} end
+    local fa = profile.frameAnchoring
+    if type(fa[anchorKey]) ~= "table" then
+        fa[anchorKey] = {}
+    end
+    local entry = fa[anchorKey]
+    entry.enabled = true
+    entry.parent = "screen"
+    entry.point = point or "CENTER"
+    entry.relative = relPoint or entry.point
+    entry.offsetX = x or 0
+    entry.offsetY = y or 0
+    entry.sizeStable = false
+
+    if _G.QUI_ApplyFrameAnchor then
+        _G.QUI_ApplyFrameAnchor(anchorKey)
+    end
+end
+
+local function SaveFrameAnchorFromFrame(anchorKey, frame, offsetY)
+    if not anchorKey or not frame or not QUICore or not QUICore.SnapFramePosition then return end
+    local point, _, relPoint, x, y = QUICore:SnapFramePosition(frame)
+    if not point then return end
+    SaveFrameAnchorPoint(anchorKey, point, relPoint, x, (y or 0) + (offsetY or 0))
 end
 
 local function IsUncollectedTransmog(itemLink)
@@ -246,13 +283,7 @@ local function CreateLootWindow()
     end)
     frame:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
-        local db = GetDB()
-        if db.loot then
-            local point, _, relPoint, x, y = QUICore:SnapFramePosition(self)
-            if point then
-                db.loot.position = { point = point, relPoint = relPoint, x = x, y = y }
-            end
-        end
+        SaveFrameAnchorFromFrame("lootFrame", self)
     end)
 
     -- Close button
@@ -296,13 +327,17 @@ local function OnLootOpened(autoLoot)
         local offsetY = tonumber(db.loot.lootUnderMouseOffsetY) or 0
         lootFrame:ClearAllPoints()
         lootFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (x / scale) + offsetX, (y / scale) + offsetY)
-    elseif db.loot.position and db.loot.position.point then
-        lootFrame:ClearAllPoints()
-        lootFrame:SetPoint(db.loot.position.point, UIParent, db.loot.position.relPoint or "CENTER",
-                           db.loot.position.x or 0, db.loot.position.y or 100)
-    else
+    elseif not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("lootFrame")) then
+        -- No frameAnchoring override — use default
         lootFrame:ClearAllPoints()
         lootFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
+    else
+        -- frameAnchoring handles position; reapply in case Blizzard reset
+        if _G.QUI_ApplyFrameAnchor then
+            _G.QUI_ApplyFrameAnchor("lootFrame")
+        elseif _G.QUI_ApplyAllFrameAnchors then
+            _G.QUI_ApplyAllFrameAnchors()
+        end
     end
 
     -- Populate slots
@@ -1161,14 +1196,7 @@ function Loot:Initialize()
         rollAnchor = CreateRollAnchor()
     end
 
-    -- Position roll anchor from saved settings
-    if db.lootRoll and db.lootRoll.position and db.lootRoll.position.point then
-        rollAnchor:ClearAllPoints()
-        rollAnchor:SetPoint(db.lootRoll.position.point, UIParent,
-                           db.lootRoll.position.relPoint or "TOP",
-                           db.lootRoll.position.x or 0,
-                           db.lootRoll.position.y or -200)
-    end
+    -- frameAnchoring positions the roll anchor; default set in CreateRollAnchor
 
     -- Disable Blizzard frames if enabled
     DisableBlizzardLoot()
@@ -1245,22 +1273,9 @@ end
 function Loot:Refresh()
     local db = GetDB()
 
-    -- Update loot frame position
-    if lootFrame and db.loot and db.loot.position and db.loot.position.point then
-        lootFrame:ClearAllPoints()
-        lootFrame:SetPoint(db.loot.position.point, UIParent,
-                          db.loot.position.relPoint or "CENTER",
-                          db.loot.position.x or 0,
-                          db.loot.position.y or 100)
-    end
-
-    -- Update roll anchor position
-    if rollAnchor and db.lootRoll and db.lootRoll.position and db.lootRoll.position.point then
-        rollAnchor:ClearAllPoints()
-        rollAnchor:SetPoint(db.lootRoll.position.point, UIParent,
-                           db.lootRoll.position.relPoint or "TOP",
-                           db.lootRoll.position.x or 0,
-                           db.lootRoll.position.y or -200)
+    -- Reapply frameAnchoring positions for loot and roll anchor
+    if _G.QUI_ApplyAllFrameAnchors then
+        _G.QUI_ApplyAllFrameAnchors()
     end
 
     -- Reposition active rolls
@@ -1336,11 +1351,19 @@ function Loot:RefreshColors()
     self:ApplyLootHistoryTheme()
 end
 
--- Register global refresh function for RefreshAllSkinning()
-_G.QUI_RefreshLootColors = function()
+local function RefreshLootColors()
     if QUICore and QUICore.Loot then
         QUICore.Loot:RefreshColors()
     end
+end
+
+if ns.Registry then
+    ns.Registry:Register("skinLoot", {
+        refresh = RefreshLootColors,
+        priority = 80,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
 end
 
 -- Preview state tracking
@@ -1358,16 +1381,13 @@ function Loot:ShowLootPreview()
     -- Apply current theme
     self:ApplyLootTheme()
 
-    -- Position
-    if db.loot and db.loot.position and db.loot.position.point then
-        lootFrame:ClearAllPoints()
-        lootFrame:SetPoint(db.loot.position.point, UIParent,
-                          db.loot.position.relPoint or "CENTER",
-                          db.loot.position.x or 0,
-                          db.loot.position.y or 100)
-    else
-        lootFrame:ClearAllPoints()
-        lootFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
+    -- Position from frameAnchoring or default
+    lootFrame:ClearAllPoints()
+    lootFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
+    if _G.QUI_ApplyFrameAnchor then
+        _G.QUI_ApplyFrameAnchor("lootFrame")
+    elseif _G.QUI_ApplyAllFrameAnchors then
+        _G.QUI_ApplyAllFrameAnchors()
     end
 
     -- Enable direct drag during preview (no shift required)
@@ -1458,13 +1478,11 @@ function Loot:ShowRollPreview()
     local spacing = (db.lootRoll and db.lootRoll.spacing) or 4
     local maxFrames = (db.lootRoll and db.lootRoll.maxFrames) or 4
 
-    -- Position anchor from saved settings
-    if db.lootRoll and db.lootRoll.position and db.lootRoll.position.point then
-        rollAnchor:ClearAllPoints()
-        rollAnchor:SetPoint(db.lootRoll.position.point, UIParent,
-                           db.lootRoll.position.relPoint or "TOP",
-                           db.lootRoll.position.x or 0,
-                           db.lootRoll.position.y or -200)
+    -- frameAnchoring positions the roll anchor
+    if _G.QUI_ApplyFrameAnchor then
+        _G.QUI_ApplyFrameAnchor("lootRollAnchor")
+    elseif _G.QUI_ApplyAllFrameAnchors then
+        _G.QUI_ApplyAllFrameAnchors()
     end
 
     local bgColor, borderColor, textColor = GetThemeColors()
@@ -1511,17 +1529,13 @@ function Loot:ShowRollPreview()
             end)
             frame:SetScript("OnDragStop", function(self)
                 self:StopMovingOrSizing()
-                -- Save position to rollAnchor position (snapped to pixel grid)
                 local point, _, relPoint, x, y = QUICore:SnapFramePosition(self)
-                if not point then return end
-                local db = GetDB()
-                if db.lootRoll then
-                    db.lootRoll.position = { point = point, relPoint = relPoint, x = x, y = y }
-                end
-                -- Update anchor to match
-                if rollAnchor then
-                    rollAnchor:ClearAllPoints()
-                    rollAnchor:SetPoint(point, UIParent, relPoint, x, y + ROLL_FRAME_HEIGHT)
+                if point then
+                    if rollAnchor then
+                        rollAnchor:ClearAllPoints()
+                        rollAnchor:SetPoint(point, UIParent, relPoint, x, (y or 0) + ROLL_FRAME_HEIGHT)
+                    end
+                    SaveFrameAnchorPoint("lootRollAnchor", point, relPoint, x, (y or 0) + ROLL_FRAME_HEIGHT)
                 end
                 -- Reposition other frames relative to new anchor
                 local previewCount = Loot._previewMaxFrames or 4
