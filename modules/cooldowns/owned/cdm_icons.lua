@@ -2354,6 +2354,11 @@ cdEventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
 cdEventFrame:RegisterEvent("BAG_UPDATE_COOLDOWN")
 cdEventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 cdEventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+-- UNIT_AURA triggers coalesced icon updates so aura-container icons
+-- refresh within 50ms of a buff gain/loss instead of waiting for the
+-- 0.5s ticker.  Registered for both player and target (target debuffs
+-- like Reaper's Mark need prompt updates too).
+cdEventFrame:RegisterUnitEvent("UNIT_AURA", "player", "target")
 
 -- Coalesce rapid cooldown events (SPELL_UPDATE_COOLDOWN, SPELL_UPDATE_CHARGES,
 -- BAG_UPDATE_COOLDOWN) into a single UpdateAllCooldowns call per 50ms window.

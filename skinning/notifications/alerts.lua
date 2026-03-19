@@ -1380,6 +1380,15 @@ if ns.Registry then
     })
 end
 
+if ns.Registry then
+    ns.Registry:Register("skinAlerts", {
+        refresh = _G.QUI_RefreshAlertColors,
+        priority = 80,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+end
+
 ---------------------------------------------------------------------------
 -- MAIN INITIALIZATION
 ---------------------------------------------------------------------------

@@ -670,8 +670,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added
 - added target unitframe to DandersFrames anchor targets
 - added option to only have action bars mouseover hide work for chars at max level
-
-
 ### Changed
 - updated castbars text clamping logic
 - made spacing of castbars anchored to cdm visually consistent between one-row and multi-row layouts
@@ -763,12 +761,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - added message history feature for chat input
 - added option to swap primary and secondary resource bar positions for some specs, and also to hide primary when they are swapped
 - added position mover for bnet notification toasts
-
-
 ### Changed
 - dynamically shortening castbar spelltexts if bar is too short
-
-
 ### Fixed
 - fixed stack text being overlayed by swipe texture on unitframe buffs and debuffs
 - fixed global font setting not being honored by the loot window
@@ -781,13 +775,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - added a defensive patch for Blizzard's EncounterWarning text throwing errors
-
-
 ### Changed
 - reworked parts of custom trackers to fix issues with dynamic layouts and clickable icons. **this makes 'dynamic layout' and 'clickable icons' mutually exclusive options for custom trackers.**
 - renamed 'Import' menu to 'Import & Export Strings'
-
-
 ### Fixed
 - fixed resource bar visibility setting overriding CDM visibility setting in some cases
 ## v2.27.0 - 2026-02-07

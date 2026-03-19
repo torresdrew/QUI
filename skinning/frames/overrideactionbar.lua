@@ -341,6 +341,15 @@ if ns.Registry then
     })
 end
 
+if ns.Registry then
+    ns.Registry:Register("skinOverrideActionBar", {
+        refresh = _G.QUI_RefreshOverrideActionBarColors,
+        priority = 80,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+end
+
 ---------------------------------------------------------------------------
 -- INITIALIZATION
 ---------------------------------------------------------------------------

@@ -22,6 +22,15 @@ local math_floor = math.floor
 local math_max = math.max
 local math_min = math.min
 
+-- Upvalue caching for hot-path performance
+local type = type
+local pairs = pairs
+local ipairs = ipairs
+local pcall = pcall
+local math_floor = math.floor
+local math_max = math.max
+local math_min = math.min
+
 -- Pre-create named frames so Edit Mode layout anchoring can resolve
 -- "QUIPowerBar" / "QUISecondaryPowerBar" before full initialization.
 -- GetPowerBar()/GetSecondaryPowerBar() will create the real frames later,

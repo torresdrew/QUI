@@ -100,6 +100,86 @@ local function SafeSetCharScale(scale)
 end
 
 ---------------------------------------------------------------------------
+-- COMBAT DEFERRAL — CharacterFrame is a managed panel; SetScale,
+-- ClearAllPoints, SetPoint on it or its children are protected during
+-- combat.  Track desired state and apply on PLAYER_REGEN_ENABLED.
+---------------------------------------------------------------------------
+local pendingCharScale = nil     -- deferred SetScale value
+local pendingTabMode   = nil     -- "character" or "other"
+local pendingDecorMode = nil     -- "character" or "other"
+
+local charCombatFrame = CreateFrame("Frame")
+charCombatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+charCombatFrame:SetScript("OnEvent", function()
+    -- If CharacterFrame closed during combat, nothing to apply
+    if not CharacterFrame or not CharacterFrame:IsShown() then
+        pendingCharScale = nil
+        pendingTabMode   = nil
+        pendingDecorMode = nil
+        return
+    end
+
+    if pendingCharScale then
+        CharacterFrame:SetScale(pendingCharScale)
+        pendingCharScale = nil
+    end
+
+    if pendingTabMode then
+        -- These functions are defined inside HookCharacterFrame; use the
+        -- deferred wrappers below instead of direct calls.
+        if pendingTabMode == "other" then
+            if CharacterFrameTab1 then
+                CharacterFrameTab1:ClearAllPoints()
+                CharacterFrameTab1:SetPoint("TOPLEFT", CharacterFrame, "BOTTOMLEFT", 11, 2)
+            end
+            if CharacterFrame.CloseButton then
+                CharacterFrame.CloseButton:ClearAllPoints()
+                CharacterFrame.CloseButton:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", -3, -5)
+            end
+        elseif pendingTabMode == "character" then
+            if CharacterFrameTab1 then
+                CharacterFrameTab1:ClearAllPoints()
+                CharacterFrameTab1:SetPoint("TOPLEFT", CharacterFrame, "BOTTOMLEFT", 11, -48)
+            end
+            if CharacterFrame.CloseButton then
+                CharacterFrame.CloseButton:ClearAllPoints()
+                CharacterFrame.CloseButton:SetPoint("TOPRIGHT", CharacterFrame, "TOPRIGHT", 52, -5)
+            end
+        end
+        pendingTabMode = nil
+    end
+
+    if pendingDecorMode then
+        local skinHandles = _G.QUI_CharacterFrameSkinning
+        if pendingDecorMode == "other" then
+            if not (skinHandles and skinHandles.SetExtended) then
+                if CharacterFramePortrait then CharacterFramePortrait:Show() end
+                if CharacterFrame.Background then CharacterFrame.Background:Show() end
+                if CharacterFrame.NineSlice then CharacterFrame.NineSlice:Show() end
+                if CharacterFrameBg then CharacterFrameBg:Show() end
+            end
+        elseif pendingDecorMode == "character" then
+            if not (skinHandles and skinHandles.SetExtended) then
+                if CharacterFramePortrait then CharacterFramePortrait:Hide() end
+                if CharacterFrame.Background then CharacterFrame.Background:Hide() end
+                if CharacterFrame.NineSlice then CharacterFrame.NineSlice:Hide() end
+                if CharacterFrameBg then CharacterFrameBg:Hide() end
+            end
+        end
+        pendingDecorMode = nil
+    end
+end)
+
+--- Safe wrapper: set CharacterFrame scale, deferring during combat.
+local function SafeSetCharScale(scale)
+    if InCombatLockdown() then
+        pendingCharScale = scale
+    else
+        CharacterFrame:SetScale(scale)
+    end
+end
+
+---------------------------------------------------------------------------
 -- Module Constants
 ---------------------------------------------------------------------------
 

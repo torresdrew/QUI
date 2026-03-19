@@ -5149,7 +5149,73 @@ initFrame:SetScript("OnEvent", function(self, event, addonName)
             end)
         end
     end
-end)
+
+    local function HookSpellBookFrame(frame)
+        if not frame then return end
+        frame:HookScript("OnShow", function()
+            C_Timer.After(0, RefreshFadeForSpellBook)
+        end)
+        frame:HookScript("OnHide", function()
+            C_Timer.After(0, RefreshFadeForSpellBook)
+        end)
+    end
+
+    HookSpellBookFrame(_G.SpellBookFrame)
+    local psf = _G.PlayerSpellsFrame
+    HookSpellBookFrame(psf)
+    if psf and psf.SpellBookFrame then
+        HookSpellBookFrame(psf.SpellBookFrame)
+    end
+
+    -- Initialize extra buttons
+    inInitSafeWindow = true
+    InitializeExtraButtons()
+    inInitSafeWindow = false
+
+    -- Apply page arrow visibility
+    local db = GetDB()
+    if db and db.bars and db.bars.bar1 then
+        ApplyPageArrowVisibility(db.bars.bar1.hidePageArrow)
+    end
+
+    -- Hide bars that are disabled in DB
+    for _, barKey in ipairs(ALL_MANAGED_BAR_KEYS) do
+        local barDB = GetBarSettings(barKey)
+        if barDB and barDB.enabled == false then
+            local container = self.containers[barKey]
+            if container then container:Hide() end
+        end
+    end
+end
+
+function ActionBarsOwned:Refresh()
+    if not self.initialized then return end
+
+    if InCombatLockdown() then
+        self.pendingRefresh = true
+        return
+    end
+
+    for _, barKey in ipairs(ALL_MANAGED_BAR_KEYS) do
+        BuildBar(barKey)
+    end
+
+    -- Hide bars that are disabled in DB
+    for _, barKey in ipairs(ALL_MANAGED_BAR_KEYS) do
+        local barDB = GetBarSettings(barKey)
+        if barDB and barDB.enabled == false then
+            local container = self.containers[barKey]
+            if container then container:Hide() end
+        end
+    end
+
+    -- Refresh pet/stance conditional visibility
+    UpdatePetBarVisibility()
+    UpdateStanceBarLayout()
+
+    UpdateUsabilityPolling()
+end
+
 
 ---------------------------------------------------------------------------
 -- UNLOCK MODE ELEMENT REGISTRATION

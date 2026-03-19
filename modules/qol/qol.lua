@@ -301,6 +301,15 @@ if ns.Registry then
     })
 end
 
+if ns.Registry then
+    ns.Registry:Register("popupBlocker", {
+        refresh = _G.QUI_RefreshPopupBlocker,
+        priority = 30,
+        group = "qol",
+        importCategories = { "qol" },
+    })
+end
+
 ---------------------------------------------------------------------------
 -- MERCHANT: SELL JUNK + AUTO REPAIR
 ---------------------------------------------------------------------------

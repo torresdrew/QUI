@@ -301,6 +301,15 @@ if ns.Registry then
     })
 end
 
+if ns.Registry then
+    ns.Registry:Register("skinReadyCheck", {
+        refresh = _G.QUI_RefreshReadyCheckColors,
+        priority = 80,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+end
+
 ---------------------------------------------------------------------------
 -- INITIALIZATION
 ---------------------------------------------------------------------------

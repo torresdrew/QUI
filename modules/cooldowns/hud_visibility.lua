@@ -1088,6 +1088,19 @@ end
 
 _G.QUI_ShouldCDMBeVisible = ShouldCDMBeVisible
 _G.QUI_ShouldUnitframesBeVisible = ShouldUnitframesBeVisible
+_G.QUI_RefreshActionBarsVisibility = UpdateActionBarsVisibility
+_G.QUI_RefreshActionBarsMouseover = SetupActionBarsMouseoverDetector
+_G.QUI_RefreshChatVisibility = UpdateChatVisibility
+_G.QUI_RefreshChatMouseover = SetupChatMouseoverDetector
+
+if ns.Registry then
+    ns.Registry:Register("cdmVisibility", {
+        refresh = _G.QUI_RefreshCDMVisibility,
+        priority = 10,
+        group = "cooldowns",
+        importCategories = { "cdm" },
+    })
+end
 
 if ns.Registry then
     ns.Registry:Register("cdmVisibility", {
