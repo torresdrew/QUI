@@ -3413,10 +3413,12 @@ local rangeCheckTicker = nil
 -- Spec-based gives better coverage than class-based: every healer/caster spec
 -- has a friendly spell that returns true/false (not nil) on alive targets.
 local SPEC_RANGE_SPELLS = {
-    -- Death Knight
-    [250] = 47541,  -- Blood: Death Coil (heals undead allies, works as range check)
-    [251] = 47541,  -- Frost: Death Coil
-    [252] = 47541,  -- Unholy: Death Coil
+    -- Death Knight: no reliable friendly spell (Death Coil only heals undead allies,
+    -- returns nil on non-undead targets causing inconsistent range results).
+    -- Falls through to UnitInRange() which handles all target types consistently.
+    [250] = nil,    -- Blood
+    [251] = nil,    -- Frost
+    [252] = nil,    -- Unholy
     -- Demon Hunter
     [577] = nil,    -- Havoc: no friendly spell
     [581] = nil,    -- Vengeance: no friendly spell
@@ -3478,7 +3480,7 @@ local CLASS_RANGE_SPELLS = {
     MAGE        = { 1459 },              -- Arcane Intellect
     WARLOCK     = { 5697 },              -- Unending Breath
     ROGUE       = { 57934 },             -- Tricks of the Trade
-    DEATHKNIGHT = { 47541 },             -- Death Coil
+    DEATHKNIGHT = {},
     WARRIOR     = {},
     DEMONHUNTER = {},
     HUNTER      = {},
@@ -3558,10 +3560,10 @@ local function CheckUnitRange(unit)
     local isDead = UnitIsDeadOrGhost(unit)
     if IsSecretValue(isDead) then isDead = false end
 
-    local spellReturnedNil = false
-
     -- Primary: friendly spell range check
-    -- IsSpellInRange returns true/false/nil (normal booleans, not secret values)
+    -- IsSpellInRange returns true/false/nil (normal booleans, not secret values).
+    -- nil means "spell not applicable to target" (e.g. NPC, wrong unit type) —
+    -- fall through to UnitInRange rather than treating as out-of-range.
     if rangeSpell and not isDead then
         local result = C_Spell.IsSpellInRange(rangeSpell, unit)
         if result == true then
@@ -3573,9 +3575,8 @@ local function CheckUnitRange(unit)
                 return true
             end
             return false
-        else
-            spellReturnedNil = true
         end
+        -- result == nil: spell not applicable, fall through to UnitInRange
     end
 
     -- Dead target: rez spell range check
@@ -3589,15 +3590,11 @@ local function CheckUnitRange(unit)
         return CheckInteractDistance(unit, 4) and true or false
     end
 
-    -- NIL-ON-ALIVE: friendly spell returned nil on alive connected target in
-    -- combat — target is likely extremely distant (outside position awareness).
-    if spellReturnedNil and connected and not isDead then
-        return false
-    end
-
-    -- In-combat last resort: UnitInRange (DK/DH/Hunter/Warrior with no friendly spell)
-    -- Returns secret booleans in Midnight+ — propagate them downstream.
-    -- SetAlphaFromBoolean handles secret booleans natively (C-side resolves them).
+    -- In-combat fallback: UnitInRange (~38-40 yd, works for all unit types).
+    -- Used for classes with no friendly spell (DK/DH/Hunter/Warrior) AND when
+    -- the friendly spell returned nil (spell not applicable to this target type,
+    -- e.g. NPC party members). Returns secret booleans in Midnight+ — propagate
+    -- them downstream; SetAlphaFromBoolean handles them natively (C-side).
     if UnitInRange then
         local inRange = UnitInRange(unit)
         if issecretvalue and issecretvalue(inRange) then
@@ -3742,6 +3739,25 @@ local function OnEvent(self, event, arg1, ...)
             UpdateConnection(frame)
             UpdateHealth(frame)
 
+        elseif event == "UNIT_IN_RANGE_UPDATE" then
+            -- Instant range update from Blizzard (~38yd boundary crossing).
+            -- Supplements ticker polling for immediate visual feedback.
+            local isRaid = frame._isRaid
+            local rangeSettings = GetRangeSettings(isRaid)
+            if rangeSettings and rangeSettings.enabled ~= false then
+                local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
+                local inRange = CheckUnitRange(arg1)
+                local cached = rangeCache[arg1]
+                local isSecret = issecretvalue and (issecretvalue(inRange) or issecretvalue(cached))
+                if isSecret or cached ~= inRange then
+                    rangeCache[arg1] = inRange
+                    local state = GetFrameState(frame)
+                    state.outOfRange = true
+                    state.inRange = inRange
+                    ApplyRangeAlpha(frame, inRange, outAlpha)
+                end
+            end
+
         elseif event == "UNIT_PHASE" then
             UpdatePhaseIcon(frame)
 
@@ -3766,8 +3782,10 @@ local function OnEvent(self, event, arg1, ...)
         UpdateHeaderVisibility()
         UpdateFrameScaling(true)
         UpdateHeaderSizes()
-        -- Rebuild map after a short delay (header needs time to create children)
-        StopRangeCheck()
+        -- Rebuild map after a short delay (header needs time to create children).
+        -- Do NOT stop the range ticker — let it keep running with the current map.
+        -- Stale entries are harmless (frame:IsShown() guard skips removed frames)
+        -- and stopping creates a visible gap where range dimming freezes.
         C_Timer.After(0.2, function()
             DecorateHeaderChildren(QUI_GF.headers.party)
             if IsMultiHeaderMode() and IsInRaid() then
@@ -3778,9 +3796,10 @@ local function OnEvent(self, event, arg1, ...)
                 DecorateHeaderChildren(QUI_GF.headers.raid)
             end
             RebuildUnitFrameMap()
+            wipe(rangeCache)  -- Fresh map — force re-evaluate all units
             UpdateFrameScaling(true)
             QUI_GF:RefreshAllFrames()
-            -- Restart range check AFTER map rebuild so it iterates fresh data
+            -- Ensure ticker is running (may not have started yet on first roster event)
             StartRangeCheck()
         end)
 
@@ -3913,6 +3932,9 @@ local function RegisterEvents()
     eventFrame:RegisterEvent("UNIT_PHASE")
     eventFrame:RegisterEvent("INCOMING_RESURRECT_CHANGED")
     eventFrame:RegisterEvent("INCOMING_SUMMON_CHANGED")
+
+    -- Range event (instant ~38yd boundary crossing, supplements ticker polling)
+    eventFrame:RegisterEvent("UNIT_IN_RANGE_UPDATE")
 
     -- Non-unit events
     eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
