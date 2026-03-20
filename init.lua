@@ -96,6 +96,17 @@ SlashCmdList["QUI_CDM"] = function()
     end
 end
 
+-- CDM Spell Manager shortcut (/spellmgr)
+SLASH_QUI_CDMCOMPOSER1 = "/spellmgr"
+SlashCmdList["QUI_CDMCOMPOSER"] = function(msg)
+    if _G.QUI_OpenCDMComposer then
+        local container = (msg and msg ~= "") and msg:lower() or nil
+        _G.QUI_OpenCDMComposer(container)
+    else
+        print("|cff60A5FAQUI:|r CDM Spell Manager not loaded yet.")
+    end
+end
+
 function QUI:SlashCommandOpen(input)
     if input and input == "debug" then
         self.db.char.debug.reload = true

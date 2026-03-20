@@ -121,6 +121,12 @@ function GUI:InitializeOptions()
 
     GUI:AddTab(frame, "Help", ns.QUI_HelpOptions.CreateHelpPage, true)  -- isBottomItem = true
 
+    GUI:AddActionButton(frame, "CDM Spell Manager", function()
+        if _G.QUI_OpenCDMComposer then
+            _G.QUI_OpenCDMComposer()
+        end
+    end)
+
     GUI:AddActionButton(frame, "CDM Settings", function()
         if CooldownViewerSettings then
             CooldownViewerSettings:SetShown(not CooldownViewerSettings:IsShown())
