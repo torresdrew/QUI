@@ -484,6 +484,7 @@ end
 -- Forward declarations (needed by drag-and-drop which is defined between these two)
 local RefreshPreview
 local RefreshEntryList
+local RefreshAddList
 
 RefreshPreview = function()
     if not previewFrame or not activeContainer then return end
@@ -1908,7 +1909,7 @@ local function GetOrCreateAddCell(index)
     return cell
 end
 
-local function RefreshAddList()
+RefreshAddList = function()
     if not addListContent or not activeContainer then return end
 
     if _G.QUI_AddContextMenu then _G.QUI_AddContextMenu:Hide() end
