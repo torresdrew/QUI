@@ -2533,6 +2533,13 @@ local defaults = {
                     maxIndicators = 5,
                     trackedSpells = {},
                 },
+                pinnedAuras = {
+                    enabled = false,
+                    slotSize = 8,
+                    edgeInset = 2,
+                    showSwipe = true,
+                    specSlots = {},
+                },
                 castbar = { enabled = false, height = 8, showIcon = false, showText = false },
                 portrait = { showPortrait = false, portraitSide = "LEFT", portraitSize = 30 },
                 pets = {
@@ -2687,6 +2694,13 @@ local defaults = {
                     spacing = 2,
                     maxIndicators = 5,
                     trackedSpells = {},
+                },
+                pinnedAuras = {
+                    enabled = false,
+                    slotSize = 8,
+                    edgeInset = 2,
+                    showSwipe = true,
+                    specSlots = {},
                 },
                 castbar = { enabled = false, height = 8, showIcon = false, showText = false },
                 portrait = { showPortrait = false, portraitSide = "LEFT", portraitSize = 30 },

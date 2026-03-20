@@ -127,6 +127,7 @@ local function CreateBar(parent)
     bar._blizzBar = nil
     bar._spellID = nil
     bar._active = false
+    bar._cSideFill = nil
 
     bar:Hide()
     return bar
@@ -728,6 +729,7 @@ local function ReleaseBar(bar)
     bar._blizzBar = nil
     bar._spellID = nil
     bar._active = false
+    bar._cSideFill = nil
     bar.NameText:SetText("")
     bar.DurationText:SetText("")
     bar.IconTexture:SetTexture(nil)
@@ -1092,6 +1094,7 @@ function CDMBars:UpdateOwnedBarAura(bar)
                 bar._durObj = durObj
                 if bar.StatusBar and bar.StatusBar.SetTimerDuration then
                     pcall(bar.StatusBar.SetTimerDuration, bar.StatusBar, durObj, nil, 1)
+                    bar._cSideFill = true
                 end
             end
         end
@@ -1149,6 +1152,7 @@ function CDMBars:UpdateOwnedBarAura(bar)
                         pcall(bar.StatusBar.SetMinMaxValues, bar.StatusBar, 0, 1)
                         if bar.StatusBar.SetTimerDuration then
                             pcall(bar.StatusBar.SetTimerDuration, bar.StatusBar, durObj, nil, 1)
+                            bar._cSideFill = true
                         end
                     end
                     handled = true
@@ -1175,6 +1179,7 @@ function CDMBars:UpdateOwnedBarAura(bar)
                             pcall(bar.StatusBar.SetMinMaxValues, bar.StatusBar, 0, 1)
                             if bar.StatusBar.SetTimerDuration then
                                 pcall(bar.StatusBar.SetTimerDuration, bar.StatusBar, durObj, nil, 1)
+                                bar._cSideFill = true
                             end
                         end
                         handled = true
@@ -1215,6 +1220,7 @@ function CDMBars:UpdateOwnedBarAura(bar)
                 bar._durObj = hookDurObj
                 if bar.StatusBar and bar.StatusBar.SetTimerDuration then
                     pcall(bar.StatusBar.SetTimerDuration, bar.StatusBar, hookDurObj, nil, 1)
+                    bar._cSideFill = true
                 end
                 handled = true
             end
@@ -1244,6 +1250,7 @@ function CDMBars:UpdateOwnedBarAura(bar)
         if not handled then
             bar._active = false
             bar._durObj = nil
+            bar._cSideFill = nil
             if bar.DurationText then bar.DurationText:SetText("") end
             if bar.StatusBar then pcall(bar.StatusBar.SetValue, bar.StatusBar, 0) end
         end
@@ -1255,6 +1262,7 @@ function CDMBars:UpdateOwnedBarAura(bar)
             if ok and not shown then
                 bar._active = false
                 bar._durObj = nil
+                bar._cSideFill = nil
                 bar._totalDuration = nil
                 bar._expirationTime = nil
                 if bar.DurationText then bar.DurationText:SetText("") end
@@ -1296,6 +1304,7 @@ function CDMBars:UpdateOwnedBarAura(bar)
     else
         bar._active = false
         bar._durObj = nil
+        bar._cSideFill = nil
         bar._totalDuration = nil
         bar._expirationTime = nil
         if bar.StatusBar then
@@ -1579,7 +1588,7 @@ barTimerFrame:SetScript("OnUpdate", function(self, elapsed)
 
                 local isSecret = remaining and Helpers.IsSecretValue(remaining)
                 if rok and remaining and not isSecret and remaining > 0 then
-                    -- OOC: readable remaining — update text + bar fill in Lua
+                    -- OOC: readable remaining — update text in Lua
                     if bar.DurationText then
                         if remaining >= 60 then
                             bar.DurationText:SetText(string.format("%.0fm", remaining / 60))
@@ -1587,17 +1596,22 @@ barTimerFrame:SetScript("OnUpdate", function(self, elapsed)
                             bar.DurationText:SetText(string.format("%.1f", remaining))
                         end
                     end
-                    -- Update bar fill: remaining / totalDuration → 0..1
-                    local total = bar._totalDuration
-                    if (not total or total <= 0) and remaining > 1 then
-                        bar._totalDuration = remaining
-                        total = remaining
-                    end
-                    if total and total > 0 and bar.StatusBar then
-                        local fill = remaining / total
-                        if fill > 1 then fill = 1 end
-                        pcall(bar.StatusBar.SetMinMaxValues, bar.StatusBar, 0, 1)
-                        pcall(bar.StatusBar.SetValue, bar.StatusBar, fill)
+                    -- Update bar fill ONLY if C-side SetTimerDuration isn't driving it.
+                    -- When _cSideFill is set, Blizzard's C-side animation smoothly
+                    -- handles the StatusBar fill — writing SetValue here would fight
+                    -- the animation and cause visible flickering.
+                    if not bar._cSideFill then
+                        local total = bar._totalDuration
+                        if (not total or total <= 0) and remaining > 1 then
+                            bar._totalDuration = remaining
+                            total = remaining
+                        end
+                        if total and total > 0 and bar.StatusBar then
+                            local fill = remaining / total
+                            if fill > 1 then fill = 1 end
+                            pcall(bar.StatusBar.SetMinMaxValues, bar.StatusBar, 0, 1)
+                            pcall(bar.StatusBar.SetValue, bar.StatusBar, fill)
+                        end
                     end
                 elseif isSecret then
                     -- Combat: remaining is secret — pass directly to C-side
