@@ -43,6 +43,7 @@ local MAX_RECYCLE_POOL_SIZE = 20
 ---------------------------------------------------------------------------
 local barPool = {}       -- active bars (array)
 local recyclePool = {}   -- recycled bars (array, max MAX_RECYCLE_POOL_SIZE)
+local barTimerFrame = CreateFrame("Frame")  -- OnUpdate set below
 
 -- Weak-keyed: Blizzard statusBar → owned bar (handles Blizzard frame recycling)
 local mirrorMap = Helpers.CreateStateTable()
@@ -1689,7 +1690,6 @@ end
 -- this OnUpdate handles owned bars that have no Blizzard bar child,
 -- or supplements the mirror during combat when hooks may lag.
 ---------------------------------------------------------------------------
-local barTimerFrame = CreateFrame("Frame")
 local BAR_TIMER_INTERVAL = 0.05  -- 50ms = ~20 FPS
 
 barTimerFrame:SetScript("OnUpdate", function(self, elapsed)
