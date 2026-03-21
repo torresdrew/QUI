@@ -3255,6 +3255,7 @@ local playerClass = nil
 local rangeSpell = nil   -- Resolved friendly spell ID for living targets
 local resSpell = nil     -- Resolved rez spell ID for dead targets
 local rangeCache = {}    -- unit → boolean (change detection, avoids redundant SetAlpha)
+local rangeCacheTime = {} -- unit → GetTime() (skip recently event-updated units in ticker)
 
 local function ResolveRangeSpells()
     if not playerClass then
@@ -3372,32 +3373,36 @@ local function ApplyRangeAlpha(frame, inRange, outAlpha)
 end
 
 local function DoRangeCheck()
-    -- Range check uses per-frame isRaid for settings, but we need at least
-    -- one enabled check. Check both party and raid settings.
+    -- Fallback ticker: catches edge cases not covered by UNIT_IN_RANGE_UPDATE
+    -- (LibRangeCheck spells with non-38yd thresholds, OOC interact distance).
+    -- Skips units recently updated by the event handler.
     local partyRange = GetRangeSettings(false)
     local raidRange = GetRangeSettings(true)
     if (not partyRange or partyRange.enabled == false) and (not raidRange or raidRange.enabled == false) then return end
 
+    local now = GetTime()
     for unit, frame in pairs(QUI_GF.unitFrameMap) do
         if frame and frame:IsShown() then
-            local rangeSettings = GetRangeSettings(frame._isRaid)
-            if rangeSettings and rangeSettings.enabled ~= false then
-                local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
-                local inRange = CheckUnitRange(unit)
-                local state = GetFrameState(frame)
+            -- Skip units updated by UNIT_IN_RANGE_UPDATE within the last 0.4s
+            local lastEventTime = rangeCacheTime[unit]
+            if lastEventTime and (now - lastEventTime) < 0.4 then
+                -- Event-driven update is still fresh, skip this unit
+            else
+                local rangeSettings = GetRangeSettings(frame._isRaid)
+                if rangeSettings and rangeSettings.enabled ~= false then
+                    local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
+                    local inRange = CheckUnitRange(unit)
+                    local state = GetFrameState(frame)
 
-                -- Secret values (from UnitInRange fallback) can't be compared
-                -- with ==, so always update when secrets are involved.
-                local cached = rangeCache[unit]
-                local isSecret = issecretvalue and (issecretvalue(inRange) or issecretvalue(cached))
+                    local cached = rangeCache[unit]
+                    local isSecret = issecretvalue and (issecretvalue(inRange) or issecretvalue(cached))
 
-                if isSecret or cached ~= inRange or state.outOfRange == nil then
-                    rangeCache[unit] = inRange
-                    -- outOfRange state: secret booleans can't be negated in Lua,
-                    -- so store the raw inRange and let alpha application handle it.
-                    state.outOfRange = true  -- Mark as range-managed
-                    state.inRange = inRange  -- Store raw value (may be secret)
-                    ApplyRangeAlpha(frame, inRange, outAlpha)
+                    if isSecret or cached ~= inRange or state.outOfRange == nil then
+                        rangeCache[unit] = inRange
+                        state.outOfRange = true
+                        state.inRange = inRange
+                        ApplyRangeAlpha(frame, inRange, outAlpha)
+                    end
                 end
             end
         end
@@ -3416,8 +3421,8 @@ local function StartRangeCheck()
         ResolveRangeSpells()
     end
 
-    -- Longer interval for large raids
-    local interval = GetGroupSize() > 25 and 0.3 or 0.2
+    -- Slow fallback interval — UNIT_IN_RANGE_UPDATE is the primary driver
+    local interval = GetGroupSize() > 25 and 0.75 or 0.5
     rangeCheckTicker = C_Timer.NewTicker(interval, DoRangeCheck)
 end
 
@@ -3427,6 +3432,7 @@ local function StopRangeCheck()
         rangeCheckTicker = nil
     end
     wipe(rangeCache)
+    wipe(rangeCacheTime)
 end
 
 ---------------------------------------------------------------------------
@@ -3484,10 +3490,7 @@ local function OnEvent(self, event, arg1, ...)
         elseif event == "UNIT_THREAT_SITUATION_UPDATE" then
             UpdateThreat(frame)
 
-        elseif event == "UNIT_AURA" then
-            -- All aura-driven updates (icons, dispel, defensive) are handled
-            -- by the shared throttled scan in groupframes_auras.lua.
-            -- This avoids redundant GetUnitAuras calls.
+        -- UNIT_AURA handled by centralized dispatcher → groupframes_auras.lua
 
         elseif event == "UNIT_CONNECTION" or event == "UNIT_FLAGS" then
             UpdateConnection(frame)
@@ -3495,7 +3498,7 @@ local function OnEvent(self, event, arg1, ...)
 
         elseif event == "UNIT_IN_RANGE_UPDATE" then
             -- Instant range update from Blizzard (~38yd boundary crossing).
-            -- Supplements ticker polling for immediate visual feedback.
+            -- Primary driver for range checks; ticker is a slow fallback.
             local isRaid = frame._isRaid
             local rangeSettings = GetRangeSettings(isRaid)
             if rangeSettings and rangeSettings.enabled ~= false then
@@ -3510,6 +3513,7 @@ local function OnEvent(self, event, arg1, ...)
                     state.inRange = inRange
                     ApplyRangeAlpha(frame, inRange, outAlpha)
                 end
+                rangeCacheTime[arg1] = GetTime()
             end
 
         elseif event == "UNIT_PHASE" then
@@ -3551,6 +3555,10 @@ local function OnEvent(self, event, arg1, ...)
             end
             RebuildUnitFrameMap()
             wipe(rangeCache)  -- Fresh map — force re-evaluate all units
+            wipe(rangeCacheTime)
+            -- Evict stale aura cache entries for units no longer in the group
+            local GFA = ns.QUI_GroupFrameAuras
+            if GFA and GFA.PruneAuraCache then GFA.PruneAuraCache() end
             UpdateFrameScaling(true)
             QUI_GF:RefreshAllFrames()
             -- Ensure ticker is running (may not have started yet on first roster event)
@@ -3607,13 +3615,15 @@ local function OnEvent(self, event, arg1, ...)
     elseif event == "PLAYER_REGEN_DISABLED" then
         -- Combat started: clear range cache so stale OOC values
         -- (CheckInteractDistance) don't persist into combat where
-        -- that API is unavailable. (QUI pattern)
+        -- that API is unavailable.
         wipe(rangeCache)
+        wipe(rangeCacheTime)
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Combat ended: clear range cache so combat-era results
         -- don't prevent OOC methods from updating.
         wipe(rangeCache)
+        wipe(rangeCacheTime)
 
         -- Process deferred operations
         if pendingRefreshSettings then
@@ -3682,7 +3692,7 @@ local function RegisterEvents()
     eventFrame:RegisterEvent("UNIT_HEAL_PREDICTION")
     eventFrame:RegisterEvent("UNIT_NAME_UPDATE")
     eventFrame:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
-    eventFrame:RegisterEvent("UNIT_AURA")
+    -- UNIT_AURA handled by centralized dispatcher (core/aura_events.lua)
     eventFrame:RegisterEvent("UNIT_CONNECTION")
     eventFrame:RegisterEvent("UNIT_FLAGS")
     eventFrame:RegisterEvent("UNIT_PHASE")

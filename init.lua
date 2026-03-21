@@ -108,6 +108,45 @@ function QUI:SlashCommandOpen(input)
             print("|cff60A5FAQUI:|r Layout Mode not loaded yet.")
         end
         return
+    elseif input and input == "tooltipdbg" then
+        local isS = issecretvalue
+        local count = 0
+        local f = EnumerateFrames()
+        while f do
+            local vis = f:IsVisible()
+            if not isS(vis) and vis then
+                -- Check for white backdrop color
+                if f.GetBackdropColor then
+                    local r, g, b = f:GetBackdropColor()
+                    if not isS(r) and r and r > 0.9 and g > 0.9 and b > 0.9 then
+                        local h = f:GetHeight()
+                        if not isS(h) and h and h > 10 then
+                            count = count + 1
+                            print("|cffff0000WHITE BACKDROP:|r", f:GetName() or tostring(f), ("r=%.2f g=%.2f b=%.2f h=%.0f"):format(r, g, b, h))
+                            local p = f:GetParent()
+                            if p then
+                                print("  parent:", p:GetName() or tostring(p))
+                            end
+                        end
+                    end
+                end
+                -- Check for NineSlice with alpha > 0
+                if f.NineSlice then
+                    local a = f.NineSlice:GetAlpha()
+                    if not isS(a) and a and a > 0 then
+                        count = count + 1
+                        print("|cffff8800NINESLICE VISIBLE:|r", f:GetName() or tostring(f), ("alpha=%.2f"):format(a))
+                    end
+                end
+            end
+            f = EnumerateFrames(f)
+        end
+        if count == 0 then
+            print("|cff60A5FAQUI:|r No white backdrops or visible NineSlices found.")
+        else
+            print("|cff60A5FAQUI:|r Found", count, "issues above.")
+        end
+        return
     elseif input and input == "perf" then
         if _G.QUI_TogglePerfMonitor then
             _G.QUI_TogglePerfMonitor()

@@ -907,13 +907,12 @@ function TooltipEngine:Initialize()
 
     SetupTooltipHook()
 
-    -- Event handlers
+    -- Event handlers (UNIT_AURA handled by centralized dispatcher)
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("MODIFIER_STATE_CHANGED")
     eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     eventFrame:RegisterEvent("UNIT_TARGET")
-    eventFrame:RegisterEvent("UNIT_AURA")
     eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if event == "MODIFIER_STATE_CHANGED" then
             OnModifierStateChanged()
@@ -923,10 +922,15 @@ function TooltipEngine:Initialize()
             OnCombatStateChanged(false)
         elseif event == "UNIT_TARGET" then
             OnUnitTargetChanged(arg1)
-        elseif event == "UNIT_AURA" then
-            OnUnitAuraChanged(arg1)
         end
     end)
+
+    -- Subscribe to centralized aura dispatcher (all units — tooltip needs any unit)
+    if ns.AuraEvents then
+        ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
+            OnUnitAuraChanged(unit)
+        end)
+    end
 end
 
 function TooltipEngine:Refresh()

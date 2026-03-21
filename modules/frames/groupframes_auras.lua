@@ -26,10 +26,10 @@ local auraIconState = Helpers.CreateStateTable()
 local layoutVersion = 0
 local frameLayoutVersions = Helpers.CreateStateTable()
 
--- UNIT_AURA throttling: coalesce rapid events per unit
-local AURA_THROTTLE = 0.05 -- 50ms coalesce window
-local pendingAuraUnits = {} -- [unit] = true
-local auraThrottleRunning = false
+-- UNIT_AURA coalescing: hidden frame Show/Hide pattern.
+-- Showing an already-shown frame is a no-op, so rapid events within
+-- the same render frame are automatically batched into a single OnUpdate.
+local pendingAuraUnits = {} -- [unit] = true|updateInfo
 
 ---------------------------------------------------------------------------
 -- SHARED AURA CACHE: Single scan feeds aura icons, dispel, and defensive
@@ -63,15 +63,111 @@ local function ScanUnitAuras(unit)
     return cache
 end
 
+-- Incremental aura update: apply add/remove/update deltas from updateInfo
+-- instead of a full rescan.  Falls back to full scan if incremental fails.
+local function IncrementalUpdateAuras(unit, updateInfo)
+    local cache = unitAuraCache[unit]
+    if not cache then
+        -- No existing cache — must do full scan
+        return ScanUnitAuras(unit)
+    end
+
+    if not C_UnitAuras or not C_UnitAuras.GetAuraDataByAuraInstanceID then
+        return ScanUnitAuras(unit)
+    end
+
+    local changed = false
+
+    -- 1. Remove auras
+    if updateInfo.removedAuraInstanceIDs then
+        local removeSet = {}
+        for _, instID in ipairs(updateInfo.removedAuraInstanceIDs) do
+            removeSet[instID] = true
+        end
+        -- Filter harmful
+        local newHarmful = {}
+        for _, ad in ipairs(cache.harmful) do
+            if not removeSet[ad.auraInstanceID] then
+                newHarmful[#newHarmful + 1] = ad
+            else
+                changed = true
+            end
+        end
+        -- Filter helpful
+        local newHelpful = {}
+        for _, ad in ipairs(cache.helpful) do
+            if not removeSet[ad.auraInstanceID] then
+                newHelpful[#newHelpful + 1] = ad
+            else
+                changed = true
+            end
+        end
+        cache.harmful = newHarmful
+        cache.helpful = newHelpful
+    end
+
+    -- 2. Update existing auras (stacks, duration changes)
+    if updateInfo.updatedAuraInstanceIDs then
+        for _, instID in ipairs(updateInfo.updatedAuraInstanceIDs) do
+            local ok, newData = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, instID)
+            if ok and newData then
+                -- Find and replace in the appropriate list
+                local list = newData.isHarmful and cache.harmful or cache.helpful
+                local found = false
+                for i, ad in ipairs(list) do
+                    if ad.auraInstanceID == instID then
+                        list[i] = newData
+                        found = true
+                        changed = true
+                        break
+                    end
+                end
+                if not found then
+                    -- Aura may have switched filter; add to correct list
+                    list[#list + 1] = newData
+                    changed = true
+                end
+            end
+        end
+    end
+
+    -- 3. Add new auras
+    if updateInfo.addedAuras then
+        for _, ad in ipairs(updateInfo.addedAuras) do
+            if ad.isHarmful then
+                cache.harmful[#cache.harmful + 1] = ad
+            else
+                cache.helpful[#cache.helpful + 1] = ad
+            end
+            changed = true
+        end
+    end
+
+    return cache, changed
+end
+
+-- Evict stale cache entries for units no longer in the group.
+-- Called on GROUP_ROSTER_UPDATE from the centralized event dispatcher.
+local function PruneAuraCache()
+    local GF = ns.QUI_GroupFrames
+    if not GF or not GF.unitFrameMap then return end
+    for unit in pairs(unitAuraCache) do
+        if not GF.unitFrameMap[unit] then
+            unitAuraCache[unit] = nil
+        end
+    end
+end
+
 -- Expose cache for other modules (dispel overlay, defensive indicator)
 QUI_GFA.unitAuraCache = unitAuraCache
 QUI_GFA.ScanUnitAuras = ScanUnitAuras
+QUI_GFA.PruneAuraCache = PruneAuraCache
 
 ---------------------------------------------------------------------------
 -- TABLE POOLING: Reusable aura data tables for GC reduction
 ---------------------------------------------------------------------------
 local auraTablePool = {}
-local POOL_SIZE = 60
+local POOL_SIZE = 120  -- Sized for raids: up to 40 units × 2 filters + headroom
 
 local function AcquireAuraTable()
     local tbl = table.remove(auraTablePool)
@@ -89,8 +185,8 @@ local function ReleaseAuraTable(tbl)
     end
 end
 
--- Pre-allocate pool
-for i = 1, POOL_SIZE do
+-- Pre-allocate a starter set (rest grow on demand up to POOL_SIZE)
+for i = 1, 60 do
     auraTablePool[i] = {}
 end
 
@@ -976,17 +1072,29 @@ end
 -- Flush all pending throttled aura updates
 -- Single scan per unit feeds aura icons, dispel overlay, and defensive indicator
 local function FlushPendingAuras()
-    auraThrottleRunning = false
     local GF = ns.QUI_GroupFrames
     if not GF or not GF.initialized then
         wipe(pendingAuraUnits)
         return
     end
-    for unit in pairs(pendingAuraUnits) do
+    for unit, updateInfo in pairs(pendingAuraUnits) do
         local frame = GF.unitFrameMap[unit]
         if frame then
-            -- Single scan populates shared cache
-            ScanUnitAuras(unit)
+            -- Try incremental update if updateInfo has delta data.
+            -- Falls back to full scan when: updateInfo is true (full update),
+            -- updateInfo is nil, or incremental fails.
+            local useIncremental = type(updateInfo) == "table"
+                and not updateInfo.isFullUpdate
+                and unitAuraCache[unit]  -- must have existing cache
+            if useIncremental then
+                local ok, cache, changed = pcall(IncrementalUpdateAuras, unit, updateInfo)
+                if not ok then
+                    -- Incremental failed — fall back to full scan
+                    ScanUnitAuras(unit)
+                end
+            else
+                ScanUnitAuras(unit)
+            end
             -- Defensives + indicators first so buff dedup set is populated
             if GF.UpdateDispelOverlay then GF:UpdateDispelOverlay(frame) end
             if GF.UpdateDefensiveIndicator then GF:UpdateDefensiveIndicator(frame) end
@@ -1003,29 +1111,48 @@ local function FlushPendingAuras()
     wipe(pendingAuraUnits)
 end
 
-local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("UNIT_AURA")
-eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+-- PLAYER_REGEN_ENABLED handler (mouse fix deferred from combat)
+local regenFrame = CreateFrame("Frame")
+regenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+regenFrame:SetScript("OnEvent", function(self, event)
+    if pendingMouseFix then FixAllIconMouse() end
+end)
 
-eventFrame:SetScript("OnEvent", function(self, event, unit)
-    if event == "PLAYER_REGEN_ENABLED" then
-        if pendingMouseFix then FixAllIconMouse() end
-        return
-    end
-    if event ~= "UNIT_AURA" then return end
-    local GF = ns.QUI_GroupFrames
-    if not GF or not GF.initialized then return end
-
-    -- Skip units we don't track
-    if not GF.unitFrameMap[unit] then return end
-
-    -- Coalesce rapid UNIT_AURA events (50ms window)
-    pendingAuraUnits[unit] = true
-    if not auraThrottleRunning then
-        auraThrottleRunning = true
-        C_Timer.After(AURA_THROTTLE, FlushPendingAuras)
+-- Flush frame: processes pending aura units after the dispatcher finishes.
+-- The centralized dispatcher fires callbacks synchronously in its OnUpdate;
+-- this frame flushes on the next OnUpdate after those callbacks populate
+-- pendingAuraUnits.
+local auraFlushFrame = CreateFrame("Frame")
+auraFlushFrame:Hide()
+auraFlushFrame:SetScript("OnUpdate", function(self)
+    self:Hide()
+    if next(pendingAuraUnits) then
+        FlushPendingAuras()
     end
 end)
+
+-- Subscribe to centralized aura dispatcher for group frame aura updates.
+if ns.AuraEvents then
+    ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
+        local GF = ns.QUI_GroupFrames
+        if not GF or not GF.initialized then return end
+
+        -- Skip units we don't track
+        if not GF.unitFrameMap[unit] then return end
+
+        -- Store updateInfo for incremental processing.
+        local existing = pendingAuraUnits[unit]
+        if existing == true then
+            -- Already marked as full update, keep it
+        elseif updateInfo and updateInfo.isFullUpdate then
+            pendingAuraUnits[unit] = true
+        else
+            pendingAuraUnits[unit] = updateInfo or true
+        end
+        -- Schedule flush for next frame
+        auraFlushFrame:Show()
+    end)
+end
 
 ---------------------------------------------------------------------------
 -- PUBLIC: Bump layout version (call when aura settings change in options)
