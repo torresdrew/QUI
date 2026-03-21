@@ -13,6 +13,7 @@ local issecretvalue = issecretvalue
 
 -- Weak-keyed set of frames we've already processed
 local processed = setmetatable({}, { __mode = "k" })
+local initialized = false
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -27,7 +28,7 @@ end
 --- so we don't accidentally suppress intentional Blizzard NineSlices
 --- that QUI simply hasn't skinned.
 local function IsBlizzardOrQUIFrame(name)
-    if not name then return false end
+    if type(name) ~= "string" then return false end
     -- QUI-owned frames
     if name:find("^QUI") or name:find("^Quazii") then return true end
     -- Common Blizzard prefixes — these frames may have intentional NineSlices
@@ -82,6 +83,48 @@ local function IsBlizzardOrQUIFrame(name)
 end
 
 ---------------------------------------------------------------------------
+-- Suppress a single frame's white backdrop / visible NineSlice
+---------------------------------------------------------------------------
+
+local suppressingBackdrop = false
+
+local function SuppressFrame(f)
+    local isS = issecretvalue
+
+    -- White backdrop → darken
+    if f.GetBackdropColor then
+        local rok, r, g, b = pcall(f.GetBackdropColor, f)
+        if rok and not isS(r) and r and r > 0.9 and g > 0.9 and b > 0.9 then
+            local hok, h = pcall(f.GetHeight, f)
+            if hok and not isS(h) and h and h > 10 then
+                suppressingBackdrop = true
+                pcall(f.SetBackdropColor, f, 0.05, 0.05, 0.05, 0.95)
+                pcall(f.SetBackdropBorderColor, f, 0, 0, 0, 1)
+                suppressingBackdrop = false
+                processed[f] = true
+            end
+        end
+    end
+
+    -- Visible NineSlice → hide
+    if f.NineSlice then
+        local aok, a = pcall(f.NineSlice.GetAlpha, f.NineSlice)
+        if aok and not isS(a) and a and a > 0 then
+            pcall(f.NineSlice.SetAlpha, f.NineSlice, 0)
+            processed[f] = true
+        end
+    end
+end
+
+--- Returns true if a frame should be left alone (Blizzard, QUI, or
+--- already handled by a per-frame skinning module).
+local function ShouldSkipFrame(f)
+    if SkinBase.IsSkinned(f) then return true end
+    local name = f:GetName()
+    return IsBlizzardOrQUIFrame(name)
+end
+
+---------------------------------------------------------------------------
 -- Core scan
 ---------------------------------------------------------------------------
 
@@ -91,37 +134,43 @@ local function ScanAndSuppress()
     local isS = issecretvalue
     local f = EnumerateFrames()
     while f do
-        if not processed[f] and not SkinBase.IsSkinned(f) then
+        if not processed[f] and not ShouldSkipFrame(f) then
             local ok, vis = pcall(f.IsVisible, f)
             if ok and not isS(vis) and vis then
-                local name = f:GetName()
-                if not IsBlizzardOrQUIFrame(name) then
-                    -- White backdrop → darken
-                    if f.GetBackdropColor then
-                        local rok, r, g, b = pcall(f.GetBackdropColor, f)
-                        if rok and not isS(r) and r and r > 0.9 and g > 0.9 and b > 0.9 then
-                            local hok, h = pcall(f.GetHeight, f)
-                            if hok and not isS(h) and h and h > 10 then
-                                pcall(f.SetBackdropColor, f, 0.05, 0.05, 0.05, 0.95)
-                                pcall(f.SetBackdropBorderColor, f, 0, 0, 0, 1)
-                                processed[f] = true
-                            end
-                        end
-                    end
-
-                    -- Visible NineSlice → hide
-                    if f.NineSlice then
-                        local aok, a = pcall(f.NineSlice.GetAlpha, f.NineSlice)
-                        if aok and not isS(a) and a and a > 0 then
-                            pcall(f.NineSlice.SetAlpha, f.NineSlice, 0)
-                            processed[f] = true
-                        end
-                    end
-                end
+                SuppressFrame(f)
             end
         end
         f = EnumerateFrames(f)
     end
+end
+
+---------------------------------------------------------------------------
+-- Real-time hook — catch white backdrops set after the initial scan
+---------------------------------------------------------------------------
+
+if BackdropTemplateMixin and BackdropTemplateMixin.SetBackdropColor then
+    hooksecurefunc(BackdropTemplateMixin, "SetBackdropColor", function(self, r, g, b)
+        if suppressingBackdrop then return end
+        if not initialized or not IsEnabled() then return end
+        if processed[self] then
+            -- Frame was already processed but just got its color reset —
+            -- clear the processed flag so we re-evaluate.
+            processed[self] = nil
+        end
+        if ShouldSkipFrame(self) then return end
+        local isS = issecretvalue
+        if isS(r) then return end
+        if r and r > 0.9 and g > 0.9 and b > 0.9 then
+            local hok, h = pcall(self.GetHeight, self)
+            if hok and not isS(h) and h and h > 10 then
+                suppressingBackdrop = true
+                pcall(self.SetBackdropColor, self, 0.05, 0.05, 0.05, 0.95)
+                pcall(self.SetBackdropBorderColor, self, 0, 0, 0, 1)
+                suppressingBackdrop = false
+                processed[self] = true
+            end
+        end
+    end)
 end
 
 ---------------------------------------------------------------------------
@@ -143,7 +192,6 @@ _G.QUI_RefreshThirdPartySkinning = Refresh
 ---------------------------------------------------------------------------
 
 local eventFrame = CreateFrame("Frame")
-local initialized = false
 
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
