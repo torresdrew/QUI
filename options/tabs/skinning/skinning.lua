@@ -36,6 +36,7 @@ local function BuildSkinningTab(tabContent)
         general.skinBorderColor = { accent[1], accent[2], accent[3], accent[4] or 1 }
     end
     if general.skinKeystoneFrame == nil then general.skinKeystoneFrame = true end
+    if general.skinThirdParty == nil then general.skinThirdParty = true end
 
     local sections, relayout, CreateCollapsible = Shared.CreateCollapsiblePage(tabContent, PAD)
 
@@ -320,6 +321,11 @@ local function BuildSkinningTab(tabContent)
     CreateCollapsible("Professions", 1 * FORM_ROW + 8, function(body)
         local sy = -4
         P(GUI:CreateFormCheckbox(body, "Skin Professions (Req. Reload)", "skinProfessions", general, ReloadConfirm), body, sy)
+    end)
+
+    CreateCollapsible("Third-Party Cleanup", 1 * FORM_ROW + 8, function(body)
+        local sy = -4
+        P(GUI:CreateFormCheckbox(body, "Suppress White Backdrops & NineSlice Borders", "skinThirdParty", general, RefreshAllSkinning), body, sy)
     end)
 
     relayout()
