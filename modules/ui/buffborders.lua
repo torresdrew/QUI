@@ -897,7 +897,6 @@ end
 
 local function ScheduleDebuffUpdate()
     debuffCoalesceFrame:Show()
-    end)
 end
 
 ---------------------------------------------------------------------------
