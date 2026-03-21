@@ -62,7 +62,6 @@ end
 local DEFAULT_ICON_SIZE = 30
 local MAX_RECYCLE_POOL_SIZE = 30
 local BASE_CROP = 0.08
-local DEBOUNCE_INTERVAL = 0.1
 
 -- Debuff type → border color (r, g, b)
 local DEBUFF_TYPE_COLORS = {
@@ -101,9 +100,6 @@ local blizzDebuffShowHooked = false
 local blizzBuffAlphaHooked = false
 local blizzDebuffAlphaHooked = false
 
--- Debounce state
-local buffUpdatePending = false
-local debuffUpdatePending = false
 
 -- Layout mode preview state
 local previewActive = false
@@ -879,21 +875,28 @@ end
 ---------------------------------------------------------------------------
 -- DEBOUNCED UPDATE SCHEDULING
 ---------------------------------------------------------------------------
+-- Frame-show coalescing for buff/debuff border updates.
+-- Show() is a no-op if already shown — automatic event batching.
+local buffCoalesceFrame = CreateFrame("Frame")
+buffCoalesceFrame:Hide()
+buffCoalesceFrame:SetScript("OnUpdate", function(self)
+    self:Hide()
+    UpdateBuffIcons()
+end)
+
+local debuffCoalesceFrame = CreateFrame("Frame")
+debuffCoalesceFrame:Hide()
+debuffCoalesceFrame:SetScript("OnUpdate", function(self)
+    self:Hide()
+    UpdateDebuffIcons()
+end)
+
 local function ScheduleBuffUpdate()
-    if buffUpdatePending then return end
-    buffUpdatePending = true
-    C_Timer.After(DEBOUNCE_INTERVAL, function()
-        buffUpdatePending = false
-        UpdateBuffIcons()
-    end)
+    buffCoalesceFrame:Show()
 end
 
 local function ScheduleDebuffUpdate()
-    if debuffUpdatePending then return end
-    debuffUpdatePending = true
-    C_Timer.After(DEBOUNCE_INTERVAL, function()
-        debuffUpdatePending = false
-        UpdateDebuffIcons()
+    debuffCoalesceFrame:Show()
     end)
 end
 
@@ -963,17 +966,14 @@ local function Init()
 end
 
 ---------------------------------------------------------------------------
--- EVENT HANDLING
+-- EVENT HANDLING: Subscribe to centralized aura dispatcher (player only)
 ---------------------------------------------------------------------------
-local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("UNIT_AURA")
-
-eventFrame:SetScript("OnEvent", function(self, event, unit)
-    if event == "UNIT_AURA" and unit == "player" then
+if ns.AuraEvents then
+    ns.AuraEvents:Subscribe("player", function(unit, updateInfo)
         ScheduleBuffUpdate()
         ScheduleDebuffUpdate()
-    end
-end)
+    end)
+end
 
 -- Initialize after AceDB is ready (called from core/main.lua OnEnable)
 C_Timer.After(1, Init)

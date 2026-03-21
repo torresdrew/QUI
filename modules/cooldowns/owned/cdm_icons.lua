@@ -112,6 +112,14 @@ local _spellToAuraInstance = {}  -- [spellId] = auraInstanceID (for GetAuraDurat
 -- to find candidates for unmapped combat instances.
 local _trackedAuraSpellIDs = {}  -- [auraSpellID] = true
 
+-- Per-tick cache: deduplicates GetPlayerAuraBySpellID calls within a single
+-- UpdateAllCooldowns cycle. Wiped at the start of each cycle. When multiple
+-- icons share the same spellID, only the first queries the API.
+-- [spellID] = auraData or false (false = checked, not found)
+local _tickAuraCache = {}
+-- [spellID] = { unit, auraData } or false (LookupAura full result)
+local _tickLookupCache = {}
+
 ---------------------------------------------------------------------------
 -- DYNAMIC CHILD LOOKUP: Scan ALL viewer children to find the one with
 -- auraInstanceID matching a tracked spell.  Blizzard recycles children
@@ -1701,18 +1709,40 @@ LookupAura = function(spellID, entry)
 
     local primaryID = entry and (entry.overrideSpellID or entry.spellID or entry.id) or spellID
 
+    -- Per-tick cache: if we already looked up this primaryID this cycle, reuse.
+    local cached = _tickLookupCache[primaryID]
+    if cached then
+        return cached[1], cached[2]  -- auraData, unit
+    elseif cached == false then
+        return nil  -- Already checked, not found
+    end
+
+    -- Helper: cache a per-spell point query result
+    local function TickCachedQuery(qID)
+        local tc = _tickAuraCache[qID]
+        if tc then return true, tc  -- true = ok, tc = auraData or false
+        elseif tc == false then return true, false end
+        local ok, ad = pcall(C_UnitAuras.GetPlayerAuraBySpellID, qID)
+        _tickAuraCache[qID] = (ok and ad) or false
+        return ok, ad
+    end
+
     -- 1. Try resolved ID (cached from OOC)
     local resolvedID = _resolvedAuraIDs[primaryID]
     if resolvedID then
-        local ok, ad = pcall(C_UnitAuras.GetPlayerAuraBySpellID, resolvedID)
-        if ok and ad then return ad, "player" end
+        local ok, ad = TickCachedQuery(resolvedID)
+        if ok and ad then
+            _tickLookupCache[primaryID] = { ad, "player" }
+            return ad, "player"
+        end
     end
 
     -- 2. Try primary ID (if different from resolved)
     if not resolvedID or resolvedID ~= spellID then
-        local ok, ad = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
+        local ok, ad = TickCachedQuery(spellID)
         if ok and ad then
             if not InCombatLockdown() then _resolvedAuraIDs[primaryID] = spellID end
+            _tickLookupCache[primaryID] = { ad, "player" }
             return ad, "player"
         end
     end
@@ -1727,9 +1757,10 @@ LookupAura = function(spellID, entry)
             altIDs[#altIDs+1] = entry.id
         end
         for _, altID in ipairs(altIDs) do
-            local ok2, ad2 = pcall(C_UnitAuras.GetPlayerAuraBySpellID, altID)
+            local ok2, ad2 = TickCachedQuery(altID)
             if ok2 and ad2 then
                 if not InCombatLockdown() then _resolvedAuraIDs[primaryID] = altID end
+                _tickLookupCache[primaryID] = { ad2, "player" }
                 return ad2, "player"
             end
         end
@@ -1738,12 +1769,18 @@ LookupAura = function(spellID, entry)
     -- 4. Target debuff fallback (e.g. Reaper's Mark)
     if entry and entry.name and entry.name ~= "" and C_UnitAuras.GetAuraDataBySpellName then
         local ok, ad = pcall(C_UnitAuras.GetAuraDataBySpellName, "target", entry.name, "HARMFUL")
-        if ok and ad then return ad, "target" end
-        -- Also try HELPFUL on target (some abilities are buffs on friendly target)
+        if ok and ad then
+            _tickLookupCache[primaryID] = { ad, "target" }
+            return ad, "target"
+        end
         local ok2, ad2 = pcall(C_UnitAuras.GetAuraDataBySpellName, "target", entry.name, "HELPFUL")
-        if ok2 and ad2 then return ad2, "target" end
+        if ok2 and ad2 then
+            _tickLookupCache[primaryID] = { ad2, "target" }
+            return ad2, "target"
+        end
     end
 
+    _tickLookupCache[primaryID] = false
     return nil
 end
 
@@ -2027,8 +2064,8 @@ end
 local _auraCacheFrame = CreateFrame("Frame")
 _auraCacheFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 _auraCacheFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-_auraCacheFrame:RegisterUnitEvent("UNIT_AURA", "player", "target")
-_auraCacheFrame:SetScript("OnEvent", function(_, event, unit, updateInfo)
+-- UNIT_AURA handled by centralized dispatcher subscription (below)
+_auraCacheFrame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_REGEN_DISABLED" then
         -- Don't wipe — preserve OOC cache (aliases, Bone Shield, etc.).
         -- Just augment with any new aura data from ForEachAura.
@@ -2055,10 +2092,17 @@ _auraCacheFrame:SetScript("OnEvent", function(_, event, unit, updateInfo)
         AuraDebug(0, "|cffffff00COMBAT END|r — full wipe + rebuild")
         -- OOC: full wipe + rebuild with clean API data
         FullRebuildAuraCache(true)
-    elseif event == "UNIT_AURA" then
-        PatchAuraCacheFromEvent(updateInfo)
     end
 end)
+
+-- Subscribe to centralized aura dispatcher for cache patching (player + target)
+if ns.AuraEvents then
+    ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
+        if unit == "player" or unit == "target" then
+            PatchAuraCacheFromEvent(updateInfo)
+        end
+    end)
+end
 
 local function RebuildAuraCache()
     if _inCombatCaching then return end
@@ -2069,6 +2113,11 @@ end
 -- UPDATE ALL COOLDOWNS
 ---------------------------------------------------------------------------
 function CDMIcons:UpdateAllCooldowns()
+    -- Wipe per-tick caches so each cycle starts fresh but deduplicates
+    -- API calls within this cycle (same spellID across multiple icons).
+    wipe(_tickAuraCache)
+    wipe(_tickLookupCache)
+
     local editMode = Helpers.IsEditModeActive()
         or (_G.QUI_IsCDMEditModeActive and _G.QUI_IsCDMEditModeActive())
 
@@ -2498,26 +2547,20 @@ cdEventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
 cdEventFrame:RegisterEvent("BAG_UPDATE_COOLDOWN")
 cdEventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 cdEventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
--- UNIT_AURA triggers coalesced icon updates so aura-container icons
--- refresh within 50ms of a buff gain/loss instead of waiting for the
--- 0.5s ticker.  Registered for both player and target (target debuffs
--- like Reaper's Mark need prompt updates too).
-cdEventFrame:RegisterUnitEvent("UNIT_AURA", "player", "target")
+-- UNIT_AURA handled by centralized dispatcher subscription (below)
 
--- Coalesce rapid cooldown events (SPELL_UPDATE_COOLDOWN, SPELL_UPDATE_CHARGES,
--- BAG_UPDATE_COOLDOWN) into a single UpdateAllCooldowns call per 50ms window.
-local CD_COALESCE_WINDOW = 0.05
-local cdCoalesceRunning = false
-
-local function FlushCooldownUpdate()
-    cdCoalesceRunning = false
+-- Frame-show coalescing for cooldown events: batches SPELL_UPDATE_COOLDOWN,
+-- SPELL_UPDATE_CHARGES, BAG_UPDATE_COOLDOWN, and UNIT_AURA into a single
+-- UpdateAllCooldowns per render frame (zero-allocation, automatic).
+local cdCoalesceFrame = CreateFrame("Frame")
+cdCoalesceFrame:Hide()
+cdCoalesceFrame:SetScript("OnUpdate", function(self)
+    self:Hide()
     CDMIcons:UpdateAllCooldowns()
-    -- Also update owned bars so they respond to aura events within 50ms
-    -- instead of waiting for the 0.5s ticker.
     if ns.CDMBars and ns.CDMBars.UpdateOwnedBars then
         ns.CDMBars:UpdateOwnedBars()
     end
-end
+end)
 
 cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "PLAYER_TARGET_CHANGED" then
@@ -2531,12 +2574,18 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
         end
         return
     end
-    -- Coalesce cooldown events
-    if not cdCoalesceRunning then
-        cdCoalesceRunning = true
-        C_Timer.After(CD_COALESCE_WINDOW, FlushCooldownUpdate)
-    end
+    -- Coalesce cooldown events via frame-show pattern
+    cdCoalesceFrame:Show()
 end)
+
+-- Subscribe to centralized aura dispatcher for prompt icon updates (player + target)
+if ns.AuraEvents then
+    ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
+        if unit == "player" or unit == "target" then
+            cdCoalesceFrame:Show()
+        end
+    end)
+end
 
 -- Visual state polling: 250ms OnUpdate for range + usability checks.
 -- Only active when at least one tracker has rangeIndicator or usabilityIndicator.

@@ -254,19 +254,35 @@ local function ScanGroupClasses()
     end
 end
 
--- Check if a unit has a buff by spell ID, with name-based fallback
--- Uses 3-method approach for maximum compatibility across WoW versions
+-- Check if a unit has a buff by spell ID, with name-based fallback.
+-- Uses point queries first (O(1)), falls back to iteration only as last resort.
 local function UnitHasBuff(unit, spellId, spellName)
     if not unit then return false end
     local exists = SafeBooleanCheck(UnitExists(unit))
     if not exists then return false end
 
-    -- Method 1: AuraUtil.ForEachAura (most reliable)
+    -- Method 1: Point query by spell ID (O(1) engine lookup)
+    if spellId and C_UnitAuras then
+        if unit == "player" and C_UnitAuras.GetPlayerAuraBySpellID then
+            local ok, auraData = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellId)
+            if ok and auraData then return true end
+        elseif C_UnitAuras.GetAuraDataBySpellName and spellName then
+            local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, spellName, "HELPFUL")
+            if ok and auraData then return true end
+        end
+    end
+
+    -- Method 2: Name-based point query (for non-player units when Method 1 didn't try it)
+    if spellName and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName and unit == "player" then
+        local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, spellName, "HELPFUL")
+        if ok and auraData then return true end
+    end
+
+    -- Method 3: ForEachAura iteration (last resort — handles talent variants, spell ID mismatches)
     if AuraUtil and AuraUtil.ForEachAura then
         local found = false
         AuraUtil.ForEachAura(unit, "HELPFUL", nil, function(auraData)
             if auraData then
-                -- Use safe field access for Midnight Beta (12.x) secret values
                 local auraSpellId = SafeGetAuraField(auraData, "spellId")
                 local auraName = SafeGetAuraField(auraData, "name")
                 if auraSpellId and auraSpellId == spellId then
@@ -278,28 +294,6 @@ local function UnitHasBuff(unit, spellId, spellName)
             if found then return true end
         end, true)
         if found then return true end
-    end
-
-    -- Method 2: GetAuraDataBySpellName
-    if spellName and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
-        local success, auraData = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, spellName, "HELPFUL")
-        if success and auraData then return true end
-    end
-
-    -- Method 3: GetAuraDataByIndex iteration
-    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for i = 1, MAX_AURA_INDEX do
-            local success, auraData = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
-            if not success or not auraData then break end
-            -- Use safe field access for Midnight Beta (12.x) secret values
-            local auraSpellId = SafeGetAuraField(auraData, "spellId")
-            local auraName = SafeGetAuraField(auraData, "name")
-            if auraSpellId and auraSpellId == spellId then
-                return true
-            elseif spellName and auraName and auraName == spellName then
-                return true
-            end
-        end
     end
 
     return false
@@ -999,15 +993,7 @@ local function OnEvent(self, event, ...)
         C_Timer.After(2, UpdateDisplay)
     elseif event == "GROUP_ROSTER_UPDATE" then
         ThrottledUpdate()
-    elseif event == "UNIT_AURA" then
-        local unit = ...
-        if unit == "player" then
-            -- Player aura changes use short throttle to prevent spam during buff/debuff application
-            ThrottledUpdate()
-        elseif unit and settings.providerMode and (unit:match("^party") or unit:match("^raid")) then
-            -- In provider mode, also update when party/raid members' auras change
-            ThrottledUpdate()
-        end
+    -- UNIT_AURA handled by centralized dispatcher subscription (above)
     elseif event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_REGEN_DISABLED" then
         ThrottledUpdate()
     elseif event == "ZONE_CHANGED_NEW_AREA" then
@@ -1026,7 +1012,7 @@ end
 
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
-eventFrame:RegisterEvent("UNIT_AURA")
+-- UNIT_AURA handled by centralized dispatcher (below)
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
@@ -1034,6 +1020,19 @@ eventFrame:RegisterEvent("UNIT_FLAGS")
 eventFrame:RegisterEvent("PLAYER_DEAD")
 eventFrame:RegisterEvent("PLAYER_UNGHOST")
 eventFrame:SetScript("OnEvent", OnEvent)
+
+-- Subscribe to centralized aura dispatcher
+if ns.AuraEvents then
+    ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
+        local settings = GetSettings()
+        if not settings or not settings.enabled then return end
+        if unit == "player" then
+            ThrottledUpdate()
+        elseif settings.providerMode and (unit:match("^party") or unit:match("^raid")) then
+            ThrottledUpdate()
+        end
+    end)
+end
 
 -- Periodic range check (every 5 seconds when out of combat and in group)
 local rangeCheckTicker

@@ -273,11 +273,10 @@ end
 
 -- Periodic alpha enforcer: catches cases where Blizzard restores alpha
 -- via internal paths that don't trigger the SetAlpha hook.
--- Runs only while viewers are hidden (always, including Edit Mode).
+-- Only active while viewers are hidden (toggled by Hide/ShowBlizzardViewers).
 local alphaEnforcerFrame = CreateFrame("Frame")
 local alphaEnforcerElapsed = 0
-alphaEnforcerFrame:SetScript("OnUpdate", function(self, dt)
-    if not viewersHidden then return end
+local function AlphaEnforcerOnUpdate(self, dt)
     alphaEnforcerElapsed = alphaEnforcerElapsed + dt
     if alphaEnforcerElapsed < 0.1 then return end
     alphaEnforcerElapsed = 0
@@ -287,7 +286,9 @@ alphaEnforcerFrame:SetScript("OnUpdate", function(self, dt)
             viewer:SetAlpha(0)
         end
     end
-end)
+end
+-- Start disabled — HideBlizzardViewers enables it
+alphaEnforcerFrame:SetScript("OnUpdate", nil)
 
 local function HideBlizzardViewers()
     if viewersHidden then return end
@@ -307,12 +308,15 @@ local function HideBlizzardViewers()
         end
     end
     viewersHidden = true
+    alphaEnforcerElapsed = 0
+    alphaEnforcerFrame:SetScript("OnUpdate", AlphaEnforcerOnUpdate)
 end
 
 local function ShowBlizzardViewers()
     if not viewersHidden then return end
     -- Clear the hidden flag BEFORE setting alpha so the hook doesn't fight us
     viewersHidden = false
+    alphaEnforcerFrame:SetScript("OnUpdate", nil)
     for vtype, viewerName in pairs(VIEWER_NAMES) do
         local viewer = _G[viewerName]
         if viewer then

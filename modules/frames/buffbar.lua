@@ -2928,66 +2928,67 @@ local function Initialize()
 
     -- TAINT SAFETY: Use local variables instead of writing to Blizzard CDM viewer frames.
     local auraHookCreated = false
-    local rescanPending = false
     local lastAuraIconCount = 0  -- Track visible icon count for change detection
     iconViewer = GetBuffIconViewer()
     if iconViewer and not auraHookCreated then
         auraHookCreated = true
-        local auraEventFrame = CreateFrame("Frame")
-        auraEventFrame:RegisterEvent("UNIT_AURA")
-        auraEventFrame:SetScript("OnEvent", function(_, event, unit)
-            local iv = GetBuffIconViewer()
-            if unit == "player" and iv and iv:IsShown() then
-                -- Debounce: only queue one rescan per 0.1s window
-                if not rescanPending then
-                    rescanPending = true
-                    C_Timer.After(0.1, function()
-                        rescanPending = false
-                        -- Re-check visibility after timer (viewer may have hidden)
-                        local iv2 = GetBuffIconViewer()
-                        if iv2 and iv2:IsShown() then
-                            if isIconLayoutRunning then return end
-                            if IsLayoutSuppressed() then return end
 
-                            -- COMBAT STABILITY: During combat, only force hash
-                            -- reset when icon count actually changed (buff gained
-                            -- or lost). This prevents 10Hz relayout from UNIT_AURA
-                            -- spam when only aura properties (stacks, duration)
-                            -- changed but icon positions don't need to move.
-                            if InCombatLockdown() then
-                                local currentCount = 0
-                                if IsOwnedEngine() then
-                                    local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
-                                    if pool then
-                                        for _, icon in ipairs(pool) do
-                                            if Helpers.SafeValue(icon:IsShown(), false) and (Helpers.SafeToNumber(icon:GetAlpha()) or 1) > 0 then
-                                                currentCount = currentCount + 1
-                                            end
-                                        end
-                                    end
-                                else
-                                    for _, child in ipairs({ iv2:GetChildren() }) do
-                                        if child and child ~= iv2.Selection then
-                                            if (child.icon or child.Icon) and child:IsShown() then
-                                                currentCount = currentCount + 1
-                                            end
-                                        end
-                                    end
-                                end
-                                if currentCount == lastAuraIconCount then
-                                    return  -- Count unchanged — skip relayout
-                                end
-                                lastAuraIconCount = currentCount
+        -- Frame-show coalescing: Show() is a no-op if already shown,
+        -- so rapid UNIT_AURA events within the same render frame are
+        -- automatically batched into a single OnUpdate flush.
+        local iconAuraCoalesce = CreateFrame("Frame")
+        iconAuraCoalesce:Hide()
+        iconAuraCoalesce:SetScript("OnUpdate", function(self)
+            self:Hide()
+            local iv2 = GetBuffIconViewer()
+            if not iv2 or not iv2:IsShown() then return end
+            if isIconLayoutRunning then return end
+            if IsLayoutSuppressed() then return end
+
+            -- COMBAT STABILITY: During combat, only force hash
+            -- reset when icon count actually changed (buff gained
+            -- or lost). This prevents relayout from UNIT_AURA spam
+            -- when only aura properties (stacks, duration) changed
+            -- but icon positions don't need to move.
+            if InCombatLockdown() then
+                local currentCount = 0
+                if IsOwnedEngine() then
+                    local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
+                    if pool then
+                        for _, icon in ipairs(pool) do
+                            if Helpers.SafeValue(icon:IsShown(), false) and (Helpers.SafeToNumber(icon:GetAlpha()) or 1) > 0 then
+                                currentCount = currentCount + 1
                             end
-
-                            -- Reset hash to force layout recalculation
-                            lastIconHash = ""
-                            CheckIconChanges()
                         end
-                    end)
+                    end
+                else
+                    for _, child in ipairs({ iv2:GetChildren() }) do
+                        if child and child ~= iv2.Selection then
+                            if (child.icon or child.Icon) and child:IsShown() then
+                                currentCount = currentCount + 1
+                            end
+                        end
+                    end
                 end
+                if currentCount == lastAuraIconCount then
+                    return  -- Count unchanged — skip relayout
+                end
+                lastAuraIconCount = currentCount
             end
+
+            lastIconHash = ""
+            CheckIconChanges()
         end)
+
+        -- Subscribe to centralized aura dispatcher (player only)
+        if ns.AuraEvents then
+            ns.AuraEvents:Subscribe("player", function(unit, updateInfo)
+                local iv = GetBuffIconViewer()
+                if iv and iv:IsShown() then
+                    iconAuraCoalesce:Show()
+                end
+            end)
+        end
     end
 
     -- Owned engine: hook Blizzard's BuffBarCooldownViewer Layout to detect
@@ -3007,21 +3008,19 @@ local function Initialize()
             end)
         end
         -- Also rebuild bars on UNIT_AURA (tracked buffs can appear/disappear)
-        local barAuraFrame = CreateFrame("Frame")
-        barAuraFrame:RegisterEvent("UNIT_AURA")
-        local barRescanPending = false
-        barAuraFrame:SetScript("OnEvent", function(_, event, unit)
-            if unit == "player" then
-                if not barRescanPending then
-                    barRescanPending = true
-                    C_Timer.After(0.15, function()
-                        barRescanPending = false
-                        if isBarLayoutRunning then return end
-                        LayoutBuffBars()
-                    end)
-                end
-            end
+        local barAuraCoalesce = CreateFrame("Frame")
+        barAuraCoalesce:Hide()
+        barAuraCoalesce:SetScript("OnUpdate", function(self)
+            self:Hide()
+            if isBarLayoutRunning then return end
+            LayoutBuffBars()
         end)
+        -- Subscribe to centralized aura dispatcher for bar layout (player only)
+        if ns.AuraEvents then
+            ns.AuraEvents:Subscribe("player", function(unit, updateInfo)
+                barAuraCoalesce:Show()
+            end)
+        end
     end
 
     -- Initial layouts (after force populate)

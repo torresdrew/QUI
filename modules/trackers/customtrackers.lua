@@ -84,12 +84,45 @@ local BASE_CROP = 0.08  -- Standard WoW icon crop
 -- Performance: reusable scratch table for LayoutVisibleIcons (avoids per-call allocation)
 local _visibleIconsScratch = {}
 
--- Performance: event-driven DoUpdate throttle state
--- Prevents multiple DoUpdate calls per frame from stacked events
--- (SPELL_UPDATE_COOLDOWN + UNIT_AURA + ACTIONBAR_UPDATE_COOLDOWN can all fire in the same frame)
-local _eventUpdatePending = false
-local _eventUpdateThrottle = 0.1  -- Minimum interval between event-driven DoUpdate bursts (seconds)
-local _lastEventUpdate = 0
+-- Forward declaration: tracks whether active state events are needed
+-- (set by UpdateEventRegistrations, checked by aura dispatcher subscription)
+local _activeStateEventsRegistered = false
+
+-- Performance: frame-show coalescing for event-driven DoUpdate.
+-- Show() on an already-shown frame is a no-op, so rapid events within
+-- the same render frame are automatically batched into a single OnUpdate.
+local _ctCoalesceFrame = CreateFrame("Frame")
+_ctCoalesceFrame:Hide()
+_ctCoalesceFrame:SetScript("OnUpdate", function(self)
+    self:Hide()
+    for _, bar in pairs(CustomTrackers.activeBars) do
+        if bar and bar:IsShown() and bar.DoUpdate then
+            bar.DoUpdate()
+        end
+    end
+end)
+
+-- Separate coalescing frame for UNIT_AURA (only updates bars with active state)
+local _ctAuraCoalesceFrame = CreateFrame("Frame")
+_ctAuraCoalesceFrame:Hide()
+_ctAuraCoalesceFrame:SetScript("OnUpdate", function(self)
+    self:Hide()
+    for _, bar in pairs(CustomTrackers.activeBars) do
+        if bar and bar:IsShown() and bar.DoUpdate and bar.config and bar.config.showActiveState ~= false then
+            bar.DoUpdate()
+        end
+    end
+end)
+
+-- Subscribe to centralized aura dispatcher (player only).
+-- Checks _activeStateEventsRegistered so it only does work when needed.
+if ns.AuraEvents then
+    ns.AuraEvents:Subscribe("player", function(unit, updateInfo)
+        if _activeStateEventsRegistered then
+            _ctAuraCoalesceFrame:Show()
+        end
+    end)
+end
 
 -- Performance: hoisted pcall wrapper functions (avoids anonymous closure allocation per call)
 local function SafeSetCooldown(cd, start, dur) cd:SetCooldown(start, dur) end
@@ -2741,7 +2774,7 @@ initFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 -- Only register SPELL_UPDATE_COOLDOWN, ACTIONBAR_UPDATE_COOLDOWN, UNIT_AURA,
 -- and spellcast events when at least one bar actually needs them.
 local _cooldownEventsRegistered = false
-local _activeStateEventsRegistered = false
+-- _activeStateEventsRegistered declared above (forward declaration for aura dispatcher)
 
 local function UpdateEventRegistrations()
     local needsCooldownEvents = false
@@ -2777,7 +2810,7 @@ local function UpdateEventRegistrations()
 
     if needsActiveStateEvents and not _activeStateEventsRegistered then
         _activeStateEventsRegistered = true
-        initFrame:RegisterEvent("UNIT_AURA")
+        -- UNIT_AURA handled by centralized dispatcher subscription
         initFrame:RegisterEvent("UNIT_SPELLCAST_START")
         initFrame:RegisterEvent("UNIT_SPELLCAST_STOP")
         initFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
@@ -2785,7 +2818,6 @@ local function UpdateEventRegistrations()
         initFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
     elseif not needsActiveStateEvents and _activeStateEventsRegistered then
         _activeStateEventsRegistered = false
-        initFrame:UnregisterEvent("UNIT_AURA")
         initFrame:UnregisterEvent("UNIT_SPELLCAST_START")
         initFrame:UnregisterEvent("UNIT_SPELLCAST_STOP")
         initFrame:UnregisterEvent("UNIT_SPELLCAST_SUCCEEDED")
@@ -2926,28 +2958,9 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
     -- can all fire multiple times per frame/GCD. Instead of calling DoUpdate on every event,
     -- we coalesce them with a minimum interval to prevent redundant full-bar scans.
     if event == "SPELL_UPDATE_COOLDOWN" or event == "ACTIONBAR_UPDATE_COOLDOWN" then
-        local now = GetTime()
-        if (now - _lastEventUpdate) >= _eventUpdateThrottle then
-            _lastEventUpdate = now
-            _eventUpdatePending = false
-            for _, bar in pairs(CustomTrackers.activeBars) do
-                if bar and bar:IsShown() and bar.DoUpdate then
-                    bar.DoUpdate()
-                end
-            end
-        elseif not _eventUpdatePending then
-            -- Schedule a deferred update to ensure we don't miss the final state
-            _eventUpdatePending = true
-            C_Timer.After(_eventUpdateThrottle, function()
-                _eventUpdatePending = false
-                _lastEventUpdate = GetTime()
-                for _, bar in pairs(CustomTrackers.activeBars) do
-                    if bar and bar:IsShown() and bar.DoUpdate then
-                        bar.DoUpdate()
-                    end
-                end
-            end)
-        end
+        -- Frame-show coalescing: batches rapid cooldown events within the
+        -- same render frame into a single DoUpdate pass (zero allocation).
+        _ctCoalesceFrame:Show()
         return
     end
 
@@ -2990,34 +3003,7 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
-    if event == "UNIT_AURA" then
-        local unit = ...
-        if unit == "player" then
-            -- Throttle: reuse same coalescing as cooldown events
-            local now = GetTime()
-            if (now - _lastEventUpdate) >= _eventUpdateThrottle then
-                _lastEventUpdate = now
-                _eventUpdatePending = false
-                for _, bar in pairs(CustomTrackers.activeBars) do
-                    if bar and bar:IsShown() and bar.DoUpdate and bar.config and bar.config.showActiveState ~= false then
-                        bar.DoUpdate()
-                    end
-                end
-            elseif not _eventUpdatePending then
-                _eventUpdatePending = true
-                C_Timer.After(_eventUpdateThrottle, function()
-                    _eventUpdatePending = false
-                    _lastEventUpdate = GetTime()
-                    for _, bar in pairs(CustomTrackers.activeBars) do
-                        if bar and bar:IsShown() and bar.DoUpdate and bar.config and bar.config.showActiveState ~= false then
-                            bar.DoUpdate()
-                        end
-                    end
-                end)
-            end
-        end
-        return
-    end
+    -- UNIT_AURA handled by centralized dispatcher subscription
 
     if event == "PLAYER_EQUIPMENT_CHANGED" then
         local slot = ...
