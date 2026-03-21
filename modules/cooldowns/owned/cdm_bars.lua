@@ -1587,14 +1587,14 @@ function CDMBars:UpdateOwnedBars()
 end
 
 ---------------------------------------------------------------------------
--- OWNED BAR TIMER: 50ms OnUpdate to update duration text + bar fill.
+-- OWNED BAR TIMER: 100ms OnUpdate to update duration text + bar fill.
 -- Uses DurationObject:GetRemainingDuration() for remaining time and
 -- bar._totalDuration (cached from auraData OOC) for the fill ratio.
 -- MirrorBlizzBar hooks handle fill when a Blizzard bar child exists;
 -- this OnUpdate handles owned bars that have no Blizzard bar child,
 -- or supplements the mirror during combat when hooks may lag.
 ---------------------------------------------------------------------------
-local BAR_TIMER_INTERVAL = 0.05  -- 50ms = ~20 FPS
+local BAR_TIMER_INTERVAL = 0.1  -- 100ms = ~10 FPS (sufficient for duration text)
 
 barTimerFrame:SetScript("OnUpdate", function(self, elapsed)
     self._elapsed = (self._elapsed or 0) + elapsed

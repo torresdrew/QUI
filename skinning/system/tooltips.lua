@@ -1267,29 +1267,51 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             RebuildTooltipList()
 
             -----------------------------------------------------------------
-            -- GameTooltip visibility watcher (OnShow hook, event-driven).
+            -- GameTooltip visibility watcher (separate OnUpdate frame).
+            --
+            -- TAINT SAFETY: Do NOT use HookScript("OnShow") or
+            -- hooksecurefunc(GameTooltip, "Show") here.  Both modify
+            -- GameTooltip's dispatch tables, permanently tainting the
+            -- frame.  When the world map's secure context later uses
+            -- GameTooltip (secureexecuterange → AreaPoiUtil →
+            -- GameTooltip_AddWidgetSet → RegisterForWidgetSet →
+            -- ProcessWidget), it encounters the tainted frame and
+            -- produces secret-value arithmetic errors in UIWidget
+            -- Setup functions (TextWithState, ItemDisplay, etc.).
+            --
+            -- Instead, a tiny watcher frame polls IsShown() each
+            -- OnUpdate to detect visibility transitions without
+            -- touching GameTooltip's internals.  The 1-frame detection
+            -- delay is imperceptible and the primary skin application
+            -- already happens synchronously via SharedTooltip_
+            -- SetBackdropStyle and TooltipDataProcessor hooks.
             -----------------------------------------------------------------
-            GameTooltip:HookScript("OnShow", function(self)
-                if not IsEnabled() then
-                    return
-                elseif InCombatLockdown() then
-                    -- Combat: re-hide NineSlice + refresh overlay colors only.
-                    pcall(CombatSafeReapply, self)
-                else
-                    if not skinnedTooltips[self] then
-                        pcall(SkinTooltip, self)
-                    else
-                        pcall(ReapplySkin, self)
+            do
+                local gtWasShown = false
+                local watcher = CreateFrame("Frame")
+                watcher:SetScript("OnUpdate", function()
+                    local shown = GameTooltip:IsShown()
+                    if shown == gtWasShown then return end
+                    gtWasShown = shown
+                    if not shown then return end
+                    -- GameTooltip just became visible
+                    if not IsEnabled() then return end
+                    if InCombatLockdown() then
+                        pcall(CombatSafeReapply, GameTooltip)
+                        return
                     end
-                    -- Defer font sizing to avoid tainting FontString metrics
-                    -- while Blizzard's tooltip chain is still running.
+                    if not skinnedTooltips[GameTooltip] then
+                        pcall(SkinTooltip, GameTooltip)
+                    else
+                        pcall(ReapplySkin, GameTooltip)
+                    end
                     C_Timer.After(0, function()
-                        if self:IsShown() then
-                            pcall(ApplyTooltipFontSizeToFrame, self)
+                        if GameTooltip:IsShown() then
+                            pcall(ApplyTooltipFontSizeToFrame, GameTooltip)
                         end
                     end)
-                end
-            end)
+                end)
+            end
 
             -- All tooltip modifications gated by master toggle + skinTooltips
             if not IsEnabled() then

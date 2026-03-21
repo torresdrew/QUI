@@ -2268,23 +2268,12 @@ function CDMIcons:UpdateCooldownsForType(viewerType)
     end
 end
 
-function CDMIcons:StartUpdateTicker()
-    if updateTicker then return end
-    updateTicker = C_Timer.NewTicker(0.5, function()
-        self:UpdateAllCooldowns()
-        -- Also update owned bars (aura-driven, no Blizzard mirror hooks)
-        if ns.CDMBars and ns.CDMBars.UpdateOwnedBars then
-            ns.CDMBars:UpdateOwnedBars()
-        end
-    end)
-end
-
-function CDMIcons:StopUpdateTicker()
-    if updateTicker then
-        updateTicker:Cancel()
-        updateTicker = nil
-    end
-end
+-- The 500ms update ticker has been removed — event-driven coalescing
+-- (SPELL_UPDATE_COOLDOWN, SPELL_UPDATE_CHARGES, BAG_UPDATE_COOLDOWN,
+-- UNIT_AURA) handles all cooldown/aura state changes.  A one-shot
+-- catch-up fires on PLAYER_REGEN_ENABLED below.
+function CDMIcons:StartUpdateTicker() end  -- no-op (kept for API compat)
+function CDMIcons:StopUpdateTicker() end   -- no-op
 
 ---------------------------------------------------------------------------
 -- CONFIGURE ICON (public wrapper)
@@ -2416,8 +2405,10 @@ function CustomCDM:UpdateAllCooldowns() CDMIcons:UpdateAllCooldowns() end
 -- matching action-bar behavior. Uses C_Spell.IsSpellInRange for spells.
 -- Polled at 250ms (no "player moved" event) + instant on target change.
 ---------------------------------------------------------------------------
-local RANGE_POLL_INTERVAL = 0.25
+local RANGE_POLL_INTERVAL_COMBAT = 0.25
+local RANGE_POLL_INTERVAL_IDLE = 1.0   -- relaxed OOC (range matters less)
 local rangePollElapsed = 0
+local rangePollInCombat = false
 
 -- Safe wrapper: C_Spell.IsSpellInRange can return secret values in Midnight
 local function SafeIsSpellInRange(spellID)
@@ -2564,6 +2555,8 @@ cdEventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
 cdEventFrame:RegisterEvent("BAG_UPDATE_COOLDOWN")
 cdEventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 cdEventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+cdEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+cdEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 -- UNIT_AURA handled by centralized dispatcher subscription (below)
 
 -- Frame-show coalescing for cooldown events: batches SPELL_UPDATE_COOLDOWN,
@@ -2591,6 +2584,18 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
         end
         return
     end
+    if event == "PLAYER_REGEN_DISABLED" then
+        rangePollInCombat = true
+        rangePollElapsed = 0  -- reset so combat interval kicks in immediately
+        return
+    end
+    if event == "PLAYER_REGEN_ENABLED" then
+        rangePollInCombat = false
+        -- One-shot catch-up: refresh all cooldowns after combat ends
+        -- (replaces the removed 500ms ticker as a safety net)
+        cdCoalesceFrame:Show()
+        return
+    end
     -- Coalesce cooldown events via frame-show pattern
     cdCoalesceFrame:Show()
 end)
@@ -2608,7 +2613,8 @@ end
 -- Only active when at least one tracker has rangeIndicator or usabilityIndicator.
 local function RangePollOnUpdate(self, elapsed)
     rangePollElapsed = rangePollElapsed + elapsed
-    if rangePollElapsed < RANGE_POLL_INTERVAL then return end
+    local interval = rangePollInCombat and RANGE_POLL_INTERVAL_COMBAT or RANGE_POLL_INTERVAL_IDLE
+    if rangePollElapsed < interval then return end
     rangePollElapsed = 0
     CDMIcons:UpdateAllIconRanges()
 end
