@@ -124,15 +124,19 @@ function CDMSpellData:GetCachedAuraDurObj(spellID)
     local buffBarViewer = _G["BuffBarCooldownViewer"]
     if not buffViewer and not buffBarViewer then return nil, nil, nil end
 
-    local function isBuffChild(ch)
+    local function isActiveBuffChild(ch)
         local vf = ch.viewerFrame
-        return vf and (vf == buffViewer or vf == buffBarViewer)
+        if not (vf and (vf == buffViewer or vf == buffBarViewer)) then return false end
+        -- Only trust hook data from shown children — hidden children retain
+        -- stale Cooldown hook caches after the buff drops.
+        local sok, shown = pcall(ch.IsShown, ch)
+        return sok and shown
     end
 
     local children = _spellIDToChild[spellID]
     if children then
         for _, child in ipairs(children) do
-            if isBuffChild(child) then
+            if isActiveBuffChild(child) then
                 local durObj = _durObjCache[child]
                 if durObj then
                     return durObj, _rawStartCache[child], _rawDurCache[child]
@@ -140,7 +144,7 @@ function CDMSpellData:GetCachedAuraDurObj(spellID)
             end
         end
         for _, child in ipairs(children) do
-            if isBuffChild(child) then
+            if isActiveBuffChild(child) then
                 local start = _rawStartCache[child]
                 if start then
                     return nil, start, _rawDurCache[child]
@@ -149,14 +153,14 @@ function CDMSpellData:GetCachedAuraDurObj(spellID)
         end
     end
 
-    -- Slow path: iterate caches filtered to buff children
+    -- Slow path: iterate caches filtered to shown buff children
     for ch, durObj in pairs(_durObjCache) do
-        if isBuffChild(ch) and ChildMatchesSpellID(ch, spellID) then
+        if isActiveBuffChild(ch) and ChildMatchesSpellID(ch, spellID) then
             return durObj, _rawStartCache[ch], _rawDurCache[ch]
         end
     end
     for ch, start in pairs(_rawStartCache) do
-        if isBuffChild(ch) and ChildMatchesSpellID(ch, spellID) then
+        if isActiveBuffChild(ch) and ChildMatchesSpellID(ch, spellID) then
             return nil, start, _rawDurCache[ch]
         end
     end

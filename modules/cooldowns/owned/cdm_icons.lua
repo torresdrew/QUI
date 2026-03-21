@@ -46,6 +46,31 @@ local function IsSafeNumeric(val)
     return type(val) == "number"
 end
 
+---------------------------------------------------------------------------
+-- CDM AURA DEBUG
+-- Enabled via /qui debug.  Prints aura resolution details per spell to
+-- chat so you can see exactly why an icon shows/hides before & during combat.
+-- State-change only: only prints when the active/inactive verdict OR the
+-- resolution source changes for a given spell.  Event-driven messages
+-- (UNIT_AURA patches, combat transitions) always print.
+---------------------------------------------------------------------------
+local _auraDebugPrevState = {}   -- [spellID] = "last verdict string"
+
+local function AuraDebug(spellID, msg, ...)
+    local QUI = _G.QUI
+    if not QUI or not QUI.DEBUG_MODE then return end
+    local full = string.format(msg, ...)
+    -- For per-spell polling messages, only print on state change
+    if spellID and spellID ~= 0 then
+        local key = tostring(spellID)
+        if _auraDebugPrevState[key] == full then return end
+        _auraDebugPrevState[key] = full
+    end
+    local name = spellID and spellID ~= 0 and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
+    local prefix = string.format("|cff34D399CDM|r [%s/%s]", name or "—", tostring(spellID or "—"))
+    QUI:DebugPrint(prefix .. " " .. full)
+end
+
 -- Per-spell override lookup helper.  Returns the cached override table
 -- for the icon's spell/container, or nil.  Cheap (two table lookups).
 local function GetIconSpellOverride(icon)
@@ -82,6 +107,10 @@ local updateTicker = nil
 -- Forward declarations (defined in AURA LOOKUP / CACHE sections below)
 local LookupAura
 local _spellToAuraInstance = {}  -- [spellId] = auraInstanceID (for GetAuraDuration)
+-- All aura spell IDs we track (both mapped and self-mapping like DnD).
+-- Built OOC by FullRebuildAuraCache.  Used by PatchAuraCacheFromEvent step 4
+-- to find candidates for unmapped combat instances.
+local _trackedAuraSpellIDs = {}  -- [auraSpellID] = true
 
 ---------------------------------------------------------------------------
 -- DYNAMIC CHILD LOOKUP: Scan ALL viewer children to find the one with
@@ -991,25 +1020,32 @@ local function UpdateIconCooldown(icon)
                 -- Death and Decay ability→DnD buff).  The entry's spellID may
                 -- be the ability ID rather than the actual buff spell ID.
                 local auraMap = ns.CDMSpellData and ns.CDMSpellData._abilityToAuraSpellID
+                local origAuraSpellID = auraSpellID
                 if auraMap and auraMap[auraSpellID] then
                     auraSpellID = auraMap[auraSpellID]
+                    AuraDebug(origAuraSpellID, "ability→aura mapped: %s → %s", tostring(origAuraSpellID), tostring(auraSpellID))
                 end
                 if auraSpellID then
-                    -- Try to get full auraData via spell ID lookups
-                    local auraData = LookupAura(auraSpellID, entry)
+                    -- Try to get full auraData via spell ID lookups.
+                    -- LookupAura returns (auraData, unit) where unit is
+                    -- "player" or "target" depending on where the aura was found.
+                    local auraData, lookupUnit = LookupAura(auraSpellID, entry)
 
                     -- Resolve auraInstanceID from auraData, Blizzard child frame,
                     -- or UNIT_AURA event cache.  The child frame's auraInstanceID
                     -- is the most reliable combat source — maintained by C-side code.
                     local blzChild = entry._blizzChild
                     local childAuraInstID
-                    -- Only trust child's auraInstanceID if the child is still
-                    -- shown — Blizzard hides children C-side when buffs drop
-                    -- but doesn't nil their auraInstanceID field.
-                    if blzChild and blzChild.auraInstanceID then
+                    -- Only trust child data if the child is still shown —
+                    -- Blizzard hides children C-side when buffs drop but
+                    -- doesn't nil their auraInstanceID or clear their
+                    -- Cooldown hook caches.  Clear stale references entirely.
+                    if blzChild then
                         local cok, cshown = pcall(blzChild.IsShown, blzChild)
                         if cok and cshown then
-                            childAuraInstID = SafeValue(blzChild.auraInstanceID, nil)
+                            if blzChild.auraInstanceID then
+                                childAuraInstID = SafeValue(blzChild.auraInstanceID, nil)
+                            end
                         else
                             -- Child is hidden/stale — clear cached reference
                             entry._blizzChild = nil
@@ -1037,12 +1073,22 @@ local function UpdateIconCooldown(icon)
                     -- GetAuraDataByAuraInstanceID returns nil for expired auras
                     -- even during combat (secret fields, but non-nil result).
                     if auraInstID and not auraData and not childAuraInstID then
-                        local auraUnit = (blzChild and blzChild.auraDataUnit) or "player"
-                        local vok, vdata = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, auraUnit, auraInstID)
+                        local valUnit = (blzChild and blzChild.auraDataUnit) or lookupUnit or "player"
+                        local vok, vdata = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, valUnit, auraInstID)
                         if vok and not vdata then
+                            AuraDebug(auraSpellID, "cache instID %s STALE (GetAuraData=nil), discarding",
+                                tostring(auraInstID))
                             auraInstID = nil
                         end
                     end
+
+                    -- Debug: log resolution sources
+                    AuraDebug(auraSpellID, "resolve: auraData=%s child=%s(%s) cache=%s combat=%s",
+                        auraData and "YES" or "no",
+                        childAuraInstID and tostring(childAuraInstID) or "no",
+                        blzChild and (select(2, pcall(blzChild.IsShown, blzChild)) and "shown" or "hidden") or "nil",
+                        _spellToAuraInstance[auraSpellID] and tostring(_spellToAuraInstance[auraSpellID]) or "no",
+                        InCombatLockdown() and "YES" or "no")
 
                     -- Hook cache: DurationObject + raw start/dur from Blizzard viewer child.
                     -- CRITICAL: For aura containers, only trust data from buff viewer
@@ -1089,12 +1135,21 @@ local function UpdateIconCooldown(icon)
                     local hookRawValid = (hookStart and hookDur and not hookRawIsGCD)
                     if auraData or auraInstID or hookDurObj or hookRawValid then
                         icon._auraActive = true
+                        -- Debug: which source made it active
+                        local activeSrc = auraData and "auraData"
+                            or (auraInstID and ("instID:" .. tostring(auraInstID)))
+                            or (hookDurObj and "hookDurObj")
+                            or "hookRaw"
+                        AuraDebug(auraSpellID, "|cff00ff00ACTIVE|r via %s", activeSrc)
 
                         local swipeSet = false
 
                         -- 1. API path: GetAuraDuration → SetCooldownFromDurationObject
-                        -- Use auraDataUnit from Blizzard child (supports target debuffs like Reaper's Mark)
-                        local auraUnit = (blzChild and blzChild.auraDataUnit) or "player"
+                        -- Use auraDataUnit from Blizzard child, or the unit LookupAura
+                        -- found the aura on (critical for target debuffs like Reaper's Mark).
+                        local auraUnit = (blzChild and blzChild.auraDataUnit)
+                            or lookupUnit
+                            or "player"
                         if not swipeSet and icon.Cooldown and auraInstID and C_UnitAuras.GetAuraDuration then
                             local dok, durObj = pcall(C_UnitAuras.GetAuraDuration, auraUnit, auraInstID)
                             if dok and durObj and icon.Cooldown.SetCooldownFromDurationObject then
@@ -1150,6 +1205,7 @@ local function UpdateIconCooldown(icon)
                         return  -- Aura path complete, skip cooldown path below
                     else
                         -- Aura genuinely absent
+                        AuraDebug(auraSpellID, "|cffff4444INACTIVE|r — no auraData, no instID, no hook")
                         icon._auraActive = false
                         if icon.Cooldown then
                             icon.Cooldown:Clear()
@@ -1624,10 +1680,10 @@ local _resolvedAuraIDs = {}  -- [ownedSpellID] = resolvedSpellID
 
 ---------------------------------------------------------------------------
 -- AURA LOOKUP WITH FALLBACK CHAIN
--- Try: resolved ID → primary ID → alt IDs.
--- Returns auraData or nil.  When all ID lookups fail during combat,
--- callers fall back to the presence cache + _spellToAuraInstance for
--- the DurationObject path (auraInstanceID is known from UNIT_AURA events).
+-- Try: resolved ID → primary ID → alt IDs → target debuff.
+-- Returns auraData, auraUnit ("player" or "target").
+-- When all ID lookups fail during combat, callers fall back to the
+-- presence cache + _spellToAuraInstance for the DurationObject path.
 ---------------------------------------------------------------------------
 LookupAura = function(spellID, entry)
     if not C_UnitAuras or not C_UnitAuras.GetPlayerAuraBySpellID then return nil end
@@ -1638,7 +1694,7 @@ LookupAura = function(spellID, entry)
     local resolvedID = _resolvedAuraIDs[primaryID]
     if resolvedID then
         local ok, ad = pcall(C_UnitAuras.GetPlayerAuraBySpellID, resolvedID)
-        if ok and ad then return ad end
+        if ok and ad then return ad, "player" end
     end
 
     -- 2. Try primary ID (if different from resolved)
@@ -1646,7 +1702,7 @@ LookupAura = function(spellID, entry)
         local ok, ad = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
         if ok and ad then
             if not InCombatLockdown() then _resolvedAuraIDs[primaryID] = spellID end
-            return ad
+            return ad, "player"
         end
     end
 
@@ -1663,7 +1719,7 @@ LookupAura = function(spellID, entry)
             local ok2, ad2 = pcall(C_UnitAuras.GetPlayerAuraBySpellID, altID)
             if ok2 and ad2 then
                 if not InCombatLockdown() then _resolvedAuraIDs[primaryID] = altID end
-                return ad2
+                return ad2, "player"
             end
         end
     end
@@ -1671,10 +1727,10 @@ LookupAura = function(spellID, entry)
     -- 4. Target debuff fallback (e.g. Reaper's Mark)
     if entry and entry.name and entry.name ~= "" and C_UnitAuras.GetAuraDataBySpellName then
         local ok, ad = pcall(C_UnitAuras.GetAuraDataBySpellName, "target", entry.name, "HARMFUL")
-        if ok and ad then return ad end
+        if ok and ad then return ad, "target" end
         -- Also try HELPFUL on target (some abilities are buffs on friendly target)
         local ok2, ad2 = pcall(C_UnitAuras.GetAuraDataBySpellName, "target", entry.name, "HELPFUL")
-        if ok2 and ad2 then return ad2 end
+        if ok2 and ad2 then return ad2, "target" end
     end
 
     return nil
@@ -1759,18 +1815,42 @@ local function FullRebuildAuraCache(wipe)
         end
     end
 
-    -- Build ability ID → auraInstanceID aliases.
+    -- Build ability ID → auraInstanceID aliases AND the tracked aura set.
     -- Tracked spells use ability/override IDs that differ from the real buff
     -- spell ID in _spellToAuraInstance.  Query GetPlayerAuraBySpellID for
     -- each tracked icon's IDs; when found, alias them to the same instance.
+    -- Also populate _trackedAuraSpellIDs for combat UNIT_AURA pairing.
+    local auraMap = ns.CDMSpellData and ns.CDMSpellData._abilityToAuraSpellID
+    table.wipe(_trackedAuraSpellIDs)
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             local entry = icon._spellEntry
             if entry and entry._isOwnedEntry then
+                -- Determine container type for this entry
+                local QUICore2 = ns.Addon
+                local ncdm2 = QUICore2 and QUICore2.db and QUICore2.db.profile and QUICore2.db.profile.ncdm
+                local cDB2 = ncdm2 and (ncdm2[entry.viewerType] or (ncdm2.containers and ncdm2.containers[entry.viewerType]))
+                local cType2 = cDB2 and cDB2.containerType
+                if not cType2 then
+                    local vt = entry.viewerType
+                    cType2 = (vt == "buff" or vt == "trackedBar") and "aura" or "cooldown"
+                end
+                local isAuraContainer = (cType2 == "aura" or cType2 == "auraBar")
+
                 local ids = {}
                 if entry.overrideSpellID then ids[#ids+1] = entry.overrideSpellID end
                 if entry.spellID and entry.spellID ~= entry.overrideSpellID then ids[#ids+1] = entry.spellID end
                 if entry.id and entry.id ~= entry.spellID and entry.id ~= entry.overrideSpellID then ids[#ids+1] = entry.id end
+
+                -- Register all aura spell IDs we track (including self-mapping).
+                -- Used by PatchAuraCacheFromEvent to identify combat candidates.
+                if isAuraContainer then
+                    for _, queryID in ipairs(ids) do
+                        local resolvedAura = (auraMap and auraMap[queryID]) or queryID
+                        _trackedAuraSpellIDs[resolvedAura] = true
+                    end
+                end
+
                 for _, queryID in ipairs(ids) do
                     if not _spellToAuraInstance[queryID] then
                         local ok, ad = pcall(C_UnitAuras.GetPlayerAuraBySpellID, queryID)
@@ -1820,6 +1900,7 @@ local function PatchAuraCacheFromEvent(updateInfo)
                         end
                     end
                     -- Stash as orphan for reassignment
+                    AuraDebug(sid, "UNIT_AURA removed instID %s → orphaned", tostring(safeIid))
                     if not orphanedSpells then orphanedSpells = {} end
                     orphanedSpells[#orphanedSpells + 1] = sid
                 end
@@ -1851,6 +1932,7 @@ local function PatchAuraCacheFromEvent(updateInfo)
             local iid = unmappedIIDs[i]
             _auraInstanceToSpell[iid] = sid
             _spellToAuraInstance[sid] = iid
+            AuraDebug(sid, "UNIT_AURA orphan reassigned → instID %s (refresh)", tostring(iid))
             -- Update alias entries (ability IDs that pointed to old instance)
             for key, oldIid in pairs(_spellToAuraInstance) do
                 if key ~= sid and oldIid ~= iid and _auraInstanceToSpell[oldIid] == nil then
@@ -1871,35 +1953,60 @@ local function PatchAuraCacheFromEvent(updateInfo)
 
     -- 4. New aura applications in combat (no orphan to pair with).
     --    Try to identify unmapped IIDs by finding tracked aura spells
-    --    that currently lack an instance.  Only attempt when there is
-    --    exactly one candidate to avoid mismatches.
-    if unmappedIIDs and auraMap then
+    --    that currently lack an instance.  Uses _trackedAuraSpellIDs
+    --    (built OOC) which includes self-mapping spells like DnD.
+    --    When multiple candidates exist, try GetAuraDataByAuraInstanceID
+    --    to validate the match before pairing.
+    if unmappedIIDs and next(_trackedAuraSpellIDs) then
         for _, iid in ipairs(unmappedIIDs) do
             if not _auraInstanceToSpell[iid] then
                 -- Collect tracked aura spell IDs that have no active instance
                 local candidates = nil
                 local candidateCount = 0
-                for _, auraSpellID in pairs(auraMap) do
+                for auraSpellID in pairs(_trackedAuraSpellIDs) do
                     if not _spellToAuraInstance[auraSpellID] then
-                        -- Deduplicate (multiple ability IDs can map to same aura)
-                        if not candidates or not candidates[auraSpellID] then
-                            if not candidates then candidates = {} end
+                        if not candidates then candidates = {} end
+                        if not candidates[auraSpellID] then
                             candidates[auraSpellID] = true
                             candidateCount = candidateCount + 1
                         end
                     end
                 end
-                -- Only pair when exactly one candidate — avoid mismatches
+                local targetSid
                 if candidateCount == 1 then
-                    local targetSid = next(candidates)
-                    _auraInstanceToSpell[iid] = targetSid
-                    _spellToAuraInstance[targetSid] = iid
-                    -- Create ability aliases
-                    for abilityID, auraID in pairs(auraMap) do
-                        if auraID == targetSid then
-                            _spellToAuraInstance[abilityID] = iid
+                    targetSid = next(candidates)
+                elseif candidateCount > 1 and C_UnitAuras.GetAuraDataByAuraInstanceID then
+                    -- Multiple candidates — use GetAuraDataByAuraInstanceID to
+                    -- read the aura's name (often readable even with secret spellId)
+                    -- and match against tracked spell names.
+                    local vok, vdata = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, "player", iid)
+                    if vok and vdata and vdata.name then
+                        local safeName = SafeValue(vdata.name, nil)
+                        if safeName then
+                            for candSid in pairs(candidates) do
+                                local nameOk, candName = pcall(C_Spell.GetSpellName, candSid)
+                                if nameOk and candName == safeName then
+                                    targetSid = candSid
+                                    break
+                                end
+                            end
                         end
                     end
+                end
+                if targetSid then
+                    _auraInstanceToSpell[iid] = targetSid
+                    _spellToAuraInstance[targetSid] = iid
+                    AuraDebug(targetSid, "UNIT_AURA new combat aura → instID %s (%d candidates)", tostring(iid), candidateCount)
+                    -- Create ability aliases
+                    if auraMap then
+                        for abilityID, auraID in pairs(auraMap) do
+                            if auraID == targetSid then
+                                _spellToAuraInstance[abilityID] = iid
+                            end
+                        end
+                    end
+                else
+                    AuraDebug(0, "UNIT_AURA unmapped instID %s — %d candidates, no match", tostring(iid), candidateCount or 0)
                 end
             end
         end
@@ -1914,10 +2021,27 @@ _auraCacheFrame:SetScript("OnEvent", function(_, event, unit, updateInfo)
     if event == "PLAYER_REGEN_DISABLED" then
         -- Don't wipe — preserve OOC cache (aliases, Bone Shield, etc.).
         -- Just augment with any new aura data from ForEachAura.
+        AuraDebug(0, "|cffffff00COMBAT START|r — augmenting aura cache (no wipe)")
         FullRebuildAuraCache(false)
         _inCombatCaching = true
+        -- Debug: dump active cache entries and tracked set
+        if _G.QUI and _G.QUI.DEBUG_MODE then
+            local cacheCount = 0
+            for sid, iid in pairs(_spellToAuraInstance) do
+                cacheCount = cacheCount + 1
+                if cacheCount <= 10 then
+                    AuraDebug(sid, "  cache: spell %s → instID %s", tostring(sid), tostring(iid))
+                end
+            end
+            local trackedCount = 0
+            for sid in pairs(_trackedAuraSpellIDs) do
+                trackedCount = trackedCount + 1
+            end
+            AuraDebug(0, "  cache: %d entries, tracked aura set: %d spells", cacheCount, trackedCount)
+        end
     elseif event == "PLAYER_REGEN_ENABLED" then
         _inCombatCaching = false
+        AuraDebug(0, "|cffffff00COMBAT END|r — full wipe + rebuild")
         -- OOC: full wipe + rebuild with clean API data
         FullRebuildAuraCache(true)
     elseif event == "UNIT_AURA" then
