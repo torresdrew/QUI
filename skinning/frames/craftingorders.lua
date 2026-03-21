@@ -349,6 +349,8 @@ local function SkinBrowseOrders(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         -- Filter dropdown (don't strip textures — preserves the clear-filter X button)
         if searchBar.FilterDropdown then
             SkinBase.CreateBackdrop(searchBar.FilterDropdown, sr, sg, sb, sa, math.min(bgr + 0.07, 1), math.min(bgg + 0.07, 1), math.min(bgb + 0.07, 1), 1)
+            local bd = SkinBase.GetBackdrop(searchBar.FilterDropdown)
+            if bd then bd:SetFrameLevel(math.max(0, bd:GetFrameLevel() - 1)) end
         end
     end
 

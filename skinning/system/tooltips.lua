@@ -438,27 +438,34 @@ local function GetOrCreateSkinFrame(tooltip)
     if frame.SetSnapToPixelGrid then frame:SetSnapToPixelGrid(true) end
     if frame.SetTexelSnappingBias then frame:SetTexelSnappingBias(0) end
 
-    -- TAINT SAFETY: Override BackdropTemplate's OnSizeChanged with a
-    -- secret-value guard. When the world map's secure context processes
-    -- GameTooltip (via AreaPoiUtil → GameTooltip_AddWidgetSet), layout
-    -- propagates to this addon-created child. BackdropTemplate's handler
-    -- does arithmetic on GetWidth()/GetHeight(), which return secret values
-    -- in the secure context (the frame is addon-tainted). Checking for
-    -- secret values before delegating prevents the arithmetic error.
-    -- The backdrop still updates correctly via explicit SetBackdrop calls
-    -- in ApplyOverlayBackdrop during normal tooltip skinning.
-    if issecretvalue then
-        frame:SetScript("OnSizeChanged", function(self)
+    -- TAINT + COLOR SAFETY: Override BackdropTemplate's OnSizeChanged.
+    -- 1) Secret-value guard: when the world map's secure context processes
+    --    GameTooltip (via AreaPoiUtil), layout propagates to this child.
+    --    GetWidth() returns secret values — bail to prevent arithmetic errors.
+    -- 2) Color re-application: OnBackdropSizeChanged → SetupPieceVisuals
+    --    re-creates backdrop pieces with default WHITE8x8 color but does NOT
+    --    re-apply the stored backdropColor/backdropBorderColor. Without this,
+    --    any tooltip resize after ApplyOverlayBackdrop (common after combat
+    --    ends in raids/instances) leaves the overlay white until /reload.
+    frame:SetScript("OnSizeChanged", function(self)
+        if issecretvalue then
             local w = self:GetWidth()
             if issecretvalue(w) then return end
-            if self.OnBackdropSizeChanged then
-                self:OnBackdropSizeChanged()
-            end
+        end
+        if self.OnBackdropSizeChanged then
+            self:OnBackdropSizeChanged()
+        end
+        -- Re-apply stored colors after piece recreation
+        if self.backdropColor then
+            self:SetBackdropColor(self.backdropColor:GetRGBA())
+        end
+        if self.backdropBorderColor then
+            self:SetBackdropBorderColor(self.backdropBorderColor:GetRGBA())
             -- Backdrop piece rebuilds can briefly default WHITE8x8 vertex colors.
             -- Re-apply our last known skin colors after every backdrop resize.
             ReapplyOverlayColors(self)
-        end)
-    end
+        end
+    end)
 
     skinFrames[tooltip] = frame
 
