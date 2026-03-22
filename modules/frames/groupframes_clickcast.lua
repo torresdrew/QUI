@@ -24,6 +24,7 @@ local hookedFrames = Helpers.CreateStateTable() -- Tracks frames with OnEnter/On
 local secureWrappedFrames = Helpers.CreateStateTable() -- Tracks frames with secure WrapScript (permanent)
 local activeBindings = {} -- Resolved mouse bindings for current spec
 local keyboardBindings = {} -- Resolved keyboard bindings for current spec
+local smartResSwapped = setmetatable({}, { __mode = "k" }) -- Per-frame: true when OnEnter swapped to res
 local isEnabled = false
 
 ---------------------------------------------------------------------------
@@ -424,16 +425,17 @@ local function SetupFrameClickCast(frame)
                 local unit = self:GetAttribute("unit")
                 if unit and UnitIsDeadOrGhost(unit) and (UnitIsConnected(unit) or not UnitIsPlayer(unit)) then
                     -- Swap left click to res
+                    smartResSwapped[self] = true
                     self:SetAttribute("type1", "macro")
                     self:SetAttribute("macrotext1", resMacro)
                 end
             end)
             frame:HookScript("OnLeave", function(self)
+                if not smartResSwapped[self] then return end
+                smartResSwapped[self] = nil
                 if not isEnabled then return end
-                local ccdb = GetDB()
-                if not ccdb or not ccdb.clickCast or not ccdb.clickCast.smartRes then return end
                 if InCombatLockdown() then return end
-                -- Restore normal binding
+                -- Restore normal binding (only needed because OnEnter swapped to res)
                 local normalBinding = nil
                 for _, b in ipairs(activeBindings) do
                     if b.button == "LeftButton" and (b.modifiers or "") == "" then
@@ -459,7 +461,7 @@ local function SetupFrameClickCast(frame)
                         self:SetAttribute("type1", actionType)
                     end
                 else
-                    -- Default: target
+                    -- Default: target (safe fallback when undoing a res swap)
                     self:SetAttribute("type1", "target")
                 end
             end)

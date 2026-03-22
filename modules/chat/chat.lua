@@ -491,17 +491,17 @@ end
 
 -- Check if message contains protected/secure content
 local function IsMessageProtected(message)
-    -- BUG-009: Secret values are truthy but can't be indexed - check type first
     if not message or type(message) ~= "string" then return false end
-    -- Secret values use |K...|k pattern
+    -- Secret strings pass the type check but can't be indexed — treat as protected
+    if Helpers.IsSecretValue(message) then return true end
+    -- Protected content uses |K...|k pattern
     if message:find("|K") then return true end
     return false
 end
 
 -- Strip textures, icons, and hyperlink formatting from message
 local function CleanMessage(message)
-    -- BUG-009: Secret values are truthy but can't be indexed - check type first
-    if not message or type(message) ~= "string" then return "" end
+    if not message or type(message) ~= "string" or Helpers.IsSecretValue(message) then return "" end
 
     local cleaned = message
     -- Remove texture escapes |T...|t

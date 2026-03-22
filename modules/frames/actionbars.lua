@@ -1701,10 +1701,13 @@ local function BuildBar(barKey)
             end
             btn:Show()
             -- Force the template to update its visuals (icon, cooldown, count, etc.)
+            -- pcall: addon code is in the call stack, so Blizzard's Update may hit
+            -- secret-value comparisons and throw.  The button will self-correct on the
+            -- next natural event cycle (ACTIONBAR_SLOT_CHANGED, etc.).
             if ActionButton_Update then
-                ActionButton_Update(btn)
+                pcall(ActionButton_Update, btn)
             elseif btn.Update then
-                btn:Update()
+                pcall(btn.Update, btn)
             end
             buttons[i] = btn
         end
@@ -1716,9 +1719,28 @@ local function BuildBar(barKey)
         -- These use their frame ID for slot lookup (not the action attribute),
         -- so we must preserve SetID and NOT set an action attribute.
         if barFrame then
+            -- Purge Edit Mode's isShownExternal before reparenting to avoid
+            -- tainting the Edit Mode system.  Writing enough nil keys pushes
+            -- the tainted entry off the secure-variable tracking list.
+            if barFrame.system then
+                barFrame.isShownExternal = nil
+                local c = 42
+                repeat
+                    if barFrame[c] == nil then
+                        barFrame[c] = nil
+                    end
+                    c = c + 1
+                until issecurevariable(barFrame, "isShownExternal")
+            end
             barFrame:UnregisterAllEvents()
             barFrame:SetParent(hiddenBarParent)
-            barFrame:Hide()
+            -- Use the original C-side Hide to avoid Edit Mode's Lua override
+            -- which can propagate taint on managed frames.
+            if barFrame.HideBase then
+                barFrame:HideBase()
+            else
+                barFrame:Hide()
+            end
             -- Neutralize UpdateGridLayout on the hidden bar.  ActionBarController
             -- still calls StanceBar:Update() → UpdateState() → UpdateGridLayout()
             -- even after reparenting.  Because addon code tainted the frame by
