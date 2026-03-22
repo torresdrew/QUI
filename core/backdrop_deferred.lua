@@ -39,8 +39,9 @@ local _backdropRetryCount = 0
 -- @param frame The frame to set backdrop on (must have BackdropTemplate mixed in)
 -- @param backdropInfo The backdrop info table, or nil to remove backdrop
 -- @param borderColor Optional {r,g,b,a} table for border color after backdrop is set
+-- @param bgColor Optional {r,g,b,a} table for background color after backdrop is set
 -- @return boolean True if backdrop was set immediately, false if deferred
-function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
+function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor, bgColor)
     if not frame or not frame.SetBackdrop then return false end
 
     -- Check if frame has valid (non-secret) dimensions
@@ -53,7 +54,7 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
 
     -- If dimensions are secret/invalid, defer the backdrop setup
     if not hasValidSize then
-        _pendingBackdropData[frame] = { info = backdropInfo, borderColor = borderColor }
+        _pendingBackdropData[frame] = { info = backdropInfo, borderColor = borderColor, bgColor = bgColor }
         QUICore.__pendingBackdrops = QUICore.__pendingBackdrops or {}
         QUICore.__pendingBackdrops[frame] = true
 
@@ -104,6 +105,10 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                                     local c = pendingData.borderColor
                                     pendingFrame:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1)
                                 end
+                                if pendingData.info and pendingData.bgColor then
+                                    local c = pendingData.bgColor
+                                    pendingFrame:SetBackdropColor(c[1], c[2], c[3], c[4] or 1)
+                                end
                                 _pendingBackdropData[pendingFrame] = nil
                                 processed[#processed + 1] = pendingFrame
                             end
@@ -139,7 +144,7 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
     if InCombatLockdown() then
         local alreadyPending = QUICore.__pendingBackdrops and QUICore.__pendingBackdrops[frame]
         if not alreadyPending then
-            _pendingBackdropData[frame] = { info = backdropInfo, borderColor = borderColor }
+            _pendingBackdropData[frame] = { info = backdropInfo, borderColor = borderColor, bgColor = bgColor }
 
             if not QUICore.__backdropEventFrame then
                 local eventFrame = CreateFrame("Frame")
@@ -157,6 +162,10 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
                                     if pendingData.info and pendingData.borderColor then
                                         local c = pendingData.borderColor
                                         pendingFrame:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1)
+                                    end
+                                    if pendingData.info and pendingData.bgColor then
+                                        local c = pendingData.bgColor
+                                        pendingFrame:SetBackdropColor(c[1], c[2], c[3], c[4] or 1)
                                     end
                                     _pendingBackdropData[pendingFrame] = nil
                                     QUICore.__pendingBackdrops[pendingFrame] = nil
@@ -195,8 +204,13 @@ function QUICore.SafeSetBackdrop(frame, backdropInfo, borderColor)
 
     -- Safe to set backdrop now
     local setOk = pcall(frame.SetBackdrop, frame, backdropInfo)
-    if setOk and backdropInfo and borderColor then
-        frame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4] or 1)
+    if setOk and backdropInfo then
+        if borderColor then
+            frame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4] or 1)
+        end
+        if bgColor then
+            frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+        end
     end
     return setOk
 end

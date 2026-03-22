@@ -234,6 +234,7 @@ local function BuildClickCastGeneral(content, cc, refreshClickCast, startY, stat
         { key = "targettarget", label = "Target of Target" },
         { key = "focus",        label = "Focus" },
         { key = "pet",          label = "Pet" },
+        { key = "boss",         label = "Boss" },
     }
 
     for _, info in ipairs(ufFrames) do

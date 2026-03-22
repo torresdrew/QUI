@@ -130,11 +130,10 @@ function QUI:SlashCommandOpen(input)
                         end
                     end
                 end
-                -- Check for orphaned overlay: has BackdropTemplate + backdrop set,
-                -- but backdropColor is nil — pieces render as default WHITE8x8.
-                -- GetBackdropColor returns 0,0,0,0 when backdropColor is nil,
-                -- so the white-check above misses these.
-                if f.backdropInfo and not f.backdropColor and f.GetBackdropColor then
+                -- Check for orphaned overlay: has BackdropTemplate + backdrop with bgFile,
+                -- but backdropColor is nil — CENTER piece renders as default white.
+                -- Border-only backdrops (no bgFile) are excluded — no background to be white.
+                if f.backdropInfo and f.backdropInfo.bgFile and not f.backdropColor and f.GetBackdropColor then
                     local h = f:GetHeight()
                     if not isS(h) and h and h > 10 then
                         count = count + 1
@@ -280,7 +279,7 @@ end
 local function RecoverQUIBackdrops()
     local f = EnumerateFrames()
     while f do
-        if f._quiBgR and f.backdropInfo and not f.backdropColor then
+        if f._quiBgR and f.backdropInfo and f.backdropInfo.bgFile and not f.backdropColor then
             pcall(f.SetBackdropColor, f, f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
             if f._quiBorderR then
                 pcall(f.SetBackdropBorderColor, f, f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)

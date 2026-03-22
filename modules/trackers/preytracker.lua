@@ -33,7 +33,7 @@ local AMBUSH_PATTERN = "ambush"
 
 local FONT_FLAGS = "OUTLINE"
 local MAX_TICKS = 3
-local COMPLETION_HOLD_TIME = 3
+local COMPLETION_HOLD_TIME = 8
 local SPARK_WIDTH = 32
 local SPARK_HEIGHT_MULT = 2.5
 local DEFAULT_FALLBACK_TEXTURE = "Interface\\Buttons\\WHITE8x8"
@@ -1370,9 +1370,22 @@ local function UpdatePreyState()
 
     if State.isPreviewMode then return end
 
+    -- During completion hold, keep showing 100% — don't let widget data overwrite
+    if State.completionUntil > 0 and GetTime() < State.completionUntil then
+        return
+    end
+
     -- Try two detection paths: quest API and widget scan
     local questID = GetActivePreyQuest()
     local widgetID, widgetInfo = ScanPreyWidgets()
+
+    -- Check if the quest is flagged completed (catches kills even if QUEST_TURNED_IN is delayed)
+    if questID and C_QuestLog.IsQuestFlaggedCompleted and C_QuestLog.IsQuestFlaggedCompleted(questID) then
+        if State.activeQuestID and State.completionUntil == 0 then
+            OnQuestCompleted(State.activeQuestID)
+        end
+        return
+    end
 
     -- We have an active prey if either the quest API or widget scan found something
     local hasActivePrey = questID ~= nil or widgetInfo ~= nil

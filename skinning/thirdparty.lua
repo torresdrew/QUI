@@ -88,10 +88,10 @@ local function SuppressFrame(f)
         end
     end
 
-    -- Orphaned overlay: backdropInfo set but backdropColor nil → WHITE8x8
-    -- renders with default white vertex color. GetBackdropColor returns 0,0,0,0
-    -- so the white-check above misses these.
-    if f.backdropInfo and not f.backdropColor and f.GetBackdropColor then
+    -- Orphaned overlay: backdropInfo set with bgFile but backdropColor nil →
+    -- CENTER piece renders with default white vertex color.
+    -- Only flag when bgFile is present (border-only backdrops have no background to be white).
+    if f.backdropInfo and f.backdropInfo.bgFile and not f.backdropColor and f.GetBackdropColor then
         local hok, h = pcall(f.GetHeight, f)
         if hok and not isS(h) and h and h > 10 then
             suppressingBackdrop = true
@@ -184,6 +184,65 @@ if BackdropTemplateMixin and BackdropTemplateMixin.SetBackdropColor then
             pcall(self.SetBackdropBorderColor, self, 0, 0, 0, 1)
             suppressingBackdrop = false
             processed[self] = true
+        end
+    end)
+end
+
+---------------------------------------------------------------------------
+-- Real-time hook — catch orphaned overlays (SetBackdrop without SetBackdropColor)
+---------------------------------------------------------------------------
+
+-- Weak-keyed pending set for frames that need deferred orphan check.
+-- After SetBackdrop, backdropColor is always nil until SetBackdropColor runs.
+-- We defer the check to give callers time to call SetBackdropColor.
+local pendingOrphanCheck = setmetatable({}, { __mode = "k" })
+local orphanTimerRunning = false
+
+local function ProcessPendingOrphans()
+    orphanTimerRunning = false
+    local isS = issecretvalue
+    for f in pairs(pendingOrphanCheck) do
+        -- If backdropColor was set in the meantime, skip
+        if f.backdropInfo and f.backdropInfo.bgFile and not f.backdropColor then
+            if f._quiBgR then
+                -- QUI frame with backup colors: recover
+                suppressingBackdrop = true
+                pcall(f.SetBackdropColor, f, f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
+                if f._quiBorderR then
+                    pcall(f.SetBackdropBorderColor, f, f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)
+                end
+                suppressingBackdrop = false
+                processed[f] = true
+            elseif not ShouldSkipFrame(f) then
+                local hok, h = pcall(f.GetHeight, f)
+                if hok and not isS(h) and h and h > 10 then
+                    suppressingBackdrop = true
+                    pcall(f.SetBackdropColor, f, 0.05, 0.05, 0.05, 0.95)
+                    pcall(f.SetBackdropBorderColor, f, 0, 0, 0, 1)
+                    suppressingBackdrop = false
+                    processed[f] = true
+                end
+            end
+        end
+    end
+    wipe(pendingOrphanCheck)
+end
+
+if BackdropTemplateMixin and BackdropTemplateMixin.SetBackdrop then
+    hooksecurefunc(BackdropTemplateMixin, "SetBackdrop", function(self, info)
+        if suppressingBackdrop then return end
+        if not initialized or not IsEnabled() then return end
+        -- Only care about backdrops with a background file (border-only = no white bg)
+        if not info or not info.bgFile then return end
+        -- Frame state changed — clear processed flag so we re-evaluate
+        if processed[self] then
+            processed[self] = nil
+        end
+        -- Defer check to let callers finish SetBackdrop + SetBackdropColor sequence
+        pendingOrphanCheck[self] = true
+        if not orphanTimerRunning then
+            orphanTimerRunning = true
+            C_Timer.After(0.2, ProcessPendingOrphans)
         end
     end)
 end

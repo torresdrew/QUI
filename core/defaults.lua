@@ -2746,6 +2746,7 @@ local defaults = {
                     targettarget = false,
                     focus = false,
                     pet = false,
+                    boss = false,
                 },
             },
 
