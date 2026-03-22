@@ -1845,6 +1845,27 @@ function QUI_LayoutMode_UI:_RebuildDrawer()
                         end,
                     })
 
+                    -- Register as anchor target so other frames can anchor to this panel
+                    local displayName = newConfig.name
+                    if ns.FRAME_ANCHOR_INFO then
+                        ns.FRAME_ANCHOR_INFO[elementKey] = {
+                            displayName = displayName,
+                            category = "Display",
+                            order = 10 + #dtDB.panels,
+                        }
+                    end
+                    local anchoring = ns.QUI_Anchoring
+                    if anchoring and anchoring.RegisterAnchorTarget then
+                        local newPanel2 = Datapanels and Datapanels.activePanels[newID]
+                        if newPanel2 then
+                            anchoring:RegisterAnchorTarget(elementKey, newPanel2, {
+                                displayName = displayName,
+                                category = "Display",
+                                order = 10 + #dtDB.panels,
+                            })
+                        end
+                    end
+
                     -- Register settings provider for the new panel
                     if Datapanels.RegisterProvider then
                         Datapanels.RegisterProvider(newID, elementKey)
