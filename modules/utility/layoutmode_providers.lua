@@ -363,10 +363,9 @@ local function RegisterAllProviders()
         local function Refresh() if _G.QUI_RefreshMinimap then _G.QUI_RefreshMinimap() end end
         local function RefreshUIHider() if _G.QUI_RefreshUIHider then _G.QUI_RefreshUIHider() end end
 
-        U.CreateCollapsible(content, "General", 3 * FORM_ROW + 8, function(body)
+        U.CreateCollapsible(content, "General", 2 * FORM_ROW + 8, function(body)
             local sy = -4
             sy = P(GUI:CreateFormSlider(body, "Map Dimensions", 120, 380, 1, "size", mm, Refresh), body, sy)
-            sy = P(GUI:CreateFormSlider(body, "Scale", 0.5, 2.0, 0.01, "scale", mm, Refresh, { deferOnDrag = true }), body, sy)
             P(GUI:CreateFormCheckbox(body, "Middle-Click Menu", "middleClickMenuEnabled", mm, Refresh), body, sy)
         end, sections, relayout)
 

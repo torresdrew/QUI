@@ -1223,6 +1223,21 @@ local function IsMouseOverAnyLinkedOwnedBar()
     return false
 end
 
+local function HookOwnedFrameForMouseover(frame, barKey)
+    if not frame then return end
+    local state = GetFrameState(frame)
+    if state.ownedMouseoverHooked then return end
+    state.ownedMouseoverHooked = true
+
+    frame:HookScript("OnEnter", function()
+        ActionBarsOwned:OnBarMouseEnter(barKey)
+    end)
+
+    frame:HookScript("OnLeave", function()
+        ActionBarsOwned:OnBarMouseLeave(barKey)
+    end)
+end
+
 function ActionBarsOwned:OnBarMouseEnter(barKey)
     local state = GetOwnedBarFadeState(barKey)
     local fadeSettings = GetFadeSettings()
@@ -1391,6 +1406,18 @@ local function SetupOwnedBarMouseover(barKey)
     local fadeOutAlpha = barSettings and barSettings.fadeOutAlpha
     if fadeOutAlpha == nil then
         fadeOutAlpha = fadeSettings and fadeSettings.fadeOutAlpha or 0
+    end
+
+    -- Hook container and buttons for mouseover detection
+    local container = ActionBarsOwned.containers[barKey]
+    if container then
+        HookOwnedFrameForMouseover(container, barKey)
+    end
+    local buttons = ActionBarsOwned.nativeButtons[barKey]
+    if buttons then
+        for _, btn in ipairs(buttons) do
+            HookOwnedFrameForMouseover(btn, barKey)
+        end
     end
 
     local state = GetOwnedBarFadeState(barKey)
@@ -3341,6 +3368,17 @@ UpdateKeybindText = function(button, settings)
     -- Reposition with configurable anchor and offsets
     hotkey:ClearAllPoints()
     local anchor = settings.keybindAnchor or "TOPRIGHT"
+
+    -- Match text justification to anchor direction (Blizzard defaults to RIGHT justify)
+    if anchor:find("LEFT") then
+        hotkey:SetJustifyH("LEFT")
+    elseif anchor:find("RIGHT") then
+        hotkey:SetJustifyH("RIGHT")
+    else
+        hotkey:SetJustifyH("CENTER")
+    end
+
+    hotkey:SetWidth(0)
     hotkey:SetPoint(anchor, button, anchor, (settings.keybindOffsetX or 0), (settings.keybindOffsetY or 0))
 end
 
