@@ -166,7 +166,67 @@ end
 local function _safeGetChildren(viewer) _collectChildren(viewer:GetChildren()) end
 
 local _childBySpellID = {}  -- [spellID] = shown child with auraInstanceID
-local _childMapDirty = true -- set true at start of each update cycle
+local _childMapDirty = true -- set true on aura/cooldown events, not per-cycle
+
+--- Full resolve: populates ch._resolvedIDs with all spell IDs for this child.
+--- Called only when the child's cooldownID changes or on first encounter.
+local function ResolveChildIDs(ch)
+    local ids = ch._resolvedIDs or {}
+    local n = 0
+
+    -- cooldownInfo IDs
+    local cinfo = ch.cooldownInfo
+    if cinfo then
+        local sid = cinfo.spellID
+        local safeSid = sid and SafeValue(sid, nil)
+        if safeSid then n = n + 1; ids[n] = safeSid end
+        local ov = cinfo.overrideSpellID
+        local safeOv = ov and SafeValue(ov, nil)
+        if safeOv then n = n + 1; ids[n] = safeOv end
+    end
+    -- cooldownID
+    local cdID = ch.cooldownID
+    if cdID then n = n + 1; ids[n] = cdID end
+    -- GetAuraSpellID
+    if ch.GetAuraSpellID then
+        local aok, auraSid = pcall(ch.GetAuraSpellID, ch)
+        local safeAura = aok and auraSid and SafeValue(auraSid, nil)
+        if safeAura then n = n + 1; ids[n] = safeAura end
+    end
+    -- GetSpellID
+    if ch.GetSpellID then
+        local sok2, fid = pcall(ch.GetSpellID, ch)
+        local safeFid = sok2 and fid and SafeValue(fid, nil)
+        if safeFid then n = n + 1; ids[n] = safeFid end
+    end
+    -- linkedSpellIDs (ability→debuff mapping).
+    -- Cache cooldownInfo on child to avoid per-tick allocation
+    -- (GetCooldownViewerCooldownInfo returns a new table each call).
+    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        local info = ch._cachedCdInfo
+        if not info or ch._cachedCdInfoID ~= cdID then
+            local iok
+            iok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
+            if iok and info then
+                ch._cachedCdInfo = info
+                ch._cachedCdInfoID = cdID
+            else
+                info = nil
+            end
+        end
+        if info and info.linkedSpellIDs then
+            for _, lsid in ipairs(info.linkedSpellIDs) do
+                local safeLsid = SafeValue(lsid, nil)
+                if safeLsid then n = n + 1; ids[n] = safeLsid end
+            end
+        end
+    end
+    -- Trim excess entries from previous resolve
+    for i = n + 1, #ids do ids[i] = nil end
+    ch._resolvedIDs = ids
+    ch._resolvedKey = cdID
+    return ids
+end
 
 local function RebuildChildMap()
     if not _childMapDirty then return end
@@ -181,51 +241,20 @@ local function RebuildChildMap()
                 local ch = _childScratch[ci]
                 local sok, shown = pcall(ch.IsShown, ch)
                 if ch and ch.auraInstanceID and sok and shown then
-                    -- Index by cooldownInfo IDs
-                    local cinfo = ch.cooldownInfo
-                    if cinfo then
-                        local sid = cinfo.spellID
-                        local safeSid = sid and SafeValue(sid, nil)
-                        if safeSid then _childBySpellID[safeSid] = ch end
-                        local ov = cinfo.overrideSpellID
-                        local safeOv = ov and SafeValue(ov, nil)
-                        if safeOv then _childBySpellID[safeOv] = ch end
-                    end
-                    -- Index by cooldownID
+                    -- Fast path: reuse cached resolution when child identity
+                    -- (cooldownID) hasn't changed.  Skips ~4 pcalls + SafeValue
+                    -- per child per tick — the biggest single perf win.
                     local cdID = ch.cooldownID
-                    if cdID then _childBySpellID[cdID] = ch end
-                    -- Index by GetAuraSpellID
-                    if ch.GetAuraSpellID then
-                        local aok, auraSid = pcall(ch.GetAuraSpellID, ch)
-                        local safeAura = aok and auraSid and SafeValue(auraSid, nil)
-                        if safeAura then _childBySpellID[safeAura] = ch end
-                    end
-                    -- Index by GetSpellID
-                    if ch.GetSpellID then
-                        local sok2, fid = pcall(ch.GetSpellID, ch)
-                        local safeFid = sok2 and fid and SafeValue(fid, nil)
-                        if safeFid then _childBySpellID[safeFid] = ch end
-                    end
-                    -- Index by linkedSpellIDs (ability→debuff mapping).
-                    -- Cache cooldownInfo on child to avoid per-tick allocation
-                    -- (GetCooldownViewerCooldownInfo returns a new table each call).
-                    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                        local info = ch._cachedCdInfo
-                        if not info or ch._cachedCdInfoID ~= cdID then
-                            local iok
-                            iok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
-                            if iok and info then
-                                ch._cachedCdInfo = info
-                                ch._cachedCdInfoID = cdID
-                            else
-                                info = nil
-                            end
+                    local cachedIDs = ch._resolvedIDs
+                    if cachedIDs and ch._resolvedKey == cdID then
+                        for k = 1, #cachedIDs do
+                            _childBySpellID[cachedIDs[k]] = ch
                         end
-                        if info and info.linkedSpellIDs then
-                            for _, lsid in ipairs(info.linkedSpellIDs) do
-                                local safeLsid = SafeValue(lsid, nil)
-                                if safeLsid then _childBySpellID[safeLsid] = ch end
-                            end
+                    else
+                        -- Slow path: resolve and cache all IDs for this child
+                        local ids = ResolveChildIDs(ch)
+                        for k = 1, #ids do
+                            _childBySpellID[ids[k]] = ch
                         end
                     end
                 end
@@ -330,53 +359,75 @@ end
 -- COOLDOWN RESOLUTION
 -- Ported from cdm_custom.lua:116-181 (GetBestSpellCooldown)
 ---------------------------------------------------------------------------
+-- Zero-allocation cooldown resolution: no table, no closure per call.
+-- This function is called once per cooldown icon per tick (~12-24x per cycle).
+-- Consider logic is fully inlined to avoid closure overhead.
 local function GetBestSpellCooldown(spellID)
     if not spellID then return nil, nil end
-
-    local candidates = { spellID }
-
-    -- Add override spell if present
-    if C_Spell.GetOverrideSpell then
-        local overrideID = C_Spell.GetOverrideSpell(spellID)
-        if overrideID and overrideID ~= spellID then
-            candidates[#candidates + 1] = overrideID
-        end
-    end
 
     local bestStart, bestDuration = nil, nil
     local secretStart, secretDuration = nil, nil
 
-    local function Consider(startTime, duration)
-        if IsSecretValue(startTime) or IsSecretValue(duration) then
-            if not secretStart and not secretDuration then
-                secretStart, secretDuration = startTime, duration
+    -- Check primary spell
+    local cdInfo = C_Spell.GetSpellCooldown(spellID)
+    if cdInfo then
+        local st, dur = cdInfo.startTime, cdInfo.duration
+        if IsSecretValue(st) or IsSecretValue(dur) then
+            if not secretStart then secretStart, secretDuration = st, dur end
+        elseif IsSafeNumeric(st) and IsSafeNumeric(dur) and dur > 0 then
+            if not bestDuration or dur > bestDuration then
+                bestStart, bestDuration = st, dur
             end
-            return
         end
-
-        if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) or duration <= 0 then
-            return
-        end
-
-        if not bestDuration or duration > bestDuration then
-            bestStart, bestDuration = startTime, duration
+    end
+    if C_Spell.GetSpellCharges then
+        local chargeInfo = C_Spell.GetSpellCharges(spellID)
+        if chargeInfo then
+            local currentCharges = SafeToNumber(chargeInfo.currentCharges, 0)
+            local maxCharges = SafeToNumber(chargeInfo.maxCharges, 0)
+            if currentCharges < maxCharges then
+                local st, dur = chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration
+                if IsSecretValue(st) or IsSecretValue(dur) then
+                    if not secretStart then secretStart, secretDuration = st, dur end
+                elseif IsSafeNumeric(st) and IsSafeNumeric(dur) and dur > 0 then
+                    if not bestDuration or dur > bestDuration then
+                        bestStart, bestDuration = st, dur
+                    end
+                end
+            end
         end
     end
 
-    for _, identifier in ipairs(candidates) do
-        local cdInfo = C_Spell.GetSpellCooldown(identifier)
-        if cdInfo then
-            Consider(cdInfo.startTime, cdInfo.duration)
-        end
-
-        -- Check charges
-        if C_Spell.GetSpellCharges then
-            local chargeInfo = C_Spell.GetSpellCharges(identifier)
-            if chargeInfo then
-                local currentCharges = SafeToNumber(chargeInfo.currentCharges, 0)
-                local maxCharges = SafeToNumber(chargeInfo.maxCharges, 0)
-                if currentCharges < maxCharges then
-                    Consider(chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration)
+    -- Check override spell (no table allocation — just a second ID)
+    if C_Spell.GetOverrideSpell then
+        local overrideID = C_Spell.GetOverrideSpell(spellID)
+        if overrideID and overrideID ~= spellID then
+            cdInfo = C_Spell.GetSpellCooldown(overrideID)
+            if cdInfo then
+                local st, dur = cdInfo.startTime, cdInfo.duration
+                if IsSecretValue(st) or IsSecretValue(dur) then
+                    if not secretStart then secretStart, secretDuration = st, dur end
+                elseif IsSafeNumeric(st) and IsSafeNumeric(dur) and dur > 0 then
+                    if not bestDuration or dur > bestDuration then
+                        bestStart, bestDuration = st, dur
+                    end
+                end
+            end
+            if C_Spell.GetSpellCharges then
+                local chargeInfo = C_Spell.GetSpellCharges(overrideID)
+                if chargeInfo then
+                    local currentCharges = SafeToNumber(chargeInfo.currentCharges, 0)
+                    local maxCharges = SafeToNumber(chargeInfo.maxCharges, 0)
+                    if currentCharges < maxCharges then
+                        local st, dur = chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration
+                        if IsSecretValue(st) or IsSecretValue(dur) then
+                            if not secretStart then secretStart, secretDuration = st, dur end
+                        elseif IsSafeNumeric(st) and IsSafeNumeric(dur) and dur > 0 then
+                            if not bestDuration or dur > bestDuration then
+                                bestStart, bestDuration = st, dur
+                            end
+                        end
+                    end
                 end
             end
         end
@@ -457,11 +508,6 @@ local function CreateIcon(parent, spellEntry)
     icon.Cooldown:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
     icon.Cooldown:SetSwipeColor(0, 0, 0, 0.8)
     icon.Cooldown:SetDrawBling(true)
-
-    -- .TextOverlay (sits above the CooldownFrame so text is never behind the swipe)
-    icon.TextOverlay = CreateFrame("Frame", nil, icon)
-    icon.TextOverlay:SetAllPoints(icon)
-    icon.TextOverlay:SetFrameLevel(icon.Cooldown:GetFrameLevel() + 2)
 
     -- .TextOverlay (sits above the CooldownFrame so text is never behind the swipe)
     icon.TextOverlay = CreateFrame("Frame", nil, icon)
@@ -1269,7 +1315,7 @@ local function UpdateIconCooldown(icon)
 
         local startTime, duration
         if entry.type == "macro" then
-            local resolvedID, resolvedType = ResolveMacro(entry)
+            local resolvedID, resolvedType, fallbackTex = ResolveMacro(entry)
             if resolvedID then
                 if resolvedType == "item" then
                     startTime, duration = GetItemCooldown(resolvedID)
@@ -1277,8 +1323,19 @@ local function UpdateIconCooldown(icon)
                     startTime, duration = GetBestSpellCooldown(resolvedID)
                 end
             end
-            -- Update icon texture dynamically (resolved spell may change each tick)
-            local newTex = GetEntryTexture(entry)
+            -- Update icon texture from already-resolved macro result
+            -- (eliminates a redundant second ResolveMacro call via GetEntryTexture)
+            local newTex
+            if resolvedID then
+                if resolvedType == "item" then
+                    local _, _, _, _, tex = C_Item.GetItemInfoInstant(resolvedID)
+                    newTex = tex
+                else
+                    newTex = GetSpellTexture(resolvedID)
+                end
+            else
+                newTex = fallbackTex
+            end
             if newTex and icon.Icon and newTex ~= icon._lastTexture then
                 icon.Icon:SetTexture(newTex)
                 icon._lastTexture = newTex
@@ -1325,15 +1382,19 @@ local function UpdateIconCooldown(icon)
             startTime, duration = GetBestSpellCooldown(entry.overrideSpellID or entry.spellID or entry.id)
 
             -- Sync texture for spell overrides (e.g., Judgment → Hammer of Wrath).
-            -- Check the override API directly and update if the active spell changed.
+            -- Cache override ID per icon — only call GetSpellTexture when the
+            -- override actually changes (eliminates ~30 texture lookups per tick).
             if C_Spell.GetOverrideSpell and icon.Icon then
                 local baseID = entry.spellID or entry.id
                 if baseID then
                     local overrideID = C_Spell.GetOverrideSpell(baseID)
-                    local newTex = GetSpellTexture(overrideID or baseID)
-                    if newTex and newTex ~= icon._lastTexture then
-                        icon.Icon:SetTexture(newTex)
-                        icon._lastTexture = newTex
+                    if overrideID ~= icon._cachedOverrideID then
+                        icon._cachedOverrideID = overrideID
+                        local newTex = GetSpellTexture(overrideID or baseID)
+                        if newTex and newTex ~= icon._lastTexture then
+                            icon.Icon:SetTexture(newTex)
+                            icon._lastTexture = newTex
+                        end
                     end
                 end
             end
@@ -1360,6 +1421,11 @@ local function UpdateIconCooldown(icon)
         end
 
     -- Stack/charge text: API-driven on each tick.
+    -- Cache chargeInfo for this icon — reused by desaturation check below
+    -- (was called 3x per cooldown icon per tick, now 1x)
+    local _cachedChargeInfo = nil
+    local _cachedChargeOk = false
+
     if entry.type == "item" then
         -- Item stack text was already set above in the cooldown section;
         -- nothing to do here — just prevent the else clause from clearing it.
@@ -1368,9 +1434,11 @@ local function UpdateIconCooldown(icon)
         local spellID = entry.overrideSpellID or entry.spellID or entry.id
         local stackText = nil
 
-        -- Check spell charges
+        -- Check spell charges (cached for desaturation reuse)
         if spellID and C_Spell.GetSpellCharges then
             local ok, chargeInfo = pcall(C_Spell.GetSpellCharges, spellID)
+            _cachedChargeOk = ok
+            _cachedChargeInfo = ok and chargeInfo or nil
             if ok and chargeInfo and chargeInfo.maxCharges then
                 if not IsSecretValue(chargeInfo.maxCharges) and chargeInfo.maxCharges > 1 then
                     local current = chargeInfo.currentCharges
@@ -1425,9 +1493,9 @@ local function UpdateIconCooldown(icon)
                     local remaining = (start + dur) - GetTime()
                     if remaining > 0 then
                         -- On cooldown — check charges before desaturating
-                        local spellID = entry.overrideSpellID or entry.spellID or entry.id
-                        if spellID and C_Spell.GetSpellCharges then
-                            local chargeInfo = C_Spell.GetSpellCharges(spellID)
+                        -- Reuse cached chargeInfo from stack text section above
+                        do
+                            local chargeInfo = _cachedChargeInfo
                             if chargeInfo then
                                 -- Secret charge data → keep current state (don't flicker)
                                 if IsSecretValue(chargeInfo.currentCharges) then
@@ -1854,6 +1922,32 @@ local _auraInstanceToSpell = {}  -- [auraInstanceID] = spellId (for removal)
 -- _spellToAuraInstance is forward-declared near top of file
 local _inCombatCaching = false
 
+-- Reverse index: auraSpellID → { abilityID, ... }
+-- Built lazily from ns.CDMSpellData._abilityToAuraSpellID.
+-- Eliminates O(M) forward iteration in ProcessAuraEntry.
+local _reverseAuraMap = nil
+local _reverseAuraMapSource = nil  -- tracks the source table identity for invalidation
+
+local function EnsureReverseAuraMap()
+    local auraMap = ns.CDMSpellData and ns.CDMSpellData._abilityToAuraSpellID
+    if not auraMap then
+        _reverseAuraMap = nil
+        return
+    end
+    -- Rebuild if source table identity changed (reloaded spell data)
+    if _reverseAuraMap and _reverseAuraMapSource == auraMap then return end
+    _reverseAuraMap = {}
+    _reverseAuraMapSource = auraMap
+    for abilityID, auraID in pairs(auraMap) do
+        local list = _reverseAuraMap[auraID]
+        if not list then
+            list = {}
+            _reverseAuraMap[auraID] = list
+        end
+        list[#list + 1] = abilityID
+    end
+end
+
 local function ProcessAuraEntry(ad)
     if not ad then return end
     local iid = ad.auraInstanceID
@@ -1870,11 +1964,14 @@ local function ProcessAuraEntry(ad)
         -- via _abilityToAuraSpellID should also resolve to the same instance.
         -- This is critical in combat where GetPlayerAuraBySpellID(abilityID)
         -- returns nil — the ability ID needs a direct path to the instance.
-        local auraMap = ns.CDMSpellData and ns.CDMSpellData._abilityToAuraSpellID
-        if auraMap then
-            for abilityID, auraID in pairs(auraMap) do
-                if auraID == safeSid and not _spellToAuraInstance[abilityID] then
-                    _spellToAuraInstance[abilityID] = safeIid
+        EnsureReverseAuraMap()
+        if _reverseAuraMap then
+            local abilities = _reverseAuraMap[safeSid]
+            if abilities then
+                for _, abilityID in ipairs(abilities) do
+                    if not _spellToAuraInstance[abilityID] then
+                        _spellToAuraInstance[abilityID] = safeIid
+                    end
                 end
             end
         end
@@ -1963,7 +2060,6 @@ local function PatchAuraCacheFromEvent(updateInfo)
     -- 1. Process removals first — collect orphaned spellIds (auras that
     --    lost their instance, likely being refreshed with a new one).
     local orphanedSpells = nil
-    local auraMap = ns.CDMSpellData and ns.CDMSpellData._abilityToAuraSpellID
     if updateInfo.removedAuraInstanceIDs then
         for _, iid in ipairs(updateInfo.removedAuraInstanceIDs) do
             local safeIid = SafeValue(iid, nil)
@@ -1973,10 +2069,14 @@ local function PatchAuraCacheFromEvent(updateInfo)
                     _auraInstanceToSpell[safeIid] = nil
                     _spellToAuraInstance[sid] = nil
                     -- Clear ability ID aliases that pointed to this instance
-                    if auraMap then
-                        for abilityID, auraID in pairs(auraMap) do
-                            if auraID == sid and _spellToAuraInstance[abilityID] == safeIid then
-                                _spellToAuraInstance[abilityID] = nil
+                    EnsureReverseAuraMap()
+                    if _reverseAuraMap then
+                        local abilities = _reverseAuraMap[sid]
+                        if abilities then
+                            for _, abilityID in ipairs(abilities) do
+                                if _spellToAuraInstance[abilityID] == safeIid then
+                                    _spellToAuraInstance[abilityID] = nil
+                                end
                             end
                         end
                     end
@@ -2014,17 +2114,12 @@ local function PatchAuraCacheFromEvent(updateInfo)
             _auraInstanceToSpell[iid] = sid
             _spellToAuraInstance[sid] = iid
             AuraDebug(sid, "UNIT_AURA orphan reassigned → instID %s (refresh)", tostring(iid))
-            -- Update alias entries (ability IDs that pointed to old instance)
-            for key, oldIid in pairs(_spellToAuraInstance) do
-                if key ~= sid and oldIid ~= iid and _auraInstanceToSpell[oldIid] == nil then
-                    -- This alias pointed to a removed instance — update it
-                    _spellToAuraInstance[key] = iid
-                end
-            end
-            -- Create ability→instance aliases for this reassigned spell
-            if auraMap then
-                for abilityID, auraID in pairs(auraMap) do
-                    if auraID == sid and not _spellToAuraInstance[abilityID] then
+            -- Update ability aliases via reverse map (targeted, not O(n) scan)
+            EnsureReverseAuraMap()
+            if _reverseAuraMap then
+                local abilities = _reverseAuraMap[sid]
+                if abilities then
+                    for _, abilityID in ipairs(abilities) do
                         _spellToAuraInstance[abilityID] = iid
                     end
                 end
@@ -2154,7 +2249,9 @@ function CDMIcons:UpdateAllCooldowns()
     -- API calls within this cycle (same spellID across multiple icons).
     wipe(_tickAuraCache)
     wipe(_tickLookupCache)
-    _childMapDirty = true  -- invalidate per-tick child map
+    -- NOTE: _childMapDirty is set by the aura event subscriber (below)
+    -- and by SPELL_UPDATE_COOLDOWN — NOT unconditionally per tick.
+    -- RebuildChildMap() is a no-op when not dirty (early return on line 232).
 
     local editMode = Helpers.IsEditModeActive()
         or (_G.QUI_IsCDMEditModeActive and _G.QUI_IsCDMEditModeActive())
@@ -2166,16 +2263,20 @@ function CDMIcons:UpdateAllCooldowns()
     -- Hoist DB lookups above the loop (avoids 4 table hops per icon)
     local _ncdm = ns.Addon and ns.Addon.db and ns.Addon.db.profile and ns.Addon.db.profile.ncdm
     local _ncdmContainers = _ncdm and _ncdm.containers
+    local inCombat = InCombatLockdown()
 
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             local entry = icon._spellEntry
             -- Update cooldown/aura state BEFORE visibility so _auraActive,
             -- _lastDuration, etc. are fresh for Show/Hide decisions.
-            -- pcall: errors in cooldown polling (e.g. secret values from
-            -- Blizzard frames during combat) must not abort the entire
-            -- visibility loop for all icon pools.
-            pcall(UpdateIconCooldown, icon)
+            -- pcall only needed during combat (secret values from Blizzard
+            -- frames) — skip overhead during OOC for ~50% less pcall cost.
+            if inCombat then
+                pcall(UpdateIconCooldown, icon)
+            else
+                UpdateIconCooldown(icon)
+            end
 
             -- Per-spell hidden override: always hide regardless of display mode
             local spellOvr = (not editMode) and GetIconSpellOverride(icon) or nil
@@ -2204,7 +2305,7 @@ function CDMIcons:UpdateAllCooldowns()
                     local isActive = icon._auraActive
                     local effectiveMode = displayMode
                     if effectiveMode == "combat" then
-                        effectiveMode = InCombatLockdown() and "always" or "active"
+                        effectiveMode = inCombat and "always" or "active"
                     end
 
                     if effectiveMode == "always" then
@@ -2261,7 +2362,7 @@ function CDMIcons:UpdateAllCooldowns()
 
                     local effectiveMode = displayMode
                     if effectiveMode == "combat" then
-                        effectiveMode = InCombatLockdown() and "always" or "active"
+                        effectiveMode = inCombat and "always" or "active"
                     end
 
                     if effectiveMode == "always" then
@@ -2426,35 +2527,37 @@ function CustomCDM:UpdateAllCooldowns() CDMIcons:UpdateAllCooldowns() end
 -- matching action-bar behavior. Uses C_Spell.IsSpellInRange for spells.
 -- Polled at 250ms (no "player moved" event) + instant on target change.
 ---------------------------------------------------------------------------
-local RANGE_POLL_INTERVAL_COMBAT = 0.25
+local RANGE_POLL_INTERVAL_COMBAT = 0.5
 local RANGE_POLL_INTERVAL_IDLE = 1.0   -- relaxed OOC (range matters less)
 local rangePollElapsed = 0
 local rangePollInCombat = false
 
--- Safe wrapper: C_Spell.IsSpellInRange can return secret values in Midnight
+-- Safe wrapper: C_Spell.IsSpellInRange can return secret values in Midnight.
+-- Calls pcall directly (no closure allocation).
 local function SafeIsSpellInRange(spellID)
     if not spellID or not C_Spell or not C_Spell.IsSpellInRange then return nil end
-    local ok, result = pcall(function()
-        local inRange = C_Spell.IsSpellInRange(spellID, "target")
-        if inRange == false then return false end
-        if inRange == true then return true end
-        return nil
-    end)
+    local ok, inRange = pcall(C_Spell.IsSpellInRange, spellID, "target")
     if not ok then return nil end
-    return result
+    if inRange == false then return false end
+    if inRange == true then return true end
+    return nil
 end
 
--- Safe wrapper: C_Spell.IsSpellUsable can return secret values in Midnight
+-- Safe wrapper: C_Spell.IsSpellUsable can return secret values in Midnight.
+-- Calls pcall directly (no closure allocation).
 local function SafeIsSpellUsable(spellID)
     if not spellID or not C_Spell or not C_Spell.IsSpellUsable then return true, false end
-    local ok, isUsable, notEnoughMana = pcall(function()
-        local usable, noMana = C_Spell.IsSpellUsable(spellID)
-        -- Convert potential secret booleans to real booleans
-        return usable and true or false, noMana and true or false
-    end)
+    local ok, usable, noMana = pcall(C_Spell.IsSpellUsable, spellID)
     if not ok then return true, false end  -- Secret value: assume usable
-    return isUsable, notEnoughMana
+    -- Convert potential secret booleans to real booleans
+    return usable and true or false, noMana and true or false
 end
+
+-- Per-cycle dedup caches: avoid calling the same C_Spell API for the same
+-- spellID when multiple icons track the same ability.
+local _rangeCycleCache = {}     -- [spellID] = true/false/"nil" (string "nil" for actual nil results)
+local _hasRangeCycleCache = {}  -- [spellID] = true/false
+local _usableCycleCache = {}    -- [spellID] = true/false
 
 -- Reset icon to normal visual state (clear any tinting)
 local function ResetIconVisuals(icon)
@@ -2463,13 +2566,13 @@ local function ResetIconVisuals(icon)
     icon._usabilityTinted = nil
 end
 
-local function UpdateIconVisualState(icon)
+local function UpdateIconVisualState(icon, cachedDB)
     if not icon or not icon._spellEntry then return end
     local entry = icon._spellEntry
     local viewerType = entry.viewerType
     if not viewerType then return end
 
-    local settings = GetTrackerSettings(viewerType)
+    local settings = cachedDB and cachedDB[viewerType] or GetTrackerSettings(viewerType)
     if not settings then
         if icon._rangeTinted or icon._usabilityTinted then
             ResetIconVisuals(icon)
@@ -2494,9 +2597,12 @@ local function UpdateIconVisualState(icon)
     -- Skip items/trinkets (self-use, no range/usability concept)
     if entry.type == "item" or entry.type == "trinket" then return end
 
-    -- Resolve current spell ID (prefer runtime override for accurate checks)
+    -- Resolve current spell ID (prefer cached override from cooldown update cycle
+    -- to avoid redundant GetOverrideSpell API calls during range polling)
     local spellID = entry.overrideSpellID or entry.spellID or entry.id
-    if C_Spell and C_Spell.GetOverrideSpell then
+    if icon._cachedOverrideID then
+        spellID = icon._cachedOverrideID
+    elseif C_Spell and C_Spell.GetOverrideSpell then
         local currentOverride = C_Spell.GetOverrideSpell(entry.spellID or entry.id)
         if currentOverride then spellID = currentOverride end
     end
@@ -2506,12 +2612,21 @@ local function UpdateIconVisualState(icon)
     -- Priority 1: Out of range (red tint) — only when target exists + ranged
     ---------------------------------------------------------------------------
     if rangeEnabled and UnitExists("target") then
-        local hasRange = true
-        if C_Spell.SpellHasRange then
-            hasRange = C_Spell.SpellHasRange(spellID)
+        -- Per-cycle dedup: skip redundant C_Spell API calls for shared spellIDs
+        local hasRange = _hasRangeCycleCache[spellID]
+        if hasRange == nil then
+            hasRange = (not C_Spell.SpellHasRange) or C_Spell.SpellHasRange(spellID)
+            _hasRangeCycleCache[spellID] = hasRange and true or false
         end
         if hasRange then
-            local inRange = SafeIsSpellInRange(spellID)
+            local cached = _rangeCycleCache[spellID]
+            local inRange
+            if cached ~= nil then
+                inRange = cached ~= "nil" and cached or nil
+            else
+                inRange = SafeIsSpellInRange(spellID)
+                _rangeCycleCache[spellID] = inRange == nil and "nil" or inRange
+            end
             if inRange == false then
                 -- Clear usability darkening if switching to range tint
                 if icon._usabilityTinted then
@@ -2539,7 +2654,12 @@ local function UpdateIconVisualState(icon)
     -- Priority 2: Unusable / resource-starved (darken)
     ---------------------------------------------------------------------------
     if usabilityEnabled then
-        local isUsable = SafeIsSpellUsable(spellID)
+        -- Per-cycle dedup: reuse result for shared spellIDs
+        local isUsable = _usableCycleCache[spellID]
+        if isUsable == nil then
+            isUsable = SafeIsSpellUsable(spellID)
+            _usableCycleCache[spellID] = isUsable
+        end
         if not isUsable then
             -- Clear cooldown desaturation so vertex color darkening is visible
             if icon._cdDesaturated then
@@ -2560,9 +2680,15 @@ local function UpdateIconVisualState(icon)
 end
 
 function CDMIcons:UpdateAllIconRanges()
+    -- Wipe per-cycle dedup caches so each poll starts fresh
+    wipe(_rangeCycleCache)
+    wipe(_hasRangeCycleCache)
+    wipe(_usableCycleCache)
+    -- Hoist DB lookup above the loop (avoids repeated GetDB per icon)
+    local db = GetDB()
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
-            UpdateIconVisualState(icon)
+            UpdateIconVisualState(icon, db)
         end
     end
 end
@@ -2609,6 +2735,7 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "PLAYER_EQUIPMENT_CHANGED" then
         -- Trinket slots 13-14: refresh textures and cooldowns immediately
         if arg1 == 13 or arg1 == 14 then
+            _childMapDirty = true
             CDMIcons:UpdateAllCooldowns()
         end
         return
@@ -2622,17 +2749,26 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
         rangePollInCombat = false
         -- One-shot catch-up: refresh all cooldowns after combat ends
         -- (replaces the removed 500ms ticker as a safety net)
+        _childMapDirty = true
         cdCoalesceFrame:Show()
         return
     end
     -- Coalesce cooldown events via frame-show pattern
+    _childMapDirty = true  -- cooldown state changed, children may have shown/hidden
     cdCoalesceFrame:Show()
 end)
 
--- Subscribe to centralized aura dispatcher for prompt icon updates (player + target)
+-- Subscribe to centralized aura dispatcher for prompt icon updates.
+-- Player auras via "player" filter (avoids callback for all 20+ raid units).
+-- Target debuffs via "all" filter (no "target" filter in the dispatcher).
 if ns.AuraEvents then
+    ns.AuraEvents:Subscribe("player", function(unit, updateInfo)
+        _childMapDirty = true
+        cdCoalesceFrame:Show()
+    end)
     ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
-        if unit == "player" or unit == "target" then
+        if unit == "target" then
+            _childMapDirty = true
             cdCoalesceFrame:Show()
         end
     end)

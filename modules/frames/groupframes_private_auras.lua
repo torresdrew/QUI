@@ -476,19 +476,19 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-eventFrame:RegisterEvent("UNIT_AURA")
+-- UNIT_AURA: use centralized dispatcher instead of a duplicate global registration
+-- (eliminates a second handler that fired for every unit in the game)
 
 -- Rate-limited per-frame refresh to clean up stale private aura renders
 local PA_REFRESH_CD = 1.0
 local paRefreshTimes = setmetatable({}, { __mode = "k" })
 
-eventFrame:SetScript("OnEvent", function(self, event, arg1)
-    local GF = ns.QUI_GroupFrames
-    if not GF or not GF.initialized then return end
-
-    if event == "UNIT_AURA" then
-        -- Re-register anchors when auras change to clean up stale renders
-        local frame = GF.unitFrameMap and GF.unitFrameMap[arg1]
+-- Subscribe to centralized aura dispatcher for private aura refresh
+if ns.AuraEvents then
+    ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
+        local GF = ns.QUI_GroupFrames
+        if not GF or not GF.initialized then return end
+        local frame = GF.unitFrameMap and GF.unitFrameMap[unit]
         if not frame then return end
         local state = frameState[frame]
         if not state or #state.anchorIDs == 0 then return end
@@ -498,8 +498,14 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         RemoveAllAnchors(state)
         state.unit = ""
         SetupPrivateAuras(frame)
+    end)
+end
 
-    elseif event == "GROUP_ROSTER_UPDATE" then
+eventFrame:SetScript("OnEvent", function(self, event, arg1)
+    local GF = ns.QUI_GroupFrames
+    if not GF or not GF.initialized then return end
+
+    if event == "GROUP_ROSTER_UPDATE" then
         -- Debounce roster changes
         if reanchorTimer then return end
         reanchorTimer = C_Timer.After(0.3, function()

@@ -502,16 +502,21 @@ local function StripCompareHeader(tooltip)
             pcall(header.NineSlice.SetBackdrop, header.NineSlice, nil)
         end
     end
-    -- Hide any child textures (border pieces, backgrounds)
-    for _, region in pairs({header:GetRegions()}) do
-        if region.SetTexture then
-            pcall(region.SetTexture, region, nil)
-        end
-        if region.SetAtlas then
-            pcall(region.SetAtlas, region, nil)
-        end
-        if region.SetAlpha then
-            pcall(region.SetAlpha, region, 0)
+    -- Hide any child textures (border pieces, backgrounds).
+    -- Use select() to iterate GetRegions without allocating a table.
+    local numRegions = select("#", header:GetRegions())
+    for i = 1, numRegions do
+        local region = select(i, header:GetRegions())
+        if region then
+            if region.SetTexture then
+                pcall(region.SetTexture, region, nil)
+            end
+            if region.SetAtlas then
+                pcall(region.SetAtlas, region, nil)
+            end
+            if region.SetAlpha then
+                pcall(region.SetAlpha, region, 0)
+            end
         end
     end
 end
@@ -658,6 +663,43 @@ local function ReapplySkin(tooltip)
 end
 
 ---------------------------------------------------------------------------
+-- Combat-safe first skin: create overlay for a never-before-skinned tooltip
+-- during combat. All operations target NineSlice (C-side SetAlpha/SetTexture)
+-- or addon-owned overlay frames — never taint-restricted.
+-- Mirrors the pattern used for EmbeddedItemTooltip first-show-in-combat.
+---------------------------------------------------------------------------
+local function CombatSafeFirstSkin(tooltip)
+    if not tooltip then return end
+    if tooltip.IsForbidden and tooltip:IsForbidden() then return end
+    if not IsEnabled() then return end
+    if skinnedTooltips[tooltip] then return end
+
+    local ns = tooltip.NineSlice
+    if ns then
+        pcall(ns.SetAlpha, ns, 0)
+        if ns.SetBackdrop then pcall(ns.SetBackdrop, ns, nil) end
+        local center = ns.Center
+        if center then
+            if center.SetTexture then pcall(center.SetTexture, center, nil) end
+            if center.SetAtlas then pcall(center.SetAtlas, center, nil) end
+            if center.SetAlpha then pcall(center.SetAlpha, center, 0) end
+        end
+    end
+    local skinFrame = GetOrCreateSkinFrame(tooltip)
+    SyncOverlayLevel(skinFrame, tooltip)
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetEffectiveColors()
+    local thickness = GetEffectiveBorderThickness()
+    local px = ns and SkinBase.GetPixelSize(ns, 1) or 1
+    local edge = math.max((thickness or 1), 2) * px
+    ApplyOverlayBackdrop(skinFrame, edge, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    skinFrame:Show()
+    skinnedTooltips[tooltip] = true
+    -- SafeHookTooltipOnShow is a forward declaration, safe to call here
+    -- because this function is only invoked at runtime (never during load).
+    if SafeHookTooltipOnShow then SafeHookTooltipOnShow(tooltip) end
+end
+
+---------------------------------------------------------------------------
 -- Combat-safe reapply: re-hide NineSlice and refresh overlay colors.
 -- All operations target either the NineSlice (SetAlpha -- C-side) or the
 -- QUI-owned overlay frame (addon frames are never taint-restricted).
@@ -764,7 +806,11 @@ local function SetupEmbeddedTooltipHooks()
             if isEmbedded or tooltip.IsEmbedded then
                 StripEmbeddedBorder(tooltip)
             elseif InCombatLockdown() then
-                pcall(CombatSafeReapply, tooltip)
+                if skinnedTooltips[tooltip] then
+                    pcall(CombatSafeReapply, tooltip)
+                else
+                    pcall(CombatSafeFirstSkin, tooltip)
+                end
             elseif skinnedTooltips[tooltip] then
                 pcall(ReapplySkin, tooltip)
             else
@@ -784,7 +830,11 @@ local function SetupEmbeddedTooltipHooks()
             if not IsEnabled() then return end
             if not tooltip then return end
             if InCombatLockdown() then
-                pcall(CombatSafeReapply, tooltip)
+                if skinnedTooltips[tooltip] then
+                    pcall(CombatSafeReapply, tooltip)
+                else
+                    pcall(CombatSafeFirstSkin, tooltip)
+                end
             elseif skinnedTooltips[tooltip] then
                 pcall(ReapplySkin, tooltip)
             else
@@ -986,14 +1036,7 @@ local function RefreshAllTooltipColors()
     -- Defer to next tooltip show if in combat — C-side calls (SetTexture, SetFont)
     -- propagate taint through the securecall chain to other addons' tooltip hooks.
     if InCombatLockdown() then return end
-    -- Refresh named tooltips from the static list
-    for _, name in ipairs(tooltipsToSkin) do
-        local tooltip = _G[name]
-        if tooltip and skinnedTooltips[tooltip] then
-            ReapplySkin(tooltip)
-        end
-    end
-    -- Also refresh dynamically skinned tooltips (via TooltipDataProcessor)
+    -- Single pass over all skinned tooltips (covers both static and dynamic)
     for tooltip in pairs(skinnedTooltips) do
         ReapplySkin(tooltip)
     end
@@ -1098,14 +1141,22 @@ HookTooltipOnShow = function(tooltip)
         end
 
         if InCombatLockdown() then
-            pcall(CombatSafeReapply, self)
+            if skinnedTooltips[self] then
+                pcall(CombatSafeReapply, self)
+            else
+                pcall(CombatSafeFirstSkin, self)
+            end
             return
         end
 
         C_Timer.After(0, function()
             if not self:IsShown() then return end
             if InCombatLockdown() then
-                pcall(CombatSafeReapply, self)
+                if skinnedTooltips[self] then
+                    pcall(CombatSafeReapply, self)
+                else
+                    pcall(CombatSafeFirstSkin, self)
+                end
                 return
             end
             pcall(ApplyTooltipFontSizeToFrame, self)
@@ -1167,7 +1218,11 @@ local function SetupTooltipPostProcessor()
         if not tooltip or tooltip == EmbeddedItemTooltip then return end
         SafeHookTooltipOnShow(tooltip)
         if InCombatLockdown() then
-            pcall(CombatSafeReapply, tooltip)
+            if skinnedTooltips[tooltip] then
+                pcall(CombatSafeReapply, tooltip)
+            else
+                pcall(CombatSafeFirstSkin, tooltip)
+            end
         else
             DeferFontSizing(tooltip)
             if IsEnabled() and not skinnedTooltips[tooltip] then
@@ -1180,7 +1235,11 @@ local function SetupTooltipPostProcessor()
         if not tooltip or tooltip == EmbeddedItemTooltip then return end
         SafeHookTooltipOnShow(tooltip)
         if InCombatLockdown() then
-            pcall(CombatSafeReapply, tooltip)
+            if skinnedTooltips[tooltip] then
+                pcall(CombatSafeReapply, tooltip)
+            else
+                pcall(CombatSafeFirstSkin, tooltip)
+            end
         else
             DeferFontSizing(tooltip)
             if IsEnabled() and not skinnedTooltips[tooltip] then
@@ -1193,7 +1252,11 @@ local function SetupTooltipPostProcessor()
         if not tooltip or tooltip == EmbeddedItemTooltip then return end
         SafeHookTooltipOnShow(tooltip)
         if InCombatLockdown() then
-            pcall(CombatSafeReapply, tooltip)
+            if skinnedTooltips[tooltip] then
+                pcall(CombatSafeReapply, tooltip)
+            else
+                pcall(CombatSafeFirstSkin, tooltip)
+            end
         else
             DeferFontSizing(tooltip)
             if IsEnabled() and not skinnedTooltips[tooltip] then
@@ -1289,11 +1352,24 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             do
                 local gtWasShown = false
                 local watcher = CreateFrame("Frame")
+                watcher:Hide()  -- Start hidden: no OnUpdate cost when tooltip not shown
+                -- Event-driven activation: only poll during show transitions.
+                -- OnShow fires before data setup, so the watcher's 1-frame delay
+                -- is still needed — but now it only runs while the tooltip is visible.
+                GameTooltip:HookScript("OnShow", function() watcher:Show() end)
+                GameTooltip:HookScript("OnHide", function()
+                    gtWasShown = false
+                    watcher:Hide()
+                end)
                 watcher:SetScript("OnUpdate", function()
                     local shown = GameTooltip:IsShown()
-                    if shown == gtWasShown then return end
+                    if shown == gtWasShown then
+                        -- Already processed this transition; stop polling
+                        if shown then watcher:Hide() end
+                        return
+                    end
                     gtWasShown = shown
-                    if not shown then return end
+                    if not shown then watcher:Hide() return end
                     -- GameTooltip just became visible
                     if not IsEnabled() then return end
                     if InCombatLockdown() then
@@ -1308,6 +1384,29 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
                     C_Timer.After(0, function()
                         if GameTooltip:IsShown() then
                             pcall(ApplyTooltipFontSizeToFrame, GameTooltip)
+                        end
+                        -- Discover comparison tooltips (ShoppingTooltip1/2).
+                        -- These may be lazily created by C-side code without
+                        -- triggering SharedTooltip_SetBackdropStyle, leaving
+                        -- them unskinned (white background).
+                        for i = 1, 2 do
+                            local st = _G["ShoppingTooltip" .. i]
+                            if st and st:IsShown() then
+                                if not hookedTooltips[st] then
+                                    SafeHookTooltipOnShow(st)
+                                end
+                                if not skinnedTooltips[st] then
+                                    if InCombatLockdown() then
+                                        pcall(CombatSafeFirstSkin, st)
+                                    else
+                                        pcall(SkinTooltip, st)
+                                    end
+                                elseif not InCombatLockdown() then
+                                    pcall(ReapplySkin, st)
+                                else
+                                    pcall(CombatSafeReapply, st)
+                                end
+                            end
                         end
                     end)
                 end)
