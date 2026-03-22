@@ -2710,6 +2710,7 @@ do
             else
                 dbKey = "essential"
             end
+            local isEssential = (dbKey == "essential")
             local tracker = ncdm[dbKey] or (ncdm.containers and ncdm.containers[dbKey])
             if not tracker then return 80 end
 
@@ -3355,6 +3356,14 @@ do
                     anchoringDB = core.db.profile.frameAnchoring
                 end
                 local hudMinWidth = anchoringDB and anchoringDB.hudMinWidth
+                if not hudMinWidth and anchoringDB then
+                    if Helpers and Helpers.MigrateHUDMinWidthSettings then
+                        hudMinWidth = Helpers.MigrateHUDMinWidthSettings(anchoringDB)
+                    else
+                        hudMinWidth = { enabled = false, width = HUD_MIN_WIDTH_DEFAULT }
+                        anchoringDB.hudMinWidth = hudMinWidth
+                    end
+                end
                 if hudMinWidth then
                     CreateCollapsible(content, "HUD Min Width", 2 * FORM_ROW + 20, function(body)
                         local sy = -4

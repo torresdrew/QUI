@@ -95,7 +95,7 @@ function GUI:InitializeOptions()
     local actionBarsTab = GUI:AddTab(frame, "Action Bars", ns.QUI_ActionBarsOptions.CreateActionBarsPage)
     -- Minimap & Datatext settings moved to Layout Mode settings panels
     local skinningTab = GUI:AddTab(frame, "Skinning & Autohide", ns.QUI_AutohidesOptions.CreateAutohidesPage)
-    local customTrackersTab = GUI:AddTab(frame, "Custom CDM Bars", ns.QUI_CustomTrackersOptions.CreateCustomTrackersPage)
+    -- Custom CDM Bars settings moved to Layout Mode (Composer)
     -- Prey Tracker settings moved to Layout Mode settings panels
     GUI:AddTab(frame, "Frame Levels", ns.QUI_HUDLayeringOptions.CreateHUDLayeringPage)
     GUI:AddTab(frame, "Profiles", ns.QUI_ProfilesOptions.CreateSpecProfilesPage)
