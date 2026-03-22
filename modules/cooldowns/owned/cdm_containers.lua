@@ -1017,7 +1017,18 @@ local function LayoutContainer(trackerKey)
     if applying[trackerKey] then return end
     applying[trackerKey] = true
 
-    container:Show()
+    -- Respect "hide with anchor" — the anchoring system hid this container
+    -- because its anchor parent is hidden. Let layout proceed (so icons stay
+    -- up-to-date) but don't re-show the container.
+    local anchorHidden = false
+    if _G.QUI_IsFrameHiddenByAnchor then
+        local anchorKey = ANCHOR_KEY_MAP[trackerKey] or ("cdmCustom_" .. trackerKey)
+        anchorHidden = _G.QUI_IsFrameHiddenByAnchor(anchorKey)
+    end
+
+    if not anchorHidden then
+        container:Show()
+    end
 
     -- Apply HUD layer priority
     local hudLayering = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.hudLayering

@@ -2360,6 +2360,13 @@ _G.QUI_HasFrameAnchor = function(key)
     return db and db.frameAnchoring and type(db.frameAnchoring[key]) == "table" or false
 end
 
+-- Returns true when the anchoring system has hidden a frame because its
+-- anchor parent is hidden (hideWithParent).  Other systems (CDM layout,
+-- hud_visibility) should respect this and avoid re-showing the frame.
+_G.QUI_IsFrameHiddenByAnchor = function(key)
+    return hideWithParentHidden[key] or false
+end
+
 _G.QUI_ApplyAllFrameAnchors = function(force)
     if QUI_Anchoring then
         QUI_Anchoring:ApplyAllFrameAnchors(force)

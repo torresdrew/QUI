@@ -1209,7 +1209,7 @@ local function UpdateDispelOverlay(frame)
 
     if cache and cache.harmful then
         for _, auraData in ipairs(cache.harmful) do
-            if auraData.isHarmful and auraData.dispelName then
+            if auraData.dispelName then
                 local dType = SafeValue(auraData.dispelName, nil)
                 if dType then
                     hasDispellable = true
@@ -1243,7 +1243,7 @@ local function UpdateDispelOverlay(frame)
     local colors = GetDispelColors()
     if cache and cache.harmful then
         for _, auraData in ipairs(cache.harmful) do
-            if auraData.isHarmful and auraData.dispelName then
+            if auraData.dispelName then
                 local dType = SafeValue(auraData.dispelName, nil)
                 if dType and colors[dType] then
                     local c = colors[dType]
