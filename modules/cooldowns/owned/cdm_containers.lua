@@ -942,6 +942,9 @@ local function InitContainers()
                 if ns.CDMIcons then
                     ns.CDMIcons:EnsurePool(key)
                 end
+                -- Register frame resolver so the anchoring system can find
+                -- this container (hideWithParent, anchor chains, etc.)
+                CDMContainers_API:RegisterDynamicFrameResolver(key, settings)
             end
         end
     end
