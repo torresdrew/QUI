@@ -152,23 +152,24 @@ if BackdropTemplateMixin and BackdropTemplateMixin.SetBackdropColor then
     hooksecurefunc(BackdropTemplateMixin, "SetBackdropColor", function(self, r, g, b)
         if suppressingBackdrop then return end
         if not initialized or not IsEnabled() then return end
+        -- Fast path: skip non-white colors immediately (most common case).
+        -- Color check is 3 number comparisons vs ShouldSkipFrame's string matching.
+        local isS = issecretvalue
+        if isS(r) then return end
+        if not r or r <= 0.9 or not g or g <= 0.9 or not b or b <= 0.9 then return end
         if processed[self] then
             -- Frame was already processed but just got its color reset —
             -- clear the processed flag so we re-evaluate.
             processed[self] = nil
         end
         if ShouldSkipFrame(self) then return end
-        local isS = issecretvalue
-        if isS(r) then return end
-        if r and r > 0.9 and g > 0.9 and b > 0.9 then
-            local hok, h = pcall(self.GetHeight, self)
-            if hok and not isS(h) and h and h > 10 then
-                suppressingBackdrop = true
-                pcall(self.SetBackdropColor, self, 0.05, 0.05, 0.05, 0.95)
-                pcall(self.SetBackdropBorderColor, self, 0, 0, 0, 1)
-                suppressingBackdrop = false
-                processed[self] = true
-            end
+        local hok, h = pcall(self.GetHeight, self)
+        if hok and not isS(h) and h and h > 10 then
+            suppressingBackdrop = true
+            pcall(self.SetBackdropColor, self, 0.05, 0.05, 0.05, 0.95)
+            pcall(self.SetBackdropBorderColor, self, 0, 0, 0, 1)
+            suppressingBackdrop = false
+            processed[self] = true
         end
     end)
 end

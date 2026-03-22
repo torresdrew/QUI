@@ -65,6 +65,9 @@ end
 
 -- Incremental aura update: apply add/remove/update deltas from updateInfo
 -- instead of a full rescan.  Falls back to full scan if incremental fails.
+-- Pre-allocated scratch table for removal set (avoids per-event allocation)
+local _scratchRemoveSet = {}
+
 local function IncrementalUpdateAuras(unit, updateInfo)
     local cache = unitAuraCache[unit]
     if not cache then
@@ -78,32 +81,36 @@ local function IncrementalUpdateAuras(unit, updateInfo)
 
     local changed = false
 
-    -- 1. Remove auras
+    -- 1. Remove auras (in-place compaction — zero allocation)
     if updateInfo.removedAuraInstanceIDs then
-        local removeSet = {}
+        wipe(_scratchRemoveSet)
         for _, instID in ipairs(updateInfo.removedAuraInstanceIDs) do
-            removeSet[instID] = true
+            _scratchRemoveSet[instID] = true
         end
-        -- Filter harmful
-        local newHarmful = {}
-        for _, ad in ipairs(cache.harmful) do
-            if not removeSet[ad.auraInstanceID] then
-                newHarmful[#newHarmful + 1] = ad
-            else
+        -- Compact harmful in-place
+        local src = cache.harmful
+        local j = 0
+        for i = 1, #src do
+            if _scratchRemoveSet[src[i].auraInstanceID] then
                 changed = true
+            else
+                j = j + 1
+                src[j] = src[i]
             end
         end
-        -- Filter helpful
-        local newHelpful = {}
-        for _, ad in ipairs(cache.helpful) do
-            if not removeSet[ad.auraInstanceID] then
-                newHelpful[#newHelpful + 1] = ad
-            else
+        for i = j + 1, #src do src[i] = nil end
+        -- Compact helpful in-place
+        src = cache.helpful
+        j = 0
+        for i = 1, #src do
+            if _scratchRemoveSet[src[i].auraInstanceID] then
                 changed = true
+            else
+                j = j + 1
+                src[j] = src[i]
             end
         end
-        cache.harmful = newHarmful
-        cache.helpful = newHelpful
+        for i = j + 1, #src do src[i] = nil end
     end
 
     -- 2. Update existing auras (stacks, duration changes)
@@ -234,6 +241,9 @@ local function SharedTimerOnUpdate(self, dt)
 
     local now = GetTime()
     local db = GetDB()
+    -- Pre-compute aura settings for both contexts (avoids per-icon table walks)
+    local raidAuras = db and db.raid and db.raid.auras
+    local partyAuras = db and db.party and db.party.auras
     local hasAny = false
 
     for icon, state in pairs(timerIcons) do
@@ -245,10 +255,8 @@ local function SharedTimerOnUpdate(self, dt)
 
             if remaining > 0 then
                 if icon.durationText then
-                    -- Determine context from icon's parent unit frame
                     local isRaid = icon.unitFrame and icon.unitFrame._isRaid
-                    local vdb = db and (isRaid and db.raid or db.party) or db
-                    local auraSettings = vdb and vdb.auras
+                    local auraSettings = isRaid and raidAuras or partyAuras
                     local showDurationText = not auraSettings or auraSettings.showDurationText ~= false
                     if showDurationText then
                         icon.durationText:SetText(FormatDuration(remaining))

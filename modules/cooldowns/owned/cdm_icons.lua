@@ -40,6 +40,17 @@ local ipairs = ipairs
 local pcall = pcall
 local CreateFrame = CreateFrame
 local GetTime = GetTime
+local wipe = wipe
+local select = select
+local tostring = tostring
+local format = format
+local InCombatLockdown = InCombatLockdown
+local C_UnitAuras = C_UnitAuras
+local C_Spell = C_Spell
+local C_Item = C_Item
+local C_CooldownViewer = C_CooldownViewer
+local C_StringUtil = C_StringUtil
+local issecretvalue = issecretvalue
 
 local function IsSafeNumeric(val)
     if IsSecretValue(val) then return false end
@@ -142,11 +153,9 @@ local function EnsureViewerFrames()
     end
 end
 
---- Find ANY viewer child whose spell identity matches one of the given IDs
---- AND has a non-nil auraInstanceID (i.e., is currently showing an active aura).
---- Returns the child frame or nil.
--- Reusable scratch table for collecting children — avoids closure + table
--- allocation on every FindActiveAuraChild call (called per-icon per-tick).
+--- Per-tick child map: builds a spellID → child lookup ONCE per
+--- UpdateAllCooldowns cycle instead of scanning all viewer children
+--- per icon.  Invalidated by setting _childMapDirty = true.
 local _childScratch = {}
 local _nChildren = 0
 local function _collectChildren(...)
@@ -154,10 +163,15 @@ local function _collectChildren(...)
     for i = 1, _nChildren do _childScratch[i] = select(i, ...) end
     for i = _nChildren + 1, #_childScratch do _childScratch[i] = nil end
 end
--- Wrapper: pcall-safe GetChildren → scratch table (no per-call closure).
 local function _safeGetChildren(viewer) _collectChildren(viewer:GetChildren()) end
 
-local function FindActiveAuraChild(id1, id2, id3)
+local _childBySpellID = {}  -- [spellID] = shown child with auraInstanceID
+local _childMapDirty = true -- set true at start of each update cycle
+
+local function RebuildChildMap()
+    if not _childMapDirty then return end
+    _childMapDirty = false
+    wipe(_childBySpellID)
     EnsureViewerFrames()
     for _, viewer in ipairs(VIEWER_FRAMES) do
         _nChildren = 0
@@ -165,52 +179,40 @@ local function FindActiveAuraChild(id1, id2, id3)
         if ok and _nChildren > 0 then
             for ci = 1, _nChildren do
                 local ch = _childScratch[ci]
-                -- Only consider shown children — Blizzard hides children
-                -- C-side when buffs drop but doesn't nil auraInstanceID.
                 local sok, shown = pcall(ch.IsShown, ch)
                 if ch and ch.auraInstanceID and sok and shown then
-                    -- Match by cooldownInfo IDs
-                    local ci = ch.cooldownInfo
-                    if ci then
-                        local sid = ci.spellID
-                        local ov = ci.overrideSpellID
+                    -- Index by cooldownInfo IDs
+                    local cinfo = ch.cooldownInfo
+                    if cinfo then
+                        local sid = cinfo.spellID
                         local safeSid = sid and SafeValue(sid, nil)
+                        if safeSid then _childBySpellID[safeSid] = ch end
+                        local ov = cinfo.overrideSpellID
                         local safeOv = ov and SafeValue(ov, nil)
-                        if (safeSid and (safeSid == id1 or safeSid == id2 or safeSid == id3))
-                            or (safeOv and (safeOv == id1 or safeOv == id2 or safeOv == id3)) then
-                            return ch
-                        end
+                        if safeOv then _childBySpellID[safeOv] = ch end
                     end
-                    -- Match by cooldownID
+                    -- Index by cooldownID
                     local cdID = ch.cooldownID
-                    if cdID and (cdID == id1 or cdID == id2 or cdID == id3) then
-                        return ch
-                    end
-                    -- Match by frame methods (GetAuraSpellID, GetSpellID)
+                    if cdID then _childBySpellID[cdID] = ch end
+                    -- Index by GetAuraSpellID
                     if ch.GetAuraSpellID then
                         local aok, auraSid = pcall(ch.GetAuraSpellID, ch)
                         local safeAura = aok and auraSid and SafeValue(auraSid, nil)
-                        if safeAura and (safeAura == id1 or safeAura == id2 or safeAura == id3) then
-                            return ch
-                        end
+                        if safeAura then _childBySpellID[safeAura] = ch end
                     end
+                    -- Index by GetSpellID
                     if ch.GetSpellID then
-                        local sok, fid = pcall(ch.GetSpellID, ch)
-                        local safeFid = sok and fid and SafeValue(fid, nil)
-                        if safeFid and (safeFid == id1 or safeFid == id2 or safeFid == id3) then
-                            return ch
-                        end
+                        local sok2, fid = pcall(ch.GetSpellID, ch)
+                        local safeFid = sok2 and fid and SafeValue(fid, nil)
+                        if safeFid then _childBySpellID[safeFid] = ch end
                     end
-                    -- Match by linkedSpellIDs from cooldown info (ability→debuff mapping)
-                    local cdID = ch.cooldownID
+                    -- Index by linkedSpellIDs (ability→debuff mapping)
                     if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
                         local iok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
                         if iok and info and info.linkedSpellIDs then
                             for _, lsid in ipairs(info.linkedSpellIDs) do
                                 local safeLsid = SafeValue(lsid, nil)
-                                if safeLsid and (safeLsid == id1 or safeLsid == id2 or safeLsid == id3) then
-                                    return ch
-                                end
+                                if safeLsid then _childBySpellID[safeLsid] = ch end
                             end
                         end
                     end
@@ -218,7 +220,13 @@ local function FindActiveAuraChild(id1, id2, id3)
             end
         end
     end
-    return nil
+end
+
+local function FindActiveAuraChild(id1, id2, id3)
+    RebuildChildMap()
+    return _childBySpellID[id1]
+        or (id2 and _childBySpellID[id2])
+        or (id3 and _childBySpellID[id3])
 end
 
 ---------------------------------------------------------------------------
@@ -2134,6 +2142,7 @@ function CDMIcons:UpdateAllCooldowns()
     -- API calls within this cycle (same spellID across multiple icons).
     wipe(_tickAuraCache)
     wipe(_tickLookupCache)
+    _childMapDirty = true  -- invalidate per-tick child map
 
     local editMode = Helpers.IsEditModeActive()
         or (_G.QUI_IsCDMEditModeActive and _G.QUI_IsCDMEditModeActive())
@@ -2141,6 +2150,10 @@ function CDMIcons:UpdateAllCooldowns()
     -- Rebuild aura cache for custom aura/auraBar containers (Composer).
     -- Built-in buff/trackedBar use direct aura lookup instead.
     RebuildAuraCache()
+
+    -- Hoist DB lookups above the loop (avoids 4 table hops per icon)
+    local _ncdm = ns.Addon and ns.Addon.db and ns.Addon.db.profile and ns.Addon.db.profile.ncdm
+    local _ncdmContainers = _ncdm and _ncdm.containers
 
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
@@ -2158,10 +2171,7 @@ function CDMIcons:UpdateAllCooldowns()
 
             if entry then
                 -- Visibility based on container type + display mode
-                local QUICore = ns.Addon
-                local ncdm = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.ncdm
-                -- Built-in containers at ncdm[key], custom containers at ncdm.containers[key]
-                local containerDB = ncdm and (ncdm[entry.viewerType] or (ncdm.containers and ncdm.containers[entry.viewerType]))
+                local containerDB = _ncdm and (_ncdm[entry.viewerType] or (_ncdmContainers and _ncdmContainers[entry.viewerType]))
                 local cType = containerDB and containerDB.containerType
                 if not cType then
                     -- Built-in buff and trackedBar are aura containers even without
@@ -2254,7 +2264,6 @@ function CDMIcons:UpdateAllCooldowns()
                 end
                 SyncCooldownBling(icon)
             end
-            SyncCooldownBling(icon)
         end
     end
 end

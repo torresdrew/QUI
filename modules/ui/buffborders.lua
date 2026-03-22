@@ -651,6 +651,16 @@ local function ClearPrivateAuraAnchors()
         if id then pcall(RemovePrivateAuraAnchor, id) end
     end
     wipe(paAnchorIDs)
+    -- Hide any stale WoW-rendered children left on anchor slots
+    for i = 1, PA_MAX_SLOTS do
+        local slot = paSlots[i]
+        if slot then
+            for j = 1, slot:GetNumChildren() do
+                local child = select(j, slot:GetChildren())
+                if child then child:Hide() end
+            end
+        end
+    end
 end
 
 local function SetupPrivateAuras()
@@ -754,11 +764,27 @@ local function UpdateBuffIcons()
     UpdateAuraIcons(buffContainer, buffActiveIcons, buffSortedIcons, "HELPFUL", true, settings, "buff")
 end
 
+-- Rate-limited private aura anchor re-registration to clean up stale renders.
+-- WoW's AddPrivateAuraAnchor rendering can persist after the aura expires;
+-- re-registering forces the client to re-evaluate active private auras.
+local paLastRefresh = 0
+local PA_REFRESH_CD = 1.0
+
+local function RefreshPrivateAuraAnchors()
+    if not AddPrivateAuraAnchor or not debuffContainer then return end
+    local now = GetTime()
+    if now - paLastRefresh < PA_REFRESH_CD then return end
+    paLastRefresh = now
+    ClearPrivateAuraAnchors()
+    SetupPrivateAuras()
+end
+
 local function UpdateDebuffIcons()
     local settings = GetSettings()
     if not settings then return end
     if previewActive then return end
     UpdateAuraIcons(debuffContainer, debuffActiveIcons, debuffSortedIcons, "HARMFUL", false, settings, "debuff")
+    RefreshPrivateAuraAnchors()
     LayoutPrivateAuraSlots()
 end
 

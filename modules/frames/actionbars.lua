@@ -3632,7 +3632,7 @@ end
 local usabilityCheckFrame = nil
 -- Range check interval (only used when range indicator is enabled)
 local RANGE_CHECK_INTERVAL_NORMAL = 0.25  -- 250ms = 4 FPS (CPU-friendly)
-local RANGE_CHECK_INTERVAL_FAST = 0.05    -- 50ms = 20 FPS (responsive)
+local RANGE_CHECK_INTERVAL_FAST = 0.1     -- 100ms = 10 FPS (responsive, halved CPU)
 local RANGE_CHECK_INTERVAL_IDLE = 1.0     -- 1s OOC (range matters less)
 local actionBarRangeInCombat = false
 
