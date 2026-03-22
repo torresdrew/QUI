@@ -2780,6 +2780,18 @@ local function RefreshButtonDrawer()
         -- Apply auto-hide toggle state immediately
         if drawerToggleButton then
             if settings.buttonDrawer.autoHideToggle then
+                -- Install Minimap hover hooks if not already done
+                if not toggleAutoHideHooked then
+                    Minimap:HookScript("OnEnter", ShowToggleButton)
+                    Minimap:HookScript("OnLeave", function()
+                        C_Timer.After(0.1, function()
+                            if not IsMouseOverDrawer() and not (Minimap:IsMouseOver()) then
+                                HideToggleButton()
+                            end
+                        end)
+                    end)
+                    toggleAutoHideHooked = true
+                end
                 if not Minimap:IsMouseOver() and not IsMouseOverDrawer() then
                     drawerToggleButton:SetAlpha(0)
                 end
