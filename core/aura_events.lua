@@ -92,6 +92,10 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, updateInfo)
         -- Already marked as full update
     elseif updateInfo and updateInfo.isFullUpdate then
         pendingUnits[unit] = true
+    elseif existing then
+        -- Multiple deltas for same unit in same frame — fall back to full scan
+        -- rather than losing the first delta's changes.
+        pendingUnits[unit] = true
     else
         pendingUnits[unit] = updateInfo or true
     end

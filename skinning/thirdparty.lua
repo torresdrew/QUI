@@ -24,60 +24,42 @@ local function IsEnabled()
     return db and db.general and db.general.skinThirdParty ~= false
 end
 
+--- Prefix set for O(1) lookup instead of pattern matches.
+--- Keys are known Blizzard/QUI frame name prefixes.
+local KNOWN_PREFIXES = {}
+for _, prefix in ipairs({
+    "QUI", "Quazii", "Blizzard_", "GameTooltip", "ItemRef", "Interface",
+    "Minimap", "PlayerFrame", "TargetFrame", "ChatFrame", "Character",
+    "Professions", "AuctionHouse", "LFG", "PVE", "EditMode", "DropDown",
+}) do
+    KNOWN_PREFIXES[prefix] = true
+end
+
+-- Sorted unique prefix lengths for cascading sub() lookups
+local PREFIX_LENGTHS
+do
+    local seen = {}
+    PREFIX_LENGTHS = {}
+    for prefix in pairs(KNOWN_PREFIXES) do
+        local len = #prefix
+        if not seen[len] then
+            seen[len] = true
+            PREFIX_LENGTHS[#PREFIX_LENGTHS + 1] = len
+        end
+    end
+    table.sort(PREFIX_LENGTHS)
+end
+
+local strsub = string.sub
+
 --- Returns true if the frame name matches a known Blizzard/QUI prefix
 --- so we don't accidentally suppress intentional Blizzard NineSlices
 --- that QUI simply hasn't skinned.
+--- Uses cascading sub()+set-lookup: ~8 hash probes instead of 18 find() calls.
 local function IsBlizzardOrQUIFrame(name)
     if type(name) ~= "string" then return false end
-    -- QUI-owned frames
-    if name:find("^QUI") or name:find("^Quazii") then return true end
-    -- Common Blizzard prefixes — these frames may have intentional NineSlices
-    -- that QUI doesn't skin; leave them alone.
-    if name:find("^Blizzard_")
-        or name:find("^GameTooltip")
-        or name:find("^ItemRef")
-        or name:find("^Interface")
-        or name:find("^Minimap")
-        or name:find("^PlayerFrame")
-        or name:find("^TargetFrame")
-        or name:find("^ChatFrame")
-        or name:find("^SpellBook")
-        or name:find("^Character")
-        or name:find("^WorldMap")
-        or name:find("^Quest")
-        or name:find("^Gossip")
-        or name:find("^Merchant")
-        or name:find("^Mail")
-        or name:find("^Friends")
-        or name:find("^Communities")
-        or name:find("^Encounter")
-        or name:find("^Collections")
-        or name:find("^Wardrobe")
-        or name:find("^Talent")
-        or name:find("^Professions")
-        or name:find("^AuctionHouse")
-        or name:find("^TradeSkill")
-        or name:find("^LFG")
-        or name:find("^PVE")
-        or name:find("^Garrison")
-        or name:find("^Adventure")
-        or name:find("^ClassTalent")
-        or name:find("^Settings")
-        or name:find("^Video")
-        or name:find("^Audio")
-        or name:find("^KeyBinding")
-        or name:find("^Macro")
-        or name:find("^Addon")
-        or name:find("^BankFrame")
-        or name:find("^Guild")
-        or name:find("^Calendar")
-        or name:find("^Achievement")
-        or name:find("^ContainerFrame")
-        or name:find("^EditMode")
-        or name:find("^HelpFrame")
-        or name:find("^DropDown")
-    then
-        return true
+    for _, len in ipairs(PREFIX_LENGTHS) do
+        if KNOWN_PREFIXES[strsub(name, 1, len)] then return true end
     end
     return false
 end
@@ -116,12 +98,20 @@ local function SuppressFrame(f)
     end
 end
 
+-- Weak-keyed cache for IsBlizzardOrQUIFrame results.
+-- Frame names are immutable, so the result never changes per frame identity.
+-- SkinBase.IsSkinned is checked live (it can change as QUI skins frames).
+local _blizzFrameCache = setmetatable({}, { __mode = "k" })
+
 --- Returns true if a frame should be left alone (Blizzard, QUI, or
 --- already handled by a per-frame skinning module).
 local function ShouldSkipFrame(f)
     if SkinBase.IsSkinned(f) then return true end
-    local name = f:GetName()
-    return IsBlizzardOrQUIFrame(name)
+    local cached = _blizzFrameCache[f]
+    if cached ~= nil then return cached end
+    local result = IsBlizzardOrQUIFrame(f:GetName())
+    _blizzFrameCache[f] = result
+    return result
 end
 
 ---------------------------------------------------------------------------
@@ -181,6 +171,7 @@ end
 local function Refresh()
     -- Clear processed set so we re-evaluate everything
     wipe(processed)
+    wipe(_blizzFrameCache)
     if IsEnabled() then
         C_Timer.After(0.1, ScanAndSuppress)
     end

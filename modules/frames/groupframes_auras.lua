@@ -13,6 +13,17 @@ local SafeValue = Helpers.SafeValue
 local SafeToNumber = Helpers.SafeToNumber
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
+-- Upvalue hot-path globals
+local pairs = pairs
+local ipairs = ipairs
+local type = type
+local pcall = pcall
+local wipe = wipe
+local format = format
+local GetTime = GetTime
+local UnitExists = UnitExists
+local C_UnitAuras = C_UnitAuras
+
 ---------------------------------------------------------------------------
 -- MODULE TABLE
 ---------------------------------------------------------------------------
@@ -1087,7 +1098,8 @@ local function FlushPendingAuras()
     end
     for unit, updateInfo in pairs(pendingAuraUnits) do
         local frame = GF.unitFrameMap[unit]
-        if frame then
+        if frame and frame:IsShown() then
+            -- Skip hidden/invisible frames (offscreen raid members).
             -- Try incremental update if updateInfo has delta data.
             -- Falls back to full scan when: updateInfo is true (full update),
             -- updateInfo is nil, or incremental fails.

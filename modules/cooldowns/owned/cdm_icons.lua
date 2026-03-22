@@ -206,10 +206,22 @@ local function RebuildChildMap()
                         local safeFid = sok2 and fid and SafeValue(fid, nil)
                         if safeFid then _childBySpellID[safeFid] = ch end
                     end
-                    -- Index by linkedSpellIDs (ability→debuff mapping)
+                    -- Index by linkedSpellIDs (ability→debuff mapping).
+                    -- Cache cooldownInfo on child to avoid per-tick allocation
+                    -- (GetCooldownViewerCooldownInfo returns a new table each call).
                     if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                        local iok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
-                        if iok and info and info.linkedSpellIDs then
+                        local info = ch._cachedCdInfo
+                        if not info or ch._cachedCdInfoID ~= cdID then
+                            local iok
+                            iok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
+                            if iok and info then
+                                ch._cachedCdInfo = info
+                                ch._cachedCdInfoID = cdID
+                            else
+                                info = nil
+                            end
+                        end
+                        if info and info.linkedSpellIDs then
                             for _, lsid in ipairs(info.linkedSpellIDs) do
                                 local safeLsid = SafeValue(lsid, nil)
                                 if safeLsid then _childBySpellID[safeLsid] = ch end
@@ -2571,10 +2583,18 @@ cdEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 -- Frame-show coalescing for cooldown events: batches SPELL_UPDATE_COOLDOWN,
 -- SPELL_UPDATE_CHARGES, BAG_UPDATE_COOLDOWN, and UNIT_AURA into a single
 -- UpdateAllCooldowns per render frame (zero-allocation, automatic).
+-- Throttled to max ~20 FPS (50ms) — raid combat fires SPELL_UPDATE_COOLDOWN
+-- many times per second; 60 FPS updates are excessive for icon display.
+local CDM_MIN_UPDATE_INTERVAL = 0.05
+local _lastCDMUpdateTime = 0
+
 local cdCoalesceFrame = CreateFrame("Frame")
 cdCoalesceFrame:Hide()
 cdCoalesceFrame:SetScript("OnUpdate", function(self)
+    local now = GetTime()
+    if now - _lastCDMUpdateTime < CDM_MIN_UPDATE_INTERVAL then return end
     self:Hide()
+    _lastCDMUpdateTime = now
     CDMIcons:UpdateAllCooldowns()
     if ns.CDMBars and ns.CDMBars.UpdateOwnedBars then
         ns.CDMBars:UpdateOwnedBars()

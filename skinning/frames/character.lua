@@ -84,6 +84,8 @@ local function HideBlizzardDecorations()
     if CharacterFramePortrait then CharacterFramePortrait:Hide() end
     if CharacterFrame.Background then CharacterFrame.Background:Hide() end
     if CharacterFrame.NineSlice then CharacterFrame.NineSlice:Hide() end
+    if CharacterFrameInset and CharacterFrameInset.NineSlice then CharacterFrameInset.NineSlice:Hide() end
+    if CharacterFrameInsetRight and CharacterFrameInsetRight.NineSlice then CharacterFrameInsetRight.NineSlice:Hide() end
     if CharacterFrameBg then CharacterFrameBg:Hide() end
     if CharacterStatsPane then CharacterStatsPane:Hide() end
 end
