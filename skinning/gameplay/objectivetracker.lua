@@ -583,7 +583,7 @@ local function ApplyQUIBackdrop(trackerFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga
                 local bd = SkinBase.GetFrameData(self, "backdrop")
                 if bd then
                     local _, _, _, _, currBgR, currBgG, currBgB = SkinBase.GetSkinColors()
-                    bd:SetBackdropColor(currBgR, currBgG, currBgB, alpha)
+                    Helpers.SetFrameBackdropColor(bd, currBgR, currBgG, currBgB, alpha)
                 end
             end)
         end)
@@ -618,11 +618,11 @@ local function ApplyQUIBackdrop(trackerFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga
         edgeSize = hideBorder and 0 or otPx,
         insets = { left = otPx, right = otPx, top = otPx, bottom = otPx }
     })
-    backdrop:SetBackdropColor(bgr, bgg, bgb, opacity)
+    Helpers.SetFrameBackdropColor(backdrop, bgr, bgg, bgb, opacity)
     if hideBorder then
-        backdrop:SetBackdropBorderColor(0, 0, 0, 0)
+        Helpers.SetFrameBackdropBorderColor(backdrop, 0, 0, 0, 0)
     else
-        backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
+        Helpers.SetFrameBackdropBorderColor(backdrop, sr, sg, sb, sa)
     end
 
     -- Set initial anchors
@@ -853,7 +853,7 @@ local function SkinObjectiveTracker()
                 local _, _, _, _, currBgR, currBgG, currBgB = SkinBase.GetSkinColors()
                 local bd = SkinBase.GetFrameData(TrackerFrame, "backdrop")
                 if bd then
-                    bd:SetBackdropColor(currBgR, currBgG, currBgB, alpha)
+                    Helpers.SetFrameBackdropColor(bd, currBgR, currBgG, currBgB, alpha)
                 end
             end)
         end)
@@ -907,11 +907,11 @@ local function RefreshObjectiveTracker()
             edgeSize = hideBorder and 0 or updPx,
             insets = { left = updPx, right = updPx, top = updPx, bottom = updPx }
         })
-        refreshBackdrop:SetBackdropColor(bgr, bgg, bgb, opacity)
+        Helpers.SetFrameBackdropColor(refreshBackdrop, bgr, bgg, bgb, opacity)
         if hideBorder then
-            refreshBackdrop:SetBackdropBorderColor(0, 0, 0, 0)
+            Helpers.SetFrameBackdropBorderColor(refreshBackdrop, 0, 0, 0, 0)
         else
-            refreshBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
+            Helpers.SetFrameBackdropBorderColor(refreshBackdrop, sr, sg, sb, sa)
         end
     end
 

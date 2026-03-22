@@ -1518,8 +1518,8 @@ local function ShowMiddleClickMenu(keepPosition)
         edgeSize = px,
         insets = { left = px, right = px, top = px, bottom = px },
     })
-    middleClickMenuFrame:SetBackdropColor(bgR, bgG, bgB, bgA)
-    middleClickMenuFrame:SetBackdropBorderColor(borderR, borderG, borderB, borderA)
+    Helpers.SetFrameBackdropColor(middleClickMenuFrame, bgR, bgG, bgB, bgA)
+    Helpers.SetFrameBackdropBorderColor(middleClickMenuFrame, borderR, borderG, borderB, borderA)
 
     for i = 1, #middleClickMenuRows do
         middleClickMenuRows[i]:Hide()
@@ -2340,8 +2340,8 @@ local function StyleDrawerFrame()
         edgeSize = hasBorder and edgeSize or 0,
         insets = hasBorder and { left = edgeSize, right = edgeSize, top = edgeSize, bottom = edgeSize } or { left = 0, right = 0, top = 0, bottom = 0 },
     })
-    drawerFrame:SetBackdropColor(bgR, bgG, bgB, bgA)
-    drawerFrame:SetBackdropBorderColor(borderR, borderG, borderB, hasBorder and borderA or 0)
+    Helpers.SetFrameBackdropColor(drawerFrame, bgR, bgG, bgB, bgA)
+    Helpers.SetFrameBackdropBorderColor(drawerFrame, borderR, borderG, borderB, hasBorder and borderA or 0)
 end
 
 local function CreateDrawerFrame()

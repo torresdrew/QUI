@@ -1076,6 +1076,12 @@ function CDMSpellData:BuildSpellListFromOwned(containerKey)
             if entry.type == "spell" and removedSpells[entry.id] then
                 isRemoved = true
             end
+            -- Safety filter: never display spells the player doesn't know
+            -- (catches cross-class contamination from shared profiles before
+            -- the dormant system has had a chance to clean up ownedSpells)
+            if not isRemoved and entry.type == "spell" and not IsSpellKnownByPlayer(entry.id) then
+                isRemoved = true
+            end
 
             if not isRemoved then
                 local resolved = ResolveOwnedEntry(entry, containerKey, i)
@@ -2262,6 +2268,9 @@ function CDMSpellData:Initialize()
                 if not InCombatLockdown() then
                     CDMSpellData:CheckAllDormantSpells()
                     CDMSpellData:ReconcileAllContainers()
+                    -- Notify containers to refresh display after dormant cleanup
+                    -- removed stale spells from ownedSpells.
+                    FireChangeCallback()
                 else
                 end
             end)

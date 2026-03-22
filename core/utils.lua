@@ -1217,6 +1217,19 @@ end
 --- Apply default values to a table for any keys that are nil.
 --- @param tbl table The target table
 --- @param defaults table Key-value pairs of defaults to apply
+--- Sets backdrop color AND stores backup fields for orphaned overlay recovery.
+--- Use instead of frame:SetBackdropColor() on QUI-owned frames.
+function Helpers.SetFrameBackdropColor(frame, r, g, b, a)
+    frame:SetBackdropColor(r, g, b, a)
+    frame._quiBgR, frame._quiBgG, frame._quiBgB, frame._quiBgA = r, g, b, a
+end
+
+--- Sets backdrop border color AND stores backup fields for recovery.
+function Helpers.SetFrameBackdropBorderColor(frame, r, g, b, a)
+    frame:SetBackdropBorderColor(r, g, b, a)
+    frame._quiBorderR, frame._quiBorderG, frame._quiBorderB, frame._quiBorderA = r, g, b, a
+end
+
 function Helpers.EnsureDefaults(tbl, defaults)
     for k, v in pairs(defaults) do
         if tbl[k] == nil then

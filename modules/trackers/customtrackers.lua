@@ -2378,7 +2378,7 @@ function CustomTrackers:CreateBar(barID, config)
         bgFile = "Interface\\Buttons\\WHITE8x8",
     })
     local bgColor = config.bgColor or {0, 0, 0, 1}
-    bar:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], config.bgOpacity or 0)
+    Helpers.SetFrameBackdropColor(bar, bgColor[1], bgColor[2], bgColor[3], config.bgOpacity or 0)
 
     -- Initialize icons array
     bar.icons = {}
@@ -2457,7 +2457,7 @@ function CustomTrackers:UpdateBar(barID)
 
             -- Update background
             local bgColor = barConfig.bgColor or {0, 0, 0, 1}
-            bar:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], barConfig.bgOpacity or 0)
+            Helpers.SetFrameBackdropColor(bar, bgColor[1], bgColor[2], bgColor[3], barConfig.bgOpacity or 0)
 
             -- Update icons
             self:UpdateBarIcons(bar)

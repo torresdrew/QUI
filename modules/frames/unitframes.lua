@@ -1559,9 +1559,9 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
         edgeFile = borderSize > 0 and "Interface\\Buttons\\WHITE8x8" or nil,
         edgeSize = borderSize > 0 and borderSize or nil,
     })
-    frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+    Helpers.SetFrameBackdropColor(frame, bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
     if borderSize > 0 then
-        frame:SetBackdropBorderColor(0, 0, 0, 1)
+        Helpers.SetFrameBackdropBorderColor(frame, 0, 0, 0, 1)
     end
 
     -- Health bar
@@ -1916,9 +1916,9 @@ local function CreateUnitFrame(unit, unitKey)
         edgeFile = borderSize > 0 and "Interface\\Buttons\\WHITE8x8" or nil,
         edgeSize = borderSize > 0 and borderSize or nil,
     })
-    frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+    Helpers.SetFrameBackdropColor(frame, bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
     if borderSize > 0 then
-        frame:SetBackdropBorderColor(0, 0, 0, 1)
+        Helpers.SetFrameBackdropBorderColor(frame, 0, 0, 0, 1)
     end
 
     -- Health bar (pixel-perfect insets)
@@ -2845,9 +2845,9 @@ function QUI_UF:RefreshFrame(unitKey)
                     edgeFile = borderSize > 0 and "Interface\\Buttons\\WHITE8x8" or nil,
                     edgeSize = borderSize > 0 and borderSize or nil,
                 })
-                frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
+                Helpers.SetFrameBackdropColor(frame, bgColor[1], bgColor[2], bgColor[3], bgAlpha)
                 if borderSize > 0 then
-                    frame:SetBackdropBorderColor(0, 0, 0, 1)
+                    Helpers.SetFrameBackdropBorderColor(frame, 0, 0, 0, 1)
                 end
 
                 -- Apply opacity to bars only (not text)
@@ -3134,9 +3134,9 @@ function QUI_UF:RefreshFrame(unitKey)
         edgeFile = borderSize > 0 and "Interface\\Buttons\\WHITE8x8" or nil,
         edgeSize = borderSize > 0 and borderSize or nil,
     })
-    frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
+    Helpers.SetFrameBackdropColor(frame, bgColor[1], bgColor[2], bgColor[3], bgAlpha)
     if borderSize > 0 then
-        frame:SetBackdropBorderColor(0, 0, 0, 1)
+        Helpers.SetFrameBackdropBorderColor(frame, 0, 0, 0, 1)
     end
 
     -- Apply opacity to bars only (not text)

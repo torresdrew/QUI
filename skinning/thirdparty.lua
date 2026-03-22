@@ -88,6 +88,20 @@ local function SuppressFrame(f)
         end
     end
 
+    -- Orphaned overlay: backdropInfo set but backdropColor nil → WHITE8x8
+    -- renders with default white vertex color. GetBackdropColor returns 0,0,0,0
+    -- so the white-check above misses these.
+    if f.backdropInfo and not f.backdropColor and f.GetBackdropColor then
+        local hok, h = pcall(f.GetHeight, f)
+        if hok and not isS(h) and h and h > 10 then
+            suppressingBackdrop = true
+            pcall(f.SetBackdropColor, f, 0.05, 0.05, 0.05, 0.95)
+            pcall(f.SetBackdropBorderColor, f, 0, 0, 0, 1)
+            suppressingBackdrop = false
+            processed[f] = true
+        end
+    end
+
     -- Visible NineSlice → hide
     if f.NineSlice then
         local aok, a = pcall(f.NineSlice.GetAlpha, f.NineSlice)
@@ -107,6 +121,9 @@ local _blizzFrameCache = setmetatable({}, { __mode = "k" })
 --- already handled by a per-frame skinning module).
 local function ShouldSkipFrame(f)
     if SkinBase.IsSkinned(f) then return true end
+    -- Skip unnamed QUI-managed frames (e.g., objective tracker backdrop)
+    -- that have backup color fields — RecoverQUIBackdrops handles these.
+    if f._quiBgR then return true end
     local cached = _blizzFrameCache[f]
     if cached ~= nil then return cached end
     local result = IsBlizzardOrQUIFrame(f:GetName())
@@ -126,8 +143,15 @@ local function ScanAndSuppress()
     while f do
         if not processed[f] and not ShouldSkipFrame(f) then
             local ok, vis = pcall(f.IsVisible, f)
-            if ok and not isS(vis) and vis then
-                SuppressFrame(f)
+            if ok and not isS(vis) then
+                if vis then
+                    -- Visible frame: full suppression (backdrop + NineSlice)
+                    SuppressFrame(f)
+                elseif f.GetBackdropColor then
+                    -- Hidden frame with backdrop: pre-emptively fix white/orphaned
+                    -- backdrops so they don't flash white when shown later
+                    SuppressFrame(f)
+                end
             end
         end
         f = EnumerateFrames(f)

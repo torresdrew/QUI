@@ -143,11 +143,13 @@ function QUI:SlashCommandOpen(input)
                         if p then
                             print("  parent:", p:GetName() or tostring(p))
                         end
-                        -- If it has _qui color fields, report them
+                        -- If it has _qui color fields, recover automatically
                         if f._quiBgR then
-                            print("  _qui colors present — attempting recovery")
-                            pcall(f.SetBackdropColor, f, f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA)
-                            pcall(f.SetBackdropBorderColor, f, f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA)
+                            print("  _qui colors present — recovering")
+                            pcall(f.SetBackdropColor, f, f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
+                            if f._quiBorderR then
+                                pcall(f.SetBackdropBorderColor, f, f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)
+                            end
                         end
                     end
                 end
@@ -219,6 +221,7 @@ function QUI:OnEnable()
     self:BackwardsCompat()
 
     self:RegisterEvent("PLAYER_ENTERING_WORLD")
+    self:RegisterEvent("PLAYER_REGEN_ENABLED")
     self:RegisterEvent("ADDON_LOADED")
     self:RegisterOptionalPullAlias()
     
@@ -272,6 +275,27 @@ function QUI:ADDON_LOADED(_, addonName)
     self:UnregisterOptionalPullAlias()
 end
 
+-- Recover QUI frames with orphaned overlays (backdropInfo set, backdropColor nil).
+-- Uses backup _quiBg* fields stored by Helpers.SetFrameBackdropColor.
+local function RecoverQUIBackdrops()
+    local f = EnumerateFrames()
+    while f do
+        if f._quiBgR and f.backdropInfo and not f.backdropColor then
+            pcall(f.SetBackdropColor, f, f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
+            if f._quiBorderR then
+                pcall(f.SetBackdropBorderColor, f, f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)
+            end
+        end
+        f = EnumerateFrames(f)
+    end
+end
+
+function QUI:PLAYER_REGEN_ENABLED()
+    -- Recover any QUI backdrops that got orphaned during combat
+    -- (SetBackdrop can error on secret values, preventing SetBackdropColor from running)
+    RecoverQUIBackdrops()
+end
+
 function QUI:PLAYER_ENTERING_WORLD(_, isInitialLogin, isReloadingUi)
     -- Ensure debug table exists
     if not self.db.char.debug then
@@ -287,6 +311,9 @@ function QUI:PLAYER_ENTERING_WORLD(_, isInitialLogin, isReloadingUi)
     else
         self:DebugPrint("Debug Mode Enabled")
     end
+
+    -- Auto-recover QUI frame backdrops after all modules have initialized
+    C_Timer.After(3, RecoverQUIBackdrops)
 end
 
 function QUI:DebugPrint(...)

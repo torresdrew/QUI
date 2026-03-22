@@ -234,7 +234,10 @@ local function LoadOrSnapshotSpecProfile(specID)
     -- after this function returns, ensuring correct ordering.
 end
 
--- Initialize the previous spec ID on first load
+-- Initialize the previous spec ID on first load.
+-- Also detects spec/class changes across login sessions (e.g. switching
+-- characters that share the same AceDB profile) and performs a spec
+-- profile save/load so stale spells from another class never display.
 local function InitSpecTracking()
     _previousSpecID = GetCurrentSpecID()
     -- If GetSpecializationInfo isn't ready yet (returns 0 or nil during early
@@ -247,6 +250,32 @@ local function InitSpecTracking()
         end)
     end
 
+    -- Cross-session spec/class detection: compare the DB-persisted spec ID
+    -- with the current spec. When they differ (different character or respec
+    -- while logged out), save the stale data under the old spec and load
+    -- the correct profile for the current spec.
+    local db = GetDB()
+    if db and _previousSpecID and _previousSpecID ~= 0 then
+        local lastSpecID = db._lastSpecID
+        if lastSpecID and lastSpecID ~= _previousSpecID then
+            -- Save stale ownedSpells under the old spec before overwriting
+            local oldPrevious = _previousSpecID
+            _previousSpecID = lastSpecID
+            SaveCurrentSpecProfile()
+            _previousSpecID = oldPrevious
+
+            -- Invalidate caches — old spec data is stale
+            if ns.InvalidateCDMFrameCache then ns.InvalidateCDMFrameCache() end
+            if ns.CDMSpellData and ns.CDMSpellData.InvalidateLearnedCache then
+                ns.CDMSpellData:InvalidateLearnedCache()
+            end
+
+            -- Load the correct spec profile (or fresh snapshot if first time)
+            LoadOrSnapshotSpecProfile(_previousSpecID)
+        end
+        -- Persist the current spec ID for next session
+        db._lastSpecID = _previousSpecID
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -2267,7 +2296,18 @@ function ownedEngine:Initialize()
                 if _G.QUI_ApplyAllFrameAnchors then
                     _G.QUI_ApplyAllFrameAnchors()
                 end
-            elseif not isLogin and not isReload then
+            elseif isLogin then
+                -- Fresh login (or character switch): run dormant spell cleanup
+                -- so cross-class/spec spells are removed before the first
+                -- meaningful RefreshAll fires from the deferred timer.
+                C_Timer.After(0.5, function()
+                    if not InCombatLockdown() and ns.CDMSpellData then
+                        ns.CDMSpellData:CheckAllDormantSpells()
+                        ns.CDMSpellData:ReconcileAllContainers()
+                        RefreshAll()
+                    end
+                end)
+            elseif not isReload then
                 C_Timer.After(0.3, RefreshAll)
             end
         elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
@@ -2291,6 +2331,9 @@ function ownedEngine:Initialize()
                 -- before the profile swap and corrupts spell lists.
                 LoadOrSnapshotSpecProfile(newSpecID)
                 _previousSpecID = newSpecID
+                -- Persist for cross-session detection
+                local specDB = GetDB()
+                if specDB then specDB._lastSpecID = newSpecID end
                 -- Profile is now correct — SPELLS_CHANGED can safely run
                 -- dormant/reconcile on the new spec's data.
                 containers._buffFingerprint = nil

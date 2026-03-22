@@ -1148,6 +1148,9 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Dispel Overlay
 ---------------------------------------------------------------------------
+-- Pre-cached dispel border key table (avoids per-call table allocation)
+local DISPEL_BORDER_KEYS = {"borderTop", "borderBottom", "borderLeft", "borderRight"}
+
 -- Helper: apply color to all 4 StatusBar borders + fill
 local function SetDispelBorderColor(overlay, r, g, b, a)
     for _, key in ipairs(DISPEL_BORDER_KEYS) do
@@ -1266,9 +1269,6 @@ local DEFENSIVE_GROWTH_OFFSETS = {
     UP     = function(size, spacing) return 0, size + spacing end,
     DOWN   = function(size, spacing) return 0, -(size + spacing) end,
 }
-
--- Pre-cached dispel border key table (avoids per-call table allocation)
-local DISPEL_BORDER_KEYS = {"borderTop", "borderBottom", "borderLeft", "borderRight"}
 
 -- Pooled scratch tables for defensive indicator (avoids 40+ allocations per
 -- aura event in raids — wipe and reuse instead of creating fresh tables)
