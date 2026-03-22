@@ -579,6 +579,21 @@ function QUI_GFCC:RegisterAllFrames()
             end
         end
     end
+
+    -- Per-group raid headers (multi-header mode: one header per raid group 1-8).
+    -- These are separate from headers.raid and must be registered independently.
+    if GF.raidGroupHeaders then
+        for g = 1, 8 do
+            local header = GF.raidGroupHeaders[g]
+            if header then
+                for i = 1, 5 do
+                    local child = header:GetAttribute("child" .. i)
+                    if not child then break end
+                    SetupFrameClickCast(child)
+                end
+            end
+        end
+    end
 end
 
 function QUI_GFCC:RegisterUnitFrames()
