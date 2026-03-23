@@ -276,13 +276,26 @@ end
 
 -- Recover QUI frames with orphaned overlays (backdropInfo set, backdropColor nil).
 -- Uses backup _quiBg* fields stored by Helpers.SetFrameBackdropColor.
+-- Falls back to default dark color for QUI-named frames without backup fields.
+local strsub = string.sub
 local function RecoverQUIBackdrops()
     local f = EnumerateFrames()
     while f do
-        if f._quiBgR and f.backdropInfo and f.backdropInfo.bgFile and not f.backdropColor then
-            pcall(f.SetBackdropColor, f, f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
-            if f._quiBorderR then
-                pcall(f.SetBackdropBorderColor, f, f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)
+        if f.backdropInfo and f.backdropInfo.bgFile and not f.backdropColor then
+            if f._quiBgR then
+                pcall(f.SetBackdropColor, f, f._quiBgR, f._quiBgG, f._quiBgB, f._quiBgA or 1)
+                if f._quiBorderR then
+                    pcall(f.SetBackdropBorderColor, f, f._quiBorderR, f._quiBorderG, f._quiBorderB, f._quiBorderA or 1)
+                end
+            else
+                -- Fallback: QUI-named frames without backup colors get default dark.
+                -- No QUI frame intentionally has a white background; a nil backdropColor
+                -- means the initial SetBackdropColor was lost (taint, error, timing).
+                local name = f.GetName and f:GetName()
+                if name and type(name) == "string" and strsub(name, 1, 4) == "QUI_" then
+                    pcall(f.SetBackdropColor, f, 0.05, 0.05, 0.05, 0.95)
+                    pcall(f.SetBackdropBorderColor, f, 0, 0, 0, 1)
+                end
             end
         end
         f = EnumerateFrames(f)

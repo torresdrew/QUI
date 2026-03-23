@@ -260,6 +260,32 @@ if BackdropTemplateMixin and BackdropTemplateMixin.SetBackdrop then
 end
 
 ---------------------------------------------------------------------------
+-- Color re-application hook — prevent resize-induced white flashing.
+-- SetupPieceVisuals (called by OnBackdropSizeChanged) re-creates backdrop
+-- texture pieces with default white vertex color but does NOT re-apply the
+-- stored backdropColor/backdropBorderColor.  Without this hook, ANY resize
+-- on a frame with a backdrop causes the background to go permanently white
+-- until the next explicit SetBackdropColor call.
+-- This benefits all BackdropTemplate frames — QUI-owned, Blizzard, and
+-- third-party alike.
+---------------------------------------------------------------------------
+
+if BackdropTemplateMixin and BackdropTemplateMixin.OnBackdropSizeChanged then
+    hooksecurefunc(BackdropTemplateMixin, "OnBackdropSizeChanged", function(self)
+        if self.backdropColor then
+            pcall(self.SetBackdropColor, self, self.backdropColor:GetRGBA())
+        elseif self._quiBgR then
+            pcall(self.SetBackdropColor, self, self._quiBgR, self._quiBgG, self._quiBgB, self._quiBgA or 1)
+        end
+        if self.backdropBorderColor then
+            pcall(self.SetBackdropBorderColor, self, self.backdropBorderColor:GetRGBA())
+        elseif self._quiBorderR then
+            pcall(self.SetBackdropBorderColor, self, self._quiBorderR, self._quiBorderG, self._quiBorderB, self._quiBorderA or 1)
+        end
+    end)
+end
+
+---------------------------------------------------------------------------
 -- Refresh (called by registry on profile/theme change)
 ---------------------------------------------------------------------------
 

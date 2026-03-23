@@ -92,8 +92,8 @@ local function CreateOrUpdateBackground()
         customBg:EnableMouse(false)  -- Don't steal clicks
     end
 
-    customBg:SetBackdropColor(bgr, bgg, bgb, bga)
-    customBg:SetBackdropBorderColor(sr, sg, sb, sa)
+    Helpers.SetFrameBackdropColor(customBg, bgr, bgg, bgb, bga)
+    Helpers.SetFrameBackdropBorderColor(customBg, sr, sg, sb, sa)
 
     return customBg
 end
