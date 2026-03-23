@@ -3282,8 +3282,11 @@ SkinButton = function(button, settings)
                 tex:SetTexture(state.origPushedTex)
                 tex:SetTexCoord(0, 1, 0, 1)
             end
+            -- Blizzard's pushed atlas has asymmetric padding (more on the
+            -- right/bottom). Extend BOTTOMRIGHT to compensate.
             tex:ClearAllPoints()
-            tex:SetAllPoints(button)
+            tex:SetPoint("TOPLEFT", button, "TOPLEFT")
+            tex:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 4, -4)
         else -- "qui" (default)
             tex:SetAtlas(nil)
             tex:SetTexture(TEXTURES.pushed)
