@@ -47,6 +47,8 @@ local minimapOriginalOnMouseUp = nil
 -- External HUD overlay detection
 local externalHudActive = false
 local quiUpdatingMinimap = false
+local hudDetectedCount = 0
+local HUD_DEBOUNCE_THRESHOLD = 2  -- require consecutive detections before hiding
 
 ---=================================================================================
 --- BLIZZARD LAYOUT NO-OPS
@@ -2958,9 +2960,10 @@ local function CheckExternalHud()
     local expectedSize = settings.size or 140
 
     -- Primary checks: API-reported values (may be overridden by external addons)
-    local currentScale = Minimap:GetScale()
-    local currentAlpha = Minimap:GetEffectiveAlpha()
-    local currentWidth = Minimap:GetWidth()
+    -- Guard against secret values from combat — treat them as normal (no HUD)
+    local currentScale = Helpers.SafeToNumber(Minimap:GetScale(), expectedScale)
+    local currentAlpha = Helpers.SafeToNumber(Minimap:GetEffectiveAlpha(), 1)
+    local currentWidth = Helpers.SafeToNumber(Minimap:GetWidth(), expectedSize)
 
     -- QUI reparents Minimap to UIParent, so check against UIParent (not MinimapCluster)
     local hudDetected = (currentScale > expectedScale * 2.0)
@@ -2973,8 +2976,10 @@ local function CheckExternalHud()
     if not hudDetected then
         local left, bottom, width, height = Minimap:GetRect()
         if left and width then
-            local uiScale = UIParent:GetEffectiveScale()
-            local renderedSize = width * Minimap:GetEffectiveScale()
+            local safeWidth = Helpers.SafeToNumber(width, 0)
+            local uiScale = Helpers.SafeToNumber(UIParent:GetEffectiveScale(), 1)
+            local mapScale = Helpers.SafeToNumber(Minimap:GetEffectiveScale(), 1)
+            local renderedSize = safeWidth * mapScale
             local expectedPixels = expectedSize * expectedScale * uiScale
             if renderedSize > expectedPixels * 2.0 then
                 hudDetected = true
@@ -2982,12 +2987,19 @@ local function CheckExternalHud()
         end
     end
 
-    if hudDetected and not externalHudActive then
-        externalHudActive = true
-        HideAllDecorations()
-    elseif not hudDetected and externalHudActive then
-        externalHudActive = false
-        Minimap_Module:Refresh()
+    if hudDetected then
+        -- Debounce: require consecutive detections before activating
+        hudDetectedCount = hudDetectedCount + 1
+        if hudDetectedCount >= HUD_DEBOUNCE_THRESHOLD and not externalHudActive then
+            externalHudActive = true
+            HideAllDecorations()
+        end
+    else
+        hudDetectedCount = 0
+        if externalHudActive then
+            externalHudActive = false
+            Minimap_Module:Refresh()
+        end
     end
 end
 
