@@ -1217,7 +1217,19 @@ local function ApplyFullProfilePayload(core, importedProfile)
         profile[key] = CloneValue(value)
     end
 
-    if core.RefreshAll then
+    -- Run backward-compatibility migrations on the freshly imported data
+    -- so that legacy keys (castBar, unitFrames, etc.) are moved to their
+    -- current locations before any module tries to read them.
+    local addon = _G.QUI
+    if addon and addon.BackwardsCompat then
+        addon:BackwardsCompat()
+    end
+
+    -- Refresh all modules via the Registry (includes frame anchoring).
+    -- Falls back to core:RefreshAll() if the Registry is not available.
+    if ns.Registry then
+        ns.Registry:RefreshAll()
+    elseif core.RefreshAll then
         core:RefreshAll()
     end
 

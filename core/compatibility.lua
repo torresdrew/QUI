@@ -102,6 +102,125 @@ local function MigrateCooldownSwipeV2(profile)
     cs.migratedToV2 = true
 end
 
+-- Migrate legacy top-level castBar/targetCastBar/focusCastBar to quiUnitFrames.*.castbar
+local CASTBAR_MIGRATION_MAP = {
+    castBar       = { "quiUnitFrames", "player",  "castbar" },
+    targetCastBar = { "quiUnitFrames", "target",  "castbar" },
+    focusCastBar  = { "quiUnitFrames", "focus",   "castbar" },
+}
+
+-- Keys that map 1:1 between old castBar and new quiUnitFrames.*.castbar
+local CASTBAR_DIRECT_KEYS = {
+    "enabled", "bgColor", "color", "height", "offsetX", "offsetY",
+    "showIcon", "width",
+}
+
+-- Keys with renamed equivalents: old → new
+local CASTBAR_RENAMED_KEYS = {
+    textSize = "fontSize",
+}
+
+local function MigrateCastBars(profile)
+    if not profile then return end
+
+    for oldKey, path in pairs(CASTBAR_MIGRATION_MAP) do
+        local old = profile[oldKey]
+        if type(old) ~= "table" then
+            -- Nothing to migrate for this cast bar
+        else
+            -- Ensure target table path exists
+            local container = profile
+            for i = 1, #path - 1 do
+                if type(container[path[i]]) ~= "table" then
+                    container[path[i]] = {}
+                end
+                container = container[path[i]]
+            end
+            local target = container[path[#path]]
+            if type(target) ~= "table" then
+                target = {}
+                container[path[#path]] = target
+            end
+
+            -- Only migrate into keys that are still nil (don't overwrite new-style data)
+            for _, k in ipairs(CASTBAR_DIRECT_KEYS) do
+                if old[k] ~= nil and target[k] == nil then
+                    target[k] = old[k]
+                end
+            end
+            for oldName, newName in pairs(CASTBAR_RENAMED_KEYS) do
+                if old[oldName] ~= nil and target[newName] == nil then
+                    target[newName] = old[oldName]
+                end
+            end
+
+            -- Remove the legacy key
+            profile[oldKey] = nil
+        end
+    end
+end
+
+-- Migrate legacy unitFrames table to quiUnitFrames
+local UNIT_FRAME_UNITS = { "player", "target", "targettarget", "pet", "focus", "boss" }
+
+local function MigrateUnitFrames(profile)
+    if not profile then return end
+
+    local old = profile.unitFrames
+    if type(old) ~= "table" then return end
+
+    if type(profile.quiUnitFrames) ~= "table" then
+        profile.quiUnitFrames = {}
+    end
+    local new = profile.quiUnitFrames
+
+    -- Migrate enabled flag
+    if old.enabled ~= nil and new.enabled == nil then
+        new.enabled = old.enabled
+    end
+
+    -- Migrate General → general (case change)
+    if type(old.General) == "table" then
+        if type(new.general) ~= "table" then
+            new.general = {}
+        end
+        for k, v in pairs(old.General) do
+            if new.general[k] == nil then
+                new.general[k] = v
+            end
+        end
+    end
+
+    -- Migrate per-unit sub-tables (conservative: only copy keys not already set)
+    for _, unit in ipairs(UNIT_FRAME_UNITS) do
+        if type(old[unit]) == "table" then
+            if type(new[unit]) ~= "table" then
+                new[unit] = {}
+            end
+            for k, v in pairs(old[unit]) do
+                if new[unit][k] == nil then
+                    new[unit][k] = v
+                end
+            end
+        end
+    end
+
+    -- Remove the legacy key
+    profile.unitFrames = nil
+end
+
+-- Remove orphaned keys that cannot be meaningfully migrated
+local ORPHAN_KEYS = { "cooldownManager", "trackerSystem", "nudgeAmount" }
+
+local function CleanOrphanKeys(profile)
+    if not profile then return end
+    for _, key in ipairs(ORPHAN_KEYS) do
+        if profile[key] ~= nil then
+            profile[key] = nil
+        end
+    end
+end
+
 function QUI:BackwardsCompat()
     -- Migrate datatext settings to slot-based architecture
     if self.db and self.db.profile and self.db.profile.datatext then
@@ -122,6 +241,21 @@ function QUI:BackwardsCompat()
     -- Migrate cooldownSwipe to v2 (3-toggle system)
     if self.db and self.db.profile then
         MigrateCooldownSwipeV2(self.db.profile)
+    end
+
+    -- Migrate legacy top-level castBar keys to quiUnitFrames.*.castbar
+    if self.db and self.db.profile then
+        MigrateCastBars(self.db.profile)
+    end
+
+    -- Migrate legacy unitFrames to quiUnitFrames
+    if self.db and self.db.profile then
+        MigrateUnitFrames(self.db.profile)
+    end
+
+    -- Remove orphaned keys that no longer have runtime consumers
+    if self.db and self.db.profile then
+        CleanOrphanKeys(self.db.profile)
     end
 
     -- Ensure db.global exists and has required fields
