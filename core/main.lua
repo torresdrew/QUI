@@ -113,6 +113,7 @@ end
 
 local defaults = ns.defaults
 
+
 function QUICore:OnInitialize()
     self.db = LibStub("AceDB-3.0"):New("QUIDB", defaults, true)
     QUI.db = self.db  -- Make database accessible to other QUI modules
@@ -883,6 +884,7 @@ function QUICore:OnProfileChanged(event, db, profileKey)
         if ns.Registry then
             ns.Registry:RefreshAll("skinning")
         end
+        SafeCall(_G.QUI_RefreshStatusTrackingBarSkin)
     end)
 
     -- Safety re-position pass: Blizzard's Edit Mode system re-applies per-spec

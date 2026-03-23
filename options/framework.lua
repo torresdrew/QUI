@@ -4448,6 +4448,7 @@ function GUI:CreateMainFrame()
         if ns.Registry then
             ns.Registry:RefreshAll("skinning")
         end
+        if _G.QUI_RefreshStatusTrackingBarSkin then _G.QUI_RefreshStatusTrackingBarSkin() end
     end
 
     -- Helper to apply accent color to header elements + theme + skinning

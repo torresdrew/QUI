@@ -44,6 +44,22 @@ local defaults = {
             gameMenuFontSize = 12,  -- Game menu button font size
             gameMenuDim = true,  -- Dim background when game menu is open
             skinPowerBarAlt = true,  -- Skin encounter/quest power bar (PlayerPowerBarAlt)
+            skinStatusTrackingBars = true,  -- Skin bottom HUD XP / reputation / status tracking bars
+            statusTrackingBarsBarColorMode = "accent",  -- blizzard | custom | class | accent
+            statusTrackingBarsBarColor = { 0.2, 0.5, 1.0, 1.0 },  -- fill when mode is custom (alpha optional)
+            statusTrackingBarsBarHeight = 0,  -- 0 = keep Blizzard default height for slot
+            statusTrackingBarsBarWidthPercent = 100,  -- 25-100 (% of Blizzard bar width)
+            statusTrackingBarsShowBorder = true,
+            statusTrackingBarsBorderThickness = 0,  -- 0 = pixel-perfect edge; else 1-8 px
+            statusTrackingBarsShowBarText = true,
+            statusTrackingBarsBarTextAlways = false,  -- ignore XP bar text CVar; keep label visible
+            statusTrackingBarsBarTextAnchor = "CENTER",  -- LEFT | CENTER | RIGHT
+            statusTrackingBarsBarTextColor = { 0.95, 0.95, 0.95, 1 },
+            statusTrackingBarsBarTextFont = "__QUI_GLOBAL__",  -- LSM name or __QUI_GLOBAL__
+            statusTrackingBarsBarTextFontSize = 11,
+            statusTrackingBarsBarTextOutline = "_inherit",  -- _inherit | _none | OUTLINE | THICKOUTLINE
+            statusTrackingBarsBarTextOffsetX = 0,
+            statusTrackingBarsBarTextOffsetY = 0,
             skinOverrideActionBar = false,  -- Skin override/vehicle action bar (opt-in)
             skinObjectiveTracker = false,  -- Skin objective tracker (opt-in)
             objectiveTrackerClickThrough = false,  -- Make objective tracker click-through

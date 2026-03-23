@@ -43,6 +43,9 @@ local function BuildSkinningTab(tabContent)
         if ns.Registry then
             ns.Registry:RefreshAll("skinning")
         end
+        if _G.QUI_RefreshStatusTrackingBarSkin then
+            _G.QUI_RefreshStatusTrackingBarSkin()
+        end
     end
 
     local function EnsureBorderOverrideDefaults(settings, prefix)
@@ -220,8 +223,9 @@ local function BuildSkinningTab(tabContent)
     if general.skinAuctionHouse == nil then general.skinAuctionHouse = false end
     if general.skinCraftingOrders == nil then general.skinCraftingOrders = false end
     if general.skinProfessions == nil then general.skinProfessions = false end
+    if general.skinStatusTrackingBars == nil then general.skinStatusTrackingBars = true end
 
-    CreateCollapsible("Skin Blizzard Frames", 11 * FORM_ROW + 8, function(body)
+    CreateCollapsible("Skin Blizzard Frames", 12 * FORM_ROW + 8, function(body)
         local sy = -4
         sy = P(GUI:CreateFormCheckbox(body, "Alert Frames (Req. Reload)", "skinAlerts", general, ReloadConfirm), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Auction House (Req. Reload)", "skinAuctionHouse", general, ReloadConfirm), body, sy)
@@ -233,7 +237,67 @@ local function BuildSkinningTab(tabContent)
         sy = P(GUI:CreateFormCheckbox(body, "Loot History (Req. Reload)", "enabled", db.lootResults, ReloadConfirm), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Override Action Bar (Req. Reload)", "skinOverrideActionBar", general, ReloadConfirm), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Professions (Req. Reload)", "skinProfessions", general, ReloadConfirm), body, sy)
-        P(GUI:CreateFormCheckbox(body, "Reputation/Currency (Req. Reload)", "skinCharacterFrame", general, ReloadConfirm), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Reputation/Currency (Req. Reload)", "skinCharacterFrame", general, ReloadConfirm), body, sy)
+        P(GUI:CreateFormCheckbox(body, "Status Tracking Bars (Req. Reload)", "skinStatusTrackingBars", general, ReloadConfirm), body, sy)
+    end)
+
+    ---------------------------------------------------------------------------
+    -- Status Tracking Bars (detailed settings)
+    ---------------------------------------------------------------------------
+    local function RefreshStatusTrackingBars()
+        if _G.QUI_RefreshStatusTrackingBarSkin then
+            _G.QUI_RefreshStatusTrackingBarSkin()
+        end
+    end
+
+    if general.statusTrackingBarsBarColorMode == nil then general.statusTrackingBarsBarColorMode = "accent" end
+    if general.statusTrackingBarsBarColor == nil then general.statusTrackingBarsBarColor = { 0.2, 0.5, 1.0, 1.0 } end
+    if general.statusTrackingBarsBarHeight == nil then general.statusTrackingBarsBarHeight = 0 end
+    if general.statusTrackingBarsBarWidthPercent == nil then general.statusTrackingBarsBarWidthPercent = 100 end
+    if general.statusTrackingBarsShowBorder == nil then general.statusTrackingBarsShowBorder = true end
+    if general.statusTrackingBarsBorderThickness == nil then general.statusTrackingBarsBorderThickness = 0 end
+    if general.statusTrackingBarsShowBarText == nil then general.statusTrackingBarsShowBarText = true end
+    if general.statusTrackingBarsBarTextAlways == nil then general.statusTrackingBarsBarTextAlways = false end
+    if general.statusTrackingBarsBarTextAnchor == nil then general.statusTrackingBarsBarTextAnchor = "CENTER" end
+    if general.statusTrackingBarsBarTextColor == nil then general.statusTrackingBarsBarTextColor = { 0.95, 0.95, 0.95, 1 } end
+    if general.statusTrackingBarsBarTextFont == nil then general.statusTrackingBarsBarTextFont = "__QUI_GLOBAL__" end
+    if general.statusTrackingBarsBarTextFontSize == nil then general.statusTrackingBarsBarTextFontSize = 11 end
+    if general.statusTrackingBarsBarTextOutline == nil then general.statusTrackingBarsBarTextOutline = "_inherit" end
+    if general.statusTrackingBarsBarTextOffsetX == nil then general.statusTrackingBarsBarTextOffsetX = 0 end
+    if general.statusTrackingBarsBarTextOffsetY == nil then general.statusTrackingBarsBarTextOffsetY = 0 end
+
+    CreateCollapsible("Status Tracking Bars", 15 * FORM_ROW + 8, function(body)
+        local sy = -4
+        sy = P(GUI:CreateFormDropdown(body, "Bar fill color", {
+            { text = "Skin accent", value = "accent" },
+            { text = "Class color", value = "class" },
+            { text = "Custom color", value = "custom" },
+            { text = "Blizzard default", value = "blizzard" },
+        }, "statusTrackingBarsBarColorMode", general, RefreshStatusTrackingBars), body, sy)
+        sy = P(GUI:CreateFormColorPicker(body, "Custom bar fill", "statusTrackingBarsBarColor", general, RefreshStatusTrackingBars, {}), body, sy)
+        sy = P(GUI:CreateFormSlider(body, "Bar height (0 = default)", 0, 24, 1, "statusTrackingBarsBarHeight", general, RefreshStatusTrackingBars), body, sy)
+        sy = P(GUI:CreateFormSlider(body, "Bar width %", 25, 100, 1, "statusTrackingBarsBarWidthPercent", general, RefreshStatusTrackingBars), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Show bar border", "statusTrackingBarsShowBorder", general, RefreshStatusTrackingBars), body, sy)
+        sy = P(GUI:CreateFormSlider(body, "Border thickness (0 = auto)", 0, 8, 1, "statusTrackingBarsBorderThickness", general, RefreshStatusTrackingBars), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Show bar text", "statusTrackingBarsShowBarText", general, RefreshStatusTrackingBars), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Always show text (ignore game toggle)", "statusTrackingBarsBarTextAlways", general, RefreshStatusTrackingBars), body, sy)
+        sy = P(GUI:CreateFormDropdown(body, "Text position", {
+            { text = "Left", value = "LEFT" },
+            { text = "Center", value = "CENTER" },
+            { text = "Right", value = "RIGHT" },
+        }, "statusTrackingBarsBarTextAnchor", general, RefreshStatusTrackingBars), body, sy)
+        sy = P(GUI:CreateFormColorPicker(body, "Text color", "statusTrackingBarsBarTextColor", general, RefreshStatusTrackingBars, {}), body, sy)
+        sy = P(GUI:CreateFormSlider(body, "Text font size", 6, 24, 1, "statusTrackingBarsBarTextFontSize", general, RefreshStatusTrackingBars), body, sy)
+        sy = P(GUI:CreateFormDropdown(body, "Text outline", {
+            { text = "Inherit (global outline)", value = "_inherit" },
+            { text = "None", value = "_none" },
+            { text = "Thin", value = "OUTLINE" },
+            { text = "Thick", value = "THICKOUTLINE" },
+        }, "statusTrackingBarsBarTextOutline", general, RefreshStatusTrackingBars), body, sy)
+        sy = P(GUI:CreateFormSlider(body, "Text X offset", -40, 40, 1, "statusTrackingBarsBarTextOffsetX", general, RefreshStatusTrackingBars), body, sy)
+        sy = P(GUI:CreateFormSlider(body, "Text Y offset", -40, 40, 1, "statusTrackingBarsBarTextOffsetY", general, RefreshStatusTrackingBars), body, sy)
+        sy = AddBorderOverrides(body, sy, general, "statusTrackingBars")
+        AddBgOverrides(body, sy, general, "statusTrackingBars")
     end)
 
     relayout()
