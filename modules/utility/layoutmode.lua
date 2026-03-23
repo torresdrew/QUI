@@ -853,13 +853,23 @@ local function SavePendingPosition(key, point, relPoint, offsetX, offsetY, ancho
             -- frames may be hidden, reparented to proxy movers, or at stale positions.
             -- Handles always reflect the correct visual position.
             local childHandle = QUI_LayoutMode._handles and QUI_LayoutMode._handles[key]
-            local parentHandle = QUI_LayoutMode._handles and QUI_LayoutMode._handles[anchorTarget]
 
-            if childHandle and parentHandle then
-                local pL, pR, pT, pB = parentHandle:GetLeft(), parentHandle:GetRight(), parentHandle:GetTop(), parentHandle:GetBottom()
+            -- For "screen" parent, use UIParent edges (no layout handle exists).
+            local pL, pR, pT, pB
+            if anchorTarget == "screen" then
+                pL, pB = 0, 0
+                pR, pT = UIParent:GetWidth(), UIParent:GetHeight()
+            else
+                local parentHandle = QUI_LayoutMode._handles and QUI_LayoutMode._handles[anchorTarget]
+                if parentHandle then
+                    pL, pR, pT, pB = parentHandle:GetLeft(), parentHandle:GetRight(), parentHandle:GetTop(), parentHandle:GetBottom()
+                end
+            end
+
+            if childHandle and pL and pR and pT and pB then
                 local cL, cR, cT, cB = childHandle:GetLeft(), childHandle:GetRight(), childHandle:GetTop(), childHandle:GetBottom()
 
-                if pL and pR and pT and pB and cL and cR and cT and cB then
+                if cL and cR and cT and cB then
                     -- Compute anchor point positions on each handle
                     local function anchorPos(l, r, t, b, pt)
                         local x, y = (l + r) / 2, (t + b) / 2  -- CENTER
@@ -874,7 +884,6 @@ local function SavePendingPosition(key, point, relPoint, offsetX, offsetY, ancho
                     local px, py = anchorPos(pL, pR, pT, pB, ptTarget)
                     relOx = math.floor(cx - px + 0.5)
                     relOy = math.floor(cy - py + 0.5)
-
                 end
             end
 
@@ -1604,10 +1613,16 @@ AddHandleScripts = function(handle, def)
             end
         end
 
-        -- Update coordinate display and anchored state after drag
+        -- Update coordinate display and anchored state after drag.
+        -- For anchored frames, show the anchor-relative offsets from DB
+        -- (SavePendingPosition has already written them).
         if anchorKey then
             self._isAnchored = true
-            self._coords:SetText(string.format("X: %d  Y: %d", ox, oy))
+            local fa = GetFrameAnchoring()
+            local entry = fa and fa[self._barKey]
+            local displayOx = entry and entry.offsetX or ox
+            local displayOy = entry and entry.offsetY or oy
+            self._coords:SetText(string.format("X: %d  Y: %d", displayOx, displayOy))
             -- Thicker border for anchored state
             if self._border and self._border.SetLineSize then
                 self._border:SetLineSize(HANDLE_BORDER_SIZE_ANCHORED)
@@ -1983,26 +1998,21 @@ SyncHandle = function(key)
         local fa = GetFrameAnchoring()
         if fa and fa[key] and type(fa[key]) == "table" then
             local parent = fa[key].parent
-            if parent and parent ~= "screen" then
+            if parent and parent ~= "disabled" then
                 existingAnchorKey = parent
             end
         end
     end
 
-    -- Update coordinate text — show DB/pending offsets for anchored frames, screen offsets otherwise
+    -- Update coordinate text — show DB offsets for anchored frames, screen offsets otherwise.
+    -- Always read from DB (not pending) because pending stores CENTER-based offsets
+    -- while the DB has the correct anchor-relative offsets.
     local ox, oy
     if existingAnchorKey then
-        -- Show the stored relative offsets (DB or pending) — don't reverse-compute
-        -- from frame positions, as layout mode reparents proxy targets.
-        if pending and pending.anchorTarget then
-            ox = pending.offsetX or 0
-            oy = pending.offsetY or 0
-        else
-            local fa = GetFrameAnchoring()
-            local entry = fa and fa[key]
-            ox = entry and entry.offsetX or 0
-            oy = entry and entry.offsetY or 0
-        end
+        local fa = GetFrameAnchoring()
+        local entry = fa and fa[key]
+        ox = entry and entry.offsetX or 0
+        oy = entry and entry.offsetY or 0
         handle._isAnchored = true
         handle._coords:SetText(string.format("X: %d  Y: %d", ox, oy))
         -- Thicker border for anchored handles
@@ -2092,8 +2102,14 @@ function QUI_LayoutMode:NudgeMover(key, dx, dy)
     -- Store pending
     SavePendingPosition(key, "CENTER", "CENTER", ox, oy)
 
-    -- Update coordinate text
-    handle._coords:SetText(string.format("X: %d  Y: %d", ox, oy))
+    -- Update coordinate text — show anchor-relative offsets for anchored frames
+    if handle._isAnchored then
+        local fa = GetFrameAnchoring()
+        local entry = fa and fa[key]
+        handle._coords:SetText(string.format("X: %d  Y: %d", entry and entry.offsetX or ox, entry and entry.offsetY or oy))
+    else
+        handle._coords:SetText(string.format("X: %d  Y: %d", ox, oy))
+    end
 
     return true
 end
