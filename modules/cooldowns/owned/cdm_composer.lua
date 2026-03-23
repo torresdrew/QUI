@@ -1194,9 +1194,10 @@ local function GetOrCreateEntryCell(index)
     cell._highlight:SetAllPoints()
     cell._highlight:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.15)
 
-    -- Tooltip + border highlight on hover
+    -- Tooltip + border highlight on hover (suppressed during drag)
     cell:SetScript("OnEnter", function(self)
         if not self._entry then return end
+        if dragState.active then return end
         self:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 0.8)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetFrameStrata("TOOLTIP")
@@ -1213,6 +1214,7 @@ local function GetOrCreateEntryCell(index)
         GameTooltip:Show()
     end)
     cell:SetScript("OnLeave", function(self)
+        if dragState.active then return end
         self:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
         GameTooltip:Hide()
     end)
@@ -1338,6 +1340,13 @@ local function StartDrag(cell, entryIndex)
     dragState.fromRow = cell
     -- Highlight the dragged cell
     cell:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
+    -- Hide highlight textures on all other cells so hover glow doesn't
+    -- compete with the drop indicator during drag
+    for _, c in ipairs(entryCells) do
+        if c ~= cell and c._highlight then
+            c._highlight:Hide()
+        end
+    end
 
     if entryListContent then
         entryListContent:SetScript("OnUpdate", function()
@@ -1360,6 +1369,16 @@ StopDrag = function()
     if cell then
         cell:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
     end
+
+    -- Restore highlight textures on all cells
+    for _, c in ipairs(entryCells) do
+        if c._highlight then
+            c._highlight:Show()
+        end
+    end
+
+    -- Dismiss any lingering tooltip
+    GameTooltip:Hide()
 
     if dropIndicator then dropIndicator:Hide() end
 
@@ -1541,79 +1560,6 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex, isDormant)
 end
 
 ---------------------------------------------------------------------------
--- ADD CONTEXT MENU (right-click on add grid cell)
----------------------------------------------------------------------------
-local function ShowAddContextMenu(anchorCell, sourceEntry)
-    if _G.QUI_AddContextMenu then
-        _G.QUI_AddContextMenu:Hide()
-    end
-
-    local spellData = GetCDMSpellData()
-    if not spellData then return end
-
-    local menu = CreateFrame("Frame", "QUI_AddContextMenu", UIParent, "BackdropTemplate")
-    menu:SetSize(160, 28)
-    menu:SetFrameStrata("TOOLTIP")
-    menu:SetFrameLevel(300)
-    menu:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
-    })
-    menu:SetBackdropColor(0.08, 0.08, 0.1, 0.98)
-    menu:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-    menu:EnableMouse(true)
-    menu:SetPoint("TOPLEFT", anchorCell, "BOTTOMLEFT", 0, -2)
-    menu:SetClampedToScreen(true)
-
-    local btn = CreateFrame("Button", nil, menu)
-    btn:SetSize(156, 24)
-    btn:SetPoint("TOPLEFT", 2, -2)
-    local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetPoint("LEFT", 8, 0)
-    label:SetText("Add to " .. GetContainerLabel(activeContainer))
-    label:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
-    btn:SetScript("OnClick", function()
-        menu:Hide()
-        if InCombatLockdown() then return end
-
-        local addType = sourceEntry._entryType or "spell"
-        local addID = sourceEntry._entryID or sourceEntry.spellID
-
-        local containerDB = GetContainerDB(activeContainer)
-        if containerDB and containerDB.removedSpells and addID then
-            containerDB.removedSpells[addID] = nil
-        end
-
-        if addType == "slot" and sourceEntry._slotID then
-            if containerDB and containerDB.removedSpells then
-                containerDB.removedSpells[sourceEntry._slotID] = nil
-            end
-            spellData:AddTrinketSlot(activeContainer, sourceEntry._slotID)
-        elseif addType == "item" then
-            spellData:AddItem(activeContainer, addID)
-        else
-            spellData:AddSpell(activeContainer, addID)
-        end
-
-        C_Timer.After(0.02, function()
-            RefreshCDM()
-            RefreshEntryList()
-            RefreshPreview()
-            RefreshAddList()
-        end)
-    end)
-    btn:SetScript("OnEnter", function() label:SetTextColor(1, 1, 1, 1) end)
-    btn:SetScript("OnLeave", function() label:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B, 1) end)
-
-    menu:SetScript("OnUpdate", function(self)
-        if not MouseIsOver(self) and (IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton")) then
-            self:Hide()
-        end
-    end)
-
-    menu:Show()
-end
 
 ---------------------------------------------------------------------------
 -- REFRESH ENTRY LIST (icon grid layout)
@@ -1956,8 +1902,6 @@ end
 RefreshAddList = function()
     if not addListContent or not activeContainer then return end
 
-    if _G.QUI_AddContextMenu then _G.QUI_AddContextMenu:Hide() end
-
     local spellData = GetCDMSpellData()
     if not spellData then return end
 
@@ -2093,14 +2037,39 @@ RefreshAddList = function()
                 cell:SetAlpha(1)
             end
 
-            -- Right-click to add
+            -- Right-click to add directly
             if isOwned then
                 cell:SetScript("OnClick", nil)
             else
                 local entryRef = entry
                 cell:SetScript("OnClick", function(self, button)
                     if button == "RightButton" then
-                        ShowAddContextMenu(self, entryRef)
+                        if InCombatLockdown() then return end
+                        local addType = entryRef._entryType or "spell"
+                        local addID = entryRef._entryID or entryRef.spellID
+
+                        local containerDB = GetContainerDB(activeContainer)
+                        if containerDB and containerDB.removedSpells and addID then
+                            containerDB.removedSpells[addID] = nil
+                        end
+
+                        local addResult
+                        if addType == "slot" and entryRef._slotID then
+                            if containerDB and containerDB.removedSpells then
+                                containerDB.removedSpells[entryRef._slotID] = nil
+                            end
+                            addResult = spellData:AddTrinketSlot(activeContainer, entryRef._slotID)
+                        elseif addType == "item" then
+                            addResult = spellData:AddItem(activeContainer, addID)
+                        else
+                            addResult = spellData:AddSpell(activeContainer, addID)
+                        end
+                        C_Timer.After(0.02, function()
+                            RefreshCDM()
+                            RefreshEntryList()
+                            RefreshPreview()
+                            RefreshAddList()
+                        end)
                     end
                 end)
             end

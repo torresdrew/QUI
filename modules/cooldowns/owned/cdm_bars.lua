@@ -1111,11 +1111,12 @@ function CDMBars:UpdateOwnedBarAura(bar)
                 apps = instData.applications
             end
         end
-        if apps and bar.NameText then
+        if bar.NameText then
             local name = (entry and entry.name) or ""
-            pcall(bar.NameText.SetFormattedText, bar.NameText, "%s (%s)", name, C_StringUtil.TruncateWhenZero(apps))
-        elseif entry and entry.name and bar.NameText then
-            bar.NameText:SetText(entry.name)
+            -- WrapString returns "" if infix is empty, so "Name" + "" = "Name"
+            -- and "Name" + " (2)" = "Name (2)". All C-side, handles secrets.
+            local stacks = apps and C_StringUtil.WrapString(C_StringUtil.TruncateWhenZero(apps), " (", ")") or ""
+            pcall(bar.NameText.SetText, bar.NameText, name .. stacks)
         end
     elseif InCombatLockdown() then
         -- API returns nil in combat — multiple fallback paths to keep bars alive.
@@ -1147,8 +1148,8 @@ function CDMBars:UpdateOwnedBarAura(bar)
                 end
             end
             -- Dynamic fallback: scan ALL viewer children for matching spell
-            if not childAuraInstID and ns.CDMIcons and ns.CDMIcons.FindActiveAuraChild then
-                local dynChild = ns.CDMIcons.FindActiveAuraChild(
+            if not childAuraInstID and ns.CDMIcons and ns.CDMIcons.FindChildForSpell then
+                local dynChild = ns.CDMIcons.FindChildForSpell(
                     spellID, entry and entry.spellID, entry and entry.id)
                 if dynChild then
                     childAuraInstID = Helpers.SafeValue(dynChild.auraInstanceID, nil)
@@ -1280,11 +1281,10 @@ function CDMBars:UpdateOwnedBarAura(bar)
                     apps = instData.applications
                 end
             end
-            if apps then
+            if bar.NameText then
                 local name = (entry and entry.name) or ""
-                pcall(bar.NameText.SetFormattedText, bar.NameText, "%s (%s)", name, C_StringUtil.TruncateWhenZero(apps))
-            elseif entry and entry.name then
-                bar.NameText:SetText(entry.name)
+                local stacks = apps and C_StringUtil.WrapString(C_StringUtil.TruncateWhenZero(apps), " (", ")") or ""
+                pcall(bar.NameText.SetText, bar.NameText, name .. stacks)
             end
         end
     else

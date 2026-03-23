@@ -1071,12 +1071,9 @@ function CDMSpellData:BuildSpellListFromOwned(containerKey)
             if entry.type == "spell" and removedSpells[entry.id] then
                 isRemoved = true
             end
-            -- Safety filter: never display spells the player doesn't know
-            -- (catches cross-class contamination from shared profiles before
-            -- the dormant system has had a chance to clean up ownedSpells)
-            if not isRemoved and entry.type == "spell" and not IsSpellKnownByPlayer(entry.id) then
-                isRemoved = true
-            end
+            -- Owned spells are explicitly configured by the user via /cdm.
+            -- No spellbook filter needed — the dormant system handles
+            -- spec-switching cleanup separately.
 
             if not isRemoved then
                 local resolved = ResolveOwnedEntry(entry, containerKey, i)
@@ -1144,13 +1141,26 @@ function CDMSpellData:CheckDormantSpells(containerKey)
         end
     end
 
-    -- Phase 1: Move unlearned spells to dormant, saving their slot index
+    -- Phase 1: Move unlearned spells to dormant, saving their slot index.
+    -- Skip for aura containers — buff/debuff IDs (Blood Shield, Reaper's Mark)
+    -- are passive procs or hero talents that IsSpellKnown doesn't cover.
+    local isAuraContainer = false
+    do
+        local ct = db.containerType
+        if not ct then
+            isAuraContainer = (containerKey == "buff" or containerKey == "trackedBar")
+        else
+            isAuraContainer = (ct == "aura" or ct == "auraBar")
+        end
+    end
     local toRemove = {}  -- indices to remove (descending order)
-    for i, entry in ipairs(ownedSpells) do
-        if entry and entry.id and entry.type == "spell" then
-            if not IsSpellKnownByPlayer(entry.id) then
-                db.dormantSpells[entry.id] = i  -- save slot position
-                toRemove[#toRemove + 1] = i
+    if not isAuraContainer then
+        for i, entry in ipairs(ownedSpells) do
+            if entry and entry.id and entry.type == "spell" then
+                if not IsSpellKnownByPlayer(entry.id) then
+                    db.dormantSpells[entry.id] = i  -- save slot position
+                    toRemove[#toRemove + 1] = i
+                end
             end
         end
     end
