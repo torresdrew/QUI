@@ -33,6 +33,15 @@ local SafeToNumber = Helpers.SafeToNumber
 local GetTime = GetTime
 local InCombatLockdown = InCombatLockdown
 
+-- Upvalue hot-path globals
+local type = type
+local ipairs = ipairs
+local pcall = pcall
+local issecretvalue = issecretvalue
+local string_format = string.format
+local hooksecurefunc = hooksecurefunc
+local CreateFrame = CreateFrame
+
 ---------------------------------------------------------------------------
 -- CONSTANTS
 ---------------------------------------------------------------------------
@@ -43,7 +52,11 @@ local MAX_RECYCLE_POOL_SIZE = 20
 ---------------------------------------------------------------------------
 local barPool = {}       -- active bars (array)
 local recyclePool = {}   -- recycled bars (array, max MAX_RECYCLE_POOL_SIZE)
-local barTimerFrame = CreateFrame("Frame")  -- OnUpdate set below
+local barTimerFrame = CreateFrame("Frame")
+local barTimerGroup = barTimerFrame:CreateAnimationGroup()
+local barTimerAnim = barTimerGroup:CreateAnimation()
+barTimerAnim:SetDuration(0.1)  -- 100ms = ~10 FPS
+barTimerGroup:SetLooping("REPEAT")
 
 -- Weak-keyed: Blizzard statusBar → owned bar (handles Blizzard frame recycling)
 local mirrorMap = Helpers.CreateStateTable()
@@ -1545,9 +1558,9 @@ function CDMBars:UpdateOwnedBars()
             if bar._active then anyActive = true end
         end
     end
-    -- Ensure the bar timer OnUpdate is running when any bar is active.
-    if anyActive and not barTimerFrame:IsShown() then
-        barTimerFrame:Show()
+    -- Ensure the bar timer is running when any bar is active.
+    if anyActive and not barTimerGroup:IsPlaying() then
+        barTimerGroup:Play()
     end
     -- Re-layout when any bar's active state changed so Show/Hide updates
     if anyChanged and _lastContainer and _lastSettings then
@@ -1556,20 +1569,16 @@ function CDMBars:UpdateOwnedBars()
 end
 
 ---------------------------------------------------------------------------
--- OWNED BAR TIMER: 100ms OnUpdate to update duration text + bar fill.
+-- OWNED BAR TIMER: 100ms AnimationGroup loop for duration text + bar fill.
 -- Uses DurationObject:GetRemainingDuration() for remaining time and
 -- bar._totalDuration (cached from auraData OOC) for the fill ratio.
 -- MirrorBlizzBar hooks handle fill when a Blizzard bar child exists;
--- this OnUpdate handles owned bars that have no Blizzard bar child,
+-- this timer handles owned bars that have no Blizzard bar child,
 -- or supplements the mirror during combat when hooks may lag.
+-- AnimationGroup:SetLooping("REPEAT") is C-side driven — no Lua elapsed
+-- accumulator overhead compared to raw OnUpdate.
 ---------------------------------------------------------------------------
-local BAR_TIMER_INTERVAL = 0.1  -- 100ms = ~10 FPS (sufficient for duration text)
-
-barTimerFrame:SetScript("OnUpdate", function(self, elapsed)
-    self._elapsed = (self._elapsed or 0) + elapsed
-    if self._elapsed < BAR_TIMER_INTERVAL then return end
-    self._elapsed = 0
-
+barTimerGroup:SetScript("OnLoop", function()
     local Helpers = ns.Helpers
     local anyActive = false
     for _, bar in ipairs(barPool) do
@@ -1584,13 +1593,13 @@ barTimerFrame:SetScript("OnUpdate", function(self, elapsed)
                     -- OOC: readable remaining — update text in Lua
                     if bar.DurationText then
                         if remaining >= 60 then
-                            local text = string.format("%.0fm", remaining / 60)
+                            local text = string_format("%.0fm", remaining / 60)
                             if text ~= bar._lastDurationText then
                                 bar._lastDurationText = text
                                 bar.DurationText:SetText(text)
                             end
                         else
-                            local text = string.format("%.1f", remaining)
+                            local text = string_format("%.1f", remaining)
                             if text ~= bar._lastDurationText then
                                 bar._lastDurationText = text
                                 bar.DurationText:SetText(text)
@@ -1630,9 +1639,9 @@ barTimerFrame:SetScript("OnUpdate", function(self, elapsed)
             end
         end
     end
-    -- Pause the OnUpdate when no bars need ticking to avoid idle CPU cost.
+    -- Stop the animation when no bars need ticking to avoid idle CPU cost.
     if not anyActive then
-        self:Hide()
+        barTimerGroup:Stop()
     end
 end)
 

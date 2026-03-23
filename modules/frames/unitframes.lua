@@ -14,6 +14,29 @@ local GetDB = Helpers.CreateDBGetter("quiUnitFrames")
 
 local GetCore = ns.Helpers.GetCore
 
+-- Upvalue hot-path globals
+local type = type
+local pairs = pairs
+local ipairs = ipairs
+local pcall = pcall
+local tostring = tostring
+local CreateFrame = CreateFrame
+local InCombatLockdown = InCombatLockdown
+local string_format = string.format
+local math_floor = math.floor
+
+-- Upvalue hot-path WoW APIs
+local UnitExists = UnitExists
+local UnitHealth = UnitHealth
+local UnitHealthMax = UnitHealthMax
+local UnitPower = UnitPower
+local UnitPowerMax = UnitPowerMax
+local UnitName = UnitName
+local UnitClass = UnitClass
+local UnitIsPlayer = UnitIsPlayer
+local UnitGetTotalAbsorbs = UnitGetTotalAbsorbs
+local GetTime = GetTime
+
 -- ADDON_LOADED safe window flag for combat /reload support
 local inInitSafeWindow = false
 
@@ -389,14 +412,14 @@ local function TruncateName(name, maxLength)
 
     -- If name is secret return shortened name, but not utf-8 safe
     if IsSecretValue(name) then
-        return string.format("%." .. maxLength .. "s", name)
+        return string_format("%." .. maxLength .. "s", name)
     end
 
     -- ok to get length and shorten utf-8 safe if too long
     local lenOk, nameLen = pcall(function() return #name end)
     if not lenOk then
         -- if get length somehow still fails return
-        return string.format("%." .. maxLength .. "s", name)
+        return string_format("%." .. maxLength .. "s", name)
     end
 
     -- short enough
@@ -428,7 +451,7 @@ local function TruncateName(name, maxLength)
     end
 
     -- Last resort fallback (works with secret values in M+/dungeons)
-    return string.format("%." .. maxLength .. "s", name)
+    return string_format("%." .. maxLength .. "s", name)
 end
 
 ---------------------------------------------------------------------------
@@ -449,7 +472,7 @@ local function FormatHealthText(hp, hpPct, style, divider, maxHp, hidePercentSym
 
     if style == "percent" then
         if hpPct then
-            local success, result = pcall(function() return string.format("%d%s", hpPct, pctSuffix) end)
+            local success, result = pcall(function() return string_format("%d%s", hpPct, pctSuffix) end)
             return success and result or ""
         end
         return ""
@@ -457,13 +480,13 @@ local function FormatHealthText(hp, hpPct, style, divider, maxHp, hidePercentSym
         return hpStr or ""
     elseif style == "both" then
         if hpPct then
-            local success, result = pcall(function() return string.format("%s%s%d%s", hpStr or "", divider, hpPct, pctSuffix) end)
+            local success, result = pcall(function() return string_format("%s%s%d%s", hpStr or "", divider, hpPct, pctSuffix) end)
             return success and result or hpStr or ""
         end
         return hpStr or ""
     elseif style == "both_reverse" then
         if hpPct then
-            local success, result = pcall(function() return string.format("%d%s%s%s", hpPct, pctSuffix, divider, hpStr or "") end)
+            local success, result = pcall(function() return string_format("%d%s%s%s", hpPct, pctSuffix, divider, hpStr or "") end)
             return success and result or hpStr or ""
         end
         return hpStr or ""
@@ -473,7 +496,7 @@ local function FormatHealthText(hp, hpPct, style, divider, maxHp, hidePercentSym
             local success, missing = pcall(function() return 100 - hpPct end)
             if not success then return "" end
             if missing > 0 then
-                return string.format("-%d%s", missing, pctSuffix)
+                return string_format("-%d%s", missing, pctSuffix)
             end
             return "0" .. pctSuffix
         end
@@ -520,7 +543,7 @@ local function FormatPowerText(power, powerPct, style, divider, hidePercentSymbo
     if style == "percent" then
         local fmtOk = pcall(function()
             if powerPct then
-                result = string.format("%d%s", powerPct, pctSuffix)
+                result = string_format("%d%s", powerPct, pctSuffix)
             end
         end)
         if not fmtOk then result = "" end
@@ -532,7 +555,7 @@ local function FormatPowerText(power, powerPct, style, divider, hidePercentSymbo
     elseif style == "both" then
         local fmtOk = pcall(function()
             if powerPct then
-                result = string.format("%s%s%d%s", powerStr or "", divider, powerPct, pctSuffix)
+                result = string_format("%s%s%d%s", powerStr or "", divider, powerPct, pctSuffix)
             else
                 result = powerStr or ""
             end
@@ -1380,11 +1403,11 @@ local function UpdateName(frame)
             if settings.totDividerUseClassColor then
                 -- Class/reaction color for divider
                 local dR, dG, dB = GetUnitClassColor(totUnit)
-                dividerColorHex = string.format("|cff%02x%02x%02x", dR * 255, dG * 255, dB * 255)
+                dividerColorHex = string_format("|cff%02x%02x%02x", dR * 255, dG * 255, dB * 255)
             elseif settings.totDividerColor then
                 -- Custom divider color
                 local c = settings.totDividerColor
-                dividerColorHex = string.format("|cff%02x%02x%02x", c[1] * 255, c[2] * 255, c[3] * 255)
+                dividerColorHex = string_format("|cff%02x%02x%02x", c[1] * 255, c[2] * 255, c[3] * 255)
             else
                 -- Default white
                 dividerColorHex = "|cFFFFFFFF"
@@ -1395,12 +1418,12 @@ local function UpdateName(frame)
             if general and general.masterColorToTText then
                 -- MASTER OVERRIDE: Color ToT name only
                 local totR, totG, totB = GetUnitClassColor(totUnit)
-                local totColorHex = string.format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
+                local totColorHex = string_format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
                 name = name .. dividerColorHex .. separator .. "|r" .. totColorHex .. totName .. "|r"
             elseif settings.totUseClassColor then
                 -- Per-unit: ToT name colored
                 local totR, totG, totB = GetUnitClassColor(totUnit)
-                local totColorHex = string.format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
+                local totColorHex = string_format("|cff%02x%02x%02x", totR * 255, totG * 255, totB * 255)
                 name = name .. dividerColorHex .. separator .. "|r" .. totColorHex .. totName .. "|r"
             else
                 -- Default: Divider colored, ToT name uncolored
@@ -2443,7 +2466,7 @@ function QUI_UF:ShowPreview(unitKey)
                 if frame.healthText then
                     local previewHPPct = 75 - (i * 5)
                     local previewMaxHP = 100000
-                    local previewHP = math.floor(previewMaxHP * (previewHPPct / 100))
+                    local previewHP = math_floor(previewMaxHP * (previewHPPct / 100))
                     frame.healthText:SetText(FormatHealthText(
                         previewHP,
                         previewHPPct,
@@ -2572,7 +2595,7 @@ function QUI_UF:ShowPreview(unitKey)
     if frame.healthText then
         local previewHPPct = 75
         local previewMaxHP = 100000
-        local previewHP = math.floor(previewMaxHP * (previewHPPct / 100))
+        local previewHP = math_floor(previewMaxHP * (previewHPPct / 100))
         frame.healthText:SetText(FormatHealthText(
             previewHP,
             previewHPPct,
@@ -2927,7 +2950,7 @@ function QUI_UF:RefreshFrame(unitKey)
                     if self.previewMode[bossKey] then
                         local previewHPPct = 75 - (i * 5)
                         local previewMaxHP = 100000
-                        local previewHP = math.floor(previewMaxHP * (previewHPPct / 100))
+                        local previewHP = math_floor(previewMaxHP * (previewHPPct / 100))
                         frame.healthText:SetText(FormatHealthText(
                             previewHP,
                             previewHPPct,

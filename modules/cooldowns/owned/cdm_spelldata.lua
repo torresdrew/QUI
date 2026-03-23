@@ -852,12 +852,21 @@ local function ResolveOwnedEntry(entry, containerKey, index)
                 resolved.name = info.name or ""
             end
         end
-        -- Check for multi-charge spells
+        -- Check for multi-charge spells (runtime + SavedVariables fallback)
         if C_Spell and C_Spell.GetSpellCharges then
-            local ok, ci = pcall(C_Spell.GetSpellCharges, resolved.overrideSpellID or displayID)
+            local checkID = resolved.overrideSpellID or displayID
+            local ok, ci = pcall(C_Spell.GetSpellCharges, checkID)
             if ok and ci then
                 local maxC = Helpers.SafeToNumber(ci.maxCharges, 0)
                 if maxC and maxC > 1 then
+                    resolved.hasCharges = true
+                end
+            end
+            -- Combat fallback: if API returned secret values, check persisted cache
+            if not resolved.hasCharges and checkID then
+                local gdb = QUI and QUI.db and QUI.db.global
+                local svCharges = gdb and gdb.cdmChargeSpells
+                if svCharges and svCharges[checkID] then
                     resolved.hasCharges = true
                 end
             end

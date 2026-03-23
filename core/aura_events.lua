@@ -12,6 +12,14 @@
 
 local ADDON_NAME, ns = ...
 
+-- Upvalue hot-path globals
+local pairs = pairs
+local ipairs = ipairs
+local type = type
+local wipe = wipe
+local tostring = tostring
+local CreateFrame = CreateFrame
+
 ---------------------------------------------------------------------------
 -- DISPATCHER
 ---------------------------------------------------------------------------

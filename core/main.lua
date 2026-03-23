@@ -5,6 +5,20 @@ local ADDON_NAME, ns = ...
 local QUI = QUI
 local ADDON_NAME = "QUI"
 
+-- Upvalue frequently-used globals (core/main.lua is ~3000 lines)
+local type = type
+local pairs = pairs
+local ipairs = ipairs
+local pcall = pcall
+local tostring = tostring
+local tonumber = tonumber
+local select = select
+local wipe = wipe
+local CreateFrame = CreateFrame
+local InCombatLockdown = InCombatLockdown
+local C_Timer = C_Timer
+local hooksecurefunc = hooksecurefunc
+
 -- Create QUICore as an Ace3 module within QUI
 local QUICore = QUI:NewModule("QUICore", "AceConsole-3.0", "AceEvent-3.0")
 QUI.QUICore = QUICore

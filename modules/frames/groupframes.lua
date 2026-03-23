@@ -22,8 +22,34 @@ local type = type
 local pairs = pairs
 local ipairs = ipairs
 local pcall = pcall
+local wipe = wipe
+local tostring = tostring
+local select = select
+local format = format
 local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
+local GetTime = GetTime
+local hooksecurefunc = hooksecurefunc
+local string_format = string.format
+local math_floor = math.floor
+local math_min = math.min
+local math_max = math.max
+
+-- Upvalue hot-path WoW APIs
+local UnitExists = UnitExists
+local UnitHealth = UnitHealth
+local UnitHealthMax = UnitHealthMax
+local UnitPower = UnitPower
+local UnitPowerMax = UnitPowerMax
+local UnitClass = UnitClass
+local UnitName = UnitName
+local UnitIsDeadOrGhost = UnitIsDeadOrGhost
+local UnitIsConnected = UnitIsConnected
+local UnitGroupRolesAssigned = UnitGroupRolesAssigned
+local UnitThreatSituation = UnitThreatSituation
+local UnitGetTotalAbsorbs = UnitGetTotalAbsorbs
+local UnitIsUnit = UnitIsUnit
+local RAID_CLASS_COLORS = RAID_CLASS_COLORS
 
 -- ADDON_LOADED safe window flag for combat /reload support
 local inInitSafeWindow = false
@@ -415,7 +441,7 @@ local function CalculateHeaderSize(db, memberCount)
     local isFlat = (groupBy == "NONE")
     local framesPerGroup = isFlat and (layout and layout.unitsPerFlat or 5) or 5
     local numGroups = math.ceil(memberCount / framesPerGroup)
-    local framesInTallestGroup = math.min(memberCount, framesPerGroup)
+    local framesInTallestGroup = math_min(memberCount, framesPerGroup)
     local colSpacing = isFlat and spacing or groupSpacing
 
     local horizontal = (grow == "LEFT" or grow == "RIGHT")
@@ -429,7 +455,7 @@ local function CalculateHeaderSize(db, memberCount)
         totalH = framesInTallestGroup * h + (framesInTallestGroup - 1) * spacing
     end
 
-    return math.max(totalW, 100), math.max(totalH, 40)
+    return math_max(totalW, 100), math_max(totalH, 40)
 end
 
 -- Expose for sub-modules
@@ -521,13 +547,19 @@ local function UpdateHealth(frame)
             frame.healthBar:SetValue(pct)
         end
 
-        -- Color
+        -- Color (dirty-checked: skip SetStatusBarColor when unchanged)
+        local r, g, b, a
         if not isConnected then
-            frame.healthBar:SetStatusBarColor(COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3], COLOR_OFFLINE[4])
+            r, g, b, a = COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3], COLOR_OFFLINE[4]
         elseif isDeadOrGhost then
-            frame.healthBar:SetStatusBarColor(COLOR_DEAD[1], COLOR_DEAD[2], COLOR_DEAD[3], COLOR_DEAD[4])
+            r, g, b, a = COLOR_DEAD[1], COLOR_DEAD[2], COLOR_DEAD[3], COLOR_DEAD[4]
         else
-            local r, g, b, a = GetHealthBarColor(unit, frame._isRaid)
+            r, g, b, a = GetHealthBarColor(unit, frame._isRaid)
+        end
+        -- r is unique per state: class color r varies by class, offline/dead
+        -- colors are distinct fixed values, dark mode is a fixed value.
+        if r ~= frame._lastHealthColorR then
+            frame._lastHealthColorR = r
             frame.healthBar:SetStatusBarColor(r, g, b, a)
         end
     end
@@ -1416,8 +1448,8 @@ local function UpdateDefensiveIndicator(frame)
     -- CENTER: calculate centering offset based on visible count
     local centerOffX = 0
     if growDir == "CENTER" then
-        local visibleCount = math.min(#foundAuras, #frame.defensiveIcons)
-        local totalSpan = visibleCount * iconSize + math.max(visibleCount - 1, 0) * spacing
+        local visibleCount = math_min(#foundAuras, #frame.defensiveIcons)
+        local totalSpan = visibleCount * iconSize + math_max(visibleCount - 1, 0) * spacing
         centerOffX = -totalSpan / 2
     end
 
@@ -2202,11 +2234,11 @@ local function UpdateAnchorRoot(key, mainHeader, selfHeader, isRaid)
 
     local totalW, totalH
     if grow == "LEFT" or grow == "RIGHT" then
-        totalW = math.max(1, mainW + (mainVisible and selfVisible and gap or 0) + selfW)
-        totalH = math.max(1, math.max(mainH, selfH))
+        totalW = math_max(1, mainW + (mainVisible and selfVisible and gap or 0) + selfW)
+        totalH = math_max(1, math_max(mainH, selfH))
     else
-        totalW = math.max(1, math.max(mainW, selfW))
-        totalH = math.max(1, mainH + (mainVisible and selfVisible and gap or 0) + selfH)
+        totalW = math_max(1, math_max(mainW, selfW))
+        totalH = math_max(1, mainH + (mainVisible and selfVisible and gap or 0) + selfH)
     end
 
     root:SetSize(totalW, totalH)
@@ -2245,12 +2277,12 @@ local function GetMultiHeaderTotalSize()
 
             if horizontal then
                 -- Groups stack vertically; width = max, height = sum
-                totalW = math.max(totalW, hW)
+                totalW = math_max(totalW, hW)
                 totalH = totalH + hH
             else
                 -- Groups stack horizontally; width = sum, height = max
                 totalW = totalW + hW
-                totalH = math.max(totalH, hH)
+                totalH = math_max(totalH, hH)
             end
         end
     end
@@ -2264,7 +2296,7 @@ local function GetMultiHeaderTotalSize()
         end
     end
 
-    return math.max(totalW, 1), math.max(totalH, 1)
+    return math_max(totalW, 1), math_max(totalH, 1)
 end
 
 local function UpdateAnchorFrames()
@@ -2321,11 +2353,11 @@ local function UpdateAnchorFrames()
 
         local totalW, totalH
         if grow == "LEFT" or grow == "RIGHT" then
-            totalW = math.max(1, mW + (anyVisible and selfVisible and gap or 0) + selfW)
-            totalH = math.max(1, math.max(mH, selfH))
+            totalW = math_max(1, mW + (anyVisible and selfVisible and gap or 0) + selfW)
+            totalH = math_max(1, math_max(mH, selfH))
         else
-            totalW = math.max(1, math.max(mW, selfW))
-            totalH = math.max(1, mH + (anyVisible and selfVisible and gap or 0) + selfH)
+            totalW = math_max(1, math_max(mW, selfW))
+            totalH = math_max(1, mH + (anyVisible and selfVisible and gap or 0) + selfH)
         end
 
         root:SetSize(totalW, totalH)
@@ -2375,7 +2407,7 @@ local function GetVisiblePartyUnitCount()
         if type(GetNumSubgroupMembers) == "function" then
             subgroupCount = GetNumSubgroupMembers() or 0
         else
-            subgroupCount = math.max((GetNumGroupMembers() or 0) - 1, 0)
+            subgroupCount = math_max((GetNumGroupMembers() or 0) - 1, 0)
         end
 
         if selfFirst or layout.showPlayer == false then
@@ -2760,7 +2792,7 @@ local function CreateHeaders()
     raidHeader:SetAttribute("initialConfigFunction", initConfigFunc)
     ConfigureRaidHeader(raidHeader)
 
-    local raidCount = math.max(IsInRaid() and GetNumGroupMembers() or 25, 5)
+    local raidCount = math_max(IsInRaid() and GetNumGroupMembers() or 25, 5)
     local raidW, raidH = CalculateHeaderSize(db, raidCount)
     raidHeader:SetSize(raidW, raidH)
 
@@ -2906,7 +2938,7 @@ local function UpdateHeaderSizes()
 
     local partyHdr = QUI_GF.headers.party
     if partyHdr then
-        local count = math.max(GetVisiblePartyUnitCount(), 1)
+        local count = math_max(GetVisiblePartyUnitCount(), 1)
         local w, h = CalculateHeaderSize(db, count)
         partyHdr:SetSize(w, h)
     end
@@ -2932,7 +2964,7 @@ local function UpdateHeaderSizes()
                         local _, _, subgroup = GetRaidRosterInfo(i)
                         if subgroup == g then groupCount = groupCount + 1 end
                     end
-                    groupCount = math.max(groupCount, 1)
+                    groupCount = math_max(groupCount, 1)
 
                     local hdrW, hdrH
                     if horizontal then
@@ -2955,7 +2987,7 @@ local function UpdateHeaderSizes()
         local raidHdr = QUI_GF.headers.raid
         if raidHdr then
             local count = IsInRaid() and GetNumGroupMembers() or 25
-            count = math.max(count, 5)
+            count = math_max(count, 5)
             local w, h = CalculateHeaderSize(db, count)
             raidHdr:SetSize(w, h)
         end

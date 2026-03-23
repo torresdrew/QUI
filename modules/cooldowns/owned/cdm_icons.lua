@@ -90,6 +90,48 @@ local recyclePool = {}
 local iconCounter = 0
 local updateTicker = nil
 
+---------------------------------------------------------------------------
+-- PER-TICK CACHES: wiped at the start of each UpdateAllCooldowns batch.
+-- Avoids redundant C API calls when the same spellID appears in multiple
+-- containers or is queried by both GetBestSpellCooldown and stack/visibility.
+---------------------------------------------------------------------------
+local _tickChargeCache = {}   -- [spellID] = chargeInfo or false
+local _tickCooldownCache = {} -- [spellID] = cdInfo or false
+
+-- Persistent multi-charge spell cache (survives combat/reload via SavedVariables).
+-- Populated OOC when GetSpellCharges returns readable values; consulted in combat
+-- when secret values block runtime detection.
+local function GetChargeMetadataDB()
+    local db = QUI and QUI.db and QUI.db.global
+    if not db then return nil end
+    if not db.cdmChargeSpells then db.cdmChargeSpells = {} end
+    return db.cdmChargeSpells
+end
+
+local function TickCacheGetCharges(spellID)
+    local cached = _tickChargeCache[spellID]
+    if cached ~= nil then return cached or nil end
+    local chargeInfo = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(spellID) or nil
+    _tickChargeCache[spellID] = chargeInfo or false
+    -- Persist multi-charge detection OOC for combat fallback
+    if chargeInfo and not InCombatLockdown() then
+        local maxC = SafeToNumber(chargeInfo.maxCharges, nil)
+        if maxC and maxC > 1 then
+            local svDB = GetChargeMetadataDB()
+            if svDB then svDB[spellID] = maxC end
+        end
+    end
+    return chargeInfo
+end
+
+local function TickCacheGetCooldown(spellID)
+    local cached = _tickCooldownCache[spellID]
+    if cached ~= nil then return cached or nil end
+    local cdInfo = C_Spell.GetSpellCooldown(spellID)
+    _tickCooldownCache[spellID] = cdInfo or false
+    return cdInfo
+end
+
 
 ---------------------------------------------------------------------------
 -- DYNAMIC CHILD LOOKUP: Scan ALL viewer children to find the one with
@@ -416,23 +458,21 @@ local function GetBestSpellCooldown(spellID)
     local secretStart, secretDuration = nil, nil
     local bestDurObj = nil
 
-    -- Check primary spell
-    local cdInfo = C_Spell.GetSpellCooldown(spellID)
+    -- Check primary spell (per-tick cached)
+    local cdInfo = TickCacheGetCooldown(spellID)
     if cdInfo then
         bestStart, bestDuration, secretStart, secretDuration, bestDurObj =
             AccumulateCooldown(cdInfo.startTime, cdInfo.duration, cdInfo,
                 bestStart, bestDuration, secretStart, secretDuration, bestDurObj)
     end
-    if C_Spell.GetSpellCharges then
-        local chargeInfo = C_Spell.GetSpellCharges(spellID)
-        if chargeInfo then
-            local currentCharges = SafeToNumber(chargeInfo.currentCharges, 0)
-            local maxCharges = SafeToNumber(chargeInfo.maxCharges, 0)
-            if currentCharges < maxCharges then
-                bestStart, bestDuration, secretStart, secretDuration, bestDurObj =
-                    AccumulateCooldown(chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration, chargeInfo,
-                        bestStart, bestDuration, secretStart, secretDuration, bestDurObj)
-            end
+    local chargeInfo = TickCacheGetCharges(spellID)
+    if chargeInfo then
+        local currentCharges = SafeToNumber(chargeInfo.currentCharges, 0)
+        local maxCharges = SafeToNumber(chargeInfo.maxCharges, 0)
+        if currentCharges < maxCharges then
+            bestStart, bestDuration, secretStart, secretDuration, bestDurObj =
+                AccumulateCooldown(chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration, chargeInfo,
+                    bestStart, bestDuration, secretStart, secretDuration, bestDurObj)
         end
     end
 
@@ -440,22 +480,20 @@ local function GetBestSpellCooldown(spellID)
     if C_Spell.GetOverrideSpell then
         local overrideID = C_Spell.GetOverrideSpell(spellID)
         if overrideID and overrideID ~= spellID then
-            cdInfo = C_Spell.GetSpellCooldown(overrideID)
+            cdInfo = TickCacheGetCooldown(overrideID)
             if cdInfo then
                 bestStart, bestDuration, secretStart, secretDuration, bestDurObj =
                     AccumulateCooldown(cdInfo.startTime, cdInfo.duration, cdInfo,
                         bestStart, bestDuration, secretStart, secretDuration, bestDurObj)
             end
-            if C_Spell.GetSpellCharges then
-                local chargeInfo = C_Spell.GetSpellCharges(overrideID)
-                if chargeInfo then
-                    local currentCharges = SafeToNumber(chargeInfo.currentCharges, 0)
-                    local maxCharges = SafeToNumber(chargeInfo.maxCharges, 0)
-                    if currentCharges < maxCharges then
-                        bestStart, bestDuration, secretStart, secretDuration, bestDurObj =
-                            AccumulateCooldown(chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration, chargeInfo,
-                                bestStart, bestDuration, secretStart, secretDuration, bestDurObj)
-                    end
+            chargeInfo = TickCacheGetCharges(overrideID)
+            if chargeInfo then
+                local currentCharges = SafeToNumber(chargeInfo.currentCharges, 0)
+                local maxCharges = SafeToNumber(chargeInfo.maxCharges, 0)
+                if currentCharges < maxCharges then
+                    bestStart, bestDuration, secretStart, secretDuration, bestDurObj =
+                        AccumulateCooldown(chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration, chargeInfo,
+                            bestStart, bestDuration, secretStart, secretDuration, bestDurObj)
                 end
             end
         end
@@ -739,8 +777,22 @@ local function GetMacroTooltipSpell(body)
     return nil
 end
 
+-- Session cache: spellID → macroName or false. Invalidated on UPDATE_MACROS.
+local _macroCache = {}
+local _macroCacheDirty = true
+
+local function InvalidateMacroCache()
+    wipe(_macroCache)
+    _macroCacheDirty = true
+end
+
 local function FindMacroForSpell(spellID, overrideSpellID)
     if not spellID and not overrideSpellID then return nil end
+
+    -- Check session cache (keyed on primary spellID)
+    local cacheKey = spellID or overrideSpellID
+    local cached = _macroCache[cacheKey]
+    if cached ~= nil then return cached or nil end
 
     -- Build lowercase spell name set for matching
     local names = {}
@@ -752,7 +804,10 @@ local function FindMacroForSpell(spellID, overrideSpellID)
         local info = C_Spell.GetSpellInfo(overrideSpellID)
         if info and info.name then names[info.name:lower()] = true end
     end
-    if not next(names) then return nil end
+    if not next(names) then
+        _macroCache[cacheKey] = false
+        return nil
+    end
 
     -- Pass 1: GetMacroSpell (WoW-resolved tooltip spell ID)
     for i = 1, MAX_ACCOUNT_MACROS + MAX_CHARACTER_MACROS do
@@ -760,6 +815,7 @@ local function FindMacroForSpell(spellID, overrideSpellID)
         if macroName then
             local macroSpell = GetMacroSpell(i)
             if macroSpell and (macroSpell == spellID or macroSpell == overrideSpellID) then
+                _macroCache[cacheKey] = macroName
                 return macroName
             end
         end
@@ -771,6 +827,7 @@ local function FindMacroForSpell(spellID, overrideSpellID)
         if macroName then
             local tooltipSpell = GetMacroTooltipSpell(GetMacroBody(i))
             if tooltipSpell and names[tooltipSpell] then
+                _macroCache[cacheKey] = macroName
                 return macroName
             end
         end
@@ -790,6 +847,7 @@ local function FindMacroForSpell(spellID, overrideSpellID)
                     local lowerBody = body:lower()
                     for name in pairs(names) do
                         if lowerBody:find(name, 1, true) then
+                            _macroCache[cacheKey] = macroName
                             return macroName
                         end
                     end
@@ -797,6 +855,7 @@ local function FindMacroForSpell(spellID, overrideSpellID)
             end
         end
     end
+    _macroCache[cacheKey] = false
     return nil
 end
 
@@ -1497,12 +1556,13 @@ local function UpdateIconCooldown(icon)
         local spellID = entry.overrideSpellID or entry.spellID or entry.id
         local stackText = nil
 
-        -- Check spell charges (cached for desaturation reuse)
-        if spellID and C_Spell.GetSpellCharges then
-            local ok, chargeInfo = pcall(C_Spell.GetSpellCharges, spellID)
+        -- Check spell charges (per-tick cached, reused for desaturation)
+        if spellID then
+            local chargeInfo = TickCacheGetCharges(spellID)
+            local ok = chargeInfo ~= nil
             _cachedChargeOk = ok
-            _cachedChargeInfo = ok and chargeInfo or nil
-            if ok and chargeInfo and chargeInfo.maxCharges then
+            _cachedChargeInfo = chargeInfo
+            if chargeInfo and chargeInfo.maxCharges then
                 if not IsSecretValue(chargeInfo.maxCharges) and chargeInfo.maxCharges > 1 then
                     local current = chargeInfo.currentCharges
                     if not IsSecretValue(current) and current and current >= 0 then
@@ -1862,6 +1922,11 @@ end
 -- UPDATE ALL COOLDOWNS
 ---------------------------------------------------------------------------
 function CDMIcons:UpdateAllCooldowns()
+    -- Wipe per-tick caches: each batch starts fresh so every spellID
+    -- is queried at most once via TickCacheGetCharges/TickCacheGetCooldown.
+    wipe(_tickChargeCache)
+    wipe(_tickCooldownCache)
+
     -- _childMapDirty is set by the aura/cooldown event subscribers.
     -- RebuildChildMap() is a no-op when not dirty.
 
@@ -1953,12 +2018,12 @@ function CDMIcons:UpdateAllCooldowns()
                             isOnCD = true
                         end
                     end
-                    -- Also check charge-based cooldowns
+                    -- Also check charge-based cooldowns (per-tick cached)
                     if not isOnCD and entry.hasCharges then
                         local spellID = entry.overrideSpellID or entry.spellID or entry.id
-                        if spellID and C_Spell.GetSpellCharges then
-                            local ok, ci = pcall(C_Spell.GetSpellCharges, spellID)
-                            if ok and ci then
+                        if spellID then
+                            local ci = TickCacheGetCharges(spellID)
+                            if ci then
                                 local current = SafeToNumber(ci.currentCharges, nil)
                                 local maxC = SafeToNumber(ci.maxCharges, nil)
                                 if current and maxC and current < maxC then
@@ -2332,6 +2397,7 @@ cdEventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 cdEventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 cdEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 cdEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+cdEventFrame:RegisterEvent("UPDATE_MACROS")
 -- UNIT_AURA handled by centralized dispatcher subscription (below)
 
 -- C_Timer coalescing for cooldown events: batches SPELL_UPDATE_COOLDOWN,
@@ -2381,6 +2447,10 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
         -- (replaces the removed 500ms ticker as a safety net)
         _childMapDirty = true
         ScheduleCDMUpdate()
+        return
+    end
+    if event == "UPDATE_MACROS" then
+        InvalidateMacroCache()
         return
     end
     -- Coalesce cooldown events via C_Timer
