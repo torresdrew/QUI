@@ -834,6 +834,9 @@ local function SetupEmbeddedTooltipHooks()
         hooksecurefunc("SharedTooltip_SetBackdropStyle", function(tooltip, style, isEmbedded)
             if not IsEnabled() then return end
             if not tooltip then return end
+            -- Only process actual tooltip frames — skip non-tooltip addon frames
+            -- that may pass through this global function.
+            if not (tooltip.GetObjectType and tooltip:GetObjectType() == "GameTooltip") then return end
             -- Trust Blizzard's isEmbedded parameter — it's the authoritative
             -- signal that this tooltip is being styled as embedded inside a
             -- parent. Parent-visibility checks have timing issues here because
@@ -864,6 +867,8 @@ local function SetupEmbeddedTooltipHooks()
         hooksecurefunc("GameTooltip_SetBackdropStyle", function(tooltip, style)
             if not IsEnabled() then return end
             if not tooltip then return end
+            -- Only process actual tooltip frames — skip non-tooltip addon frames
+            if not (tooltip.GetObjectType and tooltip:GetObjectType() == "GameTooltip") then return end
             if InCombatLockdown() then
                 if skinnedTooltips[tooltip] then
                     pcall(CombatSafeReapply, tooltip)

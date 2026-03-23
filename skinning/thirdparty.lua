@@ -82,10 +82,12 @@ local suppressingBackdrop = false
 local function SuppressFrame(f)
     local isS = issecretvalue
 
-    -- White backdrop → darken
+    -- White backdrop → darken (only when visually opaque — low alpha means the
+    -- addon styled it intentionally, e.g. transparent or semi-transparent backgrounds)
     if f.GetBackdropColor then
-        local rok, r, g, b = pcall(f.GetBackdropColor, f)
-        if rok and not isS(r) and r and r > 0.9 and g > 0.9 and b > 0.9 then
+        local rok, r, g, b, a = pcall(f.GetBackdropColor, f)
+        if rok and not isS(r) and r and r > 0.9 and g > 0.9 and b > 0.9
+            and (not a or not isS(a) and a > 0.5) then
             local hok, h = pcall(f.GetHeight, f)
             if hok and not isS(h) and h and h > 10 then
                 suppressingBackdrop = true
@@ -111,12 +113,24 @@ local function SuppressFrame(f)
         end
     end
 
-    -- Visible NineSlice → hide
+    -- Visible NineSlice → hide only if it looks like an unstyled default.
+    -- Addons that style their own NineSlice (e.g. damage meters) set custom
+    -- vertex colors on the Center piece — leave those alone.
     if f.NineSlice then
         local aok, a = pcall(f.NineSlice.GetAlpha, f.NineSlice)
         if aok and not isS(a) and a and a > 0 then
-            pcall(f.NineSlice.SetAlpha, f.NineSlice, 0)
-            processed[f] = true
+            local shouldHide = false
+            local center = f.NineSlice.Center
+            if center and center.GetVertexColor then
+                local cok, cr, cg, cb = pcall(center.GetVertexColor, center)
+                if cok and not isS(cr) and cr and cr > 0.85 and cg > 0.85 and cb > 0.85 then
+                    shouldHide = true
+                end
+            end
+            if shouldHide then
+                pcall(f.NineSlice.SetAlpha, f.NineSlice, 0)
+                processed[f] = true
+            end
         end
     end
 end
@@ -175,7 +189,7 @@ end
 ---------------------------------------------------------------------------
 
 if BackdropTemplateMixin and BackdropTemplateMixin.SetBackdropColor then
-    hooksecurefunc(BackdropTemplateMixin, "SetBackdropColor", function(self, r, g, b)
+    hooksecurefunc(BackdropTemplateMixin, "SetBackdropColor", function(self, r, g, b, a)
         if suppressingBackdrop then return end
         if not initialized or not IsEnabled() then return end
         -- Fast path: skip non-white colors immediately (most common case).
@@ -183,6 +197,8 @@ if BackdropTemplateMixin and BackdropTemplateMixin.SetBackdropColor then
         local isS = issecretvalue
         if isS(r) then return end
         if not r or r <= 0.9 or not g or g <= 0.9 or not b or b <= 0.9 then return end
+        -- Skip transparent backdrops — low alpha means the addon styled it intentionally
+        if a and not isS(a) and a < 0.5 then return end
         if processed[self] then
             -- Frame was already processed but just got its color reset —
             -- clear the processed flag so we re-evaluate.
