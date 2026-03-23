@@ -1268,6 +1268,53 @@ end
 local FadeHideEffects
 local FadeShowEffects
 local SkinSpellFlyoutButtons
+local PROC_ALERT_REGION_KEYS = {
+    "ProcStartFlipbook",
+    "ProcLoopFlipbook",
+}
+
+local function SuppressProcVisualFrame(frame)
+    if not frame then return end
+
+    pcall(function()
+        if frame.Hide then
+            frame:Hide()
+        end
+        if frame.SetAlpha then
+            frame:SetAlpha(0)
+        end
+        if frame.StopAnimating then
+            frame:StopAnimating()
+        end
+    end)
+
+    if frame.Show then
+        Helpers.DeferredHideOnShow(frame, { clearAlpha = true, combatCheck = false })
+    end
+end
+
+local function SuppressButtonProcVisuals(button)
+    if not button then return end
+
+    pcall(function()
+        local alert = button.SpellActivationAlert
+        if alert then
+            SuppressProcVisualFrame(alert)
+
+            for _, regionKey in ipairs(PROC_ALERT_REGION_KEYS) do
+                SuppressProcVisualFrame(alert[regionKey])
+            end
+        end
+    end)
+
+    pcall(function()
+        SuppressProcVisualFrame(button.OverlayGlow)
+    end)
+
+    pcall(function()
+        SuppressProcVisualFrame(button._ButtonGlow)
+    end)
+end
 
 -- Apply QUI skin to a single button
 local function SkinButton(button, settings)
@@ -1289,6 +1336,7 @@ local function SkinButton(button, settings)
 
     -- Strip Blizzard artwork first
     StripBlizzardArtwork(button)
+    SuppressButtonProcVisuals(button)
 
     local iconSize = settings.iconSize or 36
     local zoom = settings.iconZoom or 0.07
@@ -1604,54 +1652,7 @@ FadeHideEffects = function(button, state)
         if cooldown.SetDrawEdge then cooldown:SetDrawEdge(false) end
     end
 
-    local spellActivation = button.SpellActivationAlert
-    if spellActivation then
-        if not state._fhSpellActivationShowHooked and spellActivation.HookScript then
-            state._fhSpellActivationShowHooked = true
-            spellActivation:HookScript("OnShow", function(self)
-                local st = GetFrameState(button)
-                if st and st.fadeHidden then
-                    self:Hide()
-                end
-            end)
-        end
-        if spellActivation:IsShown() then
-            spellActivation:Hide()
-            state._fhSpellActivationAlert = true
-        end
-    end
-    local overlayGlow = button.OverlayGlow
-    if overlayGlow then
-        if not state._fhOverlayGlowShowHooked and overlayGlow.HookScript then
-            state._fhOverlayGlowShowHooked = true
-            overlayGlow:HookScript("OnShow", function(self)
-                local st = GetFrameState(button)
-                if st and st.fadeHidden then
-                    self:Hide()
-                end
-            end)
-        end
-        if overlayGlow:IsShown() then
-            overlayGlow:Hide()
-            state._fhOverlayGlow = true
-        end
-    end
-    local buttonGlow = button._ButtonGlow
-    if buttonGlow then
-        if not state._fhButtonGlowShowHooked and buttonGlow.HookScript then
-            state._fhButtonGlowShowHooked = true
-            buttonGlow:HookScript("OnShow", function(self)
-                local st = GetFrameState(button)
-                if st and st.fadeHidden then
-                    self:Hide()
-                end
-            end)
-        end
-        if buttonGlow:IsShown() then
-            buttonGlow:Hide()
-            state._fhButtonGlow = true
-        end
-    end
+    SuppressButtonProcVisuals(button)
 end
 
 FadeShowEffects = function(button, state)
@@ -1672,19 +1673,7 @@ FadeShowEffects = function(button, state)
     state._fhCooldownFrameShown = nil
     state._fhCooldownSwipe = nil
     state._fhCooldownEdge = nil
-
-    if state._fhSpellActivationAlert and button.SpellActivationAlert then
-        button.SpellActivationAlert:Show()
-    end
-    if state._fhOverlayGlow and button.OverlayGlow then
-        button.OverlayGlow:Show()
-    end
-    if state._fhButtonGlow and button._ButtonGlow then
-        button._ButtonGlow:Show()
-    end
-    state._fhSpellActivationAlert = nil
-    state._fhOverlayGlow = nil
-    state._fhButtonGlow = nil
+    SuppressButtonProcVisuals(button)
 end
 
 -- Hide QUI textures on a button, saving which were visible for later restore.
@@ -3096,6 +3085,7 @@ local function SkinBar(barKey)
             end)
             button:HookScript("OnShow", function(self)
                 local st = GetFrameState(self)
+                SuppressButtonProcVisuals(self)
                 local key = GetBarKeyFromButton(self)
                 local fadeState = key and ActionBars.fadeState and ActionBars.fadeState[key]
                 local hideEmptyEnabled = GetGlobalSettings() and GetGlobalSettings().hideEmptySlots
@@ -3431,6 +3421,14 @@ function ActionBars:Initialize()
     -- Initial skin pass
     SkinAllBars()
     HookSpellFlyoutSkinning()
+
+    if type(ActionButton_ShowOverlayGlow) == "function" then
+        hooksecurefunc("ActionButton_ShowOverlayGlow", function(button)
+            if ActionBars.skinnedButtons[button] then
+                SuppressButtonProcVisuals(button)
+            end
+        end)
+    end
 
     -- Apply bar layout settings (scale, lock, range indicator, empty slots)
     ApplyBarLayoutSettings()
