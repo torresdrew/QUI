@@ -1173,41 +1173,6 @@ function CDMBars:UpdateOwnedBarAura(bar)
             end
         end
 
-        -- 2. _spellToAuraInstance cache (populated from UNIT_AURA events):
-        --    Get the auraInstanceID → GetAuraDuration (all C-side).
-        if not handled then
-            local CDMIcons = ns.CDMIcons
-            local spellToAura = CDMIcons and CDMIcons._spellToAuraInstance
-            if spellToAura and C_UnitAuras.GetAuraDuration then
-                local auraInstID = spellToAura[resolvedID]
-                    or (resolvedID ~= spellID and spellToAura[spellID])
-                    or (entry and entry.spellID and spellToAura[entry.spellID])
-                    or (entry and entry.id and spellToAura[entry.id])
-                -- Validate cache-sourced instance is still active
-                if auraInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
-                    local vok, vdata = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, "player", auraInstID)
-                    if vok and not vdata then
-                        auraInstID = nil
-                    end
-                end
-                if auraInstID then
-                    local dok, durObj = pcall(C_UnitAuras.GetAuraDuration, "player", auraInstID)
-                    if dok and durObj then
-                        bar._active = true
-                        bar._durObj = durObj
-                        if bar.StatusBar then
-                            pcall(bar.StatusBar.SetMinMaxValues, bar.StatusBar, 0, 1)
-                            if bar.StatusBar.SetTimerDuration then
-                                pcall(bar.StatusBar.SetTimerDuration, bar.StatusBar, durObj, nil, 1)
-                                bar._cSideFill = true
-                            end
-                        end
-                        handled = true
-                    end
-                end
-            end
-        end
-
         -- 2. Hook cache: DurationObject from direct Blizzard child reference.
         --    Only trust data from buff viewer children — cooldown viewer
         --    children have spell cooldown timers, not aura durations.
@@ -1290,28 +1255,29 @@ function CDMBars:UpdateOwnedBarAura(bar)
             end
         end
 
-        -- Update stacks in combat — get applications and set directly
+        -- Update stacks in combat — use child auraInstanceID directly
         if handled and bar.NameText then
             local apps
-            -- Resolve unit from Blizzard child (player or target)
-            local stackUnit = "player"
-            if bar._blizzBar and bar._blizzBar.auraDataUnit then
-                stackUnit = bar._blizzBar.auraDataUnit
-            elseif bar._blizzIconChild and bar._blizzIconChild.auraDataUnit then
-                stackUnit = bar._blizzIconChild.auraDataUnit
+            -- Get auraInstanceID + unit from whichever Blizzard child is shown
+            local stackInstID, stackUnit
+            if bar._blizzBar then
+                local bok, bshown = pcall(bar._blizzBar.IsShown, bar._blizzBar)
+                if bok and bshown and bar._blizzBar.auraInstanceID then
+                    stackInstID = Helpers.SafeValue(bar._blizzBar.auraInstanceID, nil)
+                    stackUnit = bar._blizzBar.auraDataUnit or "player"
+                end
             end
-            -- Try auraInstanceID → GetAuraDataByAuraInstanceID
-            local CDMIcons = ns.CDMIcons
-            local spellToAura = CDMIcons and CDMIcons._spellToAuraInstance
-            if spellToAura and C_UnitAuras.GetAuraDataByAuraInstanceID then
-                local instID = spellToAura[spellID]
-                    or (entry and entry.spellID and spellToAura[entry.spellID])
-                    or (entry and entry.id and spellToAura[entry.id])
-                if instID then
-                    local aok, instData = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, stackUnit, instID)
-                    if aok and instData then
-                        apps = instData.applications
-                    end
+            if not stackInstID and bar._blizzIconChild then
+                local iok, ishown = pcall(bar._blizzIconChild.IsShown, bar._blizzIconChild)
+                if iok and ishown and bar._blizzIconChild.auraInstanceID then
+                    stackInstID = Helpers.SafeValue(bar._blizzIconChild.auraInstanceID, nil)
+                    stackUnit = bar._blizzIconChild.auraDataUnit or "player"
+                end
+            end
+            if stackInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
+                local aok, instData = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, stackUnit, stackInstID)
+                if aok and instData then
+                    apps = instData.applications
                 end
             end
             if apps then
