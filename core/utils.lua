@@ -532,13 +532,14 @@ function Helpers.IsHUDAnchoredToCDM(profile)
 
     local frameAnchoring = profile.frameAnchoring
     if frameAnchoring then
-        local playerFrame = frameAnchoring.playerFrame
-        local targetFrame = frameAnchoring.targetFrame
-        if playerFrame and playerFrame.enabled and (playerFrame.parent == "cdmEssential" or playerFrame.parent == "cdmUtility") then
-            return true
-        end
-        if targetFrame and targetFrame.enabled and (targetFrame.parent == "cdmEssential" or targetFrame.parent == "cdmUtility") then
-            return true
+        for _, key in ipairs({"playerFrame", "targetFrame"}) do
+            local entry = frameAnchoring[key]
+            if type(entry) == "table" then
+                local p = entry.parent
+                if p == "cdmEssential" or p == "cdmUtility" or p == "essential" or p == "utility" then
+                    return true
+                end
+            end
         end
     end
 
