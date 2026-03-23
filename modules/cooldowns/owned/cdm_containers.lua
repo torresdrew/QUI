@@ -3556,8 +3556,8 @@ do
                 P(GUI:CreateFormSlider(body, "Icon Shape", 1.0, 2.0, 0.01, "aspectRatioCrop", buffData, RefreshBuff), body, sy)
             end, sections, relayout)
 
-            -- Growth & Text section (7 rows)
-            CreateCollapsible(content, "Growth & Text", 7 * FORM_ROW + 8, function(body)
+            -- Growth & Text section (9 rows)
+            CreateCollapsible(content, "Growth & Text", 9 * FORM_ROW + 8, function(body)
                 local sy = -4
 
                 sy = P(GUI:CreateFormDropdown(body, "Growth Direction", {
@@ -3570,84 +3570,9 @@ do
                 sy = P(GUI:CreateFormSlider(body, "Duration X Offset", -20, 20, 1, "durationOffsetX", buffData, RefreshBuff), body, sy)
                 sy = P(GUI:CreateFormSlider(body, "Duration Y Offset", -20, 20, 1, "durationOffsetY", buffData, RefreshBuff), body, sy)
                 sy = P(GUI:CreateFormSlider(body, "Stack Size", 8, 50, 1, "stackSize", buffData, RefreshBuff), body, sy)
-                P(GUI:CreateFormDropdown(body, "Stack Anchor", anchorOptions, "stackAnchor", buffData, RefreshBuff), body, sy)
-            end, sections, relayout)
-
-            -- Anchor section (9 rows + tip)
-            CreateCollapsible(content, "Anchoring", 9 * FORM_ROW + 20 + 8, function(body)
-                local sy = -4
-
-                local buffAnchorTargetOptions = {
-                    {value = "disabled", text = "Disabled (Edit Mode)"},
-                    {value = "screen", text = "Screen Center"},
-                    {value = "essential", text = "CDM Essential"},
-                    {value = "utility", text = "CDM Utility"},
-                    {value = "primary", text = "Primary Resource Bar"},
-                    {value = "secondary", text = "Secondary Resource Bar"},
-                    {value = "playerFrame", text = "Player Frame"},
-                    {value = "targetFrame", text = "Target Frame"},
-                }
-                local buffAnchorPlacementOptions = {
-                    {value = "center", text = "center"},
-                    {value = "onTop", text = "on top"},
-                    {value = "below", text = "below"},
-                    {value = "left", text = "left"},
-                    {value = "right", text = "right"},
-                }
-
-                local anchorTargetDD, anchorPlacementDD, anchorSpacingS
-                local sourceDD, targetDD, anchorXS, anchorYS
-
-                local function updateStates()
-                    local isAnchored = (buffData.anchorTo or "disabled") ~= "disabled"
-                    local alpha = isAnchored and 1.0 or 0.4
-                    anchorPlacementDD:SetAlpha(alpha)
-                    anchorSpacingS:SetAlpha(alpha)
-                    anchorXS:SetAlpha(alpha)
-                    anchorYS:SetAlpha(alpha)
-                    local manualActive = isAnchored and (buffData.anchorPlacement or "center") == "center"
-                    sourceDD:SetAlpha(manualActive and 1.0 or 0.4)
-                    targetDD:SetAlpha(manualActive and 1.0 or 0.4)
-                end
-
-                anchorTargetDD = GUI:CreateFormDropdown(body, "Anchor To", buffAnchorTargetOptions, "anchorTo", buffData, function()
-                    RefreshBuff()
-                    updateStates()
-                end)
-                sy = U.PlaceRow(anchorTargetDD, body, sy)
-
-                anchorPlacementDD = GUI:CreateFormDropdown(body, "Anchor Position", buffAnchorPlacementOptions, "anchorPlacement", buffData, function()
-                    RefreshBuff()
-                    updateStates()
-                end)
-                sy = U.PlaceRow(anchorPlacementDD, body, sy)
-
-                anchorSpacingS = GUI:CreateFormSlider(body, "Anchor Spacing", 0, 40, 1, "anchorSpacing", buffData, RefreshBuff)
-                sy = U.PlaceRow(anchorSpacingS, body, sy)
-
-                sourceDD = GUI:CreateFormDropdown(body, "Source Anchor", anchorOptions, "anchorSourcePoint", buffData, RefreshBuff)
-                sy = U.PlaceRow(sourceDD, body, sy)
-
-                targetDD = GUI:CreateFormDropdown(body, "Target Anchor", anchorOptions, "anchorTargetPoint", buffData, RefreshBuff)
-                sy = U.PlaceRow(targetDD, body, sy)
-
-                anchorXS = GUI:CreateFormSlider(body, "Anchor X Offset", -1000, 1000, 1, "anchorOffsetX", buffData, RefreshBuff)
-                sy = U.PlaceRow(anchorXS, body, sy)
-
-                anchorYS = GUI:CreateFormSlider(body, "Anchor Y Offset", -1000, 1000, 1, "anchorOffsetY", buffData, RefreshBuff)
-                sy = U.PlaceRow(anchorYS, body, sy)
-
-                sy = U.PlaceRow(GUI:CreateFormSlider(body, "Stack X Offset", -20, 20, 1, "stackOffsetX", buffData, RefreshBuff), body, sy)
-                sy = U.PlaceRow(GUI:CreateFormSlider(body, "Stack Y Offset", -20, 20, 1, "stackOffsetY", buffData, RefreshBuff), body, sy)
-
-                local tip = body:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                tip:SetPoint("TOPLEFT", 0, sy)
-                tip:SetPoint("RIGHT", body, "RIGHT", 0, 0)
-                tip:SetJustifyH("LEFT")
-                tip:SetText("When disabled, use Edit Mode for positioning.")
-                tip:SetTextColor(0.5, 0.5, 0.5, 1)
-
-                updateStates()
+                sy = P(GUI:CreateFormDropdown(body, "Stack Anchor", anchorOptions, "stackAnchor", buffData, RefreshBuff), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Stack X Offset", -20, 20, 1, "stackOffsetX", buffData, RefreshBuff), body, sy)
+                P(GUI:CreateFormSlider(body, "Stack Y Offset", -20, 20, 1, "stackOffsetY", buffData, RefreshBuff), body, sy)
             end, sections, relayout)
 
             -- Position / Anchoring
@@ -3778,8 +3703,8 @@ do
                 updateInactive()
             end, sections, relayout)
 
-            -- Dimensions & Appearance section (9 rows)
-            CreateCollapsible(content, "Dimensions & Appearance", 9 * FORM_ROW + 8, function(body)
+            -- Dimensions & Appearance section (10 rows)
+            CreateCollapsible(content, "Dimensions & Appearance", 10 * FORM_ROW + 8, function(body)
                 local sy = -4
 
                 sy = P(GUI:CreateFormSlider(body, "Bar Height", 2, 48, 1, "barHeight", trackedData, RefreshBuff), body, sy)
@@ -3803,10 +3728,11 @@ do
 
                 sy = P(GUI:CreateFormCheckbox(body, "Auto Width From Anchor", "autoWidth", trackedData, RefreshBuff), body, sy)
                 sy = P(GUI:CreateFormSlider(body, "Auto Width Adjust", -20, 20, 1, "autoWidthOffset", trackedData, RefreshBuff), body, sy)
-                P(GUI:CreateFormDropdown(body, "Stack Direction", {
+                sy = P(GUI:CreateFormDropdown(body, "Stack Direction", {
                     {value = true, text = "Up / Right"},
                     {value = false, text = "Down / Left"},
                 }, "growUp", trackedData, RefreshBuff), body, sy)
+                P(GUI:CreateFormSlider(body, "Stack X Offset", -20, 20, 1, "stackOffsetX", trackedData, RefreshBuff), body, sy)
             end, sections, relayout)
 
             -- Color section (5 rows)
@@ -3882,84 +3808,6 @@ do
                 fillTip:SetTextColor(0.5, 0.5, 0.5, 1)
 
                 updateVertical()
-            end, sections, relayout)
-
-            -- Anchor section (8 rows + tip)
-            CreateCollapsible(content, "Anchoring", 8 * FORM_ROW + 20 + 8, function(body)
-                local sy = -4
-
-                local barAnchorTargetOptions = {
-                    {value = "disabled", text = "Disabled (Edit Mode)"},
-                    {value = "screen", text = "Screen Center"},
-                    {value = "essential", text = "CDM Essential"},
-                    {value = "utility", text = "CDM Utility"},
-                    {value = "primary", text = "Primary Resource Bar"},
-                    {value = "secondary", text = "Secondary Resource Bar"},
-                    {value = "playerFrame", text = "Player Frame"},
-                    {value = "targetFrame", text = "Target Frame"},
-                }
-                local barAnchorPlacementOptions = {
-                    {value = "center", text = "center"},
-                    {value = "onTop", text = "on top"},
-                    {value = "below", text = "below"},
-                    {value = "left", text = "left"},
-                    {value = "right", text = "right"},
-                    {value = "onTopResourceBars", text = "on top of resource bars"},
-                }
-
-                local anchorTargetDD, anchorPlacementDD, anchorSpacingS
-                local sourceDD, targetDD, anchorXS, anchorYS
-
-                local function updateStates()
-                    local placementMode = trackedData.anchorPlacement or "center"
-                    local isAnchored = (trackedData.anchorTo or "disabled") ~= "disabled" or placementMode == "onTopResourceBars"
-                    local alpha = isAnchored and 1.0 or 0.4
-                    anchorPlacementDD:SetAlpha(alpha)
-                    anchorSpacingS:SetAlpha(alpha)
-                    anchorXS:SetAlpha(alpha)
-                    anchorYS:SetAlpha(alpha)
-                    local manualActive = isAnchored and placementMode == "center"
-                    sourceDD:SetAlpha(manualActive and 1.0 or 0.4)
-                    targetDD:SetAlpha(manualActive and 1.0 or 0.4)
-                end
-
-                anchorTargetDD = GUI:CreateFormDropdown(body, "Anchor To", barAnchorTargetOptions, "anchorTo", trackedData, function()
-                    RefreshBuff()
-                    updateStates()
-                end)
-                sy = P(anchorTargetDD, body, sy)
-
-                anchorPlacementDD = GUI:CreateFormDropdown(body, "Anchor Position", barAnchorPlacementOptions, "anchorPlacement", trackedData, function()
-                    RefreshBuff()
-                    updateStates()
-                end)
-                sy = P(anchorPlacementDD, body, sy)
-
-                anchorSpacingS = GUI:CreateFormSlider(body, "Anchor Spacing", 0, 40, 1, "anchorSpacing", trackedData, RefreshBuff)
-                sy = P(anchorSpacingS, body, sy)
-
-                sourceDD = GUI:CreateFormDropdown(body, "Source Anchor", anchorOptions, "anchorSourcePoint", trackedData, RefreshBuff)
-                sy = P(sourceDD, body, sy)
-
-                targetDD = GUI:CreateFormDropdown(body, "Target Anchor", anchorOptions, "anchorTargetPoint", trackedData, RefreshBuff)
-                sy = P(targetDD, body, sy)
-
-                anchorXS = GUI:CreateFormSlider(body, "Anchor X Offset", -1000, 1000, 1, "anchorOffsetX", trackedData, RefreshBuff)
-                sy = P(anchorXS, body, sy)
-
-                anchorYS = GUI:CreateFormSlider(body, "Anchor Y Offset", -1000, 1000, 1, "anchorOffsetY", trackedData, RefreshBuff)
-                sy = P(anchorYS, body, sy)
-
-                sy = P(GUI:CreateFormSlider(body, "Stack X Offset", -20, 20, 1, "stackOffsetX", trackedData, RefreshBuff), body, sy)
-
-                local tip = body:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                tip:SetPoint("TOPLEFT", 0, sy)
-                tip:SetPoint("RIGHT", body, "RIGHT", 0, 0)
-                tip:SetJustifyH("LEFT")
-                tip:SetText("When disabled, use Edit Mode for positioning.")
-                tip:SetTextColor(0.5, 0.5, 0.5, 1)
-
-                updateStates()
             end, sections, relayout)
 
             -- Position / Anchoring
