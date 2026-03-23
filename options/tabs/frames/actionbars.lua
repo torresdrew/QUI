@@ -257,17 +257,108 @@ local function CreateActionBarsPage(parent)
 end
 
 ---------------------------------------------------------------------------
--- SUB-TAB: Totem Bar (Shaman only)
+-- SUB-TAB: Totem Bar (Blizzard TotemFrame — any class the client uses it for)
 ---------------------------------------------------------------------------
--- Totem Bar settings moved to Edit Mode settings panel.
 BuildTotemBarTab = function(tabContent)
     local PAD = PADDING
-    local info = GUI:CreateLabel(tabContent, "Totem Bar settings have moved to Edit Mode. Open Edit Mode and click the Totem Bar frame.", 12, C.textMuted or {0.5,0.5,0.5,1})
-    info:SetPoint("TOPLEFT", PAD, -15)
+    local FORM_ROW = 32
+    local y = -15
+
+    local core = GetCore()
+    local db = core and core.db and core.db.profile and core.db.profile.totemBar
+
+    -- Set search context for widget auto-registration
+    GUI:SetSearchContext({tabIndex = 7, tabName = "Action Bars", subTabIndex = 5, subTabName = "Totem Bar"})
+
+    if not db then
+        local notice = GUI:CreateLabel(tabContent, "Totem Bar settings not available. Try /rl.", 12, C.textMuted)
+        notice:SetPoint("TOPLEFT", PAD, y)
+        notice:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        notice:SetJustifyH("LEFT")
+        tabContent:SetHeight(60)
+        return
+    end
+
+    local function RefreshTotemBar()
+        if _G.QUI_RefreshTotemBar then
+            _G.QUI_RefreshTotemBar()
+        end
+    end
+
+    -- =====================================================
+    -- ENABLE & LOCK
+    -- =====================================================
+    local enableHeader = GUI:CreateSectionHeader(tabContent, "Totem Bar")
+    enableHeader:SetPoint("TOPLEFT", PAD, y)
+    y = y - enableHeader.gap
+
+    local enableCB = GUI:CreateFormCheckbox(tabContent, "Enable Totem Bar", "enabled", db, RefreshTotemBar)
+    enableCB:SetPoint("TOPLEFT", PAD, y)
+    enableCB:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
+    local lockCB = GUI:CreateFormCheckbox(tabContent, "Lock Position", "locked", db)
+    lockCB:SetPoint("TOPLEFT", PAD, y)
+    lockCB:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+    y = y - FORM_ROW
+
+    -- Preview toggle (pill-shaped, matches Debuff/Buff Preview style)
+    local previewContainer = CreateFrame("Frame", nil, tabContent)
+    previewContainer:SetHeight(FORM_ROW)
+    previewContainer:SetPoint("TOPLEFT", PAD, y)
+    previewContainer:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+
+    local previewLabel = previewContainer:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    previewLabel:SetPoint("LEFT", 0, 0)
+    previewLabel:SetText("Preview")
+    previewLabel:SetTextColor(C.text[1], C.text[2], C.text[3], 1)
+
+    local previewTrack = CreateFrame("Button", nil, previewContainer, "BackdropTemplate")
+    previewTrack:SetSize(40, 20)
+    previewTrack:SetPoint("LEFT", previewContainer, "LEFT", 180, 0)
+    local pxCore = GetCore()
+    local pxTrack = (pxCore and pxCore.GetPixelSize) and pxCore:GetPixelSize(previewTrack) or 1
+    previewTrack:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxTrack})
+
+    local previewThumb = CreateFrame("Frame", nil, previewTrack, "BackdropTemplate")
+    previewThumb:SetSize(16, 16)
+    local pxThumb = (pxCore and pxCore.GetPixelSize) and pxCore:GetPixelSize(previewThumb) or 1
+    previewThumb:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = pxThumb})
+    previewThumb:SetBackdropColor(0.95, 0.95, 0.95, 1)
+    previewThumb:SetBackdropBorderColor(0.85, 0.85, 0.85, 1)
+    previewThumb:SetFrameLevel(previewTrack:GetFrameLevel() + 1)
+
+    local isPreviewOn = false
+    local function UpdatePreviewToggle(on)
+        if on then
+            previewTrack:SetBackdropColor(C.accent[1], C.accent[2], C.accent[3], 1)
+            previewTrack:SetBackdropBorderColor(C.accent[1]*0.8, C.accent[2]*0.8, C.accent[3]*0.8, 1)
+            previewThumb:ClearAllPoints()
+            previewThumb:SetPoint("RIGHT", previewTrack, "RIGHT", -2, 0)
+        else
+            previewTrack:SetBackdropColor(0.15, 0.18, 0.22, 1)
+            previewTrack:SetBackdropBorderColor(0.12, 0.14, 0.18, 1)
+            previewThumb:ClearAllPoints()
+            previewThumb:SetPoint("LEFT", previewTrack, "LEFT", 2, 0)
+        end
+    end
+    UpdatePreviewToggle(isPreviewOn)
+
+    previewTrack:SetScript("OnClick", function()
+        isPreviewOn = not isPreviewOn
+        UpdatePreviewToggle(isPreviewOn)
+        if _G.QUI_ToggleTotemBarPreview then
+            _G.QUI_ToggleTotemBarPreview()
+        end
+    end)
+    y = y - FORM_ROW
+
+    local info = GUI:CreateLabel(tabContent, "Right-click a totem to dismiss when allowed. Preview shows mock icons for positioning (drag to reposition).", 11, C.textMuted)
+    info:SetPoint("TOPLEFT", PAD, y)
     info:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
     info:SetJustifyH("LEFT")
     info:SetWordWrap(true)
-    tabContent:SetHeight(80)
+    tabContent:SetHeight(math.abs(y) + 40)
 end
 
 ---------------------------------------------------------------------------

@@ -3,18 +3,13 @@
     Creates addon-owned totem buttons instead of hooking Blizzard's TotemFrame.
     Steals events from TotemFrame to prevent it from updating, then drives
     our own icons via GetTotemInfo / GetTotemTimeLeft.
-    Container + preview exist on all classes; event handling is Shaman-only.
+    Works for any class the game uses TotemFrame for (Shaman totems,
+    Brewmaster guardians, etc.).
 ]]
 
 local ADDON_NAME, ns = ...
 local QUI = QUI
 local LSM = ns.LSM
-
----------------------------------------------------------------------------
--- CLASS CHECK
----------------------------------------------------------------------------
-local _, playerClass = UnitClass("player")
-local IS_SHAMAN = (playerClass == "SHAMAN")
 
 ---------------------------------------------------------------------------
 -- MODULE NAMESPACE
@@ -282,10 +277,9 @@ local function LayoutButtons()
 end
 
 ---------------------------------------------------------------------------
--- UPDATE ALL TOTEM SLOTS (Shaman only)
+-- UPDATE ALL TOTEM SLOTS
 ---------------------------------------------------------------------------
 local function UpdateTotems()
-    if not IS_SHAMAN then return end
     if TotemBar.previewing then return end
     local db = GetDB()
     if not db or not db.enabled then return end
@@ -378,10 +372,9 @@ local function PositionContainer()
 end
 
 ---------------------------------------------------------------------------
--- ENABLE / DISABLE — EVENT STEALING (Shaman only)
+-- ENABLE / DISABLE — EVENT STEALING
 ---------------------------------------------------------------------------
 local function StealEvents()
-    if not IS_SHAMAN then return end
     local tf = TotemFrame
     if not tf then return end
     for _, event in ipairs(STOLEN_EVENTS) do
@@ -391,7 +384,6 @@ local function StealEvents()
 end
 
 local function RestoreEvents()
-    if not IS_SHAMAN then return end
     local tf = TotemFrame
     if not tf then return end
     for _, event in ipairs(STOLEN_EVENTS) do
@@ -412,10 +404,7 @@ local function Enable()
     PositionContainer()
     container:Show()
 
-    -- Register our own event handler (Shaman only)
-    if IS_SHAMAN then
-        container:RegisterEvent("PLAYER_TOTEM_UPDATE")
-    end
+    container:RegisterEvent("PLAYER_TOTEM_UPDATE")
     UpdateTotems()
 end
 
@@ -583,21 +572,31 @@ if ns.Registry then
 end
 
 ---------------------------------------------------------------------------
--- INITIALIZATION (Shaman only — non-shamans still get the container for
--- layout mode preview but never steal events or register for updates)
+-- INITIALIZATION
 ---------------------------------------------------------------------------
-if IS_SHAMAN then
-    local initFrame = CreateFrame("Frame")
-    initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-    initFrame:SetScript("OnEvent", function(self, event)
-        if event == "PLAYER_ENTERING_WORLD" then
-            if QUICore then
-                QUICore.TotemBar = TotemBar
-            end
-
-            C_Timer.After(0.6, function()
-                TotemBar:Refresh()
-            end)
+local initFrame = CreateFrame("Frame")
+initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+initFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
+initFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+initFrame:SetScript("OnEvent", function(self, event)
+    if event == "PLAYER_ENTERING_WORLD" then
+        if QUICore then
+            QUICore.TotemBar = TotemBar
         end
-    end)
-end
+
+        C_Timer.After(0.6, function()
+            TotemBar:Refresh()
+        end)
+    elseif event == "PLAYER_TOTEM_UPDATE" then
+        local db = GetDB()
+        if db and db.enabled then
+            TotemBar:Refresh()
+        end
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+        -- TotemFrame usage can change with spec (e.g. Brewmaster vs other monks).
+        local db = GetDB()
+        if db and db.enabled then
+            TotemBar:Refresh()
+        end
+    end
+end)
