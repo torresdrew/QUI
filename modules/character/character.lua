@@ -1656,6 +1656,41 @@ local function PositionStatsPanelForLayout()
 end
 
 ---------------------------------------------------------------------------
+-- Shared average ilvl accessor (overall / equipped / pvp)
+---------------------------------------------------------------------------
+local function GetPlayerAverageItemLevels()
+    local overall, equipped, pvp = GetAverageItemLevel()
+    overall = tonumber(overall) or 0
+    equipped = tonumber(equipped) or overall
+    pvp = tonumber(pvp)
+    return overall, equipped, pvp
+end
+
+---------------------------------------------------------------------------
+-- Hover tooltip for center ilvl display
+---------------------------------------------------------------------------
+local function ShowCenterILvlTooltip(self)
+    if not self then return end
+
+    local overall = tonumber(self.cachedOverallILvl)
+    local equipped = tonumber(self.cachedEquippedILvl)
+    local pvp = tonumber(self.cachedPvpILvl)
+
+    if not overall or not equipped then
+        overall, equipped, pvp = GetPlayerAverageItemLevels()
+    end
+
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
+    GameTooltip:SetText("Average Item Level")
+    GameTooltip:AddDoubleLine("Equipped", string.format("%.1f", equipped), 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine("Overall", string.format("%.1f", overall), 1, 1, 1, 1, 1, 1)
+    if pvp then
+        GameTooltip:AddDoubleLine("PvP iLvl", string.format("%.1f", pvp), 1, 1, 1, 0, 1, 0)
+    end
+    GameTooltip:Show()
+end
+
+---------------------------------------------------------------------------
 -- Setup title area: Top-left display with [Name] [ilvl] [Spec Class]
 ---------------------------------------------------------------------------
 local function SetupTitleArea()
@@ -1701,6 +1736,10 @@ local function SetupTitleArea()
         centerText:SetFont(font, 21, "OUTLINE")  -- Large font
         centerText:SetPoint("CENTER")
         centerText:SetJustifyH("CENTER")
+
+        centerFrame:EnableMouse(true)
+        centerFrame:SetScript("OnEnter", ShowCenterILvlTooltip)
+        centerFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
         centerFrame.text = centerText
         GetState(CharacterFrame).centerILvl = centerFrame
@@ -2717,7 +2756,7 @@ local function UpdateILvlDisplay()
     -- Get player info
     local name = UnitName("player") or "Unknown"
     local level = UnitLevel("player") or 0
-    local overall, equipped = GetAverageItemLevel()
+    local overall, equipped, pvp = GetPlayerAverageItemLevels()
     local ilvlStr = string.format("%.0f", equipped)
 
     -- Get spec and class
@@ -2756,6 +2795,10 @@ local function UpdateILvlDisplay()
     -- Update center ilvl display (above model) - shows equipped | overall with color coding
     local centerFrame = (frameState[CharacterFrame] or EMPTY).centerILvl
     if centerFrame and centerFrame.text then
+        centerFrame.cachedOverallILvl = overall
+        centerFrame.cachedEquippedILvl = equipped
+        centerFrame.cachedPvpILvl = pvp
+
         -- Get colors for each ilvl tier
         local eR, eG, eB = GetILvlColor(equipped)
         local oR, oG, oB = GetILvlColor(overall)
@@ -3680,6 +3723,7 @@ eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 eventFrame:RegisterEvent("UNIT_STATS")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("INSPECT_READY")
+eventFrame:RegisterEvent("PLAYER_AVG_ITEM_LEVEL_UPDATE")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
@@ -3691,7 +3735,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         end
     elseif event == "PLAYER_EQUIPMENT_CHANGED" or event == "UPDATE_INVENTORY_DURABILITY" or
            event == "SOCKET_INFO_UPDATE" or event == "PLAYER_SPECIALIZATION_CHANGED" or
-           event == "UNIT_STATS" then
+           event == "UNIT_STATS" or event == "PLAYER_AVG_ITEM_LEVEL_UPDATE" then
         ScheduleUpdate()
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- Delayed init check
