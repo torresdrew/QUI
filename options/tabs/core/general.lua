@@ -20,6 +20,7 @@ local function CreateGeneralQoLPage(parent)
         {name = "Character Pane", builder = ns.QUI_CharacterOptions.BuildCharacterPaneTab},
         -- Tooltip, Skyriding, Missing Raid Buffs, Party Keystones moved to Layout Mode settings panels
         -- XP Tracker settings moved to Layout Mode settings panels
+        {name = "Blizzard Mover", builder = ns.QUI_BlizzardMoverOptions.BuildBlizzardMoverTab},
     })
 
     content:SetHeight(600)

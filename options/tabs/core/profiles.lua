@@ -113,7 +113,7 @@ local function CreateSpecProfilesPage(parent)
         local moversBtn = GUI:CreateButton(body, "Reset All Positions", 120, 24, function()
             GUI:ShowConfirmation({
                 title = "Reset All Movers?", message = "Reset all frame positions to defaults?",
-                warningText = "Requires /reload.", acceptText = "Reset All", cancelText = "Cancel", isDestructive = true,
+                warningText = "This resets CDM, unit frames, minimap, action bars, data panels, trackers, Blizzard UI Mover panel positions, and all other movable elements. Requires /reload.", acceptText = "Reset All", cancelText = "Cancel", isDestructive = true,
                 onAccept = function()
                     local core = GetCore(); local dbRef = core and core.db
                     if not dbRef then return end
@@ -137,6 +137,8 @@ local function CreateSpecProfilesPage(parent)
                     if p.lootRoll then p.lootRoll.position = nil end
                     if p.alerts then p.alerts.alertPosition = nil; p.alerts.toastPosition = nil; p.alerts.bnetToastPosition = nil end
                     if type(p.frameAnchoring) == "table" then local hw = p.frameAnchoring.hudMinWidth; wipe(p.frameAnchoring); p.frameAnchoring.hudMinWidth = hw end
+                    if p.blizzardMover and type(p.blizzardMover.frames) == "table" then for _, row in pairs(p.blizzardMover.frames) do if type(row) == "table" then row.point = nil; row.x = nil; row.y = nil; row.scale = nil end end end
+                    local bmm = ns.QUI_BlizzardMover; if bmm and bmm.functions and bmm.functions.ClearSessionPositions then bmm.functions.ClearSessionPositions() end
                     print("|cff60A5FAQUI:|r All positions reset. Please /reload.")
                 end,
             })
