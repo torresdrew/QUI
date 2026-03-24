@@ -1627,24 +1627,6 @@ local function SetupBar1Paging(container)
 end
 
 ---------------------------------------------------------------------------
--- OWNED BUTTON EVENT HANDLER
----------------------------------------------------------------------------
--- Replace ActionBarButtonTemplate's OnEvent on QUI-managed action buttons.
--- The template handler calls ActionButton_UpdateCooldown → SetCooldown
--- which rejects secret values from tainted (addon) execution in 12.0.5+.
--- QUI drives cooldown display centrally via DurationObject APIs instead;
--- only GLOBAL_MOUSE_UP is preserved here (flyout close tracking).
-
-ActionBarsOwned.OnButtonEvent = function(self, event)
-    if event == "GLOBAL_MOUSE_UP" then
-        self:UnregisterEvent(event)
-        if self.UpdateFlyout then
-            pcall(self.UpdateFlyout, self)
-        end
-    end
-end
-
----------------------------------------------------------------------------
 -- BAR BUILD (native engine)
 ---------------------------------------------------------------------------
 
@@ -1688,10 +1670,6 @@ local function BuildBar(barKey)
         for _, blizzBtn in ipairs(origButtons) do
             blizzBtn:SetParent(hiddenBarParent)
             blizzBtn:UnregisterAllEvents()
-            -- Replace OnEvent even on hidden buttons: Blizzard's C code may
-            -- re-register events, and the template handler would still call
-            -- the broken SetCooldown path in tainted context.
-            blizzBtn:SetScript("OnEvent", ActionBarsOwned.OnButtonEvent)
         end
 
         -- Rescue the leave-vehicle button from the hidden Blizzard bar hierarchy.
@@ -1742,10 +1720,6 @@ local function BuildBar(barKey)
             else
                 btn:SetParent(container)
             end
-            -- Replace template OnEvent: QUI drives cooldowns centrally via
-            -- DurationObject APIs; the template handler would call SetCooldown
-            -- with secret values in tainted context (12.0.5+).
-            btn:SetScript("OnEvent", ActionBarsOwned.OnButtonEvent)
             btn:Show()
             -- Force the template to update its visuals (icon, cooldown, count, etc.)
             -- pcall: addon code is in the call stack, so Blizzard's Update may hit
@@ -2180,8 +2154,6 @@ local function BuildBar(barKey)
                 local btn = self:GetFrameRef("init-btn")
                 btn:SetAttribute("action", %d)
             ]], offset + i))
-            -- Replace template OnEvent: QUI drives cooldowns centrally.
-            blizzBtn:SetScript("OnEvent", ActionBarsOwned.OnButtonEvent)
             blizzBtn:Show()
             buttons[i] = blizzBtn
         end
