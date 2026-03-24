@@ -626,6 +626,11 @@ end
 local function ScanAll()
     if InCombatLockdown() then return end
 
+    -- Rebuild the spell→child map fresh each scan to prevent unbounded
+    -- growth from duplicate entries.  Hooks on child Cooldown frames
+    -- remain intact (attached to the frames, not this table).
+    wipe(_spellIDToChild)
+
     SafeguardViewerTotemRefresh()
 
     ScanViewer("essential")

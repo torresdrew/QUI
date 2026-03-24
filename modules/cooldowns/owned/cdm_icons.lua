@@ -499,6 +499,27 @@ local function GetBestSpellCooldown(spellID)
         end
     end
 
+    -- DurationObject APIs (12.0+, secret-safe).  These return objects that
+    -- can be forwarded directly to SetCooldownFromDurationObject without
+    -- reading values in Lua — the Blizzard-blessed path for addon code.
+    if not bestDurObj then
+        if C_Spell.GetSpellCooldownDuration then
+            local ok, durObj = pcall(C_Spell.GetSpellCooldownDuration, spellID)
+            if ok and durObj then bestDurObj = durObj end
+        end
+        if not bestDurObj and C_Spell.GetOverrideSpell then
+            local overrideID = C_Spell.GetOverrideSpell(spellID)
+            if overrideID and overrideID ~= spellID and C_Spell.GetSpellCooldownDuration then
+                local ok, durObj = pcall(C_Spell.GetSpellCooldownDuration, overrideID)
+                if ok and durObj then bestDurObj = durObj end
+            end
+        end
+        if not bestDurObj and C_Spell.GetSpellChargeDuration then
+            local ok, durObj = pcall(C_Spell.GetSpellChargeDuration, spellID)
+            if ok and durObj then bestDurObj = durObj end
+        end
+    end
+
     -- Prefer safe numeric values, then DurationObject, then hook cache
     if bestStart then
         return bestStart, bestDuration, bestDurObj
@@ -1605,7 +1626,7 @@ local function UpdateIconCooldown(icon)
                 cdApplied = true
             end
             -- Priority 3: hook cache DurationObject from Blizzard viewer children
-            if not cdApplied and (startTime or duration) and ns.CDMSpellData then
+            if not cdApplied and ns.CDMSpellData then
                 local hookDurObj = ns.CDMSpellData:GetCachedDurObj(
                     entry.overrideSpellID or entry.spellID or entry.id)
                 if hookDurObj and icon.Cooldown.SetCooldownFromDurationObject then
@@ -1617,6 +1638,7 @@ local function UpdateIconCooldown(icon)
             if not cdApplied and not startTime and not duration then
                 icon.Cooldown:Clear()
             end
+            icon._hasCooldownActive = cdApplied or false
         end
 
     -- Stack/charge text: API-driven on each tick.
@@ -1635,15 +1657,24 @@ local function UpdateIconCooldown(icon)
         local spellID = entry.overrideSpellID or entry.spellID or entry.id
         local stackVal  -- raw value (may be secret), forwarded to C-side
 
-        -- Check spell charges (per-tick cached, reused for desaturation)
+        -- Primary: C_Spell.GetSpellDisplayCount (canonical API, handles
+        -- charges, stacks, and cast counts; secret-safe via C-side).
+        if spellID and C_Spell.GetSpellDisplayCount then
+            local ok, val = pcall(C_Spell.GetSpellDisplayCount, spellID)
+            if ok and val then
+                stackVal = val
+            end
+        end
+
+        -- Always populate _cachedChargeInfo for the desaturation check below,
+        -- regardless of whether GetSpellDisplayCount provided a stackVal.
         if spellID then
             local chargeInfo = TickCacheGetCharges(spellID)
             local ok = chargeInfo ~= nil
             _cachedChargeOk = ok
             _cachedChargeInfo = chargeInfo
-            if chargeInfo and chargeInfo.maxCharges then
-                -- OOC: can read maxCharges to check > 1
-                -- Combat: consult persisted multi-charge cache (populated OOC)
+            -- Fallback: manual charge detection when GetSpellDisplayCount unavailable
+            if not stackVal and chargeInfo and chargeInfo.maxCharges then
                 local isMultiCharge = false
                 if not IsSecretValue(chargeInfo.maxCharges) then
                     isMultiCharge = chargeInfo.maxCharges > 1
@@ -1657,7 +1688,7 @@ local function UpdateIconCooldown(icon)
             end
         end
 
-        -- Check secondary resource counts (e.g. Festering Wounds)
+        -- Fallback: secondary resource counts (e.g. Festering Wounds)
         if not stackVal and spellID and C_Spell.GetSpellCastCount then
             local ok, val = pcall(C_Spell.GetSpellCastCount, spellID)
             if ok and val then
@@ -1752,6 +1783,7 @@ function CDMIcons:AcquireIcon(parent, spellEntry)
         icon._lastStart = nil
         icon._lastDuration = nil
         icon._isOnGCD = nil
+        icon._hasCooldownActive = nil
 
         -- Update texture
         local texID
@@ -1803,6 +1835,7 @@ function CDMIcons:ReleaseIcon(icon)
     icon._lastStart = nil
     icon._lastDuration = nil
     icon._isOnGCD = nil
+    icon._hasCooldownActive = nil
     if icon.Icon then
         icon.Icon:SetVertexColor(1, 1, 1, 1)
         icon.Icon:SetDesaturated(false)
@@ -2095,14 +2128,18 @@ function CDMIcons:UpdateAllCooldowns()
                         icon.Icon:SetDesaturated(false)
                     end
                 else
-                    -- Cooldown containers: visibility depends on display mode
-                    local isOnCD = false
-                    local dur = icon._lastDuration or 0
-                    local start = icon._lastStart or 0
-                    if dur > 1.5 and start > 0 then
-                        local remaining = (start + dur) - GetTime()
-                        if remaining > 0 then
-                            isOnCD = true
+                    -- Cooldown containers: visibility depends on display mode.
+                    -- _hasCooldownActive is set when a DurationObject was applied
+                    -- (works even when numeric start/dur are secret in combat).
+                    local isOnCD = icon._hasCooldownActive or false
+                    if not isOnCD then
+                        local dur = icon._lastDuration or 0
+                        local start = icon._lastStart or 0
+                        if dur > 1.5 and start > 0 then
+                            local remaining = (start + dur) - GetTime()
+                            if remaining > 0 then
+                                isOnCD = true
+                            end
                         end
                     end
                     -- Also check charge-based cooldowns (per-tick cached)
@@ -2510,6 +2547,23 @@ local function ScheduleCDMUpdate()
     end)
 end
 
+-- Combat safety ticker: periodic UpdateAllCooldowns during combat.
+-- DurationObject sources may resolve late (viewer hook delays); a
+-- low-frequency ticker ensures icons recover within 250ms even if the
+-- initial event-driven update failed due to secret values.
+local safetyTickFrame = CreateFrame("Frame")
+local SAFETY_TICK_INTERVAL = 0.25
+local safetyTickElapsed = 0
+local function SafetyTickOnUpdate(self, elapsed)
+    safetyTickElapsed = safetyTickElapsed + elapsed
+    if safetyTickElapsed < SAFETY_TICK_INTERVAL then return end
+    safetyTickElapsed = 0
+    CDMIcons:UpdateAllCooldowns()
+    if ns.CDMBars and ns.CDMBars.UpdateOwnedBars then
+        ns.CDMBars:UpdateOwnedBars()
+    end
+end
+
 cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "PLAYER_TARGET_CHANGED" then
         CDMIcons:UpdateAllIconRanges()
@@ -2526,12 +2580,14 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "PLAYER_REGEN_DISABLED" then
         rangePollInCombat = true
         rangePollElapsed = 0  -- reset so combat interval kicks in immediately
+        safetyTickElapsed = 0
+        safetyTickFrame:SetScript("OnUpdate", SafetyTickOnUpdate)
         return
     end
     if event == "PLAYER_REGEN_ENABLED" then
         rangePollInCombat = false
+        safetyTickFrame:SetScript("OnUpdate", nil)
         -- One-shot catch-up: refresh all cooldowns after combat ends
-        -- (replaces the removed 500ms ticker as a safety net)
         _childMapDirty = true
         ScheduleCDMUpdate()
         return
