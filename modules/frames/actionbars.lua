@@ -2142,8 +2142,17 @@ local function BuildBar(barKey)
             blizzBtn:SetParent(container)
             blizzBtn:SetID(0)
             blizzBtn.Bar = nil
-            -- Set the correct action slot for this button
-            blizzBtn:SetAttribute("action", offset + i)
+            -- Set the correct action slot from RESTRICTED code so the
+            -- attribute remains untainted.  Addon-side SetAttribute taints
+            -- the value; Blizzard's ActionButton_UpdateCooldown then reads
+            -- the tainted action, propagating taint through the
+            -- GetActionCooldown → SetCooldown call chain and causing
+            -- "secret value" errors in combat (12.0.5+).
+            container:SetFrameRef("init-btn", blizzBtn)
+            container:Execute(string_format([[
+                local btn = self:GetFrameRef("init-btn")
+                btn:SetAttribute("action", %d)
+            ]], offset + i))
             blizzBtn:Show()
             buttons[i] = blizzBtn
         end
@@ -5186,6 +5195,7 @@ function ActionBarsOwned:Initialize()
     -- installed during BuildBar (fires less often, deferred via C_Timer).
     if ActionButton_Update then
         hooksecurefunc("ActionButton_Update", function(button)
+            if InCombatLockdown() then return end
             if not ActionBarsOwned.skinnedButtons[button] then return end
             local bk = GetBarKeyFromButton(button)
             if not bk then return end
