@@ -1224,10 +1224,23 @@ local function UpdateIconCooldown(icon)
                     local expectedViewer = (vt == "trackedBar")
                         and _G["BuffBarCooldownViewer"] or _G["BuffIconCooldownViewer"]
                     local blzChild = entry._blizzChild
-                    -- Validate cached child is from the correct viewer
+                    -- Validate cached child: correct viewer AND resolved IDs still contain our spell.
+                    -- Blizzard recycles viewer children — a cached child may now track a different spell.
                     if blzChild then
+                        local valid = false
                         local vf = blzChild.viewerFrame
-                        if not (vf and vf == expectedViewer) then
+                        if vf and vf == expectedViewer then
+                            local ids = blzChild._resolvedIDs
+                            if ids then
+                                for k = 1, #ids do
+                                    if ids[k] == auraSpellID or ids[k] == (entry.spellID or 0) or ids[k] == (entry.id or 0) then
+                                        valid = true
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        if not valid then
                             entry._blizzChild = nil
                             blzChild = nil
                         end
@@ -1236,6 +1249,7 @@ local function UpdateIconCooldown(icon)
                         blzChild = FindBuffChildForSpell(vt, auraSpellID, entry.spellID, entry.id)
                         if blzChild then entry._blizzChild = blzChild end
                     end
+
 
                     -- Grab hook-cached data from the buff viewer child.
                     -- blzChild is guaranteed from a buff viewer (validated above).
@@ -1262,7 +1276,7 @@ local function UpdateIconCooldown(icon)
 
                     -- Read auraInstanceID + unit from child if available
                     if blzChild then
-                        childAuraInstID = blzChild.auraInstanceID and SafeValue(blzChild.auraInstanceID, nil)
+                        childAuraInstID = blzChild.auraInstanceID
                         auraUnit = blzChild.auraDataUnit or "player"
                     end
 
@@ -1273,36 +1287,55 @@ local function UpdateIconCooldown(icon)
                             local ok, ad = pcall(C_UnitAuras.GetPlayerAuraBySpellID, auraSpellID)
                             if ok and ad and ad.auraInstanceID then
                                 isActive = true
-                                childAuraInstID = SafeValue(ad.auraInstanceID, nil)
+                                childAuraInstID = ad.auraInstanceID
                                 auraUnit = "player"
                             end
                             if not isActive and entry.spellID and entry.spellID ~= auraSpellID then
                                 local ok2, ad2 = pcall(C_UnitAuras.GetPlayerAuraBySpellID, entry.spellID)
                                 if ok2 and ad2 and ad2.auraInstanceID then
                                     isActive = true
-                                    childAuraInstID = SafeValue(ad2.auraInstanceID, nil)
+                                    childAuraInstID = ad2.auraInstanceID
                                     auraUnit = "player"
                                 end
                             end
                         end
-                        -- 2. Target debuff by spell name (e.g. Reaper's Mark)
+                        -- 2. Player buff by name (handles spell ID mismatches,
+                        -- e.g. user entry 1242998 vs Blizzard aura 1254252 for Lesser Ghoul)
+                        if not isActive and entry.name and entry.name ~= "" and C_UnitAuras.GetAuraDataBySpellName then
+                            local ok, ad = pcall(C_UnitAuras.GetAuraDataBySpellName, "player", entry.name, "HELPFUL")
+                            if ok and ad and ad.auraInstanceID then
+                                isActive = true
+                                childAuraInstID = ad.auraInstanceID
+                                auraUnit = "player"
+                            end
+                        end
+                        -- 3. Pet buff by name (e.g. Dark Transformation)
+                        if not isActive and entry.name and entry.name ~= "" and C_UnitAuras.GetAuraDataBySpellName then
+                            local ok, ad = pcall(C_UnitAuras.GetAuraDataBySpellName, "pet", entry.name, "HELPFUL")
+                            if ok and ad and ad.auraInstanceID then
+                                isActive = true
+                                childAuraInstID = ad.auraInstanceID
+                                auraUnit = "pet"
+                            end
+                        end
+                        -- 4. Target debuff by spell name (e.g. Reaper's Mark)
                         if not isActive and entry.name and entry.name ~= "" and C_UnitAuras.GetAuraDataBySpellName then
                             local ok, ad = pcall(C_UnitAuras.GetAuraDataBySpellName, "target", entry.name, "HARMFUL")
                             if ok and ad and ad.auraInstanceID then
                                 isActive = true
-                                childAuraInstID = SafeValue(ad.auraInstanceID, nil)
+                                childAuraInstID = ad.auraInstanceID
                                 auraUnit = "target"
                             end
                             if not isActive then
                                 local ok2, ad2 = pcall(C_UnitAuras.GetAuraDataBySpellName, "target", entry.name, "HELPFUL")
                                 if ok2 and ad2 and ad2.auraInstanceID then
                                     isActive = true
-                                    childAuraInstID = SafeValue(ad2.auraInstanceID, nil)
+                                    childAuraInstID = ad2.auraInstanceID
                                     auraUnit = "target"
                                 end
                             end
                         end
-                        -- 3. Validate child auraInstanceID (handles auras not found by name/spellID)
+                        -- 5. Validate child auraInstanceID (handles auras not found by name/spellID)
                         if not isActive and childAuraInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
                             local vok, vdata = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, auraUnit, childAuraInstID)
                             if vok and vdata then
@@ -1323,19 +1356,37 @@ local function UpdateIconCooldown(icon)
                                 isActive = true
                             end
                         end
+                        -- Player buff by name fallback (spell ID mismatch)
+                        if not isActive and entry.name and entry.name ~= "" and C_UnitAuras.GetAuraDataBySpellName then
+                            local ok, ad = pcall(C_UnitAuras.GetAuraDataBySpellName, "player", entry.name, "HELPFUL")
+                            if ok and ad and ad.auraInstanceID then
+                                isActive = true
+                                childAuraInstID = ad.auraInstanceID
+                                auraUnit = "player"
+                            end
+                        end
+                        -- Pet buff by name fallback (e.g. Dark Transformation)
+                        if not isActive and entry.name and entry.name ~= "" and C_UnitAuras.GetAuraDataBySpellName then
+                            local ok, ad = pcall(C_UnitAuras.GetAuraDataBySpellName, "pet", entry.name, "HELPFUL")
+                            if ok and ad and ad.auraInstanceID then
+                                isActive = true
+                                childAuraInstID = ad.auraInstanceID
+                                auraUnit = "pet"
+                            end
+                        end
                         -- Target debuff fallback (e.g. Reaper's Mark) — works in combat
                         if not isActive and entry.name and entry.name ~= "" and C_UnitAuras.GetAuraDataBySpellName then
                             local ok, ad = pcall(C_UnitAuras.GetAuraDataBySpellName, "target", entry.name, "HARMFUL")
                             if ok and ad and ad.auraInstanceID then
                                 isActive = true
-                                childAuraInstID = SafeValue(ad.auraInstanceID, nil)
+                                childAuraInstID = ad.auraInstanceID
                                 auraUnit = "target"
                             end
                             if not isActive then
                                 local ok2, ad2 = pcall(C_UnitAuras.GetAuraDataBySpellName, "target", entry.name, "HELPFUL")
                                 if ok2 and ad2 and ad2.auraInstanceID then
                                     isActive = true
-                                    childAuraInstID = SafeValue(ad2.auraInstanceID, nil)
+                                    childAuraInstID = ad2.auraInstanceID
                                     auraUnit = "target"
                                 end
                             end
@@ -1374,14 +1425,40 @@ local function UpdateIconCooldown(icon)
                             swipeSet = true
                         end
 
-                        -- Stacks
+                        -- Stacks: pass applications directly to C-side functions.
+                        -- applications may be a secret value in combat — never read it
+                        -- in Lua, just forward to TruncateWhenZero + SetText.
+                        -- Priority: name-based search first (finds the specific stack-bearing
+                        -- aura, e.g. spell 1254252 Lesser Ghoul) over instID (which may
+                        -- point to a related passive with 0 applications).
                         local apps
-                        if childAuraInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
+                        -- 1. Name-based buff search: player then pet (most specific)
+                        if entry.name and entry.name ~= "" and C_UnitAuras.GetAuraDataBySpellName then
+                            for _, stackUnit in ipairs({"player", "pet"}) do
+                                if not apps then
+                                    local nok, nad = pcall(C_UnitAuras.GetAuraDataBySpellName, stackUnit, entry.name, "HELPFUL")
+                                    if nok and nad and nad.applications then
+                                        apps = nad.applications
+                                        -- Also update swipe timer from this aura's duration
+                                        if nad.auraInstanceID and C_UnitAuras.GetAuraDuration and icon.Cooldown then
+                                            local dok, durObj = pcall(C_UnitAuras.GetAuraDuration, stackUnit, nad.auraInstanceID)
+                                            if dok and durObj and icon.Cooldown.SetCooldownFromDurationObject then
+                                                pcall(icon.Cooldown.SetCooldownFromDurationObject, icon.Cooldown, durObj, true)
+                                                pcall(icon.Cooldown.SetReverse, icon.Cooldown, true)
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        -- 2. Fallback: instID lookup
+                        if not apps and childAuraInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
                             local aok, instData = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, auraUnit, childAuraInstID)
-                            if aok and instData then
+                            if aok and instData and instData.applications then
                                 apps = instData.applications
                             end
                         end
+                        -- Forward to C-side: TruncateWhenZero handles secret values natively
                         if apps then
                             pcall(icon.StackText.SetText, icon.StackText, C_StringUtil.TruncateWhenZero(apps))
                             icon.StackText:Show()
@@ -1552,9 +1629,11 @@ local function UpdateIconCooldown(icon)
         -- Item stack text was already set above in the cooldown section;
         -- nothing to do here — just prevent the else clause from clearing it.
     elseif entry.type == "spell" then
-        -- Cooldown entry: check charges/stacks via API
+        -- Cooldown entry: check charges/stacks via API.
+        -- Values may be secret in combat — pass directly to C-side functions
+        -- (TruncateWhenZero, SetText) without reading in Lua.
         local spellID = entry.overrideSpellID or entry.spellID or entry.id
-        local stackText = nil
+        local stackVal  -- raw value (may be secret), forwarded to C-side
 
         -- Check spell charges (per-tick cached, reused for desaturation)
         if spellID then
@@ -1563,25 +1642,33 @@ local function UpdateIconCooldown(icon)
             _cachedChargeOk = ok
             _cachedChargeInfo = chargeInfo
             if chargeInfo and chargeInfo.maxCharges then
-                if not IsSecretValue(chargeInfo.maxCharges) and chargeInfo.maxCharges > 1 then
-                    local current = chargeInfo.currentCharges
-                    if not IsSecretValue(current) and current and current >= 0 then
-                        stackText = tostring(current)
-                    end
+                -- OOC: can read maxCharges to check > 1
+                -- Combat: consult persisted multi-charge cache (populated OOC)
+                local isMultiCharge = false
+                if not IsSecretValue(chargeInfo.maxCharges) then
+                    isMultiCharge = chargeInfo.maxCharges > 1
+                else
+                    local svDB = GetChargeMetadataDB()
+                    isMultiCharge = svDB and svDB[spellID] and true or false
+                end
+                if isMultiCharge and chargeInfo.currentCharges then
+                    stackVal = chargeInfo.currentCharges
                 end
             end
         end
 
-        -- Check secondary resource counts
-        if not stackText and spellID and C_Spell.GetSpellCastCount then
+        -- Check secondary resource counts (e.g. Festering Wounds)
+        if not stackVal and spellID and C_Spell.GetSpellCastCount then
             local ok, val = pcall(C_Spell.GetSpellCastCount, spellID)
-            if ok and val and not IsSecretValue(val) and val > 0 then
-                stackText = tostring(val)
+            if ok and val then
+                stackVal = val
             end
         end
 
-        if stackText and stackText ~= "" then
-            icon.StackText:SetText(stackText)
+        -- Forward to C-side: TruncateWhenZero handles secret values and
+        -- returns "" for zero (hides stacks visually even when shown).
+        if stackVal then
+            pcall(icon.StackText.SetText, icon.StackText, C_StringUtil.TruncateWhenZero(stackVal))
             icon.StackText:Show()
         else
             icon.StackText:SetText("")

@@ -55,6 +55,8 @@ local DEFAULTS = {
     debuffGrowUp = false,
     buffBottomPadding = 10,
     debuffBottomPadding = 10,
+    showStacks = true,
+    hideSwipe = false,
 }
 
 local function GetSettings()
@@ -135,6 +137,7 @@ local function CreateAuraIcon(parent)
     -- .Cooldown frame (CooldownFrameTemplate for swipe + countdown)
     icon.Cooldown = CreateFrame("Cooldown", frameName .. "Cooldown", icon, "CooldownFrameTemplate")
     icon.Cooldown:SetAllPoints(icon)
+    icon.Cooldown:EnableMouse(false)
     icon.Cooldown:SetDrawSwipe(true)
     icon.Cooldown:SetHideCountdownNumbers(false)
     icon.Cooldown:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
@@ -173,6 +176,7 @@ local function CreateAuraIcon(parent)
     -- Metadata
     icon._auraInstanceID = nil
     icon._auraSlot = nil
+    icon._spellId = nil
     icon._filter = nil
     icon._rawDuration = nil
     icon._rawExpirationTime = nil
@@ -182,10 +186,6 @@ local function CreateAuraIcon(parent)
     icon:EnableMouse(true)
     icon:SetScript("OnEnter", function(self)
         if GameTooltip.IsForbidden and GameTooltip:IsForbidden() then return end
-        -- Skip tooltip in combat: SetOwner + SetUnitAuraByAuraInstanceID from
-        -- addon code taints GameTooltip's execution context, causing its
-        -- BackdropTemplate to error on secret-value width during Show().
-        if InCombatLockdown() then return end
         local tooltipSettings = QUI and QUI.db and QUI.db.profile and QUI.db.profile.tooltip
         if tooltipSettings and tooltipSettings.anchorToCursor then
             local anchorTooltip = ns.QUI_AnchorTooltipToCursor
@@ -197,7 +197,14 @@ local function CreateAuraIcon(parent)
         else
             GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
         end
-        if self._auraInstanceID and self._auraInstanceID > 0 then
+        if InCombatLockdown() then
+            -- Combat: SetUnitAuraByAuraInstanceID taints GameTooltip with
+            -- secret values causing BackdropTemplate errors. Use SetSpellByID
+            -- instead (static spell data, no secret values).
+            if self._spellId then
+                pcall(GameTooltip.SetSpellByID, GameTooltip, self._spellId)
+            end
+        elseif self._auraInstanceID and self._auraInstanceID > 0 then
             if GameTooltip.SetUnitAuraByAuraInstanceID then
                 pcall(GameTooltip.SetUnitAuraByAuraInstanceID, GameTooltip, "player", self._auraInstanceID)
             elseif GameTooltip.SetUnitBuffByAuraInstanceID then
@@ -258,6 +265,7 @@ local function AcquireIcon(parent)
         icon:SetSize(DEFAULT_ICON_SIZE, DEFAULT_ICON_SIZE)
         icon._auraInstanceID = nil
         icon._auraSlot = nil
+        icon._spellId = nil
         icon._filter = nil
         icon._rawDuration = nil
         icon._rawExpirationTime = nil
@@ -282,6 +290,7 @@ local function ReleaseIcon(icon)
     icon:ClearAllPoints()
     icon._auraInstanceID = nil
     icon._auraSlot = nil
+    icon._spellId = nil
     icon._filter = nil
     icon._rawDuration = nil
     icon._rawExpirationTime = nil
@@ -332,6 +341,13 @@ local function StyleIcon(icon, settings, isBuff, debuffType)
     icon.BorderBottom:Show()
     icon.BorderLeft:Show()
     icon.BorderRight:Show()
+
+    -- Swipe visibility (swipe = dark fill, edge = bright leading line)
+    if icon.Cooldown then
+        local showSwipe = not settings.hideSwipe
+        icon.Cooldown:SetDrawSwipe(showSwipe)
+        icon.Cooldown:SetDrawEdge(showSwipe)
+    end
 
     -- Font settings
     local font = GetGeneralFont()
@@ -467,6 +483,20 @@ end
 ---------------------------------------------------------------------------
 -- BANISH / RESTORE BLIZZARD FRAMES
 ---------------------------------------------------------------------------
+
+-- Recursively enable/disable mouse on all descendant frames.
+-- Blizzard child buttons remain mouse-interactive at alpha 0,
+-- producing phantom tooltips from the banished BuffFrame/DebuffFrame.
+local function SetDescendantMouse(frame, enable)
+    for i = 1, frame:GetNumChildren() do
+        local child = select(i, frame:GetChildren())
+        if child then
+            if child.EnableMouse then child:EnableMouse(enable) end
+            SetDescendantMouse(child, enable)
+        end
+    end
+end
+
 local function BanishBlizzardFrame(frame, showHookedFlag, alphaHookedFlag)
     if not frame then return false, false end
 
@@ -483,6 +513,7 @@ local function BanishBlizzardFrame(frame, showHookedFlag, alphaHookedFlag)
 
     frame:SetAlpha(0)
     frame:EnableMouse(false)
+    SetDescendantMouse(frame, false)
 
     -- Hook Show to re-enforce hiding
     if not showHookedFlag then
@@ -492,6 +523,7 @@ local function BanishBlizzardFrame(frame, showHookedFlag, alphaHookedFlag)
                 if self._quiBanished then
                     self:SetAlpha(0)
                     self:EnableMouse(false)
+                    SetDescendantMouse(self, false)
                 end
             end)
         end)
@@ -505,6 +537,7 @@ local function BanishBlizzardFrame(frame, showHookedFlag, alphaHookedFlag)
                 C_Timer.After(0, function()
                     if self._quiBanished and self:GetAlpha() > 0 then
                         self:SetAlpha(0)
+                        SetDescendantMouse(self, false)
                     end
                 end)
             end
@@ -531,6 +564,7 @@ local function RestoreBlizzardFrame(frame)
     frame._quiBanished = nil
     frame:SetAlpha(1)
     frame:EnableMouse(true)
+    SetDescendantMouse(frame, true)
 end
 
 ---------------------------------------------------------------------------
@@ -593,10 +627,17 @@ local function UpdateAuraIcons(container, activeIcons, sortedList, filter, isBuf
 
         -- Update icon data
         icon._auraInstanceID = id
+        icon._spellId = auraData.spellId
         icon._filter = filter
 
-        -- Texture
-        local texID = auraData.icon
+        -- Texture: prefer spell-specific lookup — auraData.icon can return
+        -- the granting spell's icon instead of the buff's own icon for some auras
+        local texID
+        if auraData.spellId and C_Spell and C_Spell.GetSpellTexture then
+            local ok, tex = pcall(C_Spell.GetSpellTexture, auraData.spellId)
+            if ok and tex then texID = tex end
+        end
+        texID = texID or auraData.icon
         if texID and icon.Icon then
             icon.Icon:SetTexture(texID)
         end
@@ -634,12 +675,24 @@ local function UpdateAuraIcons(container, activeIcons, sortedList, filter, isBuf
         end
 
         -- Stacks
-        local applications = auraData.applications
-        if applications then
-            local safeApps = SafeToNumber(applications, 0)
-            if safeApps > 1 then
-                icon.Stacks:SetText(safeApps)
-                icon.Stacks:Show()
+        if settings.showStacks ~= false then
+            local applications = auraData.applications
+            if applications then
+                if not IsSecretValue(applications) then
+                    -- Out of combat: filter single-stack display
+                    if applications > 1 then
+                        icon.Stacks:SetText(applications)
+                        icon.Stacks:Show()
+                    else
+                        icon.Stacks:SetText("")
+                        icon.Stacks:Hide()
+                    end
+                else
+                    -- Combat secret: C_StringUtil.TruncateWhenZero is C-side,
+                    -- accepts secret values and returns "" for zero stacks
+                    pcall(icon.Stacks.SetText, icon.Stacks, C_StringUtil.TruncateWhenZero(applications))
+                    icon.Stacks:Show()
+                end
             else
                 icon.Stacks:SetText("")
                 icon.Stacks:Hide()
