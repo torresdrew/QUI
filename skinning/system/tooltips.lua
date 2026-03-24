@@ -369,9 +369,40 @@ local function CombatRefreshTooltip(tooltip)
     end)
 end
 
+-- Quest/world map reward tooltips can attach Blizzard MoneyFrame children to
+-- GameTooltip. Mutating the tooltip frame while those children are active can
+-- taint MoneyFrame_Update width arithmetic.
+local function HasActiveMoneyFrame(tooltip)
+    if not tooltip or not tooltip.GetChildren then return false end
+
+    local ok, result = pcall(function()
+        for i = 1, select("#", tooltip:GetChildren()) do
+            local child = select(i, tooltip:GetChildren())
+            if child then
+                local childName = child.GetName and child:GetName() or nil
+                if child.moneyType ~= nil or child.staticMoney ~= nil or child.lastArgMoney ~= nil or
+                    (type(childName) == "string" and childName:find("MoneyFrame")) then
+                    if child.IsShown then
+                        local okShown, shown = pcall(child.IsShown, child)
+                        if not okShown or shown then
+                            return true
+                        end
+                    else
+                        return true
+                    end
+                end
+            end
+        end
+        return false
+    end)
+
+    return ok and result == true
+end
+
 -- Dispatch: combat vs normal path
 local function OnTooltipShow(tooltip)
     if not IsEnabled() then return end
+    if tooltip == GameTooltip and HasActiveMoneyFrame(tooltip) then return end
     if InCombatLockdown() then
         CombatRefreshTooltip(tooltip)
     else
@@ -731,6 +762,37 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         return
     end
 
+    -- Post-combat: restore full tooltip styling.  During combat the degraded
+    -- CombatRefreshTooltip path is used (unscaled edges, no font sizing, no
+    -- backdrop clear on the tooltip frame itself).  Force a full restyle now
+    -- that combat restrictions are lifted.
+    if event == "PLAYER_REGEN_ENABLED" then
+        _FlushHookQueue()
+        pendingGameTooltipRestyle = false
+        if IsEnabled() then
+            -- Clear combat-path edge cache so backdrop is recreated with
+            -- correct pixel-scaled edge sizes.
+            for _, frame in pairs(styleFrames) do
+                if frame then frame._lastEdge = nil end
+            end
+            -- Full restyle of all visible tooltips (both named and dynamic)
+            for _, name in ipairs(tooltipsToSkin) do
+                local tooltip = _G[name]
+                if tooltip and tooltip.IsShown and tooltip:IsShown() then
+                    StyleTooltip(tooltip)
+                end
+            end
+            for tooltip in pairs(styleFrames) do
+                if tooltip.IsShown and tooltip:IsShown() then
+                    StyleTooltip(tooltip)
+                end
+            end
+            RefreshAllFonts()
+        end
+        DiscoverExtraTooltips()
+        return
+    end
+
     if event ~= "ADDON_LOADED" or arg1 ~= ADDON_NAME then return end
 
     RebuildTooltipList()
@@ -829,6 +891,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     SetupHealthBarHook()
     SetupPostProcessor()
     DiscoverExtraTooltips()
+    self:RegisterEvent("PLAYER_REGEN_ENABLED")
     initialized = true
 end)
 
