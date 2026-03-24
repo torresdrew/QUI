@@ -34,6 +34,7 @@ local inInitSafeWindow = false
 
 local IS_MIDNIGHT = select(4, GetBuildInfo()) >= 120000
 
+
 ---------------------------------------------------------------------------
 -- CONSTANTS
 ---------------------------------------------------------------------------
@@ -1626,6 +1627,24 @@ local function SetupBar1Paging(container)
 end
 
 ---------------------------------------------------------------------------
+-- OWNED BUTTON EVENT HANDLER
+---------------------------------------------------------------------------
+-- Replace ActionBarButtonTemplate's OnEvent on QUI-managed action buttons.
+-- The template handler calls ActionButton_UpdateCooldown → SetCooldown
+-- which rejects secret values from tainted (addon) execution in 12.0.5+.
+-- QUI drives cooldown display centrally via DurationObject APIs instead;
+-- only GLOBAL_MOUSE_UP is preserved here (flyout close tracking).
+
+ActionBarsOwned.OnButtonEvent = function(self, event)
+    if event == "GLOBAL_MOUSE_UP" then
+        self:UnregisterEvent(event)
+        if self.UpdateFlyout then
+            pcall(self.UpdateFlyout, self)
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- BAR BUILD (native engine)
 ---------------------------------------------------------------------------
 
@@ -1719,6 +1738,10 @@ local function BuildBar(barKey)
             else
                 btn:SetParent(container)
             end
+            -- Replace template OnEvent: QUI drives cooldowns centrally via
+            -- DurationObject APIs; the template handler would call SetCooldown
+            -- with secret values in tainted context (12.0.5+).
+            btn:SetScript("OnEvent", ActionBarsOwned.OnButtonEvent)
             btn:Show()
             -- Force the template to update its visuals (icon, cooldown, count, etc.)
             -- pcall: addon code is in the call stack, so Blizzard's Update may hit
@@ -2153,6 +2176,8 @@ local function BuildBar(barKey)
                 local btn = self:GetFrameRef("init-btn")
                 btn:SetAttribute("action", %d)
             ]], offset + i))
+            -- Replace template OnEvent: QUI drives cooldowns centrally.
+            blizzBtn:SetScript("OnEvent", ActionBarsOwned.OnButtonEvent)
             blizzBtn:Show()
             buttons[i] = blizzBtn
         end
@@ -2160,26 +2185,14 @@ local function BuildBar(barKey)
 
     ActionBarsOwned.nativeButtons[barKey] = buttons
 
-    -- Guard action-button cooldowns against SetCooldown secret-value errors.
-    -- QUI's buttons run in tainted execution context (addon-created for bar1,
-    -- reparented for bars 2-8/pet/stance), so Blizzard's
-    -- ActionButton_UpdateCooldown → SetCooldown chain rejects the secret
-    -- values returned by GetActionCooldown during combat (12.0.5+).
-    -- Wrap each cooldown frame's SetCooldown in pcall so the error is
-    -- silently caught; the cooldown self-corrects when combat ends.
-    if SKINNABLE_BAR_KEYS[barKey] then
+    -- Register action buttons with Blizzard's C-side action UI system for
+    -- assisted highlighting and native cooldown integration.  Only for
+    -- standard action bars (bar1-8), not pet/stance/micro/bags.
+    if barKey ~= "pet" and barKey ~= "stance" and barKey ~= "microbar" and barKey ~= "bags" then
+        ActionBarsOwned.UpdateActionUIRegistration(barKey)
+        -- Seed initial cooldown state so buttons don't flash on first event.
         for _, btn in ipairs(buttons) do
-            local cd = btn.cooldown or btn.Cooldown
-            if cd and cd.SetCooldown then
-                local origSetCD = cd.SetCooldown
-                cd.SetCooldown = function(self, ...)
-                    if InCombatLockdown() then
-                        pcall(origSetCD, self, ...)
-                    else
-                        origSetCD(self, ...)
-                    end
-                end
-            end
+            ActionBarsOwned.UpdateCooldown(btn)
         end
     end
 
@@ -2387,11 +2400,138 @@ local InitializeExtraButtons
 local RefreshExtraButtons
 local ApplyPageArrowVisibility
 
+---------------------------------------------------------------------------
+-- OWNED COOLDOWN UPDATE (12.0.5+ DurationObject path)
+---------------------------------------------------------------------------
+-- Replaces Blizzard's ActionButton_UpdateCooldown which can no longer call
+-- SetCooldown with secret values from tainted code.  Uses the new
+-- C_ActionBar structured APIs (isActive boolean, DurationObjects) to drive
+-- cooldown display via SetCooldownFromDurationObject — the only remaining
+-- secret-safe cooldown setter.
+--
+-- All helpers are scoped inside a do...end block to stay within Lua's
+-- 200 file-scope local variable limit.  Public functions are stored as
+-- ActionBarsOwned fields.
+
+do
+    -- Build 66562+ removed the secure delegate from ActionButton_ApplyCooldown
+    -- and blocked SetCooldown from accepting secret values in tainted context.
+    local USE_DURATION_OBJECTS = IS_MIDNIGHT
+        and C_ActionBar ~= nil
+        and C_ActionBar.GetActionCooldownDuration ~= nil
+        and (tonumber((select(2, GetBuildInfo()))) or 0) >= 66562
+
+    local DEFAULT_CD_INFO  = { startTime = 0, duration = 0, isEnabled = false, isActive = false, modRate = 0 }
+    local DEFAULT_CHG_INFO = { currentCharges = 0, maxCharges = 0, cooldownStartTime = 0, cooldownDuration = 0, chargeModRate = 0, isActive = false }
+    local DEFAULT_LOC_INFO = { startTime = 0, duration = 0, modRate = 0, isActive = false, shouldReplaceNormalCooldown = false }
+
+    local function GetOrCreateChargeCooldown(button)
+        if button.chargeCooldown then return button.chargeCooldown end
+        local parent = button.cooldown or button
+        local cd = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+        cd:SetHideCountdownNumbers(true)
+        cd:SetDrawSwipe(false)
+        cd:SetAllPoints(parent)
+        cd:SetFrameLevel(button:GetFrameLevel())
+        button.chargeCooldown = cd
+        return cd
+    end
+
+    local function GetOrCreateLoCCooldown(button)
+        if button.lossOfControlCooldown then return button.lossOfControlCooldown end
+        local parent = button.cooldown or button
+        local cd = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+        cd:SetHideCountdownNumbers(true)
+        cd:SetAllPoints(parent)
+        cd:SetFrameLevel(button:GetFrameLevel() + 1)
+        cd:SetSwipeColor(0.17, 0, 0, 0.8)
+        button.lossOfControlCooldown = cd
+        return cd
+    end
+
+    local function SetOrClearCooldown(cooldown, shouldShow, durationObject)
+        if not cooldown then return end
+        if not shouldShow or not durationObject then
+            cooldown:Clear()
+            return
+        end
+        cooldown:SetCooldownFromDurationObject(durationObject)
+    end
+
+    function ActionBarsOwned.UpdateCooldown(button)
+        local action = button:GetAttribute("action")
+        if not action or action == 0 then return end
+
+        local cooldown = button.cooldown or button.Cooldown
+        if not cooldown then return end
+
+        if USE_DURATION_OBJECTS then
+            local cdInfo  = C_ActionBar.GetActionCooldown(action) or DEFAULT_CD_INFO
+            local chgInfo = C_ActionBar.GetActionCharges(action) or DEFAULT_CHG_INFO
+            local locInfo = C_ActionBar.GetActionLossOfControlCooldownInfo(action) or DEFAULT_LOC_INFO
+
+            local showLoC    = locInfo.isActive
+            local showCharge = not locInfo.shouldReplaceNormalCooldown and chgInfo.isActive
+            local showNormal = not locInfo.shouldReplaceNormalCooldown and cdInfo.isActive
+
+            -- Normal cooldown
+            SetOrClearCooldown(cooldown, showNormal, C_ActionBar.GetActionCooldownDuration(action))
+
+            -- Charge cooldown (lazy-create frame)
+            if showCharge then
+                SetOrClearCooldown(GetOrCreateChargeCooldown(button), true, C_ActionBar.GetActionChargeDuration(action))
+            elseif button.chargeCooldown then
+                button.chargeCooldown:Clear()
+            end
+
+            -- Loss of control cooldown (lazy-create frame)
+            if showLoC then
+                SetOrClearCooldown(GetOrCreateLoCCooldown(button), true, C_ActionBar.GetActionLossOfControlCooldownDuration(action))
+            elseif button.lossOfControlCooldown then
+                button.lossOfControlCooldown:Clear()
+            end
+        else
+            -- Pre-12.0.5 fallback: delegate to Blizzard's handler (pcall for safety)
+            if ActionButton_UpdateCooldown then
+                pcall(ActionButton_UpdateCooldown, button)
+            end
+        end
+    end
+
+    function ActionBarsOwned.UpdateAllCooldowns()
+        for _, barKey in ipairs(STANDARD_BAR_KEYS) do
+            local buttons = ActionBarsOwned.nativeButtons[barKey]
+            if buttons then
+                for _, btn in ipairs(buttons) do
+                    ActionBarsOwned.UpdateCooldown(btn)
+                end
+            end
+        end
+    end
+
+    -- Re-register buttons with Blizzard's C-side action UI system.
+    -- SetActionUIButton enables C-side cooldown updates and assisted highlighting.
+    function ActionBarsOwned.UpdateActionUIRegistration(barKey)
+        if not SetActionUIButton then return end
+        local buttons = ActionBarsOwned.nativeButtons[barKey]
+        if not buttons then return end
+        for _, btn in ipairs(buttons) do
+            local action = btn:GetAttribute("action")
+            local cd = btn.cooldown or btn.Cooldown
+            if action and action ~= 0 and cd then
+                SetActionUIButton(btn, action, cd)
+            end
+        end
+    end
+end -- do block (cooldown ownership)
+
 local function OnOwnedEvent(self, event, ...)
     if not ActionBarsOwned.initialized then return end
 
     if event == "ACTIONBAR_SLOT_CHANGED" then
-        -- Native buttons auto-update icons/cooldowns; just refresh empty slot visibility
+        -- Refresh empty slot visibility and cooldown state for the new action.
+        -- Icons are auto-updated by the template but cooldowns are owned by QUI.
+        ActionBarsOwned.UpdateAllCooldowns()
         if InCombatLockdown() then
             ActionBarsOwned.pendingSlotUpdate = true
             return
@@ -2413,13 +2553,22 @@ local function OnOwnedEvent(self, event, ...)
         or event == "UPDATE_SHAPESHIFT_FORM"
         or event == "UPDATE_SHAPESHIFT_FORMS"
         or event == "UPDATE_STEALTH" then
-        -- Paging is handled by state driver; refresh empty slots and bar1 bindings
+        -- Paging is handled by state driver; refresh empty slots, cooldowns,
+        -- SetActionUIButton registration, and bar1 bindings.
         C_Timer.After(0.05, function()
             local buttons = ActionBarsOwned.nativeButtons["bar1"]
             local settings = GetEffectiveSettings("bar1")
             if buttons and settings then
                 for _, btn in ipairs(buttons) do
                     UpdateEmptySlotVisibility(btn, settings)
+                end
+            end
+            -- Re-register bar1 with new action slots after page change
+            ActionBarsOwned.UpdateActionUIRegistration("bar1")
+            -- Refresh cooldowns for the new page's actions
+            if buttons then
+                for _, btn in ipairs(buttons) do
+                    ActionBarsOwned.UpdateCooldown(btn)
                 end
             end
             -- Stance bar may need re-layout when shapeshift forms change
@@ -2595,6 +2744,7 @@ local function OnOwnedEvent(self, event, ...)
             RestoreContainerPosition(barKey)
         end
         RefreshAllNativeVisuals()
+        ActionBarsOwned.UpdateAllCooldowns()
         UpdatePetBarVisibility()
         UpdateStanceBarLayout()
         inInitSafeWindow = false
@@ -2611,6 +2761,7 @@ local function OnOwnedEvent(self, event, ...)
                 RestoreContainerPosition(barKey)
             end
             RefreshAllNativeVisuals()
+            ActionBarsOwned.UpdateAllCooldowns()
             UpdatePetBarVisibility()
             UpdateStanceBarLayout()
         end)
@@ -2640,6 +2791,14 @@ local function OnOwnedEvent(self, event, ...)
                 _G.QUI_RefreshActionBars()
             end
         end
+
+    elseif event == "ACTIONBAR_UPDATE_COOLDOWN"
+        or event == "LOSS_OF_CONTROL_ADDED"
+        or event == "LOSS_OF_CONTROL_UPDATE" then
+        -- Centralized cooldown update for all owned action buttons.
+        -- Replaces per-button template OnEvent → ActionButton_UpdateCooldown
+        -- which fails with secret values in tainted context (12.0.5+).
+        ActionBarsOwned.UpdateAllCooldowns()
     end
 end
 
@@ -2657,6 +2816,9 @@ ownedEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 ownedEventFrame:RegisterEvent("PLAYER_LEVEL_UP")
 ownedEventFrame:RegisterEvent("UNIT_ENTERED_VEHICLE")
 ownedEventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
+ownedEventFrame:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
+ownedEventFrame:RegisterEvent("LOSS_OF_CONTROL_ADDED")
+ownedEventFrame:RegisterEvent("LOSS_OF_CONTROL_UPDATE")
 ownedEventFrame:SetScript("OnEvent", OnOwnedEvent)
 
 -- Don't process events until Initialize is called
@@ -5181,6 +5343,9 @@ function ActionBarsOwned:Initialize()
     ownedEventFrame:RegisterEvent("PLAYER_LEVEL_UP")
     ownedEventFrame:RegisterEvent("UNIT_ENTERED_VEHICLE")
     ownedEventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
+    ownedEventFrame:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
+    ownedEventFrame:RegisterEvent("LOSS_OF_CONTROL_ADDED")
+    ownedEventFrame:RegisterEvent("LOSS_OF_CONTROL_UPDATE")
         ownedEventFrame:Show()
 
     -- Force all action bars enabled so owned buttons function correctly
