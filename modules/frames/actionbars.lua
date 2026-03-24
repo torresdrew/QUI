@@ -2463,7 +2463,7 @@ do
     end
 
     function ActionBarsOwned.UpdateCooldown(button)
-        local action = button:GetAttribute("action")
+        local action = button.action or button:GetAttribute("action")
         if not action or action == 0 then return end
 
         local cooldown = button.cooldown or button.Cooldown
@@ -2524,6 +2524,43 @@ do
             local cd = btn.cooldown or btn.Cooldown
             if action and action ~= 0 and cd then
                 SetActionUIButton(btn, action, cd)
+            end
+        end
+    end
+
+    -- Global replacement: ActionButton_UpdateCooldown is no longer routed
+    -- through a secure delegate (build 66562+).  Any action button whose
+    -- OnEvent still calls the original will hit the secret-value error.
+    -- Replace it globally so ALL action buttons (QUI-managed, override bar,
+    -- extra action button, etc.) use the DurationObject-safe path.
+    if USE_DURATION_OBJECTS and ActionButton_UpdateCooldown then
+        ActionButton_UpdateCooldown = function(self)
+            local action = self.action or self:GetAttribute("action")
+            if not action or action == 0 then return end
+
+            local cooldown = self.cooldown or self.Cooldown
+            if not cooldown then return end
+
+            local cdInfo  = C_ActionBar.GetActionCooldown(action) or DEFAULT_CD_INFO
+            local chgInfo = C_ActionBar.GetActionCharges(action) or DEFAULT_CHG_INFO
+            local locInfo = C_ActionBar.GetActionLossOfControlCooldownInfo(action) or DEFAULT_LOC_INFO
+
+            local showLoC    = locInfo.isActive
+            local showCharge = not locInfo.shouldReplaceNormalCooldown and chgInfo.isActive
+            local showNormal = not locInfo.shouldReplaceNormalCooldown and cdInfo.isActive
+
+            SetOrClearCooldown(cooldown, showNormal, C_ActionBar.GetActionCooldownDuration(action))
+
+            if showCharge then
+                SetOrClearCooldown(GetOrCreateChargeCooldown(self), true, C_ActionBar.GetActionChargeDuration(action))
+            elseif self.chargeCooldown then
+                self.chargeCooldown:Clear()
+            end
+
+            if showLoC then
+                SetOrClearCooldown(GetOrCreateLoCCooldown(self), true, C_ActionBar.GetActionLossOfControlCooldownDuration(action))
+            elseif self.lossOfControlCooldown then
+                self.lossOfControlCooldown:Clear()
             end
         end
     end
