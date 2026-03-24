@@ -9,6 +9,17 @@ local Helpers = ns.Helpers
 local QUICore = ns.Addon
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
+-- Upvalue hot-path globals
+local pairs = pairs
+local ipairs = ipairs
+local wipe = wipe
+local format = format
+local CreateFrame = CreateFrame
+local InCombatLockdown = InCombatLockdown
+local C_Timer = C_Timer
+local string_format = string.format
+local table_insert = table.insert
+
 ---------------------------------------------------------------------------
 -- MODULE TABLE
 ---------------------------------------------------------------------------
@@ -284,13 +295,13 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
             if style == "percent" then
                 healthText:SetText(healthPct .. "%")
             elseif style == "absolute" then
-                healthText:SetText(string.format("%.0fK", fakeHP / 1000))
+                healthText:SetText(string_format("%.0fK", fakeHP / 1000))
             elseif style == "both" then
-                healthText:SetText(string.format("%.0fK", fakeHP / 1000) .. " | " .. healthPct .. "%")
+                healthText:SetText(string_format("%.0fK", fakeHP / 1000) .. " | " .. healthPct .. "%")
             elseif style == "deficit" then
                 local deficit = fakeMax - fakeHP
                 if deficit > 0 then
-                    healthText:SetText("-" .. string.format("%.0fK", deficit / 1000))
+                    healthText:SetText("-" .. string_format("%.0fK", deficit / 1000))
                 else
                     healthText:SetText("")
                 end
@@ -853,7 +864,7 @@ function QUI_GFEM:EnableTestMode(previewType)
     container:Show()
     testContainers[previewType] = container
     testContainer = container  -- legacy compat (used by SyncMoverToContent fallback)
-    table.insert(testFrames, container)
+    table_insert(testFrames, container)
     testFramesByType[previewType] = testFramesByType[previewType] or {}
 
     -- Create test frames
@@ -938,8 +949,8 @@ function QUI_GFEM:EnableTestMode(previewType)
                 end
 
                 testFrame:SetPoint(anchor, container, anchor, xOff, yOff)
-                table.insert(testFrames, testFrame)
-                table.insert(testFramesByType[previewType], testFrame)
+                table_insert(testFrames, testFrame)
+                table_insert(testFramesByType[previewType], testFrame)
 
                 -- Attach private aura placeholders
                 local PA = ns.QUI_GroupFramePrivateAuras

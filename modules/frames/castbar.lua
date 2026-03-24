@@ -22,6 +22,11 @@ local pcall = pcall
 local GetTime = GetTime
 local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
+local math_floor = math.floor
+local math_min = math.min
+local math_max = math.max
+local math_ceil = math.ceil
+local string_format = string.format
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -210,7 +215,7 @@ local function UpdateThrottledText(castbar, elapsed, text, value)
     if castbar.textThrottle >= 0.1 then
         castbar.textThrottle = 0
         if text then
-            text:SetText(string.format("%.1f", value))
+            text:SetText(string_format("%.1f", value))
         end
         return true
     end
@@ -314,7 +319,7 @@ end
 
 local function GetSizingValues(castSettings, frame)
     local barHeight = QUICore:PixelRound(castSettings.height or 25, frame)
-    barHeight = math.max(barHeight, QUICore:Pixels(4, frame))
+    barHeight = math_max(barHeight, QUICore:Pixels(4, frame))
     local iconSize = QUICore:PixelRound((castSettings.iconSize and castSettings.iconSize > 0) and castSettings.iconSize or 25, frame)
     local iconScale = castSettings.iconScale or 1.0
     return barHeight, iconSize, iconScale
@@ -793,18 +798,18 @@ local function UpdateSpellTextWidthClamp(anchorFrame, castSettingsOverride, show
         end
     end
 
-    local spellPad = math.max(0, math.abs(currentCastSettings.spellTextOffsetX or 4))
+    local spellPad = math_max(0, math.abs(currentCastSettings.spellTextOffsetX or 4))
     local reserveForTime = 0
 
     if showTimeText and anchorFrame.timeText and anchorFrame.timeText:IsShown() then
-        local timePad = math.max(0, math.abs(currentCastSettings.timeTextOffsetX or -4))
+        local timePad = math_max(0, math.abs(currentCastSettings.timeTextOffsetX or -4))
         local fixedReserveWidth = GetFixedTimeTextReserveWidth(anchorFrame, currentCastSettings)
         if fixedReserveWidth > 0 then
             reserveForTime = timePad + fixedReserveWidth + TIME_TEXT_EXTRA_PADDING
         end
     end
 
-    anchorFrame.spellText:SetWidth(math.max(1, barWidth - spellPad - reserveForTime - BAR_EDGE_PADDING))
+    anchorFrame.spellText:SetWidth(math_max(1, barWidth - spellPad - reserveForTime - BAR_EDGE_PADDING))
 end
 
 ---------------------------------------------------------------------------
@@ -815,9 +820,9 @@ local ClampNumber = nsHelpers.Clamp
 local function SafeRound(value)
     if not value then return nil end
     if value >= 0 then
-        return math.floor(value + 0.5)
+        return math_floor(value + 0.5)
     end
-    return math.ceil(value - 0.5)
+    return math_ceil(value - 0.5)
 end
 
 local function GetChannelTickSourcePolicy(castSettings)
@@ -1018,7 +1023,7 @@ local function StoreChannelTickCalibration(observation)
     end
     observedTickCount = ClampNumber(observedTickCount, 2, 24)
 
-    local confidence = 0.45 + math.min(0.2, #intervals * 0.05)
+    local confidence = 0.45 + math_min(0.2, #intervals * 0.05)
     if variation <= 0.08 then
         confidence = confidence + 0.25
     elseif variation <= 0.15 then
@@ -1037,7 +1042,7 @@ local function StoreChannelTickCalibration(observation)
     if existing then
         existing.interval = (existing.interval * 0.7) + (avgInterval * 0.3)
         existing.tickCount = SafeRound((existing.tickCount * 0.7) + (observedTickCount * 0.3))
-        existing.confidence = ClampNumber(math.max(existing.confidence * 0.9, confidence), 0.3, 0.95)
+        existing.confidence = ClampNumber(math_max(existing.confidence * 0.9, confidence), 0.3, 0.95)
         existing.updatedAt = GetTime()
     else
         CHANNEL_TICK_RUNTIME_CACHE[spellID] = {
@@ -1103,7 +1108,7 @@ local function OnChannelTickCombatLogEvent()
     end
 
     observation.lastTickTime = now
-    observation.matchQuality = math.max(observation.matchQuality or 0, quality)
+    observation.matchQuality = math_max(observation.matchQuality or 0, quality)
     if observation.tickTimes then
         observation.tickTimes[#observation.tickTimes + 1] = now
     end
@@ -1268,7 +1273,7 @@ local function ApplyChannelTickPositions(bar, positions, castSettings)
     EnsureChannelTickTextures(bar, #positions)
     local color = castSettings and castSettings.channelTickColor or CHANNEL_TICK_DEFAULT_COLOR
     local thickness = QUICore:Pixels((castSettings and castSettings.channelTickThickness) or 1, bar.statusBar)
-    thickness = math.max(QUICore:Pixels(1, bar.statusBar), thickness)
+    thickness = math_max(QUICore:Pixels(1, bar.statusBar), thickness)
 
     for i, position in ipairs(positions) do
         local marker = bar.channelTickMarkers[i]
@@ -1291,7 +1296,7 @@ local function ApplyChannelTickPositions(bar, positions, castSettings)
     end
 
     bar.channelTickLayoutDirty = nil
-    bar.channelTickLastLayout = string.format("%d:%d:%d:%0.2f",
+    bar.channelTickLastLayout = string_format("%d:%d:%d:%0.2f",
         SafeRound(barWidth) or 0,
         SafeRound(barHeight) or 0,
         #positions,
@@ -1522,7 +1527,7 @@ local function SimulateCast(castbar, castSettings, unitKey, bossIndex)
     end
     
     if castbar.timeText then
-        castbar.timeText:SetText(string.format("%.1f", castTime))
+        castbar.timeText:SetText(string_format("%.1f", castTime))
         castbar.timeText:SetTextColor(1, 1, 1, 1)
         if castSettings.showTimeText ~= false then
             castbar.timeText:Show()
@@ -2099,13 +2104,13 @@ local function UpdateCastbarVisuals(castbar, castSettings, unitKey, texture, tex
 
         if duration > 0 then
             castbar.statusBar:SetMinMaxValues(0, duration)
-            castbar.statusBar:SetValue(math.max(0, math.min(duration, progress)))
+            castbar.statusBar:SetValue(math_max(0, math_min(duration, progress)))
         end
 
         -- Set initial time text
         if castbar.timeText then
             local remaining = endTime - now
-            castbar.timeText:SetText(string.format("%.1f", math.max(0, remaining)))
+            castbar.timeText:SetText(string_format("%.1f", math_max(0, remaining)))
         end
     end
 
@@ -2493,7 +2498,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
                         self.textThrottle = (self.textThrottle or 0) + elapsed
                         if self.textThrottle >= 0.1 then
                             self.textThrottle = 0
-                            self.empoweredLevelText:SetText(tostring(math.floor(currentStage)))
+                            self.empoweredLevelText:SetText(tostring(math_floor(currentStage)))
                             UpdateTimeTextColor(self, self.unit)
                         end
                     else
@@ -2551,7 +2556,7 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
             end
             
             self.previewValue = self.previewValue + elapsed
-            local progress = math.min(self.previewValue, self.previewMaxValue)
+            local progress = math_min(self.previewValue, self.previewMaxValue)
             local remaining = self.previewMaxValue - progress
             
             self.statusBar:SetValue(progress)
@@ -2984,7 +2989,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
                     end
                 end
                 if remaining and self.timeText then
-                    self.timeText:SetText(string.format("%.1f", remaining))
+                    self.timeText:SetText(string_format("%.1f", remaining))
                     UpdateTimeTextColor(self, self.unit)
                 end
                 return
@@ -3027,11 +3032,11 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
             end
 
             self.statusBar:SetMinMaxValues(0, 1)
-            self.statusBar:SetValue(math.max(0, math.min(1, progress)))
+            self.statusBar:SetValue(math_max(0, math_min(1, progress)))
 
             local remaining = self.endTime - now
             if self.timeText then
-                self.timeText:SetText(string.format("%.1f", remaining))
+                self.timeText:SetText(string_format("%.1f", remaining))
                 UpdateTimeTextColor(self, self.unit)
             end
         elseif self.isPreviewSimulation then
@@ -3049,7 +3054,7 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
             end
 
             self.previewValue = self.previewValue + elapsed
-            local progress = math.min(self.previewValue, self.previewMaxValue)
+            local progress = math_min(self.previewValue, self.previewMaxValue)
             local remaining = self.previewMaxValue - progress
 
             self.statusBar:SetValue(progress)

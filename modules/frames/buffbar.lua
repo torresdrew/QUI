@@ -4,6 +4,18 @@ local LSM = ns.LSM
 
 local GetCore = ns.Helpers.GetCore
 
+-- Upvalue caching for hot-path performance
+local type = type
+local pcall = pcall
+local ipairs = ipairs
+local tostring = tostring
+local CreateFrame = CreateFrame
+local InCombatLockdown = InCombatLockdown
+local C_Timer = C_Timer
+local hooksecurefunc = hooksecurefunc
+local table_insert = table.insert
+local string_format = string.format
+
 ---------------------------------------------------------------------------
 -- QUI Buff Bar Manager
 -- Handles dynamic centering of BuffIconCooldownViewer and BuffBarCooldownViewer
@@ -107,10 +119,10 @@ local function GetTopVisibleResourceBarFrame()
     local candidates = {}
     if QUICore then
         if QUICore.powerBar then
-            table.insert(candidates, QUICore.powerBar)
+            table_insert(candidates, QUICore.powerBar)
         end
         if QUICore.secondaryPowerBar then
-            table.insert(candidates, QUICore.secondaryPowerBar)
+            table_insert(candidates, QUICore.secondaryPowerBar)
         end
     end
 
@@ -797,7 +809,7 @@ local function GetBuffIconFrames()
                 local hasCooldown = child.cooldown or child.Cooldown
 
                 if hasIcon or hasCooldown then
-                    table.insert(all, child)
+                    table_insert(all, child)
                 end
             end
         end
@@ -811,7 +823,7 @@ local function GetBuffIconFrames()
     local visible = {}
     for _, icon in ipairs(all) do
         if icon:IsShown() and icon.cooldownID then
-            table.insert(visible, icon)
+            table_insert(visible, icon)
         end
     end
 
@@ -861,7 +873,7 @@ local function GetBuffBarFrames()
             if child and child:IsObjectType("Frame") then
                 -- Skip Selection frame
                 if child ~= viewer.Selection and not seen[child] then
-                    table.insert(frames, child)
+                    table_insert(frames, child)
                     seen[child] = true
                 end
             end
@@ -1024,7 +1036,7 @@ local function GetBuffBarFrames()
                     barFrameState[frame] = barFrameState[frame] or {}
                     barFrameState[frame].isActive = blizzShown
                     if blizzShown then
-                        table.insert(active, frame)
+                        table_insert(active, frame)
                     end
                 else
                     local isActive = IsTrackedBarActive(frame)
@@ -1045,7 +1057,7 @@ local function GetBuffBarFrames()
                                 frame:Show()
                             end)
                         end
-                        table.insert(active, frame)
+                        table_insert(active, frame)
                     end
                 end
             end
@@ -2617,7 +2629,7 @@ local lastIconHash = ""
 
 -- Build hash of icon count + settings to detect actual changes
 local function BuildIconHash(count, settings)
-    return string.format("%d_%d_%d_%.2f_%d_%s_%s_%s_%d_%s_%s_%d_%d",
+    return string_format("%d_%d_%d_%.2f_%d_%s_%s_%s_%d_%s_%s_%d_%d",
         count,
         settings.iconSize or 42,
         settings.padding or 0,

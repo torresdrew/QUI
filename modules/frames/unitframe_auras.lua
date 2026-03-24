@@ -7,6 +7,14 @@ local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
 local Helpers = ns.Helpers
 
+-- Upvalue caching for hot-path performance
+local pcall = pcall
+local ipairs = ipairs
+local CreateFrame = CreateFrame
+local GetTime = GetTime
+local C_Timer = C_Timer
+local math_floor = math.floor
+
 -- QUI_UF is created in unitframes.lua and exported to ns.QUI_UnitFrames.
 -- This file loads after unitframes.lua, so the reference is available.
 local QUI_UF = ns.QUI_UnitFrames
@@ -435,7 +443,7 @@ local function UpdateAuras(frame)
             local row = 0
             if debuffMaxPerRow > 0 then
                 col = idx % debuffMaxPerRow
-                row = math.floor(idx / debuffMaxPerRow)
+                row = math_floor(idx / debuffMaxPerRow)
             end
             local xPos, yPos = debuffOffsetX, debuffOffsetY
             if debuffGrow == "RIGHT" then
@@ -523,7 +531,7 @@ local function UpdateAuras(frame)
             local row = 0
             if buffMaxPerRow > 0 then
                 col = idx % buffMaxPerRow
-                row = math.floor(idx / buffMaxPerRow)
+                row = math_floor(idx / buffMaxPerRow)
             end
             local xPos, yPos = buffOffsetX, buffOffsetY
             if buffGrow == "RIGHT" then

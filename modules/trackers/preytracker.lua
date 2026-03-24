@@ -39,10 +39,10 @@ local SPARK_HEIGHT_MULT = 2.5
 local DEFAULT_FALLBACK_TEXTURE = "Interface\\Buttons\\WHITE8x8"
 
 local TEXT_FORMATS = {
-    stage_pct  = function(stage, pct, name) return string.format("Stage %d — %d%%", stage, pct) end,
-    pct_only   = function(stage, pct, name) return string.format("%d%%", pct) end,
-    stage_only = function(stage, pct, name) return string.format("Stage %d", stage) end,
-    name_pct   = function(stage, pct, name) return string.format("%s — %d%%", name or "Prey", pct) end,
+    stage_pct  = function(stage, pct, name) return string_format("Stage %d — %d%%", stage, pct) end,
+    pct_only   = function(stage, pct, name) return string_format("%d%%", pct) end,
+    stage_only = function(stage, pct, name) return string_format("Stage %d", stage) end,
+    name_pct   = function(stage, pct, name) return string_format("%s — %d%%", name or "Prey", pct) end,
 }
 
 ---------------------------------------------------------------------------
@@ -62,6 +62,7 @@ local InCombatLockdown = InCombatLockdown
 local CreateFrame = CreateFrame
 local UIParent = UIParent
 local GameTooltip = GameTooltip
+local string_format = string.format
 
 ---------------------------------------------------------------------------
 -- STATE
@@ -597,7 +598,7 @@ local function CreatePreyBar()
         local name = State.preyName or "Prey Hunt"
         GameTooltip:AddLine(name, 1, 1, 1)
         if State.activeQuestID then
-            GameTooltip:AddLine(string.format("Stage %d — %d%%", State.currentStage, State.currentProgress), 0.8, 0.8, 0.8)
+            GameTooltip:AddLine(string_format("Stage %d — %d%%", State.currentStage, State.currentProgress), 0.8, 0.8, 0.8)
         end
         if State.difficulty then
             GameTooltip:AddLine("Difficulty: " .. State.difficulty, 0.7, 0.7, 0.7)
@@ -617,7 +618,7 @@ local function CreatePreyBar()
                     local sessionDelta = qty - (State.sessionStart[curr.id] or qty)
                     local deltaStr = ""
                     if settings2.currencyShowSession and sessionDelta > 0 then
-                        deltaStr = string.format(" |cff00ff00(+%d session)|r", sessionDelta)
+                        deltaStr = string_format(" |cff00ff00(+%d session)|r", sessionDelta)
                     end
                     GameTooltip:AddDoubleLine(
                         curr.name,

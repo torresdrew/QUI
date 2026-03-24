@@ -5,6 +5,22 @@ local Helpers = ns.Helpers
 local IsSecretValue = Helpers.IsSecretValue
 local SafeValue = Helpers.SafeValue
 
+-- Performance: cache frequently-called globals as locals
+local CreateFrame = CreateFrame
+local UIParent = UIParent
+local pairs = pairs
+local ipairs = ipairs
+local type = type
+local pcall = pcall
+local wipe = wipe
+local tostring = tostring
+local GetTime = GetTime
+local UnitExists = UnitExists
+local C_Timer = C_Timer
+local InCombatLockdown = InCombatLockdown
+local table_insert = table.insert
+local string_format = string.format
+
 ---------------------------------------------------------------------------
 -- QUI Missing Raid Buffs Display
 -- Shows missing raid buffs when a buff-providing class is in group
@@ -454,14 +470,14 @@ local function GetMissingBuffs()
             -- Provider mode: ONLY show buffs YOU can provide that anyone (including yourself) is missing
             if buff.providerClass == playerClass then
                 if not PlayerHasBuff(buff.spellId, buff.name) or AnyGroupMemberMissingBuff(buff.spellId, buff.name, buffRange) then
-                    table.insert(missing, buff)
+                    table_insert(missing, buff)
                 end
             end
         else
             -- Normal mode: show buffs YOU are missing when provider is in group AND in range
             if groupClasses[buff.providerClass] and not PlayerHasBuff(buff.spellId, buff.name) then
                 if IsProviderClassInRange(buff.providerClass, buffRange) then
-                    table.insert(missing, buff)
+                    table_insert(missing, buff)
                 end
             end
         end
@@ -511,7 +527,7 @@ local function CreateBuffIcon(parent, index)
             local className = LOCALIZED_CLASS_NAMES_MALE[self.buffData.providerClass] or self.buffData.providerClass
             GameTooltip:AddLine("Provided by: " .. className, 0.5, 0.8, 1)
             if self.buffCount and self.buffTotal then
-                GameTooltip:AddLine(string.format("Buffed: %d/%d", self.buffCount, self.buffTotal), 0.7, 1, 0.7)
+                GameTooltip:AddLine(string_format("Buffed: %d/%d", self.buffCount, self.buffTotal), 0.7, 1, 0.7)
             end
             GameTooltip:Show()
         end
@@ -828,7 +844,7 @@ UpdateDisplay = function()
                 local buffed, total = CountBuffedMembers(buff.spellId, buff.name)
                 icon.buffCount = buffed
                 icon.buffTotal = total
-                icon.countText:SetText(string.format("%d/%d", buffed, total))
+                icon.countText:SetText(string_format("%d/%d", buffed, total))
 
                 -- Apply font settings
                 local countFontSize = countSettings.fontSize or 10
@@ -1076,26 +1092,26 @@ function QUI_RaidBuffs:Debug()
     local settings = GetSettings()
     local lines = {}
     local playerClass = SafeUnitClass("player")
-    table.insert(lines, "QUI RaidBuffs Debug")
-    table.insert(lines, "Provider Mode: " .. (settings.providerMode and "ON" or "OFF"))
-    table.insert(lines, "Player Class: " .. (playerClass or "UNKNOWN"))
-    table.insert(lines, "In Group: " .. (IsInGroup() and "YES" or "NO"))
-    table.insert(lines, "In Raid: " .. (IsInRaid() and "YES" or "NO"))
-    table.insert(lines, "In Combat: " .. (InCombatLockdown() and "YES" or "NO"))
+    table_insert(lines, "QUI RaidBuffs Debug")
+    table_insert(lines, "Provider Mode: " .. (settings.providerMode and "ON" or "OFF"))
+    table_insert(lines, "Player Class: " .. (playerClass or "UNKNOWN"))
+    table_insert(lines, "In Group: " .. (IsInGroup() and "YES" or "NO"))
+    table_insert(lines, "In Raid: " .. (IsInRaid() and "YES" or "NO"))
+    table_insert(lines, "In Combat: " .. (InCombatLockdown() and "YES" or "NO"))
 
     -- Scan and show group classes
     ScanGroupClasses()
     local classes = {}
     for class, _ in pairs(groupClasses) do
-        table.insert(classes, class)
+        table_insert(classes, class)
     end
-    table.insert(lines, "Group Classes: " .. (#classes > 0 and table.concat(classes, ", ") or "NONE"))
+    table_insert(lines, "Group Classes: " .. (#classes > 0 and table.concat(classes, ", ") or "NONE"))
 
     -- Show party members and their status
-    table.insert(lines, "")
-    table.insert(lines, "Party Members:")
+    table_insert(lines, "")
+    table_insert(lines, "Party Members:")
     local numMembers = GetNumGroupMembers()
-    table.insert(lines, "  GetNumGroupMembers: " .. numMembers)
+    table_insert(lines, "  GetNumGroupMembers: " .. numMembers)
     if IsInGroup() and not IsInRaid() then
         for i = 1, numMembers - 1 do
             local unit = "party" .. i
@@ -1127,14 +1143,14 @@ function QUI_RaidBuffs:Debug()
             end
             local rangeInfo = " UnitInRange:" .. uirRange .. "/" .. uirChecked .. " CheckInteract:" .. cidResult .. " DistSq:" .. udsResult
 
-            table.insert(lines, "  " .. unit .. ": " .. name .. " (" .. (uClass or "?") .. ") exists:" .. tostring(exists) .. " connected:" .. tostring(connected) .. " dead:" .. tostring(dead) .. " available:" .. tostring(available))
-            table.insert(lines, "    Range APIs:" .. rangeInfo)
+            table_insert(lines, "  " .. unit .. ": " .. name .. " (" .. (uClass or "?") .. ") exists:" .. tostring(exists) .. " connected:" .. tostring(connected) .. " dead:" .. tostring(dead) .. " available:" .. tostring(available))
+            table_insert(lines, "    Range APIs:" .. rangeInfo)
         end
     end
 
     -- Check each buff
-    table.insert(lines, "")
-    table.insert(lines, "Buff Status:")
+    table_insert(lines, "")
+    table_insert(lines, "Buff Status:")
     for _, buff in ipairs(RAID_BUFFS) do
         local buffRange = buff.range or 40
         local hasProvider = groupClasses[buff.providerClass] and true or false
@@ -1155,7 +1171,7 @@ function QUI_RaidBuffs:Debug()
             status = "No provider"
         end
         local providerInfo = " range:" .. buffRange .. "yd canProvide:" .. tostring(canProvide) .. " anyMissing:" .. tostring(anyMissing) .. " providerInRange:" .. tostring(providerInRange)
-        table.insert(lines, "  " .. buff.name .. ": " .. status .. " (provider:" .. buff.providerClass .. " inGroup:" .. tostring(hasProvider) .. " hasBuff:" .. tostring(playerHas) .. providerInfo .. ")")
+        table_insert(lines, "  " .. buff.name .. ": " .. status .. " (provider:" .. buff.providerClass .. " inGroup:" .. tostring(hasProvider) .. " hasBuff:" .. tostring(playerHas) .. providerInfo .. ")")
 
         -- If player can provide this buff and provider mode is on, show who's missing it
         if canProvide and settings.providerMode and IsInGroup() and not IsInRaid() then
@@ -1164,7 +1180,7 @@ function QUI_RaidBuffs:Debug()
                 if IsUnitAvailable(unit, buffRange) then
                     local has = UnitHasBuff(unit, buff.spellId, buff.name)
                     local name = UnitName(unit) or "?"
-                    table.insert(lines, "    -> " .. unit .. " (" .. name .. "): " .. (has and "HAS" or "MISSING"))
+                    table_insert(lines, "    -> " .. unit .. " (" .. name .. "): " .. (has and "HAS" or "MISSING"))
                 end
             end
         end

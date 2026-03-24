@@ -14,6 +14,15 @@ local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
+-- Upvalue hot-path globals
+local pairs = pairs
+local pcall = pcall
+local wipe = wipe
+local CreateFrame = CreateFrame
+local InCombatLockdown = InCombatLockdown
+local hooksecurefunc = hooksecurefunc
+local C_Timer = C_Timer
+
 ---------------------------------------------------------------------------
 -- MODULE TABLE
 ---------------------------------------------------------------------------

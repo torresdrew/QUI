@@ -24,6 +24,8 @@ local GetTime = GetTime
 local UnitExists = UnitExists
 local C_UnitAuras = C_UnitAuras
 local sub = string.sub
+local CreateFrame = CreateFrame
+local table_insert = table.insert
 
 ---------------------------------------------------------------------------
 -- MODULE TABLE
@@ -669,7 +671,7 @@ local function RebuildFilterCacheForContext(cache, auraSettings)
         if buffClass then
             for key, filterStr in pairs(BUFF_CLASSIFICATION_MAP) do
                 if buffClass[key] then
-                    table.insert(cache.buffFilters, filterStr)
+                    table_insert(cache.buffFilters, filterStr)
                 end
             end
         end
@@ -678,7 +680,7 @@ local function RebuildFilterCacheForContext(cache, auraSettings)
         if debuffClass then
             for key, filterStr in pairs(DEBUFF_CLASSIFICATION_MAP) do
                 if debuffClass[key] then
-                    table.insert(cache.debuffFilters, filterStr)
+                    table_insert(cache.debuffFilters, filterStr)
                 end
             end
         end

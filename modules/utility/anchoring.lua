@@ -404,12 +404,13 @@ function QUI_Anchoring:PositionFrame(frame, anchorTarget, anchorPoint, offsetX, 
     -- Skip module positioning if this frame has an active anchoring override
     if self.layoutOwnedFrames[frame] then return true end
 
-    -- Defer positioning if in combat or secure context to avoid taint
-    if InCombatLockdown() then
+    -- Defer positioning if in combat or secure context to avoid taint.
+    -- Allow during ADDON_LOADED / PEW safe window (ns._inInitSafeWindow).
+    if InCombatLockdown() and not ns._inInitSafeWindow then
         pendingAnchoredFrameUpdateAfterCombat = true
         return false
     end
-    
+
     options = options or {}
     offsetX = offsetX or 0
     offsetY = offsetY or 0
@@ -661,9 +662,9 @@ function QUI_Anchoring:RegisterAnchoredFrame(frame, config)
     -- Skip immediate positioning if this frame has an active anchoring override
     if self.layoutOwnedFrames[frame] then return true end
 
-    -- Position immediately using multi-anchor system
-    -- Defer if in combat or secure context
-    if InCombatLockdown() then
+    -- Position immediately using multi-anchor system.
+    -- Defer if in combat (unless in the ADDON_LOADED / PEW safe window).
+    if InCombatLockdown() and not ns._inInitSafeWindow then
         pendingAnchoredFrameUpdateAfterCombat = true
         return true
     end
@@ -829,7 +830,7 @@ end
 local pendingAnchoredFrameUpdateAfterCombat = false
 
 function QUI_Anchoring:UpdateAllAnchoredFrames()
-    if InCombatLockdown() then
+    if InCombatLockdown() and not ns._inInitSafeWindow then
         -- Avoid hot-loop requeueing during combat; process once on PLAYER_REGEN_ENABLED.
         pendingAnchoredFrameUpdateAfterCombat = true
         return
@@ -2054,8 +2055,10 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
     SetFrameOverride(resolved, true, key)
 
     -- Defer protected frames to combat end; non-protected addon frames can
-    -- still be repositioned during combat.
-    if InCombatLockdown() then
+    -- still be repositioned during combat. Skip the bail during the
+    -- ADDON_LOADED / PLAYER_ENTERING_WORLD safe window where protected calls
+    -- are allowed even in combat (ns._inInitSafeWindow).
+    if InCombatLockdown() and not ns._inInitSafeWindow then
         local isProtected = false
         if type(resolved) == "table" and not resolved.GetObjectType then
             -- Boss frames array — check first frame

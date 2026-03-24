@@ -20,6 +20,8 @@ local tostring = tostring
 local C_Timer = C_Timer
 local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
+local table_insert = table.insert
+local string_format = string.format
 
 -- ADDON_LOADED safe window flag: during a combat /reload, InCombatLockdown()
 -- returns true but protected calls are still allowed. This flag lets
@@ -556,31 +558,31 @@ local function GetBarButtons(barKey)
         for _, name in ipairs(MICRO_BUTTON_NAMES) do
             local btn = _G[name]
             if btn then
-                table.insert(buttons, btn)
+                table_insert(buttons, btn)
             end
         end
         return buttons
     elseif barKey == "bags" then
         if MainMenuBarBackpackButton then
-            table.insert(buttons, MainMenuBarBackpackButton)
+            table_insert(buttons, MainMenuBarBackpackButton)
         end
         for i = 0, 3 do
             local slot = _G["CharacterBag" .. i .. "Slot"]
-            if slot then table.insert(buttons, slot) end
+            if slot then table_insert(buttons, slot) end
         end
         if CharacterReagentBag0Slot then
-            table.insert(buttons, CharacterReagentBag0Slot)
+            table_insert(buttons, CharacterReagentBag0Slot)
         end
         return buttons
     elseif barKey == "extraActionButton" then
         if ExtraActionBarFrame and ExtraActionBarFrame.button then
-            table.insert(buttons, ExtraActionBarFrame.button)
+            table_insert(buttons, ExtraActionBarFrame.button)
         end
         return buttons
     elseif barKey == "zoneAbility" then
         if ZoneAbilityFrame and ZoneAbilityFrame.SpellButtonContainer then
             for button in ZoneAbilityFrame.SpellButtonContainer:EnumerateActive() do
-                table.insert(buttons, button)
+                table_insert(buttons, button)
             end
         end
         return buttons
@@ -592,10 +594,10 @@ local function GetBarButtons(barKey)
     if not pattern then return buttons end
 
     for i = 1, count do
-        local buttonName = string.format(pattern, i)
+        local buttonName = string_format(pattern, i)
         local button = _G[buttonName]
         if button then
-            table.insert(buttons, button)
+            table_insert(buttons, button)
         end
     end
 
@@ -1588,24 +1590,24 @@ local function BuildPagingCondition()
     local parts = {}
     -- Override bar (boss encounters, scenarios)
     if GetOverrideBarIndex then
-        table.insert(parts, "[overridebar] " .. GetOverrideBarIndex())
+        table_insert(parts, "[overridebar] " .. GetOverrideBarIndex())
     end
     -- Vehicle / possess
     if GetVehicleBarIndex then
-        table.insert(parts, "[vehicleui][possessbar] " .. GetVehicleBarIndex())
+        table_insert(parts, "[vehicleui][possessbar] " .. GetVehicleBarIndex())
     end
     -- Dragonriding (bonusbar:5)
-    table.insert(parts, "[bonusbar:5] 11")
+    table_insert(parts, "[bonusbar:5] 11")
     -- Class-specific bonus bars (Druid forms, Rogue stealth, etc.)
     for i = 4, 1, -1 do
-        table.insert(parts, "[bonusbar:" .. i .. "] " .. (6 + i))
+        table_insert(parts, "[bonusbar:" .. i .. "] " .. (6 + i))
     end
     -- Manual page switching
     for i = 6, 2, -1 do
-        table.insert(parts, "[bar:" .. i .. "] " .. i)
+        table_insert(parts, "[bar:" .. i .. "] " .. i)
     end
     -- Default page
-    table.insert(parts, "1")
+    table_insert(parts, "1")
     return table.concat(parts, "; ")
 end
 
@@ -1635,10 +1637,10 @@ local function GetOriginalBlizzButtons(barKey)
     local count = BUTTON_COUNTS[barKey] or 12
     if not pattern then return buttons end
     for i = 1, count do
-        local buttonName = string.format(pattern, i)
+        local buttonName = string_format(pattern, i)
         local button = _G[buttonName]
         if button then
-            table.insert(buttons, button)
+            table_insert(buttons, button)
         end
     end
     return buttons
@@ -4904,7 +4906,7 @@ local function CollectSpellFlyoutButtons(flyout)
         if not IsSpellFlyoutButtonFrame(button, flyout) then return end
 
         seen[button] = true
-        table.insert(buttons, button)
+        table_insert(buttons, button)
     end
 
     if flyout and flyout.GetChildren then
@@ -5050,7 +5052,7 @@ local function CollectPageArrowFrames()
         if not frame or seen[frame] then return end
         if frame.Hide and frame.Show then
             seen[frame] = true
-            table.insert(frames, frame)
+            table_insert(frames, frame)
         end
     end
 
@@ -5589,7 +5591,7 @@ do
                     local filteredCopyOptions = {}
                     for _, opt in ipairs(copyBarOptions) do
                         if opt.value ~= barKey then
-                            table.insert(filteredCopyOptions, opt)
+                            table_insert(filteredCopyOptions, opt)
                         end
                     end
 

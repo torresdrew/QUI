@@ -9,6 +9,12 @@ local QUICore = ns.Addon
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
 
+-- Performance: cache frequently-called globals as locals
+local CreateFrame = CreateFrame
+local UIParent = UIParent
+local GetTime = GetTime
+local C_Timer = C_Timer
+
 ---------------------------------------------------------------------------
 -- State tracking for fade animation
 ---------------------------------------------------------------------------

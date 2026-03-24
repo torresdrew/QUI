@@ -23,10 +23,12 @@ local UnitAffectingCombat = UnitAffectingCombat
 local math_min = math.min
 local math_max = math.max
 local table_insert = table.insert
+local table_remove = table.remove
 local wipe = wipe
 local pairs = pairs
 local ipairs = ipairs
 local pcall = pcall
+local CreateFrame = CreateFrame
 
 ---------------------------------------------------------------------------
 -- MODULE NAMESPACE
@@ -43,7 +45,7 @@ CustomTrackers.infoCache = {}    -- Cached spell/item info
 local _detectorPool = {}
 
 local function AcquireDetector()
-    local f = table.remove(_detectorPool)
+    local f = table_remove(_detectorPool)
     if not f then
         f = CreateFrame("Frame")
     end
@@ -56,7 +58,7 @@ local function ReleaseDetector(f)
     f:SetScript("OnEvent", nil)
     f:SetScript("OnUpdate", nil)
     f:UnregisterAllEvents()
-    table.insert(_detectorPool, f)
+    table_insert(_detectorPool, f)
 end
 
 ---------------------------------------------------------------------------
@@ -337,7 +339,7 @@ local function GetAllClassSpecs()
     for i = 1, numSpecs do
         local specID, specName = GetSpecializationInfo(i)
         if specID and specName then
-            table.insert(specs, {
+            table_insert(specs, {
                 key = className .. "-" .. specID,
                 specID = specID,
                 specIndex = i,
@@ -437,7 +439,7 @@ function CustomTrackers:CopyEntriesToSpec(barConfig, specKey)
     -- Deep copy entries
     local copiedEntries = {}
     for _, entry in ipairs(barConfig.entries) do
-        table.insert(copiedEntries, {
+        table_insert(copiedEntries, {
             type = entry.type,
             id = entry.id,
             customName = entry.customName,
@@ -1603,7 +1605,7 @@ function CustomTrackers:UpdateBarIcons(bar)
         UpdateIconSecureAttributes(icon, entry, config)
         ApplyKeybindToTrackerIcon(icon)
 
-        table.insert(bar.icons, icon)
+        table_insert(bar.icons, icon)
     end
 
     -- Layout the icons (sets bar size)
@@ -1677,7 +1679,7 @@ local function RebuildActiveSet(bar)
             -- Only add usable spells to activeIcons (CPU optimization)
             -- This ensures we never process unknown spells in DoUpdate, regardless of hideNonUsable toggle
             if isUsable then
-                table.insert(bar.activeIcons, icon)
+                table_insert(bar.activeIcons, icon)
                 icon._usable = true
                 icon.isVisible = true  -- Mark as visible for layout
                 icon.tex:SetDesaturated(false)  -- Ensure known spells are full color
@@ -2614,7 +2616,7 @@ function CustomTrackers:AddEntry(barID, entryType, entryID, specKeyOverride)
                 end
             end
 
-            table.insert(entries, {
+            table_insert(entries, {
                 type = entryType,
                 id = entryID,
             })
@@ -2670,7 +2672,7 @@ function CustomTrackers:RemoveEntry(barID, entryType, entryID, specKeyOverride)
             if entries then
                 for i, entry in ipairs(entries) do
                     if entry.type == entryType and entry.id == entryID then
-                        table.remove(entries, i)
+                        table_remove(entries, i)
 
                         -- Refresh the bar (only if viewing current spec or not spec-specific)
                         if self.activeBars[barID] then
@@ -2727,8 +2729,8 @@ function CustomTrackers:MoveEntry(barID, entryIndex, direction, specKeyOverride)
             if newIndex < 1 or newIndex > #entries then return false end
 
             -- Swap entries
-            local entry = table.remove(entries, entryIndex)
-            table.insert(entries, newIndex, entry)
+            local entry = table_remove(entries, entryIndex)
+            table_insert(entries, newIndex, entry)
 
             -- Refresh bar display (only if viewing current spec or not spec-specific)
             if self.activeBars[barID] then
@@ -3182,7 +3184,7 @@ local function GetCustomTrackerFrames(includeAllBars)
     if CustomTrackers and CustomTrackers.activeBars then
         for _, bar in pairs(CustomTrackers.activeBars) do
             if bar and bar.config and (includeAllBars or (bar.config.enabled and bar:IsShown())) then
-                table.insert(frames, bar)
+                table_insert(frames, bar)
             end
         end
     end
@@ -3601,7 +3603,7 @@ local function RegisterCustomTrackerProvider(barID, elementKey)
                 local infoType, id, subType = GetCursorInfo()
                 if infoType == "item" then
                     if not barConfig.entries then barConfig.entries = {} end
-                    table.insert(barConfig.entries, { type = "item", id = id })
+                    table_insert(barConfig.entries, { type = "item", id = id })
                     ClearCursor()
                     Refresh()
                     -- Force rebuild to show new entry
@@ -3611,7 +3613,7 @@ local function RegisterCustomTrackerProvider(barID, elementKey)
                     end
                 elseif infoType == "spell" then
                     if not barConfig.entries then barConfig.entries = {} end
-                    table.insert(barConfig.entries, { type = "spell", id = id })
+                    table_insert(barConfig.entries, { type = "spell", id = id })
                     ClearCursor()
                     Refresh()
                     if settingsPanel then
@@ -3635,7 +3637,7 @@ local function RegisterCustomTrackerProvider(barID, elementKey)
             t1bg:SetColorTexture(0.15, 0.15, 0.2, 0.8)
             trinket1Btn:SetScript("OnClick", function()
                 if not barConfig.entries then barConfig.entries = {} end
-                table.insert(barConfig.entries, { type = "slot", id = 13, name = "Trinket 1" })
+                table_insert(barConfig.entries, { type = "slot", id = 13, name = "Trinket 1" })
                 Refresh()
                 if settingsPanel then
                     settingsPanel._currentKey = nil
@@ -3653,7 +3655,7 @@ local function RegisterCustomTrackerProvider(barID, elementKey)
             t2bg:SetColorTexture(0.15, 0.15, 0.2, 0.8)
             trinket2Btn:SetScript("OnClick", function()
                 if not barConfig.entries then barConfig.entries = {} end
-                table.insert(barConfig.entries, { type = "slot", id = 14, name = "Trinket 2" })
+                table_insert(barConfig.entries, { type = "slot", id = 14, name = "Trinket 2" })
                 Refresh()
                 if settingsPanel then
                     settingsPanel._currentKey = nil
@@ -3717,7 +3719,7 @@ local function RegisterCustomTrackerProvider(barID, elementKey)
                     removeBtn:SetNormalFontObject("GameFontNormalSmall")
                     removeBtn:SetText("|cffFF4444X|r")
                     removeBtn:SetScript("OnClick", function()
-                        table.remove(barConfig.entries, capturedIdx)
+                        table_remove(barConfig.entries, capturedIdx)
                         Refresh()
                         if settingsPanel then
                             settingsPanel._currentKey = nil
@@ -3877,7 +3879,7 @@ local function RegisterCustomTrackerProvider(barID, elementKey)
                         if db and db.bars then
                             for idx, bc in ipairs(db.bars) do
                                 if bc.id == barID then
-                                    table.remove(db.bars, idx)
+                                    table_remove(db.bars, idx)
                                     break
                                 end
                             end
@@ -3899,7 +3901,7 @@ local function RegisterCustomTrackerProvider(barID, elementKey)
                             if um._elementOrder then
                                 for i, k in ipairs(um._elementOrder) do
                                     if k == elementKey then
-                                        table.remove(um._elementOrder, i)
+                                        table_remove(um._elementOrder, i)
                                         break
                                     end
                                 end
@@ -3914,7 +3916,7 @@ local function RegisterCustomTrackerProvider(barID, elementKey)
                 })
             end
         end)
-        table.insert(sections, actionSection)
+        table_insert(sections, actionSection)
 
         -- Position
         U.BuildPositionCollapsible(content, elementKey, nil, sections, relayout)

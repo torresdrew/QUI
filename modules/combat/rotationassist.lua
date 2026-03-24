@@ -12,6 +12,12 @@ local GetTime = GetTime
 local InCombatLockdown = InCombatLockdown
 local UnitCanAttack = UnitCanAttack
 local UnitExists = UnitExists
+local CreateFrame = CreateFrame
+local UIParent = UIParent
+local type = type
+local pcall = pcall
+local ipairs = ipairs
+local C_Timer = C_Timer
 
 -- Update intervals
 local UPDATE_INTERVAL_COMBAT = 0.3

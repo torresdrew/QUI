@@ -21,6 +21,16 @@ local pcall = pcall
 local math_floor = math.floor
 local math_max = math.max
 local math_min = math.min
+local CreateFrame = CreateFrame
+local InCombatLockdown = InCombatLockdown
+local C_Timer = C_Timer
+local GetTime = GetTime
+local UnitCanAttack = UnitCanAttack
+local tostring = tostring
+local wipe = wipe
+local table_insert = table.insert
+local table_remove = table.remove
+local string_format = string.format
 
 -- Pre-create named frames so Edit Mode layout anchoring can resolve
 -- "QUIPowerBar" / "QUISecondaryPowerBar" before full initialization.
@@ -184,7 +194,7 @@ end
 
 local function FormatPercentValue(value, cfg)
     local pctSuffix = (cfg and cfg.hidePercentSymbol) and "" or "%"
-    return string.format("%.0f%s", value or 0, pctSuffix)
+    return string_format("%.0f%s", value or 0, pctSuffix)
 end
 
 local function ApplyPowerBarTextPlacement(bar, cfg)
@@ -419,7 +429,7 @@ do
         -- Kill Command: +1 (or +2 with Primal Surge)
         if spellID == KILL_COMMAND then
             local gain = C_SpellBook.IsSpellKnown(PRIMAL_SURGE) and 2 or 1
-            stacks = math.min(TIP_MAX_STACKS, stacks + gain)
+            stacks = math_min(TIP_MAX_STACKS, stacks + gain)
             expiresAt = GetTime() + TIP_DURATION
             if QUICore and QUICore.UpdateSecondaryPowerBar then
                 QUICore:UpdateSecondaryPowerBar()
@@ -429,7 +439,7 @@ do
 
         -- Takedown: +2 with Twin Fang talent
         if spellID == TAKEDOWN and C_SpellBook.IsSpellKnown(TWIN_FANG) then
-            stacks = math.min(TIP_MAX_STACKS, stacks + 2)
+            stacks = math_min(TIP_MAX_STACKS, stacks + 2)
             expiresAt = GetTime() + TIP_DURATION
             if QUICore and QUICore.UpdateSecondaryPowerBar then
                 QUICore:UpdateSecondaryPowerBar()
@@ -549,7 +559,7 @@ local essenceLastCount = nil     -- last integer essence count (detect gains)
 local essenceTickDuration = nil  -- seconds per essence regen tick
 
 -- Rune text format cache: only call string.format when the truncated value changes
-local _lastRuneRounded = {}    -- [runeIndex] = last math.floor(remaining * 10) value
+local _lastRuneRounded = {}    -- [runeIndex] = last math_floor(remaining * 10) value
 local _lastRuneFormatted = {}  -- [runeIndex] = last formatted string
 
 -- Event throttle (16ms = ~60 FPS, smooth updates while managing CPU)
@@ -928,7 +938,7 @@ local function GetPrimaryResourceValue(resource, cfg)
         if HAS_UNIT_POWER_PERCENT then
             return max, current, GetPowerPct("player", resource, false), "percent"
         else
-            return max, current, math.floor((current / max) * 100 + 0.5), "percent"
+            return max, current, math_floor((current / max) * 100 + 0.5), "percent"
         end
     else
         return max, current, current, "number"
@@ -1062,18 +1072,18 @@ local function SanitizeIndicatorValues(values, maxValue)
         local value = tonumber(rawValue)
         if value and value > 0 and value < maxValue then
             -- Round to 3 decimals to avoid floating-point duplicate noise.
-            value = math.floor((value * 1000) + 0.5) / 1000
-            local dedupeKey = string.format("%.3f", value)
+            value = math_floor((value * 1000) + 0.5) / 1000
+            local dedupeKey = string_format("%.3f", value)
             if not dedupe[dedupeKey] then
                 dedupe[dedupeKey] = true
-                table.insert(sanitized, value)
+                table_insert(sanitized, value)
             end
         end
     end
 
     table.sort(sanitized)
     while #sanitized > 3 do
-        table.remove(sanitized)
+        table_remove(sanitized)
     end
 
     return sanitized
@@ -1623,7 +1633,7 @@ _G.QUI_UpdateLockedPowerBar = function()
         -- Width (bar length) = total CDM height + borders
         local topBottomBorderSize = (evs and evs.row1BorderSize) or 0
         local targetWidth = totalHeight + (2 * topBottomBorderSize) - (2 * barBorderSize)
-        newWidth = math.floor(targetWidth + 0.5)
+        newWidth = math_floor(targetWidth + 0.5)
 
         -- Position to the right of Essential
         local essentialCenterX = Helpers.SafeValue(essentialViewer:GetCenter(), nil)
@@ -1644,8 +1654,8 @@ _G.QUI_UpdateLockedPowerBar = function()
             -- Power bar center X = visual right + bar thickness/2 + border
             local powerBarCenterX = cdmVisualRight + (barThickness / 2) + barBorderSize
 
-            newOffsetX = math.floor(powerBarCenterX - screenCenterX + 0.5) - 4
-            newOffsetY = math.floor(essentialCenterY - screenCenterY + 0.5)
+            newOffsetX = math_floor(powerBarCenterX - screenCenterX + 0.5) - 4
+            newOffsetY = math_floor(essentialCenterY - screenCenterY + 0.5)
         end
     else
         -- Horizontal CDM: bar below, width matches raw row content width
@@ -1655,14 +1665,14 @@ _G.QUI_UpdateLockedPowerBar = function()
 
         local row1BorderSize = (evs and evs.row1BorderSize) or 0
         local targetWidth = rowWidth + (2 * row1BorderSize) - (2 * barBorderSize)
-        newWidth = math.floor(targetWidth + 0.5)
+        newWidth = math_floor(targetWidth + 0.5)
 
         -- Center horizontally with Essential
         local rawCenterX = Helpers.SafeValue(essentialViewer:GetCenter(), nil)
         local rawScreenX = Helpers.SafeValue(UIParent:GetCenter(), nil)
         if rawCenterX and rawScreenX then
-            local essentialCenterX = math.floor(rawCenterX + 0.5)
-            local screenCenterX = math.floor(rawScreenX + 0.5)
+            local essentialCenterX = math_floor(rawCenterX + 0.5)
+            local screenCenterX = math_floor(rawScreenX + 0.5)
             newOffsetX = essentialCenterX - screenCenterX
         end
     end
@@ -1723,7 +1733,7 @@ _G.QUI_UpdateLockedPowerBarToUtility = function()
         -- Width (bar length) = total CDM height
         local row1BorderSize = (uvs and uvs.row1BorderSize) or 0
         local targetWidth = totalHeight + (2 * row1BorderSize) - (2 * barBorderSize)
-        newWidth = math.floor(targetWidth + 0.5)
+        newWidth = math_floor(targetWidth + 0.5)
 
         -- Position to the LEFT of Utility
         local utilityCenterX, utilityCenterY = utilityViewer:GetCenter()
@@ -1740,8 +1750,8 @@ _G.QUI_UpdateLockedPowerBarToUtility = function()
             -- Power bar center X = visual left - bar thickness/2 - border
             local powerBarCenterX = cdmVisualLeft - (barThickness / 2) - barBorderSize
 
-            newOffsetX = math.floor(powerBarCenterX - screenCenterX + 0.5) + 1
-            newOffsetY = math.floor(utilityCenterY - screenCenterY + 0.5)
+            newOffsetX = math_floor(powerBarCenterX - screenCenterX + 0.5) + 1
+            newOffsetY = math_floor(utilityCenterY - screenCenterY + 0.5)
         end
     else
         -- Horizontal CDM: bar below, width matches raw row content width
@@ -1750,14 +1760,14 @@ _G.QUI_UpdateLockedPowerBarToUtility = function()
 
         local bottomRowBorderSize = (uvs and uvs.bottomRowBorderSize) or 0
         local targetWidth = rowWidth + (2 * bottomRowBorderSize) - (2 * barBorderSize)
-        newWidth = math.floor(targetWidth + 0.5)
+        newWidth = math_floor(targetWidth + 0.5)
 
         -- Center horizontally with Utility
         local rawCenterX = utilityViewer:GetCenter()
         local rawScreenX = UIParent:GetCenter()
         if rawCenterX and rawScreenX then
-            local utilityCenterX = math.floor(rawCenterX + 0.5)
-            local screenCenterX = math.floor(rawScreenX + 0.5)
+            local utilityCenterX = math_floor(rawCenterX + 0.5)
+            local screenCenterX = math_floor(rawScreenX + 0.5)
             newOffsetX = utilityCenterX - screenCenterX
         end
     end
@@ -1826,7 +1836,7 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
         -- Width (bar length) = total CDM height + borders
         local topBottomBorderSize = (evs and evs.row1BorderSize) or 0
         local targetWidth = totalHeight + (2 * topBottomBorderSize) - (2 * barBorderSize)
-        newWidth = math.floor(targetWidth + 0.5)
+        newWidth = math_floor(targetWidth + 0.5)
 
         -- Position to the right of Essential
         local essentialCenterX, essentialCenterY = essentialViewer:GetCenter()
@@ -1842,8 +1852,8 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
             -- Power bar center X = visual right + bar thickness/2 + border
             local powerBarCenterX = cdmVisualRight + (barThickness / 2) + barBorderSize
 
-            newOffsetX = math.floor(powerBarCenterX - screenCenterX + 0.5) - 4
-            newOffsetY = math.floor(essentialCenterY - screenCenterY + 0.5)
+            newOffsetX = math_floor(powerBarCenterX - screenCenterX + 0.5) - 4
+            newOffsetY = math_floor(essentialCenterY - screenCenterY + 0.5)
         end
     else
         -- Horizontal CDM: bar above, width matches raw row content width
@@ -1852,23 +1862,23 @@ _G.QUI_UpdateLockedSecondaryPowerBar = function()
 
         local row1BorderSize = (evs and evs.row1BorderSize) or 0
         local targetWidth = rowWidth + (2 * row1BorderSize) - (2 * barBorderSize)
-        newWidth = math.floor(targetWidth + 0.5)
+        newWidth = math_floor(targetWidth + 0.5)
 
         local rawCenterX, rawCenterY = essentialViewer:GetCenter()
         local rawScreenX, rawScreenY = UIParent:GetCenter()
 
         if rawCenterX and rawCenterY and rawScreenX and rawScreenY then
-            local essentialCenterX = math.floor(rawCenterX + 0.5)
-            local essentialCenterY = math.floor(rawCenterY + 0.5)
-            local screenCenterX = math.floor(rawScreenX + 0.5)
-            local screenCenterY = math.floor(rawScreenY + 0.5)
+            local essentialCenterX = math_floor(rawCenterX + 0.5)
+            local essentialCenterY = math_floor(rawCenterY + 0.5)
+            local screenCenterX = math_floor(rawScreenX + 0.5)
+            local screenCenterY = math_floor(rawScreenY + 0.5)
             newOffsetX = essentialCenterX - screenCenterX
             -- Y offset (position above Essential CDM)
             local totalHeight = (evs and evs.totalHeight) or savedH
             if totalHeight > 0 then
                 local cdmVisualTop = essentialCenterY + (totalHeight / 2) + row1BorderSize
                 local powerBarCenterY = cdmVisualTop + (barThickness / 2) + barBorderSize
-                newOffsetY = math.floor(powerBarCenterY - screenCenterY + 0.5) - 1
+                newOffsetY = math_floor(powerBarCenterY - screenCenterY + 0.5) - 1
             end
         end
     end
@@ -1928,7 +1938,7 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
         -- Width (bar length) = total CDM height
         local row1BorderSize = (uvs and uvs.row1BorderSize) or 0
         local targetWidth = totalHeight + (2 * row1BorderSize) - (2 * barBorderSize)
-        newWidth = math.floor(targetWidth + 0.5)
+        newWidth = math_floor(targetWidth + 0.5)
 
         -- Position to the LEFT of Utility
         local utilityCenterX, utilityCenterY = utilityViewer:GetCenter()
@@ -1943,8 +1953,8 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
             -- Power bar center X = visual left - bar thickness/2
             local powerBarCenterX = cdmVisualLeft - (barThickness / 2)
 
-            newOffsetX = math.floor(powerBarCenterX - screenCenterX + 0.5)
-            newOffsetY = math.floor(utilityCenterY - screenCenterY + 0.5)
+            newOffsetX = math_floor(powerBarCenterX - screenCenterX + 0.5)
+            newOffsetY = math_floor(utilityCenterY - screenCenterY + 0.5)
         end
     else
         -- Horizontal CDM: bar below, width matches raw row content width
@@ -1953,23 +1963,23 @@ _G.QUI_UpdateLockedSecondaryPowerBarToUtility = function()
 
         local bottomRowBorderSize = (uvs and uvs.bottomRowBorderSize) or 0
         local targetWidth = rowWidth + (2 * bottomRowBorderSize) - (2 * barBorderSize)
-        newWidth = math.floor(targetWidth + 0.5)
+        newWidth = math_floor(targetWidth + 0.5)
 
         local rawCenterX, rawCenterY = utilityViewer:GetCenter()
         local rawScreenX, rawScreenY = UIParent:GetCenter()
 
         if rawCenterX and rawCenterY and rawScreenX and rawScreenY then
-            local utilityCenterX = math.floor(rawCenterX + 0.5)
-            local utilityCenterY = math.floor(rawCenterY + 0.5)
-            local screenCenterX = math.floor(rawScreenX + 0.5)
-            local screenCenterY = math.floor(rawScreenY + 0.5)
+            local utilityCenterX = math_floor(rawCenterX + 0.5)
+            local utilityCenterY = math_floor(rawCenterY + 0.5)
+            local screenCenterX = math_floor(rawScreenX + 0.5)
+            local screenCenterY = math_floor(rawScreenY + 0.5)
             newOffsetX = utilityCenterX - screenCenterX
             -- Y offset (position below Utility CDM)
             local totalHeight = (uvs and uvs.totalHeight) or savedH
             if totalHeight > 0 then
                 local cdmVisualBottom = utilityCenterY - (totalHeight / 2) - bottomRowBorderSize
                 local powerBarCenterY = cdmVisualBottom - (barThickness / 2) - barBorderSize
-                newOffsetY = math.floor(powerBarCenterY - screenCenterY + 0.5) + 1
+                newOffsetY = math_floor(powerBarCenterY - screenCenterY + 0.5) + 1
             end
         end
     end
@@ -2175,15 +2185,15 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
         for i = 1, maxPower do
             local start, duration, runeReady = GetRuneCooldown(i)
             if runeReady then
-                table.insert(readyList, { index = i })
+                table_insert(readyList, { index = i })
             else
                 if start and duration and duration > 0 then
                     local elapsed = now - start
-                    local remaining = math.max(0, duration - elapsed)
-                    local frac = math.max(0, math.min(1, elapsed / duration))
-                    table.insert(cdList, { index = i, remaining = remaining, frac = frac })
+                    local remaining = math_max(0, duration - elapsed)
+                    local frac = math_max(0, math_min(1, elapsed / duration))
+                    table_insert(cdList, { index = i, remaining = remaining, frac = frac })
                 else
-                    table.insert(cdList, { index = i, remaining = math.huge, frac = 0 })
+                    table_insert(cdList, { index = i, remaining = math.huge, frac = 0 })
                 end
             end
         end
@@ -2199,12 +2209,12 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
         local cdLookup = {}
         
         for _, v in ipairs(readyList) do
-            table.insert(displayOrder, v.index)
+            table_insert(displayOrder, v.index)
             readyLookup[v.index] = true
         end
         
         for _, v in ipairs(cdList) do
-            table.insert(displayOrder, v.index)
+            table_insert(displayOrder, v.index)
             cdLookup[v.index] = v
         end
 
@@ -2245,7 +2255,7 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
                         
                         -- Only show timer text if enabled
                         if cfg.showFragmentedPowerBarText ~= false then
-                            runeText:SetText(string.format("%.1f", math.max(0, cdInfo.remaining)))
+                            runeText:SetText(string_format("%.1f", math_max(0, cdInfo.remaining)))
                         else
                             runeText:SetText("")
                         end
@@ -2352,8 +2362,8 @@ function QUICore:UpdateFragmentedPowerDisplay(bar, resource, isVertical)
         -- Calculate partial fill from timer extrapolation
         local partialFill = 0
         if essenceNextTick and essenceTickDuration > 0 then
-            local remaining = math.max(0, essenceNextTick - now)
-            partialFill = math.max(0, math.min(1, 1 - (remaining / essenceTickDuration)))
+            local remaining = math_max(0, essenceNextTick - now)
+            partialFill = math_max(0, math_min(1, 1 - (remaining / essenceTickDuration)))
         end
 
         for pos = 1, maxPower do
@@ -2461,17 +2471,17 @@ local function RuneTimerOnUpdate(bar, delta)
             local start, duration, runeReady = GetRuneCooldown(i)
             if not runeReady and start and duration and duration > 0 then
                 anyOnCooldown = true
-                local remaining = math.max(0, duration - (now - start))
-                local frac = math.max(0, math.min(1, (now - start) / duration))
+                local remaining = math_max(0, duration - (now - start))
+                local frac = math_max(0, math_min(1, (now - start) / duration))
                 runeFrame:SetValue(frac)
                 if runeText then
                     local cfg = QUICore.db.profile.secondaryPowerBar
                     if cfg.showFragmentedPowerBarText ~= false then
                         -- Only reformat when the truncated value changes (avoids per-tick string.format)
-                        local rounded = math.floor(remaining * 10)
+                        local rounded = math_floor(remaining * 10)
                         if rounded ~= _lastRuneRounded[i] then
                             _lastRuneRounded[i] = rounded
-                            _lastRuneFormatted[i] = string.format("%.1f", remaining)
+                            _lastRuneFormatted[i] = string_format("%.1f", remaining)
                         end
                         runeText:SetText(_lastRuneFormatted[i])
                     else
@@ -2537,9 +2547,9 @@ local function EssenceTimerOnUpdate(bar, delta)
     local rechargingIdx = current + 1
     if rechargingIdx <= maxPower and essenceNextTick and essenceTickDuration and essenceTickDuration > 0 then
         local now = GetTime()
-        local remaining = math.max(0, essenceNextTick - now)
+        local remaining = math_max(0, essenceNextTick - now)
         local partialFill = 1 - (remaining / essenceTickDuration)
-        partialFill = math.max(0, math.min(1, partialFill))
+        partialFill = math_max(0, math_min(1, partialFill))
 
         local essenceFrame = bar.FragmentedPowerBars and bar.FragmentedPowerBars[rechargingIdx]
         if essenceFrame and essenceFrame:IsShown() then
@@ -2804,10 +2814,10 @@ function QUICore:UpdateSecondaryPowerBar()
 
             if primaryCenterX and primaryCenterY and screenCenterX and screenCenterY then
                 -- Round center coordinates to match Quick Position calculation
-                primaryCenterX = math.floor(primaryCenterX + 0.5)
-                primaryCenterY = math.floor(primaryCenterY + 0.5)
-                screenCenterX = math.floor(screenCenterX + 0.5)
-                screenCenterY = math.floor(screenCenterY + 0.5)
+                primaryCenterX = math_floor(primaryCenterX + 0.5)
+                primaryCenterY = math_floor(primaryCenterY + 0.5)
+                screenCenterX = math_floor(screenCenterX + 0.5)
+                screenCenterY = math_floor(screenCenterY + 0.5)
                 -- Cache Primary dimensions for Standalone fallback
                 -- For vertical Primary bar, GetWidth() returns thickness, GetHeight() returns length
                 local primaryIsVertical = (primaryCfg.orientation == "VERTICAL")
@@ -2831,19 +2841,19 @@ function QUICore:UpdateSecondaryPowerBar()
                     local primaryActualWidth = primaryBar:GetWidth()
                     local primaryVisualRight = primaryCenterX + (primaryActualWidth / 2)
                     local secondaryCenterX = primaryVisualRight + (secondaryHeight / 2)
-                    offsetX = math.floor(secondaryCenterX - screenCenterX + 0.5)
-                    offsetY = math.floor(primaryCenterY - screenCenterY + 0.5)
+                    offsetX = math_floor(secondaryCenterX - screenCenterX + 0.5)
+                    offsetY = math_floor(primaryCenterY - screenCenterY + 0.5)
                 else
                     -- Horizontal bar: Secondary goes ABOVE Primary
                     local primaryVisualTop = primaryCenterY + (primaryHeight / 2) + primaryBorderSize
                     local secondaryCenterY = primaryVisualTop + (secondaryHeight / 2) + secondaryBorderSize
-                    offsetX = math.floor(primaryCenterX - screenCenterX + 0.5)
-                    offsetY = math.floor(secondaryCenterY - screenCenterY + 0.5) - 1
+                    offsetX = math_floor(primaryCenterX - screenCenterX + 0.5)
+                    offsetY = math_floor(secondaryCenterY - screenCenterY + 0.5) - 1
                 end
 
                 -- Calculate width to match Primary's visual width
                 local targetWidth = primaryWidth + (2 * primaryBorderSize) - (2 * secondaryBorderSize)
-                width = math.floor(targetWidth + 0.5)
+                width = math_floor(targetWidth + 0.5)
 
                 -- Position the bar (add user adjustment on top of calculated base position)
                 local finalX = offsetX + (cfg.offsetX or 0)
@@ -2880,8 +2890,8 @@ function QUICore:UpdateSecondaryPowerBar()
 
             if screenCenterX and screenCenterY then
                 -- Round screen center to match Quick Position calculation
-                screenCenterX = math.floor(screenCenterX + 0.5)
-                screenCenterY = math.floor(screenCenterY + 0.5)
+                screenCenterX = math_floor(screenCenterX + 0.5)
+                screenCenterY = math_floor(screenCenterY + 0.5)
                 local primaryCenterX = cachedPrimaryDimensions.centerX
                 local primaryCenterY = cachedPrimaryDimensions.centerY
                 local primaryHeight = cachedPrimaryDimensions.height
@@ -2896,18 +2906,18 @@ function QUICore:UpdateSecondaryPowerBar()
                     -- Vertical secondary: goes to the RIGHT of Primary (use cached actual width)
                     local primaryVisualRight = primaryCenterX + (primaryWidth / 2)
                     local secondaryCenterX = primaryVisualRight + (secondaryHeight / 2)
-                    offsetX = math.floor(secondaryCenterX - screenCenterX + 0.5)
-                    offsetY = math.floor(primaryCenterY - screenCenterY + 0.5)
+                    offsetX = math_floor(secondaryCenterX - screenCenterX + 0.5)
+                    offsetY = math_floor(primaryCenterY - screenCenterY + 0.5)
                 else
                     -- Horizontal bar: Secondary goes ABOVE Primary
                     local primaryVisualTop = primaryCenterY + (primaryHeight / 2) + primaryBorderSize
                     local secondaryCenterY = primaryVisualTop + (secondaryHeight / 2) + secondaryBorderSize
-                    offsetX = math.floor(primaryCenterX - screenCenterX + 0.5)
-                    offsetY = math.floor(secondaryCenterY - screenCenterY + 0.5) - 1
+                    offsetX = math_floor(primaryCenterX - screenCenterX + 0.5)
+                    offsetY = math_floor(secondaryCenterY - screenCenterY + 0.5) - 1
                 end
 
                 local targetWidth = primaryWidth + (2 * primaryBorderSize) - (2 * secondaryBorderSize)
-                width = math.floor(targetWidth + 0.5)
+                width = math_floor(targetWidth + 0.5)
 
                 -- Add user adjustment on top of calculated base position
                 local finalX = offsetX + (cfg.offsetX or 0)
@@ -3195,13 +3205,13 @@ function QUICore:UpdateSecondaryPowerBar()
     -- Update text (safe: uses only displayValue)
     if valueType == "shards" then
         -- Destruction Warlock: show decimal shards (e.g., 3.4)
-        bar.TextValue:SetText(string.format("%.1f", displayValue or 0))
+        bar.TextValue:SetText(string_format("%.1f", displayValue or 0))
     elseif valueType == "percent" and cfg.showPercent then
         bar.TextValue:SetText(FormatPercentValue(displayValue, cfg))
     elseif valueType == "percent" then
         -- Stagger with showPercent off: show raw stagger amount
         local stagger = UnitStagger("player") or 0
-        bar.TextValue:SetText(tostring(math.floor(stagger)))
+        bar.TextValue:SetText(tostring(math_floor(stagger)))
     else
         bar.TextValue:SetText(tostring(displayValue or 0))
     end

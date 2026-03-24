@@ -39,6 +39,16 @@ local GetDB = Helpers.CreateDBGetter("totemBar")
 local GetGeneralFont = Helpers.GetGeneralFont
 local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
 
+-- Performance: cache frequently-called globals as locals
+local CreateFrame = CreateFrame
+local UIParent = UIParent
+local ipairs = ipairs
+local pcall = pcall
+local InCombatLockdown = InCombatLockdown
+local C_Timer = C_Timer
+local math_floor = math.floor
+local string_format = string.format
+
 ---------------------------------------------------------------------------
 -- EVENTS TO STEAL FROM BLIZZARD'S TotemFrame
 ---------------------------------------------------------------------------
@@ -80,11 +90,11 @@ end
 ---------------------------------------------------------------------------
 local function FormatDuration(seconds)
     if seconds >= 60 then
-        return string.format("%dm", math.floor(seconds / 60))
+        return string_format("%dm", math_floor(seconds / 60))
     elseif seconds >= 10 then
-        return string.format("%d", math.floor(seconds))
+        return string_format("%d", math_floor(seconds))
     elseif seconds > 0 then
-        return string.format("%.1f", seconds)
+        return string_format("%.1f", seconds)
     end
     return ""
 end
@@ -452,8 +462,8 @@ container:SetScript("OnDragStop", function(self)
             db.offsetX = QUICore:PixelRound(anchorX - screenX)
             db.offsetY = QUICore:PixelRound(anchorY - screenY)
         else
-            db.offsetX = math.floor(anchorX - screenX + 0.5)
-            db.offsetY = math.floor(anchorY - screenY + 0.5)
+            db.offsetX = math_floor(anchorX - screenX + 0.5)
+            db.offsetY = math_floor(anchorY - screenY + 0.5)
         end
     end
     PositionContainer()

@@ -12,6 +12,16 @@ local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
+-- Upvalue hot-path globals
+local pairs = pairs
+local ipairs = ipairs
+local wipe = wipe
+local CreateFrame = CreateFrame
+local InCombatLockdown = InCombatLockdown
+local C_Timer = C_Timer
+local table_insert = table.insert
+local table_remove = table.remove
+
 ---------------------------------------------------------------------------
 -- MODULE TABLE
 ---------------------------------------------------------------------------
@@ -310,7 +320,7 @@ local function ResolveBindings()
 
         if binding.key and hasAction then
             -- Keyboard binding
-            table.insert(keyboardBindings, {
+            table_insert(keyboardBindings, {
                 key = binding.key,
                 modifiers = binding.modifiers or "",
                 spell = binding.spell,
@@ -321,7 +331,7 @@ local function ResolveBindings()
             local scrollKey = SCROLL_WHEEL_KEYS[binding.button]
             if scrollKey then
                 -- Scroll wheel uses override bindings (same path as keyboard keys)
-                table.insert(keyboardBindings, {
+                table_insert(keyboardBindings, {
                     key = scrollKey,
                     modifiers = binding.modifiers or "",
                     spell = binding.spell,
@@ -330,7 +340,7 @@ local function ResolveBindings()
                 })
             else
                 -- Mouse binding
-                table.insert(activeBindings, {
+                table_insert(activeBindings, {
                     button = binding.button,
                     modifiers = binding.modifiers or "",
                     spell = binding.spell,
@@ -692,7 +702,7 @@ function QUI_GFCC:AddBinding(binding)
         end
     end
 
-    table.insert(bindings, binding)
+    table_insert(bindings, binding)
 
     if not InCombatLockdown() then
         self:RefreshBindings()
@@ -706,7 +716,7 @@ function QUI_GFCC:RemoveBinding(index)
     local bindings = self:GetEditableBindings()
     if index < 1 or index > #bindings then return false end
 
-    table.remove(bindings, index)
+    table_remove(bindings, index)
 
     if not InCombatLockdown() then
         self:RefreshBindings()

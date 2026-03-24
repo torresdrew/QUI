@@ -435,14 +435,33 @@ end
 -- Hooking
 ---------------------------------------------------------------------------
 
+-- Pre-allocated callback tables to avoid closure allocation in C_Timer.After
+local _pendingHookQueue = {}
+local function _FlushHookQueue()
+    for i = 1, #_pendingHookQueue do
+        local tt = _pendingHookQueue[i]
+        _pendingHookQueue[i] = nil
+        if tt then HookTooltipOnShow(tt) end
+    end
+end
+
+local _pendingFontSet = {}
+local function _FlushPendingFonts()
+    for tt in pairs(_pendingFontSet) do
+        _pendingFontSet[tt] = nil
+        if tt.IsShown and tt:IsShown() and not InCombatLockdown() then
+            pcall(ApplyFontSize, tt)
+        end
+    end
+end
+
 local SafeHookTooltipOnShow, HookTooltipOnShow
 
 SafeHookTooltipOnShow = function(tooltip)
     if hookedTooltips[tooltip] then return end
     if InCombatLockdown() then
-        C_Timer.After(0, function()
-            if tooltip then HookTooltipOnShow(tooltip) end
-        end)
+        _pendingHookQueue[#_pendingHookQueue + 1] = tooltip
+        C_Timer.After(0, _FlushHookQueue)
     else
         HookTooltipOnShow(tooltip)
     end
@@ -473,11 +492,8 @@ HookTooltipOnShow = function(tooltip)
         StyleTooltip(self)
         -- Defer font sizing out of the securecall chain to avoid tainting
         -- tooltip width calculations
-        C_Timer.After(0, function()
-            if self:IsShown() and not InCombatLockdown() then
-                pcall(ApplyFontSize, self)
-            end
-        end)
+        _pendingFontSet[self] = true
+        C_Timer.After(0, _FlushPendingFonts)
     end)
 
     hookedTooltips[tooltip] = true
@@ -581,11 +597,8 @@ local function SetupPostProcessor()
 
     local function DeferFont(tooltip)
         if not IsEnabled() then return end
-        C_Timer.After(0, function()
-            if tooltip and tooltip.IsShown and tooltip:IsShown() then
-                pcall(ApplyFontSize, tooltip)
-            end
-        end)
+        _pendingFontSet[tooltip] = true
+        C_Timer.After(0, _FlushPendingFonts)
     end
 
     local function HandlePostCall(tooltip)
@@ -706,11 +719,10 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
 
             -- GameTooltip just became visible
             OnTooltipShow(GameTooltip)
+            _pendingFontSet[GameTooltip] = true
             C_Timer.After(0, function()
+                _FlushPendingFonts()
                 if not GameTooltip:IsShown() then return end
-                if not InCombatLockdown() then
-                    pcall(ApplyFontSize, GameTooltip)
-                end
                 -- Discover comparison tooltips (lazily created by C-side)
                 for i = 1, 2 do
                     local st = _G["ShoppingTooltip" .. i]

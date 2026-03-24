@@ -977,6 +977,11 @@ function QUICore:OnEnable()
         self:InitializePixelPerfect()
     end
 
+    -- OnEnable runs synchronously inside the ADDON_LOADED handler — protected
+    -- calls are allowed even during combat reloads. Set a namespace flag so
+    -- subsystems (e.g. frame anchoring) can bypass their combat guards.
+    ns._inInitSafeWindow = true
+
     -- Apply UI scale (uses pixel perfect system if available)
     if self.ApplyUIScale then
         self:ApplyUIScale()
@@ -998,9 +1003,7 @@ function QUICore:OnEnable()
             end
             self.db.profile.general.uiScale = scaleToApply
         end
-        if not InCombatLockdown() then
-            UIParent:SetScale(scaleToApply)
-        end
+        UIParent:SetScale(scaleToApply)
     end
 
     -- Capture preserved UI scale (after it's been properly applied)
@@ -1017,15 +1020,19 @@ function QUICore:OnEnable()
     end
 
     -- IMMEDIATE: Apply frame anchoring synchronously during ADDON_LOADED
-    -- safe window. Uses raw-point mode (size-stable CENTER conversion is
-    -- deferred to later timers when UIParent dimensions have settled).
+    -- safe window. Protected calls work here even during combat reloads.
     ApplyFrameOverrides()
 
+    -- Close the safe window — all subsequent C_Timer callbacks run outside
+    -- the ADDON_LOADED handler and cannot make protected calls in combat.
+    ns._inInitSafeWindow = false
+
     -- DEFERRED 0.1s: Hook setup (spreads work across frames)
+    -- Combat-safe: uses hooksecurefunc + CreateFrame only. Must always run so
+    -- the PLAYER_REGEN_ENABLED recovery handler inside HookEditMode is created
+    -- even after a combat reload.
     C_Timer.After(0.1, function()
-        if not InCombatLockdown() then
-            self:HookEditMode()
-        end
+        self:HookEditMode()
     end)
 
     -- DEFERRED 0.5s: Unit frames (secure APIs now safe) + global font override + alerts
@@ -1041,10 +1048,10 @@ function QUICore:OnEnable()
         if self.ApplyGlobalFont then
             self:ApplyGlobalFont()
         end
-        -- Mark newly created frames + position overrides (gatekeeper blocks later module repositioning)
-        if not InCombatLockdown() then
-            ApplyFrameOverrides()
-        end
+        -- Mark newly created frames + position overrides. Non-protected frames
+        -- positioned immediately; protected frames deferred to PLAYER_REGEN_ENABLED
+        -- via pendingAnchoredFrameUpdateAfterCombat in the anchoring system.
+        ApplyFrameOverrides()
     end)
 
     -- DEFERRED 1.0s: UI hider + buff borders
@@ -1058,26 +1065,20 @@ function QUICore:OnEnable()
         if RefreshBuffBorders then
             RefreshBuffBorders()
         end
-        if not InCombatLockdown() then
-            ApplyFrameOverrides()
-        end
+        ApplyFrameOverrides()
     end)
 
     -- DEFERRED 2.0s: Safety retry for late-loading frames
     C_Timer.After(2.0, function()
-        if not InCombatLockdown() then
-            ApplyFrameOverrides()
-        end
+        ApplyFrameOverrides()
     end)
 
     -- DEFERRED 3.0s: Register all frames as anchor targets + final override apply
     C_Timer.After(3.0, function()
-        if not InCombatLockdown() then
-            if ns.QUI_Anchoring then
-                ns.QUI_Anchoring:RegisterAllFrameTargets()
-            end
-            ApplyFrameOverrides()
+        if ns.QUI_Anchoring then
+            ns.QUI_Anchoring:RegisterAllFrameTargets()
         end
+        ApplyFrameOverrides()
     end)
 
     self:SetupEncounterWarningsSecretValuePatch()

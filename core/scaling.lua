@@ -371,9 +371,9 @@ function QUICore:GetSmartDefaultScale()
     return 1.0                                                -- 1080p or lower
 end
 
---- Apply UI scale (defers if in combat)
+--- Apply UI scale (defers if in combat, unless in ADDON_LOADED safe window)
 function QUICore:ApplyUIScale()
-    if InCombatLockdown() then
+    if InCombatLockdown() and not ns._inInitSafeWindow then
         if not self._UIScalePending then
             self._UIScalePending = true
             self:RegisterEvent('PLAYER_REGEN_ENABLED', function()

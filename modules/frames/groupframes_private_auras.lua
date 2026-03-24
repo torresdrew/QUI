@@ -30,6 +30,17 @@ ns.QUI_GroupFramePrivateAuras = QUI_GFPA
 local AddPrivateAuraAnchor = C_UnitAuras.AddPrivateAuraAnchor
 local RemovePrivateAuraAnchor = C_UnitAuras.RemovePrivateAuraAnchor
 
+-- Upvalue hot-path globals
+local pairs = pairs
+local ipairs = ipairs
+local pcall = pcall
+local wipe = wipe
+local CreateFrame = CreateFrame
+local InCombatLockdown = InCombatLockdown
+local C_Timer = C_Timer
+local table_insert = table.insert
+local table_remove = table.remove
+
 -- Weak-keyed state per frame:
 --   containers    = { [i] = frame }       main icon containers
 --   scaleFrames   = { [i] = frame }       tiny scaled parents for text anchor
@@ -58,7 +69,7 @@ local function GetSettings(isRaid)
 end
 
 local function AcquireContainer(parent)
-    local container = table.remove(containerPool)
+    local container = table_remove(containerPool)
     if container then
         container:SetParent(parent)
         container:ClearAllPoints()
@@ -75,7 +86,7 @@ local function ReleaseContainer(container)
     container:ClearAllPoints()
     container:SetParent(UIParent)
     if #containerPool < POOL_SIZE then
-        table.insert(containerPool, container)
+        table_insert(containerPool, container)
     end
 end
 

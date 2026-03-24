@@ -14,6 +14,18 @@ local SafeValue = Helpers.SafeValue
 local SafeToNumber = Helpers.SafeToNumber
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
+-- Upvalue hot-path globals
+local pairs = pairs
+local ipairs = ipairs
+local type = type
+local pcall = pcall
+local wipe = wipe
+local CreateFrame = CreateFrame
+local UnitExists = UnitExists
+local C_UnitAuras = C_UnitAuras
+local table_insert = table.insert
+local table_remove = table.remove
+
 ---------------------------------------------------------------------------
 -- MODULE TABLE
 ---------------------------------------------------------------------------
@@ -260,7 +272,7 @@ local function CreateIndicator(parent)
 end
 
 local function AcquireIndicator(parent)
-    local item = table.remove(iconPool)
+    local item = table_remove(iconPool)
     if item then
         item:SetParent(parent)
         item:ClearAllPoints()
@@ -279,7 +291,7 @@ local function ReleaseIndicator(item)
     item:SetAlpha(1)
     item:SetBackdropBorderColor(0, 0, 0, 1)
     if #iconPool < POOL_SIZE then
-        table.insert(iconPool, item)
+        table_insert(iconPool, item)
     end
 end
 

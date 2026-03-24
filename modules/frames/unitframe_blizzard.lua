@@ -7,6 +7,12 @@ local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local GetDB = Helpers.CreateDBGetter("quiUnitFrames")
 
+-- Upvalue caching for hot-path performance
+local pcall = pcall
+local CreateFrame = CreateFrame
+local InCombatLockdown = InCombatLockdown
+local C_Timer = C_Timer
+
 local QUI = _G.QuaziiUI or _G.QUI
 
 -- QUI_UF is created in unitframes.lua and exported to ns.QUI_UnitFrames.
