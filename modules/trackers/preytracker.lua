@@ -37,6 +37,7 @@ local COMPLETION_HOLD_TIME = 8
 local SPARK_WIDTH = 32
 local SPARK_HEIGHT_MULT = 2.5
 local DEFAULT_FALLBACK_TEXTURE = "Interface\\Buttons\\WHITE8x8"
+local string_format = string.format
 
 local TEXT_FORMATS = {
     stage_pct  = function(stage, pct, name) return string_format("Stage %d — %d%%", stage, pct) end,
@@ -62,7 +63,6 @@ local InCombatLockdown = InCombatLockdown
 local CreateFrame = CreateFrame
 local UIParent = UIParent
 local GameTooltip = GameTooltip
-local string_format = string.format
 
 ---------------------------------------------------------------------------
 -- STATE
