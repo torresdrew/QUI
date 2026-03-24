@@ -435,6 +435,9 @@ end
 -- Hooking
 ---------------------------------------------------------------------------
 
+-- Forward-declare so upvalues are captured by functions defined below
+local SafeHookTooltipOnShow, HookTooltipOnShow
+
 -- Pre-allocated callback tables to avoid closure allocation in C_Timer.After
 local _pendingHookQueue = {}
 local function _FlushHookQueue()
@@ -454,8 +457,6 @@ local function _FlushPendingFonts()
         end
     end
 end
-
-local SafeHookTooltipOnShow, HookTooltipOnShow
 
 SafeHookTooltipOnShow = function(tooltip)
     if hookedTooltips[tooltip] then return end
