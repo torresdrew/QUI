@@ -1688,6 +1688,10 @@ local function BuildBar(barKey)
         for _, blizzBtn in ipairs(origButtons) do
             blizzBtn:SetParent(hiddenBarParent)
             blizzBtn:UnregisterAllEvents()
+            -- Replace OnEvent even on hidden buttons: Blizzard's C code may
+            -- re-register events, and the template handler would still call
+            -- the broken SetCooldown path in tainted context.
+            blizzBtn:SetScript("OnEvent", ActionBarsOwned.OnButtonEvent)
         end
 
         -- Rescue the leave-vehicle button from the hidden Blizzard bar hierarchy.

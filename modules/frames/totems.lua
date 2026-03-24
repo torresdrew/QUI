@@ -300,8 +300,12 @@ local function UpdateTotems()
         -- secret values error (caught by pcall → assume active in combat).
         local isActive = false
         if not InCombatLockdown() then
-            -- OOC: safe to compare
-            isActive = haveTotem and icon and icon ~= 0 and duration and duration > 0
+            -- OOC: safe to compare (pcall guards edge cases during combat transitions
+            -- where InCombatLockdown() returns false but values are already secret)
+            local ok, val = pcall(function()
+                return haveTotem and icon and icon ~= 0 and duration and duration > 0
+            end)
+            isActive = ok and val
         else
             -- Combat: try comparison inside pcall
             local tok, timeLeft = pcall(GetTotemTimeLeft, slot)
