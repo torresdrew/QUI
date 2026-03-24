@@ -4379,13 +4379,14 @@ do
 
             -- Target Marker
             if unitDB.targetMarker == nil then unitDB.targetMarker = {} end
-            CreateCollapsible(content, "Target Marker", 4 * FORM_ROW + 8, function(body)
+            CreateCollapsible(content, "Target Marker", 5 * FORM_ROW + 8, function(body)
                 local sy = -4
                 local tm = unitDB.targetMarker
                 sy = P(GUI:CreateFormCheckbox(body, "Show Target Marker", "enabled", tm, RefreshUF), body, sy)
                 sy = P(GUI:CreateFormSlider(body, "Size", 8, 48, 1, "size", tm, RefreshUF), body, sy)
                 sy = P(GUI:CreateFormDropdown(body, "Anchor", anchorOptions, "anchor", tm, RefreshUF), body, sy)
-                P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "xOffset", tm, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "xOffset", tm, RefreshUF), body, sy)
+                P(GUI:CreateFormSlider(body, "Y Offset", -50, 50, 1, "yOffset", tm, RefreshUF), body, sy)
             end, sections, relayout)
 
             -- Leader Icon (player, target, focus only)

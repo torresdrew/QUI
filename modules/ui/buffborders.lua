@@ -182,6 +182,10 @@ local function CreateAuraIcon(parent)
     icon:EnableMouse(true)
     icon:SetScript("OnEnter", function(self)
         if GameTooltip.IsForbidden and GameTooltip:IsForbidden() then return end
+        -- Skip tooltip in combat: SetOwner + SetUnitAuraByAuraInstanceID from
+        -- addon code taints GameTooltip's execution context, causing its
+        -- BackdropTemplate to error on secret-value width during Show().
+        if InCombatLockdown() then return end
         local tooltipSettings = QUI and QUI.db and QUI.db.profile and QUI.db.profile.tooltip
         if tooltipSettings and tooltipSettings.anchorToCursor then
             local anchorTooltip = ns.QUI_AnchorTooltipToCursor

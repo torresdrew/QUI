@@ -2382,7 +2382,7 @@ end
 
 local function CreateDrawerToggleButton()
     if drawerToggleButton then return end
-    drawerToggleButton = CreateFrame("Button", "QUI_DrawerToggle", Minimap)
+    drawerToggleButton = CreateFrame("Button", "QUI_DrawerToggle", UIParent)
     drawerToggleButton:SetSize(DEFAULT_TOGGLE_SIZE, DEFAULT_TOGGLE_SIZE)
     drawerToggleButton:SetFrameStrata("HIGH")
     drawerToggleButton:SetFrameLevel(Minimap:GetFrameLevel() + 5)
@@ -2512,6 +2512,10 @@ local function UpdateDrawerAnchor()
     local tOfsX = settings.buttonDrawer.toggleOffsetX or 0
     local tOfsY = settings.buttonDrawer.toggleOffsetY or 0
     local gap = 4
+
+    -- Re-assert strata so the toggle stays above the minimap after layout mode
+    drawerToggleButton:SetFrameStrata("HIGH")
+    drawerToggleButton:SetFrameLevel(Minimap:GetFrameLevel() + 5)
 
     drawerToggleButton:ClearAllPoints()
 
@@ -2779,6 +2783,11 @@ local function RefreshButtonDrawer()
         LayoutDrawerButtons()
         UpdateDrawerAnchor()
 
+        -- Ensure toggle is shown (HideAllDecorations may have hidden it)
+        if drawerToggleButton then
+            drawerToggleButton:Show()
+        end
+
         -- Apply auto-hide toggle state immediately
         if drawerToggleButton then
             if settings.buttonDrawer.autoHideToggle then
@@ -2952,6 +2961,10 @@ end
 
 local function CheckExternalHud()
     if quiUpdatingMinimap then return end
+
+    -- Layout mode reparents Minimap to a handle — don't treat that as a HUD
+    local um = ns.QUI_LayoutMode
+    if um and um.isActive then return end
 
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
@@ -3290,6 +3303,13 @@ function Minimap_Module:Refresh()
     -- Restart tickers with potentially new intervals
     StartUpdateTickers()
 
+    -- Re-assert minimap strata/level — layout mode reparenting clears
+    -- SetFixedFrameStrata/Level, so re-apply them every refresh.
+    Minimap:SetFrameStrata("LOW")
+    Minimap:SetFrameLevel(2)
+    Minimap:SetFixedFrameStrata(true)
+    Minimap:SetFixedFrameLevel(true)
+
     SetMinimapShape(settings.shape)
     UpdateBackdrop()
     UpdateMinimapSize()
@@ -3485,6 +3505,18 @@ do
         })
     end
 
-    C_Timer.After(2, RegisterLayoutModeElements)
+    C_Timer.After(2, function()
+        RegisterLayoutModeElements()
+
+        -- After layout mode reparents Minimap to a handle and back,
+        -- the drawer toggle can lose its anchor / strata.  Run a full
+        -- minimap refresh on exit to restore everything.
+        local um = ns.QUI_LayoutMode
+        if um and um.RegisterExitCallback then
+            um:RegisterExitCallback(function()
+                Minimap_Module:Refresh()
+            end)
+        end
+    end)
 end
 

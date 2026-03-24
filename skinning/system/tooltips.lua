@@ -187,22 +187,47 @@ local function GetStyleFrame(tooltip)
     if frame.SetSnapToPixelGrid then frame:SetSnapToPixelGrid(true) end
     if frame.SetTexelSnappingBias then frame:SetTexelSnappingBias(0) end
 
-    -- Fix BackdropTemplateMixin not re-applying colors after piece recreation
-    -- on resize. SetupPieceVisuals creates pieces with raw WHITE8x8 color but
-    -- doesn't re-apply the stored backdropColor/backdropBorderColor.
-    frame.OnBackdropSizeChanged = function(self)
+    -- Guard backdrop methods against secret-value arithmetic in combat.
+    -- The C engine fires OnBackdropSizeChanged as a cached script handler,
+    -- bypassing Lua table overrides. But self:SetupTextureCoordinates() and
+    -- self:SetupPieceVisuals() inside it use normal Lua method dispatch, so
+    -- overriding these on the frame instance intercepts the error path.
+    local origSetupTexCoords = frame.SetupTextureCoordinates
+    local origSetupVisuals = frame.SetupPieceVisuals
+    if origSetupTexCoords then
+        frame.SetupTextureCoordinates = function(self)
+            if issecretvalue then
+                local ok, w = pcall(self.GetWidth, self)
+                if not ok or issecretvalue(w) then return end
+            end
+            return origSetupTexCoords(self)
+        end
+    end
+    if origSetupVisuals then
+        frame.SetupPieceVisuals = function(self)
+            if issecretvalue then
+                local ok, w = pcall(self.GetWidth, self)
+                if not ok or issecretvalue(w) then return end
+            end
+            return origSetupVisuals(self)
+        end
+    end
+
+    -- Re-apply colors after piece recreation on resize (SetupPieceVisuals
+    -- creates pieces with raw WHITE8x8 color, losing stored colors).
+    -- Use HookScript to run after the C-dispatched handler completes.
+    pcall(frame.HookScript, frame, "OnBackdropSizeChanged", function(self)
         if issecretvalue then
             local ok, w = pcall(self.GetWidth, self)
             if not ok or issecretvalue(w) then return end
         end
-        BackdropTemplateMixin.OnBackdropSizeChanged(self)
         if self.backdropColor then
             pcall(self.SetBackdropColor, self, self.backdropColor:GetRGBA())
         end
         if self.backdropBorderColor then
             pcall(self.SetBackdropBorderColor, self, self.backdropBorderColor:GetRGBA())
         end
-    end
+    end)
 
     -- Mark as QUI-owned for global OnBackdropSizeChanged fallback
     frame._quiBgR = 0.05
