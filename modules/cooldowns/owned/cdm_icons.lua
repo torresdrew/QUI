@@ -1442,7 +1442,9 @@ local function UpdateIconCooldown(icon)
             if icon.Cooldown.SetReverse then
                 pcall(icon.Cooldown.SetReverse, icon.Cooldown, reverse)
             end
-            if not cdApplied then
+            if cdApplied then
+                SyncMirroredCooldownState(icon, icon.Cooldown, true)
+            else
                 icon.Cooldown:Clear()
             end
             icon._hasCooldownActive = cdApplied or false
