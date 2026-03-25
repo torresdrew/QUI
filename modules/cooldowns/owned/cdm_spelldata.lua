@@ -1498,6 +1498,16 @@ local function IsSpellKnownByPlayer(spellID)
     return false
 end
 
+-- Map container key → array of CooldownViewerCategory enum values to scan.
+-- Cooldown bars scan both Essential (0) + Utility (1).
+-- Buff bars scan both TrackedBuff (2) + TrackedBar (3).
+local CDM_BAR_CATEGORIES = {
+    essential  = { 0, 1 },
+    utility    = { 0, 1 },
+    buff       = { 2, 3 },
+    trackedBar = { 2, 3 },
+}
+
 -- SpellID correction maps (populated by reconciliation, used by ResolveOwnedEntry).
 -- Must be declared here before ResolveOwnedEntry which references them.
 local _cdIDToCorrectSID = {}
@@ -2100,16 +2110,6 @@ local HEALTH_ITEMS = {
     { itemID = 241308, spellID = 1236616, altItemID = 241309 },
     { itemID = 5512,   spellID = 6262 },
     { itemID = 224464, spellID = 452930, class = "WARLOCK" },
-}
-
--- Map container key → array of CooldownViewerCategory enum values to scan.
--- Cooldown bars scan both Essential (0) + Utility (1).
--- Buff bars scan both TrackedBuff (2) + TrackedBar (3).
-local CDM_BAR_CATEGORIES = {
-    essential  = { 0, 1 },
-    utility    = { 0, 1 },
-    buff       = { 2, 3 },
-    trackedBar = { 2, 3 },
 }
 
 -- Forward declaration: defined in MUTATION HELPERS section below

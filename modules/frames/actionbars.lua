@@ -16,12 +16,8 @@ local type = type
 local pairs = pairs
 local ipairs = ipairs
 local pcall = pcall
-local tostring = tostring
 local C_Timer = C_Timer
-local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
-local table_insert = table.insert
-local string_format = string.format
 
 -- ADDON_LOADED safe window flag: during a combat /reload, InCombatLockdown()
 -- returns true but protected calls are still allowed. This flag lets
@@ -152,6 +148,7 @@ local ActionBarsOwned = {
     cachedLayouts = {},    -- barKey → { numCols, numRows, isVertical, numIcons }
     editModeActive = false,
     editOverlays = {},     -- barKey → overlay frame
+    fadeState = {},         -- barKey → fade state (shared by all fade subsystems)
     pendingExtraButtonRefresh = false,
     pendingExtraButtonInit = false,
     skinnedButtons = {},    -- button → true (tracking for re-skin on updates)
@@ -167,7 +164,7 @@ ActionBarsOwned.mirrorButtons = ActionBarsOwned.nativeButtons
 -- Lua-side self.action from the attribute (set by restricted code) and
 -- triggers a safe visual refresh.  Called explicitly via CallMethod from
 -- the _childupdate-offset restricted snippet after page changes, and
--- also installed as an instance shadow so any C-side dispatch that
+-- also installed as an instance shadow so any residual mixin path that
 -- reaches UpdateAction hits this safe version.
 function ActionBarsOwned.SafeSyncAction(self)
     local action = self:GetAttribute("action")
@@ -183,9 +180,8 @@ end
 -- the button is tainted.  This version uses ONLY truthiness tests
 -- (if X then) on API returns — Lua evaluates truthiness without
 -- comparison operators, so secret booleans/numbers pass through safely.
--- SetActionUIButton causes the C-side to call ForceUpdateAction on
--- registered buttons, which dispatches mixin OnEvent → UpdateAction →
--- self:Update().  This shadow intercepts that chain.
+-- Installed as an instance shadow so any residual mixin path that
+-- reaches self:Update() hits this safe version.
 function ActionBarsOwned.SafeUpdate(self)
     local action = self.action
     if not action then return end
@@ -240,6 +236,9 @@ function ActionBarsOwned.SafeUpdate(self)
         -- Delegated to shadowed methods
         self:UpdateCount()
         self:UpdateCooldown()
+
+        -- Proc glow (spell activation overlay)
+        ActionBarsOwned.UpdateOverlayGlow(self)
 
         -- Flyout arrow
         if self.UpdateFlyout then
@@ -724,31 +723,31 @@ local function GetBarButtons(barKey)
         for _, name in ipairs(MICRO_BUTTON_NAMES) do
             local btn = _G[name]
             if btn then
-                table_insert(buttons, btn)
+                table.insert(buttons, btn)
             end
         end
         return buttons
     elseif barKey == "bags" then
         if MainMenuBarBackpackButton then
-            table_insert(buttons, MainMenuBarBackpackButton)
+            table.insert(buttons, MainMenuBarBackpackButton)
         end
         for i = 0, 3 do
             local slot = _G["CharacterBag" .. i .. "Slot"]
-            if slot then table_insert(buttons, slot) end
+            if slot then table.insert(buttons, slot) end
         end
         if CharacterReagentBag0Slot then
-            table_insert(buttons, CharacterReagentBag0Slot)
+            table.insert(buttons, CharacterReagentBag0Slot)
         end
         return buttons
     elseif barKey == "extraActionButton" then
         if ExtraActionBarFrame and ExtraActionBarFrame.button then
-            table_insert(buttons, ExtraActionBarFrame.button)
+            table.insert(buttons, ExtraActionBarFrame.button)
         end
         return buttons
     elseif barKey == "zoneAbility" then
         if ZoneAbilityFrame and ZoneAbilityFrame.SpellButtonContainer then
             for button in ZoneAbilityFrame.SpellButtonContainer:EnumerateActive() do
-                table_insert(buttons, button)
+                table.insert(buttons, button)
             end
         end
         return buttons
@@ -760,10 +759,10 @@ local function GetBarButtons(barKey)
     if not pattern then return buttons end
 
     for i = 1, count do
-        local buttonName = string_format(pattern, i)
+        local buttonName = string.format(pattern, i)
         local button = _G[buttonName]
         if button then
-            table_insert(buttons, button)
+            table.insert(buttons, button)
         end
     end
 
@@ -1262,7 +1261,8 @@ end
 -- FADE SYSTEM
 ---------------------------------------------------------------------------
 
-local fadeState = {}
+-- Alias the module-level table so both fade subsystems share one backing store.
+local fadeState = ActionBarsOwned.fadeState
 
 local function GetOwnedBarFadeState(barKey)
     if not fadeState[barKey] then
@@ -1772,20 +1772,20 @@ local function BuildPagingCondition()
     -- Override/vehicle/possess/shapeshift: use string tokens resolved
     -- dynamically in the _onstate-page restricted snippet (bar indices
     -- can change mid-session so must not be baked at build time).
-    table_insert(parts, "[overridebar] override")
-    table_insert(parts, "[vehicleui][possessbar][shapeshift] possess")
+    table.insert(parts, "[overridebar] override")
+    table.insert(parts, "[vehicleui][possessbar][shapeshift] possess")
     -- Dragonriding (bonusbar:5)
-    table_insert(parts, "[bonusbar:5] 11")
+    table.insert(parts, "[bonusbar:5] 11")
     -- Class-specific bonus bars (Druid forms, Rogue stealth, etc.)
     for i = 4, 1, -1 do
-        table_insert(parts, "[bonusbar:" .. i .. "] " .. (6 + i))
+        table.insert(parts, "[bonusbar:" .. i .. "] " .. (6 + i))
     end
     -- Manual page switching
     for i = 6, 2, -1 do
-        table_insert(parts, "[bar:" .. i .. "] " .. i)
+        table.insert(parts, "[bar:" .. i .. "] " .. i)
     end
     -- Default page
-    table_insert(parts, "1")
+    table.insert(parts, "1")
     return table.concat(parts, "; ")
 end
 
@@ -1842,10 +1842,10 @@ local function GetOriginalBlizzButtons(barKey)
     local count = BUTTON_COUNTS[barKey] or 12
     if not pattern then return buttons end
     for i = 1, count do
-        local buttonName = string_format(pattern, i)
+        local buttonName = string.format(pattern, i)
         local button = _G[buttonName]
         if button then
-            table_insert(buttons, button)
+            table.insert(buttons, button)
         end
     end
     return buttons
@@ -1923,7 +1923,21 @@ local function BuildBar(barKey)
                         end
                         self:SetAttribute("pressAndHoldAction", pressAndHold)
                     end
+                    -- Sync button.action on the Lua side so SafeUpdate reads
+                    -- the correct slot.  Without this, the mixin's
+                    -- OnAttributeChanged is the only sync path — fragile
+                    -- because that handler runs in tainted context.
+                    self:CallMethod("SafeSyncAction")
                 ]])
+                -- SafeSyncAction and UpdateCooldown must exist on the
+                -- button BEFORE SetupBar1Paging → RegisterStateDriver
+                -- fires — that immediately triggers _childupdate-offset
+                -- → CallMethod("SafeSyncAction") → SafeUpdate →
+                -- self:UpdateCooldown().
+                btn.SafeSyncAction = ActionBarsOwned.SafeSyncAction
+                btn.UpdateCooldown = function(self)
+                    ActionBarsOwned.UpdateCooldown(self)
+                end
                 if btn.RegisterForClicks then
                     btn:RegisterForClicks("AnyDown", "AnyUp")
                 end
@@ -1989,9 +2003,32 @@ local function BuildBar(barKey)
             else
                 btn:SetParent(container)
             end
+            -- Pet buttons inherit ActionButton OnEvent from the template, which
+            -- runs BaseActionButtonMixin:Update (wrong for pet actions) and can
+            -- taint the execution context.  Silence events — QUI drives pet
+            -- button visuals via UpdatePetButton / UpdateAllPetButtons.
+            if barKey == "pet" then
+                btn:UnregisterAllEvents()
+                btn:SetScript("OnEvent", nil)
+                -- The inherited OnEnter is BaseActionButtonMixin:OnEnter →
+                -- GameTooltip:SetAction(self.action), which is wrong for pet
+                -- buttons (they have no .action).  Replace with SetPetAction.
+                btn:SetScript("OnEnter", function(self)
+                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                    GameTooltip:SetPetAction(self:GetID())
+                    GameTooltip:Show()
+                end)
+                btn:SetScript("OnLeave", GameTooltip_Hide)
+            end
             btn:Show()
-            -- Populate icons from the template's own Update method
-            if btn.Update then pcall(btn.Update, btn) end
+            -- Pet: populate icons via GetPetActionInfo (PetActionBarMixin:Update
+            -- on the suppressed bar won't run, so QUI drives visuals directly).
+            -- Stance: the template's own Update handles icons.
+            if barKey == "pet" then
+                ActionBarsOwned.UpdatePetButton(btn)
+            elseif btn.Update then
+                pcall(btn.Update, btn)
+            end
             buttons[i] = btn
         end
     elseif barKey == "microbar" then
@@ -2370,7 +2407,7 @@ local function BuildBar(barKey)
                 -- Mixin methods are shadowed AFTER this loop to prevent
                 -- taint errors during subsequent combat events.
                 container:SetFrameRef("init-btn", btn)
-                container:Execute(string_format([[
+                container:Execute(string.format([[
                     local btn = self:GetFrameRef("init-btn")
                     btn:SetAttribute("action", %d)
                     btn:SetAttribute("typerelease", "actionrelease")
@@ -2398,68 +2435,28 @@ local function BuildBar(barKey)
 
     ActionBarsOwned.nativeButtons[barKey] = buttons
 
-    -- Register action buttons with Blizzard's C-side action UI system for
-    -- assisted highlighting and native cooldown integration.  Only for
-    -- standard action bars (bar1-8), not pet/stance/micro/bags.
+    -- Standard action bars (bar1-8): suppress Blizzard's event handling
+    -- and shadow mixin methods with taint-safe versions.
+    --
+    -- QUI does NOT register buttons with SetActionUIButton.  That C-side
+    -- registration creates a dispatch pipeline (ActionBarButtonEventsFrame
+    -- → ForceUpdateAction → mixin OnEvent/Update) that runs taint-unsafe
+    -- comparison operators on secret values during combat.  Instead, QUI
+    -- self-manages all updates via ownedEventFrame (cooldowns, usability,
+    -- visuals) and SPELL_ACTIVATION_OVERLAY_GLOW events (proc glows).
     if barKey ~= "pet" and barKey ~= "stance" and barKey ~= "microbar" and barKey ~= "bags" then
-        ActionBarsOwned.UpdateActionUIRegistration(barKey)
-        -- Force the mixin to populate visuals (icon, count, state) now.
-        -- The restricted SetAttribute → OnAttributeChanged chain may not
-        -- fully populate during initial creation.  Safe at file scope:
-        -- GetActionCount is suppressed, and this runs before method shadows.
         for _, btn in ipairs(buttons) do
-            if ActionButton_Update then
-                pcall(ActionButton_Update, btn)
-            end
-            ActionBarsOwned.UpdateCooldown(btn)
-        end
-        -- Addon-created frames are permanently tainted.  The Blizzard mixin's
-        -- Update uses comparison operators on secret values from restricted
-        -- APIs, which errors in tainted context.  SetActionUIButton causes
-        -- the C-side to call ForceUpdateAction → mixin OnEvent → UpdateAction
-        -- → self:Update(), bypassing UnregisterAllEvents.
-        --
-        -- Solution: shadow Update with SafeUpdate (truthiness-only version)
-        -- so all call chains that reach self:Update() hit the safe version.
-        -- Also shadow specific methods that use comparison operators:
-        --   UpdateAction            → taint-safe action sync (SafeSyncAction)
-        --   UpdateCooldown          → DurationObject path
-        --   UpdatePressAndHoldAction → no-op (handled from restricted code)
-        --   UpdateCount             → C_ActionBar.GetActionDisplayCount
-        for _, btn in ipairs(buttons) do
+            -- Unregister all events — QUI handles events centrally.
             btn:UnregisterAllEvents()
-            -- Shadow OnEvent on the INSTANCE so the C-side dispatch
-            -- (ActionBarButtonEventsFrame → button:OnEvent()) hits our
-            -- handler instead of the mixin's.  The mixin's OnEvent calls
-            -- the GLOBAL ActionButton_UpdateCooldown(self), bypassing our
-            -- instance UpdateCooldown shadow.
-            btn.OnEvent = function(self, event, ...)
-                if event == "ACTIONBAR_UPDATE_COOLDOWN"
-                    or event == "LOSS_OF_CONTROL_ADDED"
-                    or event == "LOSS_OF_CONTROL_UPDATE" then
-                    ActionBarsOwned.UpdateCooldown(self)
-                    return
-                end
-                if event == "GLOBAL_MOUSE_UP" then
-                    self:UnregisterEvent(event)
-                    if self.UpdateFlyout then
-                        pcall(self.UpdateFlyout, self)
-                    end
-                    return
-                end
-                -- All other C-dispatched events: safe visual refresh
-                ActionBarsOwned.SafeUpdate(self)
-            end
-            btn:SetScript("OnEvent", btn.OnEvent)
+            -- Shadow taint-unsafe mixin methods.  These shadows are
+            -- permanent and serve two purposes:
+            --   1. Internal calls (e.g. SafeUpdate → self:UpdateCount())
+            --      hit the safe versions.
+            --   2. Any residual mixin paths (OnAttributeChanged → Update)
+            --      are intercepted before they can compare secret values.
             btn.Update = ActionBarsOwned.SafeUpdate
-            -- Shadow UpdateAction so the mixin's taint-unsafe version
-            -- (ActionButton_CalculateAction, comparison operators) never
-            -- runs.  The restricted _childupdate-offset calls
-            -- CallMethod("SafeSyncAction") explicitly; this shadow
-            -- catches any other path (OnAttributeChanged, C-side dispatch).
             btn.UpdateAction = ActionBarsOwned.SafeSyncAction
-            -- CallMethod target: restricted code calls self:CallMethod("SafeSyncAction")
-            btn.SafeSyncAction = ActionBarsOwned.SafeSyncAction
+            btn.SafeSyncAction = ActionBarsOwned.SafeSyncAction  -- CallMethod target
             btn.UpdateCooldown = function(self)
                 ActionBarsOwned.UpdateCooldown(self)
             end
@@ -2476,6 +2473,17 @@ local function BuildBar(barKey)
                     self.Count:SetText("")
                 end
             end
+        end
+
+        -- Populate visuals via the mixin (safe — GetActionCount is
+        -- suppressed, and shadows are in place so any internal
+        -- self:Method() calls hit the safe versions).
+        for _, btn in ipairs(buttons) do
+            if ActionButton_Update then
+                pcall(ActionButton_Update, btn)
+            end
+            ActionBarsOwned.UpdateCooldown(btn)
+            ActionBarsOwned.UpdateOverlayGlow(btn)
         end
     end
 
@@ -2549,6 +2557,76 @@ end
 -- Forward declarations (defined here, referenced in event handler and Initialize)
 local UpdatePetBarVisibility, UpdateStanceBarLayout
 
+-- Update a single QUI pet button's icon and state.
+-- PetActionBarMixin:Update() on the original bar is suppressed (bar is hidden
+-- with events unregistered), so QUI must drive pet button visuals directly.
+-- Stored on ActionBarsOwned to avoid consuming a file-level local slot.
+function ActionBarsOwned.UpdatePetButton(btn)
+    local id = btn:GetID()
+    if not id or id < 1 then return end
+    local name, texture, isToken, isActive, autoCastAllowed, autoCastEnabled, spellID = GetPetActionInfo(id)
+    local icon = btn.icon
+    if icon then
+        if texture then
+            icon:SetTexture(isToken and _G[texture] or texture)
+            if GetPetActionSlotUsable and GetPetActionSlotUsable(id) then
+                icon:SetVertexColor(1, 1, 1)
+            else
+                icon:SetVertexColor(0.4, 0.4, 0.4)
+            end
+            icon:Show()
+        else
+            icon:Hide()
+        end
+    end
+    if isActive then
+        if IsPetAttackAction and IsPetAttackAction(id) then
+            -- Pet Attack: flash + subtle checked highlight
+            if btn.StartFlash then btn:StartFlash() end
+            local ct = btn:GetCheckedTexture()
+            if ct then ct:SetAlpha(0.5) end
+        else
+            -- Stance/ability active: full checked highlight
+            if btn.StopFlash then btn:StopFlash() end
+            local ct = btn:GetCheckedTexture()
+            if ct then ct:SetAlpha(1.0) end
+        end
+        btn:SetChecked(true)
+    else
+        if btn.StopFlash then btn:StopFlash() end
+        btn:SetChecked(false)
+    end
+    if btn.AutoCastOverlay then
+        btn.AutoCastOverlay:SetShown(autoCastAllowed and true or false)
+        btn.AutoCastOverlay:ShowAutoCastEnabled(autoCastEnabled and true or false)
+    end
+    if btn.SpellHighlightTexture then
+        if spellID and C_Spell and C_Spell.IsSpellOverlayed and C_Spell.IsSpellOverlayed(spellID) then
+            btn.SpellHighlightTexture:Show()
+        else
+            btn.SpellHighlightTexture:Hide()
+        end
+    end
+    -- Cooldown (also bar-driven in Blizzard code).  GetPetActionCooldown values
+    -- flow directly to the C-side; pcall guards against secret-value rejection.
+    local cooldown = btn.cooldown
+    if cooldown and GetPetActionCooldown then
+        local start, duration, enable = GetPetActionCooldown(id)
+        if CooldownFrame_Set then
+            pcall(CooldownFrame_Set, cooldown, start, duration, enable)
+        end
+    end
+end
+
+-- Update all QUI pet buttons' visuals.
+function ActionBarsOwned.UpdateAllPetButtons()
+    local petBtns = ActionBarsOwned.nativeButtons["pet"]
+    if not petBtns then return end
+    for _, btn in ipairs(petBtns) do
+        ActionBarsOwned.UpdatePetButton(btn)
+    end
+end
+
 -- Update pet bar container visibility based on whether the player has an active pet bar.
 -- PetActionBar events are unregistered (we took ownership), so we drive visibility ourselves.
 UpdatePetBarVisibility = function()
@@ -2577,13 +2655,9 @@ UpdatePetBarVisibility = function()
     local hasPet = HasPetUI and HasPetUI()
     if hasPet then
         container:Show()
-        -- Manually trigger button updates on our fresh QUI pet buttons
-        local petBtns = ActionBarsOwned.nativeButtons["pet"]
-        if petBtns then
-            for _, btn in ipairs(petBtns) do
-                if btn.Update then pcall(btn.Update, btn) end
-            end
-        end
+        -- Populate pet button icons/state (PetActionBarMixin:Update on the
+        -- original bar is suppressed, so QUI drives visuals directly).
+        ActionBarsOwned.UpdateAllPetButtons()
         LayoutNativeButtons("pet")
     else
         container:Hide()
@@ -2800,30 +2874,139 @@ do
         end
     end
 
-    -- Re-register buttons with Blizzard's C-side action UI system.
-    -- SetActionUIButton enables C-side cooldown updates and assisted highlighting.
-    function ActionBarsOwned.UpdateActionUIRegistration(barKey)
-        if not SetActionUIButton then return end
-        local buttons = ActionBarsOwned.nativeButtons[barKey]
-        if not buttons then return end
-        for _, btn in ipairs(buttons) do
-            local action = btn:GetAttribute("action")
-            local cd = btn.cooldown or btn.Cooldown
-            if action and action ~= 0 and cd then
-                SetActionUIButton(btn, action, cd)
+end -- do block (cooldown ownership)
+
+---------------------------------------------------------------------------
+-- SPELL ACTIVATION OVERLAY GLOW
+---------------------------------------------------------------------------
+-- Self-managed proc glow system.  Replaces the C-side glow that was
+-- previously provided by SetActionUIButton registration.  Driven by
+-- SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE events.  Uses LibCustomGlow
+-- for the visual effect (same library used by CDM glows).
+---------------------------------------------------------------------------
+
+local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
+
+-- Extract the spell ID from an action button's current action.
+-- Returns nil for empty slots, items, or if GetActionInfo errors (combat).
+local function GetButtonSpellId(button)
+    local action = button.action
+    if not action then return nil end
+    if not HasAction(action) then return nil end
+
+    local ok, actionType, id, subType = pcall(GetActionInfo, action)
+    if not ok then return nil end
+
+    if actionType == "spell" then
+        return id
+    elseif actionType == "macro" then
+        if subType == "spell" then
+            return id
+        end
+        -- Fallback: GetMacroSpell for macros without spell subType
+        if GetMacroSpell then
+            local macroOk, spellId = pcall(GetMacroSpell, id)
+            if macroOk and spellId then return spellId end
+        end
+    end
+    return nil
+end
+
+-- Check if the button's action is a flyout containing a specific spell.
+local function ButtonFlyoutContainsSpell(button, spellId)
+    local action = button.action
+    if not action then return false end
+    local ok, actionType, id = pcall(GetActionInfo, action)
+    if not ok or actionType ~= "flyout" then return false end
+    if FlyoutHasSpell then
+        local fok, has = pcall(FlyoutHasSpell, id, spellId)
+        if fok and has then return true end
+    end
+    return false
+end
+
+local function ShowActionButtonGlow(button)
+    if not LCG then return end
+    local state = GetFrameState(button)
+    if state.quiProcGlow then return end
+    state.quiProcGlow = true
+    LCG.ButtonGlow_Start(button)
+end
+
+local function HideActionButtonGlow(button)
+    if not LCG then return end
+    local state = GetFrameState(button)
+    if not state.quiProcGlow then return end
+    state.quiProcGlow = false
+    LCG.ButtonGlow_Stop(button)
+end
+
+-- Update the overlay glow on a single button based on current spell state.
+function ActionBarsOwned.UpdateOverlayGlow(button)
+    local spellId = GetButtonSpellId(button)
+    if spellId then
+        local IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
+            or _G.IsSpellOverlayed
+        if IsSpellOverlayed then
+            local ok, overlayed = pcall(IsSpellOverlayed, spellId)
+            if ok and overlayed then
+                ShowActionButtonGlow(button)
+                return
             end
         end
     end
+    HideActionButtonGlow(button)
+end
 
-    -- No global ActionButton_UpdateCooldown replacement needed.  Fresh
-    -- buttons' template handlers run in untainted C-dispatched context,
-    -- so Blizzard's native ActionButton_UpdateCooldown → SetCooldown path
-    -- works during combat (secret values accepted in untainted call stacks).
-    -- ActionBarsOwned.UpdateCooldown (DurationObject path) is kept above
-    -- for addon-initiated refreshes where the call stack IS tainted
-    -- (e.g., PLAYER_ENTERING_WORLD safe window seeding).
+-- Update overlay glows on all owned action buttons.
+function ActionBarsOwned.UpdateAllOverlayGlows()
+    for _, barKey in ipairs(STANDARD_BAR_KEYS) do
+        local btns = ActionBarsOwned.nativeButtons[barKey]
+        if btns then
+            for _, btn in ipairs(btns) do
+                ActionBarsOwned.UpdateOverlayGlow(btn)
+            end
+        end
+    end
+end
 
-end -- do block (cooldown ownership)
+-- Handle SPELL_ACTIVATION_OVERLAY_GLOW_SHOW: find all buttons with this
+-- spell and show glow.
+function ActionBarsOwned.OnSpellActivationGlowShow(spellId)
+    if not spellId then return end
+    for _, barKey in ipairs(STANDARD_BAR_KEYS) do
+        local btns = ActionBarsOwned.nativeButtons[barKey]
+        if btns then
+            for _, btn in ipairs(btns) do
+                local btnSpellId = GetButtonSpellId(btn)
+                if btnSpellId and btnSpellId == spellId then
+                    ShowActionButtonGlow(btn)
+                elseif ButtonFlyoutContainsSpell(btn, spellId) then
+                    ShowActionButtonGlow(btn)
+                end
+            end
+        end
+    end
+end
+
+-- Handle SPELL_ACTIVATION_OVERLAY_GLOW_HIDE: find all buttons with this
+-- spell and hide glow.
+function ActionBarsOwned.OnSpellActivationGlowHide(spellId)
+    if not spellId then return end
+    for _, barKey in ipairs(STANDARD_BAR_KEYS) do
+        local btns = ActionBarsOwned.nativeButtons[barKey]
+        if btns then
+            for _, btn in ipairs(btns) do
+                local btnSpellId = GetButtonSpellId(btn)
+                if btnSpellId and btnSpellId == spellId then
+                    HideActionButtonGlow(btn)
+                elseif ButtonFlyoutContainsSpell(btn, spellId) then
+                    HideActionButtonGlow(btn)
+                end
+            end
+        end
+    end
+end
 
 -- Full visual refresh for all owned action buttons via SafeUpdate.
 -- Uses only truthiness tests on API returns — safe during combat.
@@ -2868,11 +3051,11 @@ local function OnOwnedEvent(self, event, ...)
         or event == "UPDATE_SHAPESHIFT_FORM"
         or event == "UPDATE_SHAPESHIFT_FORMS"
         or event == "UPDATE_STEALTH" then
-        -- Paging is handled by state driver + CallMethod("SafeSyncAction")
-        -- which already syncs self.action and refreshes visuals on each
-        -- button synchronously.  Remaining work: empty slot visibility,
-        -- SetActionUIButton re-registration, cooldowns, and bar1 bindings.
-        -- Done synchronously to prevent flickering during stance dancing.
+        -- Paging is handled by state driver: _childupdate-offset sets the
+        -- action attribute and calls CallMethod("SafeSyncAction") which
+        -- syncs self.action and refreshes visuals on each button.
+        -- Remaining work: empty slot visibility, cooldowns, proc glows,
+        -- and bar1 bindings.
         local buttons = ActionBarsOwned.nativeButtons["bar1"]
         local settings = GetEffectiveSettings("bar1")
         if buttons and settings then
@@ -2880,12 +3063,11 @@ local function OnOwnedEvent(self, event, ...)
                 UpdateEmptySlotVisibility(btn, settings)
             end
         end
-        -- Re-register bar1 with new action slots after page change
-        ActionBarsOwned.UpdateActionUIRegistration("bar1")
-        -- Refresh cooldowns for the new page's actions
+        -- Refresh cooldowns and proc glows for the new page's actions
         if buttons then
             for _, btn in ipairs(buttons) do
                 ActionBarsOwned.UpdateCooldown(btn)
+                ActionBarsOwned.UpdateOverlayGlow(btn)
             end
         end
         -- Stance bar may need re-layout when shapeshift forms change
@@ -2993,25 +3175,26 @@ local function OnOwnedEvent(self, event, ...)
         -- combat.  Now call the mixin's full ActionButton_Update (safe out
         -- of combat — no secret values) so the hooksecurefunc on
         -- ActionButton_Update fires and re-applies QUI skinning/text.
+        -- Shadows stay in place — the global ActionButton_Update call
+        -- triggers the hook regardless, and internal self:Method() calls
+        -- safely hit our shadows.
         for _, barKey in ipairs(STANDARD_BAR_KEYS) do
             local btns = ActionBarsOwned.nativeButtons[barKey]
             if btns then
                 for _, btn in ipairs(btns) do
-                    btn.Update = nil         -- expose mixin for one call
-                    btn.UpdateAction = nil   -- expose mixin UpdateAction too
                     if ActionButton_Update then
                         pcall(ActionButton_Update, btn)
                     end
-                    btn.Update = ActionBarsOwned.SafeUpdate
-                    btn.UpdateAction = ActionBarsOwned.SafeSyncAction
                     ActionBarsOwned.UpdateCooldown(btn)
+                    ActionBarsOwned.UpdateOverlayGlow(btn)
                 end
             end
         end
 
     elseif event == "PET_BAR_UPDATE" or event == "PET_BAR_UPDATE_COOLDOWN" then
-        -- Pet buttons handle their own updates natively via template OnEvent.
-        -- QUI only manages container visibility (show/hide when pet exists).
+        -- PetActionBarMixin:Update on the suppressed bar won't fire, so QUI
+        -- drives pet button visuals (icons, active state, autocast) directly.
+        ActionBarsOwned.UpdateAllPetButtons()
         if not InCombatLockdown() then
             UpdatePetBarVisibility()
         end
@@ -3160,10 +3343,7 @@ local function OnOwnedEvent(self, event, ...)
         -- usability, cooldowns, flyouts, and empty slot visibility.
         ActionBarsOwned.UpdateAllButtonVisuals()
         ActionBarsOwned.UpdateAllCooldowns()
-        -- Re-register with C-side (action IDs may have shifted)
-        for _, barKey in ipairs(STANDARD_BAR_KEYS) do
-            ActionBarsOwned.UpdateActionUIRegistration(barKey)
-        end
+        ActionBarsOwned.UpdateAllOverlayGlows()
         -- Update flyout data on all buttons
         for _, barKey in ipairs(STANDARD_BAR_KEYS) do
             local btns = ActionBarsOwned.nativeButtons[barKey]
@@ -3203,11 +3383,19 @@ local function OnOwnedEvent(self, event, ...)
         -- Spell usability changed (e.g. resource gained/spent, GCD ended)
         ActionBarsOwned.UpdateAllButtonVisuals()
 
+    elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" then
+        local spellId = ...
+        ActionBarsOwned.OnSpellActivationGlowShow(spellId)
+
+    elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" then
+        local spellId = ...
+        ActionBarsOwned.OnSpellActivationGlowHide(spellId)
+
     elseif event == "UPDATE_VEHICLE_ACTIONBAR" then
-        -- Vehicle action bar data changed — full refresh + re-register
+        -- Vehicle action bar data changed — full refresh
         ActionBarsOwned.UpdateAllButtonVisuals()
         ActionBarsOwned.UpdateAllCooldowns()
-        ActionBarsOwned.UpdateActionUIRegistration("bar1")
+        ActionBarsOwned.UpdateAllOverlayGlows()
         ApplyBar1OverrideBindings()
 
     elseif event == "UNIT_INVENTORY_CHANGED" then
@@ -4589,7 +4777,7 @@ local function UpdateUsabilityPolling()
         usabilityCheckFrame:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
         usabilityCheckFrame:RegisterEvent("SPELL_UPDATE_USABLE")
         usabilityCheckFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
-        usabilityCheckFrame:RegisterEvent("UNIT_POWER_UPDATE")
+        usabilityCheckFrame:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
         usabilityCheckFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
         usabilityCheckFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
         usabilityCheckFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -4948,7 +5136,7 @@ local function GetBarFadeState(barKey)
             fadeDuration = 0.3,
             isMouseOver = false,
             delayTimer = nil,
-            detector = nil,
+            leaveCheckTimer = nil,
         }
     end
     return ActionBarsOwned.fadeState[barKey]
@@ -5083,11 +5271,13 @@ end
 -- LINKED ACTION BARS (1-8) MOUSEOVER
 ---------------------------------------------------------------------------
 
--- Bars that participate in linked mouseover behavior
-local LINKED_BAR_KEYS = {"bar1", "bar2", "bar3", "bar4", "bar5", "bar6", "bar7", "bar8"}
+-- Mouseover fade subsystem.  Wrapped in do...end to reclaim local variable
+-- slots (file has >200 locals without this, hitting Lua's MAXLOCALS limit).
+-- Entry points are exposed on ActionBarsOwned at the end of the block.
+do
 
 local function IsMouseOverAnyLinkedBar()
-    for _, barKey in ipairs(LINKED_BAR_KEYS) do
+    for _, barKey in ipairs(STANDARD_BAR_KEYS) do
         if IsMouseOverBar(barKey) then
             return true
         end
@@ -5445,15 +5635,30 @@ local function RefreshBarsForSpellBookVisibility()
     if not ActionBarsOwned.initialized then return end
 
     local forceShow = ShouldForceShowForSpellBook()
-    for barKey, _ in pairs(BAR_FRAMES) do
-        local state = GetBarFadeState(barKey)
-        state.isFading = false
-        CancelBarFadeTimers(state)
 
-        if forceShow then
-            SetBarAlpha(barKey, 1)
+    -- Owned bars (bar1-8, pet, stance) use the owned fade system.
+    -- Non-owned bars (extraActionButton, zoneAbility) use the bar fade system.
+    for barKey, _ in pairs(BAR_FRAMES) do
+        if SKINNABLE_BAR_KEYS[barKey] then
+            -- Owned bar → owned fade system (container-level alpha)
+            local state = GetOwnedBarFadeState(barKey)
+            state.isFading = false
+            CancelOwnedBarFadeTimers(state)
+            if forceShow then
+                SetOwnedBarAlpha(barKey, 1)
+            else
+                SetupOwnedBarMouseover(barKey)
+            end
         else
-            SetupBarMouseover(barKey)
+            -- Non-owned bar → bar fade system (per-button alpha)
+            local state = GetBarFadeState(barKey)
+            state.isFading = false
+            CancelBarFadeTimers(state)
+            if forceShow then
+                SetBarAlpha(barKey, 1)
+            else
+                SetupBarMouseover(barKey)
+            end
         end
     end
 end
@@ -5473,6 +5678,13 @@ local function HookSpellBookVisibilityFrame(frame)
     end)
 end
 
+-- Expose entry points from the mouseover fade do...end block
+ActionBarsOwned.SetupBarMouseover = SetupBarMouseover
+ActionBarsOwned.RefreshBarsForSpellBookVisibility = RefreshBarsForSpellBookVisibility
+ActionBarsOwned.HookSpellBookVisibilityFrame = HookSpellBookVisibilityFrame
+
+end -- do (mouseover fade subsystem)
+
 
 ---------------------------------------------------------------------------
 -- COMBAT VISIBILITY HANDLER
@@ -5485,9 +5697,11 @@ local COMBAT_FADE_BARS = {
     bar5 = true, bar6 = true, bar7 = true, bar8 = true,
 }
 
+-- Combat-leave fade resume.  REGEN_DISABLED is already handled by the
+-- main OnOwnedEvent handler (line ~3081).  This frame only resumes
+-- mouseover fade behaviour when combat ends.
 local combatFadeFrame = CreateFrame("Frame")
-combatFadeFrame:RegisterEvent("PLAYER_REGEN_DISABLED")  -- Enter combat
-combatFadeFrame:RegisterEvent("PLAYER_REGEN_ENABLED")   -- Leave combat
+combatFadeFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 combatFadeFrame:SetScript("OnEvent", function(self, event)
     local fadeSettings = GetFadeSettings()
@@ -5495,27 +5709,8 @@ combatFadeFrame:SetScript("OnEvent", function(self, event)
     if not fadeSettings.alwaysShowInCombat then return end
     if ShouldSuppressMouseoverHideForLevel() then return end
 
-    if event == "PLAYER_REGEN_DISABLED" then
-        -- Entering combat: Force action bars 1-8 to full opacity
-        for barKey, _ in pairs(COMBAT_FADE_BARS) do
-            local state = GetBarFadeState(barKey)
-            -- Cancel any pending fade timers
-            if state.delayTimer then
-                state.delayTimer:Cancel()
-                state.delayTimer = nil
-            end
-            if state.leaveCheckTimer then
-                state.leaveCheckTimer:Cancel()
-                state.leaveCheckTimer = nil
-            end
-            -- Fade to full opacity
-            StartBarFade(barKey, 1)
-        end
-    else
-        -- Leaving combat: Resume normal mouseover behavior for bars 1-8
-        for barKey, _ in pairs(COMBAT_FADE_BARS) do
-            SetupBarMouseover(barKey)
-        end
+    for barKey, _ in pairs(COMBAT_FADE_BARS) do
+        SetupOwnedBarMouseover(barKey)
     end
 end)
 
@@ -5586,7 +5781,7 @@ local function SkinBar(barKey)
                 local st = GetFrameState(self)
                 SuppressButtonProcVisuals(self)
                 local key = GetBarKeyFromButton(self)
-                local fadeState = key and ActionBars.fadeState and ActionBars.fadeState[key]
+                local fadeState = key and ActionBarsOwned.fadeState and ActionBarsOwned.fadeState[key]
                 local hideEmptyEnabled = GetGlobalSettings() and GetGlobalSettings().hideEmptySlots
                 local shouldStayHidden = (fadeState and fadeState.currentAlpha and fadeState.currentAlpha <= 0)
                     or (hideEmptyEnabled and st.hiddenEmpty)
@@ -5625,7 +5820,7 @@ local function CollectSpellFlyoutButtons(flyout)
         if not IsSpellFlyoutButtonFrame(button, flyout) then return end
 
         seen[button] = true
-        table_insert(buttons, button)
+        table.insert(buttons, button)
     end
 
     if flyout and flyout.GetChildren then
@@ -5771,7 +5966,7 @@ local function CollectPageArrowFrames()
         if not frame or seen[frame] then return end
         if frame.Hide and frame.Show then
             seen[frame] = true
-            table_insert(frames, frame)
+            table.insert(frames, frame)
         end
     end
 
@@ -5881,8 +6076,11 @@ function ActionBarsOwned:Initialize()
     ownedEventFrame:RegisterEvent("PET_BATTLE_CLOSE")
     ownedEventFrame:RegisterEvent("LOSS_OF_CONTROL_ADDED")
     ownedEventFrame:RegisterEvent("LOSS_OF_CONTROL_UPDATE")
-    -- Events that LAB handles centrally — needed because per-button
-    -- events are unregistered on QUI-created buttons.
+    -- Spell activation overlay glow (proc abilities)
+    ownedEventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
+    ownedEventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
+    -- Events that QUI handles centrally — per-button events are
+    -- unregistered on QUI-created buttons.
     ownedEventFrame:RegisterEvent("SPELLS_CHANGED")
     ownedEventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
     ownedEventFrame:RegisterEvent("SPELL_FLYOUT_UPDATE")
@@ -6095,34 +6293,39 @@ function ActionBarsOwned:Refresh()
     -- Patch LibKeyBound Binder methods to work without method injection on Midnight
     PatchLibKeyBoundForMidnight()
 
-    -- Hook tooltip suppression for action buttons
+    -- Hook tooltip suppression for action buttons (once only — hooksecurefunc is permanent)
     -- NOTE: Synchronous — deferring causes tooltip flash before hide.
-    hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
-        local global = GetGlobalSettings()
-        if not global or global.showTooltips ~= false then return end
-        local name = parent and parent.GetName and parent:GetName()
-        if name and (name:match("^ActionButton") or name:match("^MultiBar") or name:match("^PetActionButton")
-            or name:match("^StanceButton") or name:match("^OverrideActionBar") or name:match("^ExtraActionButton")) then
-            tooltip:Hide()
-            tooltip:SetOwner(UIParent, "ANCHOR_NONE")
-            tooltip:ClearLines()
-        end
-    end)
-
-    -- Initial skin pass
-    SkinAllBars()
-    HookSpellFlyoutSkinning()
-
-    if type(ActionButton_ShowOverlayGlow) == "function" then
-        hooksecurefunc("ActionButton_ShowOverlayGlow", function(button)
-            if ActionBars.skinnedButtons[button] then
-                SuppressButtonProcVisuals(button)
+    if not ActionBarsOwned._refreshHooksInstalled then
+        ActionBarsOwned._refreshHooksInstalled = true
+        hooksecurefunc("GameTooltip_SetDefaultAnchor", function(tooltip, parent)
+            local global = GetGlobalSettings()
+            if not global or global.showTooltips ~= false then return end
+            local name = parent and parent.GetName and parent:GetName()
+            if name and (name:match("^ActionButton") or name:match("^MultiBar") or name:match("^PetActionButton")
+                or name:match("^StanceButton") or name:match("^OverrideActionBar") or name:match("^ExtraActionButton")) then
+                tooltip:Hide()
+                tooltip:SetOwner(UIParent, "ANCHOR_NONE")
+                tooltip:ClearLines()
             end
         end)
+
+        if type(ActionButton_ShowOverlayGlow) == "function" then
+            hooksecurefunc("ActionButton_ShowOverlayGlow", function(button)
+                if ActionBarsOwned.skinnedButtons[button] then
+                    SuppressButtonProcVisuals(button)
+                end
+            end)
+        end
     end
 
-    -- Apply bar layout settings (scale, lock, range indicator, empty slots)
-    ApplyBarLayoutSettings()
+    -- Initial skin pass
+    for _, barKey in ipairs(ALL_MANAGED_BAR_KEYS) do
+        SkinBar(barKey)
+    end
+    HookSpellFlyoutSkinning()
+
+    -- Apply bar layout settings (spacing, empty slot visibility)
+    ApplyAllBarSpacing()
 
     -- Hide bars that are disabled in DB
     for _, barKey in ipairs(ALL_MANAGED_BAR_KEYS) do
@@ -6424,7 +6627,7 @@ do
                     local filteredCopyOptions = {}
                     for _, opt in ipairs(copyBarOptions) do
                         if opt.value ~= barKey then
-                            table_insert(filteredCopyOptions, opt)
+                            table.insert(filteredCopyOptions, opt)
                         end
                     end
 

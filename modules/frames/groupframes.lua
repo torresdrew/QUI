@@ -50,6 +50,7 @@ local UnitThreatSituation = UnitThreatSituation
 local UnitGetTotalAbsorbs = UnitGetTotalAbsorbs
 local UnitGetTotalHealAbsorbs = UnitGetTotalHealAbsorbs
 local UnitIsUnit = UnitIsUnit
+local UnitGUID = UnitGUID
 local RAID_CLASS_COLORS = RAID_CLASS_COLORS
 
 -- ADDON_LOADED safe window flag for combat /reload support
@@ -75,60 +76,71 @@ QUI_GF.editMode = false
 
 -- State tables for taint safety (weak-keyed)
 local frameState, GetFrameState = Helpers.CreateStateTable()
+local _unitGuidCache = {}  -- frame → last-known GUID (for OnAttributeChanged skip)
 
 local powerThrottle = {}      -- unitToken → last update time
 local THROTTLE_INTERVAL = 0.1 -- 100ms coalesce window
 
+---------------------------------------------------------------------------
+-- GROUP_ROSTER_UPDATE coalescing: GRU fires in bursts of 5-20 during roster
+-- changes. Showing an already-shown frame is a no-op (automatic dedup), so
+-- all GRU events in a single render frame collapse into one OnUpdate tick.
+---------------------------------------------------------------------------
+local gruCoalesceFrame = CreateFrame("Frame")
+gruCoalesceFrame:Hide()
+local _gruDeferredPending = false  -- true while the 0.2s deferred timer is active
+
 -- Font/texture caching
-local cachedFontPath = nil
-local cachedTexturePath = nil
-local cachedFontOutline = nil
+local _fontCache = {}
 
 -- Pre-allocated color tables for common colors
-local COLOR_BLACK = { 0, 0, 0, 1 }
-local COLOR_WHITE = { 1, 1, 1, 1 }
-local COLOR_DEAD = { 0.5, 0.5, 0.5, 1 }
-local COLOR_OFFLINE = { 0.4, 0.4, 0.4, 1 }
-local COLOR_GHOST = { 0.6, 0.6, 0.6, 1 }
-
--- Dispel type → color defaults (used when DB colors not set)
-local DEFAULT_DISPEL_COLORS = {
-    Magic   = { 0.2, 0.6, 1.0, 1 },  -- Blue
-    Curse   = { 0.6, 0.0, 1.0, 1 },  -- Purple
-    Disease = { 0.6, 0.4, 0.0, 1 },  -- Brown
-    Poison  = { 0.0, 0.6, 0.0, 1 },  -- Green
-    Bleed   = { 0.8, 0.0, 0.0, 1 },  -- Red
+local COLORS = {
+    BLACK   = { 0, 0, 0, 1 },
+    WHITE   = { 1, 1, 1, 1 },
+    DEAD    = { 0.5, 0.5, 0.5, 1 },
+    OFFLINE = { 0.4, 0.4, 0.4, 1 },
+    GHOST   = { 0.6, 0.6, 0.6, 1 },
 }
 
--- Forward declaration; body defined after GetHealerSettings
+-- Dispel constants and cached state
+local _dispel = {
+    defaultColors = {
+        Magic   = { 0.2, 0.6, 1.0, 1 },  -- Blue
+        Curse   = { 0.6, 0.0, 1.0, 1 },  -- Purple
+        Disease = { 0.6, 0.4, 0.0, 1 },  -- Brown
+        Poison  = { 0.0, 0.6, 0.0, 1 },  -- Green
+        Bleed   = { 0.8, 0.0, 0.0, 1 },  -- Red
+    },
+    allEnums = {1, 2, 3, 4, 9, 11},  -- WoW 12.0+, from SpellDispelType DB2
+    enumNames = {
+        [1] = "Magic", [2] = "Curse", [3] = "Disease", [4] = "Poison",
+        [9] = "Bleed", [11] = "Bleed",
+    },
+    colorCurve = nil,
+    cachedColors = nil,
+    borderKeys = {"borderTop", "borderBottom", "borderLeft", "borderRight"},
+}
+
+-- Forward declarations; bodies defined later in file
 local GetDispelColors
-
--- Dispel type enum values (WoW 12.0+, from SpellDispelType DB2)
-local ALL_DISPEL_ENUMS = {1, 2, 3, 4, 9, 11}
-
--- Enum → dispel type name mapping
-local DISPEL_ENUM_NAMES = {
-    [1] = "Magic", [2] = "Curse", [3] = "Disease", [4] = "Poison",
-    [9] = "Bleed", [11] = "Bleed",
-}
-
-local dispelColorCurve = nil
+local InvalidateDispelColors
+local UpdateSelectiveEvents
 
 local function GetDispelColorCurve(opacity)
-    if dispelColorCurve then return dispelColorCurve end
+    if _dispel.colorCurve then return _dispel.colorCurve end
     if not C_CurveUtil or not C_CurveUtil.CreateColorCurve then return nil end
     local colors = GetDispelColors()
     local curve = C_CurveUtil.CreateColorCurve()
     curve:SetType(Enum.LuaCurveType.Step)
     curve:AddPoint(0, CreateColor(0, 0, 0, 0))  -- None = invisible
-    for _, enumVal in ipairs(ALL_DISPEL_ENUMS) do
-        local typeName = DISPEL_ENUM_NAMES[enumVal]
+    for _, enumVal in ipairs(_dispel.allEnums) do
+        local typeName = _dispel.enumNames[enumVal]
         local c = typeName and colors[typeName]
         if c then
             curve:AddPoint(enumVal, CreateColor(c[1], c[2], c[3], opacity or 0.8))
         end
     end
-    dispelColorCurve = curve
+    _dispel.colorCurve = curve
     return curve
 end
 
@@ -186,15 +198,17 @@ local function IsNPCPartyMember(unit)
     return UnitExists(unit) and not UnitIsPlayer(unit)
 end
 
--- Pending combat-deferred operations
-local pendingResize = false
-local pendingResizeForce = false
-local pendingRefreshSettings = false
-local pendingVisibilityUpdate = false
-local pendingRegisterClicks = false
-local pendingGroupReflow = false
-local pendingAnchorUpdate = false
-local initSafePeriod = true
+-- Pending combat-deferred operations (consolidated to stay under Lua's 200-local limit)
+local _pending = {
+    resize = false,
+    resizeForce = false,
+    refreshSettings = false,
+    visibilityUpdate = false,
+    registerClicks = false,
+    groupReflow = false,
+    anchorUpdate = false,
+    initSafe = true,
+}
 
 -- Multi-header mode: true when groupBy == "GROUP" (each raid group gets its own header).
 -- The default groupBy is "GROUP" so nil also means multi-header.
@@ -214,14 +228,26 @@ local function GetSettings()
     return GetDB()
 end
 
--- Returns the party or raid visual settings sub-table
+-- Returns the party or raid visual settings sub-table.
+-- Cached per party/raid to avoid 5-6 table lookups per call in hot paths
+-- (UNIT_HEALTH fires for every damaged unit — 4 sub-functions each call this).
+local _cachedVDB_party = nil
+local _cachedVDB_raid = nil
+
 local function GetVisualDB(isRaid)
+    if isRaid then
+        if _cachedVDB_raid then return _cachedVDB_raid end
+    else
+        if _cachedVDB_party then return _cachedVDB_party end
+    end
     local db = GetDB()
     if not db then return nil end
     if isRaid then
-        return db.raid or db
+        _cachedVDB_raid = db.raid or db
+        return _cachedVDB_raid
     else
-        return db.party or db
+        _cachedVDB_party = db.party or db
+        return _cachedVDB_party
     end
 end
 
@@ -272,16 +298,25 @@ local function GetHealerSettings(isRaid)
 end
 
 GetDispelColors = function()
+    if _dispel.cachedColors then return _dispel.cachedColors end
     local hs = GetHealerSettings()
     local dbColors = hs and hs.dispelOverlay and hs.dispelOverlay.colors
-    if not dbColors then return DEFAULT_DISPEL_COLORS end
-    return {
-        Magic   = dbColors.Magic   or DEFAULT_DISPEL_COLORS.Magic,
-        Curse   = dbColors.Curse   or DEFAULT_DISPEL_COLORS.Curse,
-        Disease = dbColors.Disease or DEFAULT_DISPEL_COLORS.Disease,
-        Poison  = dbColors.Poison  or DEFAULT_DISPEL_COLORS.Poison,
-        Bleed   = dbColors.Bleed   or DEFAULT_DISPEL_COLORS.Bleed,
+    if not dbColors then
+        _dispel.cachedColors = _dispel.defaultColors
+        return _dispel.defaultColors
+    end
+    _dispel.cachedColors = {
+        Magic   = dbColors.Magic   or _dispel.defaultColors.Magic,
+        Curse   = dbColors.Curse   or _dispel.defaultColors.Curse,
+        Disease = dbColors.Disease or _dispel.defaultColors.Disease,
+        Poison  = dbColors.Poison  or _dispel.defaultColors.Poison,
+        Bleed   = dbColors.Bleed   or _dispel.defaultColors.Bleed,
     }
+    return _dispel.cachedColors
+end
+
+InvalidateDispelColors = function()
+    _dispel.cachedColors = nil
 end
 
 local function GetRangeSettings(isRaid)
@@ -298,23 +333,23 @@ end
 -- HELPERS: Font and texture
 ---------------------------------------------------------------------------
 local function GetFontPath(isRaid)
-    if cachedFontPath then return cachedFontPath end
+    if _fontCache.fontPath then return _fontCache.fontPath end
     local general = GetGeneralSettings(isRaid)
     local fontName = general and general.font or "Quazii"
-    cachedFontPath = LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
-    return cachedFontPath
+    _fontCache.fontPath = LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
+    return _fontCache.fontPath
 end
 
 local function GetFontOutline(isRaid)
-    if cachedFontOutline then return cachedFontOutline end
+    if _fontCache.fontOutline then return _fontCache.fontOutline end
     local general = GetGeneralSettings(isRaid)
-    cachedFontOutline = general and general.fontOutline or "OUTLINE"
-    return cachedFontOutline
+    _fontCache.fontOutline = general and general.fontOutline or "OUTLINE"
+    return _fontCache.fontOutline
 end
 
 local function GetTexturePath(textureName)
     if not textureName then
-        if cachedTexturePath then return cachedTexturePath end
+        if _fontCache.texturePath then return _fontCache.texturePath end
         local general = GetGeneralSettings()
         textureName = general and general.texture or "Quazii v5"
     end
@@ -322,8 +357,8 @@ local function GetTexturePath(textureName)
     if not path and textureName and textureName:find("[/\\]") then
         path = textureName
     end
-    if not cachedTexturePath then
-        cachedTexturePath = path
+    if not _fontCache.texturePath then
+        _fontCache.texturePath = path
     end
     return path or "Interface\\Buttons\\WHITE8X8"
 end
@@ -345,9 +380,10 @@ local function ApplyStatusBarTexture(statusBar, textureName)
 end
 
 local function InvalidateCache()
-    cachedFontPath = nil
-    cachedTexturePath = nil
-    cachedFontOutline = nil
+    wipe(_fontCache)
+    _cachedVDB_party = nil
+    _cachedVDB_raid = nil
+    InvalidateDispelColors()
 end
 
 ---------------------------------------------------------------------------
@@ -514,8 +550,8 @@ local function GetPowerBarColor(unit, isRaid)
         return c[1], c[2], c[3], c[4] or 1
     end
 
-    local ok, powerType = pcall(UnitPowerType, unit)
-    if ok and powerType then
+    local powerType = UnitPowerType(unit)
+    if powerType then
         local c = POWER_COLORS[powerType]
         if c then return c[1], c[2], c[3], 1 end
     end
@@ -540,8 +576,8 @@ local function UpdateHealth(frame)
 
     -- Health bar value — use percentage-based approach
     -- UnitHealthPercent returns 0-100 via CurveConstants.ScaleTo100, C-side handles secrets
+    -- SetMinMaxValues(0, 100) is set once at frame creation (DecorateGroupFrame) — never changes.
     if frame.healthBar then
-        frame.healthBar:SetMinMaxValues(0, 100)
         if isDeadOrGhost then
             frame.healthBar:SetValue(0)
         else
@@ -552,9 +588,9 @@ local function UpdateHealth(frame)
         -- Color (dirty-checked: skip SetStatusBarColor when unchanged)
         local r, g, b, a
         if not isConnected then
-            r, g, b, a = COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3], COLOR_OFFLINE[4]
+            r, g, b, a = COLORS.OFFLINE[1], COLORS.OFFLINE[2], COLORS.OFFLINE[3], COLORS.OFFLINE[4]
         elseif isDeadOrGhost then
-            r, g, b, a = COLOR_DEAD[1], COLOR_DEAD[2], COLOR_DEAD[3], COLOR_DEAD[4]
+            r, g, b, a = COLORS.DEAD[1], COLORS.DEAD[2], COLORS.DEAD[3], COLORS.DEAD[4]
         else
             r, g, b, a = GetHealthBarColor(unit, frame._isRaid)
         end
@@ -570,12 +606,12 @@ local function UpdateHealth(frame)
     if frame.statusText then
         if not isConnected then
             frame.statusText:SetText("OFFLINE")
-            frame.statusText:SetTextColor(COLOR_OFFLINE[1], COLOR_OFFLINE[2], COLOR_OFFLINE[3])
+            frame.statusText:SetTextColor(COLORS.OFFLINE[1], COLORS.OFFLINE[2], COLORS.OFFLINE[3])
             frame.statusText:Show()
         elseif isDeadOrGhost then
             local isGhost = UnitIsGhost(unit)
             frame.statusText:SetText(isGhost and "GHOST" or "DEAD")
-            frame.statusText:SetTextColor(COLOR_DEAD[1], COLOR_DEAD[2], COLOR_DEAD[3])
+            frame.statusText:SetTextColor(COLORS.DEAD[1], COLORS.DEAD[2], COLORS.DEAD[3])
             frame.statusText:Show()
             -- Dim the frame slightly for dead units (offline dimming handled in UpdateConnection)
             frame:SetAlpha(0.65)
@@ -630,7 +666,7 @@ local function UpdateHealth(frame)
                 local pct = GetHealthPct(unit)
                 frame.healthText:SetFormattedText(pctFmt, pct)
             end
-            local tc = healthSettings.healthTextColor or COLOR_WHITE
+            local tc = healthSettings.healthTextColor or COLORS.WHITE
             frame.healthText:SetTextColor(tc[1], tc[2], tc[3], tc[4] or 1)
         end
     elseif frame.healthText then
@@ -704,13 +740,20 @@ local function UpdatePower(frame)
         return
     end
 
-    -- C-side SetMinMaxValues/SetValue handle values natively — no pcall needed
-    frame.powerBar:SetMinMaxValues(0, maxPower)
+    -- C-side SetMinMaxValues/SetValue handle values natively — no pcall needed.
+    -- Only update SetMinMaxValues when maxPower actually changes (rare: buffs/talents).
+    if maxPower ~= frame._lastMaxPower then
+        frame._lastMaxPower = maxPower
+        frame.powerBar:SetMinMaxValues(0, maxPower)
+    end
     frame.powerBar:SetValue(power)
 
-    -- Update color
+    -- Color (dirty-checked: power color changes only on form/spec change, not every tick)
     local r, g, b, a = GetPowerBarColor(unit, frame._isRaid)
-    frame.powerBar:SetStatusBarColor(r, g, b, a)
+    if r ~= frame._lastPowerColorR then
+        frame._lastPowerColorR = r
+        frame.powerBar:SetStatusBarColor(r, g, b, a)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -751,7 +794,7 @@ local function UpdateName(frame)
                 end
             end
         end
-        local tc = nameSettings and nameSettings.nameTextColor or COLOR_WHITE
+        local tc = nameSettings and nameSettings.nameTextColor or COLORS.WHITE
         frame.nameText:SetTextColor(tc[1], tc[2], tc[3], tc[4] or 1)
     else
         frame.nameText:SetText("")
@@ -804,23 +847,33 @@ local function UpdateAbsorbs(frame, _unit, _maxHP)
         frame._absorbVertical = frame._isVerticalFill
     end
 
-    -- C-side SetMinMaxValues/SetValue handle secret values natively — no pcall needed
-    frame.absorbBar:SetMinMaxValues(0, maxHP)
+    -- C-side SetMinMaxValues/SetValue handle secret values natively — no pcall needed.
+    -- Only update SetMinMaxValues when maxHP actually changes (rare: buffs/level/UNIT_MAXHEALTH).
+    if maxHP ~= frame._lastMaxHP then
+        frame._lastMaxHP = maxHP
+        frame.absorbBar:SetMinMaxValues(0, maxHP)
+    end
     frame.absorbBar:SetValue(absorbAmount)
 
-    -- Color: avoid table allocation — pass r,g,b directly to C-side
+    -- Color (dirty-checked: settings-driven or class-based, both stable per event)
     local aa = vdb.absorbs.opacity or 0.3
+    local ar, ag, ab
     if vdb.absorbs.useClassColor then
         local _, class = UnitClass(unit)
         local cc = class and RAID_CLASS_COLORS[class]
         if cc then
-            frame.absorbBar:SetStatusBarColor(cc.r, cc.g, cc.b, aa)
+            ar, ag, ab = cc.r, cc.g, cc.b
         else
-            frame.absorbBar:SetStatusBarColor(1, 1, 1, aa)
+            ar, ag, ab = 1, 1, 1
         end
     else
-        local ac = vdb.absorbs.color or COLOR_WHITE
-        frame.absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
+        local ac = vdb.absorbs.color or COLORS.WHITE
+        ar, ag, ab = ac[1], ac[2], ac[3]
+    end
+    if ar ~= frame._lastAbsorbColorR or aa ~= frame._lastAbsorbColorA then
+        frame._lastAbsorbColorR = ar
+        frame._lastAbsorbColorA = aa
+        frame.absorbBar:SetStatusBarColor(ar, ag, ab, aa)
     end
     frame.absorbBar:Show()
 end
@@ -865,13 +918,22 @@ local function UpdateHealAbsorb(frame, _unit, _maxHP)
         frame._healAbsorbVertical = frame._isVerticalFill
     end
 
-    -- C-side SetMinMaxValues/SetValue handle secret values natively
-    frame.healAbsorbBar:SetMinMaxValues(0, maxHP)
+    -- SetMinMaxValues handled by UpdateAbsorbs (called first, caches frame._lastMaxHP).
+    -- Standalone path (UNIT_HEAL_ABSORB_AMOUNT_CHANGED): guard here too.
+    if maxHP ~= frame._lastMaxHP then
+        frame._lastMaxHP = maxHP
+        frame.healAbsorbBar:SetMinMaxValues(0, maxHP)
+    end
     frame.healAbsorbBar:SetValue(healAbsorbAmount)
 
+    -- Color (dirty-checked: settings-driven, never changes during combat)
     local ha = vdb.healAbsorbs.opacity or 0.6
     local hc = vdb.healAbsorbs.color or { 0.5, 0.1, 0.1 }
-    frame.healAbsorbBar:SetStatusBarColor(hc[1], hc[2], hc[3], ha)
+    if hc[1] ~= frame._lastHealAbsorbColorR or ha ~= frame._lastHealAbsorbColorA then
+        frame._lastHealAbsorbColorR = hc[1]
+        frame._lastHealAbsorbColorA = ha
+        frame.healAbsorbBar:SetStatusBarColor(hc[1], hc[2], hc[3], ha)
+    end
     frame.healAbsorbBar:Show()
 end
 
@@ -940,27 +1002,37 @@ local function UpdateHealPrediction(frame, _unit, _maxHP)
         frame._healPredVertical = frame._isVerticalFill
     end
 
-    -- C-side SetMinMaxValues/SetValue handle secret values natively — no pcall needed
-    frame.healPredictionBar:SetMinMaxValues(0, maxHP)
+    -- SetMinMaxValues handled by UpdateAbsorbs (called first, caches frame._lastMaxHP).
+    -- Standalone path (UNIT_HEAL_PREDICTION): guard here too.
+    if maxHP ~= frame._lastMaxHP then
+        frame._lastMaxHP = maxHP
+        frame.healPredictionBar:SetMinMaxValues(0, maxHP)
+    end
     frame.healPredictionBar:SetValue(incomingHeals)
 
-    -- Color: avoid table allocation — pass r,g,b directly to C-side
+    -- Color (dirty-checked: settings-driven or class-based, both stable per event)
     local pa = vdb.healPrediction.opacity or 0.5
+    local pr, pg, pb
     if vdb.healPrediction.useClassColor then
         local _, class = UnitClass(unit)
         local cc = class and RAID_CLASS_COLORS[class]
         if cc then
-            frame.healPredictionBar:SetStatusBarColor(cc.r, cc.g, cc.b, pa)
+            pr, pg, pb = cc.r, cc.g, cc.b
         else
-            frame.healPredictionBar:SetStatusBarColor(0.2, 1, 0.2, pa)
+            pr, pg, pb = 0.2, 1, 0.2
         end
     else
         local pc = vdb.healPrediction.color
         if pc then
-            frame.healPredictionBar:SetStatusBarColor(pc[1], pc[2], pc[3], pa)
+            pr, pg, pb = pc[1], pc[2], pc[3]
         else
-            frame.healPredictionBar:SetStatusBarColor(0.2, 1, 0.2, pa)
+            pr, pg, pb = 0.2, 1, 0.2
         end
+    end
+    if pr ~= frame._lastHealPredColorR or pa ~= frame._lastHealPredColorA then
+        frame._lastHealPredColorR = pr
+        frame._lastHealPredColorA = pa
+        frame.healPredictionBar:SetStatusBarColor(pr, pg, pb, pa)
     end
     frame.healPredictionBar:Show()
 end
@@ -1093,8 +1165,8 @@ local function UpdateThreat(frame)
         return
     end
 
-    local ok, status = pcall(UnitThreatSituation, frame.unit)
-    if ok and status and status >= 2 then
+    local status = UnitThreatSituation(frame.unit)
+    if status and status >= 2 then
         local tc = indSettings.threatColor or { 1, 0, 0, 0.8 }
         frame.threatBorder:SetBackdropBorderColor(tc[1], tc[2], tc[3], tc[4] or 0.8)
         -- Keep threat border below icons/indicators — re-level in case frame
@@ -1231,12 +1303,9 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Dispel Overlay
 ---------------------------------------------------------------------------
--- Pre-cached dispel border key table (avoids per-call table allocation)
-local DISPEL_BORDER_KEYS = {"borderTop", "borderBottom", "borderLeft", "borderRight"}
-
 -- Helper: apply color to all 4 StatusBar borders + fill
 local function SetDispelBorderColor(overlay, r, g, b, a)
-    for _, key in ipairs(DISPEL_BORDER_KEYS) do
+    for _, key in ipairs(_dispel.borderKeys) do
         local border = overlay[key]
         if border then
             border:GetStatusBarTexture():SetVertexColor(r, g, b, a)
@@ -1250,7 +1319,7 @@ end
 
 -- Helper: apply a ColorMixin (secret-safe) to all 4 StatusBar borders + fill
 local function SetDispelBorderColorMixin(overlay, color)
-    for _, key in ipairs(DISPEL_BORDER_KEYS) do
+    for _, key in ipairs(_dispel.borderKeys) do
         local border = overlay[key]
         if border then
             local tex = border:GetStatusBarTexture()
@@ -1353,18 +1422,14 @@ local DEFENSIVE_GROWTH_OFFSETS = {
     DOWN   = function(size, spacing) return 0, -(size + spacing) end,
 }
 
--- Pooled scratch tables for defensive indicator (avoids 40+ allocations per
--- aura event in raids — wipe and reuse instead of creating fresh tables)
-local _scratchFoundAuras = {}
-local _scratchSeen = {}
-
--- Defensive classification cache: auraInstanceID → true/false
--- Classification is immutable per auraInstanceID.
-local _defensiveCache = {}
-
--- Pre-cached filter strings (avoids string concatenation per call)
-local _filterBigDefensive
-local _filterExternalDefensive
+-- Defensive indicator state (scratch tables, classification cache, filter strings)
+local _defensive = {
+    foundAuras = {},     -- pooled scratch (wipe and reuse)
+    seen = {},           -- pooled scratch (wipe and reuse)
+    cache = {},          -- auraInstanceID → true/false (immutable per ID)
+    filterBig = nil,     -- pre-cached filter string
+    filterExternal = nil,
+}
 
 local function AuraMatchesDefensiveClassification(unit, auraInstanceID, classification)
     if not unit or not classification or not auraInstanceID or IsSecretValue(auraInstanceID) then
@@ -1378,15 +1443,15 @@ local function AuraMatchesDefensiveClassification(unit, auraInstanceID, classifi
     local filterStr
     if AuraUtil and AuraUtil.AuraFilters then
         if classification == AuraUtil.AuraFilters.BigDefensive then
-            if not _filterBigDefensive then
-                _filterBigDefensive = "HELPFUL|" .. classification
+            if not _defensive.filterBig then
+                _defensive.filterBig = "HELPFUL|" .. classification
             end
-            filterStr = _filterBigDefensive
+            filterStr = _defensive.filterBig
         elseif classification == AuraUtil.AuraFilters.ExternalDefensive then
-            if not _filterExternalDefensive then
-                _filterExternalDefensive = "HELPFUL|" .. classification
+            if not _defensive.filterExternal then
+                _defensive.filterExternal = "HELPFUL|" .. classification
             end
-            filterStr = _filterExternalDefensive
+            filterStr = _defensive.filterExternal
         end
     end
     if not filterStr then
@@ -1425,21 +1490,21 @@ local function IsVerifiedDefensiveAura(unit, auraData)
     end
 
     -- Check cache first
-    local cached = _defensiveCache[auraInstanceID]
+    local cached = _defensive.cache[auraInstanceID]
     if cached ~= nil then
         return cached
     end
 
     if AuraMatchesDefensiveClassification(unit, auraInstanceID, filters.BigDefensive) then
-        _defensiveCache[auraInstanceID] = true
+        _defensive.cache[auraInstanceID] = true
         return true
     end
     if AuraMatchesDefensiveClassification(unit, auraInstanceID, filters.ExternalDefensive) then
-        _defensiveCache[auraInstanceID] = true
+        _defensive.cache[auraInstanceID] = true
         return true
     end
 
-    _defensiveCache[auraInstanceID] = false
+    _defensive.cache[auraInstanceID] = false
     return false
 end
 
@@ -1466,8 +1531,8 @@ local function UpdateDefensiveIndicator(frame)
     -- Collect defensive auras from the shared cache first (just populated by
     -- the aura dispatcher). This avoids 2-3 redundant C_UnitAuras.GetUnitAuras
     -- calls per unit per aura event (~60-100 saved C API calls per raid batch).
-    local foundAuras = _scratchFoundAuras
-    local seen = _scratchSeen
+    local foundAuras = _defensive.foundAuras
+    local seen = _defensive.seen
     wipe(foundAuras)
     wipe(seen)
 
@@ -1748,7 +1813,7 @@ local function DecorateGroupFrame(frame)
         absorbBar = CreateFrame("StatusBar", nil, healthBar)
     end
     absorbBar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Fill")
-    local ac = absorbSettings and absorbSettings.color or COLOR_WHITE
+    local ac = absorbSettings and absorbSettings.color or COLORS.WHITE
     local aa = absorbSettings and absorbSettings.opacity or 0.3
     absorbBar:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
     absorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 2)
@@ -2139,18 +2204,52 @@ local function DecorateGroupFrame(frame)
         end)
         frame:HookScript("OnLeave", HideUnitTooltip)
 
-        -- Sync unit attribute → frame.unit whenever the secure header changes it
+        -- Sync unit attribute → frame.unit whenever the secure header changes it.
+        -- GUID-based skip: avoids expensive UpdateFrame when the same player is
+        -- reassigned to a different slot (common during roster shuffles).
+        --   Level 0: Both old and new nil → skip (empty slot noise)
+        --   Level 1: Same unit + same GUID → skip (no real change)
+        --   Level 2: Different unit, same GUID → light update (remap only)
+        --   Level 3: Genuinely different player → full UpdateFrame
         frame:HookScript("OnAttributeChanged", function(self, key, value)
             if key ~= "unit" then return end
             local oldUnit = self.unit
+            -- Level 0: both nil — nothing to do
+            if not oldUnit and not value then return end
+
             self.unit = value
+
+            -- Clean up old mapping
             if oldUnit and QUI_GF.unitFrameMap[oldUnit] == self then
                 QUI_GF.unitFrameMap[oldUnit] = nil
             end
-            if value then
-                QUI_GF.unitFrameMap[value] = self
-                UpdateFrame(self)
+
+            if not value then
+                -- Unit cleared (frame hidden by header)
+                _unitGuidCache[self] = nil
+                return
             end
+
+            -- Register new mapping immediately (so events dispatch correctly)
+            QUI_GF.unitFrameMap[value] = self
+
+            -- GUID comparison: detect whether the actual player changed
+            local newGuid = UnitGUID(value)
+            local oldGuid = _unitGuidCache[self]
+            _unitGuidCache[self] = newGuid
+
+            if oldGuid and newGuid and oldGuid == newGuid then
+                if oldUnit == value then
+                    -- Level 1: same unit, same player — nothing changed
+                    return
+                end
+                -- Level 2: slot moved (e.g., raid3 → raid5), same player.
+                -- Map is already updated; skip full refresh.
+                return
+            end
+
+            -- Level 3: genuinely different player (or first assignment)
+            UpdateFrame(self)
         end)
     end
 
@@ -2373,8 +2472,8 @@ local function GetMultiHeaderTotalSize()
 end
 
 local function UpdateAnchorFrames()
-    if not initSafePeriod and InCombatLockdown() then
-        pendingAnchorUpdate = true
+    if not _pending.initSafe and InCombatLockdown() then
+        _pending.anchorUpdate = true
         return
     end
     local db = GetSettings()
@@ -2702,7 +2801,7 @@ end
 ---------------------------------------------------------------------------
 local function PositionRaidGroupHeaders()
     if InCombatLockdown() then
-        pendingGroupReflow = true
+        _pending.groupReflow = true
         return
     end
 
@@ -2854,7 +2953,7 @@ local function CreateHeaders()
             if not InCombatLockdown() then
                 value:RegisterForClicks("AnyUp")
             else
-                pendingRegisterClicks = true
+                _pending.registerClicks = true
             end
         end
     end)
@@ -2898,7 +2997,7 @@ local function CreateHeaders()
             if not InCombatLockdown() then
                 value:RegisterForClicks("AnyUp")
             else
-                pendingRegisterClicks = true
+                _pending.registerClicks = true
             end
         end
     end)
@@ -2938,7 +3037,7 @@ local function CreateHeaders()
                 if not InCombatLockdown() then
                     value:RegisterForClicks("AnyUp")
                 else
-                    pendingRegisterClicks = true
+                    _pending.registerClicks = true
                 end
             end
         end)
@@ -2981,7 +3080,7 @@ local function CreateHeaders()
             if not InCombatLockdown() then
                 value:RegisterForClicks("AnyUp")
             else
-                pendingRegisterClicks = true
+                _pending.registerClicks = true
             end
         end
     end)
@@ -3106,7 +3205,7 @@ local function DecorateHeaderChildren(header)
         if not InCombatLockdown() then
             child:RegisterForClicks("AnyUp")
         else
-            pendingRegisterClicks = true
+            _pending.registerClicks = true
         end
         i = i + 1
     end
@@ -3146,7 +3245,7 @@ end
 
 local function UpdateHeaderVisibility()
     if InCombatLockdown() and not inInitSafeWindow then
-        pendingVisibilityUpdate = true
+        _pending.visibilityUpdate = true
         return
     end
 
@@ -3227,7 +3326,7 @@ local function UpdateHeaderVisibility()
     UpdateAnchorFrames()
 
     -- End safe period before the deferred callback so combat guards apply
-    initSafePeriod = false
+    _pending.initSafe = false
 
     -- Defer decoration + map rebuild to next frame (after header creates children)
     C_Timer.After(0.1, function()
@@ -3310,8 +3409,8 @@ local function UpdateFrameScaling(forceUpdate)
     local w, h = GetFrameDimensions(mode)
 
     if InCombatLockdown() and not inInitSafeWindow then
-        pendingResize = true
-        pendingResizeForce = pendingResizeForce or (forceUpdate and true or false)
+        _pending.resize = true
+        _pending.resizeForce = _pending.resizeForce or (forceUpdate and true or false)
         ApplyChildFrameLayout(w, h)
         return
     end
@@ -3346,189 +3445,138 @@ end
 ---------------------------------------------------------------------------
 local rangeCheckTicker = nil
 
--- Spec → friendly spell ID for range checking (validated with IsPlayerSpell).
--- Death Knight: no friendly spell — Death Coil returns nil on player targets; use UnitInRange / hostile spell.
-local SPEC_RANGE_SPELLS = {
-    -- Death Knight
-    [250] = nil,
-    [251] = nil,
-    [252] = nil,
-    -- Demon Hunter
-    [577] = nil,    -- Havoc: no friendly spell
-    [581] = nil,    -- Vengeance: no friendly spell
-    -- Druid
-    [102] = 8936,   -- Balance: Regrowth
-    [103] = 8936,   -- Feral: Regrowth
-    [104] = 8936,   -- Guardian: Regrowth
-    [105] = 774,    -- Restoration: Rejuvenation
-    -- Evoker
-    [1467] = 360995, -- Devastation: Emerald Blossom
-    [1468] = 360995, -- Preservation: Emerald Blossom
-    [1473] = 360995, -- Augmentation: Emerald Blossom
-    -- Hunter
-    [253] = nil,    -- Beast Mastery
-    [254] = nil,    -- Marksmanship
-    [255] = nil,    -- Survival
-    -- Mage
-    [62]  = 1459,   -- Arcane: Arcane Intellect
-    [63]  = 1459,   -- Fire: Arcane Intellect
-    [64]  = 1459,   -- Frost: Arcane Intellect
-    -- Monk
-    [268] = 116670, -- Brewmaster: Vivify
-    [269] = 116670, -- Windwalker: Vivify
-    [270] = 116670, -- Mistweaver: Vivify
-    -- Paladin
-    [65]  = 19750,  -- Holy: Flash of Light
-    [66]  = 19750,  -- Protection: Flash of Light
-    [70]  = 19750,  -- Retribution: Flash of Light
-    -- Priest
-    [256] = 17,     -- Discipline: Power Word: Shield
-    [257] = 2061,   -- Holy: Flash Heal
-    [258] = 17,     -- Shadow: Power Word: Shield
-    -- Rogue
-    [259] = 57934,  -- Assassination: Tricks of the Trade
-    [260] = 57934,  -- Outlaw: Tricks of the Trade
-    [261] = 57934,  -- Subtlety: Tricks of the Trade
-    -- Shaman
-    [262] = 8004,   -- Elemental: Healing Surge
-    [263] = 8004,   -- Enhancement: Healing Surge
-    [264] = 8004,   -- Restoration: Healing Surge
-    -- Warlock
-    [265] = 5697,   -- Affliction: Unending Breath
-    [266] = 5697,   -- Demonology: Unending Breath
-    [267] = 5697,   -- Destruction: Unending Breath
-    -- Warrior
-    [71]  = nil,    -- Arms
-    [72]  = nil,    -- Fury
-    [73]  = nil,    -- Protection
+-- Range-check spell lookup tables
+local RANGE_SPELLS = {
+    -- Spec → friendly spell ID (validated with IsPlayerSpell).
+    -- DK: no friendly spell — Death Coil returns nil on player targets; use UnitInRange / hostile spell.
+    spec = {
+        [250] = nil, [251] = nil, [252] = nil,          -- Death Knight
+        [577] = nil, [581] = nil,                        -- Demon Hunter
+        [102] = 8936, [103] = 8936, [104] = 8936,       -- Druid: Regrowth
+        [105] = 774,                                     -- Resto Druid: Rejuvenation
+        [1467] = 360995, [1468] = 360995, [1473] = 360995, -- Evoker: Emerald Blossom
+        [253] = nil, [254] = nil, [255] = nil,           -- Hunter
+        [62] = 1459, [63] = 1459, [64] = 1459,          -- Mage: Arcane Intellect
+        [268] = 116670, [269] = 116670, [270] = 116670, -- Monk: Vivify
+        [65] = 19750, [66] = 19750, [70] = 19750,       -- Paladin: Flash of Light
+        [256] = 17, [257] = 2061, [258] = 17,           -- Priest: PW:S / Flash Heal
+        [259] = 57934, [260] = 57934, [261] = 57934,    -- Rogue: Tricks of the Trade
+        [262] = 8004, [263] = 8004, [264] = 8004,       -- Shaman: Healing Surge
+        [265] = 5697, [266] = 5697, [267] = 5697,       -- Warlock: Unending Breath
+        [71] = nil, [72] = nil, [73] = nil,             -- Warrior
+    },
+    -- Hostile spell per spec (UnitCanAttack)
+    specHostile = {
+        [250] = 47541, [251] = 47541, [252] = 47541,
+        [577] = 185123, [581] = 185123,
+        [102] = 8921, [103] = 8921, [104] = 8921, [105] = 8921,
+        [1467] = 361469, [1468] = 361469, [1473] = 361469,
+        [253] = 193455, [254] = 19434, [255] = 259491,
+        [62] = 30451, [63] = 133, [64] = 116,
+        [268] = 115546, [269] = 115546, [270] = 115546,
+        [65] = 62124, [66] = 62124, [70] = 62124,
+        [256] = 585, [257] = 585, [258] = 585,
+        [259] = 36554, [260] = 185763, [261] = 36554,
+        [262] = 188196, [263] = 188196, [264] = 188196,
+        [265] = 686, [266] = 686, [267] = 29722,
+        [71] = 355, [72] = 355, [73] = 355,
+    },
+    -- Class fallback: used if spec not detected or spec spell not known
+    class = {
+        PRIEST      = { 2061, 17 },          -- Flash Heal, Power Word: Shield
+        PALADIN     = { 19750 },             -- Flash of Light
+        DRUID       = { 8936, 774 },         -- Regrowth, Rejuvenation
+        SHAMAN      = { 8004 },              -- Healing Surge
+        MONK        = { 116670 },            -- Vivify
+        EVOKER      = { 360995, 361469 },    -- Emerald Blossom, Living Flame
+        MAGE        = { 1459 },              -- Arcane Intellect
+        WARLOCK     = { 5697 },              -- Unending Breath
+        ROGUE       = { 57934 },             -- Tricks of the Trade
+        DEATHKNIGHT = {},
+        WARRIOR     = {},
+        DEMONHUNTER = {},
+        HUNTER      = {},
+    },
+    classHostile = {
+        DEATHKNIGHT = 47541, DEMONHUNTER = 185123, DRUID = 8921,
+        EVOKER = 361469, HUNTER = 75, MAGE = 116, MONK = 115546,
+        PALADIN = 62124, PRIEST = 585, ROGUE = 36554,
+        SHAMAN = 188196, WARLOCK = 686, WARRIOR = 355,
+    },
+    -- Class → single rez spell ID (Druid: Rebirth resolved in ResolveRangeSpells)
+    res = {
+        PRIEST = 2006, PALADIN = 7328, DRUID = 50769,
+        SHAMAN = 2008, MONK = 115178, EVOKER = 361227, DEATHKNIGHT = 61999,
+    },
 }
 
--- Hostile spell per spec (UnitCanAttack) — same role as DandersFrames/Grid2
-local SPEC_HOSTILE_RANGE_SPELLS = {
-    [250] = 47541, [251] = 47541, [252] = 47541,
-    [577] = 185123, [581] = 185123,
-    [102] = 8921, [103] = 8921, [104] = 8921, [105] = 8921,
-    [1467] = 361469, [1468] = 361469, [1473] = 361469,
-    [253] = 193455, [254] = 19434, [255] = 259491,
-    [62] = 30451, [63] = 133, [64] = 116,
-    [268] = 115546, [269] = 115546, [270] = 115546,
-    [65] = 62124, [66] = 62124, [70] = 62124,
-    [256] = 585, [257] = 585, [258] = 585,
-    [259] = 36554, [260] = 185763, [261] = 36554,
-    [262] = 188196, [263] = 188196, [264] = 188196,
-    [265] = 686, [266] = 686, [267] = 29722,
-    [71] = 355, [72] = 355, [73] = 355,
+local _range = {
+    playerClass = nil,
+    spell = nil,         -- Resolved friendly spell ID for living targets
+    hostileSpell = nil,  -- Resolved hostile spell for UnitCanAttack targets
+    resSpell = nil,      -- Resolved rez spell ID for dead targets
+    cache = {},          -- unit → boolean (change detection, avoids redundant SetAlpha)
+    cacheTime = {},      -- unit → GetTime() (skip recently event-updated units in ticker)
 }
-
--- Class fallback: used if spec not detected or spec spell not known
-local CLASS_RANGE_SPELLS = {
-    PRIEST      = { 2061, 17 },          -- Flash Heal, Power Word: Shield
-    PALADIN     = { 19750 },             -- Flash of Light
-    DRUID       = { 8936, 774 },         -- Regrowth, Rejuvenation
-    SHAMAN      = { 8004 },              -- Healing Surge
-    MONK        = { 116670 },            -- Vivify
-    EVOKER      = { 360995, 361469 },    -- Emerald Blossom, Living Flame
-    MAGE        = { 1459 },              -- Arcane Intellect
-    WARLOCK     = { 5697 },              -- Unending Breath
-    ROGUE       = { 57934 },             -- Tricks of the Trade
-    DEATHKNIGHT = {},
-    WARRIOR     = {},
-    DEMONHUNTER = {},
-    HUNTER      = {},
-}
-
-local CLASS_HOSTILE_RANGE_SPELLS = {
-    DEATHKNIGHT = 47541,
-    DEMONHUNTER = 185123,
-    DRUID       = 8921,
-    EVOKER      = 361469,
-    HUNTER      = 75,
-    MAGE        = 116,
-    MONK        = 115546,
-    PALADIN     = 62124,
-    PRIEST      = 585,
-    ROGUE       = 36554,
-    SHAMAN      = 188196,
-    WARLOCK     = 686,
-    WARRIOR     = 355,
-}
-
--- Class → single rez spell ID for dead-target range checking (Druid: Rebirth resolved in ResolveRangeSpells).
-local RES_SPELLS = {
-    PRIEST      = 2006,   -- Resurrection
-    PALADIN     = 7328,   -- Redemption
-    DRUID       = 50769,  -- Revive (fallback if Rebirth not known)
-    SHAMAN      = 2008,   -- Ancestral Spirit
-    MONK        = 115178, -- Resuscitate
-    EVOKER      = 361227, -- Return
-    DEATHKNIGHT = 61999,  -- Raise Ally
-}
-
-local playerClass = nil
-local rangeSpell = nil   -- Resolved friendly spell ID for living targets
-local hostileRangeSpell = nil -- Resolved hostile spell for UnitCanAttack targets
-local resSpell = nil     -- Resolved rez spell ID for dead targets
-local rangeCache = {}    -- unit → boolean (change detection, avoids redundant SetAlpha)
-local rangeCacheTime = {} -- unit → GetTime() (skip recently event-updated units in ticker)
 
 local function ResolveRangeSpells()
-    if not playerClass then
-        playerClass = select(2, UnitClass("player"))
+    if not _range.playerClass then
+        _range.playerClass = select(2, UnitClass("player"))
     end
 
     -- Clear cache — spells changed, previous results may be stale
-    wipe(rangeCache)
+    wipe(_range.cache)
 
     -- Resolve primary range spell (spec-based first, then class fallback)
-    rangeSpell = nil
+    _range.spell = nil
     local specIndex = GetSpecialization and GetSpecialization()
     local specID = specIndex and GetSpecializationInfo and GetSpecializationInfo(specIndex)
-    if specID and SPEC_RANGE_SPELLS[specID] then
-        local spellID = SPEC_RANGE_SPELLS[specID]
+    if specID and RANGE_SPELLS.spec[specID] then
+        local spellID = RANGE_SPELLS.spec[specID]
         if spellID and IsPlayerSpell(spellID) then
-            rangeSpell = spellID
+            _range.spell = spellID
         end
     end
 
     -- Class fallback if spec lookup didn't resolve
-    if not rangeSpell then
-        local candidates = CLASS_RANGE_SPELLS[playerClass]
+    if not _range.spell then
+        local candidates = RANGE_SPELLS.class[_range.playerClass]
         if candidates then
             for _, spellID in ipairs(candidates) do
                 if IsPlayerSpell(spellID) then
-                    rangeSpell = spellID
+                    _range.spell = spellID
                     break
                 end
             end
         end
     end
 
-    hostileRangeSpell = nil
-    if specID and SPEC_HOSTILE_RANGE_SPELLS[specID] then
-        local hid = SPEC_HOSTILE_RANGE_SPELLS[specID]
+    _range.hostileSpell = nil
+    if specID and RANGE_SPELLS.specHostile[specID] then
+        local hid = RANGE_SPELLS.specHostile[specID]
         if hid and IsPlayerSpell(hid) then
-            hostileRangeSpell = hid
+            _range.hostileSpell = hid
         end
     end
-    if not hostileRangeSpell then
-        local hid = CLASS_HOSTILE_RANGE_SPELLS[playerClass]
+    if not _range.hostileSpell then
+        local hid = RANGE_SPELLS.classHostile[_range.playerClass]
         if hid and IsPlayerSpell(hid) then
-            hostileRangeSpell = hid
+            _range.hostileSpell = hid
         end
     end
 
     -- Resolve rez spell (Druid: Rebirth for combat-consistent corpse range)
-    resSpell = nil
-    if playerClass == "DRUID" then
+    _range.resSpell = nil
+    if _range.playerClass == "DRUID" then
         if IsPlayerSpell(20484) then
-            resSpell = 20484
+            _range.resSpell = 20484
         elseif IsPlayerSpell(50769) then
-            resSpell = 50769
+            _range.resSpell = 50769
         end
     else
-        local rezID = RES_SPELLS[playerClass]
+        local rezID = RANGE_SPELLS.res[_range.playerClass]
         if rezID and IsPlayerSpell(rezID) then
-            resSpell = rezID
+            _range.resSpell = rezID
         end
     end
 end
@@ -3556,8 +3604,8 @@ local function CheckUnitRange(unit)
     -- Hostile units (UnitCanAttack): check hostile spell range first;
     -- also handles edge cases with cross-faction party members.
     if UnitCanAttack("player", unit) then
-        if hostileRangeSpell then
-            local inRangeH = C_Spell.IsSpellInRange(hostileRangeSpell, unit)
+        if _range.hostileSpell then
+            local inRangeH = C_Spell.IsSpellInRange(_range.hostileSpell, unit)
             if inRangeH ~= nil then
                 return inRangeH
             end
@@ -3565,8 +3613,8 @@ local function CheckUnitRange(unit)
         return true
     end
 
-    if rangeSpell and not isDead then
-        local result = C_Spell.IsSpellInRange(rangeSpell, unit)
+    if _range.spell and not isDead then
+        local result = C_Spell.IsSpellInRange(_range.spell, unit)
         if result == true then
             return true
         elseif result == false then
@@ -3580,8 +3628,8 @@ local function CheckUnitRange(unit)
         -- result == nil: spell not applicable, fall through to UnitInRange
     end
 
-    if isDead and resSpell then
-        local result = C_Spell.IsSpellInRange(resSpell, unit)
+    if isDead and _range.resSpell then
+        local result = C_Spell.IsSpellInRange(_range.resSpell, unit)
         if result ~= nil then return result end
     end
 
@@ -3599,7 +3647,7 @@ local function CheckUnitRange(unit)
         if inRange ~= nil then return inRange end
     end
 
-    if rangeSpell and friendlyReturnedNil and connected and not isDead then
+    if _range.spell and friendlyReturnedNil and connected and not isDead then
         return false
     end
 
@@ -3628,7 +3676,7 @@ local function DoRangeCheck()
     for unit, frame in pairs(QUI_GF.unitFrameMap) do
         if frame and frame:IsShown() then
             -- Skip units updated by UNIT_IN_RANGE_UPDATE within the last 0.4s
-            local lastEventTime = rangeCacheTime[unit]
+            local lastEventTime = _range.cacheTime[unit]
             if lastEventTime and (now - lastEventTime) < 0.4 then
                 -- Event-driven update is still fresh, skip this unit
             else
@@ -3638,11 +3686,11 @@ local function DoRangeCheck()
                     local inRange = CheckUnitRange(unit)
                     local state = GetFrameState(frame)
 
-                    local cached = rangeCache[unit]
+                    local cached = _range.cache[unit]
                     local isSecret = issecretvalue and (issecretvalue(inRange) or issecretvalue(cached))
 
                     if isSecret or cached ~= inRange or state.outOfRange == nil then
-                        rangeCache[unit] = inRange
+                        _range.cache[unit] = inRange
                         state.outOfRange = true
                         state.inRange = inRange
                         ApplyRangeAlpha(frame, inRange, outAlpha)
@@ -3661,7 +3709,7 @@ local function StartRangeCheck()
     if (not partyRange or partyRange.enabled == false) and (not raidRange or raidRange.enabled == false) then return end
 
     -- Ensure spells are resolved before starting
-    if not rangeSpell and not resSpell and not hostileRangeSpell then
+    if not _range.spell and not _range.resSpell and not _range.hostileSpell then
         ResolveRangeSpells()
     end
 
@@ -3676,9 +3724,57 @@ local function StopRangeCheck()
         rangeCheckTicker:Cancel()
         rangeCheckTicker = nil
     end
-    wipe(rangeCache)
-    wipe(rangeCacheTime)
+    wipe(_range.cache)
+    wipe(_range.cacheTime)
 end
+
+---------------------------------------------------------------------------
+-- GROUP_ROSTER_UPDATE: Hoisted deferred callback (avoids closure allocation)
+-- Called 0.2s after the coalesced GRU fires, giving secure headers time to
+-- create/reassign children before we rebuild the unit→frame map.
+---------------------------------------------------------------------------
+local function GRU_DeferredWork()
+    _gruDeferredPending = false
+    DecorateHeaderChildren(QUI_GF.headers.party)
+    if IsMultiHeaderMode() and IsInRaid() then
+        for g = 1, 8 do
+            DecorateHeaderChildren(QUI_GF.raidGroupHeaders[g])
+        end
+    else
+        DecorateHeaderChildren(QUI_GF.headers.raid)
+    end
+    RebuildUnitFrameMap()
+    -- Refresh GUID cache so OnAttributeChanged skip has fresh data
+    for unit, frame in pairs(QUI_GF.unitFrameMap) do
+        _unitGuidCache[frame] = UnitGUID(unit)
+    end
+    wipe(_range.cache)  -- Fresh map — force re-evaluate all units
+    wipe(_range.cacheTime)
+    -- Evict stale aura cache entries for units no longer in the group
+    local GFA = ns.QUI_GroupFrameAuras
+    if GFA and GFA.PruneAuraCache then GFA.PruneAuraCache() end
+    UpdateFrameScaling(true)
+    QUI_GF:RefreshAllFrames()
+    -- Ensure ticker is running (may not have started yet on first roster event)
+    StartRangeCheck()
+end
+
+-- Coalescing OnUpdate: fires once on the render frame AFTER the GRU burst.
+gruCoalesceFrame:SetScript("OnUpdate", function(self)
+    self:Hide()  -- One-shot: process once, then stop
+    UpdateHeaderVisibility()
+    UpdateFrameScaling(true)
+    UpdateHeaderSizes()
+    UpdateSelectiveEvents()
+    -- Schedule deferred work (secure headers need time to create children).
+    -- Cancel-and-reschedule: if a previous timer is still pending from an
+    -- earlier burst that hasn't fired yet, this replaces it harmlessly
+    -- (the flag prevents double-processing).
+    if not _gruDeferredPending then
+        _gruDeferredPending = true
+        C_Timer.After(0.2, GRU_DeferredWork)
+    end
+end)
 
 ---------------------------------------------------------------------------
 -- EVENTS: Centralized event dispatch
@@ -3782,23 +3878,23 @@ local function OnEvent(self, event, arg1, ...)
             if rangeSettings and rangeSettings.enabled ~= false then
                 local outAlpha = rangeSettings.outOfRangeAlpha or 0.4
                 local inRange = CheckUnitRange(arg1)
-                local cached = rangeCache[arg1]
+                local cached = _range.cache[arg1]
                 local isSecret = issecretvalue and (issecretvalue(inRange) or issecretvalue(cached))
                 if isSecret or cached ~= inRange then
-                    rangeCache[arg1] = inRange
+                    _range.cache[arg1] = inRange
                     local state = GetFrameState(frame)
                     state.outOfRange = true
                     state.inRange = inRange
                     ApplyRangeAlpha(frame, inRange, outAlpha)
                 end
-                rangeCacheTime[arg1] = GetTime()
+                _range.cacheTime[arg1] = GetTime()
             end
 
         elseif event == "UNIT_PHASE" then
             UpdatePhaseIcon(frame)
 
         elseif event == "INCOMING_RESURRECT_CHANGED" then
-            wipe(rangeCache)
+            wipe(_range.cache)
             UpdateResurrection(frame)
 
         elseif event == "INCOMING_SUMMON_CHANGED" then
@@ -3816,33 +3912,10 @@ local function OnEvent(self, event, arg1, ...)
     if not _cachedModuleEnabled then return end
 
     if event == "GROUP_ROSTER_UPDATE" then
-        UpdateHeaderVisibility()
-        UpdateFrameScaling(true)
-        UpdateHeaderSizes()
-        -- Rebuild map after a short delay (header needs time to create children).
-        -- Do NOT stop the range ticker — let it keep running with the current map.
-        -- Stale entries are harmless (frame:IsShown() guard skips removed frames)
-        -- and stopping creates a visible gap where range dimming freezes.
-        C_Timer.After(0.2, function()
-            DecorateHeaderChildren(QUI_GF.headers.party)
-            if IsMultiHeaderMode() and IsInRaid() then
-                for g = 1, 8 do
-                    DecorateHeaderChildren(QUI_GF.raidGroupHeaders[g])
-                end
-            else
-                DecorateHeaderChildren(QUI_GF.headers.raid)
-            end
-            RebuildUnitFrameMap()
-            wipe(rangeCache)  -- Fresh map — force re-evaluate all units
-            wipe(rangeCacheTime)
-            -- Evict stale aura cache entries for units no longer in the group
-            local GFA = ns.QUI_GroupFrameAuras
-            if GFA and GFA.PruneAuraCache then GFA.PruneAuraCache() end
-            UpdateFrameScaling(true)
-            QUI_GF:RefreshAllFrames()
-            -- Ensure ticker is running (may not have started yet on first roster event)
-            StartRangeCheck()
-        end)
+        -- Coalesce: show the throttle frame. Multiple GRU events in the same
+        -- render frame collapse into one OnUpdate tick (Show on already-shown
+        -- frame is a no-op). The heavy work runs once, next frame.
+        gruCoalesceFrame:Show()
 
     elseif event == "PLAYER_TARGET_CHANGED" then
         -- O(1) unhighlight + O(N/2) average find-and-highlight with early exit
@@ -3906,38 +3979,42 @@ local function OnEvent(self, event, arg1, ...)
         -- Combat started: clear range cache so stale OOC values
         -- (CheckInteractDistance) don't persist into combat where
         -- that API is unavailable.
-        wipe(rangeCache)
-        wipe(rangeCacheTime)
+        wipe(_range.cache)
+        wipe(_range.cacheTime)
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Combat ended: clear range cache so combat-era results
         -- don't prevent OOC methods from updating.
-        wipe(rangeCache)
-        wipe(rangeCacheTime)
+        wipe(_range.cache)
+        wipe(_range.cacheTime)
+        -- Evict defensive classification cache — auraInstanceIDs are globally
+        -- unique per application, so entries accumulate unboundedly during
+        -- long encounters. Safe to wipe OOC since new auras get fresh IDs.
+        wipe(_defensive.cache)
 
         -- Process deferred operations
-        if pendingRefreshSettings then
-            pendingRefreshSettings = false
+        if _pending.refreshSettings then
+            _pending.refreshSettings = false
             -- Full refresh: repositions headers AND reconfigures children.
             -- RefreshSettings deferred during combat because SetAttribute on
             -- SecureGroupHeaders is protected.
             QUI_GF:RefreshSettings()
-        elseif pendingResize then
-            pendingResize = false
-            local force = pendingResizeForce
-            pendingResizeForce = false
+        elseif _pending.resize then
+            _pending.resize = false
+            local force = _pending.resizeForce
+            _pending.resizeForce = false
             UpdateFrameScaling(force)
         end
-        if pendingVisibilityUpdate then
-            pendingVisibilityUpdate = false
+        if _pending.visibilityUpdate then
+            _pending.visibilityUpdate = false
             UpdateHeaderVisibility()
         end
-        if pendingGroupReflow then
-            pendingGroupReflow = false
+        if _pending.groupReflow then
+            _pending.groupReflow = false
             PositionRaidGroupHeaders()
         end
-        if pendingRegisterClicks then
-            pendingRegisterClicks = false
+        if _pending.registerClicks then
+            _pending.registerClicks = false
             DecorateHeaderChildren(QUI_GF.headers.party)
             if IsMultiHeaderMode() then
                 for g = 1, 8 do
@@ -3947,8 +4024,8 @@ local function OnEvent(self, event, arg1, ...)
                 DecorateHeaderChildren(QUI_GF.headers.raid)
             end
         end
-        if pendingAnchorUpdate then
-            pendingAnchorUpdate = false
+        if _pending.anchorUpdate then
+            _pending.anchorUpdate = false
             UpdateAnchorFrames()
         end
 
@@ -4011,19 +4088,35 @@ local function UnregisterEvents()
 end
 
 ---------------------------------------------------------------------------
--- SELECTIVE EVENT REGISTRATION: Unregister power events for large raids
+-- SELECTIVE EVENT REGISTRATION: Unregister noisy events when their
+-- corresponding visual feature is disabled, reducing wasted Lua dispatch.
 ---------------------------------------------------------------------------
-local function UpdateSelectiveEvents()
+UpdateSelectiveEvents = function()
     local db = GetSettings()
     local mode = GetGroupMode()
-    -- Large raids use raid power settings
-    local powerSettings = GetPowerSettings(mode ~= "party")
+    local isRaid = (mode ~= "party")
 
+    -- Power events: unregister in large raids when power bar hidden
+    local powerSettings = GetPowerSettings(isRaid)
     if mode == "large" and (not powerSettings or powerSettings.showPowerBar == false) then
         eventFrame:UnregisterEvent("UNIT_POWER_UPDATE")
         eventFrame:UnregisterEvent("UNIT_POWER_FREQUENT")
     else
         eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
+    end
+
+    -- Threat events: UNIT_THREAT_SITUATION_UPDATE fires for ALL units in the
+    -- game world (not just group members) because it uses global RegisterEvent.
+    -- When threat borders are disabled, unregister to avoid ~100s of wasted
+    -- dispatches per second in raids with many adds.
+    local partyInd = GetIndicatorSettings(false)
+    local raidInd = GetIndicatorSettings(true)
+    local partyThreat = partyInd and partyInd.showThreatBorder ~= false
+    local raidThreat = raidInd and raidInd.showThreatBorder ~= false
+    if partyThreat or raidThreat then
+        eventFrame:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
+    else
+        eventFrame:UnregisterEvent("UNIT_THREAT_SITUATION_UPDATE")
     end
 end
 
@@ -4070,7 +4163,7 @@ end
 function QUI_GF:RefreshSettings()
     InvalidateCache()
     RefreshCachedEnabled()
-    dispelColorCurve = nil  -- Rebuild with new opacity on next use
+    _dispel.colorCurve = nil  -- Rebuild with new opacity on next use
 
     if not self.initialized then
         return
@@ -4083,7 +4176,7 @@ function QUI_GF:RefreshSettings()
     end
 
     if InCombatLockdown() and not inInitSafeWindow then
-        pendingRefreshSettings = true
+        _pending.refreshSettings = true
         return
     end
 

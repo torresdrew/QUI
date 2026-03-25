@@ -57,6 +57,11 @@ local iconPool = {}
 local POOL_SIZE = 60
 local spellNameCache = {}
 
+-- Reusable scratch tables for aura lookups (avoids 2 table allocations
+-- per frame per UNIT_AURA event — 80+ garbage tables per raid burst).
+local _scratchActiveAuras = {}     -- [spellID] = auraData
+local _scratchActiveAuraNames = {} -- [spellName] = auraData
+
 ---------------------------------------------------------------------------
 -- SECRET AURA HANDLING (shared patterns from groupframes_indicators.lua)
 ---------------------------------------------------------------------------
@@ -295,6 +300,85 @@ local function ReleaseIndicator(item)
     end
 end
 
+-- Update indicator data in-place without touching position or acquire/release.
+-- Handles both "icon" and "square" display types, active and inactive states.
+local function UpdateIndicatorData(ind, unit, slot, auraData, showSwipe)
+    local isActive = auraData ~= nil
+    local displayType = slot.displayType or "icon"
+
+    if displayType == "square" then
+        local color = slot.color or {0.5, 0.5, 0.5, 1}
+        ind.icon:Hide()
+        ind.solidColor:SetColorTexture(color[1] or 0.5, color[2] or 0.5, color[3] or 0.5, color[4] or 1)
+        ind.solidColor:Show()
+        if ind.cooldown then ind.cooldown:Hide() end
+        if ind.stackText then ind.stackText:SetText("") end
+        ind:SetAlpha(isActive and 1 or INACTIVE_ALPHA)
+        ind:SetBackdropBorderColor(0, 0, 0, isActive and 1 or 0.5)
+    else
+        ind.solidColor:Hide()
+        ind.icon:Show()
+        ind.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+        if isActive then
+            if auraData.icon then
+                ind.icon:SetTexture(auraData.icon)
+            end
+
+            if showSwipe and ind.cooldown then
+                ind.cooldown:Show()
+                local dur = auraData.duration
+                local expTime = auraData.expirationTime
+                if dur and expTime then
+                    if unit and auraData.auraInstanceID
+                       and C_UnitAuras and C_UnitAuras.GetAuraDuration
+                       and ind.cooldown.SetCooldownFromDurationObject then
+                        local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraData.auraInstanceID)
+                        if ok and durationObj then
+                            pcall(ind.cooldown.SetCooldownFromDurationObject, ind.cooldown, durationObj)
+                        elseif not IsSecretValue(expTime) and not IsSecretValue(dur) then
+                            if ind.cooldown.SetCooldownFromExpirationTime then
+                                pcall(ind.cooldown.SetCooldownFromExpirationTime, ind.cooldown, expTime, dur)
+                            else
+                                pcall(ind.cooldown.SetCooldown, ind.cooldown, expTime - dur, dur)
+                            end
+                        else
+                            ind.cooldown:Clear()
+                        end
+                    elseif not IsSecretValue(expTime) and not IsSecretValue(dur) then
+                        if ind.cooldown.SetCooldownFromExpirationTime then
+                            pcall(ind.cooldown.SetCooldownFromExpirationTime, ind.cooldown, expTime, dur)
+                        else
+                            pcall(ind.cooldown.SetCooldown, ind.cooldown, expTime - dur, dur)
+                        end
+                    else
+                        ind.cooldown:Clear()
+                    end
+                end
+            elseif ind.cooldown then
+                ind.cooldown:Hide()
+            end
+
+            if ind.stackText then
+                local stacks = SafeToNumber(auraData.applications, 0)
+                ind.stackText:SetText(stacks > 1 and stacks or "")
+            end
+
+            ind:SetAlpha(1)
+        else
+            local spellIcon
+            if C_Spell and C_Spell.GetSpellTexture then
+                local ok2, tex = pcall(C_Spell.GetSpellTexture, slot.spellID)
+                if ok2 and tex then spellIcon = tex end
+            end
+            ind.icon:SetTexture(spellIcon or 134400)
+            if ind.cooldown then ind.cooldown:Hide() end
+            if ind.stackText then ind.stackText:SetText("") end
+            ind:SetAlpha(INACTIVE_ALPHA)
+        end
+    end
+end
+
 ---------------------------------------------------------------------------
 -- SPEC DETECTION
 ---------------------------------------------------------------------------
@@ -381,9 +465,12 @@ local function UpdateFramePinnedAuras(frame)
     local showSwipe = pa.showSwipe
     local inset = pa.edgeInset or 2
 
-    -- Build active aura lookup from shared cache
-    local activeAuras = {}
-    local activeAuraNames = {}
+    -- Build active aura lookup from shared cache.
+    -- Uses module-level scratch tables (wipe+reuse) to avoid per-call allocation.
+    local activeAuras = _scratchActiveAuras
+    local activeAuraNames = _scratchActiveAuraNames
+    wipe(activeAuras)
+    wipe(activeAuraNames)
     local helpfulAuras = nil
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
@@ -434,119 +521,68 @@ local function UpdateFramePinnedAuras(frame)
 
     local state = GetPinnedState(frame)
 
-    -- Release previous indicators
-    for _, ind in ipairs(state.indicators) do
-        ReleaseIndicator(ind)
-    end
-    wipe(state.indicators)
-
-    local bottomPad = frame._bottomPad or 0
-
+    -- Count valid slots to determine if we can reuse existing indicators
+    -- (slot set is config-fixed per spec — only changes on settings/spec change).
+    local validSlotCount = 0
     for _, slot in ipairs(slots) do
-        local spellID = slot.spellID
-        if spellID then
-            local displayType = slot.displayType or "icon"
-            local anchor = slot.anchor or "TOPLEFT"
-            local auraData = FindTrackedAuraData(unit, spellID, activeAuras, activeAuraNames, helpfulAuras)
-            local isActive = auraData ~= nil
+        if slot.spellID then validSlotCount = validSlotCount + 1 end
+    end
 
-            -- Track active auras for buff dedup
-            if isActive and auraData.auraInstanceID then
-                frame._pinnedAuraIDs[auraData.auraInstanceID] = true
-            end
+    -- Fast path: if slot count matches existing indicator count, reuse
+    -- indicators in-place (skip release→acquire→position cycle).
+    local canReuse = (#state.indicators == validSlotCount) and (validSlotCount > 0)
 
-            local ind = AcquireIndicator(frame)
-            ind:SetSize(slotSize, slotSize)
-            ind:SetFrameLevel(frame:GetFrameLevel() + 8)
-
-            -- Position at anchor with inset
-            ind:ClearAllPoints()
-            local insetDir = ANCHOR_INSET[anchor] or {0, 0}
-            local offX = insetDir[1] * inset + (slot.offsetX or 0)
-            local offY = insetDir[2] * inset + (slot.offsetY or 0)
-            -- Adjust bottom anchors for power bar padding
-            if anchor == "BOTTOMLEFT" or anchor == "BOTTOM" or anchor == "BOTTOMRIGHT" then
-                offY = offY + bottomPad
-            end
-            ind:SetPoint(anchor, frame, anchor, offX, offY)
-
-            if displayType == "square" then
-                local color = slot.color or {0.5, 0.5, 0.5, 1}
-                ind.icon:Hide()
-                ind.solidColor:SetColorTexture(color[1] or 0.5, color[2] or 0.5, color[3] or 0.5, color[4] or 1)
-                ind.solidColor:Show()
-                if ind.cooldown then ind.cooldown:Hide() end
-                if ind.stackText then ind.stackText:SetText("") end
-                ind:SetAlpha(isActive and 1 or INACTIVE_ALPHA)
-                ind:SetBackdropBorderColor(0, 0, 0, isActive and 1 or 0.5)
-            else
-                ind.solidColor:Hide()
-                ind.icon:Show()
-                ind.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-
-                if isActive then
-                    if auraData.icon then
-                        ind.icon:SetTexture(auraData.icon)
-                    end
-
-                    -- Cooldown swipe
-                    if showSwipe and ind.cooldown then
-                        ind.cooldown:Show()
-                        local dur = auraData.duration
-                        local expTime = auraData.expirationTime
-                        if dur and expTime then
-                            if unit and auraData.auraInstanceID
-                               and C_UnitAuras and C_UnitAuras.GetAuraDuration
-                               and ind.cooldown.SetCooldownFromDurationObject then
-                                local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraData.auraInstanceID)
-                                if ok and durationObj then
-                                    pcall(ind.cooldown.SetCooldownFromDurationObject, ind.cooldown, durationObj)
-                                elseif not IsSecretValue(expTime) and not IsSecretValue(dur) then
-                                    if ind.cooldown.SetCooldownFromExpirationTime then
-                                        pcall(ind.cooldown.SetCooldownFromExpirationTime, ind.cooldown, expTime, dur)
-                                    else
-                                        pcall(ind.cooldown.SetCooldown, ind.cooldown, expTime - dur, dur)
-                                    end
-                                else
-                                    ind.cooldown:Clear()
-                                end
-                            elseif not IsSecretValue(expTime) and not IsSecretValue(dur) then
-                                if ind.cooldown.SetCooldownFromExpirationTime then
-                                    pcall(ind.cooldown.SetCooldownFromExpirationTime, ind.cooldown, expTime, dur)
-                                else
-                                    pcall(ind.cooldown.SetCooldown, ind.cooldown, expTime - dur, dur)
-                                end
-                            else
-                                ind.cooldown:Clear()
-                            end
-                        end
-                    elseif ind.cooldown then
-                        ind.cooldown:Hide()
-                    end
-
-                    -- Stacks
-                    if ind.stackText then
-                        local stacks = SafeToNumber(auraData.applications, 0)
-                        ind.stackText:SetText(stacks > 1 and stacks or "")
-                    end
-
-                    ind:SetAlpha(1)
-                else
-                    -- Inactive: show spell texture faded
-                    local spellIcon
-                    if C_Spell and C_Spell.GetSpellTexture then
-                        local ok2, tex = pcall(C_Spell.GetSpellTexture, spellID)
-                        if ok2 and tex then spellIcon = tex end
-                    end
-                    ind.icon:SetTexture(spellIcon or 134400)
-                    if ind.cooldown then ind.cooldown:Hide() end
-                    if ind.stackText then ind.stackText:SetText("") end
-                    ind:SetAlpha(INACTIVE_ALPHA)
+    if canReuse then
+        -- In-place update: just refresh data/state on existing indicators
+        local idx = 0
+        for _, slot in ipairs(slots) do
+            local spellID = slot.spellID
+            if spellID then
+                idx = idx + 1
+                local ind = state.indicators[idx]
+                local auraData = FindTrackedAuraData(unit, spellID, activeAuras, activeAuraNames, helpfulAuras)
+                if auraData and auraData.auraInstanceID then
+                    frame._pinnedAuraIDs[auraData.auraInstanceID] = true
                 end
+                UpdateIndicatorData(ind, unit, slot, auraData, showSwipe)
             end
+        end
+    else
+        -- Full rebuild: release all, acquire new, position
+        for _, ind in ipairs(state.indicators) do
+            ReleaseIndicator(ind)
+        end
+        wipe(state.indicators)
 
-            ind:Show()
-            state.indicators[#state.indicators + 1] = ind
+        local bottomPad = frame._bottomPad or 0
+
+        for _, slot in ipairs(slots) do
+            local spellID = slot.spellID
+            if spellID then
+                local anchor = slot.anchor or "TOPLEFT"
+                local auraData = FindTrackedAuraData(unit, spellID, activeAuras, activeAuraNames, helpfulAuras)
+                if auraData and auraData.auraInstanceID then
+                    frame._pinnedAuraIDs[auraData.auraInstanceID] = true
+                end
+
+                local ind = AcquireIndicator(frame)
+                ind:SetSize(slotSize, slotSize)
+                ind:SetFrameLevel(frame:GetFrameLevel() + 8)
+
+                -- Position at anchor with inset
+                ind:ClearAllPoints()
+                local insetDir = ANCHOR_INSET[anchor] or {0, 0}
+                local offX = insetDir[1] * inset + (slot.offsetX or 0)
+                local offY = insetDir[2] * inset + (slot.offsetY or 0)
+                if anchor == "BOTTOMLEFT" or anchor == "BOTTOM" or anchor == "BOTTOMRIGHT" then
+                    offY = offY + bottomPad
+                end
+                ind:SetPoint(anchor, frame, anchor, offX, offY)
+
+                UpdateIndicatorData(ind, unit, slot, auraData, showSwipe)
+                ind:Show()
+                state.indicators[#state.indicators + 1] = ind
+            end
         end
     end
 end

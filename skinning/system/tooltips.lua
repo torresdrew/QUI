@@ -812,8 +812,17 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     do
         local wasShown = false
         local watcher = CreateFrame("Frame")
+        local watcherElapsed = 0
+        local WATCHER_IDLE_INTERVAL = 0.05  -- 20Hz when tooltip hidden (vs 60Hz)
         -- Watcher runs continuously — no HookScript on GameTooltip.
-        watcher:SetScript("OnUpdate", function()
+        watcher:SetScript("OnUpdate", function(self, dt)
+            -- Idle throttle: when tooltip is hidden and no pending restyle,
+            -- check at 20Hz instead of every frame. Saves ~67% of overhead.
+            if not wasShown and not pendingGameTooltipRestyle then
+                watcherElapsed = watcherElapsed + dt
+                if watcherElapsed < WATCHER_IDLE_INTERVAL then return end
+                watcherElapsed = 0
+            end
             -- Handle deferred restyle from SharedTooltip_SetBackdropStyle /
             -- GameTooltip_SetBackdropStyle hooks (taint safety).
             if pendingGameTooltipRestyle then

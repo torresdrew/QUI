@@ -111,7 +111,7 @@ local CASTBAR_MIGRATION_MAP = {
 
 -- Keys that map 1:1 between old castBar and new quiUnitFrames.*.castbar
 local CASTBAR_DIRECT_KEYS = {
-    "enabled", "bgColor", "color", "height", "offsetX", "offsetY",
+    "enabled", "bgColor", "color", "height",
     "showIcon", "width",
 }
 
@@ -119,6 +119,11 @@ local CASTBAR_DIRECT_KEYS = {
 local CASTBAR_RENAMED_KEYS = {
     textSize = "fontSize",
 }
+
+-- Position keys always migrate (legacy values represent actual screen positions
+-- and should take priority even when the target castbar section already exists
+-- from a transitional-era profile that had both old and new keys).
+local CASTBAR_POSITION_KEYS = { "offsetX", "offsetY" }
 
 local function MigrateCastBars(profile)
     if not profile then return end
@@ -154,6 +159,13 @@ local function MigrateCastBars(profile)
                 end
             end
 
+            -- Position offsets always migrate from legacy (user's actual screen placement)
+            for _, k in ipairs(CASTBAR_POSITION_KEYS) do
+                if old[k] ~= nil then
+                    target[k] = old[k]
+                end
+            end
+
             -- Remove the legacy key
             profile[oldKey] = nil
         end
@@ -161,7 +173,139 @@ local function MigrateCastBars(profile)
 end
 
 -- Migrate legacy unitFrames table to quiUnitFrames
+-- The old format used PascalCase (General, Frame.Width, Tags.Health.FontSize)
+-- while the new format uses flat camelCase (width, healthFontSize, showName).
 local UNIT_FRAME_UNITS = { "player", "target", "targettarget", "pet", "focus", "boss" }
+
+-- Helper: set key in target only if target[k] is nil (conservative merge)
+local function SetIfNil(target, key, value)
+    if value ~= nil and target[key] == nil then
+        target[key] = value
+    end
+end
+
+-- Helper: ensure a sub-table exists and merge into it conservatively
+local function EnsureSubTable(target, key)
+    if type(target[key]) ~= "table" then
+        target[key] = {}
+    end
+    return target[key]
+end
+
+-- Migrate legacy General settings (PascalCase → camelCase)
+local function MigrateUnitFramesGeneral(oldGeneral, newGeneral)
+    if type(oldGeneral) ~= "table" then return end
+
+    SetIfNil(newGeneral, "font", oldGeneral.Font)
+    SetIfNil(newGeneral, "fontOutline", oldGeneral.FontFlag)
+
+    -- DarkMode sub-table
+    if type(oldGeneral.DarkMode) == "table" then
+        local dm = oldGeneral.DarkMode
+        SetIfNil(newGeneral, "darkMode", dm.Enabled)
+        SetIfNil(newGeneral, "darkModeBgColor", dm.BackgroundColor)
+        SetIfNil(newGeneral, "darkModeHealthColor", dm.ForegroundColor)
+        if dm.UseSolidTexture ~= nil and newGeneral.darkModeOpacity == nil then
+            newGeneral.darkModeOpacity = 1
+        end
+    end
+
+    -- FontShadows
+    if type(oldGeneral.FontShadows) == "table" then
+        local fs = oldGeneral.FontShadows
+        SetIfNil(newGeneral, "fontShadowColor", fs.Color)
+        SetIfNil(newGeneral, "fontShadowOffsetX", fs.OffsetX)
+        SetIfNil(newGeneral, "fontShadowOffsetY", fs.OffsetY)
+    end
+
+    -- CustomColors.Power → powerColors (top-level, handled separately)
+    -- CustomColors.Reaction → hostility colors
+    if type(oldGeneral.CustomColors) == "table" then
+        local cc = oldGeneral.CustomColors
+        if type(cc.Reaction) == "table" then
+            -- Reaction colors: 1-2 = hostile, 3 = neutral, 4 = friendly, 5-8 = friendly
+            SetIfNil(newGeneral, "hostilityColorHostile", cc.Reaction[1])
+            SetIfNil(newGeneral, "hostilityColorNeutral", cc.Reaction[4])
+            SetIfNil(newGeneral, "hostilityColorFriendly", cc.Reaction[5])
+        end
+    end
+end
+
+-- Migrate a single unit's PascalCase data to camelCase
+local function MigrateUnitFrameUnit(oldUnit, newUnit)
+    if type(oldUnit) ~= "table" then return end
+
+    -- Top-level Enabled
+    SetIfNil(newUnit, "enabled", oldUnit.Enabled)
+
+    -- Frame sub-table → flat keys
+    if type(oldUnit.Frame) == "table" then
+        local f = oldUnit.Frame
+        SetIfNil(newUnit, "width", f.Width)
+        SetIfNil(newUnit, "height", f.Height)
+        SetIfNil(newUnit, "texture", f.Texture)
+        SetIfNil(newUnit, "useClassColor", f.ClassColor)
+        SetIfNil(newUnit, "useHostilityColor", f.ReactionColor)
+        -- Frame position (boss frames used XPosition/YPosition for anchored offset)
+        SetIfNil(newUnit, "offsetX", f.XPosition)
+        SetIfNil(newUnit, "offsetY", f.YPosition)
+    end
+
+    -- Tags.Health → health text keys
+    if type(oldUnit.Tags) == "table" then
+        if type(oldUnit.Tags.Health) == "table" then
+            local h = oldUnit.Tags.Health
+            SetIfNil(newUnit, "showHealth", h.Enabled)
+            SetIfNil(newUnit, "healthFontSize", h.FontSize)
+            SetIfNil(newUnit, "healthAnchor", h.AnchorFrom)
+            SetIfNil(newUnit, "healthOffsetX", h.OffsetX)
+            SetIfNil(newUnit, "healthOffsetY", h.OffsetY)
+            SetIfNil(newUnit, "healthTextColor", h.Color)
+            if h.DisplayPercent ~= nil and newUnit.showHealthPercent == nil then
+                newUnit.showHealthPercent = h.DisplayPercent
+            end
+        end
+
+        -- Tags.Name → name text keys
+        if type(oldUnit.Tags.Name) == "table" then
+            local n = oldUnit.Tags.Name
+            SetIfNil(newUnit, "showName", n.Enabled)
+            SetIfNil(newUnit, "nameFontSize", n.FontSize)
+            SetIfNil(newUnit, "nameAnchor", n.AnchorFrom)
+            SetIfNil(newUnit, "nameOffsetX", n.OffsetX)
+            SetIfNil(newUnit, "nameOffsetY", n.OffsetY)
+            SetIfNil(newUnit, "nameTextColor", n.Color)
+            SetIfNil(newUnit, "nameTextUseClassColor", n.ColorByClass)
+        end
+
+        -- Tags.Power → power text keys
+        if type(oldUnit.Tags.Power) == "table" then
+            local p = oldUnit.Tags.Power
+            SetIfNil(newUnit, "showPowerText", p.Enabled)
+            SetIfNil(newUnit, "powerTextFontSize", p.FontSize)
+            SetIfNil(newUnit, "powerTextAnchor", p.AnchorFrom)
+            SetIfNil(newUnit, "powerTextOffsetX", p.OffsetX)
+            SetIfNil(newUnit, "powerTextOffsetY", p.OffsetY)
+            SetIfNil(newUnit, "powerTextColor", p.Color)
+        end
+    end
+
+    -- PowerBar → flat power bar keys
+    if type(oldUnit.PowerBar) == "table" then
+        local pb = oldUnit.PowerBar
+        SetIfNil(newUnit, "showPowerBar", pb.Enabled)
+        SetIfNil(newUnit, "powerBarHeight", pb.Height)
+        SetIfNil(newUnit, "powerBarUsePowerColor", pb.ColorByType)
+        SetIfNil(newUnit, "powerBarColor", pb.FGColor)
+    end
+
+    -- Absorb → absorbs sub-table
+    if type(oldUnit.Absorb) == "table" then
+        local absorbs = EnsureSubTable(newUnit, "absorbs")
+        SetIfNil(absorbs, "enabled", oldUnit.Absorb.Enabled)
+        SetIfNil(absorbs, "color", oldUnit.Absorb.Color)
+    end
+end
 
 local function MigrateUnitFrames(profile)
     if not profile then return end
@@ -175,33 +319,27 @@ local function MigrateUnitFrames(profile)
     local new = profile.quiUnitFrames
 
     -- Migrate enabled flag
-    if old.enabled ~= nil and new.enabled == nil then
-        new.enabled = old.enabled
-    end
+    SetIfNil(new, "enabled", old.enabled)
 
-    -- Migrate General → general (case change)
+    -- Migrate General → general (PascalCase → camelCase with key mapping)
     if type(old.General) == "table" then
-        if type(new.general) ~= "table" then
-            new.general = {}
-        end
-        for k, v in pairs(old.General) do
-            if new.general[k] == nil then
-                new.general[k] = v
-            end
-        end
+        local general = EnsureSubTable(new, "general")
+        MigrateUnitFramesGeneral(old.General, general)
     end
 
-    -- Migrate per-unit sub-tables (conservative: only copy keys not already set)
+    -- Migrate per-unit sub-tables with PascalCase → camelCase key mapping
     for _, unit in ipairs(UNIT_FRAME_UNITS) do
         if type(old[unit]) == "table" then
-            if type(new[unit]) ~= "table" then
-                new[unit] = {}
-            end
-            for k, v in pairs(old[unit]) do
-                if new[unit][k] == nil then
-                    new[unit][k] = v
-                end
-            end
+            local newUnit = EnsureSubTable(new, unit)
+            MigrateUnitFrameUnit(old[unit], newUnit)
+        end
+    end
+
+    -- Migrate power custom colors to top-level powerColors if available
+    if type(old.General) == "table" and type(old.General.CustomColors) == "table" then
+        local customPower = old.General.CustomColors.Power
+        if type(customPower) == "table" and profile.powerColors == nil then
+            profile.powerColors = customPower
         end
     end
 

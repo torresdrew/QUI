@@ -201,9 +201,9 @@ local function CreateQUIAltPowerBar()
     bar:SetScript("OnLeave", OnLeave)
 
     -- Event handling
-    bar:RegisterEvent("UNIT_POWER_UPDATE")
-    bar:RegisterEvent("UNIT_POWER_BAR_SHOW")
-    bar:RegisterEvent("UNIT_POWER_BAR_HIDE")
+    bar:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
+    bar:RegisterUnitEvent("UNIT_POWER_BAR_SHOW", "player")
+    bar:RegisterUnitEvent("UNIT_POWER_BAR_HIDE", "player")
     bar:RegisterEvent("PLAYER_ENTERING_WORLD")
     bar:SetScript("OnEvent", OnEvent)
 

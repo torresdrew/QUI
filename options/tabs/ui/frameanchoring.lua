@@ -161,18 +161,6 @@ local function BuildActionBarsTab(tabContent)
     -- All action bar positioning moved to Edit Mode settings panels.
 end
 
-local function BuildDisplayTab(tabContent)
-    GUI:SetSearchContext({tabIndex = 3, tabName = "Frame Positioning", subTabIndex = 1, subTabName = "Display"})
-    local y = -10
-    -- Buff/Debuff frame positioning moved to Layout Mode settings panels.
-    local frames = {
-        { key = "chatFrame1",       name = "Chat Frame" },
-    }
-
-    for _, frameDef in ipairs(frames) do
-        y = BuildFrameEntry(tabContent, frameDef, y)
-    end
-end
 
 local function BuildQoLTab(tabContent)
     GUI:SetSearchContext({tabIndex = 3, tabName = "Frame Positioning", subTabIndex = 5, subTabName = "QoL"})
@@ -278,26 +266,8 @@ local function CreateFrameAnchoringPage(parent)
 
     local sections, relayout, CreateCollapsible = Shared.CreateCollapsiblePage(content, PADDING)
 
-    -- Display: Chat Frame
-    local chatFrameDef = { key = "chatFrame1", name = "Chat Frame" }
-    CreateCollapsible("Chat Frame", 8 * FORM_ROW + 8, function(body)
-        local AnchorOpts = GetAnchorOpts()
-        if AnchorOpts and AnchorOpts.BuildAnchoringSection then
-            local finalY = AnchorOpts:BuildAnchoringSection(body, chatFrameDef.key, { name = chatFrameDef.name, noHeader = true }, -4)
-            local realHeight = math.abs(finalY) + 4
-            body:SetHeight(realHeight)
-            local sec = body:GetParent()
-            if sec then
-                sec._contentHeight = realHeight
-                if sec._expanded then
-                    sec:SetHeight(24 + realHeight)
-                end
-            end
-        end
-    end)
-
-    -- 3rd Party Addons
-    CreateCollapsible("3rd Party Addons", 400, function(body)
+    -- 3rd Party Addons (default expanded)
+    local thirdPartySection = CreateCollapsible("3rd Party Addons", 400, function(body)
         if ns.QUI_ThirdPartyAnchoringOptions and ns.QUI_ThirdPartyAnchoringOptions.BuildThirdPartyTab then
             ns.QUI_ThirdPartyAnchoringOptions.BuildThirdPartyTab(body)
         else
@@ -305,6 +275,23 @@ local function CreateFrameAnchoringPage(parent)
             label:SetPoint("TOPLEFT", 0, -4)
         end
     end)
+
+    -- Expand 3rd Party section by default
+    if thirdPartySection then
+        thirdPartySection._expanded = true
+        local chevron = thirdPartySection:GetChildren()
+        if chevron then
+            local chevronFS = select(1, chevron:GetRegions())
+            if chevronFS and chevronFS.SetText then
+                chevronFS:SetText("v")
+            end
+        end
+        local body = select(2, thirdPartySection:GetChildren())
+        if body then
+            body:Show()
+        end
+        thirdPartySection:SetHeight(24 + thirdPartySection._contentHeight)
+    end
 
     relayout()
 

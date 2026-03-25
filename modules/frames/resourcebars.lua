@@ -3276,8 +3276,8 @@ end
 -- EVENT HANDLER
 
 function QUICore:OnUnitPower(_, unit)
-    -- Be forgiving: if unit is nil or not "player", still update.
-    -- It's cheap and avoids missing power updates.
+    -- Unit filtering now handled at the C level via RegisterUnitEvent("player").
+    -- Keep the guard for callers that invoke OnUnitPower directly (e.g. PLAYER_REGEN events).
     if unit and unit ~= "player" then
         return
     end
@@ -3397,12 +3397,24 @@ local function InitializeResourceBars(self)
         self:OnUnitPower()
     end)
 
-    -- POWER UPDATES
-    self:RegisterEvent("UNIT_POWER_FREQUENT", "OnUnitPower")
-    self:RegisterEvent("UNIT_POWER_UPDATE", "OnUnitPower")
-    self:RegisterEvent("UNIT_MAXPOWER", "OnUnitPower")
-    self:RegisterEvent("RUNE_POWER_UPDATE", "OnRunePowerUpdate")  -- DK rune updates (event-driven, replaces ticker)
-    self:RegisterEvent("UNIT_AURA", "OnUnitAura")  -- Aura-based resources (Maelstrom Weapon stacks)
+    -- POWER UPDATES — use a raw frame with RegisterUnitEvent("player") so
+    -- high-frequency events (UNIT_POWER_FREQUENT ~10x/sec/unit) are filtered
+    -- at the C level instead of dispatching through AceEvent for every unit.
+    local powerEventFrame = CreateFrame("Frame")
+    powerEventFrame:RegisterUnitEvent("UNIT_POWER_FREQUENT", "player")
+    powerEventFrame:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
+    powerEventFrame:RegisterUnitEvent("UNIT_MAXPOWER", "player")
+    powerEventFrame:RegisterUnitEvent("UNIT_AURA", "player")  -- Aura-based resources (Maelstrom Weapon stacks)
+    powerEventFrame:RegisterEvent("RUNE_POWER_UPDATE")  -- DK rune updates (no unit filter available)
+    powerEventFrame:SetScript("OnEvent", function(_, event, unit, ...)
+        if event == "RUNE_POWER_UPDATE" then
+            self:OnRunePowerUpdate(event, unit, ...)
+        elseif event == "UNIT_AURA" then
+            self:OnUnitAura(event, unit, ...)
+        else
+            self:OnUnitPower(event, unit, ...)
+        end
+    end)
 
     -- Combat state events - force update on combat transitions
     -- Ensures bars show correct values when entering/exiting combat
