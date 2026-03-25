@@ -96,6 +96,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v2.55.0 - 2026-03-25
+
+### Fixed
+- backported api-change related fixes to QUI mainline
+- fixed custom trackers not showing in M+ and raids
+- fixed swipes and cooldowns not showing on CDM viewers
 ## v2.54.1 - 2026-03-24
 
 ### Fixed
