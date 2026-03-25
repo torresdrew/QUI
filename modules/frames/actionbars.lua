@@ -308,6 +308,8 @@ local function SuppressBlizzardButton(btn)
     btn.UpdateCooldown = noop
 end
 
+local LayoutNativeButtons -- forward declaration; defined below
+
 -- Reclaim reparented buttons back to their QUI container and re-layout.
 -- Used after Blizzard steals them during vehicle/override transitions.
 local function ReclaimBarButtons(barKey)
@@ -1018,7 +1020,7 @@ local function GetOwnedLayout(barKey)
         layout.buttonHeight
 end
 
-local function LayoutNativeButtons(barKey)
+LayoutNativeButtons = function(barKey)
     local container = ActionBarsOwned.containers[barKey]
     local buttons = ActionBarsOwned.nativeButtons[barKey]
     if not container or not buttons or #buttons == 0 then return end
@@ -5905,51 +5907,12 @@ function ActionBarsOwned:Initialize()
         BuildBar(barKey)
     end
 
-    -- Shadow taint-prone methods on OverrideActionBar buttons.  QUI
-    -- doesn't own these (they're needed for vehicles/boss encounters),
-    -- but QUI's presence taints them via the shared action bar system.
-    -- The C-side still dispatches to them, hitting secret-value
-    -- comparisons and SetCooldown blocks in the tainted context.
-    for i = 1, 6 do
-        local btn = _G["OverrideActionBarButton" .. i]
-        if btn then
-            btn.Update = ActionBarsOwned.SafeUpdate
-            btn.UpdateAction = ActionBarsOwned.SafeSyncAction
-            btn.OnEvent = function(self, event)
-                if event == "ACTIONBAR_UPDATE_COOLDOWN"
-                    or event == "LOSS_OF_CONTROL_ADDED"
-                    or event == "LOSS_OF_CONTROL_UPDATE" then
-                    ActionBarsOwned.UpdateCooldown(self)
-                    return
-                end
-                if event == "GLOBAL_MOUSE_UP" then
-                    self:UnregisterEvent(event)
-                    if self.UpdateFlyout then
-                        pcall(self.UpdateFlyout, self)
-                    end
-                    return
-                end
-                ActionBarsOwned.SafeUpdate(self)
-            end
-            btn:SetScript("OnEvent", btn.OnEvent)
-            btn.UpdateCooldown = function(self)
-                ActionBarsOwned.UpdateCooldown(self)
-            end
-            btn.UpdatePressAndHoldAction = function() end
-            btn.UpdateCount = function(self)
-                local action = self.action
-                if not action or not HasAction(action) then
-                    self.Count:SetText("")
-                    return
-                end
-                if C_ActionBar and C_ActionBar.GetActionDisplayCount then
-                    self.Count:SetText(C_ActionBar.GetActionDisplayCount(action) or "")
-                else
-                    self.Count:SetText("")
-                end
-            end
-        end
-    end
+    -- Leave OverrideActionBar buttons untouched.  Directly replacing
+    -- methods (Update, OnEvent, etc.) taints the button table, which
+    -- causes Blizzard's own Setup() → SetAttribute() call to be
+    -- blocked with ADDON_ACTION_BLOCKED.  These are Blizzard's secure
+    -- frames for vehicles/boss encounters — let them manage their own
+    -- buttons.
 
     -- Suppress PossessActionBar (mind control bar) — can overlap QUI bars
     local possessBar = _G.PossessActionBar or _G.PossessBarFrame
