@@ -34,6 +34,14 @@ local inInitSafeWindow = false
 
 local IS_MIDNIGHT = select(4, GetBuildInfo()) >= 120000
 
+-- LOCAL suppression of GetActionCount on Midnight (same approach as
+-- LibActionButton).  Must be local — replacing the global taints every
+-- Blizzard button that calls it, causing SetCooldown secret-value errors
+-- on the hidden original MultiBar buttons we don't own.
+local GetActionCount = GetActionCount
+if IS_MIDNIGHT then
+    GetActionCount = function() return 0 end
+end
 
 ---------------------------------------------------------------------------
 -- CONSTANTS
@@ -153,8 +161,128 @@ ns.ActionBarsOwned = ActionBarsOwned
 -- Backward compat alias for any code referencing mirrorButtons
 ActionBarsOwned.mirrorButtons = ActionBarsOwned.nativeButtons
 
+-- Taint-safe Update replacement for addon-created action buttons.
+-- The Blizzard mixin's Update uses comparison operators (==, ~=, >) on
+-- secret number values returned by restricted APIs, which errors when
+-- the button is tainted.  This version uses ONLY truthiness tests
+-- (if X then) on API returns — Lua evaluates truthiness without
+-- comparison operators, so secret booleans/numbers pass through safely.
+-- SetActionUIButton causes the C-side to call ForceUpdateAction on
+-- registered buttons, which dispatches mixin OnEvent → UpdateAction →
+-- self:Update().  This shadow intercepts that chain.
+function ActionBarsOwned.SafeUpdate(self)
+    local action = self.action
+    if not action then return end
+
+    if HasAction(action) then
+        -- Icon
+        local texture = GetActionTexture(action)
+        if texture then
+            self.icon:SetTexture(texture)
+            self.icon:Show()
+            if self.SlotBackground then self.SlotBackground:Hide() end
+        else
+            self.icon:Hide()
+            if self.SlotBackground then self.SlotBackground:Show() end
+        end
+
+        self:SetAlpha(1.0)
+
+        -- Checked state (autoattack, toggle abilities)
+        if IsCurrentAction(action) or IsAutoRepeatAction(action) then
+            self:SetChecked(true)
+        else
+            self:SetChecked(false)
+        end
+
+        -- Usability (basic vertex color — QUI's own tint overlay handles
+        -- detailed range/mana coloring via its polling timer)
+        local isUsable, notEnoughMana = IsUsableAction(action)
+        if isUsable then
+            self.icon:SetVertexColor(1, 1, 1)
+        elseif notEnoughMana then
+            self.icon:SetVertexColor(0.5, 0.5, 1)
+        else
+            self.icon:SetVertexColor(0.4, 0.4, 0.4)
+        end
+
+        -- Equipped border
+        if IsEquippedAction(action) then
+            self.Border:SetVertexColor(0, 1, 0, 0.35)
+            self.Border:Show()
+        else
+            self.Border:Hide()
+        end
+
+        -- Action text (macro name)
+        if not IsConsumableAction(action) and not IsStackableAction(action) then
+            self.Name:SetText(GetActionText(action) or "")
+        else
+            self.Name:SetText("")
+        end
+
+        -- Delegated to shadowed methods
+        self:UpdateCount()
+        self:UpdateCooldown()
+
+        -- Flyout arrow
+        if self.UpdateFlyout then
+            pcall(self.UpdateFlyout, self)
+        end
+
+        -- Level link lock
+        if self.LevelLinkLockIcon and C_LevelLink and C_LevelLink.IsActionLocked then
+            if C_LevelLink.IsActionLocked(action) then
+                self.icon:SetDesaturated(true)
+                self.LevelLinkLockIcon:SetShown(true)
+            else
+                self.icon:SetDesaturated(false)
+                self.LevelLinkLockIcon:SetShown(false)
+            end
+        end
+    else
+        -- Empty slot
+        self.icon:Hide()
+        if self.SlotBackground then self.SlotBackground:Show() end
+        self:SetChecked(false)
+        self.cooldown:Hide()
+        self.Count:SetText("")
+        self.Name:SetText("")
+        self.Border:Hide()
+        if self.LevelLinkLockIcon then
+            self.LevelLinkLockIcon:SetShown(false)
+        end
+    end
+end
+
 local hiddenBarParent = CreateFrame("Frame")
 hiddenBarParent:Hide()
+
+-- Fully suppress a Blizzard-created action button so the C-side
+-- ActionBarButtonEventsFrame dispatch and mixin handlers are inert.
+local noop = function() end
+local function SuppressBlizzardButton(btn)
+    btn:Hide()
+    btn:UnregisterAllEvents()
+    btn:SetAttribute("statehidden", true)
+    btn.OnEvent = noop
+    btn.Update = noop
+    btn.UpdateCooldown = noop
+end
+
+-- Reclaim reparented buttons back to their QUI container and re-layout.
+-- Used after Blizzard steals them during vehicle/override transitions.
+local function ReclaimBarButtons(barKey)
+    local btns = ActionBarsOwned.nativeButtons[barKey]
+    local cont = ActionBarsOwned.containers[barKey]
+    if not btns or not cont then return end
+    for _, btn in ipairs(btns) do
+        if btn:GetParent() ~= cont then
+            btn:SetParent(cont)
+        end
+    end
+    LayoutNativeButtons(barKey)
+end
 
 ---------------------------------------------------------------------------
 -- SECURE LAYOUT HANDLER
@@ -454,8 +582,8 @@ local function GetSpellFlyoutSourceBarKey(flyout)
     if name:match("^MultiBar5Button%d+$") then return "bar6" end
     if name:match("^MultiBar6Button%d+$") then return "bar7" end
     if name:match("^MultiBar7Button%d+$") then return "bar8" end
-    if name:match("^PetActionButton%d+$") then return "pet" end
-    if name:match("^StanceButton%d+$") then return "stance" end
+    if name:match("^QUI_PetButton%d+$") or name:match("^PetActionButton%d+$") then return "pet" end
+    if name:match("^QUI_StanceButton%d+$") or name:match("^StanceButton%d+$") then return "stance" end
 
     return nil
 end
@@ -538,8 +666,8 @@ local function GetBarKeyFromButton(button)
     if name:match("^MultiBar5Button%d+$") then return "bar6" end
     if name:match("^MultiBar6Button%d+$") then return "bar7" end
     if name:match("^MultiBar7Button%d+$") then return "bar8" end
-    if name:match("^PetActionButton%d+$") then return "pet" end
-    if name:match("^StanceButton%d+$") then return "stance" end
+    if name:match("^QUI_PetButton%d+$") or name:match("^PetActionButton%d+$") then return "pet" end
+    if name:match("^QUI_StanceButton%d+$") or name:match("^StanceButton%d+$") then return "stance" end
     return nil
 end
 
@@ -1550,6 +1678,10 @@ local function IsVehicleBarActive()
         or (UnitInVehicle and UnitInVehicle("player"))
 end
 
+local function IsPetBattleActive()
+    return C_PetBattles and C_PetBattles.IsInBattle and C_PetBattles.IsInBattle()
+end
+
 -- Apply override bindings for a bar. All bars need this because reparenting
 -- + SetID(0) disconnects buttons from Blizzard's native binding lookup.
 local function ApplyBarOverrideBindings(barKey)
@@ -1570,6 +1702,17 @@ local function ApplyBarOverrideBindings(barKey)
         return
     end
 
+    -- Pet battle guard: all bindings should pass through to the pet
+    -- battle UI natively.  Clear and return for every bar.
+    if IsPetBattleActive() then
+        return
+    end
+
+    -- Housing guard: housing has its own keybinds.
+    if ActionBarsOwned._inHousing then
+        return
+    end
+
     local buttons = ActionBarsOwned.nativeButtons[barKey]
     local prefix = BINDING_COMMANDS[barKey]
     if not buttons or not prefix then return end
@@ -1581,7 +1724,7 @@ local function ApplyBarOverrideBindings(barKey)
             if key then
                 local existing = GetBindingAction(key, true)
                 if not existing or existing == "" or existing == command then
-                    SetOverrideBindingClick(container, false, key, btn:GetName(), "LeftButton")
+                    SetOverrideBindingClick(container, false, key, btn:GetName(), "Keybind")
                 end
             end
         end
@@ -1604,14 +1747,11 @@ local ApplyBar1OverrideBindings = function() ApplyBarOverrideBindings("bar1") en
 
 local function BuildPagingCondition()
     local parts = {}
-    -- Override bar (boss encounters, scenarios)
-    if GetOverrideBarIndex then
-        table_insert(parts, "[overridebar] " .. GetOverrideBarIndex())
-    end
-    -- Vehicle / possess
-    if GetVehicleBarIndex then
-        table_insert(parts, "[vehicleui][possessbar] " .. GetVehicleBarIndex())
-    end
+    -- Override/vehicle/possess/shapeshift: use string tokens resolved
+    -- dynamically in the _onstate-page restricted snippet (bar indices
+    -- can change mid-session so must not be baked at build time).
+    table_insert(parts, "[overridebar] override")
+    table_insert(parts, "[vehicleui][possessbar][shapeshift] possess")
     -- Dragonriding (bonusbar:5)
     table_insert(parts, "[bonusbar:5] 11")
     -- Class-specific bonus bars (Druid forms, Rogue stealth, etc.)
@@ -1633,8 +1773,35 @@ local function SetupBar1Paging(container)
     if bar1PagingInitialized then return end
     bar1PagingInitialized = true
 
+    -- Resolve override/possess/shapeshift bar indices dynamically in
+    -- restricted code (they can change mid-session).  String tokens from
+    -- BuildPagingCondition are converted to real page numbers here.
     container:SetAttribute("_onstate-page", [[
-        local page = tonumber(newstate) or 1
+        local page = newstate
+        if page == "override" then
+            if HasVehicleActionBar and HasVehicleActionBar() then
+                page = GetVehicleBarIndex()
+            elseif HasOverrideActionBar and HasOverrideActionBar() then
+                page = GetOverrideBarIndex()
+            elseif HasTempShapeshiftActionBar and HasTempShapeshiftActionBar() then
+                page = GetTempShapeshiftBarIndex()
+            else
+                page = 1
+            end
+        elseif page == "possess" then
+            if HasVehicleActionBar and HasVehicleActionBar() then
+                page = GetVehicleBarIndex()
+            elseif HasOverrideActionBar and HasOverrideActionBar() then
+                page = GetOverrideBarIndex()
+            elseif HasTempShapeshiftActionBar and HasTempShapeshiftActionBar() then
+                page = GetTempShapeshiftBarIndex()
+            elseif HasBonusActionBar and HasBonusActionBar() then
+                page = GetBonusBarIndex()
+            else
+                page = 1
+            end
+        end
+        page = tonumber(page) or 1
         local offset = (page - 1) * 12
         control:ChildUpdate("offset", offset)
     ]])
@@ -1684,7 +1851,7 @@ local function BuildBar(barKey)
         local origButtons = GetOriginalBlizzButtons(barKey)
         for _, blizzBtn in ipairs(origButtons) do
             blizzBtn:SetParent(hiddenBarParent)
-            blizzBtn:UnregisterAllEvents()
+            SuppressBlizzardButton(blizzBtn)
         end
 
         -- Rescue the leave-vehicle button from the hidden Blizzard bar hierarchy.
@@ -1742,24 +1909,16 @@ local function BuildBar(barKey)
                 btn:SetParent(container)
             end
             btn:Show()
-            -- Force the template to update its visuals (icon, cooldown, count, etc.)
-            -- pcall: addon code is in the call stack, so Blizzard's Update may hit
-            -- secret-value comparisons and throw.  The button will self-correct on the
-            -- next natural event cycle (ACTIONBAR_SLOT_CHANGED, etc.).
-            if ActionButton_Update then
-                pcall(ActionButton_Update, btn)
-            elseif btn.Update then
-                pcall(btn.Update, btn)
-            end
             buttons[i] = btn
         end
 
         -- Register paging state driver
         SetupBar1Paging(container)
     elseif barKey == "pet" or barKey == "stance" then
-        -- PET/STANCE: Reparent Blizzard buttons into QUI container.
-        -- These use their frame ID for slot lookup (not the action attribute),
-        -- so we must preserve SetID and NOT set an action attribute.
+        -- PET/STANCE: Create fresh buttons from Blizzard templates, then
+        -- fully suppress the originals (same pattern as bars 1-8 and
+        -- LibActionButton addons).  Pet/stance buttons use GetID() for
+        -- slot lookup — SetID is the only required setup.
         if barFrame then
             -- Purge Edit Mode's isShownExternal before reparenting to avoid
             -- tainting the Edit Mode system.  Writing enough nil keys pushes
@@ -1776,32 +1935,42 @@ local function BuildBar(barKey)
             end
             barFrame:UnregisterAllEvents()
             barFrame:SetParent(hiddenBarParent)
-            -- Use the original C-side Hide to avoid Edit Mode's Lua override
-            -- which can propagate taint on managed frames.
             if barFrame.HideBase then
                 barFrame:HideBase()
             else
                 barFrame:Hide()
             end
-            -- Neutralize UpdateGridLayout on the hidden bar.  ActionBarController
-            -- still calls StanceBar:Update() → UpdateState() → UpdateGridLayout()
-            -- even after reparenting.  Because addon code tainted the frame by
-            -- calling SetParent/Hide, the layout chain propagates taint through
-            -- EditMode → UIParent_ManageFramePositions →
-            -- UIParentRightManagedFrameContainer:ClearAllPoints() in combat.
             if barFrame.UpdateGridLayout then
                 barFrame.UpdateGridLayout = function() end
             end
         end
 
+        -- Fully suppress original Blizzard buttons
         local origButtons = GetOriginalBlizzButtons(barKey)
-        if #origButtons == 0 then return end
+        for _, blizzBtn in ipairs(origButtons) do
+            SuppressBlizzardButton(blizzBtn)
+        end
 
-        for i, blizzBtn in ipairs(origButtons) do
-            blizzBtn:SetParent(container)
-            -- Preserve original ID — pet/stance buttons use GetID() for slot lookup
-            blizzBtn:Show()
-            buttons[i] = blizzBtn
+        -- Create fresh buttons from the native template
+        local template = barKey == "pet" and "PetActionButtonTemplate" or "StanceButtonTemplate"
+        local prefix = barKey == "pet" and "QUI_PetButton" or "QUI_StanceButton"
+        local count = BUTTON_COUNTS[barKey] or 10
+
+        for i = 1, count do
+            local btnName = prefix .. i
+            local btn = _G[btnName]
+            if not btn then
+                local ok
+                ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, template)
+                if not ok then btn = _G[btnName] end
+                btn:SetID(i)
+            else
+                btn:SetParent(container)
+            end
+            btn:Show()
+            -- Populate icons from the template's own Update method
+            if btn.Update then pcall(btn.Update, btn) end
+            buttons[i] = btn
         end
     elseif barKey == "microbar" then
         -- MICRO MENU: Reparent individual micro buttons into QUI container.
@@ -2143,12 +2312,11 @@ local function BuildBar(barKey)
             barFrame:SetParent(hiddenBarParent)
             barFrame:Hide()
         end
-        -- Original Blizzard buttons stay as children of the (now hidden) bar
-        -- frame.  Do NOT call SetParent or UnregisterAllEvents on them —
-        -- either call taints Blizzard-created frames, which causes
-        -- ADDON_ACTION_BLOCKED when their template handlers fire during
-        -- combat.  Leaving them untouched is harmless: they update invisible
-        -- buttons on a hidden parent.
+        -- Fully suppress hidden Blizzard buttons via shared helper.
+        local origButtons = GetOriginalBlizzButtons(barKey)
+        for _, blizzBtn in ipairs(origButtons) do
+            SuppressBlizzardButton(blizzBtn)
+        end
 
         -- Action slot offsets: each bar maps to a fixed range of action slots.
         local BAR_ACTION_OFFSETS = {
@@ -2175,12 +2343,10 @@ local function BuildBar(barKey)
                 ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, "ActionBarButtonTemplate")
                 if not ok then btn = _G[btnName] end
                 local action = offset + i
-                -- Set action and pressAndHoldAction from RESTRICTED code so
-                -- attributes remain untainted.  Restricted SetAttribute
-                -- triggers OnAttributeChanged which populates icons/visuals.
-                -- Do NOT call pcall(ActionButton_Update) — that runs in
-                -- addon context and taints self.action, causing secret-value
-                -- errors in every subsequent template handler call.
+                -- Set action and pressAndHoldAction from RESTRICTED code.
+                -- OnAttributeChanged → Update populates icons here.
+                -- Mixin methods are shadowed AFTER this loop to prevent
+                -- taint errors during subsequent combat events.
                 container:SetFrameRef("init-btn", btn)
                 container:Execute(string_format([[
                     local btn = self:GetFrameRef("init-btn")
@@ -2215,28 +2381,42 @@ local function BuildBar(barKey)
     -- standard action bars (bar1-8), not pet/stance/micro/bags.
     if barKey ~= "pet" and barKey ~= "stance" and barKey ~= "microbar" and barKey ~= "bags" then
         ActionBarsOwned.UpdateActionUIRegistration(barKey)
-        -- Seed initial cooldown state so buttons don't flash on first event.
+        -- Force the mixin to populate visuals (icon, count, state) now.
+        -- The restricted SetAttribute → OnAttributeChanged chain may not
+        -- fully populate during initial creation.  Safe at file scope:
+        -- GetActionCount is suppressed, and this runs before method shadows.
         for _, btn in ipairs(buttons) do
+            if ActionButton_Update then
+                pcall(ActionButton_Update, btn)
+            end
             ActionBarsOwned.UpdateCooldown(btn)
         end
-        -- Addon-created frames are permanently tainted.  Following
-        -- shadow the specific mixin methods
-        -- that hit taint errors, and let everything else flow through
-        -- to C-side functions that accept tainted calls natively.
-        -- No InCombatLockdown checks — events run freely during combat.
+        -- Addon-created frames are permanently tainted.  The Blizzard mixin's
+        -- Update uses comparison operators on secret values from restricted
+        -- APIs, which errors in tainted context.  SetActionUIButton causes
+        -- the C-side to call ForceUpdateAction → mixin OnEvent → UpdateAction
+        -- → self:Update(), bypassing UnregisterAllEvents.
         --
-        -- Shadowed methods:
-        --   UpdatePressAndHoldAction → no-op (handled from restricted
-        --     code in _childupdate-offset; the mixin's version calls
-        --     SetAttribute which is blocked on tainted frames)
-        --   UpdateCooldown → DurationObject path (SetCooldownFromDurationObject
-        --     is secret-safe from tainted code; the mixin's SetCooldown is not)
-        --
-        -- OnEvent: cooldown events route to DurationObject path directly.
-        --   All other events dispatch to pcall(ActionButton_Update) which
-        --   runs cleanly with the above methods shadowed.
+        -- Solution: shadow Update with SafeUpdate (truthiness-only version)
+        -- so all call chains that reach self:Update() hit the safe version.
+        -- Also shadow specific methods that use comparison operators:
+        --   UpdateCooldown          → DurationObject path
+        --   UpdatePressAndHoldAction → no-op (handled from restricted code)
+        --   UpdateCount             → C_ActionBar.GetActionDisplayCount
         for _, btn in ipairs(buttons) do
-            btn:SetScript("OnEvent", function(self, event, ...)
+            btn:UnregisterAllEvents()
+            -- Shadow OnEvent on the INSTANCE so the C-side dispatch
+            -- (ActionBarButtonEventsFrame → button:OnEvent()) hits our
+            -- handler instead of the mixin's.  The mixin's OnEvent calls
+            -- the GLOBAL ActionButton_UpdateCooldown(self), bypassing our
+            -- instance UpdateCooldown shadow.
+            btn.OnEvent = function(self, event, ...)
+                if event == "ACTIONBAR_UPDATE_COOLDOWN"
+                    or event == "LOSS_OF_CONTROL_ADDED"
+                    or event == "LOSS_OF_CONTROL_UPDATE" then
+                    ActionBarsOwned.UpdateCooldown(self)
+                    return
+                end
                 if event == "GLOBAL_MOUSE_UP" then
                     self:UnregisterEvent(event)
                     if self.UpdateFlyout then
@@ -2244,21 +2424,26 @@ local function BuildBar(barKey)
                     end
                     return
                 end
-                if event == "ACTIONBAR_UPDATE_COOLDOWN"
-                    or event == "LOSS_OF_CONTROL_ADDED"
-                    or event == "LOSS_OF_CONTROL_UPDATE" then
-                    ActionBarsOwned.UpdateCooldown(self)
-                    return
-                end
-                if ActionButton_Update then
-                    pcall(ActionButton_Update, self)
-                end
-            end)
-            -- Shadow taint-prone mixin methods on the instance so the
-            -- template's call chains hit safe wrappers instead.
-            btn.UpdatePressAndHoldAction = function() end
+                -- All other C-dispatched events: safe visual refresh
+                ActionBarsOwned.SafeUpdate(self)
+            end
+            btn:SetScript("OnEvent", btn.OnEvent)
+            btn.Update = ActionBarsOwned.SafeUpdate
             btn.UpdateCooldown = function(self)
                 ActionBarsOwned.UpdateCooldown(self)
+            end
+            btn.UpdatePressAndHoldAction = function() end
+            btn.UpdateCount = function(self)
+                local action = self.action
+                if not action or not HasAction(action) then
+                    self.Count:SetText("")
+                    return
+                end
+                if C_ActionBar and C_ActionBar.GetActionDisplayCount then
+                    self.Count:SetText(C_ActionBar.GetActionDisplayCount(action) or "")
+                else
+                    self.Count:SetText("")
+                end
             end
         end
     end
@@ -2361,9 +2546,12 @@ UpdatePetBarVisibility = function()
     local hasPet = HasPetUI and HasPetUI()
     if hasPet then
         container:Show()
-        -- Manually trigger button updates since PetActionBar events are unregistered
-        if PetActionBar and PetActionBar.Update then
-            pcall(PetActionBar.Update, PetActionBar)
+        -- Manually trigger button updates on our fresh QUI pet buttons
+        local petBtns = ActionBarsOwned.nativeButtons["pet"]
+        if petBtns then
+            for _, btn in ipairs(petBtns) do
+                if btn.Update then pcall(btn.Update, btn) end
+            end
         end
         LayoutNativeButtons("pet")
     else
@@ -2407,6 +2595,11 @@ UpdateStanceBarLayout = function()
     end
 
     container:Show()
+
+    -- Update our fresh QUI stance buttons to populate icons
+    for _, btn in ipairs(buttons) do
+        if btn.Update then pcall(btn.Update, btn) end
+    end
 
     -- Clamp ownedLayout.iconCount to actual form count for layout
     local layout = barDB and barDB.ownedLayout
@@ -2601,11 +2794,27 @@ do
 
 end -- do block (cooldown ownership)
 
+-- Full visual refresh for all owned action buttons via SafeUpdate.
+-- Uses only truthiness tests on API returns — safe during combat.
+function ActionBarsOwned.UpdateAllButtonVisuals()
+    for _, barKey in ipairs(STANDARD_BAR_KEYS) do
+        local btns = ActionBarsOwned.nativeButtons[barKey]
+        if btns then
+            for _, btn in ipairs(btns) do
+                pcall(ActionBarsOwned.SafeUpdate, btn)
+            end
+        end
+    end
+end
+
 local function OnOwnedEvent(self, event, ...)
     if not ActionBarsOwned.initialized then return end
 
     if event == "ACTIONBAR_SLOT_CHANGED" then
-        -- Refresh cooldown state and empty slot visibility for the new action.
+        -- Slot contents changed (talent swap, spell move, etc.).  Refresh
+        -- visuals via the mixin (safe: GetActionCount suppressed), then
+        -- cooldowns via DurationObject path.
+        ActionBarsOwned.UpdateAllButtonVisuals()
         ActionBarsOwned.UpdateAllCooldowns()
         if InCombatLockdown() then
             ActionBarsOwned.pendingSlotUpdate = true
@@ -2666,26 +2875,8 @@ local function OnOwnedEvent(self, event, ...)
                         ActionBarsOwned.pendingBagsReclaim = true
                         return
                     end
-                    local microBtns = ActionBarsOwned.nativeButtons["microbar"]
-                    local microCont = ActionBarsOwned.containers["microbar"]
-                    if microBtns and microCont then
-                        for _, btn in ipairs(microBtns) do
-                            if btn:GetParent() ~= microCont then
-                                btn:SetParent(microCont)
-                            end
-                        end
-                        LayoutNativeButtons("microbar")
-                    end
-                    local bagBtns = ActionBarsOwned.nativeButtons["bags"]
-                    local bagCont = ActionBarsOwned.containers["bags"]
-                    if bagBtns and bagCont then
-                        for _, btn in ipairs(bagBtns) do
-                            if btn:GetParent() ~= bagCont then
-                                btn:SetParent(bagCont)
-                            end
-                        end
-                        LayoutNativeButtons("bags")
-                    end
+                    ReclaimBarButtons("microbar")
+                    ReclaimBarButtons("bags")
                 end)
             end
         end
@@ -2754,41 +2945,29 @@ local function OnOwnedEvent(self, event, ...)
         end
         if ActionBarsOwned.pendingMicroReclaim then
             ActionBarsOwned.pendingMicroReclaim = false
-            local btns = ActionBarsOwned.nativeButtons["microbar"]
-            local cont = ActionBarsOwned.containers["microbar"]
-            if btns and cont then
-                for _, btn in ipairs(btns) do
-                    btn:SetParent(cont)
-                end
-                LayoutNativeButtons("microbar")
-            end
+            ReclaimBarButtons("microbar")
         end
         if ActionBarsOwned.pendingBagsReclaim then
             ActionBarsOwned.pendingBagsReclaim = false
-            local btns = ActionBarsOwned.nativeButtons["bags"]
-            local cont = ActionBarsOwned.containers["bags"]
-            if btns and cont then
-                for _, btn in ipairs(btns) do
-                    btn:SetParent(cont)
-                end
-                LayoutNativeButtons("bags")
-            end
+            ReclaimBarButtons("bags")
         end
         if ActionBarsOwned.pendingSpacing then
             ActionBarsOwned.pendingSpacing = false
             ApplyAllBarSpacing()
         end
-        -- Post-combat visual refresh.  Events ran during combat via
-        -- shadowed methods, so most state is up-to-date.  This catches
-        -- any edge cases from pcall-suppressed errors and re-applies
-        -- QUI skinning that the ActionButton_Update hook skips in combat.
+        -- Post-combat full refresh.  SafeUpdate kept visuals live during
+        -- combat.  Now call the mixin's full ActionButton_Update (safe out
+        -- of combat — no secret values) so the hooksecurefunc on
+        -- ActionButton_Update fires and re-applies QUI skinning/text.
         for _, barKey in ipairs(STANDARD_BAR_KEYS) do
             local btns = ActionBarsOwned.nativeButtons[barKey]
             if btns then
                 for _, btn in ipairs(btns) do
+                    btn.Update = nil  -- expose mixin for one call
                     if ActionButton_Update then
                         pcall(ActionButton_Update, btn)
                     end
+                    btn.Update = ActionBarsOwned.SafeUpdate
                     ActionBarsOwned.UpdateCooldown(btn)
                 end
             end
@@ -2884,34 +3063,90 @@ local function OnOwnedEvent(self, event, ...)
         or event == "LOSS_OF_CONTROL_ADDED"
         or event == "LOSS_OF_CONTROL_UPDATE" then
         -- Centralized cooldown update for all owned action buttons.
-        -- Per-button OnEvent is suppressed during combat (addon-created
-        -- frames are tainted).  DurationObject path is secret-safe.
+        -- Per-button OnEvent is suppressed (addon-created frames are
+        -- tainted).  DurationObject path is secret-safe.
         ActionBarsOwned.UpdateAllCooldowns()
+
+    elseif event == "ACTIONBAR_UPDATE_USABLE"
+        or event == "ACTIONBAR_UPDATE_STATE"
+        or event == "SPELL_UPDATE_ICON" then
+        -- Usability, checked state, or icon changes.  Per-button events
+        -- are unregistered, so dispatch centrally via SafeUpdate.
+        ActionBarsOwned.UpdateAllButtonVisuals()
+
+    elseif event == "SPELL_UPDATE_CHARGES" then
+        -- Charge count changed (e.g. Arcane Charges, Chi).
+        for _, barKey in ipairs(STANDARD_BAR_KEYS) do
+            local btns = ActionBarsOwned.nativeButtons[barKey]
+            if btns then
+                for _, btn in ipairs(btns) do
+                    if btn.UpdateCount then pcall(btn.UpdateCount, btn) end
+                end
+            end
+        end
+
+    elseif event == "ACTIONBAR_SHOWGRID" then
+        -- Dragging from spellbook — show empty slot grid
+        ActionBarsOwned._showGrid = true
+        for _, barKey in ipairs(STANDARD_BAR_KEYS) do
+            local btns = ActionBarsOwned.nativeButtons[barKey]
+            if btns then
+                for _, btn in ipairs(btns) do
+                    btn:SetAlpha(1)
+                end
+            end
+        end
+
+    elseif event == "ACTIONBAR_HIDEGRID" then
+        -- Drag ended — restore empty slot visibility
+        ActionBarsOwned._showGrid = nil
+        for _, barKey in ipairs(STANDARD_BAR_KEYS) do
+            local buttons = ActionBarsOwned.nativeButtons[barKey]
+            local settings = GetEffectiveSettings(barKey)
+            if buttons and settings then
+                for _, btn in ipairs(buttons) do
+                    UpdateEmptySlotVisibility(btn, settings)
+                end
+            end
+        end
+
+    elseif event == "PLAYER_ENTER_COMBAT" or event == "PLAYER_LEAVE_COMBAT" then
+        -- Auto-attack flash state changes
+        ActionBarsOwned.UpdateAllButtonVisuals()
+
+    elseif event == "PET_BATTLE_OPENING_START" then
+        -- Clear all override bindings so the pet battle UI gets keys.
+        -- Hide action bar containers (pet battle has its own UI).
+        if not InCombatLockdown() then
+            for _, barKey in ipairs(ALL_MANAGED_BAR_KEYS) do
+                local cont = ActionBarsOwned.containers[barKey]
+                if cont then
+                    ClearOverrideBindings(cont)
+                    cont:Hide()
+                end
+            end
+        end
+
+    elseif event == "PET_BATTLE_CLOSE" then
+        -- Restore bars and bindings after pet battle ends
+        if not InCombatLockdown() then
+            for _, barKey in ipairs(ALL_MANAGED_BAR_KEYS) do
+                local cont = ActionBarsOwned.containers[barKey]
+                if cont then cont:Show() end
+            end
+            ApplyAllOverrideBindings()
+            -- Restore pet/stance visibility (may have been hidden)
+            UpdatePetBarVisibility()
+            UpdateStanceBarLayout()
+        else
+            ActionBarsOwned.pendingBindings = true
+            ActionBarsOwned.pendingRefresh = true
+        end
     end
 end
 
-ownedEventFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
-ownedEventFrame:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
-ownedEventFrame:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
-ownedEventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
-ownedEventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")
-ownedEventFrame:RegisterEvent("UPDATE_STEALTH")
-ownedEventFrame:RegisterEvent("UPDATE_BINDINGS")
-ownedEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-ownedEventFrame:RegisterEvent("CURSOR_CHANGED")
-ownedEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-ownedEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
-ownedEventFrame:RegisterEvent("PLAYER_LEVEL_UP")
-ownedEventFrame:RegisterEvent("UNIT_ENTERED_VEHICLE")
-ownedEventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
-ownedEventFrame:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
-ownedEventFrame:RegisterEvent("LOSS_OF_CONTROL_ADDED")
-ownedEventFrame:RegisterEvent("LOSS_OF_CONTROL_UPDATE")
+-- Event handler is set here; events are registered in Initialize().
 ownedEventFrame:SetScript("OnEvent", OnOwnedEvent)
-
--- Don't process events until Initialize is called
-ownedEventFrame:Hide()
-ownedEventFrame:UnregisterAllEvents()
 
 ---------------------------------------------------------------------------
 -- EXTRA BUTTON CUSTOMIZATION (Extra Action Button & Zone Ability)
@@ -4312,7 +4547,6 @@ end
 
 -- Detect how many columns a bar has by comparing button Y positions.
 -- Buttons in the same row share a similar top edge; a new row drops down.
--- Detect how many columns a bar has by comparing button Y positions.
 -- Fallback for bars without Edit Mode API (pet, stance).
 local function DetectBarColumns(buttons)
     if #buttons < 2 then return #buttons end
@@ -5461,9 +5695,19 @@ function ActionBarsOwned:Initialize()
     ownedEventFrame:RegisterEvent("UNIT_ENTERED_VEHICLE")
     ownedEventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
     ownedEventFrame:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
+    ownedEventFrame:RegisterEvent("ACTIONBAR_UPDATE_USABLE")
+    ownedEventFrame:RegisterEvent("ACTIONBAR_UPDATE_STATE")
+    ownedEventFrame:RegisterEvent("ACTIONBAR_SHOWGRID")
+    ownedEventFrame:RegisterEvent("ACTIONBAR_HIDEGRID")
+    ownedEventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
+    ownedEventFrame:RegisterEvent("SPELL_UPDATE_ICON")
+    ownedEventFrame:RegisterEvent("PLAYER_ENTER_COMBAT")
+    ownedEventFrame:RegisterEvent("PLAYER_LEAVE_COMBAT")
+    ownedEventFrame:RegisterEvent("PET_BATTLE_OPENING_START")
+    ownedEventFrame:RegisterEvent("PET_BATTLE_CLOSE")
     ownedEventFrame:RegisterEvent("LOSS_OF_CONTROL_ADDED")
     ownedEventFrame:RegisterEvent("LOSS_OF_CONTROL_UPDATE")
-        ownedEventFrame:Show()
+    ownedEventFrame:Show()
 
     -- Force all action bars enabled so owned buttons function correctly
     C_CVar.SetCVar("SHOW_MULTI_ACTIONBAR_1", "1")
@@ -5474,6 +5718,76 @@ function ActionBarsOwned:Initialize()
     -- Build all managed bars (1-8 + pet/stance)
     for _, barKey in ipairs(ALL_MANAGED_BAR_KEYS) do
         BuildBar(barKey)
+    end
+
+    -- Shadow taint-prone methods on OverrideActionBar buttons.  QUI
+    -- doesn't own these (they're needed for vehicles/boss encounters),
+    -- but QUI's presence taints them via the shared action bar system.
+    -- The C-side still dispatches to them, hitting secret-value
+    -- comparisons and SetCooldown blocks in the tainted context.
+    for i = 1, 6 do
+        local btn = _G["OverrideActionBarButton" .. i]
+        if btn then
+            btn.Update = ActionBarsOwned.SafeUpdate
+            btn.OnEvent = function(self, event)
+                if event == "ACTIONBAR_UPDATE_COOLDOWN"
+                    or event == "LOSS_OF_CONTROL_ADDED"
+                    or event == "LOSS_OF_CONTROL_UPDATE" then
+                    ActionBarsOwned.UpdateCooldown(self)
+                    return
+                end
+                ActionBarsOwned.SafeUpdate(self)
+            end
+            btn.UpdateCooldown = function(self)
+                ActionBarsOwned.UpdateCooldown(self)
+            end
+            btn.UpdatePressAndHoldAction = function() end
+        end
+    end
+
+    -- Suppress PossessActionBar (mind control bar) — can overlap QUI bars
+    local possessBar = _G.PossessActionBar or _G.PossessBarFrame
+    if possessBar then
+        possessBar:UnregisterAllEvents()
+        possessBar:SetParent(hiddenBarParent)
+        possessBar:Hide()
+    end
+
+    -- Suppress NPE (New Player Experience) tutorials that reference
+    -- original Blizzard action buttons.  Without this, the tutorial
+    -- system tries to find ActionButton1 etc. which are suppressed.
+    if _G.AddSpellToActionBar then
+        _G.AddSpellToActionBar = noop
+    end
+    if _G.AddClassSpellToActionBar then
+        _G.AddClassSpellToActionBar = noop
+    end
+    -- Enable the auto-push watcher so spells still go to bars
+    if _G.AutoPushSpellWatcher and _G.AutoPushSpellWatcher.Start then
+        pcall(_G.AutoPushSpellWatcher.Start, _G.AutoPushSpellWatcher)
+    end
+
+    -- Clear override bindings when entering player housing (housing has
+    -- its own keybinds).  Restore when leaving.
+    if EventRegistry and EventRegistry.RegisterCallback then
+        EventRegistry:RegisterCallback("HouseEditor.StateUpdated", function(_, state)
+            if InCombatLockdown() then
+                if not state then
+                    ActionBarsOwned.pendingBindings = true
+                end
+                return
+            end
+            if state then
+                ActionBarsOwned._inHousing = true
+                for _, barKey in ipairs(ALL_MANAGED_BAR_KEYS) do
+                    local cont = ActionBarsOwned.containers[barKey]
+                    if cont then ClearOverrideBindings(cont) end
+                end
+            else
+                ActionBarsOwned._inHousing = nil
+                ApplyAllOverrideBindings()
+            end
+        end, "QUI_ActionBars")
     end
 
     -- Register pet/stance-specific events

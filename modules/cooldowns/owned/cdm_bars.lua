@@ -1339,6 +1339,7 @@ end
 barTimerGroup:SetScript("OnLoop", function()
     local Helpers = ns.Helpers
     local anyActive = false
+    local anyDeactivated = false
     for _, bar in ipairs(barPool) do
         if bar._isOwnedBar and bar._active and bar:IsShown() then
             local durObj = bar._durObj
@@ -1389,6 +1390,7 @@ barTimerGroup:SetScript("OnLoop", function()
                 else
                     -- Aura expired: remaining is nil or 0 — duration done.
                     bar._active = false
+                    anyDeactivated = true
                     bar._durObj = nil
                     bar._cSideFill = nil
                     bar._lastDurationText = nil
@@ -1402,14 +1404,13 @@ barTimerGroup:SetScript("OnLoop", function()
             end
         end
     end
-    -- Re-layout when a bar deactivated during the timer tick so it hides.
-    if _lastContainer and _lastSettings then
-        for _, bar2 in ipairs(barPool) do
-            if bar2._isOwnedBar and not bar2._active and bar2:IsShown() then
-                CDMBars:LayoutBars(_lastContainer, _lastSettings)
-                break
-            end
-        end
+    -- Re-layout ONLY when a bar actually deactivated during THIS tick.
+    -- The old scan checked all bars for `not _active and IsShown()`, which
+    -- matched intentionally-shown inactive bars (inactiveMode "always"/"fade")
+    -- and triggered a full LayoutBars (with ConfigureBar re-applying textures,
+    -- points, alpha on every bar) every 100ms — causing visible flickering.
+    if anyDeactivated and _lastContainer and _lastSettings then
+        CDMBars:LayoutBars(_lastContainer, _lastSettings)
     end
     -- Stop the animation when no bars need ticking to avoid idle CPU cost.
     if not anyActive then

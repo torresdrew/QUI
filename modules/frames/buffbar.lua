@@ -2707,8 +2707,17 @@ local function CheckBarChanges()
     -- dimensions when secret values are involved.
     if InCombatLockdown() then return end
 
-    -- Always call LayoutBuffBars - it styles bars first, then verifies positions
-    -- and corrects any drift caused by Blizzard's Layout() overriding QUI spacing.
+    -- Owned engine: poll aura states only.  UpdateOwnedBars already
+    -- triggers re-layout when any bar's active state flips.  Running the
+    -- full LayoutBuffBars → CDMBars:Refresh → ConfigureBar path at 10 fps
+    -- is wasteful and causes visible flickering (textures, points, and
+    -- alpha re-applied on every bar every 100 ms).
+    if IsOwnedEngine() and ns.CDMBars then
+        ns.CDMBars:UpdateOwnedBars()
+        return
+    end
+
+    -- Classic engine: full layout to correct Blizzard Layout() drift.
     LayoutBuffBars()
 end
 

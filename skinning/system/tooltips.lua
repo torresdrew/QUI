@@ -540,7 +540,8 @@ local function SetupBackdropStyleHooks()
     if SharedTooltip_SetBackdropStyle then
         hooksecurefunc("SharedTooltip_SetBackdropStyle", function(tooltip, style, isEmbedded)
             if not IsEnabled() or not tooltip then return end
-            if not (tooltip.GetObjectType and tooltip:GetObjectType() == "GameTooltip") then return end
+            local ok, objType = pcall(tooltip.GetObjectType, tooltip)
+            if not ok or objType ~= "GameTooltip" then return end
 
             -- TAINT SAFETY: Defer GameTooltip styling to the watcher's
             -- OnUpdate to avoid modifying frame properties during the
@@ -550,8 +551,13 @@ local function SetupBackdropStyleHooks()
             -- execution context, causing secret-value errors in the
             -- widget layout's GetExtents / GetScaledRect calls.
             if tooltip == GameTooltip then
+                -- Immediately suppress NineSlice and show existing overlay
+                -- to prevent 1-frame flash.  These are C-side calls (no Lua
+                -- property writes) so they do not taint the caller's context.
+                HideNineSlice(tooltip)
+                local sf = styleFrames[tooltip]
+                if sf then sf:Show() end
                 pendingGameTooltipRestyle = true
-                -- gtWatcher runs continuously; just setting the flag is sufficient
                 return
             end
 
@@ -571,11 +577,14 @@ local function SetupBackdropStyleHooks()
     if GameTooltip_SetBackdropStyle then
         hooksecurefunc("GameTooltip_SetBackdropStyle", function(tooltip, style)
             if not IsEnabled() or not tooltip then return end
-            if not (tooltip.GetObjectType and tooltip:GetObjectType() == "GameTooltip") then return end
+            local ok, objType = pcall(tooltip.GetObjectType, tooltip)
+            if not ok or objType ~= "GameTooltip" then return end
             -- Defer GameTooltip — same taint safety concern as above.
             if tooltip == GameTooltip then
+                HideNineSlice(tooltip)
+                local sf = styleFrames[tooltip]
+                if sf then sf:Show() end
                 pendingGameTooltipRestyle = true
-                -- gtWatcher runs continuously; just setting the flag is sufficient
                 return
             end
             OnTooltipShow(tooltip)
@@ -633,6 +642,9 @@ local function SetupPostProcessor()
         SafeHookTooltipOnShow(tooltip)
         -- TAINT SAFETY: Defer GameTooltip to the watcher (same as backdrop hooks).
         if tooltip == GameTooltip then
+            HideNineSlice(tooltip)
+            local sf = styleFrames[tooltip]
+            if sf then sf:Show() end
             pendingGameTooltipRestyle = true
             return
         end
@@ -767,7 +779,18 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             end
 
             local shown = GameTooltip:IsShown()
-            if shown == wasShown then return end
+            if shown == wasShown then
+                -- Catch NineSlice reappearing via unhooked restyle paths
+                if shown and IsEnabled() then
+                    local ns = GameTooltip.NineSlice
+                    if ns and ns:IsShown() then
+                        OnTooltipShow(GameTooltip)
+                        _pendingFontSet[GameTooltip] = true
+                        C_Timer.After(0, _FlushPendingFonts)
+                    end
+                end
+                return
+            end
             wasShown = shown
             if not shown then
                 pendingGameTooltipRestyle = false
