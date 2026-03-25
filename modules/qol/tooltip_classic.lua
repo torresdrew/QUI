@@ -1332,7 +1332,13 @@ local function SetupTooltipHook()
             if not settings or not settings.enabled or not settings.showPlayerItemLevel then return end
 
             local unit = ResolveTooltipUnit(GameTooltip)
-            if not unit or UnitGUID(unit) ~= guid then return end
+            if not unit then return end
+
+            local unitGUID = UnitGUID(unit)
+            if not unitGUID or Helpers.IsSecretValue(unitGUID) or Helpers.IsSecretValue(guid) then
+                return
+            end
+            if Helpers.SafeCompare(unitGUID, guid) ~= true then return end
 
             AddUnitTooltipAugmentations(GameTooltip, unit, settings, false)
         end)
