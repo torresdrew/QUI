@@ -114,9 +114,12 @@ end
 
 ---------------------------------------------------------------------------
 -- Secret value protection for Midnight 12.0+
--- Wrap numeric comparisons in pcall to handle protected cooldown values
+-- Prefer non-secret isActive and DurationObject APIs when available.
 ---------------------------------------------------------------------------
-local function IsCooldownActive(start, duration)
+local function IsCooldownActive(start, duration, isActive)
+    if type(isActive) == "boolean" then
+        return isActive
+    end
     if not start or not duration then return false end
 
     local ok, result = pcall(function()
@@ -186,18 +189,48 @@ local function ReadSpellCooldown(spellID)
             local start = t.startTime or t.start
             local duration = t.duration
             local modRate = t.modRate
-            return start, duration, modRate
+            return start, duration, modRate, t.isActive
         else
             -- 11.x returns tuple: start, duration, enable, modRate
-            return a, b, d
+            return a, b, d, nil
         end
     end
     -- Fallback for older API
     if GetSpellCooldown then
         local s, d = GetSpellCooldown(spellID)
-        return s, d, nil
+        return s, d, nil, nil
     end
-    return nil, nil, nil
+    return nil, nil, nil, nil
+end
+
+local function ApplyCooldownFromSpell(cooldownFrame, spellID)
+    if not cooldownFrame or not spellID then return false end
+
+    local start, duration, modRate, isActive = ReadSpellCooldown(spellID)
+    if not IsCooldownActive(start, duration, isActive) then
+        return false
+    end
+
+    if cooldownFrame.SetCooldownFromDurationObject and C_Spell and C_Spell.GetSpellCooldownDuration then
+        local okDur, durObj = pcall(C_Spell.GetSpellCooldownDuration, spellID)
+        if okDur and durObj then
+            return pcall(cooldownFrame.SetCooldownFromDurationObject, cooldownFrame, durObj)
+        end
+    end
+
+    if IsSecretValue and (IsSecretValue(start) or IsSecretValue(duration) or IsSecretValue(modRate)) then
+        return false
+    end
+    if type(start) ~= "number" or type(duration) ~= "number" then
+        return false
+    end
+    if modRate ~= nil then
+        if type(modRate) ~= "number" then
+            return false
+        end
+        return pcall(cooldownFrame.SetCooldown, cooldownFrame, start, duration, modRate)
+    end
+    return pcall(cooldownFrame.SetCooldown, cooldownFrame, start, duration)
 end
 
 ---------------------------------------------------------------------------

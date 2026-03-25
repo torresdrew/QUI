@@ -79,8 +79,14 @@ local function ApplySwipeToIcon(icon, settings)
         mode = "aura"
     elseif not isBuffIcon then
         -- Detect active auras on essential/utility icons.
-        -- Primary: buff pool cross-reference (combat-safe).
-        -- Fallback: aura API queries (out of combat only).
+        -- Primary: check Blizzard's wasSetFromAura property on the viewer
+        -- child frame (set by Blizzard internally, works in combat).
+        -- Fallback 1: buff pool cross-reference (combat-safe).
+        -- Fallback 2: aura API queries (out of combat only).
+        local blizzChild = entry._blizzChild
+        if blizzChild and type(blizzChild.wasSetFromAura) == "boolean" and blizzChild.wasSetFromAura then
+            mode = "aura"
+        end
         if not mode then
             local sid = entry.overrideSpellID or entry.spellID
             if sid then
