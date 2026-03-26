@@ -162,28 +162,6 @@ local styleFrames = Helpers.CreateStateTable()   -- tooltip → overlay frame
 local hookedTooltips = Helpers.CreateStateTable() -- tooltip → true
 local pendingGameTooltipRestyle = false           -- deferred restyle for GameTooltip
 
--- Temporary debug helper for tooltip flicker investigation
-local _dbgThrottle = 0
-local function TTS_Debug(msg)
-    local Q = _G.QUI
-    if not Q or not Q.DEBUG_MODE then return end
-    local now = GetTime()
-    if now - _dbgThrottle < 0.05 then return end  -- max 20 msgs/sec
-    _dbgThrottle = now
-    local gt = GameTooltip
-    local ns = gt and gt.NineSlice
-    local sf = styleFrames[gt]
-    local nsShown = ns and ns.IsShown and ns:IsShown()
-    local sfShown = sf and sf.IsShown and sf:IsShown()
-    local nsLvl = ns and ns.GetFrameLevel and ns:GetFrameLevel() or "?"
-    local sfLvl = sf and sf.GetFrameLevel and sf:GetFrameLevel() or "?"
-    local gtLvl = gt and gt.GetFrameLevel and gt:GetFrameLevel() or "?"
-    Q:Print(("[TTS] %s | gt=%s ns=%s(%s) sf=%s(%s)"):format(
-        msg, tostring(gtLvl),
-        tostring(nsLvl), nsShown and "SHOW" or "hide",
-        tostring(sfLvl), sfShown and "SHOW" or "hide"))
-end
-
 ---------------------------------------------------------------------------
 -- NineSlice Management
 ---------------------------------------------------------------------------
@@ -359,10 +337,6 @@ local function StyleTooltip(tooltip)
         frame._quiBorderB = sb or 0
         frame._quiBorderA = sa or 1
         frame:Show()
-
-        if tooltip == GameTooltip then
-            TTS_Debug("StyleTooltip done")
-        end
 
         -- Strip CompareHeader on shopping tooltips
         if tooltip.CompareHeader then
@@ -624,7 +598,6 @@ local function SetupBackdropStyleHooks()
                 -- Immediately suppress NineSlice and show existing overlay
                 -- to prevent 1-frame flash.  These are C-side calls (no Lua
                 -- property writes) so they do not taint the caller's context.
-                TTS_Debug("SharedTooltip hook")
                 HideNineSlice(tooltip)
                 local sf = styleFrames[tooltip]
                 if sf then sf:Show() end
@@ -807,7 +780,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     -- backdrop clear on the tooltip frame itself).  Force a full restyle now
     -- that combat restrictions are lifted.
     if event == "PLAYER_REGEN_ENABLED" then
-        TTS_Debug("REGEN_ENABLED")
         _FlushHookQueue()
         pendingGameTooltipRestyle = false
         if IsEnabled() then
@@ -881,10 +853,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
                     local _sf = styleFrames[GameTooltip]
                     local alreadyStyled = _sf and _sf:IsShown()
                         and (not _ns or not _ns:IsShown())
-                    if alreadyStyled then
-                        TTS_Debug("pendingRestyle SKIP")
-                    else
-                        TTS_Debug("pendingRestyle")
+                    if not alreadyStyled then
                         OnTooltipShow(GameTooltip)
                     end
                     -- Font sizing: apply once per tooltip show cycle.  The
@@ -925,7 +894,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
                 if shown and IsEnabled() then
                     local ns = GameTooltip.NineSlice
                     if ns and ns:IsShown() then
-                        TTS_Debug("ns-reappear")
                         HideNineSlice(GameTooltip)
                         local sf = styleFrames[GameTooltip]
                         if sf then sf:Show() end
@@ -941,7 +909,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             end
 
             -- GameTooltip just became visible
-            TTS_Debug("initial-show")
             OnTooltipShow(GameTooltip)
             _pendingFontSet[GameTooltip] = true
             C_Timer.After(0, function()
