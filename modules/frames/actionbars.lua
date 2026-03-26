@@ -3470,6 +3470,8 @@ local function OnOwnedEvent(self, event, ...)
         else
             ActionBarsOwned.pendingSlotUpdate = true
         end
+        -- Zone/extra abilities may have changed — recapture frames.
+        RefreshExtraButtons()
 
     elseif event == "SPELL_FLYOUT_UPDATE" then
         -- Flyout data changed — refresh flyout arrows on all buttons
@@ -3500,6 +3502,10 @@ local function OnOwnedEvent(self, event, ...)
         ActionBarsOwned.UpdateAllCooldowns()
         ActionBarsOwned.UpdateAllOverlayGlows()
         ApplyBar1OverrideBindings()
+
+    elseif event == "UPDATE_EXTRA_ACTIONBAR" then
+        -- Extra action bar appeared/disappeared — recapture frames.
+        RefreshExtraButtons()
 
     elseif event == "UNIT_INVENTORY_CHANGED" then
         -- Equipment changed — items on action bars may need icon/cooldown refresh
@@ -3560,6 +3566,10 @@ local hookingSetPoint = false
 local extraActionSetPointHooked = false
 local zoneAbilitySetPointHooked = false
 local hookingSetParent = false
+local extraActionSetParentHooked = false
+local zoneAbilitySetParentHooked = false
+local extraActionShowHooked = false
+local zoneAbilityShowHooked = false
 local pageArrowShowHooked = {}
 local pageArrowRetryTimer = nil
 local pageArrowRetryAttempts = 0
@@ -3871,8 +3881,29 @@ local function HookExtraButtonPositioning()
             end)
         end)
     end
-    HookSetParentForType(ExtraActionBarFrame, "extraActionButton", extraActionHolder)
-    HookSetParentForType(ZoneAbilityFrame, "zoneAbility", zoneAbilityHolder)
+    if ExtraActionBarFrame and not extraActionSetParentHooked then
+        extraActionSetParentHooked = true
+        HookSetParentForType(ExtraActionBarFrame, "extraActionButton", extraActionHolder)
+    end
+    if ZoneAbilityFrame and not zoneAbilitySetParentHooked then
+        zoneAbilitySetParentHooked = true
+        HookSetParentForType(ZoneAbilityFrame, "zoneAbility", zoneAbilityHolder)
+    end
+
+    -- Hook Show to recapture frames when Blizzard makes them visible
+    -- (e.g., zone ability appearing upon entering a new zone).
+    if ExtraActionBarFrame and not extraActionShowHooked then
+        extraActionShowHooked = true
+        hooksecurefunc(ExtraActionBarFrame, "Show", function()
+            QueueExtraButtonReanchor("extraActionButton")
+        end)
+    end
+    if ZoneAbilityFrame and not zoneAbilityShowHooked then
+        zoneAbilityShowHooked = true
+        hooksecurefunc(ZoneAbilityFrame, "Show", function()
+            QueueExtraButtonReanchor("zoneAbility")
+        end)
+    end
 end
 
 local function ShowExtraButtonMovers()
@@ -3920,6 +3951,9 @@ RefreshExtraButtons = function()
     end
     ApplyExtraButtonSettings("extraActionButton")
     ApplyExtraButtonSettings("zoneAbility")
+    -- Set up hooks on any newly available frames (handles late-loaded
+    -- frames like ZoneAbilityFrame that may not exist at init time).
+    HookExtraButtonPositioning()
 end
 
 _G.QUI_ToggleExtraButtonMovers = ToggleExtraButtonMovers
@@ -6168,6 +6202,7 @@ function ActionBarsOwned:Initialize()
     ownedEventFrame:RegisterEvent("PLAYER_LEVEL_UP")
     ownedEventFrame:RegisterEvent("UNIT_ENTERED_VEHICLE")
     ownedEventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
+    ownedEventFrame:RegisterEvent("UPDATE_EXTRA_ACTIONBAR")
     ownedEventFrame:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
     ownedEventFrame:RegisterEvent("ACTIONBAR_UPDATE_USABLE")
     ownedEventFrame:RegisterEvent("ACTIONBAR_UPDATE_STATE")

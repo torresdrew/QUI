@@ -1791,21 +1791,55 @@ function CDMSpellData:SnapshotBlizzardCDM(containerKey)
                 end
                 return true
             end
-            return false
+            -- Children exist but have no cooldownInfo yet (too early at login).
+            -- Fall through to C_CooldownViewer API path below.
+        else
+            -- Essential/utility/buff: use existing scanned lists
+            ScanViewer(containerKey)
+            scanList = spellLists[containerKey]
         end
-
-        -- Essential/utility/buff: use existing scanned lists
-        ScanViewer(containerKey)
-        scanList = spellLists[containerKey]
     end
 
-    -- Primary path: C_CooldownViewer API returns ALL configured spells,
-    -- not just those with active children.  The viewer child scan above
-    -- only finds spells that are currently on cooldown or have active
-    -- auras — first-install snapshots would miss everything else.
+    -- Primary path: C_CooldownViewer API returns ALL spells in a category,
+    -- including those the user has not "added" to their CDM bars. The API
+    -- has no field to distinguish added vs not-added. Use viewer children
+    -- as the authoritative source: Blizzard only creates children for spells
+    -- the user has added. When viewer children exist, filter API results
+    -- to match. When the viewer is empty (first install), include all.
     local isAuraContainer = (containerKey == "buff" or containerKey == "trackedBar")
     local owned = {}
     local seenIDs = {}
+
+    -- Build map of cooldownID → layoutIndex from Blizzard viewer children.
+    -- These are the spells the user has actually "added" to their CDM bar.
+    -- layoutIndex preserves Blizzard's visual ordering.
+    local viewerCDIDs = {}
+    local viewerChildCount = 0
+    local viewerName = VIEWER_NAMES[containerKey]
+    local viewer = viewerName and _G[viewerName]
+    if viewer then
+        local containersToScan = { viewer.viewerFrame or viewer }
+        -- For buff, also check the addon container (children may be reparented)
+        if containerKey == "buff" then
+            local addonContainer = _G["QUI_BuffIconContainer"]
+            if addonContainer and addonContainer ~= containersToScan[1] then
+                containersToScan[#containersToScan + 1] = addonContainer
+            end
+        end
+        for _, scanContainer in ipairs(containersToScan) do
+            local okc, children = pcall(function() return { scanContainer:GetChildren() } end)
+            if okc and children then
+                for _, ch in ipairs(children) do
+                    local chCdID = ch.cooldownID or (ch.cooldownInfo and ch.cooldownInfo.cooldownID)
+                    if chCdID then
+                        viewerCDIDs[chCdID] = ch.layoutIndex or 9999
+                        viewerChildCount = viewerChildCount + 1
+                    end
+                end
+            end
+        end
+    end
+    local hasViewerFilter = (viewerChildCount > 0)
 
     -- CooldownSetSpellFlags.HideByDefault — Blizzard hides these spells from
     -- the CDM bars by default (moves them to pseudo-categories -1/-2 on the
@@ -1824,11 +1858,11 @@ function CDMSpellData:SnapshotBlizzardCDM(containerKey)
                 for _, cdID in ipairs(cooldownIDs) do
                     local okInfo, cdInfo = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
                     if okInfo and cdInfo then
-                        -- Skip spells hidden by default in Blizzard's CDM UI.
-                        -- Users can still add these via the Composer.
                         local flags = cdInfo.flags or 0
                         if bit.band(flags, HIDE_BY_DEFAULT) ~= 0 then
-                            -- Skip — this spell is hidden by default
+                            -- Skip — hidden by default in Blizzard's CDM
+                        elseif hasViewerFilter and not viewerCDIDs[cdID] then
+                            -- Skip — in API but not in viewer = "not added"
                         else
                             local sid = _cdIDToCorrectSID[cdID]
                             if not sid and isAuraContainer then
@@ -1842,7 +1876,7 @@ function CDMSpellData:SnapshotBlizzardCDM(containerKey)
                             end
                             if sid and not seenIDs[sid] then
                                 seenIDs[sid] = true
-                                owned[#owned + 1] = { type = "spell", id = sid }
+                                owned[#owned + 1] = { type = "spell", id = sid, _layoutIndex = viewerCDIDs[cdID] or 9999 }
                             end
                         end
                     end
@@ -1873,6 +1907,17 @@ function CDMSpellData:SnapshotBlizzardCDM(containerKey)
         return false
     end
 
+    -- Sort by Blizzard viewer layoutIndex to match visual order
+    if hasViewerFilter then
+        table.sort(owned, function(a, b)
+            return (a._layoutIndex or 9999) < (b._layoutIndex or 9999)
+        end)
+    end
+
+    -- Strip temporary sort keys before persisting
+    for _, entry in ipairs(owned) do
+        entry._layoutIndex = nil
+    end
     db.ownedSpells = owned
     local ncdm = GetNcdmDB()
     if ncdm then
