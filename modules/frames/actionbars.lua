@@ -295,35 +295,20 @@ end
 local hiddenBarParent = CreateFrame("Frame")
 hiddenBarParent:Hide()
 
--- Fully suppress a Blizzard-created action button so the C-side
--- ActionBarButtonEventsFrame dispatch and mixin handlers are inert.
 local noop = function() end
 
--- Remove a button from ActionBarButtonEventsFrame's dispatch array.
--- The array is built via tinsert (no UnregisterFrame method exists).
--- Setting the entry to nil leaves a hole that pairs() skips.
-local function DeregisterFromEventsFrame(btn)
-    if not ActionBarButtonEventsFrame or not ActionBarButtonEventsFrame.frames then return end
-    for k, v in pairs(ActionBarButtonEventsFrame.frames) do
-        if v == btn then
-            ActionBarButtonEventsFrame.frames[k] = nil
-            break
-        end
-    end
-end
+-- QUI uses ActionButtonTemplate + SecureActionButtonTemplate (not
+-- ActionBarButtonTemplate) to avoid auto-registering with the secure
+-- ActionBarButtonEventsFrame dispatch.  Adding tainted buttons to that
+-- array permanently taints its iteration.
 
 local function SuppressBlizzardButton(btn)
     btn:Hide()
     btn:UnregisterAllEvents()
     btn:SetAttribute("statehidden", true)
-    -- Remove from dispatch BEFORE writing tainted values.  Writing
-    -- noop to .OnEvent/.Update on a secure Blizzard button taints
-    -- those fields; if the dispatch still reaches this button it
-    -- reads tainted fields and poisons the entire iteration.
-    DeregisterFromEventsFrame(btn)
-    btn.OnEvent = noop
-    btn.Update = noop
-    btn.UpdateCooldown = noop
+    -- Keep the original secure OnEvent handler intact.  The dispatch
+    -- calls it, but with events unregistered and the button hidden,
+    -- the secure handler runs harmlessly without tainting the context.
 end
 
 local LayoutNativeButtons -- forward declaration; defined below
@@ -1909,13 +1894,20 @@ local function BuildBar(barKey)
             local btnName = "QUI_Bar1Button" .. i
             local btn = _G[btnName]
             if not btn then
-                -- pcall: during combat reload, the template's OnLoad fires
-                -- synchronously and hits secret-value comparisons in the
-                -- tainted call stack.  The frame IS created even if OnLoad
-                -- errors — retrieve it from globals.
                 local ok
-                ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, "ActionBarButtonTemplate")
+                ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, "ActionButtonTemplate, SecureActionButtonTemplate")
                 if not ok then btn = _G[btnName] end
+                -- Secure action attributes (normally set by ActionBarActionButtonMixin:OnLoad)
+                btn:SetAttribute("type", "action")
+                btn:SetAttribute("checkselfcast", true)
+                btn:SetAttribute("checkfocuscast", true)
+                btn:SetAttribute("checkmouseovercast", true)
+                btn:SetAttribute("useparent-unit", true)
+                btn:SetAttribute("useparent-actionpage", true)
+                btn:RegisterForDrag("LeftButton", "RightButton")
+                btn:RegisterForClicks("AnyUp", "LeftButtonDown", "RightButtonDown")
+                btn.flashing = 0
+                btn.flashtime = 0
                 btn:SetAttribute("index", i)
                 btn:SetAttribute("action", i)
                 btn:SetAttribute("_childupdate-offset", [[
@@ -1948,20 +1940,36 @@ local function BuildBar(barKey)
                     -- because that handler runs in tainted context.
                     self:CallMethod("SafeSyncAction")
                 ]])
-                -- SafeSyncAction and UpdateCooldown must exist on the
-                -- button BEFORE SetupBar1Paging → RegisterStateDriver
-                -- fires — that immediately triggers _childupdate-offset
-                -- → CallMethod("SafeSyncAction") → SafeUpdate →
-                -- self:UpdateCooldown().
+                -- Methods called during the state driver's immediate fire:
+                -- RegisterStateDriver → _childupdate-offset →
+                -- CallMethod("SafeSyncAction") → SafeUpdate →
+                -- self:UpdateCooldown() / self:UpdateCount().
+                -- Must exist BEFORE SetupBar1Paging.
                 btn.SafeSyncAction = ActionBarsOwned.SafeSyncAction
                 btn.UpdateCooldown = function(self)
                     ActionBarsOwned.UpdateCooldown(self)
                 end
+                btn.UpdateCount = function(self)
+                    local action = self.action
+                    if not action or not HasAction(action) then
+                        if self.Count then self.Count:SetText("") end
+                        return
+                    end
+                    if C_ActionBar and C_ActionBar.GetActionDisplayCount then
+                        if self.Count then self.Count:SetText(C_ActionBar.GetActionDisplayCount(action) or "") end
+                    elseif self.Count then
+                        self.Count:SetText("")
+                    end
+                end
                 if btn.RegisterForClicks then
                     btn:RegisterForClicks("AnyDown", "AnyUp")
                 end
+                -- Sync btn.action (ActionButtonTemplate has no
+                -- OnAttributeChanged to do this automatically).
+                btn.action = i
             else
                 btn:SetParent(container)
+                btn.action = btn:GetAttribute("action") or i
             end
             btn:Show()
             buttons[i] = btn
@@ -1995,9 +2003,11 @@ local function BuildBar(barKey)
             else
                 barFrame:Hide()
             end
-            if barFrame.UpdateGridLayout then
-                barFrame.UpdateGridLayout = function() end
-            end
+            -- Do NOT write to the bar frame (numForms, Update, etc.) — any
+            -- tainted write is read by ActionBarController, tainting its
+            -- context and leaking into the ActionBarButtonEventsFrame dispatch.
+            -- The bar is hidden + reparented + events unregistered; the
+            -- controller's calls to Update/ShouldShow are harmless.
         end
 
         -- Fully suppress original Blizzard buttons
@@ -2040,13 +2050,12 @@ local function BuildBar(barKey)
                 btn:SetScript("OnLeave", GameTooltip_Hide)
             end
             btn:Show()
-            -- Pet: populate icons via GetPetActionInfo (PetActionBarMixin:Update
-            -- on the suppressed bar won't run, so QUI drives visuals directly).
-            -- Stance: the template's own Update handles icons.
+            -- Both pet and stance bar-level Updates are suppressed — QUI
+            -- drives button visuals directly via the Blizzard APIs.
             if barKey == "pet" then
                 ActionBarsOwned.UpdatePetButton(btn)
-            elseif btn.Update then
-                pcall(btn.Update, btn)
+            elseif barKey == "stance" then
+                ActionBarsOwned.UpdateStanceButton(btn)
             end
             buttons[i] = btn
         end
@@ -2418,8 +2427,19 @@ local function BuildBar(barKey)
                 -- tainted call stack.  The frame IS created even if OnLoad
                 -- errors — retrieve it from globals.
                 local ok
-                ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, "ActionBarButtonTemplate")
+                ok, btn = pcall(CreateFrame, "CheckButton", btnName, container, "ActionButtonTemplate, SecureActionButtonTemplate")
                 if not ok then btn = _G[btnName] end
+                -- Secure action attributes (normally set by ActionBarActionButtonMixin:OnLoad)
+                btn:SetAttribute("type", "action")
+                btn:SetAttribute("checkselfcast", true)
+                btn:SetAttribute("checkfocuscast", true)
+                btn:SetAttribute("checkmouseovercast", true)
+                btn:SetAttribute("useparent-unit", true)
+                btn:SetAttribute("useparent-actionpage", true)
+                btn:RegisterForDrag("LeftButton", "RightButton")
+                btn:RegisterForClicks("AnyUp", "LeftButtonDown", "RightButtonDown")
+                btn.flashing = 0
+                btn.flashtime = 0
                 local action = offset + i
                 -- Set action and pressAndHoldAction from RESTRICTED code.
                 -- OnAttributeChanged → Update populates icons here.
@@ -2444,8 +2464,12 @@ local function BuildBar(barKey)
                 if btn.RegisterForClicks then
                     btn:RegisterForClicks("AnyDown", "AnyUp")
                 end
+                -- Sync btn.action from the attribute (ActionButtonTemplate
+                -- has no OnAttributeChanged to do this automatically).
+                btn.action = offset + i
             else
                 btn:SetParent(container)
+                btn.action = offset + i
             end
             btn:Show()
             buttons[i] = btn
@@ -2467,15 +2491,6 @@ local function BuildBar(barKey)
         for _, btn in ipairs(buttons) do
             -- Unregister all events — QUI handles events centrally.
             btn:UnregisterAllEvents()
-            -- Deregister from ActionBarButtonEventsFrame.  The template's
-            -- OnLoad auto-registers via RegisterFrame(), putting QUI's
-            -- tainted buttons into the same dispatch loop as Blizzard's
-            -- secure buttons (OverrideActionBar).  Touching tainted buttons
-            -- during iteration taints the context for all subsequent buttons.
-            -- Belt-and-suspenders: deregister from the table AND replace
-            -- OnEvent with a no-op so if the dispatch somehow reaches QUI
-            -- buttons, the handler is inert and cannot taint the context.
-            DeregisterFromEventsFrame(btn)
             -- Replace OnEvent with QUI's safe handler.  Routes cooldown
             -- events to QUI's DurationObject path; everything else to
             -- SafeUpdate.  Uses only truthiness checks — no secret value
@@ -2589,6 +2604,7 @@ local function BuildBar(barKey)
     if SKINNABLE_BAR_KEYS[barKey] then
         ApplyBarOverrideBindings(barKey)
     end
+
 end
 
 ---------------------------------------------------------------------------
@@ -2668,6 +2684,50 @@ function ActionBarsOwned.UpdateAllPetButtons()
     end
 end
 
+-- Update a single QUI stance button's icon and state.
+-- Same pattern as pet: the bar-level Update is suppressed, so QUI
+-- drives stance button visuals directly via GetShapeshiftFormInfo.
+function ActionBarsOwned.UpdateStanceButton(btn)
+    local id = btn:GetID()
+    if not id or id < 1 then return end
+    local texture, isActive, isCastable, spellID = GetShapeshiftFormInfo(id)
+    local icon = btn.icon
+    if icon then
+        if texture then
+            icon:SetTexture(texture)
+            if isCastable then
+                icon:SetVertexColor(1, 1, 1)
+            else
+                icon:SetVertexColor(0.4, 0.4, 0.4)
+            end
+            icon:Show()
+        else
+            icon:Hide()
+        end
+    end
+    if isActive then
+        btn:SetChecked(true)
+    else
+        btn:SetChecked(false)
+    end
+    local cooldown = btn.cooldown
+    if cooldown and GetShapeshiftFormCooldown then
+        local start, duration, enable = GetShapeshiftFormCooldown(id)
+        if CooldownFrame_Set then
+            pcall(CooldownFrame_Set, cooldown, start, duration, enable)
+        end
+    end
+end
+
+-- Update all QUI stance buttons' visuals.
+function ActionBarsOwned.UpdateAllStanceButtons()
+    local stanceBtns = ActionBarsOwned.nativeButtons["stance"]
+    if not stanceBtns then return end
+    for _, btn in ipairs(stanceBtns) do
+        ActionBarsOwned.UpdateStanceButton(btn)
+    end
+end
+
 -- Update pet bar container visibility based on whether the player has an active pet bar.
 -- PetActionBar events are unregistered (we took ownership), so we drive visibility ourselves.
 UpdatePetBarVisibility = function()
@@ -2742,10 +2802,8 @@ UpdateStanceBarLayout = function()
 
     container:Show()
 
-    -- Update our fresh QUI stance buttons to populate icons
-    for _, btn in ipairs(buttons) do
-        if btn.Update then pcall(btn.Update, btn) end
-    end
+    -- Populate stance button icons/state (bar-level Update is suppressed).
+    ActionBarsOwned.UpdateAllStanceButtons()
 
     -- Clamp ownedLayout.iconCount to actual form count for layout
     local layout = barDB and barDB.ownedLayout
@@ -3118,6 +3176,10 @@ local function OnOwnedEvent(self, event, ...)
             ActionBarsOwned.pendingStanceUpdate = true
         end
         ApplyBar1OverrideBindings()
+
+    elseif event == "UPDATE_SHAPESHIFT_COOLDOWN" or event == "UPDATE_SHAPESHIFT_USABLE" then
+        -- Refresh stance button visuals (cooldowns, usability coloring)
+        ActionBarsOwned.UpdateAllStanceButtons()
 
     elseif event == "UNIT_ENTERED_VEHICLE" or event == "UNIT_EXITED_VEHICLE" then
         local unit = ...
@@ -6095,6 +6157,8 @@ function ActionBarsOwned:Initialize()
     ownedEventFrame:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
     ownedEventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
     ownedEventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")
+    ownedEventFrame:RegisterEvent("UPDATE_SHAPESHIFT_COOLDOWN")
+    ownedEventFrame:RegisterEvent("UPDATE_SHAPESHIFT_USABLE")
     ownedEventFrame:RegisterEvent("UPDATE_STEALTH")
     ownedEventFrame:RegisterEvent("UPDATE_BINDINGS")
     ownedEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
@@ -6171,14 +6235,10 @@ function ActionBarsOwned:Initialize()
             overrideBar:Hide()
         end
         overrideBar:SetParent(hiddenBarParent)
-        -- Also deregister OverrideActionBar buttons from the dispatch.
-        -- Hiding the bar makes them invisible but they're still in the
-        -- ActionBarButtonEventsFrame.frames table and still receive
-        -- dispatches → SetCooldown with secret values in tainted context.
-        for i = 1, 6 do
-            local btn = _G["OverrideActionBarButton" .. i]
-            if btn then DeregisterFromEventsFrame(btn) end
-        end
+        -- Do NOT touch button scripts — SetScript on secure frames taints
+        -- them, poisoning the dispatch.  The bar is hidden with events
+        -- unregistered; buttons stay in the dispatch with their secure
+        -- handlers which run harmlessly in untainted context.
     end
 
     -- Suppress PossessActionBar (mind control bar) — can overlap QUI bars
@@ -6356,9 +6416,6 @@ function ActionBarsOwned:Refresh()
         BuildBar(barKey)
     end
 
-    -- One-time migration for lock setting (preserves user setting after CVar sync fix)
-    MigrateLockSetting()
-
     -- Patch LibKeyBound Binder methods to work without method injection on Midnight
     PatchLibKeyBoundForMidnight()
 
@@ -6450,9 +6507,9 @@ initFrame:SetScript("OnEvent", function(self, event, addonName)
         -- Suppress them now that they exist — the Initialize() pass
         -- may have run before this addon loaded.
         local overrideBar = _G.OverrideActionBar
-        if overrideBar and ActionBarButtonEventsFrame then
+        if overrideBar then
             if not overrideBar:GetParent() or overrideBar:GetParent() == hiddenBarParent then
-                -- Already hidden by Initialize — just deregister buttons
+                -- Already hidden by Initialize
             else
                 overrideBar:UnregisterAllEvents()
                 if overrideBar.HideBase then
@@ -6462,10 +6519,8 @@ initFrame:SetScript("OnEvent", function(self, event, addonName)
                 end
                 overrideBar:SetParent(hiddenBarParent)
             end
-            for i = 1, 6 do
-                local btn = _G["OverrideActionBarButton" .. i]
-                if btn then DeregisterFromEventsFrame(btn) end
-            end
+            -- Do NOT touch OverrideActionBar button scripts — SetScript on
+            -- a secure frame taints it, poisoning the dispatch iteration.
         end
     end
 end)

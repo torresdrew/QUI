@@ -1501,11 +1501,24 @@ end
 -- Map container key → array of CooldownViewerCategory enum values to scan.
 -- Cooldown bars scan both Essential (0) + Utility (1).
 -- Buff bars scan both TrackedBuff (2) + TrackedBar (3).
+-- Used by Composer (available spells) and runtime lookups where a wider
+-- scan is desirable so users can cross-add spells between containers.
 local CDM_BAR_CATEGORIES = {
     essential  = { 0, 1 },
     utility    = { 0, 1 },
     buff       = { 2, 3 },
     trackedBar = { 2, 3 },
+}
+
+-- 1:1 mapping used ONLY during first-time snapshot so spells land in the
+-- container that matches their Blizzard CDM category.
+-- Essential (0) → essential, Utility (1) → utility,
+-- TrackedBuff (2) → buff, TrackedBar (3) → trackedBar.
+local CDM_SNAPSHOT_CATEGORIES = {
+    essential  = { 0 },
+    utility    = { 1 },
+    buff       = { 2 },
+    trackedBar = { 3 },
 }
 
 -- SpellID correction maps (populated by reconciliation, used by ResolveOwnedEntry).
@@ -1794,28 +1807,43 @@ function CDMSpellData:SnapshotBlizzardCDM(containerKey)
     local owned = {}
     local seenIDs = {}
 
+    -- CooldownSetSpellFlags.HideByDefault — Blizzard hides these spells from
+    -- the CDM bars by default (moves them to pseudo-categories -1/-2 on the
+    -- Lua side).  The C-side API still returns them in their real category,
+    -- so we filter them out here so only user-visible spells are imported.
+    local HIDE_BY_DEFAULT = 2
+
     if C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCategorySet
        and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-        local categories = CDM_BAR_CATEGORIES[containerKey] or { 0, 1, 2, 3 }
+        -- Use 1:1 snapshot categories so spells land in the correct container
+        -- (e.g. Blizzard Essential → QUI essential, Utility → utility).
+        local categories = CDM_SNAPSHOT_CATEGORIES[containerKey] or CDM_BAR_CATEGORIES[containerKey] or { 0, 1, 2, 3 }
         for _, category in ipairs(categories) do
             local ok, cooldownIDs = pcall(C_CooldownViewer.GetCooldownViewerCategorySet, category)
             if ok and cooldownIDs then
                 for _, cdID in ipairs(cooldownIDs) do
                     local okInfo, cdInfo = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
                     if okInfo and cdInfo then
-                        local sid = _cdIDToCorrectSID[cdID]
-                        if not sid and isAuraContainer then
-                            local tooltipSid = Helpers.SafeValue(cdInfo.overrideTooltipSpellID, nil)
-                            if tooltipSid and tooltipSid > 0 then
-                                sid = tooltipSid
+                        -- Skip spells hidden by default in Blizzard's CDM UI.
+                        -- Users can still add these via the Composer.
+                        local flags = cdInfo.flags or 0
+                        if bit.band(flags, HIDE_BY_DEFAULT) ~= 0 then
+                            -- Skip — this spell is hidden by default
+                        else
+                            local sid = _cdIDToCorrectSID[cdID]
+                            if not sid and isAuraContainer then
+                                local tooltipSid = Helpers.SafeValue(cdInfo.overrideTooltipSpellID, nil)
+                                if tooltipSid and tooltipSid > 0 then
+                                    sid = tooltipSid
+                                end
                             end
-                        end
-                        if not sid then
-                            sid = ResolveInfoSpellID(cdInfo)
-                        end
-                        if sid and not seenIDs[sid] then
-                            seenIDs[sid] = true
-                            owned[#owned + 1] = { type = "spell", id = sid }
+                            if not sid then
+                                sid = ResolveInfoSpellID(cdInfo)
+                            end
+                            if sid and not seenIDs[sid] then
+                                seenIDs[sid] = true
+                                owned[#owned + 1] = { type = "spell", id = sid }
+                            end
                         end
                     end
                 end
