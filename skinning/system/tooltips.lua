@@ -162,6 +162,28 @@ local styleFrames = Helpers.CreateStateTable()   -- tooltip → overlay frame
 local hookedTooltips = Helpers.CreateStateTable() -- tooltip → true
 local pendingGameTooltipRestyle = false           -- deferred restyle for GameTooltip
 
+-- Temporary debug helper for tooltip flicker investigation
+local _dbgThrottle = 0
+local function TTS_Debug(msg)
+    local Q = _G.QUI
+    if not Q or not Q.DEBUG_MODE then return end
+    local now = GetTime()
+    if now - _dbgThrottle < 0.05 then return end  -- max 20 msgs/sec
+    _dbgThrottle = now
+    local gt = GameTooltip
+    local ns = gt and gt.NineSlice
+    local sf = styleFrames[gt]
+    local nsShown = ns and ns.IsShown and ns:IsShown()
+    local sfShown = sf and sf.IsShown and sf:IsShown()
+    local nsLvl = ns and ns.GetFrameLevel and ns:GetFrameLevel() or "?"
+    local sfLvl = sf and sf.GetFrameLevel and sf:GetFrameLevel() or "?"
+    local gtLvl = gt and gt.GetFrameLevel and gt:GetFrameLevel() or "?"
+    Q:Print(("[TTS] %s | gt=%s ns=%s(%s) sf=%s(%s)"):format(
+        msg, tostring(gtLvl),
+        tostring(nsLvl), nsShown and "SHOW" or "hide",
+        tostring(sfLvl), sfShown and "SHOW" or "hide"))
+end
+
 ---------------------------------------------------------------------------
 -- NineSlice Management
 ---------------------------------------------------------------------------
@@ -170,6 +192,10 @@ local function HideNineSlice(tooltip)
     local ns = tooltip.NineSlice
     if not ns then return end
     pcall(ns.Hide, ns)
+    -- Drop NineSlice below the tooltip's frame level so that even if
+    -- Blizzard briefly re-shows it (before our hook re-hides it), its
+    -- textures render behind QUI's overlay at the tooltip's own level.
+    pcall(ns.SetFrameLevel, ns, 0)
     -- TAINT SAFETY: Do NOT write to ns.layoutType / ns.layoutTextureKit /
     -- ns.backdropInfo from addon code.  Writing nil here taints those keys;
     -- the taint persists across Show() cycles and can propagate into
@@ -278,9 +304,11 @@ local function StyleTooltip(tooltip)
         end
 
         HideNineSlice(tooltip)
-        -- Clear any backdrop on the tooltip frame itself (some tooltips have
-        -- both NineSlice AND BackdropTemplate, creating a doubled border)
-        if tooltip.SetBackdrop then pcall(tooltip.SetBackdrop, tooltip, nil) end
+        -- Do NOT call tooltip:SetBackdrop(nil) here.  Clearing the tooltip's
+        -- own backdrop triggers Blizzard to re-call SharedTooltip_SetBackdropStyle
+        -- which re-shows NineSlice and sets pendingGameTooltipRestyle, creating
+        -- an infinite per-frame loop.  Our overlay at the same frame level
+        -- covers the tooltip's own backdrop anyway.
 
         -- Fall back to NineSlice if dimensions are inaccessible (secret values)
         local dimOk = pcall(function() local _ = tooltip:GetWidth() + 0 end)
@@ -294,20 +322,14 @@ local function StyleTooltip(tooltip)
 
         -- Create/get overlay and apply backdrop
         local frame = GetStyleFrame(tooltip)
-        -- Match NineSlice's frame level so our overlay is in the same
-        -- draw-layer bucket.  NineSlice uses useParentLevel="true" so
-        -- it sits at the tooltip's own level.  At the same level, WoW
-        -- renders sibling children in creation order — our overlay was
-        -- created after NineSlice so its BACKGROUND/BORDER textures
-        -- draw on top of NineSlice's.  The tooltip's own FontString
-        -- regions (text) render at ARTWORK within the same level,
-        -- which is always above BACKGROUND/BORDER.
-        local ns = tooltip.NineSlice
-        if ns and ns.GetFrameLevel then
-            local nsOk, nsLvl = pcall(ns.GetFrameLevel, ns)
-            if nsOk and type(nsLvl) == "number" then
-                frame:SetFrameLevel(nsLvl)
-            end
+        -- Set overlay to the tooltip's own frame level.  NineSlice was
+        -- dropped to level 0 by HideNineSlice above, so our overlay at
+        -- the tooltip's level (typically 1) is strictly above it.
+        -- Tooltip FontStrings (text) are regions at this same level in
+        -- the ARTWORK draw layer, which is above our BACKGROUND/BORDER.
+        local ok, level = pcall(tooltip.GetFrameLevel, tooltip)
+        if ok and type(level) == "number" then
+            frame:SetFrameLevel(level)
         end
 
         local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetEffectiveColors()
@@ -337,6 +359,10 @@ local function StyleTooltip(tooltip)
         frame._quiBorderB = sb or 0
         frame._quiBorderA = sa or 1
         frame:Show()
+
+        if tooltip == GameTooltip then
+            TTS_Debug("StyleTooltip done")
+        end
 
         -- Strip CompareHeader on shopping tooltips
         if tooltip.CompareHeader then
@@ -598,6 +624,7 @@ local function SetupBackdropStyleHooks()
                 -- Immediately suppress NineSlice and show existing overlay
                 -- to prevent 1-frame flash.  These are C-side calls (no Lua
                 -- property writes) so they do not taint the caller's context.
+                TTS_Debug("SharedTooltip hook")
                 HideNineSlice(tooltip)
                 local sf = styleFrames[tooltip]
                 if sf then sf:Show() end
@@ -780,6 +807,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     -- backdrop clear on the tooltip frame itself).  Force a full restyle now
     -- that combat restrictions are lifted.
     if event == "PLAYER_REGEN_ENABLED" then
+        TTS_Debug("REGEN_ENABLED")
         _FlushHookQueue()
         pendingGameTooltipRestyle = false
         if IsEnabled() then
@@ -843,7 +871,22 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
                 pendingGameTooltipRestyle = false
                 local isShown = GameTooltip:IsShown()
                 if isShown then
-                    OnTooltipShow(GameTooltip)
+                    -- Skip restyle when NineSlice is already hidden and our
+                    -- overlay is already visible — calling StyleTooltip again
+                    -- would just re-hide NineSlice and re-show the overlay,
+                    -- both of which trigger Blizzard layout recalculations
+                    -- that fire SharedTooltip_SetBackdropStyle again,
+                    -- creating an infinite per-frame loop.
+                    local _ns = GameTooltip.NineSlice
+                    local _sf = styleFrames[GameTooltip]
+                    local alreadyStyled = _sf and _sf:IsShown()
+                        and (not _ns or not _ns:IsShown())
+                    if alreadyStyled then
+                        TTS_Debug("pendingRestyle SKIP")
+                    else
+                        TTS_Debug("pendingRestyle")
+                        OnTooltipShow(GameTooltip)
+                    end
                     -- Font sizing: apply once per tooltip show cycle.  The
                     -- fontsApplied flag prevents re-entry: SetFont → resize →
                     -- Blizzard restyle → pendingRestyle → watcher → SetFont.
@@ -882,6 +925,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
                 if shown and IsEnabled() then
                     local ns = GameTooltip.NineSlice
                     if ns and ns:IsShown() then
+                        TTS_Debug("ns-reappear")
                         HideNineSlice(GameTooltip)
                         local sf = styleFrames[GameTooltip]
                         if sf then sf:Show() end
@@ -897,6 +941,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             end
 
             -- GameTooltip just became visible
+            TTS_Debug("initial-show")
             OnTooltipShow(GameTooltip)
             _pendingFontSet[GameTooltip] = true
             C_Timer.After(0, function()
