@@ -278,17 +278,36 @@ local function StyleTooltip(tooltip)
         end
 
         HideNineSlice(tooltip)
+        -- Clear any backdrop on the tooltip frame itself (some tooltips have
+        -- both NineSlice AND BackdropTemplate, creating a doubled border)
+        if tooltip.SetBackdrop then pcall(tooltip.SetBackdrop, tooltip, nil) end
 
         -- Fall back to NineSlice if dimensions are inaccessible (secret values)
         local dimOk = pcall(function() local _ = tooltip:GetWidth() + 0 end)
         if not dimOk then
             local ns = tooltip.NineSlice
             if ns then pcall(ns.Show, ns) end
-            -- Clear our backdrop so NineSlice is the only visual
-            if tooltip.SetBackdrop then pcall(tooltip.SetBackdrop, tooltip, nil) end
             local sf = styleFrames[tooltip]
             if sf then sf:Hide() end
             return
+        end
+
+        -- Create/get overlay and apply backdrop
+        local frame = GetStyleFrame(tooltip)
+        -- Match NineSlice's frame level so our overlay is in the same
+        -- draw-layer bucket.  NineSlice uses useParentLevel="true" so
+        -- it sits at the tooltip's own level.  At the same level, WoW
+        -- renders sibling children in creation order — our overlay was
+        -- created after NineSlice so its BACKGROUND/BORDER textures
+        -- draw on top of NineSlice's.  The tooltip's own FontString
+        -- regions (text) render at ARTWORK within the same level,
+        -- which is always above BACKGROUND/BORDER.
+        local ns = tooltip.NineSlice
+        if ns and ns.GetFrameLevel then
+            local nsOk, nsLvl = pcall(ns.GetFrameLevel, ns)
+            if nsOk and type(nsLvl) == "number" then
+                frame:SetFrameLevel(nsLvl)
+            end
         end
 
         local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetEffectiveColors()
@@ -296,34 +315,7 @@ local function StyleTooltip(tooltip)
         local px = SkinBase.GetPixelSize(tooltip, 1)
         local edge = math.max(thickness, 1) * px
 
-        -- Apply backdrop directly on the tooltip frame itself (it inherits
-        -- BackdropTemplate).  This renders at the tooltip's own BACKGROUND/
-        -- BORDER draw layers — naturally behind text (ARTWORK) and at the
-        -- same frame level as NineSlice.  A separate overlay child frame
-        -- cannot reliably stack above NineSlice without also covering text,
-        -- because both are at the same frame level (useParentLevel="true")
-        -- and WoW's internal draw order is unpredictable between child
-        -- frames at the same level.  By using the tooltip's own backdrop,
-        -- we avoid the stacking race entirely.
-        if tooltip.SetBackdrop then
-            local frame = tooltip
-            if frame._lastEdge ~= edge or not frame.backdropInfo then
-                frame:SetBackdrop({
-                    bgFile = FLAT_TEXTURE, edgeFile = FLAT_TEXTURE,
-                    edgeSize = edge,
-                    insets = { left = edge, right = edge, top = edge, bottom = edge },
-                })
-                frame._lastEdge = edge
-            end
-            frame:SetBackdropColor(bgr, bgg, bgb, bga)
-            frame:SetBackdropBorderColor(sr, sg, sb, sa)
-        end
-
-        -- Also update the separate overlay frame (used by combat-safe path
-        -- and as fallback for tooltips without BackdropTemplate)
-        local frame = GetStyleFrame(tooltip)
-        local ok, level = pcall(tooltip.GetFrameLevel, tooltip)
-        if ok and type(level) == "number" then frame:SetFrameLevel(level) end
+        -- Only re-set backdrop when edge size changes (avoids piece recreation)
         if frame._lastEdge ~= edge or not frame.backdropInfo then
             frame:SetBackdrop({
                 bgFile = FLAT_TEXTURE, edgeFile = FLAT_TEXTURE,
@@ -332,6 +324,7 @@ local function StyleTooltip(tooltip)
             })
             frame._lastEdge = edge
         end
+
         frame:SetBackdropColor(bgr, bgg, bgb, bga)
         frame:SetBackdropBorderColor(sr, sg, sb, sa)
         -- Store for global OnBackdropSizeChanged fallback
@@ -368,11 +361,6 @@ local function CombatRefreshTooltip(tooltip)
         if not frame then
             -- First encounter in combat: create overlay (addon-owned, always safe)
             frame = GetStyleFrame(tooltip)
-            local ok, level = pcall(tooltip.GetFrameLevel, tooltip)
-            if ok and type(level) == "number"
-                and not (issecretvalue and issecretvalue(level)) then
-                frame:SetFrameLevel(level)
-            end
             local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetEffectiveColors()
             local edge = math.max(GetEffectiveBorderThickness(), 1)
             frame:SetBackdrop({
