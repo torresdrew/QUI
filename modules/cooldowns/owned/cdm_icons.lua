@@ -1622,7 +1622,6 @@ local function UpdateIconCooldown(icon)
             end
         end
 
-    else
         -- Custom entry: use addon-created CD with our cooldown resolution
         local startTime, duration, durObj
         if entry.type == "macro" then
