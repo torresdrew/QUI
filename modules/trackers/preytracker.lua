@@ -75,7 +75,11 @@ local State = {
     activeQuestID = nil,
     preyName = nil,
     difficulty = nil,
-    -- Progress
+    -- Progress (raw widget/quest data)
+    progressState = nil,
+    progressPercent = nil,
+    lastWidgetSeenAt = 0,
+    -- Display (derived from raw state in UpdateBarDisplay)
     currentStage = 0,
     currentProgress = 0,
     cachedWidgetID = nil,
@@ -748,8 +752,21 @@ local function UpdateBarDisplay()
     local settings = GetSettings()
     if not settings then return end
 
-    local pct = State.currentProgress
-    local stage = State.currentStage
+    -- Derive display stage from raw progressState
+    local stage = DetermineStageFromProgressState(State.progressState)
+
+    -- Derive display percent: use raw progressPercent if available,
+    -- otherwise fall back to stage-based estimate (like the reference)
+    local pct = State.progressPercent
+    local shouldUseStageFallback = (pct == nil) or (stage >= 1 and pct <= 0)
+    if stage == 4 then
+        pct = 100
+    elseif shouldUseStageFallback then
+        pct = GetStageFallbackPercent(stage)
+    end
+
+    State.currentStage = stage
+    State.currentProgress = pct
 
     -- Set bar value (C-side handles secret values)
     bar:SetMinMaxValues(0, 100)
@@ -1172,7 +1189,8 @@ local function OnQuestCompleted(questID)
     local settings = GetSettings()
 
     -- Show 100% briefly
-    State.currentProgress = 100
+    State.progressState = PREY_PROGRESS_FINAL
+    State.progressPercent = 100
     State.completionUntil = GetTime() + COMPLETION_HOLD_TIME
     UpdateBarDisplay()
     ShowBar()
@@ -1188,6 +1206,9 @@ local function OnQuestCompleted(questID)
             State.activeQuestID = nil
             State.preyName = nil
             State.difficulty = nil
+            State.progressState = nil
+            State.progressPercent = nil
+            State.lastWidgetSeenAt = 0
             State.currentStage = 0
             State.currentProgress = 0
             State.stageSoundPlayed = {}
@@ -1353,6 +1374,9 @@ local function ResetState()
     State.activeQuestID = nil
     State.preyName = nil
     State.difficulty = nil
+    State.progressState = nil
+    State.progressPercent = nil
+    State.lastWidgetSeenAt = 0
     State.currentStage = 0
     State.currentProgress = 0
     State.cachedWidgetID = nil
@@ -1406,38 +1430,30 @@ local function UpdatePreyState()
         -- Update zone status
         State.isInPreyZone = CheckInPreyZone()
 
-        -- Extract progress and stage
-        local pct = 0
-        local newStage = 1
-
+        -- Store raw widget/quest data — display derivation happens in UpdateBarDisplay
         if widgetInfo then
             State.cachedWidgetID = widgetID
             State.isInPreyZone = true
+            State.lastWidgetSeenAt = GetTime()
 
-            -- Use progressState from widget for stage (0-3 maps to stages 1-4)
+            -- Store raw progressState from widget
             if widgetInfo.progressState ~= nil then
-                newStage = DetermineStageFromProgressState(widgetInfo.progressState)
+                State.progressState = widgetInfo.progressState
             end
 
-            -- Try granular percent from widget fields
+            -- Store raw progressPercent: try widget fields first, then quest objectives
             local widgetPct = ExtractProgressPercent(widgetInfo, widgetInfo.tooltip)
-
             if widgetPct then
-                pct = widgetPct
+                State.progressPercent = widgetPct
             else
-                -- Widget had no granular percent — try quest objectives
                 local objectivePct = ExtractQuestObjectivePercent(questID)
                 if objectivePct and objectivePct > 0 then
-                    pct = objectivePct
-                    -- Also derive stage from actual percent if no progressState
-                    if widgetInfo.progressState == nil then
-                        newStage = DetermineStageFromPercent(pct)
-                    end
+                    State.progressPercent = objectivePct
                 elseif widgetInfo.progressState == PREY_PROGRESS_FINAL then
-                    pct = 100
+                    State.progressPercent = 100
                 else
-                    -- Stage fallback respecting thirds/quarters setting
-                    pct = GetStageFallbackPercent(newStage)
+                    -- No granular percent available — leave nil so display uses stage fallback
+                    State.progressPercent = nil
                 end
             end
 
@@ -1449,22 +1465,22 @@ local function UpdatePreyState()
                 end
             end
         elseif questID then
-            -- Widget no longer visible (e.g., left prey zone) — clear cached ID
+            -- Widget no longer visible — clear cached ID, try quest objectives
             State.cachedWidgetID = nil
-            -- Try quest objectives for granular progress
             local objectivePct = ExtractQuestObjectivePercent(questID)
             if objectivePct then
-                pct = objectivePct
+                State.progressPercent = objectivePct
             end
-            newStage = DetermineStageFromPercent(pct)
+            -- No widget means no progressState — clear it if widget has been gone > 2s
+            if (GetTime() - State.lastWidgetSeenAt) > 2 then
+                State.progressState = nil
+                State.progressPercent = nil
+            end
         end
 
+        -- Stage transition sounds (before display update)
+        local newStage = DetermineStageFromProgressState(State.progressState)
         local oldStage = State.currentStage
-
-        State.currentProgress = pct
-        State.currentStage = newStage
-
-        -- Stage transition
         if oldStage > 0 and newStage > oldStage then
             OnStageTransition(oldStage, newStage)
         end
@@ -1498,14 +1514,16 @@ local function TogglePreview(enable)
 
     if enable then
         -- Fake data for layout/options preview
-        State.currentStage = 3
-        State.currentProgress = 67
+        State.progressState = 2  -- stage 3
+        State.progressPercent = 67
         State.preyName = "Prey Hunt Preview"
         State.difficulty = "Normal"
         UpdateBarAppearance()
         UpdateBarDisplay()
         bar:Show()
     else
+        State.progressState = nil
+        State.progressPercent = nil
         State.currentStage = 0
         State.currentProgress = 0
         State.preyName = nil
