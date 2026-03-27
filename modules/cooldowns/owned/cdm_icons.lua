@@ -1860,41 +1860,41 @@ local function UpdateIconCooldown(icon)
             end
         else
             if entry._blizzChild then
-                -- Blizzard viewer child drives texture (SetTexture hook).
-                -- Read isActive (non-secret) for cooldown state.
-                icon._desiredTexture = nil
                 local sid = entry.overrideSpellID or entry.spellID or entry.id
-                local ci = sid and TickCacheGetCooldown(sid)
-                apiIsActive = ci and ci.isActive
 
-                -- Chain: GetOverrideSpell → GetSpellCooldown / GetSpellCooldownDuration.
-                -- GetOverrideSpell may return a secret override ID in combat.
-                -- Pass it directly to C-side functions which handle secrets
-                -- natively and return non-secret isActive + DurationObject.
+                -- Chain: GetOverrideSpell → C-side APIs.
+                -- Override ID may be secret in combat — pass directly to
+                -- C-side functions which handle secrets natively.
                 local cdSid = C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(sid) or sid
+
+                -- Cooldown state + DurationObject from the override spell
                 local childCi = C_Spell.GetSpellCooldown(cdSid)
                 if childCi and childCi.isActive ~= nil then
                     apiIsActive = childCi.isActive
                 end
                 durObj = C_Spell.GetSpellCooldownDuration(cdSid)
+
+                -- Texture from the override spell (C-side handles secrets).
+                -- Sets _desiredTexture so the Blizzard SetTexture hook doesn't
+                -- overwrite with debuff/aura icons from the viewer child.
+                if icon.Icon then
+                    local texInfo = C_Spell.GetSpellInfo(cdSid)
+                    if texInfo and texInfo.iconID then
+                        icon._desiredTexture = texInfo.iconID
+                        pcall(icon.Icon.SetTexture, icon.Icon, texInfo.iconID)
+                    end
+                end
             else
                 -- Custom entry without viewer child: full API resolution.
                 startTime, duration, durObj, apiIsActive = GetBestSpellCooldown(entry.overrideSpellID or entry.spellID or entry.id)
-                -- Resolve override texture via API.
-                if C_Spell.GetOverrideSpell and icon.Icon then
+                -- Texture from override chain — pass secret IDs to C-side.
+                if icon.Icon then
                     local baseID = entry.overrideSpellID or entry.spellID or entry.id
-                    if baseID then
-                        local overrideID = C_Spell.GetOverrideSpell(baseID)
-                        if not Helpers.IsSecretValue(overrideID) then
-                            local texSpellID = overrideID or baseID
-                            if texSpellID ~= icon._cachedOverrideID then
-                                icon._cachedOverrideID = texSpellID
-                                icon._desiredTexture = GetSpellTexture(texSpellID)
-                            end
-                            if icon._desiredTexture then
-                                icon.Icon:SetTexture(icon._desiredTexture)
-                            end
-                        end
+                    local texSid = C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(baseID) or baseID
+                    local texInfo = C_Spell.GetSpellInfo(texSid)
+                    if texInfo and texInfo.iconID then
+                        icon._desiredTexture = texInfo.iconID
+                        pcall(icon.Icon.SetTexture, icon.Icon, texInfo.iconID)
                     end
                 end
             end
