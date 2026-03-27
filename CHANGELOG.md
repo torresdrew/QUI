@@ -4,6 +4,14 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## v2.56.0-alpha.2
+
+### CDM (Cooldown Manager)
+- Unified icon override texture resolution — both Blizzard-child and custom-entry paths now use C-side `GetSpellInfo` for secret-safe icon lookup
+
+### CI
+- Restored dev build workflow for Discord dev channel notifications on every push
+
 ## v2.56.0-alpha.1
 
 ### CDM (Cooldown Manager)
