@@ -4,6 +4,29 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## v2.56.0-alpha.3
+
+### CDM (Cooldown Manager)
+- Fixed GCD swipe regression — hook now only refreshes GCD state, swipe is driven by UpdateIconCooldown
+- Fixed cooldown icons showing irrelevant aura stacks (e.g., Coagulating Blood on Death Strike) — application stacks now gated on Blizzard's appVisible state
+- Fixed aura entries incorrectly showing charge counts instead of aura stacks
+- Fixed stale charge metadata cache bleeding into other specs/characters — cache now cleaned OOC when API returns no charges or maxCharges ≤ 1
+- Fixed hook state leaking stale text when viewer children are recycled to different spells
+- Added entryID fallback in aura resolution for owned entries with separate buff spell IDs
+- Added freshness check for charge text hooks to avoid stale text from recycled viewer children
+- Improved charge-based cooldown path to skip charged spells correctly
+
+### Totem Bar
+- Right-click dismiss now uses secure click-through to Blizzard's totem buttons (works in combat)
+- TotemFrame kept alive at alpha 0 so its event handler maintains slot state for the secure handler
+- Added combat-safe Show/Hide using SetAlpha with PLAYER_REGEN_ENABLED reconciliation
+
+### Action Bars
+- Various action bar fixes
+
+### Skinning
+- Tooltip fixes
+
 ## v2.56.0-alpha.2
 
 ### CDM (Cooldown Manager)
