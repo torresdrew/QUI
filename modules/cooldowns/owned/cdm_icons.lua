@@ -691,10 +691,15 @@ local function MirrorBlizzCooldown(icon, blizzChild)
                 return
             end
 
-            -- Swipe is driven by UpdateIconCooldown via the override chain
-            -- (GetOverrideSpell → GetSpellCooldown/Duration).  The hook
-            -- only needs to refresh GCD state — no CooldownFrame writes.
             RefreshIconGCDState(targetIcon)
+
+            -- Forward GCD swipes to the addon CooldownFrame so swipe.lua
+            -- can render them (controlled by settings.showGCDSwipe).
+            local cd = targetIcon.Cooldown
+            if cd and IsSafeNumeric(start) and IsSafeNumeric(duration) and duration > 0 then
+                pcall(cd.SetCooldown, cd, start, duration)
+                ReapplySwipeStyle(cd, targetIcon)
+            end
         end)
 
         -- No SetAllPoints/SetPoint/SetParent hooks: the Blizzard
@@ -839,10 +844,7 @@ local function SyncStackText(state)
         end
     end
     -- ChargeCount takes priority over Applications.
-    -- chargeText/appText may be secret values (Blizzard passes them to
-    -- SetText during combat) — forward to C-side SetText without comparing.
-    -- Use pcall for the ~= "" check: secret values will error on comparison;
-    -- if comparison fails, treat the value as non-empty (it's a secret number).
+    -- chargeText/appText may be secret values — use pcall for comparisons.
     local hasCharge = state.chargeText ~= nil
     if hasCharge then
         local eqOk, eqResult = pcall(function() return state.chargeText == "" end)
@@ -853,38 +855,32 @@ local function SyncStackText(state)
         local eqOk, eqResult = pcall(function() return state.appText == "" end)
         if eqOk and eqResult then hasApp = false end
     end
-    -- For cooldown icons, skip application stacks — they represent aura
-    -- stacks (e.g., Coagulating Blood on Death Strike) which aren't
-    -- meaningful on a cooldown display.  Only charges are relevant.
-    if hasApp and not hasCharge then
-        local entry = icon._spellEntry
-        if entry and not entry.isAura then
-            hasApp = false
-        end
-    end
 
-    -- Write when hooks provide actual content.  Only clear when
-    -- transitioning from content → empty (e.g., charged child recycled
-    -- to a non-charged spell).  Don't clear on repeated empty SetText
-    -- calls — Blizzard spams SetText("") on ChargeCount.Current for
-    -- every viewer child on every refresh (even buffs without charges),
-    -- which would race with the API path and cause flicker.
+    -- Filter charge text: only display for spells that should show counts.
+    -- Two valid cases:
+    --   1. Multi-charge spells (maxCharges > 1): Fire Blast, Rune of Power, etc.
+    --   2. Resource overlay spells: Blizzard Show()s the ChargeCount frame
+    --      (chargeVisible = true) for Soul Fragments, Holy Power, etc.
+    -- Spells like Darkness/Fel Devastation have chargeVisible = false/nil
+    -- and are not multi-charge, so they get filtered out.
     if hasCharge then
-        -- Only forward charge text for multi-charge spells (maxCharges > 1).
-        -- maxCharges is non-secret (12.0.5+).  Single-charge spells can
-        -- show misleading counts from empowerment mechanics (e.g., Wake of
-        -- Ashes showing "2" from Hammer of Light transformation).
+        local dominated = false
         local entry = icon._spellEntry
         local sid = entry and (entry.overrideSpellID or entry.spellID or entry.id)
+        -- Check multi-charge
         local isMulti = false
-        if sid and C_Spell.GetSpellCharges then
+        if sid and C_Spell and C_Spell.GetSpellCharges then
             local ok, ci = pcall(C_Spell.GetSpellCharges, sid)
             if ok and ci and ci.maxCharges and ci.maxCharges > 1 then
                 isMulti = true
             end
         end
-        if not isMulti then hasCharge = false end
+        if not isMulti and not state.chargeVisible then
+            dominated = true
+        end
+        if dominated then hasCharge = false end
     end
+
     if hasCharge then
         pcall(icon.StackText.SetText, icon.StackText, state.chargeText)
         icon.StackText:Show()
@@ -894,8 +890,6 @@ local function SyncStackText(state)
         icon.StackText:Show()
         state._hookHadContent = true
     elseif state._hookHadContent then
-        -- Was showing content, now empty: legitimate clear
-        -- (child recycled or charges consumed).
         icon.StackText:SetText("")
         icon.StackText:Hide()
         state._hookHadContent = false
@@ -904,24 +898,14 @@ end
 
 --- Check whether hooks are actively driving stack text for an icon.
 --- When true, API-based stack writes in UpdateIconCooldown should yield
---- to avoid overwriting the hook-driven values (our event handler runs
---- after Blizzard's hooks, creating a race where the API path clears or
---- sets stacks that the hook just populated correctly).
+--- to avoid overwriting the hook-driven values.
+--- Uses _hookHadContent: only true when SyncStackText actually displayed
+--- content (passed the multi-charge / chargeVisible filter).
 local function IsHookStackActive(entry, icon)
     if not entry or not entry._blizzChild then return false end
     local bss = blizzStackState[entry._blizzChild]
     if not bss or bss.icon ~= icon then return false end
-    -- chargeText/appText may be secret values — pcall the comparison.
-    -- If comparison errors (secret), treat as non-empty (active).
-    if bss.chargeText ~= nil then
-        local ok, eq = pcall(function() return bss.chargeText == "" end)
-        if not ok or not eq then return true end
-    end
-    if bss.appText ~= nil then
-        local ok, eq = pcall(function() return bss.appText == "" end)
-        if not ok or not eq then return true end
-    end
-    return false
+    return bss._hookHadContent == true
 end
 
 local function HookBlizzStackText(icon, blizzChild)
@@ -953,11 +937,13 @@ local function HookBlizzStackText(icon, blizzChild)
                 local s = blizzStackState[blizzChild]
                 if not s or not s.icon then return end
                 s.chargeVisible = true
+                SyncStackText(s)
             end)
             hooksecurefunc(chargeFrame, "Hide", function()
                 local s = blizzStackState[blizzChild]
                 if not s or not s.icon then return end
                 s.chargeVisible = false
+                SyncStackText(s)
             end)
             if chargeFrame.Current then
                 hooksecurefunc(chargeFrame.Current, "SetText", function(_, text)
@@ -1938,18 +1924,10 @@ local function UpdateIconCooldown(icon)
             if apiIsActive == false then
                 icon.Cooldown:Clear()
             elseif not mirrorActive and durObj then
-                -- Skip applying the swipe during GCD — the override system
-                -- lags by one tick, so the base CD briefly shows before the
-                -- override (e.g., Hammer of Light) clears it.  Deferring
-                -- during GCD lets the override resolve first.
-                if not icon._isOnGCD then
-                    pcall(icon.Cooldown.SetCooldownFromDurationObject, icon.Cooldown, durObj, false)
-                end
+                pcall(icon.Cooldown.SetCooldownFromDurationObject, icon.Cooldown, durObj, false)
             elseif not mirrorActive and startTime and duration
                    and IsSafeNumeric(startTime) and IsSafeNumeric(duration) then
-                if not icon._isOnGCD then
-                    pcall(icon.Cooldown.SetCooldown, icon.Cooldown, startTime, duration)
-                end
+                pcall(icon.Cooldown.SetCooldown, icon.Cooldown, startTime, duration)
             end
 
             -- isActive drives _hasCooldownActive for desaturation/visibility.
@@ -1995,7 +1973,8 @@ local function UpdateIconCooldown(icon)
             local stackVal  -- raw value (may be secret), forwarded to C-side
 
             -- Only show charge count when maxCharges > 1 (multi-charge spell).
-            -- maxCharges is non-secret (12.0.5+), always readable in combat.
+            -- Resource overlay counts (Soul Fragments etc.) are driven by the
+            -- hook path (HookBlizzStackText), not the API path.
             local isMultiCharge = _cachedChargeInfo
                 and _cachedChargeInfo.maxCharges
                 and _cachedChargeInfo.maxCharges > 1
