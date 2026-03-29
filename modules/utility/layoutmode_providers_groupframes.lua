@@ -10,18 +10,14 @@ local ADDON_NAME, ns = ...
 ---------------------------------------------------------------------------
 -- DROPDOWN OPTIONS
 ---------------------------------------------------------------------------
-local GROW_OPTIONS = {
-    { value = "DOWN", text = "Down" },
-    { value = "UP", text = "Up" },
-    { value = "RIGHT", text = "Right (Horizontal)" },
-    { value = "LEFT", text = "Left (Horizontal)" },
+local LAYOUT_OPTIONS = {
+    { value = "VERTICAL", text = "Vertical (columns)" },
+    { value = "HORIZONTAL", text = "Horizontal (rows)" },
 }
 
-local GROUP_GROW_OPTIONS = {
-    { value = "RIGHT", text = "Right" },
-    { value = "LEFT", text = "Left" },
-    { value = "DOWN", text = "Down" },
-    { value = "UP", text = "Up" },
+local SPOTLIGHT_FILTER_OPTIONS = {
+    { value = "ROLE", text = "By Role" },
+    { value = "NAME", text = "By Name" },
 }
 
 local SORT_OPTIONS = {
@@ -179,18 +175,27 @@ local function BuildFrameSettings(content, contextMode, sections, relayout)
     local layout = vdb.layout
     if not layout then vdb.layout = {} layout = vdb.layout end
 
+    -- Derive orientation from legacy grow settings if not yet set
+    if not layout.orientation then
+        local grow = layout.growDirection or "DOWN"
+        layout.orientation = (grow == "LEFT" or grow == "RIGHT") and "HORIZONTAL" or "VERTICAL"
+    end
+
+    local function onOrientationChange()
+        if layout.orientation == "HORIZONTAL" then
+            layout.growDirection = "RIGHT"
+            layout.groupGrowDirection = "DOWN"
+        else
+            layout.growDirection = "DOWN"
+            layout.groupGrowDirection = "RIGHT"
+        end
+        onChange()
+    end
+
     U.CreateCollapsible(content, "Layout", 1, function(body)
         local sy = -4
 
-        sy = P(GUI:CreateFormDropdown(body, "Grow Direction", GROW_OPTIONS, "growDirection", layout, onChange), body, sy)
-
-        if isRaid then
-            local groupBy = layout.groupBy or "GROUP"
-            local isFlat = (groupBy == "NONE")
-            if not isFlat then
-                sy = P(GUI:CreateFormDropdown(body, "Group Grow Direction", GROUP_GROW_OPTIONS, "groupGrowDirection", layout, onChange), body, sy)
-            end
-        end
+        sy = P(GUI:CreateFormDropdown(body, "Layout", LAYOUT_OPTIONS, "orientation", layout, onOrientationChange), body, sy)
 
         sy = P(GUI:CreateFormSlider(body, "Frame Spacing", 0, 10, 1, "spacing", layout, onChange), body, sy)
 
@@ -290,28 +295,34 @@ local function BuildFrameSettings(content, contextMode, sections, relayout)
     end, sections, relayout)
 
     ---------------------------------------------------------------------------
-    -- SPOTLIGHT (raid only)
+    -- SPOTLIGHT (raid only — just enable toggle, settings live on spotlight handle)
     ---------------------------------------------------------------------------
     if isRaid then
         local spot = vdb.spotlight
         if not spot then vdb.spotlight = {} spot = vdb.spotlight end
 
-        U.CreateCollapsible(content, "Spotlight", 1, function(body)
+        local function onSpotlightToggle()
+            -- Default to showing tanks on first enable
+            if spot.enabled and not spot.filterTank and not spot.filterHealer and not spot.filterDamager then
+                spot.filterTank = true
+            end
+            local um = ns.QUI_LayoutMode
+            if um then
+                um:SetElementEnabled("spotlightFrames", spot.enabled == true)
+            end
+            onChange()
+        end
+
+        U.CreateCollapsible(content, "Spotlight", FORM_ROW + 8, function(body)
             local sy = -4
 
-            local desc = GUI:CreateLabel(body, "Pin raid members (by role or name) to a separate highlighted group.", 10, GUI.Colors.textMuted)
+            local desc = GUI:CreateLabel(body, "Creates a separate frame that pins raid members by role or name. Enable and configure via the Spotlight handle.", 10, GUI.Colors.textMuted)
             desc:SetPoint("TOPLEFT", 0, sy)
             desc:SetPoint("RIGHT", body, "RIGHT", 0, 0)
             desc:SetJustifyH("LEFT")
-            sy = sy - 20
+            sy = sy - 28
 
-            sy = P(GUI:CreateFormCheckbox(body, "Enable Spotlight", "enabled", spot, onChange), body, sy)
-            sy = P(GUI:CreateFormDropdown(body, "Grow Direction", GROW_OPTIONS, "growDirection", spot, onChange), body, sy)
-            sy = P(GUI:CreateFormSlider(body, "Spacing", 0, 10, 1, "spacing", spot, onChange), body, sy)
-
-            local totalHeight = math.abs(sy) + 4
-            local section = body:GetParent()
-            section._contentHeight = totalHeight
+            P(GUI:CreateFormCheckbox(body, "Enable Spotlight", "enabled", spot, onSpotlightToggle), body, sy)
         end, sections, relayout)
     end
 
@@ -388,6 +399,114 @@ local function RegisterGroupFrameProviders()
         BuildFrameSettings(content, "raid", sections, relayout)
 
         U.BuildPositionCollapsible(content, "raidFrames", nil, sections, relayout)
+        relayout() return content:GetHeight()
+    end })
+
+    ---------------------------------------------------------------------------
+    -- SPOTLIGHT FRAMES
+    ---------------------------------------------------------------------------
+    settingsPanel:RegisterProvider("spotlightFrames", { build = function(content, key, width)
+        local sections = {}
+        local function relayout() U.StandardRelayout(content, sections) end
+
+        local P = U.PlaceRow
+        local FORM_ROW = U.FORM_ROW or 28
+
+        local gfdb = QUI.db and QUI.db.profile and QUI.db.profile.quiGroupFrames
+        if not gfdb then relayout() return content:GetHeight() end
+        if not gfdb.raid then gfdb.raid = {} end
+        local spot = gfdb.raid.spotlight
+        if not spot then gfdb.raid.spotlight = {} spot = gfdb.raid.spotlight end
+
+        local function onChange()
+            local GFEM = ns.QUI_GroupFrameEditMode
+            if GFEM then
+                GFEM:DestroySpotlightHeader()
+                GFEM:CreateSpotlightHeader()
+            end
+            if _G.QUI_LayoutModeSyncHandle then
+                _G.QUI_LayoutModeSyncHandle("spotlightFrames")
+            end
+        end
+
+        -- Rebuild the settings panel to reflect changed conditionals
+        local function onChangeRebuild()
+            onChange()
+            local sp = ns.QUI_LayoutMode_Settings
+            if sp then
+                sp._currentKey = nil
+                sp:Show("spotlightFrames")
+            end
+        end
+
+        -- Filter
+        U.CreateCollapsible(content, "Filter", 1, function(body)
+            local sy = -4
+
+            local desc = GUI:CreateLabel(body, "Pin raid members by role or name to a separate group.", 10, GUI.Colors.textMuted)
+            desc:SetPoint("TOPLEFT", 0, sy)
+            desc:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+            desc:SetJustifyH("LEFT")
+            sy = sy - 18
+
+            -- Filter mode
+            if not spot.filterMode then spot.filterMode = "ROLE" end
+            sy = P(GUI:CreateFormDropdown(body, "Filter By", SPOTLIGHT_FILTER_OPTIONS, "filterMode", spot, onChangeRebuild), body, sy)
+
+            -- Role filter checkboxes
+            if spot.filterMode == "ROLE" then
+                sy = P(GUI:CreateFormCheckbox(body, "Tanks", "filterTank", spot, onChange), body, sy)
+                sy = P(GUI:CreateFormCheckbox(body, "Healers", "filterHealer", spot, onChange), body, sy)
+            end
+
+            -- Name filter
+            if spot.filterMode == "NAME" then
+                sy = P(GUI:CreateFormEditBox(body, "Player Names", "nameList", spot, onChange, { commitOnEnter = true, commitOnFocusLost = true }), body, sy)
+
+                local hint = GUI:CreateLabel(body, "Comma-separated (e.g. Player1, Player2)", 10, GUI.Colors.textMuted)
+                hint:SetPoint("TOPLEFT", 180, sy)
+                hint:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+                hint:SetJustifyH("LEFT")
+                sy = sy - 14
+            end
+
+            local totalHeight = math.abs(sy) + 4
+            local section = body:GetParent()
+            section._contentHeight = totalHeight
+        end, sections, relayout)
+
+        -- Dimensions
+        U.CreateCollapsible(content, "Dimensions", 1, function(body)
+            local sy = -4
+            sy = P(GUI:CreateFormSlider(body, "Width", 60, 300, 1, "frameWidth", spot, onChange), body, sy)
+            sy = P(GUI:CreateFormSlider(body, "Height", 16, 80, 1, "frameHeight", spot, onChange), body, sy)
+
+            local totalHeight = math.abs(sy) + 4
+            local section = body:GetParent()
+            section._contentHeight = totalHeight
+        end, sections, relayout)
+
+        -- Layout
+        U.CreateCollapsible(content, "Layout", 1, function(body)
+            local sy = -4
+
+            if not spot.orientation then
+                local sg = spot.growDirection or "DOWN"
+                spot.orientation = (sg == "LEFT" or sg == "RIGHT") and "HORIZONTAL" or "VERTICAL"
+            end
+            local function onSpotOrientChange()
+                spot.growDirection = spot.orientation == "HORIZONTAL" and "RIGHT" or "DOWN"
+                onChange()
+            end
+            sy = P(GUI:CreateFormDropdown(body, "Layout", LAYOUT_OPTIONS, "orientation", spot, onSpotOrientChange), body, sy)
+            sy = P(GUI:CreateFormSlider(body, "Spacing", 0, 10, 1, "spacing", spot, onChange), body, sy)
+
+            local totalHeight = math.abs(sy) + 4
+            local section = body:GetParent()
+            section._contentHeight = totalHeight
+        end, sections, relayout)
+
+        U.BuildPositionCollapsible(content, "spotlightFrames", nil, sections, relayout)
         relayout() return content:GetHeight()
     end })
 end

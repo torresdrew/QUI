@@ -2211,7 +2211,11 @@ local function UpdateIconCooldown(icon)
                 -- When a real cooldown starts, clear usability tint so the
                 -- desaturation gate opens.  Reset _lastVisualState so the
                 -- range poll can reapply usability tint after the CD ends.
-                if apiIsActive and not icon._hasCooldownActive and icon._usabilityTinted then
+                -- Skip GCD-only transitions — GCD doesn't change spell
+                -- usability, and clearing tint here causes a brief flash
+                -- before the visual state poll reapplies it.
+                if apiIsActive and not icon._hasCooldownActive and icon._usabilityTinted
+                   and not icon._isOnGCD then
                     icon.Icon:SetVertexColor(1, 1, 1, 1)
                     icon._usabilityTinted = nil
                     icon._lastVisualState = nil
@@ -2296,26 +2300,30 @@ local function UpdateIconCooldown(icon)
                 end
             end
 
-            -- Forward to C-side: TruncateWhenZero returns "" for zero (hides
-            -- stacks visually). Guard with pcall — the function requires a finite
-            -- number and will reject secret values or unexpected types.
+            -- Forward to C-side for display. Multi-charge spells always
+            -- show their count (including "0" when depleted). Non-charge
+            -- stacks use TruncateWhenZero to hide zero (resource overlays,
+            -- non-charge spells that return 0 from GetSpellDisplayCount).
             if stackVal then
-                local truncOk, truncText = pcall(C_StringUtil.TruncateWhenZero, stackVal)
-                local displayText = truncOk and truncText or stackVal
-                -- Only show when there's actual text — TruncateWhenZero returns
-                -- "" for zero, and many spells return 0 from GetSpellDisplayCount
-                -- even when they have no charge mechanic.
-                local hasText = displayText ~= nil
-                if hasText then
-                    local etOk, etEq = pcall(function() return displayText == "" end)
-                    if etOk and etEq then hasText = false end
-                end
-                if hasText then
-                    pcall(icon.StackText.SetText, icon.StackText, displayText)
+                if isMultiCharge then
+                    -- Always show charge count — "0" is meaningful
+                    pcall(icon.StackText.SetText, icon.StackText, stackVal)
                     icon.StackText:Show()
                 else
-                    icon.StackText:SetText("")
-                    icon.StackText:Hide()
+                    local truncOk, truncText = pcall(C_StringUtil.TruncateWhenZero, stackVal)
+                    local displayText = truncOk and truncText or stackVal
+                    local hasText = displayText ~= nil
+                    if hasText then
+                        local etOk, etEq = pcall(function() return displayText == "" end)
+                        if etOk and etEq then hasText = false end
+                    end
+                    if hasText then
+                        pcall(icon.StackText.SetText, icon.StackText, displayText)
+                        icon.StackText:Show()
+                    else
+                        icon.StackText:SetText("")
+                        icon.StackText:Hide()
+                    end
                 end
             elseif not InCombatLockdown() then
                 icon.StackText:SetText("")
@@ -2349,14 +2357,15 @@ local function UpdateIconCooldown(icon)
                 shouldDesaturate = false
             end
             if shouldDesaturate then
-                -- GCD-only cooldowns should never desaturate.
+                -- GCD-only cooldowns should never desaturate, but preserve
+                -- existing desaturation when a real CD expires mid-GCD.
                 -- _isOnGCD is NeverSecret (always readable in combat),
                 -- refreshed per-tick from C_Spell.GetSpellCooldown.
                 if icon._isOnGCD then
-                    if icon._cdDesaturated then
-                        icon.Icon:SetDesaturated(false)
-                        icon._cdDesaturated = nil
-                    end
+                    -- Keep whatever desat state exists — clearing it here
+                    -- causes a brief usability flash when a real CD expires
+                    -- during the GCD window.  After GCD ends, the normal
+                    -- desat logic below will clear it if no real CD remains.
                     return
                 end
 
@@ -2376,8 +2385,21 @@ local function UpdateIconCooldown(icon)
                 end
                 -- _hasCooldownActive fallback: works for both charged and
                 -- non-charged entries (isActive accounts for charge state).
+                -- For charged entries, only desaturate when ALL charges
+                -- are depleted.  GetSpellCooldown.isActive (non-secret) is
+                -- false when charges remain (spell castable) and true when
+                -- all charges consumed.  Combined with charge.isActive
+                -- (non-secret) to confirm recharge is running.
                 if not hasRealCD and icon._hasCooldownActive then
-                    hasRealCD = true
+                    if entry.hasCharges then
+                        local _dsSpellID = entry.overrideSpellID or entry.spellID or entry.id
+                        local _dsCdInfo = TickCacheGetCooldown(_dsSpellID)
+                        if _dsCdInfo and _dsCdInfo.isActive == true then
+                            hasRealCD = true
+                        end
+                    else
+                        hasRealCD = true
+                    end
                 end
 
                 if hasRealCD then
@@ -2890,9 +2912,13 @@ function CDMIcons:UpdateAllCooldowns()
                     -- Grey out when linked debuff/aura not active on target
                     local greyOut = containerDB and containerDB.greyOutInactive
                     if greyOut and icon:IsShown() and icon.Icon and icon.Icon.SetDesaturated then
-                        -- Only apply to spells that have aura tracking (linked auras)
-                        local hasAuraLink = entry.linkedSpellIDs or entry._abilityToAuraSpellID
+                        -- Only apply to spells that have aura tracking (linked auras,
+                        -- global ability→aura mapping, or detected via ResolveAuraState).
+                        local hasAuraLink = entry.linkedSpellIDs
                             or (icon._spellEntry and icon._spellEntry.linkedSpellIDs)
+                            or (ns.CDMSpellData and ns.CDMSpellData._abilityToAuraSpellID
+                                and ns.CDMSpellData._abilityToAuraSpellID[entry.id])
+                            or icon._auraActive ~= nil
                         if hasAuraLink and not icon._auraActive then
                             local rowOpacity = icon._rowOpacity or 1
                             icon:SetAlpha(rowOpacity * 0.4)

@@ -1710,6 +1710,7 @@ local function DecorateGroupFrame(frame)
     -- Tag frame with party/raid context for settings resolution
     local parent = frame:GetParent()
     local isRaidParent = (parent == QUI_GF.headers.raid)
+        or (parent == QUI_GF.spotlightHeader)
     if not isRaidParent then
         for g = 1, 8 do
             if parent == QUI_GF.raidGroupHeaders[g] then
@@ -2264,6 +2265,9 @@ local function DecorateGroupFrame(frame)
     table.insert(QUI_GF.allFrames, frame)
 end
 
+-- Expose for spotlight (and any future external headers)
+QUI_GF.DecorateGroupFrame = DecorateGroupFrame
+
 ---------------------------------------------------------------------------
 -- UNIT FRAME MAP: Rebuild unit → frame lookup
 ---------------------------------------------------------------------------
@@ -2302,6 +2306,12 @@ local function EnsureAnchorFrame(key)
     if root then return root end
 
     local name = key == "raid" and "QUI_RaidFramesRoot" or "QUI_PartyFramesRoot"
+    -- On /reload, WoW does not destroy frames — the old root from the previous
+    -- session survives with its children (headers + unit buttons) still visible.
+    -- Hide it before creating the replacement to prevent duplicate frames.
+    local old = _G[name]
+    if old then old:Hide() end
+
     root = CreateFrame("Frame", name, UIParent)
     root:EnableMouse(false)
     root:Hide()
