@@ -1107,7 +1107,9 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-eventFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+-- ACTIONBAR_SLOT_CHANGED intentionally not registered: fires constantly
+-- even while idle.  SPELLS_CHANGED and UPDATE_MACROS cover all real
+-- changes (talent swaps, respec, macro edits).
 eventFrame:RegisterEvent("UPDATE_MACROS")
 eventFrame:RegisterEvent("SPELLS_CHANGED")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
@@ -1147,9 +1149,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
-    if event == "ACTIONBAR_SLOT_CHANGED" or event == "UPDATE_MACROS" or event == "SPELLS_CHANGED" then
-        -- Debounce: ACTIONBAR_SLOT_CHANGED fires constantly (even idle).
-        -- RefreshActionBarSpellCache iterates 180 slots — expensive.
+    if event == "UPDATE_MACROS" or event == "SPELLS_CHANGED" then
         if not state._cacheRefreshPending then
             state._cacheRefreshPending = true
             C_Timer.After(0.2, function()

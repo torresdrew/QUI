@@ -652,7 +652,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         lastSpellID = nil
         DoUpdate()  -- Immediate update on target change
     elseif event == "SPELL_UPDATE_COOLDOWN" or event == "ACTIONBAR_UPDATE_COOLDOWN" then
-        UpdateGCDCooldown()
+        -- Skip if icon is hidden (no work needed when not visible)
+        if iconFrame and iconFrame:IsShown() then
+            UpdateGCDCooldown()
+        end
     end
 end)
 

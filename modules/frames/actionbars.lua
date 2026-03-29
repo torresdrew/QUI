@@ -3459,17 +3459,23 @@ function ActionBarsOwned.UpdateAllButtonVisuals()
 end
 
 ---------------------------------------------------------------------------
--- EVENT COALESCING (frame-based Show/Hide — zero allocation)
+-- EVENT COALESCING (elapsed-time gated Show/Hide)
 ---------------------------------------------------------------------------
--- High-frequency events coalesced via frame Show/Hide pattern:
--- Show() on an already-shown frame is a no-op (auto-dedup).
--- OnUpdate fires once at the start of the next frame, then self:Hide().
--- Zero closure allocation, zero C_Timer overhead.
+-- Events activate the frame via Show().  OnUpdate checks elapsed time
+-- and only runs the update after a minimum interval (100ms = max 10/sec).
+-- Multiple events in the same frame are coalesced (Show on shown = no-op).
+-- If the interval hasn't elapsed, the frame stays shown and retries next
+-- frame.  Zero closure allocation.
+local AB_MIN_UPDATE_INTERVAL = 0.1  -- 100ms = max 10 updates/sec
 
 local abCooldownFrame = CreateFrame("Frame")
 abCooldownFrame:Hide()
+abCooldownFrame._last = 0
 abCooldownFrame:SetScript("OnUpdate", function(self)
+    local now = GetTime()
+    if now - self._last < AB_MIN_UPDATE_INTERVAL then return end
     self:Hide()
+    self._last = now
     ActionBarsOwned.UpdateAllCooldowns()
 end)
 
@@ -3479,8 +3485,12 @@ end
 
 local abVisualFrame = CreateFrame("Frame")
 abVisualFrame:Hide()
+abVisualFrame._last = 0
 abVisualFrame:SetScript("OnUpdate", function(self)
+    local now = GetTime()
+    if now - self._last < AB_MIN_UPDATE_INTERVAL then return end
     self:Hide()
+    self._last = now
     ActionBarsOwned.UpdateAllButtonVisuals()
 end)
 

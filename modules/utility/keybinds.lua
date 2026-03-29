@@ -1443,7 +1443,8 @@ end
 
 -- Event frame for cache updates
 local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+-- ACTIONBAR_SLOT_CHANGED intentionally not registered: fires constantly
+-- even while idle.  UPDATE_BINDINGS and SPELLS_CHANGED cover real changes.
 eventFrame:RegisterEvent("UPDATE_BINDINGS")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("SPELLS_CHANGED")
@@ -1475,14 +1476,9 @@ eventFrame:SetScript("OnEvent", function(self, event)
         return
     end
 
-    if event == "UPDATE_BINDINGS" or event == "ACTIONBAR_SLOT_CHANGED" then
-        -- Mark cache dirty — actual wipe/rebuild deferred to ThrottledUpdate.
-        -- ACTIONBAR_SLOT_CHANGED fires constantly (even idle); doing
-        -- wipe + ClearAllStoredKeybinds on every event was expensive.
-        if not updatePending then
-            wipe(iconKeybindCache)
-            ClearAllStoredKeybinds()
-        end
+    if event == "UPDATE_BINDINGS" then
+        wipe(iconKeybindCache)
+        ClearAllStoredKeybinds()
     end
 
     ThrottledUpdate()
