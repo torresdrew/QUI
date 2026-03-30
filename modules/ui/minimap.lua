@@ -1815,7 +1815,12 @@ local function RestoreDungeonEye()
 end
 
 local function UpdateDungeonEyePosition()
-    if InCombatLockdown() then return end
+    if InCombatLockdown() then
+        -- Blizzard can relayout the queue eye during combat; retry on the next
+        -- deferred minimap refresh once combat ends.
+        pendingMinimapRefresh = true
+        return
+    end
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
 
@@ -1926,7 +1931,9 @@ local DRAWER_BLACKLIST = {
     ["MinimapBackdrop"] = true,
     ["GameTimeFrame"] = true,
     ["TimeManagerClockButton"] = true,
+    ["QueueStatusButton"] = true,
     ["QueueStatusMinimapButton"] = true,
+    ["MiniMapLFGFrame"] = true,
     ["GarrisonLandingPageMinimapButton"] = true,
     ["ExpansionLandingPageMinimapButton"] = true,
     ["AddonCompartmentFrame"] = true,
