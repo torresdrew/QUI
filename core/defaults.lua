@@ -1302,21 +1302,21 @@ local defaults = {
                 showMacroNames = false,     -- Show macro name text
                 showCounts = true,          -- Show stack/charge count
                 hideEmptyKeybinds = false,  -- Hide placeholder keybinds
-                keybindFontSize = 16,       -- Keybind text size
+                keybindFontSize = 12,       -- Keybind text size
                 keybindColor = {1, 1, 1, 1},-- Keybind text color
-                keybindAnchor = "TOPRIGHT", -- Keybind text anchor point
-                keybindOffsetX = 0,         -- Keybind text X offset
-                keybindOffsetY = -5,        -- Keybind text Y offset
+                keybindAnchor = "TOPLEFT",  -- Keybind text anchor point
+                keybindOffsetX = 4,         -- Keybind text X offset
+                keybindOffsetY = -4,        -- Keybind text Y offset
                 macroNameFontSize = 10,     -- Macro name text size
                 macroNameColor = {1, 1, 1, 1}, -- Macro name text color
                 macroNameAnchor = "BOTTOM", -- Macro name text anchor point
                 macroNameOffsetX = 0,       -- Macro name text X offset
-                macroNameOffsetY = 0,       -- Macro name text Y offset
-                countFontSize = 14,         -- Count text size
+                macroNameOffsetY = 4,       -- Macro name text Y offset
+                countFontSize = 12,         -- Count text size
                 countColor = {1, 1, 1, 1},  -- Count text color
                 countAnchor = "BOTTOMRIGHT", -- Stack count text anchor point
-                countOffsetX = 0,           -- Stack count text X offset
-                countOffsetY = 0,           -- Stack count text Y offset
+                countOffsetX = -4,          -- Stack count text X offset
+                countOffsetY = 4,           -- Stack count text Y offset
                 -- Bar Layout settings
                 barScale = 1.0,             -- Global scale multiplier (0.5 - 2.0)
                 buttonSpacing = nil,        -- Button spacing override (nil = use Blizzard Edit Mode padding)
@@ -1358,8 +1358,8 @@ local defaults = {
                         orientation = "horizontal", -- "horizontal" or "vertical"
                         columns = 12,               -- buttons per row (horizontal) or per column (vertical)
                         iconCount = 12,             -- visible button count (1-12)
-                        buttonSize = nil,           -- nil = use Blizzard size, number = override
-                        buttonSpacing = nil,        -- nil = use global, number = override
+                        buttonSize = 30,            -- button size in pixels
+                        buttonSpacing = 0,          -- spacing between buttons in pixels
                         growUp = false,             -- rows grow bottom-to-top
                         growLeft = false,           -- columns grow right-to-left
                     },
@@ -1379,7 +1379,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1396,7 +1396,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1413,7 +1413,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 6, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1430,7 +1430,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 6, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1447,7 +1447,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1464,7 +1464,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1481,7 +1481,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
