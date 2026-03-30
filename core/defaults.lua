@@ -1214,6 +1214,10 @@ local defaults = {
             },
             -- Copy button mode: "always", "hover", "hidden", "disabled"
             copyButtonMode = "always",
+            -- Default chat tab on login/reload (1 = General, 2-10 = other tabs)
+            defaultTab = 1,
+            defaultTabPerSpec = false,    -- Use spec-specific default tabs
+            defaultTabBySpec = {},        -- [specID] = tabIndex
             -- Intro message on login
             showIntroMessage = true,
             -- Message history cache for arrow key navigation

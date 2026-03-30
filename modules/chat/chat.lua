@@ -1533,6 +1533,54 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
 end)
 
 ---------------------------------------------------------------------------
+-- Default Tab Selection on Login/Reload/Spec Change
+---------------------------------------------------------------------------
+local function GetDefaultTabIndex(settings)
+    if settings.defaultTabPerSpec then
+        local specID = Helpers.GetCurrentSpecID()
+        if specID and settings.defaultTabBySpec then
+            return settings.defaultTabBySpec[specID]
+        end
+        return nil
+    end
+    return settings.defaultTab
+end
+
+local function SelectDefaultTab(settings)
+    local tabIndex = GetDefaultTabIndex(settings)
+    if not tabIndex or tabIndex <= 1 then return end
+
+    local chatFrame = _G["ChatFrame" .. tabIndex]
+    if not chatFrame then return end
+
+    local tab = _G["ChatFrame" .. tabIndex .. "Tab"]
+    if not tab then return end
+
+    -- Verify the tab exists and has a name (not a deleted/empty slot)
+    local name = GetChatWindowInfo(tabIndex)
+    if not name or name == "" then return end
+
+    FCF_Tab_OnClick(tab, "LeftButton")
+end
+
+local defaultTabFrame = CreateFrame("Frame")
+defaultTabFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+defaultTabFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+defaultTabFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
+    local settings = GetSettings()
+    if not settings or not settings.enabled then return end
+
+    if event == "PLAYER_ENTERING_WORLD" then
+        local isInitialLogin, isReloadingUi = arg1, arg2
+        if not (isInitialLogin or isReloadingUi) then return end
+        C_Timer.After(0.5, function() SelectDefaultTab(settings) end)
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+        if not settings.defaultTabPerSpec then return end
+        C_Timer.After(0.3, function() SelectDefaultTab(settings) end)
+    end
+end)
+
+---------------------------------------------------------------------------
 -- Global refresh function for GUI
 ---------------------------------------------------------------------------
 _G.QUI_RefreshChat = RefreshAll
