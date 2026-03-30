@@ -4,6 +4,57 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## v2.56.0-alpha.4
+
+### New: Consumable Macros
+- Auto-creates per-character macros (QUI_Flask, QUI_Pot, QUI_Health, QUI_Stone, QUI_Rune, QUI_Vantus, QUI_Weapon) that use the best quality variant in your bags
+- Quality-priority fallback: Gold Fleeting → Silver Fleeting → Gold Crafted → Silver Crafted
+- Scans bags on inventory change and keeps macro bodies updated
+- Settings panel in QoL → General with per-type dropdowns and chat notifications toggle
+
+### CDM (Cooldown Manager)
+- Fixed bar flickering — skip redundant ClearAllPoints/SetPoint/SetSize when position and container dimensions haven't changed
+- Fixed aura bars losing icon during combat when Blizzard viewer child recycles (lock _desiredTexture for all bar types)
+- Separated state ownership: 100ms timer only handles visual updates, UpdateOwnedBars owns state transitions and layout
+- Split grey-out into separate Debuff and Buff toggles with automatic spell type classification (IsSpellHarmful/IsSpellHelpful)
+- Grey-out now dims child elements instead of frame alpha to preserve tooltip visibility
+- Added `_auraUnit` tracking for aura source identification
+- Simplified charge text mirroring — removed multi-charge API check, mirror ChargeCount visibility directly
+- pcall-wrapped combat-sensitive C_Spell calls (GetOverrideSpell, GetSpellCooldown, GetSpellCooldownDuration)
+- Clear cooldown frame on aura deactivation to prevent stale swipe
+- Disabled mouse on Cooldown and TextOverlay frames to prevent tooltip stealing
+
+### Action Bars
+- Replaced Lua drag handlers with SecureHandlerWrapScript for combat-safe pickup/place
+- Added assisted combat marching-ants highlight on buttons matching the next recommended spell
+- Refresh highlights on bar page changes
+- Stopped registering ACTIONBAR_SLOT_CHANGED globally — per-slot dispatch with throttled coalescing
+- Event coalescing and skinning backdrop hook scoping for reduced CPU overhead
+
+### Rotation Assist
+- pcall-wrapped all C_Spell calls for secret value safety in combat
+- Skip equality dedup when spellID is secret (comparing secret to non-secret taints)
+- Keep frame visible during brief API gaps instead of hiding/re-showing
+
+### Brez Counter
+- Pass secret charge counts to C-side SetFormattedText instead of reading into Lua
+- Cache last readable color/desaturation state for combat ticks
+
+### Group Frames
+- Added UNIT_MAXPOWER event handling for correct power bar max value updates
+- Refresh power display on UNIT_CONNECTION/UNIT_FLAGS changes
+- Edit mode overhaul
+
+### Unit Frames
+- Added GetNameSettings resolver for group frames' nested `name` sub-table vs solo flat keys
+- Fixed name text settings (font size, anchor, color) not applying correctly to boss frames
+
+### Misc
+- Refactored tooltip rendering, replaced BackdropTemplate usage for more consistent borders
+- Fixed target distance display not honoring configured font size
+- Fixed dungeon portal display
+- Debounced action tracker cache refresh and keybind wipe on ACTIONBAR_SLOT_CHANGED
+
 ## v2.56.0-alpha.3
 
 ### CDM (Cooldown Manager)
