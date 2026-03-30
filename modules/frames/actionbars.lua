@@ -157,6 +157,7 @@ ns.ActionBarsOwned = ActionBarsOwned
 
 -- Forward declaration: defined ~line 3296, called from SafeUpdate (below)
 local UpdateAssistedCombatRotationFrame
+local UpdateAllAssistedHighlights
 
 -- Backward compat alias for any code referencing mirrorButtons
 ActionBarsOwned.mirrorButtons = ActionBarsOwned.nativeButtons
@@ -191,6 +192,11 @@ function ActionBarsOwned.SafeSyncAction(self)
         end
     end
     ActionBarsOwned.SafeUpdate(self)
+    -- Refresh assisted combat highlights after page change — the button
+    -- now shows a different spell so the old highlight may be stale.
+    if oldAction and oldAction ~= action and UpdateAllAssistedHighlights then
+        UpdateAllAssistedHighlights()
+    end
 end
 
 -- Taint-safe Update replacement for addon-created action buttons.
@@ -246,11 +252,7 @@ function ActionBarsOwned.SafeUpdate(self)
         end
 
         -- Action text (macro name)
-        if not IsConsumableAction(action) and not IsStackableAction(action) then
-            self.Name:SetText(GetActionText(action) or "")
-        else
-            self.Name:SetText("")
-        end
+        self.Name:SetText(GetActionText(action) or "")
 
         -- Delegated to shadowed methods
         self:UpdateCount()
@@ -3416,6 +3418,83 @@ local function UpdateAllAssistedCombatRotation()
     end
 end
 
+---------------------------------------------------------------------------
+-- ASSISTED COMBAT HIGHLIGHT
+-- Shows marching-ants highlight on buttons matching the next recommended
+-- spell from the rotation assistant (C_AssistedCombat).  Separate from
+-- the rotation frame above, which marks the one-button rotation slot.
+---------------------------------------------------------------------------
+
+local assistedHighlightButtons = {}  -- set of buttons currently highlighted (button → true)
+local ASSISTED_HIGHLIGHT_KEY = "QUI_AssistedCombat"
+local ASSISTED_HIGHLIGHT_FALLBACK = { 1, 1, 1, 0.8 }
+
+local function GetAssistedHighlightSettings()
+    local core = ns.Addon
+    if core and core.db and core.db.profile and core.db.profile.ncdm then
+        return core.db.profile.ncdm.cooldownHighlighter
+    end
+    return nil
+end
+
+local function SetAssistedHighlightShown(button, show)
+    if not LCG then return end
+    local state = GetFrameState(button)
+    if show then
+        if state.quiAssistedHighlight then return end
+        state.quiAssistedHighlight = true
+        local hl = GetAssistedHighlightSettings()
+        local color = (hl and hl.color) or ASSISTED_HIGHLIGHT_FALLBACK
+        local lines = (hl and hl.lines) or 8
+        local freq = (hl and hl.frequency) or 0.25
+        local thick = (hl and hl.thickness) or 1
+        LCG.PixelGlow_Start(button, color, lines, freq, nil, thick, 0, 0, false, ASSISTED_HIGHLIGHT_KEY)
+    else
+        if not state.quiAssistedHighlight then return end
+        state.quiAssistedHighlight = false
+        LCG.PixelGlow_Stop(button, ASSISTED_HIGHLIGHT_KEY)
+    end
+end
+
+UpdateAllAssistedHighlights = function()
+    if not (C_AssistedCombat and C_AssistedCombat.GetNextCastSpell) then return end
+    if not (C_ActionBar and C_ActionBar.FindSpellActionButtons) then return end
+
+    local ok, nextSpellID = pcall(C_AssistedCombat.GetNextCastSpell, true)
+    if not ok then nextSpellID = nil end
+
+    -- Find which action slots contain the recommended spell (C-side handles
+    -- secret spellIDs natively — no Lua comparison needed).
+    local matchButtons = {}
+    if nextSpellID then
+        local sOk, slots = pcall(C_ActionBar.FindSpellActionButtons, nextSpellID)
+        if sOk and slots then
+            local slotMap = ActionBarsOwned.slotMap
+            if slotMap then
+                for _, slot in ipairs(slots) do
+                    local entry = slotMap[slot]
+                    if entry and entry.button then
+                        matchButtons[entry.button] = true
+                    end
+                end
+            end
+        end
+    end
+
+    -- Clear previously highlighted buttons that are no longer in the match set.
+    for btn in pairs(assistedHighlightButtons) do
+        if not matchButtons[btn] then
+            SetAssistedHighlightShown(btn, false)
+        end
+    end
+
+    -- Apply highlights to matching buttons.
+    for btn in pairs(matchButtons) do
+        SetAssistedHighlightShown(btn, true)
+    end
+    assistedHighlightButtons = matchButtons
+end
+
 -- Update overlay glows on all owned action buttons.
 function ActionBarsOwned.UpdateAllOverlayGlows()
     for _, barKey in ipairs(STANDARD_BAR_KEYS) do
@@ -3736,6 +3815,7 @@ local function OnOwnedEvent(self, event, ...)
                 end
             end
         end
+        UpdateAllAssistedHighlights()
 
     elseif event == "PET_BAR_UPDATE" or event == "PET_BAR_UPDATE_COOLDOWN" then
         -- PetActionBarMixin:Update on the suppressed bar won't fire, so QUI
@@ -6848,6 +6928,11 @@ function ActionBarsOwned:Initialize()
         EventRegistry:RegisterCallback("AssistedCombatManager.OnSetActionSpell", function()
             UpdateAllAssistedCombatRotation()
         end, "QUI_ActionBars_AssistedCombat")
+
+        -- Assisted combat highlight (marching ants on the next-cast button).
+        EventRegistry:RegisterCallback("AssistedCombatManager.OnAssistedHighlightSpellChange", function()
+            UpdateAllAssistedHighlights()
+        end, "QUI_ActionBars_AssistedHighlight")
     end
 
     -- No overlay scaling hooks needed — buttons stay at their natural 45x45

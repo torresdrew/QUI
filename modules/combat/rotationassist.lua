@@ -293,35 +293,46 @@ UpdateIconDisplay = function(spellID)
         return
     end
 
+    -- spellID may be secret during combat.  Secret userdata is truthy
+    -- and non-zero, so it passes the nil/0 gate.  All downstream calls
+    -- use C-side functions that accept secrets natively.
     if not spellID or spellID == 0 then
-        -- No spell recommended - hide the icon entirely
-        iconFrame:Hide()
+        -- No recommendation right now.  If the frame is already visible
+        -- (mid-combat), keep showing the last spell rather than hiding
+        -- and re-showing every time the API has a brief gap.
+        if not iconFrame:IsShown() then
+            UpdateVisibility()
+        end
         return
     end
 
     -- We have a spell - make sure frame is visible (respecting visibility mode)
     UpdateVisibility()
 
-    -- Get spell texture
-    local texture = C_Spell.GetSpellTexture(spellID)
-    if texture then
+    -- Texture: C_Spell.GetSpellTexture + SetTexture are both C-side.
+    local texOk, texture = pcall(C_Spell.GetSpellTexture, spellID)
+    if texOk and texture then
         iconFrame.icon:SetTexture(texture)
     end
 
-    -- Get usability state for icon tinting
-    local isUsable, notEnoughMana = C_Spell.IsSpellUsable(spellID)
-    local inRange = true
+    -- Usability / range tinting.
+    -- C_Spell.IsSpellUsable and IsSpellInRange can return secret booleans.
+    -- Secret userdata is always truthy, so use strict == true checks to
+    -- avoid misclassification (e.g., secret-false → truthy → wrong branch).
+    local usableOk, isUsable, notEnoughMana = pcall(C_Spell.IsSpellUsable, spellID)
+    if not usableOk then isUsable, notEnoughMana = true, false end
+    isUsable = (isUsable == true)
+    notEnoughMana = (notEnoughMana == true)
 
-    -- Check range if spell has range
-    local hasRange = C_Spell.SpellHasRange(spellID)
-    if hasRange and UnitExists("target") then
-        local rangeCheck = C_Spell.IsSpellInRange(spellID, "target")
-        if rangeCheck == false then
+    local inRange = true
+    local rangeOk, hasRange = pcall(C_Spell.SpellHasRange, spellID)
+    if rangeOk and hasRange == true and UnitExists("target") then
+        local rOk, rangeCheck = pcall(C_Spell.IsSpellInRange, spellID, "target")
+        if rOk and rangeCheck == false then
             inRange = false
         end
     end
 
-    -- Apply icon tint based on state
     local color
     if not inRange then
         color = COLOR_OUT_OF_RANGE
@@ -448,7 +459,16 @@ local function DoUpdate()
         spellID = nil
     end
 
-    -- Only do full update if spell changed
+    -- Secret spellID: pass directly to C-side display functions (texture,
+    -- tint, keybind).  Skip the equality dedup — comparing secret to
+    -- non-secret taints, and the update is cheap.
+    local isSecret = spellID and IsSecretValue(spellID)
+    if isSecret then
+        UpdateIconDisplay(spellID)
+        return
+    end
+
+    -- Non-secret: dedup by value
     if spellID ~= lastSpellID then
         lastSpellID = spellID
         UpdateIconDisplay(spellID)

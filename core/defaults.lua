@@ -149,6 +149,18 @@ local defaults = {
             consumableIconOffset = 5,             -- Icon offset from anchor
             consumableIconSize = 40,              -- Icon size in pixels
             consumableScale = 1,                  -- Frame scale multiplier
+            -- Consumable Macro Automation
+            consumableMacros = {
+                enabled = false,              -- Opt-in, OFF by default
+                selectedFlask = "none",       -- Flask type key or "none"
+                selectedPotion = "none",      -- Potion type key or "none"
+                selectedHealth = "none",      -- Health potion type key or "none"
+                selectedHealthstone = "none", -- Healthstone type key or "none"
+                selectedAugment = "none",     -- Augment rune type key or "none"
+                selectedVantus = "none",      -- Vantus rune type key or "none"
+                selectedWeapon = "none",      -- Weapon consumable type key or "none"
+                chatNotifications = true,     -- Notify in chat when active item changes
+            },
             -- Quick Salvage settings
             quickSalvage = {
                 enabled = false,  -- Opt-in, OFF by default

@@ -12,4 +12,5 @@
     <Script file="bigwigs.lua"/>
     <Script file="dandersframes.lua"/>
     <Script file="abilitytimeline.lua"/>
+    <Script file="consumablemacros.lua"/>
 </Ui>

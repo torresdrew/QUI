@@ -256,7 +256,12 @@ end
 
 ---------------------------------------------------------------------------
 -- Update the display (called by ticker)
+-- Passes secret values directly to C-side functions (SetFormattedText)
+-- instead of reading them into Lua.  Color/desaturation require Lua-side
+-- comparison so we cache the last readable state for combat ticks.
 ---------------------------------------------------------------------------
+local _lastDesaturated = true
+
 local function UpdateDisplay()
     local frame = BrezState.frame
     if not frame then return end
@@ -279,45 +284,48 @@ local function UpdateDisplay()
         frame.chargeText:SetText("?")
         frame.timerText:SetText("")
         frame.icon:SetDesaturated(true)
+        _lastDesaturated = true
         return
     end
 
+    -- Charge count: pass directly to C-side SetFormattedText — handles
+    -- secret values natively, no Lua-side read needed.
+    pcall(frame.chargeText.SetFormattedText, frame.chargeText, "%d", chargeInfo.currentCharges)
+
+    -- Color/desaturation and timer need Lua-side reads.
+    -- When values are secret, keep the last known visual state.
     local charges = SafeChargeNumber(chargeInfo.currentCharges)
     local maxCharges = SafeChargeNumber(chargeInfo.maxCharges)
-    local cooldownDuration = SafeChargeNumber(chargeInfo.cooldownDuration)
-    local cooldownStartTime = SafeChargeNumber(chargeInfo.cooldownStartTime)
-    if charges == nil or maxCharges == nil then
-        frame.chargeText:SetText("?")
-        frame.timerText:SetText("")
-        frame.icon:SetDesaturated(true)
-        return
-    end
 
-    -- Update charges text
-    frame.chargeText:SetText(string.format("%d", charges))
+    if charges ~= nil and maxCharges ~= nil then
+        -- Readable: update color, desaturation, and timer
+        if charges == 0 then
+            local noColor = settings.noChargesColor or { 1, 0.3, 0.3, 1 }
+            frame.chargeText:SetTextColor(noColor[1], noColor[2], noColor[3], noColor[4] or 1)
+            frame.icon:SetDesaturated(true)
+            _lastDesaturated = true
+        else
+            local hasColor = settings.hasChargesColor or { 0.3, 1, 0.3, 1 }
+            frame.chargeText:SetTextColor(hasColor[1], hasColor[2], hasColor[3], hasColor[4] or 1)
+            frame.icon:SetDesaturated(false)
+            _lastDesaturated = false
+        end
 
-    -- Color based on charges available
-    if charges == 0 then
-        local noColor = settings.noChargesColor or { 1, 0.3, 0.3, 1 }
-        frame.chargeText:SetTextColor(noColor[1], noColor[2], noColor[3], noColor[4] or 1)
-        frame.icon:SetDesaturated(true)
-    else
-        local hasColor = settings.hasChargesColor or { 0.3, 1, 0.3, 1 }
-        frame.chargeText:SetTextColor(hasColor[1], hasColor[2], hasColor[3], hasColor[4] or 1)
-        frame.icon:SetDesaturated(false)
-    end
-
-    -- Update timer text
-    if charges < maxCharges and cooldownDuration and cooldownStartTime and cooldownDuration > 0 then
-        local remaining = (cooldownStartTime + cooldownDuration) - GetTime()
-        if remaining > 0 then
-            frame.timerText:SetText(FormatTime(remaining))
+        local cooldownDuration = SafeChargeNumber(chargeInfo.cooldownDuration)
+        local cooldownStartTime = SafeChargeNumber(chargeInfo.cooldownStartTime)
+        if charges < maxCharges and cooldownDuration and cooldownStartTime and cooldownDuration > 0 then
+            local remaining = (cooldownStartTime + cooldownDuration) - GetTime()
+            if remaining > 0 then
+                frame.timerText:SetText(FormatTime(remaining))
+            else
+                frame.timerText:SetText("")
+            end
         else
             frame.timerText:SetText("")
         end
-    else
-        frame.timerText:SetText("")
     end
+    -- Secret values: charge text already updated via C-side above;
+    -- color/desat/timer keep their last state (no flicker).
 end
 
 ---------------------------------------------------------------------------

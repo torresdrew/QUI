@@ -570,6 +570,98 @@ local function BuildGeneralTab(tabContent)
         end)
     end
 
+    -- ========== Consumable Macros ==========
+    local cmDB = generalDB and generalDB.consumableMacros
+    if cmDB then
+        CreateCollapsible("Consumable Macros", 1, function(body)
+            local sy = -4
+
+            local desc = GUI:CreateLabel(body,
+                "Auto-create per-character macros that use the best quality Flask or Potion in your bags. "
+                .. "Higher quality variants are tried first (Gold Fleeting > Silver Fleeting > Gold Crafted > Silver Crafted).",
+                11, C.textMuted)
+            desc:SetPoint("TOPLEFT", 0, sy)
+            desc:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+            desc:SetWordWrap(true)
+            desc:SetHeight(40)
+            sy = sy - 44
+
+            sy = P(GUI:CreateFormCheckbox(body, "Enable Consumable Macros", "enabled", cmDB, function()
+                if ns.ConsumableMacros then
+                    if cmDB.enabled then
+                        ns.ConsumableMacros:ForceRefresh()
+                    else
+                        ns.ConsumableMacros:DeleteMacros()
+                    end
+                end
+            end), body, sy)
+
+            local flaskOptions = ns.ConsumableMacros and ns.ConsumableMacros.FLASK_OPTIONS or {
+                { value = "none", text = "None" },
+            }
+            sy = P(GUI:CreateFormDropdown(body, "Flask Type", flaskOptions, "selectedFlask", cmDB, function()
+                if ns.ConsumableMacros then ns.ConsumableMacros:ForceRefresh() end
+            end), body, sy)
+
+            local potionOptions = ns.ConsumableMacros and ns.ConsumableMacros.POTION_OPTIONS or {
+                { value = "none", text = "None" },
+            }
+            sy = P(GUI:CreateFormDropdown(body, "Potion Type", potionOptions, "selectedPotion", cmDB, function()
+                if ns.ConsumableMacros then ns.ConsumableMacros:ForceRefresh() end
+            end), body, sy)
+
+            local healthOptions = ns.ConsumableMacros and ns.ConsumableMacros.HEALTH_OPTIONS or {
+                { value = "none", text = "None" },
+            }
+            sy = P(GUI:CreateFormDropdown(body, "Health Potion", healthOptions, "selectedHealth", cmDB, function()
+                if ns.ConsumableMacros then ns.ConsumableMacros:ForceRefresh() end
+            end), body, sy)
+
+            local healthstoneOptions = ns.ConsumableMacros and ns.ConsumableMacros.HEALTHSTONE_OPTIONS or {
+                { value = "none", text = "None" },
+            }
+            sy = P(GUI:CreateFormDropdown(body, "Healthstone", healthstoneOptions, "selectedHealthstone", cmDB, function()
+                if ns.ConsumableMacros then ns.ConsumableMacros:ForceRefresh() end
+            end), body, sy)
+
+            local augmentOptions = ns.ConsumableMacros and ns.ConsumableMacros.AUGMENT_OPTIONS or {
+                { value = "none", text = "None" },
+            }
+            sy = P(GUI:CreateFormDropdown(body, "Augment Rune", augmentOptions, "selectedAugment", cmDB, function()
+                if ns.ConsumableMacros then ns.ConsumableMacros:ForceRefresh() end
+            end), body, sy)
+
+            local vantusOptions = ns.ConsumableMacros and ns.ConsumableMacros.VANTUS_OPTIONS or {
+                { value = "none", text = "None" },
+            }
+            sy = P(GUI:CreateFormDropdown(body, "Vantus Rune", vantusOptions, "selectedVantus", cmDB, function()
+                if ns.ConsumableMacros then ns.ConsumableMacros:ForceRefresh() end
+            end), body, sy)
+
+            local weaponOptions = ns.ConsumableMacros and ns.ConsumableMacros.WEAPON_OPTIONS or {
+                { value = "none", text = "None" },
+            }
+            sy = P(GUI:CreateFormDropdown(body, "Weapon Consumable", weaponOptions, "selectedWeapon", cmDB, function()
+                if ns.ConsumableMacros then ns.ConsumableMacros:ForceRefresh() end
+            end), body, sy)
+
+            sy = P(GUI:CreateFormCheckbox(body, "Chat Notifications", "chatNotifications", cmDB), body, sy)
+
+            local info = GUI:CreateLabel(body,
+                "Creates per-character macros: QUI_Flask, QUI_Pot, QUI_Health, QUI_Stone, QUI_Rune, QUI_Vantus, QUI_Weapon. Drag them to your action bars.",
+                11, C.textMuted)
+            info:SetPoint("TOPLEFT", 0, sy)
+            info:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+            info:SetWordWrap(true)
+            info:SetHeight(30)
+            sy = sy - 34
+
+            -- desc(44) + enable(32) + 7 dropdowns(224) + chat(32) + info(34) + pad
+            local section = body:GetParent()
+            section._contentHeight = 44 + 9 * FORM_ROW + 34 + 8
+        end)
+    end
+
     -- ========== Target Distance Bracket Display ==========
     local rangeCheckDB = db and db.rangeCheck
     if rangeCheckDB then

@@ -1731,7 +1731,7 @@ local function UpdateAllRotationHelpers()
     if nextSpellID and type(issecretvalue) == "function" and issecretvalue(nextSpellID) then
         nextSpellID = nil
     end
-    
+
     -- Only update if the spell changed
     if nextSpellID == lastNextSpellID then
         return
