@@ -2875,7 +2875,10 @@ do
                 sy = U.PlaceRow(desatCheck, body, sy)
 
                 local greyOutCheck = GUI:CreateFormCheckbox(body, "Grey Out Inactive Debuffs", "greyOutInactive", tracker, Refresh)
-                U.PlaceRow(greyOutCheck, body, sy)
+                sy = U.PlaceRow(greyOutCheck, body, sy)
+
+                local greyOutBuffCheck = GUI:CreateFormCheckbox(body, "Grey Out Inactive Buffs", "greyOutInactiveBuffs", tracker, Refresh)
+                U.PlaceRow(greyOutBuffCheck, body, sy)
             end, sections, relayout)
 
             -- Row sections

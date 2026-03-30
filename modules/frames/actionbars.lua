@@ -1022,28 +1022,20 @@ local function CursorHasPlaceableAction()
         or infoType == "petaction" or infoType == "mount" or infoType == "flyout"
 end
 
--- Drag handlers for owned action buttons.  BaseActionButtonMixin (from
--- ActionButtonTemplate) does not include OnDragStart/OnReceiveDrag —
--- those live in ActionBarActionButtonMixin (ActionBarButtonTemplate)
--- which QUI cannot use (taint).  Implement the standard pickup/place
--- behavior: respect lockActionBars + PICKUPACTION modifier, guard
--- combat (PickupAction/PlaceAction are protected).
-local function OwnedButton_OnDragStart(self)
-    if InCombatLockdown() then return end
-    if GetCVar("lockActionBars") ~= "1" or IsModifiedClick("PICKUPACTION") then
-        -- PreClick may have already called PickupAction — only pick up
-        -- if the cursor is still empty to avoid swapping it back.
-        if not GetCursorInfo() then
-            PickupAction(self.action)
-        end
-        ActionBarsOwned.SafeUpdate(self)
-    end
-end
-
-local function OwnedButton_OnReceiveDrag(self)
-    if InCombatLockdown() then return end
-    PlaceAction(self.action)
+-- Visual refresh after secure drag pickup/place.
+-- PickupAction/PlaceAction are handled entirely by the secure
+-- WrapScript pre-bodies (see button setup) which return
+-- "action", slot to the secure framework.  These Lua hooks only
+-- refresh button visuals after the secure handler completes.
+local function OwnedButton_PostDrag(self)
     ActionBarsOwned.SafeUpdate(self)
+    -- Slot data may lag by one frame after pickup/place
+    C_Timer.After(0, function()
+        ActionBarsOwned.SafeUpdate(self)
+        local bk = GetBarKeyFromButton(self)
+        local s = bk and GetEffectiveSettings(bk)
+        if s then UpdateEmptySlotVisibility(self, s) end
+    end)
 end
 
 ---------------------------------------------------------------------------
@@ -2707,34 +2699,73 @@ local function BuildBar(barKey)
                 self.UpdateTooltip = nil
                 GameTooltip:Hide()
             end)
-            -- Drag pickup/place — BaseActionButtonMixin has no drag
-            -- handlers; set them explicitly for shift-drag rearranging.
-            btn:SetScript("OnDragStart", OwnedButton_OnDragStart)
-            btn:SetScript("OnReceiveDrag", OwnedButton_OnReceiveDrag)
-            -- Block the secure action when the pickup modifier is held
-            -- so modifier+click picks up instead of casting.  The
-            -- restricted snippet runs after PreClick but before the
-            -- type handler — clearing "type" makes the action a no-op.
-            btn:SetAttribute("_onclick", [[
-                if IsModifiedClick("PICKUPACTION") then
-                    self:SetAttribute("type", nil)
-                else
-                    self:SetAttribute("type", "action")
+            -- ── Pickup / Place (Bartender4 / LibActionButton pattern) ──
+            -- All pickup/place goes through the secure framework via
+            -- WrapScript return values.  Lua handlers are nil'd — only
+            -- HookScript for visual refresh.  This ensures pickup works
+            -- in combat (secure path) and avoids tainted-code conflicts.
+
+            -- Sync lockActionBars CVar → button attribute for the
+            -- restricted snippets (GetCVar unavailable in restricted env).
+            btn:SetAttribute("buttonlock", GetCVar("lockActionBars") == "1")
+
+            -- OnClick: when PICKUPACTION is held, disable on-down casting
+            -- by toggling useOnKeyDown off.  The post-body restores it.
+            -- This is the Bartender4/LAB approach — more reliable than
+            -- clearing type or returning false.
+            SecureHandlerWrapScript(btn, "OnClick", btn, [[
+                if IsModifiedClick("PICKUPACTION") and not self:GetAttribute("LABdisableDragNDrop") then
+                    local useDown = self:GetAttribute("useOnKeyDown")
+                    if useDown ~= false then
+                        self:SetAttribute("_QUI_toggledDown", true)
+                        self:SetAttribute("_QUI_toggledDownBackup", useDown)
+                        self:SetAttribute("useOnKeyDown", false)
+                    end
+                end
+            ]], [[
+                if self:GetAttribute("_QUI_toggledDown") then
+                    self:SetAttribute("useOnKeyDown", self:GetAttribute("_QUI_toggledDownBackup"))
+                    self:SetAttribute("_QUI_toggledDown", nil)
+                    self:SetAttribute("_QUI_toggledDownBackup", nil)
                 end
             ]])
-            -- PreClick fires before the restricted snippet — do the
-            -- actual PickupAction / PlaceAction here.
-            btn:HookScript("PreClick", function(self, button, down)
-                if down and IsModifiedClick("PICKUPACTION") then
-                    if InCombatLockdown() then return end
-                    if GetCursorInfo() then
-                        PlaceAction(self.action)
-                    else
-                        PickupAction(self.action)
-                    end
-                    ActionBarsOwned.SafeUpdate(self)
+
+            -- OnDragStart: nil the Lua handler, let WrapScript do the
+            -- pickup via return "action", slot → secure PickupAction.
+            -- Double-wrapped because the post-script doesn't run when
+            -- the pre-script causes a pickup (WoW engine quirk).
+            btn:SetScript("OnDragStart", nil)
+            SecureHandlerWrapScript(btn, "OnDragStart", btn, [[
+                if (self:GetAttribute("buttonlock") and not IsModifiedClick("PICKUPACTION"))
+                    or self:GetAttribute("LABdisableDragNDrop") then
+                    return false
                 end
-            end)
+                return "action", self:GetAttribute("action")
+            ]])
+            -- Second wrap: phony message so the post-body runs even
+            -- though the inner wrap causes a pickup.
+            SecureHandlerWrapScript(btn, "OnDragStart", btn, [[
+                return "message", "update"
+            ]], [[
+                self:CallMethod("QUI_PostDrag")
+            ]])
+            btn.QUI_PostDrag = function(self)
+                OwnedButton_PostDrag(self)
+            end
+
+            -- OnReceiveDrag: same pattern — nil Lua handler, secure swap.
+            btn:SetScript("OnReceiveDrag", nil)
+            SecureHandlerWrapScript(btn, "OnReceiveDrag", btn, [[
+                if self:GetAttribute("LABdisableDragNDrop") then
+                    return false
+                end
+                return "action", self:GetAttribute("action")
+            ]])
+            SecureHandlerWrapScript(btn, "OnReceiveDrag", btn, [[
+                return "message", "update"
+            ]], [[
+                self:CallMethod("QUI_PostDrag")
+            ]])
         end
 
         -- Populate visuals via the mixin (safe — GetActionCount is

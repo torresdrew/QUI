@@ -380,7 +380,8 @@ local defaults = {
                 spellOverrides = {},         -- { [spellID] = { glowColor, hidden, ... } }
                 iconDisplayMode = "always",  -- "always" | "active" | "combat"
                 containerType = "cooldown",  -- "cooldown" | "aura" | "auraBar"
-                greyOutInactive = false,     -- Grey out icons when linked debuff/aura not active on target
+                greyOutInactive = false,     -- Grey out icons when linked debuff not active on target
+                greyOutInactiveBuffs = false, -- Grey out icons when linked buff not active on player
             },
             utility = {
                 enabled = true,
@@ -464,7 +465,8 @@ local defaults = {
                 spellOverrides = {},         -- { [spellID] = { glowColor, hidden, ... } }
                 iconDisplayMode = "always",  -- "always" | "active" | "combat"
                 containerType = "cooldown",  -- "cooldown" | "aura" | "auraBar"
-                greyOutInactive = false,     -- Grey out icons when linked debuff/aura not active on target
+                greyOutInactive = false,     -- Grey out icons when linked debuff not active on target
+                greyOutInactiveBuffs = false, -- Grey out icons when linked buff not active on player
             },
             buff = {
                 enabled = true,

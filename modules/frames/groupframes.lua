@@ -3892,6 +3892,10 @@ local function OnEvent(self, event, arg1, ...)
             powerThrottle[arg1] = now
             UpdatePower(frame)
 
+        elseif event == "UNIT_MAXPOWER" then
+            frame._lastMaxPower = nil  -- force SetMinMaxValues refresh
+            UpdatePower(frame)
+
         elseif event == "UNIT_ABSORB_AMOUNT_CHANGED" then
             UpdateAbsorbs(frame)
 
@@ -3912,6 +3916,7 @@ local function OnEvent(self, event, arg1, ...)
         elseif event == "UNIT_CONNECTION" or event == "UNIT_FLAGS" then
             UpdateConnection(frame)
             UpdateHealth(frame)
+            UpdatePower(frame)
 
         elseif event == "UNIT_IN_RANGE_UPDATE" then
             -- Instant range update from Blizzard (~38yd boundary crossing).
@@ -4112,6 +4117,7 @@ local function RegisterEvents()
     eventFrame:RegisterEvent("UNIT_HEALTH")
     eventFrame:RegisterEvent("UNIT_MAXHEALTH")
     eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
+    eventFrame:RegisterEvent("UNIT_MAXPOWER")
     eventFrame:RegisterEvent("UNIT_ABSORB_AMOUNT_CHANGED")
     eventFrame:RegisterEvent("UNIT_HEAL_ABSORB_AMOUNT_CHANGED")
     eventFrame:RegisterEvent("UNIT_HEAL_PREDICTION")
@@ -4156,8 +4162,10 @@ UpdateSelectiveEvents = function()
     if mode == "large" and (not powerSettings or powerSettings.showPowerBar == false) then
         eventFrame:UnregisterEvent("UNIT_POWER_UPDATE")
         eventFrame:UnregisterEvent("UNIT_POWER_FREQUENT")
+        eventFrame:UnregisterEvent("UNIT_MAXPOWER")
     else
         eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
+        eventFrame:RegisterEvent("UNIT_MAXPOWER")
     end
 
     -- Threat events: UNIT_THREAT_SITUATION_UPDATE fires for ALL units in the

@@ -57,6 +57,7 @@ local function IsSafeNumeric(val)
     return type(val) == "number"
 end
 
+
 -- Per-spell override lookup helper.  Returns the cached override table
 -- for the icon's spell/container, or nil.  Cheap (two table lookups).
 local function GetIconSpellOverride(icon)
@@ -742,6 +743,7 @@ local function UnmirrorBlizzCooldown(icon)
     -- No reparenting to undo — the Blizzard CD was never moved.
     icon._blizzCooldown = nil
     icon._auraActive = nil
+    icon._auraUnit = nil
 end
 
 ---------------------------------------------------------------------------
@@ -892,29 +894,15 @@ local function SyncStackText(state)
         if entry and entry.isAura then
             hasCharge = false
         else
-            -- Forward charge text for multi-charge spells (maxCharges > 1) or
-            -- resource overlay spells where Blizzard is actively updating the
-            -- ChargeCount frame.  Accept when chargeVisible is true (Show fired)
-            -- or when lastHookTime is within the current frame (SetText fired as
-            -- part of Blizzard's synchronous Hide→SetText→Show refresh — Show
-            -- hasn't restored chargeVisible yet but will in the same frame).
-            -- Without the freshness check, recycled viewer children leak stale
-            -- charge text from previously-mapped spells.
-            local sid = entry and (entry.overrideSpellID or entry.spellID or entry.id)
-            local isMulti = false
-            if sid and C_Spell and C_Spell.GetSpellCharges then
-                local ok, ci = pcall(C_Spell.GetSpellCharges, sid)
-                if ok and ci and ci.maxCharges and ci.maxCharges > 1 then
-                    isMulti = true
-                end
-            end
-            if not isMulti then
-                -- Accept if chargeVisible (Show already fired) or if the hook
-                -- fired this frame (SetText is mid-cycle, Show is imminent).
-                local hookFresh = state.lastHookTime and (GetTime() - state.lastHookTime) < 0.1
-                if not state.chargeVisible and not hookFresh then
-                    hasCharge = false
-                end
+            -- Mirror the Blizzard viewer child's ChargeCount visibility.
+            -- chargeVisible tracks Show/Hide hooks — true when Blizzard's
+            -- refresh cycle called ChargeCount:Show(), false after Hide().
+            -- hookFresh covers the mid-cycle window: Blizzard calls
+            -- Hide→SetText→Show synchronously, so SetText fires before
+            -- Show restores chargeVisible.
+            local hookFresh = state.lastHookTime and (GetTime() - state.lastHookTime) < 0.1
+            if not state.chargeVisible and not hookFresh then
+                hasCharge = false
             end
         end
     end
@@ -1205,7 +1193,6 @@ local function CreateIcon(parent, spellEntry)
         local sid = entry.overrideSpellID or entry.spellID or (entry.type and entry.id)
         if sid then
             if entry.type == "trinket" then
-                -- Trinket entries store slot number; resolve to item ID for tooltip
                 local itemID = GetInventoryItemID("player", sid)
                 if itemID then
                     pcall(GameTooltip.SetItemByID, GameTooltip, itemID)
@@ -1795,6 +1782,7 @@ local function UpdateIconCooldown(icon)
 
                     if r.isActive then
                         icon._auraActive = true
+                        icon._auraUnit = r.auraUnit
 
                         -- Swipe priority: durObj → hookDurObj → raw start/dur
                         local swipeSet = false
@@ -1968,6 +1956,7 @@ local function UpdateIconCooldown(icon)
                     if r.isActive then
                         _ncAuraActive = true
                         icon._auraActive = true
+                        icon._auraUnit = r.auraUnit
                         if icon.Cooldown then
                             local swipeSet = false
                             if r.durObj and icon.Cooldown.SetCooldownFromDurationObject then
@@ -1998,6 +1987,7 @@ local function UpdateIconCooldown(icon)
                                 icon._auraActive = false
                                 if icon.Cooldown then
                                     pcall(icon.Cooldown.SetReverse, icon.Cooldown, false)
+                                    pcall(icon.Cooldown.Clear, icon.Cooldown)
                                 end
                             end
                         end
@@ -2007,32 +1997,38 @@ local function UpdateIconCooldown(icon)
                 -- Chain: GetOverrideSpell → C-side APIs.
                 -- Override ID may be secret in combat — pass directly to
                 -- C-side functions which handle secrets natively.
-                local cdSid = C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(sid) or sid
+                -- pcall: GetOverrideSpell can return secret values in combat.
+                local cdSid = sid
+                if C_Spell.GetOverrideSpell then
+                    local ovOk, ovId = pcall(C_Spell.GetOverrideSpell, sid)
+                    if ovOk and ovId then cdSid = ovId end
+                end
 
                 if not _ncAuraActive then
                     -- Cooldown state + DurationObject from the override spell
-                    local childCi = C_Spell.GetSpellCooldown(cdSid)
-                    if childCi and childCi.isActive ~= nil then
+                    local ciOk, childCi = pcall(C_Spell.GetSpellCooldown, cdSid)
+                    if ciOk and childCi and childCi.isActive ~= nil then
                         apiIsActive = childCi.isActive
                     end
                     -- Refresh _isOnGCD from per-tick API data.  Hooks alone can
                     -- leave it stale after GCD ends (Blizzard may not fire a new
                     -- SetCooldownFromDurationObject when transitioning from GCD
                     -- to real CD on the viewer child).
-                    if childCi and not IsSecretValue(childCi.isOnGCD) then
+                    if ciOk and childCi and not IsSecretValue(childCi.isOnGCD) then
                         icon._isOnGCD = childCi.isOnGCD or false
                     end
-                    durObj = C_Spell.GetSpellCooldownDuration(cdSid)
+                    local durOk, durResult = pcall(C_Spell.GetSpellCooldownDuration, cdSid)
+                    if durOk and durResult then durObj = durResult end
                 else
                     -- Aura active: still refresh GCD + cooldown activity
                     -- from API so desaturation clears when the CD ends.
                     -- Do NOT set the local apiIsActive — that would cause
                     -- the CooldownFrame write to overwrite the aura swipe.
-                    local childCi = C_Spell.GetSpellCooldown(cdSid)
-                    if childCi and not IsSecretValue(childCi.isOnGCD) then
+                    local ciOk, childCi = pcall(C_Spell.GetSpellCooldown, cdSid)
+                    if ciOk and childCi and not IsSecretValue(childCi.isOnGCD) then
                         icon._isOnGCD = childCi.isOnGCD or false
                     end
-                    if childCi and childCi.isActive ~= nil then
+                    if ciOk and childCi and childCi.isActive ~= nil then
                         icon._hasCooldownActive = childCi.isActive
                     end
                 end
@@ -2072,6 +2068,7 @@ local function UpdateIconCooldown(icon)
                     if r.isActive then
                         _chargedAuraActive = true
                         icon._auraActive = true
+                        icon._auraUnit = r.auraUnit
                         -- Swipe priority: durObj → hookDurObj → raw start/dur
                         if icon.Cooldown then
                             local swipeSet = false
@@ -2103,6 +2100,7 @@ local function UpdateIconCooldown(icon)
                                 icon._auraActive = false
                                 if icon.Cooldown then
                                     pcall(icon.Cooldown.SetReverse, icon.Cooldown, false)
+                                    pcall(icon.Cooldown.Clear, icon.Cooldown)
                                 end
                             end
                         end
@@ -2269,8 +2267,6 @@ local function UpdateIconCooldown(icon)
             local isMultiCharge = _cachedChargeInfo
                 and _cachedChargeInfo.maxCharges
                 and _cachedChargeInfo.maxCharges > 1
-
-
 
             if isMultiCharge then
                 -- GetSpellDisplayCount is the canonical charge display API.
@@ -2508,6 +2504,16 @@ function CDMIcons:ReleaseIcon(icon)
     icon._isOnGCD = nil
     icon._wasOnGCD = nil
     icon._hasCooldownActive = nil
+    -- Reset grey-out child alpha (set by greyOutInactive/greyOutInactiveBuffs)
+    icon._greyType = nil
+    if icon._greyedOut then
+        icon._greyedOut = nil
+        if icon.Icon then icon.Icon:SetAlpha(1) end
+        if icon.Cooldown then icon.Cooldown:SetAlpha(1) end
+        if icon.Border then icon.Border:SetAlpha(1) end
+        if icon.DurationText then icon.DurationText:SetAlpha(1) end
+        if icon.StackText then icon.StackText:SetAlpha(1) end
+    end
     if icon.Icon then
         icon.Icon:SetVertexColor(1, 1, 1, 1)
         icon.Icon:SetDesaturated(false)
@@ -2684,7 +2690,8 @@ function CDMIcons:BuildIcons(viewerType, container)
             end
             if cType == "aura" or cType == "auraBar" then
                 icon._auraActive = false  -- will be set true by UpdateIconCooldown when aura present
-            end
+                icon._auraUnit = nil
+                        end
         end
     end
 
@@ -2741,6 +2748,7 @@ function CDMIcons:BuildIcons(viewerType, container)
             -- SetCooldownFromDurationObject hook fires.
             if entry.viewerType == "buff" then
                 icon._auraActive = true
+                icon._auraUnit = "player"
                 InitBuffVisibility(icon, entry._blizzChild)
             end
         end
@@ -2911,9 +2919,12 @@ function CDMIcons:UpdateAllCooldowns()
                         end
                     end
 
-                    -- Grey out when linked debuff/aura not active on target
-                    local greyOut = containerDB and containerDB.greyOutInactive
-                    if greyOut and icon:IsShown() and icon.Icon and icon.Icon.SetDesaturated then
+                    -- Grey out when linked debuff/buff not active
+                    -- greyOutInactive = my debuffs on target, greyOutInactiveBuffs = buffs on player
+                    local greyOutDebuffs = containerDB and containerDB.greyOutInactive
+                    local greyOutBuffs = containerDB and containerDB.greyOutInactiveBuffs
+                    local shouldGreyOut = false
+                    if (greyOutDebuffs or greyOutBuffs) and icon.Icon and icon.Icon.SetDesaturated then
                         -- Only apply to spells that have aura tracking (linked auras,
                         -- global ability→aura mapping, or detected via ResolveAuraState).
                         local hasAuraLink = entry.linkedSpellIDs
@@ -2921,24 +2932,82 @@ function CDMIcons:UpdateAllCooldowns()
                             or (ns.CDMSpellData and ns.CDMSpellData._abilityToAuraSpellID
                                 and ns.CDMSpellData._abilityToAuraSpellID[entry.id])
                             or icon._auraActive ~= nil
-                        if hasAuraLink and not icon._auraActive then
-                            local rowOpacity = icon._rowOpacity or 1
-                            icon:SetAlpha(rowOpacity * 0.4)
+                        if hasAuraLink then
+                            -- Resolve spell name for aura lookups
+                            local spellName = entry.name
+                            if not spellName then
+                                local sid = entry.overrideSpellID or entry.spellID or entry.id
+                                if sid then
+                                    local info = C_Spell.GetSpellInfo(sid)
+                                    spellName = info and info.name
+                                end
+                            end
+
+                            -- Debuff grey-out: requires valid attackable target.
+                            -- Uses HARMFUL filter to find debuff on target, then
+                            -- checks isFromPlayerOrPlayerPet for ownership.
+                            -- Classify spell as debuff/buff once via WoW API.
+                            -- IsHarmfulSpell → targets enemies (debuff spell)
+                            -- IsHelpfulSpell → targets self/allies (buff spell)
+                            if not icon._greyType and spellName then
+                                local harmOk, isHarm = pcall(function()
+                                    if C_Spell and C_Spell.IsSpellHarmful then return C_Spell.IsSpellHarmful(spellName) end
+                                    if IsHarmfulSpell then return IsHarmfulSpell(spellName) end
+                                end)
+                                local helpOk, isHelp = pcall(function()
+                                    if C_Spell and C_Spell.IsSpellHelpful then return C_Spell.IsSpellHelpful(spellName) end
+                                    if IsHelpfulSpell then return IsHelpfulSpell(spellName) end
+                                end)
+                                if harmOk and isHarm then
+                                    icon._greyType = "debuff"
+                                elseif helpOk and isHelp then
+                                    icon._greyType = "buff"
+                                end
+                            end
+
+                            -- Debuff grey-out: requires valid attackable target.
+                            -- Uses _auraActive (combat-safe, driven by hook
+                            -- cache from CDM viewer children which only track
+                            -- the player's own spells).
+                            if greyOutDebuffs and icon._greyType == "debuff" then
+                                local hasTarget = UnitExists("target")
+                                    and not UnitIsDead("target")
+                                    and UnitCanAttack("player", "target")
+                                if hasTarget and not icon._auraActive then
+                                    shouldGreyOut = true
+                                end
+                            end
+                            -- Buff grey-out: same _auraActive approach.
+                            if not shouldGreyOut and greyOutBuffs
+                               and icon._greyType == "buff" then
+                                if not icon._auraActive then
+                                    shouldGreyOut = true
+                                end
+                            end
+                        end
+                    end
+                    if shouldGreyOut then
+                        if not icon._greyedOut then
+                            -- Dim children instead of the frame itself so
+                            -- GameTooltip:SetOwner still works (WoW hides
+                            -- tooltips when the owner's effective alpha is
+                            -- below ~0.5).
+                            if icon.Icon then icon.Icon:SetAlpha(0.4) end
+                            if icon.Cooldown then icon.Cooldown:SetAlpha(0.4) end
+                            if icon.Border then icon.Border:SetAlpha(0.4) end
+                            if icon.DurationText then icon.DurationText:SetAlpha(0.4) end
+                            if icon.StackText then icon.StackText:SetAlpha(0.4) end
                             if not icon._cdDesaturated then
                                 icon.Icon:SetDesaturated(true)
                             end
                             icon._greyedOut = true
-                        elseif icon._greyedOut then
-                            local rowOpacity = icon._rowOpacity or 1
-                            icon:SetAlpha(rowOpacity)
-                            if not icon._cdDesaturated then
-                                icon.Icon:SetDesaturated(false)
-                            end
-                            icon._greyedOut = nil
                         end
                     elseif icon._greyedOut then
-                        local rowOpacity = icon._rowOpacity or 1
-                        icon:SetAlpha(rowOpacity)
+                        if icon.Icon then icon.Icon:SetAlpha(1) end
+                        if icon.Cooldown then icon.Cooldown:SetAlpha(1) end
+                        if icon.Border then icon.Border:SetAlpha(1) end
+                        if icon.DurationText then icon.DurationText:SetAlpha(1) end
+                        if icon.StackText then icon.StackText:SetAlpha(1) end
                         if icon.Icon and icon.Icon.SetDesaturated and not icon._cdDesaturated then
                             icon.Icon:SetDesaturated(false)
                         end

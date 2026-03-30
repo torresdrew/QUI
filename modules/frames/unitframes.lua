@@ -203,6 +203,11 @@ local function GetUnitSettings(unit)
     return db and db[unit]
 end
 
+-- Resolve name settings: group frames use nested "name" sub-table, solo frames use flat keys
+local function GetNameSettings(settings)
+    return settings and settings.name or settings
+end
+
 local function IsPlayerFrameEnabled(db)
     return db and db.enabled and db.player and db.player.enabled
 end
@@ -1372,7 +1377,8 @@ local function UpdateName(frame)
     local unit = frame.unit
 
     local settings = GetUnitSettings(frame.unitKey)
-    if not settings or not settings.showName then
+    local nameSettings = GetNameSettings(settings)
+    if not settings or not nameSettings.showName then
         frame.nameText:Hide()
         return
     end
@@ -1380,7 +1386,7 @@ local function UpdateName(frame)
     local name = UnitName(unit) or ""
 
     -- Apply name truncation if maxNameLength is set
-    local maxLen = settings.maxNameLength
+    local maxLen = nameSettings.maxNameLength
     if maxLen and maxLen > 0 then
         name = TruncateName(name, maxLen)
     end
@@ -1440,13 +1446,13 @@ local function UpdateName(frame)
         -- MASTER OVERRIDE: Apply class/reaction color to ALL frames
         local r, g, b = GetUnitClassColor(unit)
         frame.nameText:SetTextColor(r, g, b, 1)
-    elseif settings.nameTextUseClassColor then
+    elseif nameSettings.nameTextUseClassColor then
         -- Per-unit setting: Use class/reaction color
         local r, g, b = GetUnitClassColor(unit)
         frame.nameText:SetTextColor(r, g, b, 1)
-    elseif settings.nameTextColor then
+    elseif nameSettings.nameTextColor then
         -- Per-unit setting: Use custom color
-        local c = settings.nameTextColor
+        local c = nameSettings.nameTextColor
         frame.nameText:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1)
     elseif general and general.classColorText then
         -- Backwards compat: Legacy global toggle (deprecated)
@@ -1668,12 +1674,13 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
     end
 
     -- Name text
-    if settings.showName then
-        local nameAnchorInfo = GetTextAnchorInfo(settings.nameAnchor or "LEFT")
-        local nameOffsetX = QUICore:PixelRound(settings.nameOffsetX or 4, healthBar)
-        local nameOffsetY = QUICore:PixelRound(settings.nameOffsetY or 0, healthBar)
+    local bossNameSettings = GetNameSettings(settings)
+    if bossNameSettings.showName then
+        local nameAnchorInfo = GetTextAnchorInfo(bossNameSettings.nameAnchor or "LEFT")
+        local nameOffsetX = QUICore:PixelRound(bossNameSettings.nameOffsetX or 4, healthBar)
+        local nameOffsetY = QUICore:PixelRound(bossNameSettings.nameOffsetY or 0, healthBar)
         local nameText = healthBar:CreateFontString(nil, "OVERLAY")
-        nameText:SetFont(GetFontPath(), settings.nameFontSize or 12, GetFontOutline())
+        nameText:SetFont(GetFontPath(), bossNameSettings.nameFontSize or 12, GetFontOutline())
         nameText:SetShadowOffset(0, 0)
         nameText:SetPoint(nameAnchorInfo.point, healthBar, nameAnchorInfo.point, nameOffsetX, nameOffsetY)
         nameText:SetJustifyH(nameAnchorInfo.justify)
@@ -2155,10 +2162,11 @@ local function CreateUnitFrame(unit, unitKey)
     -- Name text
     local fontPath = GetFontPath()
     local fontOutline = general and general.fontOutline or "OUTLINE"
-    local nameFontSize = settings.nameFontSize or 12
-    local nameAnchorInfo = GetTextAnchorInfo(settings.nameAnchor or "LEFT")
-    local nameOffsetX = QUICore:PixelRound(settings.nameOffsetX or 4, frame)
-    local nameOffsetY = QUICore:PixelRound(settings.nameOffsetY or 0, frame)
+    local unitNameSettings = GetNameSettings(settings)
+    local nameFontSize = unitNameSettings.nameFontSize or 12
+    local nameAnchorInfo = GetTextAnchorInfo(unitNameSettings.nameAnchor or "LEFT")
+    local nameOffsetX = QUICore:PixelRound(unitNameSettings.nameOffsetX or 4, frame)
+    local nameOffsetY = QUICore:PixelRound(unitNameSettings.nameOffsetY or 0, frame)
 
     local nameText = textFrame:CreateFontString(nil, "OVERLAY")
     nameText:SetFont(fontPath, nameFontSize, fontOutline)
@@ -2954,16 +2962,17 @@ function QUI_UF:RefreshFrame(unitKey)
                 end
 
                 -- Update name text (create dynamically if needed)
-                if settings.showName then
+                local bossNS = GetNameSettings(settings)
+                if bossNS.showName then
                     if not frame.nameText then
                         local nameText = frame.healthBar:CreateFontString(nil, "OVERLAY")
                         nameText:SetShadowOffset(0, 0)
                         frame.nameText = nameText
                     end
-                    frame.nameText:SetFont(GetFontPath(), settings.nameFontSize or 11, GetFontOutline())
-                    local nameAnchorInfo = GetTextAnchorInfo(settings.nameAnchor or "LEFT")
-                    local nameOffsetX = QUICore:PixelRound(settings.nameOffsetX or 4, frame.healthBar)
-                    local nameOffsetY = QUICore:PixelRound(settings.nameOffsetY or 0, frame.healthBar)
+                    frame.nameText:SetFont(GetFontPath(), bossNS.nameFontSize or 11, GetFontOutline())
+                    local nameAnchorInfo = GetTextAnchorInfo(bossNS.nameAnchor or "LEFT")
+                    local nameOffsetX = QUICore:PixelRound(bossNS.nameOffsetX or 4, frame.healthBar)
+                    local nameOffsetY = QUICore:PixelRound(bossNS.nameOffsetY or 0, frame.healthBar)
                     frame.nameText:ClearAllPoints()
                     frame.nameText:SetPoint(nameAnchorInfo.point, frame.healthBar, nameAnchorInfo.point, nameOffsetX, nameOffsetY)
                     frame.nameText:SetJustifyH(nameAnchorInfo.justify)
@@ -3346,13 +3355,14 @@ function QUI_UF:RefreshFrame(unitKey)
     local fontPath = GetFontPath()
     local fontOutline = general and general.fontOutline or "OUTLINE"
     
+    local refreshNameSettings = GetNameSettings(settings)
     if frame.nameText then
-        frame.nameText:SetFont(fontPath, settings.nameFontSize or 12, fontOutline)
+        frame.nameText:SetFont(fontPath, refreshNameSettings.nameFontSize or 12, fontOutline)
         frame.nameText:ClearAllPoints()
-        local nameAnchorInfo = GetTextAnchorInfo(settings.nameAnchor or "LEFT")
-        frame.nameText:SetPoint(nameAnchorInfo.point, frame, nameAnchorInfo.point, QUICore:PixelRound(settings.nameOffsetX or 4, frame), QUICore:PixelRound(settings.nameOffsetY or 0, frame))
+        local nameAnchorInfo = GetTextAnchorInfo(refreshNameSettings.nameAnchor or "LEFT")
+        frame.nameText:SetPoint(nameAnchorInfo.point, frame, nameAnchorInfo.point, QUICore:PixelRound(refreshNameSettings.nameOffsetX or 4, frame), QUICore:PixelRound(refreshNameSettings.nameOffsetY or 0, frame))
         frame.nameText:SetJustifyH(nameAnchorInfo.justify)
-        if settings.showName then
+        if refreshNameSettings.showName then
             frame.nameText:Show()
         else
             frame.nameText:Hide()

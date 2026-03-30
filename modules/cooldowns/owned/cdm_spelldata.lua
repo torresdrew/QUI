@@ -1192,7 +1192,8 @@ local function ScanCooldownViewer(viewerType)
                         -- pcall-safe non-secret numeric values here.
                         local hasCharges = false
                         if C_Spell.GetSpellCharges then
-                            local okCharges, ci = pcall(C_Spell.GetSpellCharges, overrideSpellID or spellID)
+                            local checkChargeID = overrideSpellID or spellID
+                            local okCharges, ci = pcall(C_Spell.GetSpellCharges, checkChargeID)
                             if okCharges and ci and not Helpers.IsSecretValue(ci.maxCharges) then
                                 local maxC = Helpers.SafeToNumber(ci.maxCharges, 0)
                                 if maxC and maxC > 1 then
