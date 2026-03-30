@@ -2719,16 +2719,16 @@ local function BuildBar(barKey)
                 if IsModifiedClick("PICKUPACTION") and not self:GetAttribute("LABdisableDragNDrop") then
                     local useDown = self:GetAttribute("useOnKeyDown")
                     if useDown ~= false then
-                        self:SetAttribute("_QUI_toggledDown", true)
-                        self:SetAttribute("_QUI_toggledDownBackup", useDown)
+                        self:SetAttribute("qui-toggled-down", true)
+                        self:SetAttribute("qui-toggled-down-backup", useDown)
                         self:SetAttribute("useOnKeyDown", false)
                     end
                 end
             ]], [[
-                if self:GetAttribute("_QUI_toggledDown") then
-                    self:SetAttribute("useOnKeyDown", self:GetAttribute("_QUI_toggledDownBackup"))
-                    self:SetAttribute("_QUI_toggledDown", nil)
-                    self:SetAttribute("_QUI_toggledDownBackup", nil)
+                if self:GetAttribute("qui-toggled-down") then
+                    self:SetAttribute("useOnKeyDown", self:GetAttribute("qui-toggled-down-backup"))
+                    self:SetAttribute("qui-toggled-down", nil)
+                    self:SetAttribute("qui-toggled-down-backup", nil)
                 end
             ]])
 
