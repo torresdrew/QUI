@@ -308,7 +308,6 @@ local defaults = {
         -- QUI New Cooldown Display Manager (NCDM)
         -- Per-row configuration for Essential and Utility viewers
         ncdm = {
-            engine = "owned",  -- CDM engine: "classic" (Blizzard hooks) or "owned" (addon-owned frames)
             _snapshotVersion = 0,   -- Incremented each time ownedSpells are snapshotted
             _specProfiles = nil,    -- Future: per-spec owned spell profiles
             essential = {

@@ -93,7 +93,7 @@ local function LooksLikeLegacyMainlineProfile(profile)
         end
     end
 
-    if type(profile.ncdm) == "table" and profile.ncdm.engine == "classic" then
+    if type(profile.ncdm) == "table" and profile.ncdm.engine ~= nil then
         return true
     end
     if type(profile.actionBars) == "table" and profile.actionBars.engine == "classic" then
@@ -362,8 +362,8 @@ local function NormalizeEngines(profile)
         profile.tooltip.engine = "default"
     end
 
-    if profile.ncdm and profile.ncdm.engine and profile.ncdm.engine ~= "owned" then
-        profile.ncdm.engine = "owned"
+    if profile.ncdm and profile.ncdm.engine ~= nil then
+        profile.ncdm.engine = nil
     end
 
     if profile.actionBars and profile.actionBars.engine == "classic" then

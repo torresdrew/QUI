@@ -197,8 +197,7 @@ local function RefreshAllSwipes()
     end
 end
 
----------------------------------------------------------------------------
--- EXPORTS (deferred — only overwrite classic engine's exports when owned is active)
+-- EXPORTS
 ---------------------------------------------------------------------------
 ns._OwnedSwipe = {
     Apply = RefreshAllSwipes,

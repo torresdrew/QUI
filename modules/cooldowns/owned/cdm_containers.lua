@@ -1573,8 +1573,8 @@ local function RefreshAll(forceSync)
     end
 
     -- Defer to combat end — rebuilding destroys the current layout.
-    -- The classic engine's combatFrame calls _G.QUI_RefreshNCDM on
-    -- PLAYER_REGEN_ENABLED, which routes here and provides recovery.
+    -- A follow-up refresh on PLAYER_REGEN_ENABLED routes here and provides
+    -- recovery after combat lockdown ends.
     if InCombatLockdown() then
         return
     end
@@ -2107,8 +2107,8 @@ end
 
 ---------------------------------------------------------------------------
 -- NCDM COMPATIBILITY TABLE
--- Provides a Refresh() and LayoutViewer() interface matching the classic
--- engine's NCDM object for backward-compatible consumer access.
+-- Provides a Refresh() and LayoutViewer() interface for backward-compatible
+-- consumer access.
 ---------------------------------------------------------------------------
 local NCDM = {
     initialized = false,
@@ -2144,8 +2144,7 @@ local BLIZZARD_FALLBACKS = {
 -- Initialize: called by cdm_provider.lua after engine selection
 ---------------------------------------------------------------------------
 function ownedEngine:Initialize()
-    -- Wire owned engine's deferred exports (glows, swipe)
-    -- These are deferred to avoid overwriting classic engine's exports at file load time.
+    -- Wire owned-engine exports that are populated after their modules load.
     if ns._OwnedGlows then
         QUI.CustomGlows = ns._OwnedGlows
         _G.QUI_RefreshCustomGlows = ns._OwnedGlows.RefreshAllGlows

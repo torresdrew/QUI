@@ -1,11 +1,10 @@
 --[[
     QUI CDM Provider
-    Abstraction layer that lets multiple CDM engine implementations coexist.
-    Only one engine initializes at runtime based on db.profile.ncdm.engine.
+    Provider that wires the owned CDM engine once its modules are loaded.
 
     Load order: cdm_provider.lua → hud_visibility.lua → engine files
     Engine files call RegisterEngine() at load time.
-    Provider calls Initialize() on the selected engine at ADDON_LOADED.
+    Provider calls Initialize() on the owned engine at ADDON_LOADED.
 ]]
 
 local ADDON_NAME, ns = ...
@@ -17,7 +16,7 @@ local Helpers = ns.Helpers
 local CDMProvider = {
     engines = {},           -- name → engine table
     activeEngine = nil,     -- the initialized engine table
-    activeEngineName = nil, -- "classic" or "owned"
+    activeEngineName = nil, -- "owned" after initialization
     initialized = false,
 }
 
@@ -26,7 +25,7 @@ local CDMProvider = {
 ---------------------------------------------------------------------------
 
 --- Register a CDM engine implementation.
---- @param name string  Engine identifier ("classic" or "owned")
+--- @param name string  Engine identifier
 --- @param engine table  Table with contract methods (Initialize, Refresh, etc.)
 function CDMProvider:RegisterEngine(name, engine)
     self.engines[name] = engine

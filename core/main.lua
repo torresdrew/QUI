@@ -313,9 +313,9 @@ function QUICore:OnInitialize()
         profile.tooltip.engine = "default"
     end
 
-    -- Migrate CDM engine: classic engine removed, force to "owned"
-    if profile.ncdm and profile.ncdm.engine and profile.ncdm.engine ~= "owned" then
-        profile.ncdm.engine = "owned"
+    -- Remove deprecated CDM engine setting (owned is always used now)
+    if profile.ncdm and profile.ncdm.engine ~= nil then
+        profile.ncdm.engine = nil
     end
 
     -- Migrate action bar engine: classic engine removed, force to "owned"
