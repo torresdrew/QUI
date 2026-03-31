@@ -1880,7 +1880,9 @@ LayoutBuffIcons = function()
     if IsLayoutSuppressed() then return end
     -- Skip during Edit Mode — Blizzard controls icon layout/padding.
     -- QUI re-layouts on Edit Mode exit with saved settings.
-    if Helpers.IsEditModeActive() then return end
+    -- Owned engine: addon-owned icons need QUI positioning even during
+    -- edit mode (Composer add/remove must reposition immediately).
+    if Helpers.IsEditModeActive() and not IsOwnedEngine() then return end
 
     isIconLayoutRunning = true
 
@@ -2082,7 +2084,6 @@ LayoutBuffBars = function()
         local viewer = GetBuffBarViewer()
         if not viewer then return end
         if isBarLayoutRunning then return end
-        if Helpers.IsEditModeActive() then return end
 
         isBarLayoutRunning = true
 

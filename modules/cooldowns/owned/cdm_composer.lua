@@ -145,11 +145,16 @@ end
 -- REFRESH HELPERS
 ---------------------------------------------------------------------------
 local function RefreshCDM()
-    -- Force layout for the active container even during edit mode
+    -- Force layout for the active container even during edit mode.
+    -- FireChangeCallback (from the data layer) already triggers RefreshAll
+    -- for broad state sync.  Only force-layout the specific container here
+    -- to avoid cascading double-refreshes that cause icon flicker.
     if activeContainer and _G.QUI_ForceLayoutContainer then
         _G.QUI_ForceLayoutContainer(activeContainer)
     end
-    if _G.QUI_RefreshNCDM then _G.QUI_RefreshNCDM() end
+    -- Buff bar icons/bars need an explicit poke — ForceLayoutContainer
+    -- triggers QUI_OnBuffLayoutReady for icon positioning, but the bar
+    -- side (CDMBars) is only refreshed via QUI_RefreshBuffBar.
     if _G.QUI_RefreshBuffBar then _G.QUI_RefreshBuffBar() end
 end
 
@@ -1437,6 +1442,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex, isDormant)
                 spellData:RestoreDormantEntry(activeContainer, sid)
                 C_Timer.After(0.02, function()
                     RefreshEntryList()
+                    RefreshAddList()
                     RefreshPreview()
                 end)
             end }
@@ -1446,6 +1452,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex, isDormant)
             spellData:RemoveDormantEntry(activeContainer, sid)
             C_Timer.After(0.02, function()
                 RefreshEntryList()
+                RefreshAddList()
                 RefreshPreview()
             end)
         end }
@@ -1506,6 +1513,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex, isDormant)
             C_Timer.After(0.02, function()
                 RefreshCDM()
                 RefreshEntryList()
+                RefreshAddList()
                 RefreshPreview()
             end)
         end }
@@ -1517,6 +1525,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex, isDormant)
             C_Timer.After(0.02, function()
                 RefreshCDM()
                 RefreshEntryList()
+                RefreshAddList()
                 RefreshPreview()
             end)
         end }
