@@ -2000,6 +2000,131 @@ local function RegisterAllProviders()
             info:SetJustifyH("LEFT")
         end, sections, relayout)
 
+        -- Default Tab
+        U.CreateCollapsible(content, "Default Tab", 3 * FORM_ROW + 8, function(body)
+            -- Build tab options dynamically from current chat windows
+            local tabOptions = {}
+            for i = 1, NUM_CHAT_WINDOWS do
+                local name = GetChatWindowInfo(i)
+                if name and name ~= "" then
+                    tabOptions[#tabOptions + 1] = {
+                        value = i,
+                        text = i .. ". " .. name,
+                    }
+                end
+            end
+            if #tabOptions == 0 then
+                tabOptions[1] = { value = 1, text = "1. General" }
+            end
+
+            if not chat.defaultTabBySpec then chat.defaultTabBySpec = {} end
+
+            local container = nil
+
+            local function RebuildDefaultTab()
+                -- Destroy previous container (clears children AND regions)
+                if container then
+                    container:Hide()
+                    container:SetParent(nil)
+                    container = nil
+                end
+
+                container = CreateFrame("Frame", nil, body)
+                container:SetPoint("TOPLEFT", 0, 0)
+                container:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+                container:SetHeight(1)
+
+                local sy = -4
+
+                if chat.defaultTabPerSpec then
+                    -- Per-spec mode: all spec dropdowns tiled on one row
+                    local specs = {}
+                    local numSpecs = GetNumSpecializations and GetNumSpecializations() or 0
+                    for s = 1, numSpecs do
+                        local specID, specName = GetSpecializationInfo(s)
+                        if specID and specName then
+                            if not chat.defaultTabBySpec[specID] then
+                                chat.defaultTabBySpec[specID] = 1
+                            end
+                            specs[#specs + 1] = { id = specID, name = specName }
+                        end
+                    end
+
+                    local count = #specs
+                    if count > 0 then
+                        local GAP = 16
+                        local LABEL_WIDTH = 80
+                        local row = CreateFrame("Frame", nil, container)
+                        row:SetPoint("TOPLEFT", 0, sy)
+                        row:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+                        row:SetHeight(FORM_ROW)
+
+                        -- Create equal-width column frames by chaining anchors
+                        local columns = {}
+                        for idx = 1, count do
+                            local col = CreateFrame("Frame", nil, row)
+                            col:SetPoint("TOP", 0, 0)
+                            col:SetPoint("BOTTOM", 0, 0)
+                            if idx == 1 then
+                                col:SetPoint("LEFT", row, "LEFT", 0, 0)
+                            else
+                                col:SetPoint("LEFT", columns[idx - 1], "RIGHT", GAP, 0)
+                            end
+                            columns[idx] = col
+                        end
+                        -- Distribute column widths evenly via OnSizeChanged
+                        local function DistributeColumns(w)
+                            local colW = (w - GAP * (count - 1)) / count
+                            for idx = 1, count do
+                                columns[idx]:SetWidth(math.max(colW, 1))
+                            end
+                        end
+                        row:SetScript("OnSizeChanged", function(self, w) DistributeColumns(w) end)
+                        C_Timer.After(0, function()
+                            local w = row:GetWidth()
+                            if w and w > 0 then DistributeColumns(w) end
+                        end)
+
+                        -- Place a dropdown inside each column with compact label offset
+                        for idx, spec in ipairs(specs) do
+                            local dd = GUI:CreateFormDropdown(columns[idx], spec.name, tabOptions, spec.id, chat.defaultTabBySpec, Refresh)
+                            dd:ClearAllPoints()
+                            dd:SetPoint("TOPLEFT", 0, 0)
+                            dd:SetPoint("RIGHT", columns[idx], "RIGHT", 0, 0)
+                            -- Tighten label-to-dropdown gap (default is 180px)
+                            local btn = select(1, dd:GetChildren())
+                            if btn then
+                                btn:ClearAllPoints()
+                                btn:SetPoint("LEFT", dd, "LEFT", LABEL_WIDTH, 0)
+                                btn:SetPoint("RIGHT", dd, "RIGHT", 0, 0)
+                            end
+                        end
+                        sy = sy - FORM_ROW
+                    end
+
+                    local info = GUI:CreateLabel(container, "Each spec selects its own chat tab on login, reload, or spec switch.", 10, {0.5, 0.5, 0.5, 1})
+                    info:SetPoint("TOPLEFT", 0, sy)
+                    info:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+                    info:SetJustifyH("LEFT")
+                    sy = sy - 20
+                else
+                    sy = P(GUI:CreateFormDropdown(container, "Default Tab", tabOptions, "defaultTab", chat, Refresh), container, sy)
+                    local info = GUI:CreateLabel(container, "Select which chat tab is active when you log in or reload.", 10, {0.5, 0.5, 0.5, 1})
+                    info:SetPoint("TOPLEFT", 0, sy)
+                    info:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+                    info:SetJustifyH("LEFT")
+                    sy = sy - 20
+                end
+
+                P(GUI:CreateFormCheckbox(container, "Per Spec", "defaultTabPerSpec", chat, function()
+                    Refresh()
+                    RebuildDefaultTab()
+                end), container, sy)
+            end
+
+            RebuildDefaultTab()
+        end, sections, relayout)
+
         -- Chat Background
         if chat.glass then
             U.CreateCollapsible(content, "Chat Background", 3 * FORM_ROW + 8, function(body)

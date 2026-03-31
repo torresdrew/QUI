@@ -1626,7 +1626,7 @@ local function ApplyRotationHelperToIcon(icon, settings, nextSpellID)
         if icon._spellEntry then
             return icon._spellEntry.overrideSpellID or icon._spellEntry.spellID or icon._spellEntry.id
         end
-        -- Try cooldownID (classic CDM uses this)
+        -- Try cooldownID for compatibility with older-style cooldown frames
         if icon.cooldownID then
             return icon.cooldownID
         end

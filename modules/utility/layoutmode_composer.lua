@@ -347,6 +347,15 @@ local TEXT_JUSTIFY_OPTIONS = {
 local FILTER_MODE_OPTIONS = {
     { value = "off", text = "Off (Show All)" }, { value = "classification", text = "Classification" },
 }
+local AURA_INDICATOR_TYPE_OPTIONS = {
+    { value = "icon", text = "Icon" },
+    { value = "bar", text = "Bar" },
+    { value = "healthBarColor", text = "Health Bar Tint" },
+}
+local BAR_ORIENTATION_OPTIONS = {
+    { value = "HORIZONTAL", text = "Horizontal" },
+    { value = "VERTICAL", text = "Vertical" },
+}
 
 ---------------------------------------------------------------------------
 -- SPELL PRESETS
@@ -1110,6 +1119,7 @@ local function BuildBuffsSettings(content, gfdb, onChange)
         L:Row(GUI:CreateFormCheckbox(body, "Show Buffs", "showBuffs", auras, syncedOnChange), FORM_ROW)
         L:Row(GUI:CreateFormSlider(body, "Max Buffs", 0, 8, 1, "maxBuffs", auras, syncedOnChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormSlider(body, "Icon Size", 8, 32, 1, "buffIconSize", auras, syncedOnChange), SLIDER_HEIGHT, cond)
+        L:Row(GUI:CreateFormCheckbox(body, "Reverse Swipe", "buffReverseSwipe", auras, syncedOnChange), FORM_ROW, cond)
         L:Row(GUI:CreateFormDropdown(body, "Anchor", NINE_POINT_OPTIONS, "buffAnchor", auras, syncedOnChange), DROP_ROW, cond)
         L:Row(GUI:CreateFormDropdown(body, "Grow Direction", AURA_GROW_OPTIONS, "buffGrowDirection", auras, syncedOnChange), DROP_ROW, cond)
         L:Row(GUI:CreateFormSlider(body, "Spacing", 0, 8, 1, "buffSpacing", auras, syncedOnChange), SLIDER_HEIGHT, cond)
@@ -1179,6 +1189,7 @@ local function BuildDebuffsSettings(content, gfdb, onChange)
         L:Row(GUI:CreateFormCheckbox(body, "Show Debuffs", "showDebuffs", auras, syncedOnChange), FORM_ROW)
         L:Row(GUI:CreateFormSlider(body, "Max Debuffs", 0, 8, 1, "maxDebuffs", auras, syncedOnChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormSlider(body, "Icon Size", 8, 32, 1, "debuffIconSize", auras, syncedOnChange), SLIDER_HEIGHT, cond)
+        L:Row(GUI:CreateFormCheckbox(body, "Reverse Swipe", "debuffReverseSwipe", auras, syncedOnChange), FORM_ROW, cond)
         L:Row(GUI:CreateFormDropdown(body, "Anchor", NINE_POINT_OPTIONS, "debuffAnchor", auras, syncedOnChange), DROP_ROW, cond)
         L:Row(GUI:CreateFormDropdown(body, "Grow Direction", AURA_GROW_OPTIONS, "debuffGrowDirection", auras, syncedOnChange), DROP_ROW, cond)
         L:Row(GUI:CreateFormSlider(body, "Spacing", 0, 8, 1, "debuffSpacing", auras, syncedOnChange), SLIDER_HEIGHT, cond)
@@ -1331,6 +1342,7 @@ local function BuildDefensiveSettings(content, gfdb, onChange)
         L:Row(GUI:CreateFormCheckbox(body, "Enable Defensive Indicator", "enabled", def, onChange), FORM_ROW)
         L:Row(GUI:CreateFormSlider(body, "Max Icons", 1, 5, 1, "maxIcons", def, onChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormSlider(body, "Icon Size", 8, 32, 1, "iconSize", def, onChange), SLIDER_HEIGHT, cond)
+        L:Row(GUI:CreateFormCheckbox(body, "Reverse Swipe", "reverseSwipe", def, onChange), FORM_ROW, cond)
         L:Row(GUI:CreateFormDropdown(body, "Grow Direction", AURA_GROW_OPTIONS, "growDirection", def, onChange), DROP_ROW, cond)
         L:Row(GUI:CreateFormSlider(body, "Spacing", 0, 8, 1, "spacing", def, onChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormDropdown(body, "Position", NINE_POINT_OPTIONS, "position", def, onChange), DROP_ROW, cond)
@@ -1361,6 +1373,7 @@ local function BuildPrivateAurasSettings(content, gfdb, onChange)
         L:Row(GUI:CreateFormSlider(body, "Border Scale", -100, 10, 0.5, "borderScale", pa, onChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormCheckbox(body, "Show Countdown", "showCountdown", pa, onChange), FORM_ROW, cond)
         L:Row(GUI:CreateFormCheckbox(body, "Show Countdown Numbers", "showCountdownNumbers", pa, onChange), FORM_ROW, cond)
+        L:Row(GUI:CreateFormCheckbox(body, "Reverse Swipe", "reverseSwipe", pa, onChange), FORM_ROW, cond)
         L:Row(GUI:CreateFormSlider(body, "Stack & Countdown Scale", 0.5, 5, 0.5, "textScale", pa, onChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormSlider(body, "Stack & Countdown X Offset", -20, 20, 1, "textOffsetX", pa, onChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormSlider(body, "Stack & Countdown Y Offset", -20, 20, 1, "textOffsetY", pa, onChange), SLIDER_HEIGHT, cond)
@@ -1372,17 +1385,20 @@ end
 
 local function BuildAuraIndicatorsSettings(content, gfdb, onChange)
     local ai = gfdb.auraIndicators; if not ai then gfdb.auraIndicators = {} ai = gfdb.auraIndicators end
+    local normalizeAuraIndicators = ns.Helpers and ns.Helpers.NormalizeAuraIndicatorConfig
+    if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
     local sections = {}
     local function relayout() RelayoutComposerSections(content, sections) end
 
-    CreateComposerCollapsible(content, "Aura Indicators", function(body, updateH)
+    CreateComposerCollapsible(content, "Aura Indicator Defaults", function(body, updateH)
         local cond = function() return ai.enabled end
         local L = CreateDynamicLayout(body, updateH)
-        local desc = GUI:CreateLabel(body, "Track specific spells as icons on group frames. Auto-detects your spec.", 11, C and C.textMuted); desc:SetJustifyH("LEFT")
-        L:Row(desc, 30)
+        local desc = GUI:CreateLabel(body, "Icon indicators still use the shared strip settings below. Bars and health-bar tints are configured per aura entry.", 11, C and C.textMuted); desc:SetJustifyH("LEFT")
+        L:Row(desc, 40)
         L:Row(GUI:CreateFormCheckbox(body, "Enable Aura Indicators", "enabled", ai, onChange), FORM_ROW)
         L:Row(GUI:CreateFormSlider(body, "Icon Size", 8, 32, 1, "iconSize", ai, onChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormSlider(body, "Max Indicators", 1, 10, 1, "maxIndicators", ai, onChange), SLIDER_HEIGHT, cond)
+        L:Row(GUI:CreateFormCheckbox(body, "Reverse Swipe", "reverseSwipe", ai, onChange), FORM_ROW, cond)
         L:Row(GUI:CreateFormDropdown(body, "Anchor", NINE_POINT_OPTIONS, "anchor", ai, onChange), DROP_ROW, cond)
         L:Row(GUI:CreateFormDropdown(body, "Grow Direction", AURA_GROW_OPTIONS, "growDirection", ai, onChange), DROP_ROW, cond)
         L:Row(GUI:CreateFormSlider(body, "Spacing", 0, 8, 1, "spacing", ai, onChange), SLIDER_HEIGHT, cond)
@@ -1391,24 +1407,844 @@ local function BuildAuraIndicatorsSettings(content, gfdb, onChange)
         L:Finish()
     end, sections, relayout)
 
-    CreateComposerCollapsible(content, "Tracked Spells", function(body, updateH)
-        local desc = GUI:CreateLabel(body, "Toggle which spells are tracked for your current spec.", 11, C and C.textMuted); desc:SetJustifyH("LEFT")
-        desc:SetPoint("TOPLEFT", PAD, -6)
-        desc:SetPoint("RIGHT", body, "RIGHT", -PAD, 0)
-        if not ai.trackedSpells then ai.trackedSpells = {} end
-        local _, spellListContainer = BuildSpellListSection(body, function() return ai.trackedSpells end, function()
-            if not spellListContainer then return end
-            spellListContainer:ClearAllPoints()
-            spellListContainer:SetPoint("TOPLEFT", PAD, -30)
-            spellListContainer:SetPoint("RIGHT", body, "RIGHT", -PAD, 0)
-            body:SetHeight(30 + spellListContainer:GetHeight() + 10)
-            updateH()
+    CreateComposerCollapsible(content, "Tracked Auras", function(body, updateH)
+        if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+
+        local auraRows = {}
+        local suggestRows = {}
+        local indicatorRows = {}
+        local detailWidgets = {}
+        local selectedAuraIndex = 1
+        local selectedIndicatorIndex = 1
+
+        local title = body:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOPLEFT", PAD, -6)
+
+        local subtitle = GUI:CreateLabel(body, "Add tracked auras, then attach one or more indicator types to each aura.", 11, C and C.textMuted)
+        subtitle:SetJustifyH("LEFT")
+        subtitle:SetPoint("TOPLEFT", PAD, -24)
+        subtitle:SetPoint("RIGHT", body, "RIGHT", -PAD, 0)
+
+        local auraListArea = CreateFrame("Frame", nil, body)
+        auraListArea:SetPoint("TOPLEFT", PAD, -48)
+        auraListArea:SetPoint("RIGHT", body, "RIGHT", -PAD, 0)
+        auraListArea:SetHeight(1)
+        local AURA_ROW_HEIGHT, AURA_ROW_STEP = 28, 30
+        local INDICATOR_ROW_HEIGHT, INDICATOR_ROW_STEP = 24, 26
+
+        local auraRowsContainer = CreateFrame("Frame", nil, auraListArea)
+        auraRowsContainer:SetPoint("TOPLEFT", 0, 0)
+        auraRowsContainer:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+        auraRowsContainer:SetHeight(1)
+
+        local indicatorRowsContainer = CreateFrame("Frame", nil, auraListArea)
+        indicatorRowsContainer:SetPoint("TOPLEFT", 0, 0)
+        indicatorRowsContainer:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+        indicatorRowsContainer:SetHeight(1)
+
+        local addHeader = auraListArea:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        addHeader:SetJustifyH("LEFT")
+
+        local inputRow = CreateFrame("Frame", nil, auraListArea)
+        inputRow:SetHeight(24)
+
+        local inputBox = CreateFrame("EditBox", nil, inputRow, "BackdropTemplate")
+        inputBox:SetSize(80, 20)
+        inputBox:SetPoint("LEFT", 4, 0)
+        inputBox:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+        inputBox:SetBackdropColor(0.06, 0.06, 0.08, 1)
+        inputBox:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
+        inputBox:SetFontObject("GameFontNormalSmall")
+        inputBox:SetAutoFocus(false)
+        inputBox:SetMaxLetters(10)
+        inputBox:SetTextInsets(4, 4, 0, 0)
+        inputBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+
+        local inputLabel = inputRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        inputLabel:SetPoint("LEFT", inputBox, "RIGHT", 4, 0)
+        inputLabel:SetText("Spell ID")
+        inputLabel:SetTextColor(0.5, 0.5, 0.5)
+
+        local addManualBtn = CreateFrame("Button", nil, inputRow, "BackdropTemplate")
+        addManualBtn:SetSize(40, 20)
+        addManualBtn:SetPoint("RIGHT", inputRow, "RIGHT", -2, 0)
+        addManualBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+        addManualBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
+        addManualBtn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+        local addManualText = addManualBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        addManualText:SetPoint("CENTER")
+        addManualText:SetText("Add")
+
+        local indicatorActionsRow = CreateFrame("Frame", nil, auraListArea)
+        indicatorActionsRow:SetHeight(26)
+        indicatorActionsRow:SetPoint("TOPLEFT", auraListArea, "TOPLEFT", 0, 0)
+        indicatorActionsRow:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+
+        local addIconBtn = GUI:CreateButton(indicatorActionsRow, "Add Icon", 74, 22)
+        addIconBtn:SetPoint("LEFT", 0, 0)
+        local addBarBtn = GUI:CreateButton(indicatorActionsRow, "Add Bar", 68, 22)
+        addBarBtn:SetPoint("LEFT", addIconBtn, "RIGHT", 6, 0)
+        local addTintBtn = GUI:CreateButton(indicatorActionsRow, "Add Tint", 72, 22)
+        addTintBtn:SetPoint("LEFT", addBarBtn, "RIGHT", 6, 0)
+
+        local selectedAuraLabel = auraListArea:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        selectedAuraLabel:SetJustifyH("LEFT")
+
+        local detailArea = CreateFrame("Frame", nil, auraListArea)
+        detailArea:SetPoint("TOPLEFT", auraListArea, "TOPLEFT", 0, 0)
+        detailArea:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+        detailArea:SetHeight(1)
+
+        local function CreateDropPlaceholder(parent, height)
+            local placeholder = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+            placeholder:SetHeight(height)
+            ApplyPixelBackdrop(placeholder, 1, true)
+            placeholder:SetBackdropColor(C.accent[1] or 0.3, C.accent[2] or 0.7, C.accent[3] or 1, 0.12)
+            placeholder:SetBackdropBorderColor(C.accent[1] or 0.3, C.accent[2] or 0.7, C.accent[3] or 1, 0.85)
+            placeholder:Hide()
+            return placeholder
+        end
+
+        local auraPlaceholder = CreateDropPlaceholder(auraRowsContainer, AURA_ROW_HEIGHT)
+        local indicatorPlaceholder = CreateDropPlaceholder(indicatorRowsContainer, INDICATOR_ROW_HEIGHT)
+        local auraDragState = {}
+        local indicatorDragState = {}
+
+        local function NotifyChanged()
+            if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
             if onChange then onChange() end
-        end, -30)
-        spellListContainer:ClearAllPoints()
-        spellListContainer:SetPoint("TOPLEFT", PAD, -30)
-        spellListContainer:SetPoint("RIGHT", body, "RIGHT", -PAD, 0)
-        body:SetHeight(30 + spellListContainer:GetHeight() + 10)
+        end
+
+        local function LayoutDraggableRows(container, rows, placeholder, rowHeight, rowStep, skipRow, insertIndex)
+            local nextY = 0
+            local placedPlaceholder = false
+
+            for idx, row in ipairs(rows) do
+                if skipRow and insertIndex == idx and not placedPlaceholder then
+                    placeholder:ClearAllPoints()
+                    placeholder:SetPoint("TOPLEFT", container, "TOPLEFT", 0, nextY)
+                    placeholder:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+                    placeholder:Show()
+                    nextY = nextY - rowStep
+                    placedPlaceholder = true
+                end
+
+                if row ~= skipRow then
+                    row:ClearAllPoints()
+                    row:SetPoint("TOPLEFT", container, "TOPLEFT", 0, nextY)
+                    row:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+                    nextY = nextY - rowStep
+                end
+            end
+
+            if skipRow and not placedPlaceholder then
+                placeholder:ClearAllPoints()
+                placeholder:SetPoint("TOPLEFT", container, "TOPLEFT", 0, nextY)
+                placeholder:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+                placeholder:Show()
+                nextY = nextY - rowStep
+            elseif placeholder then
+                placeholder:Hide()
+            end
+
+            local usedHeight = math.max(0, math.abs(nextY))
+            container:SetHeight(math.max(1, usedHeight))
+            return usedHeight
+        end
+
+        local function ComputeDropIndex(rows, container, rowStep)
+            local rowCount = #rows
+            if rowCount <= 1 then
+                return 1
+            end
+
+            local scale = UIParent:GetEffectiveScale() or 1
+            local _, cursorY = GetCursorPosition()
+            cursorY = (cursorY or 0) / scale
+            local topY = container:GetTop()
+            if not topY then
+                return rowCount
+            end
+
+            local relative = topY - cursorY
+            local slot = math.floor((relative + (rowStep * 0.5)) / rowStep) + 1
+            if slot < 1 then slot = 1 end
+            if slot > (rowCount + 1) then slot = rowCount + 1 end
+            return slot
+        end
+
+        local function CommitReorder(list, fromIndex, toIndex)
+            if type(list) ~= "table" then
+                return false, fromIndex
+            end
+
+            local len = #list
+            if fromIndex < 1 or fromIndex > len then
+                return false, fromIndex
+            end
+
+            local targetIndex = toIndex
+            if targetIndex > fromIndex then
+                targetIndex = targetIndex - 1
+            end
+            if targetIndex < 1 then targetIndex = 1 end
+            if targetIndex > len then targetIndex = len end
+            if targetIndex == fromIndex then
+                return false, fromIndex
+            end
+
+            local moving = table.remove(list, fromIndex)
+            table.insert(list, targetIndex, moving)
+            return true, targetIndex
+        end
+
+        local function RemapSelectedIndex(selectedIndex, fromIndex, toIndex)
+            if not selectedIndex then
+                return selectedIndex
+            end
+            if selectedIndex == fromIndex then
+                return toIndex
+            end
+            if fromIndex < selectedIndex and toIndex >= selectedIndex then
+                return selectedIndex - 1
+            end
+            if fromIndex > selectedIndex and toIndex <= selectedIndex then
+                return selectedIndex + 1
+            end
+            return selectedIndex
+        end
+
+        local function CountIndicatorTypes(entry)
+            local icons, bars, tints = 0, 0, 0
+            for _, indicator in ipairs(entry.indicators or {}) do
+                if indicator.type == "bar" then
+                    bars = bars + 1
+                elseif indicator.type == "healthBarColor" then
+                    tints = tints + 1
+                else
+                    icons = icons + 1
+                end
+            end
+            return icons, bars, tints
+        end
+
+        local function GetIndicatorLabel(indicator, index)
+            if indicator.type == "bar" then
+                return "Bar " .. index
+            elseif indicator.type == "healthBarColor" then
+                return "Health Bar Tint " .. index
+            end
+            return "Icon " .. index
+        end
+
+        local function AcquireAuraRow()
+            local row = table.remove(auraRows)
+            if row then
+                row:Show()
+                row:ClearAllPoints()
+                return row
+            end
+
+            row = CreateFrame("Button", nil, auraListArea, "BackdropTemplate")
+            row:SetHeight(28)
+            row:RegisterForClicks("LeftButtonUp")
+            row:SetMovable(true)
+            row:RegisterForDrag("LeftButton")
+            ApplyPixelBackdrop(row, 1, true)
+
+            row.dragHandle = CreateFrame("Frame", nil, row, "BackdropTemplate")
+            row.dragHandle:SetPoint("TOPLEFT", row, "TOPLEFT", 2, -2)
+            row.dragHandle:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 2, 2)
+            row.dragHandle:SetWidth(22)
+            ApplyPixelBackdrop(row.dragHandle, 1, true)
+            row.dragHandle:SetBackdropColor(0.14, 0.14, 0.16, 0.65)
+            row.dragHandle:SetBackdropBorderColor(0.24, 0.24, 0.28, 1)
+            row.dragHandle:EnableMouse(false)
+
+            row.dragHint = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.dragHint:SetPoint("CENTER", row.dragHandle, "CENTER", 0, 0)
+            row.dragHint:SetText("::")
+            row.dragHint:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+
+            row.icon = row:CreateTexture(nil, "ARTWORK")
+            row.icon:SetSize(16, 16)
+            row.icon:SetPoint("LEFT", row.dragHandle, "RIGHT", 6, 0)
+            row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+            row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.name:SetPoint("LEFT", row.icon, "RIGHT", 4, 0)
+            row.name:SetJustifyH("LEFT")
+
+            row.summary = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            row.summary:SetJustifyH("RIGHT")
+
+            row.remove = CreateFrame("Button", nil, row)
+            row.remove:SetSize(18, 18)
+            row.remove:SetPoint("RIGHT", -4, 0)
+            row.removeText = row.remove:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.removeText:SetPoint("CENTER")
+            row.removeText:SetText("\195\151")
+            row.removeText:SetTextColor(0.8, 0.3, 0.3)
+            row.remove:SetScript("OnEnter", function() row.removeText:SetTextColor(1, 0.4, 0.4) end)
+            row.remove:SetScript("OnLeave", function() row.removeText:SetTextColor(0.8, 0.3, 0.3) end)
+            row.summary:SetPoint("RIGHT", row.remove, "LEFT", -6, 0)
+
+            return row
+        end
+
+        local activeAuraRows = {}
+        local function ReleaseAuraRows()
+            for _, row in ipairs(activeAuraRows) do
+                row:Hide()
+                row:ClearAllPoints()
+                row.remove:SetScript("OnClick", nil)
+                row:SetScript("OnDragStart", nil)
+                row:SetScript("OnDragStop", nil)
+                row:SetScript("OnUpdate", nil)
+                row:SetScript("OnClick", nil)
+                row:SetAlpha(1)
+                if row.dragHandle then
+                    row.dragHandle:SetBackdropBorderColor(0.24, 0.24, 0.28, 1)
+                end
+                table.insert(auraRows, row)
+            end
+            wipe(activeAuraRows)
+        end
+
+        local function AcquireSuggestRow()
+            local row = table.remove(suggestRows)
+            if row then
+                row:Show()
+                row:ClearAllPoints()
+                return row
+            end
+
+            row = CreateFrame("Frame", nil, auraListArea)
+            row:SetHeight(22)
+            row.icon = row:CreateTexture(nil, "ARTWORK")
+            row.icon:SetSize(14, 14)
+            row.icon:SetPoint("LEFT", 4, 0)
+            row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+            row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.name:SetPoint("LEFT", row.icon, "RIGHT", 4, 0)
+            row.name:SetJustifyH("LEFT")
+
+            row.add = CreateFrame("Button", nil, row)
+            row.add:SetSize(18, 18)
+            row.add:SetPoint("RIGHT", -2, 0)
+            row.addText = row.add:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.addText:SetPoint("CENTER")
+            row.addText:SetText("+")
+            row.addText:SetTextColor(0.3, 0.8, 0.3)
+
+            return row
+        end
+
+        local activeSuggestRows = {}
+        local function ReleaseSuggestRows()
+            for _, row in ipairs(activeSuggestRows) do
+                row:Hide()
+                row:ClearAllPoints()
+                row.add:SetScript("OnClick", nil)
+                table.insert(suggestRows, row)
+            end
+            wipe(activeSuggestRows)
+        end
+
+        local function AcquireIndicatorRow()
+            local row = table.remove(indicatorRows)
+            if row then
+                row:Show()
+                row:ClearAllPoints()
+                return row
+            end
+
+            row = CreateFrame("Button", nil, auraListArea, "BackdropTemplate")
+            row:SetHeight(24)
+            row:RegisterForClicks("LeftButtonUp")
+            row:SetMovable(true)
+            row:RegisterForDrag("LeftButton")
+            ApplyPixelBackdrop(row, 1, true)
+
+            row.dragHandle = CreateFrame("Frame", nil, row, "BackdropTemplate")
+            row.dragHandle:SetPoint("TOPLEFT", row, "TOPLEFT", 2, -2)
+            row.dragHandle:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 2, 2)
+            row.dragHandle:SetWidth(22)
+            ApplyPixelBackdrop(row.dragHandle, 1, true)
+            row.dragHandle:SetBackdropColor(0.14, 0.14, 0.16, 0.65)
+            row.dragHandle:SetBackdropBorderColor(0.24, 0.24, 0.28, 1)
+            row.dragHandle:EnableMouse(false)
+
+            row.dragHint = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.dragHint:SetPoint("CENTER", row.dragHandle, "CENTER", 0, 0)
+            row.dragHint:SetText("::")
+            row.dragHint:SetTextColor(C.textMuted[1], C.textMuted[2], C.textMuted[3], 1)
+
+            row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.label:SetPoint("LEFT", row.dragHandle, "RIGHT", 8, 0)
+            row.label:SetJustifyH("LEFT")
+
+            row.remove = CreateFrame("Button", nil, row)
+            row.remove:SetSize(18, 18)
+            row.remove:SetPoint("RIGHT", -4, 0)
+            row.removeText = row.remove:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.removeText:SetPoint("CENTER")
+            row.removeText:SetText("\195\151")
+            row.removeText:SetTextColor(0.8, 0.3, 0.3)
+            row.remove:SetScript("OnEnter", function() row.removeText:SetTextColor(1, 0.4, 0.4) end)
+            row.remove:SetScript("OnLeave", function() row.removeText:SetTextColor(0.8, 0.3, 0.3) end)
+
+            return row
+        end
+
+        local activeIndicatorRows = {}
+        local function ReleaseIndicatorRows()
+            for _, row in ipairs(activeIndicatorRows) do
+                row:Hide()
+                row:ClearAllPoints()
+                row.remove:SetScript("OnClick", nil)
+                row:SetScript("OnDragStart", nil)
+                row:SetScript("OnDragStop", nil)
+                row:SetScript("OnUpdate", nil)
+                row:SetScript("OnClick", nil)
+                row:SetAlpha(1)
+                if row.dragHandle then
+                    row.dragHandle:SetBackdropBorderColor(0.24, 0.24, 0.28, 1)
+                end
+                table.insert(indicatorRows, row)
+            end
+            wipe(activeIndicatorRows)
+        end
+
+        local function ClearDetailWidgets()
+            for _, widget in ipairs(detailWidgets) do
+                widget:Hide()
+            end
+            wipe(detailWidgets)
+        end
+
+        local function RegisterDetailWidget(widget)
+            detailWidgets[#detailWidgets + 1] = widget
+            return widget
+        end
+
+        local function AddNewAura(spellID)
+            if not ai.entries then ai.entries = {} end
+            ai.entries[#ai.entries + 1] = {
+                spellID = tonumber(spellID) or spellID,
+                enabled = true,
+                indicators = {
+                    { type = "icon", enabled = true },
+                },
+            }
+            if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+            selectedAuraIndex = #ai.entries
+            selectedIndicatorIndex = 1
+            NotifyChanged()
+        end
+
+        local RebuildAuraList
+
+        local function AddIndicator(indicatorType)
+            local entry = ai.entries and ai.entries[selectedAuraIndex]
+            if not entry then return end
+            entry.indicators[#entry.indicators + 1] = { type = indicatorType, enabled = true }
+            if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+            selectedIndicatorIndex = #entry.indicators
+            NotifyChanged()
+            if RebuildAuraList then RebuildAuraList() end
+        end
+
+        addIconBtn:SetScript("OnClick", function() AddIndicator("icon") end)
+        addBarBtn:SetScript("OnClick", function() AddIndicator("bar") end)
+        addTintBtn:SetScript("OnClick", function() AddIndicator("healthBarColor") end)
+
+        addManualBtn:SetScript("OnClick", function()
+            local id = tonumber(inputBox:GetText())
+            if id and id > 0 then
+                AddNewAura(id)
+                inputBox:SetText("")
+                inputBox:ClearFocus()
+                if RebuildAuraList then RebuildAuraList() end
+            end
+        end)
+        inputBox:SetScript("OnEnterPressed", function()
+            local click = addManualBtn:GetScript("OnClick")
+            if click then click(addManualBtn) end
+        end)
+
+        RebuildAuraList = function()
+            if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+            local entries = ai.entries or {}
+            if #entries == 0 then
+                selectedAuraIndex = 1
+                selectedIndicatorIndex = 1
+            else
+                selectedAuraIndex = math.max(1, math.min(selectedAuraIndex, #entries))
+                local selectedEntry = entries[selectedAuraIndex]
+                local indicatorCount = #(selectedEntry and selectedEntry.indicators or {})
+                selectedIndicatorIndex = math.max(1, math.min(selectedIndicatorIndex, math.max(indicatorCount, 1)))
+            end
+
+            ReleaseAuraRows()
+            ReleaseSuggestRows()
+            ReleaseIndicatorRows()
+            ClearDetailWidgets()
+
+            local specID = GetPlayerSpecID()
+            local _, specName = specID and GetSpecializationInfoByID(specID) or nil, nil
+            if specID then
+                local _, specDisplayName = GetSpecializationInfoByID(specID)
+                specName = specDisplayName
+            end
+            title:SetText("|cFF34D399" .. (specName or "Tracked Auras") .. "|r")
+
+            local y = 0
+            for idx, entry in ipairs(entries) do
+                local row = AcquireAuraRow()
+                row:SetParent(auraRowsContainer)
+
+                local tex
+                if C_Spell and C_Spell.GetSpellTexture then
+                    local ok, t = pcall(C_Spell.GetSpellTexture, entry.spellID)
+                    if ok and t then tex = t end
+                end
+                row.icon:SetTexture(tex or 134400)
+
+                local spellName = GetSpellName(entry.spellID) or ("Spell " .. tostring(entry.spellID))
+                row.name:SetText((entry.enabled ~= false and "|cFFFFFFFF" or "|cFF808080") .. spellName .. "|r")
+
+                local iconCount, barCount, tintCount = CountIndicatorTypes(entry)
+                row.summary:SetText(string.format("I:%d B:%d T:%d", iconCount, barCount, tintCount))
+
+                local selected = idx == selectedAuraIndex
+                row:SetBackdropColor(selected and 0.16 or 0.08, selected and 0.16 or 0.08, selected and 0.2 or 0.08, 0.9)
+                row:SetBackdropBorderColor(
+                    selected and (C.accent[1] or 0.3) or (C.border[1] or 0.2),
+                    selected and (C.accent[2] or 0.7) or (C.border[2] or 0.2),
+                    selected and (C.accent[3] or 1) or (C.border[3] or 0.2),
+                    1
+                )
+
+                row:SetScript("OnClick", function()
+                    if auraDragState.suppressClick then
+                        auraDragState.suppressClick = nil
+                        return
+                    end
+                    selectedAuraIndex = idx
+                    selectedIndicatorIndex = 1
+                    RebuildAuraList()
+                end)
+                row:SetScript("OnDragStart", function(self)
+                    auraDragState.active = true
+                    auraDragState.row = self
+                    auraDragState.fromIndex = idx
+                    auraDragState.toIndex = idx
+                    auraDragState.baseStrata = self:GetFrameStrata()
+                    auraDragState.baseLevel = self:GetFrameLevel()
+                    auraDragState.baseAlpha = self:GetAlpha()
+                    self:StartMoving()
+                    self:SetFrameStrata("TOOLTIP")
+                    self:SetFrameLevel(400)
+                    self:SetAlpha(0.92)
+                    self.dragHandle:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                    LayoutDraggableRows(auraRowsContainer, activeAuraRows, auraPlaceholder, AURA_ROW_HEIGHT, AURA_ROW_STEP, self, auraDragState.toIndex)
+                    self:SetScript("OnUpdate", function(dragged)
+                        if not auraDragState.active then return end
+                        local nextIndex = ComputeDropIndex(activeAuraRows, auraRowsContainer, AURA_ROW_STEP)
+                        if nextIndex ~= auraDragState.toIndex then
+                            auraDragState.toIndex = nextIndex
+                            LayoutDraggableRows(auraRowsContainer, activeAuraRows, auraPlaceholder, AURA_ROW_HEIGHT, AURA_ROW_STEP, dragged, auraDragState.toIndex)
+                        end
+                    end)
+                end)
+                row:SetScript("OnDragStop", function(self)
+                    if not auraDragState.active then
+                        return
+                    end
+                    self:StopMovingOrSizing()
+                    self:SetScript("OnUpdate", nil)
+                    self:SetAlpha(auraDragState.baseAlpha or 1)
+                    self:SetFrameStrata(auraDragState.baseStrata or "MEDIUM")
+                    if auraDragState.baseLevel then
+                        self:SetFrameLevel(auraDragState.baseLevel)
+                    end
+                    self.dragHandle:SetBackdropBorderColor(0.24, 0.24, 0.28, 1)
+                    auraDragState.active = false
+                    local changed, targetIndex = CommitReorder(entries, auraDragState.fromIndex or idx, auraDragState.toIndex or idx)
+                    auraDragState.row = nil
+                    auraDragState.fromIndex = nil
+                    auraDragState.toIndex = nil
+                    auraDragState.baseStrata = nil
+                    auraDragState.baseLevel = nil
+                    auraDragState.baseAlpha = nil
+                    auraPlaceholder:Hide()
+                    if changed then
+                        selectedAuraIndex = RemapSelectedIndex(selectedAuraIndex, idx, targetIndex)
+                        auraDragState.suppressClick = true
+                        NotifyChanged()
+                    end
+                    RebuildAuraList()
+                end)
+                row.remove:SetScript("OnClick", function()
+                    table.remove(entries, idx)
+                    NotifyChanged()
+                    RebuildAuraList()
+                end)
+
+                activeAuraRows[#activeAuraRows + 1] = row
+            end
+
+            local auraRowsHeight = LayoutDraggableRows(auraRowsContainer, activeAuraRows, auraPlaceholder, AURA_ROW_HEIGHT, AURA_ROW_STEP)
+            y = -(auraRowsHeight + 4)
+            addHeader:ClearAllPoints()
+            addHeader:SetPoint("TOPLEFT", 0, y)
+            addHeader:SetText("|cFFAAAAAAAdd Tracked Aura:|r")
+            y = y - 16
+
+            inputRow:ClearAllPoints()
+            inputRow:SetPoint("TOPLEFT", 0, y)
+            inputRow:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+            y = y - 28
+
+            local assigned = {}
+            for _, entry in ipairs(entries) do
+                assigned[entry.spellID] = true
+            end
+
+            local suggestions = {}
+            if specID and SPEC_TO_PRESET[specID] then
+                for _, spell in ipairs(SPEC_TO_PRESET[specID].spells) do
+                    if not assigned[spell.id] then
+                        suggestions[#suggestions + 1] = spell
+                    end
+                end
+            end
+            if COMMON_DEFENSIVES_PRESET then
+                for _, spell in ipairs(COMMON_DEFENSIVES_PRESET.spells) do
+                    if not assigned[spell.id] then
+                        suggestions[#suggestions + 1] = spell
+                    end
+                end
+            end
+
+            for _, spell in ipairs(suggestions) do
+                local row = AcquireSuggestRow()
+                row:SetParent(auraListArea)
+                row:SetPoint("TOPLEFT", 0, y)
+                row:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+
+                local tex
+                if C_Spell and C_Spell.GetSpellTexture then
+                    local ok, t = pcall(C_Spell.GetSpellTexture, spell.id)
+                    if ok and t then tex = t end
+                end
+                row.icon:SetTexture(tex or 134400)
+                row.name:SetText(spell.name or GetSpellName(spell.id) or ("Spell " .. spell.id))
+                row.add:SetScript("OnClick", function()
+                    AddNewAura(spell.id)
+                    RebuildAuraList()
+                end)
+
+                activeSuggestRows[#activeSuggestRows + 1] = row
+                y = y - 22
+            end
+
+            local selectedEntry = entries[selectedAuraIndex]
+            if selectedEntry then
+                y = y - 10
+                selectedAuraLabel:ClearAllPoints()
+                selectedAuraLabel:SetPoint("TOPLEFT", 0, y)
+                selectedAuraLabel:SetText("Configure: " .. (GetSpellName(selectedEntry.spellID) or ("Spell " .. tostring(selectedEntry.spellID))))
+                y = y - 22
+
+                indicatorActionsRow:ClearAllPoints()
+                indicatorActionsRow:SetPoint("TOPLEFT", 0, y)
+                indicatorActionsRow:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+                indicatorActionsRow:Show()
+                y = y - 30
+
+                local indicatorCount = #(selectedEntry.indicators or {})
+                if indicatorCount == 0 then
+                    selectedIndicatorIndex = 1
+                else
+                    selectedIndicatorIndex = math.max(1, math.min(selectedIndicatorIndex, indicatorCount))
+                end
+
+                for idx, indicator in ipairs(selectedEntry.indicators or {}) do
+                    local row = AcquireIndicatorRow()
+                    row:SetParent(indicatorRowsContainer)
+                    row.label:SetText(GetIndicatorLabel(indicator, idx))
+
+                    local selected = idx == selectedIndicatorIndex
+                    row:SetBackdropColor(selected and 0.15 or 0.07, selected and 0.15 or 0.07, selected and 0.18 or 0.07, 0.9)
+                    row:SetBackdropBorderColor(
+                        selected and (C.accent[1] or 0.3) or (C.border[1] or 0.2),
+                        selected and (C.accent[2] or 0.7) or (C.border[2] or 0.2),
+                        selected and (C.accent[3] or 1) or (C.border[3] or 0.2),
+                        1
+                    )
+
+                    row:SetScript("OnClick", function()
+                        if indicatorDragState.suppressClick then
+                            indicatorDragState.suppressClick = nil
+                            return
+                        end
+                        selectedIndicatorIndex = idx
+                        RebuildAuraList()
+                    end)
+                    row:SetScript("OnDragStart", function(self)
+                        indicatorDragState.active = true
+                        indicatorDragState.row = self
+                        indicatorDragState.fromIndex = idx
+                        indicatorDragState.toIndex = idx
+                        indicatorDragState.baseStrata = self:GetFrameStrata()
+                        indicatorDragState.baseLevel = self:GetFrameLevel()
+                        indicatorDragState.baseAlpha = self:GetAlpha()
+                        self:StartMoving()
+                        self:SetFrameStrata("TOOLTIP")
+                        self:SetFrameLevel(401)
+                        self:SetAlpha(0.92)
+                        self.dragHandle:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+                        LayoutDraggableRows(indicatorRowsContainer, activeIndicatorRows, indicatorPlaceholder, INDICATOR_ROW_HEIGHT, INDICATOR_ROW_STEP, self, indicatorDragState.toIndex)
+                        self:SetScript("OnUpdate", function(dragged)
+                            if not indicatorDragState.active then return end
+                            local nextIndex = ComputeDropIndex(activeIndicatorRows, indicatorRowsContainer, INDICATOR_ROW_STEP)
+                            if nextIndex ~= indicatorDragState.toIndex then
+                                indicatorDragState.toIndex = nextIndex
+                                LayoutDraggableRows(indicatorRowsContainer, activeIndicatorRows, indicatorPlaceholder, INDICATOR_ROW_HEIGHT, INDICATOR_ROW_STEP, dragged, indicatorDragState.toIndex)
+                            end
+                        end)
+                    end)
+                    row:SetScript("OnDragStop", function(self)
+                        if not indicatorDragState.active then
+                            return
+                        end
+                        self:StopMovingOrSizing()
+                        self:SetScript("OnUpdate", nil)
+                        self:SetAlpha(indicatorDragState.baseAlpha or 1)
+                        self:SetFrameStrata(indicatorDragState.baseStrata or "MEDIUM")
+                        if indicatorDragState.baseLevel then
+                            self:SetFrameLevel(indicatorDragState.baseLevel)
+                        end
+                        self.dragHandle:SetBackdropBorderColor(0.24, 0.24, 0.28, 1)
+                        indicatorDragState.active = false
+                        local changed, targetIndex = CommitReorder(selectedEntry.indicators, indicatorDragState.fromIndex or idx, indicatorDragState.toIndex or idx)
+                        indicatorDragState.row = nil
+                        indicatorDragState.fromIndex = nil
+                        indicatorDragState.toIndex = nil
+                        indicatorDragState.baseStrata = nil
+                        indicatorDragState.baseLevel = nil
+                        indicatorDragState.baseAlpha = nil
+                        indicatorPlaceholder:Hide()
+                        if changed then
+                            selectedIndicatorIndex = RemapSelectedIndex(selectedIndicatorIndex, idx, targetIndex)
+                            indicatorDragState.suppressClick = true
+                            NotifyChanged()
+                        end
+                        RebuildAuraList()
+                    end)
+                    row.remove:SetScript("OnClick", function()
+                        table.remove(selectedEntry.indicators, idx)
+                        if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+                        NotifyChanged()
+                        RebuildAuraList()
+                    end)
+
+                    activeIndicatorRows[#activeIndicatorRows + 1] = row
+                end
+
+                indicatorRowsContainer:ClearAllPoints()
+                indicatorRowsContainer:SetPoint("TOPLEFT", 0, y)
+                indicatorRowsContainer:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+                local indicatorRowsHeight = LayoutDraggableRows(indicatorRowsContainer, activeIndicatorRows, indicatorPlaceholder, INDICATOR_ROW_HEIGHT, INDICATOR_ROW_STEP)
+                y = y - indicatorRowsHeight
+
+                local selectedIndicator = selectedEntry.indicators and selectedEntry.indicators[selectedIndicatorIndex]
+                if selectedIndicator then
+                    y = y - 6
+                    detailArea:ClearAllPoints()
+                    detailArea:SetPoint("TOPLEFT", 0, y)
+                    detailArea:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+
+                    local detailY = -2
+                    local function AddDetailWidget(widget, height)
+                        RegisterDetailWidget(widget)
+                        widget:ClearAllPoints()
+                        widget:SetPoint("TOPLEFT", PAD, detailY)
+                        widget:SetPoint("RIGHT", detailArea, "RIGHT", -PAD, 0)
+                        detailY = detailY - height
+                    end
+
+                    AddDetailWidget(GUI:CreateFormCheckbox(detailArea, "Aura Enabled", "enabled", selectedEntry, function()
+                        NotifyChanged()
+                        RebuildAuraList()
+                    end), FORM_ROW)
+                    AddDetailWidget(GUI:CreateFormDropdown(detailArea, "Indicator Type", AURA_INDICATOR_TYPE_OPTIONS, "type", selectedIndicator, function()
+                        if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+                        NotifyChanged()
+                        RebuildAuraList()
+                    end), DROP_ROW)
+
+                    AddDetailWidget(GUI:CreateFormCheckbox(detailArea, "Indicator Enabled", "enabled", selectedIndicator, function()
+                        NotifyChanged()
+                        RebuildAuraList()
+                    end), FORM_ROW)
+
+                    if selectedIndicator.type == "bar" then
+                        AddDetailWidget(GUI:CreateFormDropdown(detailArea, "Orientation", BAR_ORIENTATION_OPTIONS, "orientation", selectedIndicator, function()
+                            NotifyChanged()
+                            RebuildAuraList()
+                        end), DROP_ROW)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "Thickness", 1, 20, 1, "thickness", selectedIndicator, onChange), SLIDER_HEIGHT)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "Width / Height", 4, 200, 1, "length", selectedIndicator, onChange), SLIDER_HEIGHT)
+                        AddDetailWidget(GUI:CreateFormCheckbox(detailArea, "Match Frame Width / Height", "matchFrameSize", selectedIndicator, function()
+                            NotifyChanged()
+                            RebuildAuraList()
+                        end), FORM_ROW)
+                        AddDetailWidget(GUI:CreateFormDropdown(detailArea, "Anchor", NINE_POINT_OPTIONS, "anchor", selectedIndicator, onChange), DROP_ROW)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "X Offset", -100, 100, 1, "offsetX", selectedIndicator, onChange), SLIDER_HEIGHT)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "Y Offset", -100, 100, 1, "offsetY", selectedIndicator, onChange), SLIDER_HEIGHT)
+                        AddDetailWidget(GUI:CreateFormColorPicker(detailArea, "Bar Color", "color", selectedIndicator, onChange), FORM_ROW)
+                        AddDetailWidget(GUI:CreateFormColorPicker(detailArea, "Background Color", "backgroundColor", selectedIndicator, onChange), FORM_ROW)
+                        AddDetailWidget(GUI:CreateFormCheckbox(detailArea, "Hide Border", "hideBorder", selectedIndicator, function()
+                            NotifyChanged()
+                            RebuildAuraList()
+                        end), FORM_ROW)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "Border Size", 1, 8, 1, "borderSize", selectedIndicator, onChange), SLIDER_HEIGHT, function() return selectedIndicator.hideBorder ~= true end)
+                        AddDetailWidget(GUI:CreateFormColorPicker(detailArea, "Border Color", "borderColor", selectedIndicator, onChange), FORM_ROW)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "Low-Time Seconds", 0, 30, 0.5, "lowTimeThreshold", selectedIndicator, onChange, { precision = 1 }), SLIDER_HEIGHT)
+                        AddDetailWidget(GUI:CreateFormColorPicker(detailArea, "Low-Time Color", "lowTimeColor", selectedIndicator, onChange), FORM_ROW)
+                    elseif selectedIndicator.type == "healthBarColor" then
+                        AddDetailWidget(GUI:CreateFormColorPicker(detailArea, "Tint Color", "color", selectedIndicator, onChange), FORM_ROW)
+                    else
+                        local note = GUI:CreateLabel(detailArea, "Icon indicators use the shared icon-strip settings in the section above.", 11, C and C.textMuted)
+                        note:SetJustifyH("LEFT")
+                        AddDetailWidget(note, 28)
+                    end
+
+                    detailArea:SetHeight(math.abs(detailY) + 8)
+                    y = y - (detailArea:GetHeight() + 4)
+                else
+                    indicatorActionsRow:Hide()
+                    detailArea:SetHeight(1)
+                end
+            else
+                selectedAuraLabel:SetText("No tracked auras yet.")
+                selectedAuraLabel:ClearAllPoints()
+                selectedAuraLabel:SetPoint("TOPLEFT", 0, y)
+                indicatorActionsRow:Hide()
+                detailArea:SetHeight(1)
+                y = y - 24
+            end
+
+            auraListArea:SetHeight(math.max(1, math.abs(y)))
+            body:SetHeight(56 + auraListArea:GetHeight())
+            updateH()
+        end
+
+        RebuildAuraList()
     end, sections, relayout)
 
     relayout()
@@ -1638,6 +2474,7 @@ local function BuildPinnedAurasSettings(content, gfdb, onChange)
         L:Row(GUI:CreateFormSlider(body, "Slot Size", 4, 20, 1, "slotSize", pa, onChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormSlider(body, "Edge Inset", 0, 10, 1, "edgeInset", pa, onChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormCheckbox(body, "Show Cooldown Swipe", "showSwipe", pa, onChange), FORM_ROW, cond)
+        L:Row(GUI:CreateFormCheckbox(body, "Reverse Swipe", "reverseSwipe", pa, onChange), FORM_ROW, function() return pa.enabled and pa.showSwipe end)
         L:Finish()
     end, sections, relayout)
 
@@ -2458,18 +3295,95 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     -- Aura indicator preview
     local aiDB = db.auraIndicators or {}
     if aiDB.enabled then
-        local aiSize = (aiDB.iconSize or 14) * PREVIEW_SCALE
-        local aiMax = aiDB.maxIndicators or 3
-        local aiCount = math.min(aiMax, #FAKE_AURA_IND_ICONS)
-        local aiAnchor = aiDB.anchor or "CENTER"
-        local aiGrow = aiDB.growDirection or "RIGHT"
-        local aiSpacing = (aiDB.spacing or 2) * PREVIEW_SCALE
-        local aiOffX = (aiDB.anchorOffsetX or 0) * PREVIEW_SCALE
-        local aiOffY = (aiDB.anchorOffsetY or 0) * PREVIEW_SCALE
-        if aiAnchor == "BOTTOMLEFT" or aiAnchor == "BOTTOM" or aiAnchor == "BOTTOMRIGHT" then
-            aiOffY = aiOffY + previewBottomPad
+        local normalizeAuraIndicators = ns.Helpers and ns.Helpers.NormalizeAuraIndicatorConfig
+        if normalizeAuraIndicators then normalizeAuraIndicators(aiDB) end
+
+        local previewLayer = CreateFrame("Frame", nil, frame)
+        previewLayer:SetAllPoints()
+        previewLayer:SetFrameLevel(frame:GetFrameLevel() + 8)
+        childRefs.auraIndicatorContainer = previewLayer
+
+        local iconCount = 0
+        for _, entry in ipairs(aiDB.entries or {}) do
+            if entry.enabled ~= false then
+                for _, indicator in ipairs(entry.indicators or {}) do
+                    if indicator.enabled ~= false and indicator.type == "icon" then
+                        iconCount = iconCount + 1
+                    end
+                end
+            end
         end
-        CreateIconStrip(frame, FAKE_AURA_IND_ICONS, aiCount, aiSize, aiAnchor, aiGrow, aiSpacing, aiOffX, aiOffY, "auraIndicatorContainer")
+
+        if iconCount > 0 then
+            local aiSize = (aiDB.iconSize or 14) * PREVIEW_SCALE
+            local aiMax = aiDB.maxIndicators or 3
+            local aiAnchor = aiDB.anchor or "CENTER"
+            local aiGrow = aiDB.growDirection or "RIGHT"
+            local aiSpacing = (aiDB.spacing or 2) * PREVIEW_SCALE
+            local aiOffX = (aiDB.anchorOffsetX or 0) * PREVIEW_SCALE
+            local aiOffY = (aiDB.anchorOffsetY or 0) * PREVIEW_SCALE
+            if aiAnchor == "BOTTOMLEFT" or aiAnchor == "BOTTOM" or aiAnchor == "BOTTOMRIGHT" then
+                aiOffY = aiOffY + previewBottomPad
+            end
+            CreateIconStrip(previewLayer, FAKE_AURA_IND_ICONS, math.min(iconCount, aiMax), aiSize, aiAnchor, aiGrow, aiSpacing, aiOffX, aiOffY)
+        end
+
+        local firstTint = nil
+        local fakeBarIndex = 0
+        for _, entry in ipairs(aiDB.entries or {}) do
+            if entry.enabled ~= false then
+                for _, indicator in ipairs(entry.indicators or {}) do
+                    if indicator.enabled ~= false and indicator.type == "healthBarColor" and not firstTint then
+                        firstTint = indicator.color
+                    elseif indicator.enabled ~= false and indicator.type == "bar" then
+                        fakeBarIndex = fakeBarIndex + 1
+                        local orientation = indicator.orientation == "VERTICAL" and "VERTICAL" or "HORIZONTAL"
+                        local thickness = (indicator.thickness or 4) * PREVIEW_SCALE
+                        local matchFrameSize = indicator.matchFrameSize == true
+                        local length = (indicator.length or 40) * PREVIEW_SCALE
+                        local width = orientation == "HORIZONTAL" and (matchFrameSize and (w - borderSize * 2) or length) or thickness
+                        local height = orientation == "VERTICAL" and (matchFrameSize and (h - previewBottomPad - borderSize * 2) or length) or thickness
+                        local anchor = indicator.anchor or "BOTTOM"
+                        local offX = (indicator.offsetX or 0) * PREVIEW_SCALE
+                        local offY = (indicator.offsetY or 0) * PREVIEW_SCALE
+                        if anchor == "BOTTOMLEFT" or anchor == "BOTTOM" or anchor == "BOTTOMRIGHT" then
+                            offY = offY + previewBottomPad
+                        end
+
+                        local bar = CreateFrame("StatusBar", nil, previewLayer, "BackdropTemplate")
+                        bar:SetStatusBarTexture(texturePath)
+                        bar:SetOrientation(orientation)
+                        bar:SetMinMaxValues(0, 1)
+                        bar:SetValue(fakeBarIndex == 1 and 0.35 or 0.8)
+                        bar:SetSize(width, height)
+                        bar:SetPoint(anchor, frame, anchor, offX, offY)
+
+                        local baseColor = indicator.color or {0.2, 0.8, 0.2, 1}
+                        local shownColor = (indicator.lowTimeThreshold or 0) > 0 and (indicator.lowTimeColor or baseColor) or baseColor
+                        bar:SetStatusBarColor(shownColor[1] or 0.2, shownColor[2] or 0.8, shownColor[3] or 0.2, shownColor[4] or 1)
+
+                        local bg = bar:CreateTexture(nil, "BACKGROUND")
+                        bg:SetAllPoints()
+                        local bgColor = indicator.backgroundColor or { shownColor[1] or 0.2, shownColor[2] or 0.8, shownColor[3] or 0.2, 0.18 }
+                        bg:SetColorTexture(bgColor[1] or 0, bgColor[2] or 0, bgColor[3] or 0, bgColor[4] or 0.18)
+
+                        if not indicator.hideBorder then
+                            local borderPx = (indicator.borderSize or 1) * px
+                            bar:SetBackdrop({
+                                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                                edgeSize = borderPx,
+                            })
+                            local bc = indicator.borderColor or {0, 0, 0, 1}
+                            bar:SetBackdropBorderColor(bc[1] or 0, bc[2] or 0, bc[3] or 0, bc[4] or 1)
+                        end
+                    end
+                end
+            end
+        end
+
+        if firstTint then
+            healthBar:SetStatusBarColor(firstTint[1] or 0.2, firstTint[2] or 0.8, firstTint[3] or 0.2, firstTint[4] or 1)
+        end
     end
 
     -- Private aura preview (with stack & countdown text)

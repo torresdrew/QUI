@@ -594,13 +594,21 @@ local function UpdateHealth(frame)
             r, g, b, a = COLORS.OFFLINE[1], COLORS.OFFLINE[2], COLORS.OFFLINE[3], COLORS.OFFLINE[4]
         elseif isDeadOrGhost then
             r, g, b, a = COLORS.DEAD[1], COLORS.DEAD[2], COLORS.DEAD[3], COLORS.DEAD[4]
+        elseif frame._auraIndicatorHealthColor then
+            local c = frame._auraIndicatorHealthColor
+            r, g, b, a = c[1] or 0.2, c[2] or 0.8, c[3] or 0.2, c[4] or 1
         else
             r, g, b, a = GetHealthBarColor(unit, frame._isRaid)
         end
-        -- r is unique per state: class color r varies by class, offline/dead
-        -- colors are distinct fixed values, dark mode is a fixed value.
-        if r ~= frame._lastHealthColorR then
+        if r ~= frame._lastHealthColorR
+            or g ~= frame._lastHealthColorG
+            or b ~= frame._lastHealthColorB
+            or a ~= frame._lastHealthColorA
+        then
             frame._lastHealthColorR = r
+            frame._lastHealthColorG = g
+            frame._lastHealthColorB = b
+            frame._lastHealthColorA = a
             frame.healthBar:SetStatusBarColor(r, g, b, a)
         end
     end
@@ -1550,6 +1558,7 @@ local function UpdateDefensiveIndicator(frame)
     local offsetY = defSettings.offsetY or 0
     local spacing = defSettings.spacing or 2
     local growDir = defSettings.growDirection or "RIGHT"
+    local reverseSwipe = defSettings.reverseSwipe ~= false
     local growFn = DEFENSIVE_GROWTH_OFFSETS[growDir] or DEFENSIVE_GROWTH_OFFSETS.RIGHT
     local stepX, stepY = growFn(iconSize, spacing)
 
@@ -1579,6 +1588,9 @@ local function UpdateDefensiveIndicator(frame)
             -- Update cooldown swipe
             local cd = defIcon.cooldown
             if cd and aura.duration and aura.expirationTime then
+                if cd.SetReverse then
+                    pcall(cd.SetReverse, cd, reverseSwipe)
+                end
                 if aura.auraInstanceID and C_UnitAuras.GetAuraDuration
                    and cd.SetCooldownFromDurationObject then
                     local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, aura.auraInstanceID)
@@ -2131,11 +2143,13 @@ local function DecorateGroupFrame(frame)
         })
         defIcon:SetBackdropBorderColor(0, 0.8, 0, 1)
 
+        local healerDB = GetHealerSettings(isRaid)
+        local defReverse = healerDB and healerDB.defensiveIndicator and healerDB.defensiveIndicator.reverseSwipe ~= false
         local defCD = defIcon.cooldown or CreateFrame("Cooldown", nil, defIcon, "CooldownFrameTemplate")
         defCD:SetAllPoints(defTex)
         defCD:SetDrawEdge(false)
         defCD:SetDrawSwipe(true)
-        defCD:SetReverse(true)
+        defCD:SetReverse(defReverse)
         defCD:SetHideCountdownNumbers(false)
         defIcon.cooldown = defCD
 
@@ -4224,6 +4238,10 @@ end
 
 function QUI_GF:UpdateDefensiveIndicator(frame)
     UpdateDefensiveIndicator(frame)
+end
+
+function QUI_GF:RefreshHealth(frame)
+    UpdateHealth(frame)
 end
 
 ---------------------------------------------------------------------------

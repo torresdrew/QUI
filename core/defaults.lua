@@ -308,7 +308,6 @@ local defaults = {
         -- QUI New Cooldown Display Manager (NCDM)
         -- Per-row configuration for Essential and Utility viewers
         ncdm = {
-            engine = "owned",  -- CDM engine: "classic" (Blizzard hooks) or "owned" (addon-owned frames)
             _snapshotVersion = 0,   -- Incremented each time ownedSpells are snapshotted
             _specProfiles = nil,    -- Future: per-spec owned spell profiles
             essential = {
@@ -1214,6 +1213,10 @@ local defaults = {
             },
             -- Copy button mode: "always", "hover", "hidden", "disabled"
             copyButtonMode = "always",
+            -- Default chat tab on login/reload (1 = General, 2-10 = other tabs)
+            defaultTab = 1,
+            defaultTabPerSpec = false,    -- Use spec-specific default tabs
+            defaultTabBySpec = {},        -- [specID] = tabIndex
             -- Intro message on login
             showIntroMessage = true,
             -- Message history cache for arrow key navigation
@@ -1298,21 +1301,21 @@ local defaults = {
                 showMacroNames = false,     -- Show macro name text
                 showCounts = true,          -- Show stack/charge count
                 hideEmptyKeybinds = false,  -- Hide placeholder keybinds
-                keybindFontSize = 16,       -- Keybind text size
+                keybindFontSize = 12,       -- Keybind text size
                 keybindColor = {1, 1, 1, 1},-- Keybind text color
-                keybindAnchor = "TOPRIGHT", -- Keybind text anchor point
-                keybindOffsetX = 0,         -- Keybind text X offset
-                keybindOffsetY = -5,        -- Keybind text Y offset
+                keybindAnchor = "TOPLEFT",  -- Keybind text anchor point
+                keybindOffsetX = 4,         -- Keybind text X offset
+                keybindOffsetY = -4,        -- Keybind text Y offset
                 macroNameFontSize = 10,     -- Macro name text size
                 macroNameColor = {1, 1, 1, 1}, -- Macro name text color
                 macroNameAnchor = "BOTTOM", -- Macro name text anchor point
                 macroNameOffsetX = 0,       -- Macro name text X offset
-                macroNameOffsetY = 0,       -- Macro name text Y offset
-                countFontSize = 14,         -- Count text size
+                macroNameOffsetY = 4,       -- Macro name text Y offset
+                countFontSize = 12,         -- Count text size
                 countColor = {1, 1, 1, 1},  -- Count text color
                 countAnchor = "BOTTOMRIGHT", -- Stack count text anchor point
-                countOffsetX = 0,           -- Stack count text X offset
-                countOffsetY = 0,           -- Stack count text Y offset
+                countOffsetX = -4,          -- Stack count text X offset
+                countOffsetY = 4,           -- Stack count text Y offset
                 -- Bar Layout settings
                 barScale = 1.0,             -- Global scale multiplier (0.5 - 2.0)
                 buttonSpacing = nil,        -- Button spacing override (nil = use Blizzard Edit Mode padding)
@@ -1354,8 +1357,8 @@ local defaults = {
                         orientation = "horizontal", -- "horizontal" or "vertical"
                         columns = 12,               -- buttons per row (horizontal) or per column (vertical)
                         iconCount = 12,             -- visible button count (1-12)
-                        buttonSize = nil,           -- nil = use Blizzard size, number = override
-                        buttonSpacing = nil,        -- nil = use global, number = override
+                        buttonSize = 30,            -- button size in pixels
+                        buttonSpacing = 0,          -- spacing between buttons in pixels
                         growUp = false,             -- rows grow bottom-to-top
                         growLeft = false,           -- columns grow right-to-left
                     },
@@ -1375,7 +1378,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1392,7 +1395,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1409,7 +1412,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 6, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1426,7 +1429,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 6, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1443,7 +1446,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1460,7 +1463,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1477,7 +1480,7 @@ local defaults = {
                     ownedPosition = nil,
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
-                        buttonSize = nil, buttonSpacing = nil, growUp = false, growLeft = false,
+                        buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -2528,7 +2531,7 @@ local defaults = {
                         },
                     },
                     targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
-                    defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0 },
+                    defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true },
                 },
                 classPower = { enabled = false, height = 4, spacing = 1 },
                 range = { enabled = true, outOfRangeAlpha = 0.4 },
@@ -2536,9 +2539,11 @@ local defaults = {
                     showDebuffs = true, maxDebuffs = 3, debuffIconSize = 16,
                     debuffAnchor = "BOTTOMRIGHT", debuffGrowDirection = "LEFT",
                     debuffSpacing = 2, debuffOffsetX = -2, debuffOffsetY = -18,
+                    debuffReverseSwipe = false,
                     showBuffs = false, maxBuffs = 0, buffIconSize = 14,
                     buffAnchor = "TOPLEFT", buffGrowDirection = "RIGHT",
                     buffSpacing = 2, buffOffsetX = 2, buffOffsetY = 16,
+                    buffReverseSwipe = false,
                     showDurationColor = true,
                     showExpiringPulse = true,
                     showDurationText = true,
@@ -2565,6 +2570,7 @@ local defaults = {
                     anchorOffsetY = 0,
                     showCountdown = true,
                     showCountdownNumbers = true,
+                    reverseSwipe = false,
                     borderScale = 1,
                     textScale = 2,
                     textOffsetX = 0,
@@ -2579,13 +2585,16 @@ local defaults = {
                     growDirection = "RIGHT",
                     spacing = 2,
                     maxIndicators = 5,
+                    reverseSwipe = false,
                     trackedSpells = {},
+                    entries = {},
                 },
                 pinnedAuras = {
                     enabled = false,
                     slotSize = 8,
                     edgeInset = 2,
                     showSwipe = true,
+                    reverseSwipe = false,
                     specSlots = {},
                 },
                 castbar = { enabled = false, height = 8, showIcon = false, showText = false },
@@ -2691,7 +2700,7 @@ local defaults = {
                         },
                     },
                     targetHighlight = { enabled = true, color = { 1, 1, 1, 0.6 }, fillOpacity = 0.12 },
-                    defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0 },
+                    defensiveIndicator = { enabled = false, iconSize = 16, maxIcons = 3, spacing = 2, growDirection = "RIGHT", position = "CENTER", offsetX = 0, offsetY = 0, reverseSwipe = true },
                 },
                 classPower = { enabled = false, height = 4, spacing = 1 },
                 range = { enabled = true, outOfRangeAlpha = 0.4 },
@@ -2699,9 +2708,11 @@ local defaults = {
                     showDebuffs = true, maxDebuffs = 3, debuffIconSize = 16,
                     debuffAnchor = "BOTTOMRIGHT", debuffGrowDirection = "LEFT",
                     debuffSpacing = 2, debuffOffsetX = -2, debuffOffsetY = -18,
+                    debuffReverseSwipe = false,
                     showBuffs = false, maxBuffs = 0, buffIconSize = 14,
                     buffAnchor = "TOPLEFT", buffGrowDirection = "RIGHT",
                     buffSpacing = 2, buffOffsetX = 2, buffOffsetY = 16,
+                    buffReverseSwipe = false,
                     showDurationColor = true,
                     showExpiringPulse = true,
                     showDurationText = true,
@@ -2728,6 +2739,7 @@ local defaults = {
                     anchorOffsetY = 0,
                     showCountdown = true,
                     showCountdownNumbers = true,
+                    reverseSwipe = false,
                     borderScale = 1,
                     textScale = 2,
                     textOffsetX = 0,
@@ -2742,13 +2754,16 @@ local defaults = {
                     growDirection = "RIGHT",
                     spacing = 2,
                     maxIndicators = 5,
+                    reverseSwipe = false,
                     trackedSpells = {},
+                    entries = {},
                 },
                 pinnedAuras = {
                     enabled = false,
                     slotSize = 8,
                     edgeInset = 2,
                     showSwipe = true,
+                    reverseSwipe = false,
                     specSlots = {},
                 },
                 castbar = { enabled = false, height = 8, showIcon = false, showText = false },

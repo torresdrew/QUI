@@ -59,24 +59,6 @@ end
 ---------------------------------------------------------------------------
 local GetSettings = Helpers.CreateDBGetter("customGlow")
 
-local function IsOwnedEngineSelected()
-    if ns.CDMProvider and ns.CDMProvider.GetActiveEngineName then
-        local active = ns.CDMProvider:GetActiveEngineName()
-        if active ~= nil then
-            return active == "owned"
-        end
-    end
-
-    local core = ns.Addon
-    local db = core and core.db and core.db.profile
-    local configured = db and db.ncdm and db.ncdm.engine
-    if configured ~= nil then
-        return configured == "owned"
-    end
-
-    return false
-end
-
 ---------------------------------------------------------------------------
 -- DETERMINE VIEWER TYPE FROM ICON
 -- Uses icon._spellEntry.viewerType instead of checking parent frame.
@@ -489,9 +471,6 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 eventFrame:SetScript("OnEvent", function(_, event, spellID)
-    -- Only run when owned CDM engine is active
-    if not IsOwnedEngineSelected() then return end
-
     if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" and spellID then
         overlayedSpells[spellID] = true
         if C_Spell and C_Spell.GetOverrideSpell then
@@ -521,13 +500,11 @@ end)
 -- Low-frequency fallback scan to catch edge cases (e.g. icon replaced
 -- with an already-active proc, no SHOW event fires for it)
 C_Timer.NewTicker(5, function()
-    if IsOwnedEngineSelected() then
-        ScanAllGlows()
-    end
+    ScanAllGlows()
 end)
 
 ---------------------------------------------------------------------------
--- EXPORTS (deferred — only overwrite classic engine's exports when owned is active)
+-- EXPORTS
 ---------------------------------------------------------------------------
 -- Store on ns for engine init to wire
 ns._OwnedGlows = {

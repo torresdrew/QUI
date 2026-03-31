@@ -26,10 +26,9 @@ The "Fade Out Alpha" setting at 0 makes hidden frames completely invisible. Set 
 **Cause:** The CDM may not have spell data for your spec, or containers may be disabled.
 
 1. Enter Layout Mode (`/qui layout`) and check CDM settings.
-2. Verify the CDM engine is set to **owned** (not "classic").
-3. Open the **Composer** to verify spells are populated for your spec.
-4. Check that containers (Essential, Utility) are enabled.
-5. Check visibility rules -- CDM may be hidden outside of combat.
+2. Open the **Composer** to verify spells are populated for your spec.
+3. Check that containers (Essential, Utility) are enabled.
+4. Check visibility rules -- CDM may be hidden outside of combat.
 
 ## Action Bars Seem to Have Disappeared
 

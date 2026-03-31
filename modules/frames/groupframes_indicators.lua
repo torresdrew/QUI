@@ -1,9 +1,9 @@
 --[[
     QUI Group Frames - Aura Indicators
-    Simple icon-row aura tracking on group frames.
-    Tracked spells are configured via the Designer UI (trackedSpells table).
-    Display uses the same container pattern as buffs/debuffs: icon size,
-    anchor, grow direction, spacing, max count.
+    One tracked aura can drive multiple frame effects at once:
+    - icon strip entries
+    - anchored aura bars
+    - health bar color overrides
 ]]
 
 local ADDON_NAME, ns = ...
@@ -13,9 +13,9 @@ local QUICore = ns.Addon
 local IsSecretValue = Helpers.IsSecretValue
 local SafeValue = Helpers.SafeValue
 local SafeToNumber = Helpers.SafeToNumber
+local NormalizeAuraIndicatorConfig = Helpers.NormalizeAuraIndicatorConfig
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
--- Upvalue hot-path globals
 local pairs = pairs
 local ipairs = ipairs
 local type = type
@@ -23,27 +23,27 @@ local pcall = pcall
 local wipe = wipe
 local CreateFrame = CreateFrame
 local UnitExists = UnitExists
+local GetTime = GetTime
 local C_UnitAuras = C_UnitAuras
+local math_max = math.max
+local math_min = math.min
 local table_insert = table.insert
 local table_remove = table.remove
+local tostring = tostring
+local tonumber = tonumber
 
----------------------------------------------------------------------------
--- MODULE TABLE
----------------------------------------------------------------------------
 local QUI_GFI = {}
 ns.QUI_GroupFrameIndicators = QUI_GFI
 
----------------------------------------------------------------------------
--- ICON POOL
----------------------------------------------------------------------------
+local POOL_SIZE = 60
 local iconPool = {}
-local POOL_SIZE = 40
+local barPool = {}
 local spellNameCache = {}
 
--- Reusable scratch tables for aura lookups (avoids 2 table allocations
--- per frame per UNIT_AURA event — 80+ garbage tables per raid burst).
-local _scratchActiveAuras = {}     -- [spellID] = auraData
-local _scratchActiveAuraNames = {} -- [spellName] = auraData
+local _scratchActiveAuras = {}
+local _scratchActiveAuraNames = {}
+local _scratchIconPayloads = {}
+local _scratchBarPayloads = {}
 
 local FILTER_RAID = "PLAYER|HELPFUL|RAID"
 local FILTER_RIC = "PLAYER|HELPFUL|RAID_IN_COMBAT"
@@ -58,12 +58,49 @@ local SECRET_TRACKED_AURAS = {
     },
 }
 
-local function GetFontPath()
+local function ColorsEqual(a, b)
+    if a == b then
+        return true
+    end
+    if type(a) ~= "table" or type(b) ~= "table" then
+        return false
+    end
+    return (a[1] or 0) == (b[1] or 0)
+        and (a[2] or 0) == (b[2] or 0)
+        and (a[3] or 0) == (b[3] or 0)
+        and (a[4] or 1) == (b[4] or 1)
+end
+
+local function GetVisualDB(isRaid)
     local db = GetDB()
-    local vdb = db and (db.party or db)
+    if not db then
+        return nil
+    end
+    local vdb = (isRaid and db.raid or db.party) or db
+    local ai = vdb and vdb.auraIndicators
+    if ai and NormalizeAuraIndicatorConfig then
+        NormalizeAuraIndicatorConfig(ai)
+    end
+    return vdb
+end
+
+local function GetFontPath()
+    local vdb = GetVisualDB(false)
     local general = vdb and vdb.general
     local fontName = general and general.font or "Quazii"
     return LSM:Fetch("font", fontName) or "Fonts\\FRIZQT__.TTF"
+end
+
+local function GetStatusBarTexturePath(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    local general = vdb and vdb.general
+    local textureName = general and general.texture or "Quazii v5"
+    return LSM and LSM:Fetch("statusbar", textureName, true) or "Interface\\TargetingFrame\\UI-StatusBar"
+end
+
+local function GetAuraIndicatorSettings(isRaid)
+    local vdb = GetVisualDB(isRaid)
+    return vdb and vdb.auraIndicators or nil
 end
 
 local function GetTrackedSpellName(spellID)
@@ -181,9 +218,6 @@ local function FindTrackedAuraData(unit, spellID, activeAurasByID, activeAurasBy
         return auraData
     end
 
-    -- Secret tracked auras can lose both readable spellId and reliable
-    -- spell-name lookup in combat, so try their signature matcher before
-    -- depending on name resolution.
     local secretAura = FindSecretTrackedAura(unit, spellID, helpfulAuras)
     if secretAura then
         return secretAura
@@ -230,7 +264,6 @@ local function CreateIconIndicator(parent)
     })
     frame:SetBackdropBorderColor(0, 0, 0, 1)
 
-    -- Cooldown swipe
     local cd = CreateFrame("Cooldown", nil, frame, "CooldownFrameTemplate")
     cd:SetAllPoints()
     cd:SetDrawEdge(false)
@@ -238,7 +271,6 @@ local function CreateIconIndicator(parent)
     cd:SetHideCountdownNumbers(true)
     frame.cooldown = cd
 
-    -- Stack text
     local stackText = frame:CreateFontString(nil, "OVERLAY")
     stackText:SetFont(GetFontPath(), 9, "OUTLINE")
     stackText:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 1, 0)
@@ -269,17 +301,15 @@ local function ReleaseIcon(item)
     end
 end
 
--- Update icon data in-place (texture, cooldown, stacks) without touching
--- position or acquire/release. Used by the fast diff path to skip the
--- full release→acquire→position cycle when the active aura set is unchanged.
 local function UpdateIconData(icon, unit, auraData)
-    -- Texture
     if icon.icon and auraData.icon then
         icon.icon:SetTexture(auraData.icon)
     end
 
-    -- Cooldown swipe
     if icon.cooldown and auraData then
+        if icon.cooldown.SetReverse then
+            pcall(icon.cooldown.SetReverse, icon.cooldown, icon._reverseSwipe == true)
+        end
         local dur = auraData.duration
         local expTime = auraData.expirationTime
         if dur and expTime then
@@ -307,147 +337,266 @@ local function UpdateIconData(icon, unit, auraData)
             else
                 icon.cooldown:Clear()
             end
+        else
+            icon.cooldown:Clear()
         end
     end
 
-    -- Stacks
     if icon.stackText and auraData then
         local stacks = SafeToNumber(auraData.applications, 0)
         icon.stackText:SetText(stacks > 1 and stacks or "")
     end
 end
 
----------------------------------------------------------------------------
--- GET TRACKED SPELL IDS from DB
----------------------------------------------------------------------------
-local function GetTrackedSpellIDs(isRaid)
-    local db = GetDB()
-    if not db then return nil end
-    local vdb = (isRaid and db.raid or db.party) or db
-    if not vdb.auraIndicators or not vdb.auraIndicators.enabled then
-        return nil
-    end
+local function CreateBarIndicator(parent)
+    local bar = CreateFrame("StatusBar", nil, parent, "BackdropTemplate")
+    bar:SetMinMaxValues(0, 1)
+    bar:SetValue(1)
 
-    local tracked = vdb.auraIndicators.trackedSpells
-    if not tracked then return nil end
+    local bg = bar:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0, 0, 0, 0.28)
+    bar.background = bg
 
-    -- Build list of enabled spell IDs
-    local spells = {}
-    for spellID, enabled in pairs(tracked) do
-        if enabled then
-            spells[#spells + 1] = tonumber(spellID) or spellID
-        end
-    end
-
-    return #spells > 0 and spells or nil
+    bar:Hide()
+    return bar
 end
 
----------------------------------------------------------------------------
--- INDICATOR STATE per frame
----------------------------------------------------------------------------
+local function AcquireBar(parent)
+    local item = table_remove(barPool)
+    if item then
+        item:SetParent(parent)
+        item:ClearAllPoints()
+        return item
+    end
+    return CreateBarIndicator(parent)
+end
+
+local function ReleaseBar(item)
+    item:Hide()
+    item:ClearAllPoints()
+    item:SetScript("OnUpdate", nil)
+    item._elapsed = 0
+    item._indicator = nil
+    item._auraData = nil
+    item._unit = nil
+    item:SetMinMaxValues(0, 1)
+    item:SetValue(1)
+    if item.background then
+        item.background:SetColorTexture(0, 0, 0, 0.28)
+    end
+    item:SetBackdrop(nil)
+    if #barPool < POOL_SIZE then
+        table_insert(barPool, item)
+    end
+end
+
+local function GetBarDisplayColor(indicator, remaining)
+    local color = indicator.color or { 0.2, 0.8, 0.2, 1 }
+    local threshold = SafeToNumber(indicator.lowTimeThreshold, 0)
+    if remaining and threshold > 0 and remaining <= threshold then
+        local lowColor = indicator.lowTimeColor
+        if type(lowColor) == "table" then
+            return lowColor
+        end
+    end
+    return color
+end
+
+local function ApplyBarColor(bar, indicator, remaining)
+    local color = GetBarDisplayColor(indicator, remaining)
+    local r = color[1] or 0.2
+    local g = color[2] or 0.8
+    local b = color[3] or 0.2
+    local a = color[4] or 1
+    bar:SetStatusBarColor(r, g, b, a)
+    if bar.background then
+        local bg = indicator.backgroundColor
+        if type(bg) == "table" then
+            bar.background:SetColorTexture(bg[1] or 0, bg[2] or 0, bg[3] or 0, bg[4] or 0.18)
+        else
+            bar.background:SetColorTexture(r, g, b, 0.18)
+        end
+    end
+end
+
+local function UpdateBarProgress(bar)
+    local auraData = bar._auraData
+    local indicator = bar._indicator
+    if not auraData or not indicator then
+        return
+    end
+
+    local duration = SafeToNumber(auraData.duration, 0)
+    local expirationTime = SafeToNumber(auraData.expirationTime, 0)
+    local remaining = nil
+    local pct = 1
+    if duration > 0 and expirationTime > 0 and not IsSecretValue(auraData.duration) and not IsSecretValue(auraData.expirationTime) then
+        remaining = math_max(expirationTime - GetTime(), 0)
+        pct = math_min(math_max(remaining / duration, 0), 1)
+    end
+
+    bar:SetValue(pct)
+    ApplyBarColor(bar, indicator, remaining)
+end
+
+local function BarOnUpdate(self, elapsed)
+    self._elapsed = (self._elapsed or 0) + elapsed
+    if self._elapsed < 0.08 then
+        return
+    end
+    self._elapsed = 0
+    UpdateBarProgress(self)
+end
+
+local function ConfigureBarIndicator(bar, frame, auraData, indicator)
+    local orientation = indicator.orientation == "VERTICAL" and "VERTICAL" or "HORIZONTAL"
+    local thickness = math_max(1, SafeToNumber(indicator.thickness, 4))
+    local length = math_max(1, SafeToNumber(indicator.length, 40))
+    local matchFrameSize = indicator.matchFrameSize == true
+    local frameWidth = math_max(1, (frame:GetWidth() or 1) - 2)
+    local frameHeight = math_max(1, (frame:GetHeight() or 1) - ((frame._bottomPad or 0) * 0.5) - 2)
+    local width = orientation == "HORIZONTAL" and (matchFrameSize and frameWidth or length) or thickness
+    local height = orientation == "VERTICAL" and (matchFrameSize and frameHeight or length) or thickness
+    local anchor = indicator.anchor or "BOTTOM"
+    local offsetX = SafeToNumber(indicator.offsetX, 0)
+    local offsetY = SafeToNumber(indicator.offsetY, 0)
+
+    local borderSize = math_max(1, SafeToNumber(indicator.borderSize, 1))
+    local borderColor = indicator.borderColor or { 0, 0, 0, 1 }
+    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(bar) or 1
+
+    bar:ClearAllPoints()
+    if anchor:find("BOTTOM") then
+        offsetY = offsetY + (frame._bottomPad or 0)
+    end
+    bar:SetPoint(anchor, frame, anchor, offsetX, offsetY)
+    bar:SetSize(width, height)
+    bar:SetOrientation(orientation)
+    bar:SetStatusBarTexture(GetStatusBarTexturePath(frame._isRaid))
+
+    if indicator.hideBorder then
+        bar:SetBackdrop(nil)
+    else
+        bar:SetBackdrop({
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = borderSize * px,
+        })
+        bar:SetBackdropBorderColor(
+            borderColor[1] or 0,
+            borderColor[2] or 0,
+            borderColor[3] or 0,
+            borderColor[4] or 1
+        )
+    end
+
+    bar._unit = frame.unit
+    bar._auraData = auraData
+    bar._indicator = indicator
+    bar._elapsed = 0
+    UpdateBarProgress(bar)
+
+    local duration = SafeToNumber(auraData.duration, 0)
+    local expirationTime = SafeToNumber(auraData.expirationTime, 0)
+    if duration > 0 and expirationTime > 0 and not IsSecretValue(auraData.duration) and not IsSecretValue(auraData.expirationTime) then
+        bar:SetScript("OnUpdate", BarOnUpdate)
+    else
+        bar:SetScript("OnUpdate", nil)
+    end
+end
+
 local frameIndicatorState = Helpers.CreateStateTable()
 
 local function GetIndicatorState(frame)
     local state = frameIndicatorState[frame]
     if not state then
-        state = { icons = {}, container = nil, _prevAuraIDs = {} }
+        state = {
+            icons = {},
+            bars = {},
+            iconContainer = nil,
+        }
         frameIndicatorState[frame] = state
     end
     return state
 end
 
----------------------------------------------------------------------------
--- ENSURE CONTAINER: Create/update the icon container on a group frame
----------------------------------------------------------------------------
-local function EnsureContainer(frame)
+local function EnsureIconContainer(frame)
     local state = GetIndicatorState(frame)
-    if state.container then return state.container end
+    if state.iconContainer then
+        return state.iconContainer
+    end
 
     local container = CreateFrame("Frame", nil, frame)
     container:SetSize(1, 1)
     container:SetFrameLevel(frame:GetFrameLevel() + 8)
-    state.container = container
+    state.iconContainer = container
     return container
 end
 
-local function PositionContainer(frame)
-    local db = GetDB()
-    if not db then return end
-    local isRaid = frame._isRaid
-    local vdb = (isRaid and db.raid or db.party) or db
-    local ai = vdb.auraIndicators
-    if not ai then return end
-
+local function PositionIconContainer(frame, ai)
     local state = GetIndicatorState(frame)
-    local container = state.container
-    if not container then return end
+    local container = state.iconContainer
+    if not container then
+        return
+    end
 
     local anchor = ai.anchor or "TOPLEFT"
     local offX = ai.anchorOffsetX or 0
     local offY = ai.anchorOffsetY or 0
-
     container:ClearAllPoints()
-    if anchor:find("BOTTOM") then offY = offY + (frame._bottomPad or 0) end
+    if anchor:find("BOTTOM") then
+        offY = offY + (frame._bottomPad or 0)
+    end
     container:SetPoint(anchor, frame, anchor, offX, offY)
 end
 
----------------------------------------------------------------------------
--- CLEAR all indicators from a frame
----------------------------------------------------------------------------
+local function SetHealthBarOverride(frame, color)
+    local changed = not ColorsEqual(frame._auraIndicatorHealthColor, color)
+    if not changed then
+        return
+    end
+
+    frame._auraIndicatorHealthColor = color
+    local GF = ns.QUI_GroupFrames
+    if GF and GF.RefreshHealth then
+        GF:RefreshHealth(frame)
+    end
+end
+
 local function ClearIndicators(frame)
     local state = frameIndicatorState[frame]
-    if not state then return end
+    if frame and frame._indicatorAuraIDs then
+        wipe(frame._indicatorAuraIDs)
+    end
+    if frame and frame._auraIndicatorHealthColor then
+        SetHealthBarOverride(frame, nil)
+    end
+    if not state then
+        return
+    end
 
     for _, icon in ipairs(state.icons) do
         ReleaseIcon(icon)
     end
     wipe(state.icons)
+
+    for _, bar in ipairs(state.bars) do
+        ReleaseBar(bar)
+    end
+    wipe(state.bars)
+
+    if state.iconContainer then
+        state.iconContainer:Hide()
+    end
 end
 
----------------------------------------------------------------------------
--- UPDATE: Process indicators for a single frame
----------------------------------------------------------------------------
-local function UpdateFrameIndicators(frame)
-    if not frame or not frame.unit then return end
-
-    local isRaid = frame._isRaid
-    local trackedSpells = GetTrackedSpellIDs(isRaid)
-    if not trackedSpells then
-        ClearIndicators(frame)
-        return
-    end
-
-    local unit = frame.unit
-    if not UnitExists(unit) then
-        ClearIndicators(frame)
-        return
-    end
-
-    local db = GetDB()
-    if not db then
-        ClearIndicators(frame)
-        return
-    end
-    local vdb = (isRaid and db.raid or db.party) or db
-    local ai = vdb.auraIndicators
-    if not ai then
-        ClearIndicators(frame)
-        return
-    end
-
-    local iconSize = ai.iconSize or 14
-    local growDir = ai.growDirection or "RIGHT"
-    local spacing = ai.spacing or 2
-    local maxIcons = ai.maxIndicators or 5
-    local anchor = ai.anchor or "TOPLEFT"
-
-    -- Build a set of active auras on the unit from shared cache.
-    -- Uses module-level scratch tables (wipe+reuse) to avoid per-call allocation.
+local function BuildActiveAuraLookup(unit)
     local activeAuras = _scratchActiveAuras
     local activeAuraNames = _scratchActiveAuraNames
     wipe(activeAuras)
     wipe(activeAuraNames)
     local helpfulAuras = nil
+
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
     if cache then
@@ -472,21 +621,173 @@ local function UpdateFrameIndicators(frame)
                 end
             end
         end
-    else
-        -- Fallback: direct scan if cache not populated
-        if C_UnitAuras and C_UnitAuras.GetUnitAuras then
-            for _, filter in ipairs({"HELPFUL", "HARMFUL"}) do
-                local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit, filter, 40)
-                if ok and auras then
-                    if filter == "HELPFUL" then
-                        helpfulAuras = auras
+    elseif C_UnitAuras and C_UnitAuras.GetUnitAuras then
+        for _, filter in ipairs({ "HELPFUL", "HARMFUL" }) do
+            local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit, filter, 40)
+            if ok and auras then
+                if filter == "HELPFUL" then
+                    helpfulAuras = auras
+                end
+                for _, auraData in ipairs(auras) do
+                    local spellID = SafeValue(auraData.spellId, nil)
+                    if spellID then activeAuras[spellID] = auraData end
+                    local spellName = SafeValue(auraData.name, nil)
+                    if spellName and not activeAuraNames[spellName] then
+                        activeAuraNames[spellName] = auraData
                     end
-                    for _, auraData in ipairs(auras) do
-                        local spellID = SafeValue(auraData.spellId, nil)
-                        if spellID then activeAuras[spellID] = auraData end
-                        local spellName = SafeValue(auraData.name, nil)
-                        if spellName and not activeAuraNames[spellName] then
-                            activeAuraNames[spellName] = auraData
+                end
+            end
+        end
+    end
+
+    return activeAuras, activeAuraNames, helpfulAuras
+end
+
+local function RenderIconIndicators(frame, ai, iconPayloads)
+    local state = GetIndicatorState(frame)
+    for _, icon in ipairs(state.icons) do
+        ReleaseIcon(icon)
+    end
+    wipe(state.icons)
+
+    if #iconPayloads == 0 then
+        if state.iconContainer then
+            state.iconContainer:Hide()
+        end
+        return
+    end
+
+    local container = EnsureIconContainer(frame)
+    local iconSize = ai.iconSize or 14
+    local growDir = ai.growDirection or "RIGHT"
+    local spacing = ai.spacing or 2
+    local maxIcons = ai.maxIndicators or 5
+    local anchor = ai.anchor or "TOPLEFT"
+    local count = math_min(#iconPayloads, maxIcons)
+
+    PositionIconContainer(frame, ai)
+    container:Show()
+
+    for idx = 1, count do
+        local payload = iconPayloads[idx]
+        local icon = AcquireIcon(container)
+        icon:SetSize(iconSize, iconSize)
+        icon._reverseSwipe = ai.reverseSwipe == true
+        icon:ClearAllPoints()
+
+        local vertPart = anchor:find("TOP") and "TOP" or (anchor:find("BOTTOM") and "BOTTOM" or "")
+        local firstHoriz = growDir == "LEFT" and "RIGHT" or "LEFT"
+        local firstAnchor = vertPart .. firstHoriz
+
+        if idx == 1 then
+            icon:SetPoint(firstAnchor, container, firstAnchor, 0, 0)
+        else
+            local prev = state.icons[idx - 1]
+            if growDir == "LEFT" then
+                icon:SetPoint("RIGHT", prev, "LEFT", -spacing, 0)
+            else
+                icon:SetPoint("LEFT", prev, "RIGHT", spacing, 0)
+            end
+        end
+
+        UpdateIconData(icon, frame.unit, payload.auraData)
+        icon:Show()
+        state.icons[idx] = icon
+    end
+
+    if growDir == "CENTER" and count > 0 then
+        local totalSpan = count * iconSize + math_max(count - 1, 0) * spacing
+        local startX = -totalSpan / 2
+        local vertPart2 = anchor:find("TOP") and "TOP" or (anchor:find("BOTTOM") and "BOTTOM" or "")
+        local iconPoint = vertPart2 == "" and "LEFT" or (vertPart2 .. "LEFT")
+        for idx = 1, count do
+            local icon = state.icons[idx]
+            icon:ClearAllPoints()
+            icon:SetPoint(iconPoint, container, anchor, startX + (idx - 1) * (iconSize + spacing), 0)
+        end
+    end
+end
+
+local function RenderBarIndicators(frame, barPayloads)
+    local state = GetIndicatorState(frame)
+    for _, bar in ipairs(state.bars) do
+        ReleaseBar(bar)
+    end
+    wipe(state.bars)
+
+    for idx, payload in ipairs(barPayloads) do
+        local bar = AcquireBar(frame)
+        bar:SetFrameLevel(frame:GetFrameLevel() + 9)
+        ConfigureBarIndicator(bar, frame, payload.auraData, payload.indicator)
+        bar:Show()
+        state.bars[idx] = bar
+    end
+end
+
+local function UpdateFrameIndicators(frame)
+    if not frame or not frame.unit then
+        return
+    end
+
+    local ai = GetAuraIndicatorSettings(frame._isRaid)
+    if not ai or ai.enabled == false then
+        ClearIndicators(frame)
+        return
+    end
+
+    local entries = ai.entries
+    if type(entries) ~= "table" or #entries == 0 then
+        ClearIndicators(frame)
+        return
+    end
+
+    local unit = frame.unit
+    if not UnitExists(unit) then
+        ClearIndicators(frame)
+        return
+    end
+
+    local activeAuras, activeAuraNames, helpfulAuras = BuildActiveAuraLookup(unit)
+    local iconPayloads = _scratchIconPayloads
+    local barPayloads = _scratchBarPayloads
+    wipe(iconPayloads)
+    wipe(barPayloads)
+
+    if not frame._indicatorAuraIDs then
+        frame._indicatorAuraIDs = {}
+    end
+    wipe(frame._indicatorAuraIDs)
+
+    local defIDs = frame._defensiveAuraIDs
+    local healthColor = nil
+
+    for _, entry in ipairs(entries) do
+        if entry.enabled ~= false and entry.spellID then
+            local auraData = FindTrackedAuraData(unit, entry.spellID, activeAuras, activeAuraNames, helpfulAuras)
+            if auraData then
+                local auraInstanceID = auraData.auraInstanceID
+                if auraInstanceID then
+                    frame._indicatorAuraIDs[auraInstanceID] = true
+                end
+
+                for _, indicator in ipairs(entry.indicators or {}) do
+                    if indicator.enabled ~= false then
+                        if indicator.type == "icon" then
+                            if not (defIDs and auraInstanceID and defIDs[auraInstanceID]) then
+                                iconPayloads[#iconPayloads + 1] = {
+                                    indicator = indicator,
+                                    auraData = auraData,
+                                    key = tostring(entry.id) .. ":" .. tostring(indicator.id),
+                                }
+                            end
+                        elseif indicator.type == "bar" then
+                            barPayloads[#barPayloads + 1] = {
+                                indicator = indicator,
+                                auraData = auraData,
+                                key = tostring(entry.id) .. ":" .. tostring(indicator.id),
+                            }
+                        elseif indicator.type == "healthBarColor" and not healthColor then
+                            healthColor = indicator.color or { 0.2, 0.8, 0.2, 1 }
                         end
                     end
                 end
@@ -494,146 +795,27 @@ local function UpdateFrameIndicators(frame)
         end
     end
 
-    local state = GetIndicatorState(frame)
-
-    -- Expose active indicator auraInstanceIDs for buff deduplication
-    if not frame._indicatorAuraIDs then frame._indicatorAuraIDs = {} end
-    wipe(frame._indicatorAuraIDs)
-
-    -- Pre-resolve which tracked spells are active and collect their auraData.
-    -- This lets us diff against the previous set before touching any icons.
-    local defIDs = frame._defensiveAuraIDs
-    local resolvedCount = 0
-    local resolvedData = state._resolvedData
-    if not resolvedData then
-        resolvedData = {}
-        state._resolvedData = resolvedData
-    end
-
-    for _, spellID in ipairs(trackedSpells) do
-        if resolvedCount >= maxIcons then break end
-        local auraData = FindTrackedAuraData(unit, spellID, activeAuras, activeAuraNames, helpfulAuras)
-        if auraData then
-            if not (defIDs and auraData.auraInstanceID and defIDs[auraData.auraInstanceID]) then
-                resolvedCount = resolvedCount + 1
-                resolvedData[resolvedCount] = auraData
-                if auraData.auraInstanceID then
-                    frame._indicatorAuraIDs[auraData.auraInstanceID] = true
-                end
-            end
-        end
-    end
-    -- Trim stale entries from previous pass
-    for i = resolvedCount + 1, #resolvedData do
-        resolvedData[i] = nil
-    end
-
-    -- Diff: check if the active aura set matches the previous frame.
-    -- If same count and same auraInstanceIDs in order, skip the expensive
-    -- release→acquire→position cycle and just update icon data in-place.
-    local prevIDs = state._prevAuraIDs
-    local canFastPath = (#prevIDs == resolvedCount) and (resolvedCount == #state.icons)
-    if canFastPath then
-        for i = 1, resolvedCount do
-            local newID = resolvedData[i].auraInstanceID
-            if not newID or IsSecretValue(newID) or prevIDs[i] ~= newID then
-                canFastPath = false
-                break
-            end
-        end
-    end
-
-    if canFastPath then
-        -- Fast path: same aura set — only update data (cooldown, stacks, texture).
-        -- Positions are unchanged, skip release→acquire→position entirely.
-        for i = 1, resolvedCount do
-            UpdateIconData(state.icons[i], unit, resolvedData[i])
-        end
-    else
-        -- Full rebuild: release all icons, acquire new ones, position them
-        for _, icon in ipairs(state.icons) do
-            ReleaseIcon(icon)
-        end
-        wipe(state.icons)
-        wipe(prevIDs)
-
-        local container = EnsureContainer(frame)
-        PositionContainer(frame)
-
-        local count = 0
-        for i = 1, resolvedCount do
-            local auraData = resolvedData[i]
-            count = count + 1
-            local icon = AcquireIcon(container)
-            icon:SetSize(iconSize, iconSize)
-
-            -- Position in row
-            icon:ClearAllPoints()
-            local vertPart = anchor:find("TOP") and "TOP" or (anchor:find("BOTTOM") and "BOTTOM" or "")
-            local firstHoriz = growDir == "LEFT" and "RIGHT" or "LEFT"
-            local firstAnchor = vertPart .. firstHoriz
-
-            if count == 1 then
-                icon:SetPoint(firstAnchor, container, firstAnchor, 0, 0)
-            else
-                local prev = state.icons[count - 1]
-                if prev then
-                    if growDir == "LEFT" then
-                        icon:SetPoint("RIGHT", prev, "LEFT", -spacing, 0)
-                    else
-                        icon:SetPoint("LEFT", prev, "RIGHT", spacing, 0)
-                    end
-                end
-            end
-
-            UpdateIconData(icon, unit, auraData)
-            icon:Show()
-            state.icons[count] = icon
-            prevIDs[count] = auraData.auraInstanceID
-        end
-
-        -- CENTER: reposition all icons centered around the container's anchor.
-        -- Only needed on full rebuild — fast path preserves existing positions.
-        if growDir == "CENTER" and count > 0 then
-            local totalSpan = count * iconSize + math.max(count - 1, 0) * spacing
-            local startX = -totalSpan / 2
-            local vertPart2 = anchor:find("TOP") and "TOP" or (anchor:find("BOTTOM") and "BOTTOM" or "")
-            local iconPoint = vertPart2 == "" and "LEFT" or (vertPart2 .. "LEFT")
-            for idx = 1, count do
-                local ic = state.icons[idx]
-                if ic then
-                    ic:ClearAllPoints()
-                    ic:SetPoint(iconPoint, container, anchor, startX + (idx - 1) * (iconSize + spacing), 0)
-                end
-            end
-        end
-    end
+    RenderIconIndicators(frame, ai, iconPayloads)
+    RenderBarIndicators(frame, barPayloads)
+    SetHealthBarOverride(frame, healthColor)
 end
 
----------------------------------------------------------------------------
--- EVENT HOOKUP
--- UNIT_AURA is driven by the shared aura scan in groupframes_auras.lua
--- (FlushPendingAuras calls GFI:RefreshFrame) to ensure indicators update
--- before buffs, enabling buff deduplication.
----------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 
-eventFrame:SetScript("OnEvent", function(self, event, arg1)
+eventFrame:SetScript("OnEvent", function()
     local GF = ns.QUI_GroupFrames
-    if not GF or not GF.initialized then return end
-
-    if event == "PLAYER_SPECIALIZATION_CHANGED" then
-        QUI_GFI:RefreshAll()
+    if not GF or not GF.initialized then
+        return
     end
+    QUI_GFI:RefreshAll()
 end)
 
----------------------------------------------------------------------------
--- PUBLIC API
----------------------------------------------------------------------------
 function QUI_GFI:RefreshAll()
     local GF = ns.QUI_GroupFrames
-    if not GF or not GF.initialized then return end
+    if not GF or not GF.initialized then
+        return
+    end
 
     for _, frame in pairs(GF.unitFrameMap) do
         if frame and frame:IsShown() then

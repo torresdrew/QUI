@@ -8,6 +8,11 @@ local ADDON_NAME, ns = ...
 -- Ensure namespace tables exist
 ns.Helpers = ns.Helpers or {}
 local Helpers = ns.Helpers
+local pairs = pairs
+local ipairs = ipairs
+local tostring = tostring
+local tonumber = tonumber
+local table_remove = table.remove
 
 -- Cache LibSharedMedia reference
 local LSM = LibStub("LibSharedMedia-3.0", true)
@@ -151,6 +156,152 @@ local function DeepCopyDefaults(src)
         copy[k] = type(v) == "table" and DeepCopyDefaults(v) or v
     end
     return copy
+end
+
+local function CreateDefaultAuraIndicatorRecord(indicatorType, index)
+    indicatorType = indicatorType or "icon"
+    local record = {
+        id = indicatorType .. "_" .. tostring(index or 1),
+        type = indicatorType,
+        enabled = true,
+    }
+
+    if indicatorType == "bar" then
+        record.orientation = "HORIZONTAL"
+        record.thickness = 4
+        record.length = 40
+        record.matchFrameSize = false
+        record.anchor = "BOTTOM"
+        record.offsetX = 0
+        record.offsetY = 0
+        record.color = { 0.2, 0.8, 0.2, 1 }
+        record.backgroundColor = { 0.2, 0.8, 0.2, 0.18 }
+        record.borderSize = 1
+        record.borderColor = { 0, 0, 0, 1 }
+        record.hideBorder = false
+        record.lowTimeThreshold = 0
+        record.lowTimeColor = { 1, 0.2, 0.2, 1 }
+    elseif indicatorType == "healthBarColor" then
+        record.color = { 0.2, 0.8, 0.2, 1 }
+    end
+
+    return record
+end
+
+local function NormalizeAuraIndicatorRecord(record, entryIndex, indicatorIndex)
+    if type(record) ~= "table" then
+        record = {}
+    end
+
+    local indicatorType = record.type
+    if indicatorType ~= "icon" and indicatorType ~= "bar" and indicatorType ~= "healthBarColor" then
+        indicatorType = "icon"
+    end
+
+    local defaults = CreateDefaultAuraIndicatorRecord(indicatorType, indicatorIndex)
+    for key, value in pairs(defaults) do
+        if record[key] == nil then
+            record[key] = type(value) == "table" and DeepCopyDefaults(value) or value
+        end
+    end
+
+    record.type = indicatorType
+    record.id = record.id or (indicatorType .. "_" .. tostring(entryIndex or 1) .. "_" .. tostring(indicatorIndex or 1))
+    if record.enabled == nil then
+        record.enabled = true
+    end
+
+    if indicatorType == "bar" then
+        if record.orientation ~= "VERTICAL" then
+            record.orientation = "HORIZONTAL"
+        end
+        record.thickness = tonumber(record.thickness) or defaults.thickness
+        record.length = tonumber(record.length) or defaults.length
+        record.matchFrameSize = record.matchFrameSize == true
+        record.anchor = record.anchor or defaults.anchor
+        record.offsetX = tonumber(record.offsetX) or 0
+        record.offsetY = tonumber(record.offsetY) or 0
+        if type(record.color) ~= "table" then
+            record.color = DeepCopyDefaults(defaults.color)
+        end
+        if type(record.backgroundColor) ~= "table" then
+            record.backgroundColor = DeepCopyDefaults(defaults.backgroundColor)
+        end
+        if type(record.borderColor) ~= "table" then
+            record.borderColor = DeepCopyDefaults(defaults.borderColor)
+        end
+        record.borderSize = tonumber(record.borderSize) or defaults.borderSize
+        record.hideBorder = record.hideBorder == true
+        record.lowTimeThreshold = tonumber(record.lowTimeThreshold) or 0
+        if type(record.lowTimeColor) ~= "table" then
+            record.lowTimeColor = DeepCopyDefaults(defaults.lowTimeColor)
+        end
+    elseif indicatorType == "healthBarColor" then
+        if type(record.color) ~= "table" then
+            record.color = DeepCopyDefaults(defaults.color)
+        end
+    end
+
+    return record
+end
+
+function Helpers.NormalizeAuraIndicatorConfig(ai)
+    if type(ai) ~= "table" then
+        return nil
+    end
+
+    if type(ai.trackedSpells) ~= "table" then
+        ai.trackedSpells = {}
+    end
+    if type(ai.entries) ~= "table" then
+        ai.entries = {}
+    end
+
+    if #ai.entries == 0 then
+        for spellID, enabled in pairs(ai.trackedSpells) do
+            if enabled then
+                local normalizedSpellID = tonumber(spellID) or spellID
+                ai.entries[#ai.entries + 1] = {
+                    id = "aura_" .. tostring(normalizedSpellID),
+                    spellID = normalizedSpellID,
+                    enabled = true,
+                    indicators = {
+                        CreateDefaultAuraIndicatorRecord("icon", 1),
+                    },
+                }
+            end
+        end
+    end
+
+    for idx = #ai.entries, 1, -1 do
+        local entry = ai.entries[idx]
+        if type(entry) ~= "table" or entry.spellID == nil then
+            table_remove(ai.entries, idx)
+        else
+            entry.spellID = tonumber(entry.spellID) or entry.spellID
+            entry.id = entry.id or ("aura_" .. tostring(entry.spellID) .. "_" .. tostring(idx))
+            if entry.enabled == nil then
+                entry.enabled = true
+            end
+            if type(entry.indicators) ~= "table" then
+                entry.indicators = {}
+            end
+
+            for indIdx = #entry.indicators, 1, -1 do
+                if type(entry.indicators[indIdx]) ~= "table" then
+                    table_remove(entry.indicators, indIdx)
+                else
+                    entry.indicators[indIdx] = NormalizeAuraIndicatorRecord(entry.indicators[indIdx], idx, indIdx)
+                end
+            end
+
+            if #entry.indicators == 0 then
+                entry.indicators[1] = CreateDefaultAuraIndicatorRecord("icon", 1)
+            end
+        end
+    end
+
+    return ai
 end
 
 --- Get module settings with defaults fallback

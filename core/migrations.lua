@@ -93,7 +93,7 @@ local function LooksLikeLegacyMainlineProfile(profile)
         end
     end
 
-    if type(profile.ncdm) == "table" and profile.ncdm.engine == "classic" then
+    if type(profile.ncdm) == "table" and profile.ncdm.engine ~= nil then
         return true
     end
     if type(profile.actionBars) == "table" and profile.actionBars.engine == "classic" then
@@ -362,8 +362,8 @@ local function NormalizeEngines(profile)
         profile.tooltip.engine = "default"
     end
 
-    if profile.ncdm and profile.ncdm.engine and profile.ncdm.engine ~= "owned" then
-        profile.ncdm.engine = "owned"
+    if profile.ncdm and profile.ncdm.engine ~= nil then
+        profile.ncdm.engine = nil
     end
 
     if profile.actionBars and profile.actionBars.engine == "classic" then
@@ -953,6 +953,18 @@ function Migrations.NormalizeProfile(core, opts)
     MigrateToShowLogic(profile.cdmVisibility)
     MigrateToShowLogic(profile.unitframesVisibility)
     MigrateGroupFrameContainers(profile)
+    if profile.quiGroupFrames then
+        local normalizeAuraIndicators = ns.Helpers and ns.Helpers.NormalizeAuraIndicatorConfig
+        if normalizeAuraIndicators then
+            local gf = profile.quiGroupFrames
+            if gf.party and gf.party.auraIndicators then
+                normalizeAuraIndicators(gf.party.auraIndicators)
+            end
+            if gf.raid and gf.raid.auraIndicators then
+                normalizeAuraIndicators(gf.raid.auraIndicators)
+            end
+        end
+    end
     NormalizeEngines(profile)
     NormalizeMinimapSettings(profile)
     MigrateAnchoring(profile)

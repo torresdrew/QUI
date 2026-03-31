@@ -3066,14 +3066,10 @@ end
 
 
 -- Legacy compat: GetIcons returns the pool for a viewer name.
--- Returns empty when called from the classic engine's LayoutViewer context
--- (which passes Blizzard viewer names) to prevent the classic engine from
--- repositioning our addon-owned icons onto the Blizzard viewer during combat.
+-- Return empty for unknown viewer names so external callers cannot adopt and
+-- reposition addon-owned icons onto the Blizzard viewers.
 function CustomCDM:GetIcons(viewerName)
-    -- Only return icons when asked for addon-owned container names
-    -- (internal callers from the owned engine).  The classic engine passes
-    -- Blizzard viewer names ("EssentialCooldownViewer", etc.) — return
-    -- empty so it doesn't adopt and reposition our icons.
+    -- Only return icons when asked for addon-owned container names.
     if viewerName == "QUI_EssentialContainer" then
         return iconPools["essential"] or {}
     elseif viewerName == "QUI_UtilityContainer" then

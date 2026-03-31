@@ -11,14 +11,6 @@ The **Cooldown Manager** (CDM) configures the core HUD system that displays your
 
 ---
 
-## Engine
-
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| `ncdm.engine` | string | `"owned"` | CDM engine: `"owned"` (addon-owned frames, recommended) or `"classic"` (legacy Blizzard hooks) |
-
----
-
 ## Essential Bar
 
 The primary ability bar, typically showing core rotational and cooldown abilities.

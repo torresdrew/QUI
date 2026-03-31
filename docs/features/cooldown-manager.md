@@ -84,7 +84,6 @@ Containers can be positioned independently in Layout Mode and each has its own l
 
 | Setting | Description | Default |
 |:--------|:------------|:--------|
-| Engine | "owned" (addon frames) or "classic" (Blizzard hooks) | owned |
 | Essential icon size | Pixel size of Essential container icons | 39 |
 | Essential icons per row | Number of icons before wrapping to a new row | 8 |
 | Essential rows | Maximum number of rows (1-3) | 3 |
@@ -114,9 +113,6 @@ Configure these in the CDM visibility settings or via the HUD Visibility tab.
 
 {: .note }
 Custom entries are stored per-character, not per-profile. If you add a trinket to your Essential container on one character, it will not appear on another character even if they share the same profile.
-
-{: .important }
-The "classic" engine is legacy code. If you experience issues with cooldown tracking, make sure your engine is set to "owned" -- it receives all bug fixes and new features.
 
 {: .note }
 You can add both spells and items as custom entries. This is especially useful for tracking trinket cooldowns or on-use items alongside your rotation abilities.
