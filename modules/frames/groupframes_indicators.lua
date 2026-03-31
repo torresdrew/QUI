@@ -307,6 +307,9 @@ local function UpdateIconData(icon, unit, auraData)
     end
 
     if icon.cooldown and auraData then
+        if icon.cooldown.SetReverse then
+            pcall(icon.cooldown.SetReverse, icon.cooldown, icon._reverseSwipe == true)
+        end
         local dur = auraData.duration
         local expTime = auraData.expirationTime
         if dur and expTime then
@@ -669,6 +672,7 @@ local function RenderIconIndicators(frame, ai, iconPayloads)
         local payload = iconPayloads[idx]
         local icon = AcquireIcon(container)
         icon:SetSize(iconSize, iconSize)
+        icon._reverseSwipe = ai.reverseSwipe == true
         icon:ClearAllPoints()
 
         local vertPart = anchor:find("TOP") and "TOP" or (anchor:find("BOTTOM") and "BOTTOM" or "")

@@ -223,6 +223,42 @@ local function RemoveAllAnchors(state)
     end
 end
 
+local function ApplyCooldownReverseRecursive(node, reverse, depth)
+    if not node or depth > 5 or not node.GetNumChildren then
+        return
+    end
+
+    for i = 1, node:GetNumChildren() do
+        local child = select(i, node:GetChildren())
+        if child then
+            if child.IsObjectType and child:IsObjectType("Cooldown") and child.SetReverse then
+                pcall(child.SetReverse, child, reverse == true)
+            end
+            ApplyCooldownReverseRecursive(child, reverse, depth + 1)
+        end
+    end
+end
+
+local function ApplyPrivateAuraSwipeReverse(state, reverse)
+    if not state then return end
+
+    for _, container in ipairs(state.containers) do
+        ApplyCooldownReverseRecursive(container, reverse, 1)
+    end
+    for _, scaleFrame in ipairs(state.scaleFrames) do
+        ApplyCooldownReverseRecursive(scaleFrame, reverse, 1)
+    end
+end
+
+local function SchedulePrivateAuraSwipeReverse(frame, state, reverse)
+    ApplyPrivateAuraSwipeReverse(state, reverse)
+    C_Timer.After(0, function()
+        if frameState[frame] == state then
+            ApplyPrivateAuraSwipeReverse(state, reverse)
+        end
+    end)
+end
+
 ---------------------------------------------------------------------------
 -- CORE: Setup private auras on a single frame
 ---------------------------------------------------------------------------
@@ -258,6 +294,7 @@ local function SetupPrivateAuras(frame)
     local anchor = settings.anchor or "RIGHT"
     local offsetX = settings.anchorOffsetX or -2
     local offsetY = settings.anchorOffsetY or 0
+    local reverseSwipe = settings.reverseSwipe == true
     if anchor:find("BOTTOM") then offsetY = offsetY + (frame._bottomPad or 0) end
 
     state.unit = unit
@@ -293,6 +330,8 @@ local function SetupPrivateAuras(frame)
         state.anchorIDs[i] = mainID
         state.textAnchorIDs[i] = textID
     end
+
+    SchedulePrivateAuraSwipeReverse(frame, state, reverseSwipe)
 end
 
 ---------------------------------------------------------------------------
@@ -359,6 +398,7 @@ local function ReanchorPrivateAuras(frame)
     state.unit = unit
 
     local maxSlots = settings.maxPerFrame or 2
+    local reverseSwipe = settings.reverseSwipe == true
 
     for i = 1, maxSlots do
         local container = state.containers[i]
@@ -374,6 +414,8 @@ local function ReanchorPrivateAuras(frame)
         state.anchorIDs[i] = mainID
         state.textAnchorIDs[i] = textID
     end
+
+    SchedulePrivateAuraSwipeReverse(frame, state, reverseSwipe)
 end
 
 ---------------------------------------------------------------------------

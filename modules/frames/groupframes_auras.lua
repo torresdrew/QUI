@@ -476,6 +476,12 @@ local function CreateAuraIcon(parent, size)
     return icon
 end
 
+local function SafeSetReverse(cooldown, reverse)
+    if cooldown and cooldown.SetReverse then
+        pcall(cooldown.SetReverse, cooldown, reverse == true)
+    end
+end
+
 -- Dispel border colors (file-level to avoid per-call allocation)
 local AURA_DISPEL_COLORS = {
     Magic   = { 0.2, 0.6, 1.0, 1 },
@@ -955,6 +961,7 @@ local function UpdateFrameAuras(frame)
                 end
             end
             local icon = frame.debuffIcons[i]
+            SafeSetReverse(icon and icon.cooldown, auraSettings.debuffReverseSwipe == true)
             if auraData then
                 icon._cachedShowPulse = showPulse
                 UpdateAuraIcon(icon, auraData, unit)
@@ -1126,6 +1133,7 @@ local function UpdateFrameAuras(frame)
                 end
             end
             local bIcon = frame.buffIcons[i]
+            SafeSetReverse(bIcon and bIcon.cooldown, auraSettings.buffReverseSwipe == true)
             if auraData then
                 bIcon._cachedShowPulse = showPulse
                 UpdateAuraIcon(bIcon, auraData, unit)

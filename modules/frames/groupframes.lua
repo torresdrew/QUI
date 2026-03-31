@@ -1558,6 +1558,7 @@ local function UpdateDefensiveIndicator(frame)
     local offsetY = defSettings.offsetY or 0
     local spacing = defSettings.spacing or 2
     local growDir = defSettings.growDirection or "RIGHT"
+    local reverseSwipe = defSettings.reverseSwipe ~= false
     local growFn = DEFENSIVE_GROWTH_OFFSETS[growDir] or DEFENSIVE_GROWTH_OFFSETS.RIGHT
     local stepX, stepY = growFn(iconSize, spacing)
 
@@ -1587,6 +1588,9 @@ local function UpdateDefensiveIndicator(frame)
             -- Update cooldown swipe
             local cd = defIcon.cooldown
             if cd and aura.duration and aura.expirationTime then
+                if cd.SetReverse then
+                    pcall(cd.SetReverse, cd, reverseSwipe)
+                end
                 if aura.auraInstanceID and C_UnitAuras.GetAuraDuration
                    and cd.SetCooldownFromDurationObject then
                     local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, aura.auraInstanceID)
@@ -2139,11 +2143,13 @@ local function DecorateGroupFrame(frame)
         })
         defIcon:SetBackdropBorderColor(0, 0.8, 0, 1)
 
+        local healerDB = GetHealerSettings(isRaid)
+        local defReverse = healerDB and healerDB.defensiveIndicator and healerDB.defensiveIndicator.reverseSwipe ~= false
         local defCD = defIcon.cooldown or CreateFrame("Cooldown", nil, defIcon, "CooldownFrameTemplate")
         defCD:SetAllPoints(defTex)
         defCD:SetDrawEdge(false)
         defCD:SetDrawSwipe(true)
-        defCD:SetReverse(true)
+        defCD:SetReverse(defReverse)
         defCD:SetHideCountdownNumbers(false)
         defIcon.cooldown = defCD
 

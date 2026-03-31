@@ -327,6 +327,9 @@ local function UpdateIndicatorData(ind, unit, slot, auraData, showSwipe)
 
             if showSwipe and ind.cooldown then
                 ind.cooldown:Show()
+                if ind.cooldown.SetReverse then
+                    pcall(ind.cooldown.SetReverse, ind.cooldown, ind._reverseSwipe == true)
+                end
                 local dur = auraData.duration
                 local expTime = auraData.expirationTime
                 if dur and expTime then
@@ -463,6 +466,7 @@ local function UpdateFramePinnedAuras(frame)
 
     local slotSize = pa.slotSize or 8
     local showSwipe = pa.showSwipe
+    local reverseSwipe = pa.reverseSwipe == true
     local inset = pa.edgeInset or 2
 
     -- Build active aura lookup from shared cache.
@@ -544,6 +548,7 @@ local function UpdateFramePinnedAuras(frame)
                 if auraData and auraData.auraInstanceID then
                     frame._pinnedAuraIDs[auraData.auraInstanceID] = true
                 end
+                ind._reverseSwipe = reverseSwipe
                 UpdateIndicatorData(ind, unit, slot, auraData, showSwipe)
             end
         end
@@ -579,6 +584,7 @@ local function UpdateFramePinnedAuras(frame)
                 end
                 ind:SetPoint(anchor, frame, anchor, offX, offY)
 
+                ind._reverseSwipe = reverseSwipe
                 UpdateIndicatorData(ind, unit, slot, auraData, showSwipe)
                 ind:Show()
                 state.indicators[#state.indicators + 1] = ind
