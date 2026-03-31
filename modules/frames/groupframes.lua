@@ -2665,14 +2665,52 @@ local function ConfigurePartyHeader(header)
     header:SetAttribute("_initialAttribute-unit-height", h)
 end
 
+-- Build a comma-separated nameList of all raid members excluding the player.
+-- When used with strictFiltering=true on raid headers, this prevents the
+-- player from appearing in the raid roster (they show via the self header).
+local function BuildRaidNameListExcludingPlayer()
+    local names = {}
+    for i = 1, GetNumGroupMembers() do
+        local name = GetRaidRosterInfo(i)
+        if name and not UnitIsUnit("raid" .. i, "player") then
+            names[#names + 1] = name
+        end
+    end
+    return table.concat(names, ",")
+end
+
+-- Find which raid subgroup the player belongs to (1-8).
+local function GetPlayerRaidSubgroup()
+    for i = 1, GetNumGroupMembers() do
+        local name, _, subgroup = GetRaidRosterInfo(i)
+        if name and UnitIsUnit("raid" .. i, "player") then
+            return subgroup
+        end
+    end
+    return nil
+end
+
 local function ConfigureRaidHeader(header)
     local layout = GetLayoutSettings(true)
     if not layout then return end
+
+    local db = GetSettings()
+    local selfFirst = db and db.selfFirst
 
     header:SetAttribute("showRaid", true)
     header:SetAttribute("showParty", false)
     header:SetAttribute("showPlayer", false)
     header:SetAttribute("showSolo", false)
+
+    -- When selfFirst is on, filter the player out of the raid header so they
+    -- only appear in the self header (avoids the player showing twice).
+    if selfFirst and IsInRaid() then
+        header:SetAttribute("nameList", BuildRaidNameListExcludingPlayer())
+        header:SetAttribute("strictFiltering", true)
+    else
+        header:SetAttribute("nameList", nil)
+        header:SetAttribute("strictFiltering", nil)
+    end
 
     local mode = GetGroupMode()
     local w, h = GetFrameDimensions(mode)
@@ -2785,6 +2823,10 @@ local function ConfigureRaidGroupHeaders()
     local sortMethod = layout.sortMethod or "INDEX"
     local sortByRole = layout.sortByRole
 
+    local db = GetSettings()
+    local selfFirst = db and db.selfFirst
+    local nameList = (selfFirst and IsInRaid()) and BuildRaidNameListExcludingPlayer() or nil
+
     for g = 1, 8 do
         local header = QUI_GF.raidGroupHeaders[g]
         if header then
@@ -2801,6 +2843,16 @@ local function ConfigureRaidGroupHeaders()
                 header:SetAttribute("sortMethod", "NAME")
             else
                 header:SetAttribute("sortMethod", sortMethod)
+            end
+
+            -- When selfFirst is on, filter the player out of their group
+            -- header so they only appear in the self header.
+            if nameList then
+                header:SetAttribute("nameList", nameList)
+                header:SetAttribute("strictFiltering", true)
+            else
+                header:SetAttribute("nameList", nil)
+                header:SetAttribute("strictFiltering", nil)
             end
 
             header:SetAttribute("_initialAttributeNames", "unit-width,unit-height")
@@ -3178,6 +3230,9 @@ local function UpdateHeaderSizes()
         partyHdr:SetSize(w, h)
     end
 
+    local selfFirst = db and db.selfFirst
+    local playerGroup = (selfFirst and IsInRaid()) and GetPlayerRaidSubgroup() or nil
+
     if IsMultiHeaderMode() and IsInRaid() then
         -- Multi-header mode: size each group header individually
         local mode = GetGroupMode()
@@ -3199,6 +3254,10 @@ local function UpdateHeaderSizes()
                     for i = 1, totalMembers do
                         local _, _, subgroup = GetRaidRosterInfo(i)
                         if subgroup == g then groupCount = groupCount + 1 end
+                    end
+                    -- Subtract 1 for the player when selfFirst is on
+                    if playerGroup == g then
+                        groupCount = groupCount - 1
                     end
                     groupCount = math_max(groupCount, 1)
 
@@ -3223,18 +3282,26 @@ local function UpdateHeaderSizes()
         local raidHdr = QUI_GF.headers.raid
         if raidHdr then
             local count = IsInRaid() and GetNumGroupMembers() or 25
+            -- Subtract 1 for the player when selfFirst is on
+            if playerGroup then count = count - 1 end
             count = math_max(count, 5)
             local w, h = CalculateHeaderSize(db, count)
             raidHdr:SetSize(w, h)
         end
     end
 
-    -- Self header uses party dimensions; root layout handles ordering.
+    -- Self header dimensions: use raid dims when in raid, party dims otherwise.
     local selfHdr = QUI_GF.headers.self
     if selfHdr then
-        local partyDims = db.party and db.party.dimensions
-        local sw = partyDims and partyDims.partyWidth or 200
-        local sh = partyDims and partyDims.partyHeight or 40
+        local sw, sh
+        if IsInRaid() then
+            local mode = GetGroupMode()
+            sw, sh = GetFrameDimensions(mode)
+        else
+            local partyDims = db.party and db.party.dimensions
+            sw = partyDims and partyDims.partyWidth or 200
+            sh = partyDims and partyDims.partyHeight or 40
+        end
         selfHdr:SetAttribute("_initialAttribute-unit-width", sw)
         selfHdr:SetAttribute("_initialAttribute-unit-height", sh)
         selfHdr:SetSize(sw, sh)
@@ -3427,14 +3494,22 @@ local function ApplyChildFrameLayout()
     local raidMode = GetGroupMode()
     local raidW, raidH = GetFrameDimensions(raidMode ~= "party" and raidMode or "small")
 
+    local selfInRaid = IsInRaid()
     local function LayoutChildren(header)
         if not header then return end
+        -- Self header child uses raid dims when in raid, party dims otherwise
+        local useRaidForSelf = (header == QUI_GF.headers.self and selfInRaid)
         local i = 1
         while true do
             local child = header:GetAttribute("child" .. i)
             if not child then break end
             if not inCombat then
-                local cw, ch = child._isRaid and raidW or partyW, child._isRaid and raidH or partyH
+                local cw, ch
+                if useRaidForSelf or child._isRaid then
+                    cw, ch = raidW, raidH
+                else
+                    cw, ch = partyW, partyH
+                end
                 child:SetSize(cw, ch)
             end
             if child.healthBar and child.powerBar then
@@ -3503,8 +3578,11 @@ local function UpdateFrameScaling(forceUpdate)
     end
     local selfHeader = QUI_GF.headers.self
     if selfHeader then
-        selfHeader:SetAttribute("_initialAttribute-unit-width", partyW)
-        selfHeader:SetAttribute("_initialAttribute-unit-height", partyH)
+        -- Self header matches raid dimensions when in raid, party otherwise
+        local selfW = IsInRaid() and raidW or partyW
+        local selfH = IsInRaid() and raidH or partyH
+        selfHeader:SetAttribute("_initialAttribute-unit-width", selfW)
+        selfHeader:SetAttribute("_initialAttribute-unit-height", selfH)
     end
     local raidHeader = QUI_GF.headers.raid
     if raidHeader then
