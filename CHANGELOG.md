@@ -4,6 +4,32 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## v2.56.0-alpha.6
+
+### Breaking
+- Removed classic CDM engine support — owned engine is now the only engine
+
+### Action Bars
+- do-block scoping for spell glow, extra buttons, skinning, and flyout sections to limit local scope
+- Fixed anchor key mapping — pet/stance/microbar/bags now map to correct anchoring system keys
+- Combat reload safety: defer pet bar and stance bar hide when data unavailable at PEW time
+- Re-apply frame anchoring during PEW init safe window (containers may not exist at ADDON_LOADED)
+- Added lightweight `QUI_RefreshActionBarFade` for fade-only refresh without full bar rebuild
+- Fade/alwaysShow settings now use lightweight refresh
+- Updated defaults: 30px buttons, 0px spacing, better text positions
+
+### Group Frames
+- Added option to reverse the CD swipe on auras
+- Added drag-n-drop rearrangement for aura indicators
+- Added new aura indicator types (bars, healthbar color)
+
+### New Features
+- Option to select a default chat tab on login/reload
+- Custom tracker bars restored
+
+### Fixes
+- Fixed minimap zoom not being persistent
+
 ## v2.56.0-alpha.5
 
 ### CDM (Cooldown Manager)
