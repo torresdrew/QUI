@@ -594,13 +594,21 @@ local function UpdateHealth(frame)
             r, g, b, a = COLORS.OFFLINE[1], COLORS.OFFLINE[2], COLORS.OFFLINE[3], COLORS.OFFLINE[4]
         elseif isDeadOrGhost then
             r, g, b, a = COLORS.DEAD[1], COLORS.DEAD[2], COLORS.DEAD[3], COLORS.DEAD[4]
+        elseif frame._auraIndicatorHealthColor then
+            local c = frame._auraIndicatorHealthColor
+            r, g, b, a = c[1] or 0.2, c[2] or 0.8, c[3] or 0.2, c[4] or 1
         else
             r, g, b, a = GetHealthBarColor(unit, frame._isRaid)
         end
-        -- r is unique per state: class color r varies by class, offline/dead
-        -- colors are distinct fixed values, dark mode is a fixed value.
-        if r ~= frame._lastHealthColorR then
+        if r ~= frame._lastHealthColorR
+            or g ~= frame._lastHealthColorG
+            or b ~= frame._lastHealthColorB
+            or a ~= frame._lastHealthColorA
+        then
             frame._lastHealthColorR = r
+            frame._lastHealthColorG = g
+            frame._lastHealthColorB = b
+            frame._lastHealthColorA = a
             frame.healthBar:SetStatusBarColor(r, g, b, a)
         end
     end
@@ -4224,6 +4232,10 @@ end
 
 function QUI_GF:UpdateDefensiveIndicator(frame)
     UpdateDefensiveIndicator(frame)
+end
+
+function QUI_GF:RefreshHealth(frame)
+    UpdateHealth(frame)
 end
 
 ---------------------------------------------------------------------------

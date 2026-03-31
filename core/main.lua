@@ -293,6 +293,21 @@ function QUICore:OnInitialize()
         gf.unifiedPosition = nil
     end
 
+    -- Migrate legacy group-frame aura indicator spell toggles into the new
+    -- per-aura entries model while keeping the old table for backwards compat.
+    if gf then
+        local Helpers = ns.Helpers
+        local normalizeAuraIndicators = Helpers and Helpers.NormalizeAuraIndicatorConfig
+        if normalizeAuraIndicators then
+            if gf.party and gf.party.auraIndicators then
+                normalizeAuraIndicators(gf.party.auraIndicators)
+            end
+            if gf.raid and gf.raid.auraIndicators then
+                normalizeAuraIndicators(gf.raid.auraIndicators)
+            end
+        end
+    end
+
     -- Migrate tooltip engine: normalize legacy engine names to "default"
     if profile.tooltip and profile.tooltip.engine and profile.tooltip.engine ~= "default" then
         profile.tooltip.engine = "default"

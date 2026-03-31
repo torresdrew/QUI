@@ -953,6 +953,18 @@ function Migrations.NormalizeProfile(core, opts)
     MigrateToShowLogic(profile.cdmVisibility)
     MigrateToShowLogic(profile.unitframesVisibility)
     MigrateGroupFrameContainers(profile)
+    if profile.quiGroupFrames then
+        local normalizeAuraIndicators = ns.Helpers and ns.Helpers.NormalizeAuraIndicatorConfig
+        if normalizeAuraIndicators then
+            local gf = profile.quiGroupFrames
+            if gf.party and gf.party.auraIndicators then
+                normalizeAuraIndicators(gf.party.auraIndicators)
+            end
+            if gf.raid and gf.raid.auraIndicators then
+                normalizeAuraIndicators(gf.raid.auraIndicators)
+            end
+        end
+    end
     NormalizeEngines(profile)
     NormalizeMinimapSettings(profile)
     MigrateAnchoring(profile)

@@ -2584,6 +2584,7 @@ local defaults = {
                     spacing = 2,
                     maxIndicators = 5,
                     trackedSpells = {},
+                    entries = {},
                 },
                 pinnedAuras = {
                     enabled = false,
@@ -2747,6 +2748,7 @@ local defaults = {
                     spacing = 2,
                     maxIndicators = 5,
                     trackedSpells = {},
+                    entries = {},
                 },
                 pinnedAuras = {
                     enabled = false,

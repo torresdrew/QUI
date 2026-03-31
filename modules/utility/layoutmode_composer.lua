@@ -347,6 +347,15 @@ local TEXT_JUSTIFY_OPTIONS = {
 local FILTER_MODE_OPTIONS = {
     { value = "off", text = "Off (Show All)" }, { value = "classification", text = "Classification" },
 }
+local AURA_INDICATOR_TYPE_OPTIONS = {
+    { value = "icon", text = "Icon" },
+    { value = "bar", text = "Bar" },
+    { value = "healthBarColor", text = "Health Bar Tint" },
+}
+local BAR_ORIENTATION_OPTIONS = {
+    { value = "HORIZONTAL", text = "Horizontal" },
+    { value = "VERTICAL", text = "Vertical" },
+}
 
 ---------------------------------------------------------------------------
 -- SPELL PRESETS
@@ -1372,14 +1381,16 @@ end
 
 local function BuildAuraIndicatorsSettings(content, gfdb, onChange)
     local ai = gfdb.auraIndicators; if not ai then gfdb.auraIndicators = {} ai = gfdb.auraIndicators end
+    local normalizeAuraIndicators = ns.Helpers and ns.Helpers.NormalizeAuraIndicatorConfig
+    if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
     local sections = {}
     local function relayout() RelayoutComposerSections(content, sections) end
 
-    CreateComposerCollapsible(content, "Aura Indicators", function(body, updateH)
+    CreateComposerCollapsible(content, "Aura Indicator Defaults", function(body, updateH)
         local cond = function() return ai.enabled end
         local L = CreateDynamicLayout(body, updateH)
-        local desc = GUI:CreateLabel(body, "Track specific spells as icons on group frames. Auto-detects your spec.", 11, C and C.textMuted); desc:SetJustifyH("LEFT")
-        L:Row(desc, 30)
+        local desc = GUI:CreateLabel(body, "Icon indicators still use the shared strip settings below. Bars and health-bar tints are configured per aura entry.", 11, C and C.textMuted); desc:SetJustifyH("LEFT")
+        L:Row(desc, 40)
         L:Row(GUI:CreateFormCheckbox(body, "Enable Aura Indicators", "enabled", ai, onChange), FORM_ROW)
         L:Row(GUI:CreateFormSlider(body, "Icon Size", 8, 32, 1, "iconSize", ai, onChange), SLIDER_HEIGHT, cond)
         L:Row(GUI:CreateFormSlider(body, "Max Indicators", 1, 10, 1, "maxIndicators", ai, onChange), SLIDER_HEIGHT, cond)
@@ -1391,24 +1402,560 @@ local function BuildAuraIndicatorsSettings(content, gfdb, onChange)
         L:Finish()
     end, sections, relayout)
 
-    CreateComposerCollapsible(content, "Tracked Spells", function(body, updateH)
-        local desc = GUI:CreateLabel(body, "Toggle which spells are tracked for your current spec.", 11, C and C.textMuted); desc:SetJustifyH("LEFT")
-        desc:SetPoint("TOPLEFT", PAD, -6)
-        desc:SetPoint("RIGHT", body, "RIGHT", -PAD, 0)
-        if not ai.trackedSpells then ai.trackedSpells = {} end
-        local _, spellListContainer = BuildSpellListSection(body, function() return ai.trackedSpells end, function()
-            if not spellListContainer then return end
-            spellListContainer:ClearAllPoints()
-            spellListContainer:SetPoint("TOPLEFT", PAD, -30)
-            spellListContainer:SetPoint("RIGHT", body, "RIGHT", -PAD, 0)
-            body:SetHeight(30 + spellListContainer:GetHeight() + 10)
-            updateH()
+    CreateComposerCollapsible(content, "Tracked Auras", function(body, updateH)
+        if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+
+        local auraRows = {}
+        local suggestRows = {}
+        local indicatorRows = {}
+        local detailWidgets = {}
+        local selectedAuraIndex = 1
+        local selectedIndicatorIndex = 1
+
+        local title = body:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOPLEFT", PAD, -6)
+
+        local subtitle = GUI:CreateLabel(body, "Add tracked auras, then attach one or more indicator types to each aura.", 11, C and C.textMuted)
+        subtitle:SetJustifyH("LEFT")
+        subtitle:SetPoint("TOPLEFT", PAD, -24)
+        subtitle:SetPoint("RIGHT", body, "RIGHT", -PAD, 0)
+
+        local auraListArea = CreateFrame("Frame", nil, body)
+        auraListArea:SetPoint("TOPLEFT", PAD, -48)
+        auraListArea:SetPoint("RIGHT", body, "RIGHT", -PAD, 0)
+        auraListArea:SetHeight(1)
+
+        local addHeader = auraListArea:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        addHeader:SetJustifyH("LEFT")
+
+        local inputRow = CreateFrame("Frame", nil, auraListArea)
+        inputRow:SetHeight(24)
+
+        local inputBox = CreateFrame("EditBox", nil, inputRow, "BackdropTemplate")
+        inputBox:SetSize(80, 20)
+        inputBox:SetPoint("LEFT", 4, 0)
+        inputBox:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+        inputBox:SetBackdropColor(0.06, 0.06, 0.08, 1)
+        inputBox:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
+        inputBox:SetFontObject("GameFontNormalSmall")
+        inputBox:SetAutoFocus(false)
+        inputBox:SetMaxLetters(10)
+        inputBox:SetTextInsets(4, 4, 0, 0)
+        inputBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+
+        local inputLabel = inputRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        inputLabel:SetPoint("LEFT", inputBox, "RIGHT", 4, 0)
+        inputLabel:SetText("Spell ID")
+        inputLabel:SetTextColor(0.5, 0.5, 0.5)
+
+        local addManualBtn = CreateFrame("Button", nil, inputRow, "BackdropTemplate")
+        addManualBtn:SetSize(40, 20)
+        addManualBtn:SetPoint("RIGHT", inputRow, "RIGHT", -2, 0)
+        addManualBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+        addManualBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
+        addManualBtn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+        local addManualText = addManualBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        addManualText:SetPoint("CENTER")
+        addManualText:SetText("Add")
+
+        local indicatorActionsRow = CreateFrame("Frame", nil, auraListArea)
+        indicatorActionsRow:SetHeight(26)
+        indicatorActionsRow:SetPoint("TOPLEFT", auraListArea, "TOPLEFT", 0, 0)
+        indicatorActionsRow:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+
+        local addIconBtn = GUI:CreateButton(indicatorActionsRow, "Add Icon", 74, 22)
+        addIconBtn:SetPoint("LEFT", 0, 0)
+        local addBarBtn = GUI:CreateButton(indicatorActionsRow, "Add Bar", 68, 22)
+        addBarBtn:SetPoint("LEFT", addIconBtn, "RIGHT", 6, 0)
+        local addTintBtn = GUI:CreateButton(indicatorActionsRow, "Add Tint", 72, 22)
+        addTintBtn:SetPoint("LEFT", addBarBtn, "RIGHT", 6, 0)
+
+        local selectedAuraLabel = auraListArea:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        selectedAuraLabel:SetJustifyH("LEFT")
+
+        local detailArea = CreateFrame("Frame", nil, auraListArea)
+        detailArea:SetPoint("TOPLEFT", auraListArea, "TOPLEFT", 0, 0)
+        detailArea:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+        detailArea:SetHeight(1)
+
+        local function NotifyChanged()
+            if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
             if onChange then onChange() end
-        end, -30)
-        spellListContainer:ClearAllPoints()
-        spellListContainer:SetPoint("TOPLEFT", PAD, -30)
-        spellListContainer:SetPoint("RIGHT", body, "RIGHT", -PAD, 0)
-        body:SetHeight(30 + spellListContainer:GetHeight() + 10)
+        end
+
+        local function CountIndicatorTypes(entry)
+            local icons, bars, tints = 0, 0, 0
+            for _, indicator in ipairs(entry.indicators or {}) do
+                if indicator.type == "bar" then
+                    bars = bars + 1
+                elseif indicator.type == "healthBarColor" then
+                    tints = tints + 1
+                else
+                    icons = icons + 1
+                end
+            end
+            return icons, bars, tints
+        end
+
+        local function GetIndicatorLabel(indicator, index)
+            if indicator.type == "bar" then
+                return "Bar " .. index
+            elseif indicator.type == "healthBarColor" then
+                return "Health Bar Tint " .. index
+            end
+            return "Icon " .. index
+        end
+
+        local function AcquireAuraRow()
+            local row = table.remove(auraRows)
+            if row then
+                row:Show()
+                row:ClearAllPoints()
+                return row
+            end
+
+            row = CreateFrame("Button", nil, auraListArea, "BackdropTemplate")
+            row:SetHeight(28)
+            row:RegisterForClicks("LeftButtonUp")
+            ApplyPixelBackdrop(row, 1, true)
+
+            row.icon = row:CreateTexture(nil, "ARTWORK")
+            row.icon:SetSize(16, 16)
+            row.icon:SetPoint("LEFT", 4, 0)
+            row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+            row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.name:SetPoint("LEFT", row.icon, "RIGHT", 4, 0)
+            row.name:SetJustifyH("LEFT")
+
+            row.summary = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            row.summary:SetPoint("RIGHT", -28, 0)
+            row.summary:SetJustifyH("RIGHT")
+
+            row.remove = CreateFrame("Button", nil, row)
+            row.remove:SetSize(18, 18)
+            row.remove:SetPoint("RIGHT", -4, 0)
+            row.removeText = row.remove:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.removeText:SetPoint("CENTER")
+            row.removeText:SetText("\195\151")
+            row.removeText:SetTextColor(0.8, 0.3, 0.3)
+            row.remove:SetScript("OnEnter", function() row.removeText:SetTextColor(1, 0.4, 0.4) end)
+            row.remove:SetScript("OnLeave", function() row.removeText:SetTextColor(0.8, 0.3, 0.3) end)
+
+            return row
+        end
+
+        local activeAuraRows = {}
+        local function ReleaseAuraRows()
+            for _, row in ipairs(activeAuraRows) do
+                row:Hide()
+                row:ClearAllPoints()
+                row.remove:SetScript("OnClick", nil)
+                row:SetScript("OnClick", nil)
+                table.insert(auraRows, row)
+            end
+            wipe(activeAuraRows)
+        end
+
+        local function AcquireSuggestRow()
+            local row = table.remove(suggestRows)
+            if row then
+                row:Show()
+                row:ClearAllPoints()
+                return row
+            end
+
+            row = CreateFrame("Frame", nil, auraListArea)
+            row:SetHeight(22)
+            row.icon = row:CreateTexture(nil, "ARTWORK")
+            row.icon:SetSize(14, 14)
+            row.icon:SetPoint("LEFT", 4, 0)
+            row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+
+            row.name = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.name:SetPoint("LEFT", row.icon, "RIGHT", 4, 0)
+            row.name:SetJustifyH("LEFT")
+
+            row.add = CreateFrame("Button", nil, row)
+            row.add:SetSize(18, 18)
+            row.add:SetPoint("RIGHT", -2, 0)
+            row.addText = row.add:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.addText:SetPoint("CENTER")
+            row.addText:SetText("+")
+            row.addText:SetTextColor(0.3, 0.8, 0.3)
+
+            return row
+        end
+
+        local activeSuggestRows = {}
+        local function ReleaseSuggestRows()
+            for _, row in ipairs(activeSuggestRows) do
+                row:Hide()
+                row:ClearAllPoints()
+                row.add:SetScript("OnClick", nil)
+                table.insert(suggestRows, row)
+            end
+            wipe(activeSuggestRows)
+        end
+
+        local function AcquireIndicatorRow()
+            local row = table.remove(indicatorRows)
+            if row then
+                row:Show()
+                row:ClearAllPoints()
+                return row
+            end
+
+            row = CreateFrame("Button", nil, auraListArea, "BackdropTemplate")
+            row:SetHeight(24)
+            row:RegisterForClicks("LeftButtonUp")
+            ApplyPixelBackdrop(row, 1, true)
+
+            row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            row.label:SetPoint("LEFT", 8, 0)
+            row.label:SetJustifyH("LEFT")
+
+            row.remove = CreateFrame("Button", nil, row)
+            row.remove:SetSize(18, 18)
+            row.remove:SetPoint("RIGHT", -4, 0)
+            row.removeText = row.remove:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.removeText:SetPoint("CENTER")
+            row.removeText:SetText("\195\151")
+            row.removeText:SetTextColor(0.8, 0.3, 0.3)
+            row.remove:SetScript("OnEnter", function() row.removeText:SetTextColor(1, 0.4, 0.4) end)
+            row.remove:SetScript("OnLeave", function() row.removeText:SetTextColor(0.8, 0.3, 0.3) end)
+
+            return row
+        end
+
+        local activeIndicatorRows = {}
+        local function ReleaseIndicatorRows()
+            for _, row in ipairs(activeIndicatorRows) do
+                row:Hide()
+                row:ClearAllPoints()
+                row.remove:SetScript("OnClick", nil)
+                row:SetScript("OnClick", nil)
+                table.insert(indicatorRows, row)
+            end
+            wipe(activeIndicatorRows)
+        end
+
+        local function ClearDetailWidgets()
+            for _, widget in ipairs(detailWidgets) do
+                widget:Hide()
+            end
+            wipe(detailWidgets)
+        end
+
+        local function RegisterDetailWidget(widget)
+            detailWidgets[#detailWidgets + 1] = widget
+            return widget
+        end
+
+        local function AddNewAura(spellID)
+            if not ai.entries then ai.entries = {} end
+            ai.entries[#ai.entries + 1] = {
+                spellID = tonumber(spellID) or spellID,
+                enabled = true,
+                indicators = {
+                    { type = "icon", enabled = true },
+                },
+            }
+            if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+            selectedAuraIndex = #ai.entries
+            selectedIndicatorIndex = 1
+            NotifyChanged()
+        end
+
+        local RebuildAuraList
+
+        local function AddIndicator(indicatorType)
+            local entry = ai.entries and ai.entries[selectedAuraIndex]
+            if not entry then return end
+            entry.indicators[#entry.indicators + 1] = { type = indicatorType, enabled = true }
+            if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+            selectedIndicatorIndex = #entry.indicators
+            NotifyChanged()
+            if RebuildAuraList then RebuildAuraList() end
+        end
+
+        addIconBtn:SetScript("OnClick", function() AddIndicator("icon") end)
+        addBarBtn:SetScript("OnClick", function() AddIndicator("bar") end)
+        addTintBtn:SetScript("OnClick", function() AddIndicator("healthBarColor") end)
+
+        addManualBtn:SetScript("OnClick", function()
+            local id = tonumber(inputBox:GetText())
+            if id and id > 0 then
+                AddNewAura(id)
+                inputBox:SetText("")
+                inputBox:ClearFocus()
+                if RebuildAuraList then RebuildAuraList() end
+            end
+        end)
+        inputBox:SetScript("OnEnterPressed", function()
+            local click = addManualBtn:GetScript("OnClick")
+            if click then click(addManualBtn) end
+        end)
+
+        RebuildAuraList = function()
+            if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+            local entries = ai.entries or {}
+            if #entries == 0 then
+                selectedAuraIndex = 1
+                selectedIndicatorIndex = 1
+            else
+                selectedAuraIndex = math.max(1, math.min(selectedAuraIndex, #entries))
+                local selectedEntry = entries[selectedAuraIndex]
+                local indicatorCount = #(selectedEntry and selectedEntry.indicators or {})
+                selectedIndicatorIndex = math.max(1, math.min(selectedIndicatorIndex, math.max(indicatorCount, 1)))
+            end
+
+            ReleaseAuraRows()
+            ReleaseSuggestRows()
+            ReleaseIndicatorRows()
+            ClearDetailWidgets()
+
+            local specID = GetPlayerSpecID()
+            local _, specName = specID and GetSpecializationInfoByID(specID) or nil, nil
+            if specID then
+                local _, specDisplayName = GetSpecializationInfoByID(specID)
+                specName = specDisplayName
+            end
+            title:SetText("|cFF34D399" .. (specName or "Tracked Auras") .. "|r")
+
+            local y = 0
+            for idx, entry in ipairs(entries) do
+                local row = AcquireAuraRow()
+                row:SetParent(auraListArea)
+                row:SetPoint("TOPLEFT", 0, y)
+                row:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+
+                local tex
+                if C_Spell and C_Spell.GetSpellTexture then
+                    local ok, t = pcall(C_Spell.GetSpellTexture, entry.spellID)
+                    if ok and t then tex = t end
+                end
+                row.icon:SetTexture(tex or 134400)
+
+                local spellName = GetSpellName(entry.spellID) or ("Spell " .. tostring(entry.spellID))
+                row.name:SetText((entry.enabled ~= false and "|cFFFFFFFF" or "|cFF808080") .. spellName .. "|r")
+
+                local iconCount, barCount, tintCount = CountIndicatorTypes(entry)
+                row.summary:SetText(string.format("I:%d B:%d T:%d", iconCount, barCount, tintCount))
+
+                local selected = idx == selectedAuraIndex
+                row:SetBackdropColor(selected and 0.16 or 0.08, selected and 0.16 or 0.08, selected and 0.2 or 0.08, 0.9)
+                row:SetBackdropBorderColor(
+                    selected and (C.accent[1] or 0.3) or (C.border[1] or 0.2),
+                    selected and (C.accent[2] or 0.7) or (C.border[2] or 0.2),
+                    selected and (C.accent[3] or 1) or (C.border[3] or 0.2),
+                    1
+                )
+
+                row:SetScript("OnClick", function()
+                    selectedAuraIndex = idx
+                    selectedIndicatorIndex = 1
+                    RebuildAuraList()
+                end)
+                row.remove:SetScript("OnClick", function()
+                    table.remove(entries, idx)
+                    NotifyChanged()
+                    RebuildAuraList()
+                end)
+
+                activeAuraRows[#activeAuraRows + 1] = row
+                y = y - 30
+            end
+
+            y = y - 4
+            addHeader:ClearAllPoints()
+            addHeader:SetPoint("TOPLEFT", 0, y)
+            addHeader:SetText("|cFFAAAAAAAdd Tracked Aura:|r")
+            y = y - 16
+
+            inputRow:ClearAllPoints()
+            inputRow:SetPoint("TOPLEFT", 0, y)
+            inputRow:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+            y = y - 28
+
+            local assigned = {}
+            for _, entry in ipairs(entries) do
+                assigned[entry.spellID] = true
+            end
+
+            local suggestions = {}
+            if specID and SPEC_TO_PRESET[specID] then
+                for _, spell in ipairs(SPEC_TO_PRESET[specID].spells) do
+                    if not assigned[spell.id] then
+                        suggestions[#suggestions + 1] = spell
+                    end
+                end
+            end
+            if COMMON_DEFENSIVES_PRESET then
+                for _, spell in ipairs(COMMON_DEFENSIVES_PRESET.spells) do
+                    if not assigned[spell.id] then
+                        suggestions[#suggestions + 1] = spell
+                    end
+                end
+            end
+
+            for _, spell in ipairs(suggestions) do
+                local row = AcquireSuggestRow()
+                row:SetParent(auraListArea)
+                row:SetPoint("TOPLEFT", 0, y)
+                row:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+
+                local tex
+                if C_Spell and C_Spell.GetSpellTexture then
+                    local ok, t = pcall(C_Spell.GetSpellTexture, spell.id)
+                    if ok and t then tex = t end
+                end
+                row.icon:SetTexture(tex or 134400)
+                row.name:SetText(spell.name or GetSpellName(spell.id) or ("Spell " .. spell.id))
+                row.add:SetScript("OnClick", function()
+                    AddNewAura(spell.id)
+                    RebuildAuraList()
+                end)
+
+                activeSuggestRows[#activeSuggestRows + 1] = row
+                y = y - 22
+            end
+
+            local selectedEntry = entries[selectedAuraIndex]
+            if selectedEntry then
+                y = y - 10
+                selectedAuraLabel:ClearAllPoints()
+                selectedAuraLabel:SetPoint("TOPLEFT", 0, y)
+                selectedAuraLabel:SetText("Configure: " .. (GetSpellName(selectedEntry.spellID) or ("Spell " .. tostring(selectedEntry.spellID))))
+                y = y - 22
+
+                indicatorActionsRow:ClearAllPoints()
+                indicatorActionsRow:SetPoint("TOPLEFT", 0, y)
+                indicatorActionsRow:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+                indicatorActionsRow:Show()
+                y = y - 30
+
+                local indicatorCount = #(selectedEntry.indicators or {})
+                if indicatorCount == 0 then
+                    selectedIndicatorIndex = 1
+                else
+                    selectedIndicatorIndex = math.max(1, math.min(selectedIndicatorIndex, indicatorCount))
+                end
+
+                for idx, indicator in ipairs(selectedEntry.indicators or {}) do
+                    local row = AcquireIndicatorRow()
+                    row:SetParent(auraListArea)
+                    row:SetPoint("TOPLEFT", 0, y)
+                    row:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+                    row.label:SetText(GetIndicatorLabel(indicator, idx))
+
+                    local selected = idx == selectedIndicatorIndex
+                    row:SetBackdropColor(selected and 0.15 or 0.07, selected and 0.15 or 0.07, selected and 0.18 or 0.07, 0.9)
+                    row:SetBackdropBorderColor(
+                        selected and (C.accent[1] or 0.3) or (C.border[1] or 0.2),
+                        selected and (C.accent[2] or 0.7) or (C.border[2] or 0.2),
+                        selected and (C.accent[3] or 1) or (C.border[3] or 0.2),
+                        1
+                    )
+
+                    row:SetScript("OnClick", function()
+                        selectedIndicatorIndex = idx
+                        RebuildAuraList()
+                    end)
+                    row.remove:SetScript("OnClick", function()
+                        table.remove(selectedEntry.indicators, idx)
+                        if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+                        NotifyChanged()
+                        RebuildAuraList()
+                    end)
+
+                    activeIndicatorRows[#activeIndicatorRows + 1] = row
+                    y = y - 26
+                end
+
+                local selectedIndicator = selectedEntry.indicators and selectedEntry.indicators[selectedIndicatorIndex]
+                if selectedIndicator then
+                    y = y - 6
+                    detailArea:ClearAllPoints()
+                    detailArea:SetPoint("TOPLEFT", 0, y)
+                    detailArea:SetPoint("RIGHT", auraListArea, "RIGHT", 0, 0)
+
+                    local detailY = -2
+                    local function AddDetailWidget(widget, height)
+                        RegisterDetailWidget(widget)
+                        widget:ClearAllPoints()
+                        widget:SetPoint("TOPLEFT", PAD, detailY)
+                        widget:SetPoint("RIGHT", detailArea, "RIGHT", -PAD, 0)
+                        detailY = detailY - height
+                    end
+
+                    AddDetailWidget(GUI:CreateFormCheckbox(detailArea, "Aura Enabled", "enabled", selectedEntry, function()
+                        NotifyChanged()
+                        RebuildAuraList()
+                    end), FORM_ROW)
+                    AddDetailWidget(GUI:CreateFormDropdown(detailArea, "Indicator Type", AURA_INDICATOR_TYPE_OPTIONS, "type", selectedIndicator, function()
+                        if normalizeAuraIndicators then normalizeAuraIndicators(ai) end
+                        NotifyChanged()
+                        RebuildAuraList()
+                    end), DROP_ROW)
+
+                    AddDetailWidget(GUI:CreateFormCheckbox(detailArea, "Indicator Enabled", "enabled", selectedIndicator, function()
+                        NotifyChanged()
+                        RebuildAuraList()
+                    end), FORM_ROW)
+
+                    if selectedIndicator.type == "bar" then
+                        AddDetailWidget(GUI:CreateFormDropdown(detailArea, "Orientation", BAR_ORIENTATION_OPTIONS, "orientation", selectedIndicator, function()
+                            NotifyChanged()
+                            RebuildAuraList()
+                        end), DROP_ROW)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "Thickness", 1, 20, 1, "thickness", selectedIndicator, onChange), SLIDER_HEIGHT)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "Width / Height", 4, 200, 1, "length", selectedIndicator, onChange), SLIDER_HEIGHT)
+                        AddDetailWidget(GUI:CreateFormCheckbox(detailArea, "Match Frame Width / Height", "matchFrameSize", selectedIndicator, function()
+                            NotifyChanged()
+                            RebuildAuraList()
+                        end), FORM_ROW)
+                        AddDetailWidget(GUI:CreateFormDropdown(detailArea, "Anchor", NINE_POINT_OPTIONS, "anchor", selectedIndicator, onChange), DROP_ROW)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "X Offset", -100, 100, 1, "offsetX", selectedIndicator, onChange), SLIDER_HEIGHT)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "Y Offset", -100, 100, 1, "offsetY", selectedIndicator, onChange), SLIDER_HEIGHT)
+                        AddDetailWidget(GUI:CreateFormColorPicker(detailArea, "Bar Color", "color", selectedIndicator, onChange), FORM_ROW)
+                        AddDetailWidget(GUI:CreateFormCheckbox(detailArea, "Hide Border", "hideBorder", selectedIndicator, function()
+                            NotifyChanged()
+                            RebuildAuraList()
+                        end), FORM_ROW)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "Border Size", 1, 8, 1, "borderSize", selectedIndicator, onChange), SLIDER_HEIGHT, function() return selectedIndicator.hideBorder ~= true end)
+                        AddDetailWidget(GUI:CreateFormColorPicker(detailArea, "Border Color", "borderColor", selectedIndicator, onChange), FORM_ROW)
+                        AddDetailWidget(GUI:CreateFormSlider(detailArea, "Low-Time Seconds", 0, 30, 0.5, "lowTimeThreshold", selectedIndicator, onChange, { precision = 1 }), SLIDER_HEIGHT)
+                        AddDetailWidget(GUI:CreateFormColorPicker(detailArea, "Low-Time Color", "lowTimeColor", selectedIndicator, onChange), FORM_ROW)
+                    elseif selectedIndicator.type == "healthBarColor" then
+                        AddDetailWidget(GUI:CreateFormColorPicker(detailArea, "Tint Color", "color", selectedIndicator, onChange), FORM_ROW)
+                    else
+                        local note = GUI:CreateLabel(detailArea, "Icon indicators use the shared icon-strip settings in the section above.", 11, C and C.textMuted)
+                        note:SetJustifyH("LEFT")
+                        AddDetailWidget(note, 28)
+                    end
+
+                    detailArea:SetHeight(math.abs(detailY) + 8)
+                    y = y - (detailArea:GetHeight() + 4)
+                else
+                    indicatorActionsRow:Hide()
+                    detailArea:SetHeight(1)
+                end
+            else
+                selectedAuraLabel:SetText("No tracked auras yet.")
+                selectedAuraLabel:ClearAllPoints()
+                selectedAuraLabel:SetPoint("TOPLEFT", 0, y)
+                indicatorActionsRow:Hide()
+                detailArea:SetHeight(1)
+                y = y - 24
+            end
+
+            auraListArea:SetHeight(math.max(1, math.abs(y)))
+            body:SetHeight(56 + auraListArea:GetHeight())
+            updateH()
+        end
+
+        RebuildAuraList()
     end, sections, relayout)
 
     relayout()
@@ -2458,18 +3005,94 @@ local function CreateDesignerPreview(container, previewType, childRefs)
     -- Aura indicator preview
     local aiDB = db.auraIndicators or {}
     if aiDB.enabled then
-        local aiSize = (aiDB.iconSize or 14) * PREVIEW_SCALE
-        local aiMax = aiDB.maxIndicators or 3
-        local aiCount = math.min(aiMax, #FAKE_AURA_IND_ICONS)
-        local aiAnchor = aiDB.anchor or "CENTER"
-        local aiGrow = aiDB.growDirection or "RIGHT"
-        local aiSpacing = (aiDB.spacing or 2) * PREVIEW_SCALE
-        local aiOffX = (aiDB.anchorOffsetX or 0) * PREVIEW_SCALE
-        local aiOffY = (aiDB.anchorOffsetY or 0) * PREVIEW_SCALE
-        if aiAnchor == "BOTTOMLEFT" or aiAnchor == "BOTTOM" or aiAnchor == "BOTTOMRIGHT" then
-            aiOffY = aiOffY + previewBottomPad
+        local normalizeAuraIndicators = ns.Helpers and ns.Helpers.NormalizeAuraIndicatorConfig
+        if normalizeAuraIndicators then normalizeAuraIndicators(aiDB) end
+
+        local previewLayer = CreateFrame("Frame", nil, frame)
+        previewLayer:SetAllPoints()
+        previewLayer:SetFrameLevel(frame:GetFrameLevel() + 8)
+        childRefs.auraIndicatorContainer = previewLayer
+
+        local iconCount = 0
+        for _, entry in ipairs(aiDB.entries or {}) do
+            if entry.enabled ~= false then
+                for _, indicator in ipairs(entry.indicators or {}) do
+                    if indicator.enabled ~= false and indicator.type == "icon" then
+                        iconCount = iconCount + 1
+                    end
+                end
+            end
         end
-        CreateIconStrip(frame, FAKE_AURA_IND_ICONS, aiCount, aiSize, aiAnchor, aiGrow, aiSpacing, aiOffX, aiOffY, "auraIndicatorContainer")
+
+        if iconCount > 0 then
+            local aiSize = (aiDB.iconSize or 14) * PREVIEW_SCALE
+            local aiMax = aiDB.maxIndicators or 3
+            local aiAnchor = aiDB.anchor or "CENTER"
+            local aiGrow = aiDB.growDirection or "RIGHT"
+            local aiSpacing = (aiDB.spacing or 2) * PREVIEW_SCALE
+            local aiOffX = (aiDB.anchorOffsetX or 0) * PREVIEW_SCALE
+            local aiOffY = (aiDB.anchorOffsetY or 0) * PREVIEW_SCALE
+            if aiAnchor == "BOTTOMLEFT" or aiAnchor == "BOTTOM" or aiAnchor == "BOTTOMRIGHT" then
+                aiOffY = aiOffY + previewBottomPad
+            end
+            CreateIconStrip(previewLayer, FAKE_AURA_IND_ICONS, math.min(iconCount, aiMax), aiSize, aiAnchor, aiGrow, aiSpacing, aiOffX, aiOffY)
+        end
+
+        local firstTint = nil
+        local fakeBarIndex = 0
+        for _, entry in ipairs(aiDB.entries or {}) do
+            if entry.enabled ~= false then
+                for _, indicator in ipairs(entry.indicators or {}) do
+                    if indicator.enabled ~= false and indicator.type == "healthBarColor" and not firstTint then
+                        firstTint = indicator.color
+                    elseif indicator.enabled ~= false and indicator.type == "bar" then
+                        fakeBarIndex = fakeBarIndex + 1
+                        local orientation = indicator.orientation == "VERTICAL" and "VERTICAL" or "HORIZONTAL"
+                        local thickness = (indicator.thickness or 4) * PREVIEW_SCALE
+                        local matchFrameSize = indicator.matchFrameSize == true
+                        local length = (indicator.length or 40) * PREVIEW_SCALE
+                        local width = orientation == "HORIZONTAL" and (matchFrameSize and (w - borderSize * 2) or length) or thickness
+                        local height = orientation == "VERTICAL" and (matchFrameSize and (h - previewBottomPad - borderSize * 2) or length) or thickness
+                        local anchor = indicator.anchor or "BOTTOM"
+                        local offX = (indicator.offsetX or 0) * PREVIEW_SCALE
+                        local offY = (indicator.offsetY or 0) * PREVIEW_SCALE
+                        if anchor == "BOTTOMLEFT" or anchor == "BOTTOM" or anchor == "BOTTOMRIGHT" then
+                            offY = offY + previewBottomPad
+                        end
+
+                        local bar = CreateFrame("StatusBar", nil, previewLayer, "BackdropTemplate")
+                        bar:SetStatusBarTexture(texturePath)
+                        bar:SetOrientation(orientation)
+                        bar:SetMinMaxValues(0, 1)
+                        bar:SetValue(fakeBarIndex == 1 and 0.35 or 0.8)
+                        bar:SetSize(width, height)
+                        bar:SetPoint(anchor, frame, anchor, offX, offY)
+
+                        local baseColor = indicator.color or {0.2, 0.8, 0.2, 1}
+                        local shownColor = (indicator.lowTimeThreshold or 0) > 0 and (indicator.lowTimeColor or baseColor) or baseColor
+                        bar:SetStatusBarColor(shownColor[1] or 0.2, shownColor[2] or 0.8, shownColor[3] or 0.2, shownColor[4] or 1)
+
+                        local bg = bar:CreateTexture(nil, "BACKGROUND")
+                        bg:SetAllPoints()
+                        bg:SetColorTexture(shownColor[1] or 0.2, shownColor[2] or 0.8, shownColor[3] or 0.2, 0.18)
+
+                        if not indicator.hideBorder then
+                            local borderPx = (indicator.borderSize or 1) * px
+                            bar:SetBackdrop({
+                                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                                edgeSize = borderPx,
+                            })
+                            local bc = indicator.borderColor or {0, 0, 0, 1}
+                            bar:SetBackdropBorderColor(bc[1] or 0, bc[2] or 0, bc[3] or 0, bc[4] or 1)
+                        end
+                    end
+                end
+            end
+        end
+
+        if firstTint then
+            healthBar:SetStatusBarColor(firstTint[1] or 0.2, firstTint[2] or 0.8, firstTint[3] or 0.2, firstTint[4] or 1)
+        end
     end
 
     -- Private aura preview (with stack & countdown text)
