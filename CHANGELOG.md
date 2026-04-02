@@ -4,6 +4,41 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## v2.56.0-alpha.7
+
+### New: Click-Cast Per-Loadout Bindings
+- Per-loadout binding support — separate click-cast bindings per talent loadout
+- Spell override resolution via C_Spell.GetSpellName on stored spellID for dynamic talent overrides
+- Options panel: loadout toggle, loadout dropdown, copy/clear loadout actions
+
+### New: Searchable Dropdown Widget
+- Added CreateSearchableDropdown to the GUI framework with text filter, scrollable results, and keyboard navigation
+
+### CDM (Cooldown Manager)
+- Reapply swipe style on aura deactivation and cooldown-active state transitions — fixes edge/color not updating when cooldowns start or end
+
+### Action Bars
+- Fixed fade/empty slot alpha layering — button-level alpha decoupled from container fade
+- Hide ADD/MOD blend textures (gloss, tintOverlay) during fade — MOD blend fades toward white, not transparent
+- Added orange active-stance border for pet bar buttons (Assist/Defensive/Passive indicator)
+- Call UpdateAllButtonVisuals during PEW init and deferred retry
+- Fix spellHighlight scoping for do-block accessibility
+
+### Group Frames
+- Fixed selfFirst showing player as duplicate in raid — separate party/raid self-first settings
+- Self header now uses raid dimensions when in raid
+- Fixed power bar secret value handling — pass secrets to C-side SetMinMaxValues/SetValue, guard Lua-side cache comparison
+- Fixed power bar nil handling for arena opponents (UnitPower returns nil)
+- Fixed GUID cache poisoning from secret UnitGUID during combat
+- Fixed anchor resize ordering — resize roots before applying position anchors to prevent CENTER offset jumps
+
+### Tooltips
+- Replaced HookScript("OnShow") with hooksecurefunc("Show") to prevent taint propagation from secure callers
+- Use Font object sizing for GameTooltip instead of per-FontString SetFont to prevent taint on GetStringWidth()
+
+### Fixes
+- Anchoring: fix frame anchor key lookup for layout mode handle positioning
+
 ## v2.56.0-alpha.6
 
 ### Breaking
