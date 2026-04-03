@@ -1,8 +1,20 @@
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
-local LSM = LibStub("LibSharedMedia-3.0")
+local LSM = ns.LSM
 
 local GetCore = ns.Helpers.GetCore
+
+-- Upvalue caching for hot-path performance
+local type = type
+local pcall = pcall
+local ipairs = ipairs
+local tostring = tostring
+local CreateFrame = CreateFrame
+local InCombatLockdown = InCombatLockdown
+local C_Timer = C_Timer
+local hooksecurefunc = hooksecurefunc
+local table_insert = table.insert
+local string_format = string.format
 
 ---------------------------------------------------------------------------
 -- QUI Buff Bar Manager
@@ -20,14 +32,6 @@ local Helpers = ns.Helpers
 local GetGeneralFont = Helpers.GetGeneralFont
 local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
 
----------------------------------------------------------------------------
--- CDM ENGINE DETECTION
----------------------------------------------------------------------------
-local function IsOwnedEngine()
-    return ns.CDMProvider and ns.CDMProvider:GetActiveEngineName() == "owned"
-end
-
----------------------------------------------------------------------------
 -- CDM VIEWER FRAME GETTERS (resolve via QUI-owned frame registry)
 ---------------------------------------------------------------------------
 local function GetBuffIconViewer() return _G.QUI_GetCDMViewerFrame("buffIcon") end
@@ -49,20 +53,14 @@ end
 
 -- TAINT SAFETY: Store per-frame state in local weak-keyed tables instead of
 -- writing custom properties to Blizzard CDM viewer frames and their children.
-local iconBuffState   = Helpers.CreateStateTable()  -- icon → { setup, border, borderSize, aspectRatioCrop, atlasHooked, atlasDisabled }
+local iconBuffState   = Helpers.CreateStateTable()  -- texture → { atlasHooked, atlasDisabled }
 local barFrameState   = Helpers.CreateStateTable()  -- bar frame → { bg, borderContainer, styled, isActive }
 local viewerBuffState = Helpers.CreateStateTable()  -- viewer → { anchorCache, originalPoints, onUpdateHooked, isHorizontal, goingRight, goingUp }
-local disabledRegions = Helpers.CreateStateTable()  -- region → true (guard for Show hook)
 
 -- Tolerance-based position check: skip repositioning if within tolerance
 -- Prevents jitter from floating-point drift
 local abs = math.abs
-local function Clamp01(value, fallback)
-    if type(value) ~= "number" then return fallback end
-    if value < 0 then return 0 end
-    if value > 1 then return 1 end
-    return value
-end
+local Clamp01 = Helpers.Clamp01
 
 local function PositionMatchesTolerance(icon, expectedX, tolerance)
     if not icon then return false end
@@ -112,10 +110,10 @@ local function GetTopVisibleResourceBarFrame()
     local candidates = {}
     if QUICore then
         if QUICore.powerBar then
-            table.insert(candidates, QUICore.powerBar)
+            table_insert(candidates, QUICore.powerBar)
         end
         if QUICore.secondaryPowerBar then
-            table.insert(candidates, QUICore.secondaryPowerBar)
+            table_insert(candidates, QUICore.secondaryPowerBar)
         end
     end
 
@@ -136,16 +134,6 @@ end
 local function ResolveTrackedBarAnchorFrame(anchorTo)
     if not anchorTo or anchorTo == "disabled" then
         return nil
-    end
-    if anchorTo == "essential" or anchorTo == "utility" then
-        local getProxy = _G.QUI_GetCDMAnchorProxyFrame
-        if type(getProxy) == "function" then
-            local proxyKey = (anchorTo == "essential") and "cdmEssential" or "cdmUtility"
-            local proxy = getProxy(proxyKey)
-            if proxy then
-                return proxy
-            end
-        end
     end
     if anchorTo == "screen" then
         return UIParent
@@ -171,9 +159,9 @@ local function GetTrackedBarAnchorWidth(anchorTo, anchorFrame)
     local width
     if anchorTo == "essential" or anchorTo == "utility" then
         local afvs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(anchorFrame)
-        width = (afvs and afvs.iconWidth) or (afvs and afvs.row1Width) or anchorFrame:GetWidth()
+        width = (afvs and afvs.iconWidth) or (afvs and afvs.row1Width) or Helpers.SafeToNumber(anchorFrame:GetWidth())
     else
-        width = anchorFrame:GetWidth()
+        width = Helpers.SafeToNumber(anchorFrame:GetWidth())
     end
 
     if type(width) ~= "number" or width <= 1 then
@@ -186,7 +174,7 @@ local function ApplyTrackedBarAnchor(settings)
     local viewer = GetBuffBarViewer()
     if not viewer then return end
     -- Respect centralized frame anchoring overrides
-    if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(viewer) then return end
+    if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("buffBar") then return end
     -- Avoid ClearAllPoints/SetPoint churn on protected Blizzard viewers during combat.
     if InCombatLockdown() then return end
     -- Don't reposition during Edit Mode — let the user drag/nudge freely.
@@ -223,17 +211,15 @@ local function ApplyTrackedBarAnchor(settings)
         -- Keep configured source/target points for backward compatibility.
     end
 
-    -- Owned engine uses explicit SetSize() on the viewer container, so the
-    -- source anchor must match the growth direction.  Otherwise WoW expands
-    -- the frame from its anchored point (e.g. CENTER → grows both ways).
-    if IsOwnedEngine() then
-        local orientation = settings.orientation or "horizontal"
-        local growUp = settings.growUp ~= false
-        if orientation == "vertical" then
-            sourcePoint = growUp and "LEFT" or "RIGHT"
-        else
-            sourcePoint = growUp and "BOTTOM" or "TOP"
-        end
+    -- The owned tracked-bar container uses explicit SetSize(), so the source
+    -- anchor must match the growth direction. Otherwise WoW expands the frame
+    -- from its anchored point (for example, CENTER would grow both ways).
+    local orientation = settings.orientation or "horizontal"
+    local growUp = settings.growUp ~= false
+    if orientation == "vertical" then
+        sourcePoint = growUp and "LEFT" or "RIGHT"
+    else
+        sourcePoint = growUp and "BOTTOM" or "TOP"
     end
 
     offsetX = QUICore:PixelRound(offsetX + spacingX, viewer)
@@ -296,7 +282,7 @@ local function ApplyBuffIconAnchor(settings)
     local viewer = GetBuffIconViewer()
     if not viewer then return end
     -- Respect centralized frame anchoring overrides
-    if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(viewer) then return end
+    if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("buffIcon") then return end
     if InCombatLockdown() then return end
     if Helpers.IsEditModeActive() then return end
 
@@ -472,7 +458,7 @@ local function GetTrackedBarSettings()
         barWidth = 215,
         texture = "Quazii v5",
         useClassColor = true,
-        barColor = {0.204, 0.827, 0.6, 1},
+        barColor = {0.376, 0.647, 0.980, 1},
         barOpacity = 1.0,
         borderSize = 2,
         bgColor = {0, 0, 0, 1},
@@ -643,14 +629,13 @@ local function GetTrackedBarRuntimeEntries()
 
     local entries = {}
     local selection = viewer.Selection
-    local okChildren, children = pcall(function()
-        return { viewer:GetChildren() }
-    end)
-    if not okChildren or not children then
+    local okN, numChildren = pcall(function() return select('#', viewer:GetChildren()) end)
+    if not okN or not numChildren or numChildren == 0 then
         return entries
     end
 
-    for _, child in ipairs(children) do
+    for ci = 1, numChildren do
+        local child = select(ci, viewer:GetChildren())
         if child and child ~= selection and child.IsObjectType and child:IsObjectType("Frame")
             and child.Bar and child.Bar.IsObjectType and child.Bar:IsObjectType("StatusBar")
             and (child.cooldownID or child.layoutIndex) then
@@ -763,14 +748,6 @@ local isBarLayoutRunning = false
 
 local layoutSuppressed = 0
 
-local function SuppressLayout()
-    layoutSuppressed = layoutSuppressed + 1
-end
-
-local function UnsuppressLayout()
-    layoutSuppressed = math.max(0, layoutSuppressed - 1)
-end
-
 local function IsLayoutSuppressed()
     return layoutSuppressed > 0
 end
@@ -780,338 +757,25 @@ end
 ---------------------------------------------------------------------------
 
 local function GetBuffIconFrames()
-    -- Owned engine: read addon-owned icons from the CDM icon pool
-    if IsOwnedEngine() then
-        local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
-        if not pool or #pool == 0 then return {} end
+    local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
+    if not pool or #pool == 0 then return {} end
 
-        local visible = {}
-        for _, icon in ipairs(pool) do
-            if icon:IsShown() and icon:GetAlpha() > 0 then
-                visible[#visible + 1] = icon
-            end
-        end
-
-        -- Sort by layoutIndex from spell entry
-        table.sort(visible, function(a, b)
-            local aIdx = (a._spellEntry and a._spellEntry.layoutIndex) or 0
-            local bIdx = (b._spellEntry and b._spellEntry.layoutIndex) or 0
-            return aIdx < bIdx
-        end)
-
-        return visible
-    end
-
-    -- Classic engine: iterate Blizzard viewer children
-    local viewer = GetBuffIconViewer()
-    if not viewer then
-        return {}
-    end
-
-    local all = {}
-
-    for _, child in ipairs({ viewer:GetChildren() }) do
-        if child then
-            -- Skip Selection frame (Edit Mode)
-            if child == viewer.Selection then
-                -- Skip
-            else
-                local hasIcon = child.icon or child.Icon
-                local hasCooldown = child.cooldown or child.Cooldown
-
-                if hasIcon or hasCooldown then
-                    table.insert(all, child)
-                end
-            end
-        end
-    end
-
-    table.sort(all, function(a, b)
-        return (a.layoutIndex or 0) < (b.layoutIndex or 0)
-    end)
-
-    -- Only keep visible icons that have been fully initialized (have cooldownID)
     local visible = {}
-    for _, icon in ipairs(all) do
-        if icon:IsShown() and icon.cooldownID then
-            table.insert(visible, icon)
+    for _, icon in ipairs(pool) do
+        if icon:IsShown() and icon:GetAlpha() > 0 then
+            visible[#visible + 1] = icon
         end
     end
+
+    table.sort(visible, function(a, b)
+        local aIdx = (a._spellEntry and a._spellEntry.layoutIndex) or 0
+        local bIdx = (b._spellEntry and b._spellEntry.layoutIndex) or 0
+        return aIdx < bIdx
+    end)
 
     return visible
 end
 
----------------------------------------------------------------------------
--- BAR FRAME COLLECTION
----------------------------------------------------------------------------
-
-local function GetBuffBarFrames()
-    -- Owned engine: return addon-owned bars from CDMBars pool
-    if IsOwnedEngine() then
-        local CDMBars = ns.CDMBars
-        if CDMBars then
-            return CDMBars:GetActiveBars()
-        end
-        return {}
-    end
-
-    -- Classic engine: iterate Blizzard viewer children
-    local viewer = GetBuffBarViewer()
-    if not viewer then
-        return {}
-    end
-
-    local frames = {}
-
-    -- First, try CooldownViewer API if present
-    if viewer.GetItemFrames then
-        local ok, items = pcall(viewer.GetItemFrames, viewer)
-        if ok and items then
-            frames = items
-        end
-    end
-
-    -- Merge raw children scan as well (GetItemFrames may return only active rows).
-    local seen = {}
-    for _, frame in ipairs(frames) do
-        seen[frame] = true
-    end
-    local okc, children = pcall(function()
-        return { viewer:GetChildren() }
-    end)
-    if okc and children then
-        for _, child in ipairs(children) do
-            if child and child:IsObjectType("Frame") then
-                -- Skip Selection frame
-                if child ~= viewer.Selection and not seen[child] then
-                    table.insert(frames, child)
-                    seen[child] = true
-                end
-            end
-        end
-    end
-
-    -- Resolve inactivity behavior once for this pass
-    local settings = GetTrackedBarSettings()
-    local stylingEnabled = settings.enabled
-    local inactiveMode = stylingEnabled and (settings.inactiveMode or "hide") or "always"
-    if inactiveMode ~= "always" and inactiveMode ~= "fade" and inactiveMode ~= "hide" then
-        inactiveMode = "always"
-    end
-    local reserveSlotWhenInactive = (settings.reserveSlotWhenInactive == true)
-
-    local function IsTrackedBarActive(frame)
-        if not frame then return false end
-
-        local function IsSecret(value)
-            if Helpers and Helpers.IsSecretValue then
-                local ok, secret = pcall(Helpers.IsSecretValue, value)
-                return ok and secret == true
-            end
-            return false
-        end
-
-        local function IsSafeNumber(value)
-            return type(value) == "number" and not IsSecret(value)
-        end
-
-        local function SafeCompareNumbers(a, b, mode)
-            if not IsSafeNumber(a) or not IsSafeNumber(b) then return nil end
-            local ok, result = pcall(function()
-                if mode == "gt" then return a > b end
-                if mode == "lt" then return a < b end
-                return nil
-            end)
-            return ok and result or nil
-        end
-
-        local function SafeAddNumber(a, b)
-            if not IsSafeNumber(a) or not IsSafeNumber(b) then return nil end
-            local ok, result = pcall(function()
-                return a + b
-            end)
-            if ok and IsSafeNumber(result) then
-                return result
-            end
-            return nil
-        end
-
-        local hadComparableData = false
-
-        local function LooksLikeDurationText(text)
-            if IsSecret(text) then return false end
-            if type(text) ~= "string" then return false end
-            local compact = text:gsub("%s+", "")
-            if compact == "" then return false end
-            local lowered = compact:lower()
-            if lowered == "0" or lowered == "0.0" or lowered == "0s" or lowered == "00:00" then
-                return false
-            end
-            return lowered:match("^[%d:%.smhd]+$") ~= nil
-        end
-
-        local function HasDurationText(owner)
-            if not owner or not owner.GetRegions then return false end
-            for _, region in ipairs({ owner:GetRegions() }) do
-                if region and region.GetObjectType and region:GetObjectType() == "FontString" and region.GetText then
-                    local okText, text = pcall(region.GetText, region)
-                    if okText and type(text) == "string" and not IsSecret(text) then
-                        hadComparableData = true
-                    end
-                    if okText and LooksLikeDurationText(text) then
-                        return true
-                    end
-                end
-            end
-            return false
-        end
-
-        local hasProgressingValue = false
-        local hasRunningCooldown = false
-        local hasDuration = false
-
-        local statusBar = frame.Bar
-        if statusBar and statusBar.GetValue then
-            local okValue, value = pcall(statusBar.GetValue, statusBar)
-            if okValue and IsSafeNumber(value) then
-                hadComparableData = true
-                local okMinMax, minValue, maxValue = pcall(statusBar.GetMinMaxValues, statusBar)
-                local maxGreaterMin = okMinMax and SafeCompareNumbers(maxValue, minValue, "gt")
-                if maxGreaterMin then
-                    hadComparableData = true
-                    -- Treat only in-progress bars as active from value alone.
-                    local minThreshold = SafeAddNumber(minValue, 0.001)
-                    local maxThreshold = SafeAddNumber(maxValue, -0.001)
-                    local aboveMin = minThreshold and SafeCompareNumbers(value, minThreshold, "gt")
-                    local belowMax = maxThreshold and SafeCompareNumbers(value, maxThreshold, "lt")
-                    hasProgressingValue = (aboveMin == true and belowMax == true)
-                end
-            end
-        end
-
-        local iconContainer = frame.Icon
-        local cooldown = iconContainer and (iconContainer.Cooldown or iconContainer.cooldown)
-        if cooldown and cooldown.GetCooldownTimes then
-            local okCD, startTime, duration, isEnabled = pcall(cooldown.GetCooldownTimes, cooldown)
-            if okCD and IsSafeNumber(duration) and IsSafeNumber(startTime) then
-                hadComparableData = true
-                local durationPositive = SafeCompareNumbers(duration, 0, "gt")
-                local startPositive = SafeCompareNumbers(startTime, 0, "gt")
-                local enabledState = true
-                if isEnabled ~= nil and not IsSecret(isEnabled) then
-                    hadComparableData = true
-                    local okEnabled, enabled = pcall(function()
-                        return isEnabled ~= 0
-                    end)
-                    enabledState = okEnabled and enabled or false
-                end
-                if durationPositive and startPositive and enabledState then
-                    hasRunningCooldown = true
-                end
-            end
-        end
-
-        hasDuration = HasDurationText(frame) or HasDurationText(statusBar)
-
-        if hasRunningCooldown or hasDuration or hasProgressingValue then
-            return true
-        end
-        if hadComparableData then
-            return false
-        end
-        return nil -- Unknown due secret/combat restrictions.
-    end
-
-    -- Filter frames, allowing inactive entries to be shown for always/fade modes.
-    local active = {}
-    local inCombat = InCombatLockdown()
-    for _, frame in ipairs(frames) do
-        if frame then
-            local iconContainer = frame.Icon
-            local iconTexture = iconContainer and (iconContainer.Icon or iconContainer.icon or iconContainer.texture)
-            local hasTexture = iconTexture and iconTexture.GetTexture and iconTexture:GetTexture() ~= nil
-            -- Hidden frames without identifiers or texture are usually unused pool entries.
-            local looksInitialized = (frame.cooldownID ~= nil) or (frame.layoutIndex ~= nil) or hasTexture
-
-            if not frame:IsShown() and not looksInitialized then
-                -- Skip uninitialized pooled frames.
-            else
-                -- In combat, bars can be intentionally alpha-hidden by QUI while still
-                -- logically shown by Blizzard. Using IsVisible() here would treat
-                -- alpha=0 bars as absent, preventing them from coming back when the
-                -- aura becomes active mid-combat.
-                local blizzShown = frame:IsShown()
-
-                if inCombat then
-                    -- In combat, trust Blizzard visibility state and avoid forcing Show/Hide.
-                    barFrameState[frame] = barFrameState[frame] or {}
-                    barFrameState[frame].isActive = blizzShown
-                    if blizzShown then
-                        table.insert(active, frame)
-                    end
-                else
-                    local isActive = IsTrackedBarActive(frame)
-                    if isActive == nil then
-                        isActive = blizzShown
-                    end
-                    barFrameState[frame] = barFrameState[frame] or {}
-                    barFrameState[frame].isActive = isActive
-
-                    if inactiveMode == "hide" and not reserveSlotWhenInactive and not isActive then
-                        pcall(function()
-                            frame:SetAlpha(0)
-                            frame:Hide()
-                        end)
-                    else
-                        if not frame:IsShown() then
-                            pcall(function()
-                                frame:Show()
-                            end)
-                        end
-                        table.insert(active, frame)
-                    end
-                end
-            end
-        end
-    end
-
-    table.sort(active, function(a, b)
-        return (a.layoutIndex or 0) < (b.layoutIndex or 0)
-    end)
-
-    return active
-end
-
----------------------------------------------------------------------------
--- HELPER: Strip Blizzard's overlay texture (the square artifact)
----------------------------------------------------------------------------
-
-local function StripBlizzardOverlay(icon)
-    if not icon or not icon.GetRegions then return end
-
-    for _, region in ipairs({ icon:GetRegions() }) do
-        if region:IsObjectType("Texture") then
-            -- Check for the specific overlay atlas
-            if region.GetAtlas then
-                local ok, atlas = pcall(region.GetAtlas, region)
-                if ok and atlas == "UI-HUD-CoolDownManager-IconOverlay" then
-                    region:SetTexture("")
-                    region:Hide()
-                    if not disabledRegions[region] then
-                        disabledRegions[region] = true
-                        hooksecurefunc(region, "Show", function(self)
-                            if self and not (self.IsForbidden and self:IsForbidden()) then
-                                pcall(self.Hide, self)
-                            end
-                        end)
-                    end
-                end
-            end
-        end
-    end
-end
-
----------------------------------------------------------------------------
 -- HELPER: Disable atlas-based border textures (debuff type colors, etc.)
 -- Hooks SetAtlas to prevent Blizzard from re-applying borders on updates
 ---------------------------------------------------------------------------
@@ -1146,306 +810,40 @@ local function DisableAtlasBorder(tex)
     end
 end
 
----------------------------------------------------------------------------
--- HELPER: One-time icon setup (mask removal, overlay strip)
--- NOTE: Per-icon OnShow hooks removed - they caused cascade during rapid buff changes
--- Polling at 0.05s + viewer hooks handle detection efficiently
----------------------------------------------------------------------------
-
-local function SetupIconOnce(icon)
-    local ibs = iconBuffState[icon]
-    if ibs and ibs.setup then return end
-
-    -- Remove ALL of Blizzard's masks (they may have multiple)
-    local textures = { icon.Icon, icon.icon, icon.texture, icon.Texture }
-    for _, tex in ipairs(textures) do
-        if tex and tex.GetMaskTexture then
-            for i = 1, 10 do
-                local mask = tex:GetMaskTexture(i)
-                if mask then
-                    tex:RemoveMaskTexture(mask)
-                end
-            end
-        end
-    end
-
-    -- Hide any NormalTexture border that Blizzard adds
-    if icon.NormalTexture then icon.NormalTexture:SetAlpha(0) end
-    if icon.GetNormalTexture then
-        local normalTex = icon:GetNormalTexture()
-        if normalTex then normalTex:SetAlpha(0) end
-    end
-
-    -- Strip Blizzard's overlay texture
-    StripBlizzardOverlay(icon)
-
-    -- Disable aura type border textures (debuff colors, buff borders, enchant borders)
-    DisableAtlasBorder(icon.DebuffBorder)
-    DisableAtlasBorder(icon.BuffBorder)
-    DisableAtlasBorder(icon.TempEnchantBorder)
-
-    iconBuffState[icon] = ibs or {}
-    iconBuffState[icon].setup = true
-end
-
----------------------------------------------------------------------------
 -- HELPER: Apply icon size, aspect ratio, border, and perfect square fix
 ---------------------------------------------------------------------------
 
 local function ApplyIconStyle(icon, settings)
     if not icon then return end
 
-    -- Owned engine: delegate to icon factory + swipe module
-    if IsOwnedEngine() then
-        local rowConfig = {
-            size = settings.iconSize or 42,
-            borderSize = settings.borderSize or 2,
-            borderColorTable = settings.borderColorTable or {0, 0, 0, 1},
-            aspectRatioCrop = settings.aspectRatioCrop or 1.0,
-            zoom = settings.zoom or 0,
-            durationSize = settings.durationSize or 14,
-            durationOffsetX = settings.durationOffsetX or 0,
-            durationOffsetY = settings.durationOffsetY or 8,
-            durationTextColor = settings.durationTextColor or {1, 1, 1, 1},
-            durationAnchor = settings.durationAnchor or "TOP",
-            stackSize = settings.stackSize or 14,
-            stackOffsetX = settings.stackOffsetX or 0,
-            stackOffsetY = settings.stackOffsetY or -8,
-            stackTextColor = settings.stackTextColor or {1, 1, 1, 1},
-            stackAnchor = settings.stackAnchor or "BOTTOM",
-            opacity = settings.opacity or 1.0,
-        }
-        if ns.CDMIcons and ns.CDMIcons.ConfigureIcon then
-            ns.CDMIcons.ConfigureIcon(icon, rowConfig)
-        end
-        local swipeMod = QUI and QUI.CooldownSwipe
-        if swipeMod and swipeMod.ApplyToIcon then
-            swipeMod.ApplyToIcon(icon)
-        end
-        if icon.GetScale and icon:GetScale() ~= 1 then
-            icon:SetScale(1)
-        end
-        return
+    local rowConfig = {
+        size = settings.iconSize or 42,
+        borderSize = settings.borderSize or 2,
+        borderColorTable = settings.borderColorTable or {0, 0, 0, 1},
+        aspectRatioCrop = settings.aspectRatioCrop or 1.0,
+        zoom = settings.zoom or 0,
+        durationSize = settings.durationSize or 14,
+        durationOffsetX = settings.durationOffsetX or 0,
+        durationOffsetY = settings.durationOffsetY or 8,
+        durationTextColor = settings.durationTextColor or {1, 1, 1, 1},
+        durationAnchor = settings.durationAnchor or "TOP",
+        stackSize = settings.stackSize or 14,
+        stackOffsetX = settings.stackOffsetX or 0,
+        stackOffsetY = settings.stackOffsetY or -8,
+        stackTextColor = settings.stackTextColor or {1, 1, 1, 1},
+        stackAnchor = settings.stackAnchor or "BOTTOM",
+        opacity = settings.opacity or 1.0,
+    }
+    if ns.CDMIcons and ns.CDMIcons.ConfigureIcon then
+        ns.CDMIcons.ConfigureIcon(icon, rowConfig)
     end
-
-    -- Classic engine: manual styling
-    SetupIconOnce(icon)
-
-    local size = settings.iconSize or 42
-    local aspectRatio = settings.aspectRatioCrop or 1.0
-    local zoom = settings.zoom or 0
-    local borderSize = settings.borderSize or 2
-
-    -- Calculate dimensions using crop-based aspect ratio
-    local width, height = size, size
-    if aspectRatio > 1.0 then
-        -- Wider: height shrinks
-        height = size / aspectRatio
-    elseif aspectRatio < 1.0 then
-        -- Taller: width shrinks
-        width = size * aspectRatio
+    local swipeMod = QUI and QUI.CooldownSwipe
+    if swipeMod and swipeMod.ApplyToIcon then
+        swipeMod.ApplyToIcon(icon)
     end
-
-    -- Reset any scale Blizzard may have applied (Edit Mode slider can set
-    -- per-icon scale, which persists after exit and makes icons visually
-    -- larger even though GetWidth/GetHeight returns QUI's configured size).
     if icon.GetScale and icon:GetScale() ~= 1 then
         icon:SetScale(1)
     end
-
-    icon:SetSize(width, height)
-
-    -- Create or update border (using BACKGROUND texture to avoid secret value errors during combat)
-    -- BackdropTemplate causes "arithmetic on secret value" crashes when frame is resized during combat
-    local ibs = iconBuffState[icon] or {}
-    iconBuffState[icon] = ibs
-    if borderSize > 0 then
-        if not ibs.border then
-            ibs.border = icon:CreateTexture(nil, "BACKGROUND", nil, -8)
-            ibs.border:SetColorTexture(0, 0, 0, 1)
-        end
-
-        ibs.border:ClearAllPoints()
-        ibs.border:SetPoint("TOPLEFT", icon, "TOPLEFT", -borderSize, borderSize)
-        ibs.border:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", borderSize, -borderSize)
-        ibs.border:Show()
-        ibs.borderSize = borderSize
-    else
-        if ibs.border then
-            ibs.border:Hide()
-        end
-        ibs.borderSize = 0
-    end
-
-    -- Calculate texture coordinates (crop-based, no stretching)
-    -- BASE_CROP always applied first to hide Blizzard's grey icon edges
-    local BASE_CROP = 0.08
-    local left, right, top, bottom = BASE_CROP, 1 - BASE_CROP, BASE_CROP, 1 - BASE_CROP
-
-    -- Apply aspect ratio crop ON TOP of base crop (within the already-cropped area)
-    if aspectRatio > 1.0 then
-        -- Wider: crop MORE from top/bottom
-        local cropAmount = 1.0 - (1.0 / aspectRatio)
-        local availableHeight = bottom - top
-        local offset = (cropAmount * availableHeight) / 2.0
-        top = top + offset
-        bottom = bottom - offset
-    elseif aspectRatio < 1.0 then
-        -- Taller: crop MORE from left/right
-        local cropAmount = 1.0 - aspectRatio
-        local availableWidth = right - left
-        local offset = (cropAmount * availableWidth) / 2.0
-        left = left + offset
-        right = right - offset
-    end
-
-    -- Apply zoom on top of everything (zooms into center)
-    if zoom > 0 then
-        local centerX = (left + right) / 2.0
-        local centerY = (top + bottom) / 2.0
-        local currentWidth = right - left
-        local currentHeight = bottom - top
-        local visibleSize = 1.0 - (zoom * 2)
-        left = centerX - (currentWidth * visibleSize / 2.0)
-        right = centerX + (currentWidth * visibleSize / 2.0)
-        top = centerY - (currentHeight * visibleSize / 2.0)
-        bottom = centerY + (currentHeight * visibleSize / 2.0)
-    end
-
-    local function ProcessTexture(tex)
-        if not tex then return end
-        tex:ClearAllPoints()
-        tex:SetAllPoints(icon)
-        if tex.SetTexCoord then
-            tex:SetTexCoord(left, right, top, bottom)
-        end
-    end
-
-    -- Try common texture property names
-    ProcessTexture(icon.Icon)
-    ProcessTexture(icon.icon)
-    ProcessTexture(icon.texture)
-    ProcessTexture(icon.Texture)
-
-    -- Fix the Cooldown frame
-    local cooldown = icon.Cooldown or icon.cooldown
-    if cooldown then
-        cooldown:ClearAllPoints()
-        cooldown:SetAllPoints(icon)
-        -- Use simple stretchable texture so swipe fills entire frame
-        cooldown:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
-        cooldown:SetSwipeColor(0, 0, 0, 0.8)
-
-        -- Show cooldown swipe based on showBuffIconSwipe setting (opt-in, default OFF)
-        local core = GetCore()
-        local showBuffIconSwipe = core and core.db and core.db.profile.cooldownSwipe
-            and core.db.profile.cooldownSwipe.showBuffIconSwipe or false
-        if cooldown.SetDrawSwipe then
-            cooldown:SetDrawSwipe(showBuffIconSwipe)
-        end
-        if cooldown.SetDrawEdge then
-            cooldown:SetDrawEdge(showBuffIconSwipe)
-        end
-    end
-
-    -- Fix CooldownFlash if it exists
-    if icon.CooldownFlash then
-        icon.CooldownFlash:ClearAllPoints()
-        icon.CooldownFlash:SetAllPoints(icon)
-    end
-
-    -- Apply text sizes and offsets
-    local durationSize = settings.durationSize or 12
-    local stackSize = settings.stackSize or 12
-    local durationOffsetX = settings.durationOffsetX or 0
-    local durationOffsetY = settings.durationOffsetY or 0
-    local durationAnchor = settings.durationAnchor or "CENTER"
-    local stackOffsetX = settings.stackOffsetX or 0
-    local stackOffsetY = settings.stackOffsetY or 0
-    local stackAnchor = settings.stackAnchor or "BOTTOMRIGHT"
-
-    -- Get font from general settings
-    local generalFont = GetGeneralFont()
-    local generalOutline = GetGeneralFontOutline()
-
-    -- Apply duration text size and offset (cooldown text)
-    if cooldown and durationSize then
-        -- Method 1: Check for OmniCC text
-        if cooldown.text then
-            cooldown.text:SetFont(generalFont, durationSize, generalOutline)
-            pcall(function()
-                cooldown.text:ClearAllPoints()
-                cooldown.text:SetPoint(durationAnchor, icon, durationAnchor, durationOffsetX, durationOffsetY)
-            end)
-        end
-
-        -- Method 2: Check for Blizzard's built-in cooldown text (GetRegions)
-        for _, region in ipairs({ cooldown:GetRegions() }) do
-            if region:GetObjectType() == "FontString" then
-                region:SetFont(generalFont, durationSize, generalOutline)
-                pcall(function()
-                    region:ClearAllPoints()
-                    region:SetPoint(durationAnchor, icon, durationAnchor, durationOffsetX, durationOffsetY)
-                end)
-            end
-        end
-    end
-
-    -- Apply stack text size using same approach as core/main.lua
-    local fs = nil
-
-    -- 1. ChargeCount (ability charges)
-    local charge = icon.ChargeCount
-    if charge then
-        fs = charge.Current or charge.Text or charge.Count or nil
-        if not fs and charge.GetRegions then
-            for _, region in ipairs({ charge:GetRegions() }) do
-                if region:GetObjectType() == "FontString" then
-                    fs = region
-                    break
-                end
-            end
-        end
-    end
-
-    -- 2. Applications (Buff stacks)
-    if not fs then
-        local apps = icon.Applications
-        if apps and apps.GetRegions then
-            for _, region in ipairs({ apps:GetRegions() }) do
-                if region:GetObjectType() == "FontString" then
-                    fs = region
-                    break
-                end
-            end
-        end
-    end
-
-    -- 3. Fallback: look for named stack text
-    if not fs and icon.GetRegions then
-        for _, region in ipairs({ icon:GetRegions() }) do
-            if region:GetObjectType() == "FontString" then
-                local name = region:GetName()
-                if name and (name:find("Stack") or name:find("Applications") or name:find("Count")) then
-                    fs = region
-                    break
-                end
-            end
-        end
-    end
-
-    -- Apply the stack size and offset
-    if fs and stackSize then
-        fs:SetFont(generalFont, stackSize, generalOutline)
-        pcall(function()
-            fs:ClearAllPoints()
-            fs:SetPoint(stackAnchor, icon, stackAnchor, stackOffsetX, stackOffsetY)
-        end)
-    end
-
-    -- Apply opacity
-    local opacity = settings.opacity or 1.0
-    icon:SetAlpha(opacity)
 end
 
 ---------------------------------------------------------------------------
@@ -1460,7 +858,7 @@ local function ApplyBarStyle(frame, settings, overrideBarWidth)
     local barWidth = overrideBarWidth or settings.barWidth or 200
     local texture = settings.texture or "Quazii v5"
     local useClassColor = settings.useClassColor
-    local barColor = settings.barColor or {0.204, 0.827, 0.6, 1}
+    local barColor = settings.barColor or {0.376, 0.647, 0.980, 1}
     local barOpacity = settings.barOpacity or 1.0
     local borderSize = settings.borderSize or 1
     local bgColor = settings.bgColor or {0, 0, 0, 1}
@@ -1534,22 +932,28 @@ local function ApplyBarStyle(frame, settings, overrideBarWidth)
     DisableAtlasBorder(frame.TempEnchantBorder)
 
     -- 2. Set bar dimensions (swapped for vertical orientation)
-    pcall(function()
-        frame:SetHeight(frameHeight)
-        frame:SetWidth(frameWidth)
-        if statusBar then
-            statusBar:SetHeight(frameHeight)
-            statusBar:SetWidth(frameWidth)
-            -- Set StatusBar orientation
-            if statusBar.SetOrientation then
-                statusBar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
+    -- COMBAT SAFETY: SetHeight/SetWidth can trigger Blizzard's Layout() which
+    -- repositions bars with default spacing, causing visible jumping. During
+    -- combat, skip dimension changes — bars keep their pre-combat size and
+    -- dimensions are corrected on PLAYER_REGEN_ENABLED.
+    if not InCombatLockdown() then
+        pcall(function()
+            frame:SetHeight(frameHeight)
+            frame:SetWidth(frameWidth)
+            if statusBar then
+                statusBar:SetHeight(frameHeight)
+                statusBar:SetWidth(frameWidth)
+                -- Set StatusBar orientation
+                if statusBar.SetOrientation then
+                    statusBar:SetOrientation(isVertical and "VERTICAL" or "HORIZONTAL")
+                end
+                -- Set fill direction for vertical bars
+                if isVertical and statusBar.SetReverseFill then
+                    statusBar:SetReverseFill(fillDirection == "down")
+                end
             end
-            -- Set fill direction for vertical bars
-            if isVertical and statusBar.SetReverseFill then
-                statusBar:SetReverseFill(fillDirection == "down")
-            end
-        end
-    end)
+        end)
+    end
 
     -- 3. Handle icon visibility and styling
     local iconContainer = frame.Icon
@@ -1882,9 +1286,6 @@ LayoutBuffIcons = function()
     if not viewer then return end
     if isIconLayoutRunning then return end  -- Re-entry guard
     if IsLayoutSuppressed() then return end
-    -- Skip during Edit Mode — Blizzard controls icon layout/padding.
-    -- QUI re-layouts on Edit Mode exit with saved settings.
-    if Helpers.IsEditModeActive() then return end
 
     isIconLayoutRunning = true
 
@@ -2031,31 +1432,22 @@ LayoutBuffIcons = function()
         end
     end
 
-    -- Re-sync buff icon visibility after styling.
-    if IsOwnedEngine() then
-        -- No alpha re-sync needed for owned buff icons.  The parent viewer
-        -- is alpha=0 so Blizzard children's IsShown() is unreliable.
-        -- Visibility is driven by the rescan mechanism (aura events rebuild
-        -- the icon pool).  Icons are always alpha=1 while in the pool.
-    else
-        for _, icon in ipairs(icons) do
-            local entry = icon._spellEntry
-            if entry and entry._blizzChild and not Helpers.SafeValue(entry._blizzChild:IsShown(), true) then
-                icon:SetAlpha(0)
-            end
-        end
-    end
-
     -- Owned containers need explicit sizing (Blizzard viewers auto-size from children).
-    if IsOwnedEngine() then
-        viewer:SetSize(totalWidth, totalHeight)
-    end
+    viewer:SetSize(totalWidth, totalHeight)
 
     -- Write calculated dimensions to viewer state so the proxy sizeResolver
     -- (CDMSizeResolver) reads our formula dimensions instead of falling back
     -- to Blizzard's auto-sized frame dimensions.
     if _G.QUI_SetCDMViewerBounds then
         _G.QUI_SetCDMViewerBounds(viewer, totalWidth, totalHeight)
+    end
+
+    -- Suppress Blizzard's dirty flag so its Layout() doesn't override our
+    -- icon positioning on the next frame. Our SetPoint/SetSize calls above
+    -- mark the viewer dirty; clearing it prevents the built-in OnUpdate from
+    -- re-running Blizzard's default layout and stomping our grid.
+    if viewer.MarkClean then
+        viewer:MarkClean()
     end
 
     isIconLayoutRunning = false
@@ -2067,298 +1459,27 @@ end
 
 local barState = {
     lastCount      = 0,
-    lastBarWidth   = nil,
-    lastBarHeight  = nil,
-    lastSpacing    = nil,
 }
 
 LayoutBuffBars = function()
-    -- Owned engine: delegate to CDMBars layout engine
-    if IsOwnedEngine() then
-        local viewer = GetBuffBarViewer()
-        if not viewer then return end
-        if isBarLayoutRunning then return end
-        if Helpers.IsEditModeActive() then return end
-
-        isBarLayoutRunning = true
-
-        local settings = GetTrackedBarSettings()
-        if not settings.enabled then
-            NotifyTrackedBarRuntimeChanged()
-            isBarLayoutRunning = false
-            return
-        end
-
-        -- Apply anchoring to the owned container
-        ApplyTrackedBarAnchor(settings)
-
-        -- Resolve autoWidth
-        local resolvedBarWidth = settings.barWidth or 215
-        local anchorTo = settings.anchorTo or "disabled"
-        local placement = settings.anchorPlacement or "center"
-        local canAutoWidth = settings.autoWidth and (anchorTo ~= "screen")
-        if canAutoWidth then
-            local anchorFrame
-            local widthAnchorType = anchorTo
-            if placement == "onTopResourceBars" then
-                anchorFrame = GetTopVisibleResourceBarFrame()
-                widthAnchorType = nil
-            else
-                anchorFrame = ResolveTrackedBarAnchorFrame(anchorTo)
-            end
-            if not anchorFrame and placement == "onTopResourceBars" then
-                anchorFrame = ResolveTrackedBarAnchorFrame(anchorTo)
-                widthAnchorType = anchorTo
-            end
-            if anchorFrame and anchorFrame:IsShown() then
-                local anchorWidth = GetTrackedBarAnchorWidth(widthAnchorType, anchorFrame)
-                if anchorWidth then
-                    local adjust = settings.autoWidthOffset or 0
-                    resolvedBarWidth = math.max(20, QUICore:PixelRound(anchorWidth + adjust, viewer))
-                end
-            end
-        end
-
-        local CDMBars = ns.CDMBars
-        if CDMBars then
-            CDMBars:Refresh(viewer, settings, resolvedBarWidth)
-        end
-
-        NotifyTrackedBarRuntimeChanged()
-        isBarLayoutRunning = false
-        return
-    end
-
     local viewer = GetBuffBarViewer()
     if not viewer then return end
-    if isBarLayoutRunning then return end  -- Re-entry guard
-    if IsLayoutSuppressed() then return end
-    -- Skip during Edit Mode — Blizzard controls bar layout/padding.
-    if Helpers.IsEditModeActive() then return end
+    if isBarLayoutRunning then return end
 
     isBarLayoutRunning = true
-
-    -- Combat-safe refresh path: avoid moving the viewer anchor itself, but still
-    -- keep per-bar style/size/stack positioning in sync so QUI options are honored
-    -- when bars appear mid-combat.
-    if InCombatLockdown() then
-        -- Apply HUD layer priority to bars even during combat.
-        local core = GetCore()
-        local hudLayering = core and core.db and core.db.profile and core.db.profile.hudLayering
-        local layerPriority = hudLayering and hudLayering.buffBar or 5
-        local frameLevel = 200
-        if core and core.GetHUDFrameLevel then
-            frameLevel = core:GetHUDFrameLevel(layerPriority)
-        end
-
-        local settings = GetTrackedBarSettings()
-        local stylingEnabled = settings.enabled
-        local inactiveMode = settings.inactiveMode or "hide"
-        if inactiveMode ~= "always" and inactiveMode ~= "fade" and inactiveMode ~= "hide" then
-            inactiveMode = "always"
-        end
-        local inactiveAlpha = Clamp01(settings.inactiveAlpha, 0.3)
-        local reserveSlotWhenInactive = (settings.reserveSlotWhenInactive == true)
-        local bars = GetBuffBarFrames()
-        local count = #bars
-        if count == 0 then
-            NotifyTrackedBarRuntimeChanged()
-            isBarLayoutRunning = false
-            return
-        end
-
-        local refBar = bars[1]
-        if not refBar then
-            NotifyTrackedBarRuntimeChanged()
-            isBarLayoutRunning = false
-            return
-        end
-
-        local barWidth = refBar:GetWidth()
-        local resolvedBarWidth = settings.barWidth or barWidth
-        local placement = settings.anchorPlacement or "center"
-        local anchorTo = settings.anchorTo or "disabled"
-        local canAutoWidth = stylingEnabled and settings.autoWidth and (anchorTo ~= "screen")
-        if canAutoWidth then
-            local anchorFrame
-            local widthAnchorType = anchorTo
-            if placement == "onTopResourceBars" then
-                anchorFrame = GetTopVisibleResourceBarFrame()
-                widthAnchorType = nil
-            else
-                anchorFrame = ResolveTrackedBarAnchorFrame(anchorTo)
-            end
-            if not anchorFrame and placement == "onTopResourceBars" then
-                anchorFrame = ResolveTrackedBarAnchorFrame(anchorTo)
-                widthAnchorType = anchorTo
-            end
-            if anchorFrame and anchorFrame:IsShown() then
-                local anchorWidth = GetTrackedBarAnchorWidth(widthAnchorType, anchorFrame)
-                if anchorWidth then
-                    local adjust = settings.autoWidthOffset or 0
-                    resolvedBarWidth = math.max(20, QUICore:PixelRound(anchorWidth + adjust, viewer))
-                end
-            end
-        end
-        if stylingEnabled then
-            barWidth = resolvedBarWidth
-        end
-
-        local barHeight = stylingEnabled and settings.barHeight or refBar:GetHeight()
-        local spacing = stylingEnabled and settings.spacing or (viewer.childYPadding or 0)
-        local growFromBottom = (not stylingEnabled) or (settings.growUp ~= false)
-        local orientation = stylingEnabled and settings.orientation or "horizontal"
-        local isVertical = (orientation == "vertical")
-        if stylingEnabled and ((settings.anchorTo or "disabled") ~= "disabled" or placement == "onTopResourceBars") then
-            if placement == "onTop" or placement == "onTopResourceBars" then
-                growFromBottom = true
-            elseif placement == "below" then
-                growFromBottom = false
-            elseif isVertical and placement == "right" then
-                growFromBottom = true
-            elseif isVertical and placement == "left" then
-                growFromBottom = false
-            end
-        end
-
-        local effectiveBarWidth, effectiveBarHeight
-        if isVertical then
-            effectiveBarWidth = barHeight
-            effectiveBarHeight = stylingEnabled and resolvedBarWidth or 200
-        else
-            effectiveBarWidth = barWidth
-            effectiveBarHeight = barHeight
-        end
-
-        -- Keep Blizzard layout direction state aligned with QUI settings.
-        viewerBuffState[viewer] = viewerBuffState[viewer] or {}
-        local vbsBar = viewerBuffState[viewer]
-        vbsBar.isHorizontal = not isVertical
-        if isVertical then
-            vbsBar.goingRight = growFromBottom
-            vbsBar.goingUp = false
-        else
-            vbsBar.goingRight = true
-            vbsBar.goingUp = growFromBottom
-        end
-
-        -- COMBAT PASS 1: Apply styling and strata/level first.
-        -- SetHeight/SetWidth in ApplyBarStyle can trigger Blizzard's Layout()
-        -- which repositions bars with default spacing, so we style first and
-        -- position last to ensure QUI spacing wins.
-        for _, frame in ipairs(bars) do
-            if stylingEnabled then
-                ApplyBarStyle(frame, settings, resolvedBarWidth)
-            else
-                pcall(function()
-                    frame:SetAlpha(1)
-                end)
-            end
-
-            -- Keep strata/level in sync with HUD layering.
-            pcall(function()
-                frame:SetFrameStrata("MEDIUM")
-                frame:SetFrameLevel(frameLevel)
-                if frame.Bar then
-                    frame.Bar:SetFrameStrata("MEDIUM")
-                    frame.Bar:SetFrameLevel(frameLevel + 1)
-                end
-                if frame.Icon then
-                    frame.Icon:SetFrameStrata("MEDIUM")
-                    frame.Icon:SetFrameLevel(frameLevel + 1)
-                end
-            end)
-        end
-
-        -- COMBAT PASS 2: Position bars and apply alpha LAST so QUI spacing
-        -- overrides any positions Blizzard's Layout() set during styling.
-        local combatPx = QUICore:GetPixelSize()
-        for index, frame in ipairs(bars) do
-            pcall(function()
-                frame:ClearAllPoints()
-                local offsetIndex = index - 1
-                if isVertical then
-                    local x
-                    if growFromBottom then
-                        x = snapPx(offsetIndex * (effectiveBarWidth + spacing), combatPx)
-                        frame:SetPoint("LEFT", viewer, "LEFT", x, 0)
-                    else
-                        x = snapPx(-offsetIndex * (effectiveBarWidth + spacing), combatPx)
-                        frame:SetPoint("RIGHT", viewer, "RIGHT", x, 0)
-                    end
-                else
-                    local y
-                    if growFromBottom then
-                        y = snapPx(offsetIndex * (effectiveBarHeight + spacing), combatPx)
-                        frame:SetPoint("BOTTOM", viewer, "BOTTOM", 0, y)
-                    else
-                        y = snapPx(-offsetIndex * (effectiveBarHeight + spacing), combatPx)
-                        frame:SetPoint("TOP", viewer, "TOP", 0, y)
-                    end
-                end
-            end)
-
-            local bfs = barFrameState[frame]
-            local isActive = not (bfs and bfs.isActive == false)
-            local targetAlpha = 1
-            if not isActive then
-                if inactiveMode == "fade" then
-                    targetAlpha = inactiveAlpha
-                elseif inactiveMode == "hide" and not reserveSlotWhenInactive then
-                    targetAlpha = 0
-                end
-            end
-            pcall(function()
-                frame:SetAlpha(targetAlpha)
-            end)
-        end
-
+    local settings = GetTrackedBarSettings()
+    if not settings.enabled then
         NotifyTrackedBarRuntimeChanged()
         isBarLayoutRunning = false
         return
     end
 
-    -- Apply HUD layer priority (strata + level)
-    local core = GetCore()
-    local hudLayering = core and core.db and core.db.profile and core.db.profile.hudLayering
-    local layerPriority = hudLayering and hudLayering.buffBar or 5
-    local frameLevel = 200  -- Default fallback
-    if core and core.GetHUDFrameLevel then
-        frameLevel = core:GetHUDFrameLevel(layerPriority)
-    end
-    -- Set strata to MEDIUM to match power bars, then apply frame level
-    viewer:SetFrameStrata("MEDIUM")
-    viewer:SetFrameLevel(frameLevel)
-
-    -- Get tracked bar settings
-    local settings = GetTrackedBarSettings()
-    local stylingEnabled = settings.enabled
-
-    -- Optional anchoring to CDM/resource/unitframe targets.
     ApplyTrackedBarAnchor(settings)
 
-    local bars = GetBuffBarFrames()
-    local count = #bars
-    if count == 0 then
-        barState.lastCount = 0
-        NotifyTrackedBarRuntimeChanged()
-        isBarLayoutRunning = false
-        return
-    end
-
-    local refBar = bars[1]
-    if not refBar then
-        NotifyTrackedBarRuntimeChanged()
-        isBarLayoutRunning = false
-        return
-    end
-
-    -- Use settings for dimensions if styling enabled, otherwise use frame defaults
-    local barWidth = refBar:GetWidth()
-    local resolvedBarWidth = settings.barWidth or barWidth
-    local placement = settings.anchorPlacement or "center"
+    local resolvedBarWidth = settings.barWidth or 215
     local anchorTo = settings.anchorTo or "disabled"
-    local canAutoWidth = stylingEnabled and settings.autoWidth and (anchorTo ~= "screen")
+    local placement = settings.anchorPlacement or "center"
+    local canAutoWidth = settings.autoWidth and (anchorTo ~= "screen")
     if canAutoWidth then
         local anchorFrame
         local widthAnchorType = anchorTo
@@ -2380,224 +1501,25 @@ LayoutBuffBars = function()
             end
         end
     end
-    if stylingEnabled then
-        barWidth = resolvedBarWidth
-    end
 
-    local barHeight = stylingEnabled and settings.barHeight or refBar:GetHeight()
-    local spacing = stylingEnabled and settings.spacing or (viewer.childYPadding or 0)
-    local growFromBottom = (not stylingEnabled) or (settings.growUp ~= false)
-
-    -- Vertical bar support
-    local orientation = stylingEnabled and settings.orientation or "horizontal"
-    local isVertical = (orientation == "vertical")
-    if stylingEnabled and ((settings.anchorTo or "disabled") ~= "disabled" or placement == "onTopResourceBars") then
-        if placement == "onTop" then
-            growFromBottom = true
-        elseif placement == "onTopResourceBars" then
-            growFromBottom = true
-        elseif placement == "below" then
-            growFromBottom = false
-        elseif isVertical and placement == "right" then
-            growFromBottom = true
-        elseif isVertical and placement == "left" then
-            growFromBottom = false
-        end
-    end
-
-    -- CRITICAL: Tell Blizzard's GridLayoutFrameMixin which layout direction to use
-    -- When isHorizontal=true, Blizzard positions bars up/down (Y-axis)
-    -- When isHorizontal=false, Blizzard positions bars left/right (X-axis)
-    -- This prevents Blizzard's Layout() from overriding QUI's positioning with wrong axis
-    -- TAINT SAFETY: Store layout flags in local table instead of writing to Blizzard viewer
-    viewerBuffState[viewer] = viewerBuffState[viewer] or {}
-    local vbsBar = viewerBuffState[viewer]
-    vbsBar.isHorizontal = not isVertical
-    -- Also update direction flags to match QUI's growth direction
-    if isVertical then
-        vbsBar.goingRight = growFromBottom  -- growUp becomes growRight
-        vbsBar.goingUp = false
-    else
-        vbsBar.goingRight = true
-        vbsBar.goingUp = growFromBottom
-    end
-
-    -- For vertical bars, swap dimensions (height setting becomes width)
-    local effectiveBarWidth, effectiveBarHeight
-    if isVertical then
-        effectiveBarWidth = barHeight  -- Height setting becomes bar width
-        effectiveBarHeight = stylingEnabled and resolvedBarWidth or 200  -- Width setting becomes bar height
-    else
-        effectiveBarWidth = barWidth
-        effectiveBarHeight = barHeight
-    end
-
-    if not effectiveBarHeight or effectiveBarHeight == 0 then
-        NotifyTrackedBarRuntimeChanged()
-        isBarLayoutRunning = false
-        return
-    end
-
-    barState.lastCount = count
-    barState.lastBarWidth = effectiveBarWidth
-    barState.lastBarHeight = effectiveBarHeight
-    barState.lastSpacing = spacing
-
-    -- Cache pixel size once for layout loops (avoids repeated GetEffectiveScale calls)
-    local px = QUICore:GetPixelSize()
-
-    -- Total size of the stack (height for horizontal bars, width for vertical)
-    local totalSize
-    if isVertical then
-        totalSize = (count * effectiveBarWidth) + ((count - 1) * spacing)
-    else
-        totalSize = (count * effectiveBarHeight) + ((count - 1) * spacing)
-    end
-    totalSize = snapPx(totalSize, px)
-
-    -- PASS 1: Apply visual styling and frame strata/level FIRST.
-    -- ApplyBarStyle calls SetHeight/SetWidth which can trigger Blizzard's Layout()
-    -- on the viewer, overriding bar positions. By styling first we let Blizzard's
-    -- Layout finish before our positioning pass claims the final word.
-    for _, bar in ipairs(bars) do
-        if stylingEnabled then
-            ApplyBarStyle(bar, settings, resolvedBarWidth)
-        else
-            pcall(function()
-                bar:SetAlpha(1)
-            end)
-            local iconContainer = bar.Icon
-            local iconTexture = iconContainer and (iconContainer.Icon or iconContainer.icon or iconContainer.texture)
-            if iconTexture and iconTexture.SetDesaturated then
-                pcall(function()
-                    iconTexture:SetDesaturated(false)
-                end)
-            end
-        end
-        -- Apply frame strata/level to each bar AND its .Bar child for proper HUD layering
-        bar:SetFrameStrata("MEDIUM")
-        bar:SetFrameLevel(frameLevel)
-        if bar.Bar then
-            bar.Bar:SetFrameStrata("MEDIUM")
-            bar.Bar:SetFrameLevel(frameLevel + 1)
-        end
-        if bar.Icon then
-            bar.Icon:SetFrameStrata("MEDIUM")
-            bar.Icon:SetFrameLevel(frameLevel + 1)
-        end
-    end
-
-    -- POSITION CHECK: After styling, verify if bars need repositioning.
-    -- The styling pass above may have triggered Blizzard's Layout() which uses
-    -- its own childYPadding — check for position drift before doing SetPoint work.
-    local needsReposition = false
-    for index, bar in ipairs(bars) do
-        local offsetIndex = index - 1
-        if isVertical then
-            local expectedX
-            if growFromBottom then
-                expectedX = snapPx(offsetIndex * (effectiveBarWidth + spacing), px)
-            else
-                expectedX = snapPx(-offsetIndex * (effectiveBarWidth + spacing), px)
-            end
-            local point, _, _, xOfs = bar:GetPoint(1)
-            if not point or abs((xOfs or 0) - expectedX) > 2 then
-                needsReposition = true
-                break
-            end
-        else
-            local expectedY
-            if growFromBottom then
-                expectedY = snapPx(offsetIndex * (effectiveBarHeight + spacing), px)
-            else
-                expectedY = snapPx(-offsetIndex * (effectiveBarHeight + spacing), px)
-            end
-            local point, _, _, _, yOfs = bar:GetPoint(1)
-            if not point or abs((yOfs or 0) - expectedY) > 2 then
-                needsReposition = true
-                break
-            end
-        end
-    end
-
-    -- PASS 2: Position each bar LAST so QUI's spacing overrides any positions
-    -- that Blizzard's Layout() applied during the styling pass above.
-    if needsReposition then
-        for _, bar in ipairs(bars) do
-            bar:ClearAllPoints()
-        end
-        for index, bar in ipairs(bars) do
-            local offsetIndex = index - 1
-
-            if isVertical then
-                -- VERTICAL BARS: Stack horizontally (left/right)
-                local x
-                if growFromBottom then
-                    -- Grow Right: bar 1 at LEFT edge, stacks rightward
-                    x = offsetIndex * (effectiveBarWidth + spacing)
-                    x = snapPx(x, px)
-                    bar:SetPoint("LEFT", viewer, "LEFT", x, 0)
-                else
-                    -- Grow Left: bar 1 at RIGHT edge, stacks leftward
-                    x = -offsetIndex * (effectiveBarWidth + spacing)
-                    x = snapPx(x, px)
-                    bar:SetPoint("RIGHT", viewer, "RIGHT", x, 0)
-                end
-            else
-                -- HORIZONTAL BARS: Stack vertically (up/down)
-                local y
-                if growFromBottom then
-                    y = offsetIndex * (effectiveBarHeight + spacing)
-                    y = snapPx(y, px)
-                    bar:SetPoint("BOTTOM", viewer, "BOTTOM", 0, y)
-                else
-                    y = -offsetIndex * (effectiveBarHeight + spacing)
-                    y = snapPx(y, px)
-                    bar:SetPoint("TOP", viewer, "TOP", 0, y)
-                end
-            end
-        end
-    end
-
-    -- No SetSize on the viewer frame — Blizzard auto-sizes it from children.
-    -- This prevents the SetSize → RefreshLayout → re-layout loop.
-    -- Ensure Blizzard's Layout() uses correct direction flags.
-    if isVertical then
-        vbsBar.isHorizontal = false
-    else
-        vbsBar.isHorizontal = true
-        vbsBar.goingUp = growFromBottom
-    end
-
-    -- Write calculated dimensions to viewer state so the proxy sizeResolver
-    -- reads our formula dimensions instead of Blizzard's auto-sized frame size.
-    if _G.QUI_SetCDMViewerBounds then
-        local bw, bh
-        if isVertical then
-            bw = totalSize
-            bh = effectiveBarHeight
-        else
-            bw = effectiveBarWidth
-            bh = totalSize
-        end
-        _G.QUI_SetCDMViewerBounds(viewer, bw, bh)
+    local CDMBars = ns.CDMBars
+    if CDMBars then
+        CDMBars:Refresh(viewer, settings, resolvedBarWidth)
     end
 
     NotifyTrackedBarRuntimeChanged()
     isBarLayoutRunning = false
 end
 
----------------------------------------------------------------------------
 -- CHANGE DETECTION (called from OnUpdate hooks on viewers)
 -- Icons: Hash-based detection for count/settings changes
--- Bars: Position verification (hash removed - bars now self-correct via position checks)
 ---------------------------------------------------------------------------
 
 local lastIconHash = ""
 
 -- Build hash of icon count + settings to detect actual changes
 local function BuildIconHash(count, settings)
-    return string.format("%d_%d_%d_%.2f_%d_%s_%s_%s_%d_%s_%s_%d_%d",
+    return string_format("%d_%d_%d_%.2f_%d_%s_%s_%s_%d_%s_%s_%d_%d",
         count,
         settings.iconSize or 42,
         settings.padding or 0,
@@ -2624,19 +1546,16 @@ local function CheckIconChanges()
 
     -- Count visible icons
     local visibleCount = 0
-    if IsOwnedEngine() then
-        local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
-        if pool then
-            for _, icon in ipairs(pool) do
-                if icon:IsShown() and icon:GetAlpha() > 0 then visibleCount = visibleCount + 1 end
-            end
-        end
-    else
-        for _, child in ipairs({ viewer:GetChildren() }) do
-            if child and child ~= viewer.Selection then
-                if (child.icon or child.Icon) and child:IsShown() then
+    local inCombat = InCombatLockdown()
+    local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
+    if pool then
+        for _, icon in ipairs(pool) do
+            if inCombat then
+                if Helpers.SafeValue(icon:IsShown(), false) and (Helpers.SafeToNumber(icon:GetAlpha()) or 1) > 0 then
                     visibleCount = visibleCount + 1
                 end
+            else
+                if icon:IsShown() and icon:GetAlpha() > 0 then visibleCount = visibleCount + 1 end
             end
         end
     end
@@ -2655,46 +1574,26 @@ local function CheckIconChanges()
     LayoutBuffIcons()
 end
 
-local function CheckBarChanges()
-    if not GetBuffBarViewer() then return end
-    if isBarLayoutRunning then return end  -- Skip if already laying out
-    -- Skip during Edit Mode — Blizzard controls bar layout/padding.
-    if Helpers.IsEditModeActive() then return end
-
-    -- Always call LayoutBuffBars - it styles bars first, then verifies positions
-    -- and corrects any drift caused by Blizzard's Layout() overriding QUI spacing.
-    LayoutBuffBars()
-end
-
----------------------------------------------------------------------------
 -- OnUpdate handlers for buff icon/bar viewers (module-level to avoid
 -- per-hook closure allocation).  Elapsed accumulators live at module scope
 -- instead of being captured upvalues inside anonymous closures.
 ---------------------------------------------------------------------------
 local buffIconOnUpdateElapsed = 0
-local buffBarOnUpdateElapsed = 0
 
 local function BuffIconViewer_OnUpdate(self, elapsed)
     buffIconOnUpdateElapsed = buffIconOnUpdateElapsed + elapsed
-    if buffIconOnUpdateElapsed > 0.05 then  -- 20 FPS polling - hash prevents over-layout
+    if buffIconOnUpdateElapsed > 0.1 then  -- 10 FPS polling (was 20 FPS)
         buffIconOnUpdateElapsed = 0
+        -- Suppress Blizzard's dirty flag at the same cadence as our poll.
+        -- Previously ran every frame; moving inside the throttle reduces
+        -- calls from 60+/sec to ~10/sec with no visible layout glitches.
+        if self.MarkClean then self:MarkClean() end
         if self:IsShown() then
             CheckIconChanges()
         end
     end
 end
 
-local function BuffBarViewer_OnUpdate(self, elapsed)
-    buffBarOnUpdateElapsed = buffBarOnUpdateElapsed + elapsed
-    if buffBarOnUpdateElapsed > 0.05 then  -- 20 FPS for bars
-        buffBarOnUpdateElapsed = 0
-        if self:IsShown() then
-            CheckBarChanges()
-        end
-    end
-end
-
----------------------------------------------------------------------------
 -- FORCE POPULATE: Briefly trigger Edit Mode behavior to load all spells
 -- This ensures the buff icons know what spells to display on first load
 ---------------------------------------------------------------------------
@@ -2705,52 +1604,9 @@ local function ForcePopulateBuffIcons()
     if forcePopulateDone then return end
     if InCombatLockdown() then return end
 
-    -- Owned engine: trigger spell data rescan; the container module handles
-    -- icon building and fires QUI_OnBuffLayoutReady when icons are ready.
-    if IsOwnedEngine() then
-        forcePopulateDone = true
-        if ns.CDMSpellData then
-            ns.CDMSpellData:ForceScan()
-        end
-        return
-    end
-
-    -- Classic engine: poke Blizzard viewer to populate
-    local viewer = GetBuffIconViewer()
-    if not viewer then return end
-
     forcePopulateDone = true
-
-    -- Method 1: Call Layout() which triggers Blizzard to populate icons
-    if viewer.Layout and type(viewer.Layout) == "function" then
-        pcall(function()
-            viewer:Layout()
-        end)
-    end
-
-    -- Method 2: If the viewer has systemInfo with spells, it should auto-populate
-    -- Just triggering a size change can help force refresh
-    if not InCombatLockdown() then
-        local w, h = viewer:GetSize()
-        if w and h and w > 0 and h > 0 then
-            -- Briefly nudge size to trigger internal refresh
-            pcall(function()
-                viewer:SetSize(w + 0.1, h)
-                C_Timer.After(0.05, function()
-                    if viewer and not InCombatLockdown() then
-                        pcall(function() viewer:SetSize(w, h) end)
-                    end
-                end)
-            end)
-        end
-    end
-
-    -- Method 3: Force a rescan via QUICore if available
-    local core = GetCore()
-    if core and core.ForceRefreshBuffIcons then
-            C_Timer.After(0.2, function()
-                pcall(function() core:ForceRefreshBuffIcons() end)
-            end)
+    if ns.CDMSpellData then
+        ns.CDMSpellData:ForceScan()
     end
 end
 
@@ -2790,8 +1646,8 @@ local function Initialize()
 
     -- TAINT SAFETY: OnUpdate hooks use module-level elapsed tracking instead of
     -- writing properties to Blizzard CDM viewer frames, to avoid tainting the
-    -- frame table.  Handlers are module-level named functions (BuffIconViewer_OnUpdate,
-    -- BuffBarViewer_OnUpdate) so no closure is allocated per HookScript call.
+    -- frame table. Handlers are module-level named functions so no closure is
+    -- allocated per HookScript call.
     -- OnUpdate polling at 0.05s (20 FPS) - works alongside UNIT_AURA event detection
     local iconViewer = GetBuffIconViewer()
     local iconVbs = iconViewer and (viewerBuffState[iconViewer] or {})
@@ -2801,84 +1657,6 @@ local function Initialize()
         iconViewer:HookScript("OnUpdate", BuffIconViewer_OnUpdate)
     end
 
-    -- Owned engine: no OnUpdate polling needed for bars — hooks handle data.
-    -- Classic engine: poll at 20 FPS for bar position correction.
-    if not IsOwnedEngine() then
-        barViewer = GetBuffBarViewer()
-        local barVbs = barViewer and (viewerBuffState[barViewer] or {})
-        if barViewer then viewerBuffState[barViewer] = barVbs end
-        if barViewer and not barVbs.onUpdateHooked then
-            barVbs.onUpdateHooked = true
-            barViewer:HookScript("OnUpdate", BuffBarViewer_OnUpdate)
-        end
-    end
-
-    -- TAINT SAFETY: ALL hooks on Blizzard CDM viewer frames must defer via C_Timer.After(0)
-    -- to break taint chain from secure CDM context. CDM viewers are Edit Mode managed frames.
-
-    -- OnSizeChanged removed: Blizzard auto-sizes the viewer from children,
-    -- which would create a loop (LayoutBuffIcons → icon SetPoint → auto-size
-    -- → OnSizeChanged → LayoutBuffIcons). The Layout hook below covers
-    -- Blizzard-initiated layout changes.
-
-    -- Blizzard viewer hooks (classic engine only — owned containers don't use
-    -- .Layout/.RefreshLayout and the alpha=0 Blizzard viewer never shows).
-    if not IsOwnedEngine() then
-        -- OnShow hook - refresh when viewer becomes visible
-        if iconViewer then
-            iconViewer:HookScript("OnShow", function(self)
-                C_Timer.After(0, function()
-                    if InCombatLockdown() then return end
-                    if IsLayoutSuppressed() then return end
-                    if isIconLayoutRunning then return end
-                    LayoutBuffIcons()
-                end)
-            end)
-        end
-
-        -- Hook Layout - deferred call after Blizzard's layout completes
-        if iconViewer and iconViewer.Layout then
-            hooksecurefunc(iconViewer, "Layout", function()
-                C_Timer.After(0, function()
-                    if InCombatLockdown() then return end
-                    if IsLayoutSuppressed() then return end
-                    if isIconLayoutRunning then return end
-                    LayoutBuffIcons()
-                end)
-            end)
-        end
-
-        if barViewer and barViewer.Layout then
-            hooksecurefunc(barViewer, "Layout", function()
-                C_Timer.After(0, function()
-                    if InCombatLockdown() then return end
-                    if IsLayoutSuppressed() then return end
-                    if isBarLayoutRunning then return end
-                    LayoutBuffBars()
-                end)
-            end)
-        end
-
-        -- FEAT-007: Hook RefreshLayout to correct layout direction after Blizzard sets it
-        -- Blizzard's RefreshLayout() sets isHorizontal based on IsHorizontal() (always true for BuffBar)
-        -- then calls Layout(). We hook RefreshLayout to fix direction right before Layout() runs.
-        -- TAINT SAFETY: Store in local table instead of writing to Blizzard viewer
-        if barViewer and barViewer.RefreshLayout then
-            hooksecurefunc(barViewer, "RefreshLayout", function(self)
-                C_Timer.After(0, function()
-                    if InCombatLockdown() then return end
-                    local settings = GetTrackedBarSettings()
-                    if settings.enabled and settings.orientation == "vertical" then
-                        viewerBuffState[self] = viewerBuffState[self] or {}
-                        viewerBuffState[self].isHorizontal = false
-                        viewerBuffState[self].goingRight = settings.growUp ~= false
-                        viewerBuffState[self].goingUp = false
-                    end
-                end)
-            end)
-        end
-    end
-
     ---------------------------------------------------------------------------
     -- EVENT-BASED UPDATES: UNIT_AURA hook for immediate buff change detection
     -- (Replaces polling as primary detection - polling becomes fallback only)
@@ -2886,61 +1664,88 @@ local function Initialize()
 
     -- TAINT SAFETY: Use local variables instead of writing to Blizzard CDM viewer frames.
     local auraHookCreated = false
-    local rescanPending = false
+    local lastAuraIconCount = 0  -- Track visible icon count for change detection
     iconViewer = GetBuffIconViewer()
     if iconViewer and not auraHookCreated then
         auraHookCreated = true
-        local auraEventFrame = CreateFrame("Frame")
-        auraEventFrame:RegisterEvent("UNIT_AURA")
-        auraEventFrame:SetScript("OnEvent", function(_, event, unit)
-            local iv = GetBuffIconViewer()
-            if unit == "player" and iv and iv:IsShown() then
-                -- Debounce: only queue one rescan per 0.1s window
-                if not rescanPending then
-                    rescanPending = true
-                    C_Timer.After(0.1, function()
-                        rescanPending = false
-                        -- Re-check visibility after timer (viewer may have hidden)
-                        local iv2 = GetBuffIconViewer()
-                        if iv2 and iv2:IsShown() then
-                            if isIconLayoutRunning then return end
-                            if IsLayoutSuppressed() then return end
-                            -- Reset hash to force layout recalculation
-                            lastIconHash = ""
-                            CheckIconChanges()
-                        end
-                    end)
-                end
-            end
-        end)
-    end
 
-    -- Owned engine: hook Blizzard's BuffBarCooldownViewer Layout to detect
-    -- bar child additions/removals and rebuild owned bars accordingly.
-    if IsOwnedEngine() then
-        local blizzBarViewer = _G["BuffBarCooldownViewer"]
-        if blizzBarViewer and blizzBarViewer.Layout then
-            hooksecurefunc(blizzBarViewer, "Layout", function()
-                C_Timer.After(0.1, function()
-                    if isBarLayoutRunning then return end
-                    LayoutBuffBars()
-                end)
+        -- Frame-show coalescing: Show() is a no-op if already shown,
+        -- so rapid UNIT_AURA events within the same render frame are
+        -- automatically batched into a single OnUpdate flush.
+        local iconAuraCoalesce = CreateFrame("Frame")
+        iconAuraCoalesce:Hide()
+        iconAuraCoalesce:SetScript("OnUpdate", function(self)
+            self:Hide()
+            local iv2 = GetBuffIconViewer()
+            if not iv2 or not iv2:IsShown() then return end
+            if isIconLayoutRunning then return end
+            if IsLayoutSuppressed() then return end
+
+            -- COMBAT STABILITY: During combat, only force hash
+            -- reset when icon count actually changed (buff gained
+            -- or lost). This prevents relayout from UNIT_AURA spam
+            -- when only aura properties (stacks, duration) changed
+            -- but icon positions don't need to move.
+            if InCombatLockdown() then
+                local currentCount = 0
+                local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
+                if pool then
+                    for _, icon in ipairs(pool) do
+                        if Helpers.SafeValue(icon:IsShown(), false) and (Helpers.SafeToNumber(icon:GetAlpha()) or 1) > 0 then
+                            currentCount = currentCount + 1
+                        end
+                    end
+                end
+                if currentCount == lastAuraIconCount then
+                    return  -- Count unchanged — skip relayout
+                end
+                lastAuraIconCount = currentCount
+            end
+
+            lastIconHash = ""
+            CheckIconChanges()
+        end)
+
+        -- Subscribe to centralized aura dispatcher (player only)
+        if ns.AuraEvents then
+            ns.AuraEvents:Subscribe("player", function(unit, updateInfo)
+                local iv = GetBuffIconViewer()
+                if iv and iv:IsShown() then
+                    iconAuraCoalesce:Show()
+                end
             end)
         end
-        -- Also rebuild bars on UNIT_AURA (tracked buffs can appear/disappear)
-        local barAuraFrame = CreateFrame("Frame")
-        barAuraFrame:RegisterEvent("UNIT_AURA")
-        local barRescanPending = false
-        barAuraFrame:SetScript("OnEvent", function(_, event, unit)
-            if unit == "player" then
-                if not barRescanPending then
-                    barRescanPending = true
-                    C_Timer.After(0.15, function()
-                        barRescanPending = false
-                        if isBarLayoutRunning then return end
-                        LayoutBuffBars()
-                    end)
-                end
+    end
+
+    -- Hook Blizzard's BuffBarCooldownViewer Layout to detect bar child
+    -- additions/removals and rebuild owned bars accordingly.
+    local blizzBarViewer = _G["BuffBarCooldownViewer"]
+    if blizzBarViewer and blizzBarViewer.Layout then
+        hooksecurefunc(blizzBarViewer, "Layout", function()
+            -- Suppress during combat: UNIT_AURA already handles bar updates,
+            -- and Blizzard's Layout() fires from dimension changes that
+            -- produce secret values, causing continuous resize oscillation.
+            if InCombatLockdown() then return end
+            C_Timer.After(0.1, function()
+                if isBarLayoutRunning then return end
+                LayoutBuffBars()
+            end)
+        end)
+    end
+    -- Also rebuild bars on UNIT_AURA (tracked buffs can appear/disappear)
+    local barAuraCoalesce = CreateFrame("Frame")
+    barAuraCoalesce:Hide()
+    barAuraCoalesce:SetScript("OnUpdate", function(self)
+        self:Hide()
+        if isBarLayoutRunning then return end
+        LayoutBuffBars()
+    end)
+    -- Subscribe to centralized aura dispatcher for bar layout (player only)
+    if ns.AuraEvents then
+        ns.AuraEvents:Subscribe("player", function(unit, updateInfo)
+            local bv = _G["BuffBarCooldownViewer"]
+            if bv and bv:IsShown() then
+                barAuraCoalesce:Show()
             end
         end)
     end
@@ -3133,4 +1938,13 @@ end
 _G.QUI_RefreshBuffBar = QUI_BuffBar.Refresh
 _G.QUI_GetTrackedBarRuntimeEntries = function()
     return GetTrackedBarRuntimeEntries()
+end
+
+if ns.Registry then
+    ns.Registry:Register("buffbar", {
+        refresh = _G.QUI_RefreshBuffBar,
+        priority = 20,
+        group = "frames",
+        importCategories = { "cdm" },
+    })
 end

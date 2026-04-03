@@ -9,6 +9,8 @@ nav_order: 7
 
 QUI replaces Blizzard's minimap with a clean, configurable version featuring square or round shapes, button management, a clock, coordinates, zone text, and a datatext information panel. Most minimap chrome (zoom buttons, tracking, difficulty badge) is hidden by default for a minimal look.
 
+Minimap settings are accessed through **Layout Mode** (`/qui layout`) -- they have been moved out of the main options panel.
+
 **DB path:** `db.profile.minimap` (minimap), `db.profile.datatext` (datatext panel)
 
 ---
@@ -50,8 +52,8 @@ General minimap behavior toggles.
 | `minimap.autoZoom` | boolean | `false` | Automatically zoom out after 10 seconds when zoomed in |
 | `minimap.hideAddonButtons` | boolean | `true` | Hide addon minimap buttons (show on hover only) |
 | `minimap.middleClickMenuEnabled` | boolean | `true` | Open quick menu on middle-click |
-| `minimap.hideMicroMenu` | boolean | `false` | Hide Blizzard's micro menu bar (Character, Spellbook, etc.) |
-| `minimap.hideBagBar` | boolean | `false` | Hide Blizzard's bag bar |
+| `actionBars.bars.microbar.enabled` | boolean | `true` | Toggle the Blizzard micro menu bar |
+| `actionBars.bars.bags.enabled` | boolean | `true` | Toggle the Blizzard bag bar |
 
 ---
 

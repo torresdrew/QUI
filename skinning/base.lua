@@ -43,6 +43,28 @@ function SkinBase.GetSkinBarColor(moduleSettings, prefix)
 end
 
 ---------------------------------------------------------------------------
+-- Per-frame OnBackdropSizeChanged fix
+-- BackdropTemplateMixin.SetupPieceVisuals re-creates backdrop texture pieces
+-- with default white vertex color but does NOT re-apply stored colors.
+-- Instead of hooking the global mixin (which fires for EVERY BackdropTemplate
+-- resize in the entire UI — hundreds/sec in raids), we hook individual
+-- QUI-skinned frames in CreateBackdrop / ApplyFullBackdrop.
+---------------------------------------------------------------------------
+local function HookBackdropSizeChanged(frame)
+    if not frame or frame._quiSizeHooked then return end
+    frame._quiSizeHooked = true
+    if not frame.OnBackdropSizeChanged then return end
+    hooksecurefunc(frame, "OnBackdropSizeChanged", function(self)
+        if self._quiBgR then
+            pcall(self.SetBackdropColor, self, self._quiBgR, self._quiBgG, self._quiBgB, self._quiBgA or 1)
+        end
+        if self._quiBorderR then
+            pcall(self.SetBackdropBorderColor, self, self._quiBorderR, self._quiBorderG, self._quiBorderB, self._quiBorderA or 1)
+        end
+    end)
+end
+
+---------------------------------------------------------------------------
 -- CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 -- Creates (or updates) a pixel-perfect QUI backdrop on the given frame.
 -- Stores the backdrop in a local weak-keyed table (NOT on the frame itself)
@@ -60,14 +82,55 @@ function SkinBase.CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
     local backdrop = frameBackdrops[frame]
     local px = SkinBase.GetPixelSize(backdrop, 1)
+    -- Store backup color fields so third-party frame cleanup recognizes this
+    -- as a QUI-owned frame and skips it during orphan/NineSlice suppression.
+    backdrop._quiBgR = bgr or 0.05
+    backdrop._quiBgG = bgg or 0.05
+    backdrop._quiBgB = bgb or 0.05
+    backdrop._quiBgA = bga or 0.95
+    backdrop._quiBorderR = sr or 0
+    backdrop._quiBorderG = sg or 0
+    backdrop._quiBorderB = sb or 0
+    backdrop._quiBorderA = sa or 1
     backdrop:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = px,
         insets = { left = px, right = px, top = px, bottom = px },
     })
-    backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
-    backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
+    backdrop:SetBackdropColor(backdrop._quiBgR, backdrop._quiBgG, backdrop._quiBgB, backdrop._quiBgA)
+    backdrop:SetBackdropBorderColor(backdrop._quiBorderR, backdrop._quiBorderG, backdrop._quiBorderB, backdrop._quiBorderA)
+    HookBackdropSizeChanged(backdrop)
+end
+
+---------------------------------------------------------------------------
+-- ApplyFullBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+-- Applies a pixel-perfect backdrop directly to a BackdropTemplate frame.
+-- Unlike CreateBackdrop, this sets the backdrop on the frame itself
+-- (for frames that already have BackdropTemplate or are addon-owned).
+---------------------------------------------------------------------------
+function SkinBase.ApplyFullBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    if not frame then return end
+    local px = SkinBase.GetPixelSize(frame, 1)
+    -- Store backup color fields so third-party frame cleanup recognizes this
+    -- as a QUI-owned frame and skips it during orphan/NineSlice suppression.
+    frame._quiBgR = bgr or 0.05
+    frame._quiBgG = bgg or 0.05
+    frame._quiBgB = bgb or 0.05
+    frame._quiBgA = bga or 0.95
+    frame._quiBorderR = sr or 0
+    frame._quiBorderG = sg or 0
+    frame._quiBorderB = sb or 0
+    frame._quiBorderA = sa or 1
+    frame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = px,
+        insets = { left = px, right = px, top = px, bottom = px },
+    })
+    frame:SetBackdropColor(frame._quiBgR, frame._quiBgG, frame._quiBgB, frame._quiBgA)
+    frame:SetBackdropBorderColor(frame._quiBorderR, frame._quiBorderG, frame._quiBorderB, frame._quiBorderA)
+    HookBackdropSizeChanged(frame)
 end
 
 ---------------------------------------------------------------------------
@@ -131,4 +194,5 @@ function SkinBase.StripTextures(frame)
         end
     end
 end
+
 

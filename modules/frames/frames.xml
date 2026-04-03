@@ -10,10 +10,12 @@
     <Script file="groupframes.lua"/>
     <Script file="groupframes_auras.lua"/>
     <Script file="groupframes_indicators.lua"/>
+    <Script file="groupframes_pinned_auras.lua"/>
     <Script file="groupframes_private_auras.lua"/>
     <Script file="groupframes_clickcast.lua"/>
     <Script file="groupframes_blizzard.lua"/>
     <Script file="groupframes_editmode.lua"/>
+    <Include file="party_tracker\party_tracker.xml"/>
     <Script file="buffbar.lua"/>
     <Script file="raidbuffs.lua"/>
     <Script file="totems.lua"/>

@@ -101,8 +101,10 @@ local function EnsureCache()
 end
 
 -- Invalidate on relevant events
+-- ACTIONBAR_SLOT_CHANGED intentionally not registered: fires constantly
+-- even while idle.  SPELLS_CHANGED covers real action bar content changes.
 local cacheFrame = CreateFrame("Frame")
-cacheFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+cacheFrame:RegisterEvent("SPELLS_CHANGED")
 cacheFrame:RegisterEvent("UPDATE_MACROS")
 cacheFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 cacheFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -176,7 +178,7 @@ function RangeUtils.IsOutOfMidRange()
             local slot = midSlots[abilityID]
             if slot then
                 local inRange = IsActionInRange(slot)
-                if inRange == false then foundOutOfRange = true end
+                if inRange == false then foundOutOfRange = true; break end
                 if inRange == true then return false end
             end
         end

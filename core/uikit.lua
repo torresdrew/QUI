@@ -8,7 +8,7 @@ local ADDON_NAME, ns = ...
 local UIKit = {}
 ns.UIKit = UIKit
 
-local LSM = LibStub("LibSharedMedia-3.0", true)
+local LSM = ns.LSM
 local Helpers = ns.Helpers
 local DEFAULT_FONT = "Fonts\\FRIZQT__.TTF"
 local floor = math.floor
@@ -25,18 +25,17 @@ local borderLineState = (Helpers and Helpers.CreateStateTable and Helpers.Create
 local backdropBorderState = (Helpers and Helpers.CreateStateTable and Helpers.CreateStateTable()) or setmetatable({}, { __mode = "k" })
 local iconState = (Helpers and Helpers.CreateStateTable and Helpers.CreateStateTable()) or setmetatable({}, { __mode = "k" })
 local accentCheckboxState = (Helpers and Helpers.CreateStateTable and Helpers.CreateStateTable()) or setmetatable({}, { __mode = "k" })
+local chevronCaretState = (Helpers and Helpers.CreateStateTable and Helpers.CreateStateTable()) or setmetatable({}, { __mode = "k" })
+local valueAnimationState = (Helpers and Helpers.CreateStateTable and Helpers.CreateStateTable()) or setmetatable({}, { __mode = "k" })
 
 -- Shared fallback color table for checkboxes (avoids per-widget allocation)
 local DEFAULT_CHECKBOX_COLORS = {
-    accent = {0.204, 0.827, 0.600},
-    accentHover = {0.431, 0.906, 0.718},
+    accent = {0.376, 0.647, 0.980},
+    accentHover = {0.506, 0.737, 1.0},
     toggleOff = {0.18, 0.18, 0.20},
 }
 
---- Lazily resolve QUICore (safe if called before main.lua loads)
-local function GetCore()
-    return ns.Addon
-end
+local GetCore = Helpers.GetCore
 
 local function Round(value)
     return floor((value or 0) + 0.5)
@@ -191,6 +190,57 @@ local function RefreshAccentCheckboxLayout(checkbox)
     UIKit.SetPointPx(checkbox.checkRight, "CENTER", checkbox, "CENTER", 2, 0)
 end
 
+local function RefreshChevronCaretLayout(caret)
+    local state = chevronCaretState[caret]
+    if not state or not caret or not caret.line1 or not caret.line2 then return end
+
+    UIKit.SetSizePx(caret, state.sizePixels or 10, state.sizePixels or 10)
+    UIKit.SetPointPx(
+        caret,
+        state.point or "RIGHT",
+        state.relativeTo or state.parent,
+        state.relativePoint or state.point or "RIGHT",
+        state.xPixels or 0,
+        state.yPixels or 0
+    )
+
+    SetRegionSizePx(caret.line1, state.lineWidthPixels or 6, state.lineHeightPixels or 1, caret)
+    SetRegionSizePx(caret.line2, state.lineWidthPixels or 6, state.lineHeightPixels or 1, caret)
+
+    if state.expanded then
+        caret.line1:SetRotation(math.rad(-45))
+        caret.line1:ClearAllPoints()
+        UIKit.SetPointPx(caret.line1, "CENTER", caret, "CENTER", -2, 0)
+
+        caret.line2:SetRotation(math.rad(45))
+        caret.line2:ClearAllPoints()
+        UIKit.SetPointPx(caret.line2, "CENTER", caret, "CENTER", 2, 0)
+    else
+        local collapsedDirection = state.collapsedDirection or "left"
+        if collapsedDirection == "right" then
+            caret.line1:SetRotation(math.rad(-45))
+            caret.line1:ClearAllPoints()
+            UIKit.SetPointPx(caret.line1, "CENTER", caret, "CENTER", 1, 2)
+
+            caret.line2:SetRotation(math.rad(45))
+            caret.line2:ClearAllPoints()
+            UIKit.SetPointPx(caret.line2, "CENTER", caret, "CENTER", 1, -2)
+        else
+            caret.line1:SetRotation(math.rad(45))
+            caret.line1:ClearAllPoints()
+            UIKit.SetPointPx(caret.line1, "CENTER", caret, "CENTER", -1, 2)
+
+            caret.line2:SetRotation(math.rad(-45))
+            caret.line2:ClearAllPoints()
+            UIKit.SetPointPx(caret.line2, "CENTER", caret, "CENTER", -1, -2)
+        end
+    end
+
+    local color = state.color or { 1, 1, 1, 1 }
+    ApplyColorTexture(caret.line1, color[1], color[2], color[3], color[4] or 1)
+    ApplyColorTexture(caret.line2, color[1], color[2], color[3], color[4] or 1)
+end
+
 ---------------------------------------------------------------------------
 -- SCALE-BOUND REGISTRY
 ---------------------------------------------------------------------------
@@ -211,15 +261,6 @@ function UIKit.RegisterScaleRefresh(owner, key, refreshFn)
     callbacks[key or refreshFn] = refreshFn
 end
 
-function UIKit.UnregisterScaleRefresh(owner, key)
-    local callbacks = owner and scaleRefreshRegistry[owner]
-    if not callbacks then return end
-    callbacks[key] = nil
-    if not next(callbacks) then
-        scaleRefreshRegistry[owner] = nil
-    end
-end
-
 function UIKit.RefreshScaleBoundWidgets()
     for owner, callbacks in pairs(scaleRefreshRegistry) do
         for _, refreshFn in pairs(callbacks) do
@@ -228,13 +269,80 @@ function UIKit.RefreshScaleBoundWidgets()
     end
 end
 
+local animationDriver
+local animationDriverOnUpdate
+
+local function EnsureAnimationDriver()
+    if animationDriver then return animationDriver end
+    animationDriver = CreateFrame("Frame")
+    animationDriverOnUpdate = function(self, elapsed)
+        local anyActive = false
+        for owner, states in pairs(valueAnimationState) do
+            for key, state in pairs(states) do
+                state.elapsed = math.min((state.elapsed or 0) + elapsed, state.duration)
+                local progress = (state.duration > 0) and (state.elapsed / state.duration) or 1
+                local value = state.fromValue + ((state.toValue - state.fromValue) * progress)
+                if state.onUpdate then
+                    pcall(state.onUpdate, owner, value, progress)
+                end
+                if progress >= 1 then
+                    states[key] = nil
+                    if state.onFinish then
+                        pcall(state.onFinish, owner, state.toValue)
+                    end
+                else
+                    anyActive = true
+                end
+            end
+            if not next(states) then
+                valueAnimationState[owner] = nil
+            end
+        end
+        if not anyActive then
+            self:SetScript("OnUpdate", nil)
+        end
+    end
+    animationDriver:SetScript("OnUpdate", animationDriverOnUpdate)
+    return animationDriver
+end
+
+function UIKit.CancelValueAnimation(owner, key)
+    local states = owner and valueAnimationState[owner]
+    if not states then return end
+    states[key or "default"] = nil
+    if not next(states) then
+        valueAnimationState[owner] = nil
+    end
+end
+
+function UIKit.AnimateValue(owner, key, options)
+    if not owner or type(options) ~= "table" then return end
+    if type(options.onUpdate) ~= "function" then return end
+
+    local animKey = key or "default"
+    local states = valueAnimationState[owner]
+    if not states then
+        states = {}
+        valueAnimationState[owner] = states
+    end
+
+    states[animKey] = {
+        fromValue = options.fromValue or 0,
+        toValue = options.toValue or 0,
+        duration = math.max(0, options.duration or 0.16),
+        elapsed = 0,
+        onUpdate = options.onUpdate,
+        onFinish = options.onFinish,
+    }
+
+    pcall(options.onUpdate, owner, options.fromValue or 0, 0)
+    local driver = EnsureAnimationDriver()
+    driver:SetScript("OnUpdate", animationDriverOnUpdate)
+end
+
 ---------------------------------------------------------------------------
 -- PIXEL HELPERS
 ---------------------------------------------------------------------------
-
-function UIKit.Pixels(value, frame)
-    return Pixels(value, frame)
-end
 
 function UIKit.DisablePixelSnap(obj)
     if not obj then return end
@@ -258,16 +366,6 @@ function UIKit.SetSizePx(frame, widthPixels, heightPixels)
         return
     end
     SetRegionSizePx(frame, widthPixels, heightPixels, frame)
-end
-
-function UIKit.SetWidthPx(frame, widthPixels)
-    if not frame then return end
-    local core = GetCore()
-    if core and core.SetPixelPerfectWidth then
-        core:SetPixelPerfectWidth(frame, widthPixels)
-        return
-    end
-    SetRegionSizePx(frame, widthPixels, nil, frame)
 end
 
 function UIKit.SetHeightPx(frame, heightPixels)
@@ -332,10 +430,7 @@ function UIKit.ResolveFontPath(fontName)
         local path = LSM:Fetch("font", fontName)
         if path then return path end
     end
-    if Helpers and Helpers.GetGeneralFont then
-        return Helpers.GetGeneralFont()
-    end
-    return DEFAULT_FONT
+    return Helpers.GetGeneralFont()
 end
 
 ---------------------------------------------------------------------------
@@ -639,6 +734,58 @@ function UIKit.CreateAccentCheckbox(parent, options)
 end
 
 ---------------------------------------------------------------------------
+-- CHEVRON CARET
+---------------------------------------------------------------------------
+
+function UIKit.CreateChevronCaret(parent, options)
+    options = options or {}
+
+    local caret = CreateFrame("Frame", nil, parent)
+    caret.line1 = caret:CreateTexture(nil, options.layer or "OVERLAY")
+    caret.line2 = caret:CreateTexture(nil, options.layer or "OVERLAY")
+
+    chevronCaretState[caret] = {
+        parent = parent,
+        point = options.point or "RIGHT",
+        relativeTo = options.relativeTo or parent,
+        relativePoint = options.relativePoint or options.point or "RIGHT",
+        xPixels = options.xPixels or 0,
+        yPixels = options.yPixels or 0,
+        sizePixels = options.sizePixels or 10,
+        lineWidthPixels = options.lineWidthPixels or 6,
+        lineHeightPixels = options.lineHeightPixels or 1,
+        expanded = options.expanded and true or false,
+        collapsedDirection = options.collapsedDirection or "left",
+        color = {
+            options.r or 1,
+            options.g or 1,
+            options.b or 1,
+            options.a or 1,
+        },
+    }
+
+    UIKit.RegisterScaleRefresh(caret, "chevronCaret", function(owner)
+        RefreshChevronCaretLayout(owner)
+    end)
+    RefreshChevronCaretLayout(caret)
+    return caret
+end
+
+function UIKit.SetChevronCaretExpanded(caret, expanded)
+    local state = chevronCaretState[caret]
+    if not state then return end
+    state.expanded = expanded and true or false
+    RefreshChevronCaretLayout(caret)
+end
+
+function UIKit.SetChevronCaretColor(caret, r, g, b, a)
+    local state = chevronCaretState[caret]
+    if not state then return end
+    state.color = { r or 1, g or 1, b or 1, a or 1 }
+    RefreshChevronCaretLayout(caret)
+end
+
+---------------------------------------------------------------------------
 -- ICON
 ---------------------------------------------------------------------------
 
@@ -747,6 +894,7 @@ function UIKit.CreateAnchorProxy(sourceFrame, opts)
     local currentSource = sourceFrame
     local lastWidth, lastHeight = 0, 0
     local lastAnchorSource = nil
+    local cachedSourceScale, cachedProxyScale
 
     function proxy:Sync()
         local source = currentSource
@@ -769,16 +917,31 @@ function UIKit.CreateAnchorProxy(sourceFrame, opts)
         if sizeResolver then
             w, h = sizeResolver(source)
         else
-            w = source:GetWidth() or 0
-            h = source:GetHeight() or 0
+            w = Helpers and Helpers.SafeToNumber(source:GetWidth(), 0) or (source:GetWidth() or 0)
+            h = Helpers and Helpers.SafeToNumber(source:GetHeight(), 0) or (source:GetHeight() or 0)
         end
         w = math.max(1, w or 0)
         h = math.max(1, h or 0)
         -- Scale conversion: sizeResolver dimensions are in the source frame's
         -- coordinate space, but the proxy is parented to UIParent.  Convert
         -- so the proxy's screen-space size matches the actual source content.
-        local sourceScale = source:GetEffectiveScale()
-        local proxyScale = self:GetEffectiveScale()
+        -- Cache effective scale — GetEffectiveScale can return secret values
+        -- during combat which cannot be used in Lua arithmetic.
+        local rawSrcScale = source:GetEffectiveScale()
+        local rawPxyScale = self:GetEffectiveScale()
+        local sourceScale, proxyScale
+        if rawSrcScale and not (issecretvalue and issecretvalue(rawSrcScale)) then
+            sourceScale = rawSrcScale
+            cachedSourceScale = rawSrcScale
+        else
+            sourceScale = cachedSourceScale
+        end
+        if rawPxyScale and not (issecretvalue and issecretvalue(rawPxyScale)) then
+            proxyScale = rawPxyScale
+            cachedProxyScale = rawPxyScale
+        else
+            proxyScale = cachedProxyScale
+        end
         if sourceScale and proxyScale and proxyScale > 0 and sourceScale ~= proxyScale then
             local scaleFactor = sourceScale / proxyScale
             w = w * scaleFactor
@@ -788,15 +951,26 @@ function UIKit.CreateAnchorProxy(sourceFrame, opts)
         -- slightly different floats than what was passed to SetSize,
         -- causing infinite SetSize→OnSizeChanged→SetSize loops.
         if math.abs(lastWidth - w) > 0.5 or math.abs(lastHeight - h) > 0.5 then
-            self:SetSize(w, h)
-            lastWidth, lastHeight = w, h
+            -- pcall: if protection somehow propagated to the proxy (e.g.
+            -- brief window at combat boundary), silently defer rather than
+            -- throwing ADDON_ACTION_BLOCKED.
+            local ok = pcall(self.SetSize, self, w, h)
+            if ok then
+                lastWidth, lastHeight = w, h
+            else
+                combatPending = true
+            end
         end
         if anchorResolver then
             anchorResolver(self, source)
             lastAnchorSource = source
         elseif lastAnchorSource ~= source then
-            self:ClearAllPoints()
-            self:SetPoint("CENTER", source, "CENTER", 0, 0)
+            -- pcall: anchoring to source can propagate protection from
+            -- Blizzard frames; if the proxy became protected, ClearAllPoints
+            -- and SetPoint would be blocked during combat.
+            if pcall(self.ClearAllPoints, self) then
+                pcall(self.SetPoint, self, "CENTER", source, "CENTER", 0, 0)
+            end
             lastAnchorSource = source
         end
         initialized = true

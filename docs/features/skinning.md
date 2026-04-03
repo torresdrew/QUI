@@ -57,6 +57,10 @@ The quest and objective tracker can be skinned with customizable height, font si
 
 The vehicle/override action bar that appears during certain encounters and quests can be skinned to match your action bar style.
 
+### Auction House
+
+The Auction House frame can be skinned with QUI's dark theme for visual consistency.
+
 ### Instance Frames
 
 The PVE finder, Dungeon finder, and PVP frames can be skinned for visual consistency when queuing for content.
@@ -72,6 +76,10 @@ Both frames are skinned as part of the [Character Pane]({% link features/charact
 ### Ready Check
 
 The ready check popup is reskinned with QUI's dark theme for a cleaner appearance during group content.
+
+### Status Bars
+
+General status bar skinning applies QUI's dark theme to reputation bars, honor bars, and other Blizzard status tracking bars for visual consistency.
 
 ## Key Features
 

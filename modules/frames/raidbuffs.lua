@@ -1,9 +1,29 @@
 local ADDON_NAME, ns = ...
 local QUICore = ns.Addon
-local LSM = LibStub("LibSharedMedia-3.0")
+local LSM = ns.LSM
 local Helpers = ns.Helpers
 local IsSecretValue = Helpers.IsSecretValue
 local SafeValue = Helpers.SafeValue
+
+-- Performance: cache frequently-called globals as locals
+local CreateFrame = CreateFrame
+local UIParent = UIParent
+local pairs = pairs
+local ipairs = ipairs
+local type = type
+local pcall = pcall
+local wipe = wipe
+local tostring = tostring
+local GetTime = GetTime
+local UnitExists = UnitExists
+local C_Timer = C_Timer
+local InCombatLockdown = InCombatLockdown
+local IsPlayerSpell = IsPlayerSpell
+local GetWeaponEnchantInfo = GetWeaponEnchantInfo
+local GetInventoryItemID = GetInventoryItemID
+local table_insert = table.insert
+local string_format = string.format
+local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 
 ---------------------------------------------------------------------------
 -- QUI Missing Raid Buffs Display
@@ -24,15 +44,18 @@ local UPDATE_THROTTLE = 0.5
 local MAX_AURA_INDEX = 40  -- WoW maximum buff slots
 
 -- Raid buffs configuration
--- spellId: Primary spell ID for icon lookup (can be single ID or table of IDs)
+-- spellId: Primary spell ID for icon lookup and detection
+-- buffIDs: All aura spell IDs to check (variant detection for talent/expansion differences)
+-- castSpellId: The ability spell ID to cast (may differ from buff aura ID)
 -- name: Buff name for fallback detection (catches talent variants)
 -- stat: What the buff provides (for tooltip)
 -- providerClass: Which class provides this buff
 -- range: Range in yards for checking if provider/target is reachable
--- NOTE: Name-based fallback catches talent-modified buffs with different spell IDs
 local RAID_BUFFS = {
     {
         spellId = 21562,
+        buffIDs = { 21562 },
+        castSpellId = 21562,
         name = "Power Word: Fortitude",
         stat = "Stamina",
         providerClass = "PRIEST",
@@ -40,6 +63,8 @@ local RAID_BUFFS = {
     },
     {
         spellId = 6673,
+        buffIDs = { 6673 },
+        castSpellId = 6673,
         name = "Battle Shout",
         stat = "Attack Power",
         providerClass = "WARRIOR",
@@ -47,6 +72,8 @@ local RAID_BUFFS = {
     },
     {
         spellId = 1459,
+        buffIDs = { 1459, 432778 },
+        castSpellId = 1459,
         name = "Arcane Intellect",
         stat = "Intellect",
         providerClass = "MAGE",
@@ -54,6 +81,8 @@ local RAID_BUFFS = {
     },
     {
         spellId = 1126,
+        buffIDs = { 1126, 432661 },
+        castSpellId = 1126,
         name = "Mark of the Wild",
         stat = "Versatility",
         providerClass = "DRUID",
@@ -62,6 +91,8 @@ local RAID_BUFFS = {
     {
         -- 381748 is the buff that appears on players, 364342 is the ability
         spellId = 381748,
+        buffIDs = { 381748 },
+        castSpellId = 364342,
         name = "Blessing of the Bronze",
         stat = "Movement Speed",
         providerClass = "EVOKER",
@@ -69,10 +100,91 @@ local RAID_BUFFS = {
     },
     {
         spellId = 462854,
+        buffIDs = { 462854 },
+        castSpellId = 462854,
         name = "Skyfury",
         stat = "Mastery",
         providerClass = "SHAMAN",
         range = 100,
+    },
+    {
+        spellId = 465,
+        buffIDs = { 465 },
+        castSpellId = 465,
+        name = "Devotion Aura",
+        stat = "Damage Reduction",
+        providerClass = "PALADIN",
+        range = 40,
+    },
+}
+
+-- Self-buff configuration (class-specific maintenance buffs)
+-- checkType: "playerAura" checks player buff IDs, "weaponEnchant" checks GetWeaponEnchantInfo
+-- anyBuffIDs: set of aura spell IDs — any match means buff is present (playerAura)
+-- anyEnchantIDs: set of weapon enchant IDs — any match means enchant is present (weaponEnchant)
+-- castPriority: ordered list of spell IDs to try casting (first known wins)
+-- requiresShield: only check if shield equipped in OH slot
+local SELF_BUFFS = {
+    -- Shaman: Main hand weapon enchant
+    {
+        name = "Weapon Enchant",
+        stat = "Main Hand",
+        providerClass = "SHAMAN",
+        selfBuff = true,
+        checkType = "weaponEnchant",
+        anyEnchantIDs = { [5400] = true, [5401] = true, [6498] = true },
+        castPriority = { 318038, 33757, 382021 },  -- Flametongue, Windfury, Earthliving
+    },
+    -- Shaman: Shield enchant (requires shield equipped)
+    {
+        name = "Shield Enchant",
+        stat = "Off Hand",
+        providerClass = "SHAMAN",
+        selfBuff = true,
+        checkType = "weaponEnchant",
+        requiresShield = true,
+        anyEnchantIDs = { [7587] = true, [7528] = true },
+        castPriority = { 462757, 457481 },  -- Thunderstrike Ward, Tidecaller's Guard
+    },
+    -- Shaman: Lightning/Water Shield
+    {
+        name = "Shield",
+        stat = "Self-Buff",
+        providerClass = "SHAMAN",
+        selfBuff = true,
+        checkType = "playerAura",
+        anyBuffIDs = { [192106] = true, [52127] = true },
+        castPriority = { 192106, 52127 },  -- Lightning Shield, Water Shield
+    },
+    -- Paladin: Weapon rite
+    {
+        name = "Weapon Rite",
+        stat = "Main Hand",
+        providerClass = "PALADIN",
+        selfBuff = true,
+        checkType = "weaponEnchant",
+        anyEnchantIDs = { [7143] = true, [7144] = true },
+        castPriority = { 433568, 433583 },  -- Rite of Sanctification, Rite of Adjuration
+    },
+    -- Rogue: Lethal poison
+    {
+        name = "Lethal Poison",
+        stat = "Lethal",
+        providerClass = "ROGUE",
+        selfBuff = true,
+        checkType = "playerAura",
+        anyBuffIDs = { [2823] = true, [315584] = true, [8679] = true, [381664] = true },
+        castPriority = { 2823, 315584, 8679, 381664 },  -- Deadly, Instant, Wound, Amplifying
+    },
+    -- Rogue: Non-lethal poison
+    {
+        name = "Non-Lethal Poison",
+        stat = "Non-Lethal",
+        providerClass = "ROGUE",
+        selfBuff = true,
+        checkType = "playerAura",
+        anyBuffIDs = { [3408] = true, [5761] = true, [381637] = true },
+        castPriority = { 3408, 5761, 381637 },  -- Crippling, Numbing, Atrophic
     },
 }
 
@@ -108,8 +220,8 @@ local DEFAULTS = {
     enabled = true,
     showOnlyInGroup = true,
     showOnlyInInstance = false,  -- Only show in dungeon/raid instances
-    providerMode = false,
-    hideLabelBar = false,        -- Hide the "Missing Buffs" label bar
+    providerMode = false,         -- Only show buffs the player can cast
+    hideLabelBar = false,        -- Hide the "Raid Buffs" label bar
     iconSize = 32,
     labelFontSize = 12,
     labelTextColor = nil,        -- nil = white, otherwise {r, g, b, a}
@@ -254,24 +366,56 @@ local function ScanGroupClasses()
     end
 end
 
--- Check if a unit has a buff by spell ID, with name-based fallback
--- Uses 3-method approach for maximum compatibility across WoW versions
-local function UnitHasBuff(unit, spellId, spellName)
+-- Check if a unit has a buff by spell ID, with name-based fallback.
+-- Uses point queries first (O(1)), falls back to iteration only as last resort.
+-- buffIDs: optional table of variant spell IDs to check (e.g., {1459, 432778} for Arcane Intellect)
+local function UnitHasBuff(unit, spellId, spellName, buffIDs)
     if not unit then return false end
     local exists = SafeBooleanCheck(UnitExists(unit))
     if not exists then return false end
 
-    -- Method 1: AuraUtil.ForEachAura (most reliable)
+    -- Method 1: Point query by spell ID (O(1) engine lookup)
+    if C_UnitAuras then
+        local idsToCheck = buffIDs or (spellId and { spellId })
+        if idsToCheck then
+            if unit == "player" and C_UnitAuras.GetPlayerAuraBySpellID then
+                for _, id in ipairs(idsToCheck) do
+                    local ok, auraData = pcall(C_UnitAuras.GetPlayerAuraBySpellID, id)
+                    if ok and auraData then return true end
+                end
+            elseif C_UnitAuras.GetAuraDataBySpellName and spellName then
+                local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, spellName, "HELPFUL")
+                if ok and auraData then return true end
+            end
+        end
+    end
+
+    -- Method 2: Name-based point query (for non-player units when Method 1 didn't try it)
+    if spellName and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName and unit == "player" then
+        local ok, auraData = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, spellName, "HELPFUL")
+        if ok and auraData then return true end
+    end
+
+    -- Method 3: ForEachAura iteration (last resort — handles talent variants, spell ID mismatches)
     if AuraUtil and AuraUtil.ForEachAura then
+        local idSet
+        if buffIDs then
+            idSet = {}
+            for _, id in ipairs(buffIDs) do idSet[id] = true end
+        end
         local found = false
         AuraUtil.ForEachAura(unit, "HELPFUL", nil, function(auraData)
             if auraData then
-                -- Use safe field access for Midnight Beta (12.x) secret values
                 local auraSpellId = SafeGetAuraField(auraData, "spellId")
                 local auraName = SafeGetAuraField(auraData, "name")
-                if auraSpellId and auraSpellId == spellId then
-                    found = true
-                elseif spellName and auraName and auraName == spellName then
+                if auraSpellId then
+                    if idSet and idSet[auraSpellId] then
+                        found = true
+                    elseif auraSpellId == spellId then
+                        found = true
+                    end
+                end
+                if not found and spellName and auraName and auraName == spellName then
                     found = true
                 end
             end
@@ -280,40 +424,18 @@ local function UnitHasBuff(unit, spellId, spellName)
         if found then return true end
     end
 
-    -- Method 2: GetAuraDataBySpellName
-    if spellName and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
-        local success, auraData = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, spellName, "HELPFUL")
-        if success and auraData then return true end
-    end
-
-    -- Method 3: GetAuraDataByIndex iteration
-    if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-        for i = 1, MAX_AURA_INDEX do
-            local success, auraData = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
-            if not success or not auraData then break end
-            -- Use safe field access for Midnight Beta (12.x) secret values
-            local auraSpellId = SafeGetAuraField(auraData, "spellId")
-            local auraName = SafeGetAuraField(auraData, "name")
-            if auraSpellId and auraSpellId == spellId then
-                return true
-            elseif spellName and auraName and auraName == spellName then
-                return true
-            end
-        end
-    end
-
     return false
 end
 
 -- Check if player has a buff (convenience wrapper)
-local function PlayerHasBuff(spellId, spellName)
-    return UnitHasBuff("player", spellId, spellName)
+local function PlayerHasBuff(spellId, spellName, buffIDs)
+    return UnitHasBuff("player", spellId, spellName, buffIDs)
 end
 
 -- Check if any available group member is missing a specific buff
-local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards)
+local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards, buffIDs)
     -- Check player first
-    if not PlayerHasBuff(spellId, spellName) then
+    if not PlayerHasBuff(spellId, spellName, buffIDs) then
         return true
     end
 
@@ -323,7 +445,7 @@ local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards)
             local unit = "raid" .. i
             local isPlayer = UnitIsUnit(unit, "player")
             if IsUnitAvailable(unit, rangeYards) and not IsSecretValue(isPlayer) and not isPlayer then
-                if not UnitHasBuff(unit, spellId, spellName) then
+                if not UnitHasBuff(unit, spellId, spellName, buffIDs) then
                     return true
                 end
             end
@@ -332,7 +454,7 @@ local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards)
         for i = 1, GetNumGroupMembers() - 1 do
             local unit = "party" .. i
             if IsUnitAvailable(unit, rangeYards) then
-                if not UnitHasBuff(unit, spellId, spellName) then
+                if not UnitHasBuff(unit, spellId, spellName, buffIDs) then
                     return true
                 end
             end
@@ -343,13 +465,13 @@ local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards)
 end
 
 -- Count how many group members have a specific buff and total group size
-local function CountBuffedMembers(spellId, spellName)
+local function CountBuffedMembers(spellId, spellName, buffIDs)
     local buffed = 0
     local total = 0
 
     -- Check player
     total = total + 1
-    if PlayerHasBuff(spellId, spellName) then
+    if PlayerHasBuff(spellId, spellName, buffIDs) then
         buffed = buffed + 1
     end
 
@@ -363,7 +485,7 @@ local function CountBuffedMembers(spellId, spellName)
                 local connected = SafeBooleanCheck(UnitIsConnected(unit))
                 if exists and connected then
                     total = total + 1
-                    if UnitHasBuff(unit, spellId, spellName) then
+                    if UnitHasBuff(unit, spellId, spellName, buffIDs) then
                         buffed = buffed + 1
                     end
                 end
@@ -378,7 +500,7 @@ local function CountBuffedMembers(spellId, spellName)
             local connected = SafeBooleanCheck(UnitIsConnected(unit))
             if exists and connected then
                 total = total + 1
-                if UnitHasBuff(unit, spellId, spellName) then
+                if UnitHasBuff(unit, spellId, spellName, buffIDs) then
                     buffed = buffed + 1
                 end
             end
@@ -391,6 +513,66 @@ end
 -- Get player's class
 local function GetPlayerClass()
     return SafeUnitClass("player")
+end
+
+-- Check if the player can cast a specific raid buff (correct class + knows the spell)
+local function PlayerCanCastBuff(buff)
+    if not buff.castSpellId then return false end
+    local playerClass = GetPlayerClass()
+    if buff.providerClass ~= playerClass then return false end
+    if IsPlayerSpell then
+        return IsPlayerSpell(buff.castSpellId)
+    end
+    return false
+end
+
+-- Check if a self-buff requirement is satisfied
+local function PlayerHasSelfBuff(entry)
+    if entry.checkType == "playerAura" then
+        if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+            for id in pairs(entry.anyBuffIDs) do
+                local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, id)
+                if ok and aura then return true end
+            end
+        end
+        return false
+    elseif entry.checkType == "weaponEnchant" then
+        local hasMH, _, _, mhID, hasOH, _, _, ohID = GetWeaponEnchantInfo()
+        if entry.requiresShield then
+            local ohItemID = GetInventoryItemID("player", 17)
+            if not ohItemID then return true end  -- No OH item = skip this check
+            local _, _, _, _, _, _, itemSubClass = C_Item.GetItemInfoInstant(ohItemID)
+            if itemSubClass ~= 6 then return true end  -- Not a shield = skip
+            return hasOH and entry.anyEnchantIDs[ohID] or false
+        end
+        return hasMH and entry.anyEnchantIDs[mhID] or false
+    end
+    return true  -- Unknown check type = assume satisfied
+end
+
+-- Resolve which spell to cast for a self-buff (first known spell from priority list)
+local function ResolveSelfBuffCast(entry)
+    if not entry.castPriority then return nil, nil end
+    for _, id in ipairs(entry.castPriority) do
+        if IsPlayerSpell and IsPlayerSpell(id) then
+            local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+            if spellName then return spellName, id end
+        end
+    end
+    return nil, nil
+end
+
+-- Get icon for a self-buff (icon of the first known spell)
+local function GetSelfBuffIcon(entry)
+    if entry._resolvedSpellId then
+        return GetBuffIcon(entry._resolvedSpellId)
+    end
+    for _, id in ipairs(entry.castPriority) do
+        if IsPlayerSpell and IsPlayerSpell(id) then
+            return GetBuffIcon(id)
+        end
+    end
+    return GetBuffIcon(entry.castPriority[1])
 end
 
 -- Check if any unit of a given class is in range (for receiving buffs from them)
@@ -418,8 +600,8 @@ local function IsProviderClassInRange(providerClass, rangeYards)
     return false
 end
 
-local function GetMissingBuffs()
-    local missing = {}
+local function GetRelevantBuffs()
+    local result = {}
     local settings = GetSettings()
 
     -- Preview mode: return cached preview buffs (generated once when preview enabled)
@@ -427,53 +609,65 @@ local function GetMissingBuffs()
         return previewBuffs
     end
 
-    -- Check if we should only show in group
-    if settings.showOnlyInGroup and not IsInGroup() then
-        return missing
-    end
-
-    -- Check if we should only show in instance
-    if settings.showOnlyInInstance and not ns.Utils.IsInInstancedContent() then
-        return missing
-    end
-
     -- Only show out of combat (always enforced)
     if InCombatLockdown() then
-        return missing
+        return result
     end
 
     -- Disable during M+ keystones - aura data is protected during challenge mode
     if C_ChallengeMode and C_ChallengeMode.IsChallengeModeActive and C_ChallengeMode.IsChallengeModeActive() then
-        return missing
+        return result
     end
-
-    -- Scan group composition
-    ScanGroupClasses()
 
     local playerClass = GetPlayerClass()
 
-    -- Check each raid buff
-    for _, buff in ipairs(RAID_BUFFS) do
-        local buffRange = buff.range or 40
+    -- Raid buffs: subject to group/instance filters
+    local showRaidBuffs = true
+    if settings.showOnlyInGroup and not IsInGroup() then
+        showRaidBuffs = false
+    end
+    if settings.showOnlyInInstance and not ns.Utils.IsInInstancedContent() then
+        showRaidBuffs = false
+    end
 
-        if settings.providerMode then
-            -- Provider mode: ONLY show buffs YOU can provide that anyone (including yourself) is missing
-            if buff.providerClass == playerClass then
-                if not PlayerHasBuff(buff.spellId, buff.name) or AnyGroupMemberMissingBuff(buff.spellId, buff.name, buffRange) then
-                    table.insert(missing, buff)
+    if showRaidBuffs then
+        ScanGroupClasses()
+
+        for _, buff in ipairs(RAID_BUFFS) do
+            if settings.providerMode then
+                -- Provider mode: only show buffs the player's class can provide
+                if buff.providerClass == playerClass then
+                    buff._hasBuff = PlayerHasBuff(buff.spellId, buff.name, buff.buffIDs)
+                    table_insert(result, buff)
                 end
-            end
-        else
-            -- Normal mode: show buffs YOU are missing when provider is in group AND in range
-            if groupClasses[buff.providerClass] and not PlayerHasBuff(buff.spellId, buff.name) then
-                if IsProviderClassInRange(buff.providerClass, buffRange) then
-                    table.insert(missing, buff)
+            else
+                -- Default: show all buffs where provider class is in the group
+                if groupClasses[buff.providerClass] then
+                    buff._hasBuff = PlayerHasBuff(buff.spellId, buff.name, buff.buffIDs)
+                    table_insert(result, buff)
                 end
             end
         end
     end
 
-    return missing
+    -- Self-buffs: bypass group/instance filters (they matter solo)
+    if settings.showSelfBuffs ~= false then
+        for _, selfBuff in ipairs(SELF_BUFFS) do
+            if selfBuff.providerClass == playerClass then
+                local spellName, resolvedSpellId = ResolveSelfBuffCast(selfBuff)
+                if spellName then
+                    selfBuff._resolvedSpellName = spellName
+                    selfBuff._resolvedSpellId = resolvedSpellId
+                    selfBuff._hasBuff = PlayerHasSelfBuff(selfBuff)
+                    if not selfBuff._hasBuff then
+                        table_insert(result, selfBuff)
+                    end
+                end
+            end
+        end
+    end
+
+    return result
 end
 
 ---------------------------------------------------------------------------
@@ -481,7 +675,7 @@ end
 ---------------------------------------------------------------------------
 
 local function CreateBuffIcon(parent, index)
-    local button = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    local button = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     button:SetSize(ICON_SIZE, ICON_SIZE)
 
     -- Background/border using backdrop (border settings applied in ApplyIconBorderSettings)
@@ -507,22 +701,36 @@ local function CreateBuffIcon(parent, index)
     button.countText:SetTextColor(1, 1, 1, 1)
     button.countText:Hide()
 
-    -- Tooltip
-    button:SetScript("OnEnter", function(self)
-        if self.buffData then
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:AddLine(self.buffData.name, 1, 1, 1)
-            GameTooltip:AddLine(self.buffData.stat, 0.7, 0.7, 0.7)
+    -- Secure click-to-cast overlay (child of non-secure parent — hiding parent is safe in combat)
+    button.clickButton = CreateFrame("Button", nil, button, "SecureActionButtonTemplate")
+    button.clickButton:SetAllPoints()
+    button.clickButton:RegisterForClicks("AnyUp", "AnyDown")
+    button.isCastable = false
+
+    -- Tooltip (on the secure overlay since it receives mouse events)
+    button.clickButton:SetScript("OnEnter", function(self)
+        local icon = self:GetParent()
+        if icon.buffData then
+            GameTooltip:SetOwner(icon, "ANCHOR_RIGHT")
+            GameTooltip:AddLine(icon.buffData.name, 1, 1, 1)
+            GameTooltip:AddLine(icon.buffData.stat, 0.7, 0.7, 0.7)
             GameTooltip:AddLine(" ")
-            local className = LOCALIZED_CLASS_NAMES_MALE[self.buffData.providerClass] or self.buffData.providerClass
-            GameTooltip:AddLine("Provided by: " .. className, 0.5, 0.8, 1)
-            if self.buffCount and self.buffTotal then
-                GameTooltip:AddLine(string.format("Buffed: %d/%d", self.buffCount, self.buffTotal), 0.7, 1, 0.7)
+            if icon.buffData.selfBuff then
+                GameTooltip:AddLine("Self-buff", 0.5, 0.8, 1)
+            else
+                local className = LOCALIZED_CLASS_NAMES_MALE[icon.buffData.providerClass] or icon.buffData.providerClass
+                GameTooltip:AddLine("Provided by: " .. className, 0.5, 0.8, 1)
+                if icon.buffCount and icon.buffTotal then
+                    GameTooltip:AddLine(string_format("Buffed: %d/%d", icon.buffCount, icon.buffTotal), 0.7, 1, 0.7)
+                end
+            end
+            if icon.isCastable then
+                GameTooltip:AddLine("Click to cast", 0.2, 1, 0.2)
             end
             GameTooltip:Show()
         end
     end)
-    button:SetScript("OnLeave", function()
+    button.clickButton:SetScript("OnLeave", function()
         GameTooltip:Hide()
     end)
 
@@ -532,11 +740,11 @@ end
 -- Apply border settings to icons
 local function ApplyIconBorderSettings()
     local settings = GetSettings()
-    local borderSettings = settings.iconBorder or { show = true, width = 1, useClassColor = false, color = { 0.2, 1.0, 0.6, 1 } }
+    local borderSettings = settings.iconBorder or { show = true, width = 1, useClassColor = false, color = { 0.376, 0.647, 0.980, 1 } }
     local borderWidth = borderSettings.show and (borderSettings.width or 1) or 0
 
     -- Determine border color
-    local br, bg, bb, ba = 0.2, 1.0, 0.6, 1
+    local br, bg, bb, ba = 0.376, 0.647, 0.980, 1
     if borderSettings.useClassColor then
         local _, class = UnitClass("player")
         if class and RAID_CLASS_COLORS[class] then
@@ -596,7 +804,7 @@ local function CreateMainFrame()
     mainFrame:SetMovable(true)
     mainFrame:RegisterForDrag("LeftButton")
     mainFrame:SetScript("OnDragStart", function(self)
-        if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(self) then return end
+        if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("missingRaidBuffs") then return end
         if not InCombatLockdown() then
             self:StartMoving()
         end
@@ -698,7 +906,7 @@ local function CreateMainFrame()
     mainFrame.labelBar.text = mainFrame.labelBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     mainFrame.labelBar.text:SetPoint("CENTER", 0, 0)
     mainFrame.labelBar.text:SetFont(STANDARD_TEXT_FONT, 10, "OUTLINE")
-    mainFrame.labelBar.text:SetText("Missing Buffs")
+    mainFrame.labelBar.text:SetText("Raid Buffs")
 
     -- Pre-create icon slots
     for i = 1, #RAID_BUFFS do
@@ -719,7 +927,7 @@ local function ApplySkin()
     if not mainFrame then return end
 
     local QUI = _G.QUI
-    local sr, sg, sb, sa = 0.2, 1.0, 0.6, 1
+    local sr, sg, sb, sa = 0.376, 0.647, 0.980, 1
     local bgr, bgg, bgb, bga = 0.05, 0.05, 0.05, 0.95
 
     if QUI and QUI.GetSkinColor then
@@ -766,9 +974,6 @@ function QUI_RaidBuffs:Refresh()
     UpdateDisplay()
 end
 
-_G.QUI_RefreshRaidBuffColors = function()
-    QUI_RaidBuffs:RefreshColors()
-end
 
 _G.QUI_RefreshRaidBuffs = function()
     QUI_RaidBuffs:Refresh()
@@ -780,8 +985,11 @@ end
 
 UpdateDisplay = function()
     local settings = GetSettings()
+    local inCombat = InCombatLockdown()
     if not settings.enabled then
-        if mainFrame then mainFrame:Hide() end
+        if mainFrame then
+            if inCombat then mainFrame:SetAlpha(0) else mainFrame:Hide() end
+        end
         return
     end
 
@@ -790,10 +998,10 @@ UpdateDisplay = function()
         ApplySkin()
     end
 
-    local missing = GetMissingBuffs()
+    local missing = GetRelevantBuffs()
 
     if #missing == 0 then
-        mainFrame:Hide()
+        if inCombat then mainFrame:SetAlpha(0) else mainFrame:Hide() end
         return
     end
 
@@ -828,16 +1036,72 @@ UpdateDisplay = function()
                 icon:SetPoint("CENTER", mainFrame.iconContainer, "CENTER", 0, startY + offset)
             end
 
-            icon.icon:SetTexture(GetBuffIcon(buff.spellId))
+            -- Set icon texture (self-buffs resolve dynamically)
+            if buff.selfBuff then
+                icon.icon:SetTexture(GetSelfBuffIcon(buff))
+            else
+                icon.icon:SetTexture(GetBuffIcon(buff.spellId))
+            end
             icon.buffData = buff
 
-            -- Update buff count display
+            -- Visual states based on buff status
+            local canCast = buff.selfBuff and buff._resolvedSpellName or (not buff.selfBuff and PlayerCanCastBuff(buff))
+            local hasBuff = buff._hasBuff
+
+            if hasBuff then
+                -- Have the buff: saturated, no glow
+                icon.icon:SetDesaturated(false)
+                icon.icon:SetVertexColor(1, 1, 1, 1)
+                if LCG then LCG.AutoCastGlow_Stop(icon) end
+            elseif canCast then
+                -- Missing, player can cast: desaturated + glow
+                icon.icon:SetDesaturated(true)
+                icon.icon:SetVertexColor(1, 1, 1, 1)
+                if LCG then LCG.AutoCastGlow_Start(icon, { 0.2, 1, 0.2, 1 }, 8, 0.25) end
+            else
+                -- Missing, someone else provides: desaturated
+                icon.icon:SetDesaturated(true)
+                icon.icon:SetVertexColor(0.6, 0.6, 0.6, 1)
+                if LCG then LCG.AutoCastGlow_Stop(icon) end
+            end
+
+            -- Configure click-to-cast — SetAttribute is protected, skip during combat
+            if not inCombat then
+                if not previewMode then
+                    if buff.selfBuff and buff._resolvedSpellName then
+                        icon.clickButton:SetAttribute("type", "spell")
+                        icon.clickButton:SetAttribute("spell", buff._resolvedSpellName)
+                        icon.isCastable = true
+                    elseif not buff.selfBuff and PlayerCanCastBuff(buff) then
+                        local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(buff.castSpellId)
+                        if spellName then
+                            icon.clickButton:SetAttribute("type", "spell")
+                            icon.clickButton:SetAttribute("spell", spellName)
+                            icon.isCastable = true
+                        else
+                            icon.clickButton:SetAttribute("type", nil)
+                            icon.clickButton:SetAttribute("spell", nil)
+                            icon.isCastable = false
+                        end
+                    else
+                        icon.clickButton:SetAttribute("type", nil)
+                        icon.clickButton:SetAttribute("spell", nil)
+                        icon.isCastable = false
+                    end
+                else
+                    icon.clickButton:SetAttribute("type", nil)
+                    icon.clickButton:SetAttribute("spell", nil)
+                    icon.isCastable = false
+                end
+            end
+
+            -- Update buff count display (skip for self-buffs — they're player-only)
             local countSettings = settings.buffCount or { show = false }
-            if countSettings.show and icon.countText then
-                local buffed, total = CountBuffedMembers(buff.spellId, buff.name)
+            if not buff.selfBuff and countSettings.show and icon.countText then
+                local buffed, total = CountBuffedMembers(buff.spellId, buff.name, buff.buffIDs)
                 icon.buffCount = buffed
                 icon.buffTotal = total
-                icon.countText:SetText(string.format("%d/%d", buffed, total))
+                icon.countText:SetText(string_format("%d/%d", buffed, total))
 
                 -- Apply font settings
                 local countFontSize = countSettings.fontSize or 10
@@ -867,97 +1131,111 @@ UpdateDisplay = function()
                     icon.countText:SetPoint("LEFT", icon, "RIGHT", 2 + offsetX, offsetY)
                 end
 
-                icon.countText:Show()
+                if inCombat then icon.countText:SetAlpha(1) else icon.countText:Show() end
             elseif icon.countText then
-                icon.countText:Hide()
+                if inCombat then icon.countText:SetAlpha(0) else icon.countText:Hide() end
             end
 
-            icon:Show()
+            if inCombat then icon:SetAlpha(1) else icon:Show() end
         else
-            icon:Hide()
+            if LCG then LCG.AutoCastGlow_Stop(icon) end
+            if inCombat then
+                icon:SetAlpha(0)
+            else
+                icon:Hide()
+            end
             if icon.countText then
-                icon.countText:Hide()
+                if inCombat then icon.countText:SetAlpha(0) else icon.countText:Hide() end
+            end
+            -- Clear secure attributes on hidden icons (skip in combat)
+            if not inCombat and icon.clickButton then
+                icon.clickButton:SetAttribute("type", nil)
+                icon.clickButton:SetAttribute("spell", nil)
+                icon.isCastable = false
             end
         end
     end
 
-    -- Update label font size and calculate bar height
-    local fontSize = settings.labelFontSize or 12
-    local labelBarHeight = fontSize + 8  -- Font size + padding
-    local labelBarGap = 2
+    -- Layout, sizing, and positioning use protected APIs — skip during combat
+    if not inCombat then
+        -- Update label font size and calculate bar height
+        local fontSize = settings.labelFontSize or 12
+        local labelBarHeight = fontSize + 8  -- Font size + padding
+        local labelBarGap = 2
 
-    mainFrame.labelBar.text:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
-    mainFrame.labelBar.text:SetText("Missing Buffs")
+        mainFrame.labelBar.text:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+        mainFrame.labelBar.text:SetText("Raid Buffs")
 
-    -- Resize frames based on orientation
-    local hideLabelBar = settings.hideLabelBar
-    local minIconsSize = (3 * iconSize) + (2 * iconSpacing)  -- 3 icons minimum
-    local minTextWidth = fontSize * 8 + 10  -- Approximate text width + padding
+        -- Resize frames based on orientation
+        local hideLabelBar = settings.hideLabelBar
+        local minIconsSize = (3 * iconSize) + (2 * iconSpacing)  -- 3 icons minimum
+        local minTextWidth = fontSize * 8 + 10  -- Approximate text width + padding
 
-    -- Update icon container and label bar anchoring based on grow direction
-    mainFrame.iconContainer:ClearAllPoints()
-    mainFrame.labelBar:ClearAllPoints()
+        -- Update icon container and label bar anchoring based on grow direction
+        mainFrame.iconContainer:ClearAllPoints()
+        mainFrame.labelBar:ClearAllPoints()
 
-    if isVertical then
-        -- Vertical layout
-        local containerHeight = totalSize
-        local containerWidth = iconSize
-        mainFrame.iconContainer:SetSize(containerWidth, containerHeight)
+        if isVertical then
+            -- Vertical layout
+            local containerHeight = totalSize
+            local containerWidth = iconSize
+            mainFrame.iconContainer:SetSize(containerWidth, containerHeight)
 
-        if hideLabelBar then
-            mainFrame.labelBar:Hide()
-            -- Position container based on vertical grow direction
-            if growDir == "UP" then
-                mainFrame.iconContainer:SetPoint("BOTTOM", mainFrame, "BOTTOM", 0, 0)
-            elseif growDir == "DOWN" then
+            if hideLabelBar then
+                mainFrame.labelBar:Hide()
+                -- Position container based on vertical grow direction
+                if growDir == "UP" then
+                    mainFrame.iconContainer:SetPoint("BOTTOM", mainFrame, "BOTTOM", 0, 0)
+                elseif growDir == "DOWN" then
+                    mainFrame.iconContainer:SetPoint("TOP", mainFrame, "TOP", 0, 0)
+                else -- CENTER_V
+                    mainFrame.iconContainer:SetPoint("CENTER", mainFrame, "CENTER", 0, 0)
+                end
+                mainFrame:SetSize(containerWidth, containerHeight)
+            else
+                local frameWidth = math.max(containerWidth, minTextWidth)
+                mainFrame.labelBar:SetSize(frameWidth, labelBarHeight)
+                mainFrame.labelBar:Show()
+                -- Label bar below icons for vertical
                 mainFrame.iconContainer:SetPoint("TOP", mainFrame, "TOP", 0, 0)
-            else -- CENTER_V
-                mainFrame.iconContainer:SetPoint("CENTER", mainFrame, "CENTER", 0, 0)
+                mainFrame.labelBar:SetPoint("TOP", mainFrame.iconContainer, "BOTTOM", 0, -labelBarGap)
+                mainFrame:SetSize(frameWidth, containerHeight + labelBarGap + labelBarHeight)
             end
-            mainFrame:SetSize(containerWidth, containerHeight)
         else
-            local frameWidth = math.max(containerWidth, minTextWidth)
-            mainFrame.labelBar:SetSize(frameWidth, labelBarHeight)
-            mainFrame.labelBar:Show()
-            -- Label bar below icons for vertical
-            mainFrame.iconContainer:SetPoint("TOP", mainFrame, "TOP", 0, 0)
-            mainFrame.labelBar:SetPoint("TOP", mainFrame.iconContainer, "BOTTOM", 0, -labelBarGap)
-            mainFrame:SetSize(frameWidth, containerHeight + labelBarGap + labelBarHeight)
-        end
-    else
-        -- Horizontal layout
-        local frameWidth = math.max(totalSize, hideLabelBar and 0 or math.max(minIconsSize, minTextWidth))
-        mainFrame.iconContainer:SetSize(totalSize, iconSize)
+            -- Horizontal layout
+            local frameWidth = math.max(totalSize, hideLabelBar and 0 or math.max(minIconsSize, minTextWidth))
+            mainFrame.iconContainer:SetSize(totalSize, iconSize)
 
-        if hideLabelBar then
-            mainFrame.labelBar:Hide()
-            -- Position container based on horizontal grow direction
-            if growDir == "LEFT" then
-                mainFrame.iconContainer:SetPoint("RIGHT", mainFrame, "RIGHT", 0, 0)
-            elseif growDir == "RIGHT" then
-                mainFrame.iconContainer:SetPoint("LEFT", mainFrame, "LEFT", 0, 0)
-            else -- CENTER_H
-                mainFrame.iconContainer:SetPoint("CENTER", mainFrame, "CENTER", 0, 0)
+            if hideLabelBar then
+                mainFrame.labelBar:Hide()
+                -- Position container based on horizontal grow direction
+                if growDir == "LEFT" then
+                    mainFrame.iconContainer:SetPoint("RIGHT", mainFrame, "RIGHT", 0, 0)
+                elseif growDir == "RIGHT" then
+                    mainFrame.iconContainer:SetPoint("LEFT", mainFrame, "LEFT", 0, 0)
+                else -- CENTER_H
+                    mainFrame.iconContainer:SetPoint("CENTER", mainFrame, "CENTER", 0, 0)
+                end
+                mainFrame:SetSize(totalSize, iconSize)
+            else
+                mainFrame.iconContainer:SetSize(frameWidth, iconSize)
+                mainFrame.iconContainer:SetPoint("TOP", mainFrame, "TOP", 0, 0)
+                mainFrame.labelBar:SetSize(frameWidth, labelBarHeight)
+                mainFrame.labelBar:Show()
+                mainFrame.labelBar:SetPoint("TOP", mainFrame.iconContainer, "BOTTOM", 0, -labelBarGap)
+                mainFrame:SetSize(frameWidth, iconSize + labelBarGap + labelBarHeight)
             end
-            mainFrame:SetSize(totalSize, iconSize)
-        else
-            mainFrame.iconContainer:SetSize(frameWidth, iconSize)
-            mainFrame.iconContainer:SetPoint("TOP", mainFrame, "TOP", 0, 0)
-            mainFrame.labelBar:SetSize(frameWidth, labelBarHeight)
-            mainFrame.labelBar:Show()
-            mainFrame.labelBar:SetPoint("TOP", mainFrame.iconContainer, "BOTTOM", 0, -labelBarGap)
-            mainFrame:SetSize(frameWidth, iconSize + labelBarGap + labelBarHeight)
+        end
+
+        -- Restore saved position (skip if anchoring system has overridden this frame)
+        -- Position is saved using grow-direction-appropriate anchor, so icons stay in place
+        if settings.position and not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("missingRaidBuffs")) then
+            mainFrame:ClearAllPoints()
+            mainFrame:SetPoint(settings.position.point, UIParent, settings.position.relPoint, settings.position.x, settings.position.y)
         end
     end
 
-    -- Restore saved position (skip if anchoring system has overridden this frame)
-    -- Position is saved using grow-direction-appropriate anchor, so icons stay in place
-    if settings.position and not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(mainFrame)) then
-        mainFrame:ClearAllPoints()
-        mainFrame:SetPoint(settings.position.point, UIParent, settings.position.relPoint, settings.position.x, settings.position.y)
-    end
-
-    mainFrame:Show()
+    if inCombat then mainFrame:SetAlpha(1) else mainFrame:Show() end
 end
 
 local function ThrottledUpdate()
@@ -1002,15 +1280,7 @@ local function OnEvent(self, event, ...)
         C_Timer.After(2, UpdateDisplay)
     elseif event == "GROUP_ROSTER_UPDATE" then
         ThrottledUpdate()
-    elseif event == "UNIT_AURA" then
-        local unit = ...
-        if unit == "player" then
-            -- Player aura changes use short throttle to prevent spam during buff/debuff application
-            ThrottledUpdate()
-        elseif unit and settings.providerMode and (unit:match("^party") or unit:match("^raid")) then
-            -- In provider mode, also update when party/raid members' auras change
-            ThrottledUpdate()
-        end
+    -- UNIT_AURA handled by centralized dispatcher subscription (above)
     elseif event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_REGEN_DISABLED" then
         ThrottledUpdate()
     elseif event == "ZONE_CHANGED_NEW_AREA" then
@@ -1029,7 +1299,7 @@ end
 
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
-eventFrame:RegisterEvent("UNIT_AURA")
+-- UNIT_AURA handled by centralized dispatcher (below)
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
@@ -1037,6 +1307,17 @@ eventFrame:RegisterEvent("UNIT_FLAGS")
 eventFrame:RegisterEvent("PLAYER_DEAD")
 eventFrame:RegisterEvent("PLAYER_UNGHOST")
 eventFrame:SetScript("OnEvent", OnEvent)
+
+-- Subscribe to centralized aura dispatcher
+if ns.AuraEvents then
+    ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
+        local settings = GetSettings()
+        if not settings or not settings.enabled then return end
+        if unit == "player" or unit:match("^party") or unit:match("^raid") then
+            ThrottledUpdate()
+        end
+    end)
+end
 
 -- Periodic range check (every 5 seconds when out of combat and in group)
 local rangeCheckTicker
@@ -1075,35 +1356,30 @@ function QUI_RaidBuffs:Toggle()
     UpdateDisplay()
 end
 
-function QUI_RaidBuffs:ForceUpdate()
-    UpdateDisplay()
-    ApplySkin()
-end
 
 function QUI_RaidBuffs:Debug()
     local settings = GetSettings()
     local lines = {}
     local playerClass = SafeUnitClass("player")
-    table.insert(lines, "QUI RaidBuffs Debug")
-    table.insert(lines, "Provider Mode: " .. (settings.providerMode and "ON" or "OFF"))
-    table.insert(lines, "Player Class: " .. (playerClass or "UNKNOWN"))
-    table.insert(lines, "In Group: " .. (IsInGroup() and "YES" or "NO"))
-    table.insert(lines, "In Raid: " .. (IsInRaid() and "YES" or "NO"))
-    table.insert(lines, "In Combat: " .. (InCombatLockdown() and "YES" or "NO"))
+    table_insert(lines, "QUI RaidBuffs Debug")
+    table_insert(lines, "Player Class: " .. (playerClass or "UNKNOWN"))
+    table_insert(lines, "In Group: " .. (IsInGroup() and "YES" or "NO"))
+    table_insert(lines, "In Raid: " .. (IsInRaid() and "YES" or "NO"))
+    table_insert(lines, "In Combat: " .. (InCombatLockdown() and "YES" or "NO"))
 
     -- Scan and show group classes
     ScanGroupClasses()
     local classes = {}
     for class, _ in pairs(groupClasses) do
-        table.insert(classes, class)
+        table_insert(classes, class)
     end
-    table.insert(lines, "Group Classes: " .. (#classes > 0 and table.concat(classes, ", ") or "NONE"))
+    table_insert(lines, "Group Classes: " .. (#classes > 0 and table.concat(classes, ", ") or "NONE"))
 
     -- Show party members and their status
-    table.insert(lines, "")
-    table.insert(lines, "Party Members:")
+    table_insert(lines, "")
+    table_insert(lines, "Party Members:")
     local numMembers = GetNumGroupMembers()
-    table.insert(lines, "  GetNumGroupMembers: " .. numMembers)
+    table_insert(lines, "  GetNumGroupMembers: " .. numMembers)
     if IsInGroup() and not IsInRaid() then
         for i = 1, numMembers - 1 do
             local unit = "party" .. i
@@ -1135,21 +1411,21 @@ function QUI_RaidBuffs:Debug()
             end
             local rangeInfo = " UnitInRange:" .. uirRange .. "/" .. uirChecked .. " CheckInteract:" .. cidResult .. " DistSq:" .. udsResult
 
-            table.insert(lines, "  " .. unit .. ": " .. name .. " (" .. (uClass or "?") .. ") exists:" .. tostring(exists) .. " connected:" .. tostring(connected) .. " dead:" .. tostring(dead) .. " available:" .. tostring(available))
-            table.insert(lines, "    Range APIs:" .. rangeInfo)
+            table_insert(lines, "  " .. unit .. ": " .. name .. " (" .. (uClass or "?") .. ") exists:" .. tostring(exists) .. " connected:" .. tostring(connected) .. " dead:" .. tostring(dead) .. " available:" .. tostring(available))
+            table_insert(lines, "    Range APIs:" .. rangeInfo)
         end
     end
 
     -- Check each buff
-    table.insert(lines, "")
-    table.insert(lines, "Buff Status:")
+    table_insert(lines, "")
+    table_insert(lines, "Buff Status:")
     for _, buff in ipairs(RAID_BUFFS) do
         local buffRange = buff.range or 40
         local hasProvider = groupClasses[buff.providerClass] and true or false
         local providerInRange = IsProviderClassInRange(buff.providerClass, buffRange)
-        local playerHas = PlayerHasBuff(buff.spellId, buff.name)
-        local canProvide = buff.providerClass == playerClass
-        local anyMissing = AnyGroupMemberMissingBuff(buff.spellId, buff.name, buffRange)
+        local playerHas = PlayerHasBuff(buff.spellId, buff.name, buff.buffIDs)
+        local canProvide = PlayerCanCastBuff(buff)
+        local anyMissing = AnyGroupMemberMissingBuff(buff.spellId, buff.name, buffRange, buff.buffIDs)
         local status = ""
         if hasProvider and not playerHas then
             if providerInRange then
@@ -1163,16 +1439,16 @@ function QUI_RaidBuffs:Debug()
             status = "No provider"
         end
         local providerInfo = " range:" .. buffRange .. "yd canProvide:" .. tostring(canProvide) .. " anyMissing:" .. tostring(anyMissing) .. " providerInRange:" .. tostring(providerInRange)
-        table.insert(lines, "  " .. buff.name .. ": " .. status .. " (provider:" .. buff.providerClass .. " inGroup:" .. tostring(hasProvider) .. " hasBuff:" .. tostring(playerHas) .. providerInfo .. ")")
+        table_insert(lines, "  " .. buff.name .. ": " .. status .. " (provider:" .. buff.providerClass .. " inGroup:" .. tostring(hasProvider) .. " hasBuff:" .. tostring(playerHas) .. providerInfo .. ")")
 
-        -- If player can provide this buff and provider mode is on, show who's missing it
-        if canProvide and settings.providerMode and IsInGroup() and not IsInRaid() then
+        -- If player can provide this buff, show who's missing it
+        if canProvide and IsInGroup() and not IsInRaid() then
             for i = 1, numMembers - 1 do
                 local unit = "party" .. i
                 if IsUnitAvailable(unit, buffRange) then
-                    local has = UnitHasBuff(unit, buff.spellId, buff.name)
+                    local has = UnitHasBuff(unit, buff.spellId, buff.name, buff.buffIDs)
                     local name = UnitName(unit) or "?"
-                    table.insert(lines, "    -> " .. unit .. " (" .. name .. "): " .. (has and "HAS" or "MISSING"))
+                    table_insert(lines, "    -> " .. unit .. " (" .. name .. "): " .. (has and "HAS" or "MISSING"))
                 end
             end
         end
@@ -1209,6 +1485,18 @@ function QUI_RaidBuffs:EnablePreview()
     for i, buff in ipairs(RAID_BUFFS) do
         previewBuffs[i] = buff
     end
+    -- Include self-buffs for current class in preview
+    local playerClass = GetPlayerClass()
+    for _, selfBuff in ipairs(SELF_BUFFS) do
+        if selfBuff.providerClass == playerClass then
+            local spellName, resolvedId = ResolveSelfBuffCast(selfBuff)
+            if spellName then
+                selfBuff._resolvedSpellName = spellName
+                selfBuff._resolvedSpellId = resolvedId
+            end
+            table_insert(previewBuffs, selfBuff)
+        end
+    end
     UpdateDisplay()
 end
 
@@ -1222,10 +1510,12 @@ function QUI_RaidBuffs:IsPreviewMode()
     return previewMode
 end
 
--- Global function for options panel
-_G.QUI_ToggleRaidBuffsPreview = function()
-    if ns.RaidBuffs then
-        return ns.RaidBuffs:TogglePreview()
-    end
-    return false
+
+if ns.Registry then
+    ns.Registry:Register("raidbuffs", {
+        refresh = _G.QUI_RefreshRaidBuffs,
+        priority = 20,
+        group = "frames",
+        importCategories = { "groupFrames" },
+    })
 end

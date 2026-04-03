@@ -12,7 +12,7 @@ local UIKit = ns.UIKit
 ---------------------------------------------------------------------------
 -- Local references
 ---------------------------------------------------------------------------
-local LSM = LibStub("LibSharedMedia-3.0", true)
+local LSM = ns.LSM
 local skinnedFrames = {}        -- Track which frames have been styled
 local urlPopup = nil            -- Copy popup frame (created on demand)
 local chatCopyFrame = nil       -- Chat history copy frame (created on demand)
@@ -58,16 +58,14 @@ local EDITBOX_TEXTURES = {
 -- QUI Color palette for popup styling
 local QUI_COLORS = {
     bg = {0.067, 0.094, 0.153, 0.97},
-    accent = {0.204, 0.827, 0.6, 1},
+    accent = {0.376, 0.647, 0.980, 1},
     text = {0.953, 0.957, 0.965, 1},
 }
 
 ---------------------------------------------------------------------------
 -- Get settings from database
 ---------------------------------------------------------------------------
-local function GetSettings()
-    return Helpers.GetModuleDB("chat")
-end
+local GetSettings = Helpers.CreateDBGetter("chat")
 
 local function ApplySurfaceStyle(frame, bgColor, borderColor, borderSizePixels)
     if not frame then return end
@@ -493,17 +491,17 @@ end
 
 -- Check if message contains protected/secure content
 local function IsMessageProtected(message)
-    -- BUG-009: Secret values are truthy but can't be indexed - check type first
     if not message or type(message) ~= "string" then return false end
-    -- Secret values use |K...|k pattern
+    -- Secret strings pass the type check but can't be indexed — treat as protected
+    if Helpers.IsSecretValue(message) then return true end
+    -- Protected content uses |K...|k pattern
     if message:find("|K") then return true end
     return false
 end
 
 -- Strip textures, icons, and hyperlink formatting from message
 local function CleanMessage(message)
-    -- BUG-009: Secret values are truthy but can't be indexed - check type first
-    if not message or type(message) ~= "string" then return "" end
+    if not message or type(message) ~= "string" or Helpers.IsSecretValue(message) then return "" end
 
     local cleaned = message
     -- Remove texture escapes |T...|t
@@ -798,7 +796,7 @@ end
 -- Flag + hook + hide pattern used by all chat button frames.
 -- Can't use Helpers.DeferredHideOnShow because the _chatButtonsHidden
 -- guard allows toggling visibility back on at runtime.
-local _chatButtonHooked = setmetatable({}, { __mode = "k" })
+local _chatButtonHooked = Helpers.CreateStateTable()
 local function HideChatButtonOnShow(frame)
     _chatButtonsHidden[frame] = true
     if not _chatButtonHooked[frame] then
@@ -1535,6 +1533,54 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
 end)
 
 ---------------------------------------------------------------------------
+-- Default Tab Selection on Login/Reload/Spec Change
+---------------------------------------------------------------------------
+local function GetDefaultTabIndex(settings)
+    if settings.defaultTabPerSpec then
+        local specID = Helpers.GetCurrentSpecID()
+        if specID and settings.defaultTabBySpec then
+            return settings.defaultTabBySpec[specID]
+        end
+        return nil
+    end
+    return settings.defaultTab
+end
+
+local function SelectDefaultTab(settings)
+    local tabIndex = GetDefaultTabIndex(settings)
+    if not tabIndex or tabIndex <= 1 then return end
+
+    local chatFrame = _G["ChatFrame" .. tabIndex]
+    if not chatFrame then return end
+
+    local tab = _G["ChatFrame" .. tabIndex .. "Tab"]
+    if not tab then return end
+
+    -- Verify the tab exists and has a name (not a deleted/empty slot)
+    local name = GetChatWindowInfo(tabIndex)
+    if not name or name == "" then return end
+
+    FCF_Tab_OnClick(tab, "LeftButton")
+end
+
+local defaultTabFrame = CreateFrame("Frame")
+defaultTabFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+defaultTabFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+defaultTabFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
+    local settings = GetSettings()
+    if not settings or not settings.enabled then return end
+
+    if event == "PLAYER_ENTERING_WORLD" then
+        local isInitialLogin, isReloadingUi = arg1, arg2
+        if not (isInitialLogin or isReloadingUi) then return end
+        C_Timer.After(0.5, function() SelectDefaultTab(settings) end)
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+        if not settings.defaultTabPerSpec then return end
+        C_Timer.After(0.3, function() SelectDefaultTab(settings) end)
+    end
+end)
+
+---------------------------------------------------------------------------
 -- Global refresh function for GUI
 ---------------------------------------------------------------------------
 _G.QUI_RefreshChat = RefreshAll
@@ -1544,3 +1590,12 @@ QUI.Chat = {
     SkinFrame = SkinChatFrame,
     SkinAll = SkinAllChatFrames,
 }
+
+if ns.Registry then
+    ns.Registry:Register("chat", {
+        refresh = _G.QUI_RefreshChat,
+        priority = 45,
+        group = "chat",
+        importCategories = { "chat" },
+    })
+end

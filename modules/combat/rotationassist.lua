@@ -3,19 +3,22 @@
 -- Uses C_AssistedCombat API (Starter Build / Rotation Helper)
 
 local ADDON_NAME, QUI = ...
-local LSM = LibStub("LibSharedMedia-3.0")
-local Helpers = QUI.Helpers
-local IsSecretValue = Helpers and Helpers.IsSecretValue
+local LSM = QUI.LSM
 
-local function GetCore()
-    return (QUI and QUI.QUICore) or (_G.QUI and _G.QUI.QUICore)
-end
+local GetCore = QUI.Helpers.GetCore
+local IsSecretValue = QUI.Helpers.IsSecretValue
 
 -- Locals for performance
 local GetTime = GetTime
 local InCombatLockdown = InCombatLockdown
 local UnitCanAttack = UnitCanAttack
 local UnitExists = UnitExists
+local CreateFrame = CreateFrame
+local UIParent = UIParent
+local type = type
+local pcall = pcall
+local ipairs = ipairs
+local C_Timer = C_Timer
 
 -- Update intervals
 local UPDATE_INTERVAL_COMBAT = 0.3
@@ -239,7 +242,7 @@ CreateIconFrame = function()
     -- Drag handlers
     iconFrame:SetScript("OnDragStart", function(self)
         local db = GetDB()
-        local isAnchoredOverride = _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(self)
+        local isAnchoredOverride = _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("rotationAssistIcon")
         if db and not db.isLocked and not isAnchoredOverride then
             self:StartMoving()
         end
@@ -249,7 +252,7 @@ CreateIconFrame = function()
         self:StopMovingOrSizing()
 
         -- Frame anchoring owns position while an override is active.
-        if _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(self) then
+        if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("rotationAssistIcon") then
             return
         end
 
@@ -290,35 +293,46 @@ UpdateIconDisplay = function(spellID)
         return
     end
 
+    -- spellID may be secret during combat.  Secret userdata is truthy
+    -- and non-zero, so it passes the nil/0 gate.  All downstream calls
+    -- use C-side functions that accept secrets natively.
     if not spellID or spellID == 0 then
-        -- No spell recommended - hide the icon entirely
-        iconFrame:Hide()
+        -- No recommendation right now.  If the frame is already visible
+        -- (mid-combat), keep showing the last spell rather than hiding
+        -- and re-showing every time the API has a brief gap.
+        if not iconFrame:IsShown() then
+            UpdateVisibility()
+        end
         return
     end
 
     -- We have a spell - make sure frame is visible (respecting visibility mode)
     UpdateVisibility()
 
-    -- Get spell texture
-    local texture = C_Spell.GetSpellTexture(spellID)
-    if texture then
+    -- Texture: C_Spell.GetSpellTexture + SetTexture are both C-side.
+    local texOk, texture = pcall(C_Spell.GetSpellTexture, spellID)
+    if texOk and texture then
         iconFrame.icon:SetTexture(texture)
     end
 
-    -- Get usability state for icon tinting
-    local isUsable, notEnoughMana = C_Spell.IsSpellUsable(spellID)
-    local inRange = true
+    -- Usability / range tinting.
+    -- C_Spell.IsSpellUsable and IsSpellInRange can return secret booleans.
+    -- Secret userdata is always truthy, so use strict == true checks to
+    -- avoid misclassification (e.g., secret-false → truthy → wrong branch).
+    local usableOk, isUsable, notEnoughMana = pcall(C_Spell.IsSpellUsable, spellID)
+    if not usableOk then isUsable, notEnoughMana = true, false end
+    isUsable = (isUsable == true)
+    notEnoughMana = (notEnoughMana == true)
 
-    -- Check range if spell has range
-    local hasRange = C_Spell.SpellHasRange(spellID)
-    if hasRange and UnitExists("target") then
-        local rangeCheck = C_Spell.IsSpellInRange(spellID, "target")
-        if rangeCheck == false then
+    local inRange = true
+    local rangeOk, hasRange = pcall(C_Spell.SpellHasRange, spellID)
+    if rangeOk and hasRange == true and UnitExists("target") then
+        local rOk, rangeCheck = pcall(C_Spell.IsSpellInRange, spellID, "target")
+        if rOk and rangeCheck == false then
             inRange = false
         end
     end
 
-    -- Apply icon tint based on state
     local color
     if not inRange then
         color = COLOR_OUT_OF_RANGE
@@ -360,10 +374,38 @@ local function UpdateGCDCooldown()
     -- Only show GCD swipe when the icon itself is visible
     if not iconFrame:IsShown() then return end
 
-    if ApplyCooldownFromSpell(iconFrame.cooldown, GCD_SPELL_ID) then
-        iconFrame.cooldown:Show()
-    else
-        iconFrame.cooldown:Clear()
+    local cd = iconFrame.cooldown
+    local cdInfo = C_Spell and C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(GCD_SPELL_ID)
+    if not cdInfo then cd:Clear() return end
+
+    -- isActive: new 12.0.5+ non-secret boolean; fall back to pcall detection
+    local isActive = cdInfo.isActive
+    if isActive == nil then
+        isActive = IsCooldownActive(cdInfo.startTime or cdInfo.start, cdInfo.duration)
+    end
+
+    if not isActive then cd:Clear() return end
+
+    cd:Show()
+
+    -- Priority 1: DurationObject (secret-safe, works in combat)
+    if C_Spell.GetSpellCooldownDuration and cd.SetCooldownFromDurationObject then
+        local ok, durObj = pcall(C_Spell.GetSpellCooldownDuration, GCD_SPELL_ID)
+        if ok and durObj then
+            pcall(cd.SetCooldownFromDurationObject, cd, durObj, false)
+            return
+        end
+    end
+
+    -- Priority 2: non-secret numeric values (SetCooldown restricted from secrets 12.0.5+)
+    local start, duration = cdInfo.startTime or cdInfo.start, cdInfo.duration
+    if start and duration and not IsSecretValue(start) and not IsSecretValue(duration) then
+        local modRate = cdInfo.modRate
+        if modRate and not IsSecretValue(modRate) then
+            cd:SetCooldown(start, duration, modRate)
+        else
+            cd:SetCooldown(start, duration)
+        end
     end
 end
 
@@ -417,7 +459,16 @@ local function DoUpdate()
         spellID = nil
     end
 
-    -- Only do full update if spell changed
+    -- Secret spellID: pass directly to C-side display functions (texture,
+    -- tint, keybind).  Skip the equality dedup — comparing secret to
+    -- non-secret taints, and the update is cheap.
+    local isSecret = spellID and IsSecretValue(spellID)
+    if isSecret then
+        UpdateIconDisplay(spellID)
+        return
+    end
+
+    -- Non-secret: dedup by value
     if spellID ~= lastSpellID then
         lastSpellID = spellID
         UpdateIconDisplay(spellID)
@@ -473,7 +524,7 @@ RefreshIconFrame = function()
     pcall(iconFrame.SetSize, iconFrame, size, size)
 
     -- Position (manual only when no frame-anchoring override is active)
-    local isAnchoredOverride = _G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(iconFrame)
+    local isAnchoredOverride = _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("rotationAssistIcon")
     if not isAnchoredOverride then
         iconFrame:ClearAllPoints()
         local posX = db.positionX or 0
@@ -515,6 +566,7 @@ RefreshIconFrame = function()
                 iconFrame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4] or 1)
             end
         end
+        iconFrame:SetBackdropColor(0, 0, 0, 0)
     else
         if SafeSetBackdrop then
             SafeSetBackdrop(iconFrame, nil)
@@ -565,8 +617,11 @@ RefreshIconFrame = function()
         iconFrame.keybindText:SetPoint(anchor, iconFrame, anchor, offsetX, offsetY)
     end
 
-    -- Don't call UpdateVisibility() here - let OnUpdate show the frame
-    -- only after a spell has been fetched, to avoid empty border flash
+    -- Force a full visibility + display recheck with the new settings.
+    -- Reset lastSpellID so the next DoUpdate() treats the current spell as
+    -- "changed" and runs UpdateIconDisplay → UpdateVisibility.
+    lastSpellID = nil
+    DoUpdate()
 end
 
 --------------------------------------------------------------------------------
@@ -617,7 +672,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         lastSpellID = nil
         DoUpdate()  -- Immediate update on target change
     elseif event == "SPELL_UPDATE_COOLDOWN" or event == "ACTIONBAR_UPDATE_COOLDOWN" then
-        UpdateGCDCooldown()
+        -- Skip if icon is hidden (no work needed when not visible)
+        if iconFrame and iconFrame:IsShown() then
+            UpdateGCDCooldown()
+        end
     end
 end)
 
@@ -639,3 +697,12 @@ QUI.RotationAssistIcon = {
     Refresh = RefreshRotationAssistIcon,
     GetFrame = function() return iconFrame end,
 }
+
+if QUI.Registry then
+    QUI.Registry:Register("rotationAssist", {
+        refresh = _G.QUI_RefreshRotationAssistIcon,
+        priority = 40,
+        group = "combat",
+        importCategories = { "cdm" },
+    })
+end

@@ -327,6 +327,9 @@ local PROFILE_SKINNING_GENERAL_KEYS = {
     "objectiveTrackerTitleColor",
     "objectiveTrackerTextColor",
     "skinInstanceFrames",
+    "skinAuctionHouse",
+    "skinCraftingOrders",
+    "skinProfessions",
     "skinBgColor",
     "skinAlerts",
     "skinCharacterFrame",
@@ -600,7 +603,8 @@ local PROFILE_IMPORT_CATEGORIES = {
                 paths = {
                     "quiGroupFrames.enabled",
                     "quiGroupFrames.unifiedPosition",
-                    "quiGroupFrames.selfFirst",
+                    "quiGroupFrames.partySelfFirst",
+                    "quiGroupFrames.raidSelfFirst",
                     "quiGroupFrames.clickCast",
                 },
             },
@@ -749,8 +753,8 @@ local PROFILE_IMPORT_CATEGORIES = {
     },
     {
         id = "customTrackers",
-        label = "Custom Trackers",
-        description = "Custom tracker bar settings and individual imported tracker bars.",
+        label = "Custom CDM Bars",
+        description = "Custom CDM bar settings and individual imported bars.",
         recommended = true,
         topLevelKeys = { "customTrackersVisibility", "keybindOverridesEnabledTrackers" },
         paths = {
@@ -761,7 +765,7 @@ local PROFILE_IMPORT_CATEGORIES = {
             {
                 id = "customTrackersShared",
                 label = "Shared Settings",
-                description = "Tracker keybind display and shared visibility settings.",
+                description = "CDM bar keybind display and shared visibility settings.",
                 topLevelKeys = { "customTrackersVisibility", "keybindOverridesEnabledTrackers" },
                 paths = {
                     "customTrackers.keybinds",
@@ -778,6 +782,7 @@ local PROFILE_IMPORT_CATEGORIES = {
             "mplusTimer",
             "combatText",
             "brzCounter",
+            "atonementCounter",
             "combatTimer",
             "xpTracker",
             "totemBar",
@@ -1230,11 +1235,56 @@ local function ApplyFullProfilePayload(core, importedProfile)
         profile[key] = CloneValue(value)
     end
 
-    if core.RefreshAll then
+    -- Run backward-compatibility migrations on the freshly imported data
+    -- so that legacy keys (castBar, unitFrames, etc.) are moved to their
+    -- current locations before any module tries to read them.
+    local addon = _G.QUI
+    if addon and addon.BackwardsCompat then
+        addon:BackwardsCompat()
+    end
+
+    -- Refresh all modules via the Registry (includes frame anchoring).
+    -- Falls back to core:RefreshAll() if the Registry is not available.
+    if ns.Registry then
+        ns.Registry:RefreshAll()
+    elseif core.RefreshAll then
         core:RefreshAll()
     end
 
     return true, "Profile imported successfully."
+end
+
+local function NormalizeOptionalProfileName(name)
+    if type(name) ~= "string" then
+        return nil
+    end
+    name = name:gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" then
+        return nil
+    end
+    return name
+end
+
+local function PrepareImportTargetProfile(core, requestedProfileName)
+    local db = core and core.db
+    if not db or not db.profile then
+        return false, "No profile loaded."
+    end
+
+    local explicitName = NormalizeOptionalProfileName(requestedProfileName)
+    local currentName = db.GetCurrentProfile and db:GetCurrentProfile() or "Default"
+    if not explicitName then
+        return true, currentName, false
+    end
+
+    if explicitName ~= currentName then
+        local ok, err = pcall(db.SetProfile, db, explicitName)
+        if not ok then
+            return false, ("Could not switch to profile '%s': %s"):format(explicitName, tostring(err))
+        end
+    end
+
+    return true, (db.GetCurrentProfile and db:GetCurrentProfile()) or explicitName, true
 end
 
 ---=================================================================================
@@ -1271,6 +1321,7 @@ function QUICore:GetProfileImportCategories()
     return BuildProfileImportPreview({}, "QUI1").categories or {}
 end
 
+
 function QUICore:AnalyzeProfileImportString(str)
     local ok, payloadOrErr, prefix = ParseProfileImportString(self, str)
     if not ok then
@@ -1280,16 +1331,25 @@ function QUICore:AnalyzeProfileImportString(str)
     return true, BuildProfileImportPreview(payloadOrErr, prefix)
 end
 
-function QUICore:ImportProfileFromString(str)
+function QUICore:ImportProfileFromString(str, targetProfileName)
     local ok, payloadOrErr = ParseProfileImportString(self, str)
     if not ok then
         return false, payloadOrErr
     end
 
-    return ApplyFullProfilePayload(self, payloadOrErr)
+    local targetOK, activeProfileName, usingExplicitTarget = PrepareImportTargetProfile(self, targetProfileName)
+    if not targetOK then
+        return false, activeProfileName
+    end
+
+    local importOK, message = ApplyFullProfilePayload(self, payloadOrErr)
+    if importOK and usingExplicitTarget then
+        return true, ("Profile imported successfully into profile '%s'."):format(activeProfileName)
+    end
+    return importOK, message
 end
 
-function QUICore:ImportProfileSelectionFromString(str, selectedCategoryIDs)
+function QUICore:ImportProfileSelectionFromString(str, selectedCategoryIDs, targetProfileName)
     local ok, payloadOrErr = ParseProfileImportString(self, str)
     if not ok then
         return false, payloadOrErr
@@ -1338,13 +1398,18 @@ function QUICore:ImportProfileSelectionFromString(str, selectedCategoryIDs)
                 local importedBars = payloadOrErr.customTrackers and payloadOrErr.customTrackers.bars
                 local importedBar = type(importedBars) == "table" and importedBars[barIndex] or nil
                 local barName = type(importedBar) == "table" and importedBar.name or ("Bar " .. barIndex)
-                selectedLabels[#selectedLabels + 1] = ("Custom Trackers > %s"):format(tostring(barName))
+                selectedLabels[#selectedLabels + 1] = ("Custom CDM Bars > %s"):format(tostring(barName))
             end
         end
     end
 
     if #selectedLabels == 0 then
         return false, "Select at least one category to import."
+    end
+
+    local targetOK, activeProfileName, usingExplicitTarget = PrepareImportTargetProfile(self, targetProfileName)
+    if not targetOK then
+        return false, activeProfileName
     end
 
     local profile = self.db and self.db.profile
@@ -1418,10 +1483,15 @@ function QUICore:ImportProfileSelectionFromString(str, selectedCategoryIDs)
         RestoreDatatextPanelLayout(profile, previousProfile)
     end
 
-    if self.RefreshAll then
+    if ns.Registry then
+        ns.Registry:RefreshByCategories(selectedCategoryIDs)
+    elseif self.RefreshAll then
         self:RefreshAll()
     end
 
+    if usingExplicitTarget then
+        return true, ("Imported %s into profile '%s'."):format(table.concat(selectedLabels, ", "), activeProfileName)
+    end
     return true, ("Imported %s."):format(table.concat(selectedLabels, ", "))
 end
 
@@ -1430,14 +1500,15 @@ end
 ---=================================================================================
 
 -- Generate a collision-safe unique tracker ID
-GenerateUniqueTrackerID = function()
+function QUICore:GenerateUniqueTrackerID()
+    local db = self and self.db or QUICore.db
     local used = {}
-    local bars = QUICore.db.profile.customTrackers and QUICore.db.profile.customTrackers.bars or {}
+    local bars = db and db.profile and db.profile.customTrackers and db.profile.customTrackers.bars or {}
     for _, b in ipairs(bars) do
         if b.id then used[b.id] = true end
     end
-    if QUICore.db.global and QUICore.db.global.specTrackerSpells then
-        for id in pairs(QUICore.db.global.specTrackerSpells) do
+    if db and db.global and db.global.specTrackerSpells then
+        for id in pairs(db.global.specTrackerSpells) do
             used[id] = true
         end
     end
@@ -1446,6 +1517,10 @@ GenerateUniqueTrackerID = function()
         id = "tracker" .. time() .. math.random(1000, 9999)
     until not used[id]
     return id
+end
+
+GenerateUniqueTrackerID = function()
+    return QUICore:GenerateUniqueTrackerID()
 end
 
 -- Export a single tracker bar (with its spec-specific entries if enabled)
@@ -1677,7 +1752,7 @@ function QUICore:ImportAllTrackerBars(str, replaceExisting)
         end
     end
 
-    return true, "Tracker bars imported successfully."
+    return true, "CDM bars imported successfully."
 end
 
 ---=================================================================================

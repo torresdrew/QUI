@@ -3,7 +3,6 @@
 -- Uses LibRangeCheck-3.0 when available, with a built-in fallback.
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
-local QUI = QuaziiUI
 
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
@@ -181,7 +180,14 @@ local function CreateRangeFrame()
     frame:EnableMouse(false)
     frame:RegisterForDrag("LeftButton")
 
-    local text = UIKit.CreateText(frame, 22, nil, "OUTLINE", "OVERLAY")
+    -- Use raw CreateFontString so the text is NOT registered in the global
+    -- fontRegistry.  ApplyAppearance() sets the real font/size from user
+    -- settings; if we used UIKit.CreateText here, the hardcoded 22 would be
+    -- recorded and RefreshAllFonts() (UI_SCALE_CHANGED) could revert it.
+    local text = frame:CreateFontString(nil, "OVERLAY")
+    text:SetFont(UIKit.ResolveFontPath(), 22, "OUTLINE")
+    text:SetTextColor(1, 1, 1, 1)
+    text:SetWordWrap(false)
     text:SetPoint("CENTER", frame, "CENTER", 0, 0)
     text:SetText("10-25 yd")
 
@@ -227,7 +233,7 @@ local function ApplyAppearance()
     state.frame:SetFrameStrata(settings.strata or "MEDIUM")
     state.text:SetFont(fontPath, fontSize, "OUTLINE")
 
-    if not (_G.QUI_IsFrameOverridden and _G.QUI_IsFrameOverridden(state.frame)) then
+    if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("rangeCheck")) then
         state.frame:ClearAllPoints()
         state.frame:SetPoint("CENTER", UIParent, "CENTER", settings.offsetX or 0, settings.offsetY or -190)
     end
@@ -379,6 +385,12 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         return
     end
 
+    if event == "PLAYER_ENTERING_WORLD" then
+        -- Re-apply appearance after zone-in / reload so the user's font size
+        -- and position survive any scale changes that happened during loading.
+        ApplyAppearance()
+    end
+
     if event == "PLAYER_REGEN_DISABLED" then
         state.inCombat = true
     elseif event == "PLAYER_REGEN_ENABLED" then
@@ -395,8 +407,17 @@ _G.QUI_IsRangeCheckPreviewMode = function()
     return state.preview == true
 end
 
-if QUI then
-    QUI.RangeCheck = {
+if ns.Registry then
+    ns.Registry:Register("rangecheck", {
+        refresh = _G.QUI_RefreshRangeCheck,
+        priority = 30,
+        group = "qol",
+        importCategories = { "castBars" },
+    })
+end
+
+if _G.QUI then
+    _G.QUI.RangeCheck = {
         Refresh = RefreshRangeCheck,
         TogglePreview = TogglePreview,
     }

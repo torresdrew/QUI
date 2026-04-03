@@ -23,8 +23,8 @@ Each group uses the same set of visibility rules, but is configured independentl
 
 Visibility rules are configured in the QUI options panel:
 
-- Open `/qui` and navigate to the **UI > HUD Visibility** tab.
-- Select the frame group you want to configure (CDM, Unit Frames, or Custom Trackers).
+- HUD visibility settings for CDM are accessed through **Layout Mode** (`/qui layout`).
+- Unit Frame and Custom Tracker visibility settings are in the **General & QoL** tab in `/qui`.
 
 ## Key Features
 
@@ -37,6 +37,7 @@ Visibility rules are configured in the QUI options panel:
 - **Mouseover reveal** -- When enabled, moving your cursor over the frame area brings frames to full visibility regardless of other hide rules.
 - **Castbar exception** -- For Unit Frames, an option to always show castbars even when the unit frame itself is hidden, so you never miss a cast.
 - **Vehicle hide (CDM only)** -- An additional hide rule specifically for the CDM that hides bars when you are in a vehicle.
+- **Show below 100% health (Unit Frames only)** -- Show unit frames when the player's health drops below 100%, useful for keeping frames hidden during full health but visible when taking damage.
 
 ## Visibility Rules Reference
 
@@ -63,6 +64,24 @@ Every frame group supports the following rules:
 Show rules are evaluated first. If any enabled show rule is satisfied, the frame is eligible to appear. Hide rules are then checked; if any hide rule is satisfied, it overrides the show result and the frame stays hidden. The "Don't Hide In Dungeons/Raids" toggle overrides the mounted, flying, and skyriding hide rules specifically when you are inside instanced content.
 
 If "Show Always" is enabled, no other show rules matter -- the frame is always eligible. Hide rules still apply on top of "Show Always" unless overridden by the dungeon/raid exception.
+
+```mermaid
+flowchart TD
+    START["Frame visibility check"] --> ALWAYS{"Show Always?"}
+    ALWAYS -->|Yes| ELIGIBLE["Eligible to show"]
+    ALWAYS -->|No| SHOW{"Any show rule satisfied?<br/>Combat / Target / Group /<br/>Instance / Mouseover"}
+    SHOW -->|No| HIDDEN["Frame hidden<br/>(fade to Fade Out Alpha)"]
+    SHOW -->|Yes| ELIGIBLE
+    ELIGIBLE --> HIDE{"Any hide rule active?<br/>Mounted / Flying / Skyriding / Vehicle"}
+    HIDE -->|No| VISIBLE["Frame visible"]
+    HIDE -->|Yes| INSTANCE{"In dungeon/raid AND<br/>Don't Hide In Dungeons/Raids?"}
+    INSTANCE -->|Yes| VISIBLE
+    INSTANCE -->|No| HIDDEN
+
+    style START fill:#1a1a2e,stroke:#34D399,color:#fff
+    style VISIBLE fill:#065f46,stroke:#34D399,color:#fff
+    style HIDDEN fill:#7f1d1d,stroke:#ef4444,color:#fff
+```
 
 ## Tips
 

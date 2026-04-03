@@ -2239,16 +2239,11 @@ local function CreateCDMSetupPage(parent)
             if widthSlider then
                 widthSlider:SetAlpha(autoWidthActive and 0.4 or 1.0)
             end
-            -- Owned engine always respects growUp directly (no anchor override),
-            -- so only force-disable the dropdown for the classic (Blizzard) engine.
-            local isOwnedEngine = db.ncdm and db.ncdm.engine == "owned"
-            local forceGrowth = not isOwnedEngine
-                and (placementMode == "onTop" or placementMode == "below" or placementMode == "onTopResourceBars"
-                    or ((trackedData.orientation == "vertical") and (placementMode == "left" or placementMode == "right")))
-            growthDropdown:SetAlpha(forceGrowth and 0.4 or 1.0)
-            stackTip:SetAlpha(forceGrowth and 0.4 or 1.0)
+            -- The owned engine is the only supported renderer, so growth stays configurable.
+            growthDropdown:SetAlpha(1.0)
+            stackTip:SetAlpha(1.0)
             if growthDropdown.SetEnabled then
-                growthDropdown:SetEnabled(not forceGrowth)
+                growthDropdown:SetEnabled(true)
             end
         end
         updateAnchorStates()  -- Initial state
@@ -4901,33 +4896,11 @@ local function CreateCDMSetupPage(parent)
         tabContent:SetHeight(math.abs(y) + 60)
     end
 
-    -- Engine selection dropdown (above sub-tabs)
-    local PAD = 10
-    local ENGINE_ROW = 32
-    local engineY = -8
-
     GUI:SetSearchContext({tabIndex = 4, tabName = "Cooldown Manager"})
 
-    local engineOptions = {
-        {value = "owned", text = "QUI CDM Engine"},
-        {value = "classic", text = "Classic (Blizzard Hooks)"},
-    }
-    local engineDropdown = GUI:CreateFormDropdown(content, "CDM Engine", engineOptions, "engine", db.ncdm, function()
-        QUI:SafeReload()
-    end)
-    engineDropdown:SetPoint("TOPLEFT", PAD, engineY)
-    engineDropdown:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
-    engineY = engineY - ENGINE_ROW
-
-    local reloadHint = content:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    reloadHint:SetPoint("TOPLEFT", PAD, engineY)
-    reloadHint:SetTextColor(0.5, 0.5, 0.5, 1)
-    reloadHint:SetText("Changing the engine requires a UI reload.")
-    engineY = engineY - 18
-
-    -- Host frame for sub-tabs, offset below the engine dropdown
+    -- Host frame for sub-tabs
     local subTabHost = CreateFrame("Frame", nil, content)
-    subTabHost:SetPoint("TOPLEFT", 0, engineY)
+    subTabHost:SetPoint("TOPLEFT", 0, -8)
     subTabHost:SetPoint("BOTTOMRIGHT", 0, 0)
 
     -- Create sub-tabs
