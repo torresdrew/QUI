@@ -5,6 +5,24 @@ All notable changes to QUI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
+
+## v3.0.0 - 2026-04-04
+
+### Added
+- Introduced a major new layout mode system with composer UI, anchor providers, layout settings, and broader support for repositioning HUD and frame elements.
+- Added Party Tracker support, an Atonement counter, consumable macros, and brought back custom tracker bars.
+- Expanded raid-buff and consumable tracking with self-buff coverage, weapon enhancements, visual status states, and better group-relevant buff detection.
+
+### Changed
+- Reworked the Cooldown Manager by removing the old classic engine and expanding the owned engine/composer with better swipes, charges, desaturation, proc highlighting, and row/layout control.
+- Overhauled group and unit frame customization with pinned/private auras, drag-and-drop aura indicators, new indicator types, improved click-cast handling, and separate self-first behavior for party vs raid.
+- Improved action bars, buff/debuff frames, cast bars, resource bars, totem bars, and minimap behavior with more layout options, better visuals, and persistent settings like minimap zoom.
+- Expanded Blizzard skinning coverage for major UI surfaces including tooltips, alerts, ready checks, Auction House, Crafting Orders, Professions, and the game menu.
+
+### Fixed
+- Hardened the addon against combat taint and secret-value issues across cooldowns, group frames, tooltips, minimap interactions, click-cast, and other secure UI paths.
+- Reduced CPU overhead in several hot paths, especially for cooldown processing, action bars, aura handling, and hidden-element updates.
+- Improved profile switching, migrations, defaults, import behavior, and refresh ordering to make setup changes safer and more reliable.
 ## v2.55.3 - 2026-03-30
 
 ### Fixed
