@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v3.1.0 - 2026-04-05
+
+### Added
+- added nudge +/- buttons to sliders
+- Raid buffs: toggle aura detection, hide active provider buffs
+- DandersFrames: layout mode integration with absolute positioning support
+- CDM: add per-spell desaturateIgnoreAura override
+
+### Changed
+- Layout mode: right-click to select, middle-click to unanchor, sticky toolbar
+- Layout mode: visual toolbar overhaul, group frame enable toggle guard
+- Buff borders: simplify right-click cancel to use CancelAuraByAuraInstanceID
+- DandersFrames: prompt reload on enable/disable toggle change
+- Overhaul defaults for better OOTB experience; fix spec profile sync and spell detection
+- stop background search indexing work after closing options panel
+
+### Fixed
+- fixed DandersFrames movement regressions
+- improved sync between options panels in layout mode and options menu
+- Minimap: fix dungeon eye SetPoint error on initial load
+- CDM: fix item/trinket/slot ID space separation; buff borders: prefer numeric cooldown path
+- stopped minimap provider refresh loops
+- Click-cast: resolve base spells for override transform searchability
 ## v3.0.0 - 2026-04-04
 
 ### Added
