@@ -7642,6 +7642,29 @@ do
 
             local sections = {}
             local function relayout() U.StandardRelayout(content, sections) end
+            local DEFER = { deferOnDrag = true }
+
+            -- Lightweight preview: recompute container size from layout params
+            local function PreviewBarSize()
+                local container = ActionBarsOwned.containers and ActionBarsOwned.containers[DB_KEY_MAP[barKey] or barKey]
+                if not container or not layout then return end
+                local btnSize = layout.buttonSize or 36
+                local spacing = layout.buttonSpacing or 2
+                local cols = layout.columns or 12
+                local visible = layout.iconCount or (BUTTON_COUNTS[dbKey] or 12)
+                local rows = math.ceil(visible / math.max(cols, 1))
+                local isVertical = layout.orientation == "vertical"
+                local w, h
+                if isVertical then
+                    w = rows * btnSize + math.max(rows - 1, 0) * spacing
+                    h = math.min(visible, cols) * btnSize + math.max(math.min(visible, cols) - 1, 0) * spacing
+                else
+                    w = math.min(visible, cols) * btnSize + math.max(math.min(visible, cols) - 1, 0) * spacing
+                    h = rows * btnSize + math.max(rows - 1, 0) * spacing
+                end
+                container:SetSize(math.max(w, 1), math.max(h, 1))
+            end
+            local DEFER_SIZE = { deferOnDrag = true, onDragPreview = PreviewBarSize }
 
             -- SECTION: Layout
             if hasLayout and layout then
@@ -7744,16 +7767,16 @@ do
                         orientationOptions, "orientation", layout, RefreshActionBars), body, sy)
 
                     sy = P(GUI:CreateFormSlider(body, "Buttons Per Row",
-                        1, maxButtons, 1, "columns", layout, RefreshActionBars), body, sy)
+                        1, maxButtons, 1, "columns", layout, RefreshActionBars, DEFER_SIZE), body, sy)
 
                     sy = P(GUI:CreateFormSlider(body, "Visible Buttons",
-                        1, maxButtons, 1, "iconCount", layout, RefreshActionBars), body, sy)
+                        1, maxButtons, 1, "iconCount", layout, RefreshActionBars, DEFER_SIZE), body, sy)
 
                     sy = P(GUI:CreateFormSlider(body, "Button Size",
-                        20, 64, 1, "buttonSize", layout, RefreshActionBars), body, sy)
+                        20, 64, 1, "buttonSize", layout, RefreshActionBars, DEFER_SIZE), body, sy)
 
                     sy = P(GUI:CreateFormSlider(body, "Button Spacing",
-                        -10, 10, 1, "buttonSpacing", layout, RefreshActionBars), body, sy)
+                        -10, 10, 1, "buttonSpacing", layout, RefreshActionBars, DEFER_SIZE), body, sy)
 
                     sy = P(GUI:CreateFormCheckbox(body, "Grow Upward",
                         "growUp", layout, RefreshActionBars), body, sy)
@@ -7768,19 +7791,19 @@ do
             CreateCollapsible(content, "Visual", 7 * FORM_ROW + 8, function(body)
                 local sy = -4
                 sy = P(GUI:CreateFormSlider(body, "Icon Crop",
-                    0.05, 0.15, 0.01, "iconZoom", barDB, RefreshActionBars), body, sy)
+                    0.05, 0.15, 0.01, "iconZoom", barDB, RefreshActionBars, DEFER), body, sy)
 
                 sy = P(GUI:CreateFormCheckbox(body, "Show Backdrop",
                     "showBackdrop", barDB, RefreshActionBars), body, sy)
 
                 sy = P(GUI:CreateFormSlider(body, "Backdrop Opacity",
-                    0, 1, 0.05, "backdropAlpha", barDB, RefreshActionBars), body, sy)
+                    0, 1, 0.05, "backdropAlpha", barDB, RefreshActionBars, DEFER), body, sy)
 
                 sy = P(GUI:CreateFormCheckbox(body, "Show Gloss",
                     "showGloss", barDB, RefreshActionBars), body, sy)
 
                 sy = P(GUI:CreateFormSlider(body, "Gloss Opacity",
-                    0, 1, 0.05, "glossAlpha", barDB, RefreshActionBars), body, sy)
+                    0, 1, 0.05, "glossAlpha", barDB, RefreshActionBars, DEFER), body, sy)
 
                 sy = P(GUI:CreateFormCheckbox(body, "Show Borders",
                     "showBorders", barDB, RefreshActionBars), body, sy)
@@ -7804,16 +7827,16 @@ do
                     "hideEmptyKeybinds", barDB, RefreshActionBars), body, sy)
 
                 sy = P(GUI:CreateFormSlider(body, "Font Size",
-                    8, 18, 1, "keybindFontSize", barDB, RefreshActionBars), body, sy)
+                    8, 18, 1, "keybindFontSize", barDB, RefreshActionBars, DEFER), body, sy)
 
                 sy = P(GUI:CreateFormDropdown(body, "Anchor",
                     anchorOptions, "keybindAnchor", barDB, RefreshActionBars), body, sy)
 
                 sy = P(GUI:CreateFormSlider(body, "X-Offset",
-                    -20, 20, 1, "keybindOffsetX", barDB, RefreshActionBars), body, sy)
+                    -20, 20, 1, "keybindOffsetX", barDB, RefreshActionBars, DEFER), body, sy)
 
                 sy = P(GUI:CreateFormSlider(body, "Y-Offset",
-                    -20, 20, 1, "keybindOffsetY", barDB, RefreshActionBars), body, sy)
+                    -20, 20, 1, "keybindOffsetY", barDB, RefreshActionBars, DEFER), body, sy)
 
                 P(GUI:CreateFormColorPicker(body, "Color",
                     "keybindColor", barDB, RefreshActionBars), body, sy)
@@ -7826,16 +7849,16 @@ do
                     "showMacroNames", barDB, RefreshActionBars), body, sy)
 
                 sy = P(GUI:CreateFormSlider(body, "Font Size",
-                    8, 18, 1, "macroNameFontSize", barDB, RefreshActionBars), body, sy)
+                    8, 18, 1, "macroNameFontSize", barDB, RefreshActionBars, DEFER), body, sy)
 
                 sy = P(GUI:CreateFormDropdown(body, "Anchor",
                     anchorOptions, "macroNameAnchor", barDB, RefreshActionBars), body, sy)
 
                 sy = P(GUI:CreateFormSlider(body, "X-Offset",
-                    -20, 20, 1, "macroNameOffsetX", barDB, RefreshActionBars), body, sy)
+                    -20, 20, 1, "macroNameOffsetX", barDB, RefreshActionBars, DEFER), body, sy)
 
                 sy = P(GUI:CreateFormSlider(body, "Y-Offset",
-                    -20, 20, 1, "macroNameOffsetY", barDB, RefreshActionBars), body, sy)
+                    -20, 20, 1, "macroNameOffsetY", barDB, RefreshActionBars, DEFER), body, sy)
 
                 P(GUI:CreateFormColorPicker(body, "Color",
                     "macroNameColor", barDB, RefreshActionBars), body, sy)
@@ -7848,16 +7871,16 @@ do
                     "showCounts", barDB, RefreshActionBars), body, sy)
 
                 sy = P(GUI:CreateFormSlider(body, "Font Size",
-                    8, 20, 1, "countFontSize", barDB, RefreshActionBars), body, sy)
+                    8, 20, 1, "countFontSize", barDB, RefreshActionBars, DEFER), body, sy)
 
                 sy = P(GUI:CreateFormDropdown(body, "Anchor",
                     anchorOptions, "countAnchor", barDB, RefreshActionBars), body, sy)
 
                 sy = P(GUI:CreateFormSlider(body, "X-Offset",
-                    -20, 20, 1, "countOffsetX", barDB, RefreshActionBars), body, sy)
+                    -20, 20, 1, "countOffsetX", barDB, RefreshActionBars, DEFER), body, sy)
 
                 sy = P(GUI:CreateFormSlider(body, "Y-Offset",
-                    -20, 20, 1, "countOffsetY", barDB, RefreshActionBars), body, sy)
+                    -20, 20, 1, "countOffsetY", barDB, RefreshActionBars, DEFER), body, sy)
 
                 P(GUI:CreateFormColorPicker(body, "Color",
                     "countColor", barDB, RefreshActionBars), body, sy)

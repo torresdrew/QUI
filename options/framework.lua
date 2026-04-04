@@ -3924,6 +3924,7 @@ function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onC
         and UIKit.CreateBorderLines
         and UIKit.UpdateBorderLines
     local deferOnDrag = options.deferOnDrag or false
+    local onDragPreview = options.onDragPreview
     local precision = options.precision
     local formatStr = precision and string.format("%%.%df", precision) or (step < 1 and "%.2f" or "%d")
 
@@ -4139,7 +4140,10 @@ function GUI:CreateFormSlider(parent, label, min, max, step, dbKey, dbTable, onC
         if dbTable and dbKey then dbTable[dbKey] = value end
         if userInput then
             BroadcastToSiblings(container, value)
-            if deferOnDrag and isDragging then return end
+            if deferOnDrag and isDragging then
+                if onDragPreview then onDragPreview(value) end
+                return
+            end
             if onChange then onChange(value) end
             MaybeAutoNotifyProviderSync(container)
         end

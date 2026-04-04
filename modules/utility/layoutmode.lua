@@ -3479,6 +3479,7 @@ end
 
 -- Hook globals that exist at file-load time
 HookRefreshForLayoutSync("QUI_RefreshUnitFrames")
+HookRefreshForLayoutSync("QUI_RefreshCastbar")
 HookRefreshForLayoutSync("QUI_RefreshCastbars")
 
 -- Hook globals that are defined by later-loading modules

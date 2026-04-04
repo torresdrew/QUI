@@ -4332,17 +4332,28 @@ do
             local unitDB = ufdb[unitKey]
             local sections = {}
             local function relayout() U.StandardRelayout(content, sections) end
+            local DEFER = { deferOnDrag = true }
+
+            -- Lightweight preview: resize the unit frame from DB without full rebuild
+            local function PreviewFrameSize()
+                local frame = QUI_UF.frames and QUI_UF.frames[unitKey]
+                if not frame then return end
+                local w = unitDB.width or 200
+                local h = unitDB.height or 40
+                frame:SetSize(w, h)
+            end
+            local DEFER_SIZE = { deferOnDrag = true, onDragPreview = PreviewFrameSize }
 
             -- Size & Appearance
             local sizeRows = 4
             if unitKey == "boss" then sizeRows = sizeRows + 1 end
             CreateCollapsible(content, "Size & Appearance", sizeRows * FORM_ROW + 8, function(body)
                 local sy = -4
-                sy = P(GUI:CreateFormSlider(body, "Width", 100, 500, 1, "width", unitDB, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Height", 20, 100, 1, "height", unitDB, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Border Size", 0, 5, 1, "borderSize", unitDB, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Width", 100, 500, 1, "width", unitDB, RefreshUF, DEFER_SIZE), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Height", 20, 100, 1, "height", unitDB, RefreshUF, DEFER_SIZE), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Border Size", 0, 5, 1, "borderSize", unitDB, RefreshUF, DEFER), body, sy)
                 if unitKey == "boss" then
-                    sy = P(GUI:CreateFormSlider(body, "Boss Spacing", 0, 100, 1, "spacing", unitDB, RefreshUF), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Boss Spacing", 0, 100, 1, "spacing", unitDB, RefreshUF, DEFER), body, sy)
                 end
                 P(GUI:CreateFormDropdown(body, "Bar Texture", GetTextureList(), "texture", unitDB, RefreshUF), body, sy)
             end, sections, relayout)
@@ -4372,7 +4383,7 @@ do
                 local sy = -4
                 local abs = unitDB.absorbs
                 sy = P(GUI:CreateFormCheckbox(body, "Show Absorbs", "enabled", abs, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Opacity", 0, 1, 0.05, "opacity", abs, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Opacity", 0, 1, 0.05, "opacity", abs, RefreshUF, DEFER), body, sy)
                 sy = P(GUI:CreateFormColorPicker(body, "Absorb Color", "color", abs, RefreshUF), body, sy)
                 P(GUI:CreateFormDropdown(body, "Absorb Texture", GetTextureList(), "texture", abs, RefreshUF), body, sy)
             end, sections, relayout)
@@ -4390,7 +4401,7 @@ do
                     local sy = -4
                     local hp = unitDB.healPrediction
                     sy = P(GUI:CreateFormCheckbox(body, "Show Incoming Heals", "enabled", hp, RefreshUF), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Opacity", 0, 1, 0.05, "opacity", hp, RefreshUF), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Opacity", 0, 1, 0.05, "opacity", hp, RefreshUF, DEFER), body, sy)
                     P(GUI:CreateFormColorPicker(body, "Heal Color", "color", hp, RefreshUF), body, sy)
                 end, sections, relayout)
             end
@@ -4399,12 +4410,12 @@ do
             CreateCollapsible(content, "Name Text", 7 * FORM_ROW + 8, function(body)
                 local sy = -4
                 sy = P(GUI:CreateFormCheckbox(body, "Show Name", "showName", unitDB, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Font Size", 8, 24, 1, "nameFontSize", unitDB, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Font Size", 8, 24, 1, "nameFontSize", unitDB, RefreshUF, DEFER), body, sy)
                 sy = P(GUI:CreateFormColorPicker(body, "Name Color", "nameTextColor", unitDB, RefreshUF), body, sy)
                 sy = P(GUI:CreateFormDropdown(body, "Anchor", anchorOptions, "nameAnchor", unitDB, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "X Offset", -100, 100, 1, "nameOffsetX", unitDB, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Y Offset", -50, 50, 1, "nameOffsetY", unitDB, RefreshUF), body, sy)
-                P(GUI:CreateFormSlider(body, "Max Length (0=none)", 0, 30, 1, "maxNameLength", unitDB, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "X Offset", -100, 100, 1, "nameOffsetX", unitDB, RefreshUF, DEFER), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Y Offset", -50, 50, 1, "nameOffsetY", unitDB, RefreshUF, DEFER), body, sy)
+                P(GUI:CreateFormSlider(body, "Max Length (0=none)", 0, 30, 1, "maxNameLength", unitDB, RefreshUF, DEFER), body, sy)
             end, sections, relayout)
 
             -- Health Text
@@ -4429,17 +4440,17 @@ do
                 sy = P(GUI:CreateFormDropdown(body, "Display Style", healthDisplayOptions, "healthDisplayStyle", unitDB, RefreshUF), body, sy)
                 sy = P(GUI:CreateFormDropdown(body, "Divider", dividerOptions, "healthDivider", unitDB, RefreshUF), body, sy)
                 sy = P(GUI:CreateFormColorPicker(body, "Text Color", "healthTextColor", unitDB, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Font Size", 8, 24, 1, "healthFontSize", unitDB, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Font Size", 8, 24, 1, "healthFontSize", unitDB, RefreshUF, DEFER), body, sy)
                 sy = P(GUI:CreateFormDropdown(body, "Anchor", anchorOptions, "healthAnchor", unitDB, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "X Offset", -100, 100, 1, "healthOffsetX", unitDB, RefreshUF), body, sy)
-                P(GUI:CreateFormSlider(body, "Y Offset", -50, 50, 1, "healthOffsetY", unitDB, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "X Offset", -100, 100, 1, "healthOffsetX", unitDB, RefreshUF, DEFER), body, sy)
+                P(GUI:CreateFormSlider(body, "Y Offset", -50, 50, 1, "healthOffsetY", unitDB, RefreshUF, DEFER), body, sy)
             end, sections, relayout)
 
             -- Power Bar
             CreateCollapsible(content, "Power Bar", 5 * FORM_ROW + 8, function(body)
                 local sy = -4
                 sy = P(GUI:CreateFormCheckbox(body, "Show Power Bar", "showPowerBar", unitDB, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Height", 1, 20, 1, "powerBarHeight", unitDB, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Height", 1, 20, 1, "powerBarHeight", unitDB, RefreshUF, DEFER), body, sy)
                 sy = P(GUI:CreateFormCheckbox(body, "Show Border", "powerBarBorder", unitDB, RefreshUF), body, sy)
                 sy = P(GUI:CreateFormCheckbox(body, "Use Power Type Color", "powerBarUsePowerColor", unitDB, RefreshUF), body, sy)
                 P(GUI:CreateFormColorPicker(body, "Custom Bar Color", "powerBarColor", unitDB, RefreshUF), body, sy)
@@ -4458,10 +4469,10 @@ do
                 sy = P(GUI:CreateFormDropdown(body, "Format", powerFormatOptions, "powerTextFormat", unitDB, RefreshUF), body, sy)
                 sy = P(GUI:CreateFormCheckbox(body, "Use Power Type Color", "powerTextUsePowerColor", unitDB, RefreshUF), body, sy)
                 sy = P(GUI:CreateFormColorPicker(body, "Custom Text Color", "powerTextColor", unitDB, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Font Size", 8, 24, 1, "powerTextFontSize", unitDB, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Font Size", 8, 24, 1, "powerTextFontSize", unitDB, RefreshUF, DEFER), body, sy)
                 sy = P(GUI:CreateFormDropdown(body, "Anchor", anchorOptions, "powerTextAnchor", unitDB, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "X Offset", -100, 100, 1, "powerTextOffsetX", unitDB, RefreshUF), body, sy)
-                P(GUI:CreateFormSlider(body, "Y Offset", -50, 50, 1, "powerTextOffsetY", unitDB, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "X Offset", -100, 100, 1, "powerTextOffsetX", unitDB, RefreshUF, DEFER), body, sy)
+                P(GUI:CreateFormSlider(body, "Y Offset", -50, 50, 1, "powerTextOffsetY", unitDB, RefreshUF, DEFER), body, sy)
             end, sections, relayout)
 
             -- Auras - Debuffs
@@ -4475,12 +4486,12 @@ do
                 if unitKey ~= "player" then
                     sy = P(GUI:CreateFormCheckbox(body, "Only My Debuffs", "onlyMyDebuffs", auras, RefreshUF), body, sy)
                 end
-                sy = P(GUI:CreateFormSlider(body, "Icon Size", 12, 50, 1, "iconSize", auras, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Icon Size", 12, 50, 1, "iconSize", auras, RefreshUF, DEFER), body, sy)
                 sy = P(GUI:CreateFormDropdown(body, "Anchor", cornerOptions, "debuffAnchor", auras, RefreshUF), body, sy)
                 sy = P(GUI:CreateFormDropdown(body, "Grow Direction", growOptions, "debuffGrow", auras, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Max Icons", 1, 32, 1, "debuffMaxIcons", auras, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "X Offset", -100, 100, 1, "debuffOffsetX", auras, RefreshUF), body, sy)
-                P(GUI:CreateFormSlider(body, "Y Offset", -100, 100, 1, "debuffOffsetY", auras, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Max Icons", 1, 32, 1, "debuffMaxIcons", auras, RefreshUF, DEFER), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "X Offset", -100, 100, 1, "debuffOffsetX", auras, RefreshUF, DEFER), body, sy)
+                P(GUI:CreateFormSlider(body, "Y Offset", -100, 100, 1, "debuffOffsetY", auras, RefreshUF, DEFER), body, sy)
             end, sections, relayout)
 
             -- Auras - Buffs
@@ -4488,12 +4499,12 @@ do
                 local sy = -4
                 sy = P(GUI:CreateFormCheckbox(body, "Show Buffs", "showBuffs", auras, RefreshUF), body, sy)
                 sy = P(GUI:CreateFormCheckbox(body, "Hide Duration Swipe", "buffHideSwipe", auras, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Icon Size", 12, 50, 1, "buffIconSize", auras, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Icon Size", 12, 50, 1, "buffIconSize", auras, RefreshUF, DEFER), body, sy)
                 sy = P(GUI:CreateFormDropdown(body, "Anchor", cornerOptions, "buffAnchor", auras, RefreshUF), body, sy)
                 sy = P(GUI:CreateFormDropdown(body, "Grow Direction", growOptions, "buffGrow", auras, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Max Icons", 1, 32, 1, "buffMaxIcons", auras, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "X Offset", -100, 100, 1, "buffOffsetX", auras, RefreshUF), body, sy)
-                P(GUI:CreateFormSlider(body, "Y Offset", -100, 100, 1, "buffOffsetY", auras, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Max Icons", 1, 32, 1, "buffMaxIcons", auras, RefreshUF, DEFER), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "X Offset", -100, 100, 1, "buffOffsetX", auras, RefreshUF, DEFER), body, sy)
+                P(GUI:CreateFormSlider(body, "Y Offset", -100, 100, 1, "buffOffsetY", auras, RefreshUF, DEFER), body, sy)
             end, sections, relayout)
 
             -- Target Marker
@@ -4502,10 +4513,10 @@ do
                 local sy = -4
                 local tm = unitDB.targetMarker
                 sy = P(GUI:CreateFormCheckbox(body, "Show Target Marker", "enabled", tm, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "Size", 8, 48, 1, "size", tm, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "Size", 8, 48, 1, "size", tm, RefreshUF, DEFER), body, sy)
                 sy = P(GUI:CreateFormDropdown(body, "Anchor", anchorOptions, "anchor", tm, RefreshUF), body, sy)
-                sy = P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "xOffset", tm, RefreshUF), body, sy)
-                P(GUI:CreateFormSlider(body, "Y Offset", -50, 50, 1, "yOffset", tm, RefreshUF), body, sy)
+                sy = P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "xOffset", tm, RefreshUF, DEFER), body, sy)
+                P(GUI:CreateFormSlider(body, "Y Offset", -50, 50, 1, "yOffset", tm, RefreshUF, DEFER), body, sy)
             end, sections, relayout)
 
             -- Target Highlight (boss frames only)
@@ -4526,9 +4537,9 @@ do
                     local sy = -4
                     local li = unitDB.leaderIcon
                     sy = P(GUI:CreateFormCheckbox(body, "Show Leader/Assistant", "enabled", li, RefreshUF), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Icon Size", 8, 32, 1, "size", li, RefreshUF), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Icon Size", 8, 32, 1, "size", li, RefreshUF, DEFER), body, sy)
                     sy = P(GUI:CreateFormDropdown(body, "Anchor", anchorOptions, "anchor", li, RefreshUF), body, sy)
-                    P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "xOffset", li, RefreshUF), body, sy)
+                    P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "xOffset", li, RefreshUF, DEFER), body, sy)
                 end, sections, relayout)
             end
 
@@ -4543,9 +4554,9 @@ do
                     local sy = -4
                     local r = ind.rested
                     sy = P(GUI:CreateFormCheckbox(body, "Enable", "enabled", r, RefreshUF), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Icon Size", 8, 32, 1, "size", r, RefreshUF), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Icon Size", 8, 32, 1, "size", r, RefreshUF, DEFER), body, sy)
                     sy = P(GUI:CreateFormDropdown(body, "Anchor", anchorOptions, "anchor", r, RefreshUF), body, sy)
-                    P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "offsetX", r, RefreshUF), body, sy)
+                    P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "offsetX", r, RefreshUF, DEFER), body, sy)
                 end, sections, relayout)
 
                 -- Combat
@@ -4554,9 +4565,9 @@ do
                     local sy = -4
                     local cb = ind.combat
                     sy = P(GUI:CreateFormCheckbox(body, "Enable", "enabled", cb, RefreshUF), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Icon Size", 8, 32, 1, "size", cb, RefreshUF), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Icon Size", 8, 32, 1, "size", cb, RefreshUF, DEFER), body, sy)
                     sy = P(GUI:CreateFormDropdown(body, "Anchor", anchorOptions, "anchor", cb, RefreshUF), body, sy)
-                    P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "offsetX", cb, RefreshUF), body, sy)
+                    P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "offsetX", cb, RefreshUF, DEFER), body, sy)
                 end, sections, relayout)
 
                 -- Stance/Form
@@ -4565,10 +4576,10 @@ do
                     local sy = -4
                     local st = ind.stance
                     sy = P(GUI:CreateFormCheckbox(body, "Show Stance/Form", "enabled", st, RefreshUF), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Font Size", 8, 24, 1, "fontSize", st, RefreshUF), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Font Size", 8, 24, 1, "fontSize", st, RefreshUF, DEFER), body, sy)
                     sy = P(GUI:CreateFormDropdown(body, "Anchor", anchorOptions, "anchor", st, RefreshUF), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "offsetX", st, RefreshUF), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Y Offset", -50, 50, 1, "offsetY", st, RefreshUF), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "X Offset", -50, 50, 1, "offsetX", st, RefreshUF, DEFER), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Y Offset", -50, 50, 1, "offsetY", st, RefreshUF, DEFER), body, sy)
                     sy = P(GUI:CreateFormCheckbox(body, "Use Class Color", "useClassColor", st, RefreshUF), body, sy)
                     P(GUI:CreateFormColorPicker(body, "Custom Color", "customColor", st, RefreshUF), body, sy)
                 end, sections, relayout)
@@ -4592,7 +4603,7 @@ do
                     sy = P(GUI:CreateFormDropdown(body, "Separator", sepOptions, "totSeparator", unitDB, RefreshUF), body, sy)
                     sy = P(GUI:CreateFormCheckbox(body, "Divider Uses Class/React Color", "totDividerUseClassColor", unitDB, RefreshUF), body, sy)
                     sy = P(GUI:CreateFormColorPicker(body, "Custom Divider Color", "totDividerColor", unitDB, RefreshUF), body, sy)
-                    P(GUI:CreateFormSlider(body, "Name Character Limit", 0, 100, 1, "totNameCharLimit", unitDB, RefreshUF), body, sy)
+                    P(GUI:CreateFormSlider(body, "Name Character Limit", 0, 100, 1, "totNameCharLimit", unitDB, RefreshUF, DEFER), body, sy)
                 end, sections, relayout)
 
                 -- Invert Healthbar
@@ -4630,13 +4641,21 @@ do
                     end
                 end
 
+                local function PreviewCBSize()
+                    local QUI_Castbar = ns.QUI_Castbar
+                    local cb = QUI_Castbar and QUI_Castbar.castbars and QUI_Castbar.castbars[unitKey]
+                    if not cb then return end
+                    cb:SetSize(castDB.width or 250, castDB.height or 25)
+                end
+                local DEFER_CB = { deferOnDrag = true, onDragPreview = PreviewCBSize }
+
                 CreateCollapsible(content, "Castbar", 7 * FORM_ROW + 8, function(body)
                     local sy = -4
                     sy = P(GUI:CreateFormCheckbox(body, "Enable Castbar", "enabled", castDB, RefreshCB), body, sy)
                     sy = P(GUI:CreateFormCheckbox(body, "Show Spell Icon", "showIcon", castDB, RefreshCB), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Width", 50, 2000, 1, "width", castDB, RefreshCB), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Bar Height", 4, 60, 1, "height", castDB, RefreshCB), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Font Size", 8, 24, 1, "fontSize", castDB, RefreshCB), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Width", 50, 2000, 1, "width", castDB, RefreshCB, DEFER_CB), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Bar Height", 4, 60, 1, "height", castDB, RefreshCB, DEFER_CB), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Font Size", 8, 24, 1, "fontSize", castDB, RefreshCB, DEFER), body, sy)
                     sy = P(GUI:CreateFormColorPicker(body, "Castbar Color", "color", castDB, RefreshCB), body, sy)
                     P(GUI:CreateFormColorPicker(body, "Background Color", "bgColor", castDB, RefreshCB), body, sy)
                 end, sections, relayout)
@@ -4644,10 +4663,10 @@ do
                 CreateCollapsible(content, "Castbar Style", 5 * FORM_ROW + 8, function(body)
                     local sy = -4
                     sy = P(GUI:CreateFormDropdown(body, "Bar Texture", GetTextureList(), "texture", castDB, RefreshCB), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Border Size", 0, 5, 1, "borderSize", castDB, RefreshCB), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Icon Size", 8, 80, 1, "iconSize", castDB, RefreshCB), body, sy)
-                    sy = P(GUI:CreateFormSlider(body, "Icon Scale", 0.5, 2.0, 0.1, "iconScale", castDB, RefreshCB, { precision = 1 }), body, sy)
-                    P(GUI:CreateFormSlider(body, "Icon Border Size", 0, 5, 0.1, "iconBorderSize", castDB, RefreshCB, { precision = 1 }), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Border Size", 0, 5, 1, "borderSize", castDB, RefreshCB, DEFER), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Icon Size", 8, 80, 1, "iconSize", castDB, RefreshCB, DEFER), body, sy)
+                    sy = P(GUI:CreateFormSlider(body, "Icon Scale", 0.5, 2.0, 0.1, "iconScale", castDB, RefreshCB, { precision = 1, deferOnDrag = true }), body, sy)
+                    P(GUI:CreateFormSlider(body, "Icon Border Size", 0, 5, 0.1, "iconBorderSize", castDB, RefreshCB, { precision = 1, deferOnDrag = true }), body, sy)
                 end, sections, relayout)
 
                 if unitKey ~= "boss" and unitKey ~= "pet" then

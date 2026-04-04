@@ -2127,7 +2127,7 @@ function QUI_LayoutMode_UI:_RebuildDrawer()
                         label = newConfig.name,
                         group = "Display",
                         order = 10 + #dtDB.panels,
-                        isOwned = false,
+                        isOwned = true,
                         getFrame = function() return Datapanels and Datapanels.activePanels[newID] end,
                         isEnabled = function()
                             -- Check config enabled, not IsShown (panel hides when no slots assigned)
@@ -2145,6 +2145,11 @@ function QUI_LayoutMode_UI:_RebuildDrawer()
                             for _, pc in ipairs(dtDB.panels) do
                                 if pc.id == newID then pc.enabled = val; break end
                             end
+                        end,
+                        setGameplayHidden = function(hide)
+                            local p = Datapanels and Datapanels.activePanels[newID]
+                            if not p then return end
+                            if hide then p:Hide() else p:Show() end
                         end,
                     })
 

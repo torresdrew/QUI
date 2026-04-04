@@ -293,8 +293,8 @@ function Datapanels:UpdatePanel(panelID)
     panel.borderTop:SetShown(showBorder)
     panel.borderBottom:SetShown(showBorder)
 
-    -- Update position if changed
-    if panel.config.position then
+    -- Update position if changed (skip during layout mode — mover owns position)
+    if panel.config.position and not (_G.QUI_IsLayoutModeActive and _G.QUI_IsLayoutModeActive()) then
         panel:ClearAllPoints()
         panel:SetPoint(panel.config.position[1], UIParent, panel.config.position[2], panel.config.position[3], panel.config.position[4])
     end
@@ -474,20 +474,30 @@ local function RegisterDatapanelProvider(panelID, elementKey)
             end
         end
 
+        -- Lightweight preview: resize the panel frame (child overlay auto-follows)
+        local function PreviewSize()
+            local panel = Datapanels.activePanels[panelID]
+            if panel then
+                panel:SetSize(panelDB.width or 300, panelDB.height or 22)
+            end
+        end
+        local DEFER = { deferOnDrag = true }
+        local DEFER_SIZE = { deferOnDrag = true, onDragPreview = PreviewSize }
+
         -- Panel Settings
         U.CreateCollapsible(content, "Panel Settings", 7 * FORM_ROW + 8, function(body)
             local sy = -4
-            sy = P(GUI:CreateFormSlider(body, "Width", 100, 800, 1, "width", panelDB, Refresh), body, sy)
-            sy = P(GUI:CreateFormSlider(body, "Height", 16, 60, 1, "height", panelDB, Refresh), body, sy)
-            local numSlotsSlider = GUI:CreateFormSlider(body, "Number of Slots", 1, 6, 1, "numSlots", panelDB, Refresh)
+            sy = P(GUI:CreateFormSlider(body, "Width", 100, 800, 1, "width", panelDB, Refresh, DEFER_SIZE), body, sy)
+            sy = P(GUI:CreateFormSlider(body, "Height", 16, 60, 1, "height", panelDB, Refresh, DEFER_SIZE), body, sy)
+            local numSlotsSlider = GUI:CreateFormSlider(body, "Number of Slots", 1, 6, 1, "numSlots", panelDB, Refresh, DEFER)
             if GUI.SetWidgetProviderSyncOptions then
                 GUI:SetWidgetProviderSyncOptions(numSlotsSlider, { auto = true, structural = true })
             end
             sy = P(numSlotsSlider, body, sy)
-            sy = P(GUI:CreateFormSlider(body, "Background Opacity", 0, 100, 5, "bgOpacity", panelDB, Refresh), body, sy)
-            sy = P(GUI:CreateFormSlider(body, "Border Size (0=hidden)", 0, 8, 1, "borderSize", panelDB, Refresh), body, sy)
+            sy = P(GUI:CreateFormSlider(body, "Background Opacity", 0, 100, 5, "bgOpacity", panelDB, Refresh, DEFER), body, sy)
+            sy = P(GUI:CreateFormSlider(body, "Border Size (0=hidden)", 0, 8, 1, "borderSize", panelDB, Refresh, DEFER), body, sy)
             sy = P(GUI:CreateFormColorPicker(body, "Border Color", "borderColor", panelDB, Refresh), body, sy)
-            P(GUI:CreateFormSlider(body, "Font Size", 8, 18, 1, "fontSize", panelDB, Refresh), body, sy)
+            P(GUI:CreateFormSlider(body, "Font Size", 8, 18, 1, "fontSize", panelDB, Refresh, DEFER), body, sy)
         end, sections, relayout)
 
         -- Slot Configuration
@@ -611,7 +621,7 @@ local function RegisterDatapanelProvider(panelID, elementKey)
         end)
         table.insert(sections, deleteSection)
 
-        U.BuildPositionCollapsible(content, elementKey, nil, sections, relayout)
+        U.BuildPositionCollapsible(content, elementKey, { autoWidth = true }, sections, relayout)
         relayout() return content:GetHeight()
     end })
 end
@@ -637,7 +647,7 @@ do
                     label = panelConfig.name or ("Datapanel: " .. panelID),
                     group = "Display",
                     order = 10 + i,
-                    isOwned = false,  -- proxy mover (LOW strata frames need proxy)
+                    isOwned = true,
                     getFrame = function()
                         return Datapanels.activePanels[panelID]
                     end,
