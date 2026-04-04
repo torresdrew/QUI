@@ -2292,10 +2292,17 @@ function ownedEngine:Initialize()
 
     eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
         if event == "PLAYER_REGEN_ENABLED" then
-            -- Combat end: full rebuild to pick up any spell data changes
-            -- that were deferred while LayoutContainer was combat-gated.
+            -- Combat end: restore dormant spells that were incorrectly
+            -- shelved during zone transitions (e.g. SPELLS_CHANGED fired
+            -- while APIs were stale, then combat started before the next
+            -- dormant check could run). Full rebuild follows to pick up
+            -- any spell data changes deferred while combat-gated.
             C_Timer.After(0.1, function()
                 if not InCombatLockdown() then
+                    if ns.CDMSpellData then
+                        ns.CDMSpellData:CheckAllDormantSpells()
+                        ns.CDMSpellData:ReconcileAllContainers()
+                    end
                     RefreshAll()
                 end
             end)
@@ -2371,7 +2378,19 @@ function ownedEngine:Initialize()
                 end
             end
         elseif event == "CHALLENGE_MODE_START" then
-            C_Timer.After(0.5, RefreshAll)
+            -- Restore dormant spells before refreshing — SPELLS_CHANGED
+            -- may have incorrectly shelved spells during the zone
+            -- transition when WoW APIs were temporarily stale.
+            -- If already in combat, PLAYER_REGEN_ENABLED handles recovery.
+            C_Timer.After(0.5, function()
+                if not InCombatLockdown() then
+                    if ns.CDMSpellData then
+                        ns.CDMSpellData:CheckAllDormantSpells()
+                        ns.CDMSpellData:ReconcileAllContainers()
+                    end
+                    RefreshAll()
+                end
+            end)
         elseif event == "ZONE_CHANGED_NEW_AREA" then
             C_Timer.After(0.3, RefreshAll)
         elseif event == "CINEMATIC_STOP" or event == "STOP_MOVIE" then
