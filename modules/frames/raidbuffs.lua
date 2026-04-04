@@ -19,6 +19,7 @@ local UnitExists = UnitExists
 local C_Timer = C_Timer
 local InCombatLockdown = InCombatLockdown
 local IsPlayerSpell = IsPlayerSpell
+local IsCurrentSpell = IsCurrentSpell
 local GetWeaponEnchantInfo = GetWeaponEnchantInfo
 local GetInventoryItemID = GetInventoryItemID
 local table_insert = table.insert
@@ -115,6 +116,7 @@ local RAID_BUFFS = {
         stat = "Damage Reduction",
         providerClass = "PALADIN",
         range = 40,
+        isToggleAura = true,  -- Toggle aura: caster doesn't get a HELPFUL buff when solo
     },
 }
 
@@ -432,6 +434,19 @@ local function PlayerHasBuff(spellId, spellName, buffIDs)
     return UnitHasBuff("player", spellId, spellName, buffIDs)
 end
 
+-- Check if player has a buff, with toggle aura fallback (for raid buff entries)
+-- Toggle auras (e.g. Devotion Aura) don't place a HELPFUL buff on the caster when solo
+local function PlayerHasRaidBuff(buff)
+    if PlayerHasBuff(buff.spellId, buff.name, buff.buffIDs) then
+        return true
+    end
+    if buff.isToggleAura and buff.castSpellId and IsCurrentSpell then
+        local ok, current = pcall(IsCurrentSpell, buff.castSpellId)
+        if ok and current then return true end
+    end
+    return false
+end
+
 -- Check if any available group member is missing a specific buff
 local function AnyGroupMemberMissingBuff(spellId, spellName, rangeYards, buffIDs)
     -- Check player first
@@ -633,15 +648,17 @@ local function GetRelevantBuffs()
 
         for _, buff in ipairs(RAID_BUFFS) do
             if settings.providerMode then
-                -- Provider mode: only show buffs the player's class can provide
+                -- Provider mode: only show buffs the player's class can provide that are missing
                 if buff.providerClass == playerClass then
-                    buff._hasBuff = PlayerHasBuff(buff.spellId, buff.name, buff.buffIDs)
-                    table_insert(result, buff)
+                    buff._hasBuff = PlayerHasRaidBuff(buff)
+                    if not buff._hasBuff then
+                        table_insert(result, buff)
+                    end
                 end
             else
                 -- Default: show all buffs where provider class is in the group
                 if groupClasses[buff.providerClass] then
-                    buff._hasBuff = PlayerHasBuff(buff.spellId, buff.name, buff.buffIDs)
+                    buff._hasBuff = PlayerHasRaidBuff(buff)
                     table_insert(result, buff)
                 end
             end
