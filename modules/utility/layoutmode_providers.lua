@@ -648,7 +648,7 @@ local function RegisterAllProviders()
             local s1dd = GUI:CreateFormDropdown(body, "Slot 1 (Left)", dtOptions, nil, nil, function(val)
                 dt.slots[1] = val; Refresh()
             end)
-            if s1dd.SetValue then s1dd:SetValue(dt.slots[1] or "") end
+            if s1dd.SetValue then s1dd:SetValue(dt.slots[1] or "", true) end
             sy = P(s1dd, body, sy)
             sy = P(GUI:CreateFormCheckbox(body, "Slot 1 Short Label", "shortLabel", dt.slot1, Refresh), body, sy)
             sy = P(GUI:CreateFormCheckbox(body, "Slot 1 No Label", "noLabel", dt.slot1, Refresh), body, sy)
@@ -659,7 +659,7 @@ local function RegisterAllProviders()
             local s2dd = GUI:CreateFormDropdown(body, "Slot 2 (Center)", dtOptions, nil, nil, function(val)
                 dt.slots[2] = val; Refresh()
             end)
-            if s2dd.SetValue then s2dd:SetValue(dt.slots[2] or "") end
+            if s2dd.SetValue then s2dd:SetValue(dt.slots[2] or "", true) end
             sy = P(s2dd, body, sy)
             sy = P(GUI:CreateFormCheckbox(body, "Slot 2 Short Label", "shortLabel", dt.slot2, Refresh), body, sy)
             sy = P(GUI:CreateFormCheckbox(body, "Slot 2 No Label", "noLabel", dt.slot2, Refresh), body, sy)
@@ -670,7 +670,7 @@ local function RegisterAllProviders()
             local s3dd = GUI:CreateFormDropdown(body, "Slot 3 (Right)", dtOptions, nil, nil, function(val)
                 dt.slots[3] = val; Refresh()
             end)
-            if s3dd.SetValue then s3dd:SetValue(dt.slots[3] or "") end
+            if s3dd.SetValue then s3dd:SetValue(dt.slots[3] or "", true) end
             sy = P(s3dd, body, sy)
             sy = P(GUI:CreateFormCheckbox(body, "Slot 3 Short Label", "shortLabel", dt.slot3, Refresh), body, sy)
             sy = P(GUI:CreateFormCheckbox(body, "Slot 3 No Label", "noLabel", dt.slot3, Refresh), body, sy)

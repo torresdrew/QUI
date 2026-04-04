@@ -508,7 +508,7 @@ local function RegisterDatapanelProvider(panelID, elementKey)
                 local slotDD = GUI:CreateFormDropdown(body, "Slot " .. s, dtOptions, nil, nil, function(val)
                     panelDB.slots[s] = val; Refresh()
                 end)
-                if slotDD.SetValue then slotDD:SetValue(panelDB.slots[s] or "") end
+                if slotDD.SetValue then slotDD:SetValue(panelDB.slots[s] or "", true) end
                 sy = P(slotDD, body, sy)
             end
         end, sections, relayout)

@@ -48,6 +48,28 @@ local function GetProvider(providerKey)
     return settingsPanel._providers[providerKey]
 end
 
+local function IsSurfaceVisible(frame)
+    if not frame or type(frame.IsVisible) ~= "function" then
+        return false
+    end
+
+    local okVisible, isVisible = pcall(frame.IsVisible, frame)
+    if not okVisible or not isVisible then
+        return false
+    end
+
+    local GUI = GetGUI()
+    local mainFrame = GUI and GUI.MainFrame
+    if mainFrame and mainFrame ~= frame and type(mainFrame.IsVisible) == "function" then
+        local okMainVisible, mainVisible = pcall(mainFrame.IsVisible, mainFrame)
+        if not okMainVisible or not mainVisible then
+            return false
+        end
+    end
+
+    return true
+end
+
 local function ClearHost(parent)
     if not parent then return end
 
@@ -191,7 +213,7 @@ local function BuildViaProvider(providerKey, parent, width, options)
     }
 
     SettingsBuilders.RegisterProviderSurface(providerKey, surfaceId, RefreshSurface, function()
-        return parent:IsShown()
+        return IsSurfaceVisible(parent)
     end)
 
     if not parent._quiProviderSurfaceHooks then
@@ -206,7 +228,7 @@ local function BuildViaProvider(providerKey, parent, width, options)
             local info = self._quiProviderSurfaceInfo
             if not info then return end
             SettingsBuilders.RegisterProviderSurface(info.providerKey, info.surfaceId, info.refreshFn, function()
-                return self:IsShown()
+                return IsSurfaceVisible(self)
             end)
         end)
     end
