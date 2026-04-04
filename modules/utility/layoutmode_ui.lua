@@ -891,9 +891,11 @@ end
 ---------------------------------------------------------------------------
 
 CreateToolbar = function(ui)
+    local LCG = LibStub("LibCustomGlow-1.0", true)
+
     local PANEL_WIDTH = 140
-    local TAB_WIDTH = 24
-    local TAB_HEIGHT = 80
+    local TAB_WIDTH = 26
+    local TAB_HEIGHT = 160
     local BTN_HEIGHT = 28
     local BTN_SPACING = 4
     local PANEL_PAD = 8
@@ -916,10 +918,38 @@ CreateToolbar = function(ui)
     tabBorder:SetWidth(1)
     tabBorder:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.6)
 
+    -- Accent glow stripe (bright inner edge)
+    local tabGlow = tab:CreateTexture(nil, "ARTWORK")
+    tabGlow:SetPoint("TOPLEFT", tabBorder, "TOPLEFT", 0, 0)
+    tabGlow:SetPoint("BOTTOMLEFT", tabBorder, "BOTTOMLEFT", 0, 0)
+    tabGlow:SetWidth(6)
+    tabGlow:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.25)
+
     local tabChevron = tab:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    tabChevron:SetPoint("CENTER", 0, 0)
+    tabChevron:SetPoint("BOTTOM", tab, "BOTTOM", 0, 8)
     tabChevron:SetText("\194\171") -- «
     tabChevron:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B, 1)
+
+    -- "Edit Mode" label on the tab (rotated look via vertical stacking)
+    local tabLabel = tab:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    tabLabel:SetPoint("TOP", tab, "TOP", 0, -8)
+    tabLabel:SetText("E\nD\nI\nT\n \nM\nO\nD\nE")
+    tabLabel:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B, 0.7)
+    tabLabel:SetJustifyH("CENTER")
+    tabLabel:SetSpacing(0)
+
+    -- Pulse animation on the glow stripe + border
+    local pulseState = { elapsed = 0, min = 0.15, max = 0.45 }
+    local pulseFrame = CreateFrame("Frame")
+    pulseFrame:Hide()
+    pulseFrame:SetScript("OnUpdate", function(self, dt)
+        pulseState.elapsed = pulseState.elapsed + dt
+        -- 2-second cycle
+        local t = (math.sin(pulseState.elapsed * math.pi) + 1) / 2
+        local alpha = pulseState.min + (pulseState.max - pulseState.min) * t
+        tabGlow:SetAlpha(alpha)
+        tabBorder:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.4 + 0.5 * t)
+    end)
 
     -- Slide-out panel (hidden by default, appears to left of tab)
     local panel = CreateFrame("Frame", "QUI_LayoutMode_Toolbar", UIParent)
@@ -1095,6 +1125,7 @@ CreateToolbar = function(ui)
         tab:ClearAllPoints()
         panel:ClearAllPoints()
         tabBorder:ClearAllPoints()
+        tabGlow:ClearAllPoints()
         tabChevron:ClearAllPoints()
 
         if docked == "LEFT" then
@@ -1102,13 +1133,17 @@ CreateToolbar = function(ui)
             panel:SetPoint("TOPLEFT", tab, "TOPRIGHT", 0, 0)
             tabBorder:SetPoint("TOPRIGHT", tab, "TOPRIGHT", 0, 0)
             tabBorder:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", 0, 0)
+            tabGlow:SetPoint("TOPRIGHT", tabBorder, "TOPLEFT", 0, 0)
+            tabGlow:SetPoint("BOTTOMRIGHT", tabBorder, "BOTTOMLEFT", 0, 0)
         else
             tab:SetPoint("RIGHT", UIParent, "RIGHT", 0, offsetY)
             panel:SetPoint("TOPRIGHT", tab, "TOPLEFT", 0, 0)
             tabBorder:SetPoint("TOPLEFT", tab, "TOPLEFT", 0, 0)
             tabBorder:SetPoint("BOTTOMLEFT", tab, "BOTTOMLEFT", 0, 0)
+            tabGlow:SetPoint("TOPLEFT", tabBorder, "TOPRIGHT", 0, 0)
+            tabGlow:SetPoint("BOTTOMLEFT", tabBorder, "BOTTOMRIGHT", 0, 0)
         end
-        tabChevron:SetPoint("CENTER", 0, 0)
+        tabChevron:SetPoint("BOTTOM", tab, "BOTTOM", 0, 8)
 
         -- Show border on the screen-facing side of panel
         if docked == "LEFT" then
@@ -1313,10 +1348,12 @@ CreateToolbar = function(ui)
         CancelCollapseTimer()
         Expand()
         tabBg:SetColorTexture(0.12, 0.12, 0.15, 0.95)
+        tabLabel:SetAlpha(1)
     end)
     tab:SetScript("OnLeave", function()
         clickCollapsed = false  -- reset after mouse leaves
         tabBg:SetColorTexture(0.08, 0.08, 0.10, 0.85)
+        tabLabel:SetAlpha(0.7)
         if not isDragging then
             StartCollapseTimer()
         end
@@ -1333,6 +1370,20 @@ CreateToolbar = function(ui)
     -- Expose for drawer hover coordination
     ui._cancelCollapseTimer = CancelCollapseTimer
     ui._startCollapseTimer = StartCollapseTimer
+
+    -- Start/stop glow and pulse when tab is shown/hidden
+    tab:SetScript("OnShow", function()
+        pulseFrame:Show()
+        if LCG then
+            LCG.PixelGlow_Start(tab, {ACCENT_R, ACCENT_G, ACCENT_B, 0.7}, 12, 0.4, nil, 2, 0, 0, false, "_QUILayoutTab")
+        end
+    end)
+    tab:SetScript("OnHide", function()
+        pulseFrame:Hide()
+        if LCG then
+            LCG.PixelGlow_Stop(tab, "_QUILayoutTab")
+        end
+    end)
 
     -- Store references (toolbar = tab for show/hide, panel for anchoring)
     ui._toolbar = tab

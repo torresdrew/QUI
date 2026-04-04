@@ -1984,6 +1984,9 @@ do
         -- Both party and raid share db.enabled, so toggling one must sync the other
         local function GroupFrameSetEnabled(val, siblingKey)
             local db = GetGFDB()
+            -- Skip if already in the requested state (avoids spurious reload
+            -- prompts when layout mode re-enforces disabled state on close)
+            if db and (db.enabled ~= false) == (val ~= false) then return end
             if db then db.enabled = val end
             -- Sync sibling handle visual
             C_Timer.After(0, function()
