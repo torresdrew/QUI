@@ -1026,6 +1026,12 @@ local function InstallAnchorGuard(frame, key)
         _setPointGuardedFrames[frame] = true
         hooksecurefunc(frame, "SetPoint", function()
             if _editModeReapplyGuard then return end
+            -- During layout mode, frames reparented to mover handles are
+            -- repositioned by the handle system (TOPLEFT for boss frames).
+            -- Without this guard, every SetPoint triggers a deferred
+            -- ApplyFrameAnchor that overrides the handle anchoring, creating
+            -- a feedback loop on every frame tick during drag.
+            if _G.QUI_IsLayoutModeActive and _G.QUI_IsLayoutModeActive() then return end
             C_Timer.After(0, function()
                 if InCombatLockdown() then
                     pendingAnchoredFrameUpdateAfterCombat = true
@@ -2220,6 +2226,14 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
 
     -- Boss frames: single setting applied to all with stacking Y offset
     if key == "bossFrames" and type(resolved) == "table" and not resolved.GetObjectType then
+        -- During layout mode, boss frames are reparented to the mover handle
+        -- and anchored TOPLEFT. Skip repositioning here — the handle system
+        -- manages their position. Without this guard, ApplyAllFrameAnchors
+        -- would re-anchor boss1 using ptSelf (CENTER/BOTTOM), overriding the
+        -- TOPLEFT anchoring that SyncHandle set.
+        if _G.QUI_IsLayoutModeActive and _G.QUI_IsLayoutModeActive() then
+            return
+        end
         for i, frame in ipairs(resolved) do
             local stackOffsetY = offsetY - ((i - 1) * 50)
             if useSizeStable then

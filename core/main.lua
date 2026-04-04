@@ -936,7 +936,9 @@ function QUICore:OnProfileChanged(event, db, profileKey)
         if ns.Registry then
             ns.Registry:RefreshAll("skinning")
         end
-        SafeCall(_G.QUI_RefreshStatusTrackingBarSkin)
+        if _G.QUI_RefreshStatusTrackingBarSkin then
+            _G.QUI_RefreshStatusTrackingBarSkin()
+        end
     end)
 
     -- Safety re-position pass: Blizzard's Edit Mode system re-applies per-spec

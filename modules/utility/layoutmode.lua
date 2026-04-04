@@ -1538,14 +1538,22 @@ AddHandleScripts = function(handle, def)
                 if def2 then
                     local targetFrame = def2.getFrame and def2.getFrame()
                     if targetFrame then
-                        local frameOx, frameOy = postSnapOx, postSnapOy
-                        if def2.getCenterOffset then
-                            local cdx, cdy = def2.getCenterOffset(frame:GetSize())
-                            frameOx = frameOx - cdx
-                            frameOy = frameOy - cdy
-                        end
                         pcall(targetFrame.ClearAllPoints, targetFrame)
-                        pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", frameOx, frameOy)
+                        -- Boss frames: keep boss1 at TOPLEFT of handle.
+                        -- Boss1 is a child of the handle so it moves with it;
+                        -- setting CENTER/UIParent would fight the anchor point.
+                        if key == "bossFrames" then
+                            pcall(targetFrame.SetPoint, targetFrame, "TOPLEFT", frame, "TOPLEFT", 0, 0)
+                            pcall(targetFrame.SetPoint, targetFrame, "TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+                        else
+                            local frameOx, frameOy = postSnapOx, postSnapOy
+                            if def2.getCenterOffset then
+                                local cdx, cdy = def2.getCenterOffset(frame:GetSize())
+                                frameOx = frameOx - cdx
+                                frameOy = frameOy - cdy
+                            end
+                            pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", frameOx, frameOy)
+                        end
                     end
                 end
             end

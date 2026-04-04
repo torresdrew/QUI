@@ -636,7 +636,10 @@ HookTooltipOnShow = function(tooltip)
         -- propagate back, while still firing before the next rendered frame
         -- (no 1-frame NineSlice flash).
         hooksecurefunc(tooltip, "Show", function(self)
-            if not IsEnabled() then return end
+            if not IsEnabled() then
+                FallbackToNineSlice(self)
+                return
+            end
             HideNineSlice(self)
             local sf = styleFrames[self]
             if sf then pcall(sf.Show, sf) end
@@ -647,7 +650,10 @@ HookTooltipOnShow = function(tooltip)
     end
 
     hooksecurefunc(tooltip, "Show", function(self)
-        if not IsEnabled() then return end
+        if not IsEnabled() then
+            FallbackToNineSlice(self)
+            return
+        end
 
         -- Synchronous: hide NineSlice + apply overlay (no 1-frame flash)
         if InCombatLockdown() then
@@ -948,6 +954,13 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             pendingGameTooltipRestyle = false
 
             if not GameTooltip:IsShown() then
+                fontsApplied = false
+                return
+            end
+
+            -- If skinning was disabled mid-show, restore NineSlice.
+            if not IsEnabled() then
+                FallbackToNineSlice(GameTooltip)
                 fontsApplied = false
                 return
             end
