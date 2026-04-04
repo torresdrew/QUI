@@ -1710,6 +1710,7 @@ local function RestoreDungeonEye()
     if not btn then return end
 
     -- Restore original UpdatePosition so Blizzard can manage the button again
+    local hadOverride = dungeonEyeOriginalUpdatePosition ~= nil
     if dungeonEyeOriginalUpdatePosition then
         btn.UpdatePosition = dungeonEyeOriginalUpdatePosition
         dungeonEyeOriginalUpdatePosition = nil
@@ -1721,7 +1722,10 @@ local function RestoreDungeonEye()
     end
 
     -- Let Blizzard re-anchor via its own method now that it's restored
-    if btn.UpdatePosition then
+    -- Only call UpdatePosition if we previously suppressed it; calling it
+    -- during initial load (before Blizzard fully initialises the button)
+    -- causes SetPoint errors.
+    if hadOverride and btn.UpdatePosition then
         btn:UpdatePosition()
     elseif dungeonEyeOriginalPoint then
         btn:ClearAllPoints()
