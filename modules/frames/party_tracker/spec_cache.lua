@@ -6,11 +6,13 @@
 ]]
 
 local ADDON_NAME, ns = ...
+local Helpers = ns.Helpers
 
 local SpecCache = {}
 ns.PartyTracker_SpecCache = SpecCache
 
 local UnitGUID = UnitGUID
+local IsSecretValue = Helpers.IsSecretValue
 local UnitClass = UnitClass
 local UnitExists = UnitExists
 local UnitIsUnit = UnitIsUnit
@@ -48,7 +50,7 @@ function SpecCache.GetSpec(unit)
     end
 
     local guid = UnitGUID(unit)
-    if not guid then return nil end
+    if not guid or IsSecretValue(guid) then return nil end
     local entry = cache[guid]
     if entry and entry.specId and GetTime() < entry.expiry then
         return entry.specId
@@ -65,7 +67,7 @@ end
 function SpecCache.SetSpec(unit, specId)
     if not unit or not specId or specId == 0 then return end
     local guid = UnitGUID(unit)
-    if not guid then return end
+    if not guid or IsSecretValue(guid) then return end
     cache[guid] = {
         specId = specId,
         classToken = select(2, UnitClass(unit)),
@@ -84,7 +86,7 @@ function SpecCache.RequestInspect(unit)
     if not UnitIsConnected(unit) then return end
 
     local guid = UnitGUID(unit)
-    if not guid then return end
+    if not guid or IsSecretValue(guid) then return end
 
     -- Already cached and fresh
     local entry = cache[guid]
@@ -116,7 +118,7 @@ local function ProcessInspectQueue()
         local unit = table.remove(inspectQueue, 1)
         if UnitExists(unit) and not UnitIsUnit(unit, "player") and UnitIsConnected(unit) then
             local guid = UnitGUID(unit)
-            local entry = guid and cache[guid]
+            local entry = guid and not IsSecretValue(guid) and cache[guid]
             if not entry or not entry.specId or GetTime() >= entry.expiry then
                 local ok = pcall(NotifyInspect, unit)
                 if ok then
@@ -180,7 +182,7 @@ C_Timer.After(0, function()
             -- cached spec and re-inspect. Fires for any unit in the group.
             if arg1 and UnitExists(arg1) then
                 local guid = UnitGUID(arg1)
-                if guid then cache[guid] = nil end
+                if guid and not IsSecretValue(guid) then cache[guid] = nil end
                 SpecCache.RequestInspect(arg1)
             else
                 -- No unit arg or unknown — re-inspect all party members
