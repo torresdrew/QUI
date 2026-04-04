@@ -374,7 +374,7 @@ local function ScanAllGlows()
                     -- replaced (e.g., Judgment → Hammer of Wrath via Wake of Ashes).
                     -- The glow event fires for the override's spell ID, which differs
                     -- from both baseID and the static scan-time overrideSpellID.
-                    if not shouldGlow and C_Spell and C_Spell.GetOverrideSpell then
+                    if not shouldGlow and baseID and C_Spell and C_Spell.GetOverrideSpell then
                         local currentOverride = C_Spell.GetOverrideSpell(baseID)
                         if currentOverride and currentOverride ~= baseID
                             and currentOverride ~= overrideID then
