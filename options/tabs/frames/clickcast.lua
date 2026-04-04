@@ -1514,6 +1514,25 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
         local fixedTop = math.abs(y)
         local totalHeight = fixedTop + listHeight + 10 + addContainer:GetHeight() + 30
         content:SetHeight(totalHeight)
+
+        -- Propagate new height to the collapsible section so it resizes.
+        -- The section's bodyClip (ScrollFrame) clips content to the old
+        -- height, so we must grow it — plus update the outer scroll
+        -- content so the scroll range covers the new total.
+        local section = content._logicalSection
+        if section and section._expanded and section._bodyClip then
+            section._contentHeight = totalHeight
+            section._bodyClip:SetHeight(totalHeight)
+            local sectionH = 24 + totalHeight -- 24 = COLLAPSIBLE_HEADER_HEIGHT
+            local prevH = section:GetHeight() or 0
+            section:SetHeight(sectionH)
+            -- Grow the outer scroll content by the delta
+            local scrollContent = section:GetParent()
+            if scrollContent and scrollContent.SetHeight and prevH > 0 then
+                local outerH = scrollContent:GetHeight() or 0
+                scrollContent:SetHeight(outerH + (sectionH - prevH))
+            end
+        end
     end
 
     RefreshBindingList()

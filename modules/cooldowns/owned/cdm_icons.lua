@@ -164,6 +164,7 @@ local function GetChargeMetadataDB()
 end
 
 local function TickCacheGetCharges(spellID)
+    if not spellID then return nil end
     local cached = _tickChargeCache[spellID]
     if cached ~= nil then return cached or nil end
     local chargeInfo = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(spellID) or nil
@@ -191,6 +192,7 @@ local function TickCacheGetCharges(spellID)
 end
 
 local function TickCacheGetCooldown(spellID)
+    if not spellID then return nil end
     local cached = _tickCooldownCache[spellID]
     if cached ~= nil then return cached or nil end
     local cdInfo = C_Spell.GetSpellCooldown(spellID)
@@ -532,7 +534,13 @@ end
 local function GetIconCooldownIdentifier(icon)
     local entry = icon and icon._spellEntry
     if not entry then return nil end
-    return entry.overrideSpellID or entry.spellID or entry.id
+    -- Resolve from BASE spell at runtime so dynamic transforms are current
+    local base = entry.spellID or entry.id
+    if base and C_Spell.GetOverrideSpell then
+        local ok, ovId = pcall(C_Spell.GetOverrideSpell, base)
+        if ok and ovId then return ovId end
+    end
+    return base
 end
 
 local function RefreshIconGCDState(icon)
@@ -1765,6 +1773,15 @@ local function UpdateIconCooldown(icon)
     if not icon or not icon._spellEntry then return end
     local entry = icon._spellEntry
 
+    -- Runtime override: resolve from the BASE spell each tick so dynamic
+    -- transforms (Glacial Spike ↔ Frostbolt, Mind Blast → Void Blast)
+    -- are always current.  Shared across all paths in this function.
+    local _runtimeSid = entry.spellID or entry.overrideSpellID or entry.id
+    if _runtimeSid and C_Spell.GetOverrideSpell then
+        local ovOk, ovId = pcall(C_Spell.GetOverrideSpell, _runtimeSid)
+        if ovOk and ovId then _runtimeSid = ovId end
+    end
+
         -- Aura-driven update: delegates to shared CDMSpellData:ResolveAuraState().
         -- Icons apply result to swipe/stacks display on CooldownFrame.
         do
@@ -1775,7 +1792,7 @@ local function UpdateIconCooldown(icon)
                 cType = (vt == "buff" or vt == "trackedBar") and "aura" or "cooldown"
             end
             if cType == "aura" or cType == "auraBar" then
-                local auraSpellID = entry.overrideSpellID or entry.spellID or entry.id
+                local auraSpellID = _runtimeSid
                 if auraSpellID and ns.CDMSpellData then
                     local p = icon._auraParams or {}
                     icon._auraParams = p
@@ -1821,7 +1838,7 @@ local function UpdateIconCooldown(icon)
 
                         -- Keep texture showing the tracked aura spell
                         if icon.Icon then
-                            local texSpellID = entry.overrideSpellID or entry.spellID or entry.id
+                            local texSpellID = auraSpellID
                             if texSpellID then
                                 local texID = GetSpellTexture(texSpellID)
                                 if texID and texID ~= icon._lastTexture then
@@ -1922,7 +1939,7 @@ local function UpdateIconCooldown(icon)
             end
         else
             if entry._blizzChild and not entry.hasCharges then
-                local sid = entry.overrideSpellID or entry.spellID or entry.id
+                local sid = _runtimeSid
 
                 -- Non-charged abilities may have an aura phase (e.g.,
                 -- defensive CDs that grant a buff). Detect active aura
@@ -1967,15 +1984,8 @@ local function UpdateIconCooldown(icon)
                     end
                 end
 
-                -- Chain: GetOverrideSpell → C-side APIs.
-                -- Override ID may be secret in combat — pass directly to
-                -- C-side functions which handle secrets natively.
-                -- pcall: GetOverrideSpell can return secret values in combat.
-                local cdSid = sid
-                if C_Spell.GetOverrideSpell then
-                    local ovOk, ovId = pcall(C_Spell.GetOverrideSpell, sid)
-                    if ovOk and ovId then cdSid = ovId end
-                end
+                -- Use runtime-resolved override for cooldown queries + texture.
+                local cdSid = _runtimeSid
 
                 if not _ncAuraActive then
                     -- Cooldown state + DurationObject from the override spell
@@ -2024,7 +2034,7 @@ local function UpdateIconCooldown(icon)
                 -- normal charge-recharge display via GetBestSpellCooldown.
                 local _chargedAuraActive = false
                 if entry.hasCharges and ns.CDMSpellData then
-                    local _cBaseID = entry.overrideSpellID or entry.spellID or entry.id
+                    local _cBaseID = _runtimeSid
 
                     local p = icon._auraParams or {}
                     icon._auraParams = p
@@ -2066,25 +2076,24 @@ local function UpdateIconCooldown(icon)
 
                 if not _chargedAuraActive then
                     -- Custom entry / charged recharge: full API resolution.
-                    startTime, duration, durObj, apiIsActive = GetBestSpellCooldown(entry.overrideSpellID or entry.spellID or entry.id)
+                    startTime, duration, durObj, apiIsActive = GetBestSpellCooldown(_runtimeSid)
                 else
                     -- Aura active: keep _hasCooldownActive in sync so
                     -- desaturation clears when the recharge completes.
-                    local _, _, _, _auraApiActive = GetBestSpellCooldown(entry.overrideSpellID or entry.spellID or entry.id)
+                    local _, _, _, _auraApiActive = GetBestSpellCooldown(_runtimeSid)
                     if _auraApiActive ~= nil then
                         icon._hasCooldownActive = _auraApiActive
                     end
                 end
                 -- Refresh _isOnGCD from tick-cached API data (same query
                 -- GetBestSpellCooldown already performed via TickCacheGetCooldown).
-                local _tickCi = TickCacheGetCooldown(entry.overrideSpellID or entry.spellID or entry.id)
+                local _tickCi = TickCacheGetCooldown(_runtimeSid)
                 if _tickCi and not IsSecretValue(_tickCi.isOnGCD) then
                     icon._isOnGCD = _tickCi.isOnGCD or false
                 end
-                -- Texture from override chain — pass secret IDs to C-side.
+                -- Texture from override chain — already resolved in _runtimeSid.
                 if icon.Icon then
-                    local baseID = entry.overrideSpellID or entry.spellID or entry.id
-                    local texSid = C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(baseID) or baseID
+                    local texSid = _runtimeSid
                     local texInfo = C_Spell.GetSpellInfo(texSid)
                     if texInfo and texInfo.iconID then
                         icon._desiredTexture = texInfo.iconID
@@ -2198,7 +2207,7 @@ local function UpdateIconCooldown(icon)
     -- Populate _cachedChargeInfo unconditionally (needed for desaturation
     -- check below), independent of whether hooks are driving stack text.
     do
-        local spellID = entry.overrideSpellID or entry.spellID or entry.id
+        local spellID = _runtimeSid
         if spellID then
             local chargeInfo = TickCacheGetCharges(spellID)
             _cachedChargeOk = chargeInfo ~= nil
@@ -2309,7 +2318,7 @@ local function UpdateIconCooldown(icon)
             -- Custom spell entry: check charges/stacks via API.
             -- Values may be secret in combat — pass directly to C-side functions
             -- (TruncateWhenZero, SetText) without reading in Lua.
-            local spellID = entry.overrideSpellID or entry.spellID or entry.id
+            local spellID = _runtimeSid
             local stackVal  -- raw value (may be secret), forwarded to C-side
 
             -- Only show charge count when maxCharges > 1 (multi-charge spell).
@@ -2445,7 +2454,7 @@ local function UpdateIconCooldown(icon)
                 -- (non-secret) to confirm recharge is running.
                 if not hasRealCD and icon._hasCooldownActive then
                     if entry.hasCharges then
-                        local _dsSpellID = entry.overrideSpellID or entry.spellID or entry.id
+                        local _dsSpellID = _runtimeSid
                         local _dsCdInfo = TickCacheGetCooldown(_dsSpellID)
                         if _dsCdInfo and _dsCdInfo.isActive == true then
                             hasRealCD = true
@@ -2972,7 +2981,7 @@ function CDMIcons:UpdateAllCooldowns()
                     end
                     -- Also check charge-based cooldowns (per-tick cached)
                     if not isOnCD and entry.hasCharges then
-                        local spellID = entry.overrideSpellID or entry.spellID or entry.id
+                        local spellID = _runtimeSid
                         if spellID then
                             local ci = TickCacheGetCharges(spellID)
                             if ci then
@@ -3029,7 +3038,7 @@ function CDMIcons:UpdateAllCooldowns()
                             -- Resolve spell name for aura lookups
                             local spellName = entry.name
                             if not spellName then
-                                local sid = entry.overrideSpellID or entry.spellID or entry.id
+                                local sid = _runtimeSid
                                 if sid then
                                     local info = C_Spell.GetSpellInfo(sid)
                                     spellName = info and info.name
@@ -3379,7 +3388,7 @@ local function UpdateIconVisualState(icon, cachedDB)
 
     -- Resolve current spell ID (prefer cached override from cooldown update cycle
     -- to avoid redundant GetOverrideSpell API calls during range polling)
-    local spellID = entry.overrideSpellID or entry.spellID or entry.id
+    local spellID = entry.spellID or entry.id
     if icon._cachedOverrideID then
         spellID = icon._cachedOverrideID
     elseif C_Spell and C_Spell.GetOverrideSpell then
