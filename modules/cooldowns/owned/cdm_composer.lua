@@ -1042,6 +1042,12 @@ local function ShowOverridePanel(parentRow, containerKey, entry, entryIndex)
     local durCheck = GUI:CreateFormCheckbox(overridePanel, "Hide Duration Text", "hideDurationText", proxyDB, OnOverrideChange)
     PlaceWidget(durCheck)
 
+    -- Desaturate Ignore Aura — only for cooldown containers (essential/utility)
+    if cType == "cooldown" then
+        local desatIgnoreAura = GUI:CreateFormCheckbox(overridePanel, "Desaturate Ignore Aura", "desaturateIgnoreAura", proxyDB, OnOverrideChange)
+        PlaceWidget(desatIgnoreAura)
+    end
+
     -- Size override (simple editbox, 0 = default, 1-80 = px)
     local sizeRow = CreateFrame("Frame", nil, overridePanel)
     sizeRow:SetHeight(FORM_ROW)

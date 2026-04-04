@@ -1727,8 +1727,14 @@ local function ConfigureIcon(icon, rowConfig)
 
         -- desaturate: cache for UpdateIconCooldown to use per-icon
         icon._spellOverrideDesaturate = spellOvr.desaturate
+
+        -- desaturateIgnoreAura: when true, aura-active state does not suppress
+        -- cooldown desaturation — the icon desaturates based on charge/CD state
+        -- even while the spell's debuff/buff is ticking on the target.
+        icon._desaturateIgnoreAura = spellOvr.desaturateIgnoreAura or nil
     else
         icon._spellOverrideDesaturate = nil
+        icon._desaturateIgnoreAura = nil
     end
 
     SyncCooldownBling(icon)
@@ -2378,8 +2384,12 @@ local function UpdateIconCooldown(icon)
     if icon.Icon and icon.Icon.SetDesaturated then
         local viewerType = entry.viewerType
 
-        -- Skip buff viewer icons and aura-active icons (they show buff timers)
-        if viewerType ~= "buff" and not icon._auraActive and not icon._rangeTinted and not icon._usabilityTinted then
+        -- Skip buff viewer icons and aura-active icons (they show buff timers).
+        -- _desaturateIgnoreAura: per-spell override lets charged abilities that
+        -- apply auras still desaturate based on charge/CD state while the aura
+        -- is active (e.g. a charged debuff spell should grey out when fully depleted).
+        local auraBlocks = icon._auraActive and not icon._desaturateIgnoreAura
+        if viewerType ~= "buff" and not auraBlocks and not icon._rangeTinted and not icon._usabilityTinted then
             -- Per-spell desaturate override takes precedence over tracker-wide setting
             local desatOverride = icon._spellOverrideDesaturate
             local settings = _hoistedNcdm and _hoistedNcdm[viewerType]
@@ -2565,6 +2575,7 @@ function CDMIcons:ReleaseIcon(icon)
     icon._usabilityTinted = nil
     icon._cdDesaturated = nil
     icon._spellOverrideDesaturate = nil
+    icon._desaturateIgnoreAura = nil
     icon._lastStart = nil
     icon._lastDuration = nil
     icon._isOnGCD = nil
