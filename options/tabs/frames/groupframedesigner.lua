@@ -24,8 +24,33 @@ local function BuildGeneralTab(tabContent)
     local PAD = Shared.PADDING
     local y = -15
     local C = GUI.Colors
+    local profile = QUI and QUI.db and QUI.db.profile
+    local gfdb = profile and profile.quiGroupFrames
 
     GUI:SetSearchContext({tabIndex = 6, tabName = "Group Frames", subTabIndex = 1, subTabName = "General"})
+
+    if not gfdb then
+        local info = GUI:CreateLabel(tabContent, "Group frame settings not available - database not loaded", 12, C.textMuted)
+        info:SetPoint("TOPLEFT", PAD, y)
+        tabContent:SetHeight(100)
+        return
+    end
+
+    local enableCheck = GUI:CreateFormCheckbox(tabContent, "Enable QUI Group Frames (Req. Reload)", "enabled", gfdb, function()
+        if _G.QUI_RefreshGroupFrames then
+            _G.QUI_RefreshGroupFrames()
+        end
+        GUI:ShowConfirmation({
+            title = "Reload UI?",
+            message = "Changing the QUI Group Frames enabled state requires a UI reload to take full effect.",
+            acceptText = "Reload",
+            cancelText = "Later",
+            onAccept = function() QUI:SafeReload() end,
+        })
+    end)
+    enableCheck:SetPoint("TOPLEFT", PAD, y)
+    enableCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+    y = y - 38
 
     local title = GUI:CreateSectionHeader(tabContent, "Group Frames Overview")
     title:SetPoint("TOPLEFT", PAD, y)
@@ -69,7 +94,7 @@ local function BuildGeneralTab(tabContent)
     end)
     editModeBtn:SetPoint("TOPLEFT", PAD, y)
 
-    tabContent:SetHeight(180)
+    tabContent:SetHeight(220)
 end
 
 local function CreateGroupFramesPage(parent)
