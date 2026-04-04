@@ -32,8 +32,6 @@ local UIKit = ns.UIKit
 local spellCache = {}  -- { { spellID, name, icon, tab }, ... }
 local spellCacheBuilt = false
 
-local CLICKCAST_DEBUG = true  -- TEMP: remove after debugging override spells
-
 local function RebuildSpellCache()
     wipe(spellCache)
     spellCacheBuilt = false
@@ -60,24 +58,6 @@ local function RebuildSpellCache()
                             local baseCheck = C_Spell.GetBaseSpell(info.spellID)
                             if baseCheck and baseCheck ~= info.spellID then
                                 isKnown = IsPlayerSpell(baseCheck)
-                            end
-                        end
-
-                        -- DEBUG: log override spell info for all non-passive active-spec spells
-                        if CLICKCAST_DEBUG then
-                            local dbgName = C_Spell.GetSpellName(info.spellID)
-                            local dbgOverride = C_Spell.GetOverrideSpell and C_Spell.GetOverrideSpell(info.spellID)
-                            local dbgBase = C_Spell.GetBaseSpell and C_Spell.GetBaseSpell(info.spellID)
-                            local dbgOverrideName = dbgOverride and dbgOverride ~= info.spellID and C_Spell.GetSpellName(dbgOverride)
-                            local dbgBaseName = dbgBase and dbgBase ~= info.spellID and C_Spell.GetSpellName(dbgBase)
-                            if dbgOverrideName or dbgBaseName or not isKnown then
-                                print(("[QUI CC Debug] spellID=%d name=%s | override=%s(%s) base=%s(%s) | isKnown=%s isPassive=%s"):format(
-                                    info.spellID,
-                                    tostring(dbgName),
-                                    tostring(dbgOverride), tostring(dbgOverrideName),
-                                    tostring(dbgBase), tostring(dbgBaseName),
-                                    tostring(isKnown), tostring(isPassive)
-                                ))
                             end
                         end
 
