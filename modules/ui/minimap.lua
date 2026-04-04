@@ -1236,10 +1236,18 @@ local function UpdateButtonVisibility()
     if MinimapCluster and MinimapCluster.IndicatorFrame and MinimapCluster.IndicatorFrame.MailFrame then
         local mailFrame = MinimapCluster.IndicatorFrame.MailFrame
 
-        -- NOTE: Removed direct `mailFrame.Layout = function() end` write which taints
-        -- the Blizzard frame. hiddenButtonParent already has Layout defined on it,
-        -- and when mailFrame is reparented there, Blizzard's Layout calls on the
-        -- child frame itself should be safe since MailFrame typically has its own Layout.
+        -- Blizzard's UPDATE_PENDING_MAIL handler calls self:GetParent():Layout().
+        -- External addons may reparent this frame to a dummy that lacks Layout.
+        -- Hook SetParent to ensure any new parent always has a no-op Layout.
+        if not mailFrame._quiSetParentHooked then
+            hooksecurefunc(mailFrame, "SetParent", function(self)
+                local parent = self:GetParent()
+                if parent and not parent.Layout then
+                    parent.Layout = function() end
+                end
+            end)
+            mailFrame._quiSetParentHooked = true
+        end
 
         if settings.showMail then
             mailFrame:SetParent(Minimap)
