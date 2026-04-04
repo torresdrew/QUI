@@ -302,6 +302,17 @@ local function ResolveSpellName(binding)
     return binding.spell
 end
 
+-- Return the stable saved-loadout config ID for the current spec.
+-- GetActiveConfigID() returns an ephemeral staging copy that changes each
+-- session; GetLastSelectedSavedConfigID() returns the persistent saved ID.
+local function GetStableLoadoutID()
+    local specID = GetSpecializationInfo(GetSpecialization() or 1)
+    if not specID or not C_ClassTalents then return nil, specID end
+    local savedID = C_ClassTalents.GetLastSelectedSavedConfigID and C_ClassTalents.GetLastSelectedSavedConfigID(specID)
+    if savedID then return savedID, specID end
+    return C_ClassTalents.GetActiveConfigID() or 0, specID
+end
+
 -- Look up the correct binding table for the current spec/loadout settings.
 local function GetActiveBindingTable()
     local db = GetDB()
@@ -312,7 +323,7 @@ local function GetActiveBindingTable()
         local specID = GetSpecializationInfo(GetSpecialization() or 1)
         if specID then
             if cc.perLoadout then
-                local configID = C_ClassTalents and C_ClassTalents.GetActiveConfigID() or 0
+                local configID = GetStableLoadoutID()
                 if configID and cc.loadoutBindings and cc.loadoutBindings[specID] then
                     return cc.loadoutBindings[specID][configID]
                 end
@@ -700,7 +711,7 @@ function QUI_GFCC:GetEditableBindings()
         local specID = GetSpecializationInfo(GetSpecialization() or 1)
         if specID then
             if cc.perLoadout then
-                local configID = C_ClassTalents and C_ClassTalents.GetActiveConfigID() or 0
+                local configID = GetStableLoadoutID()
                 if configID then
                     if not cc.loadoutBindings then cc.loadoutBindings = {} end
                     if not cc.loadoutBindings[specID] then cc.loadoutBindings[specID] = {} end

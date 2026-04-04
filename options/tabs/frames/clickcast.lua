@@ -651,10 +651,29 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
                     local labelText = "Editing bindings for: " .. specName
                     if cc.perLoadout and C_ClassTalents then
                         local configID = C_ClassTalents.GetActiveConfigID()
-                        if configID and C_Traits and C_Traits.GetConfigInfo then
-                            local configInfo = C_Traits.GetConfigInfo(configID)
-                            if configInfo and configInfo.name then
-                                labelText = labelText .. " \226\128\148 " .. configInfo.name
+                        if configID then
+                            local specID = GetSpecializationInfo(specIndex)
+                            -- The active configID is an ephemeral staging copy;
+                            -- match it to the saved loadout via GetLastSelectedSavedConfigID
+                            local savedID = specID and C_ClassTalents.GetLastSelectedSavedConfigID and C_ClassTalents.GetLastSelectedSavedConfigID(specID)
+                            local builds = specID and C_ClassTalents.GetConfigIDsBySpecID(specID)
+                            local ordinal
+                            local lookupID = savedID or configID
+                            if builds then
+                                for idx, cid in ipairs(builds) do
+                                    if cid == lookupID then
+                                        ordinal = idx
+                                        break
+                                    end
+                                end
+                            end
+                            local configInfo = C_Traits and C_Traits.GetConfigInfo and C_Traits.GetConfigInfo(lookupID)
+                            local customName = configInfo and configInfo.name
+                            -- Use custom name if it differs from the spec name, otherwise just "Loadout N"
+                            if customName and customName ~= specName then
+                                labelText = labelText .. " \226\128\148 " .. customName
+                            elseif ordinal then
+                                labelText = labelText .. " \226\128\148 Loadout " .. ordinal
                             end
                         end
                     end
@@ -1543,6 +1562,21 @@ local function BuildClickCastBindings(content, cc, refreshClickCast, startY, sta
             if RefreshBindingList then RefreshBindingList() end
         end)
     end
+
+    -- Refresh binding list when the player switches spec or talent loadout
+    local specListener = CreateFrame("Frame", nil, content)
+    specListener:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    specListener:RegisterEvent("TRAIT_CONFIG_UPDATED")
+    specListener:RegisterEvent("ACTIVE_COMBAT_CONFIG_CHANGED")
+    specListener:SetScript("OnEvent", function()
+        if content:IsShown() and RefreshBindingList then
+            C_Timer.After(0.5, function()
+                if content:IsShown() then
+                    RefreshBindingList()
+                end
+            end)
+        end
+    end)
 
     -- Export cleanup refs for OnHide handler
     if state then
