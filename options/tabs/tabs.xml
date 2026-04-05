@@ -12,6 +12,7 @@
     <Script file="chat/chat.lua"/>
     <Script file="character/character.lua"/>
     <Script file="cooldowns/cdm_effects.lua"/>
+    <Script file="utility/keybinds.lua"/>
     <Script file="cooldowns/cdm.lua"/>
     <Script file="ui/autohide.lua"/>
     <Script file="skinning/skinning.lua"/>
