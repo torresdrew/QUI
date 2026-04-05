@@ -1371,7 +1371,7 @@ local function CategoryHasData(category, profileData)
     return false
 end
 
-local function BuildProfileImportPreview(profileData, prefix)
+local function BuildProfileImportPreview(profileData, prefix, importType)
     local function BuildCategoryPreview(category)
         local children = nil
         local hasAvailableChild = false
@@ -1421,9 +1421,70 @@ local function BuildProfileImportPreview(profileData, prefix)
     end
 
     return {
-        importType = "QUI Profile",
+        importType = importType or "QUI Profile",
         prefix = prefix or "QUI1",
         categories = categories,
+    }
+end
+
+local function BuildSelectedCategoryLabel(category)
+    if not category then
+        return nil
+    end
+
+    for parentID, children in pairs(PROFILE_IMPORT_CHILDREN_BY_PARENT) do
+        for _, child in ipairs(children) do
+            if child == category then
+                local parent = PROFILE_IMPORT_CATEGORY_BY_ID[parentID]
+                if parent then
+                    return ("%s > %s"):format(parent.label, category.label)
+                end
+            end
+        end
+    end
+
+    return category.label
+end
+
+local function CollectSelectedProfileCategories(selectedCategoryIDs, profileData)
+    if type(selectedCategoryIDs) ~= "table" then
+        return false, "Select at least one category."
+    end
+
+    local selectedLookup = {}
+    local selectedLabels = {}
+    local selectedSpecs = {}
+    local selectedCustomTrackerBarIndexes = {}
+
+    for _, categoryID in ipairs(selectedCategoryIDs) do
+        local category = PROFILE_IMPORT_CATEGORY_BY_ID[categoryID]
+        if category and not selectedLookup[categoryID] then
+            selectedLookup[categoryID] = true
+            selectedLabels[#selectedLabels + 1] = BuildSelectedCategoryLabel(category)
+            selectedSpecs[#selectedSpecs + 1] = category
+        else
+            local barIndex = ParseCustomTrackerBarSelectionID(categoryID)
+            if barIndex and not selectedLookup[categoryID] then
+                selectedLookup[categoryID] = true
+                selectedCustomTrackerBarIndexes[#selectedCustomTrackerBarIndexes + 1] = barIndex
+
+                local profileBars = profileData and profileData.customTrackers and profileData.customTrackers.bars
+                local selectedBar = type(profileBars) == "table" and profileBars[barIndex] or nil
+                local barName = type(selectedBar) == "table" and selectedBar.name or ("Bar " .. barIndex)
+                selectedLabels[#selectedLabels + 1] = ("Custom CDM Bars > %s"):format(tostring(barName))
+            end
+        end
+    end
+
+    if #selectedLabels == 0 then
+        return false, "Select at least one category."
+    end
+
+    return true, {
+        lookup = selectedLookup,
+        labels = selectedLabels,
+        specs = selectedSpecs,
+        customTrackerBarIndexes = selectedCustomTrackerBarIndexes,
     }
 end
 
@@ -1447,6 +1508,35 @@ local function ApplyProfileImportCategory(targetProfile, importedProfile, catego
             targetProfile.bigWigs.emphasized = CloneValue(importedProfile.bigWigs.emphasized)
         end
     end
+end
+
+local function ExportSelectedCustomTrackerBars(targetProfile, sourceProfile, barIndexes)
+    if type(targetProfile) ~= "table" or type(sourceProfile) ~= "table" or type(barIndexes) ~= "table" then
+        return false
+    end
+
+    local sourceBars = sourceProfile.customTrackers and sourceProfile.customTrackers.bars
+    if type(sourceBars) ~= "table" then
+        return false
+    end
+
+    if type(targetProfile.customTrackers) ~= "table" then
+        targetProfile.customTrackers = {}
+    end
+    if type(targetProfile.customTrackers.bars) ~= "table" then
+        targetProfile.customTrackers.bars = {}
+    end
+
+    local exportedAny = false
+    for _, barIndex in ipairs(barIndexes) do
+        local sourceBar = sourceBars[barIndex]
+        if type(sourceBar) == "table" then
+            table.insert(targetProfile.customTrackers.bars, CloneValue(sourceBar))
+            exportedAny = true
+        end
+    end
+
+    return exportedAny
 end
 
 local function ApplyFullProfilePayload(core, importedProfile)
@@ -1528,57 +1618,15 @@ local function RunImportFullProfile(core, importedProfile, targetProfileName)
 end
 
 local function RunImportProfileSelection(core, payloadOrErr, selectedCategoryIDs, targetProfileName)
-    if type(selectedCategoryIDs) ~= "table" then
+    local selectionOK, selectionData = CollectSelectedProfileCategories(selectedCategoryIDs, payloadOrErr)
+    if not selectionOK then
         return false, "Select at least one category to import."
     end
 
-    local selectedLookup = {}
-    local selectedLabels = {}
-    local selectedSpecs = {}
-    local selectedCustomTrackerBarIndexes = {}
-
-    local function BuildSelectedLabel(category)
-        if not category then
-            return nil
-        end
-
-        for parentID, children in pairs(PROFILE_IMPORT_CHILDREN_BY_PARENT) do
-            for _, child in ipairs(children) do
-                if child == category then
-                    local parent = PROFILE_IMPORT_CATEGORY_BY_ID[parentID]
-                    if parent then
-                        return ("%s > %s"):format(parent.label, category.label)
-                    end
-                end
-            end
-        end
-
-        return category.label
-    end
-
-    for _, categoryID in ipairs(selectedCategoryIDs) do
-        local category = PROFILE_IMPORT_CATEGORY_BY_ID[categoryID]
-        if category and not selectedLookup[categoryID] then
-            selectedLookup[categoryID] = true
-            selectedLabels[#selectedLabels + 1] = BuildSelectedLabel(category)
-            selectedSpecs[#selectedSpecs + 1] = category
-        else
-            local barIndex = ParseCustomTrackerBarSelectionID(categoryID)
-            if barIndex and not selectedLookup[categoryID] then
-                selectedLookup[categoryID] = true
-                selectedCustomTrackerBarIndexes[#selectedCustomTrackerBarIndexes + 1] = barIndex
-
-                local importedBars = payloadOrErr.customTrackers and payloadOrErr.customTrackers.bars
-                local importedBar = type(importedBars) == "table" and importedBars[barIndex] or nil
-                local barName = type(importedBar) == "table" and importedBar.name or ("Bar " .. barIndex)
-                selectedLabels[#selectedLabels + 1] = ("Custom CDM Bars > %s"):format(tostring(barName))
-            end
-        end
-    end
-
-    if #selectedLabels == 0 then
-        return false, "Select at least one category to import."
-    end
+    local selectedLookup = selectionData.lookup
+    local selectedLabels = selectionData.labels
+    local selectedSpecs = selectionData.specs
+    local selectedCustomTrackerBarIndexes = selectionData.customTrackerBarIndexes
 
     local targetOK, activeProfileName, usingExplicitTarget = PrepareImportTargetProfile(core, targetProfileName)
     if not targetOK then
@@ -1668,6 +1716,55 @@ local function RunImportProfileSelection(core, payloadOrErr, selectedCategoryIDs
     return true, ("Imported %s."):format(table.concat(selectedLabels, ", "))
 end
 
+local function SerializeProfileExportPayload(payload)
+    if type(payload) ~= "table" then
+        return nil, "Failed to serialize profile."
+    end
+    if not AceSerializer or not LibDeflate then
+        return nil, "Export requires AceSerializer-3.0 and LibDeflate."
+    end
+
+    local serialized = AceSerializer:Serialize(payload)
+    if not serialized or type(serialized) ~= "string" then
+        return nil, "Failed to serialize profile."
+    end
+
+    local compressed = LibDeflate:CompressDeflate(serialized)
+    if not compressed then
+        return nil, "Failed to compress profile."
+    end
+
+    local encoded = LibDeflate:EncodeForPrint(compressed)
+    if not encoded then
+        return nil, "Failed to encode profile."
+    end
+
+    return "QUI1:" .. encoded
+end
+
+local function RunExportProfileSelection(core, selectedCategoryIDs)
+    local profile = core and core.db and core.db.profile
+    if type(profile) ~= "table" then
+        return nil, "No profile loaded."
+    end
+
+    local selectionOK, selectionData = CollectSelectedProfileCategories(selectedCategoryIDs, profile)
+    if not selectionOK then
+        return nil, "Select at least one category to export."
+    end
+
+    local exportPayload = {}
+    for _, category in ipairs(selectionData.specs) do
+        ApplyProfileImportCategory(exportPayload, profile, category)
+    end
+
+    if not selectionData.lookup.customTrackers and #selectionData.customTrackerBarIndexes > 0 then
+        ExportSelectedCustomTrackerBars(exportPayload, profile, selectionData.customTrackerBarIndexes)
+    end
+
+    return SerializeProfileExportPayload(exportPayload)
+end
+
 ---=================================================================================
 --- PROFILE IMPORT/EXPORT
 ---=================================================================================
@@ -1676,30 +1773,18 @@ function QUICore:ExportProfileToString()
     if not self.db or not self.db.profile then
         return "No profile loaded."
     end
-    if not AceSerializer or not LibDeflate then
-        return "Export requires AceSerializer-3.0 and LibDeflate."
-    end
 
-    local serialized = AceSerializer:Serialize(self.db.profile)
-    if not serialized or type(serialized) ~= "string" then
-        return "Failed to serialize profile."
-    end
-
-    local compressed = LibDeflate:CompressDeflate(serialized)
-    if not compressed then
-        return "Failed to compress profile."
-    end
-
-    local encoded = LibDeflate:EncodeForPrint(compressed)
-    if not encoded then
-        return "Failed to encode profile."
-    end
-
-    return "QUI1:" .. encoded
+    local exportString, exportErr = SerializeProfileExportPayload(self.db.profile)
+    return exportString or exportErr or "Failed to export profile."
 end
 
 function QUICore:GetProfileImportCategories()
     return BuildProfileImportPreview({}, "QUI1").categories or {}
+end
+
+function QUICore:GetProfileExportCategories()
+    local profile = self and self.db and self.db.profile
+    return BuildProfileImportPreview(profile or {}, "QUI1", "Current Profile").categories or {}
 end
 
 function QUICore:BuildProfileImportPreviewFromPayload(payload, prefix)
@@ -1707,6 +1792,14 @@ function QUICore:BuildProfileImportPreviewFromPayload(payload, prefix)
         return nil
     end
     return BuildProfileImportPreview(payload, prefix or "QUI1")
+end
+
+function QUICore:BuildProfileExportPreview()
+    local profile = self and self.db and self.db.profile
+    if type(profile) ~= "table" then
+        return nil
+    end
+    return BuildProfileImportPreview(profile, "QUI1", "Current Profile")
 end
 
 function QUICore:DescribeProfileImportValidationErrors(detail)
@@ -1800,6 +1893,10 @@ function QUICore:ImportProfileSelectionFromValidatedPayload(payload, selectedCat
     end
 
     return RunImportProfileSelection(self, payload, selectedCategoryIDs, targetProfileName)
+end
+
+function QUICore:ExportProfileSelectionToString(selectedCategoryIDs)
+    return RunExportProfileSelection(self, selectedCategoryIDs)
 end
 
 ---=================================================================================

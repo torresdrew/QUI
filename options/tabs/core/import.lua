@@ -132,16 +132,116 @@ local function BuildImportExportTab(tabContent)
     exportHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - exportHeader.gap
 
-    -- Export text box
-    local exportContainer = CreateScrollableTextBox(tabContent, 100, "")
-    exportContainer:SetPoint("TOPLEFT", PAD, y)
-    exportContainer:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-    local exportEditBox = exportContainer.editBox
-    exportEditBox:SetTextColor(0.8, 0.85, 0.9, 1)
-    exportEditBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
+    local exportNote = CreateWrappedLabel(
+        tabContent,
+        "Generate a full profile string or export only selected categories. Selective exports use the same QUI1 profile format as full exports, so they can be pasted into the import analyzer below.",
+        10,
+        C.textMuted
+    )
+    exportNote:SetPoint("TOPLEFT", PAD, y)
+    exportNote:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+    y = y - (exportNote:GetStringHeight() or 28) - 12
 
-    -- Populate export string
-    local function RefreshExportString()
+    local exportState = {
+        preview = nil,
+        selected = {},
+        checkboxByID = {},
+        exportSelectedBtn = nil,
+    }
+
+    local exportEditBox
+
+    local function FocusExportText()
+        if not exportEditBox then
+            return
+        end
+        exportEditBox:SetFocus()
+        exportEditBox:HighlightText()
+    end
+
+    local function GetSelectedExportCategoryIDs()
+        if not exportState.preview or type(exportState.preview.categories) ~= "table" then
+            return {}
+        end
+
+        local selectedIDs = {}
+        local function CollectSelected(categories, parentSelected)
+            for _, category in ipairs(categories or {}) do
+                local isSelected = category.available and exportState.selected[category.id] and not parentSelected
+                if isSelected then
+                    selectedIDs[#selectedIDs + 1] = category.id
+                end
+                if type(category.children) == "table" then
+                    CollectSelected(category.children, isSelected)
+                end
+            end
+        end
+        CollectSelected(exportState.preview.categories, false)
+        return selectedIDs
+    end
+
+    local function UpdateExportActionButtons()
+        local hasPreview = exportState.preview and true or false
+        local selectedIDs = GetSelectedExportCategoryIDs()
+        SetButtonEnabled(exportState.exportSelectedBtn, hasPreview and #selectedIDs > 0)
+    end
+
+    local function UpdateExportCheckboxStates()
+        local function ApplyState(categories, parentSelected)
+            for _, category in ipairs(categories or {}) do
+                local checkbox = exportState.checkboxByID[category.id]
+                if checkbox then
+                    SetImportCheckboxEnabled(checkbox, category.available and not parentSelected)
+                end
+
+                if type(category.children) == "table" then
+                    ApplyState(category.children, parentSelected or (exportState.selected[category.id] and category.available))
+                end
+            end
+        end
+
+        if exportState.preview and type(exportState.preview.categories) == "table" then
+            ApplyState(exportState.preview.categories, false)
+        end
+    end
+
+    local function ApplyExportSelectionPreset(mode)
+        if not exportState.preview or type(exportState.preview.categories) ~= "table" then
+            return
+        end
+
+        local function ApplyToCategories(categories, parentHasChildren)
+            for _, category in ipairs(categories or {}) do
+                local shouldSelect = false
+                if category.available then
+                    if mode == "all" then
+                        shouldSelect = true
+                    elseif mode == "recommended" then
+                        shouldSelect = category.recommended and true or false
+                        if parentHasChildren then
+                            shouldSelect = false
+                        end
+                    end
+                end
+
+                exportState.selected[category.id] = shouldSelect
+                local checkbox = exportState.checkboxByID[category.id]
+                if checkbox and checkbox.SetValue then
+                    checkbox:SetValue(shouldSelect, true)
+                end
+
+                if type(category.children) == "table" then
+                    ApplyToCategories(category.children, true)
+                end
+            end
+        end
+
+        ApplyToCategories(exportState.preview.categories, false)
+        UpdateExportCheckboxStates()
+        UpdateExportActionButtons()
+    end
+
+    local function RefreshExportString(selectText)
         local core = GetCore()
         if core and core.ExportProfileToString then
             local str = core:ExportProfileToString()
@@ -149,24 +249,176 @@ local function BuildImportExportTab(tabContent)
         else
             exportEditBox:SetText("QUICore not available")
         end
+
+        if selectText then
+            FocusExportText()
+        end
     end
+
+    local function RefreshSelectiveExportString(selectText)
+        local core = GetCore()
+        if not core or not core.ExportProfileSelectionToString then
+            exportEditBox:SetText("QUICore not available")
+            return
+        end
+
+        local selectedIDs = GetSelectedExportCategoryIDs()
+        local exportString, exportErr = core:ExportProfileSelectionToString(selectedIDs)
+        exportEditBox:SetText(exportString or exportErr or "Error generating export string")
+
+        if selectText then
+            FocusExportText()
+        end
+    end
+
+    local exportPreview = nil
+    local core = GetCore()
+    if core and core.BuildProfileExportPreview then
+        exportPreview = core:BuildProfileExportPreview()
+    end
+    exportState.preview = exportPreview
+
+    if exportPreview and type(exportPreview.categories) == "table" then
+        local selectiveExportHeader = GUI:CreateSectionHeader(tabContent, "Selective Export")
+        selectiveExportHeader:SetPoint("TOPLEFT", PAD, y)
+        y = y - selectiveExportHeader.gap
+
+        local selectiveExportText = CreateWrappedLabel(
+            tabContent,
+            "Parent checkboxes export a whole section. Indented child rows let you export specific subtabs only. Recommended keeps Theme / Fonts / Colors and Layout / Positions unchecked.",
+            11,
+            C.textMuted
+        )
+        selectiveExportText:SetPoint("TOPLEFT", PAD, y)
+        selectiveExportText:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - (selectiveExportText:GetStringHeight() or 18) - 12
+
+        local selectAllExportBtn = GUI:CreateButton(tabContent, "SELECT ALL", 110, 24, function()
+            ApplyExportSelectionPreset("all")
+        end)
+        selectAllExportBtn:SetPoint("TOPLEFT", PAD, y)
+
+        local recommendedExportBtn = GUI:CreateButton(tabContent, "RECOMMENDED", 130, 24, function()
+            ApplyExportSelectionPreset("recommended")
+        end)
+        recommendedExportBtn:SetPoint("LEFT", selectAllExportBtn, "RIGHT", 10, 0)
+
+        local clearExportBtn = GUI:CreateButton(tabContent, "CLEAR", 90, 24, function()
+            ApplyExportSelectionPreset("clear")
+        end)
+        clearExportBtn:SetPoint("LEFT", recommendedExportBtn, "RIGHT", 10, 0)
+        y = y - 36
+
+        local availableCount = 0
+
+        local function RenderExportCategoryRow(category, indent, parentCategory)
+            if not category.available and parentCategory == nil then
+                return
+            end
+
+            if category.available then
+                availableCount = availableCount + 1
+            end
+
+            local checkbox = GUI:CreateFormCheckboxOriginal(
+                tabContent,
+                category.label,
+                category.id,
+                exportState.selected,
+                function(value)
+                    if value and parentCategory and exportState.selected[parentCategory.id] then
+                        exportState.selected[parentCategory.id] = false
+                        local parentCheckbox = exportState.checkboxByID[parentCategory.id]
+                        if parentCheckbox and parentCheckbox.SetValue then
+                            parentCheckbox:SetValue(false, true)
+                        end
+                    end
+
+                    UpdateExportCheckboxStates()
+                    UpdateExportActionButtons()
+                end
+            )
+            checkbox:SetPoint("TOPLEFT", PAD + indent, y)
+            checkbox:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            exportState.checkboxByID[category.id] = checkbox
+
+            local descColor = category.available and C.textMuted or C.warning
+            local descText = category.description or ""
+            if not category.available then
+                descText = descText ~= "" and (descText .. " Not present in the current profile.") or "Not present in the current profile."
+            end
+
+            local desc = CreateWrappedLabel(tabContent, descText, 10, descColor)
+            desc:SetPoint("TOPLEFT", PAD + 208 + indent, y - 4)
+            desc:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+
+            local descHeight = desc:GetStringHeight() or 14
+            local rowHeight = math.max(28, descHeight + 8)
+            y = y - rowHeight - 4
+
+            if type(category.children) == "table" then
+                for _, child in ipairs(category.children) do
+                    RenderExportCategoryRow(child, indent + 18, category)
+                end
+            end
+        end
+
+        for _, category in ipairs(exportPreview.categories) do
+            RenderExportCategoryRow(category, 0, nil)
+        end
+
+        if availableCount == 0 then
+            local noCategories = CreateWrappedLabel(
+                tabContent,
+                "No selective export categories are currently available in this profile.",
+                11,
+                C.textMuted
+            )
+            noCategories:SetPoint("TOPLEFT", PAD, y)
+            noCategories:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - (noCategories:GetStringHeight() or 18) - 12
+        end
+
+        local selectiveExportActionNote = CreateWrappedLabel(
+            tabContent,
+            "Export Selected writes a partial QUI1 profile string containing only the checked categories. Full Profile regenerates the complete current profile string.",
+            10,
+            C.textMuted
+        )
+        selectiveExportActionNote:SetPoint("TOPLEFT", PAD, y)
+        selectiveExportActionNote:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+        y = y - (selectiveExportActionNote:GetStringHeight() or 18) - 14
+
+        exportState.exportSelectedBtn = GUI:CreateButton(tabContent, "EXPORT SELECTED", 170, 28, function()
+            RefreshSelectiveExportString(true)
+        end)
+        exportState.exportSelectedBtn:SetPoint("TOPLEFT", PAD, y)
+
+        local fullExportBtn = GUI:CreateButton(tabContent, "FULL PROFILE", 140, 28, function()
+            RefreshExportString(true)
+        end)
+        fullExportBtn:SetPoint("LEFT", exportState.exportSelectedBtn, "RIGHT", 10, 0)
+
+        y = y - 42
+
+        ApplyExportSelectionPreset("all")
+    end
+
+    -- Export text box
+    local exportContainer = CreateScrollableTextBox(tabContent, 100, "")
+    exportContainer:SetPoint("TOPLEFT", PAD, y)
+    exportContainer:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+    exportEditBox = exportContainer.editBox
+    exportEditBox:SetTextColor(0.8, 0.85, 0.9, 1)
+    exportEditBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
     RefreshExportString()
 
     y = y - 115
 
-    -- SELECT ALL button (themed)
-    local selectBtn = GUI:CreateButton(tabContent, "SELECT ALL", 120, 28, function()
-        RefreshExportString()
-        exportEditBox:SetFocus()
-        exportEditBox:HighlightText()
-    end)
-    selectBtn:SetPoint("TOPLEFT", PAD, y)
+    local copyHint = GUI:CreateLabel(tabContent, "press Ctrl+C to copy the generated export string", 11, C.textMuted)
+    copyHint:SetPoint("TOPLEFT", PAD, y)
 
-    -- Hint text
-    local copyHint = GUI:CreateLabel(tabContent, "then press Ctrl+C to copy", 11, C.textMuted)
-    copyHint:SetPoint("LEFT", selectBtn, "RIGHT", 12, 0)
-
-    y = y - 50
+    y = y - 28
 
     -- Import Section Header
     local importHeader = GUI:CreateSectionHeader(tabContent, "Import Profile String")
