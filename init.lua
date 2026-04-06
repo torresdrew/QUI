@@ -118,6 +118,13 @@ function QUI:SlashCommandOpen(input)
             print("|cff60A5FAQUI:|r Layout Mode not loaded yet.")
         end
         return
+    elseif input and input == "cdm" then
+        if _G.QUI_OpenCDMComposer then
+            _G.QUI_OpenCDMComposer()
+        else
+            print("|cff60A5FAQUI:|r CDM Spell Composer not available. Enable CDM first.")
+        end
+        return
     elseif input and input == "tooltipdbg" then
         local isS = issecretvalue
         local count = 0
