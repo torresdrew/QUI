@@ -32,6 +32,17 @@ QUI.imports = setmetatable({}, {
     end,
 })
 
+-- Preset profiles: bundled QUI profile strings that users can install as
+-- real AceDB profiles from the Profiles tab. Each entry maps an
+-- _importLoaders key to a human-friendly profile name and description.
+-- To add a new preset, just append an entry here and ship the matching
+-- importstring file — the UI picks it up automatically.
+QUI._presetProfiles = {
+    { key = "QUIProfile",         profileName = "Quazii",           description = "Quazii's signature UI layout" },
+    { key = "QUIProfileDarkMode", profileName = "Quazii Dark Mode", description = "Dark mode variant of Quazii's layout" },
+    { key = "CocoProfile",        profileName = "Coco",             description = "Coco's personal UI layout" },
+}
+
 ---@type table
 QUI.defaults = {
     global = {},
@@ -106,6 +117,13 @@ function QUI:SlashCommandOpen(input)
             _G.QUI_ToggleLayoutMode()
         else
             print("|cff60A5FAQUI:|r Layout Mode not loaded yet.")
+        end
+        return
+    elseif input and input == "cdm" then
+        if _G.QUI_OpenCDMComposer then
+            _G.QUI_OpenCDMComposer()
+        else
+            print("|cff60A5FAQUI:|r CDM Spell Composer not available. Enable CDM first.")
         end
         return
     elseif input and input == "tooltipdbg" then

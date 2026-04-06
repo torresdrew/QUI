@@ -16,6 +16,24 @@ local MAX_DISPLAY_SCHEMA_ERRORS = 3
 local MAX_DETAIL_TYPE_MISMATCHES = 64
 local MAX_SANITIZE_STEPS = 128
 
+local function CloneValue(value, seen)
+    if type(value) ~= "table" then
+        return value
+    end
+
+    seen = seen or {}
+    if seen[value] then
+        return seen[value]
+    end
+
+    local copy = {}
+    seen[value] = copy
+    for k, v in pairs(value) do
+        copy[CloneValue(k, seen)] = CloneValue(v, seen)
+    end
+    return copy
+end
+
 local function GetDisplayPath(path, rootLabel)
     if type(path) ~= "string" or path == "" then
         return "root"
@@ -1051,24 +1069,6 @@ for _, category in ipairs(PROFILE_IMPORT_CATEGORIES) do
     RegisterImportCategory(category)
 end
 
-local function CloneValue(value, seen)
-    if type(value) ~= "table" then
-        return value
-    end
-
-    seen = seen or {}
-    if seen[value] then
-        return seen[value]
-    end
-
-    local copy = {}
-    seen[value] = copy
-    for k, v in pairs(value) do
-        copy[CloneValue(k, seen)] = CloneValue(v, seen)
-    end
-    return copy
-end
-
 local function ParseCustomTrackerBarSelectionID(categoryID)
     if type(categoryID) ~= "string" then
         return nil
@@ -1568,6 +1568,13 @@ local function ApplyFullProfilePayload(core, importedProfile)
         core:RefreshAll()
     end
 
+    -- Imported profiles may contain CDM spells from a different class/spec.
+    -- Clear the imported ownedSpells and re-snapshot from Blizzard's CDM
+    -- viewers so the current spec's abilities display immediately.
+    if ns.CDMContainers and ns.CDMContainers.ResnapshotForCurrentSpec then
+        ns.CDMContainers.ResnapshotForCurrentSpec()
+    end
+
     return true, "Profile imported successfully."
 end
 
@@ -1708,6 +1715,13 @@ local function RunImportProfileSelection(core, payloadOrErr, selectedCategoryIDs
         ns.Registry:RefreshByCategories(selectedCategoryIDs)
     elseif core.RefreshAll then
         core:RefreshAll()
+    end
+
+    -- Imported profiles may contain CDM spells from a different class/spec.
+    -- Clear the imported ownedSpells and re-snapshot from Blizzard's CDM
+    -- viewers so the current spec's abilities display immediately.
+    if ns.CDMContainers and ns.CDMContainers.ResnapshotForCurrentSpec then
+        ns.CDMContainers.ResnapshotForCurrentSpec()
     end
 
     if usingExplicitTarget then
@@ -1854,7 +1868,16 @@ end
 function QUICore:ImportProfileFromString(str, targetProfileName)
     local ok, payloadOrErr = ParseProfileImportString(self, str)
     if not ok then
-        return false, payloadOrErr
+        -- Strict validation failed — attempt auto-sanitize (strip incompatible types and retry)
+        local sok, sanitized, prefix, stripped, serr = self:SanitizeProfileImportString(str)
+        if not sok then
+            return false, payloadOrErr  -- Return original error if sanitize also fails
+        end
+        if stripped and #stripped > 0 then
+            local count = #stripped
+            print(("|cff60A5FAQUI:|r Auto-fixed %d incompatible setting%s during import."):format(count, count == 1 and "" or "s"))
+        end
+        payloadOrErr = sanitized
     end
 
     return RunImportFullProfile(self, payloadOrErr, targetProfileName)

@@ -21,7 +21,7 @@ local ipairs = ipairs
 local C_Timer = C_Timer
 
 -- Update intervals
-local UPDATE_INTERVAL_COMBAT = 0.3
+local UPDATE_INTERVAL_COMBAT = 0.1   -- 100ms in combat (was 300ms)
 local UPDATE_INTERVAL_IDLE = 1.0
 
 -- Icon state colors

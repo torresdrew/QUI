@@ -4,6 +4,7 @@
     <Script file="quazii_editmode.lua" />
     <Script file="quazii_profile.lua" />
     <Script file="quazii_profile_darkmode.lua" />
+    <Script file="coco_profile.lua" />
     <Script file="quazii_platynator.lua" />
     <Script file="quazii_plater.lua" />
     <Script file="quazii_details.lua" />

@@ -1353,10 +1353,19 @@ local function UpdateButtonVisibility()
     if MinimapCluster and MinimapCluster.IndicatorFrame and MinimapCluster.IndicatorFrame.MailFrame then
         local mailFrame = MinimapCluster.IndicatorFrame.MailFrame
 
-        -- NOTE: Removed direct `mailFrame.Layout = function() end` write which taints
-        -- the Blizzard frame. hiddenButtonParent already has Layout defined on it,
-        -- and when mailFrame is reparented there, Blizzard's Layout calls on the
-        -- child frame itself should be safe since MailFrame typically has its own Layout.
+        -- Hook SetParent so that any new parent always has a Layout method.
+        -- Blizzard's IndicatorFrame layout code walks up the parent chain calling
+        -- :Layout(), and reparenting MailFrame to a frame without one produces
+        -- a nil-method error. We install a no-op on any parent that lacks it
+        -- (Minimap and hiddenButtonParent already have Layout defined upstream).
+        if not mailFrame._quiSetParentHooked then
+            mailFrame._quiSetParentHooked = true
+            hooksecurefunc(mailFrame, "SetParent", function(_, parent)
+                if type(parent) == "table" and parent.Layout == nil then
+                    parent.Layout = function() end
+                end
+            end)
+        end
 
         if settings.showMail then
             mailFrame:SetParent(Minimap)
@@ -1374,8 +1383,15 @@ local function UpdateButtonVisibility()
     if MinimapCluster and MinimapCluster.IndicatorFrame and MinimapCluster.IndicatorFrame.CraftingOrderFrame then
         local craftingFrame = MinimapCluster.IndicatorFrame.CraftingOrderFrame
 
-        -- NOTE: Removed direct `craftingFrame.Layout = function() end` write which
-        -- taints the Blizzard frame. See mailFrame comment above.
+        -- See mailFrame comment above — same Layout-method guard.
+        if not craftingFrame._quiSetParentHooked then
+            craftingFrame._quiSetParentHooked = true
+            hooksecurefunc(craftingFrame, "SetParent", function(_, parent)
+                if type(parent) == "table" and parent.Layout == nil then
+                    parent.Layout = function() end
+                end
+            end)
+        end
 
         if settings.showCraftingOrder then
             craftingFrame:SetParent(Minimap)

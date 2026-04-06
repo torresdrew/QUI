@@ -158,6 +158,8 @@ ns.ActionBarsOwned = ActionBarsOwned
 -- Forward declaration: defined ~line 3296, called from SafeUpdate (below)
 local UpdateAssistedCombatRotationFrame
 local UpdateAllAssistedHighlights
+-- Forward declaration: defined in usability section, called from OnOwnedEvent
+local ScheduleUsabilityUpdate
 
 -- Backward compat alias for any code referencing mirrorButtons
 ActionBarsOwned.mirrorButtons = ActionBarsOwned.nativeButtons
@@ -214,6 +216,19 @@ function ActionBarsOwned.SafeUpdate(self)
     if HasAction(action) then
         -- Icon
         local texture = GetActionTexture(action)
+        -- Assisted combat rotation slots return nil texture when the
+        -- rotation has no current recommendation (e.g. no target).  Fall
+        -- back to the next-cast spell texture so the button isn't blank.
+        if not texture and C_AssistedCombat and C_AssistedCombat.GetNextCastSpell then
+            local aOk, isAssisted = pcall(C_ActionBar.IsAssistedCombatAction, action)
+            if aOk and isAssisted then
+                local sOk, spellID = pcall(C_AssistedCombat.GetNextCastSpell, true)
+                if sOk and spellID then
+                    local tOk, tex = pcall(C_Spell.GetSpellTexture, spellID)
+                    if tOk and tex then texture = tex end
+                end
+            end
+        end
         if texture then
             self.icon:SetTexture(texture)
             self.icon:Show()
@@ -313,7 +328,10 @@ function ActionBarsOwned.SafeUpdate(self)
                 pcall(ActionButton_StopFlash, self)
             end
         end
-        -- Clean up overlays that belong to the departed action
+        -- Clean up overlays/elements that belong to the departed action
+        if self.UpdateFlyout then
+            pcall(self.UpdateFlyout, self)
+        end
         UpdateAssistedCombatRotationFrame(self)
         ActionBarsOwned.UpdateOverlayGlow(self)
     end
@@ -3510,17 +3528,31 @@ end
 -- Show arrow overlay on buttons with the one-button rotation action.
 ---------------------------------------------------------------------------
 
+-- Tracks whether any button has ever shown an assisted combat rotation
+-- frame.  Once true, SafeUpdate must check every button.  While false,
+-- we can skip the per-button pcall entirely — a huge saving when the
+-- feature isn't in use (majority of players).  Set to true by
+-- OnSetActionSpell callback and by the first successful frame creation.
+-- Stored on the module table so the EventRegistry callback (outside
+-- this do block) can set it.
+ActionBarsOwned._assistedCombatEverActive = false
+
 UpdateAssistedCombatRotationFrame = function(button)
     if not (C_ActionBar and C_ActionBar.IsAssistedCombatAction) then return end
+    -- Fast path: if assisted combat was never active AND this button has
+    -- no rotation frame, skip the expensive pcall entirely.
+    local frame = button.AssistedCombatRotationFrame
+    if not ActionBarsOwned._assistedCombatEverActive and not frame then return end
+
     local action = button.action
     local ok, show = false, false
     if action and HasAction(action) then
         ok, show = pcall(C_ActionBar.IsAssistedCombatAction, action)
         if not ok then show = false end
     end
-    local frame = button.AssistedCombatRotationFrame
     -- Only create the template frame when needed (first time it should show).
     if show and not frame then
+        ActionBarsOwned._assistedCombatEverActive = true
         frame = CreateFrame("Frame", nil, button, "ActionBarButtonAssistedCombatRotationTemplate")
         button.AssistedCombatRotationFrame = frame
     end
@@ -3720,11 +3752,17 @@ end
 -- EVENT COALESCING (elapsed-time gated Show/Hide)
 ---------------------------------------------------------------------------
 -- Events activate the frame via Show().  OnUpdate checks elapsed time
--- and only runs the update after a minimum interval (100ms = max 10/sec).
--- Multiple events in the same frame are coalesced (Show on shown = no-op).
--- If the interval hasn't elapsed, the frame stays shown and retries next
--- frame.  Zero closure allocation.
-local AB_MIN_UPDATE_INTERVAL = 0.1  -- 100ms = max 10 updates/sec
+-- and only runs the update after a minimum interval.  Multiple events
+-- in the same frame are coalesced (Show on shown = no-op).  If the
+-- interval hasn't elapsed, the frame stays shown and retries next frame.
+-- Zero closure allocation.
+--
+-- Two intervals: cooldown-only updates use a fast 33ms cap (~30/sec)
+-- because cooldown swipes are visually continuous.  Full visual updates
+-- (icon, name, border, glow) use 66ms (~15/sec) since they're discrete
+-- state changes where the extra latency is imperceptible.
+local AB_CD_UPDATE_INTERVAL  = 0.033  -- 33ms for cooldown-only
+local AB_VIS_UPDATE_INTERVAL = 0.066  -- 66ms for full visual refresh
 
 -- Unified update frame: merges cooldown and visual update into a single
 -- OnUpdate handler with dirty flags.  When visuals are dirty, SafeUpdate
@@ -3733,26 +3771,33 @@ local AB_MIN_UPDATE_INTERVAL = 0.1  -- 100ms = max 10 updates/sec
 -- combat), the lightweight UpdateAllCooldowns runs alone.
 local abUpdateFrame = CreateFrame("Frame")
 abUpdateFrame:Hide()
-abUpdateFrame._last = 0
+abUpdateFrame._lastCd = 0
+abUpdateFrame._lastVis = 0
 abUpdateFrame._dirtyCooldowns = false
 abUpdateFrame._dirtyVisuals = false
 
 abUpdateFrame:SetScript("OnUpdate", function(self)
     local now = GetTime()
-    if now - self._last < AB_MIN_UPDATE_INTERVAL then return end
-    self:Hide()
-    self._last = now
-
     local doVis = self._dirtyVisuals
     local doCd  = self._dirtyCooldowns
-    self._dirtyCooldowns = false
-    self._dirtyVisuals = false
 
     if doVis then
+        if now - self._lastVis < AB_VIS_UPDATE_INTERVAL then return end
+        self:Hide()
+        self._lastVis = now
+        self._lastCd = now
+        self._dirtyCooldowns = false
+        self._dirtyVisuals = false
         -- SafeUpdate includes cooldown update internally
         ActionBarsOwned.UpdateAllButtonVisuals()
     elseif doCd then
+        if now - self._lastCd < AB_CD_UPDATE_INTERVAL then return end
+        self:Hide()
+        self._lastCd = now
+        self._dirtyCooldowns = false
         ActionBarsOwned.UpdateAllCooldowns()
+    else
+        self:Hide()
     end
 end)
 
@@ -3803,6 +3848,12 @@ abSlotFrame:SetScript("OnUpdate", function(self)
     wipe(abDirtySlots)
     -- Rebuild spell-to-button map after slot content changes (drag/drop)
     ActionBarsOwned.RebuildSpellIdMap()
+    -- Refresh assisted combat highlights and rotation frames — the spell
+    -- may have moved to a different button, so the old highlight/arrow
+    -- must move too.  Without this, dragging the one-button rotation
+    -- action leaves the highlight on the old (now-empty) slot.
+    UpdateAllAssistedHighlights()
+    ActionBarsOwned.UpdateAllAssistedCombatRotation()
     if InCombatLockdown() then
         ActionBarsOwned.pendingSlotUpdate = true
     end
@@ -4093,13 +4144,17 @@ local function OnOwnedEvent(self, event, ...)
         -- Debounced: fires 20+/sec in combat, coalesced to ~20/sec max.
         ScheduleABCooldownUpdate()
 
-    elseif event == "ACTIONBAR_UPDATE_USABLE"
-        or event == "ACTIONBAR_UPDATE_STATE"
+    elseif event == "ACTIONBAR_UPDATE_STATE"
         or event == "SPELL_UPDATE_ICON" then
-        -- Usability, checked state, or icon changes.  Per-button events
-        -- are unregistered, so dispatch centrally via SafeUpdate.
-        -- Debounced: coalesced to ~20/sec max.
+        -- Checked state or icon changes.  Per-button events are
+        -- unregistered, so dispatch centrally via SafeUpdate.
         ScheduleABVisualUpdate()
+
+    elseif event == "ACTIONBAR_UPDATE_USABLE" then
+        -- Usability only — the dedicated usability overlay system handles
+        -- tinting (range/mana/unusable).  No need for a full SafeUpdate
+        -- which redundantly sets vertex colors on all 96 buttons.
+        ScheduleUsabilityUpdate()
 
     elseif event == "SPELL_UPDATE_CHARGES" then
         -- Charge count changed (e.g. Arcane Charges, Chi).
@@ -4132,6 +4187,17 @@ local function OnOwnedEvent(self, event, ...)
         -- ACTIONBAR_SLOT_CHANGED (fires constantly even while idle).
         ActionBarsOwned._showGrid = nil
         self:UnregisterEvent("ACTIONBAR_SLOT_CHANGED")
+        -- Full post-drag refresh: the drag may have moved spells (including
+        -- the one-button rotation action) between slots.  Some action types
+        -- don't fire per-slot ACTIONBAR_SLOT_CHANGED, so we refresh
+        -- everything here to guarantee correctness.
+        ScheduleABVisualUpdate()
+        ScheduleABCooldownUpdate()
+        -- Assisted combat rotation and highlights must also refresh — the
+        -- rotation action may have moved to a new button.
+        ActionBarsOwned.UpdateAllAssistedCombatRotation()
+        UpdateAllAssistedHighlights()
+        -- Restore empty slot visibility (alpha was forced to 1 during grid)
         for _, barKey in ipairs(STANDARD_BAR_KEYS) do
             local buttons = ActionBarsOwned.nativeButtons[barKey]
             local settings = GetEffectiveSettings(barKey)
@@ -4141,6 +4207,8 @@ local function OnOwnedEvent(self, event, ...)
                 end
             end
         end
+        -- Rebuild spell-to-button map (slot contents may have changed)
+        ActionBarsOwned.RebuildSpellIdMap()
 
     elseif event == "PLAYER_ENTER_COMBAT" or event == "PLAYER_LEAVE_COMBAT" then
         -- Auto-attack flash state changes (SafeUpdate handles flash now)
@@ -4196,8 +4264,10 @@ local function OnOwnedEvent(self, event, ...)
         end
 
     elseif event == "SPELL_UPDATE_USABLE" then
-        -- Spell usability changed (e.g. resource gained/spent, GCD ended)
-        ScheduleABVisualUpdate()
+        -- Spell usability changed (e.g. resource gained/spent, GCD ended).
+        -- Routed to the dedicated usability overlay system — avoids
+        -- redundant full SafeUpdate on all 96 buttons just for tinting.
+        ScheduleUsabilityUpdate()
 
     elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" then
         local spellId = ...
@@ -5619,7 +5689,7 @@ local function UpdateAllButtonUsability()
 end
 
 -- Debounced event handler (prevents rapid-fire updates)
-local function ScheduleUsabilityUpdate()
+ScheduleUsabilityUpdate = function()
     if usabilityState.updatePending then return end
     usabilityState.updatePending = true
     C_Timer.After(0.05, function()
@@ -5658,13 +5728,10 @@ local function UpdateUsabilityPolling()
     local checkFrame = usabilityState.checkFrame
 
     -- Event-driven usability updates (very efficient)
+    -- ACTIONBAR_UPDATE_USABLE and SPELL_UPDATE_USABLE are handled by
+    -- OnOwnedEvent → ScheduleUsabilityUpdate() directly, so they are
+    -- NOT registered here (avoids double dispatch).
     if usabilityEnabled or rangeEnabled then
-        checkFrame:RegisterEvent("ACTIONBAR_UPDATE_USABLE")
-        -- ACTIONBAR_UPDATE_COOLDOWN intentionally omitted: ownedEventFrame
-        -- already handles cooldowns, and ACTIONBAR_UPDATE_USABLE fires when
-        -- usability state changes (e.g. cooldown ends).  Eliminates double
-        -- handler invocation on every cooldown tick (20+/sec in combat).
-        checkFrame:RegisterEvent("SPELL_UPDATE_USABLE")
         checkFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
         checkFrame:RegisterUnitEvent("UNIT_POWER_UPDATE", "player")
         checkFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
@@ -7143,12 +7210,31 @@ function ActionBarsOwned:Initialize()
     -- Assisted combat rotation (one-button rotation arrow overlay).
     if EventRegistry and EventRegistry.RegisterCallback then
         EventRegistry:RegisterCallback("AssistedCombatManager.OnSetActionSpell", function()
+            ActionBarsOwned._assistedCombatEverActive = true
             ActionBarsOwned.UpdateAllAssistedCombatRotation()
         end, "QUI_ActionBars_AssistedCombat")
 
         -- Assisted combat highlight (marching ants on the next-cast button).
+        -- Also schedule a visual update: the one-button rotation slot
+        -- dynamically changes which spell it shows, so GetActionTexture
+        -- returns a different icon.  Without this, the button texture is
+        -- stale until the next unrelated visual event.
+        --
+        -- Soft targeting causes constant nil→spell→nil→spell oscillation.
+        -- Nil means "no recommendation right now" (target lost, soft-target
+        -- gap) — NOT "rotation disabled".  Clearing highlights on nil
+        -- causes visible on/off flicker.  Instead, ignore nil entirely
+        -- and keep showing the last valid recommendation.  Highlights
+        -- refresh naturally when the rotation action is moved/removed
+        -- (HIDEGRID) or during the post-combat full refresh
+        -- (PLAYER_REGEN_ENABLED calls UpdateAllAssistedHighlights).
         EventRegistry:RegisterCallback("AssistedCombatManager.OnAssistedHighlightSpellChange", function()
-            UpdateAllAssistedHighlights()
+            local ok, nextSpell = pcall(C_AssistedCombat.GetNextCastSpell, true)
+            if ok and nextSpell then
+                UpdateAllAssistedHighlights()
+                ScheduleABVisualUpdate()
+            end
+            -- nil events intentionally ignored — keep last valid highlight
         end, "QUI_ActionBars_AssistedHighlight")
     end
 

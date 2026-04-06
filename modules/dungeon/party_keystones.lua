@@ -209,6 +209,14 @@ local function PositionKeyTracker()
     end
 end
 
+-- Always re-anchor to PVEFrame when shown — overrides layout-mode absolute
+-- positioning so the frame stays attached to the instance panel.
+KeyTrackerFrame:HookScript("OnShow", function()
+    if PVEFrame then
+        PositionKeyTracker()
+    end
+end)
+
 KeyTrackerFrame:SetScript("OnDragStart", function(self)
     if IsShiftKeyDown() then
         self:StartMoving()

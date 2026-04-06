@@ -1214,6 +1214,51 @@ CommitPositions = function()
                 else
                     fa[key].offsetX = pos.offsetX
                     fa[key].offsetY = pos.offsetY
+                    -- Ensure point/relative are CENTER for unanchored frames.
+                    -- Writing nil to AceDB fields lets explicit defaults
+                    -- (e.g. TOPRIGHT/BOTTOMRIGHT) leak back through the
+                    -- metatable on reload, misinterpreting CENTER-based offsets.
+                    if not pos.anchorTarget then
+                        fa[key].point = "CENTER"
+                        fa[key].relative = "CENTER"
+                    end
+                    -- Growth-direction containers need corner anchoring so
+                    -- the fixed edge stays put as the grid resizes.  Convert
+                    -- CENTER offsets to corner offsets when real dimensions
+                    -- are available (auras were showing during save).
+                    if not pos.anchorTarget and (key == "buffFrame" or key == "debuffFrame") then
+                        local bbDB = _G.QUI and _G.QUI.db and _G.QUI.db.profile
+                            and _G.QUI.db.profile.buffBorders
+                        if bbDB then
+                            local growLeft, growUp
+                            if key == "buffFrame" then
+                                growLeft, growUp = bbDB.buffGrowLeft, bbDB.buffGrowUp
+                            else
+                                growLeft, growUp = bbDB.debuffGrowLeft, bbDB.debuffGrowUp
+                            end
+                            local corner
+                            if growUp then
+                                corner = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
+                            else
+                                corner = growLeft and "TOPRIGHT" or "TOPLEFT"
+                            end
+                            local frame = def.frame and _G[def.frame]
+                            local fw = frame and frame._naturalW
+                            local fh = frame and frame._naturalH
+                            if fw and fh and fw > 1 and fh > 1 then
+                                local FRAC_X = { TOPLEFT = 0, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 1 }
+                                local FRAC_Y = { TOPLEFT = 1, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 0 }
+                                local cx = fa[key].offsetX or 0
+                                local cy = fa[key].offsetY or 0
+                                local pw = UIParent:GetWidth()
+                                local ph = UIParent:GetHeight()
+                                fa[key].point = corner
+                                fa[key].relative = corner
+                                fa[key].offsetX = math.floor(cx + (FRAC_X[corner] - 0.5) * (fw - pw) + 0.5)
+                                fa[key].offsetY = math.floor(cy + (FRAC_Y[corner] - 0.5) * (fh - ph) + 0.5)
+                            end
+                        end
+                    end
                 end
                 if fa[key].sizeStable == nil then
                     fa[key].sizeStable = true
@@ -1428,8 +1473,8 @@ AddHandleScripts = function(handle, def)
             local entry = fa and fa[self._barKey]
             if entry and type(entry) == "table" and entry.parent and entry.parent ~= "disabled" then
                 entry.parent = "disabled"
-                entry.point = nil
-                entry.relative = nil
+                entry.point = "CENTER"
+                entry.relative = "CENTER"
                 QUI_LayoutMode._hasChanges = true
                 -- Update handle visuals (remove anchored state)
                 if self._isAnchored then
@@ -1750,7 +1795,7 @@ AddHandleScripts = function(handle, def)
                 anchorPtSelf = pending.anchorPointSelf
                 anchorPtTarget = pending.anchorPointTarget
             else
-                local fa = QUI.db.profile.frameAnchoring
+                local fa = GetFrameAnchoring()
                 if fa and fa[self._barKey] and type(fa[self._barKey]) == "table" then
                     local entry = fa[self._barKey]
                     if entry.parent and entry.parent ~= "disabled" then
@@ -1771,8 +1816,8 @@ AddHandleScripts = function(handle, def)
             local fa = GetFrameAnchoring()
             if fa and fa[self._barKey] then
                 fa[self._barKey].parent = "disabled"
-                fa[self._barKey].point = nil
-                fa[self._barKey].relative = nil
+                fa[self._barKey].point = "CENTER"
+                fa[self._barKey].relative = "CENTER"
             end
         end
 
@@ -2500,13 +2545,74 @@ do
                 overlay:ClearAllPoints()
                 overlay:SetPoint("TOPLEFT", frame, "TOPLEFT", -8, 32)
                 overlay:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 8, -32)
+
+                -- Corner resize grip — drag to resize ChatFrame1 directly.
+                if not overlay._chatResizeGrip then
+                    local grip = CreateFrame("Button", nil, overlay)
+                    grip:SetSize(20, 20)
+                    grip:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", -2, -2)
+                    grip:SetFrameLevel(overlay:GetFrameLevel() + 10)
+                    grip:EnableMouse(true)
+
+                    -- Accent-colored corner indicator (two mint bars forming an L).
+                    local barH = grip:CreateTexture(nil, "OVERLAY")
+                    barH:SetColorTexture(0.204, 0.827, 0.600, 0.9)
+                    barH:SetPoint("TOPRIGHT", 0, 0)
+                    barH:SetSize(18, 3)
+
+                    local barV = grip:CreateTexture(nil, "OVERLAY")
+                    barV:SetColorTexture(0.204, 0.827, 0.600, 0.9)
+                    barV:SetPoint("TOPRIGHT", 0, 0)
+                    barV:SetSize(3, 18)
+
+                    local hl = grip:CreateTexture(nil, "HIGHLIGHT")
+                    hl:SetColorTexture(1, 1, 1, 0.35)
+                    hl:SetAllPoints()
+                    hl:SetBlendMode("ADD")
+
+                    grip:SetScript("OnEnter", function(self)
+                        if GameTooltip then
+                            GameTooltip:SetOwner(self, "ANCHOR_BOTTOMRIGHT")
+                            GameTooltip:SetText("Drag to resize chat frame")
+                            GameTooltip:Show()
+                        end
+                    end)
+                    grip:SetScript("OnLeave", function()
+                        if GameTooltip then GameTooltip:Hide() end
+                    end)
+                    grip:SetScript("OnMouseDown", function(self, button)
+                        if button ~= "LeftButton" then return end
+                        if InCombatLockdown and InCombatLockdown() then return end
+                        local f = _G.ChatFrame1
+                        if not f then return end
+                        if f.SetResizable then f:SetResizable(true) end
+                        f:StartSizing("TOPRIGHT")
+                    end)
+                    grip:SetScript("OnMouseUp", function(self, button)
+                        local f = _G.ChatFrame1
+                        if f then
+                            f:StopMovingOrSizing()
+                            if _G.FCF_SavePositionAndDimensions then
+                                _G.FCF_SavePositionAndDimensions(f)
+                            end
+                        end
+                        if _G.QUI_RefreshChatSizeSliders then
+                            _G.QUI_RefreshChatSizeSliders()
+                        end
+                    end)
+
+                    overlay._chatResizeGrip = grip
+                end
             end,
             onOpen = function()
                 -- Deferred: CreateChildOverlay sets SetClampedToScreen(true)
                 -- after onOpen fires, so override on next frame.
                 C_Timer.After(0, function()
                     local f = _G.ChatFrame1
-                    if f then f:SetClampedToScreen(false) end
+                    if f then
+                        f:SetClampedToScreen(false)
+                        if f.SetResizable then f:SetResizable(true) end
+                    end
                 end)
             end,
         })
@@ -2760,11 +2866,13 @@ do
                 key = "lootFrame", label = "Loot Frame", group = "Display", order = 7,
                 frame = "QUI_LootFrame",
                 dbKey = "loot", enabledField = "enabled",
+                requiresReload = true,
             },
             {
                 key = "lootRollAnchor", label = "Loot Roll Anchor", group = "Display", order = 8,
                 frame = "QUI_LootRollAnchor",
                 dbKey = "lootRoll", enabledField = "enabled",
+                requiresReload = true,
             },
             {
                 key = "alertAnchor", label = "Alert Anchor", group = "Display", order = 9,
@@ -2815,7 +2923,22 @@ do
                 end,
                 setEnabled = function(val)
                     local db = GetDB()
-                    if db then db[info.enabledField] = val end
+                    if not db then return end
+                    local old = db[info.enabledField]
+                    db[info.enabledField] = val
+                    local changed = (old ~= false) ~= (val ~= false)
+                    if changed and info.requiresReload then
+                        local GUI = QUI and QUI.GUI
+                        if GUI then
+                            GUI:ShowConfirmation({
+                                title = "Reload UI?",
+                                message = "This change requires a reload to take effect.",
+                                acceptText = "Reload",
+                                cancelText = "Later",
+                                onAccept = function() QUI:SafeReload() end,
+                            })
+                        end
+                    end
                     if info.refresh and _G[info.refresh] then
                         _G[info.refresh]()
                     end

@@ -2549,6 +2549,24 @@ ns.CDMContainers = {
     GetAllContainerKeys = function() return CDMContainers_API:GetAllContainerKeys() end,
     -- Save current spec's ownedSpells to _specProfiles (called after Composer mutations)
     SaveActiveSpecProfile = function() SaveSpecProfile(GetCurrentSpecID()) end,
+    -- Clear imported ownedSpells and re-snapshot from Blizzard CDM for the
+    -- current spec. Called after profile import so foreign-class spells are
+    -- replaced with the player's actual abilities.
+    ResnapshotForCurrentSpec = function()
+        if not ns.CDMSpellData then return end
+        local containerKeys = CDMContainers_API:GetAllContainerKeys()
+        for _, key in ipairs(containerKeys) do
+            local containerDB = GetTrackerSettings(key)
+            if containerDB then
+                containerDB.ownedSpells = nil
+                containerDB.dormantSpells = nil
+            end
+        end
+        ns.CDMSpellData:ForceScan()
+        for _, key in ipairs(containerKeys) do
+            ns.CDMSpellData:SnapshotBlizzardCDM(key)
+        end
+    end,
 }
 
 ---------------------------------------------------------------------------

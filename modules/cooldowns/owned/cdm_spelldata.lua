@@ -1508,6 +1508,68 @@ local function ResolveOwnedEntry(entry, containerKey, index)
                 elseif isBuff then score = 3
                 elseif hasAura then score = 2
                 elseif ch.Cooldown then score = 1 end
+                -- Tiebreaker for duplicate spellID children (e.g. Inertia):
+                -- Blizzard creates multiple CDM entries for the same spell
+                -- with different linked buff IDs — only one actually
+                -- activates during combat.
+                -- 1) Prefer child with an active aura (combat case).
+                -- 2) OOC: prefer child whose linkedSpellIDs[1] matches the
+                --    _abilityToAuraSpellID map (the "canonical" aura).
+                -- 3) Final fallback: lower cooldownID for determinism.
+                if score == bestScore and score >= 3 and ch.cooldownInfo then
+                    local linked = ch.cooldownInfo.linkedSpellIDs
+                    if linked then
+                        -- Active aura check (works in and out of combat)
+                        if C_UnitAuras.GetPlayerAuraBySpellID then
+                            for li = 1, #linked do
+                                local lsid = Helpers.SafeValue(linked[li], nil)
+                                if lsid and lsid > 0 then
+                                    local aok, ad = pcall(C_UnitAuras.GetPlayerAuraBySpellID, lsid)
+                                    if aok and ad and ad.auraInstanceID then
+                                        score = score + 1
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        -- OOC tiebreaker: prefer the child whose linked
+                        -- aura has a distinct icon from the base spell.
+                        -- The active buff typically has its own icon; passive
+                        -- or hidden variants share the ability icon.
+                        if score == bestScore and bestChild and bestChild.cooldownInfo then
+                            local baseSid = Helpers.SafeValue(ch.cooldownInfo.spellID, nil)
+                            local baseIcon
+                            if baseSid and C_Spell and C_Spell.GetSpellInfo then
+                                local bi = C_Spell.GetSpellInfo(baseSid)
+                                baseIcon = bi and bi.iconID
+                            end
+                            if baseIcon then
+                                local chLinked = ch.cooldownInfo.linkedSpellIDs
+                                local bestLinked = bestChild.cooldownInfo.linkedSpellIDs
+                                local chIcon, bestIcon
+                                if chLinked and chLinked[1] then
+                                    local lsid = Helpers.SafeValue(chLinked[1], nil)
+                                    if lsid and C_Spell.GetSpellInfo then
+                                        local li = C_Spell.GetSpellInfo(lsid)
+                                        chIcon = li and li.iconID
+                                    end
+                                end
+                                if bestLinked and bestLinked[1] then
+                                    local lsid = Helpers.SafeValue(bestLinked[1], nil)
+                                    if lsid and C_Spell.GetSpellInfo then
+                                        local li = C_Spell.GetSpellInfo(lsid)
+                                        bestIcon = li and li.iconID
+                                    end
+                                end
+                                -- Prefer child with distinct aura icon
+                                if chIcon and chIcon ~= baseIcon
+                                    and (not bestIcon or bestIcon == baseIcon) then
+                                    score = score + 1
+                                end
+                            end
+                        end
+                    end
+                end
                 if score > bestScore then
                     bestChild = ch
                     bestScore = score
@@ -2178,13 +2240,45 @@ RebuildSpellToCooldownID = function()
                         if not auraID then auraID = ov or sid end
 
                         if auraID then
-                            -- Map base ability → first linked aura
-                            if sid and sid ~= auraID then
-                                _abilityToAuraSpellID[sid] = auraID
-                            end
-                            -- Map override ability → first linked aura
-                            if ov and ov ~= auraID and ov ~= sid then
-                                _abilityToAuraSpellID[ov] = auraID
+                            local baseKey = sid or ov
+                            local existing = baseKey and _abilityToAuraSpellID[baseKey]
+                            -- When multiple CDM entries share the same base
+                            -- spellID but link to different auras (e.g. Inertia
+                            -- 427640 → 427641 and 427640 → 1215159), prefer the
+                            -- linked aura whose icon differs from the base — that
+                            -- is the active buff, not a passive/hidden variant.
+                            if existing and existing ~= auraID and baseKey then
+                                local baseIcon
+                                if C_Spell and C_Spell.GetSpellInfo then
+                                    local bi = C_Spell.GetSpellInfo(baseKey)
+                                    baseIcon = bi and bi.iconID
+                                end
+                                if baseIcon then
+                                    local existIcon, newIcon
+                                    if C_Spell.GetSpellInfo then
+                                        local ei = C_Spell.GetSpellInfo(existing)
+                                        existIcon = ei and ei.iconID
+                                        local ni = C_Spell.GetSpellInfo(auraID)
+                                        newIcon = ni and ni.iconID
+                                    end
+                                    -- Prefer the aura with a distinct icon
+                                    if existIcon == baseIcon and newIcon and newIcon ~= baseIcon then
+                                        _abilityToAuraSpellID[baseKey] = auraID
+                                        if ov and ov ~= auraID and ov ~= baseKey then
+                                            _abilityToAuraSpellID[ov] = auraID
+                                        end
+                                    end
+                                    -- If existing already has distinct icon, keep it
+                                end
+                            else
+                                -- Map base ability → first linked aura
+                                if sid and sid ~= auraID then
+                                    _abilityToAuraSpellID[sid] = auraID
+                                end
+                                -- Map override ability → first linked aura
+                                if ov and ov ~= auraID and ov ~= sid then
+                                    _abilityToAuraSpellID[ov] = auraID
+                                end
                             end
                         end
                     end
@@ -3182,6 +3276,109 @@ function CDMSpellData:FindChildForSpellID(spellID)
         end
     end
     return nil
+end
+
+---------------------------------------------------------------------------
+-- DEBUG: /cdmdump <name> — dump all viewer children matching <name>.
+-- Prints spellID, overrideSpellID, iconFileID, wasSetFromAura, shown,
+-- auraInstanceID, and viewer type for each match.
+---------------------------------------------------------------------------
+SLASH_QUI_CDMDUMP1 = "/cdmdump"
+SlashCmdList["QUI_CDMDUMP"] = function(msg)
+    local filter = msg and strtrim(msg):lower() or ""
+    if filter == "" then
+        print("|cff34D399[CDM-Dump]|r Usage: /cdmdump <name or spellID>")
+        return
+    end
+    local filterNum = tonumber(filter)
+    local viewers = {
+        { name = "BuffIconCooldownViewer",  type = "icon" },
+        { name = "BuffBarCooldownViewer",   type = "bar"  },
+    }
+    local found = 0
+    for _, v in ipairs(viewers) do
+        local viewer = _G[v.name]
+        if viewer then
+            local numChildren = viewer:GetNumChildren()
+            for i = 1, numChildren do
+                local child = select(i, viewer:GetChildren())
+                if child then
+                    local ci = child.cooldownInfo
+                    local childName = ci and Helpers.SafeValue(ci.name, nil)
+                    local childSid = ci and Helpers.SafeValue(ci.spellID, nil)
+                    local childOv = ci and Helpers.SafeValue(ci.overrideSpellID, nil)
+                    -- Match by name substring OR by spell ID
+                    local match = false
+                    if filterNum then
+                        match = (childSid == filterNum) or (childOv == filterNum)
+                    end
+                    if not match and childName and childName:lower():find(filter, 1, true) then
+                        match = true
+                    end
+                    if match then
+                        found = found + 1
+                        local sid = Helpers.SafeValue(ci.spellID, "secret")
+                        local ov = Helpers.SafeValue(ci.overrideSpellID, "secret")
+                        local iconFile = Helpers.SafeValue(ci.iconFileID, "secret")
+                        local wasAura = ci.wasSetFromAura
+                        local useAuraTime = ci.cooldownUseAuraDisplayTime
+                        local shown = pcall(child.IsShown, child) and child:IsShown()
+                        local auraInstID = child.auraInstanceID
+                            and Helpers.SafeValue(child.auraInstanceID, "secret") or "nil"
+                        local auraUnit = child.auraDataUnit or "nil"
+                        local cooldownID = ci.cooldownID
+                            and Helpers.SafeValue(ci.cooldownID, "secret") or "nil"
+                        print("|cff34D399[CDM-Dump]|r", v.type, "#" .. i, childName)
+                        print("  spellID=", sid, "overrideSpellID=", ov)
+                        print("  iconFileID=", iconFile, "cooldownID=", cooldownID)
+                        print("  wasSetFromAura=", tostring(wasAura),
+                              "useAuraDisplayTime=", tostring(useAuraTime))
+                        print("  shown=", tostring(shown),
+                              "auraInstanceID=", auraInstID,
+                              "auraDataUnit=", auraUnit)
+                        -- Dump child methods that reveal spell identity
+                        if child.GetSpellID then
+                            local ok, gsid = pcall(child.GetSpellID, child)
+                            print("  GetSpellID()=", ok and Helpers.SafeValue(gsid, "secret") or "err")
+                        end
+                        if child.GetAuraSpellID then
+                            local ok, asid = pcall(child.GetAuraSpellID, child)
+                            print("  GetAuraSpellID()=", ok and Helpers.SafeValue(asid, "secret") or "err")
+                        end
+                        -- Dump actual icon texture from the child's Icon region
+                        local iconRegion = child.Icon or child.icon
+                        if iconRegion then
+                            local nested = iconRegion.Icon or iconRegion.icon
+                            local texRegion = (nested and nested.GetTexture) and nested or iconRegion
+                            if texRegion and texRegion.GetTexture then
+                                local tok, tex = pcall(texRegion.GetTexture, texRegion)
+                                print("  Icon texture=", tok and tex or "err")
+                            end
+                        end
+                        -- Dump all cooldownInfo keys for full visibility
+                        print("  cooldownInfo keys:")
+                        for k, val in pairs(ci) do
+                            if k == "linkedSpellIDs" and type(val) == "table" then
+                                local ids = {}
+                                for li, lv in ipairs(val) do
+                                    ids[li] = tostring(Helpers.SafeValue(lv, "secret"))
+                                end
+                                print("    ", k, "= {", table.concat(ids, ", "), "}")
+                            else
+                                local safe = Helpers.SafeValue(val, "secret")
+                                print("    ", k, "=", tostring(safe))
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    if found == 0 then
+        print("|cff34D399[CDM-Dump]|r No viewer children matching '" .. msg .. "'")
+    else
+        print("|cff34D399[CDM-Dump]|r", found, "children found")
+    end
 end
 
 ---------------------------------------------------------------------------

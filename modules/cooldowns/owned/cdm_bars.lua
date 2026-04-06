@@ -1057,11 +1057,28 @@ function CDMBars:BuildBarsFromOwned(container, spellList)
                 end
             elseif entry.type == "spell" then
                 -- Cooldown bars: use overrideSpellID for talent replacements.
-                -- Aura bars: use raw entry.id — the Blizzard bar viewer hook
-                -- provides the final texture and must agree with the initial.
+                -- Aura bars: resolve icon from the entry's own Blizzard
+                -- child linkedSpellIDs. When multiple CDM entries share the
+                -- same base spellID (e.g. Inertia has two entries with
+                -- different linked auras), each entry's child has a unique
+                -- linked aura with its own icon.
                 local iconSid
                 if entry.isAura then
-                    iconSid = entry.id or spellID
+                    local baseId = entry.id or spellID
+                    -- Try this entry's Blizzard child's linked aura first
+                    local blzChild = entry._blizzChild or bar._blizzIconChild
+                    if blzChild and blzChild.cooldownInfo and blzChild.cooldownInfo.linkedSpellIDs then
+                        local linked = blzChild.cooldownInfo.linkedSpellIDs
+                        if linked[1] then
+                            local lsid = Helpers.SafeValue(linked[1], nil)
+                            if lsid and lsid > 0 then iconSid = lsid end
+                        end
+                    end
+                    -- Fallback to ability→aura map, then base ID
+                    if not iconSid then
+                        local auraMap = ns.CDMSpellData and ns.CDMSpellData._abilityToAuraSpellID
+                        iconSid = (auraMap and auraMap[baseId]) or baseId
+                    end
                 else
                     iconSid = entry.overrideSpellID or entry.id or spellID
                 end

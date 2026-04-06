@@ -666,25 +666,29 @@ local function BuildActionButtonCache()
             elseif type(frame.GetObjectType) ~= "function" then
                 -- Not a WoW widget, skip
             else
-                -- Check if this looks like an action button
-                local isActionButton = false
+                -- pcall the widget check — some addons expose GetObjectType via
+                -- metatables on non-widget objects, which errors when called
+                local ok, isActionButton = pcall(function()
+                    local objType = frame:GetObjectType()
+                    if not objType then return false end
 
-                -- Check for common action button indicators
-                if frame.action or (frame.GetAction and type(frame.GetAction) == "function") then
-                    isActionButton = true
-                end
+                    -- Check for common action button indicators
+                    if frame.action or (frame.GetAction and type(frame.GetAction) == "function") then
+                        return true
+                    end
 
-                -- Also check by name pattern
-                if not isActionButton then
+                    -- Also check by name pattern
                     if globalName:match("ActionButton%d+$") or
                        globalName:match("Button%d+$") and globalName:match("Bar") then
                         if frame.action or frame.GetAction then
-                            isActionButton = true
+                            return true
                         end
                     end
-                end
 
-                if isActionButton then
+                    return false
+                end)
+
+                if ok and isActionButton then
                     table.insert(cachedActionButtons, frame)
                 end
             end

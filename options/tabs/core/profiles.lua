@@ -29,23 +29,44 @@ local function CreateSpecProfilesPage(parent)
     -- Shared state
     local profileDropdown
     local profileDropdowns_all = {}
+    local profileDropdowns_withPresets = {}
     local profileDropdowns_filtered = {}
     local currentProfileName
 
-    local function GetProfileList()
+    -- Build a lookup of preset profile names → preset definitions
+    local presetsByName = {}
+    for _, preset in ipairs(QUI._presetProfiles or {}) do
+        presetsByName[preset.profileName] = preset
+    end
+
+    local function GetProfileList(includePresets)
         local profiles = {}
         local core = GetCore()
         local dbRef = core and core.db
+        local seen = {}
         if dbRef then
             for _, name in ipairs(dbRef:GetProfiles()) do
                 table.insert(profiles, {value = name, text = name})
+                seen[name] = true
+            end
+        end
+        -- Append bundled presets that aren't already installed as real profiles
+        if includePresets then
+            for _, preset in ipairs(QUI._presetProfiles or {}) do
+                if not seen[preset.profileName] then
+                    table.insert(profiles, {
+                        value = preset.profileName,
+                        text = preset.profileName .. "  |cff34D399(Preset)|r",
+                    })
+                end
             end
         end
         return profiles
     end
 
     local function RefreshProfileDropdowns()
-        local allProfiles = GetProfileList()
+        local allProfiles = GetProfileList(false)
+        local allWithPresets = GetProfileList(true)
         local core = GetCore()
         local dbRef = core and core.db
         local currentProfile = dbRef and dbRef:GetCurrentProfile() or ""
@@ -55,6 +76,9 @@ local function CreateSpecProfilesPage(parent)
         end
         for _, dd in ipairs(profileDropdowns_all) do
             if dd.SetOptions then dd.SetOptions(allProfiles) end
+        end
+        for _, dd in ipairs(profileDropdowns_withPresets) do
+            if dd.SetOptions then dd.SetOptions(allWithPresets) end
         end
         for _, dd in ipairs(profileDropdowns_filtered) do
             if dd.SetOptions then dd.SetOptions(filtered) end
@@ -168,19 +192,50 @@ local function CreateSpecProfilesPage(parent)
     CreateCollapsible("Switch Profile", 1 * FORM_ROW + 8, function(body)
         local sy = -4
         local profileWrapper = { selected = "" }
-        profileDropdown = GUI:CreateFormDropdown(body, "Select Profile", GetProfileList(), "selected", profileWrapper, function(value)
+        profileDropdown = GUI:CreateFormDropdown(body, "Select Profile", GetProfileList(true), "selected", profileWrapper, function(value)
             local core = GetCore(); local freshDB = core and core.db
             if freshDB and value and value ~= "" then
                 local current = freshDB:GetCurrentProfile()
-                if value ~= current then
-                    freshDB:SetProfile(value)
-                    if currentProfileName then currentProfileName:SetText(value) end
-                    print("|cff60A5FAQUI:|r Switched to profile: " .. value)
-                    RefreshProfileDropdowns()
+                if value == current then return end
+
+                -- Check if this is an uninstalled preset that needs importing
+                local preset = presetsByName[value]
+                if preset then
+                    -- See if this profile already exists
+                    local exists = false
+                    for _, name in ipairs(freshDB:GetProfiles()) do
+                        if name == value then exists = true; break end
+                    end
+                    if not exists then
+                        -- Install the preset: import string into a new profile named after the preset
+                        local importData = QUI.imports[preset.key]
+                        if not importData or not importData.data then
+                            print("|cffff0000QUI:|r Preset data not found for: " .. value)
+                            return
+                        end
+                        local ok, msg = core:ImportProfileFromString(importData.data, preset.profileName)
+                        if ok then
+                            print("|cff60A5FAQUI:|r Installed and switched to preset profile: " .. value)
+                        else
+                            print("|cffff0000QUI:|r Failed to install preset: " .. (msg or "unknown error"))
+                            -- Restore original profile on failure
+                            if freshDB:GetCurrentProfile() ~= current then
+                                pcall(freshDB.SetProfile, freshDB, current)
+                            end
+                        end
+                        if currentProfileName then currentProfileName:SetText(freshDB:GetCurrentProfile()) end
+                        RefreshProfileDropdowns()
+                        return
+                    end
                 end
+
+                freshDB:SetProfile(value)
+                if currentProfileName then currentProfileName:SetText(value) end
+                print("|cff60A5FAQUI:|r Switched to profile: " .. value)
+                RefreshProfileDropdowns()
             end
         end)
-        table.insert(profileDropdowns_all, profileDropdown)
+        table.insert(profileDropdowns_withPresets, profileDropdown)
         P(profileDropdown, body, sy)
 
         local initCore = GetCore(); local initDB = initCore and initCore.db

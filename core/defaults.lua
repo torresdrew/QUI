@@ -3637,14 +3637,14 @@ local defaults = {
             groupPetFrames = 3,
         },
         frameAnchoring = {
-            -- CDM-centered HUD layout
-            cdmEssential = {
-                point = "CENTER", parent = "screen", relative = "CENTER",
-                offsetX = 0, offsetY = -180,
-                sizeStable = true, autoWidth = false, autoHeight = false,
-                hideWithParent = false, keepInPlace = false,
-                widthAdjust = 0, heightAdjust = 0,
-            },
+            -- CDM containers (cdmEssential, cdmUtility, buffIcon, buffBar)
+            -- are deliberately excluded from frameAnchoring defaults. The CDM
+            -- module owns their positioning via ncdm.pos and anchorBelowEssential.
+            -- Creating default FA entries here would cause AceDB to auto-fill
+            -- them, which makes QUI_HasFrameAnchor return true and the
+            -- anchoring system would SetPoint() them, overriding CDM positions.
+            -- Other frames can still reference them as parents — the anchoring
+            -- system resolves CDM frames at runtime via FRAME_RESOLVERS.
             primaryPower = {
                 point = "TOP", parent = "cdmEssential", relative = "BOTTOM",
                 offsetX = 0, offsetY = 0,
@@ -3656,20 +3656,6 @@ local defaults = {
                 point = "TOP", parent = "primaryPower", relative = "BOTTOM",
                 offsetX = 0, offsetY = 0,
                 sizeStable = true, autoWidth = true, autoHeight = false,
-                hideWithParent = false, keepInPlace = false,
-                widthAdjust = 0, heightAdjust = 0,
-            },
-            cdmUtility = {
-                point = "TOP", parent = "secondaryPower", relative = "BOTTOM",
-                offsetX = 0, offsetY = 0,
-                sizeStable = true, autoWidth = false, autoHeight = false,
-                hideWithParent = false, keepInPlace = false,
-                widthAdjust = 0, heightAdjust = 0,
-            },
-            buffIcon = {
-                point = "BOTTOM", parent = "cdmEssential", relative = "TOP",
-                offsetX = 0, offsetY = 0,
-                sizeStable = true, autoWidth = false, autoHeight = false,
                 hideWithParent = false, keepInPlace = false,
                 widthAdjust = 0, heightAdjust = 0,
             },
