@@ -1014,6 +1014,20 @@ local function MigrateAnchoring(profile)
         end
         local fa = profile.frameAnchoring
 
+        -- Detect 2.55-style profile: has frameAnchoring entries with the
+        -- legacy `enabled` flag. In 2.55, positions were stored as absolute
+        -- screen offsets (parent=screen, CENTER) regardless of the frame's
+        -- logical parent. These offsets are meaningless in the new parent-
+        -- chain system — they must be discarded so the seed can apply
+        -- proper default parent chains.
+        local isLegacy255 = false
+        for _, settings in pairs(fa) do
+            if type(settings) == "table" and settings.enabled ~= nil then
+                isLegacy255 = true
+                break
+            end
+        end
+
         -- CDM containers are positioned by the CDM module (ncdm.pos,
         -- anchorBelowEssential). Creating FA entries for them makes
         -- QUI_HasFrameAnchor return true, which causes CDM to skip its
@@ -1025,14 +1039,36 @@ local function MigrateAnchoring(profile)
             buffBar      = true,
         }
 
+        -- Frames whose absolute 2.55 offsets should be discarded because
+        -- their new default parent is a CDM container or another moving
+        -- frame. Preserving absolute offsets would orphan them from the
+        -- parent chain and leave them at the wrong visual location.
+        local LEGACY255_DISCARD_ABSOLUTE = {
+            playerFrame    = true,
+            targetFrame    = true,
+            totFrame       = true,
+            focusFrame     = true,
+            petFrame       = true,
+            bossFrames     = true,
+            playerCastbar  = true,
+            targetCastbar  = true,
+            focusCastbar   = true,
+            petCastbar     = true,
+            totCastbar     = true,
+            primaryPower   = true,
+            secondaryPower = true,
+            partyFrames    = true,
+            raidFrames     = true,
+        }
+
         for key, settings in pairs(fa) do
             if type(settings) == "table" and settings.enabled ~= nil then
                 if settings.enabled == false then
-                    -- Preserve non-CDM entries that have real position data so
-                    -- the user's layout survives the upgrade. Old 2.55 profiles
-                    -- stored custom positions as enabled=false with non-zero
-                    -- offsets. Seed defaults are a last resort.
-                    if CDM_OWNED_KEYS[key] then
+                    -- enabled=false = never explicitly positioned via layout mode.
+                    -- For CDM containers and chain frames: discard (absolute 2.55
+                    -- coords don't translate). For other frames with real position
+                    -- data: preserve. Seed defaults are a last resort.
+                    if CDM_OWNED_KEYS[key] or LEGACY255_DISCARD_ABSOLUTE[key] then
                         fa[key] = nil
                     else
                         local hasPositionData = (tonumber(settings.offsetX) or 0) ~= 0
@@ -1046,7 +1082,15 @@ local function MigrateAnchoring(profile)
                         end
                     end
                 else
-                    settings.enabled = nil
+                    -- enabled=true = user explicitly positioned this via layout
+                    -- mode. The entry already has valid parent-chain data (e.g.
+                    -- playerCastbar with parent=cdmUtility). Always preserve,
+                    -- except for CDM containers which the CDM module owns.
+                    if CDM_OWNED_KEYS[key] then
+                        fa[key] = nil
+                    else
+                        settings.enabled = nil  -- strip flag, keep data
+                    end
                 end
             end
         end
@@ -1068,13 +1112,27 @@ local function MigrateAnchoring(profile)
         end
 
         local uf = profile.quiUnitFrames
-        if uf then
+        if uf and not isLegacy255 then
+            -- Only migrate inline offsets for non-legacy profiles. On legacy
+            -- 2.55 profiles these offsets are absolute screen positions that
+            -- don't fit the new parent-chain system — let the seed handle them.
             MigrateInlineOffsets(uf.player, "playerFrame")
             MigrateInlineOffsets(uf.target, "targetFrame")
             MigrateInlineOffsets(uf.targettarget, "totFrame")
             MigrateInlineOffsets(uf.focus, "focusFrame")
             MigrateInlineOffsets(uf.pet, "petFrame")
             MigrateInlineOffsets(uf.boss, "bossFrames")
+        elseif uf and isLegacy255 then
+            -- Strip absolute offsets from quiUnitFrames so they don't bleed
+            -- through via other code paths. The seed will apply proper
+            -- default parent chains (playerFrame → cdmEssential, etc.)
+            for _, unitKey in ipairs({"player","target","targettarget","focus","pet","boss"}) do
+                local unitDB = uf[unitKey]
+                if type(unitDB) == "table" then
+                    unitDB.offsetX = nil
+                    unitDB.offsetY = nil
+                end
+            end
         end
 
         local bars = profile.actionBars and profile.actionBars.bars
@@ -1096,7 +1154,7 @@ local function MigrateAnchoring(profile)
         MigrateInlineOffsets(profile.crosshair, "crosshair")
 
         local gf = profile.quiGroupFrames
-        if gf then
+        if gf and not isLegacy255 then
             local pos = gf.position
             if pos and (pos.offsetX or pos.offsetY) and not fa.partyFrames then
                 fa.partyFrames = {
@@ -1123,6 +1181,11 @@ local function MigrateAnchoring(profile)
         end
 
         if uf then
+            -- Castbar migration: if the user had an explicit playerCastbar
+            -- entry (enabled=true) it was already preserved above. For implicit
+            -- cases, translate the castbar.anchor field to an FA entry. The
+            -- anchor field is semantic ("unitframe"/"essential"/"utility"/"none")
+            -- so it works across profile versions.
             local castbarMigrations = {
                 { unitKey = "player", targetKey = "playerCastbar", parentFrameKey = "playerFrame" },
                 { unitKey = "target", targetKey = "targetCastbar", parentFrameKey = "targetFrame" },
@@ -1132,8 +1195,13 @@ local function MigrateAnchoring(profile)
             for _, cm in ipairs(castbarMigrations) do
                 local unitSettings = uf[cm.unitKey]
                 local castDB = unitSettings and unitSettings.castbar
-                if castDB and not fa[cm.targetKey] then
-                    local anchor = castDB.anchor or "none"
+                local anchor = castDB and (castDB.anchor or "none")
+                -- On legacy 2.55 profiles, skip "none" anchor entirely:
+                -- freeOffsetX/Y are absolute screen coords that don't translate.
+                -- Let the seed apply the default parent chain (castbar → unit
+                -- frame TOP→BOTTOM).
+                local skipLegacyNone = isLegacy255 and anchor == "none"
+                if castDB and not fa[cm.targetKey] and not skipLegacyNone then
                     local parent, ox, oy, point, relative
                     if anchor == "none" then
                         parent = "screen"
@@ -1410,6 +1478,30 @@ local DEFAULT_FRAME_ANCHORING = {
     skyriding       = { parent = "screen",          point = "CENTER",       relative = "TOP",     offsetY = -30 },
     powerBarAlt     = { parent = "screen",          point = "CENTER",       relative = "TOP",     offsetY = -75 },
     bnetToastAnchor = { parent = "screen",          point = "CENTER",       relative = "TOP",     offsetY = -125 },
+    -- Frames without defaults that would otherwise stack at screen center
+    -- on legacy profile imports. Parent chain keeps them visible and out of
+    -- the way; users can fine-tune in layout mode.
+    extraActionButton = { parent = "screen",        point = "CENTER",       relative = "BOTTOM",  offsetY = 200 },
+    readyCheck      = { parent = "screen",          point = "CENTER",       relative = "CENTER" },
+    consumables     = { parent = "readyCheck",      point = "BOTTOM",       relative = "TOP",     offsetY = 50 },
+    lootFrame       = { parent = "screen",          point = "CENTER",       relative = "CENTER",  offsetX = 300 },
+    preyTracker     = { parent = "screen",          point = "CENTER",       relative = "TOP",     offsetY = -250 },
+    rotationAssistIcon = { parent = "cdmEssential", point = "BOTTOM",       relative = "TOP",     offsetY = 40 },
+    keyTracker      = { parent = "minimap",         point = "TOPRIGHT",     relative = "BOTTOMLEFT" },
+    xpTracker       = { parent = "screen",          point = "BOTTOM",       relative = "BOTTOM",  offsetY = 4 },
+    actionTracker   = { parent = "screen",          point = "RIGHT",        relative = "RIGHT",   offsetX = -20 },
+    petWarning      = { parent = "playerFrame",     point = "TOP",          relative = "BOTTOM",  offsetY = -30 },
+    focusCastAlert  = { parent = "screen",          point = "CENTER",       relative = "CENTER",  offsetY = -100 },
+    missingRaidBuffs = { parent = "screen",         point = "TOP",          relative = "TOP",     offsetY = -100 },
+    mplusTimer      = { parent = "screen",          point = "TOPRIGHT",     relative = "TOPRIGHT", offsetX = -200, offsetY = -100 },
+    tooltipAnchor   = { parent = "screen",          point = "BOTTOMRIGHT",  relative = "BOTTOMRIGHT", offsetX = -200, offsetY = 100 },
+    alertAnchor     = { parent = "screen",          point = "TOP",          relative = "TOP",     offsetY = -20 },
+    toastAnchor     = { parent = "screen",          point = "TOP",          relative = "TOP",     offsetY = -150 },
+    topCenterWidgets = { parent = "screen",         point = "TOP",          relative = "TOP",     offsetY = -100 },
+    belowMinimapWidgets = { parent = "datatextPanel", point = "TOP",        relative = "BOTTOM" },
+    crosshair       = { parent = "screen",          point = "CENTER",       relative = "CENTER" },
+    rangeCheck      = { parent = "screen",          point = "CENTER",       relative = "CENTER" },
+    totemBar        = { parent = "screen",          point = "CENTER",       relative = "BOTTOM",  offsetY = 200 },
 }
 
 local function IsUninitializedAnchoring(fa)
@@ -1527,6 +1619,21 @@ end
 function Migrations.Run(db)
     local profile = db and db.profile
     if type(profile) ~= "table" then return false end
+
+    -- One-time cleanup: delete CDM container FA entries from existing
+    -- profiles that had them from the old defaults. The CDM module owns
+    -- positioning via ncdm.pos; FA entries for CDM containers cause the
+    -- anchoring system to override CDM positions. Runs once per profile
+    -- (sentinel: _cdmFaCleanupVersion).
+    if (profile._cdmFaCleanupVersion or 0) < 1 then
+        if type(profile.frameAnchoring) == "table" then
+            profile.frameAnchoring.cdmEssential = nil
+            profile.frameAnchoring.cdmUtility   = nil
+            profile.frameAnchoring.buffIcon     = nil
+            profile.frameAnchoring.buffBar      = nil
+        end
+        profile._cdmFaCleanupVersion = 1
+    end
 
     -- 1. Data format migrations (restructure raw data first)
     MigrateDatatextSlots(profile.datatext)
