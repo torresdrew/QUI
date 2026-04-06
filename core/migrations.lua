@@ -1017,9 +1017,50 @@ local function MigrateAnchoring(profile)
         for key, settings in pairs(fa) do
             if type(settings) == "table" and settings.enabled ~= nil then
                 if settings.enabled == false then
-                    fa[key] = nil
+                    -- Preserve entries with meaningful position data (old profiles
+                    -- stored CDM/buff positions as enabled=false with non-zero offsets)
+                    local hasPositionData = (tonumber(settings.offsetX) or 0) ~= 0
+                        or (tonumber(settings.offsetY) or 0) ~= 0
+                        or (tonumber(settings.widthAdjust) or 0) ~= 0
+                        or (tonumber(settings.heightAdjust) or 0) ~= 0
+                    if hasPositionData then
+                        settings.enabled = nil  -- strip flag, keep data
+                    else
+                        fa[key] = nil
+                    end
                 else
                     settings.enabled = nil
+                end
+            end
+        end
+
+        -- Migrate CDM container positions from ncdm.pos to frameAnchoring.
+        -- Old profiles stored CDM positions as ncdm.essential.pos = { ox, oy }.
+        -- Convert to frameAnchoring entries so the parent chain resolves.
+        local ncdm = profile.ncdm
+        if type(ncdm) == "table" then
+            local cdmPosMap = {
+                essential  = "cdmEssential",
+                utility    = "cdmUtility",
+                buff       = "buffIcon",
+                trackedBar = "buffBar",
+            }
+            for ncdmKey, faKey in pairs(cdmPosMap) do
+                if not fa[faKey] then
+                    local container = ncdm[ncdmKey]
+                    if type(container) == "table" and type(container.pos) == "table" then
+                        local pos = container.pos
+                        if pos.ox ~= nil or pos.oy ~= nil then
+                            fa[faKey] = {
+                                parent = "screen",
+                                point = "CENTER",
+                                relative = "CENTER",
+                                offsetX = pos.ox or 0,
+                                offsetY = pos.oy or 0,
+                                sizeStable = true,
+                            }
+                        end
+                    end
                 end
             end
         end
@@ -1052,8 +1093,15 @@ local function MigrateAnchoring(profile)
 
         local bars = profile.actionBars and profile.actionBars.bars
         if bars then
-            MigrateInlineOffsets(bars.extraActionButton, "extraActionButton")
-            MigrateInlineOffsets(bars.zoneAbility, "zoneAbility")
+            -- Skip inline offsets for bars that have a position table — those
+            -- small offsets are icon/layout adjustments, not screen positions.
+            -- The actual screen position in bars.*.position is migrated by v3.
+            if type(bars.extraActionButton) == "table" and not bars.extraActionButton.position then
+                MigrateInlineOffsets(bars.extraActionButton, "extraActionButton")
+            end
+            if type(bars.zoneAbility) == "table" and not bars.zoneAbility.position then
+                MigrateInlineOffsets(bars.zoneAbility, "zoneAbility")
+            end
         end
 
         MigrateInlineOffsets(profile.totemBar, "totemBar")
@@ -1276,10 +1324,14 @@ local function MigrateAnchoring(profile)
                 bags = "bagBar",
             }
             for dbKey, barData in pairs(barsDB) do
-                if type(barData) == "table" and barData.ownedPosition then
+                if type(barData) == "table" then
                     local faKey = barKeyMap[dbKey] or dbKey
-                    MigratePos(barData.ownedPosition, faKey,
-                        { point = "CENTER", relative = "CENTER", offsetX = 0, offsetY = 0 })
+                    -- Prefer ownedPosition (new), fall back to position (old 2.55 format)
+                    local posSource = barData.ownedPosition or barData.position
+                    if posSource then
+                        MigratePos(posSource, faKey,
+                            { point = "CENTER", relative = "CENTER", offsetX = 0, offsetY = 0 })
+                    end
                 end
             end
         end
@@ -1391,7 +1443,7 @@ local function IsUninitializedAnchoring(fa)
     return count > 0
 end
 
-local ANCHORING_SEED_VERSION = 1
+local ANCHORING_SEED_VERSION = 2
 
 local function SeedDefaultFrameAnchoring(profile)
     if not profile then return end
@@ -1406,51 +1458,74 @@ local function SeedDefaultFrameAnchoring(profile)
     end
     local fa = profile.frameAnchoring
 
-    -- Only seed if the existing data looks uninitialized
-    if not IsUninitializedAnchoring(fa) then
-        profile._anchoringSeedVersion = ANCHORING_SEED_VERSION
-        return
-    end
+    -- Determine whether existing entries need their parent chains rewritten.
+    -- If the profile already has entries with real parent chains (non-screen),
+    -- only fill gaps for missing entries — don't overwrite existing chains.
+    local uninit = IsUninitializedAnchoring(fa)
 
     for key, defaults in pairs(DEFAULT_FRAME_ANCHORING) do
-        if type(fa[key]) ~= "table" then
-            fa[key] = {}
-        end
-        local entry = fa[key]
+        local existing = type(fa[key]) == "table"
 
-        -- Seed parent chain and anchor points (overwrite uninitialized
-        -- "screen"/CENTER data with the proper default parent chain)
-        entry.parent   = defaults.parent
-        entry.point    = defaults.point
-        entry.relative = defaults.relative
+        if not existing then
+            -- Always create missing entries with proper default parent chains.
+            -- This ensures old profiles (which may only have a few entries
+            -- surviving migration) get the full parent chain seeded.
+            fa[key] = {
+                parent   = defaults.parent,
+                point    = defaults.point,
+                relative = defaults.relative,
+                offsetX  = defaults.offsetX or 0,
+                offsetY  = defaults.offsetY or 0,
+                sizeStable    = true,
+                hideWithParent = false,
+                keepInPlace   = defaults.keepInPlace or false,
+                autoWidth     = defaults.autoWidth or false,
+                autoHeight    = false,
+                heightAdjust  = 0,
+                widthAdjust   = 0,
+            }
+        elseif uninit then
+            -- Profile looks uninitialized (all screen/CENTER with zero offsets):
+            -- overwrite parent chains with proper defaults.
+            local entry = fa[key]
+            entry.parent   = defaults.parent
+            entry.point    = defaults.point
+            entry.relative = defaults.relative
 
-        -- Seed offsets from defaults (only if currently zeroed)
-        if defaults.offsetX and (entry.offsetX or 0) == 0 then
-            entry.offsetX = defaults.offsetX
-        end
-        if defaults.offsetY and (entry.offsetY or 0) == 0 then
-            entry.offsetY = defaults.offsetY
-        end
+            if defaults.offsetX and (entry.offsetX or 0) == 0 then
+                entry.offsetX = defaults.offsetX
+            end
+            if defaults.offsetY and (entry.offsetY or 0) == 0 then
+                entry.offsetY = defaults.offsetY
+            end
 
-        -- Seed newer fields that old profiles don't have at all
-        if entry.hideWithParent == nil then
-            entry.hideWithParent = false
-        end
-        if defaults.keepInPlace and entry.keepInPlace == nil then
-            entry.keepInPlace = defaults.keepInPlace
-        elseif entry.keepInPlace == nil then
-            entry.keepInPlace = false
-        end
-        if defaults.autoWidth and entry.autoWidth == nil then
-            entry.autoWidth = defaults.autoWidth
-        end
+            if entry.hideWithParent == nil then entry.hideWithParent = false end
+            if defaults.keepInPlace and entry.keepInPlace == nil then
+                entry.keepInPlace = defaults.keepInPlace
+            elseif entry.keepInPlace == nil then
+                entry.keepInPlace = false
+            end
+            if defaults.autoWidth and entry.autoWidth == nil then
+                entry.autoWidth = defaults.autoWidth
+            end
 
-        -- Ensure standard fields exist
-        if entry.sizeStable == nil then entry.sizeStable = true end
-        if entry.autoHeight == nil then entry.autoHeight = false end
-        if entry.autoWidth == nil then entry.autoWidth = false end
-        if entry.heightAdjust == nil then entry.heightAdjust = 0 end
-        if entry.widthAdjust == nil then entry.widthAdjust = 0 end
+            if entry.sizeStable == nil then entry.sizeStable = true end
+            if entry.autoHeight == nil then entry.autoHeight = false end
+            if entry.autoWidth == nil then entry.autoWidth = false end
+            if entry.heightAdjust == nil then entry.heightAdjust = 0 end
+            if entry.widthAdjust == nil then entry.widthAdjust = 0 end
+        else
+            -- Profile has real parent chains — only fill in missing metadata
+            -- fields on existing entries, don't touch parent/point/relative.
+            local entry = fa[key]
+            if entry.hideWithParent == nil then entry.hideWithParent = false end
+            if entry.keepInPlace == nil then entry.keepInPlace = defaults.keepInPlace or false end
+            if entry.sizeStable == nil then entry.sizeStable = true end
+            if entry.autoHeight == nil then entry.autoHeight = false end
+            if entry.autoWidth == nil then entry.autoWidth = defaults.autoWidth or false end
+            if entry.heightAdjust == nil then entry.heightAdjust = 0 end
+            if entry.widthAdjust == nil then entry.widthAdjust = 0 end
+        end
     end
 
     profile._anchoringSeedVersion = ANCHORING_SEED_VERSION
