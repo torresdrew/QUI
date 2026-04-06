@@ -1,11 +1,24 @@
 ---------------------------------------------------------------------------
 -- QUI Profile Migrations
 -- Shared normalization pipeline for legacy SavedVariables and profile imports.
+--
+-- This is the single entry point for ALL profile-level migrations.
+-- Call Migrations.Run(db) from any context that activates a profile:
+--   - Addon startup (init.lua OnEnable via BackwardsCompat)
+--   - Module startup (main.lua QUICore:OnInitialize)
+--   - Profile switch (main.lua QUICore:OnProfileChanged)
+--   - Profile import (profile_io.lua via BackwardsCompat)
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 
 local Migrations = ns.Migrations or {}
 ns.Migrations = Migrations
+
+local CURRENT_SCHEMA_VERSION = 1
+
+---------------------------------------------------------------------------
+-- Shared helpers
+---------------------------------------------------------------------------
 
 local function CloneValue(value)
     if type(value) ~= "table" then
@@ -18,6 +31,366 @@ local function CloneValue(value)
     end
     return copy
 end
+
+-- Helper: set key in target only if target[k] is nil (conservative merge)
+local function SetIfNil(target, key, value)
+    if value ~= nil and target[key] == nil then
+        target[key] = value
+    end
+end
+
+-- Helper: ensure a sub-table exists and merge into it conservatively
+local function EnsureSubTable(target, key)
+    if type(target[key]) ~= "table" then
+        target[key] = {}
+    end
+    return target[key]
+end
+
+---------------------------------------------------------------------------
+-- 1. Data format migrations (restructure raw data first)
+---------------------------------------------------------------------------
+
+-- Migrate legacy datatext toggles to slot-based config
+local function MigrateDatatextSlots(dt)
+    if not dt then return end
+    if dt.slots then return end  -- Already migrated
+
+    -- Build slots from legacy flags
+    dt.slots = {}
+
+    -- Priority order: time, friends, guild (matching old composite order)
+    if dt.showTime then table.insert(dt.slots, "time") end
+    if dt.showFriends then table.insert(dt.slots, "friends") end
+    if dt.showGuild then table.insert(dt.slots, "guild") end
+
+    -- Pad to 3 slots with empty strings
+    while #dt.slots < 3 do
+        table.insert(dt.slots, "")
+    end
+end
+
+-- Migrate global shortLabels to per-slot configuration
+local function MigratePerSlotSettings(dt)
+    if not dt then return end
+    if dt.slot1 then return end  -- Already migrated
+
+    -- Get global shortLabels value (from previous implementation)
+    local globalShortLabels = dt.shortLabels or false
+
+    -- Create per-slot configs with inherited global setting
+    dt.slot1 = { shortLabel = globalShortLabels, xOffset = 0, yOffset = 0 }
+    dt.slot2 = { shortLabel = globalShortLabels, xOffset = 0, yOffset = 0 }
+    dt.slot3 = { shortLabel = globalShortLabels, xOffset = 0, yOffset = 0 }
+end
+
+-- Migrate legacy classColorText to new master text color toggles
+local function MigrateMasterTextColors(general)
+    if not general then return end
+
+    -- If legacy classColorText was enabled, migrate to new master toggles
+    if general.classColorText == true and general.masterColorNameText == nil then
+        general.masterColorNameText = true
+        general.masterColorHealthText = true
+        -- Leave power/castbar/ToT as false (new features not covered by legacy toggle)
+    end
+
+    -- Initialize any nil values to false (for fresh profiles or profiles without legacy toggle)
+    if general.masterColorNameText == nil then general.masterColorNameText = false end
+    if general.masterColorHealthText == nil then general.masterColorHealthText = false end
+    if general.masterColorPowerText == nil then general.masterColorPowerText = false end
+    if general.masterColorCastbarText == nil then general.masterColorCastbarText = false end
+    if general.masterColorToTText == nil then general.masterColorToTText = false end
+end
+
+-- Migrate chat.styleEditBox boolean to chat.editBox table
+local function MigrateChatEditBox(chat)
+    if not chat then return end
+    if chat.editBox then return end  -- Already migrated
+
+    -- Create editBox table from legacy styleEditBox boolean
+    chat.editBox = {
+        enabled = chat.styleEditBox ~= false,  -- Default true if nil or true
+        bgAlpha = 0.25,
+        bgColor = {0, 0, 0},
+    }
+
+    -- Remove legacy key
+    chat.styleEditBox = nil
+end
+
+-- Migrate legacy cooldownSwipe (hideEssential/hideUtility) to new 3-toggle system
+local function MigrateCooldownSwipeV2(profile)
+    if not profile then return end
+    if not profile.cooldownSwipe then profile.cooldownSwipe = {} end
+
+    local cs = profile.cooldownSwipe
+    if cs.migratedToV2 then return end  -- Already migrated
+
+    -- Check old settings
+    local hadHideEssential = cs.hideEssential == true
+    local hadHideUtility = cs.hideUtility == true
+    local hadHideBuffSwipe = profile.cooldownManager and profile.cooldownManager.hideSwipe == true
+
+    -- Migration: If user had swipes hidden, they likely wanted to hide GCD clutter
+    -- Give them spell cooldowns back while keeping GCD hidden
+    if hadHideEssential or hadHideUtility or hadHideBuffSwipe then
+        cs.showBuffSwipe = true
+        cs.showGCDSwipe = false       -- Hide GCD (what most users wanted)
+        cs.showCooldownSwipe = true   -- Show actual cooldowns
+    else
+        -- Fresh or never-hidden: show all
+        cs.showBuffSwipe = true
+        cs.showGCDSwipe = true
+        cs.showCooldownSwipe = true
+    end
+
+    -- Clean up legacy keys
+    cs.hideEssential = nil
+    cs.hideUtility = nil
+    if profile.cooldownManager then
+        profile.cooldownManager.hideSwipe = nil
+    end
+
+    cs.migratedToV2 = true
+end
+
+-- Migrate legacy top-level castBar/targetCastBar/focusCastBar to quiUnitFrames.*.castbar
+local CASTBAR_MIGRATION_MAP = {
+    castBar       = { "quiUnitFrames", "player",  "castbar" },
+    targetCastBar = { "quiUnitFrames", "target",  "castbar" },
+    focusCastBar  = { "quiUnitFrames", "focus",   "castbar" },
+}
+
+local CASTBAR_DIRECT_KEYS = {
+    "enabled", "bgColor", "color", "height",
+    "showIcon", "width",
+}
+
+local CASTBAR_RENAMED_KEYS = {
+    textSize = "fontSize",
+}
+
+local CASTBAR_POSITION_KEYS = { "offsetX", "offsetY" }
+
+local function MigrateCastBars(profile)
+    if not profile then return end
+
+    for oldKey, path in pairs(CASTBAR_MIGRATION_MAP) do
+        local old = profile[oldKey]
+        if type(old) ~= "table" then
+            -- Nothing to migrate for this cast bar
+        else
+            -- Ensure target table path exists
+            local container = profile
+            for i = 1, #path - 1 do
+                if type(container[path[i]]) ~= "table" then
+                    container[path[i]] = {}
+                end
+                container = container[path[i]]
+            end
+            local target = container[path[#path]]
+            if type(target) ~= "table" then
+                target = {}
+                container[path[#path]] = target
+            end
+
+            -- Only migrate into keys that are still nil (don't overwrite new-style data)
+            for _, k in ipairs(CASTBAR_DIRECT_KEYS) do
+                if old[k] ~= nil and target[k] == nil then
+                    target[k] = old[k]
+                end
+            end
+            for oldName, newName in pairs(CASTBAR_RENAMED_KEYS) do
+                if old[oldName] ~= nil and target[newName] == nil then
+                    target[newName] = old[oldName]
+                end
+            end
+
+            -- Position offsets always migrate from legacy (user's actual screen placement)
+            for _, k in ipairs(CASTBAR_POSITION_KEYS) do
+                if old[k] ~= nil then
+                    target[k] = old[k]
+                end
+            end
+
+            -- Remove the legacy key
+            profile[oldKey] = nil
+        end
+    end
+end
+
+-- Migrate legacy unitFrames table to quiUnitFrames
+-- The old format used PascalCase (General, Frame.Width, Tags.Health.FontSize)
+-- while the new format uses flat camelCase (width, healthFontSize, showName).
+local UNIT_FRAME_UNITS = { "player", "target", "targettarget", "pet", "focus", "boss" }
+
+local function MigrateUnitFramesGeneral(oldGeneral, newGeneral)
+    if type(oldGeneral) ~= "table" then return end
+
+    SetIfNil(newGeneral, "font", oldGeneral.Font)
+    SetIfNil(newGeneral, "fontOutline", oldGeneral.FontFlag)
+
+    if type(oldGeneral.DarkMode) == "table" then
+        local dm = oldGeneral.DarkMode
+        SetIfNil(newGeneral, "darkMode", dm.Enabled)
+        SetIfNil(newGeneral, "darkModeBgColor", dm.BackgroundColor)
+        SetIfNil(newGeneral, "darkModeHealthColor", dm.ForegroundColor)
+        if dm.UseSolidTexture ~= nil and newGeneral.darkModeOpacity == nil then
+            newGeneral.darkModeOpacity = 1
+        end
+    end
+
+    if type(oldGeneral.FontShadows) == "table" then
+        local fs = oldGeneral.FontShadows
+        SetIfNil(newGeneral, "fontShadowColor", fs.Color)
+        SetIfNil(newGeneral, "fontShadowOffsetX", fs.OffsetX)
+        SetIfNil(newGeneral, "fontShadowOffsetY", fs.OffsetY)
+    end
+
+    if type(oldGeneral.CustomColors) == "table" then
+        local cc = oldGeneral.CustomColors
+        if type(cc.Reaction) == "table" then
+            SetIfNil(newGeneral, "hostilityColorHostile", cc.Reaction[1])
+            SetIfNil(newGeneral, "hostilityColorNeutral", cc.Reaction[4])
+            SetIfNil(newGeneral, "hostilityColorFriendly", cc.Reaction[5])
+        end
+    end
+end
+
+local function MigrateUnitFrameUnit(oldUnit, newUnit)
+    if type(oldUnit) ~= "table" then return end
+
+    SetIfNil(newUnit, "enabled", oldUnit.Enabled)
+
+    if type(oldUnit.Frame) == "table" then
+        local f = oldUnit.Frame
+        SetIfNil(newUnit, "width", f.Width)
+        SetIfNil(newUnit, "height", f.Height)
+        SetIfNil(newUnit, "texture", f.Texture)
+        SetIfNil(newUnit, "useClassColor", f.ClassColor)
+        SetIfNil(newUnit, "useHostilityColor", f.ReactionColor)
+        SetIfNil(newUnit, "offsetX", f.XPosition)
+        SetIfNil(newUnit, "offsetY", f.YPosition)
+    end
+
+    if type(oldUnit.Tags) == "table" then
+        if type(oldUnit.Tags.Health) == "table" then
+            local h = oldUnit.Tags.Health
+            SetIfNil(newUnit, "showHealth", h.Enabled)
+            SetIfNil(newUnit, "healthFontSize", h.FontSize)
+            SetIfNil(newUnit, "healthAnchor", h.AnchorFrom)
+            SetIfNil(newUnit, "healthOffsetX", h.OffsetX)
+            SetIfNil(newUnit, "healthOffsetY", h.OffsetY)
+            SetIfNil(newUnit, "healthTextColor", h.Color)
+            if h.DisplayPercent ~= nil and newUnit.showHealthPercent == nil then
+                newUnit.showHealthPercent = h.DisplayPercent
+            end
+        end
+
+        if type(oldUnit.Tags.Name) == "table" then
+            local n = oldUnit.Tags.Name
+            SetIfNil(newUnit, "showName", n.Enabled)
+            SetIfNil(newUnit, "nameFontSize", n.FontSize)
+            SetIfNil(newUnit, "nameAnchor", n.AnchorFrom)
+            SetIfNil(newUnit, "nameOffsetX", n.OffsetX)
+            SetIfNil(newUnit, "nameOffsetY", n.OffsetY)
+            SetIfNil(newUnit, "nameTextColor", n.Color)
+            SetIfNil(newUnit, "nameTextUseClassColor", n.ColorByClass)
+        end
+
+        if type(oldUnit.Tags.Power) == "table" then
+            local p = oldUnit.Tags.Power
+            SetIfNil(newUnit, "showPowerText", p.Enabled)
+            SetIfNil(newUnit, "powerTextFontSize", p.FontSize)
+            SetIfNil(newUnit, "powerTextAnchor", p.AnchorFrom)
+            SetIfNil(newUnit, "powerTextOffsetX", p.OffsetX)
+            SetIfNil(newUnit, "powerTextOffsetY", p.OffsetY)
+            SetIfNil(newUnit, "powerTextColor", p.Color)
+        end
+    end
+
+    if type(oldUnit.PowerBar) == "table" then
+        local pb = oldUnit.PowerBar
+        SetIfNil(newUnit, "showPowerBar", pb.Enabled)
+        SetIfNil(newUnit, "powerBarHeight", pb.Height)
+        SetIfNil(newUnit, "powerBarUsePowerColor", pb.ColorByType)
+        SetIfNil(newUnit, "powerBarColor", pb.FGColor)
+    end
+
+    if type(oldUnit.Absorb) == "table" then
+        local absorbs = EnsureSubTable(newUnit, "absorbs")
+        SetIfNil(absorbs, "enabled", oldUnit.Absorb.Enabled)
+        SetIfNil(absorbs, "color", oldUnit.Absorb.Color)
+    end
+end
+
+local function MigrateUnitFrames(profile)
+    if not profile then return end
+
+    local old = profile.unitFrames
+    if type(old) ~= "table" then return end
+
+    if type(profile.quiUnitFrames) ~= "table" then
+        profile.quiUnitFrames = {}
+    end
+    local new = profile.quiUnitFrames
+
+    SetIfNil(new, "enabled", old.enabled)
+
+    if type(old.General) == "table" then
+        local general = EnsureSubTable(new, "general")
+        MigrateUnitFramesGeneral(old.General, general)
+    end
+
+    for _, unit in ipairs(UNIT_FRAME_UNITS) do
+        if type(old[unit]) == "table" then
+            local newUnit = EnsureSubTable(new, unit)
+            MigrateUnitFrameUnit(old[unit], newUnit)
+        end
+    end
+
+    if type(old.General) == "table" and type(old.General.CustomColors) == "table" then
+        local customPower = old.General.CustomColors.Power
+        if type(customPower) == "table" and profile.powerColors == nil then
+            profile.powerColors = customPower
+        end
+    end
+
+    -- Remove the legacy key
+    profile.unitFrames = nil
+end
+
+-- Migrate selfFirst → partySelfFirst / raidSelfFirst
+local function MigrateSelfFirst(profile)
+    if not profile then return end
+    local gf = profile.quiGroupFrames
+    if not gf or gf.selfFirst == nil then return end
+
+    if gf.partySelfFirst == nil then
+        gf.partySelfFirst = gf.selfFirst
+    end
+    if gf.raidSelfFirst == nil then
+        gf.raidSelfFirst = gf.selfFirst
+    end
+    gf.selfFirst = nil
+end
+
+-- Remove orphaned keys that no longer have runtime consumers
+local ORPHAN_KEYS = { "cooldownManager", "trackerSystem", "nudgeAmount" }
+
+local function CleanOrphanKeys(profile)
+    if not profile then return end
+    for _, key in ipairs(ORPHAN_KEYS) do
+        if profile[key] ~= nil then
+            profile[key] = nil
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- 2. Legacy profile detection & normalization
+---------------------------------------------------------------------------
 
 local function LooksLikeLegacyMainlineProfile(profile)
     if type(profile) ~= "table" then
@@ -105,301 +478,6 @@ local function LooksLikeLegacyMainlineProfile(profile)
     end
 
     return false
-end
-
-local function ColorsEqual(a, b)
-    if type(a) ~= "table" or type(b) ~= "table" then
-        return false
-    end
-
-    for i = 1, 4 do
-        if (a[i] or 0) ~= (b[i] or 0) then
-            return false
-        end
-    end
-
-    return true
-end
-
-local DEFAULT_SKY_BLUE_ACCENT = { 0.376, 0.647, 0.980, 1 }
-
-local function EnsureThemeStorage(profile)
-    if type(profile) ~= "table" then
-        return
-    end
-    if type(profile.general) ~= "table" then
-        profile.general = {}
-    end
-
-    local general = profile.general
-    local generalAccent = type(general.addonAccentColor) == "table" and general.addonAccentColor or nil
-    local rootAccent = type(profile.addonAccentColor) == "table" and profile.addonAccentColor or nil
-
-    if generalAccent then
-        profile.addonAccentColor = CloneValue(generalAccent)
-    elseif rootAccent then
-        general.addonAccentColor = CloneValue(rootAccent)
-    end
-
-    local generalPreset = type(general.themePreset) == "string" and general.themePreset ~= "" and general.themePreset or nil
-    local rootPreset = type(profile.themePreset) == "string" and profile.themePreset ~= "" and profile.themePreset or nil
-
-    -- Older mainline profiles never had themePreset. If AceDB filled the new
-    -- default preset into the root only, ignore that placeholder and prefer the
-    -- legacy accent/class-color intent instead of forcing Sky Blue.
-    if not generalPreset and rootPreset == "Sky Blue" then
-        local accent = generalAccent or rootAccent
-        if general.skinUseClassColor == true or (accent and not ColorsEqual(accent, DEFAULT_SKY_BLUE_ACCENT)) then
-            rootPreset = nil
-        end
-    end
-
-    if general.skinUseClassColor == true then
-        generalPreset = "Class Colored"
-        rootPreset = "Class Colored"
-    elseif generalPreset then
-        rootPreset = generalPreset
-    elseif rootPreset then
-        generalPreset = rootPreset
-    end
-
-    if generalPreset then
-        general.themePreset = generalPreset
-    end
-    if rootPreset then
-        profile.themePreset = rootPreset
-    elseif profile.themePreset ~= nil and general.themePreset == nil then
-        profile.themePreset = nil
-    end
-end
-
-local function MigrateLegacyLootSettings(profile)
-    if type(profile) ~= "table" or type(profile.general) ~= "table" then
-        return
-    end
-
-    local general = profile.general
-    local hadLegacyLootSettings = false
-    if profile.loot == nil then profile.loot = {} end
-    if profile.lootRoll == nil then profile.lootRoll = {} end
-    if profile.lootResults == nil then profile.lootResults = {} end
-
-    if general.skinLootWindow ~= nil then
-        profile.loot.enabled = general.skinLootWindow
-        general.skinLootWindow = nil
-        hadLegacyLootSettings = true
-    end
-
-    if general.skinLootUnderMouse ~= nil then
-        profile.loot.lootUnderMouse = general.skinLootUnderMouse
-        general.skinLootUnderMouse = nil
-        hadLegacyLootSettings = true
-    end
-
-    if general.skinLootHistory ~= nil then
-        profile.lootResults.enabled = general.skinLootHistory
-        general.skinLootHistory = nil
-        hadLegacyLootSettings = true
-    end
-
-    if general.skinRollFrames ~= nil then
-        profile.lootRoll.enabled = general.skinRollFrames
-        general.skinRollFrames = nil
-        hadLegacyLootSettings = true
-    end
-
-    if general.skinRollSpacing ~= nil then
-        profile.lootRoll.spacing = general.skinRollSpacing
-        general.skinRollSpacing = nil
-        hadLegacyLootSettings = true
-    end
-
-    if hadLegacyLootSettings and profile.lootRoll.enabled == nil then
-        profile.lootRoll.enabled = true
-    end
-end
-
-local function ResetCastbarPreviewModes(profile)
-    if not profile or not profile.quiUnitFrames then
-        return
-    end
-
-    for _, unitKey in ipairs({ "player", "target", "focus", "pet", "targettarget" }) do
-        local unitDB = profile.quiUnitFrames[unitKey]
-        if unitDB and unitDB.castbar then
-            unitDB.castbar.previewMode = false
-        end
-    end
-
-    for i = 1, 8 do
-        local bossDB = profile.quiUnitFrames["boss" .. i]
-        if bossDB and bossDB.castbar then
-            bossDB.castbar.previewMode = false
-        end
-    end
-end
-
-local function EnsureCraftingOrderIndicator(profile)
-    if not profile then
-        return
-    end
-    if not profile.minimap then
-        profile.minimap = {}
-    end
-    if profile.minimap._showCraftingOrderMigrated ~= true then
-        profile.minimap.showCraftingOrder = true
-        profile.minimap._showCraftingOrderMigrated = true
-    end
-end
-
-local function MigrateToShowLogic(visTable)
-    if not visTable then return end
-
-    if visTable.hideOutOfCombat then
-        visTable.showInCombat = true
-    end
-    if visTable.hideWhenNotInGroup then
-        visTable.showInGroup = true
-    end
-    if visTable.hideWhenNotInInstance then
-        visTable.showInInstance = true
-    end
-
-    visTable.hideOutOfCombat = nil
-    visTable.hideWhenNotInGroup = nil
-    visTable.hideWhenNotInInstance = nil
-end
-
-local function MigrateGroupFrameContainers(profile)
-    local gf = profile and profile.quiGroupFrames
-    if not gf then
-        return
-    end
-
-    local VISUAL_KEYS = {
-        "general", "layout", "health", "power", "name", "absorbs", "healPrediction",
-        "indicators", "healer", "classPower", "range", "auras",
-        "privateAuras", "auraIndicators", "castbar", "portrait", "pets",
-    }
-
-    local needsMigration = false
-    for _, key in ipairs(VISUAL_KEYS) do
-        if gf[key] then
-            needsMigration = true
-            break
-        end
-    end
-    if gf.partyLayout or gf.raidLayout then
-        needsMigration = true
-    end
-
-    if needsMigration then
-        if not gf.party then gf.party = {} end
-        if not gf.raid then gf.raid = {} end
-
-        for _, key in ipairs(VISUAL_KEYS) do
-            if gf[key] then
-                if not gf.party[key] then gf.party[key] = CloneValue(gf[key]) end
-                if not gf.raid[key] then gf.raid[key] = CloneValue(gf[key]) end
-                gf[key] = nil
-            end
-        end
-
-        if gf.partyLayout then
-            if not gf.party.layout then
-                gf.party.layout = gf.partyLayout
-            else
-                for key, value in pairs(gf.partyLayout) do
-                    if gf.party.layout[key] == nil then
-                        gf.party.layout[key] = value
-                    end
-                end
-            end
-            gf.partyLayout = nil
-        end
-
-        if gf.raidLayout then
-            if not gf.raid.layout then
-                gf.raid.layout = gf.raidLayout
-            else
-                for key, value in pairs(gf.raidLayout) do
-                    if gf.raid.layout[key] == nil then
-                        gf.raid.layout[key] = value
-                    end
-                end
-            end
-            gf.raidLayout = nil
-        end
-    end
-
-    if gf.dimensions then
-        if not gf.party then gf.party = {} end
-        if not gf.raid then gf.raid = {} end
-        if not gf.party.dimensions then gf.party.dimensions = CloneValue(gf.dimensions) end
-        if not gf.raid.dimensions then gf.raid.dimensions = CloneValue(gf.dimensions) end
-        gf.dimensions = nil
-    end
-
-    if gf.spotlight then
-        if not gf.raid then gf.raid = {} end
-        if not gf.raid.spotlight then gf.raid.spotlight = gf.spotlight end
-        gf.spotlight = nil
-    end
-
-    if gf.unifiedPosition ~= nil then
-        if gf.unifiedPosition and gf.position and not gf.raidPosition then
-            gf.raidPosition = {
-                offsetX = gf.position.offsetX,
-                offsetY = gf.position.offsetY,
-            }
-        end
-        gf.unifiedPosition = nil
-    end
-end
-
-local function NormalizeEngines(profile)
-    if profile.tooltip and profile.tooltip.engine and profile.tooltip.engine ~= "default" then
-        profile.tooltip.engine = "default"
-    end
-
-    if profile.ncdm and profile.ncdm.engine ~= nil then
-        profile.ncdm.engine = nil
-    end
-
-    if profile.actionBars and profile.actionBars.engine == "classic" then
-        profile.actionBars.engine = "owned"
-    end
-end
-
-local function NormalizeMinimapSettings(profile)
-    if not profile or not profile.minimap then
-        return
-    end
-
-    if profile.minimap.scale ~= nil and profile.minimap.scale ~= 1.0 then
-        profile.minimap.scale = 1.0
-    end
-
-    local mm = profile.minimap
-    if mm.hideMicroMenu ~= nil then
-        if not profile.actionBars then profile.actionBars = {} end
-        if not profile.actionBars.bars then profile.actionBars.bars = {} end
-        if not profile.actionBars.bars.microbar then profile.actionBars.bars.microbar = {} end
-        if mm.hideMicroMenu then
-            profile.actionBars.bars.microbar.enabled = false
-        end
-        mm.hideMicroMenu = nil
-    end
-
-    if mm.hideBagBar ~= nil then
-        if not profile.actionBars then profile.actionBars = {} end
-        if not profile.actionBars.bars then profile.actionBars.bars = {} end
-        if not profile.actionBars.bars.bags then profile.actionBars.bars.bags = {} end
-        if mm.hideBagBar then
-            profile.actionBars.bars.bags.enabled = false
-        end
-        mm.hideBagBar = nil
-    end
 end
 
 local function IsPlaceholderAnchorEntry(entry)
@@ -611,6 +689,323 @@ local function NormalizeLegacyActionBarLayouts(profile)
         profile._legacyMainlineUsesEditModeActionBars = true
     end
 end
+
+---------------------------------------------------------------------------
+-- 3. Feature migrations
+---------------------------------------------------------------------------
+
+local function ResetCastbarPreviewModes(profile)
+    if not profile or not profile.quiUnitFrames then
+        return
+    end
+
+    for _, unitKey in ipairs({ "player", "target", "focus", "pet", "targettarget" }) do
+        local unitDB = profile.quiUnitFrames[unitKey]
+        if unitDB and unitDB.castbar then
+            unitDB.castbar.previewMode = false
+        end
+    end
+
+    for i = 1, 8 do
+        local bossDB = profile.quiUnitFrames["boss" .. i]
+        if bossDB and bossDB.castbar then
+            bossDB.castbar.previewMode = false
+        end
+    end
+end
+
+local function ColorsEqual(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then
+        return false
+    end
+
+    for i = 1, 4 do
+        if (a[i] or 0) ~= (b[i] or 0) then
+            return false
+        end
+    end
+
+    return true
+end
+
+local DEFAULT_SKY_BLUE_ACCENT = { 0.376, 0.647, 0.980, 1 }
+
+local function EnsureThemeStorage(profile)
+    if type(profile) ~= "table" then
+        return
+    end
+    if type(profile.general) ~= "table" then
+        profile.general = {}
+    end
+
+    local general = profile.general
+    local generalAccent = type(general.addonAccentColor) == "table" and general.addonAccentColor or nil
+    local rootAccent = type(profile.addonAccentColor) == "table" and profile.addonAccentColor or nil
+
+    if generalAccent then
+        profile.addonAccentColor = CloneValue(generalAccent)
+    elseif rootAccent then
+        general.addonAccentColor = CloneValue(rootAccent)
+    end
+
+    local generalPreset = type(general.themePreset) == "string" and general.themePreset ~= "" and general.themePreset or nil
+    local rootPreset = type(profile.themePreset) == "string" and profile.themePreset ~= "" and profile.themePreset or nil
+
+    -- Older mainline profiles never had themePreset. If AceDB filled the new
+    -- default preset into the root only, ignore that placeholder and prefer the
+    -- legacy accent/class-color intent instead of forcing Sky Blue.
+    if not generalPreset and rootPreset == "Sky Blue" then
+        local accent = generalAccent or rootAccent
+        if general.skinUseClassColor == true or (accent and not ColorsEqual(accent, DEFAULT_SKY_BLUE_ACCENT)) then
+            rootPreset = nil
+        end
+    end
+
+    if general.skinUseClassColor == true then
+        generalPreset = "Class Colored"
+        rootPreset = "Class Colored"
+    elseif generalPreset then
+        rootPreset = generalPreset
+    elseif rootPreset then
+        generalPreset = rootPreset
+    end
+
+    if generalPreset then
+        general.themePreset = generalPreset
+    end
+    if rootPreset then
+        profile.themePreset = rootPreset
+    elseif profile.themePreset ~= nil and general.themePreset == nil then
+        profile.themePreset = nil
+    end
+end
+
+local function MigrateLegacyLootSettings(profile)
+    if type(profile) ~= "table" or type(profile.general) ~= "table" then
+        return
+    end
+
+    local general = profile.general
+    local hadLegacyLootSettings = false
+    if profile.loot == nil then profile.loot = {} end
+    if profile.lootRoll == nil then profile.lootRoll = {} end
+    if profile.lootResults == nil then profile.lootResults = {} end
+
+    if general.skinLootWindow ~= nil then
+        profile.loot.enabled = general.skinLootWindow
+        general.skinLootWindow = nil
+        hadLegacyLootSettings = true
+    end
+
+    if general.skinLootUnderMouse ~= nil then
+        profile.loot.lootUnderMouse = general.skinLootUnderMouse
+        general.skinLootUnderMouse = nil
+        hadLegacyLootSettings = true
+    end
+
+    if general.skinLootHistory ~= nil then
+        profile.lootResults.enabled = general.skinLootHistory
+        general.skinLootHistory = nil
+        hadLegacyLootSettings = true
+    end
+
+    if general.skinRollFrames ~= nil then
+        profile.lootRoll.enabled = general.skinRollFrames
+        general.skinRollFrames = nil
+        hadLegacyLootSettings = true
+    end
+
+    if general.skinRollSpacing ~= nil then
+        profile.lootRoll.spacing = general.skinRollSpacing
+        general.skinRollSpacing = nil
+        hadLegacyLootSettings = true
+    end
+
+    if hadLegacyLootSettings and profile.lootRoll.enabled == nil then
+        profile.lootRoll.enabled = true
+    end
+end
+
+local function EnsureCraftingOrderIndicator(profile)
+    if not profile then
+        return
+    end
+    if not profile.minimap then
+        profile.minimap = {}
+    end
+    if profile.minimap._showCraftingOrderMigrated ~= true then
+        profile.minimap.showCraftingOrder = true
+        profile.minimap._showCraftingOrderMigrated = true
+    end
+end
+
+local function MigrateToShowLogic(visTable)
+    if not visTable then return end
+
+    if visTable.hideOutOfCombat then
+        visTable.showInCombat = true
+    end
+    if visTable.hideWhenNotInGroup then
+        visTable.showInGroup = true
+    end
+    if visTable.hideWhenNotInInstance then
+        visTable.showInInstance = true
+    end
+
+    visTable.hideOutOfCombat = nil
+    visTable.hideWhenNotInGroup = nil
+    visTable.hideWhenNotInInstance = nil
+end
+
+local function MigrateGroupFrameContainers(profile)
+    local gf = profile and profile.quiGroupFrames
+    if not gf then
+        return
+    end
+
+    local VISUAL_KEYS = {
+        "general", "layout", "health", "power", "name", "absorbs", "healPrediction",
+        "indicators", "healer", "classPower", "range", "auras",
+        "privateAuras", "auraIndicators", "castbar", "portrait", "pets",
+    }
+
+    local needsMigration = false
+    for _, key in ipairs(VISUAL_KEYS) do
+        if gf[key] then
+            needsMigration = true
+            break
+        end
+    end
+    if gf.partyLayout or gf.raidLayout then
+        needsMigration = true
+    end
+
+    if needsMigration then
+        if not gf.party then gf.party = {} end
+        if not gf.raid then gf.raid = {} end
+
+        for _, key in ipairs(VISUAL_KEYS) do
+            if gf[key] then
+                if not gf.party[key] then gf.party[key] = CloneValue(gf[key]) end
+                if not gf.raid[key] then gf.raid[key] = CloneValue(gf[key]) end
+                gf[key] = nil
+            end
+        end
+
+        if gf.partyLayout then
+            if not gf.party.layout then
+                gf.party.layout = gf.partyLayout
+            else
+                for key, value in pairs(gf.partyLayout) do
+                    if gf.party.layout[key] == nil then
+                        gf.party.layout[key] = value
+                    end
+                end
+            end
+            gf.partyLayout = nil
+        end
+
+        if gf.raidLayout then
+            if not gf.raid.layout then
+                gf.raid.layout = gf.raidLayout
+            else
+                for key, value in pairs(gf.raidLayout) do
+                    if gf.raid.layout[key] == nil then
+                        gf.raid.layout[key] = value
+                    end
+                end
+            end
+            gf.raidLayout = nil
+        end
+    end
+
+    if gf.dimensions then
+        if not gf.party then gf.party = {} end
+        if not gf.raid then gf.raid = {} end
+        if not gf.party.dimensions then gf.party.dimensions = CloneValue(gf.dimensions) end
+        if not gf.raid.dimensions then gf.raid.dimensions = CloneValue(gf.dimensions) end
+        gf.dimensions = nil
+    end
+
+    if gf.spotlight then
+        if not gf.raid then gf.raid = {} end
+        if not gf.raid.spotlight then gf.raid.spotlight = gf.spotlight end
+        gf.spotlight = nil
+    end
+
+    if gf.unifiedPosition ~= nil then
+        if gf.unifiedPosition and gf.position and not gf.raidPosition then
+            gf.raidPosition = {
+                offsetX = gf.position.offsetX,
+                offsetY = gf.position.offsetY,
+            }
+        end
+        gf.unifiedPosition = nil
+    end
+end
+
+local function NormalizeAuraIndicators(profile)
+    if not profile or not profile.quiGroupFrames then return end
+    local normalizeAuraIndicators = ns.Helpers and ns.Helpers.NormalizeAuraIndicatorConfig
+    if not normalizeAuraIndicators then return end
+
+    local gf = profile.quiGroupFrames
+    if gf.party and gf.party.auraIndicators then
+        normalizeAuraIndicators(gf.party.auraIndicators)
+    end
+    if gf.raid and gf.raid.auraIndicators then
+        normalizeAuraIndicators(gf.raid.auraIndicators)
+    end
+end
+
+local function NormalizeEngines(profile)
+    if profile.tooltip and profile.tooltip.engine and profile.tooltip.engine ~= "default" then
+        profile.tooltip.engine = "default"
+    end
+
+    if profile.ncdm and profile.ncdm.engine ~= nil then
+        profile.ncdm.engine = nil
+    end
+
+    if profile.actionBars and profile.actionBars.engine == "classic" then
+        profile.actionBars.engine = "owned"
+    end
+end
+
+local function NormalizeMinimapSettings(profile)
+    if not profile or not profile.minimap then
+        return
+    end
+
+    if profile.minimap.scale ~= nil and profile.minimap.scale ~= 1.0 then
+        profile.minimap.scale = 1.0
+    end
+
+    local mm = profile.minimap
+    if mm.hideMicroMenu ~= nil then
+        if not profile.actionBars then profile.actionBars = {} end
+        if not profile.actionBars.bars then profile.actionBars.bars = {} end
+        if not profile.actionBars.bars.microbar then profile.actionBars.bars.microbar = {} end
+        if mm.hideMicroMenu then
+            profile.actionBars.bars.microbar.enabled = false
+        end
+        mm.hideMicroMenu = nil
+    end
+
+    if mm.hideBagBar ~= nil then
+        if not profile.actionBars then profile.actionBars = {} end
+        if not profile.actionBars.bars then profile.actionBars.bars = {} end
+        if not profile.actionBars.bars.bags then profile.actionBars.bars.bags = {} end
+        if mm.hideBagBar then
+            profile.actionBars.bars.bags.enabled = false
+        end
+        mm.hideBagBar = nil
+    end
+end
+
+---------------------------------------------------------------------------
+-- 4. Anchoring migrations (depend on data being in final locations)
+---------------------------------------------------------------------------
 
 local function MigrateAnchoring(profile)
     if not profile._anchoringMigrationVersion then
@@ -927,25 +1322,168 @@ local function MigrateNCDMContainers(profile)
     profile.ncdm._containersMigrated = true
 end
 
-function Migrations.NormalizeProfile(core, opts)
-    local profile = core and core.db and core.db.profile
-    if type(profile) ~= "table" then
-        return false
+---------------------------------------------------------------------------
+-- 5. Anchoring seed (must run after all anchoring migrations)
+---------------------------------------------------------------------------
+
+local DEFAULT_FRAME_ANCHORING = {
+    bagBar          = { parent = "microMenu",       point = "TOPLEFT",      relative = "BOTTOMLEFT" },
+    bar1            = { parent = "bar3",            point = "BOTTOM",       relative = "TOP" },
+    bar2            = { parent = "bar1",            point = "BOTTOM",       relative = "TOP" },
+    bar3            = { parent = "screen",          point = "BOTTOMRIGHT",  relative = "BOTTOM" },
+    bar4            = { parent = "bar5",            point = "BOTTOMLEFT",   relative = "TOPLEFT" },
+    bar5            = { parent = "bar6",            point = "BOTTOMLEFT",   relative = "TOPLEFT" },
+    bar6            = { parent = "bar3",            point = "BOTTOMLEFT",   relative = "BOTTOMRIGHT" },
+    bossFrames      = { parent = "datatextPanel",   point = "TOPLEFT",      relative = "BOTTOMLEFT" },
+    brezCounter     = { parent = "combatTimer",     point = "BOTTOM",       relative = "TOP" },
+    atonementCounter = { parent = "brezCounter",    point = "BOTTOM",       relative = "TOP" },
+    buffFrame       = { parent = "minimap",         point = "TOPRIGHT",     relative = "TOPLEFT" },
+    buffIcon        = { parent = "cdmEssential",    point = "BOTTOM",       relative = "TOP" },
+    cdmUtility      = { parent = "secondaryPower",  point = "TOP",          relative = "BOTTOM" },
+    combatTimer     = { parent = "bar3",            point = "BOTTOMRIGHT",  relative = "BOTTOMLEFT" },
+    consumables     = { parent = "readyCheck",      point = "BOTTOM",       relative = "TOP" },
+    datatextPanel   = { parent = "minimap",         point = "TOP",          relative = "BOTTOM" },
+    debuffFrame     = { parent = "buffFrame",       point = "TOPRIGHT",     relative = "BOTTOMRIGHT" },
+    focusCastbar    = { parent = "focusFrame",      point = "TOP",          relative = "BOTTOM",  autoWidth = true },
+    focusFrame      = { parent = "playerFrame",     point = "BOTTOMLEFT",   relative = "TOPLEFT", offsetY = 200 },
+    microMenu       = { parent = "screen",          point = "TOPLEFT",      relative = "TOPLEFT" },
+    minimap         = { parent = "screen",          point = "TOPRIGHT",     relative = "TOPRIGHT", offsetY = -25 },
+    objectiveTracker = { parent = "datatextPanel",  point = "TOPRIGHT",     relative = "BOTTOMRIGHT" },
+    partyFrames     = { parent = "cdmUtility",      point = "TOP",          relative = "BOTTOM",  offsetY = -25, keepInPlace = true },
+    petBar          = { parent = "bar6",            point = "BOTTOMLEFT",   relative = "BOTTOMRIGHT" },
+    petCastbar      = { parent = "petFrame",        point = "TOP",          relative = "BOTTOM" },
+    petFrame        = { parent = "playerFrame",     point = "BOTTOMRIGHT",  relative = "BOTTOMLEFT" },
+    playerCastbar   = { parent = "playerFrame",     point = "TOP",          relative = "BOTTOM",  autoWidth = true },
+    playerFrame     = { parent = "cdmEssential",    point = "BOTTOMRIGHT",  relative = "BOTTOMLEFT" },
+    primaryPower    = { parent = "cdmEssential",    point = "TOP",          relative = "BOTTOM",  autoWidth = true },
+    raidFrames      = { parent = "cdmUtility",      point = "TOP",          relative = "BOTTOM",  offsetY = -25, keepInPlace = true },
+    secondaryPower  = { parent = "primaryPower",    point = "TOP",          relative = "BOTTOM",  autoWidth = true },
+    stanceBar       = { parent = "petBar",          point = "BOTTOMLEFT",   relative = "TOPLEFT" },
+    targetCastbar   = { parent = "targetFrame",     point = "TOP",          relative = "BOTTOM",  autoWidth = true },
+    targetFrame     = { parent = "cdmEssential",    point = "BOTTOMLEFT",   relative = "BOTTOMRIGHT" },
+    totCastbar      = { parent = "totFrame",        point = "TOP",          relative = "BOTTOM" },
+    totFrame        = { parent = "targetFrame",     point = "BOTTOMLEFT",   relative = "BOTTOMRIGHT" },
+    zoneAbility     = { parent = "extraActionButton", point = "CENTER",     relative = "CENTER" },
+    cdmEssential    = { parent = "screen",          point = "CENTER",       relative = "CENTER",  offsetY = -180 },
+    lootRollAnchor  = { parent = "readyCheck",      point = "TOP",          relative = "BOTTOM",  keepInPlace = true },
+    skyriding       = { parent = "screen",          point = "CENTER",       relative = "TOP",     offsetY = -30 },
+    powerBarAlt     = { parent = "screen",          point = "CENTER",       relative = "TOP",     offsetY = -75 },
+    bnetToastAnchor = { parent = "screen",          point = "CENTER",       relative = "TOP",     offsetY = -125 },
+}
+
+local function IsUninitializedAnchoring(fa)
+    if type(fa) ~= "table" then return true end
+    local count = 0
+    for key, entry in pairs(fa) do
+        if type(entry) == "table" then
+            count = count + 1
+            local parent = entry.parent
+            if parent and parent ~= "screen" and parent ~= "disabled" then
+                return false  -- Has a real parent chain
+            end
+            if (entry.offsetX or 0) ~= 0 or (entry.offsetY or 0) ~= 0 then
+                if parent ~= "screen" then
+                    return false
+                end
+            end
+        end
+    end
+    return count > 0
+end
+
+local ANCHORING_SEED_VERSION = 1
+
+local function SeedDefaultFrameAnchoring(profile)
+    if not profile then return end
+
+    -- Only run once
+    if profile._anchoringSeedVersion and profile._anchoringSeedVersion >= ANCHORING_SEED_VERSION then
+        return
     end
 
-    local isLegacyMainlineProfile = LooksLikeLegacyMainlineProfile(profile)
+    if type(profile.frameAnchoring) ~= "table" then
+        profile.frameAnchoring = {}
+    end
+    local fa = profile.frameAnchoring
 
-    local addon = _G.QUI
-    if addon and addon.BackwardsCompat then
-        addon:BackwardsCompat()
+    -- Only seed if the existing data looks uninitialized
+    if not IsUninitializedAnchoring(fa) then
+        profile._anchoringSeedVersion = ANCHORING_SEED_VERSION
+        return
     end
 
-    if isLegacyMainlineProfile then
+    for key, defaults in pairs(DEFAULT_FRAME_ANCHORING) do
+        if type(fa[key]) ~= "table" then
+            fa[key] = {}
+        end
+        local entry = fa[key]
+
+        -- Seed parent chain and anchor points (overwrite uninitialized
+        -- "screen"/CENTER data with the proper default parent chain)
+        entry.parent   = defaults.parent
+        entry.point    = defaults.point
+        entry.relative = defaults.relative
+
+        -- Seed offsets from defaults (only if currently zeroed)
+        if defaults.offsetX and (entry.offsetX or 0) == 0 then
+            entry.offsetX = defaults.offsetX
+        end
+        if defaults.offsetY and (entry.offsetY or 0) == 0 then
+            entry.offsetY = defaults.offsetY
+        end
+
+        -- Seed newer fields that old profiles don't have at all
+        if entry.hideWithParent == nil then
+            entry.hideWithParent = false
+        end
+        if defaults.keepInPlace and entry.keepInPlace == nil then
+            entry.keepInPlace = defaults.keepInPlace
+        elseif entry.keepInPlace == nil then
+            entry.keepInPlace = false
+        end
+        if defaults.autoWidth and entry.autoWidth == nil then
+            entry.autoWidth = defaults.autoWidth
+        end
+
+        -- Ensure standard fields exist
+        if entry.sizeStable == nil then entry.sizeStable = true end
+        if entry.autoHeight == nil then entry.autoHeight = false end
+        if entry.autoWidth == nil then entry.autoWidth = false end
+        if entry.heightAdjust == nil then entry.heightAdjust = 0 end
+        if entry.widthAdjust == nil then entry.widthAdjust = 0 end
+    end
+
+    profile._anchoringSeedVersion = ANCHORING_SEED_VERSION
+end
+
+---------------------------------------------------------------------------
+-- Entry point: Run all profile migrations
+---------------------------------------------------------------------------
+
+function Migrations.Run(db)
+    local profile = db and db.profile
+    if type(profile) ~= "table" then return false end
+
+    -- 1. Data format migrations (restructure raw data first)
+    MigrateDatatextSlots(profile.datatext)
+    MigratePerSlotSettings(profile.datatext)
+    MigrateMasterTextColors(profile.quiUnitFrames and profile.quiUnitFrames.general)
+    MigrateChatEditBox(profile.chat)
+    MigrateCooldownSwipeV2(profile)
+    MigrateCastBars(profile)
+    MigrateUnitFrames(profile)
+    MigrateSelfFirst(profile)
+    CleanOrphanKeys(profile)
+
+    -- 2. Legacy profile detection & normalization
+    local isLegacy = LooksLikeLegacyMainlineProfile(profile)
+    if isLegacy then
         PruneLegacyPlaceholderAnchors(profile)
         ResetLegacyAnchorsForRebuild(profile)
         NormalizeLegacyActionBarLayouts(profile)
     end
 
+    -- 3. Feature migrations
     ResetCastbarPreviewModes(profile)
     EnsureThemeStorage(profile)
     MigrateLegacyLootSettings(profile)
@@ -953,23 +1491,16 @@ function Migrations.NormalizeProfile(core, opts)
     MigrateToShowLogic(profile.cdmVisibility)
     MigrateToShowLogic(profile.unitframesVisibility)
     MigrateGroupFrameContainers(profile)
-    if profile.quiGroupFrames then
-        local normalizeAuraIndicators = ns.Helpers and ns.Helpers.NormalizeAuraIndicatorConfig
-        if normalizeAuraIndicators then
-            local gf = profile.quiGroupFrames
-            if gf.party and gf.party.auraIndicators then
-                normalizeAuraIndicators(gf.party.auraIndicators)
-            end
-            if gf.raid and gf.raid.auraIndicators then
-                normalizeAuraIndicators(gf.raid.auraIndicators)
-            end
-        end
-    end
+    NormalizeAuraIndicators(profile)
     NormalizeEngines(profile)
     NormalizeMinimapSettings(profile)
+
+    -- 4. Anchoring (depends on data being in final locations)
     MigrateAnchoring(profile)
     MigrateNCDMContainers(profile)
+    SeedDefaultFrameAnchoring(profile)
 
+    -- 5. Stamp schema version
+    profile._schemaVersion = CURRENT_SCHEMA_VERSION
     return true
 end
-
