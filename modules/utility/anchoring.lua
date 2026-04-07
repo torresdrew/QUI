@@ -37,6 +37,15 @@ local Helpers = {}
 -- Forward-declared tables (populated later, referenced by ResolveFrameForKey)
 local CDM_LOGICAL_SIZE_KEYS = {}
 
+-- Corner anchor names — used by the growAnchor apply-time conversion to
+-- validate the corner string from FA entries.
+local CORNER_POINTS = {
+    TOPLEFT     = true,
+    TOPRIGHT    = true,
+    BOTTOMLEFT  = true,
+    BOTTOMRIGHT = true,
+}
+
 -- Edit Mode hook state (declared early so ApplyFrameAnchor can set the guard)
 local _editModeReapplyGuard = false  -- prevents recursive reapply during QUI's own SetPoint
 
@@ -2320,6 +2329,68 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
     local relative = settings.relative or "CENTER"
     local offsetX = settings.offsetX or 0
     local offsetY = settings.offsetY or 0
+
+    -- growAnchor: apply-time corner conversion for FREE-POSITION dynamic-
+    -- size containers (buff/debuff/auraBar with parent=disabled or screen).
+    --
+    -- For free-position containers, layout mode writes CENTER-relative drag
+    -- offsets (just like every other frame). But the container's actual
+    -- SetPoint anchor needs to be a CORNER so the icons don't drift toward
+    -- the center as the container grows/shrinks. The corner is determined
+    -- by icon grow direction (set via the buff borders config) and stored
+    -- as `settings.growAnchor`. Read here at apply time so the math always
+    -- uses fresh values: the container's current natural size and UIParent's
+    -- current dimensions.
+    --
+    -- IMPORTANT: only fires when the entry is CENTER-anchored (or has no
+    -- explicit point/relative — both mean "free position"). For chain-
+    -- anchored containers (e.g. buffFrame.parent=minimap with explicit
+    -- point=TOPRIGHT, relative=TOPLEFT), the user's stored anchor pair
+    -- already provides a stable fixed-corner reference: the source corner
+    -- of the SetPoint sits at a fixed location on the parent frame, and
+    -- icons positioned inside the container relative to that same source
+    -- corner stay stable as the container resizes. No conversion needed.
+    -- Forcing the conversion would rewrite the user's `relative` from
+    -- TOPLEFT to TOPRIGHT (or whatever growAnchor is) and visually break
+    -- the chain anchor.
+    local entryPoint    = settings.point or "CENTER"
+    local entryRelative = settings.relative or "CENTER"
+    local isFreePosition = entryPoint == "CENTER" and entryRelative == "CENTER"
+    if isFreePosition
+        and settings.growAnchor and CORNER_POINTS and CORNER_POINTS[settings.growAnchor]
+        and (key == "buffFrame" or key == "debuffFrame" or key == "buffBar" or key == "buffIcon")
+    then
+        local corner = settings.growAnchor
+        local fw = (resolved.GetWidth and resolved:GetWidth()) or 0
+        local fh = (resolved.GetHeight and resolved:GetHeight()) or 0
+        -- Container size resolution (in priority order):
+        --   1. The frame's actual current size (real, post-LayoutIcons)
+        --   2. The cached natural size from the most recent LayoutIcons
+        --      pass — survives across Init/PEW/SetSize when the live frame
+        --      is briefly 1x1 again
+        --   3. A sane minimum (32x32) so the corner math at least produces
+        --      an on-screen value, which gets corrected on the next call
+        --      to ApplyFrameAnchor (LayoutIcons triggers one when it
+        --      finishes positioning icons).
+        if fw < 4 then
+            fw = resolved._naturalW or settings._minWidth or 32
+        end
+        if fh < 4 then
+            fh = resolved._naturalH or settings._minHeight or 32
+        end
+        local pw = (parentFrame and parentFrame.GetWidth and parentFrame:GetWidth()) or UIParent:GetWidth()
+        local ph = (parentFrame and parentFrame.GetHeight and parentFrame:GetHeight()) or UIParent:GetHeight()
+        local GA_FRAC_X = { TOPLEFT = 0, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 1 }
+        local GA_FRAC_Y = { TOPLEFT = 1, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 0 }
+        -- offsetX/offsetY are CENTER-relative; convert to corner-relative.
+        local cornerX = offsetX + (GA_FRAC_X[corner] - 0.5) * (fw - pw)
+        local cornerY = offsetY + (GA_FRAC_Y[corner] - 0.5) * (fh - ph)
+        SmoothSetPoint(resolved, corner, parentFrame, corner, cornerX, cornerY)
+        -- Skip ApplyAutoSizing — buff/debuff containers manage their own
+        -- size via LayoutIcons.
+        return
+    end
+
     local useSizeStable = IsSizeStableAnchoringEnabled(settings)
     -- During early init, UIParent dimensions haven't settled — CENTER offset
     -- computation produces wrong values. Use raw point instead; deferred

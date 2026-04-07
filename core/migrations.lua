@@ -43,11 +43,40 @@ if _G.QUI then _G.QUI.Migrations = Migrations end
 -- v20 = MigrateAnchoringV2                         (3.0 mplusTimer/tooltip/brez legacy offsets)
 -- v21 = MigrateAnchoringV3                         (3.1 readyCheck/loot/alerts/bars position)
 -- v22 = MigrateNCDMContainers                      (3.0 ncdm.containers schema)
+-- v23 = Re-run PruneLegacyPlaceholderAnchors with `enabled` whitelisted
+--       (3.1.5: ghost FA entries with enabled=false survived earlier prune
+--        passes because the enabled flag prevented placeholder detection;
+--        re-running cleans them up so AceDB defaults take over)
+-- v24 = RepairDisabledAnchorsWithStaleCornerPoints
+--       (3.1.5: SavePendingPosition's free-position branch failed to reset
+--        point/relative when existingParent == "disabled". Frames that had
+--        been corner-converted (TOPRIGHT/TOPRIGHT) before being unanchored
+--        ended up with CENTER-based offsets stored against TOPRIGHT anchor
+--        points, teleporting them off-screen. Repair: detect entries where
+--        parent="disabled" and point/relative are non-CENTER, normalize
+--        them back to CENTER/CENTER preserving the offsets.)
+-- v25 = Re-run RepairDisabledStaleCornerEntries
+--       (3.1.5: a separate bug in buffborders.lua LayoutIcons was writing
+--        the runtime corner-conversion BACK to the DB on every layout pass,
+--        re-corrupting any entry that v24 repaired. The buffborders bug is
+--        fixed in this same release; this gate re-runs the repair against
+--        profiles that already migrated past v24 with re-corrupted data.
+--        v25 also handles the AceDB-default-stripped variant: entries
+--        where point=nil but relative is a corner string. AceDB strips
+--        point="TOPRIGHT" on save because it matches the default for
+--        debuffFrame, leaving only `relative="TOPRIGHT"` as the buggy
+--        fingerprint in raw SV.)
+-- v26 = Add growAnchor field to buff/debuff/auraBar FA entries
+--       (3.1.5 Phase 2: split icon-grow direction from container anchor.
+--        Existing corner-anchored entries get growAnchor = entry.point so
+--        the new ApplyFrameAnchor growAnchor branch interprets them as
+--        already-corner-anchored. Entries that v24/v25 normalized to
+--        CENTER/CENTER get growAnchor derived from buffBorders config.)
 --
 -- When adding a new migration: bump CURRENT_SCHEMA_VERSION, add it to the
 -- linear gate chain in RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 22
+local CURRENT_SCHEMA_VERSION = 26
 
 ---------------------------------------------------------------------------
 -- Shared helpers
@@ -481,6 +510,12 @@ local function IsPlaceholderAnchorEntry(entry)
     end
 
     -- Ignore housekeeping-only entries such as hudMinWidth.
+    --
+    -- `enabled` is whitelisted because 3.0 era profiles still carry the
+    -- legacy enabled flag on ghost entries — without this, an `enabled=false`
+    -- ghost survives pruning, falls through the cleanup loop, and ends up
+    -- masking the AceDB default with a useless zero-offset CENTER anchor.
+    -- The flag itself is meaningless once the migration normalizes things.
     for key, value in pairs(entry) do
         if key ~= "parent"
             and key ~= "point"
@@ -495,6 +530,7 @@ local function IsPlaceholderAnchorEntry(entry)
             and key ~= "autoHeight"
             and key ~= "widthAdjust"
             and key ~= "heightAdjust"
+            and key ~= "enabled"
             and value ~= nil
         then
             return false
@@ -504,16 +540,58 @@ local function IsPlaceholderAnchorEntry(entry)
     return true
 end
 
+-- Buffered debug log: chat isn't available during OnInitialize/OnEnable when
+-- migrations run, so we collect lines into a global table that can be dumped
+-- via /qui miglog after login. The buffer is created lazily on first write.
+--
+-- Logging is unconditional during the v3.1.5 anchor-migration debug push.
+-- Strip the MigLog calls and this helper after the bug is fixed.
+local function MigLog(fmt, ...)
+    if not _G.QUI_MIGRATION_LOG then _G.QUI_MIGRATION_LOG = {} end
+    local line
+    if select("#", ...) > 0 then
+        local ok, msg = pcall(string.format, fmt, ...)
+        line = ok and msg or fmt
+    else
+        line = fmt
+    end
+    _G.QUI_MIGRATION_LOG[#_G.QUI_MIGRATION_LOG + 1] = line
+end
+
 local function PruneLegacyPlaceholderAnchors(profile)
     if type(profile) ~= "table" or type(profile.frameAnchoring) ~= "table" then
+        MigLog("PruneLegacyPlaceholderAnchors: skip — profile=%s frameAnchoring=%s",
+            type(profile), type(profile and profile.frameAnchoring))
         return
     end
 
+    local pruned, kept = 0, 0
+    MigLog("PruneLegacyPlaceholderAnchors: scanning frameAnchoring")
     for key, entry in pairs(profile.frameAnchoring) do
-        if key ~= "hudMinWidth" and IsPlaceholderAnchorEntry(entry) then
+        if key == "hudMinWidth" then
+            -- skip
+        elseif IsPlaceholderAnchorEntry(entry) then
+            MigLog("  PRUNE %s (parent=%s, point=%s, ofs=%s/%s, enabled=%s)",
+                tostring(key),
+                tostring(entry.parent),
+                tostring(entry.point),
+                tostring(entry.offsetX),
+                tostring(entry.offsetY),
+                tostring(entry.enabled))
             profile.frameAnchoring[key] = nil
+            pruned = pruned + 1
+        else
+            MigLog("  keep  %s (parent=%s, point=%s, ofs=%s/%s, enabled=%s)",
+                tostring(key),
+                tostring(entry.parent),
+                tostring(entry.point),
+                tostring(entry.offsetX),
+                tostring(entry.offsetY),
+                tostring(entry.enabled))
+            kept = kept + 1
         end
     end
+    MigLog("PruneLegacyPlaceholderAnchors done: pruned=%d kept=%d", pruned, kept)
 end
 
 -- Gated externally by schema version v10 (only runs once, only for legacy
@@ -1094,37 +1172,59 @@ local function MigrateAnchoringV1(profile)
 
         -- Legacy cleanup only runs if the profile actually has entries.
         -- Fresh profiles skip this block entirely (existingFa is nil).
+        --
+        -- Discriminator: a TRUE 2.55 entry has no `parent` field at all
+        -- (2.55 stored only point/relative/offsets/enabled, no parent
+        -- chain). A 3.0+ entry that happens to still carry an `enabled`
+        -- flag will have `parent` set, and its position data must be
+        -- preserved exactly — even when the key is in
+        -- LEGACY255_DISCARD_ABSOLUTE, because that list only describes
+        -- frames whose 2.55 absolute coords don't translate. A 3.0+
+        -- entry with `parent="screen"` and real offsets is a free
+        -- screen position the user explicitly chose, not a stale 2.55
+        -- artifact. Discarding it falls back to the AceDB default
+        -- (e.g. playerFrame → cdmEssential), which silently re-parents
+        -- the user's frames to a CDM container they may have hidden.
         if existingFa then
             for key, settings in pairs(existingFa) do
                 if type(settings) == "table" and settings.enabled ~= nil then
-                    if settings.enabled == false then
-                        -- enabled=false = never explicitly positioned via layout mode.
-                        -- For CDM containers and chain frames: discard (absolute 2.55
-                        -- coords don't translate). For other frames with real position
-                        -- data: preserve. Seed defaults are a last resort.
-                        if CDM_OWNED_KEYS[key] or LEGACY255_DISCARD_ABSOLUTE[key] then
+                    local hasParentField = settings.parent ~= nil
+                    local hasPositionData = (tonumber(settings.offsetX) or 0) ~= 0
+                        or (tonumber(settings.offsetY) or 0) ~= 0
+                        or (tonumber(settings.widthAdjust) or 0) ~= 0
+                        or (tonumber(settings.heightAdjust) or 0) ~= 0
+
+                    if CDM_OWNED_KEYS[key] then
+                        -- CDM containers are positioned by the CDM module via
+                        -- ncdm.<key>.pos. The cooperation contract is that
+                        -- frameAnchoring entries for these keys yield to CDM,
+                        -- so always strip them.
+                        existingFa[key] = nil
+                    elseif hasParentField then
+                        -- 3.0+ shape: full {parent, point, relative, offsets}.
+                        -- User data — preserve, just remove the legacy flag.
+                        settings.enabled = nil
+                    elseif settings.enabled == false then
+                        -- True 2.55 shape (no parent field), enabled=false:
+                        -- this was never explicitly positioned via layout
+                        -- mode. For frames whose new default chains them
+                        -- to a CDM container or other moving frame, the
+                        -- legacy absolute coords don't translate — discard
+                        -- so the seed default applies. For other frames,
+                        -- preserve real position data via the seed pin.
+                        if LEGACY255_DISCARD_ABSOLUTE[key] then
                             existingFa[key] = nil
+                        elseif hasPositionData then
+                            settings.enabled = nil  -- keep, will be pinned to screen later
                         else
-                            local hasPositionData = (tonumber(settings.offsetX) or 0) ~= 0
-                                or (tonumber(settings.offsetY) or 0) ~= 0
-                                or (tonumber(settings.widthAdjust) or 0) ~= 0
-                                or (tonumber(settings.heightAdjust) or 0) ~= 0
-                            if hasPositionData then
-                                settings.enabled = nil  -- strip flag, keep data
-                            else
-                                existingFa[key] = nil
-                            end
+                            existingFa[key] = nil
                         end
                     else
-                        -- enabled=true = user explicitly positioned this via layout
-                        -- mode. The entry already has valid parent-chain data (e.g.
-                        -- playerCastbar with parent=cdmUtility). Always preserve,
-                        -- except for CDM containers which the CDM module owns.
-                        if CDM_OWNED_KEYS[key] then
-                            existingFa[key] = nil
-                        else
-                            settings.enabled = nil  -- strip flag, keep data
-                        end
+                        -- True 2.55 shape, enabled=true: user moved it via
+                        -- 2.55 layout mode. Strip the flag, keep the data.
+                        -- The seed at the end of MigrateAnchoringV1 won't
+                        -- overwrite it because the entry still exists.
+                        settings.enabled = nil
                     end
                 end
             end
@@ -1467,6 +1567,139 @@ local function MigrateAnchoringV3(profile)
     end
 end
 
+---------------------------------------------------------------------------
+-- v24: Repair entries with parent="disabled" + stale corner point/relative
+---------------------------------------------------------------------------
+-- The SavePendingPosition free-position branch had a bug: when the user
+-- middle-clicked a frame to unanchor it (parent → "disabled") and the
+-- entry already had non-CENTER point/relative from a prior corner-
+-- conversion, subsequent drags wrote fresh CENTER-based offsets without
+-- normalizing point/relative. The runtime then interpreted CENTER offsets
+-- as TOPRIGHT-anchored offsets and the frame teleported off-screen.
+--
+-- Detection: parent == "disabled" AND point == relative AND that value
+-- is one of the four corners. Layout mode's drag handler measures offsets
+-- against UIParent CENTER, so the stored offsetX/offsetY are already in
+-- CENTER coordinate space — they just need the entry's point/relative
+-- normalized to CENTER/CENTER to be interpreted correctly. Repair preserves
+-- the user's drag position; it does NOT discard the offsets.
+local CORNER_POINTS = {
+    TOPLEFT     = true,
+    TOPRIGHT    = true,
+    BOTTOMLEFT  = true,
+    BOTTOMRIGHT = true,
+}
+
+local function RepairDisabledStaleCornerEntries(profile)
+    if type(profile) ~= "table" or type(profile.frameAnchoring) ~= "table" then
+        return
+    end
+    local repaired = 0
+    for key, entry in pairs(profile.frameAnchoring) do
+        if type(entry) == "table" and entry.parent == "disabled" then
+            -- Two fingerprints to detect:
+            --
+            -- (a) point == relative AND both are corner names. The straight-
+            --     forward case after the SavePendingPosition bug.
+            -- (b) point == nil AND relative is a corner name. This occurs
+            --     after AceDB save/load: AceDB strips fields whose value
+            --     matches the default. For buff/debuff frames the default
+            --     point happens to be "TOPRIGHT" — when the corner conv
+            --     wrote point="TOPRIGHT", AceDB stripped it on save,
+            --     leaving relative="TOPRIGHT" as the only on-disk witness
+            --     to the corruption. The proxy view fills point back in
+            --     from defaults so consumers see (TOPRIGHT, TOPRIGHT)
+            --     again. From a repair standpoint, the raw entry shape
+            --     {parent=disabled, point=nil, relative=<corner>} is the
+            --     same bug as case (a) just with one field stripped.
+            local isCornerPair = entry.point == entry.relative
+                and CORNER_POINTS[entry.point or ""]
+            local isStrippedCorner = entry.point == nil
+                and CORNER_POINTS[entry.relative or ""]
+
+            if isCornerPair or isStrippedCorner then
+                MigLog("v25 RepairDisabledStaleCorner: %s (parent=disabled, point=%s, rel=%s, ofs=%s/%s) → CENTER/CENTER",
+                    tostring(key),
+                    tostring(entry.point),
+                    tostring(entry.relative),
+                    tostring(entry.offsetX),
+                    tostring(entry.offsetY))
+                -- Repair: keep parent/offsets exactly as the user dragged
+                -- them, normalize point/relative to CENTER/CENTER so the
+                -- runtime interprets the offsets in the same coordinate
+                -- space they were measured in.
+                entry.point = "CENTER"
+                entry.relative = "CENTER"
+                repaired = repaired + 1
+            end
+        end
+    end
+    MigLog("RepairDisabledStaleCorner done: repaired=%d", repaired)
+end
+
+---------------------------------------------------------------------------
+-- v26: Backfill growAnchor field on buff/debuff/auraBar FA entries
+---------------------------------------------------------------------------
+-- Phase 2 of the buff/debuff anchor split: separate "where the container
+-- lives" (FA entry point/relative/offsets) from "which corner stays fixed
+-- as the container resizes" (FA entry growAnchor field). The apply path
+-- reads growAnchor and converts CENTER offsets to corner offsets at apply
+-- time using the container's current natural size.
+--
+-- For existing profiles, we need to populate growAnchor so the new apply
+-- path knows the corner. Two cases:
+--
+-- (a) Entry was already corner-anchored from a prior corner-conversion
+--     run: point == relative AND both are corner names. Set
+--     growAnchor = entry.point so the new apply path treats the existing
+--     offsets as already-corner-anchored and applies them directly. We
+--     leave point/relative/offsets alone — they're already in the right
+--     shape for the apply-time path to consume verbatim.
+--
+-- (b) Entry was normalized to CENTER/CENTER by v24/v25 repair, OR is a
+--     fresh CENTER-anchored entry from a Phase 2 layout-mode drag.
+--     growAnchor is derived from buffBorders.{buff,debuff}GrowLeft/GrowUp.
+--     The apply path will compute the corner conversion using the live
+--     container size on next apply.
+--
+-- For v26 we only backfill case (a) — case (b) is handled at runtime by
+-- buffborders.lua's UpdateGrowAnchor watcher, which fires on every refresh
+-- including the post-migration FullRefresh that runs at module init.
+local function BackfillGrowAnchor(profile)
+    if type(profile) ~= "table" or type(profile.frameAnchoring) ~= "table" then
+        return
+    end
+    local KEYS = { "buffFrame", "debuffFrame", "buffBar", "buffIcon" }
+    local backfilled = 0
+    for _, key in ipairs(KEYS) do
+        local entry = profile.frameAnchoring[key]
+        if type(entry) == "table" and entry.growAnchor == nil then
+            -- Case (a): existing corner-anchored entry. Both point and
+            -- relative are the same corner string. Capture it as growAnchor.
+            if entry.point == entry.relative
+                and CORNER_POINTS[entry.point or ""]
+            then
+                entry.growAnchor = entry.point
+                backfilled = backfilled + 1
+                MigLog("v26 BackfillGrowAnchor: %s growAnchor=%s (from existing corner anchor)",
+                    tostring(key), tostring(entry.growAnchor))
+            end
+            -- Case (b) is left for the runtime watcher (UpdateGrowAnchor in
+            -- buffborders.lua), which fires on FullRefresh after the module
+            -- initializes and reads buffBorders.{buff,debuff}GrowLeft/GrowUp
+            -- to derive the corner. Doing it here would require a copy of
+            -- that logic and would race with anything that mutates the
+            -- buffBorders DB before module init.
+        end
+    end
+    MigLog("BackfillGrowAnchor done: backfilled=%d", backfilled)
+end
+
+-- CORNER_POINTS used by both RepairDisabledStaleCornerEntries and
+-- BackfillGrowAnchor. Defined locally so the migration module is
+-- self-contained (anchoring.lua has its own copy).
+-- (Already declared earlier in this file.)
+
 -- Gated externally by schema version v22. The data-shape guard is "does
 -- ncdm.<legacy key> still exist?" — if not, the loop below is a no-op.
 local function MigrateNCDMContainers(profile)
@@ -1617,12 +1850,29 @@ function Migrations.RunOnProfile(profile)
 
     local stored = tonumber(profile._schemaVersion) or 0
 
+    do
+        local faCount = 0
+        if type(profile.frameAnchoring) == "table" then
+            for _ in pairs(profile.frameAnchoring) do faCount = faCount + 1 end
+        end
+        MigLog("=== RunOnProfile: stored=%d current=%d faEntries=%d ===",
+            stored, CURRENT_SCHEMA_VERSION, faCount)
+        if type(profile.frameAnchoring) == "table" and profile.frameAnchoring.debuffFrame then
+            local d = profile.frameAnchoring.debuffFrame
+            MigLog("  pre-mig debuffFrame: parent=%s point=%s ofs=%s/%s enabled=%s",
+                tostring(d.parent), tostring(d.point), tostring(d.offsetX), tostring(d.offsetY), tostring(d.enabled))
+        else
+            MigLog("  pre-mig debuffFrame: NIL (no raw entry)")
+        end
+    end
+
     -- ResetCastbarPreviewModes is a runtime sanity reset, NOT a migration —
     -- it clears the transient previewMode flag on every load so a preview
     -- left enabled in a prior session never persists. Always runs.
     ResetCastbarPreviewModes(profile)
 
     if stored >= CURRENT_SCHEMA_VERSION then
+        MigLog("RunOnProfile: stored >= current, NOTHING TO DO")
         return false  -- Nothing to do. Backup (if any) remains untouched.
     end
 
@@ -1681,6 +1931,57 @@ function Migrations.RunOnProfile(profile)
     if stored < 20 then MigrateAnchoringV2(profile) end
     if stored < 21 then MigrateAnchoringV3(profile) end
     if stored < 22 then MigrateNCDMContainers(profile) end
+
+    -- v23: re-prune ghost FA entries that the original v10 prune missed
+    -- because they carried a stray `enabled = false` flag (3.0-era write
+    -- artifacts). The whitelist update to IsPlaceholderAnchorEntry needs
+    -- to actually run against existing v22 profiles to clean up the
+    -- ghosts that the v19 cleanup loop preserved with `enabled` stripped
+    -- but parent="screen", point=CENTER, all zeros — those ghost entries
+    -- mask the AceDB default chain (e.g. debuffFrame → buffFrame →
+    -- minimap), so chained children fall back to screen center instead
+    -- of following their default parent.
+    if stored < 23 then PruneLegacyPlaceholderAnchors(profile) end
+
+    -- v24: repair `parent="disabled"` entries that carry stale corner
+    -- point/relative from a SavePendingPosition bug. See the function
+    -- docstring above for details. Heals frames that were unanchored
+    -- via middle-click and then dragged, ending up off-screen.
+    if stored < 24 then RepairDisabledStaleCornerEntries(profile) end
+
+    -- v25: re-run the repair against profiles that already migrated past
+    -- v24 with re-corrupted data. Two reasons:
+    --   1. The buffborders.lua LayoutIcons bug was writing the runtime
+    --      corner conversion BACK to the DB on every layout pass, undoing
+    --      v24's work for any profile that had buffs/debuffs visible at
+    --      reload time. The buffborders bug is fixed in this same release.
+    --   2. The original v24 discriminator only matched entries with
+    --      explicit point AND relative both set to a corner name. AceDB's
+    --      default-stripping on save left some entries with point=nil and
+    --      only relative set to a corner — same bug, different shape.
+    --      v25 catches both shapes.
+    if stored < 25 then RepairDisabledStaleCornerEntries(profile) end
+
+    -- v26: backfill growAnchor on buff/debuff/auraBar FA entries that have
+    -- existing corner anchoring. The new apply-path growAnchor branch reads
+    -- this field to perform CENTER → corner conversion at apply time. See
+    -- the function docstring for case-handling details.
+    if stored < 26 then BackfillGrowAnchor(profile) end
+
+    if type(profile.frameAnchoring) == "table" and profile.frameAnchoring.debuffFrame then
+        local d = profile.frameAnchoring.debuffFrame
+        MigLog("post-mig debuffFrame: parent=%s point=%s ofs=%s/%s enabled=%s",
+            tostring(d.parent), tostring(d.point), tostring(d.offsetX), tostring(d.offsetY), tostring(d.enabled))
+    else
+        MigLog("post-mig debuffFrame: NIL (entry removed)")
+    end
+    if type(profile.frameAnchoring) == "table" and profile.frameAnchoring.bar1 then
+        local b = profile.frameAnchoring.bar1
+        MigLog("post-mig bar1: parent=%s point=%s ofs=%s/%s enabled=%s",
+            tostring(b.parent), tostring(b.point), tostring(b.offsetX), tostring(b.offsetY), tostring(b.enabled))
+    else
+        MigLog("post-mig bar1: NIL (entry removed)")
+    end
 
     profile._schemaVersion = CURRENT_SCHEMA_VERSION
     return true

@@ -171,6 +171,82 @@ function QUI:SlashCommandOpen(input)
             print("|cff60A5FAQUI:|r unknown migration subcommand. Use: status, restore")
         end
         return
+    elseif input and input == "miglog" then
+        -- Dump the buffered migration debug log. Migrations run during
+        -- OnInitialize/OnEnable when the chat frame isn't ready, so they
+        -- buffer messages into _G.QUI_MIGRATION_LOG instead of printing
+        -- directly. To enable buffering on next /reload, run:
+        --   /run QUI_MIGRATION_DEBUG = true
+        -- and then /reload. After login, /qui miglog dumps it.
+        local log = _G.QUI_MIGRATION_LOG
+        if type(log) ~= "table" or #log == 0 then
+            print("|cff60A5FAQUI:|r migration log is empty.")
+            print("  Enable with |cFFFFFF00/run QUI_MIGRATION_DEBUG = true|r then |cFFFFFF00/reload|r.")
+            return
+        end
+        print(("|cff60A5FAQUI migration log (%d lines):|r"):format(#log))
+        for i, line in ipairs(log) do
+            print(("  |cff888888%3d|r %s"):format(i, tostring(line)))
+        end
+        return
+    elseif input and input == "miglog clear" then
+        _G.QUI_MIGRATION_LOG = {}
+        print("|cff60A5FAQUI:|r migration log cleared.")
+        return
+    elseif input and input == "anchordump" then
+        -- Live dump of frameAnchoring entries for the active profile.
+        -- Shows both raw SV and proxy-merged values for keys we care about.
+        local profile = self.db and self.db.profile
+        if not profile then
+            print("|cff60A5FAQUI:|r no profile loaded.")
+            return
+        end
+        local raw = self.db.sv and self.db.sv.profiles
+            and self.db.sv.profiles[self.db:GetCurrentProfile()]
+        local rawFa = raw and raw.frameAnchoring
+        local proxyFa = profile.frameAnchoring
+        print(("|cff60A5FAQUI anchordump:|r profile=%s schema=%s"):format(
+            tostring(self.db:GetCurrentProfile()),
+            tostring(profile._schemaVersion)))
+        local function dump(label, fa, key)
+            local e = fa and fa[key]
+            if not e then
+                print(("  %s.%s = nil"):format(label, key))
+                return
+            end
+            print(("  %s.%s = {parent=%s point=%s rel=%s ofs=%s/%s enabled=%s keepInPlace=%s}"):format(
+                label, key,
+                tostring(e.parent), tostring(e.point), tostring(e.relative),
+                tostring(e.offsetX), tostring(e.offsetY),
+                tostring(e.enabled), tostring(e.keepInPlace)))
+        end
+        for _, key in ipairs({"debuffFrame", "buffFrame", "minimap", "bar1", "bar2", "bar3"}) do
+            dump("RAW  ", rawFa, key)
+            dump("PROXY", proxyFa, key)
+        end
+        -- Also dump live frame positions if frames exist
+        local function framePos(name, frameKey)
+            local frame = nil
+            if frameKey == "debuffFrame" then frame = _G.QUI_DebuffIconContainer end
+            if frameKey == "buffFrame" then frame = _G.QUI_BuffIconContainer end
+            if frameKey == "minimap" then frame = _G.Minimap end
+            if not frame or not frame.GetPoint then return end
+            local n = frame:GetNumPoints() or 0
+            if n == 0 then
+                print(("  LIVE %s = (no points, %dx%d)"):format(name, frame:GetWidth() or 0, frame:GetHeight() or 0))
+                return
+            end
+            for i = 1, n do
+                local pt, rt, rp, x, y = frame:GetPoint(i)
+                local rtName = type(rt) == "table" and (rt.GetName and rt:GetName() or "anon") or tostring(rt)
+                print(("  LIVE %s [%d/%d] = %s -> %s.%s ofs=%.0f/%.0f"):format(
+                    name, i, n, tostring(pt), rtName, tostring(rp), x or 0, y or 0))
+            end
+        end
+        framePos("debuffFrame", "debuffFrame")
+        framePos("buffFrame", "buffFrame")
+        framePos("minimap", "minimap")
+        return
     elseif input and input == "tooltipdbg" then
         local isS = issecretvalue
         local count = 0
