@@ -99,19 +99,57 @@ function QUI_Anchoring_Options:GetAnchoringDB()
     return db.frameAnchoring
 end
 
+-- Returns a table bound to frameAnchoring[key] that widgets can read from
+-- and write to. If the underlying entry does not yet exist, the returned
+-- table is a lazy proxy: reads fall through to ANCHORING_DEFAULTS, and the
+-- first write materializes the real entry in frameAnchoring (with defaults
+-- backfilled) before applying the write.
+--
+-- This prevents the "opening a settings panel resurrects the entry" bug.
+-- Previously this function unconditionally created anchoringDB[key] on
+-- read, which caused ApplyAllFrameAnchors to pick up default screen/CENTER
+-- entries for frames that should not have a frameAnchoring entry at all
+-- (notably CDM containers owned by ncdm.pos).
 function QUI_Anchoring_Options:GetFrameDB(key)
     local anchoringDB = self:GetAnchoringDB()
     if not anchoringDB then return nil end
-    if not anchoringDB[key] then
-        anchoringDB[key] = {}
-    end
-    -- Backfill missing defaults (handles entries created before new fields were added)
-    for k, v in pairs(ANCHORING_DEFAULTS) do
-        if anchoringDB[key][k] == nil then
-            anchoringDB[key][k] = v
+
+    -- Existing entry: backfill missing default fields in-place and return it.
+    local existing = anchoringDB[key]
+    if existing then
+        for k, v in pairs(ANCHORING_DEFAULTS) do
+            if existing[k] == nil then
+                existing[k] = v
+            end
         end
+        return existing
     end
-    return anchoringDB[key]
+
+    -- No entry: return a proxy that only materializes on first write.
+    local proxy = {}
+    setmetatable(proxy, {
+        __index = function(_, k)
+            local real = anchoringDB[key]
+            if real and real[k] ~= nil then
+                return real[k]
+            end
+            return ANCHORING_DEFAULTS[k]
+        end,
+        __newindex = function(_, k, v)
+            local real = anchoringDB[key]
+            if not real then
+                real = {}
+                anchoringDB[key] = real
+                -- Backfill defaults so the newly-materialized entry has the
+                -- full metadata shape the anchoring system expects.
+                for dk, dv in pairs(ANCHORING_DEFAULTS) do
+                    real[dk] = dv
+                end
+            end
+            real[k] = v
+        end,
+    })
+    return proxy
 end
 
 function QUI_Anchoring_Options:GetAnchoringDefaults()

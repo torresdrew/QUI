@@ -1364,6 +1364,7 @@ local defaults = {
                         buttonSpacing = 0,          -- spacing between buttons in pixels
                         growUp = false,             -- rows grow bottom-to-top
                         growLeft = false,           -- columns grow right-to-left
+                        flyoutDirection = "AUTO",   -- "AUTO" | "UP" | "DOWN" | "LEFT" | "RIGHT"
                     },
                     -- Style overrides (nil = use global)
                     overrideEnabled = false,
@@ -1382,6 +1383,7 @@ local defaults = {
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
                         buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
+                        flyoutDirection = "AUTO",
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1399,6 +1401,7 @@ local defaults = {
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
                         buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
+                        flyoutDirection = "AUTO",
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1416,6 +1419,7 @@ local defaults = {
                     ownedLayout = {
                         orientation = "horizontal", columns = 6, iconCount = 12,
                         buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
+                        flyoutDirection = "AUTO",
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1433,6 +1437,7 @@ local defaults = {
                     ownedLayout = {
                         orientation = "horizontal", columns = 6, iconCount = 12,
                         buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
+                        flyoutDirection = "AUTO",
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1450,6 +1455,7 @@ local defaults = {
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
                         buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
+                        flyoutDirection = "AUTO",
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1467,6 +1473,7 @@ local defaults = {
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
                         buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
+                        flyoutDirection = "AUTO",
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -1484,6 +1491,7 @@ local defaults = {
                     ownedLayout = {
                         orientation = "horizontal", columns = 12, iconCount = 12,
                         buttonSize = 30, buttonSpacing = 0, growUp = false, growLeft = false,
+                        flyoutDirection = "AUTO",
                     },
                     overrideEnabled = false,
                     iconZoom = 0.05, showBackdrop = nil, backdropAlpha = 0,
@@ -3227,6 +3235,7 @@ local defaults = {
             shape = "SQUARE",  -- SQUARE or ROUND
             size = 226,
             scale = 1.0,  -- Scale multiplier for minimap frame
+            zoomLevel = 0,  -- World zoom level (0-5); does not change the frame size
             borderSize = 1,
             borderColor = {0, 0, 0, 1},  -- Black border
             useClassColorBorder = false,

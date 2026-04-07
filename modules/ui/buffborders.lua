@@ -1074,8 +1074,15 @@ local function UpdateWeaponEnchantIcons()
                     container:SetAlpha(s and s.fadeOutAlpha or 0)
                 end
             end)
-            -- No right-click cancel for weapon enchants
-            icon:SetScript("OnMouseUp", nil)
+            -- Right-click to cancel weapon temp enchant (out of combat only).
+            -- CancelItemTempEnchantment uses 1 = mainhand, 2 = offhand.
+            icon:SetScript("OnMouseUp", function(self, button)
+                if button ~= "RightButton" then return end
+                if InCombatLockdown() then return end
+                if not CancelItemTempEnchantment then return end
+                local enchantIndex = (self._enchantSlot == 17) and 2 or 1
+                CancelItemTempEnchantment(enchantIndex)
+            end)
         else
             ReleaseEnchantIcon(slot)
         end

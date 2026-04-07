@@ -448,6 +448,7 @@ end
 local SkinButton, UpdateButtonText, UpdateEmptySlotVisibility, UpdateKeybindText
 local FadeHideTextures, FadeShowTextures
 local ApplyAllBarSpacing
+local ApplyFlyoutDirection, ApplyAllFlyoutDirections
 
 -- Store QUI state outside secure Blizzard frame tables.
 -- Writing custom keys directly on action buttons can taint secret values.
@@ -4011,6 +4012,10 @@ local function OnOwnedEvent(self, event, ...)
             ActionBarsOwned.pendingSpacing = false
             ApplyAllBarSpacing()
         end
+        if ActionBarsOwned.pendingFlyoutDirection then
+            ActionBarsOwned.pendingFlyoutDirection = false
+            if ApplyAllFlyoutDirections then ApplyAllFlyoutDirections() end
+        end
         -- Post-combat full refresh.  SafeUpdate kept visuals live during
         -- combat.  Now call the mixin's full ActionButton_Update (safe out
         -- of combat — no secret values) so the hooksecurefunc on
@@ -5206,6 +5211,14 @@ UpdateKeybindText = function(button, settings)
             num = buttonName:match("^QUI_Bar8Button(%d+)$")
             if num then bindingName = "MULTIACTIONBAR7BUTTON" .. num end
         end
+        if not bindingName then
+            num = buttonName:match("^QUI_PetButton(%d+)$")
+            if num then bindingName = "BONUSACTIONBUTTON" .. num end
+        end
+        if not bindingName then
+            num = buttonName:match("^QUI_StanceButton(%d+)$")
+            if num then bindingName = "SHAPESHIFTBUTTON" .. num end
+        end
 
         -- Blizzard button names (fallback for reparented buttons)
         if not bindingName then
@@ -6070,6 +6083,43 @@ ApplyAllBarSpacing = function()
 
     for barKey, _ in pairs(BUTTON_PATTERNS) do
         ApplyButtonSpacing(barKey)
+    end
+end
+
+-- Apply the user's flyoutDirection setting to each button on a standard bar.
+-- "AUTO" clears the attribute so Blizzard's position-based auto-detect runs.
+-- Writing secure attributes on tainted addon buttons during combat causes
+-- taint, so defer to PLAYER_REGEN_ENABLED when locked down.
+local VALID_FLYOUT_DIRS = { UP = true, DOWN = true, LEFT = true, RIGHT = true }
+
+ApplyFlyoutDirection = function(barKey)
+    local buttons = ActionBarsOwned.nativeButtons and ActionBarsOwned.nativeButtons[barKey]
+    if not buttons or #buttons == 0 then return end
+
+    local db = GetDB()
+    local barDB = db and db.bars and db.bars[barKey]
+    local layout = barDB and barDB.ownedLayout
+    if not layout then return end
+
+    if InCombatLockdown() then
+        ActionBarsOwned.pendingFlyoutDirection = true
+        return
+    end
+
+    local dir = layout.flyoutDirection
+    if not VALID_FLYOUT_DIRS[dir] then dir = nil end -- AUTO / unset
+
+    for _, btn in ipairs(buttons) do
+        if btn and btn.SetAttribute then
+            btn:SetAttribute("flyoutDirection", dir)
+            if btn.UpdateFlyout then pcall(btn.UpdateFlyout, btn) end
+        end
+    end
+end
+
+ApplyAllFlyoutDirections = function()
+    for _, barKey in ipairs(STANDARD_BAR_KEYS) do
+        ApplyFlyoutDirection(barKey)
     end
 end
 
@@ -7391,6 +7441,7 @@ function ActionBarsOwned:Refresh()
 
     -- Apply bar layout settings (spacing, empty slot visibility)
     ApplyAllBarSpacing()
+    ApplyAllFlyoutDirections()
 
     -- Hide bars that are disabled in DB
     for _, barKey in ipairs(ALL_MANAGED_BAR_KEYS) do
@@ -7688,6 +7739,19 @@ do
             pet = true, stance = true, microbar = true, bags = true,
         }
 
+        local FLYOUT_BARS = {
+            bar1 = true, bar2 = true, bar3 = true, bar4 = true,
+            bar5 = true, bar6 = true, bar7 = true, bar8 = true,
+        }
+
+        local flyoutDirectionOptions = {
+            {value = "AUTO",  text = "Auto"},
+            {value = "UP",    text = "Up"},
+            {value = "DOWN",  text = "Down"},
+            {value = "LEFT",  text = "Left"},
+            {value = "RIGHT", text = "Right"},
+        }
+
         local SETTINGS_DB_KEY_MAP = {
             petBar = "pet", stanceBar = "stance",
             microMenu = "microbar", bagBar = "bags",
@@ -7758,6 +7822,7 @@ do
                 local maxButtons = BUTTON_COUNTS[dbKey] or (dbKey == "microbar" and 12 or (dbKey == "bags" and 6 or 12))
                 local extraRows = isMicroBag and 1 or 2
                 if barKey == "bar1" then extraRows = extraRows + 1 end
+                if FLYOUT_BARS[barKey] then extraRows = extraRows + 1 end
                 local numRows = 7 + extraRows
                 local descHeight = isMicroBag and 0 or 16
                 CreateCollapsible(content, "Layout", numRows * FORM_ROW + descHeight + 8, function(body)
@@ -7867,8 +7932,19 @@ do
                     sy = P(GUI:CreateFormCheckbox(body, "Grow Upward",
                         "growUp", layout, RefreshActionBars), body, sy)
 
-                    P(GUI:CreateFormCheckbox(body, "Grow Left",
-                        "growLeft", layout, RefreshActionBars), body, sy)
+                    if FLYOUT_BARS[barKey] then
+                        sy = P(GUI:CreateFormCheckbox(body, "Grow Left",
+                            "growLeft", layout, RefreshActionBars), body, sy)
+
+                        P(GUI:CreateFormDropdown(body, "Flyout Direction",
+                            flyoutDirectionOptions, "flyoutDirection", layout,
+                            function()
+                                ApplyFlyoutDirection(barKey)
+                            end), body, sy)
+                    else
+                        P(GUI:CreateFormCheckbox(body, "Grow Left",
+                            "growLeft", layout, RefreshActionBars), body, sy)
+                    end
                 end, sections, relayout)
             end
 

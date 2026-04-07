@@ -32,6 +32,9 @@ local datatextFrame
 
 -- Performance: Cached settings and tickers (avoid per-frame GetSettings calls)
 local cachedSettings = nil
+-- Tracks the last zoom level applied from the saved profile so generic Refresh()
+-- calls don't keep stomping the user's mousewheel/button zoom mid-play.
+local lastAppliedZoomLevel = nil
 local clockTicker = nil
 local coordsTicker = nil
 
@@ -3230,48 +3233,13 @@ local function SetupZoomPersistence()
     local function PersistCurrentZoom()
         C_Timer.After(0, function()
             if Minimap and Minimap.GetZoom then
-                PersistMinimapZoom(Minimap:GetZoom())
-            end
-        end)
-    end
-
-    if Minimap.ZoomIn then
-        Minimap.ZoomIn:HookScript("OnClick", PersistCurrentZoom)
-    end
-    if Minimap.ZoomOut then
-        Minimap.ZoomOut:HookScript("OnClick", PersistCurrentZoom)
-    end
-end
-
----=================================================================================
---- ZOOM PERSISTENCE
---- Blizzard stores indoor and outdoor minimap zoom separately. Keep them in sync
---- so a player's chosen zoom level survives relogs regardless of where they log in.
----=================================================================================
-
-local zoomPersistenceHooked = false
-
-local function PersistMinimapZoom(zoom)
-    local normalizedZoom = math.max(0, math.floor((zoom or 0) + 0.5))
-    local indoorZoom = math.min(normalizedZoom, 3)
-
-    if C_CVar and C_CVar.SetCVar then
-        C_CVar.SetCVar("minimapZoom", tostring(normalizedZoom))
-        C_CVar.SetCVar("minimapInsideZoom", tostring(indoorZoom))
-    elseif SetCVar then
-        SetCVar("minimapZoom", normalizedZoom)
-        SetCVar("minimapInsideZoom", indoorZoom)
-    end
-end
-
-local function SetupZoomPersistence()
-    if zoomPersistenceHooked then return end
-    zoomPersistenceHooked = true
-
-    local function PersistCurrentZoom()
-        C_Timer.After(0, function()
-            if Minimap and Minimap.GetZoom then
-                PersistMinimapZoom(Minimap:GetZoom())
+                local z = Minimap:GetZoom()
+                PersistMinimapZoom(z)
+                lastAppliedZoomLevel = z
+                if QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.minimap then
+                    QUICore.db.profile.minimap.zoomLevel = z
+                    InvalidateSettingsCache()
+                end
             end
         end)
     end
@@ -3297,6 +3265,33 @@ local function SetupMouseWheelZoom()
             Minimap.ZoomOut:Click()
         end
     end)
+end
+
+---=================================================================================
+--- USER ZOOM LEVEL (world zoom, does not affect frame size)
+---=================================================================================
+
+local function GetMaxZoomLevel()
+    if Minimap.GetZoomLevels then
+        local levels = Minimap:GetZoomLevels()
+        if levels and levels > 0 then
+            return levels - 1
+        end
+    end
+    return 5
+end
+
+local function ApplyZoomLevel(zoomLevel)
+    zoomLevel = tonumber(zoomLevel) or 0
+    if zoomLevel < 0 then zoomLevel = 0 end
+    local maxZoom = GetMaxZoomLevel()
+    if zoomLevel > maxZoom then zoomLevel = maxZoom end
+    if lastAppliedZoomLevel == zoomLevel then return end
+    lastAppliedZoomLevel = zoomLevel
+    if Minimap.SetZoom then Minimap:SetZoom(zoomLevel) end
+    PersistMinimapZoom(zoomLevel)
+    if Minimap.ZoomIn and Minimap.ZoomIn.Enable then Minimap.ZoomIn:Enable() end
+    if Minimap.ZoomOut and Minimap.ZoomOut.Enable then Minimap.ZoomOut:Enable() end
 end
 
 ---=================================================================================
@@ -3578,6 +3573,7 @@ function Minimap_Module:Refresh()
     SetMinimapShape(settings.shape)
     UpdateBackdrop()
     UpdateMinimapSize()
+    ApplyZoomLevel(settings.zoomLevel)
     UpdateClock()
     UpdateCoords()
     UpdateZoneText()

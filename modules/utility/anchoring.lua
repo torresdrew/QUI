@@ -1746,13 +1746,22 @@ end
 --                   frame in the chain rather than using the child's own points).
 --                   nil when no chain walk happened or only hardcoded fallbacks
 --                   were used.
-local function ResolveParentFrame(parentKey)
+-- originKey: optional key of the frame being anchored. Pre-seeding visited[originKey]
+-- prevents the walker from resolving to the origin frame itself via fallback chains.
+-- e.g. primaryPower.parent = "secondaryPower" on a class without a secondary resource
+-- falls back to FRAME_ANCHOR_FALLBACKS["secondaryPower"] = "primaryPower", which would
+-- return the primaryPower frame — creating a self-anchor. With originKey="primaryPower"
+-- the visited guard breaks the loop and the walker returns UIParent instead.
+local function ResolveParentFrame(parentKey, originKey)
     if not parentKey or parentKey == "screen" or parentKey == "disabled" then
         return UIParent, nil
     end
 
     local key = parentKey
     local visited = {}  -- guard against circular fallback chains
+    if originKey then
+        visited[originKey] = true  -- never resolve to the frame we're positioning
+    end
 
     -- Grab the user's anchoring config for dynamic chain walking
     local anchoringDB = QUICore and QUICore.db and QUICore.db.profile
@@ -2249,7 +2258,9 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         parentFrame = ResolveFrameForKey(settings.parent) or UIParent
     else
         local chainSettings
-        parentFrame, chainSettings = ResolveParentFrame(settings.parent)
+        -- Pass `key` as originKey so the walker can never resolve a fallback
+        -- chain back to the frame we're positioning (self-anchor loop).
+        parentFrame, chainSettings = ResolveParentFrame(settings.parent, key)
 
         -- When a chain walk occurred (hidden intermediate frame), adopt the
         -- last hidden link's anchor points so the child "replaces" it visually.
@@ -2331,6 +2342,16 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         local centerX, centerY = ComputeCenterOffsetsForAnchor(
             resolved, key, parentFrame, point, relative, offsetX, offsetY, settings.parent
         )
+        -- SetPoint offsets are interpreted in the frame's OWN scaled coord
+        -- space. centerX/Y are in UIParent (parent) coord. Divide by the
+        -- frame's own scale so the visual position matches. No-op for scale=1.
+        if resolved and resolved.GetScale then
+            local fScale = resolved:GetScale() or 1
+            if fScale > 0 and fScale ~= 1 then
+                centerX = centerX / fScale
+                centerY = centerY / fScale
+            end
+        end
         if not FrameAlreadyAtPosition(resolved, "CENTER", parentFrame, "CENTER", centerX, centerY) then
             _editModeReapplyGuard = true
             pcall(SmoothSetPoint, resolved, "CENTER", parentFrame, "CENTER", centerX, centerY)
@@ -2577,7 +2598,7 @@ _G.QUI_ReanchorFramePositionOnly = function(key)
     local resolved = ResolveApplyFrameForKey(key)
     if not resolved then return end
 
-    local parentFrame = ResolveParentFrame(settings.parent)
+    local parentFrame = ResolveParentFrame(settings.parent, key)
     if not parentFrame then return end
 
     local point = settings.point or "CENTER"
@@ -2616,7 +2637,7 @@ _G.QUI_AnchorOverlayToParent = function(overlayFrame, key, overlayW, overlayH)
     local settings = anchoringDB[key]
     if type(settings) ~= "table" then return end
 
-    local parentFrame = ResolveParentFrame(settings.parent)
+    local parentFrame = ResolveParentFrame(settings.parent, key)
     if not parentFrame then return end
 
     local point = settings.point or "CENTER"
