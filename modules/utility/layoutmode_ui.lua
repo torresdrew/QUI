@@ -394,9 +394,19 @@ local function GetHandleEdges(handle)
 end
 
 --- Reposition a handle via CENTER offsets (supports both types).
+--- ox, oy are in UIParent local coord. For child overlays whose parent has
+--- a custom scale, divide by the scale because SetPoint offsets are
+--- interpreted in the frame's own coord space.
 local function SetHandlePosition(handle, ox, oy)
     if handle._isChildOverlay and handle._parentFrame then
         local parent = handle._parentFrame
+        if parent.GetScale then
+            local pScale = parent:GetScale() or 1
+            if pScale > 0 and pScale ~= 1 then
+                ox = ox / pScale
+                oy = oy / pScale
+            end
+        end
         pcall(parent.ClearAllPoints, parent)
         pcall(parent.SetPoint, parent, "CENTER", UIParent, "CENTER", ox, oy)
     else

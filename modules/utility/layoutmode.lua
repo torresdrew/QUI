@@ -275,8 +275,9 @@ function QUI_LayoutMode:SetElementEnabled(key, enabled)
             self._handles[key] = handle
             SyncHandle(key)
             handle:Show()
-            -- If child overlay isn't visible (parent hidden), replace with proxy mover
-            if handle._isChildOverlay and not handle:IsVisible() then
+            -- If child overlay isn't visible (parent hidden), replace with proxy mover.
+            -- mplusTimer exempt (see main code path).
+            if handle._isChildOverlay and not handle:IsVisible() and key ~= "mplusTimer" then
                 handle:Hide()
                 handle:SetParent(nil)
                 handle = CreateProxyMover(def)
@@ -474,8 +475,10 @@ function QUI_LayoutMode:Open()
                     handle:Show()
                 end
 
-                -- If child overlay isn't visible (parent hidden), replace with proxy mover
-                if handle._isChildOverlay and not handle:IsVisible() then
+                -- If child overlay isn't visible (parent hidden), replace with proxy mover.
+                -- mplusTimer is exempt: its parent is shown via demo mode and we
+                -- need the child overlay to inherit the parent's user-set scale.
+                if handle._isChildOverlay and not handle:IsVisible() and key ~= "mplusTimer" then
                     handle:Hide()
                     handle:SetParent(nil)
                     handle = CreateProxyMover(def)
@@ -1098,10 +1101,20 @@ end
 
 --- Convert a handle's position to CENTER-based offsets relative to UIParent.
 --- Works for both proxy movers and child overlays.
+--- Returns offsets in UIParent local coord. For scaled child overlay parents,
+--- GetCenter returns in the frame's own scaled coord, so we multiply by the
+--- frame's scale to get UIParent local coord.
 HandleToOffsets = function(handle)
     local cx, cy
     if handle._isChildOverlay and handle._parentFrame then
         cx, cy = handle._parentFrame:GetCenter()
+        if cx and cy and handle._parentFrame.GetScale then
+            local pScale = handle._parentFrame:GetScale() or 1
+            if pScale > 0 and pScale ~= 1 then
+                cx = cx * pScale
+                cy = cy * pScale
+            end
+        end
     else
         cx, cy = handle:GetCenter()
     end
@@ -1113,11 +1126,22 @@ end
 
 --- Position a handle from CENTER-based offsets.
 --- For child overlays, repositions the parent frame.
+--- offsetX/Y are in UIParent local coord. For child overlays whose parent has
+--- a custom scale, divide by the scale because SetPoint offsets are interpreted
+--- in the frame's own scaled coord space. No-op for scale=1 frames.
 SetHandleFromOffsets = function(handle, offsetX, offsetY)
     if handle._isChildOverlay and handle._parentFrame then
         local parent = handle._parentFrame
+        local ox, oy = offsetX or 0, offsetY or 0
+        if parent.GetScale then
+            local pScale = parent:GetScale() or 1
+            if pScale > 0 and pScale ~= 1 then
+                ox = ox / pScale
+                oy = oy / pScale
+            end
+        end
         pcall(parent.ClearAllPoints, parent)
-        pcall(parent.SetPoint, parent, "CENTER", UIParent, "CENTER", offsetX or 0, offsetY or 0)
+        pcall(parent.SetPoint, parent, "CENTER", UIParent, "CENTER", ox, oy)
     else
         handle:ClearAllPoints()
         handle:SetPoint("CENTER", UIParent, "CENTER", offsetX or 0, offsetY or 0)
@@ -1540,10 +1564,19 @@ AddHandleScripts = function(handle, def)
         -- Capture cursor-to-handle offset so snap can compute cursor-intended position
         local cx, cy = GetCursorPosition()
         local scale = UIParent:GetEffectiveScale()
-        cx, cy = cx / scale, cy / scale
+        cx, cy = cx / scale, cy / scale  -- cursor in UIParent local coord
         local hx, hy
         if self._isChildOverlay and self._parentFrame then
             hx, hy = self._parentFrame:GetCenter()
+            -- parent.GetCenter returns in the frame's OWN (scaled) coord space.
+            -- Convert to UIParent local coord so it matches the cursor's space.
+            if hx and hy and self._parentFrame.GetScale then
+                local pScale = self._parentFrame:GetScale() or 1
+                if pScale > 0 and pScale ~= 1 then
+                    hx = hx * pScale
+                    hy = hy * pScale
+                end
+            end
         else
             hx, hy = self:GetCenter()
         end
@@ -2763,6 +2796,14 @@ do
                 key = "mplusTimer", label = "M+ Timer", group = "Instance", order = 2,
                 frame = "QUI_MPlusTimerFrame",
                 dbKey = "mplusTimer", enabledField = "enabled",
+                -- Use child overlay (setupOverlay forces the child overlay
+                -- code path because of `isOwned and (not getSize or setupOverlay)`).
+                -- Child overlay parents to QUI_MPlusTimerFrame so it inherits
+                -- the frame's scale automatically — no coord-space math.
+                setupOverlay = function(overlay, targetFrame)
+                    overlay:ClearAllPoints()
+                    overlay:SetAllPoints(targetFrame)
+                end,
                 previewOn  = function() local t = _G.QUI_MPlusTimer; if t and t.EnableDemoMode then t:EnableDemoMode() end end,
                 previewOff = function() local t = _G.QUI_MPlusTimer; if t and t.DisableDemoMode then t:DisableDemoMode() end end,
             },

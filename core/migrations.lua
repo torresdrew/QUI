@@ -1646,19 +1646,24 @@ function Migrations.Run(db)
     local profile = db and db.profile
     if type(profile) ~= "table" then return false end
 
-    -- One-time cleanup: delete CDM container FA entries from existing
-    -- profiles that had them from the old defaults. The CDM module owns
-    -- positioning via ncdm.pos; FA entries for CDM containers cause the
-    -- anchoring system to override CDM positions. Runs once per profile
-    -- (sentinel: _cdmFaCleanupVersion).
-    if (profile._cdmFaCleanupVersion or 0) < 1 then
+    -- Cleanup: delete CDM container FA entries from existing profiles.
+    -- The CDM module owns positioning via ncdm.pos; FA entries for CDM
+    -- containers cause the anchoring system to override CDM positions.
+    --
+    -- v1 (initial cleanup) ran once per profile. v2 re-runs because the
+    -- anchoring options panel's GetFrameDB had a write-on-read side effect
+    -- that resurrected these entries the moment a CDM settings panel was
+    -- opened in layout mode. GetFrameDB has since been fixed (proxy that
+    -- only materializes on write), but we still need to purge any ghost
+    -- entries that were created before the fix landed.
+    if (profile._cdmFaCleanupVersion or 0) < 2 then
         if type(profile.frameAnchoring) == "table" then
             profile.frameAnchoring.cdmEssential = nil
             profile.frameAnchoring.cdmUtility   = nil
             profile.frameAnchoring.buffIcon     = nil
             profile.frameAnchoring.buffBar      = nil
         end
-        profile._cdmFaCleanupVersion = 1
+        profile._cdmFaCleanupVersion = 2
     end
 
     -- 1. Data format migrations (restructure raw data first)
