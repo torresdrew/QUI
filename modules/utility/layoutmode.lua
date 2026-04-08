@@ -1039,26 +1039,40 @@ local function SavePendingPosition(key, point, relPoint, offsetX, offsetY, ancho
             fa[key].point = ptSelf
             fa[key].relative = ptTarget
         else
-            -- If the frame has an existing anchor with non-CENTER points,
-            -- compute relative offsets from handle positions rather than
-            -- writing absolute screen offsets.
+            -- No anchor target = free position drag. The handle's offsetX/offsetY
+            -- are screen-CENTER-relative (computed against UIParent CENTER).
+            -- If the existing entry has non-CENTER point/relative AND a real
+            -- parent frame, we recompute via handle edges so the offset is
+            -- expressed relative to the existing anchor pair. Otherwise we
+            -- store the raw CENTER-based drag offsets and reset point/relative
+            -- to CENTER/CENTER so the offsets are interpreted in the same
+            -- coordinate space they were measured in.
+            --
+            -- Bug fix: previously the "disabled"-parent case fell through to
+            -- a raw offset write WITHOUT resetting point/relative. If the
+            -- entry still carried stale TOPRIGHT/TOPRIGHT from a prior
+            -- corner-conversion (e.g. buffFrame/debuffFrame), the new
+            -- CENTER-based offsets were applied as TOPRIGHT-anchored offsets
+            -- and the frame teleported off-screen. CommitPositions' corner
+            -- conversion only re-derives offsets when both point AND relative
+            -- match its expected before-state, so we MUST normalize here.
             local existingParent = fa[key].parent
             local existingPt = fa[key].point or "CENTER"
             local existingRelPt = fa[key].relative or "CENTER"
 
-            if existingParent and existingParent ~= "disabled"
-               and (existingPt ~= "CENTER" or existingRelPt ~= "CENTER") then
+            local hasRealParent = existingParent
+                and existingParent ~= "disabled"
+                and existingParent ~= "screen"
+            local hasNonCenterPoints = existingPt ~= "CENTER" or existingRelPt ~= "CENTER"
+
+            if hasRealParent and hasNonCenterPoints then
                 -- Compute relative offset from anchor parent
                 local childHandle = QUI_LayoutMode._handles and QUI_LayoutMode._handles[key]
-                local parentHandle = (existingParent == "screen") and nil
-                    or (QUI_LayoutMode._handles and QUI_LayoutMode._handles[existingParent])
+                local parentHandle = QUI_LayoutMode._handles
+                    and QUI_LayoutMode._handles[existingParent]
 
-                -- For "screen" parent, use UIParent edges
                 local pL, pR, pT, pB
-                if existingParent == "screen" then
-                    pL, pB = 0, 0
-                    pR, pT = UIParent:GetWidth(), UIParent:GetHeight()
-                elseif parentHandle then
+                if parentHandle then
                     pL, pR, pT, pB = parentHandle:GetLeft(), parentHandle:GetRight(), parentHandle:GetTop(), parentHandle:GetBottom()
                 end
 
@@ -1086,8 +1100,77 @@ local function SavePendingPosition(key, point, relPoint, offsetX, offsetY, ancho
                     fa[key].offsetY = offsetY
                 end
             else
-                fa[key].offsetX = offsetX
-                fa[key].offsetY = offsetY
+                -- Free-position fall-through: parent is nil/screen/disabled,
+                -- or there's no real chain to recompute against.
+                --
+                -- Dynamic-size buff-borders containers (buffFrame/debuffFrame)
+                -- get stored as CORNER-anchored directly, using the growth
+                -- corner derived from buffBorders config. This decouples
+                -- the stored position from the container's current size —
+                -- apply time just SetPoints with the stored corner offsets,
+                -- no size-dependent math.
+                --
+                -- NOTE: this is NOT applied to CDM containers (buffIcon,
+                -- buffBar, cdmEssential, cdmUtility). Those are owned by
+                -- the CDM module and positioned via `ncdm.<key>.pos` —
+                -- their frameAnchoring entries are actively stripped by
+                -- CDM_OWNED_KEYS in the migration layer. They also support
+                -- a different growth model (CENTERED_HORIZONTAL / auraBar
+                -- growUp / etc.) that doesn't fit the four-corner scheme.
+                local isGrowAnchorKey = key == "buffFrame" or key == "debuffFrame"
+                local growCorner
+                if isGrowAnchorKey then
+                    local profile = QUI and QUI.db and QUI.db.profile
+                    local bbDB = profile and profile.buffBorders
+                    if bbDB then
+                        local growLeft, growUp
+                        if key == "buffFrame" then
+                            growLeft = bbDB.buffGrowLeft
+                            growUp   = bbDB.buffGrowUp
+                        else
+                            growLeft = bbDB.debuffGrowLeft
+                            growUp   = bbDB.debuffGrowUp
+                        end
+                        if growUp then
+                            growCorner = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
+                        else
+                            growCorner = growLeft and "TOPRIGHT" or "TOPLEFT"
+                        end
+                    end
+                end
+
+                if growCorner then
+                    -- Convert the drag handle's CENTER offset to a corner
+                    -- offset using the live container's current size. This
+                    -- one-time conversion at SAVE time means the apply path
+                    -- can use the stored values directly — no recomputation.
+                    local def = QUI_LayoutMode._elements[key]
+                    local frame = def and def.frame and _G[def.frame]
+                    local fw = frame and (frame._naturalW or (frame.GetWidth and frame:GetWidth())) or 0
+                    local fh = frame and (frame._naturalH or (frame.GetHeight and frame:GetHeight())) or 0
+                    if fw < 4 then fw = 32 end
+                    if fh < 4 then fh = 32 end
+                    local pw = UIParent:GetWidth()
+                    local ph = UIParent:GetHeight()
+                    local FRAC_X = { TOPLEFT = 0, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 1 }
+                    local FRAC_Y = { TOPLEFT = 1, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 0 }
+                    local cornerX = (offsetX or 0) + (FRAC_X[growCorner] - 0.5) * (fw - pw)
+                    local cornerY = (offsetY or 0) + (FRAC_Y[growCorner] - 0.5) * (fh - ph)
+                    fa[key].point = growCorner
+                    fa[key].relative = growCorner
+                    fa[key].offsetX = math.floor(cornerX + 0.5)
+                    fa[key].offsetY = math.floor(cornerY + 0.5)
+                    fa[key].growAnchor = growCorner
+                else
+                    -- Normal free-position frame: CENTER-anchored, drag
+                    -- offsets used verbatim. Reset point/relative to CENTER
+                    -- so the offsets are interpreted in the same coordinate
+                    -- space they were measured in.
+                    fa[key].point = "CENTER"
+                    fa[key].relative = "CENTER"
+                    fa[key].offsetX = offsetX
+                    fa[key].offsetY = offsetY
+                end
             end
         end
     end
@@ -1243,45 +1326,14 @@ CommitPositions = function()
                     -- (e.g. TOPRIGHT/BOTTOMRIGHT) leak back through the
                     -- metatable on reload, misinterpreting CENTER-based offsets.
                     if not pos.anchorTarget then
+                        -- Free-position frames are stored as CENTER offsets,
+                        -- including dynamic-size containers like buffFrame /
+                        -- debuffFrame. The apply path handles corner-anchor
+                        -- conversion for those via the `growAnchor` field
+                        -- (set by the buff borders module). Layout mode no
+                        -- longer special-cases buff/debuff here.
                         fa[key].point = "CENTER"
                         fa[key].relative = "CENTER"
-                    end
-                    -- Growth-direction containers need corner anchoring so
-                    -- the fixed edge stays put as the grid resizes.  Convert
-                    -- CENTER offsets to corner offsets when real dimensions
-                    -- are available (auras were showing during save).
-                    if not pos.anchorTarget and (key == "buffFrame" or key == "debuffFrame") then
-                        local bbDB = _G.QUI and _G.QUI.db and _G.QUI.db.profile
-                            and _G.QUI.db.profile.buffBorders
-                        if bbDB then
-                            local growLeft, growUp
-                            if key == "buffFrame" then
-                                growLeft, growUp = bbDB.buffGrowLeft, bbDB.buffGrowUp
-                            else
-                                growLeft, growUp = bbDB.debuffGrowLeft, bbDB.debuffGrowUp
-                            end
-                            local corner
-                            if growUp then
-                                corner = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
-                            else
-                                corner = growLeft and "TOPRIGHT" or "TOPLEFT"
-                            end
-                            local frame = def.frame and _G[def.frame]
-                            local fw = frame and frame._naturalW
-                            local fh = frame and frame._naturalH
-                            if fw and fh and fw > 1 and fh > 1 then
-                                local FRAC_X = { TOPLEFT = 0, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 1 }
-                                local FRAC_Y = { TOPLEFT = 1, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 0 }
-                                local cx = fa[key].offsetX or 0
-                                local cy = fa[key].offsetY or 0
-                                local pw = UIParent:GetWidth()
-                                local ph = UIParent:GetHeight()
-                                fa[key].point = corner
-                                fa[key].relative = corner
-                                fa[key].offsetX = math.floor(cx + (FRAC_X[corner] - 0.5) * (fw - pw) + 0.5)
-                                fa[key].offsetY = math.floor(cy + (FRAC_Y[corner] - 0.5) * (fh - ph) + 0.5)
-                            end
-                        end
                     end
                 end
                 if fa[key].sizeStable == nil then

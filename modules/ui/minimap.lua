@@ -3078,7 +3078,7 @@ local function SetupMinimapDragging()
     if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("minimap") then
         local quiDB = _G.QUI and _G.QUI.db and _G.QUI.db.profile
         local anchorSettings = quiDB and quiDB.frameAnchoring and quiDB.frameAnchoring["minimap"]
-        if anchorSettings and anchorSettings.enabled then
+        if anchorSettings and anchorSettings.enabled ~= false then
             local pt = anchorSettings.point or "CENTER"
             local rel = anchorSettings.relative or "CENTER"
             local ox = anchorSettings.offsetX or 0

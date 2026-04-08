@@ -13,8 +13,88 @@ local ADDON_NAME, ns = ...
 
 local Migrations = ns.Migrations or {}
 ns.Migrations = Migrations
+-- Also expose on the QUI global so init.lua (which has no `ns` scope) can
+-- reach the snapshot/restore helpers for the `/qui migration` slash command.
+if _G.QUI then _G.QUI.Migrations = Migrations end
 
-local CURRENT_SCHEMA_VERSION = 1
+---------------------------------------------------------------------------
+-- Schema version history
+---------------------------------------------------------------------------
+-- v0  = unknown / fresh install / 2.55 and earlier (pre-modern data model)
+-- v1  = legacy "always 1" stamp (3.0 – 3.1.4) — treated as v0 by the rewrite
+-- v2  = MigrateDatatextSlots                       (3.0)
+-- v3  = MigratePerSlotSettings                     (3.0)
+-- v4  = MigrateMasterTextColors                    (3.0)
+-- v5  = MigrateChatEditBox                         (3.0)
+-- v6  = MigrateCooldownSwipeV2                     (3.0)
+-- v7  = MigrateCastBars                            (3.0)
+-- v8  = MigrateUnitFrames                          (3.0)
+-- v9  = MigrateSelfFirst + CleanOrphanKeys         (3.0)
+-- v10 = Legacy 2.55 mainline anchor rebuild        (2.55 only)
+-- v11 = EnsureThemeStorage                         (3.0/3.1)
+-- v12 = MigrateLegacyLootSettings                  (3.0)
+-- v13 = EnsureCraftingOrderIndicator               (minimap indicator default flip)
+-- v14 = MigrateToShowLogic (cdm + unitframes)      (3.0 hide → show)
+-- v15 = MigrateGroupFrameContainers                (3.0 party/raid split)
+-- v16 = NormalizeAuraIndicators                    (3.0 shape normalize)
+-- v17 = NormalizeEngines                           (3.0 drop legacy engine keys)
+-- v18 = NormalizeMinimapSettings                   (2.55 position array → FA)
+-- v19 = MigrateAnchoringV1                         (2.55 anchoring + castbar anchor)
+-- v20 = MigrateAnchoringV2                         (3.0 mplusTimer/tooltip/brez legacy offsets)
+-- v21 = MigrateAnchoringV3                         (3.1 readyCheck/loot/alerts/bars position)
+-- v22 = MigrateNCDMContainers                      (3.0 ncdm.containers schema)
+-- v23 = Re-run PruneLegacyPlaceholderAnchors with `enabled` whitelisted
+--       (3.1.5: ghost FA entries with enabled=false survived earlier prune
+--        passes because the enabled flag prevented placeholder detection;
+--        re-running cleans them up so AceDB defaults take over)
+-- v24 = RepairDisabledAnchorsWithStaleCornerPoints
+--       (3.1.5: SavePendingPosition's free-position branch failed to reset
+--        point/relative when existingParent == "disabled". Frames that had
+--        been corner-converted (TOPRIGHT/TOPRIGHT) before being unanchored
+--        ended up with CENTER-based offsets stored against TOPRIGHT anchor
+--        points, teleporting them off-screen. Repair: detect entries where
+--        parent="disabled" and point/relative are non-CENTER, normalize
+--        them back to CENTER/CENTER preserving the offsets.)
+-- v25 = Re-run RepairDisabledStaleCornerEntries
+--       (3.1.5: a separate bug in buffborders.lua LayoutIcons was writing
+--        the runtime corner-conversion BACK to the DB on every layout pass,
+--        re-corrupting any entry that v24 repaired. The buffborders bug is
+--        fixed in this same release; this gate re-runs the repair against
+--        profiles that already migrated past v24 with re-corrupted data.
+--        v25 also handles the AceDB-default-stripped variant: entries
+--        where point=nil but relative is a corner string. AceDB strips
+--        point="TOPRIGHT" on save because it matches the default for
+--        debuffFrame, leaving only `relative="TOPRIGHT"` as the buggy
+--        fingerprint in raw SV.)
+-- v26 = Add growAnchor field to buff/debuff/auraBar FA entries
+--       (3.1.5 Phase 2: split icon-grow direction from container anchor.
+--        Existing corner-anchored entries get growAnchor = entry.point so
+--        the new ApplyFrameAnchor growAnchor branch interprets them as
+--        already-corner-anchored. Entries that v24/v25 normalized to
+--        CENTER/CENTER get growAnchor derived from buffBorders config.)
+-- v27 = RestoreChainedDefaultAnchors
+--       (3.1.5: MigrateAnchoringV2's MigrateOffsets unconditionally pinned
+--        legacy 2.55 inline-offset frames to parent="screen", which
+--        clobbered the chained-default parents for brezCounter (→
+--        combatTimer), combatTimer (→ bar3), and petWarning (→ playerFrame).
+--        Detect FA entries that exactly match the legacy MigrateOffsets
+--        shape and delete them so AceDB defaults restore the chain. Also
+--        patches MigrateOffsets going forward to skip these keys.)
+-- v28 = RestoreMplusTimerChainedDefault
+--       (3.1.5: same root cause as v27, but for MigrateAnchoringV2's
+--        mplusTimer branch — it pinned the timer to parent="screen" from
+--        legacy `profile.mplusTimer.position`, clobbering the chained
+--        partyFrames default. v27's RestoreChainedDefaultAnchors couldn't
+--        catch it because IsLegacyMigrateOffsetsEntry requires point=CENTER
+--        and the V2 mplusTimer entry inherits the user's saved point. v28
+--        uses a relaxed shape check (parent=screen, sizeStable=true, only
+--        the 6 V2 fields) and also patches MigrateAnchoringV2 to skip the
+--        mplusTimer write going forward.)
+--
+-- When adding a new migration: bump CURRENT_SCHEMA_VERSION, add it to the
+-- linear gate chain in RunOnProfile, and document the version above.
+---------------------------------------------------------------------------
+local CURRENT_SCHEMA_VERSION = 28
 
 ---------------------------------------------------------------------------
 -- Shared helpers
@@ -119,40 +199,44 @@ local function MigrateChatEditBox(chat)
     chat.styleEditBox = nil
 end
 
--- Migrate legacy cooldownSwipe (hideEssential/hideUtility) to new 3-toggle system
+-- Migrate legacy cooldownSwipe (hideEssential/hideUtility) to new 3-toggle system.
+-- Idempotency: gated externally by schema version v6; internally by the absence
+-- of the legacy hide* keys. Safe to call on already-migrated data.
 local function MigrateCooldownSwipeV2(profile)
     if not profile then return end
     if not profile.cooldownSwipe then profile.cooldownSwipe = {} end
 
     local cs = profile.cooldownSwipe
-    if cs.migratedToV2 then return end  -- Already migrated
+    -- Strip legacy sentinel from any 3.1.x profile that still carries it.
+    cs.migratedToV2 = nil
 
-    -- Check old settings
     local hadHideEssential = cs.hideEssential == true
     local hadHideUtility = cs.hideUtility == true
     local hadHideBuffSwipe = profile.cooldownManager and profile.cooldownManager.hideSwipe == true
 
-    -- Migration: If user had swipes hidden, they likely wanted to hide GCD clutter
-    -- Give them spell cooldowns back while keeping GCD hidden
+    -- Data-shape guard: if none of the legacy keys exist and the new-style
+    -- show* keys already exist, there's nothing to migrate.
+    if not (hadHideEssential or hadHideUtility or hadHideBuffSwipe)
+        and cs.hideEssential == nil and cs.hideUtility == nil
+        and cs.showBuffSwipe ~= nil then
+        return
+    end
+
     if hadHideEssential or hadHideUtility or hadHideBuffSwipe then
         cs.showBuffSwipe = true
         cs.showGCDSwipe = false       -- Hide GCD (what most users wanted)
         cs.showCooldownSwipe = true   -- Show actual cooldowns
-    else
-        -- Fresh or never-hidden: show all
+    elseif cs.showBuffSwipe == nil then
         cs.showBuffSwipe = true
         cs.showGCDSwipe = true
         cs.showCooldownSwipe = true
     end
 
-    -- Clean up legacy keys
     cs.hideEssential = nil
     cs.hideUtility = nil
     if profile.cooldownManager then
         profile.cooldownManager.hideSwipe = nil
     end
-
-    cs.migratedToV2 = true
 end
 
 -- Migrate legacy top-level castBar/targetCastBar/focusCastBar to quiUnitFrames.*.castbar
@@ -392,91 +476,25 @@ end
 -- 2. Legacy profile detection & normalization
 ---------------------------------------------------------------------------
 
-local function LooksLikeLegacyMainlineProfile(profile)
-    if type(profile) ~= "table" then
-        return false
-    end
-
-    local general = profile.general
-    local hasNextVersionMarkers = false
-    if type(general) == "table" then
-        if general.addEditModeButton ~= nil
-            or general.objectiveTrackerClickThrough ~= nil
-            or general.skinAuctionHouse ~= nil
-            or general.skinCraftingOrders ~= nil
-            or general.skinProfessions ~= nil
-            or general.overrideSCTFont ~= nil
-            or general.craftingOrderExpansionFilter ~= nil
-            or general.themePreset ~= nil
-        then
-            hasNextVersionMarkers = true
-        end
-    end
-    if profile.actionBarsVisibility ~= nil
-        or profile.chatVisibility ~= nil
-        or profile.cooldownHighlighter ~= nil
-        or profile.preyTracker ~= nil
-        or profile.themePreset ~= nil
-    then
-        hasNextVersionMarkers = true
-    end
-
-    if hasNextVersionMarkers then
-        return false
-    end
-
-    if type(general) == "table" then
-        if general.skinLootWindow ~= nil
-            or general.skinLootUnderMouse ~= nil
-            or general.skinLootHistory ~= nil
-            or general.skinRollFrames ~= nil
-            or general.skinRollSpacing ~= nil
-        then
+-- Explicit legacy-2.55 detection.
+--
+-- We no longer shape-sniff a dozen heuristics. The 2.55-era anchoring system
+-- stored positions with an `enabled` flag on each `frameAnchoring` entry;
+-- 3.0+ dropped that flag in favor of parent-chain entries. Presence of any
+-- `frameAnchoring.<key>.enabled` value is a reliable 2.55 marker.
+--
+-- Called exactly once, from the v10 schema gate in RunOnProfile, for profiles
+-- whose schema version is below v10. Fresh installs and 3.0+ upgraders return
+-- false here and skip the legacy anchor rebuild entirely.
+local function IsLegacy255Profile(profile)
+    if type(profile) ~= "table" then return false end
+    local fa = profile.frameAnchoring
+    if type(fa) ~= "table" then return false end
+    for _, entry in pairs(fa) do
+        if type(entry) == "table" and entry.enabled ~= nil then
             return true
         end
     end
-
-    if profile.unitFrames ~= nil
-        or profile.castBar ~= nil
-        or profile.targetCastBar ~= nil
-        or profile.focusCastBar ~= nil
-    then
-        return true
-    end
-
-    local gf = profile.quiGroupFrames
-    if type(gf) == "table" and (gf.unifiedPosition ~= nil or gf.partyLayout ~= nil or gf.raidLayout ~= nil) then
-        return true
-    end
-
-    local mm = profile.minimap
-    if type(mm) == "table" and (mm.hideMicroMenu ~= nil or mm.hideBagBar ~= nil) then
-        return true
-    end
-
-    local cdmVis = profile.cdmVisibility
-    local ufVis = profile.unitframesVisibility
-    for _, vis in ipairs({ cdmVis, ufVis }) do
-        if type(vis) == "table" and (
-            vis.hideOutOfCombat ~= nil
-            or vis.hideWhenNotInGroup ~= nil
-            or vis.hideWhenNotInInstance ~= nil
-        ) then
-            return true
-        end
-    end
-
-    if type(profile.ncdm) == "table" and profile.ncdm.engine ~= nil then
-        return true
-    end
-    if type(profile.actionBars) == "table" and profile.actionBars.engine == "classic" then
-        return true
-    end
-
-    if type(profile.frameAnchoring) == "table" or profile._anchoringMigrationVersion ~= nil then
-        return true
-    end
-
     return false
 end
 
@@ -510,6 +528,12 @@ local function IsPlaceholderAnchorEntry(entry)
     end
 
     -- Ignore housekeeping-only entries such as hudMinWidth.
+    --
+    -- `enabled` is whitelisted because 3.0 era profiles still carry the
+    -- legacy enabled flag on ghost entries — without this, an `enabled=false`
+    -- ghost survives pruning, falls through the cleanup loop, and ends up
+    -- masking the AceDB default with a useless zero-offset CENTER anchor.
+    -- The flag itself is meaningless once the migration normalizes things.
     for key, value in pairs(entry) do
         if key ~= "parent"
             and key ~= "point"
@@ -524,6 +548,7 @@ local function IsPlaceholderAnchorEntry(entry)
             and key ~= "autoHeight"
             and key ~= "widthAdjust"
             and key ~= "heightAdjust"
+            and key ~= "enabled"
             and value ~= nil
         then
             return false
@@ -533,20 +558,65 @@ local function IsPlaceholderAnchorEntry(entry)
     return true
 end
 
+-- Buffered debug log: chat isn't available during OnInitialize/OnEnable when
+-- migrations run, so we collect lines into a global table that can be dumped
+-- via /qui miglog after login. The buffer is created lazily on first write.
+--
+-- Logging is unconditional during the v3.1.5 anchor-migration debug push.
+-- Strip the MigLog calls and this helper after the bug is fixed.
+local function MigLog(fmt, ...)
+    if not _G.QUI_MIGRATION_LOG then _G.QUI_MIGRATION_LOG = {} end
+    local line
+    if select("#", ...) > 0 then
+        local ok, msg = pcall(string.format, fmt, ...)
+        line = ok and msg or fmt
+    else
+        line = fmt
+    end
+    _G.QUI_MIGRATION_LOG[#_G.QUI_MIGRATION_LOG + 1] = line
+end
+
 local function PruneLegacyPlaceholderAnchors(profile)
     if type(profile) ~= "table" or type(profile.frameAnchoring) ~= "table" then
+        MigLog("PruneLegacyPlaceholderAnchors: skip — profile=%s frameAnchoring=%s",
+            type(profile), type(profile and profile.frameAnchoring))
         return
     end
 
+    local pruned, kept = 0, 0
+    MigLog("PruneLegacyPlaceholderAnchors: scanning frameAnchoring")
     for key, entry in pairs(profile.frameAnchoring) do
-        if key ~= "hudMinWidth" and IsPlaceholderAnchorEntry(entry) then
+        if key == "hudMinWidth" then
+            -- skip
+        elseif IsPlaceholderAnchorEntry(entry) then
+            MigLog("  PRUNE %s (parent=%s, point=%s, ofs=%s/%s, enabled=%s)",
+                tostring(key),
+                tostring(entry.parent),
+                tostring(entry.point),
+                tostring(entry.offsetX),
+                tostring(entry.offsetY),
+                tostring(entry.enabled))
             profile.frameAnchoring[key] = nil
+            pruned = pruned + 1
+        else
+            MigLog("  keep  %s (parent=%s, point=%s, ofs=%s/%s, enabled=%s)",
+                tostring(key),
+                tostring(entry.parent),
+                tostring(entry.point),
+                tostring(entry.offsetX),
+                tostring(entry.offsetY),
+                tostring(entry.enabled))
+            kept = kept + 1
         end
     end
+    MigLog("PruneLegacyPlaceholderAnchors done: pruned=%d kept=%d", pruned, kept)
 end
 
+-- Gated externally by schema version v10 (only runs once, only for legacy
+-- 2.55 mainline profiles). Any stale `_legacyMainlineAnchorsRebuilt` sentinel
+-- on 3.1.x profiles is scrubbed at the bottom of this function.
 local function ResetLegacyAnchorsForRebuild(profile)
-    if type(profile) ~= "table" or profile._legacyMainlineAnchorsRebuilt then
+    if type(profile) ~= "table" then
         return
     end
     if type(profile.frameAnchoring) ~= "table" then
@@ -554,7 +624,17 @@ local function ResetLegacyAnchorsForRebuild(profile)
     end
 
     local fa = profile.frameAnchoring
+    -- Only clear entries that look like legacy 2.55 placeholders. A 3.0+
+    -- shaped entry (one with a `parent` field set) was authored by the user
+    -- via the modern layout system — preserve it even on profiles that
+    -- IsLegacy255Profile flagged due to a stray `enabled` flag elsewhere.
+    -- This mirrors the discriminator MigrateAnchoringV1 uses at the
+    -- `hasParentField` branch.
     local function ClearAnchor(key)
+        local entry = fa[key]
+        if type(entry) == "table" and entry.parent ~= nil then
+            return
+        end
         fa[key] = nil
     end
     local function HasOffsets(sourceTable)
@@ -626,8 +706,12 @@ local function ResetLegacyAnchorsForRebuild(profile)
             microbar = "microMenu",
             bags = "bagBar",
         }
+        -- Only the legacy 2.55 `position` field counts as a position source.
+        -- See the matching comment in MigrateAnchoringV3 — `ownedPosition` is
+        -- dead orphaned data on 3.x profiles and must not trigger ClearAnchor,
+        -- which would yank a chained-default bar onto the screen-center seed.
         for dbKey, barData in pairs(barsDB) do
-            if type(barData) == "table" and type(barData.ownedPosition) == "table" then
+            if type(barData) == "table" and type(barData.position) == "table" then
                 ClearAnchor(barKeyMap[dbKey] or dbKey)
             end
         end
@@ -636,7 +720,7 @@ local function ResetLegacyAnchorsForRebuild(profile)
     end
 
     profile._anchoringMigrationVersion = nil
-    profile._legacyMainlineAnchorsRebuilt = true
+    profile._legacyMainlineAnchorsRebuilt = nil
 end
 
 local LEGACY_MAINLINE_EDIT_MODE_BARS = {
@@ -826,6 +910,12 @@ local function MigrateLegacyLootSettings(profile)
     end
 end
 
+-- Gated externally by schema version v13. This is a one-time default flip:
+-- users who never touched `showCraftingOrder` get it set to true. Users who
+-- explicitly set it to false must NOT have their choice overwritten. We
+-- detect "untouched" as `== nil` (AceDB proxy returns nil for keys the user
+-- never set, because there's no default for this key). Scrubs any stale
+-- sentinel from 3.1.x profiles.
 local function EnsureCraftingOrderIndicator(profile)
     if not profile then
         return
@@ -833,9 +923,9 @@ local function EnsureCraftingOrderIndicator(profile)
     if not profile.minimap then
         profile.minimap = {}
     end
-    if profile.minimap._showCraftingOrderMigrated ~= true then
+    profile.minimap._showCraftingOrderMigrated = nil
+    if profile.minimap.showCraftingOrder == nil then
         profile.minimap.showCraftingOrder = true
-        profile.minimap._showCraftingOrderMigrated = true
     end
 end
 
@@ -1024,14 +1114,40 @@ end
 ---------------------------------------------------------------------------
 -- 4. Anchoring migrations (depend on data being in final locations)
 ---------------------------------------------------------------------------
+--
+-- Split into three separate functions, one per schema version (v19/v20/v21).
+-- Each function is gated externally by the linear schema version in
+-- RunOnProfile; the old `profile._anchoringMigrationVersion` sentinel is
+-- scrubbed at the top of MigrateAnchoringV1 on first upgrade.
+--
+-- The Ensure/Read helpers are shared via closure-capture factories.
 
-local function MigrateAnchoring(profile)
-    if not profile._anchoringMigrationVersion then
+local function MakeAnchoringHelpers(profile)
+    -- Lazy accessor: only materializes profile.frameAnchoring on first write.
+    -- Fresh profiles with no legacy source data never trigger the creation,
+    -- so they don't get an empty shadow table that would mask AceDB defaults.
+    local function EnsureFa()
         if not profile.frameAnchoring then
             profile.frameAnchoring = {}
         end
-        local fa = profile.frameAnchoring
+        return profile.frameAnchoring
+    end
+    -- Snapshot the existing table (may be nil) for read paths. Iterators and
+    -- membership checks should treat nil as "no entries" without creating the
+    -- table. Writes go through EnsureFa().
+    local function ReadFa()
+        return profile.frameAnchoring
+    end
+    return EnsureFa, ReadFa
+end
 
+local function MigrateAnchoringV1(profile)
+    -- Scrub legacy sentinel on first upgrade.
+    profile._anchoringMigrationVersion = nil
+
+    local EnsureFa, ReadFa = MakeAnchoringHelpers(profile)
+
+    do
         -- Detect 2.55-style profile: has frameAnchoring entries with the
         -- legacy `enabled` flag. In 2.55, positions were stored as absolute
         -- screen offsets (parent=screen, CENTER) regardless of the frame's
@@ -1039,10 +1155,13 @@ local function MigrateAnchoring(profile)
         -- chain system — they must be discarded so the seed can apply
         -- proper default parent chains.
         local isLegacy255 = false
-        for _, settings in pairs(fa) do
-            if type(settings) == "table" and settings.enabled ~= nil then
-                isLegacy255 = true
-                break
+        local existingFa = ReadFa()
+        if existingFa then
+            for _, settings in pairs(existingFa) do
+                if type(settings) == "table" and settings.enabled ~= nil then
+                    isLegacy255 = true
+                    break
+                end
             end
         end
 
@@ -1079,35 +1198,61 @@ local function MigrateAnchoring(profile)
             raidFrames     = true,
         }
 
-        for key, settings in pairs(fa) do
-            if type(settings) == "table" and settings.enabled ~= nil then
-                if settings.enabled == false then
-                    -- enabled=false = never explicitly positioned via layout mode.
-                    -- For CDM containers and chain frames: discard (absolute 2.55
-                    -- coords don't translate). For other frames with real position
-                    -- data: preserve. Seed defaults are a last resort.
-                    if CDM_OWNED_KEYS[key] or LEGACY255_DISCARD_ABSOLUTE[key] then
-                        fa[key] = nil
-                    else
-                        local hasPositionData = (tonumber(settings.offsetX) or 0) ~= 0
-                            or (tonumber(settings.offsetY) or 0) ~= 0
-                            or (tonumber(settings.widthAdjust) or 0) ~= 0
-                            or (tonumber(settings.heightAdjust) or 0) ~= 0
-                        if hasPositionData then
-                            settings.enabled = nil  -- strip flag, keep data
-                        else
-                            fa[key] = nil
-                        end
-                    end
-                else
-                    -- enabled=true = user explicitly positioned this via layout
-                    -- mode. The entry already has valid parent-chain data (e.g.
-                    -- playerCastbar with parent=cdmUtility). Always preserve,
-                    -- except for CDM containers which the CDM module owns.
+        -- Legacy cleanup only runs if the profile actually has entries.
+        -- Fresh profiles skip this block entirely (existingFa is nil).
+        --
+        -- Discriminator: a TRUE 2.55 entry has no `parent` field at all
+        -- (2.55 stored only point/relative/offsets/enabled, no parent
+        -- chain). A 3.0+ entry that happens to still carry an `enabled`
+        -- flag will have `parent` set, and its position data must be
+        -- preserved exactly — even when the key is in
+        -- LEGACY255_DISCARD_ABSOLUTE, because that list only describes
+        -- frames whose 2.55 absolute coords don't translate. A 3.0+
+        -- entry with `parent="screen"` and real offsets is a free
+        -- screen position the user explicitly chose, not a stale 2.55
+        -- artifact. Discarding it falls back to the AceDB default
+        -- (e.g. playerFrame → cdmEssential), which silently re-parents
+        -- the user's frames to a CDM container they may have hidden.
+        if existingFa then
+            for key, settings in pairs(existingFa) do
+                if type(settings) == "table" and settings.enabled ~= nil then
+                    local hasParentField = settings.parent ~= nil
+                    local hasPositionData = (tonumber(settings.offsetX) or 0) ~= 0
+                        or (tonumber(settings.offsetY) or 0) ~= 0
+                        or (tonumber(settings.widthAdjust) or 0) ~= 0
+                        or (tonumber(settings.heightAdjust) or 0) ~= 0
+
                     if CDM_OWNED_KEYS[key] then
-                        fa[key] = nil
+                        -- CDM containers are positioned by the CDM module via
+                        -- ncdm.<key>.pos. The cooperation contract is that
+                        -- frameAnchoring entries for these keys yield to CDM,
+                        -- so always strip them.
+                        existingFa[key] = nil
+                    elseif hasParentField then
+                        -- 3.0+ shape: full {parent, point, relative, offsets}.
+                        -- User data — preserve, just remove the legacy flag.
+                        settings.enabled = nil
+                    elseif settings.enabled == false then
+                        -- True 2.55 shape (no parent field), enabled=false:
+                        -- this was never explicitly positioned via layout
+                        -- mode. For frames whose new default chains them
+                        -- to a CDM container or other moving frame, the
+                        -- legacy absolute coords don't translate — discard
+                        -- so the seed default applies. For other frames,
+                        -- preserve real position data via the seed pin.
+                        if LEGACY255_DISCARD_ABSOLUTE[key] then
+                            existingFa[key] = nil
+                        elseif hasPositionData then
+                            settings.enabled = nil  -- keep, will be pinned to screen later
+                        else
+                            existingFa[key] = nil
+                        end
                     else
-                        settings.enabled = nil  -- strip flag, keep data
+                        -- True 2.55 shape, enabled=true: user moved it via
+                        -- 2.55 layout mode. Strip the flag, keep the data.
+                        -- The seed at the end of MigrateAnchoringV1 won't
+                        -- overwrite it because the entry still exists.
+                        settings.enabled = nil
                     end
                 end
             end
@@ -1118,8 +1263,10 @@ local function MigrateAnchoring(profile)
             local ox = sourceTable.offsetX
             local oy = sourceTable.offsetY
             if ox == nil and oy == nil then return end
-            if fa[targetKey] then return end
-            fa[targetKey] = {
+            -- Skip if the target entry already exists (read without creating).
+            local currentFa = ReadFa()
+            if currentFa and currentFa[targetKey] then return end
+            EnsureFa()[targetKey] = {
                 parent = "screen",
                 point = "CENTER",
                 relative = "CENTER",
@@ -1173,9 +1320,10 @@ local function MigrateAnchoring(profile)
 
         local gf = profile.quiGroupFrames
         if gf and not isLegacy255 then
+            local currentFa = ReadFa()
             local pos = gf.position
-            if pos and (pos.offsetX or pos.offsetY) and not fa.partyFrames then
-                fa.partyFrames = {
+            if pos and (pos.offsetX or pos.offsetY) and not (currentFa and currentFa.partyFrames) then
+                EnsureFa().partyFrames = {
                     parent = "screen",
                     point = "CENTER",
                     relative = "CENTER",
@@ -1186,8 +1334,9 @@ local function MigrateAnchoring(profile)
             end
 
             local raidPos = gf.raidPosition
-            if raidPos and (raidPos.offsetX or raidPos.offsetY) and not fa.raidFrames then
-                fa.raidFrames = {
+            currentFa = ReadFa()
+            if raidPos and (raidPos.offsetX or raidPos.offsetY) and not (currentFa and currentFa.raidFrames) then
+                EnsureFa().raidFrames = {
                     parent = "screen",
                     point = "CENTER",
                     relative = "CENTER",
@@ -1219,7 +1368,8 @@ local function MigrateAnchoring(profile)
                 -- Let the seed apply the default parent chain (castbar → unit
                 -- frame TOP→BOTTOM).
                 local skipLegacyNone = isLegacy255 and anchor == "none"
-                if castDB and not fa[cm.targetKey] and not skipLegacyNone then
+                local currentFa = ReadFa()
+                if castDB and not (currentFa and currentFa[cm.targetKey]) and not skipLegacyNone then
                     local parent, ox, oy, point, relative
                     if anchor == "none" then
                         parent = "screen"
@@ -1267,47 +1417,59 @@ local function MigrateAnchoring(profile)
                     if anchor ~= "none" then
                         entry.autoWidth = true
                     end
-                    fa[cm.targetKey] = entry
+                    EnsureFa()[cm.targetKey] = entry
                 end
             end
         end
 
-        profile._anchoringMigrationVersion = 1
     end
+end
 
-    if (profile._anchoringMigrationVersion or 0) < 2 then
-        if not profile.frameAnchoring then profile.frameAnchoring = {} end
-        local fa = profile.frameAnchoring
+local function MigrateAnchoringV2(profile)
+    local EnsureFa, ReadFa = MakeAnchoringHelpers(profile)
 
-        local mpt = profile.mplusTimer and profile.mplusTimer.position
-        if mpt and not fa.mplusTimer then
-            fa.mplusTimer = {
-                point = mpt.point or "TOPRIGHT",
-                relative = mpt.relPoint or "TOPRIGHT",
-                offsetX = mpt.x or -100,
-                offsetY = mpt.y or -200,
-                sizeStable = true,
-            }
-        end
+    do
+        -- mplusTimer's AceDB default is chained to partyFrames
+        -- (point=BOTTOMLEFT, parent=partyFrames, relative=BOTTOMRIGHT). The
+        -- legacy `profile.mplusTimer.position` table is just resolved screen
+        -- coords written by the module's GetPosition(), so migrating it into
+        -- frameAnchoring as parent="screen" clobbers the chained default.
+        -- Skip the write entirely; the chained default will take over. v28
+        -- (RestoreMplusTimerChainedDefault) cleans up profiles that already
+        -- ran the buggy version of this migration.
 
         local tp = profile.tooltip and profile.tooltip.anchorPosition
-        if tp and not fa.tooltipAnchor then
-            fa.tooltipAnchor = {
-                point = tp.point or "BOTTOMRIGHT",
-                relative = tp.relPoint or "BOTTOMRIGHT",
-                offsetX = tp.x or -200,
-                offsetY = tp.y or 100,
-                sizeStable = true,
-            }
+        if tp then
+            local currentFa = ReadFa()
+            if not (currentFa and currentFa.tooltipAnchor) then
+                EnsureFa().tooltipAnchor = {
+                    parent = "screen",
+                    point = tp.point or "BOTTOMRIGHT",
+                    relative = tp.relPoint or "BOTTOMRIGHT",
+                    offsetX = tp.x or -200,
+                    offsetY = tp.y or 100,
+                    sizeStable = true,
+                }
+            end
         end
 
+        -- Legacy inline offsets are UIParent-center-based absolute coords.
+        -- Pin parent="screen" explicitly so copyDefaults can't later fill
+        -- in a chain-rooted default parent and misinterpret the offsets.
+        --
+        -- Excludes keys whose AceDB default has a chained (non-screen)
+        -- parent — pinning those to screen would clobber the chain. See
+        -- v27 (RestoreChainedDefaultAnchors) for the cleanup of profiles
+        -- that ran the original buggy version of this migration.
         local function MigrateOffsets(sourceTable, targetKey)
             if not sourceTable then return end
             local ox = sourceTable.offsetX or sourceTable.xOffset
             local oy = sourceTable.offsetY or sourceTable.yOffset
             if ox == nil and oy == nil then return end
-            if fa[targetKey] then return end
-            fa[targetKey] = {
+            local currentFa = ReadFa()
+            if currentFa and currentFa[targetKey] then return end
+            EnsureFa()[targetKey] = {
+                parent = "screen",
                 point = "CENTER",
                 relative = "CENTER",
                 offsetX = ox or 0,
@@ -1316,25 +1478,29 @@ local function MigrateAnchoring(profile)
             }
         end
 
-        MigrateOffsets(profile.brzCounter, "brezCounter")
-        MigrateOffsets(profile.combatTimer, "combatTimer")
+        -- brezCounter, combatTimer, petWarning omitted intentionally — their
+        -- AceDB defaults chain to other frames (combatTimer / bar3 /
+        -- playerFrame respectively) and screen-pinning loses the chain.
         MigrateOffsets(profile.rangeCheck, "rangeCheck")
         MigrateOffsets(profile.actionTracker, "actionTracker")
         MigrateOffsets(profile.focusCastAlert, "focusCastAlert")
-        MigrateOffsets(profile.petCombatWarning, "petWarning")
         MigrateOffsets(profile.raidBuffs, "missingRaidBuffs")
-
-        profile._anchoringMigrationVersion = 2
     end
+end
 
-    if (profile._anchoringMigrationVersion or 0) < 3 then
-        if not profile.frameAnchoring then profile.frameAnchoring = {} end
-        local fa = profile.frameAnchoring
+local function MigrateAnchoringV3(profile)
+    local EnsureFa, ReadFa = MakeAnchoringHelpers(profile)
 
+    do
+        -- Legacy position tables are UIParent-center-based absolute coords.
+        -- Pin parent="screen" explicitly so copyDefaults can't later fill
+        -- in a chain-rooted default parent and misinterpret the offsets.
         local function MigratePos(source, faKey, defaults)
             if not source then return end
-            if fa[faKey] then return end
-            fa[faKey] = {
+            local currentFa = ReadFa()
+            if currentFa and currentFa[faKey] then return end
+            EnsureFa()[faKey] = {
+                parent = "screen",
                 point = source.point or defaults.point,
                 relative = source.relPoint or source.relativePoint or defaults.relative,
                 offsetX = source.x or defaults.offsetX,
@@ -1366,14 +1532,18 @@ local function MigrateAnchoring(profile)
 
         if gen then
             local cfp = gen.consumableFreePosition
-            if cfp and not fa.consumables then
-                fa.consumables = {
-                    point = cfp.point or "CENTER",
-                    relative = cfp.relativePoint or cfp.relPoint or "CENTER",
-                    offsetX = cfp.x or 0,
-                    offsetY = cfp.y or 100,
-                    sizeStable = true,
-                }
+            if cfp then
+                local currentFa = ReadFa()
+                if not (currentFa and currentFa.consumables) then
+                    EnsureFa().consumables = {
+                        parent = "screen",
+                        point = cfp.point or "CENTER",
+                        relative = cfp.relativePoint or cfp.relPoint or "CENTER",
+                        offsetX = cfp.x or 0,
+                        offsetY = cfp.y or 100,
+                        sizeStable = true,
+                    }
+                end
             end
         end
 
@@ -1406,24 +1576,280 @@ local function MigrateAnchoring(profile)
             for dbKey, barData in pairs(barsDB) do
                 if type(barData) == "table" then
                     local faKey = barKeyMap[dbKey] or dbKey
-                    -- Prefer ownedPosition (new), fall back to position (old 2.55 format)
-                    local posSource = barData.ownedPosition or barData.position
-                    if posSource then
+                    -- ONLY the legacy 2.55 `position` field is migrated here.
+                    -- `ownedPosition` is a dead 3.x-era field that no runtime
+                    -- code reads or writes anymore — it lingers in some 3.0
+                    -- profiles as orphaned data. Treating it as a position
+                    -- source would clobber the user's chained-default bars
+                    -- with a screen-center FA entry on every login (bar1 →
+                    -- bar3 chain replaced with parent="screen", offset 0/0).
+                    local posSource = barData.position
+                    if type(posSource) == "table" then
                         MigratePos(posSource, faKey,
                             { point = "CENTER", relative = "CENTER", offsetX = 0, offsetY = 0 })
                     end
                 end
             end
         end
-
-        profile._anchoringMigrationVersion = 3
     end
 end
 
-local function MigrateNCDMContainers(profile)
-    if not profile.ncdm or profile.ncdm._containersMigrated then
+---------------------------------------------------------------------------
+-- v24: Repair entries with parent="disabled" + stale corner point/relative
+---------------------------------------------------------------------------
+-- The SavePendingPosition free-position branch had a bug: when the user
+-- middle-clicked a frame to unanchor it (parent → "disabled") and the
+-- entry already had non-CENTER point/relative from a prior corner-
+-- conversion, subsequent drags wrote fresh CENTER-based offsets without
+-- normalizing point/relative. The runtime then interpreted CENTER offsets
+-- as TOPRIGHT-anchored offsets and the frame teleported off-screen.
+--
+-- Detection: parent == "disabled" AND point == relative AND that value
+-- is one of the four corners. Layout mode's drag handler measures offsets
+-- against UIParent CENTER, so the stored offsetX/offsetY are already in
+-- CENTER coordinate space — they just need the entry's point/relative
+-- normalized to CENTER/CENTER to be interpreted correctly. Repair preserves
+-- the user's drag position; it does NOT discard the offsets.
+local CORNER_POINTS = {
+    TOPLEFT     = true,
+    TOPRIGHT    = true,
+    BOTTOMLEFT  = true,
+    BOTTOMRIGHT = true,
+}
+
+local function RepairDisabledStaleCornerEntries(profile)
+    if type(profile) ~= "table" or type(profile.frameAnchoring) ~= "table" then
         return
     end
+    local repaired = 0
+    for key, entry in pairs(profile.frameAnchoring) do
+        if type(entry) == "table" and entry.parent == "disabled" then
+            -- Two fingerprints to detect:
+            --
+            -- (a) point == relative AND both are corner names. The straight-
+            --     forward case after the SavePendingPosition bug.
+            -- (b) point == nil AND relative is a corner name. This occurs
+            --     after AceDB save/load: AceDB strips fields whose value
+            --     matches the default. For buff/debuff frames the default
+            --     point happens to be "TOPRIGHT" — when the corner conv
+            --     wrote point="TOPRIGHT", AceDB stripped it on save,
+            --     leaving relative="TOPRIGHT" as the only on-disk witness
+            --     to the corruption. The proxy view fills point back in
+            --     from defaults so consumers see (TOPRIGHT, TOPRIGHT)
+            --     again. From a repair standpoint, the raw entry shape
+            --     {parent=disabled, point=nil, relative=<corner>} is the
+            --     same bug as case (a) just with one field stripped.
+            local isCornerPair = entry.point == entry.relative
+                and CORNER_POINTS[entry.point or ""]
+            local isStrippedCorner = entry.point == nil
+                and CORNER_POINTS[entry.relative or ""]
+
+            if isCornerPair or isStrippedCorner then
+                MigLog("v25 RepairDisabledStaleCorner: %s (parent=disabled, point=%s, rel=%s, ofs=%s/%s) → CENTER/CENTER",
+                    tostring(key),
+                    tostring(entry.point),
+                    tostring(entry.relative),
+                    tostring(entry.offsetX),
+                    tostring(entry.offsetY))
+                -- Repair: keep parent/offsets exactly as the user dragged
+                -- them, normalize point/relative to CENTER/CENTER so the
+                -- runtime interprets the offsets in the same coordinate
+                -- space they were measured in.
+                entry.point = "CENTER"
+                entry.relative = "CENTER"
+                repaired = repaired + 1
+            end
+        end
+    end
+    MigLog("RepairDisabledStaleCorner done: repaired=%d", repaired)
+end
+
+---------------------------------------------------------------------------
+-- v26: Backfill growAnchor field on buff/debuff/auraBar FA entries
+---------------------------------------------------------------------------
+-- Phase 2 of the buff/debuff anchor split: separate "where the container
+-- lives" (FA entry point/relative/offsets) from "which corner stays fixed
+-- as the container resizes" (FA entry growAnchor field). The apply path
+-- reads growAnchor and converts CENTER offsets to corner offsets at apply
+-- time using the container's current natural size.
+--
+-- For existing profiles, we need to populate growAnchor so the new apply
+-- path knows the corner. Two cases:
+--
+-- (a) Entry was already corner-anchored from a prior corner-conversion
+--     run: point == relative AND both are corner names. Set
+--     growAnchor = entry.point so the new apply path treats the existing
+--     offsets as already-corner-anchored and applies them directly. We
+--     leave point/relative/offsets alone — they're already in the right
+--     shape for the apply-time path to consume verbatim.
+--
+-- (b) Entry was normalized to CENTER/CENTER by v24/v25 repair, OR is a
+--     fresh CENTER-anchored entry from a Phase 2 layout-mode drag.
+--     growAnchor is derived from buffBorders.{buff,debuff}GrowLeft/GrowUp.
+--     The apply path will compute the corner conversion using the live
+--     container size on next apply.
+--
+-- For v26 we only backfill case (a) — case (b) is handled at runtime by
+-- buffborders.lua's UpdateGrowAnchor watcher, which fires on every refresh
+-- including the post-migration FullRefresh that runs at module init.
+local function BackfillGrowAnchor(profile)
+    if type(profile) ~= "table" or type(profile.frameAnchoring) ~= "table" then
+        return
+    end
+    -- Only buff-borders containers. CDM containers (buffIcon, buffBar,
+    -- cdmEssential, cdmUtility) are positioned by the CDM module via
+    -- ncdm.<key>.pos — their FA entries are stripped by CDM_OWNED_KEYS
+    -- and they use a different growth model (CENTERED_HORIZONTAL etc.)
+    -- that doesn't fit the four-corner growAnchor scheme.
+    local KEYS = { "buffFrame", "debuffFrame" }
+    local backfilled = 0
+    for _, key in ipairs(KEYS) do
+        local entry = profile.frameAnchoring[key]
+        if type(entry) == "table" and entry.growAnchor == nil then
+            -- Case (a): existing corner-anchored entry. Both point and
+            -- relative are the same corner string. Capture it as growAnchor.
+            if entry.point == entry.relative
+                and CORNER_POINTS[entry.point or ""]
+            then
+                entry.growAnchor = entry.point
+                backfilled = backfilled + 1
+                MigLog("v26 BackfillGrowAnchor: %s growAnchor=%s (from existing corner anchor)",
+                    tostring(key), tostring(entry.growAnchor))
+            end
+            -- Case (b) is left for the runtime watcher (UpdateGrowAnchor in
+            -- buffborders.lua), which fires on FullRefresh after the module
+            -- initializes and reads buffBorders.{buff,debuff}GrowLeft/GrowUp
+            -- to derive the corner. Doing it here would require a copy of
+            -- that logic and would race with anything that mutates the
+            -- buffBorders DB before module init.
+        end
+    end
+    MigLog("BackfillGrowAnchor done: backfilled=%d", backfilled)
+end
+
+---------------------------------------------------------------------------
+-- v27: Restore chained-default parents clobbered by MigrateOffsets
+---------------------------------------------------------------------------
+-- The original v20 MigrateOffsets pinned all legacy 2.55 inline-offset
+-- frames to parent="screen", which broke the chained defaults for
+-- frames whose AceDB default points at another frame:
+--
+--   brezCounter → combatTimer  (default)
+--   combatTimer → bar3         (default)
+--   petWarning  → playerFrame  (default)
+--
+-- Detect FA entries that exactly match the legacy MigrateOffsets shape
+-- and delete them so AceDB's default chain takes over. The shape is
+-- distinctive: parent="screen", point/relative=CENTER (or stripped to
+-- nil by AceDB), sizeStable=true, with no other customization fields.
+-- Any user-edited entry (different point/relative, enabled flag,
+-- keepInPlace, scale, etc.) is left untouched.
+local RESTORE_CHAINED_KEYS = {
+    brezCounter = true,
+    combatTimer = true,
+    petWarning  = true,
+}
+
+-- Fields permitted in a "pristine MigrateOffsets" entry. Anything outside
+-- this set means the user (or another migration) edited the entry, so
+-- we leave it alone.
+local MIGRATE_OFFSETS_FIELDS = {
+    parent     = true,
+    point      = true,
+    relative   = true,
+    offsetX    = true,
+    offsetY    = true,
+    sizeStable = true,
+}
+
+local function IsLegacyMigrateOffsetsEntry(entry)
+    if type(entry) ~= "table" then return false end
+    if entry.parent ~= "screen" then return false end
+    if entry.point ~= nil and entry.point ~= "CENTER" then return false end
+    if entry.relative ~= nil and entry.relative ~= "CENTER" then return false end
+    for k in pairs(entry) do
+        if not MIGRATE_OFFSETS_FIELDS[k] then
+            return false
+        end
+    end
+    return true
+end
+
+local function RestoreChainedDefaultAnchors(profile)
+    if type(profile) ~= "table" or type(profile.frameAnchoring) ~= "table" then
+        return
+    end
+    local fa = profile.frameAnchoring
+    local restored = 0
+    for key in pairs(RESTORE_CHAINED_KEYS) do
+        local entry = fa[key]
+        if IsLegacyMigrateOffsetsEntry(entry) then
+            MigLog("v27 RestoreChainedDefault: %s (parent=screen, point=%s, ofs=%s/%s) → default chain",
+                tostring(key),
+                tostring(entry.point),
+                tostring(entry.offsetX),
+                tostring(entry.offsetY))
+            fa[key] = nil
+            restored = restored + 1
+        end
+    end
+    MigLog("RestoreChainedDefaultAnchors done: restored=%d", restored)
+end
+
+-- v28: clean up frameAnchoring.mplusTimer entries that the buggy
+-- MigrateAnchoringV2 wrote with parent="screen". The mplusTimer AceDB
+-- default is chained to partyFrames, so deleting the entry restores the
+-- chain. RestoreChainedDefaultAnchors couldn't handle this key because
+-- IsLegacyMigrateOffsetsEntry requires point=CENTER, while V2's mplusTimer
+-- entry inherited the user's saved point (TOPRIGHT/BOTTOMRIGHT/etc.).
+-- The shape check here is relaxed: parent="screen", sizeStable=true, only
+-- the 6 fields V2 ever wrote, and no extra keys. A user who positioned
+-- the timer via layout mode after the buggy V2 ran will lose that
+-- customization, but v27 only just landed so the blast radius is small.
+local function IsLegacyMigrateAnchoringV2MplusEntry(entry)
+    if type(entry) ~= "table" then return false end
+    if entry.parent ~= "screen" then return false end
+    if entry.sizeStable ~= true then return false end
+    for k in pairs(entry) do
+        if not MIGRATE_OFFSETS_FIELDS[k] then
+            return false
+        end
+    end
+    return true
+end
+
+local function RestoreMplusTimerChainedDefault(profile)
+    if type(profile) ~= "table" or type(profile.frameAnchoring) ~= "table" then
+        return
+    end
+    local fa = profile.frameAnchoring
+    local entry = fa.mplusTimer
+    if IsLegacyMigrateAnchoringV2MplusEntry(entry) then
+        MigLog("v28 RestoreMplusTimerChainedDefault: mplusTimer (parent=screen, point=%s, ofs=%s/%s) → default chain",
+            tostring(entry.point),
+            tostring(entry.offsetX),
+            tostring(entry.offsetY))
+        fa.mplusTimer = nil
+        MigLog("RestoreMplusTimerChainedDefault done: restored=1")
+    else
+        MigLog("RestoreMplusTimerChainedDefault done: restored=0")
+    end
+end
+
+-- CORNER_POINTS used by both RepairDisabledStaleCornerEntries and
+-- BackfillGrowAnchor. Defined locally so the migration module is
+-- self-contained (anchoring.lua has its own copy).
+-- (Already declared earlier in this file.)
+
+-- Gated externally by schema version v22. The data-shape guard is "does
+-- ncdm.<legacy key> still exist?" — if not, the loop below is a no-op.
+local function MigrateNCDMContainers(profile)
+    if not profile or not profile.ncdm then
+        return
+    end
+
+    -- Scrub stale sentinel from 3.1.x profiles.
+    profile.ncdm._containersMigrated = nil
 
     if not profile.ncdm.containers then
         profile.ncdm.containers = {}
@@ -1442,267 +1868,342 @@ local function MigrateNCDMContainers(profile)
         trackedBar = "auraBar",
     }
 
+    -- Only migrate each key when the destination container is absent.
+    -- Profiles that have already been through this migration once (3.0 / 3.1.x
+    -- users) already have `containers[key]` populated and may have modified
+    -- it since; clobbering it from the stale `ncdm[key]` would lose user
+    -- changes. The source `ncdm[key]` is intentionally left in place to
+    -- stay compatible with any module still reading from the old location.
     for _, key in ipairs({ "essential", "utility", "buff", "trackedBar" }) do
-        if profile.ncdm[key] then
+        if profile.ncdm[key] and profile.ncdm.containers[key] == nil then
             profile.ncdm.containers[key] = CloneValue(profile.ncdm[key])
             profile.ncdm.containers[key].builtIn = true
             profile.ncdm.containers[key].containerType = containerTypes[key]
             profile.ncdm.containers[key].name = containerNames[key]
         end
     end
-
-    profile.ncdm._containersMigrated = true
-end
-
----------------------------------------------------------------------------
--- 5. Anchoring seed (must run after all anchoring migrations)
----------------------------------------------------------------------------
-
-local DEFAULT_FRAME_ANCHORING = {
-    bagBar          = { parent = "microMenu",       point = "TOPLEFT",      relative = "BOTTOMLEFT" },
-    bar1            = { parent = "bar3",            point = "BOTTOM",       relative = "TOP" },
-    bar2            = { parent = "bar1",            point = "BOTTOM",       relative = "TOP" },
-    bar3            = { parent = "screen",          point = "BOTTOMRIGHT",  relative = "BOTTOM" },
-    bar4            = { parent = "bar5",            point = "BOTTOMLEFT",   relative = "TOPLEFT" },
-    bar5            = { parent = "bar6",            point = "BOTTOMLEFT",   relative = "TOPLEFT" },
-    bar6            = { parent = "bar3",            point = "BOTTOMLEFT",   relative = "BOTTOMRIGHT" },
-    bossFrames      = { parent = "datatextPanel",   point = "TOPLEFT",      relative = "BOTTOMLEFT" },
-    brezCounter     = { parent = "combatTimer",     point = "BOTTOM",       relative = "TOP" },
-    atonementCounter = { parent = "brezCounter",    point = "BOTTOM",       relative = "TOP" },
-    buffFrame       = { parent = "minimap",         point = "TOPRIGHT",     relative = "TOPLEFT" },
-    -- CDM containers (cdmEssential, cdmUtility, buffIcon, buffBar) are
-    -- deliberately excluded. The CDM module owns their positioning via
-    -- ncdm.pos and anchorBelowEssential. Creating FA entries here would
-    -- make QUI_HasFrameAnchor return true and cause CDM to skip its own
-    -- positioning logic. Frames that parent to CDM containers resolve them
-    -- at runtime via ResolveFrameForKey.
-    combatTimer     = { parent = "bar3",            point = "BOTTOMRIGHT",  relative = "BOTTOMLEFT" },
-    consumables     = { parent = "readyCheck",      point = "BOTTOM",       relative = "TOP" },
-    datatextPanel   = { parent = "minimap",         point = "TOP",          relative = "BOTTOM" },
-    debuffFrame     = { parent = "buffFrame",       point = "TOPRIGHT",     relative = "BOTTOMRIGHT" },
-    focusCastbar    = { parent = "focusFrame",      point = "TOP",          relative = "BOTTOM",  autoWidth = true },
-    focusFrame      = { parent = "playerFrame",     point = "BOTTOMLEFT",   relative = "TOPLEFT", offsetY = 200 },
-    microMenu       = { parent = "screen",          point = "TOPLEFT",      relative = "TOPLEFT" },
-    minimap         = { parent = "screen",          point = "TOPRIGHT",     relative = "TOPRIGHT", offsetY = -25 },
-    objectiveTracker = { parent = "datatextPanel",  point = "TOPRIGHT",     relative = "BOTTOMRIGHT" },
-    partyFrames     = { parent = "cdmUtility",      point = "TOP",          relative = "BOTTOM",  offsetY = -25, keepInPlace = true },
-    petBar          = { parent = "bar6",            point = "BOTTOMLEFT",   relative = "BOTTOMRIGHT" },
-    petCastbar      = { parent = "petFrame",        point = "TOP",          relative = "BOTTOM" },
-    petFrame        = { parent = "playerFrame",     point = "BOTTOMRIGHT",  relative = "BOTTOMLEFT" },
-    playerCastbar   = { parent = "playerFrame",     point = "TOP",          relative = "BOTTOM",  autoWidth = true },
-    playerFrame     = { parent = "cdmEssential",    point = "BOTTOMRIGHT",  relative = "BOTTOMLEFT" },
-    primaryPower    = { parent = "cdmEssential",    point = "TOP",          relative = "BOTTOM",  autoWidth = true },
-    raidFrames      = { parent = "cdmUtility",      point = "TOP",          relative = "BOTTOM",  offsetY = -25, keepInPlace = true },
-    secondaryPower  = { parent = "primaryPower",    point = "TOP",          relative = "BOTTOM",  autoWidth = true },
-    stanceBar       = { parent = "petBar",          point = "BOTTOMLEFT",   relative = "TOPLEFT" },
-    targetCastbar   = { parent = "targetFrame",     point = "TOP",          relative = "BOTTOM",  autoWidth = true },
-    targetFrame     = { parent = "cdmEssential",    point = "BOTTOMLEFT",   relative = "BOTTOMRIGHT" },
-    totCastbar      = { parent = "totFrame",        point = "TOP",          relative = "BOTTOM" },
-    totFrame        = { parent = "targetFrame",     point = "BOTTOMLEFT",   relative = "BOTTOMRIGHT" },
-    zoneAbility     = { parent = "extraActionButton", point = "CENTER",     relative = "CENTER" },
-    lootRollAnchor  = { parent = "readyCheck",      point = "TOP",          relative = "BOTTOM",  keepInPlace = true },
-    skyriding       = { parent = "screen",          point = "CENTER",       relative = "TOP",     offsetY = -30 },
-    powerBarAlt     = { parent = "screen",          point = "CENTER",       relative = "TOP",     offsetY = -75 },
-    bnetToastAnchor = { parent = "screen",          point = "CENTER",       relative = "TOP",     offsetY = -125 },
-    -- Frames without defaults that would otherwise stack at screen center
-    -- on legacy profile imports. Parent chain keeps them visible and out of
-    -- the way; users can fine-tune in layout mode.
-    extraActionButton = { parent = "screen",        point = "CENTER",       relative = "BOTTOM",  offsetY = 200 },
-    readyCheck      = { parent = "screen",          point = "CENTER",       relative = "CENTER" },
-    consumables     = { parent = "readyCheck",      point = "BOTTOM",       relative = "TOP",     offsetY = 50 },
-    lootFrame       = { parent = "screen",          point = "CENTER",       relative = "CENTER",  offsetX = 300 },
-    preyTracker     = { parent = "screen",          point = "CENTER",       relative = "TOP",     offsetY = -250 },
-    rotationAssistIcon = { parent = "cdmEssential", point = "BOTTOM",       relative = "TOP",     offsetY = 40 },
-    keyTracker      = { parent = "minimap",         point = "TOPRIGHT",     relative = "BOTTOMLEFT" },
-    xpTracker       = { parent = "screen",          point = "BOTTOM",       relative = "BOTTOM",  offsetY = 4 },
-    actionTracker   = { parent = "screen",          point = "RIGHT",        relative = "RIGHT",   offsetX = -20 },
-    petWarning      = { parent = "playerFrame",     point = "TOP",          relative = "BOTTOM",  offsetY = -30 },
-    focusCastAlert  = { parent = "screen",          point = "CENTER",       relative = "CENTER",  offsetY = -100 },
-    missingRaidBuffs = { parent = "screen",         point = "TOP",          relative = "TOP",     offsetY = -100 },
-    mplusTimer      = { parent = "screen",          point = "TOPRIGHT",     relative = "TOPRIGHT", offsetX = -200, offsetY = -100 },
-    tooltipAnchor   = { parent = "screen",          point = "BOTTOMRIGHT",  relative = "BOTTOMRIGHT", offsetX = -200, offsetY = 100 },
-    alertAnchor     = { parent = "screen",          point = "TOP",          relative = "TOP",     offsetY = -20 },
-    toastAnchor     = { parent = "screen",          point = "TOP",          relative = "TOP",     offsetY = -150 },
-    topCenterWidgets = { parent = "screen",         point = "TOP",          relative = "TOP",     offsetY = -100 },
-    belowMinimapWidgets = { parent = "datatextPanel", point = "TOP",        relative = "BOTTOM" },
-    crosshair       = { parent = "screen",          point = "CENTER",       relative = "CENTER" },
-    rangeCheck      = { parent = "screen",          point = "CENTER",       relative = "CENTER" },
-    totemBar        = { parent = "screen",          point = "CENTER",       relative = "BOTTOM",  offsetY = 200 },
-}
-
-local function IsUninitializedAnchoring(fa)
-    if type(fa) ~= "table" then return true end
-    local count = 0
-    for key, entry in pairs(fa) do
-        if type(entry) == "table" then
-            count = count + 1
-            local parent = entry.parent
-            if parent and parent ~= "screen" and parent ~= "disabled" then
-                return false  -- Has a real parent chain
-            end
-            if (entry.offsetX or 0) ~= 0 or (entry.offsetY or 0) ~= 0 then
-                if parent ~= "screen" then
-                    return false
-                end
-            end
-        end
-    end
-    return count > 0
-end
-
-local ANCHORING_SEED_VERSION = 2
-
-local function SeedDefaultFrameAnchoring(profile)
-    if not profile then return end
-
-    -- Only run once
-    if profile._anchoringSeedVersion and profile._anchoringSeedVersion >= ANCHORING_SEED_VERSION then
-        return
-    end
-
-    if type(profile.frameAnchoring) ~= "table" then
-        profile.frameAnchoring = {}
-    end
-    local fa = profile.frameAnchoring
-
-    -- Determine whether existing entries need their parent chains rewritten.
-    -- If the profile already has entries with real parent chains (non-screen),
-    -- only fill gaps for missing entries — don't overwrite existing chains.
-    local uninit = IsUninitializedAnchoring(fa)
-
-    for key, defaults in pairs(DEFAULT_FRAME_ANCHORING) do
-        local existing = type(fa[key]) == "table"
-
-        if not existing then
-            -- Always create missing entries with proper default parent chains.
-            -- This ensures old profiles (which may only have a few entries
-            -- surviving migration) get the full parent chain seeded.
-            fa[key] = {
-                parent   = defaults.parent,
-                point    = defaults.point,
-                relative = defaults.relative,
-                offsetX  = defaults.offsetX or 0,
-                offsetY  = defaults.offsetY or 0,
-                sizeStable    = true,
-                hideWithParent = false,
-                keepInPlace   = defaults.keepInPlace or false,
-                autoWidth     = defaults.autoWidth or false,
-                autoHeight    = false,
-                heightAdjust  = 0,
-                widthAdjust   = 0,
-            }
-        elseif uninit then
-            -- Profile looks uninitialized (all screen/CENTER with zero offsets):
-            -- overwrite parent chains with proper defaults.
-            local entry = fa[key]
-            entry.parent   = defaults.parent
-            entry.point    = defaults.point
-            entry.relative = defaults.relative
-
-            if defaults.offsetX and (entry.offsetX or 0) == 0 then
-                entry.offsetX = defaults.offsetX
-            end
-            if defaults.offsetY and (entry.offsetY or 0) == 0 then
-                entry.offsetY = defaults.offsetY
-            end
-
-            if entry.hideWithParent == nil then entry.hideWithParent = false end
-            if defaults.keepInPlace and entry.keepInPlace == nil then
-                entry.keepInPlace = defaults.keepInPlace
-            elseif entry.keepInPlace == nil then
-                entry.keepInPlace = false
-            end
-            if defaults.autoWidth and entry.autoWidth == nil then
-                entry.autoWidth = defaults.autoWidth
-            end
-
-            if entry.sizeStable == nil then entry.sizeStable = true end
-            if entry.autoHeight == nil then entry.autoHeight = false end
-            if entry.autoWidth == nil then entry.autoWidth = false end
-            if entry.heightAdjust == nil then entry.heightAdjust = 0 end
-            if entry.widthAdjust == nil then entry.widthAdjust = 0 end
-        else
-            -- Profile has real parent chains — only fill in missing metadata
-            -- fields on existing entries, don't touch parent/point/relative.
-            local entry = fa[key]
-            if entry.hideWithParent == nil then entry.hideWithParent = false end
-            if entry.keepInPlace == nil then entry.keepInPlace = defaults.keepInPlace or false end
-            if entry.sizeStable == nil then entry.sizeStable = true end
-            if entry.autoHeight == nil then entry.autoHeight = false end
-            if entry.autoWidth == nil then entry.autoWidth = defaults.autoWidth or false end
-            if entry.heightAdjust == nil then entry.heightAdjust = 0 end
-            if entry.widthAdjust == nil then entry.widthAdjust = 0 end
-        end
-    end
-
-    profile._anchoringSeedVersion = ANCHORING_SEED_VERSION
 end
 
 ---------------------------------------------------------------------------
 -- Entry point: Run all profile migrations
 ---------------------------------------------------------------------------
+--
+-- Note: SeedDefaultFrameAnchoring and DEFAULT_FRAME_ANCHORING used to live
+-- here. They wrote a parallel copy of default frameAnchoring entries into
+-- every profile on login, bloating SVs with data AceDB already provides
+-- via its defaults metatable. Removed. All frameAnchoring defaults now
+-- live in core/defaults.lua as the single source of truth. AceDB serves
+-- them on read, strips them on save, and no migration write is needed.
+--
+-- For legacy 2.55 absolute-offset profiles, MigrateAnchoring v1's
+-- LEGACY255_DISCARD_ABSOLUTE handling still nils the broken entries;
+-- AceDB defaults then fill in the replacements via metatable.
 
-function Migrations.Run(db)
-    local profile = db and db.profile
-    if type(profile) ~= "table" then return false end
+---------------------------------------------------------------------------
+-- Snapshot / restore
+---------------------------------------------------------------------------
+-- Before the migration pipeline mutates a profile, we save a deep copy of
+-- the profile under `_migrationBackup`. If a migration corrupts data, the
+-- user can run `/qui migration restore [N]` to roll back to a previous
+-- pre-migration state. We keep up to MAX_BACKUP_SLOTS snapshots in a
+-- circular buffer (slot 1 = newest, slot N = oldest); each successful
+-- migration run pushes a new snapshot to the front and trims the tail.
+--
+-- The backup excludes `_migrationBackup` itself to prevent recursive growth.
 
-    -- Cleanup: delete CDM container FA entries from existing profiles.
-    -- The CDM module owns positioning via ncdm.pos; FA entries for CDM
-    -- containers cause the anchoring system to override CDM positions.
-    --
-    -- v1 (initial cleanup) ran once per profile. v2 re-runs because the
-    -- anchoring options panel's GetFrameDB had a write-on-read side effect
-    -- that resurrected these entries the moment a CDM settings panel was
-    -- opened in layout mode. GetFrameDB has since been fixed (proxy that
-    -- only materializes on write), but we still need to purge any ghost
-    -- entries that were created before the fix landed.
-    if (profile._cdmFaCleanupVersion or 0) < 2 then
-        if type(profile.frameAnchoring) == "table" then
-            profile.frameAnchoring.cdmEssential = nil
-            profile.frameAnchoring.cdmUtility   = nil
-            profile.frameAnchoring.buffIcon     = nil
-            profile.frameAnchoring.buffBar      = nil
+local BACKUP_KEY = "_migrationBackup"
+local MAX_BACKUP_SLOTS = 5
+
+local function DeepCloneExcluding(value, excludeKey)
+    if type(value) ~= "table" then return value end
+    local copy = {}
+    for k, v in pairs(value) do
+        if k ~= excludeKey then
+            copy[k] = DeepCloneExcluding(v, excludeKey)
         end
-        profile._cdmFaCleanupVersion = 2
+    end
+    return copy
+end
+
+-- Returns the backup container in slotted form, lazily upgrading the
+-- legacy single-slot shape ({fromVersion, toVersion, savedAt, snapshot})
+-- to the new {slots = {...}} shape. Returns nil if no backup exists.
+local function GetBackupContainer(profile)
+    local b = profile[BACKUP_KEY]
+    if type(b) ~= "table" then return nil end
+    if type(b.slots) == "table" then
+        return b
+    end
+    -- Legacy single-slot shape — migrate in place.
+    if type(b.snapshot) == "table" then
+        local upgraded = { slots = { {
+            fromVersion = b.fromVersion,
+            toVersion   = b.toVersion,
+            savedAt     = b.savedAt,
+            snapshot    = b.snapshot,
+        } } }
+        profile[BACKUP_KEY] = upgraded
+        return upgraded
+    end
+    return nil
+end
+
+local function CreateBackup(profile, fromVersion)
+    local container = GetBackupContainer(profile) or { slots = {} }
+    local newEntry = {
+        fromVersion = fromVersion or 0,
+        toVersion   = CURRENT_SCHEMA_VERSION,
+        savedAt     = (time and time()) or 0,
+        snapshot    = DeepCloneExcluding(profile, BACKUP_KEY),
+    }
+    -- Push to front, trim tail to MAX_BACKUP_SLOTS.
+    table.insert(container.slots, 1, newEntry)
+    while #container.slots > MAX_BACKUP_SLOTS do
+        table.remove(container.slots)
+    end
+    profile[BACKUP_KEY] = container
+end
+
+-- Restore the active profile from a migration backup slot. `slotIndex`
+-- is 1-based and defaults to 1 (most recent). Wipes all current profile
+-- keys (except the backup container itself) and copies the snapshot in.
+-- Returns (ok, messageOrBackupInfo).
+function Migrations.Restore(profile, slotIndex)
+    if type(profile) ~= "table" then
+        return false, "no profile"
+    end
+    local container = GetBackupContainer(profile)
+    if not container or #container.slots == 0 then
+        return false, "no migration backup available for this profile"
+    end
+    slotIndex = tonumber(slotIndex) or 1
+    if slotIndex < 1 or slotIndex > #container.slots then
+        return false, ("invalid slot %d (have %d backup(s))"):format(slotIndex, #container.slots)
+    end
+    local entry = container.slots[slotIndex]
+    if type(entry) ~= "table" or type(entry.snapshot) ~= "table" then
+        return false, ("backup slot %d is empty or corrupt"):format(slotIndex)
     end
 
-    -- 1. Data format migrations (restructure raw data first)
-    MigrateDatatextSlots(profile.datatext)
-    MigratePerSlotSettings(profile.datatext)
-    MigrateMasterTextColors(profile.quiUnitFrames and profile.quiUnitFrames.general)
-    MigrateChatEditBox(profile.chat)
-    MigrateCooldownSwipeV2(profile)
-    MigrateCastBars(profile)
-    MigrateUnitFrames(profile)
-    MigrateSelfFirst(profile)
-    CleanOrphanKeys(profile)
+    for k in pairs(profile) do
+        if k ~= BACKUP_KEY then
+            profile[k] = nil
+        end
+    end
+    for k, v in pairs(entry.snapshot) do
+        profile[k] = DeepCloneExcluding(v, BACKUP_KEY)
+    end
+    -- After restore, the profile is back at its pre-migration version. The
+    -- backup container is preserved so the user can restore other slots.
+    return true, entry
+end
 
-    -- 2. Legacy profile detection & normalization
-    local isLegacy = LooksLikeLegacyMainlineProfile(profile)
-    if isLegacy then
+-- Returns the full backup container ({slots = {...}}) for inspection.
+-- Lazily upgrades legacy single-slot shape on read.
+function Migrations.GetBackupInfo(profile)
+    if type(profile) ~= "table" then return nil end
+    return GetBackupContainer(profile)
+end
+
+Migrations.MAX_BACKUP_SLOTS = MAX_BACKUP_SLOTS
+
+---------------------------------------------------------------------------
+-- Entry point: Run all profile migrations
+---------------------------------------------------------------------------
+--
+-- Run the full migration pipeline against a single raw profile table.
+-- Accepts either db.profile (AceDB proxy) or a raw db.sv.profiles[name]
+-- entry. Operates only on explicit user data — never relies on AceDB
+-- default-merging, so it's safe to call against raw tables that have
+-- never been touched by AceDB.
+--
+-- Each migration is gated by a linear schema version. A profile's
+-- `_schemaVersion` records the last version it was migrated through;
+-- on upgrade, gates v(stored+1)..v(CURRENT) run in order. Each migration
+-- function retains an internal data-shape guard so that running it twice
+-- (e.g. on a profile already at CURRENT that re-enters the pipeline from
+-- a profile import) is a no-op.
+--
+-- Historical note: prior to the rewrite, CURRENT_SCHEMA_VERSION was a
+-- constant `1` that never matched the actual number of migrations added
+-- over time. Profiles from the 3.0 – 3.1.4 era all have `_schemaVersion=1`
+-- stamped regardless of which migrations had actually run; they are
+-- treated as v1 here and all post-v1 gates re-run against them, relying
+-- on each migration's internal shape guards to no-op on already-migrated
+-- data.
+function Migrations.RunOnProfile(profile)
+    if type(profile) ~= "table" then return false end
+
+    local stored = tonumber(profile._schemaVersion) or 0
+
+    do
+        local faCount = 0
+        if type(profile.frameAnchoring) == "table" then
+            for _ in pairs(profile.frameAnchoring) do faCount = faCount + 1 end
+        end
+        MigLog("=== RunOnProfile: stored=%d current=%d faEntries=%d ===",
+            stored, CURRENT_SCHEMA_VERSION, faCount)
+        if type(profile.frameAnchoring) == "table" and profile.frameAnchoring.debuffFrame then
+            local d = profile.frameAnchoring.debuffFrame
+            MigLog("  pre-mig debuffFrame: parent=%s point=%s ofs=%s/%s enabled=%s",
+                tostring(d.parent), tostring(d.point), tostring(d.offsetX), tostring(d.offsetY), tostring(d.enabled))
+        else
+            MigLog("  pre-mig debuffFrame: NIL (no raw entry)")
+        end
+    end
+
+    -- ResetCastbarPreviewModes is a runtime sanity reset, NOT a migration —
+    -- it clears the transient previewMode flag on every load so a preview
+    -- left enabled in a prior session never persists. Always runs.
+    ResetCastbarPreviewModes(profile)
+
+    if stored >= CURRENT_SCHEMA_VERSION then
+        MigLog("RunOnProfile: stored >= current, NOTHING TO DO")
+        return false  -- Nothing to do. Backup (if any) remains untouched.
+    end
+
+    -- Skip the backup for empty/fresh profiles — there's nothing worth
+    -- rolling back to. A profile is "fresh" if it has no keys other than
+    -- internal version stamps.
+    local hasUserData = false
+    for k in pairs(profile) do
+        if k ~= "_schemaVersion" and k ~= "_defaultsVersion" and k ~= BACKUP_KEY then
+            hasUserData = true
+            break
+        end
+    end
+
+    -- Snapshot BEFORE any gate runs, so a failed/corrupt migration can
+    -- always be rolled back to the pre-pipeline state.
+    if hasUserData then
+        CreateBackup(profile, stored)
+    end
+
+    -- === Data format migrations (restructure raw data first) ===
+    if stored < 2  then MigrateDatatextSlots(profile.datatext) end
+    if stored < 3  then MigratePerSlotSettings(profile.datatext) end
+    if stored < 4  then MigrateMasterTextColors(profile.quiUnitFrames and profile.quiUnitFrames.general) end
+    if stored < 5  then MigrateChatEditBox(profile.chat) end
+    if stored < 6  then MigrateCooldownSwipeV2(profile) end
+    if stored < 7  then MigrateCastBars(profile) end
+    if stored < 8  then MigrateUnitFrames(profile) end
+    if stored < 9  then
+        MigrateSelfFirst(profile)
+        CleanOrphanKeys(profile)
+    end
+
+    -- === Legacy 2.55 mainline normalization (explicit marker check) ===
+    if stored < 10 and IsLegacy255Profile(profile) then
         PruneLegacyPlaceholderAnchors(profile)
         ResetLegacyAnchorsForRebuild(profile)
         NormalizeLegacyActionBarLayouts(profile)
     end
 
-    -- 3. Feature migrations
-    ResetCastbarPreviewModes(profile)
-    EnsureThemeStorage(profile)
-    MigrateLegacyLootSettings(profile)
-    EnsureCraftingOrderIndicator(profile)
-    MigrateToShowLogic(profile.cdmVisibility)
-    MigrateToShowLogic(profile.unitframesVisibility)
-    MigrateGroupFrameContainers(profile)
-    NormalizeAuraIndicators(profile)
-    NormalizeEngines(profile)
-    NormalizeMinimapSettings(profile)
+    -- === Feature migrations ===
+    if stored < 11 then EnsureThemeStorage(profile) end
+    if stored < 12 then MigrateLegacyLootSettings(profile) end
+    if stored < 13 then EnsureCraftingOrderIndicator(profile) end
+    if stored < 14 then
+        MigrateToShowLogic(profile.cdmVisibility)
+        MigrateToShowLogic(profile.unitframesVisibility)
+    end
+    if stored < 15 then MigrateGroupFrameContainers(profile) end
+    if stored < 16 then NormalizeAuraIndicators(profile) end
+    if stored < 17 then NormalizeEngines(profile) end
+    if stored < 18 then NormalizeMinimapSettings(profile) end
 
-    -- 4. Anchoring (depends on data being in final locations)
-    MigrateAnchoring(profile)
-    MigrateNCDMContainers(profile)
-    SeedDefaultFrameAnchoring(profile)
+    -- === Anchoring (depends on data being in final locations) ===
+    if stored < 19 then MigrateAnchoringV1(profile) end
+    if stored < 20 then MigrateAnchoringV2(profile) end
+    if stored < 21 then MigrateAnchoringV3(profile) end
+    if stored < 22 then MigrateNCDMContainers(profile) end
 
-    -- 5. Stamp schema version
+    -- v23: re-prune ghost FA entries that the original v10 prune missed
+    -- because they carried a stray `enabled = false` flag (3.0-era write
+    -- artifacts). The whitelist update to IsPlaceholderAnchorEntry needs
+    -- to actually run against existing v22 profiles to clean up the
+    -- ghosts that the v19 cleanup loop preserved with `enabled` stripped
+    -- but parent="screen", point=CENTER, all zeros — those ghost entries
+    -- mask the AceDB default chain (e.g. debuffFrame → buffFrame →
+    -- minimap), so chained children fall back to screen center instead
+    -- of following their default parent.
+    if stored < 23 then PruneLegacyPlaceholderAnchors(profile) end
+
+    -- v24: repair `parent="disabled"` entries that carry stale corner
+    -- point/relative from a SavePendingPosition bug. See the function
+    -- docstring above for details. Heals frames that were unanchored
+    -- via middle-click and then dragged, ending up off-screen.
+    if stored < 24 then RepairDisabledStaleCornerEntries(profile) end
+
+    -- v25: re-run the repair against profiles that already migrated past
+    -- v24 with re-corrupted data. Two reasons:
+    --   1. The buffborders.lua LayoutIcons bug was writing the runtime
+    --      corner conversion BACK to the DB on every layout pass, undoing
+    --      v24's work for any profile that had buffs/debuffs visible at
+    --      reload time. The buffborders bug is fixed in this same release.
+    --   2. The original v24 discriminator only matched entries with
+    --      explicit point AND relative both set to a corner name. AceDB's
+    --      default-stripping on save left some entries with point=nil and
+    --      only relative set to a corner — same bug, different shape.
+    --      v25 catches both shapes.
+    if stored < 25 then RepairDisabledStaleCornerEntries(profile) end
+
+    -- v26: backfill growAnchor on buff/debuff/auraBar FA entries that have
+    -- existing corner anchoring. The new apply-path growAnchor branch reads
+    -- this field to perform CENTER → corner conversion at apply time. See
+    -- the function docstring for case-handling details.
+    if stored < 26 then BackfillGrowAnchor(profile) end
+
+    -- v27: undo MigrateOffsets's screen-pinning of frames whose AceDB
+    -- default has a chained parent (brezCounter → combatTimer, combatTimer
+    -- → bar3, petWarning → playerFrame). See function docstring.
+    if stored < 27 then RestoreChainedDefaultAnchors(profile) end
+
+    -- v28: undo MigrateAnchoringV2's mplusTimer screen-pinning. Same root
+    -- cause as v27 but for a key v27's discriminator couldn't catch (V2's
+    -- mplusTimer entry uses non-CENTER points). See function docstring.
+    if stored < 28 then RestoreMplusTimerChainedDefault(profile) end
+
+    if type(profile.frameAnchoring) == "table" and profile.frameAnchoring.debuffFrame then
+        local d = profile.frameAnchoring.debuffFrame
+        MigLog("post-mig debuffFrame: parent=%s point=%s ofs=%s/%s enabled=%s",
+            tostring(d.parent), tostring(d.point), tostring(d.offsetX), tostring(d.offsetY), tostring(d.enabled))
+    else
+        MigLog("post-mig debuffFrame: NIL (entry removed)")
+    end
+    if type(profile.frameAnchoring) == "table" and profile.frameAnchoring.bar1 then
+        local b = profile.frameAnchoring.bar1
+        MigLog("post-mig bar1: parent=%s point=%s ofs=%s/%s enabled=%s",
+            tostring(b.parent), tostring(b.point), tostring(b.offsetX), tostring(b.offsetY), tostring(b.enabled))
+    else
+        MigLog("post-mig bar1: NIL (entry removed)")
+    end
+
     profile._schemaVersion = CURRENT_SCHEMA_VERSION
     return true
+end
+
+-- Run migrations across every stored profile in the database. Previously
+-- this function only touched db.profile (the active profile of the logged-
+-- in character), leaving all other profiles frozen in their pre-migration
+-- state until the user happened to log in on the matching character. Now
+-- it iterates db.sv.profiles and migrates each one.
+--
+-- For stub db objects (e.g. profile import path) without db.sv.profiles,
+-- falls back to migrating db.profile alone.
+function Migrations.Run(db)
+    if not db then return false end
+
+    local profiles = db.sv and db.sv.profiles
+    if type(profiles) == "table" then
+        local any = false
+        for _, profile in pairs(profiles) do
+            if Migrations.RunOnProfile(profile) then
+                any = true
+            end
+        end
+        return any
+    end
+
+    return Migrations.RunOnProfile(db.profile)
 end

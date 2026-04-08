@@ -7,6 +7,110 @@
 local ADDON_NAME, ns = ...
 
 ---------------------------------------------------------------------------
+-- Shadow-defaults mechanism (full-coverage / track-everything mode)
+--
+-- On every successful load, after migrations settle, we deep-copy the
+-- currently-shipping defaults table into rawProfile._shippedDefaults.
+-- On the *next* load, StampOldDefaultsOnRawProfile recursively walks the
+-- shadow and the new shipping defaults in lockstep. For every leaf where
+--   (a) the previous shipping value differs from the new shipping value,
+--   (b) the user has no explicit override at that path in raw SV, and
+--   (c) the parent path already exists in raw SV (we don't create
+--       intermediate tables — a missing parent means the user has never
+--       customized that subtree, so AceDB defaults should apply normally),
+-- we pin the previous value into raw SV so the default flip doesn't
+-- silently change the user's behavior.
+--
+-- The shadow only takes effect starting from the *first* load after the
+-- mechanism ships. Users who lost a value to a default flip *before* the
+-- shadow existed need a one-shot stamp (like the v3 rescue below).
+--
+-- Important behavior consequence: tracking everything means every default
+-- flip becomes opt-in for *new installs only*. Existing users who never
+-- toggled a setting will be permanently pinned to whatever default they
+-- first installed under, until they manually change it. If you want a
+-- default change to propagate to existing users, you must either bump
+-- the schema and explicitly migrate, or accept that only new installs
+-- will see it.
+---------------------------------------------------------------------------
+
+local function DeepCopy(value)
+    if type(value) ~= "table" then return value end
+    local copy = {}
+    for k, v in pairs(value) do
+        copy[k] = DeepCopy(v)
+    end
+    return copy
+end
+
+local function DeepEqual(a, b)
+    if a == b then return true end
+    if type(a) ~= "table" or type(b) ~= "table" then return false end
+    for k, v in pairs(a) do
+        if not DeepEqual(v, b[k]) then return false end
+    end
+    for k in pairs(b) do
+        if a[k] == nil then return false end
+    end
+    return true
+end
+
+-- Recursive lockstep walk over shadow + current + raw.
+--
+-- shadowNode  — previous shipping value (always a table at this level)
+-- currentNode — current shipping value at the same position (may be nil
+--               or non-table if the defaults shape changed)
+-- rawNode     — raw SV table at the same position (always a table at
+--               this level — caller guarantees this)
+local function PinDefaultsRecursive(shadowNode, currentNode, rawNode)
+    for key, shadowVal in pairs(shadowNode) do
+        local currentVal = (type(currentNode) == "table") and currentNode[key] or nil
+        local rawVal = rawget(rawNode, key)
+
+        if currentVal == nil then
+            -- Default was removed entirely. Don't resurrect it — that's a
+            -- migration concern, not a defaults-pin concern.
+        elseif type(shadowVal) == "table" and type(currentVal) == "table" then
+            -- Both shapes are tables. Recurse only if the user has touched
+            -- this subtree in raw SV — otherwise AceDB serves the entire
+            -- subtree from defaults and we have no parent to write into.
+            if type(rawVal) == "table" then
+                PinDefaultsRecursive(shadowVal, currentVal, rawVal)
+            end
+        else
+            -- Leaf (or shape-mismatch). Pin if the value flipped and the
+            -- user has no explicit override at this exact key.
+            if rawVal == nil and not DeepEqual(shadowVal, currentVal) then
+                rawset(rawNode, key, DeepCopy(shadowVal))
+            end
+        end
+    end
+end
+
+local function PinTrackedDefaults(rawProfile)
+    local shadow = rawget(rawProfile, "_shippedDefaults")
+    if type(shadow) ~= "table" then return end
+    if not (ns.defaults and ns.defaults.profile) then return end
+    PinDefaultsRecursive(shadow, ns.defaults.profile, rawProfile)
+end
+
+-- Snapshot the entire current shipping defaults table into
+-- rawProfile._shippedDefaults via deep copy. Called after migrations
+-- have settled, on every load, for every stored profile.
+local function WriteShippedDefaultsSnapshot(rawProfile)
+    if type(rawProfile) ~= "table" then return end
+    if not (ns.defaults and ns.defaults.profile) then return end
+    rawset(rawProfile, "_shippedDefaults", DeepCopy(ns.defaults.profile))
+end
+
+local function WriteShippedDefaultsSnapshotAll(db)
+    if not (db and db.sv and db.sv.profiles) then return end
+    for _, rawProfile in pairs(db.sv.profiles) do
+        WriteShippedDefaultsSnapshot(rawProfile)
+    end
+end
+
+---------------------------------------------------------------------------
 -- Defaults v1 migration (v3.1.0 defaults overhaul)
 -- Stamps OLD default values into existing profiles so that changing
 -- defaults.lua doesn't silently flip settings for returning users.
@@ -16,15 +120,19 @@ local ADDON_NAME, ns = ...
 -- it needs to distinguish "user never set this" (rawget == nil) from
 -- "AceDB filled in the default" (proxy returns default value).
 ---------------------------------------------------------------------------
-local function StampOldDefaults(db)
-    local profileName = db:GetCurrentProfile()
-    local rawProfile = db.sv and db.sv.profiles and db.sv.profiles[profileName]
+-- Stamp old defaults into a single raw profile table. Operates entirely on
+-- raw data via rawget/rawset — no AceDB proxy access — so it can be called
+-- against any profile, not just the active one.
+local function StampOldDefaultsOnRawProfile(rawProfile)
     if not rawProfile then return end  -- brand-new profile, use new defaults
 
     -- Already migrated this profile?
     -- v1 had a bug that created intermediate tables via rawset, polluting the SV.
-    -- v2 is the fixed version; re-run is harmless (stamp only writes nil keys).
-    if rawProfile._defaultsVersion and rawProfile._defaultsVersion >= 2 then return end
+    -- v2 is the fixed version of the original stamp block.
+    -- v3 adds a quiGroupFrames.enabled rescue stamp for users who lived
+    -- through the default=true window (see end of this function).
+    local currentVersion = rawProfile._defaultsVersion or 0
+    if currentVersion >= 3 then return end
 
     -- Check if this is an existing profile (has any real data).
     -- Brand-new profiles have no keys in the raw SV table.
@@ -37,7 +145,7 @@ local function StampOldDefaults(db)
     end
     if not hasData then
         -- New profile — just stamp version, let new defaults apply
-        db.profile._defaultsVersion = 2
+        rawset(rawProfile, "_defaultsVersion", 3)
         return
     end
 
@@ -64,6 +172,12 @@ local function StampOldDefaults(db)
         -- If rawget(raw, key) ~= nil, user explicitly set it — leave it alone
     end
 
+    -- v2 stamp block: only for profiles that haven't been through it yet.
+    -- Re-running on v2+ profiles would be a no-op for already-stamped keys
+    -- but would be actively wrong for `quiGroupFrames.enabled`, since users
+    -- in the default=true window have a nil raw value that we now want to
+    -- preserve as `true`, not overwrite with `false`. See v3 block below.
+    if currentVersion < 2 then
     ---------------------------------------------------------------------------
     -- General Settings (false → true flips)
     ---------------------------------------------------------------------------
@@ -306,11 +420,60 @@ local function StampOldDefaults(db)
             rawset(rawContainers, 1, nil)
         end
     end
+    end  -- end v2 stamp block
 
     ---------------------------------------------------------------------------
-    -- Done — stamp version
+    -- v3: rescue quiGroupFrames.enabled for users from the default=true window
+    --
+    -- Between commits 78b420b ("Overhaul defaults for better OOTB experience")
+    -- and 6e50421 ("Migration overhaul"), the default for
+    -- quiGroupFrames.enabled was `true`. Users who installed during that window
+    -- and never explicitly toggled the setting had no `enabled` key written to
+    -- their SavedVariables (AceDB strips keys whose value matches the default).
+    --
+    -- After 6e50421 reverted the default back to `false`, AceDB started
+    -- serving `false` for those same users — silently turning off their group
+    -- frames. The v2 stamp block above can't help: those users were already
+    -- stamped at v2, so the early return prevented it from running.
+    --
+    -- This v3 stamp targets that exact population: profiles that already
+    -- reached v2 AND still have `quiGroupFrames` in raw SV but no `enabled`
+    -- key. For them we can be confident their lived experience was `true`
+    -- (otherwise the key would be present with an explicit value), so we
+    -- pin it back to `true`. Profiles freshly upgrading from < v2 are
+    -- unaffected — the v2 block above already handled them with the
+    -- pre-flip `false` default.
+    if currentVersion >= 2 then
+        local rawGF = rawget(rawProfile, "quiGroupFrames")
+        if type(rawGF) == "table" and rawget(rawGF, "enabled") == nil then
+            rawset(rawGF, "enabled", true)
+        end
+    end
+
     ---------------------------------------------------------------------------
-    db.profile._defaultsVersion = 2
+    -- Shadow-defaults pin: handles all future default flips for paths in
+    -- TRACKED_DEFAULTS. No-op on the very first load that introduces a path
+    -- (no previous shadow to compare against) — that's why one-shot rescues
+    -- like the v3 block above are still needed for the existing broken
+    -- population at the moment a path is added.
+    ---------------------------------------------------------------------------
+    PinTrackedDefaults(rawProfile)
+
+    ---------------------------------------------------------------------------
+    -- Done — stamp version directly on the raw profile
+    ---------------------------------------------------------------------------
+    rawset(rawProfile, "_defaultsVersion", 3)
+end
+
+-- Iterate every stored profile and stamp old defaults on each. Previously
+-- this only operated on db:GetCurrentProfile(), so unused profiles never
+-- got their defaults stamped and silently inherited new default values on
+-- upgrade. Now every profile in db.sv.profiles is processed independently.
+local function StampOldDefaults(db)
+    if not (db and db.sv and db.sv.profiles) then return end
+    for _, rawProfile in pairs(db.sv.profiles) do
+        StampOldDefaultsOnRawProfile(rawProfile)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -326,6 +489,14 @@ function QUI:BackwardsCompat()
     -- Tier 1: All profile-level migrations (consolidated in migrations.lua)
     if ns.Migrations and ns.Migrations.Run then
         ns.Migrations.Run(self.db)
+    end
+
+    -- Tier 2: Shadow-defaults snapshot. After migrations have settled,
+    -- record the currently-shipping defaults for tracked fragile paths
+    -- on every stored profile, so the *next* load can detect default
+    -- flips and pin previous values via PinTrackedDefaults.
+    if self.db then
+        WriteShippedDefaultsSnapshotAll(self.db)
     end
 
     -- Global/char structure housekeeping (not profile-specific)

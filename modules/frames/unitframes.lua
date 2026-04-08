@@ -70,7 +70,7 @@ local function GetActiveFrameOverrideSettings(frame)
     local profile = QUICore and QUICore.db and QUICore.db.profile
     local anchoringDB = profile and profile.frameAnchoring
     local settings = anchoringDB and anchoringDB[overrideKey]
-    if type(settings) ~= "table" or not settings.enabled then
+    if type(settings) ~= "table" or settings.enabled == false then
         return nil
     end
     return settings

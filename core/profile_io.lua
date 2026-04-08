@@ -1549,7 +1549,13 @@ local function ApplyFullProfilePayload(core, importedProfile)
         profile[key] = nil
     end
     for key, value in pairs(importedProfile) do
-        profile[key] = CloneValue(value)
+        -- Strip any stale migration backup that rode along in the export.
+        -- It refers to the source user's profile state and is meaningless
+        -- here. A fresh backup will be created by the migration pipeline
+        -- below if the imported data actually needs migrating.
+        if key ~= "_migrationBackup" then
+            profile[key] = CloneValue(value)
+        end
     end
 
     -- Run backward-compatibility migrations on the freshly imported data
@@ -1788,7 +1794,16 @@ function QUICore:ExportProfileToString()
         return "No profile loaded."
     end
 
-    local exportString, exportErr = SerializeProfileExportPayload(self.db.profile)
+    -- Shallow-copy so we can strip `_migrationBackup` (per-profile rollback
+    -- buffer, not user data) without mutating the live profile.
+    local payload = {}
+    for k, v in pairs(self.db.profile) do
+        if k ~= "_migrationBackup" then
+            payload[k] = v
+        end
+    end
+
+    local exportString, exportErr = SerializeProfileExportPayload(payload)
     return exportString or exportErr or "Failed to export profile."
 end
 

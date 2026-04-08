@@ -824,7 +824,7 @@ local function SaveContainerPosition(trackerKey)
             local profile = QUICore and QUICore.db and QUICore.db.profile
             local anchoringDB = profile and profile.frameAnchoring
             local settings = anchoringDB and anchoringDB[anchorKey]
-            if settings and settings.enabled then
+            if settings and settings.enabled ~= false then
                 local parent = settings.parent or "screen"
                 if parent == "screen" or parent == "disabled" then
                     -- ox/oy are CENTER→CENTER offsets. If the anchoring config
@@ -878,7 +878,7 @@ local function RestoreContainerPosition(container, trackerKey)
         local profile = QUICore and QUICore.db and QUICore.db.profile
         local anchoringDB = profile and profile.frameAnchoring
         local settings = anchoringDB and anchoringDB[anchorKey]
-        if settings and settings.enabled then
+        if settings and settings.enabled ~= false then
             local parent = settings.parent or "screen"
             if parent == "screen" or parent == "disabled" then
                 local ox = settings.offsetX or 0
@@ -2658,6 +2658,24 @@ do
             end,
         })
 
+        -- Fallback sizes for when a CDM container is currently empty /
+        -- disabled / pre-layout. CreateContainer initializes frames to
+        -- SetSize(1, 1); LayoutContainer only sets a real size when
+        -- maxRowWidth > 0. Without a getSize callback, the layout mode
+        -- proxy mover would shrink to HANDLE_MIN_SIZE on disabled/empty
+        -- containers. Prefer the cached width/height the CDM module
+        -- persists on every layout pass.
+        local function GetCachedContainerSize(elementKey)
+            local ncdm = GetNcdmDB()
+            if not ncdm then return nil, nil end
+            if elementKey == "cdmEssential" then
+                return ncdm._lastEssentialWidth, ncdm._lastEssentialHeight
+            elseif elementKey == "cdmUtility" then
+                return ncdm._lastUtilityWidth, ncdm._lastUtilityHeight
+            end
+            return nil, nil
+        end
+
         for _, info in ipairs(CDM_ELEMENTS) do
             um:RegisterElement({
                 key = info.key,
@@ -2686,6 +2704,26 @@ do
                 getFrame = function()
                     local viewerKey = CDM_VIEWER_MAP[info.key]
                     return _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame(viewerKey)
+                end,
+                -- Size fallback: use the live frame's dimensions when they're
+                -- real, otherwise fall back to the CDM module's last-layout
+                -- cache so the mover handle stays the right size even when
+                -- the container is disabled/empty (frame size = 1x1).
+                getSize = function()
+                    local viewerKey = CDM_VIEWER_MAP[info.key]
+                    local f = _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame(viewerKey)
+                    if f and f.GetSize then
+                        local ok, fw, fh = pcall(f.GetSize, f)
+                        if ok and fw and fh and fw > 2 and fh > 2 then
+                            return fw, fh
+                        end
+                    end
+                    -- Frame is 1x1 (unlaid-out/disabled) — use cache.
+                    local cw, ch = GetCachedContainerSize(info.key)
+                    if cw and ch and cw > 2 and ch > 2 then
+                        return cw, ch
+                    end
+                    return nil, nil
                 end,
             })
         end

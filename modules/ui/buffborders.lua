@@ -485,6 +485,8 @@ local function LayoutIcons(container, sortedIcons, settings, prefix)
     end
 
     -- Growth-direction anchor — the corner that should stay fixed on screen.
+    -- Used to position icons within the container. The container itself is
+    -- positioned by ApplyFrameAnchor's growAnchor branch.
     local anchor
     if growUp then
         anchor = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
@@ -492,62 +494,34 @@ local function LayoutIcons(container, sortedIcons, settings, prefix)
         anchor = growLeft and "TOPRIGHT" or "TOPLEFT"
     end
 
-    -- Compute new grid dimensions FIRST so the anchor conversion below uses
-    -- the correct (post-resize) size.  The old code used GetWidth/GetHeight
-    -- which returned the PREVIOUS size (often 1x1 on the first pass), causing
-    -- the growth corner to land at the wrong screen position after SetSize.
+    -- Compute grid dimensions and resize the container.
     local numCols = math.min(count, iconsPerRow)
     local numRows = math.ceil(count / iconsPerRow)
     local totalW = numCols * iconSize + math.max(0, numCols - 1) * spacing
     local bottomPadding = settings[prefix .. "BottomPadding"] or 10
     local totalH = numRows * iconSize + math.max(0, numRows - 1) * rowSpacing + bottomPadding
 
-    -- Resize container to the new dimensions before re-anchoring so that
-    -- the anchor conversion math and SetAllPoints overlays see the real size.
     container:SetSize(totalW, totalH)
     -- Cache the natural size so layout mode proxy movers can read it
     -- (frame.GetSize returns handle size when reparented via SetAllPoints).
     container._naturalW = totalW
     container._naturalH = totalH
 
-    -- Re-anchor the container at the growth corner so it stays fixed when
-    -- future SetSize calls change the dimensions.  The anchoring system (or
-    -- layout mode) may have positioned the container at a different anchor
-    -- (e.g. CENTER).  We convert the SetPoint to the growth corner,
-    -- preserving the CENTER screen position, so the icon grid never shifts.
-    -- Skip during layout mode — the handle system owns the container position
-    -- and re-anchoring would move the container out from under the mover.
+    -- Re-apply the container's frame anchor now that we know its real size.
+    -- ApplyFrameAnchor's growAnchor branch reads the current container size
+    -- and computes the correct corner-anchored SetPoint to keep the visible
+    -- icons stable as the container grows/shrinks. Skip during layout mode —
+    -- the handle system owns the container position there.
     if not Helpers.IsLayoutModeActive() then
-        local pt, rel, rp, ox, oy = container:GetPoint(1)
-        if pt and pt ~= anchor then
-            local fx1, fy1 = ANCHOR_FRAC_X[pt], ANCHOR_FRAC_Y[pt]
-            local fx2, fy2 = ANCHOR_FRAC_X[anchor], ANCHOR_FRAC_Y[anchor]
-            if fx1 and fy1 and fx2 and fy2 then
-                local newOx = (ox or 0) + (fx2 - fx1) * totalW
-                local newOy = (oy or 0) + (fy2 - fy1) * totalH
-                container:ClearAllPoints()
-                container:SetPoint(anchor, rel, rp, newOx, newOy)
-                -- Persist the converted anchor to the DB so the anchoring
-                -- system never re-applies the stale CENTER point.  This
-                -- self-corrects legacy/imported profiles on the first
-                -- LayoutIcons pass that has real grid dimensions.
-                -- Only write back for unanchored containers (parent is
-                -- UIParent or disabled).  Parent-relative anchors use
-                -- a different relative point that we must not overwrite.
-                local fa = QUI and QUI.db and QUI.db.profile
-                    and QUI.db.profile.frameAnchoring
-                if fa then
-                    local faKey = container:GetName() == "QUI_BuffIconContainer"
-                        and "buffFrame" or "debuffFrame"
-                    local entry = fa[faKey]
-                    if entry and (not entry.parent or entry.parent == "disabled") then
-                        entry.point = anchor
-                        entry.relative = anchor
-                        entry.offsetX = math.floor(newOx + 0.5)
-                        entry.offsetY = math.floor(newOy + 0.5)
-                    end
-                end
-            end
+        local faKey
+        local name = container:GetName()
+        if name == "QUI_BuffIconContainer" then
+            faKey = "buffFrame"
+        elseif name == "QUI_DebuffIconContainer" then
+            faKey = "debuffFrame"
+        end
+        if faKey and _G.QUI_ApplyFrameAnchor then
+            _G.QUI_ApplyFrameAnchor(faKey)
         end
     end
 
@@ -1345,8 +1319,108 @@ end
 ---------------------------------------------------------------------------
 -- FULL REFRESH (called from settings / profile switch)
 ---------------------------------------------------------------------------
+-- Derive the growth-corner anchor for a buff/debuff container based on the
+-- user's grow direction settings, and write it to the frame anchoring DB
+-- entry.
+--
+-- Two cases depending on the entry's current format:
+--
+-- 1) Legacy CENTER format (point=CENTER, relative=CENTER): just set the
+--    growAnchor metadata field. The apply path's CENTER→corner self-heal
+--    branch will pick it up on the next apply, convert to corner format,
+--    and write back.
+--
+-- 2) New corner format (point=<corner>, relative=<corner>): the stored
+--    offsets are relative to the OLD corner. Changing grow direction
+--    means changing which corner the frame anchors at. To preserve the
+--    visual position of the growth origin (i.e. the first icon), we
+--    recompute the offsets so the NEW corner lands at the same screen
+--    position the OLD corner was at:
+--      parent.newCorner + (newX, newY) = parent.oldCorner + (oldX, oldY)
+--      newX = oldX + (FRAC_X[oldCorner] - FRAC_X[newCorner]) * pw
+--      newY = oldY + (FRAC_Y[oldCorner] - FRAC_Y[newCorner]) * ph
+--    Formula is independent of container size — the growth-anchor corner
+--    stays at exactly the same screen point.
+--
+-- Called from FullRefresh whenever the user toggles a grow direction
+-- checkbox, and from Init so the field is present on first load.
+local GROW_ANCHOR_FRAC_X = { TOPLEFT = 0, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 1 }
+local GROW_ANCHOR_FRAC_Y = { TOPLEFT = 1, TOPRIGHT = 1, BOTTOMLEFT = 0, BOTTOMRIGHT = 0 }
+
+local function UpdateGrowAnchor(faKey)
+    if not faKey then return end
+    local profile = QUI and QUI.db and QUI.db.profile
+    if not profile then return end
+    local bbDB = profile.buffBorders
+    if type(bbDB) ~= "table" then return end
+
+    local growLeft, growUp
+    if faKey == "buffFrame" then
+        growLeft = bbDB.buffGrowLeft
+        growUp   = bbDB.buffGrowUp
+    elseif faKey == "debuffFrame" then
+        growLeft = bbDB.debuffGrowLeft
+        growUp   = bbDB.debuffGrowUp
+    else
+        return
+    end
+
+    local newCorner
+    if growUp then
+        newCorner = growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT"
+    else
+        newCorner = growLeft and "TOPRIGHT" or "TOPLEFT"
+    end
+
+    if not profile.frameAnchoring then
+        profile.frameAnchoring = {}
+    end
+    if not profile.frameAnchoring[faKey] then
+        profile.frameAnchoring[faKey] = {}
+    end
+    local entry = profile.frameAnchoring[faKey]
+    local oldCorner = entry.growAnchor
+
+    if oldCorner == newCorner then return end  -- no change, skip
+
+    -- Detect entry format: new corner format has point==relative==corner.
+    local isNewCornerFormat = entry.point == oldCorner
+        and entry.relative == oldCorner
+        and GROW_ANCHOR_FRAC_X[oldCorner] ~= nil
+
+    if isNewCornerFormat and oldCorner and entry.parent == "disabled" then
+        -- Recompute the corner offsets so the NEW corner lands at the
+        -- same screen point the OLD corner was at. This preserves the
+        -- position of the first icon (the growth origin).
+        local pw = UIParent:GetWidth()
+        local ph = UIParent:GetHeight()
+        local dX = (GROW_ANCHOR_FRAC_X[oldCorner] - GROW_ANCHOR_FRAC_X[newCorner]) * pw
+        local dY = (GROW_ANCHOR_FRAC_Y[oldCorner] - GROW_ANCHOR_FRAC_Y[newCorner]) * ph
+        entry.offsetX = math.floor((entry.offsetX or 0) + dX + 0.5)
+        entry.offsetY = math.floor((entry.offsetY or 0) + dY + 0.5)
+        entry.point = newCorner
+        entry.relative = newCorner
+    end
+    -- For legacy CENTER format: don't touch point/relative/offsets. The
+    -- apply path's self-heal will convert on next apply using the current
+    -- container size.
+
+    entry.growAnchor = newCorner
+
+    -- Re-apply so the new anchor takes effect immediately.
+    if _G.QUI_ApplyFrameAnchor then
+        _G.QUI_ApplyFrameAnchor(faKey)
+    end
+end
+
 local function FullRefresh()
     ManageBlizzardFrames()
+
+    -- Sync growAnchor from the user's grow direction settings. This catches
+    -- any toggle of the Grow Left / Grow Up checkboxes in the layout mode
+    -- settings panel — Refresh fires after the checkbox writes to bbDB.
+    UpdateGrowAnchor("buffFrame")
+    UpdateGrowAnchor("debuffFrame")
 
     if previewActive then
         -- Re-style preview icons with new settings
@@ -1389,14 +1463,26 @@ local function Init()
     buffContainer = CreateContainer("QUI_BuffIconContainer")
     debuffContainer = CreateContainer("QUI_DebuffIconContainer")
 
-    -- Offset debuff container below buff container by default
+    -- Offset debuff container below buff container by default. This is a
+    -- pre-anchor placeholder that gets immediately overridden by the
+    -- applyAnchor calls below; it's just here in case applyAnchor bails
+    -- (e.g. before the anchoring system is ready).
     debuffContainer:ClearAllPoints()
     debuffContainer:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", -205, -58)
+
+    -- Sync growAnchor from the user's grow direction settings BEFORE
+    -- applyAnchor runs, so the apply path's growAnchor branch finds a
+    -- corner value to convert against.
+    UpdateGrowAnchor("buffFrame")
+    UpdateGrowAnchor("debuffFrame")
 
     -- Re-apply saved anchoring positions now that QUI containers exist.
     -- ApplyAllFrameAnchors may have already run (via EDIT_MODE_LAYOUTS_UPDATED)
     -- before these containers were created, causing the resolver to fall back
     -- to Blizzard's BuffFrame/DebuffFrame instead of QUI's owned containers.
+    -- UpdateGrowAnchor above already calls applyAnchor as part of writing
+    -- the corner, but call again to be safe in case the field was already
+    -- set and UpdateGrowAnchor short-circuited.
     local applyAnchor = _G.QUI_ApplyFrameAnchor
     if applyAnchor then
         applyAnchor("buffFrame")

@@ -126,6 +126,136 @@ function QUI:SlashCommandOpen(input)
             print("|cff60A5FAQUI:|r CDM Spell Composer not available. Enable CDM first.")
         end
         return
+    elseif input and input:match("^migration") then
+        -- /qui migration             → status (current schema version + backup slots)
+        -- /qui migration status      → same
+        -- /qui migration restore     → roll back to most recent snapshot (slot 1)
+        -- /qui migration restore N   → roll back to snapshot in slot N (1 = newest)
+        local sub, arg = input:match("^migration%s+(%S+)%s*(%S*)")
+        sub = sub or "status"
+        local Mig = self.Migrations
+        local profile = self.db and self.db.profile
+        if not (Mig and profile) then
+            print("|cff60A5FAQUI:|r Migration system not available.")
+            return
+        end
+        if sub == "status" then
+            local v = tonumber(profile._schemaVersion) or 0
+            print(("|cff60A5FAQUI migration:|r current profile schema version = v%d"):format(v))
+            local container = Mig.GetBackupInfo and Mig.GetBackupInfo(profile)
+            local slots = container and container.slots
+            if slots and #slots > 0 then
+                print(("  %d backup slot(s) available (1 = newest):"):format(#slots))
+                for i, entry in ipairs(slots) do
+                    local savedAtStr = "unknown"
+                    if type(entry.savedAt) == "number" and entry.savedAt > 0 then
+                        savedAtStr = date("%Y-%m-%d %H:%M:%S", entry.savedAt)
+                    end
+                    print(("    [%d] v%s → v%s (saved %s)"):format(
+                        i,
+                        tostring(entry.fromVersion or "?"),
+                        tostring(entry.toVersion or "?"),
+                        savedAtStr))
+                end
+                print("  run |cFFFFFF00/qui migration restore [N]|r to roll back to slot N (default 1).")
+            else
+                print("  no migration backup on file for this profile.")
+            end
+        elseif sub == "restore" then
+            if not Mig.Restore then
+                print("|cff60A5FAQUI:|r Restore not supported by this build.")
+                return
+            end
+            local slotIndex = tonumber(arg) or 1
+            local ok, info = Mig.Restore(profile, slotIndex)
+            if ok then
+                print(("|cff60A5FAQUI migration:|r restored profile from slot %d to pre-migration state (v%s). Reloading..."):format(
+                    slotIndex,
+                    tostring(info and info.fromVersion or "?")))
+                QUI:SafeReload()
+            else
+                print("|cff60A5FAQUI migration:|r " .. tostring(info or "restore failed"))
+            end
+        else
+            print("|cff60A5FAQUI:|r unknown migration subcommand. Use: status, restore [N]")
+        end
+        return
+    elseif input and input == "miglog" then
+        -- Dump the buffered migration debug log. Migrations run during
+        -- OnInitialize/OnEnable when the chat frame isn't ready, so they
+        -- buffer messages into _G.QUI_MIGRATION_LOG instead of printing
+        -- directly. To enable buffering on next /reload, run:
+        --   /run QUI_MIGRATION_DEBUG = true
+        -- and then /reload. After login, /qui miglog dumps it.
+        local log = _G.QUI_MIGRATION_LOG
+        if type(log) ~= "table" or #log == 0 then
+            print("|cff60A5FAQUI:|r migration log is empty.")
+            print("  Enable with |cFFFFFF00/run QUI_MIGRATION_DEBUG = true|r then |cFFFFFF00/reload|r.")
+            return
+        end
+        print(("|cff60A5FAQUI migration log (%d lines):|r"):format(#log))
+        for i, line in ipairs(log) do
+            print(("  |cff888888%3d|r %s"):format(i, tostring(line)))
+        end
+        return
+    elseif input and input == "miglog clear" then
+        _G.QUI_MIGRATION_LOG = {}
+        print("|cff60A5FAQUI:|r migration log cleared.")
+        return
+    elseif input and input == "anchordump" then
+        -- Live dump of frameAnchoring entries for the active profile.
+        -- Shows both raw SV and proxy-merged values for keys we care about.
+        local profile = self.db and self.db.profile
+        if not profile then
+            print("|cff60A5FAQUI:|r no profile loaded.")
+            return
+        end
+        local raw = self.db.sv and self.db.sv.profiles
+            and self.db.sv.profiles[self.db:GetCurrentProfile()]
+        local rawFa = raw and raw.frameAnchoring
+        local proxyFa = profile.frameAnchoring
+        print(("|cff60A5FAQUI anchordump:|r profile=%s schema=%s"):format(
+            tostring(self.db:GetCurrentProfile()),
+            tostring(profile._schemaVersion)))
+        local function dump(label, fa, key)
+            local e = fa and fa[key]
+            if not e then
+                print(("  %s.%s = nil"):format(label, key))
+                return
+            end
+            print(("  %s.%s = {parent=%s point=%s rel=%s ofs=%s/%s enabled=%s keepInPlace=%s}"):format(
+                label, key,
+                tostring(e.parent), tostring(e.point), tostring(e.relative),
+                tostring(e.offsetX), tostring(e.offsetY),
+                tostring(e.enabled), tostring(e.keepInPlace)))
+        end
+        for _, key in ipairs({"debuffFrame", "buffFrame", "minimap", "bar1", "bar2", "bar3"}) do
+            dump("RAW  ", rawFa, key)
+            dump("PROXY", proxyFa, key)
+        end
+        -- Also dump live frame positions if frames exist
+        local function framePos(name, frameKey)
+            local frame = nil
+            if frameKey == "debuffFrame" then frame = _G.QUI_DebuffIconContainer end
+            if frameKey == "buffFrame" then frame = _G.QUI_BuffIconContainer end
+            if frameKey == "minimap" then frame = _G.Minimap end
+            if not frame or not frame.GetPoint then return end
+            local n = frame:GetNumPoints() or 0
+            if n == 0 then
+                print(("  LIVE %s = (no points, %dx%d)"):format(name, frame:GetWidth() or 0, frame:GetHeight() or 0))
+                return
+            end
+            for i = 1, n do
+                local pt, rt, rp, x, y = frame:GetPoint(i)
+                local rtName = type(rt) == "table" and (rt.GetName and rt:GetName() or "anon") or tostring(rt)
+                print(("  LIVE %s [%d/%d] = %s -> %s.%s ofs=%.0f/%.0f"):format(
+                    name, i, n, tostring(pt), rtName, tostring(rp), x or 0, y or 0))
+            end
+        end
+        framePos("debuffFrame", "debuffFrame")
+        framePos("buffFrame", "buffFrame")
+        framePos("minimap", "minimap")
+        return
     elseif input and input == "tooltipdbg" then
         local isS = issecretvalue
         local count = 0
