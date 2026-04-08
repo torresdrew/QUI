@@ -1088,8 +1088,50 @@ local function CreateBarContainer(barKey)
     container:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     container:Show()
     container:SetClampedToScreen(true)
+
+    -- Override / vehicle / possess / petbattle visibility gate.
+    --
+    -- Blizzard's OverrideActionBar and the pet battle UI take over input
+    -- during those states; leaving any QUI bar visible would draw
+    -- duplicate or empty icons.  We can't use the reserved "visibility"
+    -- state driver because it unconditionally Show()s the frame when the
+    -- macro doesn't match, which would clobber bars the user has
+    -- disabled (bar7/8 off, no-pet pet bar, no-stance stance bar, etc.).
+    --
+    -- Instead, use a custom state handler that hides on override but
+    -- only re-shows when the frame's "qui-user-shown" attribute is true.
+    -- Lua code that controls visibility (disable, HasPetUI,
+    -- GetNumShapeshiftForms) sets qui-user-shown alongside Show/Hide
+    -- calls via SetBarContainerShown() below.
+    container:SetAttribute("qui-user-shown", true)
+    container:SetAttribute("_onstate-quioverride", [[
+        if newstate == "hide" then
+            self:Hide()
+        elseif self:GetAttribute("qui-user-shown") then
+            self:Show()
+        end
+    ]])
+    RegisterStateDriver(container, "quioverride",
+        "[overridebar][vehicleui][possessbar][petbattle] hide; show")
+
     return container
 end
+
+-- Central helper for toggling a bar container's intended visibility.
+-- Sets the qui-user-shown attribute so the override/vehicle state driver
+-- knows whether to re-show the bar on exit, and calls Show/Hide to apply
+-- the change immediately (when out of combat).
+local function SetBarContainerShown(container, shown)
+    if not container then return end
+    container:SetAttribute("qui-user-shown", shown and true or false)
+    if InCombatLockdown() then return end
+    if shown then
+        container:Show()
+    else
+        container:Hide()
+    end
+end
+ActionBarsOwned.SetBarContainerShown = SetBarContainerShown
 
 ---------------------------------------------------------------------------
 -- LAYOUT ENGINE
@@ -3061,6 +3103,7 @@ UpdatePetBarVisibility = function()
 
     local barDB = GetBarSettings("pet")
     if barDB and barDB.enabled == false then
+        container:SetAttribute("qui-user-shown", false)
         if not InCombatLockdown() or inInitSafeWindow then
             container:Hide()
         else
@@ -3080,6 +3123,7 @@ UpdatePetBarVisibility = function()
     local wasShown = container:IsShown()
     local hasPet = HasPetUI and HasPetUI()
     if hasPet then
+        container:SetAttribute("qui-user-shown", true)
         container:Show()
         -- Populate pet button icons/state (PetActionBarMixin:Update on the
         -- original bar is suppressed, so QUI drives visuals directly).
@@ -3093,6 +3137,7 @@ UpdatePetBarVisibility = function()
         -- PLAYER_REGEN_ENABLED so pet events have a chance to populate.
         ActionBarsOwned.pendingPetUpdate = true
     else
+        container:SetAttribute("qui-user-shown", false)
         container:Hide()
     end
     -- Notify anchoring system when visibility changed so dependents re-anchor
@@ -3114,6 +3159,7 @@ UpdateStanceBarLayout = function()
 
     local barDB = GetBarSettings("stance")
     if barDB and barDB.enabled == false then
+        container:SetAttribute("qui-user-shown", false)
         container:Hide()
         if _G.QUI_UpdateFramesAnchoredTo then _G.QUI_UpdateFramesAnchoredTo("stanceBar") end
         return
@@ -3131,6 +3177,7 @@ UpdateStanceBarLayout = function()
             ActionBarsOwned.pendingStanceUpdate = true
             return
         end
+        container:SetAttribute("qui-user-shown", false)
         container:Hide()
         if wasShown and _G.QUI_UpdateFramesAnchoredTo then
             _G.QUI_UpdateFramesAnchoredTo("stanceBar")
@@ -3138,6 +3185,7 @@ UpdateStanceBarLayout = function()
         return
     end
 
+    container:SetAttribute("qui-user-shown", true)
     container:Show()
 
     -- Populate stance button icons/state (bar-level Update is suppressed).
@@ -7144,35 +7192,27 @@ function ActionBarsOwned:Initialize()
         BuildBar(barKey)
     end
 
-    -- Hide OverrideActionBar entirely.
-    -- QUI bar1 already pages to override/vehicle action indices via the
-    -- secure _onstate-page handler, so the Blizzard OverrideActionBar is
-    -- redundant.  Leaving it active causes taint: its buttons share the
-    -- ActionBarButtonEventsFrame dispatch with QUI's tainted buttons,
-    -- and the iteration context propagates taint to the secure buttons.
+    -- Let Blizzard's OverrideActionBar display natively during vehicle /
+    -- override / possess states.  QUI's bar1 is hidden during those states
+    -- by a secure visibility state driver (see HideBar1DuringOverride
+    -- below), so there's no visual conflict.  Keybinds pass through to
+    -- Blizzard's native override bar because ApplyBarOverrideBindings bails
+    -- for bar1 when IsVehicleBarActive() is true, leaving the default
+    -- ACTIONBUTTON1..6 -> OverrideActionBarButton1..6 remap intact.
+    --
+    -- We still clean isShownExternal on OverrideActionBar to prevent
+    -- Edit Mode from writing a tainted show flag that could propagate
+    -- through ActionBarController on re-show.
     local overrideBar = _G.OverrideActionBar
-    if overrideBar then
-        if overrideBar.system then
-            overrideBar.isShownExternal = nil
-            local c = 42
-            repeat
-                if overrideBar[c] == nil then
-                    overrideBar[c] = nil
-                end
-                c = c + 1
-            until issecurevariable(overrideBar, "isShownExternal")
-        end
-        overrideBar:UnregisterAllEvents()
-        if overrideBar.HideBase then
-            overrideBar:HideBase()
-        else
-            overrideBar:Hide()
-        end
-        overrideBar:SetParent(hiddenBarParent)
-        -- Do NOT touch button scripts — SetScript on secure frames taints
-        -- them, poisoning the dispatch.  The bar is hidden with events
-        -- unregistered; buttons stay in the dispatch with their secure
-        -- handlers which run harmlessly in untainted context.
+    if overrideBar and overrideBar.system then
+        overrideBar.isShownExternal = nil
+        local c = 42
+        repeat
+            if overrideBar[c] == nil then
+                overrideBar[c] = nil
+            end
+            c = c + 1
+        until issecurevariable(overrideBar, "isShownExternal")
     end
 
     -- Suppress PossessActionBar (mind control bar) — can overlap QUI bars
@@ -7388,7 +7428,10 @@ function ActionBarsOwned:Initialize()
         local barDB = GetBarSettings(barKey)
         if barDB and barDB.enabled == false then
             local container = self.containers[barKey]
-            if container then container:Hide() end
+            if container then
+                container:SetAttribute("qui-user-shown", false)
+                container:Hide()
+            end
         end
     end
 end
@@ -7448,7 +7491,10 @@ function ActionBarsOwned:Refresh()
         local barDB = GetBarSettings(barKey)
         if barDB and barDB.enabled == false then
             local container = self.containers[barKey]
-            if container then container:Hide() end
+            if container then
+                container:SetAttribute("qui-user-shown", false)
+                container:Hide()
+            end
         end
     end
 
@@ -7505,24 +7551,21 @@ initFrame:SetScript("OnEvent", function(self, event, addonName)
                 ApplyPageArrowVisibility(db.bars.bar1.hidePageArrow)
             end)
         end
-        -- OverrideActionBar buttons are created by Blizzard_ActionBar.
-        -- Suppress them now that they exist — the Initialize() pass
-        -- may have run before this addon loaded.
+        -- OverrideActionBar is intentionally left visible so Blizzard can
+        -- display vehicle/override abilities natively; QUI bar1 hides
+        -- during those states via its qui_overridevisibility state driver.
+        -- Clean isShownExternal here (Blizzard_ActionBar may have just
+        -- created it) so Edit Mode writes don't taint ActionBarController.
         local overrideBar = _G.OverrideActionBar
-        if overrideBar then
-            if not overrideBar:GetParent() or overrideBar:GetParent() == hiddenBarParent then
-                -- Already hidden by Initialize
-            else
-                overrideBar:UnregisterAllEvents()
-                if overrideBar.HideBase then
-                    overrideBar:HideBase()
-                else
-                    overrideBar:Hide()
+        if overrideBar and overrideBar.system then
+            overrideBar.isShownExternal = nil
+            local c = 42
+            repeat
+                if overrideBar[c] == nil then
+                    overrideBar[c] = nil
                 end
-                overrideBar:SetParent(hiddenBarParent)
-            end
-            -- Do NOT touch OverrideActionBar button scripts — SetScript on
-            -- a secure frame taints it, poisoning the dispatch iteration.
+                c = c + 1
+            until issecurevariable(overrideBar, "isShownExternal")
         end
     end
 end)
@@ -7624,6 +7667,7 @@ do
                     barDB.enabled = val
                     local container = ActionBarsOwned.containers and ActionBarsOwned.containers[containerKey]
                     if container then
+                        container:SetAttribute("qui-user-shown", val and true or false)
                         if val then
                             container:Show()
                         else
@@ -7660,6 +7704,7 @@ do
                 setGameplayHidden = function(hide)
                     local container = ActionBarsOwned.containers and ActionBarsOwned.containers[containerKey]
                     if not container then return end
+                    container:SetAttribute("qui-user-shown", (not hide) and true or false)
                     if hide then
                         container:Hide()
                     else

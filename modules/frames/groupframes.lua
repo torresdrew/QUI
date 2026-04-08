@@ -37,6 +37,7 @@ local string_format = string.format
 local math_floor = math.floor
 local math_min = math.min
 local math_max = math.max
+local math_ceil = math.ceil
 
 -- Upvalue hot-path WoW APIs
 local UnitExists = UnitExists
@@ -2452,6 +2453,66 @@ local function GetAnchorPosition(key, db)
     return pos and pos.offsetX or -400, pos and pos.offsetY or 0
 end
 
+-- Compute a fallback size for an anchor root when no headers are visible
+-- (solo for party, or no raid members for raid).  Frames anchored to this
+-- root via keepInPlace need a valid GetLeft/GetWidth to compute coordinates
+-- against, otherwise they render at nil coordinates.  The fallback matches
+-- what Layout Mode's test mode would display for a full party/raid so the
+-- size is consistent between the two modes.
+local function GetAnchorFallbackSize(key, db)
+    local isRaid = key == "raid"
+    local vdb = isRaid and (db and (db.raid or db)) or (db and (db.party or db))
+    local layout = (vdb and vdb.layout)
+        or (db and ((isRaid and db.raidLayout) or db.partyLayout))
+        or (db and db.layout)
+
+    local count
+    if isRaid then
+        count = (db and db.testMode and db.testMode.raidCount) or 25
+    else
+        count = 5
+    end
+
+    local framesPerGroup = 5
+    local numGroups = math_ceil(count / framesPerGroup)
+    local spacing = (layout and layout.spacing) or 2
+    local groupSpacing = (layout and layout.groupSpacing) or 10
+    local grow = (layout and layout.growDirection) or "DOWN"
+    local horizontal = (grow == "LEFT" or grow == "RIGHT")
+
+    -- Frame dimensions — mirror the logic in groupframes_editmode.lua
+    -- EnableTestMode for consistency with the live layout-mode preview.
+    local dims = vdb and vdb.dimensions
+    local mode
+    if count <= 5 then mode = "party"
+    elseif count <= 15 then mode = "small"
+    elseif count <= 25 then mode = "medium"
+    else mode = "large"
+    end
+
+    local frameW, frameH
+    if mode == "party" then
+        frameW, frameH = (dims and dims.partyWidth) or 200, (dims and dims.partyHeight) or 40
+    elseif mode == "small" then
+        frameW, frameH = (dims and dims.smallRaidWidth) or 180, (dims and dims.smallRaidHeight) or 36
+    elseif mode == "medium" then
+        frameW, frameH = (dims and dims.mediumRaidWidth) or 160, (dims and dims.mediumRaidHeight) or 30
+    else
+        frameW, frameH = (dims and dims.largeRaidWidth) or 140, (dims and dims.largeRaidHeight) or 24
+    end
+
+    local totalW, totalH
+    if horizontal then
+        totalW = framesPerGroup * frameW + (framesPerGroup - 1) * spacing
+        totalH = numGroups * frameH + (numGroups - 1) * groupSpacing
+    else
+        totalW = numGroups * frameW + (numGroups - 1) * groupSpacing
+        totalH = framesPerGroup * frameH + (framesPerGroup - 1) * spacing
+    end
+
+    return math_max(totalW, 1), math_max(totalH, 1)
+end
+
 local function GetHeaderLeadEdge(isRaid)
     local layout = GetLayoutSettings(isRaid)
     local grow = GetLayoutGrowDirection(layout, "DOWN")
@@ -2518,7 +2579,19 @@ local function UpdateAnchorRoot(key, mainHeader, selfHeader, isRaid)
     local selfVisible = selfHeader and selfHeader:IsShown()
 
     if not mainVisible and not selfVisible then
+        -- No headers to display, but we still give the root a valid
+        -- SetPoint and SetSize so frames anchored to it via keepInPlace
+        -- (in the anchoring system) can compute coordinates.  Without
+        -- this, GetLeft/GetBottom/GetWidth all return nil on the hidden
+        -- root and any child anchored through it renders at nil
+        -- coordinates (invisible).  The size matches what Layout Mode's
+        -- test mode would display for a full party/raid so there's no
+        -- visual jump between layout mode and gameplay.
+        local fallbackW, fallbackH = GetAnchorFallbackSize(key, db)
+        local posX, posY = GetAnchorPosition(key, db)
         root:ClearAllPoints()
+        root:SetPoint("CENTER", UIParent, "CENTER", posX, posY)
+        root:SetSize(fallbackW, fallbackH)
         root:Hide()
         return
     end

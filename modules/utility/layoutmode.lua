@@ -329,6 +329,21 @@ function QUI_LayoutMode:SetElementEnabled(key, enabled)
                     if _G.QUI_SetFrameLayoutOwned then
                         _G.QUI_SetFrameLayoutOwned(targetFrame, nil)
                     end
+                    -- Re-pin to UIParent at the handle's current screen
+                    -- position — otherwise SetAllPoints(handle) leaves a
+                    -- dangling anchor to the about-to-be-hidden handle and
+                    -- the frame disappears.  See Close() for details.
+                    local cx, cy = handle:GetCenter()
+                    if cx and cy then
+                        local hs = handle:GetEffectiveScale() or 1
+                        local us = UIParent:GetEffectiveScale() or 1
+                        local uw = UIParent:GetWidth() or 0
+                        local uh = UIParent:GetHeight() or 0
+                        local ox = (cx * hs / us) - (uw / 2)
+                        local oy = (cy * hs / us) - (uh / 2)
+                        pcall(targetFrame.ClearAllPoints, targetFrame)
+                        pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", ox, oy)
+                    end
                 end
                 handle._savedTargetParent = nil
                 handle._savedTargetStrata = nil
@@ -676,6 +691,27 @@ function QUI_LayoutMode:Close(skipSaveCheck)
                 -- Release the PositionFrame guard set during reparenting
                 if _G.QUI_SetFrameLayoutOwned then
                     _G.QUI_SetFrameLayoutOwned(targetFrame, nil)
+                end
+                -- The frame was SetAllPoints(handle) while layout mode was
+                -- active.  The handle is about to be hidden, leaving the
+                -- frame with a dangling anchor to a hidden ancestor — the
+                -- frame disappears even though it's still "shown".  Re-pin
+                -- to UIParent at the handle's current screen position so
+                -- the frame stays where the user left it.  SaveAndClose /
+                -- DiscardAndClose run QUI_ApplyAllFrameAnchors after this,
+                -- which will override with any saved anchor; for elements
+                -- without a frameAnchoring entry (e.g. zoneAbility that
+                -- the user never moved), this keeps them visible.
+                local cx, cy = handle:GetCenter()
+                if cx and cy then
+                    local hs = handle:GetEffectiveScale() or 1
+                    local us = UIParent:GetEffectiveScale() or 1
+                    local uw = UIParent:GetWidth() or 0
+                    local uh = UIParent:GetHeight() or 0
+                    local ox = (cx * hs / us) - (uw / 2)
+                    local oy = (cy * hs / us) - (uh / 2)
+                    pcall(targetFrame.ClearAllPoints, targetFrame)
+                    pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", ox, oy)
                 end
             end
             handle._savedTargetParent = nil
@@ -3566,6 +3602,21 @@ function QUI_LayoutMode:ToggleHandlePreview(key)
                 pcall(targetFrame.SetParent, targetFrame, handle._savedTargetParent)
                 if _G.QUI_SetFrameLayoutOwned then
                     _G.QUI_SetFrameLayoutOwned(targetFrame, nil)
+                end
+                -- Re-pin the frame to UIParent at the handle's current
+                -- screen position; SetAllPoints(handle) would otherwise
+                -- leave a dangling anchor to the hidden handle.  See
+                -- Close() for details.
+                local cx, cy = handle:GetCenter()
+                if cx and cy then
+                    local hs = handle:GetEffectiveScale() or 1
+                    local us = UIParent:GetEffectiveScale() or 1
+                    local uw = UIParent:GetWidth() or 0
+                    local uh = UIParent:GetHeight() or 0
+                    local ox = (cx * hs / us) - (uw / 2)
+                    local oy = (cy * hs / us) - (uh / 2)
+                    pcall(targetFrame.ClearAllPoints, targetFrame)
+                    pcall(targetFrame.SetPoint, targetFrame, "CENTER", UIParent, "CENTER", ox, oy)
                 end
             end
             handle._savedTargetParent = nil

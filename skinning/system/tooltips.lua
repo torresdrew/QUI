@@ -725,6 +725,12 @@ local function SetupBackdropStyleHooks()
             -- execution context, causing secret-value errors in the
             -- widget layout's GetExtents / GetScaledRect calls.
             if tooltip == GameTooltip then
+                -- Quest-reward tooltips (TaskPOI_OnEnter → AddQuestRewardsToTooltip
+                -- → SetTooltipMoney → MoneyFrame_Update) are extremely sensitive
+                -- to any addon touching the tooltip mid-build.  When a MoneyFrame
+                -- child is already attached, skip the restyle entirely so we
+                -- don't taint MoneyFrame_Update's width arithmetic.
+                if HasActiveMoneyFrame(tooltip) then return end
                 -- Immediately suppress NineSlice and show existing overlay
                 -- to prevent 1-frame flash.  These are C-side calls (no Lua
                 -- property writes) so they do not taint the caller's context.
@@ -760,6 +766,9 @@ local function SetupBackdropStyleHooks()
             if not ok or objType ~= "GameTooltip" then return end
             -- Defer GameTooltip — same taint safety concern as above.
             if tooltip == GameTooltip then
+                -- Quest-reward MoneyFrame mid-build: bail to avoid tainting
+                -- MoneyFrame_Update's width arithmetic.
+                if HasActiveMoneyFrame(tooltip) then return end
                 HideNineSlice(tooltip)
                 local sf = styleFrames[tooltip]
                 if sf then sf:Show() end
@@ -781,6 +790,10 @@ local function SetupBackdropStyleHooks()
         hooksecurefunc(EmbeddedItemTooltip, "Show", function(self)
             if not IsEnabled() then return end
             if IsEmbedded(self) then
+                -- World-quest reward path: GameTooltip is mid-build with a
+                -- MoneyFrame child.  Mutating the embedded child's backdrop
+                -- here can taint MoneyFrame_Update's width arithmetic.
+                if HasActiveMoneyFrame(GameTooltip) then return end
                 HideNineSlice(self)
                 if self.SetBackdrop then pcall(self.SetBackdrop, self, nil) end
                 local sf = styleFrames[self]
@@ -825,6 +838,9 @@ local function SetupPostProcessor()
         SafeHookTooltipOnShow(tooltip)
         -- TAINT SAFETY: Defer GameTooltip to the watcher (same as backdrop hooks).
         if tooltip == GameTooltip then
+            -- Quest-reward MoneyFrame mid-build: bail to avoid tainting
+            -- MoneyFrame_Update's width arithmetic.
+            if HasActiveMoneyFrame(tooltip) then return end
             HideNineSlice(tooltip)
             local sf = styleFrames[tooltip]
             if sf then sf:Show() end

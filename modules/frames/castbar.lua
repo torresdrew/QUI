@@ -1080,6 +1080,12 @@ local function StopChannelTickObservation(bar)
 end
 
 local function OnChannelTickCombatLogEvent()
+    -- Fast bail: this handler is registered for the lifetime of the
+    -- addon but observations are only active while a tracked unit is
+    -- channelling. Avoid calling CombatLogGetCurrentEventInfo() (and
+    -- the subevent table lookup) on every CLEU tick in raid when there
+    -- is nothing to observe. next() on an empty table is ~free.
+    if not next(CHANNEL_TICK_ACTIVE_BY_GUID) then return end
     local _, subEvent, _, sourceGUID, _, _, _, _, _, _, _, spellID, spellName = CombatLogGetCurrentEventInfo()
     if not CHANNEL_TICK_SUBEVENTS[subEvent] then return end
     sourceGUID = NormalizeChannelTickGUID(sourceGUID)

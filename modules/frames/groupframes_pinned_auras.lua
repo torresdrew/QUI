@@ -306,48 +306,64 @@ local function UpdateIndicatorData(ind, unit, slot, auraData, showSwipe)
     local isActive = auraData ~= nil
     local displayType = slot.displayType or "icon"
 
+    if not isActive then
+        if ind.cooldown then
+            ind.cooldown:Hide()
+            ind.cooldown:Clear()
+        end
+        if ind.stackText then
+            ind.stackText:SetText("")
+        end
+        if ind.solidColor then
+            ind.solidColor:Hide()
+        end
+        if ind.icon then
+            ind.icon:Hide()
+        end
+        ind:SetAlpha(1)
+        ind:Hide()
+        return
+    end
+
+    ind:Show()
+
     if displayType == "square" then
         local color = slot.color or {0.5, 0.5, 0.5, 1}
         ind.icon:Hide()
         ind.solidColor:SetColorTexture(color[1] or 0.5, color[2] or 0.5, color[3] or 0.5, color[4] or 1)
         ind.solidColor:Show()
-        if ind.cooldown then ind.cooldown:Hide() end
-        if ind.stackText then ind.stackText:SetText("") end
-        ind:SetAlpha(isActive and 1 or INACTIVE_ALPHA)
-        ind:SetBackdropBorderColor(0, 0, 0, isActive and 1 or 0.5)
+        if ind.cooldown then
+            ind.cooldown:Hide()
+            ind.cooldown:Clear()
+        end
+        if ind.stackText then
+            ind.stackText:SetText("")
+        end
+        ind:SetAlpha(1)
+        ind:SetBackdropBorderColor(0, 0, 0, 1)
     else
         ind.solidColor:Hide()
         ind.icon:Show()
         ind.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-        if isActive then
-            if auraData.icon then
-                ind.icon:SetTexture(auraData.icon)
-            end
+        if auraData.icon then
+            ind.icon:SetTexture(auraData.icon)
+        end
 
-            if showSwipe and ind.cooldown then
-                ind.cooldown:Show()
-                if ind.cooldown.SetReverse then
-                    pcall(ind.cooldown.SetReverse, ind.cooldown, ind._reverseSwipe == true)
-                end
-                local dur = auraData.duration
-                local expTime = auraData.expirationTime
-                if dur and expTime then
-                    if unit and auraData.auraInstanceID
-                       and C_UnitAuras and C_UnitAuras.GetAuraDuration
-                       and ind.cooldown.SetCooldownFromDurationObject then
-                        local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraData.auraInstanceID)
-                        if ok and durationObj then
-                            pcall(ind.cooldown.SetCooldownFromDurationObject, ind.cooldown, durationObj)
-                        elseif not IsSecretValue(expTime) and not IsSecretValue(dur) then
-                            if ind.cooldown.SetCooldownFromExpirationTime then
-                                pcall(ind.cooldown.SetCooldownFromExpirationTime, ind.cooldown, expTime, dur)
-                            else
-                                pcall(ind.cooldown.SetCooldown, ind.cooldown, expTime - dur, dur)
-                            end
-                        else
-                            ind.cooldown:Clear()
-                        end
+        if showSwipe and ind.cooldown then
+            ind.cooldown:Show()
+            if ind.cooldown.SetReverse then
+                pcall(ind.cooldown.SetReverse, ind.cooldown, ind._reverseSwipe == true)
+            end
+            local dur = auraData.duration
+            local expTime = auraData.expirationTime
+            if dur and expTime then
+                if unit and auraData.auraInstanceID
+                   and C_UnitAuras and C_UnitAuras.GetAuraDuration
+                   and ind.cooldown.SetCooldownFromDurationObject then
+                    local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraData.auraInstanceID)
+                    if ok and durationObj then
+                        pcall(ind.cooldown.SetCooldownFromDurationObject, ind.cooldown, durationObj)
                     elseif not IsSecretValue(expTime) and not IsSecretValue(dur) then
                         if ind.cooldown.SetCooldownFromExpirationTime then
                             pcall(ind.cooldown.SetCooldownFromExpirationTime, ind.cooldown, expTime, dur)
@@ -357,28 +373,30 @@ local function UpdateIndicatorData(ind, unit, slot, auraData, showSwipe)
                     else
                         ind.cooldown:Clear()
                     end
+                elseif not IsSecretValue(expTime) and not IsSecretValue(dur) then
+                    if ind.cooldown.SetCooldownFromExpirationTime then
+                        pcall(ind.cooldown.SetCooldownFromExpirationTime, ind.cooldown, expTime, dur)
+                    else
+                        pcall(ind.cooldown.SetCooldown, ind.cooldown, expTime - dur, dur)
+                    end
+                else
+                    ind.cooldown:Clear()
                 end
-            elseif ind.cooldown then
-                ind.cooldown:Hide()
+            else
+                ind.cooldown:Clear()
             end
-
-            if ind.stackText then
-                local stacks = SafeToNumber(auraData.applications, 0)
-                ind.stackText:SetText(stacks > 1 and stacks or "")
-            end
-
-            ind:SetAlpha(1)
-        else
-            local spellIcon
-            if C_Spell and C_Spell.GetSpellTexture then
-                local ok2, tex = pcall(C_Spell.GetSpellTexture, slot.spellID)
-                if ok2 and tex then spellIcon = tex end
-            end
-            ind.icon:SetTexture(spellIcon or 134400)
-            if ind.cooldown then ind.cooldown:Hide() end
-            if ind.stackText then ind.stackText:SetText("") end
-            ind:SetAlpha(INACTIVE_ALPHA)
+        elseif ind.cooldown then
+            ind.cooldown:Hide()
+            ind.cooldown:Clear()
         end
+
+        if ind.stackText then
+            local stacks = SafeToNumber(auraData.applications, 0)
+            ind.stackText:SetText(stacks > 1 and stacks or "")
+        end
+
+        ind:SetAlpha(1)
+        ind:SetBackdropBorderColor(0, 0, 0, 1)
     end
 end
 
@@ -586,7 +604,6 @@ local function UpdateFramePinnedAuras(frame)
 
                 ind._reverseSwipe = reverseSwipe
                 UpdateIndicatorData(ind, unit, slot, auraData, showSwipe)
-                ind:Show()
                 state.indicators[#state.indicators + 1] = ind
             end
         end

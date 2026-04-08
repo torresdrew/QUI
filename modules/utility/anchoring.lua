@@ -1241,6 +1241,187 @@ local function IsBlizzardElementDisabled(elementKey)
     return db and db.enabled == false
 end
 
+---------------------------------------------------------------------------
+-- MANAGED-CONTAINER REPARENT
+--
+-- Blizzard's UIParentRightManagedFrameContainer is a secure layout chain.
+-- Calling ClearAllPoints/SetPoint on any of its children from addon code
+-- permanently taints the child's position data, which then propagates to
+-- the container itself. The next time Blizzard reshuffles the chain
+-- (e.g. CompactArenaFrame:RefreshMembers in raids), it fires
+-- "AddOn 'QUI' tried to call the protected function
+-- 'UIParentRightManagedFrameContainer:ClearAllPoints()'".
+--
+-- To let QUI layout mode keep positioning these frames, we reparent each
+-- target into a QUI-owned holder (child of UIParent, OUTSIDE the managed
+-- container) at login. The anchoring resolver returns the holder, so
+-- ApplyFrameAnchor and layout-mode handles SetPoint on addon-safe frames.
+-- The Blizzard frame rides along via a TOPLEFT→holder pin.
+--
+-- Reference implementation: ExtraActionButton in
+-- modules/frames/actionbars.lua.
+---------------------------------------------------------------------------
+
+local MANAGED_REPARENT_TARGETS = {
+    { key = "objectiveTracker",    frameName = "ObjectiveTrackerFrame",            holderName = "QUI_ObjectiveTrackerHolder"    },
+    { key = "topCenterWidgets",    frameName = "UIWidgetTopCenterContainerFrame",  holderName = "QUI_TopCenterWidgetsHolder"    },
+    { key = "belowMinimapWidgets", frameName = "UIWidgetBelowMinimapContainerFrame", holderName = "QUI_BelowMinimapWidgetsHolder" },
+}
+
+-- [key] = { holder, frame, installed, hookingSetPoint, hookingSetParent,
+--           pendingReanchor, sizeHooked, setPointHooked, setParentHooked }
+-- Declared here so FRAME_RESOLVERS closures can reference it via upvalue
+-- capture; the table is populated later by InstallManagedReparent.
+local managedReparentState = {}
+
+local function MirrorHolderSize(key)
+    local state = managedReparentState[key]
+    if not state or not state.holder or not state.frame then return end
+    local frame = state.frame
+    local w = (frame.GetWidth  and frame:GetWidth())  or 0
+    local h = (frame.GetHeight and frame:GetHeight()) or 0
+    if type(w) ~= "number" or w < 1 then w = 1 end
+    if type(h) ~= "number" or h < 1 then h = 1 end
+    state.holder:SetSize(w, h)
+end
+
+local function ReanchorFrameToHolder(key)
+    local state = managedReparentState[key]
+    if not state or not state.holder or not state.frame then return end
+    if InCombatLockdown() then return end
+    local frame = state.frame
+    state.hookingSetPoint = true
+    pcall(frame.ClearAllPoints, frame)
+    pcall(frame.SetPoint, frame, "TOPLEFT", state.holder, "TOPLEFT", 0, 0)
+    state.hookingSetPoint = false
+    MirrorHolderSize(key)
+end
+
+local function QueueManagedReanchor(key)
+    local state = managedReparentState[key]
+    if not state or state.pendingReanchor then return end
+    state.pendingReanchor = true
+    C_Timer.After(0, function()
+        state.pendingReanchor = false
+        if InCombatLockdown() then return end
+        ReanchorFrameToHolder(key)
+    end)
+end
+
+local function InstallManagedReparent(def)
+    local state = managedReparentState[def.key]
+    if state and state.installed then return state.holder end
+    if InCombatLockdown() then return nil end
+
+    local frame = _G[def.frameName]
+    if not frame then return nil end
+
+    state = state or {}
+    managedReparentState[def.key] = state
+    state.key   = def.key
+    state.frame = frame
+
+    -- Create the holder outside the managed container
+    local holder = state.holder or _G[def.holderName]
+    if not holder then
+        holder = CreateFrame("Frame", def.holderName, UIParent)
+        local strata = frame.GetFrameStrata and frame:GetFrameStrata() or "MEDIUM"
+        holder:SetFrameStrata(strata)
+        -- Seed with the frame's current footprint so layout-mode handles
+        -- get a real hit area before OnSizeChanged fires
+        local seedW = (frame.GetWidth  and frame:GetWidth())  or 0
+        local seedH = (frame.GetHeight and frame:GetHeight()) or 0
+        if type(seedW) ~= "number" or seedW < 1 then seedW = 200 end
+        if type(seedH) ~= "number" or seedH < 1 then seedH = 200 end
+        holder:SetSize(seedW, seedH)
+        -- Place the holder wherever the frame currently sits (best-effort —
+        -- ApplyFrameAnchor will overwrite this if the user has a saved anchor)
+        holder:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    end
+    state.holder = holder
+
+    -- Reparent the Blizzard frame into the holder
+    state.hookingSetParent = true
+    pcall(frame.SetParent, frame, holder)
+    state.hookingSetParent = false
+
+    -- Pin the frame to the holder's TOPLEFT
+    ReanchorFrameToHolder(def.key)
+
+    -- Mirror the frame's size onto the holder so layout-mode handles track it
+    if frame.HookScript and not state.sizeHooked then
+        state.sizeHooked = true
+        frame:HookScript("OnSizeChanged", function()
+            MirrorHolderSize(def.key)
+        end)
+    end
+
+    -- If anything repositions the frame, reanchor back to the holder
+    if not state.setPointHooked then
+        state.setPointHooked = true
+        hooksecurefunc(frame, "SetPoint", function()
+            if state.hookingSetPoint then return end
+            QueueManagedReanchor(def.key)
+        end)
+    end
+
+    -- If anything reparents the frame back into a managed container
+    -- (Edit Mode layout recalc, zone transition), reclaim it
+    if not state.setParentHooked then
+        state.setParentHooked = true
+        hooksecurefunc(frame, "SetParent", function(self, newParent)
+            if state.hookingSetParent then return end
+            if newParent == state.holder then return end
+            C_Timer.After(0, function()
+                if InCombatLockdown() then return end
+                if state.frame:GetParent() == state.holder then return end
+                state.hookingSetParent = true
+                pcall(state.frame.SetParent, state.frame, state.holder)
+                state.hookingSetParent = false
+                QueueManagedReanchor(def.key)
+            end)
+        end)
+    end
+
+    state.installed = true
+    return holder
+end
+
+local function EnsureAllManagedReparents()
+    if InCombatLockdown() then return end
+    local installedAny = false
+    for _, def in ipairs(MANAGED_REPARENT_TARGETS) do
+        local wasInstalled = managedReparentState[def.key] and managedReparentState[def.key].installed
+        if InstallManagedReparent(def) and not wasInstalled then
+            installedAny = true
+        end
+    end
+    -- After a new holder becomes available, re-apply anchors so any
+    -- saved positions for these keys actually get committed to the
+    -- holder (prior ApplyAllFrameAnchors passes got nil from the
+    -- resolver and bailed).
+    if installedAny and QUI_Anchoring and QUI_Anchoring.ApplyAllFrameAnchors then
+        C_Timer.After(0, function()
+            if InCombatLockdown() then return end
+            pcall(QUI_Anchoring.ApplyAllFrameAnchors, QUI_Anchoring)
+        end)
+    end
+end
+
+-- Install reparents on login (all Blizzard frames exist by PLAYER_ENTERING_WORLD)
+-- and retry on PLAYER_REGEN_ENABLED in case combat blocked the first attempt.
+local managedReparentInitFrame = CreateFrame("Frame")
+managedReparentInitFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+managedReparentInitFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+managedReparentInitFrame:SetScript("OnEvent", function(_, event)
+    if event == "PLAYER_REGEN_ENABLED" then
+        EnsureAllManagedReparents()
+        return
+    end
+    -- Delay slightly so Blizzard's own frame setup has completed
+    C_Timer.After(0.5, EnsureAllManagedReparents)
+end)
+
 local FRAME_RESOLVERS = {
     -- CDM Viewers
     cdmEssential = function() return _G.QUI_GetCDMViewerFrame and _G.QUI_GetCDMViewerFrame("essential") end,
@@ -1448,9 +1629,25 @@ local FRAME_RESOLVERS = {
     -- Display
     minimap = function() return _G["Minimap"] end,
     datatextPanel = function() return _G["QUI_DatatextPanel"] end,
-    objectiveTracker = function() return _G["ObjectiveTrackerFrame"] end,
-    topCenterWidgets = function() return _G["UIWidgetTopCenterContainerFrame"] end,
-    belowMinimapWidgets = function() return _G["UIWidgetBelowMinimapContainerFrame"] end,
+    -- Managed-container frames resolve to their QUI holder once reparented
+    -- (see MANAGED_REPARENT_TARGETS above). Before the reparent installs
+    -- (early login window, or a combat-deferred retry), the resolver
+    -- returns nil so ApplyFrameAnchor bails early — SetPointing the raw
+    -- Blizzard frame while it still lives inside the managed container
+    -- would permanently taint the container. EnsureAllManagedReparents
+    -- triggers a reapply once the holders are installed.
+    objectiveTracker = function()
+        local state = managedReparentState["objectiveTracker"]
+        return state and state.holder or nil
+    end,
+    topCenterWidgets = function()
+        local state = managedReparentState["topCenterWidgets"]
+        return state and state.holder or nil
+    end,
+    belowMinimapWidgets = function()
+        local state = managedReparentState["belowMinimapWidgets"]
+        return state and state.holder or nil
+    end,
     buffFrame = function()
         local owned = _G["QUI_BuffIconContainer"]
         if owned then return owned end

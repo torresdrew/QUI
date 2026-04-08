@@ -1496,6 +1496,12 @@ end
 local function HookInspectFrame()
     if not InspectFrame then return end
 
+    -- Master gate: if Skin Inspect Frame is disabled, do not modify the
+    -- inspect frame at all (no slot reposition, no width change, no overlays).
+    local core = QUICore or ns.Addon
+    local generalDB = core and core.db and core.db.profile and core.db.profile.general
+    if generalDB and generalDB.skinInspectFrame == false then return end
+
     local settings = GetSettings()
     -- Skip if full overlays are disabled AND no lite features are enabled
     local hasLiteFeature = settings.inspectLiteShowPerSlot or settings.inspectLiteShowOverall
@@ -1526,6 +1532,28 @@ local function HookInspectFrame()
             C_Timer.After(0.3, shared.ScheduleUpdate)
         end
     end)
+
+    -- First-show race: ADDON_LOADED is delayed 0.1s, by which time
+    -- InspectFrame is already shown and HookScript("OnShow") will not fire
+    -- for the initial inspect. Run the same setup manually in that case.
+    if InspectFrame:IsShown() then
+        currentInspectTab = 1
+        local currentSettings = GetSettings()
+        if currentSettings.inspectEnabled then
+            ApplyInspectPaneLayout()
+            InitializeInspectOverlays()
+        end
+        C_Timer.After(0.1, function()
+            local unit = InspectFrame.unit or "target"
+            local ok, canInspect = pcall(function() return UnitExists(unit) and CanInspect(unit) end)
+            if ok and canInspect then
+                NotifyInspect(unit)
+            end
+        end)
+        if shared.ScheduleUpdate then
+            C_Timer.After(0.3, shared.ScheduleUpdate)
+        end
+    end
 
     InspectFrame:HookScript("OnHide", function()
         inspectLayoutApplied = false

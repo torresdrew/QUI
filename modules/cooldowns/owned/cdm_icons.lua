@@ -3611,6 +3611,13 @@ local _lastCDMUpdateTime = 0
 
 local _cdmUpdatePending = false
 
+-- Bars are aura-state driven (active/inactive transitions). Gate UpdateOwnedBars
+-- behind a dirty flag so pure cooldown-event flurries (SPELL_UPDATE_COOLDOWN
+-- fires constantly in raid) don't walk the bar pool on every coalesce tick.
+-- Flag is raised only by aura-related paths; cleared when UpdateOwnedBars runs.
+-- Initialized true so the first scheduled update does a catch-up pass.
+local _barsDirty = true
+
 local function ScheduleCDMUpdate()
     if _cdmUpdatePending then return end
     _cdmUpdatePending = true
@@ -3618,7 +3625,8 @@ local function ScheduleCDMUpdate()
         _cdmUpdatePending = false
         _lastCDMUpdateTime = GetTime()
         CDMIcons:UpdateAllCooldowns()
-        if ns.CDMBars and ns.CDMBars.UpdateOwnedBars then
+        if _barsDirty and ns.CDMBars and ns.CDMBars.UpdateOwnedBars then
+            _barsDirty = false
             ns.CDMBars:UpdateOwnedBars()
         end
     end)
@@ -3626,17 +3634,27 @@ end
 
 -- Combat safety ticker: periodic UpdateAllCooldowns during combat.
 -- DurationObject sources may resolve late (viewer hook delays); a
--- low-frequency ticker ensures icons recover within 250ms even if the
--- initial event-driven update failed due to secret values.
+-- low-frequency ticker ensures icons recover even if the initial
+-- event-driven update failed due to secret values. Interval is 1s
+-- because the event path (ScheduleCDMUpdate) already coalesces at
+-- 50ms — this ticker is a fallback, not the primary update path.
+-- A shorter interval compounds with event-driven rebuilds and was
+-- measurably contributing to raid-combat stutters.
 local safetyTickFrame = CreateFrame("Frame")
-local SAFETY_TICK_INTERVAL = 0.25
+local SAFETY_TICK_INTERVAL = 1.0
 local safetyTickElapsed = 0
 local function SafetyTickOnUpdate(self, elapsed)
     safetyTickElapsed = safetyTickElapsed + elapsed
     if safetyTickElapsed < SAFETY_TICK_INTERVAL then return end
     safetyTickElapsed = 0
+    -- Dirty-gate: if the event-driven path ran within the last interval,
+    -- the state is already fresh and this tick would be redundant work.
+    -- Safety tick is a fallback for late-resolving DurationObjects, not a
+    -- primary update path — skipping when recent is safe.
+    if GetTime() - _lastCDMUpdateTime < SAFETY_TICK_INTERVAL then return end
     CDMIcons:UpdateAllCooldowns()
-    if ns.CDMBars and ns.CDMBars.UpdateOwnedBars then
+    if _barsDirty and ns.CDMBars and ns.CDMBars.UpdateOwnedBars then
+        _barsDirty = false
         ns.CDMBars:UpdateOwnedBars()  -- safety ticker, don't clear oocInactive
     end
 end
@@ -3673,6 +3691,7 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
         safetyTickFrame:SetScript("OnUpdate", nil)
         -- One-shot catch-up: refresh all cooldowns after combat ends
         ns.CDMSpellData:InvalidateChildMap()
+        _barsDirty = true
         ScheduleCDMUpdate()
         return
     end
@@ -3688,14 +3707,20 @@ end)
 -- Subscribe to centralized aura dispatcher for prompt icon updates.
 -- Player auras via "player" filter (avoids callback for all 20+ raid units).
 -- Target debuffs via "all" filter (no "target" filter in the dispatcher).
+-- Aura events set _barsDirty so UpdateOwnedBars (aura-state driven) runs next
+-- coalesce tick. Pure cooldown events (SPELL_UPDATE_COOLDOWN path at
+-- cdEventFrame:OnEvent) deliberately do NOT set the flag — bar fill is driven
+-- by barTimerGroup independently of ScheduleCDMUpdate.
 if ns.AuraEvents then
     ns.AuraEvents:Subscribe("player", function(unit, updateInfo)
         ns.CDMSpellData:InvalidateChildMap()
+        _barsDirty = true
         ScheduleCDMUpdate()
     end)
     ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
         if unit == "target" then
             ns.CDMSpellData:InvalidateChildMap()
+            _barsDirty = true
             ScheduleCDMUpdate()
         end
     end)

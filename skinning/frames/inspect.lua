@@ -144,6 +144,7 @@ end
 -- API: Set background extended mode (for stats panel)
 ---------------------------------------------------------------------------
 local function SetInspectFrameBgExtended(extended)
+    if not IsSkinningEnabled() then return end
     if not customBg then
         CreateOrUpdateBackground()
     end

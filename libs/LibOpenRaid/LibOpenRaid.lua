@@ -3588,7 +3588,9 @@ local createLocalCooldownTracker = function()
             local unitId, castGUID, spellId = ...
 
             --don't track spells casted by the player
-            local bUnitIsThePlayer = UnitIsUnit(unitId, "player")
+            --use pcall to handle secret values from derived units (focustarget, nameplate*, etc.) in Midnight
+            local okIsPlayer, bUnitIsThePlayer = pcall(UnitIsUnit, unitId, "player")
+            if (not okIsPlayer) then return end
             if (not bUnitIsThePlayer) then
                 --get the caster name and check if it's a unit in the group
                 --use pcall to handle secret values from nameplate units in Midnight
