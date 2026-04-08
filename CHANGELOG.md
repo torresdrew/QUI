@@ -4,6 +4,31 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+
+## v3.2.0 - 2026-04-09
+
+### Added
+- added private dispel overlay support
+- added GSE action bar compatibility shim
+
+### Profile Migration Improvements
+- Late migration: import action bar positions from Blizzard Edit Mode
+- Migration overhaul > linear schema, chained-parent fixes, shadow defaults
+- Migration: stop reading dead `ownedPosition` field as a position source
+- Remove _cdmFaCleanupVersion migration and add CDM mover size fallback
+- Anchoring overhaul > defaults.lua single source of truth, sentinel parent fixes, all-profile migration
+- Frame scale-aware anchoring, M+ timer overlay, flyout direction, minimap zoom level
+- Linear schema versioning, migration backup/restore, /qui migration command
+
+### Fixed
+- fixed whisper chat history taint
+- fixed chat secret string handling
+- fixed party tracker secret boolean checks
+- fix castbar border sizing, keep it inside the configured castbar footprint
+- stabilized totem bar anchor by sizing container to full bar extent
+- guard UnitIsUnit boolean result against secret values
+- Managed-container reparent, override bar restore, perf + taint fixes
+- gate on party scope + avoid UnitIsUnit taint
 ## Unreleased
 
 ### Changed
