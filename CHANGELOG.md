@@ -4,7 +4,7 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-## Unreleased
+## v3.1.5-alpha.1 - 2026-04-07
 
 ### Changed
 - **Group Frames are now disabled by default.** Users who had them explicitly enabled will keep them. Users who never toggled the setting will see group frames disabled on first login — re-enable in *Group Frames → Enable* if you want them back.
