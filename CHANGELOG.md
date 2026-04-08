@@ -4,6 +4,24 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## v3.1.5-alpha.3 - 2026-04-08
+
+### Added
+- **Per-module CPU profiler** in `/qui perf`. New "Hot Modules" section measures per-module CPU cost via `debugprofile` wrapped around each module's `SetScript` handler. Zero overhead until toggled on. Registered sources cover the aura dispatcher, CDM (containers/icons/glows/highlighter), group frames (+ indicators, pinned auras, private auras), buff bar, raid buffs, totem bar, rotation assist, atonement counter, action bars (cooldown/state/visual paths), and the aura router. Sorted by ms/s, top 7 shown per sample.
+- **Layout Mode solo toggle-off.** Clicking a handle's solo button a second time now un-solos and restores all enabled handles, so you don't have to hunt for SHOW ALL to get back.
+
+### Changed
+- **Action bars CPU rework** to cut cost in raid combat. A weak-keyed `_activeButtons` set (maintained by `SafeUpdate`) lets cooldown, state, and visual loops iterate only the ~30-50 active buttons instead of walking all 96 every tick. `ACTIONBAR_UPDATE_STATE` now dispatches through a lean `UpdateAllButtonStates` (IsCurrentAction/IsAutoRepeatAction + SetChecked only) instead of the 20-API-call full `SafeUpdate` chain. `UpdateCooldown` skips `Clear()` calls on buttons that were idle last scan (~270 redundant clears per tick removed on a typical layout). Full rescans are forced on `SPELLS_CHANGED`, `UPDATE_VEHICLE_ACTIONBAR`, `PLAYER_EQUIPMENT_CHANGED`, and `PLAYER_ENTERING_WORLD`. CD and visual throttle intervals relaxed to 100ms (10Hz).
+- **Group frames SetBackdrop churn eliminated.** Blizzard's `SetBackdrop` doesn't short-circuit on identical backdropInfo — every call runs `NineSliceUtil.ApplyLayout` across all nine pieces. In large raids, re-running `SetBackdrop` on the frame, portrait, threat border, target highlight, and five defensive icons per redecoration was enough to trip WoW's 200ms script budget ("script ran too long" in NineSlice.lua). New `EnsureBackdrop` helper caches the last-applied backdrop per frame, and defensive icon setup splits one-time creation from per-refresh config.
+- **Layout mode master-toggle rows** no longer render show/solo/reset layer buttons — those rows have no handle and the buttons were dead.
+- **SHOW ALL / HIDE ALL** buttons in Layout Mode now highlight to reflect current visibility state (fully shown → SHOW ALL highlighted, fully hidden → HIDE ALL highlighted), and properly restore color on mouse leave.
+
+### Fixed
+- **`CompactRaidFrameManager` visibility.** Hiding the raid frame manager is now driven solely by the explicit `hideRaidFrameManager` setting. It was previously coupled to `quiGroupFrames.enabled` (in uihider) and also hard-suppressed by the blizzard group-frame hider, causing the manager and its buttons to disappear for users who wanted Blizzard's raid controls available alongside QUI party frames.
+- **Totem bar anchor jump.** The totem bar container was sized to `visibleCount`, so the rect shrank and grew every time a totem dropped or expired — `sizeStable` cached offsets against the apply-time width, and the growth edge visibly jumped whenever totem count changed (especially in combat where `SetSize` was deferred). `LayoutButtons` now sizes the container to the full `MAX_SLOTS` extent unconditionally and reapplies the anchor, and the anchoring engine forces `useSizeStable=false` + skips tiny-frame inflation for `totemBar`.
+- **`UnitIsUnit` secret-boolean taint** in LibOpenRaid cooldown tracker. The `pcall` around `UnitIsUnit` catches errors from derived units in Midnight, but the returned boolean itself can still be a secret value and taint later comparisons — now gated with `issecretvalue`.
+- **Inspect frame background strata.** Forcing `customBg` to `BACKGROUND` strata put it lower than `InspectFrame`'s `MEDIUM` parent, causing intermittent render-order issues where the background could end up drawn behind the world. Now inherits parent strata with `FrameLevel 0`.
+
 ## v3.1.5-alpha.2 - 2026-04-08
 
 ### Added
