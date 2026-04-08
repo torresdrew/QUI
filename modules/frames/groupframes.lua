@@ -140,6 +140,19 @@ local function GetCachedBackdrop(bgFile, edgeFile, edgeSize)
     return bd
 end
 
+-- Skip SetBackdrop when the same cached backdrop table is already applied.
+-- Blizzard's SetBackdrop does NOT short-circuit on identical backdropInfo —
+-- it unconditionally runs NineSliceUtil.ApplyLayout, which walks every
+-- piece (corners + edges + center) and is expensive enough that repeated
+-- calls across a full raid can exhaust WoW's 200ms script budget
+-- ("script ran too long" in NineSlice.lua). Tracking the last-applied
+-- cached table on the frame lets re-decoration passes skip the rebuild.
+local function EnsureBackdrop(frame, bd)
+    if frame._quiBackdrop == bd then return end
+    frame._quiBackdrop = bd
+    frame:SetBackdrop(bd)
+end
+
 ---------------------------------------------------------------------------
 -- GROUP_ROSTER_UPDATE coalescing: GRU fires in bursts of 5-20 during roster
 -- changes. Showing an already-shown frame is a no-op (automatic dedup), so
@@ -1922,7 +1935,7 @@ local function DecorateGroupFrame(frame)
     local borderSize = borderPx > 0 and (QUICore.Pixels and QUICore:Pixels(borderPx, frame) or borderPx) or 0
     local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
 
-    frame:SetBackdrop(GetCachedBackdrop(
+    EnsureBackdrop(frame, GetCachedBackdrop(
         "Interface\\Buttons\\WHITE8x8",
         borderSize > 0 and "Interface\\Buttons\\WHITE8x8" or nil,
         borderSize > 0 and borderSize or nil
@@ -2222,7 +2235,7 @@ local function DecorateGroupFrame(frame)
     threatBorder:SetPoint("TOPLEFT", -px, px)
     threatBorder:SetPoint("BOTTOMRIGHT", px, -px)
     threatBorder:SetFrameLevel(frame:GetFrameLevel() + 3)
-    threatBorder:SetBackdrop(GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", threatBorderPx))
+    EnsureBackdrop(threatBorder, GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", threatBorderPx))
     threatBorder:Hide()
     frame.threatBorder = threatBorder
 
@@ -2232,7 +2245,7 @@ local function DecorateGroupFrame(frame)
     targetHighlight:SetPoint("TOPLEFT", -px, px)
     targetHighlight:SetPoint("BOTTOMRIGHT", px, -px)
     targetHighlight:SetFrameLevel(frame:GetFrameLevel() + 4)
-    targetHighlight:SetBackdrop(GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", px * 2))
+    EnsureBackdrop(targetHighlight, GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", px * 2))
     targetHighlight:Hide()
     frame.targetHighlight = targetHighlight
 
@@ -2295,41 +2308,51 @@ local function DecorateGroupFrame(frame)
     dispelOverlay:Hide()
     frame.dispelOverlay = dispelOverlay
 
-    -- Defensive indicator icons (pool of up to MAX_DEFENSIVE_ICONS)
+    -- Defensive indicator icons (pool of up to MAX_DEFENSIVE_ICONS).
+    -- One-time init per icon is split from per-refresh config: SetBackdrop
+    -- on a BackdropTemplate frame goes through NineSliceUtil.ApplyLayout
+    -- on every call (Blizzard's SetBackdrop does not short-circuit on
+    -- identical backdropInfo). In large raids, re-running SetBackdrop on
+    -- 5 icons × 40 frames per redecoration is enough to exhaust WoW's
+    -- 200ms script budget ("script ran too long" in NineSlice.lua).
     local MAX_DEFENSIVE_ICONS = 5
     if not frame.defensiveIcons then frame.defensiveIcons = {} end
+    local healerDB = GetHealerSettings(isRaid)
+    local defReverse = healerDB and healerDB.defensiveIndicator and healerDB.defensiveIndicator.reverseSwipe ~= false
     for i = 1, MAX_DEFENSIVE_ICONS do
-        local defIcon = frame.defensiveIcons[i] or CreateFrame("Frame", nil, frame, "BackdropTemplate")
-        defIcon:SetSize(16, 16)
-        defIcon:ClearAllPoints()
-        defIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
-        defIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
+        local defIcon = frame.defensiveIcons[i]
+        if not defIcon then
+            defIcon = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+            defIcon:SetSize(16, 16)
+            defIcon:ClearAllPoints()
+            defIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+            defIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
 
-        local defTex = defIcon.icon or defIcon:CreateTexture(nil, "ARTWORK")
-        defTex:SetAllPoints()
-        defTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        defIcon.icon = defTex
+            local defTex = defIcon:CreateTexture(nil, "ARTWORK")
+            defTex:SetAllPoints()
+            defTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            defIcon.icon = defTex
 
-        defIcon:SetBackdrop(GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", px))
-        defIcon:SetBackdropBorderColor(0, 0.8, 0, 1)
+            defIcon:SetBackdrop(GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", px))
+            defIcon:SetBackdropBorderColor(0, 0.8, 0, 1)
 
-        local healerDB = GetHealerSettings(isRaid)
-        local defReverse = healerDB and healerDB.defensiveIndicator and healerDB.defensiveIndicator.reverseSwipe ~= false
-        local defCD = defIcon.cooldown or CreateFrame("Cooldown", nil, defIcon, "CooldownFrameTemplate")
-        defCD:SetAllPoints(defTex)
-        defCD:SetDrawEdge(false)
-        defCD:SetDrawSwipe(true)
-        defCD:SetReverse(defReverse)
-        defCD:SetHideCountdownNumbers(false)
-        defIcon.cooldown = defCD
+            local defCD = CreateFrame("Cooldown", nil, defIcon, "CooldownFrameTemplate")
+            defCD:SetAllPoints(defTex)
+            defCD:SetDrawEdge(false)
+            defCD:SetDrawSwipe(true)
+            defCD:SetHideCountdownNumbers(false)
+            defIcon.cooldown = defCD
 
-        if defIcon.SetMouseClickEnabled then
-            defIcon:SetMouseClickEnabled(false)
+            if defIcon.SetMouseClickEnabled then
+                defIcon:SetMouseClickEnabled(false)
+            end
+            defIcon:EnableMouse(false)
+
+            defIcon:Hide()
+            frame.defensiveIcons[i] = defIcon
         end
-        defIcon:EnableMouse(false)
-
-        defIcon:Hide()
-        frame.defensiveIcons[i] = defIcon
+        -- Per-refresh: reverse-swipe can change via settings
+        defIcon.cooldown:SetReverse(defReverse)
     end
     -- Keep backward compat alias for single-icon references
     frame.defensiveIcon = frame.defensiveIcons[1]
@@ -2356,7 +2379,7 @@ local function DecorateGroupFrame(frame)
             portrait:SetPoint("LEFT", frame, "RIGHT", 0, 0)
         end
 
-        portrait:SetBackdrop(GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", portraitBorderPx))
+        EnsureBackdrop(portrait, GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", portraitBorderPx))
         portrait:SetBackdropBorderColor(0, 0, 0, 1)
         portrait:SetFrameLevel(frame:GetFrameLevel() + 1)
 
