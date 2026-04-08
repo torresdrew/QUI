@@ -171,7 +171,7 @@ local function AddTimestamp(text)
 
     -- Restricted chat payloads can be secret strings during encounters.
     -- Leave them untouched so Blizzard can render them without coercion.
-    if Helpers.IsSecretValue(text) then
+    if not text or type(text) ~= "string" or Helpers.IsSecretValue(text) then
         return text
     end
 
@@ -444,29 +444,43 @@ local function InstallMessageFilters()
     if messageFiltersInstalled then return end
     messageFiltersInstalled = true
 
+    local whisperEvents = {
+        CHAT_MSG_WHISPER = true,
+        CHAT_MSG_WHISPER_INFORM = true,
+        CHAT_MSG_BN_WHISPER = true,
+        CHAT_MSG_BN_WHISPER_INFORM = true,
+    }
+
     -- Build a filter function that processes timestamps and URLs
     local function MessageFilter(self, event, msg, ...)
-        if type(msg) ~= "string" then return false end
+        if not msg or type(msg) ~= "string" or Helpers.IsSecretValue(msg) then
+            return false
+        end
+
+        -- Whisper history is now protected more aggressively in 12.x and
+        -- rewriting those payloads can taint Blizzard's chat bookkeeping.
+        if whisperEvents[event] then
+            return false
+        end
 
         local settings = GetSettings()
         if not settings or not settings.enabled then return false end
 
-        -- Secret strings cannot be safely formatted, gsub'd, or compared.
-        -- Let Blizzard handle the original message without addon mutation.
-        if Helpers.IsSecretValue(msg) then
-            return false
-        end
-
         local modified = msg
+        local success = pcall(function()
+            -- Apply timestamps
+            if settings.timestamps and settings.timestamps.enabled then
+                modified = AddTimestamp(modified)
+            end
 
-        -- Apply timestamps
-        if settings.timestamps and settings.timestamps.enabled then
-            modified = AddTimestamp(modified)
-        end
+            -- Apply URL detection
+            if settings.urls and settings.urls.enabled then
+                modified = MakeURLsClickable(modified)
+            end
+        end)
 
-        -- Apply URL detection
-        if settings.urls and settings.urls.enabled then
-            modified = MakeURLsClickable(modified)
+        if not success or Helpers.IsSecretValue(modified) then
+            return false
         end
 
         if modified ~= msg then
@@ -480,8 +494,7 @@ local function InstallMessageFilters()
         "CHAT_MSG_SAY", "CHAT_MSG_YELL", "CHAT_MSG_GUILD", "CHAT_MSG_OFFICER",
         "CHAT_MSG_PARTY", "CHAT_MSG_PARTY_LEADER", "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER",
         "CHAT_MSG_RAID_WARNING", "CHAT_MSG_INSTANCE_CHAT", "CHAT_MSG_INSTANCE_CHAT_LEADER",
-        "CHAT_MSG_WHISPER", "CHAT_MSG_WHISPER_INFORM", "CHAT_MSG_BN_WHISPER",
-        "CHAT_MSG_BN_WHISPER_INFORM", "CHAT_MSG_BN_INLINE_TOAST_ALERT",
+        "CHAT_MSG_BN_INLINE_TOAST_ALERT",
         "CHAT_MSG_CHANNEL", "CHAT_MSG_EMOTE", "CHAT_MSG_TEXT_EMOTE",
         "CHAT_MSG_SYSTEM", "CHAT_MSG_MONSTER_SAY", "CHAT_MSG_MONSTER_YELL",
         "CHAT_MSG_MONSTER_EMOTE", "CHAT_MSG_MONSTER_WHISPER", "CHAT_MSG_MONSTER_PARTY",
