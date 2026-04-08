@@ -1474,25 +1474,68 @@ local function UpdateDispelOverlay(frame)
     local unit = frame.unit
     local overlay = frame.dispelOverlay
 
-    -- Check shared aura cache first to avoid redundant C_UnitAuras.GetUnitAuras call.
+    -- Check shared aura cache first to avoid redundant full aura scans.
     -- The cache was just populated by the aura dispatcher before this function runs.
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
     local hasDispellable = false
     local firstDispellableInstID = nil
-    local fallbackDispelType = nil
+    local firstDispellableType = nil
     local fromPrivateSlots = false
 
     if cache and cache.harmful then
         for _, auraData in ipairs(cache.harmful) do
-            if auraData.dispelName then
+            local matched = false
+            local instID = auraData.auraInstanceID
+
+            -- Preferred path: ask the client directly whether this aura is
+            -- dispellable by the player using the HARMFUL|RAID_PLAYER_DISPELLABLE
+            -- classification filter. This is more reliable than trusting that
+            -- `dispelName` was populated on the cached aura payload.
+            if instID and not IsSecretValue(instID)
+               and C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID then
+                local ok, filteredOut = pcall(
+                    C_UnitAuras.IsAuraFilteredOutByInstanceID,
+                    unit,
+                    instID,
+                    "HARMFUL|RAID_PLAYER_DISPELLABLE"
+                )
+                if ok and not IsSecretValue(filteredOut) and filteredOut == false then
+                    matched = true
+                end
+            end
+
+            -- Fallback: legacy/raw dispel type from the cached aura payload.
+            if not matched and auraData.dispelName and not IsSecretValue(auraData.dispelName) then
                 local dType = SafeValue(auraData.dispelName, nil)
                 if dType then
-                    hasDispellable = true
-                    firstDispellableInstID = auraData.auraInstanceID
-                    fallbackDispelType = dType
-                    break
+                    matched = true
+                    firstDispellableType = dType
                 end
+            end
+
+            -- Extra fallback: refresh directly from the aura instance in case
+            -- the shared cache entry is missing dispel metadata.
+            if not matched and instID and C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+                local ok, liveAura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, instID)
+                if ok and liveAura and liveAura.dispelName and not IsSecretValue(liveAura.dispelName) then
+                    local dType = SafeValue(liveAura.dispelName, nil)
+                    if dType then
+                        matched = true
+                        firstDispellableType = dType
+                    end
+                end
+            end
+
+            if matched then
+                hasDispellable = true
+                firstDispellableInstID = instID
+
+                if not firstDispellableType and auraData.dispelName and not IsSecretValue(auraData.dispelName) then
+                    firstDispellableType = SafeValue(auraData.dispelName, nil)
+                end
+
+                break
             end
         end
     end
@@ -1514,7 +1557,7 @@ local function UpdateDispelOverlay(frame)
         return
     end
 
-    -- WoW 12.0+ secret-safe path: C-side color resolution using cached auraInstanceID
+    -- Preferred color path: let the client resolve the color from the aura instance.
     if firstDispellableInstID and C_UnitAuras.GetAuraDispelTypeColor then
         local opacity = healerSettings.dispelOverlay.opacity or 0.8
         local curve = GetDispelColorCurve(opacity)
@@ -1528,34 +1571,22 @@ local function UpdateDispelOverlay(frame)
         end
     end
 
-    -- Fallback: use dispel type from the visible cache or slot-based private scan.
+    -- Fallback color path: look up the resolved dispel type in the color table.
     local colors = GetDispelColors()
     local fallbackOpacity = healerSettings.dispelOverlay.opacity or 0.8
-    if ShowConfiguredDispelOverlay(overlay, colors, fallbackDispelType, fallbackOpacity) then
+    if ShowConfiguredDispelOverlay(overlay, colors, firstDispellableType, fallbackOpacity) then
         return
     end
 
-    if cache and cache.harmful and not fromPrivateSlots then
-        for _, auraData in ipairs(cache.harmful) do
-            if auraData.dispelName then
-                local dType = SafeValue(auraData.dispelName, nil)
-                if ShowConfiguredDispelOverlay(overlay, colors, dType, fallbackOpacity) then
-                    return
-                end
-            end
-        end
-    end
-
-    if fromPrivateSlots then
-        local genericColor = colors and (colors.Magic or colors.Curse or colors.Disease or colors.Poison)
-        if genericColor then
-            SetDispelBorderColor(overlay, genericColor[1], genericColor[2], genericColor[3], fallbackOpacity)
-            overlay:Show()
-            return
-        end
-    end
-
-    overlay:Hide()
+    -- Last-resort fallback: detection succeeded but no type-specific color
+    -- could be resolved. For private-slot-only matches, prefer any available
+    -- dispel color; otherwise default to Magic blue so the healer still sees
+    -- the overlay instead of silently dropping it.
+    local fallback = fromPrivateSlots and colors and (colors.Magic or colors.Curse or colors.Disease or colors.Poison)
+        or (colors and colors.Magic)
+    fallback = fallback or { 0.2, 0.6, 1.0, 1 }
+    SetDispelBorderColor(overlay, fallback[1], fallback[2], fallback[3], fallbackOpacity)
+    overlay:Show()
 end
 
 ---------------------------------------------------------------------------
