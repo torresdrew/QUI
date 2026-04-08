@@ -169,6 +169,12 @@ local function AddTimestamp(text)
         return text
     end
 
+    -- Restricted chat payloads can be secret strings during encounters.
+    -- Leave them untouched so Blizzard can render them without coercion.
+    if Helpers.IsSecretValue(text) then
+        return text
+    end
+
     local fmt = settings.timestamps.format == "12h" and "%I:%M %p" or "%H:%M"
     local timestamp = date(fmt)
     local color = settings.timestamps.color
@@ -440,10 +446,16 @@ local function InstallMessageFilters()
 
     -- Build a filter function that processes timestamps and URLs
     local function MessageFilter(self, event, msg, ...)
-        if not msg or type(msg) ~= "string" then return false end
+        if type(msg) ~= "string" then return false end
 
         local settings = GetSettings()
         if not settings or not settings.enabled then return false end
+
+        -- Secret strings cannot be safely formatted, gsub'd, or compared.
+        -- Let Blizzard handle the original message without addon mutation.
+        if Helpers.IsSecretValue(msg) then
+            return false
+        end
 
         local modified = msg
 
@@ -491,9 +503,8 @@ end
 
 -- Check if message contains protected/secure content
 local function IsMessageProtected(message)
-    if not message or type(message) ~= "string" then return false end
-    -- Secret strings pass the type check but can't be indexed — treat as protected
     if Helpers.IsSecretValue(message) then return true end
+    if type(message) ~= "string" then return false end
     -- Protected content uses |K...|k pattern
     if message:find("|K") then return true end
     return false
@@ -501,7 +512,7 @@ end
 
 -- Strip textures, icons, and hyperlink formatting from message
 local function CleanMessage(message)
-    if not message or type(message) ~= "string" or Helpers.IsSecretValue(message) then return "" end
+    if Helpers.IsSecretValue(message) or type(message) ~= "string" then return "" end
 
     local cleaned = message
     -- Remove texture escapes |T...|t
@@ -527,7 +538,7 @@ local function GetChatLines(chatFrame)
 
     for i = 1, numMessages do
         local message, r, g, b = chatFrame:GetMessageInfo(i)
-        if message and not IsMessageProtected(message) then
+        if type(message) == "string" and not IsMessageProtected(message) then
             local cleaned = CleanMessage(message)
             if cleaned and cleaned ~= "" then
                 tinsert(lines, cleaned)
