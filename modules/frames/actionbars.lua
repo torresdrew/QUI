@@ -209,11 +209,20 @@ end
 -- comparison operators, so secret booleans/numbers pass through safely.
 -- Installed as an instance shadow so any residual mixin path that
 -- reaches self:Update() hits this safe version.
+-- Pre-filtered "buttons with an action" set. Mirrors LibActionButton's
+-- ActiveButtons pattern: maintained by SafeUpdate, consumed by the centralized
+-- state/usable/cooldown loops so they skip empty slots without an O(N)
+-- iterate + HasAction check every tick. Weak-keyed so destroyed buttons
+-- drop out automatically.
+ActionBarsOwned._activeButtons = ActionBarsOwned._activeButtons
+    or setmetatable({}, { __mode = "k" })
+
 function ActionBarsOwned.SafeUpdate(self)
     local action = self.action
     if not action then return end
 
     if HasAction(action) then
+        ActionBarsOwned._activeButtons[self] = true
         -- Icon
         local texture = GetActionTexture(action)
         -- Assisted combat rotation slots return nil texture when the
@@ -313,6 +322,7 @@ function ActionBarsOwned.SafeUpdate(self)
         end
     else
         -- Empty slot
+        ActionBarsOwned._activeButtons[self] = nil
         self.icon:Hide()
         if self.SlotBackground then self.SlotBackground:Show() end
         self:SetChecked(false)
@@ -3311,12 +3321,21 @@ do
         cooldown:SetCooldownFromDurationObject(durationObject)
     end
 
-    function ActionBarsOwned.UpdateCooldown(button)
-        local action = button.action or button:GetAttribute("action")
-        if not action or action == 0 then return end
+    -- Per-button "was on cooldown last scan" cache. Skips redundant Clear()
+    -- calls on idle buttons (the common case — ~90 of 96 buttons are usually
+    -- off cooldown at any given moment). In raid combat, SPELL_UPDATE_COOLDOWN
+    -- fires ~20-30/sec and we scan all 96 buttons on each tick; without this
+    -- cache we hit Clear() 270 times per tick (cooldown + charge + LoC frames)
+    -- for buttons that are already cleared.
+    local _buttonWasActive = setmetatable({}, { __mode = "k" })
 
-        -- Skip empty slots entirely — avoids 3+ API calls on buttons with no spell
-        if not HasAction(action) then return end
+    function ActionBarsOwned.UpdateCooldown(button)
+        -- Hot path: called every ~100ms for all active buttons. Every
+        -- saved Lua op compounds to measurable ms/sec in raid combat.
+        -- `button.action` is always set by SafeSyncAction/state driver,
+        -- so the GetAttribute fallback is dead code and has been removed.
+        local action = button.action
+        if not action or action == 0 then return end
 
         local cooldown = button.cooldown or button.Cooldown
         if not cooldown then return end
@@ -3327,12 +3346,17 @@ do
             -- button for the majority of buttons not on cooldown at any moment).
             local cdInfo = C_ActionBar.GetActionCooldown(action) or DEFAULT_CD_INFO
             if not cdInfo.isActive then
-                -- Not on cooldown — clear everything quickly
-                cooldown:Clear()
-                if button.chargeCooldown then button.chargeCooldown:Clear() end
-                if button.lossOfControlCooldown then button.lossOfControlCooldown:Clear() end
+                -- Idle button: only clear the frames on the active→inactive
+                -- transition. Subsequent idle scans skip the Clear() churn.
+                if _buttonWasActive[button] then
+                    _buttonWasActive[button] = nil
+                    cooldown:Clear()
+                    if button.chargeCooldown then button.chargeCooldown:Clear() end
+                    if button.lossOfControlCooldown then button.lossOfControlCooldown:Clear() end
+                end
                 return
             end
+            _buttonWasActive[button] = true
 
             -- Button IS on cooldown — now check charges and LoC (2 more API calls)
             local chgInfo = C_ActionBar.GetActionCharges(action) or DEFAULT_CHG_INFO
@@ -3378,15 +3402,23 @@ do
         if now == _lastCdUpdateTime then return end
         _lastCdUpdateTime = now
 
+        -- Fast path: iterate only buttons with actions (LibActionButton
+        -- pattern). Typical raid: ~30-50 active of 96 total.
+        local activeButtons = ActionBarsOwned._activeButtons
+        if next(activeButtons) ~= nil then
+            for btn in pairs(activeButtons) do
+                ActionBarsOwned.UpdateCooldown(btn)
+            end
+            return
+        end
+
+        -- Fallback: full scan before the first SafeUpdate pass has
+        -- populated _activeButtons (fresh login, brief window before
+        -- PLAYER_ENTERING_WORLD-driven refresh).
         for _, barKey in ipairs(STANDARD_BAR_KEYS) do
-            -- Always update even when faded — cooldown state must be current
-            -- so swipes render correctly on fade-in.
             local buttons = ActionBarsOwned.nativeButtons[barKey]
             if buttons then
                 for _, btn in ipairs(buttons) do
-                    -- Skip empty slots at loop level to avoid function call +
-                    -- attribute lookups (UpdateCooldown also checks HasAction
-                    -- internally, but this avoids the overhead for 40-60 empty buttons)
                     if HasAction(btn.action or 0) then
                         ActionBarsOwned.UpdateCooldown(btn)
                     end
@@ -3757,44 +3789,88 @@ ActionBarsOwned.UpdateAllAssistedCombatRotation = UpdateAllAssistedCombatRotatio
 
 end -- do (spell glow / highlight / assisted rotation)
 
+-- Lean checked-state refresh: IsCurrentAction / IsAutoRepeatAction +
+-- SetChecked. Used for ACTIONBAR_UPDATE_STATE which fires frequently in
+-- combat (every autoattack toggle, every current-action change). Avoids
+-- the 20-API-call full SafeUpdate path for events that only affect
+-- the checked state. Mirrors LibActionButton's UpdateButtonState.
+local _lastStateUpdateTime = 0
+function ActionBarsOwned.UpdateAllButtonStates()
+    local now = GetTime()
+    if now == _lastStateUpdateTime then return end
+    _lastStateUpdateTime = now
+
+    for btn in pairs(ActionBarsOwned._activeButtons) do
+        local action = btn.action
+        if action and action ~= 0 then
+            if IsCurrentAction(action) or IsAutoRepeatAction(action) then
+                btn:SetChecked(true)
+            else
+                btn:SetChecked(false)
+            end
+        end
+    end
+end
+
 -- Full visual refresh for all owned action buttons via SafeUpdate.
 -- Uses only truthiness tests on API returns — safe during combat.
 local _lastVisualUpdateTime = 0
+local _visualFirstRunDone = false
 function ActionBarsOwned.UpdateAllButtonVisuals()
     -- Hard throttle: max once per frame
     local now = GetTime()
     if now == _lastVisualUpdateTime then return end
     _lastVisualUpdateTime = now
 
-    for _, barKey in ipairs(STANDARD_BAR_KEYS) do
-        -- Always update even when the bar is faded out.  Mouseover-hidden
-        -- bars still need current icon/action data so they render correctly
-        -- on fade-in.  Events like SPELLS_CHANGED fire after reload and
-        -- must not be silently dropped for hidden bars.
-        local btns = ActionBarsOwned.nativeButtons[barKey]
-        if btns then
-            for _, btn in ipairs(btns) do
-                local action = btn.action or 0
-                if HasAction(action) then
-                    -- Button has an action — always update visuals
-                    local state = GetFrameState(btn)
-                    state.wasEmpty = false
-                    pcall(ActionBarsOwned.SafeUpdate, btn)
-                else
-                    -- Empty slot — run SafeUpdate once to clear visuals
-                    -- on the transition, then skip on subsequent ticks
-                    local state = GetFrameState(btn)
-                    if not state.wasEmpty then
-                        state.wasEmpty = true
+    -- First run needs a full scan: it's where _activeButtons gets populated
+    -- for the first time (SafeUpdate sets the entries). All empty-slot
+    -- visuals are also initialized here. Subsequent runs iterate only the
+    -- active set (typical: 30-50 vs 96).
+    --
+    -- Full scans also run when SPELLS_CHANGED, PLAYER_ENTERING_WORLD, or
+    -- similar "something big happened" events fire — those need to walk
+    -- every button to catch mass action-table shuffles. Those events
+    -- force _visualFirstRunDone = false via ForceFullVisualRescan.
+    if not _visualFirstRunDone then
+        for _, barKey in ipairs(STANDARD_BAR_KEYS) do
+            local btns = ActionBarsOwned.nativeButtons[barKey]
+            if btns then
+                for _, btn in ipairs(btns) do
+                    local action = btn.action or 0
+                    if HasAction(action) then
+                        local state = GetFrameState(btn)
+                        state.wasEmpty = false
                         pcall(ActionBarsOwned.SafeUpdate, btn)
+                    else
+                        local state = GetFrameState(btn)
+                        if not state.wasEmpty then
+                            state.wasEmpty = true
+                            pcall(ActionBarsOwned.SafeUpdate, btn)
+                        end
                     end
                 end
             end
+        end
+        _visualFirstRunDone = true
+    else
+        -- Fast path: iterate only buttons with actions. Active→empty
+        -- transitions are handled by SafeSyncAction/ACTIONBAR_SLOT_CHANGED
+        -- paths calling SafeUpdate directly on the affected button.
+        for btn in pairs(ActionBarsOwned._activeButtons) do
+            local state = GetFrameState(btn)
+            state.wasEmpty = false
+            pcall(ActionBarsOwned.SafeUpdate, btn)
         end
     end
 
     -- Rebuild spell-to-button reverse lookup for glow events
     ActionBarsOwned.RebuildSpellIdMap()
+end
+
+-- Force the next UpdateAllButtonVisuals call to do a full scan (covers
+-- mass action-table shuffles where individual slot events aren't reliable).
+function ActionBarsOwned.ForceFullVisualRescan()
+    _visualFirstRunDone = false
 end
 
 ---------------------------------------------------------------------------
@@ -3810,24 +3886,29 @@ end
 -- because cooldown swipes are visually continuous.  Full visual updates
 -- (icon, name, border, glow) use 66ms (~15/sec) since they're discrete
 -- state changes where the extra latency is imperceptible.
-local AB_CD_UPDATE_INTERVAL  = 0.033  -- 33ms for cooldown-only
-local AB_VIS_UPDATE_INTERVAL = 0.066  -- 66ms for full visual refresh
+local AB_CD_UPDATE_INTERVAL    = 0.100  -- 100ms for cooldown-only (10Hz — cooldown swipes self-animate once set, so this only gates detection latency)
+local AB_STATE_UPDATE_INTERVAL = 0.066  -- 66ms for checked-state (autoattack/current-action toggle)
+local AB_VIS_UPDATE_INTERVAL   = 0.100  -- 100ms for full visual refresh (10Hz — discrete state changes tolerate this)
 
--- Unified update frame: merges cooldown and visual update into a single
--- OnUpdate handler with dirty flags.  When visuals are dirty, SafeUpdate
--- already calls UpdateCooldown() internally (line 259), so we skip the
--- separate cooldown pass.  When only cooldowns are dirty (most common in
--- combat), the lightweight UpdateAllCooldowns runs alone.
+-- Unified update frame: merges cooldown, state and visual update into a
+-- single OnUpdate handler with dirty flags. When visuals are dirty,
+-- SafeUpdate already covers checked state + cooldown internally, so those
+-- flags are subsumed. When only state is dirty (common in combat from
+-- ACTIONBAR_UPDATE_STATE), a lean per-button SetChecked pass runs instead
+-- of the 20-API-call SafeUpdate chain.
 local abUpdateFrame = CreateFrame("Frame")
 abUpdateFrame:Hide()
 abUpdateFrame._lastCd = 0
+abUpdateFrame._lastState = 0
 abUpdateFrame._lastVis = 0
 abUpdateFrame._dirtyCooldowns = false
+abUpdateFrame._dirtyStates = false
 abUpdateFrame._dirtyVisuals = false
 
 abUpdateFrame:SetScript("OnUpdate", function(self)
     local now = GetTime()
     local doVis = self._dirtyVisuals
+    local doState = self._dirtyStates
     local doCd  = self._dirtyCooldowns
 
     if doVis then
@@ -3835,10 +3916,25 @@ abUpdateFrame:SetScript("OnUpdate", function(self)
         self:Hide()
         self._lastVis = now
         self._lastCd = now
+        self._lastState = now
         self._dirtyCooldowns = false
+        self._dirtyStates = false
         self._dirtyVisuals = false
-        -- SafeUpdate includes cooldown update internally
+        -- SafeUpdate includes cooldown + checked state internally
         ActionBarsOwned.UpdateAllButtonVisuals()
+    elseif doState then
+        if now - self._lastState < AB_STATE_UPDATE_INTERVAL then return end
+        -- State is lean; if cooldowns are also dirty, run them in the same
+        -- tick to avoid a second OnUpdate wake-up.
+        self:Hide()
+        self._lastState = now
+        self._dirtyStates = false
+        ActionBarsOwned.UpdateAllButtonStates()
+        if doCd and (now - self._lastCd >= AB_CD_UPDATE_INTERVAL) then
+            self._lastCd = now
+            self._dirtyCooldowns = false
+            ActionBarsOwned.UpdateAllCooldowns()
+        end
     elseif doCd then
         if now - self._lastCd < AB_CD_UPDATE_INTERVAL then return end
         self:Hide()
@@ -3850,13 +3946,48 @@ abUpdateFrame:SetScript("OnUpdate", function(self)
     end
 end)
 
+-- Profiler: split cooldown-path vs state-path vs visual-path work so we
+-- can see which is hot. We wrap the update functions at the SetScript
+-- handler level rather than the OnUpdate tick, so the measurement
+-- reflects only the actual refresh cost (not throttled no-op ticks).
+do
+    local origAllCd    = ActionBarsOwned.UpdateAllCooldowns
+    local origAllVis   = ActionBarsOwned.UpdateAllButtonVisuals
+    local origAllState = ActionBarsOwned.UpdateAllButtonStates
+    local cdProbeFrame    = CreateFrame("Frame")
+    local visProbeFrame   = CreateFrame("Frame")
+    local stateProbeFrame = CreateFrame("Frame")
+    cdProbeFrame:SetScript("OnEvent",    function() origAllCd()    end)
+    visProbeFrame:SetScript("OnEvent",   function() origAllVis()   end)
+    stateProbeFrame:SetScript("OnEvent", function() origAllState() end)
+    ActionBarsOwned.UpdateAllCooldowns     = function() cdProbeFrame:GetScript("OnEvent")()    end
+    ActionBarsOwned.UpdateAllButtonVisuals = function() visProbeFrame:GetScript("OnEvent")()   end
+    ActionBarsOwned.UpdateAllButtonStates  = function() stateProbeFrame:GetScript("OnEvent")() end
+    ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+    ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "AB_Cooldowns", frame = cdProbeFrame,    scriptType = "OnEvent" }
+    ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "AB_States",    frame = stateProbeFrame, scriptType = "OnEvent" }
+    ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "AB_Visuals",   frame = visProbeFrame,   scriptType = "OnEvent" }
+end
+
 local function ScheduleABCooldownUpdate()
     abUpdateFrame._dirtyCooldowns = true
     abUpdateFrame:Show()
 end
 
-local function ScheduleABVisualUpdate()
+local function ScheduleABVisualUpdate(full)
     abUpdateFrame._dirtyVisuals = true
+    if full then
+        -- Mass action-table shuffles (shapeshift, vehicle swap, fresh world,
+        -- spell learn/unlearn) need a full scan because the old _activeButtons
+        -- set is stale — the same button handle may now point at a different
+        -- action and some active→empty transitions aren't event-signalled.
+        ActionBarsOwned.ForceFullVisualRescan()
+    end
+    abUpdateFrame:Show()
+end
+
+local function ScheduleABStateUpdate()
+    abUpdateFrame._dirtyStates = true
     abUpdateFrame:Show()
 end
 
@@ -4156,6 +4287,9 @@ local function OnOwnedEvent(self, event, ...)
                 RestoreContainerPosition(barKey)
             end
             RefreshAllNativeVisuals()
+            -- PEW covers zone/arena/BG entry — action set may differ,
+            -- force a full scan so the active button set rebuilds.
+            ActionBarsOwned.ForceFullVisualRescan()
             ActionBarsOwned.UpdateAllButtonVisuals()
             ActionBarsOwned.UpdateAllCooldowns()
             UpdatePetBarVisibility()
@@ -4197,10 +4331,15 @@ local function OnOwnedEvent(self, event, ...)
         -- Debounced: fires 20+/sec in combat, coalesced to ~20/sec max.
         ScheduleABCooldownUpdate()
 
-    elseif event == "ACTIONBAR_UPDATE_STATE"
-        or event == "SPELL_UPDATE_ICON" then
-        -- Checked state or icon changes.  Per-button events are
-        -- unregistered, so dispatch centrally via SafeUpdate.
+    elseif event == "ACTIONBAR_UPDATE_STATE" then
+        -- Checked state only (autoattack, toggle abilities, current action).
+        -- This event fires very frequently in combat — dispatch via the
+        -- lean SetChecked-only pass instead of the full SafeUpdate chain.
+        ScheduleABStateUpdate()
+
+    elseif event == "SPELL_UPDATE_ICON" then
+        -- Icon texture changed (rare — spell morphs, glyphs, etc).
+        -- Needs full SafeUpdate to refresh the icon texture.
         ScheduleABVisualUpdate()
 
     elseif event == "ACTIONBAR_UPDATE_USABLE" then
@@ -4276,7 +4415,7 @@ local function OnOwnedEvent(self, event, ...)
         -- Talent swap, respec, new spell learned — full refresh of icons,
         -- usability, cooldowns, flyouts, and empty slot visibility.
         -- Coalesced: SPELLS_CHANGED fires more often than expected in 12.0+.
-        ScheduleABVisualUpdate()
+        ScheduleABVisualUpdate(true)  -- force full scan: action table reshuffled
         ScheduleABCooldownUpdate()
         ActionBarsOwned.UpdateAllOverlayGlows()
         -- Update flyout data on all buttons
@@ -4332,7 +4471,7 @@ local function OnOwnedEvent(self, event, ...)
 
     elseif event == "UPDATE_VEHICLE_ACTIONBAR" then
         -- Vehicle action bar data changed — full refresh (coalesced)
-        ScheduleABVisualUpdate()
+        ScheduleABVisualUpdate(true)  -- force full scan: vehicle swaps whole action set
         ScheduleABCooldownUpdate()
         ActionBarsOwned.UpdateAllOverlayGlows()
         ApplyBar1OverrideBindings()
@@ -4345,7 +4484,7 @@ local function OnOwnedEvent(self, event, ...)
         -- Equipment changed — items on action bars may need icon/cooldown refresh
         local unit = ...
         if unit == "player" then
-            ScheduleABVisualUpdate()
+            ScheduleABVisualUpdate(true)  -- force full scan: item slots may have gained/lost actions
             ScheduleABCooldownUpdate()
         end
 
@@ -4386,6 +4525,9 @@ end
 
 -- Event handler is set here; events are registered in Initialize().
 ownedEventFrame:SetScript("OnEvent", OnOwnedEvent)
+
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "ActionBars", frame = ownedEventFrame }
 
 ---------------------------------------------------------------------------
 -- EXTRA BUTTON CUSTOMIZATION (Extra Action Button & Zone Ability)
