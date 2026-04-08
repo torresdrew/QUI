@@ -1579,6 +1579,39 @@ CreateFramesDrawer = function(ui)
     local showAllBtn = CreateDrawerActionButton(controls, "SHOW ALL", 74)
     showAllBtn:SetPoint("RIGHT", hideAllBtn, "LEFT", -6, 0)
 
+    local function UpdateGlobalButtonsVisual()
+        local um = ns.QUI_LayoutMode
+        if not um then return end
+        local anyShown, anyHidden = false, false
+        for _, key in ipairs(um._elementOrder or {}) do
+            if um:IsElementEnabled(key) then
+                if um:IsHandleShown(key) then
+                    anyShown = true
+                else
+                    anyHidden = true
+                end
+            end
+        end
+
+        if anyShown and not anyHidden then
+            showAllBtn._bg:SetColorTexture(0.15, 0.35, 0.55, 1)
+            showAllBtn._label:SetTextColor(1, 1, 1, 1)
+            hideAllBtn._bg:SetColorTexture(0.2, 0.2, 0.2, 0.9)
+            hideAllBtn._label:SetTextColor(0.8, 0.82, 0.85, 1)
+        elseif anyHidden and not anyShown then
+            hideAllBtn._bg:SetColorTexture(0.45, 0.16, 0.16, 1)
+            hideAllBtn._label:SetTextColor(1, 1, 1, 1)
+            showAllBtn._bg:SetColorTexture(0.2, 0.2, 0.2, 0.9)
+            showAllBtn._label:SetTextColor(0.8, 0.82, 0.85, 1)
+        else
+            showAllBtn._bg:SetColorTexture(0.2, 0.2, 0.2, 0.9)
+            showAllBtn._label:SetTextColor(0.8, 0.82, 0.85, 1)
+            hideAllBtn._bg:SetColorTexture(0.2, 0.2, 0.2, 0.9)
+            hideAllBtn._label:SetTextColor(0.8, 0.82, 0.85, 1)
+        end
+    end
+    drawer._updateGlobalButtons = UpdateGlobalButtonsVisual
+
     showAllBtn:SetScript("OnClick", function()
         local um = ns.QUI_LayoutMode
         if not um then return end
@@ -1589,6 +1622,10 @@ CreateFramesDrawer = function(ui)
     end)
     showAllBtn:HookScript("OnEnter", function(self)
         self._bg:SetColorTexture(0.15, 0.35, 0.55, 1)
+        self._label:SetTextColor(1, 1, 1, 1)
+    end)
+    showAllBtn:SetScript("OnLeave", function()
+        UpdateGlobalButtonsVisual()
     end)
 
     hideAllBtn:SetScript("OnClick", function()
@@ -1601,6 +1638,10 @@ CreateFramesDrawer = function(ui)
     end)
     hideAllBtn:HookScript("OnEnter", function(self)
         self._bg:SetColorTexture(0.45, 0.16, 0.16, 1)
+        self._label:SetTextColor(1, 1, 1, 1)
+    end)
+    hideAllBtn:SetScript("OnLeave", function()
+        UpdateGlobalButtonsVisual()
     end)
 
     drawer._controls = controls
@@ -1846,7 +1887,8 @@ function QUI_LayoutMode_UI:_RebuildDrawer()
             end
 
             -- Layer visibility buttons (to left of ON/OFF)
-            do
+            -- Skip for master toggle rows (noHandle) — they have nothing to show/solo/reset.
+            if not def.noHandle then
                 local showBtn = CreateFrame("Button", nil, row)
                 showBtn:SetSize(40, 18)
                 if row._toggle then
@@ -2235,6 +2277,9 @@ function QUI_LayoutMode_UI:_RebuildDrawer()
     drawer._allRows = allRows
     drawer._layerRows = layerRows
     drawer._refreshLayerButtons = function()
+        if drawer._updateGlobalButtons then
+            drawer._updateGlobalButtons()
+        end
         for _, layerRow in ipairs(drawer._layerRows or {}) do
             if layerRow._updateShowVisual then
                 layerRow._updateShowVisual()
