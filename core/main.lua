@@ -141,6 +141,17 @@ function QUICore:OnInitialize()
     if ns.Migrations and ns.Migrations.Run then
         ns.Migrations.Run(self.db)
     end
+
+    -- Late migrations run at PLAYER_LOGIN once Blizzard runtime state
+    -- (EditModeManagerFrame, live frame positions) is available. The
+    -- handler unregisters itself after a successful pass.
+    if ns.Migrations and ns.Migrations.RunLate then
+        self:RegisterEvent("PLAYER_LOGIN", function(event)
+            ns.Migrations.RunLate(self.db)
+            self:UnregisterEvent("PLAYER_LOGIN")
+        end)
+    end
+
     local profile = self.db.profile
 
     -- Initialize preserved scale - will be properly set in OnEnable after UI scale is applied
@@ -227,6 +238,13 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     local addon = _G.QUI
     if addon and addon.BackwardsCompat then
         addon:BackwardsCompat()
+    end
+
+    -- Late migrations also run on profile switch — by this point (well
+    -- past PLAYER_LOGIN) EditModeManagerFrame is loaded, so we can call
+    -- synchronously rather than waiting for an event.
+    if ns.Migrations and ns.Migrations.RunLate then
+        ns.Migrations.RunLate(self.db)
     end
 
     -- Wipe the font registry so stale FontStrings from the old profile's frames

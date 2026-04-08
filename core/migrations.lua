@@ -1885,6 +1885,188 @@ local function MigrateNCDMContainers(profile)
 end
 
 ---------------------------------------------------------------------------
+-- Late migration: import action bar / micro menu / bag bar positions from
+-- Blizzard Edit Mode for users whose QUI profile predates frame anchoring
+-- for these bars. Runs at PLAYER_LOGIN (not at addon-init time) because it
+-- depends on EditModeManagerFrame being populated and the live bar frames
+-- being laid out, neither of which is guaranteed during ADDON_LOADED.
+--
+-- Per-bar gating:
+--   1. Bar already has a real (non-placeholder) frameAnchoring entry → PROTECTED.
+--      Users who positioned the bar in QUI's Layout Mode keep their position.
+--   2. Live frame readable → IMPORTED. Read absolute screen coords from
+--      the live frame (lets WoW resolve any anchor chain like
+--      MainActionBar → MultiBar5 → ...) and write a UIParent-relative
+--      anchor into profile.frameAnchoring[<key>].
+--   3. Live frame missing/nil-coords → SKIPPED. Bar gets no entry from
+--      this migration; sentinel still stamps so we don't retry forever.
+--      Affects e.g. stance bar on a stanceless character — harmless
+--      because that bar is never visible for them anyway.
+--
+-- Note: we deliberately do NOT skip `isInDefaultPosition` entries. Even
+-- bars at Blizzard's default need to be captured as explicit QUI data,
+-- otherwise the migration leaves a gap exactly where legacy users with
+-- no QUI overrides need it filled — they currently get the EditMode
+-- position via actionbars.lua's RestoreContainerPosition fallback, but
+-- that fallback depends on the live Blizzard frame being readable at
+-- apply time. Importing makes the position permanent and editable.
+--
+-- Sentinel: profile._abPositionsImportedFromEditMode. Stamped after the
+-- first successful EditMode read regardless of how many bars actually
+-- imported — this is a one-shot best-effort migration, not a "keep
+-- trying until everything succeeds" loop.
+--
+-- Only operates on the active profile (db.profile), not all stored
+-- profiles, because EditMode layouts are per-character and other profiles
+-- belong to alts with potentially different EditMode setups.
+---------------------------------------------------------------------------
+
+-- (system, systemIndex) → { fa = frameAnchoring key, frame = global frame name }
+-- Indexed by [system][systemIndex] for ActionBar (which has multiple
+-- instances), and [system]["*"] for MicroMenu/Bags (single instance, no
+-- systemIndex). Built lazily so the Enum reference doesn't blow up if
+-- this file is loaded in a context without Blizzard's enums.
+local EM_TO_QUI = nil
+local function GetEditModeLookup()
+    if EM_TO_QUI then return EM_TO_QUI end
+    if type(Enum) ~= "table" or type(Enum.EditModeSystem) ~= "table" then
+        return nil
+    end
+    local AB    = Enum.EditModeSystem.ActionBar
+    local MICRO = Enum.EditModeSystem.MicroMenu
+    local BAGS  = Enum.EditModeSystem.Bags
+    if AB == nil or MICRO == nil or BAGS == nil then
+        return nil
+    end
+    EM_TO_QUI = {
+        [AB] = {
+            [1]  = { fa = "bar1",      frame = "MainActionBar" },
+            [2]  = { fa = "bar2",      frame = "MultiBarBottomLeft" },
+            [3]  = { fa = "bar3",      frame = "MultiBarBottomRight" },
+            [4]  = { fa = "bar4",      frame = "MultiBarRight" },
+            [5]  = { fa = "bar5",      frame = "MultiBarLeft" },
+            [6]  = { fa = "bar6",      frame = "MultiBar5" },
+            [7]  = { fa = "bar7",      frame = "MultiBar6" },
+            [8]  = { fa = "bar8",      frame = "MultiBar7" },
+            [11] = { fa = "stanceBar", frame = "StanceBar" },
+            [12] = { fa = "petBar",    frame = "PetActionBar" },
+            -- 13 = PossessActionBar — intentionally omitted, QUI doesn't manage it
+        },
+        [MICRO] = { ["*"] = { fa = "microMenu", frame = "MicroMenuContainer" } },
+        [BAGS]  = { ["*"] = { fa = "bagBar",    frame = "BagsBar" } },
+    }
+    return EM_TO_QUI
+end
+
+local function LookupEditModeSystem(sys)
+    local lookup = GetEditModeLookup()
+    if not lookup then return nil end
+    local typeTable = lookup[sys.system]
+    if not typeTable then return nil end
+    return typeTable[sys.systemIndex] or typeTable["*"]
+end
+
+local function MigrateActionBarPositionsFromEditMode(profile)
+    if type(profile) ~= "table" then return end
+    if profile._abPositionsImportedFromEditMode then
+        MigLog("EditMode AB import: sentinel set, skipping")
+        return
+    end
+
+    -- Scope gate: this migration is intended for fresh installs and
+    -- pre-3.0 legacy upgraders. RunOnProfile flags eligible profiles
+    -- (those whose pre-migration `_schemaVersion` was < 19, i.e. before
+    -- MigrateAnchoringV1) by setting `_needsLateAbImport`. Profiles
+    -- without that flag have already been through the modern anchoring
+    -- pipeline and have explicit QUI positions for any bars they care
+    -- about, so we just stamp the sentinel and return.
+    if not profile._needsLateAbImport then
+        MigLog("EditMode AB import: profile not flagged for late import, stamping sentinel and skipping")
+        profile._abPositionsImportedFromEditMode = true
+        return
+    end
+
+    if not (EditModeManagerFrame and EditModeManagerFrame.GetActiveLayoutInfo) then
+        MigLog("EditMode AB import: EditModeManagerFrame not ready, will retry")
+        return
+    end
+
+    local layout = EditModeManagerFrame:GetActiveLayoutInfo()
+    if type(layout) ~= "table" or type(layout.systems) ~= "table" then
+        MigLog("EditMode AB import: no active layout, will retry")
+        return
+    end
+
+    profile.frameAnchoring = profile.frameAnchoring or {}
+    local fa = profile.frameAnchoring
+
+    local imported, protected, skipped = 0, 0, 0
+
+    for _, sys in ipairs(layout.systems) do
+        local mapping = LookupEditModeSystem(sys)
+        if mapping then
+            local key = mapping.fa
+            local existing = fa[key]
+            local userHasPosition = (existing ~= nil) and (not IsPlaceholderAnchorEntry(existing))
+
+            if userHasPosition then
+                protected = protected + 1
+                MigLog("  %s: PROTECTED (user has QUI position)", key)
+            else
+                local frame = _G[mapping.frame]
+                local L = frame and frame.GetLeft and frame:GetLeft()
+                local B = frame and frame.GetBottom and frame:GetBottom()
+                if type(L) == "number" and type(B) == "number" then
+                    fa[key] = {
+                        parent   = "screen",
+                        point    = "BOTTOMLEFT",
+                        relative = "BOTTOMLEFT",
+                        offsetX  = L,
+                        offsetY  = B,
+                    }
+                    imported = imported + 1
+                    MigLog("  %s: IMPORTED at %.1f, %.1f (from %s, %s)",
+                        key, L, B, mapping.frame,
+                        sys.isInDefaultPosition and "default" or "moved")
+                else
+                    skipped = skipped + 1
+                    MigLog("  %s: SKIPPED (frame %s not laid out)", key, mapping.frame)
+                end
+            end
+        end
+    end
+
+    -- One-shot best-effort: stamp the sentinel after a successful
+    -- EditMode read regardless of how many bars actually imported.
+    -- Bars that couldn't be read (e.g. stance bar on a stanceless
+    -- character) won't get retried — they're invisible for that
+    -- character anyway and don't need a frameAnchoring entry.
+    profile._abPositionsImportedFromEditMode = true
+    profile._needsLateAbImport = nil
+
+    MigLog("EditMode AB import done: imported=%d protected=%d skipped=%d",
+        imported, protected, skipped)
+end
+
+---------------------------------------------------------------------------
+-- Late entry point: migrations that depend on Blizzard runtime state
+---------------------------------------------------------------------------
+-- Called from QUICore PLAYER_LOGIN (after EditModeManagerFrame is loaded
+-- and live frames are laid out, but before the action bar module applies
+-- frameAnchoring on PLAYER_ENTERING_WORLD).
+--
+-- Unlike Migrations.Run, this only operates on the active profile —
+-- the data sources (live frames, EditMode layout) are per-character and
+-- don't apply to alts' stored profiles.
+function Migrations.RunLate(db)
+    if not db then return false end
+    local profile = db.profile
+    if type(profile) ~= "table" then return false end
+    MigrateActionBarPositionsFromEditMode(profile)
+    return true
+end
+
+---------------------------------------------------------------------------
 -- Entry point: Run all profile migrations
 ---------------------------------------------------------------------------
 --
@@ -2035,6 +2217,18 @@ function Migrations.RunOnProfile(profile)
     if type(profile) ~= "table" then return false end
 
     local stored = tonumber(profile._schemaVersion) or 0
+
+    -- Flag legacy/fresh profiles for the late EditMode action bar import.
+    -- v19 (MigrateAnchoringV1) is the first migration that wrote any
+    -- frameAnchoring data; profiles stored at < 19 either predate the
+    -- modern anchoring pipeline or are fresh installs. Either way, the
+    -- late migration should run for them. The flag is read at PLAYER_LOGIN
+    -- by Migrations.RunLate after EditModeManagerFrame is loaded.
+    -- Profiles already at v19+ never get the flag, so RunLate stamps
+    -- their sentinel and skips the import loop.
+    if stored < 19 and not profile._abPositionsImportedFromEditMode then
+        profile._needsLateAbImport = true
+    end
 
     do
         local faCount = 0
