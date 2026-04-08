@@ -199,6 +199,9 @@ eventFrame:SetScript("OnEvent", function(_, _, _, _, castSpellID)
     end
 end)
 
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "CDM_Highlighter", frame = eventFrame }
+
 ---------------------------------------------------------------------------
 -- GLOBAL REFRESH
 ---------------------------------------------------------------------------

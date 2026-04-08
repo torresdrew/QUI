@@ -167,3 +167,10 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, updateInfo)
     end
     coalesceFrame:Show()
 end)
+
+-- Perf profiler opt-in: coalesceFrame.OnUpdate runs the aura subscriber fan-out
+-- (group frames, CDM, raidbuffs, atonement, private auras, etc). Wrapping it
+-- measures total aura dispatch cost as one "AuraDispatch" line.
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "AuraDispatch", frame = coalesceFrame, scriptType = "OnUpdate" }
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "AuraRouter", frame = eventFrame }

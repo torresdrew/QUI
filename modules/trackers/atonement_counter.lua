@@ -559,6 +559,9 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     QueueRefresh()
 end)
 
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "AtonementCounter", frame = eventFrame }
+
 _G.QUI_RefreshAtonementCounter = RefreshAtonementCounter
 _G.QUI_ToggleAtonementCounterPreview = TogglePreview
 

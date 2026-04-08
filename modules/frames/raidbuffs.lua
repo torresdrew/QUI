@@ -1323,6 +1323,9 @@ eventFrame:RegisterEvent("PLAYER_DEAD")
 eventFrame:RegisterEvent("PLAYER_UNGHOST")
 eventFrame:SetScript("OnEvent", OnEvent)
 
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "RaidBuffs", frame = eventFrame }
+
 -- Subscribe to centralized aura dispatcher
 if ns.AuraEvents then
     ns.AuraEvents:Subscribe("all", function(unit, updateInfo)

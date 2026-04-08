@@ -4621,6 +4621,10 @@ end
 
 eventFrame:SetScript("OnEvent", OnEvent)
 
+-- Perf profiler opt-in (no-op until /qui perf → Modules toggle)
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "GroupFrames", frame = eventFrame }
+
 ---------------------------------------------------------------------------
 -- EVENT REGISTRATION
 ---------------------------------------------------------------------------

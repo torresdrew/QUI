@@ -2430,6 +2430,9 @@ function ownedEngine:Initialize()
             end)
         end
     end)
+
+    ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+    ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "CDM_Containers", frame = eventFrame }
 end
 
 function ownedEngine:Refresh()

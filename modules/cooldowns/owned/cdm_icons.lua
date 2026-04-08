@@ -3704,6 +3704,9 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
     ScheduleCDMUpdate()
 end)
 
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "CDM_Icons", frame = cdEventFrame }
+
 -- Subscribe to centralized aura dispatcher for prompt icon updates.
 -- Player auras via "player" filter (avoids callback for all 20+ raid units).
 -- Target debuffs via "all" filter (no "target" filter in the dispatcher).

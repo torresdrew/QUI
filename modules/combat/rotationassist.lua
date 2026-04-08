@@ -679,6 +679,9 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
+QUI.QUI_PerfRegistry = QUI.QUI_PerfRegistry or {}
+QUI.QUI_PerfRegistry[#QUI.QUI_PerfRegistry + 1] = { name = "RotationAssist", frame = eventFrame }
+
 --------------------------------------------------------------------------------
 -- Global Refresh Function
 --------------------------------------------------------------------------------

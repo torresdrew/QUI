@@ -546,6 +546,9 @@ eventFrame:SetScript("OnEvent", function(_, event, spellID)
     ScanAllGlows()
 end)
 
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "CDM_Glows", frame = eventFrame }
+
 -- Low-frequency fallback scan to catch edge cases (e.g. icon replaced
 -- with an already-active proc, no SHOW event fires for it)
 C_Timer.NewTicker(5, function()

@@ -1806,6 +1806,9 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "BuffBar", frame = eventFrame }
+
 ---------------------------------------------------------------------------
 -- OWNED ENGINE CALLBACKS
 -- cdm_containers.lua fires these when buff container/icons are ready.

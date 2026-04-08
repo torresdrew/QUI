@@ -635,3 +635,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         end
     end
 end)
+
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "GF_PrivateAuras", frame = eventFrame }

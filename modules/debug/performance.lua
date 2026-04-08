@@ -7,12 +7,15 @@ ns.QUI_PerfMonitor = QUI_PerfMonitor
 -- Constants
 local SAMPLE_INTERVAL = 1.0
 local MAX_HISTORY = 150
-local FRAME_WIDTH = 300
+local FRAME_WIDTH = 340
 local FRAME_HEIGHT_BASE = 220
 local FRAME_HEIGHT_EVENTS = 320
-local GRAPH_WIDTH = 260
+local FRAME_HEIGHT_MODULES = 340
+local FRAME_HEIGHT_BOTH = 440
+local GRAPH_WIDTH = 300
 local GRAPH_HEIGHT = 80
 local TOP_EVENTS_COUNT = 5
+local TOP_MODULES_COUNT = 7
 local ACCENT_R, ACCENT_G, ACCENT_B = 0.204, 0.827, 0.600 -- #34D399
 local BG_R, BG_G, BG_B, BG_A = 0.08, 0.08, 0.08, 0.92
 local BORDER_R, BORDER_G, BORDER_B = 0.204, 0.827, 0.600
@@ -43,6 +46,15 @@ local eventRates = {}       -- [eventName] = fires/sec (from last sample)
 local eventSniffer          -- hidden frame that registers all events
 local topEvents = {}        -- sorted {name, rate} for display
 
+-- Module profiler
+local moduleProfileEnabled = false
+local moduleStats = {}        -- [name] = {ms = 0, count = 0} accumulator for current window
+local moduleRates = {}        -- [name] = {ms, calls} per-second for display
+local topModules = {}         -- sorted snapshot for display
+local profileRegistry = {}    -- [name] = {frame, scriptType, orig}
+local debugprofilestart_fn = debugprofilestart
+local debugprofilestop_fn = debugprofilestop
+
 -- UI references
 local memText, peakText, avgText, cpuText, sessionText, samplesText
 local graphBars = {}
@@ -51,6 +63,9 @@ local gcResultText
 local eventSection          -- container frame for the hot events section
 local eventRows = {}        -- fontstring pairs for top events
 local eventsToggleBtn       -- button to enable/disable event sniffer
+local moduleSection         -- container frame for the hot modules section
+local moduleRows = {}       -- fontstring triples (name/ms/calls) for top modules
+local modulesToggleBtn      -- button to enable/disable module profiler
 local graphContainer        -- the memory graph frame
 
 -- ─── API Detection ───────────────────────────────────────────────────────────
@@ -73,6 +88,129 @@ local function DetectCPUAPI()
 
     -- Tier 3: memory only
     cpuAPITier = nil
+end
+
+-- ─── Module Profiler ─────────────────────────────────────────────────────────
+--
+-- Wraps `SetScript("OnEvent"|"OnUpdate")` handlers on registered module frames
+-- with debugprofilestart/debugprofilestop timing. Lets us measure per-module
+-- CPU cost within QUI without scriptProfile CVar or external tooling.
+--
+-- Modules opt in by pushing (name, frame, scriptType) onto `ns.QUI_PerfRegistry`
+-- at file-load time. PerfMonitor drains the registry at bootstrap. The overhead
+-- is zero when the profiler is disabled — the original handler runs untouched.
+-- When enabled, each dispatch adds two debugprofile calls + a table-index add.
+
+local function MakeWrappedHandler(name, orig)
+    return function(...)
+        debugprofilestart_fn()
+        orig(...)
+        local ms = debugprofilestop_fn()
+        local s = moduleStats[name]
+        if not s then
+            s = { ms = 0, count = 0 }
+            moduleStats[name] = s
+        end
+        s.ms = s.ms + ms
+        s.count = s.count + 1
+    end
+end
+
+local function InstallProfileWrappers()
+    for name, info in pairs(profileRegistry) do
+        if info.frame and info.frame.SetScript then
+            info.frame:SetScript(info.scriptType, MakeWrappedHandler(name, info.orig))
+        end
+    end
+end
+
+local function RemoveProfileWrappers()
+    for _, info in pairs(profileRegistry) do
+        if info.frame and info.frame.SetScript then
+            info.frame:SetScript(info.scriptType, info.orig)
+        end
+    end
+end
+
+local function DrainPerfRegistry()
+    local reg = ns.QUI_PerfRegistry
+    if not reg then return end
+    for i = 1, #reg do
+        local entry = reg[i]
+        local name = entry.name or entry[1]
+        local frame = entry.frame or entry[2]
+        local scriptType = entry.scriptType or entry[3] or "OnEvent"
+        if name and frame and frame.GetScript and not profileRegistry[name] then
+            local orig = frame:GetScript(scriptType)
+            if orig then
+                profileRegistry[name] = {
+                    frame = frame,
+                    scriptType = scriptType,
+                    orig = orig,
+                }
+            end
+        end
+    end
+    -- Clear the registry so re-drain (after reload) is idempotent.
+    wipe(reg)
+end
+
+-- Public API: called by debug.xml's init or modules directly if they load after
+-- performance.lua. Safe to call multiple times.
+function QUI_PerfMonitor:Register(name, frame, scriptType)
+    ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+    ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = {
+        name = name,
+        frame = frame,
+        scriptType = scriptType or "OnEvent",
+    }
+    -- If the profiler already bootstrapped, drain now so the new entry is wrapped.
+    if next(profileRegistry) ~= nil or moduleProfileEnabled then
+        DrainPerfRegistry()
+        if moduleProfileEnabled then
+            -- Only wrap the newly-added frame, not all (avoid double-wrap on existing ones).
+            local info = profileRegistry[name]
+            if info and info.frame:GetScript(info.scriptType) == info.orig then
+                info.frame:SetScript(info.scriptType, MakeWrappedHandler(name, info.orig))
+            end
+        end
+    end
+end
+
+local function StartModuleProfiler()
+    DrainPerfRegistry()
+    wipe(moduleStats)
+    wipe(moduleRates)
+    wipe(topModules)
+    moduleProfileEnabled = true
+    InstallProfileWrappers()
+end
+
+local function StopModuleProfiler()
+    moduleProfileEnabled = false
+    RemoveProfileWrappers()
+    wipe(moduleStats)
+    wipe(moduleRates)
+    wipe(topModules)
+end
+
+local function SnapshotModuleRates(dt)
+    if not moduleProfileEnabled then return end
+    local rate = dt > 0 and dt or 1
+    wipe(moduleRates)
+    for name, s in pairs(moduleStats) do
+        moduleRates[name] = {
+            ms = s.ms / rate,
+            calls = s.count / rate,
+        }
+        s.ms = 0
+        s.count = 0
+    end
+    wipe(topModules)
+    for name, r in pairs(moduleRates) do
+        topModules[#topModules + 1] = { name = name, ms = r.ms, calls = r.calls }
+    end
+    table.sort(topModules, function(a, b) return a.ms > b.ms end)
 end
 
 -- ─── Event Sniffer ───────────────────────────────────────────────────────────
@@ -123,19 +261,52 @@ end
 
 local function RefreshLayout()
     if not monitorFrame then return end
-    if eventSnifferEnabled then
+
+    if eventSnifferEnabled and moduleProfileEnabled then
+        monitorFrame:SetHeight(FRAME_HEIGHT_BOTH)
+    elseif moduleProfileEnabled then
+        monitorFrame:SetHeight(FRAME_HEIGHT_MODULES)
+    elseif eventSnifferEnabled then
         monitorFrame:SetHeight(FRAME_HEIGHT_EVENTS)
+    else
+        monitorFrame:SetHeight(FRAME_HEIGHT_BASE)
+    end
+
+    if eventSnifferEnabled then
         eventSection:Show()
         eventsToggleBtn:SetText("Events: ON")
     else
-        monitorFrame:SetHeight(FRAME_HEIGHT_BASE)
         eventSection:Hide()
         eventsToggleBtn:SetText("Events: OFF")
-        -- Clear event rows
         for i = 1, TOP_EVENTS_COUNT do
             eventRows[i].name:SetText("")
             eventRows[i].rate:SetText("")
         end
+    end
+
+    if moduleProfileEnabled then
+        moduleSection:Show()
+        modulesToggleBtn:SetText("Modules: ON")
+    else
+        moduleSection:Hide()
+        modulesToggleBtn:SetText("Modules: OFF")
+        for i = 1, TOP_MODULES_COUNT do
+            moduleRows[i].name:SetText("")
+            moduleRows[i].ms:SetText("")
+            moduleRows[i].calls:SetText("")
+        end
+    end
+
+    -- Stack module section below event section when both are shown.
+    if eventSnifferEnabled and moduleProfileEnabled then
+        moduleSection:ClearAllPoints()
+        moduleSection:SetPoint("TOPLEFT", eventSection, "BOTTOMLEFT", 0, -4)
+        moduleSection:SetPoint("TOPRIGHT", eventSection, "BOTTOMRIGHT", 0, -4)
+    elseif moduleProfileEnabled then
+        -- Anchor to same slot events would use
+        moduleSection:ClearAllPoints()
+        moduleSection:SetPoint("TOPLEFT", monitorFrame, "TOPLEFT", 0, moduleSection._baseY or -130)
+        moduleSection:SetPoint("TOPRIGHT", monitorFrame, "TOPRIGHT", 0, moduleSection._baseY or -130)
     end
 end
 
@@ -201,6 +372,9 @@ local function Sample()
 
     -- Event rates (no-op if sniffer disabled)
     SnapshotEventRates(SAMPLE_INTERVAL)
+
+    -- Per-module rates (no-op if profiler disabled)
+    SnapshotModuleRates(SAMPLE_INTERVAL)
 
     PushHistory(memoryHistory, currentMem)
     PushHistory(cpuHistory, currentCPUPct)
@@ -272,6 +446,23 @@ local function UpdateDisplay()
         end
     end
 
+    -- Top modules (only when profiler is active)
+    if moduleProfileEnabled then
+        for i = 1, TOP_MODULES_COUNT do
+            local row = moduleRows[i]
+            local entry = topModules[i]
+            if entry then
+                row.name:SetText(entry.name)
+                row.ms:SetText(format("%.2f ms/s", entry.ms))
+                row.calls:SetText(format("%.0f/s", entry.calls))
+            else
+                row.name:SetText("")
+                row.ms:SetText("")
+                row.calls:SetText("")
+            end
+        end
+    end
+
     UpdateGraph()
 end
 
@@ -336,6 +527,7 @@ local function CreateMonitorFrame()
         isTracking = false
         f:SetScript("OnUpdate", nil)
         StopEventSniffer()
+        StopModuleProfiler()
     end)
 
     -- Accent separator
@@ -398,6 +590,56 @@ local function CreateMonitorFrame()
 
         eventRows[i] = { name = nameFs, rate = rateFs }
         ey = ey + rowSpacing
+    end
+
+    -- ─── Hot Modules section (hidden by default) ────────────────────────────
+    moduleSection = CreateFrame("Frame", nil, f)
+    moduleSection._baseY = y  -- remember original anchor Y for solo positioning
+    moduleSection:SetPoint("TOPLEFT", f, "TOPLEFT", 0, y)
+    moduleSection:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, y)
+    moduleSection:SetHeight(TOP_MODULES_COUNT * (-rowSpacing) + 22)
+    moduleSection:Hide()
+
+    local modSep = moduleSection:CreateTexture(nil, "ARTWORK")
+    modSep:SetPoint("TOPLEFT", moduleSection, "TOPLEFT", 8, 0)
+    modSep:SetPoint("TOPRIGHT", moduleSection, "TOPRIGHT", -8, 0)
+    modSep:SetHeight(1)
+    modSep:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.3)
+
+    local modHeader = moduleSection:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    modHeader:SetPoint("TOPLEFT", moduleSection, "TOPLEFT", 12, -4)
+    modHeader:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B)
+    modHeader:SetText("Hot Modules")
+
+    local msHeader = moduleSection:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    msHeader:SetPoint("TOPRIGHT", moduleSection, "TOPRIGHT", -62, -4)
+    msHeader:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B)
+    msHeader:SetText("ms/s")
+
+    local callsHeader = moduleSection:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    callsHeader:SetPoint("TOPRIGHT", moduleSection, "TOPRIGHT", -12, -4)
+    callsHeader:SetTextColor(ACCENT_R, ACCENT_G, ACCENT_B)
+    callsHeader:SetText("calls")
+
+    local my = -4 + rowSpacing
+    for i = 1, TOP_MODULES_COUNT do
+        local nameFs = moduleSection:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        nameFs:SetPoint("TOPLEFT", moduleSection, "TOPLEFT", 16, my)
+        nameFs:SetTextColor(0.8, 0.8, 0.8)
+        nameFs:SetText("")
+
+        local msFs = moduleSection:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        msFs:SetPoint("TOPRIGHT", moduleSection, "TOPRIGHT", -62, my)
+        msFs:SetTextColor(1, 1, 1)
+        msFs:SetText("")
+
+        local callsFs = moduleSection:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        callsFs:SetPoint("TOPRIGHT", moduleSection, "TOPRIGHT", -12, my)
+        callsFs:SetTextColor(0.6, 0.6, 0.6)
+        callsFs:SetText("")
+
+        moduleRows[i] = { name = nameFs, ms = msFs, calls = callsFs }
+        my = my + rowSpacing
     end
 
     -- ─── Memory Graph (anchored to bottom so it shifts with frame height) ───
@@ -471,6 +713,19 @@ local function CreateMonitorFrame()
         RefreshLayout()
     end)
 
+    modulesToggleBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+    modulesToggleBtn:SetSize(95, 20)
+    modulesToggleBtn:SetPoint("RIGHT", eventsToggleBtn, "LEFT", -6, 0)
+    modulesToggleBtn:SetText("Modules: OFF")
+    modulesToggleBtn:SetScript("OnClick", function()
+        if moduleProfileEnabled then
+            StopModuleProfiler()
+        else
+            StartModuleProfiler()
+        end
+        RefreshLayout()
+    end)
+
     monitorFrame = f
     return f
 end
@@ -526,6 +781,7 @@ end
 local function StopTracking()
     isTracking = false
     StopEventSniffer()
+    StopModuleProfiler()
     if monitorFrame then
         monitorFrame:SetScript("OnUpdate", nil)
         monitorFrame:Hide()
@@ -549,5 +805,6 @@ local bootstrap = CreateFrame("Frame")
 bootstrap:RegisterEvent("PLAYER_LOGIN")
 bootstrap:SetScript("OnEvent", function(self)
     DetectCPUAPI()
+    DrainPerfRegistry()
     self:UnregisterAllEvents()
 end)

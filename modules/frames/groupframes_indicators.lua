@@ -827,3 +827,6 @@ end
 function QUI_GFI:RefreshFrame(frame)
     UpdateFrameIndicators(frame)
 end
+
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "GF_Indicators", frame = eventFrame }

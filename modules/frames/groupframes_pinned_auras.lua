@@ -642,3 +642,6 @@ end
 function QUI_GFP:RefreshFrame(frame)
     UpdateFramePinnedAuras(frame)
 end
+
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "GF_PinnedAuras", frame = eventFrame }
