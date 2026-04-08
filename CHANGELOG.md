@@ -4,6 +4,33 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## v3.1.5-alpha.2 - 2026-04-08
+
+### Added
+- **Managed-container reparent** for `ObjectiveTrackerFrame`, top-center widgets, and below-minimap widgets. Blizzard's `UIParentRightManagedFrameContainer` is a secure layout chain; SetPointing its children from addon code was tainting the container and firing protected-function errors on `CompactArenaFrame` refreshes. QUI now reparents these frames into QUI-owned holders outside the managed container at login, and layout mode drives the holder instead of the Blizzard frame.
+- **Late EditMode action bar import migration.** On profiles that predate QUI's modern anchoring pipeline (`_schemaVersion < 19`) or fresh installs, action bar / micro menu / bag bar positions are imported from Blizzard's Edit Mode layout at `PLAYER_LOGIN`. Bars with an existing QUI position are protected.
+
+### Changed
+- **OverrideActionBar restored.** QUI no longer fully suppresses Blizzard's OverrideActionBar — vehicle / override / possess states now display natively. QUI bar1 hides during those states via a secure `quioverride` state driver on each bar container that respects a `qui-user-shown` attribute, so disabled bars and no-pet/no-stance bars don't get clobbered on override exit.
+- **CDM raid-combat perf.** Bar updates now gated behind a `_barsDirty` flag raised only by aura events — pure `SPELL_UPDATE_COOLDOWN` flurries no longer walk the bar pool on every coalesce tick. Safety ticker slowed from 250ms to 1s with a recent-update skip; the event path already coalesces at 50ms.
+- **Castbar channel-tick CLEU** early-bails when no tracked channels are active. CLEU fires thousands of times per second in raid and the old path decoded every event even when nothing was being observed.
+- **Late migrations pipeline** (`Migrations.RunLate`) runs at `PLAYER_LOGIN` once Blizzard runtime state (EditModeManagerFrame, live frame positions) is available. Separate from the normal `Migrations.Run` pipeline that runs at addon init.
+- **Party tracker scope gate.** All party tracker subscribers (CC icons, cooldown display, kick timer) now early-return unless QUI group frames are enabled, the player is not in a raid, and the unit is `party1..4`. Raid units and unrelated unit tokens (target/focus/etc.) were reaching spec/aura APIs that return secret booleans in combat and taint the addon.
+
+### Fixed
+- **Buff/debuff corner-anchor save path.** `SavePendingPosition` now stores `buffFrame`/`debuffFrame` entries in corner format directly, using the growth corner derived from buffBorders config. `ApplyFrameAnchor`'s CENTER-format branch became a one-shot self-heal for legacy entries. Toggling grow direction recomputes corner offsets in place so the growth-origin screen position is preserved.
+- **`ResetLegacyAnchorsForRebuild`** now preserves 3.0+ shaped `frameAnchoring` entries (entries with a `parent` field set) from being wiped when a profile is flagged as legacy 2.55.
+- **Chained-parent migration rescue.** `v27` and `v28` migrations undo `MigrateOffsets`'s screen-pinning of frames whose AceDB default has a chained parent (`brezCounter → combatTimer`, `combatTimer → bar3`, `petWarning → playerFrame`, `mplusTimer`). `MigrateOffsets` and `MigrateAnchoringV2` patched to skip these keys going forward.
+- **Shadow-defaults mechanism.** On every successful load, QUI deep-copies the currently-shipping defaults into `rawProfile._shippedDefaults`. Next load compares shadow vs current defaults and pins the previous value for any leaf that flipped without explicit user override — default flips are now opt-in for new installs only.
+- **`UnitIsUnit` taint** in LibOpenRaid cooldown tracker: wrapped in pcall to handle secret booleans from derived units (focustarget, nameplate*, etc.).
+- **`SpecCache.GetSpec`** replaces `UnitIsUnit(unit, "player")` with a literal string compare. `UnitIsUnit` returns a secret boolean in combat for restricted unit tokens and was tainting every caller that tested it.
+- **Group frame anchor root fallback size.** `UpdateAnchorRoot` gives the root a valid SetPoint+SetSize even when no headers are visible (solo party, empty raid), so frames anchored through it via `keepInPlace` can compute coordinates.
+- **Group frame pinned auras** inactive-state branch at the top of `UpdateIndicatorData` fully hides the indicator and returns early. Previously active/inactive handling was interleaved with partial clears, leaving stale swipes and stack counts visible.
+- **Layout mode unmount.** When unmounting a frame from its handle (Close, ToggleHandlePreview, SetElementEnabled), re-pin the frame to UIParent at the handle's current screen position. `SetAllPoints(handle)` left a dangling anchor to the about-to-be-hidden handle, making elements without an explicit `frameAnchoring` entry disappear on layout close (zoneAbility, etc.).
+- **Inspect frame** respects the `skinInspectFrame` master gate and bails entirely when disabled. Handles the ADDON_LOADED-delayed first-show race by running overlay setup manually when InspectFrame is already visible at hook install time.
+- **Quest reward tooltip MoneyFrame taint.** All tooltip skinning backdrop hook paths bail when a MoneyFrame child is attached to GameTooltip. `TaskPOI_OnEnter → AddQuestRewardsToTooltip → SetTooltipMoney → MoneyFrame_Update` is extremely sensitive to addon mutations mid-build and the width arithmetic was picking up taint.
+- **`/qui migration`** slash command for status and restore [N] operations, backed by a 5-slot circular backup buffer.
+
 ## v3.1.5-alpha.1 - 2026-04-07
 
 ### Changed
