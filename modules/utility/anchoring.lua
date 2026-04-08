@@ -2647,6 +2647,15 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         -- Raw point anchoring keeps the growth edge fixed.
         useSizeStable = false
     end
+    if key == "totemBar" then
+        -- Totem bar container resizes dynamically as totems drop/expire
+        -- (1x1 when empty → N icons wide when active). sizeStable caches
+        -- CENTER offsets from the width at apply time, so the frame visibly
+        -- jumps when the size changes later — especially in combat where
+        -- LayoutButtons defers the SetSize until PLAYER_REGEN_ENABLED.
+        -- Raw point anchoring keeps the growth edge fixed instead.
+        useSizeStable = false
+    end
 
     -- Boss frames: single setting applied to all with stacking Y offset
     if key == "bossFrames" and type(resolved) == "table" and not resolved.GetObjectType then
@@ -2711,7 +2720,7 @@ function QUI_Anchoring:ApplyFrameAnchor(key, settings)
         -- at 1x1 intentionally and grow as icons appear; converting to
         -- CENTER would break the growth-edge anchoring that LayoutIcons
         -- depends on.
-        local skipInflation = key == "buffFrame" or key == "debuffFrame" or key == "buffBar"
+        local skipInflation = key == "buffFrame" or key == "debuffFrame" or key == "buffBar" or key == "totemBar"
         local needsInflation = false
         if not skipInflation and parentFrame and parentFrame ~= UIParent and parentFrame.GetSize then
             local ok, pw, ph = pcall(parentFrame.GetSize, parentFrame)
@@ -2951,7 +2960,7 @@ _G.QUI_ReanchorFramePositionOnly = function(key)
     local offsetX = settings.offsetX or 0
     local offsetY = settings.offsetY or 0
     local useSizeStable = IsSizeStableAnchoringEnabled(settings)
-    if CASTBAR_ANCHOR_KEYS[key] or key == "buffBar" or key == "buffFrame" or key == "debuffFrame" then
+    if CASTBAR_ANCHOR_KEYS[key] or key == "buffBar" or key == "buffFrame" or key == "debuffFrame" or key == "totemBar" then
         useSizeStable = false
     end
 
@@ -2990,7 +2999,7 @@ _G.QUI_AnchorOverlayToParent = function(overlayFrame, key, overlayW, overlayH)
     local offsetX = settings.offsetX or 0
     local offsetY = settings.offsetY or 0
     local useSizeStable = IsSizeStableAnchoringEnabled(settings)
-    if CASTBAR_ANCHOR_KEYS[key] or key == "buffBar" or key == "buffFrame" or key == "debuffFrame" then
+    if CASTBAR_ANCHOR_KEYS[key] or key == "buffBar" or key == "buffFrame" or key == "debuffFrame" or key == "totemBar" then
         useSizeStable = false
     end
 

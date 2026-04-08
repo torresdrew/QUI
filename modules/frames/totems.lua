@@ -270,6 +270,12 @@ local function LayoutButtons()
     local spacing = db.spacing or 4
     local iconSize = db.iconSize or 36
 
+    -- Active buttons pack from the growth edge (offset = visibleCount-based),
+    -- inactive buttons are pre-positioned at their slot offset so they still
+    -- have a valid anchor if they activate mid-combat (secure SetPoint is
+    -- protected in combat). LayoutButtons is a no-op in combat, so the
+    -- in-combat activation shows at the pre-positioned slot until combat ends,
+    -- at which point this function re-runs and repacks to the growth edge.
     local visibleCount = 0
     for i = 1, MAX_SLOTS do
         local btn = TotemBar.buttons[i]
@@ -280,9 +286,6 @@ local function LayoutButtons()
             visibleCount = visibleCount + 1
             offset = (visibleCount - 1) * (iconSize + spacing)
         else
-            -- Pre-position inactive buttons at their slot offset so they have
-            -- anchor points if they become active during combat (SetPoint is
-            -- protected on secure frames).  They are alpha 0, so invisible.
             offset = (i - 1) * (iconSize + spacing)
         end
         if growDir == "RIGHT" then
@@ -296,15 +299,26 @@ local function LayoutButtons()
         end
     end
 
-    -- Resize container to fit
-    if visibleCount > 0 then
-        if growDir == "RIGHT" or growDir == "LEFT" then
-            container:SetSize(visibleCount * iconSize + (visibleCount - 1) * spacing, iconSize)
-        else
-            container:SetSize(iconSize, visibleCount * iconSize + (visibleCount - 1) * spacing)
-        end
+    -- Container is always sized to the full bar extent (all MAX_SLOTS) so
+    -- the anchor engine sees a stable rect. This is the critical piece: the
+    -- original code sized to visibleCount which caused the anchor to jump
+    -- every time a totem dropped or expired, because sizeStable/tiny-frame
+    -- inflation fallbacks recomputed offsets against the changing rect.
+    if growDir == "RIGHT" or growDir == "LEFT" then
+        container:SetSize(MAX_SLOTS * iconSize + (MAX_SLOTS - 1) * spacing, iconSize)
     else
-        container:SetSize(1, 1)
+        container:SetSize(iconSize, MAX_SLOTS * iconSize + (MAX_SLOTS - 1) * spacing)
+    end
+    -- Re-apply anchor so the engine picks up the new container size. With the
+    -- fixed MAX_SLOTS sizing above the rect rarely changes, but reapplying is
+    -- cheap and covers OOC growDirection / iconSize config changes.
+    local anchoring = ns.QUI_Anchoring
+    if anchoring and anchoring.ApplyFrameAnchor and QUICore
+       and QUICore.db and QUICore.db.profile and QUICore.db.profile.frameAnchoring then
+        local settings = QUICore.db.profile.frameAnchoring.totemBar
+        if settings then
+            anchoring:ApplyFrameAnchor("totemBar", settings)
+        end
     end
 end
 
