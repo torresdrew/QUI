@@ -1667,6 +1667,12 @@ local function IsVerifiedDefensiveAura(unit, auraData)
     return false
 end
 
+-- Exposed so the aura scanner (groupframes_auras.lua) can pre-classify
+-- defensives at scan time and stash matching instance IDs on the unit cache.
+-- Mirrors the dispel scan-time set pattern — moves the per-aura filter call
+-- out of the per-event UpdateDefensiveIndicator hot path.
+QUI_GF.IsVerifiedDefensiveAura = IsVerifiedDefensiveAura
+
 local function UpdateDefensiveIndicator(frame)
     if not frame or not frame.unit or not frame.defensiveIcons then return end
 
@@ -1687,9 +1693,13 @@ local function UpdateDefensiveIndicator(frame)
     local defSettings = healerSettings.defensiveIndicator
     local maxIcons = defSettings.maxIcons or 3
 
-    -- Collect defensive auras from the shared cache first (just populated by
-    -- the aura dispatcher). This avoids 2-3 redundant C_UnitAuras.GetUnitAuras
-    -- calls per unit per aura event (~60-100 saved C API calls per raid batch).
+    -- Scan-time set fast path: the aura scanner already classified every
+    -- helpful aura against BigDefensive + ExternalDefensive and stashed the
+    -- matching instance IDs in cache.defensives. Walk that set directly and
+    -- resolve each ID back to its aura data via an index map over cache.helpful.
+    -- This replaces the previous "iterate cache.helpful and filter-check each"
+    -- loop with a 2-pass walk whose cost is bounded by the number of actual
+    -- defensives present (typically 0-3), not the size of the helpful list.
     local foundAuras = _defensive.foundAuras
     local seen = _defensive.seen
     wipe(foundAuras)
@@ -1697,15 +1707,18 @@ local function UpdateDefensiveIndicator(frame)
 
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
-    if cache and cache.helpful then
-        for _, auraData in ipairs(cache.helpful) do
-            if IsVerifiedDefensiveAura(unit, auraData) then
-                local instID = auraData.auraInstanceID
-                if not instID or not seen[instID] then
-                    if instID then seen[instID] = true end
-                    foundAuras[#foundAuras + 1] = auraData
-                    if #foundAuras >= maxIcons then break end
-                end
+    if cache and cache.defensives and cache.helpful and next(cache.defensives) then
+        -- Build an instID → auraData lookup for the small set of defensives.
+        -- We only need to walk cache.helpful once, and only hit the IDs in the
+        -- defensive set.
+        local helpful = cache.helpful
+        for i = 1, #helpful do
+            local ad = helpful[i]
+            local instID = ad.auraInstanceID
+            if instID and cache.defensives[instID] and not seen[instID] then
+                seen[instID] = true
+                foundAuras[#foundAuras + 1] = ad
+                if #foundAuras >= maxIcons then break end
             end
         end
     end

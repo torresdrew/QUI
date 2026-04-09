@@ -56,12 +56,14 @@ local framePrevBuffCount = Helpers.CreateStateTable()
 --     helpful = {auraData...},
 --     harmful = {auraData...},
 --     playerDispellable = { [instID] = true },  -- scan-time classification
+--     defensives        = { [instID] = true },  -- scan-time classification
 -- }
 --
--- `playerDispellable` is classified at scan/add time so UpdateDispelOverlay
--- collapses from "iterate harmful and filter-check each" into "next(set)".
--- Classification is invariant per aura instance ID, so the set only needs
--- maintenance on add/remove — in-place updates leave it untouched.
+-- `playerDispellable` and `defensives` are classified at scan/add time so the
+-- dispel overlay and defensive indicator collapse from "iterate aura list and
+-- filter-check each" into "next(set)" / "for id in pairs(set)". Classification
+-- is invariant per aura instance ID, so the sets only need maintenance on
+-- add/remove — in-place updates leave them untouched.
 local unitAuraCache = {}
 
 local DISPEL_FILTER = "HARMFUL|RAID_PLAYER_DISPELLABLE"
@@ -77,15 +79,25 @@ local function ClassifyDispellable(unit, instID)
     return filteredOut == false
 end
 
+-- Classify a single helpful aura as a verified defensive (big or external).
+-- Delegates to the groupframes.lua classifier which owns the spell-ID fast
+-- path and the BigDefensive/ExternalDefensive filter cache.
+local function ClassifyDefensive(unit, auraData)
+    local GF = ns.QUI_GroupFrames
+    if not GF or not GF.IsVerifiedDefensiveAura then return false end
+    return GF.IsVerifiedDefensiveAura(unit, auraData) == true
+end
+
 local function ScanUnitAuras(unit)
     local cache = unitAuraCache[unit]
     if not cache then
-        cache = { helpful = {}, harmful = {}, playerDispellable = {} }
+        cache = { helpful = {}, harmful = {}, playerDispellable = {}, defensives = {} }
         unitAuraCache[unit] = cache
     else
         wipe(cache.helpful)
         wipe(cache.harmful)
         wipe(cache.playerDispellable)
+        wipe(cache.defensives)
     end
 
     if not C_UnitAuras or not C_UnitAuras.GetUnitAuras then return cache end
@@ -118,8 +130,18 @@ local function ScanUnitAuras(unit)
     local ok2, helpful = pcall(C_UnitAuras.GetUnitAuras, unit, "HELPFUL", 40)
     if ok2 and helpful then
         local dst = cache.helpful
+        local defensives = cache.defensives
         for i = 1, #helpful do
-            dst[i] = helpful[i]
+            local ad = helpful[i]
+            dst[i] = ad
+            -- Scan-time defensive classification: the IsVerifiedDefensiveAura
+            -- spell-ID fast path makes most checks a single table lookup, and
+            -- the rare filter-API path gets memoized in _defensive.cache for
+            -- subsequent adds.
+            local instID = ad.auraInstanceID
+            if instID and ClassifyDefensive(unit, ad) then
+                defensives[instID] = true
+            end
         end
     end
 
@@ -151,14 +173,16 @@ local function IncrementalUpdateAuras(unit, updateInfo)
     local changed = false
     local setChanged = false
     local dispellable = cache.playerDispellable
+    local defensives = cache.defensives
 
     -- 1. Remove auras (in-place compaction — zero allocation)
     if updateInfo.removedAuraInstanceIDs then
         wipe(_scratchRemoveSet)
         for _, instID in ipairs(updateInfo.removedAuraInstanceIDs) do
             _scratchRemoveSet[instID] = true
-            -- Evict from the dispellable set; cheap unconditional nil-write.
+            -- Evict from the scan-time classification sets; cheap nil-writes.
             if dispellable then dispellable[instID] = nil end
+            if defensives then defensives[instID] = nil end
         end
         -- Compact harmful in-place
         local src = cache.harmful
@@ -208,12 +232,17 @@ local function IncrementalUpdateAuras(unit, updateInfo)
                     list[#list + 1] = newData
                     changed = true
                     setChanged = true
-                    -- Reclassify dispellability if it's now harmful; if it
-                    -- moved out of harmful the stale entry will be evicted
-                    -- the next time the aura is removed.
-                    if dispellable and newData.isHarmful then
-                        if ClassifyDispellable(unit, instID) then
-                            dispellable[instID] = true
+                    -- Reclassify for the bucket it landed in. Stale entries
+                    -- in the opposite bucket get evicted on the next remove.
+                    if newData.isHarmful then
+                        if dispellable then
+                            if ClassifyDispellable(unit, instID) then
+                                dispellable[instID] = true
+                            end
+                        end
+                    else
+                        if defensives and ClassifyDefensive(unit, newData) then
+                            defensives[instID] = true
                         end
                     end
                 end
@@ -240,6 +269,13 @@ local function IncrementalUpdateAuras(unit, updateInfo)
                 end
             else
                 cache.helpful[#cache.helpful + 1] = ad
+                -- Classify once at add time for scan-time defensive set.
+                if defensives then
+                    local instID = ad.auraInstanceID
+                    if instID and ClassifyDefensive(unit, ad) then
+                        defensives[instID] = true
+                    end
+                end
             end
             changed = true
             setChanged = true
