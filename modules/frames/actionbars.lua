@@ -3344,10 +3344,17 @@ do
             -- Fast path: check primary cooldown first (1 API call).
             -- If not active, skip charges/LoC entirely (saves 2 API calls per
             -- button for the majority of buttons not on cooldown at any moment).
-            local cdInfo = C_ActionBar.GetActionCooldown(action) or DEFAULT_CD_INFO
-            if not cdInfo.isActive then
+            local cdInfo  = C_ActionBar.GetActionCooldown(action) or DEFAULT_CD_INFO
+            local chgInfo = C_ActionBar.GetActionCharges(action) or DEFAULT_CHG_INFO
+            local cdActive = cdInfo.isActive
+            local chActive = chgInfo.isActive
+            if not cdActive and not chActive then
                 -- Idle button: only clear the frames on the active→inactive
                 -- transition. Subsequent idle scans skip the Clear() churn.
+                -- Note: a charged spell with an unspent charge (e.g. 1/2)
+                -- is still "active" here because its recharge swipe must
+                -- drive the charge cooldown frame even though the primary
+                -- cooldown is idle.
                 if _buttonWasActive[button] then
                     _buttonWasActive[button] = nil
                     cooldown:Clear()
@@ -3358,13 +3365,13 @@ do
             end
             _buttonWasActive[button] = true
 
-            -- Button IS on cooldown — now check charges and LoC (2 more API calls)
-            local chgInfo = C_ActionBar.GetActionCharges(action) or DEFAULT_CHG_INFO
+            -- Button is on cooldown and/or recharging a charge — LoC is the
+            -- remaining query.
             local locInfo = C_ActionBar.GetActionLossOfControlCooldownInfo(action) or DEFAULT_LOC_INFO
 
             local showLoC    = locInfo.isActive
-            local showCharge = not locInfo.shouldReplaceNormalCooldown and chgInfo.isActive
-            local showNormal = not locInfo.shouldReplaceNormalCooldown
+            local showCharge = not locInfo.shouldReplaceNormalCooldown and chActive
+            local showNormal = not locInfo.shouldReplaceNormalCooldown and cdActive
 
             -- Normal cooldown (only fetch DurationObject when needed)
             if showNormal then
