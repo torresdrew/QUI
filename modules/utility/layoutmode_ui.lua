@@ -1122,6 +1122,15 @@ CreateToolbar = function(ui)
         if um then um:DiscardAndClose() end
     end, 0.5, 0.1, 0.1)
 
+    -- QUI Settings button
+    AddButton("QUI Settings", function()
+        local gui = _G.QUI and _G.QUI.GUI
+        if gui and gui.Toggle then
+            gui:Toggle()
+            if ui._collapseToolbar then ui._collapseToolbar() end
+        end
+    end, 0.15, 0.25, 0.4)
+
     -- Set panel height
     local panelHeight = math.abs(btnY) + PANEL_PAD
     panel:SetHeight(panelHeight)
@@ -1379,6 +1388,7 @@ CreateToolbar = function(ui)
     ui._toolbarPanel = panel
     ui._tabDocked = function() return docked end
     ui._expandToolbar = Expand
+    ui._collapseToolbar = Collapse
     ui._resetToolbarState = function() expanded = false end
     ui:ApplyConfigPanelScale(panel)
 end
