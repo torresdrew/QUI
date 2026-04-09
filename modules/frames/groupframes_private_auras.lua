@@ -672,7 +672,7 @@ local paRefreshTimes = setmetatable({}, { __mode = "k" })
 
 -- Subscribe to centralized aura dispatcher for private aura refresh
 if ns.AuraEvents then
-    ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
+    ns.AuraEvents:Subscribe("roster", function(unit, updateInfo)
         -- Drop non-group-frame units fast. The dispel overlay path in
         -- groupframes.lua calls RefreshPrivateDispelState on-demand for the
         -- units it actually renders, so an eager scan for target/focus/boss/

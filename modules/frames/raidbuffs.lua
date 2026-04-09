@@ -1328,12 +1328,12 @@ ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "RaidBuffs", frame = ev
 
 -- Subscribe to centralized aura dispatcher
 if ns.AuraEvents then
-    ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
+    -- Roster filter handles player/party/raid membership at the dispatcher
+    -- level — no string.match per event.
+    ns.AuraEvents:Subscribe("roster", function(unit, updateInfo)
         local settings = GetSettings()
         if not settings or not settings.enabled then return end
-        if unit == "player" or unit:match("^party") or unit:match("^raid") then
-            ThrottledUpdate()
-        end
+        ThrottledUpdate()
     end)
 end
 

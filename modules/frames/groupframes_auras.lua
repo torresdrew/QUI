@@ -1209,7 +1209,7 @@ end)
 -- one render frame into a single callback per unit. No need for a second
 -- coalescing layer (which added 33ms latency at 60fps for zero benefit).
 if ns.AuraEvents then
-    ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
+    ns.AuraEvents:Subscribe("roster", function(unit, updateInfo)
         local GF = ns.QUI_GroupFrames
         if not GF or not GF.initialized then return end
 
