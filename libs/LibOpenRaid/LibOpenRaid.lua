@@ -1195,7 +1195,8 @@ end
         end,
 
         ["UNIT_PET"] = function(unitId)
-            if (UnitIsUnit(unitId, "player")) then
+            local ok, isPlayer = pcall(UnitIsUnit, unitId, "player")
+            if (ok and isPlayer) then
                 openRaidLib.Schedules.NewUniqueTimer(1.1, function() openRaidLib.internalCallback.TriggerEvent("playerPetChange") end, "mainControl", "petStatus_Schedule")
                 --if the pet is alive, register to know when it dies
                 local petHealth = UnitHealth("pet")
