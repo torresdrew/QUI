@@ -379,7 +379,6 @@ local function StampOldDefaultsOnRawProfile(rawProfile)
     stamp({"actionBars", "style", "countOffsetY"}, 4)
     stamp({"actionBars", "style", "rangeIndicator"}, false)
     stamp({"actionBars", "style", "usabilityIndicator"}, false)
-    stamp({"actionBars", "style", "usabilityDesaturate"}, false)
 
     ---------------------------------------------------------------------------
     -- Action Bars (fade)

@@ -3735,6 +3735,29 @@ do
             label = "Minimap",
             group = "Display",
             order = 1,
+            isEnabled = function()
+                local settings = GetSettings()
+                return settings and settings.enabled ~= false
+            end,
+            setEnabled = function(val)
+                local settings = GetSettings()
+                if not settings then return end
+                -- Skip if already in the requested state (avoids spurious reload
+                -- prompts when layout mode re-enforces state on close)
+                if (settings.enabled ~= false) == (val ~= false) then return end
+                settings.enabled = val
+                InvalidateSettingsCache()
+                local GUI = _G.QUI and _G.QUI.GUI
+                if GUI and GUI.ShowConfirmation then
+                    GUI:ShowConfirmation({
+                        title = "Reload UI?",
+                        message = "Enabling or disabling the minimap module requires a UI reload to take effect.",
+                        acceptText = "Reload",
+                        cancelText = "Later",
+                        onAccept = function() _G.QUI:SafeReload() end,
+                    })
+                end
+            end,
             setGameplayHidden = function(hide)
                 if not Minimap then return end
                 if hide then

@@ -53,8 +53,7 @@ Global style settings applied to all action bar buttons. Individual bars can ove
 | `global.rangeIndicator` | boolean | `false` | Tint buttons red when target is out of range |
 | `global.rangeColor` | color | `{0.8, 0.1, 0.1, 1}` | Out-of-range tint color |
 | `global.usabilityIndicator` | boolean | `false` | Dim buttons for unusable abilities |
-| `global.usabilityDesaturate` | boolean | `false` | Grey out (desaturate) unusable ability icons |
-| `global.usabilityColor` | color | `{0.4, 0.4, 0.4, 1}` | Unusable ability dim color (when not desaturating) |
+| `global.usabilityColor` | color | `{0.4, 0.4, 0.4, 1}` | Unusable ability tint color |
 | `global.manaColor` | color | `{0.5, 0.5, 1.0, 1}` | Out-of-mana tint color |
 | `global.fastUsabilityUpdates` | boolean | `false` | 5x faster range/usability checks (50ms vs 250ms) |
 | `global.showTooltips` | boolean | `true` | Show tooltips when hovering action buttons |
