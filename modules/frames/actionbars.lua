@@ -4388,6 +4388,7 @@ local function OnOwnedEvent(self, event, ...)
         ActionBarsOwned.UpdateAllCooldowns()
         UpdatePetBarVisibility()
         UpdateStanceBarLayout()
+        ApplyAllFlyoutDirections()
         inInitSafeWindow = false
         ns._inInitSafeWindow = false
         -- Second pass after Blizzard frames settle; defer if safe period ended
@@ -4410,6 +4411,7 @@ local function OnOwnedEvent(self, event, ...)
             ActionBarsOwned.UpdateAllCooldowns()
             UpdatePetBarVisibility()
             UpdateStanceBarLayout()
+            ApplyAllFlyoutDirections()
         end)
         local db = GetDB()
         if db and db.bars and db.bars.bar1 then
@@ -4543,6 +4545,7 @@ local function OnOwnedEvent(self, event, ...)
                 end
             end
         end
+        ApplyAllFlyoutDirections()
         -- Refresh empty slot visibility (slots may have gained/lost actions)
         if not InCombatLockdown() then
             for _, barKey in ipairs(STANDARD_BAR_KEYS) do
@@ -4570,6 +4573,7 @@ local function OnOwnedEvent(self, event, ...)
                 end
             end
         end
+        ApplyAllFlyoutDirections()
 
     elseif event == "SPELL_UPDATE_USABLE" then
         -- Spell usability changed (e.g. resource gained/spent, GCD ended).
