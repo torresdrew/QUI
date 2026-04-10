@@ -50,17 +50,11 @@ This is useful when you want to adopt someone else's color scheme without losing
 
 ## Bundled Presets
 
-QUI ships with several built-in profile presets that you can import from the **Import & Export Strings** tab:
+QUI ships with one built-in import preset in the **Import & Export Strings** tab:
 
 | Preset | Description |
 |--------|-------------|
-| **Quazii Profile** | The standard QUI layout and settings. |
-| **Quazii Dark Mode** | A darker visual variant of the standard profile. |
-| **Quazii Details!** | Details damage meter profile complementing QUI's style. |
-| **Quazii Plater** | Nameplate settings for the Plater addon. |
-| **Quazii Platynator** | Nameplate settings for the Platynator addon. |
 | **QUI Edit Mode Base** | The base Blizzard Edit Mode layout string (for Blizzard Edit Mode import). |
-| **Quazii Edit Mode** | Quazii's original Blizzard Edit Mode layout string. |
 
 ## Reset All Movers
 

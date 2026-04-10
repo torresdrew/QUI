@@ -1042,104 +1042,11 @@ local function BuildImportExportTab(tabContent)
     ClearAnalysis("Paste a QUI profile string and click Analyze Import to choose what to import.", false)
 end
 
---------------------------------------------------------------------------------
--- SUB-TAB BUILDER: Quazii's Strings (preset import strings)
---------------------------------------------------------------------------------
-local function BuildQuaziiStringsTab(tabContent)
-    local PAD = 10
-    local BOX_HEIGHT = 70
-    local SECTION_HEIGHT = BOX_HEIGHT + 8 + 24 + 12  -- textbox + gap + button + pad
-    local CreateCollapsiblePage = Shared.CreateCollapsiblePage
-
-    GUI:SetSearchContext({tabIndex = 14, tabName = "Import & Export Strings", subTabIndex = 2, subTabName = "Quazii's Strings"})
-
-    -- Disclaimer banner
-    local warnBg = CreateFrame("Frame", nil, tabContent)
-    warnBg:SetPoint("TOPLEFT", PAD, -10)
-    warnBg:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-    ApplyImportSurface(warnBg, {0.5, 0.25, 0.0, 0.25}, {0.961, 0.620, 0.043, 0.6})
-
-    local warnTitle = warnBg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    warnTitle:SetFont(GUI.FONT_PATH or "Fonts\\FRIZQT__.TTF", 12, "")
-    warnTitle:SetTextColor(0.961, 0.620, 0.043)
-    warnTitle:SetText("Warning: These strings are outdated")
-    warnTitle:SetPoint("TOPLEFT", 10, -8)
-
-    local warnText = warnBg:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    warnText:SetFont(GUI.FONT_PATH or "Fonts\\FRIZQT__.TTF", 11, "")
-    warnText:SetTextColor(0.8, 0.75, 0.65)
-    warnText:SetText("These profile strings may no longer match the current version of QUI and could cause unexpected issues. The Edit Mode string in particular may conflict with QUI's skinning and anchoring. Use with caution \226\128\148 for a reliable starting point, use the Edit Mode string on the Welcome tab instead.")
-    warnText:SetPoint("TOPLEFT", warnTitle, "BOTTOMLEFT", 0, -4)
-    warnText:SetPoint("RIGHT", warnBg, "RIGHT", -10, 0)
-    warnText:SetJustifyH("LEFT")
-    warnText:SetWordWrap(true)
-
-    warnBg:SetScript("OnShow", function(self)
-        C_Timer.After(0, function()
-            local textHeight = warnText:GetStringHeight() or 14
-            self:SetHeight(textHeight + 32)
-        end)
-    end)
-    warnBg:SetHeight(60)
-
-    -- Store all text boxes for clearing selections
-    local allTextBoxes = {}
-
-    local function selectOnly(targetEditBox)
-        for _, editBox in ipairs(allTextBoxes) do
-            if editBox ~= targetEditBox then
-                editBox:ClearFocus()
-                editBox:HighlightText(0, 0)
-            end
-        end
-        targetEditBox:SetFocus()
-        targetEditBox:HighlightText()
-    end
-
-    local sections, relayout, CreateCollapsible = CreateCollapsiblePage(tabContent, PAD, -78)
-
-    -- Helper to build a string section body
-    local function BuildStringSection(body, importKey)
-        local str = ""
-        if _G.QUI and _G.QUI.imports and _G.QUI.imports[importKey] then
-            str = _G.QUI.imports[importKey].data or ""
-        end
-
-        local container = CreateScrollableTextBox(body, BOX_HEIGHT, str)
-        container:SetPoint("TOPLEFT", 0, -4)
-        container:SetPoint("RIGHT", body, "RIGHT", 0, 0)
-        table.insert(allTextBoxes, container.editBox)
-
-        local btn = GUI:CreateButton(body, "SELECT ALL", 120, 24, function()
-            selectOnly(container.editBox)
-        end)
-        btn:SetPoint("TOPLEFT", 0, -(BOX_HEIGHT + 12))
-
-        local tip = GUI:CreateLabel(body, "then press Ctrl+C to copy", 11, C.textMuted)
-        tip:SetPoint("LEFT", btn, "RIGHT", 10, 0)
-    end
-
-    CreateCollapsible("Details! String", SECTION_HEIGHT, function(body) BuildStringSection(body, "QuaziiDetails") end)
-    CreateCollapsible("Plater String", SECTION_HEIGHT, function(body) BuildStringSection(body, "Plater") end)
-    CreateCollapsible("Platynator String", SECTION_HEIGHT, function(body) BuildStringSection(body, "Platynator") end)
-    CreateCollapsible("QUI Import/Export String - Default Profile", SECTION_HEIGHT, function(body) BuildStringSection(body, "QUIProfile") end)
-    CreateCollapsible("QUI Import/Export String - Dark Mode", SECTION_HEIGHT, function(body) BuildStringSection(body, "QUIProfileDarkMode") end)
-    CreateCollapsible("Quazii Edit Mode String", SECTION_HEIGHT, function(body) BuildStringSection(body, "EditMode") end)
-
-    relayout()
-end
-
---------------------------------------------------------------------------------
--- PAGE: QUI Import/Export (with sub-tabs)
+-- PAGE: QUI Import/Export
 --------------------------------------------------------------------------------
 local function CreateImportExportPage(parent)
-    local scroll, content = CreateScrollableContent(parent)
-
-    GUI:CreateSubTabs(content, {
-        {name = "Import/Export", builder = BuildImportExportTab},
-        {name = "Quazii's Strings", builder = BuildQuaziiStringsTab},
-    })
-
+    local _, content = CreateScrollableContent(parent)
+    BuildImportExportTab(content)
     content:SetHeight(550)
 end
 
@@ -1149,5 +1056,4 @@ end
 ns.QUI_ImportOptions = {
     CreateImportExportPage = CreateImportExportPage,
     BuildImportExportTab = BuildImportExportTab,
-    BuildQuaziiStringsTab = BuildQuaziiStringsTab,
 }

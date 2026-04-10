@@ -136,7 +136,7 @@ local function CreateWelcomePage(parent)
     y = y - editModeHeader.gap
 
     local editModeDesc = CreateWrappedLabel(content,
-        "Copy this string and import it in Blizzard Edit Mode (Escape > Edit Mode > Layout dropdown > Import) to set up these default frame positions. Use this as a starting point for your layout if you encounter any unusual errors with your old layout or even the Quazii Edit Mode string.",
+        "Copy this string and import it in Blizzard Edit Mode (Escape > Edit Mode > Layout dropdown > Import) to set up these default frame positions. Use this as a starting point for your layout if you encounter unusual errors with an older layout.",
         11, C.textMuted, contentWidth - PADDING * 2)
     editModeDesc:SetPoint("TOPLEFT", PADDING, y)
     y = y - (editModeDesc:GetStringHeight() or 14) - 10

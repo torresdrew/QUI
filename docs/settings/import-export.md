@@ -23,19 +23,13 @@ QUI profiles can be shared between players as compressed strings. The system enf
 
 ## Bundled Presets
 
-QUI ships with several ready-made import strings that configure QUI and compatible addons:
+QUI currently ships one built-in import string:
 
 | Preset | Description |
 |--------|-------------|
 | QUI Edit Mode Base | Blizzard Edit Mode layout for optimal QUI frame positioning |
-| Quazii Edit Mode | Quazii's original Blizzard Edit Mode layout |
-| Quazii Profile | Quazii's recommended QUI settings (the classic look) |
-| Quazii Dark Mode | Dark variant of Quazii's profile |
-| Quazii Details! | Details! damage meter profile matching QUI aesthetics |
-| Quazii Plater | Plater nameplate profile for QUI |
-| Quazii Platynator | Platynator nameplate profile for QUI |
 
-The **QUI Edit Mode Base** preset configures Blizzard's built-in Edit Mode so that default frames are positioned correctly for QUI's layout. The **Quazii Profile** and **Quazii Dark Mode** presets configure QUI itself. The **Details!**, **Plater**, and **Platynator** presets are for third-party addons and require those addons to be installed.
+The **QUI Edit Mode Base** preset configures Blizzard's built-in Edit Mode so that default frames are positioned correctly for QUI's layout.
 
 ## How to Import
 
