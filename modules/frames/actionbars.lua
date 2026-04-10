@@ -5921,7 +5921,7 @@ local function UpdateButtonUsability(button, settings)
         return
     end
 
-    if not action then
+    if not action or not SafeHasAction(action) then
         if state.tinted then
             if state.tintOverlay then state.tintOverlay:Hide() end
             state.tinted = nil
@@ -6071,6 +6071,8 @@ local function UpdateUsabilityPolling()
         checkFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
         checkFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
         checkFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        checkFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+        checkFrame:RegisterEvent("ZONE_CHANGED_INDOORS")
 
         checkFrame:SetScript("OnEvent", function(self, event, ...)
             if event == "PLAYER_REGEN_DISABLED" then
