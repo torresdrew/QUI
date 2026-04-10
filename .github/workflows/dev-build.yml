@@ -43,6 +43,7 @@ jobs:
           zip -r ../${{ steps.info.outputs.filename }} QUI
 
       - name: Post to Discord
+        if: github.ref == 'refs/heads/main'
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_DEV_WEBHOOK_URL }}
           BRANCH: ${{ steps.info.outputs.branch }}
