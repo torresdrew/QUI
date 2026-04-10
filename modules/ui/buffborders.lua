@@ -314,6 +314,7 @@ end
 
 local function ReleaseIcon(icon)
     if not icon then return end
+    if icon._cancelBtn then icon._cancelBtn:Hide() end
     icon:Hide()
     icon:ClearAllPoints()
     icon._auraInstanceID = nil
@@ -1163,15 +1164,31 @@ local function UpdateWeaponEnchantIcons()
                     container:SetAlpha(s and s.fadeOutAlpha or 0)
                 end
             end)
-            -- Right-click to cancel weapon temp enchant (out of combat only).
-            -- CancelItemTempEnchantment uses 1 = mainhand, 2 = offhand.
-            icon:SetScript("OnMouseUp", function(self, button)
-                if button ~= "RightButton" then return end
-                if InCombatLockdown() then return end
-                if not CancelItemTempEnchantment then return end
-                local enchantIndex = (self._enchantSlot == 17) and 2 or 1
-                CancelItemTempEnchantment(enchantIndex)
-            end)
+            -- CancelItemTempEnchantment is protected, so we overlay a secure
+            -- button whose cancelaura action calls it via Blizzard's own
+            -- SECURE_ACTIONS handler (target-slot → CANCELABLE_ITEMS lookup).
+            if not icon._cancelBtn then
+                local btn = CreateFrame("Button", nil, icon, "SecureActionButtonTemplate")
+                btn:SetAllPoints(icon)
+                btn:RegisterForClicks("RightButtonUp")
+                btn:SetAttribute("type2", "cancelaura")
+                -- Pass tooltip events through to the underlying icon
+                btn:SetScript("OnEnter", function(self)
+                    local parent = self:GetParent()
+                    if parent and parent:GetScript("OnEnter") then
+                        parent:GetScript("OnEnter")(parent)
+                    end
+                end)
+                btn:SetScript("OnLeave", function(self)
+                    local parent = self:GetParent()
+                    if parent and parent:GetScript("OnLeave") then
+                        parent:GetScript("OnLeave")(parent)
+                    end
+                end)
+                icon._cancelBtn = btn
+            end
+            icon._cancelBtn:SetAttribute("target-slot2", slot)
+            icon._cancelBtn:Show()
         else
             ReleaseEnchantIcon(slot)
         end
