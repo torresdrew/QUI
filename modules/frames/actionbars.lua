@@ -4315,26 +4315,9 @@ local function OnOwnedEvent(self, event, ...)
             ActionBarsOwned.pendingFlyoutDirection = false
             if ApplyAllFlyoutDirections then ApplyAllFlyoutDirections() end
         end
-        -- Post-combat full refresh.  SafeUpdate kept visuals live during
-        -- combat.  Now call the mixin's full ActionButton_Update (safe out
-        -- of combat — no secret values) so the hooksecurefunc on
-        -- ActionButton_Update fires and re-applies QUI skinning/text.
-        -- Shadows stay in place — the global ActionButton_Update call
-        -- triggers the hook regardless, and internal self:Method() calls
-        -- safely hit our shadows.
-        for _, barKey in ipairs(STANDARD_BAR_KEYS) do
-            local btns = ActionBarsOwned.nativeButtons[barKey]
-            if btns then
-                for _, btn in ipairs(btns) do
-                    if ActionButton_Update then
-                        pcall(ActionButton_Update, btn)
-                    end
-                    ActionBarsOwned.UpdateCooldown(btn)
-                    ActionBarsOwned.UpdateOverlayGlow(btn)
-                end
-            end
-        end
-        UpdateAllAssistedHighlights()
+        -- SafeUpdate keeps all visuals live during combat (icon, cooldown,
+        -- glow, usability, count, checked state).  Skinning state does not
+        -- drift in combat, so no post-combat re-skin pass is needed.
 
     elseif event == "PET_BAR_UPDATE" or event == "PET_BAR_UPDATE_COOLDOWN" then
         -- PetActionBarMixin:Update on the suppressed bar won't fire, so QUI

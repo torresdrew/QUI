@@ -2301,7 +2301,6 @@ function ownedEngine:Initialize()
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     eventFrame:RegisterEvent("CHALLENGE_MODE_START")
     eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
     eventFrame:RegisterEvent("CINEMATIC_STOP")
@@ -2309,26 +2308,7 @@ function ownedEngine:Initialize()
     eventFrame:RegisterEvent("ADDON_LOADED")
 
     eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
-        if event == "PLAYER_REGEN_ENABLED" then
-            -- Combat end: restore dormant spells that were incorrectly
-            -- shelved during zone transitions (e.g. SPELLS_CHANGED fired
-            -- while APIs were stale, then combat started before the next
-            -- dormant check could run).
-            -- restoreOnly=true: only run Phase 2 (restore returning spells).
-            -- Phase 1 (mark dormant) is skipped because this is a recovery
-            -- path — we don't want to re-dormant spells that the stale-API
-            -- window already incorrectly shelved.
-            C_Timer.After(0.1, function()
-                if not InCombatLockdown() then
-                    if ns.CDMSpellData then
-                        ns.CDMSpellData:CheckAllDormantSpells(true)
-                        ns.CDMSpellData:ReconcileAllContainers()
-                    end
-                    RefreshAll()
-                end
-            end)
-            return
-        elseif event == "ADDON_LOADED" and arg1 == "Blizzard_CooldownManager" then
+        if event == "ADDON_LOADED" and arg1 == "Blizzard_CooldownManager" then
             -- Viewer just loaded -- grab it as buff container
             InitBuffContainer()
             if initialized then
@@ -2387,16 +2367,7 @@ function ownedEngine:Initialize()
                 -- Profile is now correct — SPELLS_CHANGED can safely run
                 -- dormant/reconcile on the new spec's data.
                 buffFingerprint = nil
-                if InCombatLockdown() then
-                    local regenFrame = CreateFrame("Frame")
-                    regenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-                    regenFrame:SetScript("OnEvent", function(self2)
-                        self2:UnregisterAllEvents()
-                        RefreshAll()
-                    end)
-                else
-                    RefreshAll()
-                end
+                RefreshAll()
             end
         elseif event == "CHALLENGE_MODE_START" then
             -- Restore dormant spells before refreshing — SPELLS_CHANGED
