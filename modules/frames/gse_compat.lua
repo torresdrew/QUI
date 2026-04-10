@@ -262,6 +262,106 @@ local function InstallGSEHooks()
 end
 
 ---------------------------------------------------------------------------
+-- Right-click sequence picker popup
+--
+-- GSE hooks OnClick on known addon buttons to show a context menu for
+-- assigning / changing / clearing sequence overrides.  QUI buttons are
+-- not in that list, so we install the equivalent handler ourselves.
+---------------------------------------------------------------------------
+
+local rightClickHooked = {}  -- [buttonName] = true
+
+local function HookRightClickOnce(btn, buttonName)
+    if rightClickHooked[buttonName] then return end
+    rightClickHooked[buttonName] = true
+    btn:HookScript("OnClick", function(self, mousebutton, down)
+        if not _G.GSE then return end
+        if not _G.GSEOptions or not _G.GSEOptions.actionBarOverridePopup then return end
+        if InCombatLockdown() then return end
+        if not down then return end
+        if mousebutton ~= "RightButton" then return end
+
+        local existingSequence = self:GetAttribute("gse-button")
+
+        if not existingSequence then
+            local action = self.action or self:GetAttribute("action")
+            if not action or action == 0 then return end
+            if HasAction(action) then return end
+        end
+
+        local classIconText = ""
+        local classInfo = C_CreatureInfo and C_CreatureInfo.GetClassInfo(GSE.GetCurrentClassID())
+        if classInfo and classInfo.classFile then
+            classIconText = "|A:classicon-" .. classInfo.classFile:lower() .. ":16:16|a "
+        end
+
+        local names = {}
+        local function addSequences(classID)
+            for k, seq in pairs(GSE.Library[classID] or {}) do
+                local specID = seq and seq.MetaData and seq.MetaData.SpecID
+                local disabled = seq and seq.MetaData and seq.MetaData.Disabled
+                names[#names + 1] = { name = k, specID = specID, disabled = disabled }
+            end
+        end
+        addSequences(GSE.GetCurrentClassID())
+        addSequences(0)
+
+        table.sort(names, function(a, b) return a.name < b.name end)
+
+        local L = GSE.L or {}
+        local bName = self:GetName()
+        MenuUtil.CreateContextMenu(self, function(ownerRegion, rootDescription)
+            if existingSequence then
+                rootDescription:CreateTitle((L["GSE"] or "GSE") .. ": " .. existingSequence)
+                rootDescription:CreateButton(L["Clear Override"] or "Clear Override", function()
+                    GSE.RemoveActionBarOverride(bName)
+                end)
+                if #names > 0 then
+                    rootDescription:CreateDivider()
+                    rootDescription:CreateTitle(L["Change Sequence"] or "Change Sequence")
+                end
+            else
+                rootDescription:CreateTitle(L["Assign GSE Sequence"] or "Assign GSE Sequence")
+            end
+            for _, entry in ipairs(names) do
+                local iconText = classIconText
+                local specID = entry.specID
+                if specID and specID >= 15 and GetSpecializationInfoByID then
+                    local _, _, _, specIconID = GetSpecializationInfoByID(specID)
+                    if specIconID then
+                        iconText = "|T" .. specIconID .. ":16:16|t "
+                    end
+                end
+                local label = iconText .. entry.name
+                if entry.disabled then
+                    local element = rootDescription:CreateButton("|cFF808080" .. label .. "|r", function() end)
+                    element:SetTooltip(function(tooltip)
+                        GameTooltip_SetTitle(tooltip, L["Sequence Disabled"] or "Sequence Disabled")
+                    end)
+                else
+                    rootDescription:CreateButton(label, function()
+                        GSE.CreateActionBarOverride(bName, entry.name)
+                    end)
+                end
+            end
+        end)
+    end)
+end
+
+local function HookRightClickAllQUIButtons()
+    if not _G.GSE then return end
+    for bar = 1, 8 do
+        for slot = 1, 12 do
+            local name = "QUI_Bar" .. bar .. "Button" .. slot
+            local btn = _G[name]
+            if btn then
+                HookRightClickOnce(btn, name)
+            end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- Event wiring
 ---------------------------------------------------------------------------
 
@@ -278,10 +378,14 @@ eventFrame:SetScript("OnEvent", function(self, event)
         C_Timer.After(0.1, function()
             InstallGSEHooks()
             ReapplyAll()
+            HookRightClickAllQUIButtons()
         end)
     elseif event == "PLAYER_ENTERING_WORLD" then
         InstallGSEHooks()
-        C_Timer.After(0.1, ReapplyAll)
+        C_Timer.After(0.1, function()
+            ReapplyAll()
+            HookRightClickAllQUIButtons()
+        end)
     elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
         C_Timer.After(0.1, ReapplyAll)
     elseif event == "PLAYER_REGEN_ENABLED" then
