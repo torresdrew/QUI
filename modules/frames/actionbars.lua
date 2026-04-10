@@ -275,16 +275,10 @@ function ActionBarsOwned.SafeUpdate(self)
             self:SetChecked(false)
         end
 
-        -- Usability (basic vertex color — QUI's own tint overlay handles
-        -- detailed range/mana coloring via its polling timer)
-        local isUsable, notEnoughMana = IsUsableAction(action)
-        if isUsable then
-            self.icon:SetVertexColor(1, 1, 1)
-        elseif notEnoughMana then
-            self.icon:SetVertexColor(0.5, 0.5, 1)
-        else
-            self.icon:SetVertexColor(0.4, 0.4, 0.4)
-        end
+        -- Usability coloring is handled entirely by the QUI tint overlay
+        -- system (UpdateButtonUsability).  Keep icon vertex color neutral
+        -- so the overlay is the sole source of range/mana/unusable tinting.
+        self.icon:SetVertexColor(1, 1, 1)
 
         -- Equipped border
         if IsEquippedAction(action) then
@@ -5983,12 +5977,8 @@ local function UpdateButtonUsability(button, settings)
     elseif newTint == "unusable" then
         local overlay = GetTintOverlay(button)
         if overlay then
-            if settings.usabilityDesaturate then
-                overlay:SetColorTexture(0.4, 0.4, 0.4, 1)
-            else
-                local c = settings.usabilityColor
-                overlay:SetColorTexture(c and c[1] or 0.4, c and c[2] or 0.4, c and c[3] or 0.4, c and c[4] or 1)
-            end
+            local c = settings.usabilityColor
+            overlay:SetColorTexture(c and c[1] or 0.4, c and c[2] or 0.4, c and c[3] or 0.4, c and c[4] or 1)
             overlay:Show()
         end
         state.tinted = "unusable"

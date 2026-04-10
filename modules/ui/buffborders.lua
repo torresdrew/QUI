@@ -851,6 +851,108 @@ local function ClearPrivateAuraAnchors()
     end
 end
 
+local function EnsureSlotBorders(slot)
+    if slot.BorderTop then return end
+    slot.BorderTop = slot:CreateTexture(nil, "OVERLAY", nil, 7)
+    slot.BorderBottom = slot:CreateTexture(nil, "OVERLAY", nil, 7)
+    slot.BorderLeft = slot:CreateTexture(nil, "OVERLAY", nil, 7)
+    slot.BorderRight = slot:CreateTexture(nil, "OVERLAY", nil, 7)
+
+    slot.BorderTop:SetPoint("TOPLEFT", slot, "TOPLEFT", 0, 0)
+    slot.BorderTop:SetPoint("TOPRIGHT", slot, "TOPRIGHT", 0, 0)
+    slot.BorderBottom:SetPoint("BOTTOMLEFT", slot, "BOTTOMLEFT", 0, 0)
+    slot.BorderBottom:SetPoint("BOTTOMRIGHT", slot, "BOTTOMRIGHT", 0, 0)
+    slot.BorderLeft:SetPoint("TOPLEFT", slot, "TOPLEFT", 0, 0)
+    slot.BorderLeft:SetPoint("BOTTOMLEFT", slot, "BOTTOMLEFT", 0, 0)
+    slot.BorderRight:SetPoint("TOPRIGHT", slot, "TOPRIGHT", 0, 0)
+    slot.BorderRight:SetPoint("BOTTOMRIGHT", slot, "BOTTOMRIGHT", 0, 0)
+end
+
+local function SlotHasVisibleAura(slot)
+    for i = 1, slot:GetNumChildren() do
+        local child = select(i, slot:GetChildren())
+        if child and child:IsShown() then return true end
+    end
+    return false
+end
+
+local function StyleSlotBorders(slot, settings)
+    if not slot.BorderTop then return end
+    local borderSize = settings and settings.borderSize or 2
+    local r, g, b = BORDER_COLOR_DEBUFF_DEFAULT[1], BORDER_COLOR_DEBUFF_DEFAULT[2], BORDER_COLOR_DEBUFF_DEFAULT[3]
+
+    slot.BorderTop:SetColorTexture(r, g, b, 1)
+    slot.BorderBottom:SetColorTexture(r, g, b, 1)
+    slot.BorderLeft:SetColorTexture(r, g, b, 1)
+    slot.BorderRight:SetColorTexture(r, g, b, 1)
+
+    slot.BorderTop:SetHeight(borderSize)
+    slot.BorderBottom:SetHeight(borderSize)
+    slot.BorderLeft:SetWidth(borderSize)
+    slot.BorderRight:SetWidth(borderSize)
+
+    -- Only show borders when the client has rendered a visible aura child
+    local visible = SlotHasVisibleAura(slot)
+    slot.BorderTop:SetShown(visible)
+    slot.BorderBottom:SetShown(visible)
+    slot.BorderLeft:SetShown(visible)
+    slot.BorderRight:SetShown(visible)
+end
+
+local function StyleSlotTextRecursive(node, settings, depth)
+    if not node or depth > 5 then return end
+
+    local font = GetGeneralFont()
+    local outline = GetGeneralFontOutline()
+    local fontSize = settings.fontSize or 12
+
+    -- Style FontString regions on this node
+    for i = 1, (node.GetNumRegions and node:GetNumRegions() or 0) do
+        local region = select(i, node:GetRegions())
+        if region and region.IsObjectType and region:IsObjectType("FontString") and region.SetFont then
+            pcall(region.SetFont, region, font, fontSize, outline)
+            -- Reposition duration/stack text using debuff settings
+            local text = region:GetText()
+            if text then
+                local anchor = settings.debuffDurationTextAnchor or "CENTER"
+                local offX = settings.debuffDurationTextOffsetX or 0
+                local offY = settings.debuffDurationTextOffsetY or 0
+                pcall(region.ClearAllPoints, region)
+                pcall(region.SetPoint, region, anchor, region:GetParent(), anchor, offX, offY)
+            end
+        end
+    end
+
+    -- Style Cooldown countdown FontStrings
+    if node.IsObjectType and node:IsObjectType("Cooldown") and node.GetCountdownFontString then
+        local cdText = node:GetCountdownFontString()
+        if cdText and cdText.SetFont then
+            pcall(cdText.SetFont, cdText, font, fontSize, outline)
+            local anchor = settings.debuffDurationTextAnchor or "CENTER"
+            local offX = settings.debuffDurationTextOffsetX or 0
+            local offY = settings.debuffDurationTextOffsetY or 0
+            pcall(cdText.ClearAllPoints, cdText)
+            pcall(cdText.SetPoint, cdText, anchor, node, anchor, offX, offY)
+        end
+    end
+
+    -- Recurse into children
+    for i = 1, (node.GetNumChildren and node:GetNumChildren() or 0) do
+        local child = select(i, node:GetChildren())
+        if child then
+            StyleSlotTextRecursive(child, settings, depth + 1)
+        end
+    end
+end
+
+local function DeferStyleSlotText(slot, settings)
+    C_Timer.After(0, function()
+        if not slot:IsShown() then return end
+        StyleSlotBorders(slot, settings)
+        StyleSlotTextRecursive(slot, settings, 1)
+    end)
+end
+
 local function SetupPrivateAuras()
     if not AddPrivateAuraAnchor or not debuffContainer then return end
     if InCombatLockdown() then
@@ -866,6 +968,8 @@ local function SetupPrivateAuras()
         if s > 0 then iconSize = s end
     end
 
+    local borderSize = settings and settings.borderSize or 2
+
     for i = 1, PA_MAX_SLOTS do
         local slot = paSlots[i]
         if not slot then
@@ -878,6 +982,11 @@ local function SetupPrivateAuras()
         slot:SetFrameLevel(debuffContainer:GetFrameLevel() + 5)
         slot:Show()
 
+        -- Add and style border textures to match normal debuff icons
+        EnsureSlotBorders(slot)
+        StyleSlotBorders(slot, settings)
+
+        -- Inset the icon by borderSize so the border is visible around it
         local ok, anchorID = pcall(AddPrivateAuraAnchor, {
             unitToken = "player",
             auraIndex = i,
@@ -885,9 +994,9 @@ local function SetupPrivateAuras()
             showCountdownFrame = true,
             showCountdownNumbers = true,
             iconInfo = {
-                iconWidth = iconSize,
-                iconHeight = iconSize,
-                borderScale = 1,
+                iconWidth = iconSize - borderSize * 2,
+                iconHeight = iconSize - borderSize * 2,
+                borderScale = -1000,
                 iconAnchor = {
                     point = "CENTER",
                     relativeTo = slot,
@@ -898,6 +1007,11 @@ local function SetupPrivateAuras()
             },
         })
         paAnchorIDs[i] = ok and anchorID or nil
+    end
+
+    -- Defer text styling — client creates children asynchronously
+    for _, slot in ipairs(paSlots) do
+        DeferStyleSlotText(slot, settings)
     end
 end
 
@@ -942,6 +1056,7 @@ local function LayoutPrivateAuraSlots()
         slot:SetSize(iconSize, iconSize)
         slot:ClearAllPoints()
         slot:SetPoint(anchor, debuffContainer, anchor, xOff, yOff)
+        StyleSlotBorders(slot, settings)
         slot:Show()
     end
 end
