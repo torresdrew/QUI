@@ -207,8 +207,6 @@ local function CreateAuraIcon(parent)
     icon._auraSlot = nil
     icon._spellId = nil
     icon._filter = nil
-    icon._rawDuration = nil
-    icon._rawExpirationTime = nil
     icon._baseSwipeReverse = baseSwipeReverse
     icon._isQUIAuraIcon = true
 
@@ -322,8 +320,6 @@ local function ReleaseIcon(icon)
     icon._auraSlot = nil
     icon._spellId = nil
     icon._filter = nil
-    icon._rawDuration = nil
-    icon._rawExpirationTime = nil
     if icon.Icon then
         icon.Icon:SetTexture(nil)
         icon.Icon:SetDesaturated(false)
@@ -713,25 +709,9 @@ local function UpdateAuraIcons(container, activeIcons, sortedList, filter, isBuf
         icon._spellId = auraData.spellId
         icon._filter = filter
 
-        -- Texture: prefer spell-specific lookup — auraData.icon can return
-        -- the granting spell's icon instead of the buff's own icon for some auras
-        local texID
-        if auraData.spellId and C_Spell and C_Spell.GetSpellTexture then
-            local ok, tex = pcall(C_Spell.GetSpellTexture, auraData.spellId)
-            if ok and tex then texID = tex end
+        if icon.Icon and C_Spell and C_Spell.GetSpellTexture then
+            pcall(icon.Icon.SetTexture, icon.Icon, C_Spell.GetSpellTexture(auraData.spellId))
         end
-        texID = texID or auraData.icon
-        if texID and icon.Icon then
-            icon.Icon:SetTexture(texID)
-        end
-
-        -- Cooldown swipe (secret-safe via pcall to C-side)
-        local duration = auraData.duration
-        local expirationTime = auraData.expirationTime
-
-        -- Store raw values (may be secret) — C-side functions handle them
-        icon._rawDuration = duration
-        icon._rawExpirationTime = expirationTime
 
         -- Optional inversion so users can choose whether darkening ramps up
         -- toward expiration or ramps down from full duration.
@@ -743,23 +723,11 @@ local function UpdateAuraIcons(container, activeIcons, sortedList, filter, isBuf
             pcall(icon.Cooldown.SetReverse, icon.Cooldown, targetReverse)
         end
 
-        -- Cooldown swipe: prefer numeric path (correct remaining-time display),
-        -- fall back to DurationObject only when values are secret (combat).
-        if expirationTime and duration then
-            if not IsSecretValue(expirationTime) and not IsSecretValue(duration) then
-                -- Non-secret: SetCooldown with computed start time — always
-                -- shows correct remaining time for long-duration auras.
-                local startTime = expirationTime - duration
-                pcall(icon.Cooldown.SetCooldown, icon.Cooldown, startTime, duration)
-            elseif icon._auraInstanceID and C_UnitAuras and C_UnitAuras.GetAuraDuration
-                   and icon.Cooldown.SetCooldownFromDurationObject then
-                -- Combat (secret values): DurationObject is C-side safe
-                local ok, durObj = pcall(C_UnitAuras.GetAuraDuration, "player", icon._auraInstanceID)
-                if ok and durObj then
-                    pcall(icon.Cooldown.SetCooldownFromDurationObject, icon.Cooldown, durObj, true)
-                else
-                    icon.Cooldown:Clear()
-                end
+        if icon.Cooldown and icon.Cooldown.SetCooldownFromDurationObject
+           and C_UnitAuras and C_UnitAuras.GetAuraDuration then
+            local ok, durObj = pcall(C_UnitAuras.GetAuraDuration, "player", id)
+            if ok and durObj then
+                pcall(icon.Cooldown.SetCooldownFromDurationObject, icon.Cooldown, durObj, true)
             else
                 icon.Cooldown:Clear()
             end
@@ -767,37 +735,16 @@ local function UpdateAuraIcons(container, activeIcons, sortedList, filter, isBuf
             icon.Cooldown:Clear()
         end
 
-        -- Stacks
+        -- Stacks: TruncateWhenZero is C-side, returns "" for 0/1 stacks
         if settings.showStacks ~= false then
-            local applications = auraData.applications
-            if applications then
-                if not IsSecretValue(applications) then
-                    -- Out of combat: filter single-stack display
-                    if applications > 1 then
-                        icon.Stacks:SetText(applications)
-                        icon.Stacks:Show()
-                    else
-                        icon.Stacks:SetText("")
-                        icon.Stacks:Hide()
-                    end
-                else
-                    -- Combat secret: C_StringUtil.TruncateWhenZero is C-side,
-                    -- accepts secret values and returns "" for zero stacks
-                    pcall(icon.Stacks.SetText, icon.Stacks, C_StringUtil.TruncateWhenZero(applications))
-                    icon.Stacks:Show()
-                end
-            else
-                icon.Stacks:SetText("")
-                icon.Stacks:Hide()
-            end
+            pcall(icon.Stacks.SetText, icon.Stacks, C_StringUtil.TruncateWhenZero(auraData.applications))
+            icon.Stacks:Show()
         else
             icon.Stacks:SetText("")
             icon.Stacks:Hide()
         end
 
-        -- Style (borders, font)
-        local debuffType = not isBuff and (auraData.dispelName or "") or nil
-        StyleIcon(icon, settings, isBuff, debuffType)
+        StyleIcon(icon, settings, isBuff, auraData.dispelName)
 
         icon:Show()
     end
@@ -864,21 +811,33 @@ local function ClearPrivateAuraAnchors()
     end
 end
 
-local function EnsureSlotBorders(slot)
-    if slot.BorderTop then return end
-    slot.BorderTop = slot:CreateTexture(nil, "OVERLAY", nil, 7)
-    slot.BorderBottom = slot:CreateTexture(nil, "OVERLAY", nil, 7)
-    slot.BorderLeft = slot:CreateTexture(nil, "OVERLAY", nil, 7)
-    slot.BorderRight = slot:CreateTexture(nil, "OVERLAY", nil, 7)
+local function EnsureSlotBorders(slot, iconSize, borderSize)
+    local size = iconSize or DEFAULT_ICON_SIZE
+    local bSize = borderSize or 2
+    local half = size / 2
 
-    slot.BorderTop:SetPoint("TOPLEFT", slot, "TOPLEFT", 0, 0)
-    slot.BorderTop:SetPoint("TOPRIGHT", slot, "TOPRIGHT", 0, 0)
-    slot.BorderBottom:SetPoint("BOTTOMLEFT", slot, "BOTTOMLEFT", 0, 0)
-    slot.BorderBottom:SetPoint("BOTTOMRIGHT", slot, "BOTTOMRIGHT", 0, 0)
-    slot.BorderLeft:SetPoint("TOPLEFT", slot, "TOPLEFT", 0, 0)
-    slot.BorderLeft:SetPoint("BOTTOMLEFT", slot, "BOTTOMLEFT", 0, 0)
-    slot.BorderRight:SetPoint("TOPRIGHT", slot, "TOPRIGHT", 0, 0)
-    slot.BorderRight:SetPoint("BOTTOMRIGHT", slot, "BOTTOMRIGHT", 0, 0)
+    if not slot.BorderTop then
+        slot.BorderTop = slot:CreateTexture(nil, "OVERLAY", nil, 7)
+        slot.BorderBottom = slot:CreateTexture(nil, "OVERLAY", nil, 7)
+        slot.BorderLeft = slot:CreateTexture(nil, "OVERLAY", nil, 7)
+        slot.BorderRight = slot:CreateTexture(nil, "OVERLAY", nil, 7)
+    end
+
+    slot.BorderTop:ClearAllPoints()
+    slot.BorderTop:SetPoint("BOTTOMLEFT", slot, "CENTER", -half, half - bSize)
+    slot.BorderTop:SetSize(size, bSize)
+
+    slot.BorderBottom:ClearAllPoints()
+    slot.BorderBottom:SetPoint("TOPLEFT", slot, "CENTER", -half, -half)
+    slot.BorderBottom:SetSize(size, bSize)
+
+    slot.BorderLeft:ClearAllPoints()
+    slot.BorderLeft:SetPoint("TOPRIGHT", slot, "CENTER", -half + bSize, half)
+    slot.BorderLeft:SetSize(bSize, size)
+
+    slot.BorderRight:ClearAllPoints()
+    slot.BorderRight:SetPoint("TOPLEFT", slot, "CENTER", half - bSize, half)
+    slot.BorderRight:SetSize(bSize, size)
 end
 
 local function SlotHasVisibleAura(slot)
@@ -891,7 +850,6 @@ end
 
 local function StyleSlotBorders(slot, settings)
     if not slot.BorderTop then return end
-    local borderSize = settings and settings.borderSize or 2
     local r, g, b = BORDER_COLOR_DEBUFF_DEFAULT[1], BORDER_COLOR_DEBUFF_DEFAULT[2], BORDER_COLOR_DEBUFF_DEFAULT[3]
 
     slot.BorderTop:SetColorTexture(r, g, b, 1)
@@ -899,12 +857,6 @@ local function StyleSlotBorders(slot, settings)
     slot.BorderLeft:SetColorTexture(r, g, b, 1)
     slot.BorderRight:SetColorTexture(r, g, b, 1)
 
-    slot.BorderTop:SetHeight(borderSize)
-    slot.BorderBottom:SetHeight(borderSize)
-    slot.BorderLeft:SetWidth(borderSize)
-    slot.BorderRight:SetWidth(borderSize)
-
-    -- Only show borders when the client has rendered a visible aura child
     local visible = SlotHasVisibleAura(slot)
     slot.BorderTop:SetShown(visible)
     slot.BorderBottom:SetShown(visible)
@@ -945,12 +897,11 @@ local function SetupPrivateAuras()
             paSlots[i] = slot
         end
         slot:SetParent(debuffContainer)
-        slot:SetSize(iconSize, iconSize)
         slot:SetFrameLevel(debuffContainer:GetFrameLevel() + 5)
         slot:Show()
 
         -- Add and style border textures to match normal debuff icons
-        EnsureSlotBorders(slot)
+        EnsureSlotBorders(slot, iconSize, borderSize)
         StyleSlotBorders(slot, settings)
 
         -- Primary anchor: icon + countdown swipe, no countdown numbers
@@ -1059,7 +1010,6 @@ local function LayoutPrivateAuraSlots()
         local xOff = growLeft and -(col * step) or (col * step)
         local yOff = growUp and (row * step) or -(row * step)
 
-        slot:SetSize(iconSize, iconSize)
         slot:ClearAllPoints()
         slot:SetPoint(anchor, debuffContainer, anchor, xOff, yOff)
         StyleSlotBorders(slot, settings)

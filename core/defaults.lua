@@ -1333,6 +1333,7 @@ local defaults = {
                 manaColor = {0.5, 0.5, 1.0, 1}, -- Out of mana color (blue tint)
                 fastUsabilityUpdates = false, -- 5x faster range/usability checks (50ms vs 250ms)
                 showTooltips = true,        -- Show tooltips when hovering action buttons
+                useOnKeyDown = false,       -- Cast on key press (true) vs key release (false)
             },
             -- Mouseover fade settings
             fade = {
