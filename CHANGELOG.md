@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v3.2.3 - 2026-04-12
+
+### Fixed
+- avoid premature m+ log stops (should stop the "abandoned" m+ logs)
+- consumablecheck: skip enhancement slot when player lacks required spells
+- consumablecheck: trim legacy expansion data, always configure buttons 
+- groupframes: re-check combat state per decoration batch tick
+- defaults: disable auto combat logging by default
+- actionbars: cast-on-key-press toggle, assisted combat rotation dedupe 
+- buffborders: fix icon flow direction vars, support screen parent anchors
+- buffborders: simplify aura icons to DurationObject-only cooldown path
+- buffborders: remove global names from aura icon and cooldown frames
 ## v3.2.2 - 2026-04-11
 
 ### Added
