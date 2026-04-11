@@ -270,10 +270,18 @@ local CLASS_ENHANCEMENT_CONFIG = {
 
 local function GetEnhancementConfig(slot)
     local classConfig = CLASS_ENHANCEMENT_CONFIG[playerClass]
-    if classConfig then
-        return classConfig[slot]
+    if not classConfig then return nil end
+    local slotConfig = classConfig[slot]
+    if not slotConfig then return nil end
+    if slotConfig.spells then
+        for _, spell in ipairs(slotConfig.spells) do
+            if IsPlayerSpell(spell.spellID) then
+                return slotConfig
+            end
+        end
+        return nil
     end
-    return nil
+    return slotConfig
 end
 
 local function HasShieldEquipped()
