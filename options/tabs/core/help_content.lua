@@ -134,7 +134,7 @@ QUI_HelpContent.Troubleshooting = {
     },
     {
         question = "Settings didn't apply after changing them",
-        answer = "Some settings require a UI reload to take effect. Type /rl or /reload to apply pending changes. Profile switches always require a reload.",
+        answer = "Some settings require a UI reload to take effect. Most profile switches should apply live; use /rl only when a specific setting asks for it or combat blocked protected updates.",
     },
     {
         question = "My keybinds aren't showing on action bars",
