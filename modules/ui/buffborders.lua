@@ -583,17 +583,6 @@ end
 local function BanishBlizzardFrame(frame, showHookedFlag, alphaHookedFlag)
     if not frame then return false, false end
 
-    if InCombatLockdown() then
-        -- Defer to after combat
-        local f = CreateFrame("Frame")
-        f:RegisterEvent("PLAYER_REGEN_ENABLED")
-        f:SetScript("OnEvent", function(self)
-            self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-            BanishBlizzardFrame(frame, showHookedFlag, alphaHookedFlag)
-        end)
-        return showHookedFlag, alphaHookedFlag
-    end
-
     frame:SetAlpha(0)
     frame:EnableMouse(false)
     SetDescendantMouse(frame, false)
@@ -633,16 +622,6 @@ end
 
 local function RestoreBlizzardFrame(frame)
     if not frame then return end
-
-    if InCombatLockdown() then
-        local f = CreateFrame("Frame")
-        f:RegisterEvent("PLAYER_REGEN_ENABLED")
-        f:SetScript("OnEvent", function(self)
-            self:UnregisterEvent("PLAYER_REGEN_ENABLED")
-            RestoreBlizzardFrame(frame)
-        end)
-        return
-    end
 
     frame._quiBanished = nil
     frame:SetAlpha(1)

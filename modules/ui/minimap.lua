@@ -2699,10 +2699,6 @@ end
 
 local function CollectButton(frame, name)
     if collectedButtons[name] then return end
-    if InCombatLockdown() then
-        pendingDrawerSetup = true
-        return
-    end
     SaveOriginalState(frame, name)
     local data = collectedButtons[name]
 
@@ -2765,10 +2761,6 @@ local function CollectButton(frame, name)
 end
 
 local function ScanAndCollectButtons()
-    if InCombatLockdown() then
-        pendingDrawerSetup = true
-        return
-    end
     if not drawerFrame then return end
 
     -- Scan Minimap children
@@ -2817,10 +2809,6 @@ local function ScanAndCollectButtons()
 end
 
 local function ReleaseAllButtons()
-    if InCombatLockdown() then
-        pendingDrawerSetup = true
-        return
-    end
     for name, data in pairs(collectedButtons) do
         local frame = data.frame
         if frame then

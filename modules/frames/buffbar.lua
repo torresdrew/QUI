@@ -1602,7 +1602,6 @@ local forcePopulateDone = false
 
 local function ForcePopulateBuffIcons()
     if forcePopulateDone then return end
-    if InCombatLockdown() then return end
 
     forcePopulateDone = true
     if ns.CDMSpellData then
@@ -1624,7 +1623,7 @@ local function Initialize()
     -- This prevents Blizzard's Layout() from using wrong axis if first buff appears during combat
     -- TAINT SAFETY: Store in local table instead of writing to Blizzard viewer
     local barViewer = GetBuffBarViewer()
-    if barViewer and not InCombatLockdown() then
+    if barViewer then
         local settings = GetTrackedBarSettings()
         local isVertical = (settings.orientation == "vertical")
         local growFromBottom = (settings.growUp ~= false)
@@ -1916,7 +1915,7 @@ function QUI_BuffBar.Refresh()
     -- Must be done outside combat to take effect
     -- TAINT SAFETY: Store in local table instead of writing to Blizzard viewer
     local barViewer = GetBuffBarViewer()
-    if barViewer and not InCombatLockdown() then
+    if barViewer then
         local settings = GetTrackedBarSettings()
         local isVertical = (settings.orientation == "vertical")
         local growFromBottom = (settings.growUp ~= false)
