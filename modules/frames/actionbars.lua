@@ -1845,6 +1845,16 @@ local function SetupOwnedBarMouseover(barKey)
         return
     end
 
+    -- Combat override: keep bars visible when alwaysShowInCombat is on.
+    -- Mirrors the guard in OnBarMouseLeave — without this, HUD visibility
+    -- refreshes (QUI_RefreshActionBarFade) reset alpha to fadeOutAlpha
+    -- even though the combat-enter handler just showed the bars.
+    local isMainBar = barKey and barKey:match("^bar%d$")
+    if isMainBar and InCombatLockdown() and fadeSettings and fadeSettings.alwaysShowInCombat then
+        SetOwnedBarAlpha(barKey, 1)
+        return
+    end
+
     local fadeOutAlpha = barSettings and barSettings.fadeOutAlpha
     if fadeOutAlpha == nil then
         fadeOutAlpha = fadeSettings and fadeSettings.fadeOutAlpha or 0
