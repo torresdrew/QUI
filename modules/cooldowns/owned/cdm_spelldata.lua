@@ -1951,7 +1951,12 @@ function CDMSpellData:CheckDormantSpells(containerKey, restoreOnly)
                 local known = IsSpellKnownByPlayer(entry.id)
                 if not known then
                     -- Save slot position AND row assignment so both are restored
-                    db.dormantSpells[entry.id] = { slot = i, row = entry.row }
+                    db._dormantSequence = (db._dormantSequence or 0) + 1
+                    db.dormantSpells[entry.id] = {
+                        slot = i,
+                        row = entry.row,
+                        seq = db._dormantSequence,
+                    }
                     toRemove[#toRemove + 1] = i
                 end
             end
@@ -1967,18 +1972,33 @@ function CDMSpellData:CheckDormantSpells(containerKey, restoreOnly)
     for sid, savedData in pairs(db.dormantSpells) do
         if IsSpellKnownByPlayer(sid) then
             -- Support both legacy (number) and new (table) dormant format
-            local savedSlot, savedRow
+            local savedSlot, savedRow, savedSeq
             if type(savedData) == "table" then
                 savedSlot = savedData.slot or 9999
                 savedRow = savedData.row
+                savedSeq = savedData.seq or savedSlot
             else
                 savedSlot = savedData or 9999
+                savedSeq = savedSlot
             end
-            returning[#returning + 1] = { id = sid, slot = savedSlot, row = savedRow }
+            returning[#returning + 1] = {
+                id = sid,
+                slot = savedSlot,
+                row = savedRow,
+                seq = savedSeq,
+            }
         end
     end
-    -- Sort by saved slot (lowest first) so insertions maintain order
-    table.sort(returning, function(a, b) return a.slot < b.slot end)
+    -- Sort by saved slot, then by dormant sequence for deterministic same-slot restores.
+    table.sort(returning, function(a, b)
+        if a.slot ~= b.slot then
+            return a.slot < b.slot
+        end
+        if a.seq ~= b.seq then
+            return a.seq < b.seq
+        end
+        return a.id < b.id
+    end)
     if #returning > 0 then
     end
     for _, info in ipairs(returning) do

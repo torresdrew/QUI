@@ -121,6 +121,8 @@ local _previousSpecID = nil  -- Track outgoing spec for save-on-switch
 local specTrackingReady = false
 local specTrackingPendingRefresh = false
 local specTrackingRetryToken = 0
+local profileCallbackSink = nil
+local lastKnownProfile = nil
 local RefreshAll  -- forward declaration; finalized in REFRESH ALL section
 
 local SPEC_TRACKING_RETRY_DELAY = 0.5
@@ -144,6 +146,7 @@ local function ClearContainerSpecState(containerDB)
     containerDB.ownedSpells = nil
     containerDB.removedSpells = {}
     containerDB.dormantSpells = {}
+    containerDB._dormantSequence = 0
 end
 
 local function TrySnapshotBuiltInContainers(containerKeys)
@@ -215,6 +218,7 @@ local function SaveSpecProfile(specID)
                 ownedSpells = CopyTable(containerDB.ownedSpells),
                 removedSpells = CopyTable(containerDB.removedSpells or {}),
                 dormantSpells = CopyTable(containerDB.dormantSpells or {}),
+                dormantSequence = containerDB._dormantSequence or 0,
             }
         end
     end
@@ -255,6 +259,7 @@ local function LoadOrSnapshotSpecProfile(specID, attempt, retryToken)
                     containerDB.ownedSpells = CopyTable(savedContainer.ownedSpells)
                     containerDB.removedSpells = CopyTable(savedContainer.removedSpells)
                     containerDB.dormantSpells = CopyTable(savedContainer.dormantSpells or {})
+                    containerDB._dormantSequence = savedContainer.dormantSequence or 0
                 else
                     -- Container exists now but wasn't in the saved profile
                     -- (e.g. custom container created after the profile was
@@ -394,6 +399,58 @@ local function InitSpecTracking()
         ScheduleInitialSpecTrackingRetry(1, retryToken)
         return false
     end
+end
+
+local function IsChallengeModeProfileTransition()
+    if not C_ChallengeMode then
+        return false
+    end
+
+    return (C_ChallengeMode.IsChallengeModeActive and C_ChallengeMode.IsChallengeModeActive())
+        or (C_ChallengeMode.GetActiveChallengeMapID and C_ChallengeMode.GetActiveChallengeMapID() ~= nil)
+end
+
+local function SyncCurrentProfileSpecState(event, _, profileKey)
+    if not initialized then
+        return
+    end
+
+    local currentProfile = QUICore and QUICore.db and QUICore.db.GetCurrentProfile and QUICore.db:GetCurrentProfile()
+    if event == "OnProfileChanged" and profileKey and profileKey == lastKnownProfile and profileKey == currentProfile then
+        return
+    end
+
+    lastKnownProfile = currentProfile or profileKey or lastKnownProfile
+
+    if IsChallengeModeProfileTransition() then
+        return
+    end
+
+    -- Cancel any stale async spec-load retries before hydrating the new profile.
+    specTrackingRetryToken = specTrackingRetryToken + 1
+
+    local specReadyNow = InitSpecTracking()
+    if not specReadyNow then
+        specTrackingPendingRefresh = true
+    end
+end
+
+local function RegisterProfileCallbacks()
+    if profileCallbackSink or not (QUICore and QUICore.db and QUICore.db.RegisterCallback) then
+        return
+    end
+
+    profileCallbackSink = {}
+
+    function profileCallbackSink:OnProfileChanged(event, db, profileKey)
+        SyncCurrentProfileSpecState(event, db, profileKey)
+    end
+
+    QUICore.db.RegisterCallback(profileCallbackSink, "OnProfileChanged", "OnProfileChanged")
+    QUICore.db.RegisterCallback(profileCallbackSink, "OnProfileCopied", "OnProfileChanged")
+    QUICore.db.RegisterCallback(profileCallbackSink, "OnProfileReset", "OnProfileChanged")
+
+    lastKnownProfile = QUICore.db:GetCurrentProfile()
 end
 
 ---------------------------------------------------------------------------
@@ -2350,6 +2407,7 @@ function ownedEngine:Initialize()
     -- available yet, delay the first meaningful layout until the profile swap
     -- / fresh snapshot has finished to avoid rendering another character's CDs.
     local specReadyNow = InitSpecTracking()
+    RegisterProfileCallbacks()
 
     -- Invalidate visibility frame cache so hud_visibility picks up new containers
     if ns.InvalidateCDMFrameCache then
