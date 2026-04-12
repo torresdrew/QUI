@@ -41,6 +41,7 @@ QUI._presetProfiles = {
     { key = "OakTankDPS",  profileName = "Oak's Tank/DPS", description = "Oak's Tank/DPS UI layout" },
     { key = "OakHealer",   profileName = "Oak's Healer",   description = "Oak's Healer UI layout" },
     { key = "CocoProfile", profileName = "Coco",            description = "Coco's personal UI layout" },
+    { key = "NoktarianHealing", profileName = "Noktarian Healing Profile", description = "Noktarian's healing UI layout" },
 }
 
 ---@type table
