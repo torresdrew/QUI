@@ -773,13 +773,7 @@ local function SetupPrivateAuras()
     for i = 1, PA_MAX_SLOTS do
         local slot = paSlots[i]
         if not slot then
-            -- Parent to UIParent (not debuffContainer) so protected-frame
-            -- inheritance from AddPrivateAuraAnchor does not propagate up
-            -- to debuffContainer and then sideways to buffContainer via
-            -- the debuffFrame → buffFrame SetPoint chain.
-            slot = CreateFrame("Frame", "QUI_PlayerPrivateAura" .. i, UIParent)
-            slot:SetIgnoreParentAlpha(true)
-            slot:SetFrameStrata("HIGH")
+            slot = CreateFrame("Frame", "QUI_PlayerPrivateAura" .. i, debuffContainer)
             paSlots[i] = slot
         end
         slot:SetSize(iconSize, iconSize)
@@ -835,60 +829,28 @@ local function LayoutPrivateAuraSlots()
     if iconsPerRow <= 0 then iconsPerRow = 10 end
     local spacing = settings.debuffIconSpacing or 0
     if spacing <= 0 then spacing = 2 end
+    local rowSpacing = settings.debuffRowSpacing or 0
+    if rowSpacing <= 0 then rowSpacing = spacing end
     local growLeft = settings.debuffGrowLeft
     local growUp = settings.debuffGrowUp
+    local xDir = growLeft and -1 or 1
+    local yDir = growUp and 1 or -1
+    local point = growUp
+        and (growLeft and "BOTTOMRIGHT" or "BOTTOMLEFT")
+        or (growLeft and "TOPRIGHT" or "TOPLEFT")
 
-    -- Read debuffContainer's growth corner in effective pixels. Slots are
-    -- parented to UIParent (to break the protected-frame inheritance chain),
-    -- so positioning goes through computed absolute UIParent coordinates.
-    local dcLeft = debuffContainer:GetLeft()
-    local dcRight = debuffContainer:GetRight()
-    local dcTop = debuffContainer:GetTop()
-    local dcBottom = debuffContainer:GetBottom()
-    if not (dcLeft and dcRight and dcTop and dcBottom) then
-        for _, slot in ipairs(paSlots) do
-            slot:Hide()
-        end
-        return
-    end
-
-    -- Effective pixels → slot-local pixels. Slot is a UIParent child, so its
-    -- effective scale matches UIParent's.
-    local uiScale = UIParent:GetEffectiveScale()
-    local dcScale = debuffContainer:GetEffectiveScale()
-    local scaleRatio = dcScale / uiScale
-
-    local cornerX, cornerY
-    if growUp then
-        cornerY = dcBottom / uiScale
-        cornerX = growLeft and (dcRight / uiScale) or (dcLeft / uiScale)
-    else
-        cornerY = dcTop / uiScale
-        cornerX = growLeft and (dcRight / uiScale) or (dcLeft / uiScale)
-    end
-
-    -- First icon center is iconSize/2 inset from the growth corner (in the
-    -- flow direction), scale-corrected for the container's coordinate system.
-    local halfShiftX = (growLeft and -(iconSize / 2) or (iconSize / 2)) * scaleRatio
-    local halfShiftY = (growUp and (iconSize / 2) or -(iconSize / 2)) * scaleRatio
-
-    local debuffCount = debuffContainer and debuffContainer._visibleDebuffCount or 0
-    local step = (iconSize + spacing) * scaleRatio
+    local debuffCount = debuffContainer._visibleDebuffCount or 0
 
     for i, slot in ipairs(paSlots) do
         local idx = debuffCount + i - 1
         local col = idx % iconsPerRow
         local row = math.floor(idx / iconsPerRow)
 
-        local xGrow = growLeft and -(col * step) or (col * step)
-        local yGrow = growUp and (row * step) or -(row * step)
-
-        local centerX = cornerX + halfShiftX + xGrow
-        local centerY = cornerY + halfShiftY + yGrow
-
         slot:SetSize(iconSize, iconSize)
         slot:ClearAllPoints()
-        slot:SetPoint("CENTER", UIParent, "BOTTOMLEFT", centerX, centerY)
+        slot:SetPoint(point, debuffContainer, point,
+            xDir * col * (iconSize + spacing),
+            yDir * row * (iconSize + rowSpacing))
         StyleSlotBorders(slot, settings)
         slot:Show()
     end

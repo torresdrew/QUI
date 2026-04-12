@@ -1166,23 +1166,78 @@ regenFrame:SetScript("OnEvent", function(self, event)
 end)
 
 -- Subscribe to centralized aura dispatcher for group frame aura updates.
--- Always full-scan: ignores updateInfo deltas entirely. GetUnitAuras returns
--- one bulk table per filter type (zero per-aura allocation). This is simpler
--- and avoids the GetAuraDataByAuraInstanceID calls that created hundreds of
--- ~600-byte Blizzard tables per second in raids, overwhelming the GC.
+-- Hybrid approach: use updateInfo to DECIDE whether to full-scan, but never
+-- call GetAuraDataByAuraInstanceID (which allocated ~600-byte tables per aura).
+--
+-- Pure stack/duration updates (the dominant raid path — 80%+ of events) skip
+-- the entire scan + overlay + filter/sort pipeline and just refresh visible
+-- icon cooldown swipes via DurationObject (zero Lua allocation).
+--
+-- Set changes (add/remove) and full updates trigger the full pipeline.
 if ns.AuraEvents then
-    ns.AuraEvents:Subscribe("roster", function(unit)
+    ns.AuraEvents:Subscribe("roster", function(unit, updateInfo)
         local GF = ns.QUI_GroupFrames
         if not GF or not GF.initialized then return end
 
         local frame = GF.unitFrameMap[unit]
         if not frame or not frame:IsShown() then return end
 
-        -- Full scan: wipe + rebuild cache from GetUnitAuras (2 C-side calls)
-        ScanUnitAuras(unit)
+        -- Fast path: pure stack/duration update (no auras added or removed).
+        -- The display set is identical — skip full scan + all overlay updates.
+        -- Just refresh cooldown swipes on visible icons via DurationObject.
+        if type(updateInfo) == "table"
+            and not updateInfo.isFullUpdate
+            and not updateInfo.addedAuras
+            and not updateInfo.removedAuraInstanceIDs
+            and updateInfo.updatedAuraInstanceIDs
+            and unitAuraCache[unit]
+        then
+            local updated = updateInfo.updatedAuraInstanceIDs
+            if #updated == 0 then return end
+            -- Zero-alloc refresh: DurationObject for swipe, C-side for stacks
+            if frame.debuffIcons then
+                for _, icon in ipairs(frame.debuffIcons) do
+                    if not icon:IsShown() then break end
+                    local state = icon._auraState
+                    local instID = state and state.auraInstanceID
+                    if instID and not IsSecretValue(instID) then
+                        if icon.cooldown and icon.cooldown.SetCooldownFromDurationObject and C_UnitAuras.GetAuraDuration then
+                            local ok, dObj = pcall(C_UnitAuras.GetAuraDuration, unit, instID)
+                            if ok and dObj then
+                                pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, dObj, true)
+                            end
+                        end
+                        if icon.stackText and C_UnitAuras.GetAuraApplicationDisplayCount then
+                            local ok, s = pcall(C_UnitAuras.GetAuraApplicationDisplayCount, unit, instID, 2, 99)
+                            if ok and s then pcall(icon.stackText.SetText, icon.stackText, s) end
+                        end
+                    end
+                end
+            end
+            if frame.buffIcons then
+                for _, icon in ipairs(frame.buffIcons) do
+                    if not icon:IsShown() then break end
+                    local state = icon._auraState
+                    local instID = state and state.auraInstanceID
+                    if instID and not IsSecretValue(instID) then
+                        if icon.cooldown and icon.cooldown.SetCooldownFromDurationObject and C_UnitAuras.GetAuraDuration then
+                            local ok, dObj = pcall(C_UnitAuras.GetAuraDuration, unit, instID)
+                            if ok and dObj then
+                                pcall(icon.cooldown.SetCooldownFromDurationObject, icon.cooldown, dObj, true)
+                            end
+                        end
+                        if icon.stackText and C_UnitAuras.GetAuraApplicationDisplayCount then
+                            local ok, s = pcall(C_UnitAuras.GetAuraApplicationDisplayCount, unit, instID, 2, 99)
+                            if ok and s then pcall(icon.stackText.SetText, icon.stackText, s) end
+                        end
+                    end
+                end
+            end
+            return
+        end
 
-        -- Update all consumers: dispel overlay, defensive indicator,
-        -- aura indicators, pinned auras, and icon display.
+        -- Set change or full update: full scan + all consumers.
+        ScanUnitAuras(unit)
         if GF.UpdateDispelOverlay then GF:UpdateDispelOverlay(frame) end
         if GF.UpdateDefensiveIndicator then GF:UpdateDefensiveIndicator(frame) end
         local GFI = ns.QUI_GroupFrameIndicators

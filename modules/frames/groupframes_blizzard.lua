@@ -111,11 +111,12 @@ local function StripUnitFrameEvents(frame)
     if not frame then return end
     pcall(function()
         frame:UnregisterAllEvents()
-        -- Keep UNIT_AURA alive so Blizzard's aura cache still updates
-        local unit = frame.unit or frame.displayedUnit
-        if unit and frame.RegisterUnitEvent then
-            frame:RegisterUnitEvent("UNIT_AURA", unit)
-        end
+        -- PERF: Do NOT re-register UNIT_AURA on hidden Blizzard frames.
+        -- QUI calls GetUnitAuras directly and never reads Blizzard's aura
+        -- containers. Leaving UNIT_AURA registered caused Blizzard's
+        -- CompactUnitFrame_UpdateAuras to run on 40 hidden frames in
+        -- parallel with QUI's own aura processing — doubling all aura
+        -- work in raids for zero benefit.
     end)
     strippedFrames[frame] = true
 end
