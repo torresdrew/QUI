@@ -27,6 +27,13 @@ local middleClickMenuFrame
 local middleClickMenuBlocker
 local middleClickMenuRows = {}
 
+-- Stable anchor proxy: parented to UIParent, stays put when external addons
+-- (e.g. full-screen HUD overlays) reparent/scale the real Minimap frame.
+-- The frame anchoring system resolves "minimap" to this proxy so dependent
+-- frames (objective tracker, buffs, datatext panel, etc.) never follow
+-- Minimap off-screen.
+local minimapAnchor
+
 -- Datatext panel (3-slot architecture using QUICore.Datatexts registry)
 local datatextFrame
 
@@ -2986,6 +2993,12 @@ local function UpdateMinimapSize()
     BeginQUIControlledMinimapUpdate()
     Minimap:SetSize(settings.size, settings.size)
     Minimap:SetScale(settings.scale or 1.0)
+    -- Keep the anchor proxy in sync so anchoring-dependent frames see the
+    -- correct geometry even when external addons rescale the real Minimap.
+    if minimapAnchor then
+        minimapAnchor:SetSize(settings.size, settings.size)
+        minimapAnchor:SetScale(settings.scale or 1.0)
+    end
     EndQUIControlledMinimapUpdate()
 
     -- Temporary diagnostic: disable the forced render nudge that toggles
@@ -3018,13 +3031,38 @@ local function SetupMinimapDragging()
         return
     end
 
+    -- Create the stable anchor proxy (once). This frame is parented to UIParent
+    -- and holds the minimap's intended position. The frame anchoring system
+    -- resolves "minimap" to this proxy, so dependent frames (objective tracker,
+    -- buffs, datatext, etc.) stay in place when external addons reparent or
+    -- rescale the real Minimap for full-screen HUD overlays.
+    if not minimapAnchor then
+        minimapAnchor = CreateFrame("Frame", "QUI_MinimapAnchor", UIParent)
+        minimapAnchor:SetFrameStrata("LOW")
+        minimapAnchor:SetFrameLevel(1)
+        -- Size is set below in sync with UpdateMinimapSize
+
+        -- Mirror anchor position to the real Minimap. The anchoring system
+        -- positions the proxy; this hook keeps Minimap on top of it.
+        -- When an external HUD is active, skip the mirror so the external
+        -- addon's positioning is not overwritten.
+        hooksecurefunc(minimapAnchor, "ClearAllPoints", function()
+            if externalHudActive then return end
+            Minimap:ClearAllPoints()
+        end)
+        hooksecurefunc(minimapAnchor, "SetPoint", function(self, pt, relTo, relPt, ox, oy)
+            if externalHudActive then return end
+            Minimap:SetPoint(pt, relTo, relPt, ox, oy)
+        end)
+    end
+
     -- Reparent minimap to UIParent for proper positioning
     Minimap:SetParent(UIParent)
     Minimap:SetFrameStrata("LOW")
     Minimap:SetFrameLevel(2)
     Minimap:SetFixedFrameStrata(true)
     Minimap:SetFixedFrameLevel(true)
-    
+
     -- Reparent MinimapCluster to a hidden frame — QUI manages the minimap
     -- independently. This makes MinimapCluster permanently invisible
     -- regardless of Blizzard alpha resets during Edit Mode, eliminating
@@ -3035,7 +3073,7 @@ local function SetupMinimapDragging()
         MinimapCluster:SetParent(hiddenCluster)
         MinimapCluster:EnableMouse(false)
     end
-    
+
     -- Setup dragging - only movable during Edit Mode
     Minimap:EnableMouse(true)
     Minimap:SetMovable(false)
@@ -3056,7 +3094,26 @@ local function SetupMinimapDragging()
         if point then
             settings.position = {point, relPoint, x, y}
         end
+        -- Keep anchor proxy in sync with the dragged position
+        if minimapAnchor and point then
+            minimapAnchor:ClearAllPoints()
+            minimapAnchor:SetPoint(point, UIParent, relPoint, x, y)
+        end
     end)
+
+    -- Helper: position both the anchor proxy and the Minimap at the same point.
+    -- The anchor stays at UIParent; Minimap sits on top of it.
+    -- When the anchor has mirror hooks installed, positioning the anchor also
+    -- positions Minimap via the hook — so skip the redundant direct call.
+    local function ApplyMinimapPosition(pt, parent, rel, ox, oy)
+        if minimapAnchor then
+            minimapAnchor:ClearAllPoints()
+            minimapAnchor:SetPoint(pt, parent, rel, ox, oy)
+        else
+            Minimap:ClearAllPoints()
+            Minimap:SetPoint(pt, parent, rel, ox, oy)
+        end
+    end
 
     -- If the frame anchoring system owns this frame, apply the RAW anchor
     -- point directly (not through ApplyFrameAnchor which converts to size-stable
@@ -3077,8 +3134,7 @@ local function SetupMinimapDragging()
                 local resolved = _G[anchorSettings.parent]
                 if resolved then parent = resolved end
             end
-            Minimap:ClearAllPoints()
-            Minimap:SetPoint(pt, parent, rel, ox, oy)
+            ApplyMinimapPosition(pt, parent, rel, ox, oy)
         end
         return
     end
@@ -3090,11 +3146,9 @@ local function SetupMinimapDragging()
         local relPoint = pos[2] or pos.relPoint or "BOTTOMLEFT"
         local x = pos[3] or pos.x or 790
         local y = pos[4] or pos.y or 285
-        Minimap:ClearAllPoints()
-        Minimap:SetPoint(point, UIParent, relPoint, x, y)
+        ApplyMinimapPosition(point, UIParent, relPoint, x, y)
     else
-        Minimap:ClearAllPoints()
-        Minimap:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", 790, 285)
+        ApplyMinimapPosition("TOPLEFT", UIParent, "BOTTOMLEFT", 790, 285)
     end
 end
 
@@ -3114,6 +3168,9 @@ local function HideAllDecorations()
     if datatextFrame then datatextFrame:Hide() end
     if drawerToggleButton then drawerToggleButton:Hide() end
     if drawerFrame then drawerFrame:Hide() end
+    if middleClickMenuFrame then middleClickMenuFrame:Hide() end
+    if middleClickMenuBlocker then middleClickMenuBlocker:Hide() end
+    if middleClickBlockerOverlay then middleClickBlockerOverlay:Hide() end
     if clockTicker then clockTicker:Cancel(); clockTicker = nil end
     if coordsTicker then coordsTicker:Cancel(); coordsTicker = nil end
 end
@@ -3425,7 +3482,25 @@ function Minimap_Module:Initialize()
         hooksecurefunc(Minimap, "SetScale", function() DeferCheckExternalHud() end)
         hooksecurefunc(Minimap, "SetAlpha", function() DeferCheckExternalHud() end)
         hooksecurefunc(Minimap, "SetSize", function() DeferCheckExternalHud() end)
-        hooksecurefunc(Minimap, "SetParent", function() DeferCheckExternalHud() end)
+        -- SetParent is the most reliable HUD signal — if Minimap's parent
+        -- changes away from UIParent, an external addon is taking over.
+        -- Bypass the normal debounce and activate immediately.
+        hooksecurefunc(Minimap, "SetParent", function()
+            if IsExternalHudCheckSuppressed() then return end
+            local parent = Minimap:GetParent()
+            if parent and parent ~= UIParent and not externalHudActive then
+                externalHudActive = true
+                LogExternalHudTransition(true, "reparented",
+                    Helpers.SafeToNumber(Minimap:GetScale(), 1),
+                    Helpers.SafeToNumber(Minimap:GetEffectiveAlpha(), 1),
+                    Helpers.SafeToNumber(Minimap:GetWidth(), 0),
+                    parent:GetName() or tostring(parent))
+                HideAllDecorations()
+            elseif parent == UIParent and externalHudActive then
+                -- Parent restored — schedule a full check to confirm
+                DeferCheckExternalHud()
+            end
+        end)
         hooksecurefunc(Minimap, "SetWidth", function() DeferCheckExternalHud() end)
         hooksecurefunc(Minimap, "SetHeight", function() DeferCheckExternalHud() end)
         hooksecurefunc(Minimap, "SetPoint", function() DeferCheckExternalHud() end)
@@ -3575,8 +3650,18 @@ function Minimap_Module:Refresh()
     -- Restore saved position from profile — skip if the frame anchoring system owns this frame
     if not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("minimap")) then
         if settings.position and settings.position[1] and settings.position[2] then
-            Minimap:ClearAllPoints()
-            Minimap:SetPoint(settings.position[1], UIParent, settings.position[2], settings.position[3] or 0, settings.position[4] or 0)
+            local pt = settings.position[1]
+            local relPt = settings.position[2]
+            local ox = settings.position[3] or 0
+            local oy = settings.position[4] or 0
+            if minimapAnchor then
+                -- Hook on anchor mirrors to Minimap automatically
+                minimapAnchor:ClearAllPoints()
+                minimapAnchor:SetPoint(pt, UIParent, relPt, ox, oy)
+            else
+                Minimap:ClearAllPoints()
+                Minimap:SetPoint(pt, UIParent, relPt, ox, oy)
+            end
         end
     end
 

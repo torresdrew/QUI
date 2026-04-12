@@ -1644,8 +1644,11 @@ local FRAME_RESOLVERS = {
         end
         return GF and GF.headers and GF.headers.raid
     end,
-    -- Display
-    minimap = function() return _G["Minimap"] end,
+    -- Display — return the stable anchor proxy instead of raw Minimap.
+    -- QUI_MinimapAnchor is parented to UIParent and holds the minimap's
+    -- intended position. This makes anchoring-dependent frames immune to
+    -- external addons that reparent/rescale Minimap for full-screen HUDs.
+    minimap = function() return _G["QUI_MinimapAnchor"] or _G["Minimap"] end,
     datatextPanel = function() return _G["QUI_DatatextPanel"] end,
     -- Managed-container frames resolve to their QUI holder once reparented
     -- (see MANAGED_REPARENT_TARGETS above). Before the reparent installs
