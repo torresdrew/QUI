@@ -247,12 +247,11 @@ function ActionBarsOwned.SafeUpdate(self)
             -- rotation has no current recommendation (e.g. no target).  Fall
             -- back to the next-cast spell texture so the button isn't blank.
             if not texture and C_AssistedCombat and C_AssistedCombat.GetNextCastSpell then
-                local aOk, isAssisted = pcall(C_ActionBar.IsAssistedCombatAction, action)
-                if aOk and isAssisted then
-                    local sOk, spellID = pcall(C_AssistedCombat.GetNextCastSpell, true)
-                    if sOk and spellID then
-                        local tOk, tex = pcall(C_Spell.GetSpellTexture, spellID)
-                        if tOk and tex then texture = tex end
+                if C_ActionBar.IsAssistedCombatAction(action) then
+                    local spellID = C_AssistedCombat.GetNextCastSpell(true)
+                    if spellID then
+                        local tex = C_Spell.GetSpellTexture(spellID)
+                        if tex then texture = tex end
                     end
                 end
             end
@@ -3890,15 +3889,14 @@ local _assistRotationButton = nil
 UpdateAssistedCombatRotationFrame = function(button)
     if not (C_ActionBar and C_ActionBar.IsAssistedCombatAction) then return end
     -- Fast path: if assisted combat was never active AND this button has
-    -- no rotation frame, skip the expensive pcall entirely.
+    -- no rotation frame, skip entirely.
     local frame = button.AssistedCombatRotationFrame
     if not ActionBarsOwned._assistedCombatEverActive and not frame then return end
 
     local action = button.action
-    local ok, show = false, false
+    local show = false
     if action and HasAction(action) then
-        ok, show = pcall(C_ActionBar.IsAssistedCombatAction, action)
-        if not ok then show = false end
+        show = C_ActionBar.IsAssistedCombatAction(action)
     end
     -- Only create the template frame when needed (first time it should show).
     if show and not frame then
@@ -3932,8 +3930,8 @@ local function UpdateAllAssistedCombatRotation()
     end
     local spellID = AssistedCombatManager and AssistedCombatManager.lastNextCastSpellID
     if not spellID then return end
-    local sOk, slots = pcall(C_ActionBar.FindSpellActionButtons, spellID)
-    if not (sOk and slots) then return end
+    local slots = C_ActionBar.FindSpellActionButtons(spellID)
+    if not slots then return end
     local slotMap = ActionBarsOwned.slotMap
     if not slotMap then return end
     for _, slot in ipairs(slots) do
@@ -4006,8 +4004,8 @@ UpdateAllAssistedHighlights = function()
     local matchButtons = _assistHighlightScratch
     wipe(matchButtons)
     if nextSpellID then
-        local sOk, slots = pcall(C_ActionBar.FindSpellActionButtons, nextSpellID)
-        if sOk and slots then
+        local slots = C_ActionBar.FindSpellActionButtons(nextSpellID)
+        if slots then
             local slotMap = ActionBarsOwned.slotMap
             if slotMap then
                 for _, slot in ipairs(slots) do
@@ -4211,29 +4209,8 @@ abUpdateFrame._lastVis = 0
 abUpdateFrame._dirtyCooldowns = false
 abUpdateFrame._dirtyStates = false
 abUpdateFrame._dirtyVisuals = false
-abUpdateFrame._dirtyAssistRotation = false
-abUpdateFrame._dirtyAssistHighlight = false
-
-abUpdateFrame._lastAssist = 0
-
 abUpdateFrame:SetScript("OnUpdate", function(self)
     local now = GetTime()
-
-    -- Assisted combat flags: time-gated to avoid per-frame pcall + table
-    -- work under soft targeting (Blizzard fires highlight events every frame).
-    if self._dirtyAssistRotation or self._dirtyAssistHighlight then
-        if now - self._lastAssist >= 0.1 then
-            self._lastAssist = now
-            if self._dirtyAssistRotation then
-                self._dirtyAssistRotation = false
-                ActionBarsOwned.UpdateAllAssistedCombatRotation()
-            end
-            if self._dirtyAssistHighlight then
-                self._dirtyAssistHighlight = false
-                UpdateAllAssistedHighlights()
-            end
-        end
-    end
 
     local doVis = self._dirtyVisuals
     local doState = self._dirtyStates
@@ -7833,43 +7810,28 @@ function ActionBarsOwned:Initialize()
     -- Assisted combat rotation (one-button rotation arrow overlay).
     if EventRegistry and EventRegistry.RegisterCallback then
         EventRegistry:RegisterCallback("AssistedCombatManager.OnSetActionSpell", function()
-            ActionBarsOwned._assistedCombatEverActive = true
             -- Dedupe: Blizzard fires this every OnUpdate frame under soft
             -- targeting; if the rotation spell hasn't actually changed,
-            -- skip the dirty-flag flip entirely.  Read the manager's Lua
-            -- table directly — zero cost vs pcall into C.
+            -- skip entirely.
             local newSpell = AssistedCombatManager and AssistedCombatManager.lastNextCastSpellID
             if newSpell == ActionBarsOwned._lastAssistRotationSpell then return end
             ActionBarsOwned._lastAssistRotationSpell = newSpell
-            abUpdateFrame._dirtyAssistRotation = true
-            abUpdateFrame:Show()
+            if newSpell then ActionBarsOwned._assistedCombatEverActive = true end
+            ActionBarsOwned.UpdateAllAssistedCombatRotation()
         end, "QUI_ActionBars_AssistedCombat")
 
         -- Assisted combat highlight (marching ants on the next-cast button).
-        -- Also schedule a visual update: the one-button rotation slot
-        -- dynamically changes which spell it shows, so GetActionTexture
-        -- returns a different icon.  Without this, the button texture is
-        -- stale until the next unrelated visual event.
-        --
+        -- Process immediately in the callback — no dirty-flag deferral.
         -- Soft targeting causes constant nil→spell→nil→spell oscillation.
         -- Nil means "no recommendation right now" (target lost, soft-target
-        -- gap) — NOT "rotation disabled".  Clearing highlights on nil
-        -- causes visible on/off flicker.  Instead, ignore nil entirely
-        -- and keep showing the last valid recommendation.  Highlights
-        -- refresh naturally when the rotation action is moved/removed
-        -- (HIDEGRID) or during the post-combat full refresh
-        -- (PLAYER_REGEN_ENABLED calls UpdateAllAssistedHighlights).
+        -- gap) — NOT "rotation disabled".  Ignore nil to avoid flicker.
+        -- Highlights refresh on HIDEGRID or PLAYER_REGEN_ENABLED.
         EventRegistry:RegisterCallback("AssistedCombatManager.OnAssistedHighlightSpellChange", function()
-            -- Read the manager's Lua table directly — zero cost vs pcall.
             local nextSpell = AssistedCombatManager.lastNextCastSpellID
-            -- nil means "no recommendation" (target lost, soft-target gap).
-            -- Ignore nil to avoid on/off flicker; highlights refresh on
-            -- HIDEGRID or PLAYER_REGEN_ENABLED.
             if not nextSpell then return end
             if nextSpell == ActionBarsOwned._lastAssistHighlightSpell then return end
             ActionBarsOwned._lastAssistHighlightSpell = nextSpell
-            abUpdateFrame._dirtyAssistHighlight = true
-            abUpdateFrame:Show()
+            UpdateAllAssistedHighlights()
         end, "QUI_ActionBars_AssistedHighlight")
     end
 
