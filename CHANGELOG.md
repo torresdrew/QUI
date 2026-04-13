@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v3.3.3 - 2026-04-14
+
+### Fixed
+- actionbars: update icons on MODIFIER_STATE_CHANGED for macro conditionals
+- castbar: simplify timer-driven time text to use DurationObject directly
+- resourcebars: guard geometry calls with InCombatLockdown, suppress talent FlashBorder
 ## v3.3.2 - 2026-04-14
 
 ### Changed
