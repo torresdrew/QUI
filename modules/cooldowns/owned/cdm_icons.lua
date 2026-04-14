@@ -1281,6 +1281,7 @@ end
 ---------------------------------------------------------------------------
 local function SyncClickButtonFrameLevel(icon)
     if not icon or not icon.clickButton or not icon.TextOverlay then return end
+    if InCombatLockdown() then return end
     local requiredLevel = icon.TextOverlay:GetFrameLevel() + 2
     if icon.clickButton:GetFrameLevel() ~= requiredLevel then
         icon.clickButton:SetFrameLevel(requiredLevel)
