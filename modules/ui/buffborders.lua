@@ -303,7 +303,7 @@ local function SyncHeaderAttributes(header, settings, prefix)
     -- icon size directly into the snippet — updated each time SyncHeaderAttributes
     -- runs (out of combat). During combat, new children use the last-set size.
     header:SetAttribute("initialConfigFunction",
-        ("self:SetWidth(%d) self:SetHeight(%d)"):format(iconSize, iconSize)
+        ("self:SetWidth(%d) self:SetHeight(%d) self:RegisterForClicks('RightButtonUp')"):format(iconSize, iconSize)
     )
 end
 

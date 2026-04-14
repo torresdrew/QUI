@@ -3067,34 +3067,37 @@ local function BuildBar(barKey)
                     GameTooltip:Hide()
                 end)
 
-                -- ── PreClick: suppress action when drag modifier held ──
+                -- ── PreClick: defer action to mouse-up when drag modifier held ──
                 -- When useOnKeyDown is true the action fires on mouse-
                 -- down, BEFORE OnDragStart can detect the drag motion.
                 -- Without intervention shift-click casts instead of
                 -- picking up the spell.  This Lua pre-click handler
-                -- clears the "type" attribute so the secure action
-                -- dispatch becomes a no-op; PostClick restores it.
+                -- temporarily disables useOnKeyDown so the action fires
+                -- on mouse-up instead — giving OnDragStart time to
+                -- detect drags while still letting the action through
+                -- for normal modifier+click (e.g. [mod:shift] macros).
                 -- When the cursor already carries a spell (placement),
-                -- the suppression is skipped so the drop goes through.
+                -- the deferral is skipped so the drop goes through.
                 -- Uses Lua hooks (not restricted snippets) because the
                 -- restricted environment lacks GetCursorInfo().
                 -- SetAttribute is fine — bar rearranging is out-of-combat.
                 btn:HookScript("PreClick", function(self)
                     if InCombatLockdown() then return end
-                    if self:GetAttribute("useOnKeyDown")
+                    local useOnKeyDown = self:GetAttribute("useOnKeyDown")
+                    if useOnKeyDown
                         and self:GetAttribute("buttonlock")
                         and IsModifiedClick("PICKUPACTION")
                         and not GetCursorInfo() then
-                        self:SetAttribute("type", nil)
-                        self._quiPreClickSuppressed = true
+                        self:SetAttribute("useOnKeyDown", false)
+                        self._quiPreClickKeyDownBackup = useOnKeyDown
                     end
                 end)
                 btn:HookScript("PostClick", function(self)
-                    if self._quiPreClickSuppressed then
-                        self._quiPreClickSuppressed = nil
+                    if self._quiPreClickKeyDownBackup ~= nil then
                         if not InCombatLockdown() then
-                            self:SetAttribute("type", "action")
+                            self:SetAttribute("useOnKeyDown", self._quiPreClickKeyDownBackup)
                         end
+                        self._quiPreClickKeyDownBackup = nil
                     end
                 end)
 

@@ -30,6 +30,7 @@ local cursorFollowHooked = Helpers.CreateStateTable()
 -- its dispatch tables, causing ADDON_ACTION_BLOCKED when the world map's
 -- secure context (secureexecuterange) uses GameTooltip for map pins.
 local gtCursorWatcher
+local pendingFixedAnchor  -- tooltip queued for fixed-anchor repositioning (deferred from hook)
 
 -- World quest / map tooltips can register a widget container on GameTooltip.
 -- Re-anchoring or re-showing the tooltip from addon code while that container
@@ -119,6 +120,16 @@ local function EnsureCursorFollowHooks(tooltip)
         if not gtCursorWatcher then
             gtCursorWatcher = CreateFrame("Frame")
             gtCursorWatcher:SetScript("OnUpdate", function()
+                -- Flush deferred fixed-anchor repositioning (queued from
+                -- GameTooltip_SetDefaultAnchor hook to avoid mid-build taint).
+                if pendingFixedAnchor then
+                    local tip = pendingFixedAnchor
+                    pendingFixedAnchor = nil
+                    if tip:IsShown() then
+                        Provider:PositionTooltipAtAnchor(tip, Provider:GetSettings())
+                    end
+                end
+
                 if not cursorFollowActive[GameTooltip] then return end
                 if not GameTooltip:IsShown() then
                     cursorFollowActive[GameTooltip] = nil
@@ -675,26 +686,25 @@ local function SetupTooltipHook()
         -- Cursor positioning uses cached UIParent scale and
         -- GetCursorPosition (screen coords, not restricted) — safe in combat.
         if settings.anchorToCursor then
-            -- Don't call AnchorTooltipToCursor here — it calls SetOwner()
-            -- which re-taints the tooltip from addon context, breaking
-            -- widget-set layout (secret value arithmetic on child frames).
-            -- Blizzard already called SetOwner(parent, "ANCHOR_NONE") inside
-            -- GameTooltip_SetDefaultAnchor before this hook fires.
+            -- TAINT SAFETY: Do NOT call SetOwner, SetPoint, or any other
+            -- frame-modifying function on GameTooltip here.  This hook fires
+            -- inside Blizzard's synchronous tooltip-build chain (e.g.
+            -- AreaPoiUtil → Show → AddWidgetSet).  Any addon property write
+            -- on GameTooltip — even from hooksecurefunc — taints the frame's
+            -- geometry, causing GetStringHeight() to return secret values
+            -- when UIWidgetTemplateTextWithState:Setup() runs later in the
+            -- same Lua stack.  Just flag for the OnUpdate cursor-follow
+            -- watcher, which repositions on the next frame after the widget
+            -- build is complete.
             EnsureCursorFollowHooks(tooltip)
-            if HasActiveMoneyFrame(tooltip) then
-                cursorFollowActive[tooltip] = nil
-                return
-            end
-            if HasActiveWidgetContainer(tooltip) then
-                cursorFollowActive[tooltip] = nil
-                return
-            end
             cursorFollowActive[tooltip] = true
-            Provider:PositionTooltipAtCursor(tooltip, settings)
         else
             cursorFollowActive[tooltip] = nil
-            -- Anchor to QUI's fixed tooltip anchor instead of Blizzard default
-            Provider:PositionTooltipAtAnchor(tooltip, settings)
+            -- TAINT SAFETY: Defer fixed-anchor repositioning to the next
+            -- frame for the same reason as cursor-follow above — calling
+            -- SetPoint here taints GameTooltip's geometry mid-build.
+            EnsureCursorFollowHooks(tooltip)
+            pendingFixedAnchor = tooltip
         end
     end)
 

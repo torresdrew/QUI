@@ -13,6 +13,7 @@ local qolFrame = CreateFrame("Frame")
 local popupBlockerDefaults = {
     enabled = false,
     blockTalentMicroButtonAlerts = false,
+    blockHelpTips = false,
     blockEventToasts = false,
     blockMountAlerts = false,
     blockPetAlerts = false,
@@ -356,6 +357,35 @@ local function HookTalentReminderAlerts()
     end
 end
 
+local helpTipShowHooked = false
+
+local function ClampActiveHelpTips()
+    if not HelpTip or not HelpTip.framePool then return end
+    for frame in HelpTip.framePool:EnumerateActive() do
+        frame:SetClampedToScreen(true)
+    end
+end
+
+local function HookHelpTipRepositioning()
+    if helpTipShowHooked or not HelpTip then return end
+    hooksecurefunc(HelpTip, "Show", function()
+        C_Timer.After(0, ClampActiveHelpTips)
+    end)
+    helpTipShowHooked = true
+end
+
+local function RefreshHelpTipSuppression()
+    if not HelpTip then return end
+    HookHelpTipRepositioning()
+    local suppress = IsPopupBlockEnabled("blockHelpTips")
+    HelpTip:SetHelpTipsEnabled("QUI", not suppress)
+    if suppress then
+        HelpTip:ForceHideAll()
+    else
+        ClampActiveHelpTips()
+    end
+end
+
 local function RefreshPopupBlocker()
     HookPopupAlertSystems()
     HookEventToastManager()
@@ -363,6 +393,7 @@ local function RefreshPopupBlocker()
 
     HideEventToasts()
     HideTalentReminderAlerts()
+    RefreshHelpTipSuppression()
 end
 
 _G.QUI_RefreshPopupBlocker = RefreshPopupBlocker
