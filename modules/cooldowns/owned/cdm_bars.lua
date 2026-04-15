@@ -39,6 +39,7 @@ local ipairs = ipairs
 local pcall = pcall
 local issecretvalue = issecretvalue
 local string_format = string.format
+local math_floor = math.floor
 local hooksecurefunc = hooksecurefunc
 local CreateFrame = CreateFrame
 
@@ -1564,14 +1565,18 @@ barTimerGroup:SetScript("OnLoop", function()
                         -- OOC: readable remaining — update text in Lua
                         if bar.DurationText then
                             if remaining >= 60 then
-                                local text = string_format("%.0fm", remaining / 60)
-                                if text ~= bar._lastDurationText then
+                                local bucket = math_floor(remaining / 60)
+                                if bucket ~= bar._lastDurationBucket then
+                                    bar._lastDurationBucket = bucket
+                                    local text = string_format("%.0fm", remaining / 60)
                                     bar._lastDurationText = text
                                     bar.DurationText:SetText(text)
                                 end
                             else
-                                local text = string_format("%.1f", remaining)
-                                if text ~= bar._lastDurationText then
+                                local bucket = math_floor(remaining * 10)
+                                if bucket ~= bar._lastDurationBucket then
+                                    bar._lastDurationBucket = bucket
+                                    local text = string_format("%.1f", remaining)
                                     bar._lastDurationText = text
                                     bar.DurationText:SetText(text)
                                 end
@@ -1607,6 +1612,7 @@ barTimerGroup:SetScript("OnLoop", function()
                         bar._durObj = nil
                         bar._cSideFill = nil
                         bar._lastDurationText = nil
+                        bar._lastDurationBucket = nil
                         if bar.DurationText then
                             bar.DurationText:SetText("")
                         end

@@ -128,6 +128,7 @@ local THROTTLE_INTERVAL = 0.1 -- 100ms coalesce window
 -- table reference lets it short-circuit and reduces GC pressure.
 ---------------------------------------------------------------------------
 local _backdropCache = {}
+do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "GF_backdropCache", tbl = _backdropCache } end
 local function GetCachedBackdrop(bgFile, edgeFile, edgeSize)
     local key = (bgFile or "") .. "|" .. (edgeFile or "") .. "|" .. (edgeSize or 0)
     local bd = _backdropCache[key]

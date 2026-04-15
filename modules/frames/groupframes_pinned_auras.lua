@@ -56,6 +56,10 @@ local ANCHOR_INSET = {
 local iconPool = {}
 local POOL_SIZE = 60
 local spellNameCache = {}
+do local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "GF_Pin_iconPool", tbl = iconPool }
+    mp[#mp + 1] = { name = "GF_Pin_spellNameCache", tbl = spellNameCache }
+end
 
 local DEFAULT_SQUARE_COLOR = { 0.5, 0.5, 0.5, 1 }
 local DEFAULT_INSET = { 0, 0 }
@@ -76,7 +80,7 @@ local FILTER_DISP = "PLAYER|HELPFUL|RAID_PLAYER_DISPELLABLE"
 local SECRET_TRACKED_AURAS = {
     [10060] = {
         name = "Power Infusion",
-        signature = "1:0:0:1",
+        signature = 9,  -- raid(8) + disp(1)
         filter = "HELPFUL",
         scanLimit = 100,
     },
@@ -115,10 +119,7 @@ local function GetTrackedSpellName(spellID)
 end
 
 local function MakeAuraSignature(passesRaid, passesRic, passesExt, passesDisp)
-    return (passesRaid and "1" or "0")
-        .. ":" .. (passesRic and "1" or "0")
-        .. ":" .. (passesExt and "1" or "0")
-        .. ":" .. (passesDisp and "1" or "0")
+    return (passesRaid and 8 or 0) + (passesRic and 4 or 0) + (passesExt and 2 or 0) + (passesDisp and 1 or 0)
 end
 
 local function GetAuraFilterMatch(unit, auraInstanceID, filterString)
@@ -224,7 +225,7 @@ local function FindTrackedAuraData(unit, spellID, activeAurasByID, activeAurasBy
         return auraData
     end
 
-    if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
+    if not InCombatLockdown() and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
         local okHelpful, helpfulAura = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, spellName, "HELPFUL")
         if okHelpful and helpfulAura then
             return helpfulAura

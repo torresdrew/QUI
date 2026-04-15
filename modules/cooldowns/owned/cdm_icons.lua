@@ -88,6 +88,7 @@ local iconPools = {
 }
 -- Phase G: Pools for custom containers are created dynamically via EnsurePool().
 local recyclePool = {}
+do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "CDM_iconRecyclePool", tbl = recyclePool } end
 local iconCounter = 0
 local updateTicker = nil
 
@@ -3684,18 +3685,20 @@ local _cdmUpdatePending = false
 -- Initialized true so the first scheduled update does a catch-up pass.
 local _barsDirty = true
 
+local function _CDMUpdateCallback()
+    _cdmUpdatePending = false
+    _lastCDMUpdateTime = GetTime()
+    CDMIcons:UpdateAllCooldowns()
+    if _barsDirty and ns.CDMBars and ns.CDMBars.UpdateOwnedBars then
+        _barsDirty = false
+        ns.CDMBars:UpdateOwnedBars()
+    end
+end
+
 local function ScheduleCDMUpdate()
     if _cdmUpdatePending then return end
     _cdmUpdatePending = true
-    C_Timer.After(CDM_MIN_UPDATE_INTERVAL, function()
-        _cdmUpdatePending = false
-        _lastCDMUpdateTime = GetTime()
-        CDMIcons:UpdateAllCooldowns()
-        if _barsDirty and ns.CDMBars and ns.CDMBars.UpdateOwnedBars then
-            _barsDirty = false
-            ns.CDMBars:UpdateOwnedBars()
-        end
-    end)
+    C_Timer.After(CDM_MIN_UPDATE_INTERVAL, _CDMUpdateCallback)
 end
 
 -- Combat safety ticker: periodic UpdateAllCooldowns during combat.
