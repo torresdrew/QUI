@@ -2043,7 +2043,12 @@ local function ApplyBarOverrideBindings(barKey)
             if key then
                 local existing = GetBindingAction(key, true)
                 if not existing or existing == "" or existing == command then
-                    SetOverrideBindingClick(container, false, key, btn:GetName(), "Keybind")
+                    -- Pet/stance buttons use PetActionButtonTemplate / StanceButtonTemplate
+                    -- whose OnClick handlers check for "LeftButton" specifically.  Standard
+                    -- action bars (SecureActionButtonTemplate) fire via secure attributes
+                    -- regardless of button string, so "Keybind" works for them.
+                    local vBtn = (barKey == "pet" or barKey == "stance") and "LeftButton" or "Keybind"
+                    SetOverrideBindingClick(container, false, key, btn:GetName(), vBtn)
                 end
             end
         end

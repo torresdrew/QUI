@@ -1271,9 +1271,11 @@ function CDMBars:LayoutBars(container, settings)
         else
             w, h = barWidth, barHeight
         end
-        container:SetSize(w, h)
-        if _G.QUI_SetCDMViewerBounds then
-            _G.QUI_SetCDMViewerBounds(container, w, h)
+        if not InCombatLockdown() then
+            container:SetSize(w, h)
+            if _G.QUI_SetCDMViewerBounds then
+                _G.QUI_SetCDMViewerBounds(container, w, h)
+            end
         end
         return
     end
@@ -1467,12 +1469,14 @@ function CDMBars:LayoutBars(container, settings)
     local lastW = container._lastBarLayoutW
     local lastH = container._lastBarLayoutH
     if lastW ~= totalW or lastH ~= totalH then
-        container._lastBarLayoutW = totalW
-        container._lastBarLayoutH = totalH
-        container:SetSize(totalW, totalH)
-        -- Write calculated dimensions to viewer state for proxy sizing
-        if _G.QUI_SetCDMViewerBounds then
-            _G.QUI_SetCDMViewerBounds(container, totalW, totalH)
+        if not InCombatLockdown() then
+            container._lastBarLayoutW = totalW
+            container._lastBarLayoutH = totalH
+            container:SetSize(totalW, totalH)
+            -- Write calculated dimensions to viewer state for proxy sizing
+            if _G.QUI_SetCDMViewerBounds then
+                _G.QUI_SetCDMViewerBounds(container, totalW, totalH)
+            end
         end
     end
 end
