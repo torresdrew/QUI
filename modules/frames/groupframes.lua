@@ -200,6 +200,7 @@ local _dispel = {
 local GetDispelColors
 local InvalidateDispelColors
 local UpdateSelectiveEvents
+local UpdateDarkModeVisuals
 
 local function GetDispelColorCurve(opacity)
     if _dispel.colorCurve then return _dispel.colorCurve end
@@ -696,6 +697,12 @@ local function UpdateHealth(frame)
         if frame.healthText then frame.healthText:SetText("") end
         return
     end
+
+    -- BackdropTemplate-backed frames can lose their cached tint when the client
+    -- rebuilds backdrop internals. Re-apply our configured backdrop/alpha here
+    -- so frequent health updates restore the intended colors without waiting for
+    -- a full frame refresh.
+    UpdateDarkModeVisuals(frame)
 
     local isDeadOrGhost = UnitIsDeadOrGhost(unit)
     local isConnected = UnitIsConnected(unit) or IsNPCPartyMember(unit)
@@ -1843,7 +1850,7 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Dark Mode Visuals (backdrop, health bar alpha)
 ---------------------------------------------------------------------------
-local function UpdateDarkModeVisuals(frame)
+UpdateDarkModeVisuals = function(frame)
     if not frame then return end
     local general = GetGeneralSettings(frame._isRaid)
     local bgColor, healthOpacity, bgOpacity
@@ -1857,9 +1864,15 @@ local function UpdateDarkModeVisuals(frame)
         bgOpacity = general and general.defaultBgOpacity or 1.0
     end
     local bgAlpha = (bgColor[4] or 1) * bgOpacity
+    -- Do not dirty-check the backdrop tint: BackdropTemplate can rebuild or
+    -- desync the visible backdrop without changing our configured RGBA, and we
+    -- want both live updates and settings changes to force the correct color.
     frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
     if frame.healthBar then
-        frame.healthBar:SetAlpha(healthOpacity)
+        if healthOpacity ~= frame._lastHealthBarAlpha then
+            frame._lastHealthBarAlpha = healthOpacity
+            frame.healthBar:SetAlpha(healthOpacity)
+        end
     end
 end
 
@@ -4984,6 +4997,15 @@ function QUI_GF:RefreshSettings()
     -- Force re-decoration of all children
     for _, frame in pairs(self.allFrames) do
         frame._quiDecorated = false
+        frame._lastBackdropColorR = nil
+        frame._lastBackdropColorG = nil
+        frame._lastBackdropColorB = nil
+        frame._lastBackdropColorA = nil
+        frame._lastHealthBarAlpha = nil
+        frame._lastHealthColorR = nil
+        frame._lastHealthColorG = nil
+        frame._lastHealthColorB = nil
+        frame._lastHealthColorA = nil
     end
     wipe(self.allFrames)
 
@@ -4995,6 +5017,15 @@ function QUI_GF:RefreshSettings()
             local child = header:GetAttribute("child" .. i)
             if not child then break end
             child._quiDecorated = false
+            child._lastBackdropColorR = nil
+            child._lastBackdropColorG = nil
+            child._lastBackdropColorB = nil
+            child._lastBackdropColorA = nil
+            child._lastHealthBarAlpha = nil
+            child._lastHealthColorR = nil
+            child._lastHealthColorG = nil
+            child._lastHealthColorB = nil
+            child._lastHealthColorA = nil
             i = i + 1
         end
     end
