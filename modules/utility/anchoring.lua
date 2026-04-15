@@ -1580,6 +1580,7 @@ local FRAME_RESOLVERS = {
         if IsBlizzardElementDisabled("zoneAbility") then return nil end
         return _G["ZoneAbilityFrame"]
     end,
+    leaveVehicle = function() return _G["MainMenuBarVehicleLeaveButton"] end,
     -- QoL
     brezCounter = function() return _G["QUI_BrezCounter"] end,
     atonementCounter = function() return _G["QUI_AtonementCounter"] end,
@@ -1806,6 +1807,7 @@ local FRAME_ANCHOR_INFO = {
     bagBar          = { displayName = "Bag Bar",               category = "Action Bars",       order = 12 },
     extraActionButton = { displayName = "Extra Action Button", category = "Action Bars",       order = 13 },
     zoneAbility     = { displayName = "Zone Ability Button",   category = "Action Bars",       order = 14 },
+    leaveVehicle    = { displayName = "Leave Vehicle Button", category = "Action Bars",       order = 15 },
     brezCounter     = { displayName = "Brez Counter",          category = "QoL",               order = 1 },
     atonementCounter = { displayName = "Atonement Counter",    category = "QoL",               order = 2 },
     combatTimer     = { displayName = "Combat Timer",          category = "QoL",               order = 3 },
