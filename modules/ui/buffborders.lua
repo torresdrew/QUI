@@ -237,6 +237,11 @@ local function CreateHeader(name, filter)
         header:SetAttribute("weaponTemplate", "QUIAuraIconTemplate")
     end
 
+    -- Ensure QUI headers sit above banished Blizzard frames whose secure
+    -- children may retain EnableMouse(true) during combat.
+    header:SetFrameStrata("MEDIUM")
+    header:SetFrameLevel(50)
+
     -- Fade support
     header._fadeEnabled = false
     header:EnableMouse(true)
@@ -348,9 +353,10 @@ local function StyleHeaderChildren(header, settings, isBuff)
         child._spellId = data.spellId
         child._filter = filter
 
-        -- Register right-click for buff cancellation (protected, out-of-combat only)
-        if not child._quiClickRegistered and not InCombatLockdown() then
-            child._quiClickRegistered = true
+        -- Register right-click for buff cancellation (protected, out-of-combat only).
+        -- Re-register every pass — the XML template sets this at creation time but
+        -- external code or secure header recycling can clear the registration.
+        if not InCombatLockdown() then
             child:RegisterForClicks("RightButtonUp")
         end
 
@@ -580,36 +586,22 @@ end
 
 local function BanishBlizzardFrame(frame, showHookedFlag, alphaHookedFlag)
     if not frame then return false, false end
+    if InCombatLockdown() then return showHookedFlag, alphaHookedFlag end
 
-    frame:SetAlpha(0)
+    -- Full suppression: hide the frame and kill its event pump so the
+    -- secure header never creates children. No children = no invisible
+    -- buttons stealing clicks or generating phantom tooltips.
+    frame:Hide()
+    frame:UnregisterAllEvents()
     frame:EnableMouse(false)
     SetDescendantMouse(frame, false)
 
-    -- Hook Show to re-enforce hiding
+    -- Hook Show to re-suppress if Blizzard code tries to resurrect it
     if not showHookedFlag then
         showHookedFlag = true
         hooksecurefunc(frame, "Show", function(self)
-            C_Timer.After(0, function()
-                if self._quiBanished then
-                    self:SetAlpha(0)
-                    self:EnableMouse(false)
-                    SetDescendantMouse(self, false)
-                end
-            end)
-        end)
-    end
-
-    -- Hook SetAlpha to prevent Blizzard from restoring visibility
-    if not alphaHookedFlag then
-        alphaHookedFlag = true
-        hooksecurefunc(frame, "SetAlpha", function(self, alpha)
-            if self._quiBanished and alpha > 0 then
-                C_Timer.After(0, function()
-                    if self._quiBanished and self:GetAlpha() > 0 then
-                        self:SetAlpha(0)
-                        SetDescendantMouse(self, false)
-                    end
-                end)
+            if self._quiBanished and not InCombatLockdown() then
+                self:Hide()
             end
         end)
     end
@@ -620,11 +612,12 @@ end
 
 local function RestoreBlizzardFrame(frame)
     if not frame then return end
+    if InCombatLockdown() then return end
 
     frame._quiBanished = nil
-    frame:SetAlpha(1)
     frame:EnableMouse(true)
     SetDescendantMouse(frame, true)
+    frame:Show()
 end
 
 ---------------------------------------------------------------------------
@@ -1430,6 +1423,19 @@ paRegenFrame:SetScript("OnEvent", function()
         paPendingSetup = false
         SetupPrivateAuras()
         LayoutPrivateAuraSlots()
+    end
+    -- Re-suppress banished Blizzard frames — Show/Hide is protected during
+    -- combat so our hook couldn't enforce the hide. Now that we're out of
+    -- combat, slam them back down.
+    if blizzBuffBanished and BuffFrame then
+        BuffFrame:Hide()
+        BuffFrame:EnableMouse(false)
+        SetDescendantMouse(BuffFrame, false)
+    end
+    if blizzDebuffBanished and DebuffFrame then
+        DebuffFrame:Hide()
+        DebuffFrame:EnableMouse(false)
+        SetDescendantMouse(DebuffFrame, false)
     end
     -- Re-sync header attributes that couldn't be changed during combat
     local settings = GetSettings()

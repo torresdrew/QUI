@@ -1022,14 +1022,19 @@ local function HookBlizzStackText(icon, blizzChild)
                 if not s or not s.icon then return end
                 local entry = s.icon._spellEntry
                 if entry and entry._blizzChild ~= blizzChild then return end
+                -- Clear cached chargeText — Blizzard may hide the frame
+                -- instead of calling SetText("") when stacks deplete.
+                -- Without this, IsHookStackActive stays true on stale data.
+                s.chargeText = nil
+                ChargeDebug(entry and entry.name, "HOOK ChargeCount.Hide",
+                    "spellID=", entry and entry.spellID, "overrideSpellID=", entry and entry.overrideSpellID)
                 -- Charged entries: StackText is driven by the FWD path
                 -- (cooldownChargesCount), not ChargeCount visibility.
                 -- Blizzard hides ChargeCount when the aura is active
                 -- (switches to Applications), but FWD still writes
                 -- charges every tick — let it be the authority.
                 if entry and entry.hasCharges then return end
-                ChargeDebug(entry and entry.name, "HOOK ChargeCount.Hide",
-                    "spellID=", entry and entry.spellID, "overrideSpellID=", entry and entry.overrideSpellID)
+                s.icon.StackText:SetText("")
                 s.icon.StackText:Hide()
             end)
             if chargeFrame.Current then
@@ -1086,7 +1091,11 @@ local function HookBlizzStackText(icon, blizzChild)
                 if not s or not s.icon then return end
                 local entry = s.icon._spellEntry
                 if entry and entry._blizzChild ~= blizzChild then return end
+                -- Clear cached appText — Blizzard hides the frame
+                -- when stacks deplete instead of calling SetText("").
+                s.appText = nil
                 if entry and entry.hasCharges then return end
+                s.icon.StackText:SetText("")
                 s.icon.StackText:Hide()
             end)
             if appFrame.Applications then
