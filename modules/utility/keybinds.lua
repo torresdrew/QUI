@@ -992,10 +992,15 @@ local function ApplyKeybindToIcon(icon, viewerName)
     local itemID
     local itemName
 
-    -- New CDM icons (cdm_icons.lua) store data in _spellEntry
+    -- New CDM icons (cdm_icons.lua) store data in _spellEntry.
+    -- Two paths populate item-typed entries:
+    --   _isCustomEntry: legacy essential/utility custom merge (cdm_icons BuildIcons)
+    --   _isOwnedEntry:  Composer/owned containers (cdm_spelldata ResolveOwnedEntry)
+    -- Both carry .type and .id; either should be treated as an item entry.
     local spellEntry = icon._spellEntry
-    local customEntry = icon._customCDMEntry or (spellEntry and spellEntry._isCustomEntry and spellEntry)
-    local isItemEntry = customEntry and (customEntry.type == "item" or customEntry.type == "trinket")
+    local customEntry = icon._customCDMEntry
+        or (spellEntry and (spellEntry._isCustomEntry or spellEntry._isOwnedEntry) and spellEntry)
+    local isItemEntry = customEntry and (customEntry.type == "item" or customEntry.type == "trinket" or customEntry.type == "slot")
 
     -- Try _spellEntry first (new addon-owned CDM icons)
     if spellEntry then
@@ -1028,9 +1033,9 @@ local function ApplyKeybindToIcon(icon, viewerName)
     if isItemEntry and customEntry and customEntry.id then
         if customEntry.type == "item" then
             itemID = tonumber(customEntry.id)
-        elseif customEntry.type == "trinket" then
-            -- entry.id stores slot number (13/14) for trinket entries
-            itemID = GetInventoryItemID("player", customEntry.id)
+        elseif customEntry.type == "trinket" or customEntry.type == "slot" then
+            -- entry.id stores equipment slot (13/14) for trinket/slot entries
+            itemID = customEntry.itemID or GetInventoryItemID("player", customEntry.id)
         end
         if itemID then
             itemName = C_Item.GetItemInfo(itemID)
