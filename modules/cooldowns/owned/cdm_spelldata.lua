@@ -59,6 +59,15 @@ local buffChildrenHooked = false  -- one-time hook for buff viewer aura events
 -- DurationObject cache: Blizzard child → captured DurationObject/start/duration.
 local _spellIDToChild = {}  -- [spellID] = { child1, child2, ... } (built OOC during scan)
 
+-- Per-batch memo caches for ResolveOwnedEntry candidate scoring.
+-- Wiped at the start of each BuildSpellListFromOwned call so all owned
+-- entries in one batch share the same spellID→icon and lsid→active lookups.
+-- Prevents O(candidates × linkedSpellIDs × entries) API storms when the
+-- _spellIDToChild candidate list grows large (e.g. 35+ children share a
+-- linkedSpellID via a buff-viewer CDM entry).
+local _resolveIconMemo = {}          -- [spellID] = iconID (false = negative lookup)
+local _resolveAuraActiveMemo = {}    -- [lsid]    = bool   (true = active aura present)
+
 --- Check if a Blizzard viewer child matches a given spell ID.
 --- Tries cooldownInfo.overrideSpellID, cooldownInfo.spellID (may be secret),
 --- and cooldownID (numeric, typically not secret).
@@ -1304,6 +1313,44 @@ local RebuildSpellToCooldownID
 local ResolveInfoSpellID
 local ResolveChildSpellID
 
+-- Memoized C_Spell.GetSpellInfo icon lookup.  The raw API can fire 30+ times
+-- per ResolveOwnedEntry in the viewer-child tiebreaker when candidate lists
+-- are large; memoizing per batch collapses this to one call per unique ID.
+-- `false` is stored for negative results so we don't retry missing spells.
+local function GetMemoIcon(spellID)
+    if not spellID then return nil end
+    local cached = _resolveIconMemo[spellID]
+    if cached ~= nil then
+        return cached or nil
+    end
+    if C_Spell and C_Spell.GetSpellInfo then
+        local info = C_Spell.GetSpellInfo(spellID)
+        local iconID = info and info.iconID or nil
+        _resolveIconMemo[spellID] = iconID or false
+        return iconID
+    end
+    _resolveIconMemo[spellID] = false
+    return nil
+end
+
+-- Memoized active-aura presence check.  Same rationale as GetMemoIcon:
+-- C_UnitAuras.GetPlayerAuraBySpellID runs per linkedSpellID per tying
+-- candidate, so memoizing per batch is a large win.
+local function IsMemoAuraActive(lsid)
+    if not lsid then return false end
+    local cached = _resolveAuraActiveMemo[lsid]
+    if cached ~= nil then return cached end
+    local active = false
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        local ok, ad = pcall(C_UnitAuras.GetPlayerAuraBySpellID, lsid)
+        if ok and ad and ad.auraInstanceID then
+            active = true
+        end
+    end
+    _resolveAuraActiveMemo[lsid] = active
+    return active
+end
+
 -- Resolve a single owned entry to a spell data table compatible with
 -- the existing icon/bar building pipeline.
 local function ResolveOwnedEntry(entry, containerKey, index)
@@ -1496,6 +1543,8 @@ local function ResolveOwnedEntry(entry, containerKey, index)
     if resolved.id and resolved.id ~= resolved.spellID and resolved.id ~= resolved.overrideSpellID then searchIDs[#searchIDs+1] = resolved.id end
 
     local bestChild, bestScore = nil, 0
+    local bestChildHasCdInfo = false -- preserve original "bestChild.cooldownInfo" guard
+    local bestChildLinkedIcon = nil  -- icon of bestChild.cooldownInfo.linkedSpellIDs[1]
     for _, searchSid in ipairs(searchIDs) do
         local candidates = _spellIDToChild[searchSid]
         if candidates then
@@ -1519,51 +1568,34 @@ local function ResolveOwnedEntry(entry, containerKey, index)
                 if score == bestScore and score >= 3 and ch.cooldownInfo then
                     local linked = ch.cooldownInfo.linkedSpellIDs
                     if linked then
-                        -- Active aura check (works in and out of combat)
-                        if C_UnitAuras.GetPlayerAuraBySpellID then
-                            for li = 1, #linked do
-                                local lsid = Helpers.SafeValue(linked[li], nil)
-                                if lsid and lsid > 0 then
-                                    local aok, ad = pcall(C_UnitAuras.GetPlayerAuraBySpellID, lsid)
-                                    if aok and ad and ad.auraInstanceID then
-                                        score = score + 1
-                                        break
-                                    end
-                                end
+                        -- Active aura check (memoized per batch — see
+                        -- IsMemoAuraActive).  Works in and out of combat.
+                        for li = 1, #linked do
+                            local lsid = Helpers.SafeValue(linked[li], nil)
+                            if lsid and lsid > 0 and IsMemoAuraActive(lsid) then
+                                score = score + 1
+                                break
                             end
                         end
                         -- OOC tiebreaker: prefer the child whose linked
                         -- aura has a distinct icon from the base spell.
                         -- The active buff typically has its own icon; passive
                         -- or hidden variants share the ability icon.
-                        if score == bestScore and bestChild and bestChild.cooldownInfo then
+                        if score == bestScore and bestChild and bestChildHasCdInfo then
                             local baseSid = Helpers.SafeValue(ch.cooldownInfo.spellID, nil)
-                            local baseIcon
-                            if baseSid and C_Spell and C_Spell.GetSpellInfo then
-                                local bi = C_Spell.GetSpellInfo(baseSid)
-                                baseIcon = bi and bi.iconID
-                            end
+                            local baseIcon = baseSid and GetMemoIcon(baseSid) or nil
                             if baseIcon then
-                                local chLinked = ch.cooldownInfo.linkedSpellIDs
-                                local bestLinked = bestChild.cooldownInfo.linkedSpellIDs
-                                local chIcon, bestIcon
-                                if chLinked and chLinked[1] then
-                                    local lsid = Helpers.SafeValue(chLinked[1], nil)
-                                    if lsid and C_Spell.GetSpellInfo then
-                                        local li = C_Spell.GetSpellInfo(lsid)
-                                        chIcon = li and li.iconID
-                                    end
+                                local chIcon
+                                if linked[1] then
+                                    local lsid = Helpers.SafeValue(linked[1], nil)
+                                    if lsid then chIcon = GetMemoIcon(lsid) end
                                 end
-                                if bestLinked and bestLinked[1] then
-                                    local lsid = Helpers.SafeValue(bestLinked[1], nil)
-                                    if lsid and C_Spell.GetSpellInfo then
-                                        local li = C_Spell.GetSpellInfo(lsid)
-                                        bestIcon = li and li.iconID
-                                    end
-                                end
-                                -- Prefer child with distinct aura icon
+                                -- Prefer child with distinct aura icon.
+                                -- bestChildLinkedIcon is cached at
+                                -- bestChild-assignment time, avoiding a
+                                -- repeat lookup every iteration.
                                 if chIcon and chIcon ~= baseIcon
-                                    and (not bestIcon or bestIcon == baseIcon) then
+                                    and (not bestChildLinkedIcon or bestChildLinkedIcon == baseIcon) then
                                     score = score + 1
                                 end
                             end
@@ -1573,6 +1605,16 @@ local function ResolveOwnedEntry(entry, containerKey, index)
                 if score > bestScore then
                     bestChild = ch
                     bestScore = score
+                    -- Cache bestChild's linked[1] icon so subsequent
+                    -- tiebreakers don't re-resolve it every iteration.
+                    bestChildLinkedIcon = nil
+                    local bci = ch.cooldownInfo
+                    bestChildHasCdInfo = (bci ~= nil)
+                    local bl = bci and bci.linkedSpellIDs
+                    if bl and bl[1] then
+                        local lsid = Helpers.SafeValue(bl[1], nil)
+                        if lsid then bestChildLinkedIcon = GetMemoIcon(lsid) end
+                    end
                 end
             end
         end
@@ -1847,6 +1889,13 @@ function CDMSpellData:BuildSpellListFromOwned(containerKey)
     if not next(_spellToCooldownID) then
         RebuildSpellToCooldownID()
     end
+
+    -- Wipe per-batch memo caches so a stale aura-active result from the
+    -- previous batch can't persist across buff-data-changed dispatches.
+    -- Icon lookups would be safe to carry, but wiping both keeps the
+    -- invariant simple: memos live for exactly one batch.
+    wipe(_resolveIconMemo)
+    wipe(_resolveAuraActiveMemo)
 
     local ownedSpells = NormalizeOwnedSpells(db.ownedSpells)
     local removedSpells = db.removedSpells or {}

@@ -1875,34 +1875,43 @@ local function UpdateIconCooldown(icon)
                         end
 
                         -- Keep texture showing the active aura buff.
-                        -- Roll the Bones (etc.) cycles between different
-                        -- buff spells — resolve the actual buff icon from
-                        -- auraData or the child's linkedSpellIDs, not the
-                        -- base ability icon.
+                        -- Spells like Roll the Bones cycle between multiple
+                        -- buff IDs — mirror the Blizzard child's live Icon
+                        -- texture each tick. linkedSpellIDs[1] is always
+                        -- the first entry of the linked set (wrong buff in
+                        -- combat once a different one is rolled); the
+                        -- child's Icon region is Blizzard-driven and
+                        -- tracks the active buff. Texture may be secret
+                        -- in combat — forward C-side, no Lua comparison.
                         if icon.Icon then
-                            local texID
-                            -- 1. auraData.icon — the live buff's texture
-                            if r.auraData then
-                                local aIcon = SafeValue(r.auraData.icon, nil)
-                                if aIcon and aIcon ~= 0 then texID = aIcon end
-                            end
-                            -- 2. Blizzard child linkedSpellIDs (like bars)
-                            if not texID and entry._blizzChild then
-                                local ci = entry._blizzChild.cooldownInfo
-                                if ci and ci.linkedSpellIDs then
-                                    local lsid = SafeValue(ci.linkedSpellIDs[1], nil)
-                                    if lsid and lsid > 0 then
-                                        texID = GetSpellTexture(lsid)
+                            local mirrored = false
+                            if entry._blizzChild then
+                                local blzIcon = entry._blizzChild.Icon or entry._blizzChild.icon
+                                local texRegion = blzIcon and (blzIcon.Icon or blzIcon.icon or blzIcon)
+                                if texRegion and texRegion.GetTexture then
+                                    local tok, tex = pcall(texRegion.GetTexture, texRegion)
+                                    if tok and tex then
+                                        pcall(icon.Icon.SetTexture, icon.Icon, tex)
+                                        mirrored = true
                                     end
                                 end
                             end
-                            -- 3. Fallback: base aura spell texture
-                            if not texID then
-                                texID = GetSpellTexture(auraSpellID)
-                            end
-                            if texID and texID ~= icon._lastTexture then
-                                icon.Icon:SetTexture(texID)
-                                icon._lastTexture = texID
+                            -- Fallback: auraData.icon then base aura spell
+                            -- texture (used when child Icon region isn't
+                            -- yet resolvable, e.g. first show).
+                            if not mirrored then
+                                local texID
+                                if r.auraData then
+                                    local aIcon = SafeValue(r.auraData.icon, nil)
+                                    if aIcon and aIcon ~= 0 then texID = aIcon end
+                                end
+                                if not texID then
+                                    texID = GetSpellTexture(auraSpellID)
+                                end
+                                if texID and texID ~= icon._lastTexture then
+                                    icon.Icon:SetTexture(texID)
+                                    icon._lastTexture = texID
+                                end
                             end
                         end
 
