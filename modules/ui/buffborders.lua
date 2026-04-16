@@ -379,8 +379,18 @@ local function StyleHeaderChildren(header, settings, isBuff)
                 BBDebug(("PostClick cancel btn=%s id=%d auraInstanceID=%s combat=%s"):format(
                     tostring(button), self:GetID(), tostring(aid), tostring(InCombatLockdown())
                 ))
-                if aid and C_UnitAuras and C_UnitAuras.CancelAuraByAuraInstanceID then
-                    pcall(C_UnitAuras.CancelAuraByAuraInstanceID, aid)
+                if aid and C_UnitAuras then
+                    -- Try every known cancel API and report what happens
+                    if C_UnitAuras.CancelAuraByAuraInstanceID then
+                        local ok, err = pcall(C_UnitAuras.CancelAuraByAuraInstanceID, aid)
+                        BBDebug(("CancelAuraByAuraInstanceID(%s) ok=%s err=%s"):format(tostring(aid), tostring(ok), tostring(err)))
+                    else
+                        BBDebug("CancelAuraByAuraInstanceID does not exist")
+                    end
+                    if not ok and CancelUnitBuff then
+                        local ok2, err2 = pcall(CancelUnitBuff, "player", self:GetID(), self._filter)
+                        BBDebug(("CancelUnitBuff(player, %d, %s) ok=%s err=%s"):format(self:GetID(), tostring(self._filter), tostring(ok2), tostring(err2)))
+                    end
                 end
             end)
         end
