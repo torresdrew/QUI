@@ -1058,16 +1058,10 @@ local function HookBlizzStackText(icon, blizzChild)
                     -- The Hide hook handles clearing when ChargeCount is hidden.
                     -- Charged entries are driven by cooldownChargesCount (FWD path).
                     if not (entry and entry.hasCharges) then
-                        -- Blindly forward via TruncateWhenZero (C-side,
-                        -- resolves secrets, returns "" for zero).  pcall
-                        -- because TWZ requires a number — if text is
-                        -- already a string like "", fall back to raw text.
-                        local twzOk, twzVal = pcall(C_StringUtil.TruncateWhenZero, text)
-                        pcall(s.icon.StackText.SetText, s.icon.StackText,
-                            twzOk and twzVal or text)
-                        if s.chargeVisible ~= false then
-                            s.icon.StackText:Show()
-                        end
+                        -- Blindly forward. No comparing. SetText is C-side
+                        -- and handles secrets natively.
+                        pcall(s.icon.StackText.SetText, s.icon.StackText, text)
+                        s.icon.StackText:Show()
                     end
                 end)
             end
@@ -1117,12 +1111,8 @@ local function HookBlizzStackText(icon, blizzChild)
                     ChargeDebug(entry and entry.name, "HOOK Applications.SetText text=", text,
                         "appVis=", s.appVisible,
                         "hasCharges=", entry and entry.hasCharges)
-                    local twzOk, twzVal = pcall(C_StringUtil.TruncateWhenZero, text)
-                    pcall(s.icon.StackText.SetText, s.icon.StackText,
-                        twzOk and twzVal or text)
-                    if s.appVisible ~= false then
-                        s.icon.StackText:Show()
-                    end
+                    pcall(s.icon.StackText.SetText, s.icon.StackText, text)
+                    s.icon.StackText:Show()
                 end)
             end
         end
