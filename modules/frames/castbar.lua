@@ -1052,6 +1052,39 @@ local function StoreChannelTickCalibration(observation)
     end
 end
 
+-- Pool of recycled observation structs. Each channel start was allocating a
+-- fresh table + nested tickTimes={}; in heavy channel-cast content (Mind
+-- Flay, Fists of Fury, etc.) those add up to a steady drip of GC garbage.
+-- StoreChannelTickCalibration consumes the observation before disposal, so
+-- recycling is safe.
+local CHANNEL_TICK_OBSERVATION_POOL = {}
+local CHANNEL_TICK_OBSERVATION_POOL_MAX = 4
+
+local function ReleaseChannelTickObservation(observation)
+    if not observation then return end
+    if observation.tickTimes then wipe(observation.tickTimes) end
+    if #CHANNEL_TICK_OBSERVATION_POOL < CHANNEL_TICK_OBSERVATION_POOL_MAX then
+        observation.spellID = nil
+        observation.spellName = nil
+        observation.sourceGUID = nil
+        observation.startTime = nil
+        observation.endTime = nil
+        observation.matchQuality = nil
+        observation.lastTickTime = nil
+        CHANNEL_TICK_OBSERVATION_POOL[#CHANNEL_TICK_OBSERVATION_POOL + 1] = observation
+    end
+end
+
+local function AcquireChannelTickObservation()
+    local n = #CHANNEL_TICK_OBSERVATION_POOL
+    if n > 0 then
+        local obs = CHANNEL_TICK_OBSERVATION_POOL[n]
+        CHANNEL_TICK_OBSERVATION_POOL[n] = nil
+        return obs
+    end
+    return { tickTimes = {} }
+end
+
 local function StopChannelTickObservation(bar)
     if not bar then return end
     local guid = NormalizeChannelTickGUID(bar.channelTickObservationGUID)
@@ -1068,6 +1101,7 @@ local function StopChannelTickObservation(bar)
     if observation then
         StoreChannelTickCalibration(observation)
         CHANNEL_TICK_ACTIVE_BY_GUID[guid] = nil
+        ReleaseChannelTickObservation(observation)
     end
     bar.channelTickObservationGUID = nil
 end
@@ -1091,6 +1125,7 @@ local function OnChannelTickCombatLogEvent()
     if observation.endTime and now > (observation.endTime + 0.5) then
         StoreChannelTickCalibration(observation)
         CHANNEL_TICK_ACTIVE_BY_GUID[sourceGUID] = nil
+        ReleaseChannelTickObservation(observation)
         return
     end
 
@@ -1133,16 +1168,15 @@ local function StartChannelTickObservation(bar, spellID, spellName, startTime, e
     EnsureChannelTickEventRegistration()
     StopChannelTickObservation(bar)
 
-    CHANNEL_TICK_ACTIVE_BY_GUID[sourceGUID] = {
-        spellID = NormalizeChannelTickSpellID(spellID),
-        spellName = spellName,
-        sourceGUID = sourceGUID,
-        startTime = startTime or GetTime(),
-        endTime = endTime,
-        tickTimes = {},
-        matchQuality = 0,
-        lastTickTime = nil,
-    }
+    local observation = AcquireChannelTickObservation()
+    observation.spellID = NormalizeChannelTickSpellID(spellID)
+    observation.spellName = spellName
+    observation.sourceGUID = sourceGUID
+    observation.startTime = startTime or GetTime()
+    observation.endTime = endTime
+    observation.matchQuality = 0
+    observation.lastTickTime = nil
+    CHANNEL_TICK_ACTIVE_BY_GUID[sourceGUID] = observation
     bar.channelTickObservationGUID = sourceGUID
 end
 
