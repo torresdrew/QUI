@@ -344,6 +344,86 @@ CDMSpellData.FindBuffChildForSpell = FindBuffChildForSpell
 CDMSpellData._childBySpellID = _childBySpellID
 
 ---------------------------------------------------------------------------
+-- CHILD METADATA HELPERS — single source of truth for extracting spell ID
+-- and display name from a Blizzard viewer child. Used by cdm_bars (and
+-- previously duplicated inline there).
+---------------------------------------------------------------------------
+
+-- Returns the C_CooldownViewer info for a child, with per-child caching
+-- (matches the pattern ResolveChildIDs uses internally).
+local function GetCachedCooldownInfo(child)
+    local cdID = child.cooldownID
+    if not cdID or not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        return nil
+    end
+    local info = child._cachedCdInfo
+    if info and child._cachedCdInfoID == cdID then return info end
+    local iok
+    iok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
+    if iok and info then
+        child._cachedCdInfo = info
+        child._cachedCdInfoID = cdID
+        return info
+    end
+    return nil
+end
+
+--- Single best spellID for a Blizzard viewer child.
+--- Priority: cooldownInfo.overrideSpellID → cooldownInfo.spellID
+--- → cached C_CooldownViewer info → cooldownID.
+function CDMSpellData.GetChildPrimarySpellID(child)
+    if not child then return nil end
+    local cinfo = child.cooldownInfo
+    if cinfo then
+        local override = SafeValue(cinfo.overrideSpellID, nil); if override then return override end
+        local sid = SafeValue(cinfo.spellID, nil); if sid then return sid end
+    end
+    local info = GetCachedCooldownInfo(child)
+    if info then
+        local override = SafeValue(info.overrideSpellID, nil); if override then return override end
+        local sid = SafeValue(info.spellID, nil); if sid then return sid end
+    end
+    return child.cooldownID
+end
+
+--- Override and base spell IDs as a pair (callers that need them separately —
+--- e.g. bars' color-override lookup). Either or both may be nil.
+function CDMSpellData.GetChildSpellIDPair(child)
+    if not child then return nil, nil end
+    local override, base
+    local cinfo = child.cooldownInfo
+    if cinfo then
+        override = SafeValue(cinfo.overrideSpellID, nil)
+        base = SafeValue(cinfo.spellID, nil)
+    end
+    if not override or not base then
+        local info = GetCachedCooldownInfo(child)
+        if info then
+            override = override or SafeValue(info.overrideSpellID, nil)
+            base = base or SafeValue(info.spellID, nil)
+        end
+    end
+    return override, base
+end
+
+--- Best display name for a Blizzard viewer child.
+--- Priority: cooldownInfo.name → cached info.name → caller-provided
+--- nameFromRegions fallback (FontString scan is caller-specific).
+function CDMSpellData.GetChildSpellName(child, nameFromRegions)
+    if not child then return nil end
+    local cinfo = child.cooldownInfo
+    if cinfo then
+        local name = SafeValue(cinfo.name, nil); if name then return name end
+    end
+    local info = GetCachedCooldownInfo(child)
+    if info then
+        local name = SafeValue(info.name, nil); if name then return name end
+    end
+    if nameFromRegions then return nameFromRegions(child) end
+    return nil
+end
+
+---------------------------------------------------------------------------
 -- HOOK CACHE QUERIES
 ---------------------------------------------------------------------------
 
