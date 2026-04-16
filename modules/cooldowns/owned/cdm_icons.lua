@@ -150,8 +150,9 @@ end
 -- Avoids redundant C API calls when the same spellID appears in multiple
 -- containers or is queried by both GetBestSpellCooldown and stack/visibility.
 ---------------------------------------------------------------------------
-local _tickChargeCache = {}   -- [spellID] = chargeInfo or false
-local _tickCooldownCache = {} -- [spellID] = cdInfo or false
+local _tickChargeCache = {}    -- [spellID] = chargeInfo or false
+local _tickCooldownCache = {}  -- [spellID] = cdInfo or false
+local _tickDurationCache = {}  -- [spellID] = DurationObject or false
 
 -- Persistent multi-charge spell cache (survives combat/reload via SavedVariables).
 -- Populated OOC when GetSpellCharges returns readable values; consulted in combat
@@ -200,6 +201,16 @@ local function TickCacheGetCooldown(spellID)
     return cdInfo
 end
 
+local function TickCacheGetDuration(spellID)
+    if not spellID then return nil end
+    local cached = _tickDurationCache[spellID]
+    if cached ~= nil then return cached or nil end
+    local ok, durObj = pcall(C_Spell.GetSpellCooldownDuration, spellID)
+    local result = (ok and durObj) or nil
+    _tickDurationCache[spellID] = result or false
+    return result
+end
+
 
 ---------------------------------------------------------------------------
 -- DYNAMIC CHILD LOOKUP: Scan ALL viewer children to find the one with
@@ -246,8 +257,9 @@ end
 ---------------------------------------------------------------------------
 -- TEXTURE HELPERS
 ---------------------------------------------------------------------------
--- Per-cycle texture cache: wiped once per UpdateAllCooldowns batch so
--- each spellID→iconID lookup happens at most once per tick, not per-icon.
+-- Persistent texture cache: spellID→iconID rarely changes (only on talent
+-- swap / spec change), so we keep it across ticks.  Wiped on SPELLS_CHANGED
+-- and PLAYER_SPECIALIZATION_CHANGED to pick up new icons.
 local _textureCycleCache = {}
 
 local function GetSpellTexture(spellID)
@@ -458,16 +470,14 @@ local function GetBestSpellCooldown(spellID)
                 if ok and durObj then bestDurObj = durObj end
             end
         end
-        -- Fall back to spell cooldown duration (non-charged spells)
-        if not bestDurObj and C_Spell.GetSpellCooldownDuration then
-            local ok, durObj = pcall(C_Spell.GetSpellCooldownDuration, spellID)
-            if ok and durObj then bestDurObj = durObj end
+        -- Fall back to spell cooldown duration (non-charged spells, per-tick cached)
+        if not bestDurObj then
+            bestDurObj = TickCacheGetDuration(spellID)
         end
         if not bestDurObj and C_Spell.GetOverrideSpell then
             local overrideID = C_Spell.GetOverrideSpell(spellID)
-            if overrideID and overrideID ~= spellID and C_Spell.GetSpellCooldownDuration then
-                local ok, durObj = pcall(C_Spell.GetSpellCooldownDuration, overrideID)
-                if ok and durObj then bestDurObj = durObj end
+            if overrideID and overrideID ~= spellID then
+                bestDurObj = TickCacheGetDuration(overrideID)
             end
         end
     end
@@ -2044,29 +2054,29 @@ local function UpdateIconCooldown(icon)
 
                 if not _ncAuraActive then
                     -- Cooldown state + DurationObject from the override spell
-                    local ciOk, childCi = pcall(C_Spell.GetSpellCooldown, cdSid)
-                    if ciOk and childCi and childCi.isActive ~= nil then
+                    -- (per-tick cached to avoid fresh Blizzard table per icon).
+                    local childCi = TickCacheGetCooldown(cdSid)
+                    if childCi and childCi.isActive ~= nil then
                         apiIsActive = childCi.isActive
                     end
                     -- Refresh _isOnGCD from per-tick API data.  Hooks alone can
                     -- leave it stale after GCD ends (Blizzard may not fire a new
                     -- SetCooldownFromDurationObject when transitioning from GCD
                     -- to real CD on the viewer child).
-                    if ciOk and childCi and not IsSecretValue(childCi.isOnGCD) then
+                    if childCi and not IsSecretValue(childCi.isOnGCD) then
                         icon._isOnGCD = childCi.isOnGCD or false
                     end
-                    local durOk, durResult = pcall(C_Spell.GetSpellCooldownDuration, cdSid)
-                    if durOk and durResult then durObj = durResult end
+                    durObj = TickCacheGetDuration(cdSid)
                 else
                     -- Aura active: still refresh GCD + cooldown activity
                     -- from API so desaturation clears when the CD ends.
                     -- Do NOT set the local apiIsActive — that would cause
                     -- the CooldownFrame write to overwrite the aura swipe.
-                    local ciOk, childCi = pcall(C_Spell.GetSpellCooldown, cdSid)
-                    if ciOk and childCi and not IsSecretValue(childCi.isOnGCD) then
+                    local childCi = TickCacheGetCooldown(cdSid)
+                    if childCi and not IsSecretValue(childCi.isOnGCD) then
                         icon._isOnGCD = childCi.isOnGCD or false
                     end
-                    if ciOk and childCi and childCi.isActive ~= nil then
+                    if childCi and childCi.isActive ~= nil then
                         icon._hasCooldownActive = childCi.isActive
                     end
                 end
@@ -2075,25 +2085,23 @@ local function UpdateIconCooldown(icon)
                 -- Non-aura cooldown entries keep _desiredTexture set so
                 -- HookBlizzTexture's wasSetFromAura guard blocks debuff
                 -- texture bleed (e.g. Outbreak → Virulent Plague).
-                -- Update it every tick from the live override (cdSid) so
-                -- talent swaps (Keg Smash → Empty Barrel) are reflected.
-                -- Aura entries: clear _desiredTexture so HookBlizzTexture
-                -- can forward the correct aura icon from the child.
+                -- Uses persistent _textureCycleCache (wiped on SPELLS_CHANGED)
+                -- so GetSpellInfo isn't called 20×/sec per icon.
                 if icon.Icon and entry._blizzChild and not entry.isAura then
-                    local texInfo = C_Spell.GetSpellInfo(cdSid)
-                    if texInfo and texInfo.iconID then
-                        if icon._desiredTexture ~= texInfo.iconID then
-                            icon._desiredTexture = texInfo.iconID
-                            pcall(icon.Icon.SetTexture, icon.Icon, texInfo.iconID)
+                    local texID = GetSpellTexture(cdSid)
+                    if texID then
+                        if icon._desiredTexture ~= texID then
+                            icon._desiredTexture = texID
+                            pcall(icon.Icon.SetTexture, icon.Icon, texID)
                         end
                     end
                 elseif icon.Icon and entry._blizzChild then
                     icon._desiredTexture = nil
                 elseif icon.Icon then
-                    local texInfo = C_Spell.GetSpellInfo(cdSid)
-                    if texInfo and texInfo.iconID then
-                        icon._desiredTexture = texInfo.iconID
-                        pcall(icon.Icon.SetTexture, icon.Icon, texInfo.iconID)
+                    local texID = GetSpellTexture(cdSid)
+                    if texID then
+                        icon._desiredTexture = texID
+                        pcall(icon.Icon.SetTexture, icon.Icon, texID)
                     end
                 end
             else
@@ -2175,23 +2183,22 @@ local function UpdateIconCooldown(icon)
                 -- Texture: mirror runtime override each tick (same as
                 -- non-charged path). Keeps _desiredTexture set to block
                 -- debuff bleed, but updates it for talent swaps.
+                -- Uses persistent _textureCycleCache (wiped on SPELLS_CHANGED).
                 if icon.Icon and entry._blizzChild and not entry.isAura then
-                    local texSid = _runtimeSid
-                    local texInfo = C_Spell.GetSpellInfo(texSid)
-                    if texInfo and texInfo.iconID then
-                        if icon._desiredTexture ~= texInfo.iconID then
-                            icon._desiredTexture = texInfo.iconID
-                            pcall(icon.Icon.SetTexture, icon.Icon, texInfo.iconID)
+                    local texID = GetSpellTexture(_runtimeSid)
+                    if texID then
+                        if icon._desiredTexture ~= texID then
+                            icon._desiredTexture = texID
+                            pcall(icon.Icon.SetTexture, icon.Icon, texID)
                         end
                     end
                 elseif icon.Icon and entry._blizzChild then
                     icon._desiredTexture = nil
                 elseif icon.Icon then
-                    local texSid = _runtimeSid
-                    local texInfo = C_Spell.GetSpellInfo(texSid)
-                    if texInfo and texInfo.iconID then
-                        icon._desiredTexture = texInfo.iconID
-                        pcall(icon.Icon.SetTexture, icon.Icon, texInfo.iconID)
+                    local texID = GetSpellTexture(_runtimeSid)
+                    if texID then
+                        icon._desiredTexture = texID
+                        pcall(icon.Icon.SetTexture, icon.Icon, texID)
                     end
                 end
             end
@@ -2965,7 +2972,7 @@ function CDMIcons:UpdateAllCooldowns()
     -- is queried at most once via TickCacheGetCharges/TickCacheGetCooldown.
     wipe(_tickChargeCache)
     wipe(_tickCooldownCache)
-    wipe(_textureCycleCache)
+    wipe(_tickDurationCache)
 
     -- Child map is invalidated by aura/cooldown event subscribers via
     -- CDMSpellData:InvalidateChildMap(). RebuildChildMap is a no-op when clean.
@@ -3629,6 +3636,7 @@ cdEventFrame:RegisterEvent("PLAYER_SOFT_ENEMY_CHANGED")
 cdEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 cdEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 cdEventFrame:RegisterEvent("UPDATE_MACROS")
+cdEventFrame:RegisterEvent("SPELLS_CHANGED")
 -- UNIT_AURA handled by centralized dispatcher subscription (below)
 
 -- C_Timer coalescing for cooldown events: batches SPELL_UPDATE_COOLDOWN,
@@ -3729,6 +3737,12 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
     end
     if event == "UPDATE_MACROS" then
         InvalidateMacroCache()
+        return
+    end
+    if event == "SPELLS_CHANGED" then
+        -- Talent/spec change: spell icons may have changed.
+        wipe(_textureCycleCache)
+        ScheduleCDMUpdate()
         return
     end
     -- Coalesce cooldown events via C_Timer
