@@ -12,6 +12,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v3.4.0 - 2026-04-17
+
+### Added
+- anchoring: add Leave Vehicle button to layout mode and frame resolvers
+
+### Changed
+- raidbuffs: only display missing buffs in default group view
+
+### Fixed
+- fixed aura cancellation in combat
+- restored resource bar swap positioning
+- fixed groupframes backdrop colors changing in darkmode
+- cdm: show keybinds for items added via Composer
+- cdm: mirror Blizzard child texture for cycling buffs, memoize resolver lookups
+- cdm: add per-tick duration cache, persist texture cache across ticks
+- cdm: clean up stale hook state and debug logging after reparent refactor
+- cdm: replace stack text hooks with native frame reparenting
+- cdm: show "0" stacks for charged abilities when all charges depleted
+- cdm: forward all hook SetText calls without filtering
+- cdm: clear stack text when hook receives empty value
+- cdm: prefer hook-driven stack text over API path for aura icons
+- cdm: fix bar icon mirroring, aura tooltip resolution, add bar debug
+- cdm: fix aura refresh detection, texture updates, and override stability
+- actionbars/cdm/buffborders: UNIT_AURA count updates, parent-check hook detection
+- buffborders/cdm: fix right-click cancel via secure attributes, simplify hooks
+- buffborders: use INDEX sort to preserve Blizzard aura ordering
+- buffborders: fix right-click cancel and stack display on secure aura children
+- cdm/actionbars: fix aura icon resolution, simplify assisted combat glow
+- cdm/actionbars: guard bar container sizing in combat, fix pet/stance keybinds
+- cdm/buffborders: visibility-based hook tracking, banish revert, debug tooling
+- cdm/buffborders: fix stack clear on hide, harden Blizzard frame suppression
+- cdm/groupframes: add buff pandemic glow, new glow types, GC optimizations
+- keybinds/rotation/glows: custom container support, override resolution
+- perf: memory audit tooling, GC pressure reduction, party tracker raid guard
+- qol/tooltip: fix taint from FlashBorder hooks, HelpTip API, and tooltip deferral
+- uihider: replace CompactRaidFrameManager hooks with hidden-parent reparent
+- fix taint and interaction issues, add HelpTip suppression
+- Revert "cdm: add override cache and handle COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED"
+- cdm: guard SyncClickButtonFrameLevel with InCombatLockdown check
+- groupframes: create spotlight header at runtime, not just in edit mode
+- minimap: prevent collected buttons from being dragged via StartMoving
 ## v3.3.3 - 2026-04-14
 
 ### Fixed
