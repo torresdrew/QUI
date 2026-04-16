@@ -936,188 +936,117 @@ end
 ---------------------------------------------------------------------------
 
 
---- Check whether hooks are actively driving stack text for an icon.
---- When true, API-based stack writes in UpdateIconCooldown should yield
---- to avoid overwriting the hook-driven values (our event handler runs
---- after Blizzard's hooks, creating a race where the API path clears or
---- sets stacks that the hook just populated correctly).
----
---- Uses frame visibility (chargeVisible/appVisible) rather than text
---- content comparison.  Hook text values can be secret — comparing
---- secrets always fails, making text-based checks permanently stuck.
---- Frame Show/Hide state is a boolean, immune to secret value issues.
+--- Check whether Blizzard's native stack frames are actively displaying
+--- on this icon.  When true, API-based stack writes in UpdateIconCooldown
+--- should yield — the reparented native frames are the source of truth.
+--- Live IsShown() check — no cached state, immune to secret values.
 local function IsHookStackActive(entry, icon)
     if not entry or not entry._blizzChild then return false end
-    local bss = blizzStackState[entry._blizzChild]
-    if not bss or bss.icon ~= icon then return false end
-    if bss.chargeVisible then return true end
-    if bss.appVisible then return true end
+    local child = entry._blizzChild
+    -- ChargeCount shown = Blizzard is displaying charges/stacks natively
+    if child.ChargeCount and child.ChargeCount:IsShown() then return true end
+    -- Applications shown = Blizzard is displaying application stacks
+    if child.Applications and child.Applications:IsShown() then return true end
     return false
 end
 
 local function HookBlizzStackText(icon, blizzChild)
     if not blizzChild then return end
 
+    local entry = icon._spellEntry
+    local chargeFrame = blizzChild.ChargeCount
+    local appFrame = blizzChild.Applications
+
+    -- Reparent and style Blizzard's native ChargeCount and Applications
+    -- frames onto our CDM icon.  Blizzard manages SetText/Show/Hide
+    -- natively — no hooks needed for stack text forwarding.  This avoids
+    -- all secret-value comparison issues: Blizzard's C-side code handles
+    -- zero detection, visibility toggling, and clearing internally.
+    --
+    -- For non-charged entries (Spirit Bomb / Soul Fragments): the native
+    -- ChargeCount.Current and Applications.Applications FontStrings
+    -- display stacks directly.  Blizzard clears them when stacks deplete.
+    --
+    -- For charged entries (hasCharges=true): the FWD path drives
+    -- icon.StackText via cooldownChargesCount — Blizzard native frames
+    -- are still reparented but the FWD path is the authority.
+
+    -- Reparent ChargeCount to our icon's TextOverlay so it renders
+    -- above the cooldown swipe.  Blizzard still owns the frame and
+    -- calls Show/Hide/SetText on it normally.
+    if chargeFrame then
+        local textOverlay = icon.TextOverlay
+        if textOverlay then
+            local lvl = textOverlay:GetFrameLevel() + 1
+            pcall(chargeFrame.SetParent, chargeFrame, textOverlay)
+            pcall(chargeFrame.SetFrameLevel, chargeFrame, lvl)
+        end
+        -- Show ChargeCount — Blizzard may start it hidden on essential
+        -- viewer children but still updates its text.  Making it visible
+        -- lets the native text display.  Blizzard's Hide() calls will
+        -- still work and correctly hide when stacks deplete.
+        if not (entry and entry.hasCharges) then
+            chargeFrame:Show()
+        end
+    end
+
+    -- Same for Applications.
+    if appFrame then
+        local textOverlay = icon.TextOverlay
+        if textOverlay then
+            local lvl = textOverlay:GetFrameLevel() + 1
+            pcall(appFrame.SetParent, appFrame, textOverlay)
+            pcall(appFrame.SetFrameLevel, appFrame, lvl)
+        end
+    end
+
+    -- Style the native FontStrings (font/color/position applied in
+    -- ConfigureIcon via StyleBlizzNativeStacks, called after this).
+
+    -- Minimal state tracking for IsHookStackActive and the FWD path.
     local state = blizzStackState[blizzChild]
     if not state then
         state = {}
         blizzStackState[blizzChild] = state
     end
-    -- When the child is reassigned to a different icon (spec change, pool
-    -- rebuild), clear stale text state from the previous mapping.  Without
-    -- this, chargeText/appText from the old spell leaks into the new icon
-    -- because the hook state survives child recycling.
-    if state.icon ~= icon then
-        state.chargeText = nil
-        state.appText = nil
-        state.chargeVisible = nil
-        state.appVisible = nil
-        state._hookHadContent = false
-        state.lastHookTime = nil
-    end
     state.icon = icon
-    state.blizzChild = blizzChild  -- Track child for stale mapping guard
+    state.blizzChild = blizzChild
+    state.chargeVisible = chargeFrame and chargeFrame:IsShown() or nil
+    state.appVisible = appFrame and appFrame:IsShown() or nil
 
-    -- Debug dump on assignment/reassignment
-    if _G.QUI_CDM_CHARGE_DEBUG then
-        local entry = icon._spellEntry
-        local eName = entry and entry.name or "?"
-        ChargeDebug(eName, "HookBlizzStackText ASSIGN",
-            "spellID=", entry and entry.spellID, "overrideSpellID=", entry and entry.overrideSpellID,
-            "hasCharges=", entry and entry.hasCharges,
-            "child.cooldownChargesCount=", blizzChild.cooldownChargesCount,
-            "ChargeCount=", blizzChild.ChargeCount and "exists" or "nil",
-            "Applications=", blizzChild.Applications and "exists" or "nil")
-    end
+    ChargeDebug(entry and entry.name, "HookBlizzStackText ASSIGN",
+        "spellID=", entry and entry.spellID, "overrideSpellID=", entry and entry.overrideSpellID,
+        "hasCharges=", entry and entry.hasCharges,
+        "child.cooldownChargesCount=", blizzChild.cooldownChargesCount,
+        "ChargeCount=", chargeFrame and "exists" or "nil",
+        "Applications=", appFrame and "exists" or "nil")
+end
 
-    -- Always (re-)seed visibility flags from current frame state.
-    -- On icon reassignment, chargeVisible/appVisible are cleared to nil
-    -- but state.hooked stays true — must seed outside the hooked block.
+--- Style the reparented Blizzard ChargeCount/Applications FontStrings
+--- with our font, color, and position.  Called from ConfigureIcon after
+--- HookBlizzStackText has reparented the frames.
+local function StyleBlizzNativeStacks(icon, blizzChild, font, size, outline, r, g, b, a, anchor, ox, oy)
+    if not blizzChild then return end
     local chargeFrame = blizzChild.ChargeCount
     local appFrame = blizzChild.Applications
-    -- Seed true if frame is currently shown, nil if hidden/missing.
-    -- nil = unknown (never explicitly hidden) — SetText hooks treat
-    -- this as "allow Show" so entries where Blizzard never toggles
-    -- ChargeCount visibility still display stacks via the hook.
-    -- The Hide hook sets false explicitly to block future Shows.
-    state.chargeVisible = (chargeFrame and chargeFrame:IsShown()) or nil
-    state.appVisible = (appFrame and appFrame:IsShown()) or nil
 
-    if not state.hooked then
-        state.hooked = true
-
-        -- Hook ChargeCount (e.g., charged spells, dynamic transforms like
-        -- Mind Blast → Void Blast). Show/Hide forward directly to control
-        -- StackText visibility. SetText forwards the charge count blindly.
-        -- Blizzard uses Show/Hide on ChargeCount to toggle charge display.
-        if chargeFrame then
-            hooksecurefunc(chargeFrame, "Show", function()
-                local s = blizzStackState[blizzChild]
-                if not s or not s.icon then return end
-                local entry = s.icon._spellEntry
-                if entry and entry._blizzChild ~= blizzChild then return end
-                if entry and entry.isAura then return end
-                s.chargeVisible = true
-                ChargeDebug(entry and entry.name, "HOOK ChargeCount.Show",
-                    "spellID=", entry and entry.spellID, "overrideSpellID=", entry and entry.overrideSpellID)
-                s.icon.StackText:Show()
-            end)
-            hooksecurefunc(chargeFrame, "Hide", function()
-                local s = blizzStackState[blizzChild]
-                if not s or not s.icon then return end
-                local entry = s.icon._spellEntry
-                if entry and entry._blizzChild ~= blizzChild then return end
-                s.chargeVisible = false
-                s.chargeText = nil
-                ChargeDebug(entry and entry.name, "HOOK ChargeCount.Hide",
-                    "spellID=", entry and entry.spellID, "overrideSpellID=", entry and entry.overrideSpellID)
-                -- Charged entries: StackText is driven by the FWD path
-                -- (cooldownChargesCount), not ChargeCount visibility.
-                -- Blizzard hides ChargeCount when the aura is active
-                -- (switches to Applications), but FWD still writes
-                -- charges every tick — let it be the authority.
-                if entry and entry.hasCharges then return end
-                s.icon.StackText:SetText("")
-                s.icon.StackText:Hide()
-            end)
-            if chargeFrame.Current then
-                hooksecurefunc(chargeFrame.Current, "SetText", function(_, text)
-                    local s = blizzStackState[blizzChild]
-                    if not s or not s.icon then return end
-                    local entry = s.icon._spellEntry
-                    if entry and entry._blizzChild ~= blizzChild then return end
-                    if entry and entry.isAura then return end
-                    s.chargeText = text
-                    ChargeDebug(entry and entry.name, "HOOK ChargeCount.SetText text=", text,
-                        "hasCharges=", entry and entry.hasCharges,
-                        "chargeVis=", s.chargeVisible,
-                        "spellID=", entry and entry.spellID, "overrideSpellID=", entry and entry.overrideSpellID,
-                        "blizzChild match=", entry._blizzChild == blizzChild)
-                    -- Non-charged entries (e.g., Spirit Bomb / Soul Fragments):
-                    -- forward ChargeCount text directly to StackText and Show.
-                    -- The Hide hook handles clearing when ChargeCount is hidden.
-                    -- Charged entries are driven by cooldownChargesCount (FWD path).
-                    if not (entry and entry.hasCharges) then
-                        -- Blindly forward. No comparing. SetText is C-side
-                        -- and handles secrets natively.
-                        pcall(s.icon.StackText.SetText, s.icon.StackText, text)
-                        s.icon.StackText:Show()
-                    end
-                end)
-            end
-        end
-
-        -- Hook Applications (e.g., Soul Fragments, Renewing Mists stacks)
-        -- Same direct forwarding pattern as ChargeCount.
-        if appFrame then
-            hooksecurefunc(appFrame, "Show", function()
-                local s = blizzStackState[blizzChild]
-                if not s or not s.icon then return end
-                local entry = s.icon._spellEntry
-                if entry and entry._blizzChild ~= blizzChild then return end
-                s.appVisible = true
-                ChargeDebug(entry and entry.name, "HOOK Applications.Show",
-                    "hasCharges=", entry and entry.hasCharges,
-                    "appText=", s.appText)
-                if entry and entry.hasCharges then return end
-                s.icon.StackText:Show()
-            end)
-            hooksecurefunc(appFrame, "Hide", function()
-                local s = blizzStackState[blizzChild]
-                if not s or not s.icon then return end
-                local entry = s.icon._spellEntry
-                if entry and entry._blizzChild ~= blizzChild then return end
-                s.appVisible = false
-                s.appText = nil
-                ChargeDebug(entry and entry.name, "HOOK Applications.Hide",
-                    "hasCharges=", entry and entry.hasCharges,
-                    "appText was=", s.appText)
-                if entry and entry.hasCharges then return end
-                s.icon.StackText:SetText("")
-                s.icon.StackText:Hide()
-            end)
-            if appFrame.Applications then
-                hooksecurefunc(appFrame.Applications, "SetText", function(_, text)
-                    local s = blizzStackState[blizzChild]
-                    if not s or not s.icon then return end
-                    local entry = s.icon._spellEntry
-                    if entry and entry._blizzChild ~= blizzChild then return end
-                    -- Charged entries: StackText is driven by
-                    -- cooldownChargesCount (FWD path), not application
-                    -- stacks. Skip forwarding to prevent buff viewer
-                    -- applications ("0") from overwriting charge count.
-                    if entry and entry.hasCharges then return end
-                    s.appText = text
-                    ChargeDebug(entry and entry.name, "HOOK Applications.SetText text=", text,
-                        "appVis=", s.appVisible,
-                        "hasCharges=", entry and entry.hasCharges)
-                    pcall(s.icon.StackText.SetText, s.icon.StackText, text)
-                    s.icon.StackText:Show()
-                end)
-            end
-        end
+    if chargeFrame and chargeFrame.Current then
+        local fs = chargeFrame.Current
+        pcall(fs.SetFont, fs, font, size, outline)
+        pcall(fs.SetTextColor, fs, r, g, b, a)
+        pcall(fs.ClearAllPoints, fs)
+        pcall(fs.SetPoint, fs, anchor, icon, anchor, ox, oy)
+        pcall(fs.SetDrawLayer, fs, "OVERLAY", 7)
     end
 
+    if appFrame and appFrame.Applications then
+        local fs = appFrame.Applications
+        pcall(fs.SetFont, fs, font, size, outline)
+        pcall(fs.SetTextColor, fs, r, g, b, a)
+        pcall(fs.ClearAllPoints, fs)
+        pcall(fs.SetPoint, fs, anchor, icon, anchor, ox, oy)
+        pcall(fs.SetDrawLayer, fs, "OVERLAY", 7)
+    end
 end
 
 local function UnhookBlizzStackText(icon)
@@ -1744,6 +1673,17 @@ local function ConfigureIcon(icon, rowConfig)
         icon.StackText:ClearAllPoints()
         icon.StackText:SetPoint(sAnchor, icon, sAnchor, sox, soy)
         icon.StackText:SetDrawLayer("OVERLAY", 7)
+
+        -- Also style reparented Blizzard native stack FontStrings
+        -- (ChargeCount.Current, Applications.Applications) so they
+        -- match our font/color/position.
+        local entry = icon._spellEntry
+        if entry and entry._blizzChild then
+            StyleBlizzNativeStacks(icon, entry._blizzChild,
+                generalFont, stackSize, generalOutline,
+                stc[1], stc[2], stc[3], stc[4] or 1,
+                sAnchor, sox, soy)
+        end
     end
 
     -- Apply row opacity
