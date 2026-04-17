@@ -1188,10 +1188,21 @@ local function CreateIcon(parent, spellEntry)
     icon:EnableMouse(true)
     icon:SetScript("OnEnter", function(self)
         if GameTooltip.IsForbidden and GameTooltip:IsForbidden() then return end
+        local tooltipProvider = ns.TooltipProvider
+        if tooltipProvider then
+            if tooltipProvider.IsOwnerFadedOut and tooltipProvider:IsOwnerFadedOut(self) then
+                pcall(GameTooltip.Hide, GameTooltip)
+                return
+            end
+            if tooltipProvider.ShouldShowTooltip and not tooltipProvider:ShouldShowTooltip("cdm") then
+                pcall(GameTooltip.Hide, GameTooltip)
+                return
+            end
+        end
         local entry = self._spellEntry
         if not entry then return end
         local tooltipSettings = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.tooltip
-        if tooltipSettings and tooltipSettings.hideInCombat and InCombatLockdown() then return end
+        if (not tooltipProvider) and tooltipSettings and tooltipSettings.hideInCombat and InCombatLockdown() then return end
         if tooltipSettings and tooltipSettings.anchorToCursor then
             local anchorTooltip = ns.QUI_AnchorTooltipToCursor
             if anchorTooltip then

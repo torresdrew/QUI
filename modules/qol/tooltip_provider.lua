@@ -193,6 +193,10 @@ function TooltipProvider:IsTransientTooltipOwner(owner)
     return owner == UIParent or IsOPieFrame(owner)
 end
 
+local function IsCDMOwnerState(state)
+    return state and (state.skinned or state._isQUICDMIcon or state._spellEntry)
+end
+
 ---------------------------------------------------------------------------
 -- Context Detection
 -- Determines what triggered the tooltip based on owner frame
@@ -204,16 +208,16 @@ function TooltipProvider:GetTooltipContext(owner)
     if self:IsTransientTooltipOwner(owner) then return nil end
 
     -- CDM: Check for skinned CDM icons
-    local getIS = _G.QUI_GetCDMIconState
+    local getIS = _G.QUI_GetIconState or _G.QUI_GetCDMIconState
     local ownerIS = getIS and getIS(owner)
-    if ownerIS and ownerIS.skinned then
+    if IsCDMOwnerState(ownerIS) then
         return "cdm"
     end
 
     local parent = owner:GetParent()
     if parent then
         local parentIS = getIS and getIS(parent)
-        if parentIS and parentIS.skinned then
+        if IsCDMOwnerState(parentIS) then
             return "cdm"
         end
         local getViewer = _G.QUI_GetCDMViewerFrame
