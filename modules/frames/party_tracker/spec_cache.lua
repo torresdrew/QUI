@@ -141,6 +141,19 @@ end
 ---------------------------------------------------------------------------
 
 local function ProcessInspectQueue()
+    -- Don't compete with the user's open InspectFrame. NotifyInspect is a
+    -- singleton: a background call here cancels whatever the user is looking
+    -- at, so INSPECT_READY fires for the wrong unit and GetInventoryItemLink
+    -- returns nil for every slot the user hovers. Pause until they close it;
+    -- the ticker is re-armed from InspectFrame's OnHide hook below.
+    if InspectFrame and InspectFrame:IsShown() then
+        if inspectTicker then
+            inspectTicker:Cancel()
+            inspectTicker = nil
+        end
+        return
+    end
+
     -- Timeout stale inspects
     if inspectPending and (GetTime() - inspectStartTime > INSPECT_TIMEOUT) then
         inspectPending = nil
@@ -184,12 +197,31 @@ end
 -- EVENT HANDLING
 ---------------------------------------------------------------------------
 
+-- When InspectFrame closes, resume background spec scanning if anything is
+-- queued. ProcessInspectQueue cancels the ticker when InspectFrame is shown,
+-- so without this the queue would stall until the next roster update.
+local function InstallInspectFrameOnHide()
+    if not InspectFrame or InspectFrame.__qui_spec_cache_hook then return end
+    InspectFrame.__qui_spec_cache_hook = true
+    InspectFrame:HookScript("OnHide", function()
+        if #inspectQueue > 0 then
+            SpecCache.EnsureTicker()
+        end
+    end)
+end
+
 C_Timer.After(0, function()
     local eventFrame = CreateFrame("Frame")
     eventFrame:RegisterEvent("INSPECT_READY")
     eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    eventFrame:RegisterEvent("ADDON_LOADED")
+
+    -- Blizzard_InspectUI is load-on-demand; InstallInspectFrameOnHide is
+    -- a no-op if the frame doesn't exist yet. Try now in case it's already
+    -- loaded, then again whenever it loads.
+    InstallInspectFrameOnHide()
 
     local function QueueAllPartyInspects()
         local numGroup = GetNumGroupMembers() or 0
@@ -203,6 +235,11 @@ C_Timer.After(0, function()
     end
 
     eventFrame:SetScript("OnEvent", function(_, event, arg1)
+        if event == "ADDON_LOADED" and arg1 == "Blizzard_InspectUI" then
+            InstallInspectFrameOnHide()
+            return
+        end
+
         if event == "INSPECT_READY" then
             if inspectPending then
                 local specId = GetInspectSpecialization()

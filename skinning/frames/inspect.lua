@@ -78,6 +78,10 @@ local function CreateOrUpdateBackground()
         -- issues where customBg can end up drawn behind the world.
         customBg:SetFrameLevel(0)
         customBg:EnableMouse(false)  -- Don't steal clicks
+        -- Default anchor to the inspect frame so the backdrop always has a
+        -- valid rect. SetInspectFrameBgExtended overrides this when the stats
+        -- panel extension is needed.
+        customBg:SetAllPoints(InspectFrame)
     end
 
     customBg:SetBackdropColor(bgr, bgg, bgb, bga)
@@ -176,13 +180,21 @@ local function SetupInspectFrameSkinning()
     if not IsSkinningEnabled() then return end
     if not InspectFrame then return end
 
-    -- Create initial background (will be positioned by qui_character.lua via SetExtended)
     CreateOrUpdateBackground()
 
-    -- Initial setup if already shown (rare edge case)
+    -- Position backdrop on every show, independent of the overlay module.
+    -- Previously only SetInspectExtendedMode / SetInspectNormalMode (in the
+    -- overlay hook path) called SetExtended, so with inspectEnabled=false the
+    -- backdrop never got its height extension and tabs below InspectFrame
+    -- rendered without a skin behind them.
+    InspectFrame:HookScript("OnShow", function()
+        SetInspectFrameBgExtended(IsInspectOverlaysEnabled())
+    end)
+
+    -- First-show race: if InspectFrame is already shown when this runs, the
+    -- OnShow hook won't fire for the current open. Apply once directly.
     if InspectFrame:IsShown() then
-        local extended = IsInspectOverlaysEnabled()
-        SetInspectFrameBgExtended(extended)
+        SetInspectFrameBgExtended(IsInspectOverlaysEnabled())
     end
 end
 
@@ -233,9 +245,9 @@ local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:SetScript("OnEvent", function(self, event, addon)
     if addon == "Blizzard_InspectUI" then
-        C_Timer.After(0.1, function()
-            SetupInspectFrameSkinning()
-        end)
+        -- Run immediately: Blizzard's own code shows InspectFrame in the same
+        -- tick as ADDON_LOADED fires, so deferring here races the first OnShow.
+        SetupInspectFrameSkinning()
         self:UnregisterEvent("ADDON_LOADED")
     end
 end)

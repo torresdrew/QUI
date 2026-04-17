@@ -1432,7 +1432,7 @@ local function ApplyInspectPaneLayout()
         C_Timer.After(0.05, function()
             RepositionInspectSlots()
             PositionInspectModelScene()
-            UpdateAllInspectSlotBorders("target")
+            UpdateAllInspectSlotBorders(InspectFrame and InspectFrame.unit or "target")
         end)
     end)
 
@@ -1448,10 +1448,11 @@ local function InitializeInspectOverlays()
     local shared = GetShared()
     if not shared.CreateSlotOverlay or not shared.EQUIPMENT_SLOTS then return end
 
+    local unit = (InspectFrame and InspectFrame.unit) or "target"
     for _, slotInfo in ipairs(shared.EQUIPMENT_SLOTS) do
         local slotFrame = _G["Inspect" .. slotInfo.name .. "Slot"]
         if slotFrame then
-            inspectOverlays[slotInfo.id] = shared.CreateSlotOverlay(slotFrame, slotInfo, "target")
+            inspectOverlays[slotInfo.id] = shared.CreateSlotOverlay(slotFrame, slotInfo, unit)
         end
     end
 
@@ -1467,16 +1468,23 @@ local function UpdateInspectFrame()
     local settings = GetSettings()
     local shared = GetShared()
 
+    -- Use the actual inspected unit, not "target". Right-click-inspect from
+    -- a raid frame sets InspectFrame.unit to e.g. "raid7" without changing
+    -- the player's target. Reading "target" here would paint overlays from
+    -- the wrong unit (or nil) and wipe Blizzard's correct data, producing
+    -- the "text flashes then disappears" symptom.
+    local unit = InspectFrame.unit or "target"
+
     if settings.inspectEnabled then
         -- Full overlay mode: always use detailed overlays, never lite mode
         HideLiteDisplays()
         if shared.UpdateAllSlotOverlays then
-            shared.UpdateAllSlotOverlays("target", inspectOverlays)
+            shared.UpdateAllSlotOverlays(unit, inspectOverlays)
         end
     elseif settings.inspectLiteShowPerSlot or settings.inspectLiteShowOverall then
         -- Lite mode (only when full overlays disabled): show enabled lite displays
         HideDetailedOverlays()
-        UpdateAllLiteDisplays("target")
+        UpdateAllLiteDisplays(unit)
     else
         -- All disabled: hide everything
         HideLiteDisplays()
@@ -1487,7 +1495,7 @@ local function UpdateInspectFrame()
     UpdateInspectILvlDisplay()
 
     -- Update slot borders based on item quality
-    UpdateAllInspectSlotBorders("target")
+    UpdateAllInspectSlotBorders(unit)
 end
 
 ---------------------------------------------------------------------------
@@ -1519,23 +1527,21 @@ local function HookInspectFrame()
             InitializeInspectOverlays()
         end
 
-        C_Timer.After(0.1, function()
-            local unit = InspectFrame.unit or "target"
-            -- Use pcall to protect against edge cases (unit out of range mid-check)
-            local ok, canInspect = pcall(function() return UnitExists(unit) and CanInspect(unit) end)
-            if ok and canInspect then
-                NotifyInspect(unit)
-            end
-        end)
+        -- NOTE: do NOT call NotifyInspect here. Blizzard's InspectFrame_Show
+        -- already calls NotifyInspect(unit) before firing OnShow. Calling it
+        -- again cancels the server request that's already in flight and
+        -- restarts it, which loses the inspect data (GetInventoryItemLink
+        -- returns nil for every slot). Confirmed via /qinspect trace.
 
         if shared.ScheduleUpdate then
             C_Timer.After(0.3, shared.ScheduleUpdate)
         end
     end)
 
-    -- First-show race: ADDON_LOADED is delayed 0.1s, by which time
-    -- InspectFrame is already shown and HookScript("OnShow") will not fire
-    -- for the initial inspect. Run the same setup manually in that case.
+    -- First-show race: if InspectFrame is already shown when our hook
+    -- installs, OnShow won't fire for this open. Apply layout/overlays
+    -- manually. Blizzard already called NotifyInspect as part of showing
+    -- the frame; do not call it again here.
     if InspectFrame:IsShown() then
         currentInspectTab = 1
         local currentSettings = GetSettings()
@@ -1543,13 +1549,6 @@ local function HookInspectFrame()
             ApplyInspectPaneLayout()
             InitializeInspectOverlays()
         end
-        C_Timer.After(0.1, function()
-            local unit = InspectFrame.unit or "target"
-            local ok, canInspect = pcall(function() return UnitExists(unit) and CanInspect(unit) end)
-            if ok and canInspect then
-                NotifyInspect(unit)
-            end
-        end)
         if shared.ScheduleUpdate then
             C_Timer.After(0.3, shared.ScheduleUpdate)
         end
@@ -1594,9 +1593,9 @@ eventFrame:RegisterEvent("INSPECT_READY")
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 == "Blizzard_InspectUI" then
-            C_Timer.After(0.1, function()
-                HookInspectFrame()
-            end)
+            -- Run immediately: Blizzard's own code shows InspectFrame in the
+            -- same tick as ADDON_LOADED, so deferring races the first OnShow.
+            HookInspectFrame()
         end
     elseif event == "INSPECT_READY" then
         -- arg1 is the GUID of the inspected unit
