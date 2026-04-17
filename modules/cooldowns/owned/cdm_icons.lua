@@ -3130,17 +3130,25 @@ function CDMIcons:UpdateAllCooldowns()
                         if isOnCD then
                             if not icon:IsShown() then icon:Show() end
                         else
-                            -- Keep icon visible if procOnUsable glow would trigger
-                            local keepForProc = false
-                            if ns._OwnedGlows and ns._OwnedGlows.IsSpellCastable then
-                                local spellOvr = ns.CDMSpellData and ns.CDMSpellData:GetSpellOverride(viewerType, entry.spellID or entry.id)
-                                if spellOvr and spellOvr.procOnUsable then
-                                    keepForProc = ns._OwnedGlows.IsSpellCastable(icon)
-                                end
+                            -- Keep proc-ready icons visible in active mode, not just
+                            -- procOnUsable overrides. Blizzard CDM can raise overlay
+                            -- glows for off-cooldown spells that should still appear.
+                            local keepForGlow = false
+                            if ns._OwnedGlows and ns._OwnedGlows.ShouldIconGlow then
+                                keepForGlow = ns._OwnedGlows.ShouldIconGlow(icon)
                             end
-                            if keepForProc then
-                                if not icon:IsShown() then icon:Show() end
+                            if keepForGlow then
+                                local wasHidden = not icon:IsShown()
+                                if wasHidden then
+                                    icon:Show()
+                                end
+                                if ns._OwnedGlows and ns._OwnedGlows.SyncGlowForIcon then
+                                    ns._OwnedGlows.SyncGlowForIcon(icon)
+                                end
                             elseif icon:IsShown() then
+                                if ns._OwnedGlows and ns._OwnedGlows.StopGlow then
+                                    ns._OwnedGlows.StopGlow(icon)
+                                end
                                 icon:Hide()
                             end
                         end
@@ -3662,6 +3670,9 @@ cdEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 cdEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 cdEventFrame:RegisterEvent("UPDATE_MACROS")
 cdEventFrame:RegisterEvent("SPELLS_CHANGED")
+cdEventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
+cdEventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
+cdEventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
 -- UNIT_AURA handled by centralized dispatcher subscription (below)
 
 -- C_Timer coalescing for cooldown events: batches SPELL_UPDATE_COOLDOWN,
@@ -3734,6 +3745,7 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
     end
     if event == "PLAYER_SOFT_ENEMY_CHANGED" then
         CDMIcons:UpdateAllIconRanges()
+        ScheduleCDMUpdate()
         return
     end
     if event == "PLAYER_EQUIPMENT_CHANGED" then

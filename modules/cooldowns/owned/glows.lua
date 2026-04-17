@@ -42,6 +42,99 @@ local function ForEachSpellCandidate(spellID, callback)
     end
 end
 
+local function GetChildSpellID(child)
+    if not child or not child.GetSpellID then return nil end
+    local ok, spellID = pcall(child.GetSpellID, child)
+    if ok and spellID then
+        return spellID
+    end
+    return nil
+end
+
+local function GetChildAuraSpellID(child)
+    if not child or not child.GetAuraSpellID then return nil end
+    local ok, spellID = pcall(child.GetAuraSpellID, child)
+    if ok and spellID then
+        return spellID
+    end
+    return nil
+end
+
+local function GetPreferredSpellID(icon)
+    if not icon or not icon._spellEntry then return nil end
+
+    local entry = icon._spellEntry
+    local child = entry._blizzChild
+    local childSpellID = GetChildSpellID(child)
+    if childSpellID then
+        return childSpellID
+    end
+
+    local childAuraSpellID = GetChildAuraSpellID(child)
+    if childAuraSpellID then
+        return childAuraSpellID
+    end
+
+    if icon._runtimeSpellID then
+        return icon._runtimeSpellID
+    end
+
+    local CDMSpellData = ns.CDMSpellData
+    if CDMSpellData and CDMSpellData.ResolveDisplaySpellID then
+        local resolvedID = CDMSpellData:ResolveDisplaySpellID(entry)
+        if resolvedID then
+            return resolvedID
+        end
+    end
+
+    return entry.overrideSpellID or entry.spellID or entry.id
+end
+
+local function ForEachIconSpellID(icon, callback)
+    if not icon or not icon._spellEntry or not callback then return end
+
+    local entry = icon._spellEntry
+    local child = entry._blizzChild
+    local rawSeen = {}
+    local candidateSeen = {}
+
+    local function VisitRaw(id)
+        if not id or rawSeen[id] then return end
+        rawSeen[id] = true
+        ForEachSpellCandidate(id, function(candidateID)
+            if candidateID and not candidateSeen[candidateID] then
+                candidateSeen[candidateID] = true
+                callback(candidateID)
+            end
+        end)
+    end
+
+    VisitRaw(entry.spellID)
+    VisitRaw(entry.overrideSpellID)
+    VisitRaw(entry.id)
+    VisitRaw(icon._runtimeSpellID)
+    VisitRaw(GetChildSpellID(child))
+    VisitRaw(GetChildAuraSpellID(child))
+
+    local CDMSpellData = ns.CDMSpellData
+    if CDMSpellData and CDMSpellData.ResolveDisplaySpellID then
+        VisitRaw(CDMSpellData:ResolveDisplaySpellID(entry))
+    end
+
+    local info = child and child.cooldownInfo
+    if info then
+        VisitRaw(Helpers.SafeValue(info.spellID, nil))
+        VisitRaw(Helpers.SafeValue(info.overrideSpellID, nil))
+        VisitRaw(Helpers.SafeValue(info.overrideTooltipSpellID, nil))
+
+        if info.linkedSpellIDs then
+            for _, linkedSpellID in ipairs(info.linkedSpellIDs) do
+                VisitRaw(Helpers.SafeValue(linkedSpellID, nil))
+            end
+        end
+    end
+end
+
 -- Safe wrapper: C_Spell.IsSpellUsable can return secret values in Midnight.
 local function SafeIsSpellUsable(spellID)
     if not spellID or not C_Spell or not C_Spell.IsSpellUsable then return true, false end
@@ -57,9 +150,7 @@ local function IsSpellCastable(icon)
     -- GCD-only cooldowns don't make a spell uncastable — skip the check
     -- so procOnUsable glow persists through the GCD swipe window.
     if icon._hasCooldownActive and not icon._isOnGCD then return false end
-    local spellID = icon._cachedOverrideID
-        or icon._spellEntry.overrideSpellID
-        or icon._spellEntry.spellID
+    local spellID = GetPreferredSpellID(icon)
     if not spellID then return false end
     return SafeIsSpellUsable(spellID)
 end
@@ -135,9 +226,7 @@ local function RebuildGlowSpellMap()
                     end
                 end
 
-                ForEachSpellCandidate(icon._spellEntry.spellID, AddID)
-                ForEachSpellCandidate(icon._spellEntry.overrideSpellID, AddID)
-                AddID(icon._cachedOverrideID)
+                ForEachIconSpellID(icon, AddID)
 
                 for _, id in ipairs(ids) do
                     local list = spellIdToGlowIcons[id]
@@ -530,15 +619,13 @@ local function IsOverlayed(spellID)
     return overlayedSpells[spellID] or false
 end
 
-local function EvaluateGlowForIcon(icon)
-    if not icon or not icon:IsShown() or not icon._spellEntry then
+local function EvaluateGlowForIcon(icon, includeHidden)
+    if not icon or not icon._spellEntry then
         return false, nil
     end
-
-    local entry = icon._spellEntry
-    local viewerType = entry.viewerType
-    local baseID = entry.spellID
-    local overrideID = entry.overrideSpellID
+    if not includeHidden and not icon:IsShown() then
+        return false, nil
+    end
 
     local spellOvr = GetSpellGlowOverride(icon)
 
@@ -548,16 +635,12 @@ local function EvaluateGlowForIcon(icon)
     elseif spellOvr and spellOvr.glowEnabled == true then
         shouldGlow = true
     else
-        shouldGlow = IsOverlayed(baseID)
-            or (overrideID and overrideID ~= baseID and IsOverlayed(overrideID))
-
-        if not shouldGlow and baseID and C_Spell and C_Spell.GetOverrideSpell then
-            local currentOverride = C_Spell.GetOverrideSpell(baseID)
-            if currentOverride and currentOverride ~= baseID
-                and currentOverride ~= overrideID then
-                shouldGlow = IsOverlayed(currentOverride)
+        shouldGlow = false
+        ForEachIconSpellID(icon, function(spellID)
+            if not shouldGlow and IsOverlayed(spellID) then
+                shouldGlow = true
             end
-        end
+        end)
     end
 
     if not shouldGlow and spellOvr and spellOvr.procOnUsable then
@@ -745,6 +828,11 @@ ns._OwnedGlows = {
     activeGlowIcons = activeGlowIcons,
     ScheduleGlowScan = ScanAllGlows,
     IsSpellCastable = IsSpellCastable,
+    ShouldIconGlow = function(icon)
+        local shouldGlow = EvaluateGlowForIcon(icon, true)
+        return shouldGlow and true or false
+    end,
+    SyncGlowForIcon = SyncGlowForIcon,
     HookBlizzPandemic = HookBlizzPandemic,
     ClearPandemicState = ClearPandemicState,
     GetGlowState = function(icon)
