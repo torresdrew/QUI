@@ -3470,6 +3470,12 @@ function CDMSpellData:Initialize()
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("SPELLS_CHANGED")
     eventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+    -- 12.0.5: auraInstanceID values re-randomize on encounter/M+/PvP start,
+    -- so the auraInstanceID-keyed tick caches must be evicted to avoid stale
+    -- negative entries masking newly-applied auras.
+    eventFrame:RegisterEvent("ENCOUNTER_START")
+    eventFrame:RegisterEvent("CHALLENGE_MODE_START")
+    eventFrame:RegisterEvent("PVP_MATCH_ACTIVE")
     eventFrame:SetScript("OnEvent", function(self, event, arg)
         if event == "SPELL_UPDATE_COOLDOWN" then
             -- No-op: ScanAll runs on its own 0.5s ticker (line 3178).
@@ -3521,6 +3527,13 @@ function CDMSpellData:Initialize()
             if not InCombatLockdown() then
                 CDMSpellData:ReconcileAllContainers()
             end
+        elseif event == "ENCOUNTER_START" or event == "CHALLENGE_MODE_START" or event == "PVP_MATCH_ACTIVE" then
+            -- Blizzard re-randomizes auraInstanceID values on these events
+            -- (12.0.5+). Wipe the auraInstanceID-keyed tick caches so old
+            -- negative entries (`false`) don't mask newly-applied auras that
+            -- happen to land on a previously-seen ID.
+            wipe(_tickAuraDataCache)
+            wipe(_tickAuraDurationCache)
         elseif event == "PLAYER_ENTERING_WORLD" then
             -- Suppress SPELLS_CHANGED dormant checks during zone transitions.
             -- APIs are stale for ~1-2s after entering a new zone/instance.
