@@ -1861,6 +1861,7 @@ local function BuildAuraIndicatorsSettings(content, gfdb, onChange)
             ai.entries[#ai.entries + 1] = {
                 spellID = tonumber(spellID) or spellID,
                 enabled = true,
+                onlyMine = false,
                 indicators = {
                     { type = "icon", enabled = true },
                 },
@@ -1943,7 +1944,13 @@ local function BuildAuraIndicatorsSettings(content, gfdb, onChange)
                 row.name:SetText((entry.enabled ~= false and "|cFFFFFFFF" or "|cFF808080") .. spellName .. "|r")
 
                 local iconCount, barCount, tintCount = CountIndicatorTypes(entry)
-                row.summary:SetText(string.format("I:%d B:%d T:%d", iconCount, barCount, tintCount))
+                row.summary:SetText(string.format(
+                    "I:%d B:%d T:%d%s",
+                    iconCount,
+                    barCount,
+                    tintCount,
+                    entry.onlyMine and " |cff56D1FFMine|r" or ""
+                ))
 
                 local selected = idx == selectedAuraIndex
                 row:SetBackdropColor(selected and 0.16 or 0.08, selected and 0.16 or 0.08, selected and 0.2 or 0.08, 0.9)
@@ -2205,6 +2212,10 @@ local function BuildAuraIndicatorsSettings(content, gfdb, onChange)
                     end
 
                     AddDetailWidget(GUI:CreateFormCheckbox(detailArea, "Aura Enabled", "enabled", selectedEntry, function()
+                        NotifyChanged()
+                        RebuildAuraList()
+                    end), FORM_ROW)
+                    AddDetailWidget(GUI:CreateFormCheckbox(detailArea, "Only My Cast", "onlyMine", selectedEntry, function()
                         NotifyChanged()
                         RebuildAuraList()
                     end), FORM_ROW)

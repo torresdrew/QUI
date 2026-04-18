@@ -283,6 +283,7 @@ function Helpers.NormalizeAuraIndicatorConfig(ai)
             if entry.enabled == nil then
                 entry.enabled = true
             end
+            entry.onlyMine = entry.onlyMine == true
             if type(entry.indicators) ~= "table" then
                 entry.indicators = {}
             end
