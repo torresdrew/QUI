@@ -1841,7 +1841,7 @@ local function UpdateIconCooldown(icon)
                     p.entryName = entry.name
                     p.viewerType = entry.viewerType
                     p.blizzChild = entry._blizzChild
-                    p.blizzBarChild = nil
+                    p.blizzBarChild = entry._blizzBarChild
 
                     local r = ns.CDMSpellData:ResolveAuraState(p)
                     if r.blizzChild and r.blizzChild ~= entry._blizzChild then
@@ -1853,6 +1853,9 @@ local function UpdateIconCooldown(icon)
                         HookBlizzTexture(icon, r.blizzChild)
                         HookBlizzStackText(icon, r.blizzChild)
                     end
+                    -- Cache bar-viewer counterpart so the next tick passes it
+                    -- through without rescanning BuffBarCooldownViewer.
+                    entry._blizzBarChild = r.blizzBarChild
 
                     if r.isActive then
                         icon._auraActive = true
@@ -2037,9 +2040,10 @@ local function UpdateIconCooldown(icon)
                     p.entryName = entry.name
                     p.viewerType = entry.viewerType
                     p.blizzChild = entry._blizzChild
-                    p.blizzBarChild = nil
+                    p.blizzBarChild = entry._blizzBarChild
 
                     local r = ns.CDMSpellData:ResolveAuraState(p)
+                    entry._blizzBarChild = r.blizzBarChild
 
                     if r.isActive then
                         _ncAuraActive = true
@@ -2146,9 +2150,10 @@ local function UpdateIconCooldown(icon)
                     p.entryName = entry.name
                     p.viewerType = entry.viewerType
                     p.blizzChild = entry._blizzChild
-                    p.blizzBarChild = nil
+                    p.blizzBarChild = entry._blizzBarChild
 
                     local r = ns.CDMSpellData:ResolveAuraState(p)
+                    entry._blizzBarChild = r.blizzBarChild
 
                     if r.isActive then
                         icon._auraActive = true

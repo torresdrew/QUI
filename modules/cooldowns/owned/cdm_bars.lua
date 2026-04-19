@@ -607,7 +607,15 @@ local function MirrorBlizzBar(ownedBar, blizzBarChild)
         hooksecurefunc(blizzStatusBar, "SetValue", function(self, value)
             local target = mirrorMap[blizzBarChild]
             if not target then return end
-            -- Forward value to owned StatusBar (C-side handles secret values)
+            -- When the aura is no longer active, Blizzard's bar child may
+            -- transition to driving the ability's cooldown progress (same
+            -- child is reused: aura while up, cooldown while recharging).
+            -- UpdateOwnedBarAura has already reset the owned StatusBar to 0
+            -- on the inactive transition; forwarding cooldown-progress
+            -- writes here flickers the bar between 0 and the cooldown value.
+            if target._active == false then
+                return
+            end
             pcall(target.StatusBar.SetValue, target.StatusBar, value)
             target._lastMirrorFill = GetTime()
         end)
@@ -1095,6 +1103,14 @@ function CDMBars:UpdateOwnedBarAura(bar)
 
     local r = ns.CDMSpellData:ResolveAuraState(p)
     if r.blizzChild then bar._blizzIconChild = r.blizzChild end
+    -- Late-bind a bar-viewer child when the initial FindBlizzBarChild at
+    -- build time returned nil (spell not yet in BuffBarCooldownViewer) and
+    -- one has since appeared. Hook mirror once so StatusBar/icon writes
+    -- flow to the owned bar from here on.
+    if not bar._blizzBar and r.blizzBarChild then
+        bar._blizzBar = r.blizzBarChild
+        MirrorBlizzBar(bar, r.blizzBarChild)
+    end
 
     local _bname = entry and entry.name
 
