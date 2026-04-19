@@ -262,6 +262,8 @@ do
     local seenGUID  = {}
     local pendingToken = 0
 
+    do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "RB_WW_seenGUID", tbl = seenGUID } end
+
     function WhirlwindTracker:GetStacks()
         -- Expire stale stacks
         if expiresAt and GetTime() >= expiresAt then
@@ -278,7 +280,7 @@ do
     function WhirlwindTracker:Reset()
         stacks = 0
         expiresAt = nil
-        seenGUID = {}
+        wipe(seenGUID)
         pendingToken = pendingToken + 1
     end
 
@@ -365,7 +367,7 @@ do
             -- Combat ended: clear pending token to prevent stale delayed grants,
             -- and clear GUID cache to prevent memory growth.
             pendingToken = pendingToken + 1
-            seenGUID = {}
+            wipe(seenGUID)
         end
     end)
     wwFrame:RegisterEvent("ACTIVE_PLAYER_SPECIALIZATION_CHANGED")

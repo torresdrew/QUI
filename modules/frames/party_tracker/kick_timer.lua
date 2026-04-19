@@ -30,6 +30,7 @@ ns.PartyTracker_KickTimer = KickTimer
 
 local GF = nil
 local SpecCache = nil
+local SyncIconLayer = ns.PartyTracker_SyncIconLayer
 
 local IsActive = ns.PartyTracker_IsActive
 local IsPartyUnit = ns.PartyTracker_IsPartyUnit
@@ -100,8 +101,7 @@ end
 local function CreateKickIcon(parent, px)
     local icon = CreateFrame("Frame", nil, parent)
     icon:SetSize(20, 20)
-    icon:SetFrameStrata("HIGH")
-    icon:SetFrameLevel(100)
+    SyncIconLayer(icon, parent)
 
     local tex = icon:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints()
@@ -217,9 +217,8 @@ local function ShowStaticIcon(frame)
         if icon.innerIcon then pcall(icon.innerIcon.SetTexture, icon.innerIcon, texture) end
     end
 
-    -- Ensure strata is above the group frame (may be reset by layout mode)
-    icon:SetFrameStrata("HIGH")
-    icon:SetFrameLevel(100)
+    -- Layout refreshes can touch frame layering, so re-sync before showing.
+    SyncIconLayer(icon, frame)
 
     icon:Show()
 end

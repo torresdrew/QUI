@@ -854,6 +854,7 @@ end
 
 -- Tracks which widget frames have been hooked for OnShow re-suppression
 local suppressionHookedFrames = {}
+do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "Prey_suppressionHooked", tbl = suppressionHookedFrames } end
 
 -- Determines if a child frame should be forcibly hidden (models, animations, glow)
 local function ShouldHardSuppress(target)

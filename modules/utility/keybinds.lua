@@ -49,6 +49,14 @@ local currentRotationBaseSpellID = nil  -- original base spell from Blizzard
 -- Position-based keybind cache (remembers keybinds by icon to handle procs)
 local iconKeybindCache = {}
 
+do local mp = QUI._memprobes or {}; QUI._memprobes = mp
+    mp[#mp + 1] = { name = "KB_spellToKeybind",     tbl = spellToKeybind }
+    mp[#mp + 1] = { name = "KB_spellNameToKeybind", tbl = spellNameToKeybind }
+    mp[#mp + 1] = { name = "KB_itemToKeybind",      tbl = itemToKeybind }
+    mp[#mp + 1] = { name = "KB_macroNameToIndex",   tbl = macroNameToIndex }
+    mp[#mp + 1] = { name = "KB_iconKeybindCache",   tbl = iconKeybindCache }
+end
+
 -- TAINT SAFETY: Store per-icon state in local weak-keyed tables instead of
 -- writing custom properties to Blizzard CDM icon frames.
 local iconKeybindState = QUI.Helpers.CreateStateTable()      -- icon → { text (FontString), keybind, spellID, overlay }

@@ -400,9 +400,6 @@ local function StampOldDefaultsOnRawProfile(rawProfile)
     stamp({"quiGroupFrames", "party", "absorbs", "opacity"}, 0.3)
     stamp({"quiGroupFrames", "party", "dimensions", "partyWidth"}, 200)
     stamp({"quiGroupFrames", "party", "dimensions", "partyHeight"}, 40)
-    stamp({"quiGroupFrames", "party", "partyTracker", "ccIcons", "enabled"}, false)
-    stamp({"quiGroupFrames", "party", "partyTracker", "kickTimer", "enabled"}, false)
-    stamp({"quiGroupFrames", "party", "partyTracker", "partyCooldowns", "enabled"}, false)
 
     -- Raid absorbs
     stamp({"quiGroupFrames", "raid", "absorbs", "opacity"}, 0.3)

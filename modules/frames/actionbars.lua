@@ -222,6 +222,8 @@ end
 ActionBarsOwned._activeButtons = ActionBarsOwned._activeButtons
     or setmetatable({}, { __mode = "k" })
 
+local UpdateButtonProfessionQuality
+
 function ActionBarsOwned.SafeUpdate(self)
     local action = self.action
     if not action then return end
@@ -257,6 +259,8 @@ function ActionBarsOwned.SafeUpdate(self)
             self.icon:Hide()
             if self.SlotBackground then self.SlotBackground:Show() end
         end
+
+        UpdateButtonProfessionQuality(self)
 
         self:SetAlpha(1.0)
 
@@ -342,6 +346,7 @@ function ActionBarsOwned.SafeUpdate(self)
         self.Count:SetText("")
         self.Name:SetText("")
         self.Border:Hide()
+        UpdateButtonProfessionQuality(self)
         if self.LevelLinkLockIcon then
             self.LevelLinkLockIcon:SetShown(false)
         end
@@ -3744,6 +3749,27 @@ local function GetButtonSpellId(button)
     return nil
 end
 
+local function ForEachSpellCandidate(spellId, callback)
+    if not spellId or not callback then return end
+
+    local seen = {}
+    local function Visit(id)
+        if id and not seen[id] then
+            seen[id] = true
+            callback(id)
+        end
+    end
+
+    Visit(spellId)
+
+    if C_Spell and C_Spell.GetOverrideSpell then
+        local ok, overrideId = pcall(C_Spell.GetOverrideSpell, spellId)
+        if ok and overrideId and overrideId ~= spellId then
+            Visit(overrideId)
+        end
+    end
+end
+
 -- Check if the button's action is a flyout containing a specific spell.
 local function ButtonFlyoutContainsSpell(button, spellId)
     local action = button.action
@@ -3775,12 +3801,14 @@ local function RebuildSpellIdMap()
             for _, btn in ipairs(btns) do
                 local spellId = GetButtonSpellId(btn)
                 if spellId then
-                    local list = spellIdToButtons[spellId]
-                    if not list then
-                        list = {}
-                        spellIdToButtons[spellId] = list
-                    end
-                    list[#list + 1] = btn
+                    ForEachSpellCandidate(spellId, function(candidateId)
+                        local list = spellIdToButtons[candidateId]
+                        if not list then
+                            list = {}
+                            spellIdToButtons[candidateId] = list
+                        end
+                        list[#list + 1] = btn
+                    end)
                 else
                     -- Check if this is a flyout button (rare but possible)
                     local action = btn.action
@@ -3819,8 +3847,15 @@ function ActionBarsOwned.UpdateOverlayGlow(button)
         local IsSpellOverlayed = C_SpellActivationOverlay and C_SpellActivationOverlay.IsSpellOverlayed
             or _G.IsSpellOverlayed
         if IsSpellOverlayed then
-            local ok, overlayed = pcall(IsSpellOverlayed, spellId)
-            if ok and overlayed then
+            local overlayed = false
+            ForEachSpellCandidate(spellId, function(candidateId)
+                if overlayed then return end
+                local ok, result = pcall(IsSpellOverlayed, candidateId)
+                if ok and result then
+                    overlayed = true
+                end
+            end)
+            if overlayed then
                 ShowActionButtonGlow(button)
                 return
             end
@@ -4061,19 +4096,58 @@ end
 
 -- Handle SPELL_ACTIVATION_OVERLAY_GLOW_SHOW: O(1) lookup via reverse map,
 -- flyout fallback for rare flyout-containing-spell case.
-function ActionBarsOwned.OnSpellActivationGlowShow(spellId)
-    if not spellId then return end
-    local btns = spellIdToButtons[spellId]
-    if btns then
-        for _, btn in ipairs(btns) do
-            ShowActionButtonGlow(btn)
+local function ForEachButtonForSpellGlow(spellId, callback)
+    if not spellId or not callback then return false end
+
+    local matched = false
+    local visited = {}
+    local slotMap = ActionBarsOwned.slotMap
+
+    local function VisitButton(button)
+        if button and not visited[button] then
+            visited[button] = true
+            matched = true
+            callback(button)
         end
     end
-    -- Flyout fallback: check the small set of flyout buttons
-    for _, btn in ipairs(flyoutButtons) do
-        if ButtonFlyoutContainsSpell(btn, spellId) then
-            ShowActionButtonGlow(btn)
+
+    ForEachSpellCandidate(spellId, function(candidateId)
+        local btns = spellIdToButtons[candidateId]
+        if btns then
+            for _, btn in ipairs(btns) do
+                VisitButton(btn)
+            end
         end
+
+        for _, btn in ipairs(flyoutButtons) do
+            if ButtonFlyoutContainsSpell(btn, candidateId) then
+                VisitButton(btn)
+            end
+        end
+
+        if C_ActionBar and C_ActionBar.FindSpellActionButtons and slotMap then
+            local ok, slots = pcall(C_ActionBar.FindSpellActionButtons, candidateId)
+            if ok and slots then
+                for _, slot in ipairs(slots) do
+                    local entry = slotMap[slot]
+                    if entry and entry.button then
+                        VisitButton(entry.button)
+                    end
+                end
+            end
+        end
+    end)
+
+    return matched
+end
+
+function ActionBarsOwned.OnSpellActivationGlowShow(spellId)
+    if not spellId then return end
+    if not ForEachButtonForSpellGlow(spellId, ShowActionButtonGlow) then
+        -- Some proc events fire for spell IDs that do not appear directly on
+        -- the button (base vs current override). Fall back to a cheap full
+        -- rescan so the visible button still picks up the glow.
+        ActionBarsOwned.UpdateAllOverlayGlows()
     end
 end
 
@@ -4081,17 +4155,8 @@ end
 -- flyout fallback for rare flyout-containing-spell case.
 function ActionBarsOwned.OnSpellActivationGlowHide(spellId)
     if not spellId then return end
-    local btns = spellIdToButtons[spellId]
-    if btns then
-        for _, btn in ipairs(btns) do
-            HideActionButtonGlow(btn)
-        end
-    end
-    -- Flyout fallback: check the small set of flyout buttons
-    for _, btn in ipairs(flyoutButtons) do
-        if ButtonFlyoutContainsSpell(btn, spellId) then
-            HideActionButtonGlow(btn)
-        end
+    if not ForEachButtonForSpellGlow(spellId, HideActionButtonGlow) then
+        ActionBarsOwned.UpdateAllOverlayGlows()
     end
 end
 
@@ -5523,9 +5588,61 @@ local function SuppressButtonProcVisuals(button)
     end)
 end
 
+UpdateButtonProfessionQuality = function(button, settings)
+    if not button then return end
+
+    local overlay = button.ProfessionQualityOverlayTexture
+    if settings == nil then
+        local db = GetDB()
+        settings = db and db.global
+    end
+    if settings and settings.showProfessionQuality == false then
+        if overlay then
+            overlay:Hide()
+        end
+        return
+    end
+
+    local action = GetSafeActionSlot(button)
+    if not action or not (C_ActionBar and C_ActionBar.GetProfessionQualityInfo) then
+        if overlay then
+            overlay:Hide()
+        end
+        return
+    end
+
+    local ok, qualityInfo = pcall(C_ActionBar.GetProfessionQualityInfo, action)
+    local atlas = ok and qualityInfo and qualityInfo.iconInventory
+    if not atlas then
+        if overlay then
+            overlay:Hide()
+        end
+        return
+    end
+
+    if not overlay then
+        overlay = button:CreateTexture(nil, "OVERLAY", nil, 7)
+        overlay:SetPoint("CENTER", button, "TOPLEFT", 14, -14)
+        overlay:SetDrawLayer("OVERLAY", 7)
+        button.ProfessionQualityOverlayTexture = overlay
+    end
+
+    overlay:SetAtlas(
+        atlas,
+        TextureKitConstants and TextureKitConstants.UseAtlasSize or true
+    )
+    overlay:Show()
+end
+
 -- Apply QUI skin to a single button
 SkinButton = function(button, settings)
-    if not button or not settings or not settings.skinEnabled then
+    if not button or not settings then
+        return
+    end
+
+    UpdateButtonProfessionQuality(button, settings)
+
+    if not settings.skinEnabled then
         return
     end
     local state = GetFrameState(button)

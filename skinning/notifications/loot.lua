@@ -281,22 +281,26 @@ local function OnLootOpened(autoLoot)
     -- Fast loot clears items faster than the frame can populate
     if db.general and db.general.fastAutoLoot then return end
 
-    -- Position window
-    if db.loot.lootUnderMouse then
-        local x, y = GetCursorPosition()
-        local scale = UIParent:GetEffectiveScale()
-        local offsetX = tonumber(db.loot.lootUnderMouseOffsetX) or 0
-        local offsetY = tonumber(db.loot.lootUnderMouseOffsetY) or 0
-        lootFrame:ClearAllPoints()
-        lootFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (x / scale) + offsetX, (y / scale) + offsetY)
-    elseif not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("lootFrame")) then
-        -- No frameAnchoring override — use default
-        lootFrame:ClearAllPoints()
-        lootFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
-    else
-        -- frameAnchoring handles position; reapply in case Blizzard reset
-        if _G.QUI_ApplyAllFrameAnchors then
-            _G.QUI_ApplyAllFrameAnchors()
+    -- Position window. TAINT SAFETY: skip all repositioning in combat.
+    -- GetCursorPosition/UIParent:GetEffectiveScale can return secret values in
+    -- combat; forwarding them to SetPoint taints the frame, and subsequent
+    -- ClearAllPoints/SetPoint calls then fire ADDON_ACTION_BLOCKED. The frame
+    -- keeps its last valid position while in combat.
+    if not InCombatLockdown() then
+        if db.loot.lootUnderMouse then
+            local x, y = GetCursorPosition()
+            local scale = UIParent:GetEffectiveScale()
+            local offsetX = tonumber(db.loot.lootUnderMouseOffsetX) or 0
+            local offsetY = tonumber(db.loot.lootUnderMouseOffsetY) or 0
+            lootFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", (x / scale) + offsetX, (y / scale) + offsetY)
+        elseif not (_G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("lootFrame")) then
+            -- No frameAnchoring override — use default
+            lootFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
+        else
+            -- frameAnchoring handles position; reapply in case Blizzard reset
+            if _G.QUI_ApplyAllFrameAnchors then
+                _G.QUI_ApplyAllFrameAnchors()
+            end
         end
     end
 
@@ -1343,7 +1347,6 @@ function Loot:ShowLootPreview()
     self:ApplyLootTheme()
 
     -- Position from frameAnchoring or default
-    lootFrame:ClearAllPoints()
     lootFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
     if _G.QUI_ApplyAllFrameAnchors then
         _G.QUI_ApplyAllFrameAnchors()

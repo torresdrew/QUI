@@ -4,6 +4,11 @@ All notable changes to QUI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## Unreleased
+
+### Removed
+- removed party tracker (CC icons, kick timer, party cooldown display)
+
 
 
 

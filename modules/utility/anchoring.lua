@@ -1032,6 +1032,10 @@ local ResolveApplyFrameForKey
 
 local _anchorGuardedFrames = {}  -- [frame] = true, prevents double-hooking
 local _setPointGuardedFrames = {} -- [frame] = true, prevents double-hooking SetPoint guards
+do local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "Anch_anchorGuardedFrames",   tbl = _anchorGuardedFrames }
+    mp[#mp + 1] = { name = "Anch_setPointGuardedFrames", tbl = _setPointGuardedFrames }
+end
 
 -- Layer 1: Hook ApplySystemAnchor on a single Blizzard frame
 local DYNAMIC_REANCHOR_KEYS = { buffFrame = true, debuffFrame = true }
@@ -1900,6 +1904,7 @@ end
 
 local hideWithParentHidden = {}  -- keys hidden because their anchor parent is hidden
 local _visibilityHooked = {}    -- [frame] = true — prevents double-hooking OnShow/OnHide
+do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "Anch_visibilityHooked", tbl = _visibilityHooked } end
 local FRAME_ANCHOR_FALLBACKS    -- forward-declared; table populated below
 local HUD_MIN_WIDTH_DEFAULT = (ns.Helpers and ns.Helpers.HUD_MIN_WIDTH_DEFAULT) or 200
 
@@ -2176,6 +2181,7 @@ end
 
 -- Track which parent frames have been hooked for OnSizeChanged
 local hookedParentFrames = {}
+do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "Anch_hookedParentFrames", tbl = hookedParentFrames } end
 
 CDM_LOGICAL_SIZE_KEYS.cdmEssential = true
 CDM_LOGICAL_SIZE_KEYS.cdmUtility = true

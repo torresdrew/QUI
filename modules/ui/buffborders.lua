@@ -102,6 +102,7 @@ local BORDER_COLOR_DEBUFF_DEFAULT = { 0.50, 0.00, 0.00 }
 ---------------------------------------------------------------------------
 -- Weapon enchant cached total duration per slot
 local enchantCachedDuration = {}
+do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "BB_enchantCache", tbl = enchantCachedDuration } end
 
 -- Sorted icon lists (kept as empty tables for legacy references)
 local buffSortedIcons = {}

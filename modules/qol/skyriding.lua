@@ -47,6 +47,7 @@ local fadeTargetAlpha = 1
 local inCombat = false
 local hasThrillOfTheSkiesBuff = false
 local isPreviewMode = false
+local farmHudHooked = false
 
 -- Smooth animation state
 local targetBarValue = 0
@@ -971,6 +972,11 @@ local function UpdateVisibility()
         return
     end
 
+    if settings.hideWhenFarmHudShown and _G.FarmHud and _G.FarmHud.IsShown and _G.FarmHud:IsShown() then
+        skyridingFrame:Hide()
+        return
+    end
+
     local gliding, canGlideNow, _ = GetGlidingInfo()
     isGliding = gliding
     canGlide = canGlideNow
@@ -1257,6 +1263,10 @@ end
 ---------------------------------------------------------------------------
 -- World/Zone Refresh
 ---------------------------------------------------------------------------
+-- Forward declaration; EnsureSkyridingFrame is defined below after
+-- ScheduleSkyridingWorldRefresh so it has access to ApplySettings/OnUpdate.
+local EnsureSkyridingFrame
+
 local function RefreshSkyridingState()
     groundedTime = 0
     fadeStart = 0
@@ -1267,6 +1277,15 @@ local function RefreshSkyridingState()
     _secondWindDirty = true
     _abilityDirty = true
     _visibilityDirty = true
+
+    -- Lazy-init guard: PEW into a glide-capable zone (e.g. logging back in
+    -- where the player can already glide) may not fire PLAYER_CAN_GLIDE_CHANGED.
+    if not skyridingFrame then
+        local _, canGlideNow = GetGlidingInfo()
+        if canGlideNow and EnsureSkyridingFrame then
+            EnsureSkyridingFrame()
+        end
+    end
 
     if not skyridingFrame then return end
 
@@ -1286,6 +1305,45 @@ local function ScheduleSkyridingWorldRefresh(delay)
         _pendingWorldRefreshTimer = nil
         RefreshSkyridingState()
     end)
+end
+
+-- Lazy frame creation. Skyriding allocates ~7 frames + 20 textures up front;
+-- non-skyriding characters never need them. This is invoked from the first
+-- event that proves the player is in a glide-capable context (or from preview
+-- mode). ApplySettings creates the frame when missing; we then attach OnUpdate.
+-- Assigns to the forward-declared local above RefreshSkyridingState.
+function EnsureSkyridingFrame()
+    if skyridingFrame then return true end
+
+    local settings = GetSettings()
+    if not settings or settings.enabled == false then return false end
+
+    ApplySettings()
+    if not skyridingFrame then return false end
+
+    skyridingFrame:SetScript("OnUpdate", OnUpdate)
+    return true
+end
+
+---------------------------------------------------------------------------
+-- External HUD Integration
+-- Hook a third-party fullscreen HUD frame so we can yield to it without
+-- polling. The external frame hides our skyriding display while visible.
+---------------------------------------------------------------------------
+local function TryHookFarmHud()
+    if farmHudHooked then return end
+    local externalFrame = _G.FarmHud
+    if not externalFrame or type(externalFrame.HookScript) ~= "function" then return end
+
+    externalFrame:HookScript("OnShow", function()
+        _visibilityDirty = true
+        if skyridingFrame then UpdateVisibility() end
+    end)
+    externalFrame:HookScript("OnHide", function()
+        _visibilityDirty = true
+        if skyridingFrame then UpdateVisibility() end
+    end)
+    farmHudHooked = true
 end
 
 ---------------------------------------------------------------------------
@@ -1310,13 +1368,11 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 ~= ADDON_NAME then return end
         self:UnregisterEvent("ADDON_LOADED")
-        CreateSkyridingFrame()
-        ApplySettings()
-        -- Start OnUpdate for animations
-        if skyridingFrame then
-            skyridingFrame:SetScript("OnUpdate", OnUpdate)
-        end
+        -- Frame creation is deferred to the first PLAYER_CAN_GLIDE_CHANGED
+        -- (truthy) or preview-mode entry. Non-skyriding characters never
+        -- allocate the ~27 frame/texture objects.
     elseif event == "PLAYER_ENTERING_WORLD" then
+        TryHookFarmHud()
         RefreshSkyridingState()
         -- Loading screens can briefly preserve the pre-instance mount/glide state.
         -- Recheck once Blizzard has finished updating player movement state.
@@ -1325,11 +1381,13 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         RefreshSkyridingState()
     elseif event == "PLAYER_CAN_GLIDE_CHANGED" then
         canGlide = arg1
+        if arg1 then EnsureSkyridingFrame() end
         -- Must call directly: OnUpdate doesn't fire when frame is hidden
         if skyridingFrame then UpdateVisibility() end
     elseif event == "PLAYER_IS_GLIDING_CHANGED" then
         isGliding = arg1
         groundedTime = 0
+        if arg1 then EnsureSkyridingFrame() end
         if skyridingFrame then UpdateVisibility() end
     elseif event == "UPDATE_BONUS_ACTIONBAR" or event == "SPELL_UPDATE_CHARGES" then
         _vigorDirty = true
@@ -1383,6 +1441,7 @@ end)
 local function ToggleSkyridingPreview(enable)
     CreateSkyridingFrame()
     if not skyridingFrame then return end
+    skyridingFrame:SetScript("OnUpdate", OnUpdate)
 
     isPreviewMode = enable
 

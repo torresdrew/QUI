@@ -169,45 +169,32 @@ local function GetBarDisplayName(frame)
     return nil
 end
 
+-- Bar-specific FontString-fallback for name lookup, passed to the shared
+-- CDMSpellData.GetChildSpellName helper. Region scanning stays here since
+-- it's bar-specific.
+local function GetBarDisplayNameWithFallback(child)
+    return GetBarDisplayName(child) or GetBarDisplayName(child and child.Bar)
+end
+
 local function GetBlizzTrackedBarSpellData(blizzBarChild)
     if not blizzBarChild then return nil end
+    local CDMSpellData = ns.CDMSpellData
+    if not CDMSpellData then return nil end
 
-    local resolvedSpellID, baseSpellID, overrideSpellID, name
-    local cdInfo = blizzBarChild.cooldownInfo
-    if cdInfo then
-        overrideSpellID = Helpers.SafeToNumber(cdInfo.overrideSpellID, nil)
-        baseSpellID = Helpers.SafeToNumber(cdInfo.spellID, nil)
-        name = Helpers.SafeValue(cdInfo.name, nil)
-        resolvedSpellID = overrideSpellID or baseSpellID
-    end
-
+    local overrideSpellID, baseSpellID = CDMSpellData.GetChildSpellIDPair(blizzBarChild)
+    local resolvedSpellID = overrideSpellID or baseSpellID
     local cdID = blizzBarChild.cooldownID
-    if (not resolvedSpellID or not name) and cdID
-        and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-        local okInfo, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
-        if okInfo and info then
-            overrideSpellID = overrideSpellID or Helpers.SafeToNumber(info.overrideSpellID, nil)
-            baseSpellID = baseSpellID or Helpers.SafeToNumber(info.spellID, nil)
-            name = name or Helpers.SafeValue(info.name, nil)
-            resolvedSpellID = resolvedSpellID or overrideSpellID or baseSpellID
-        end
-    end
-
-    if not name then
-        name = GetBarDisplayName(blizzBarChild) or GetBarDisplayName(blizzBarChild.Bar)
-    end
+    local name = CDMSpellData.GetChildSpellName(blizzBarChild, GetBarDisplayNameWithFallback)
 
     if not resolvedSpellID and name and C_Spell and C_Spell.GetSpellInfo then
         local okSpellInfo, spellInfo = pcall(C_Spell.GetSpellInfo, name)
         if okSpellInfo and spellInfo and spellInfo.spellID then
             baseSpellID = baseSpellID or spellInfo.spellID
-            resolvedSpellID = resolvedSpellID or spellInfo.spellID
+            resolvedSpellID = spellInfo.spellID
         end
     end
 
-    if not resolvedSpellID and not name and not cdID then
-        return nil
-    end
+    if not resolvedSpellID and not name and not cdID then return nil end
 
     return {
         spellID = resolvedSpellID,
@@ -468,48 +455,21 @@ function CDMBars.ConfigureBar(bar, settings, overrideWidth)
 end
 
 ---------------------------------------------------------------------------
--- SPELL ID EXTRACTION: Get spellID from a Blizzard bar child via
--- cooldownInfo, cooldownID + C_CooldownViewer API, or name lookup.
+-- SPELL ID EXTRACTION: Get spellID from a Blizzard bar child.
+-- Delegates cooldownInfo / cooldownID / C_CooldownViewer to
+-- CDMSpellData.GetChildPrimarySpellID (single source of truth, with the
+-- cached _cachedCdInfo lookup), then adds the bar-specific name fallback.
 ---------------------------------------------------------------------------
 local function ExtractSpellID(blizzBarChild)
     if not blizzBarChild then return nil end
 
-    -- 1. Direct cooldownInfo (same property icons use)
-    local cdInfo = blizzBarChild.cooldownInfo
-    if cdInfo then
-        local override = SafeToNumber(cdInfo.overrideSpellID, nil)
-        if override then return override end
-        local spell = SafeToNumber(cdInfo.spellID, nil)
-        if spell then return spell end
+    local sid = ns.CDMSpellData and ns.CDMSpellData.GetChildPrimarySpellID(blizzBarChild)
+    if sid and sid ~= blizzBarChild.cooldownID then
+        return sid  -- helper found a real spellID, not the cooldownID fallback
     end
 
-    -- 2. cooldownID + C_CooldownViewer API
-    local cdID = blizzBarChild.cooldownID
-    if cdID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-        local ok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
-        if ok and info then
-            local override = SafeToNumber(info.overrideSpellID, nil)
-            if override then return override end
-            local spell = SafeToNumber(info.spellID, nil)
-            if spell then return spell end
-        end
-    end
-
-    -- 3. Name-based lookup: read name from bar FontStrings, look up spellID
-    local function GetBarName(frame)
-        if not frame or not frame.GetRegions then return nil end
-        for _, region in ipairs({ frame:GetRegions() }) do
-            if region and region:GetObjectType() == "FontString" then
-                local okT, text = pcall(region.GetText, region)
-                if okT and type(text) == "string" and text ~= "" then
-                    local justify = region:GetJustifyH()
-                    if justify ~= "RIGHT" then return text end
-                end
-            end
-        end
-        return nil
-    end
-    local name = GetBarName(blizzBarChild) or GetBarName(blizzBarChild.Bar)
+    -- Name-based last resort: read from bar FontStrings, look up via spell info.
+    local name = GetBarDisplayNameWithFallback(blizzBarChild)
     if name and C_Spell and C_Spell.GetSpellInfo then
         local ok, info = pcall(C_Spell.GetSpellInfo, name)
         if ok and info and info.spellID then
@@ -517,6 +477,8 @@ local function ExtractSpellID(blizzBarChild)
         end
     end
 
+    -- Preserve legacy behavior: caller treats _spellID as truthy=have-real-id;
+    -- returning the cdID fallback would falsely satisfy `if bar._spellID then`.
     return nil
 end
 

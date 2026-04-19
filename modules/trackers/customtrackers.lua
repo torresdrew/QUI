@@ -588,6 +588,23 @@ local function GetCachedSpellInfo(spellID)
     return nil
 end
 
+local function GetProfessionQualityInfoForItem(itemIDOrLink)
+    if not itemIDOrLink or not C_TradeSkillUI then return nil end
+
+    if C_TradeSkillUI.GetItemReagentQualityInfo then
+        local qualityInfo = C_TradeSkillUI.GetItemReagentQualityInfo(itemIDOrLink)
+        if qualityInfo then
+            return qualityInfo
+        end
+    end
+
+    if C_TradeSkillUI.GetItemCraftedQualityInfo then
+        return C_TradeSkillUI.GetItemCraftedQualityInfo(itemIDOrLink)
+    end
+
+    return nil
+end
+
 local function GetCachedItemInfo(itemID)
     if not itemID then return nil end
     local cacheKey = "item_" .. itemID
@@ -601,6 +618,7 @@ local function GetCachedItemInfo(itemID)
             icon = icon,
             id = itemID,
             type = "item",
+            professionQualityInfo = GetProfessionQualityInfoForItem(itemID),
         }
         return CustomTrackers.infoCache[cacheKey]
     end
@@ -624,17 +642,21 @@ local function GetCachedSlotInfo(slotNum)
             id = slotNum,
             itemID = nil,
             type = "slot",
+            professionQualityInfo = nil,
         }
         return CustomTrackers.infoCache[cacheKey]
     end
     local name, _, _, _, _, _, _, _, _, icon = C_Item.GetItemInfo(itemID)
     if name then
+        local itemLink = GetInventoryItemLink("player", slotNum)
         CustomTrackers.infoCache[cacheKey] = {
             name = name,
             icon = icon,
             id = slotNum,
             itemID = itemID,
+            itemLink = itemLink,
             type = "slot",
+            professionQualityInfo = GetProfessionQualityInfoForItem(itemLink or itemID),
         }
         return CustomTrackers.infoCache[cacheKey]
     end
@@ -689,6 +711,11 @@ local knownChargeSpells = {}
 -- Track when charge spells were last cast (spellID -> GetTime())
 -- Used to detect real recharge vs GCD in combat when charge count is secret
 local chargeSpellLastCast = {}
+
+do local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "CT_knownChargeSpells", tbl = knownChargeSpells }
+    mp[#mp + 1] = { name = "CT_chargeSpellLastCast", tbl = chargeSpellLastCast }
+end
 
 local function GetSpellChargeCount(spellID)
     if not spellID then return 0, 1, 0, 0, false, nil end
@@ -1287,6 +1314,56 @@ end
 ---------------------------------------------------------------------------
 -- ICON STYLING
 ---------------------------------------------------------------------------
+local function ClearTrackerProfessionQuality(icon)
+    if icon and icon.professionQualityOverlay then
+        icon.professionQualityOverlay:Hide()
+    end
+end
+
+local function UpdateTrackerProfessionQuality(icon, config, info)
+    if not icon or not config or config.showProfessionQuality == false then
+        ClearTrackerProfessionQuality(icon)
+        return
+    end
+
+    local entry = icon.entry
+    if not entry or (entry.type ~= "item" and entry.type ~= "slot") then
+        ClearTrackerProfessionQuality(icon)
+        return
+    end
+
+    local qualityInfo = info and info.professionQualityInfo
+    local atlas = qualityInfo and qualityInfo.iconInventory
+    if not atlas then
+        ClearTrackerProfessionQuality(icon)
+        return
+    end
+
+    if not icon.professionQualityOverlay then
+        icon.professionQualityOverlay = icon:CreateTexture(nil, "ARTWORK", nil, 7)
+        icon.professionQualityOverlay:SetPoint("TOPLEFT", -3, 2)
+        icon.professionQualityOverlay:SetDrawLayer("ARTWORK", 7)
+    end
+
+    icon.professionQualityOverlay:SetAtlas(
+        atlas,
+        TextureKitConstants and TextureKitConstants.UseAtlasSize or true
+    )
+    icon.professionQualityOverlay:Show()
+end
+
+local function ApplyTrackerIconVisuals(icon, config, info)
+    if not icon or not icon.tex then return end
+
+    if info and info.icon then
+        icon.tex:SetTexture(info.icon)
+    else
+        icon.tex:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+    end
+
+    UpdateTrackerProfessionQuality(icon, config, info)
+end
+
 local function StyleTrackerIcon(icon, config)
     if not icon or not config then return end
 
@@ -1718,11 +1795,7 @@ function CustomTrackers:UpdateBarIcons(bar)
             info = GetCachedItemInfo(entry.id)
         end
 
-        if info and info.icon then
-            icon.tex:SetTexture(info.icon)
-        else
-            icon.tex:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-        end
+        ApplyTrackerIconVisuals(icon, config, info)
 
         -- Set up secure button for clickable icons (if enabled)
         UpdateIconSecureAttributes(icon, entry, config)
@@ -1757,6 +1830,7 @@ end
 -- Bars that need a full RebuildActiveSet (with Show/Hide + layout) after combat ends.
 -- During combat we update data but use alpha-based visibility to avoid ADDON_ACTION_BLOCKED.
 local pendingActiveSetRebuilds = {}
+do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "CT_pendingRebuilds", tbl = pendingActiveSetRebuilds } end
 
 -- Rebuild the active icon set for a bar
 -- Called on: spec change, talent change, bar creation, hideNonUsable toggle
@@ -2473,6 +2547,11 @@ end
 local _barFramePool = {}  -- [barID] = frame (hidden, ready for reuse)
 local _pendingBarDeletes = {}  -- [barID] = true (queued during combat lockdown)
 local _pendingRefreshAll = false
+
+do local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "CT_barFramePool",      tbl = _barFramePool }
+    mp[#mp + 1] = { name = "CT_pendingBarDeletes", tbl = _pendingBarDeletes }
+end
 
 local function BarHasSecureChildren(bar)
     local firstIcon = bar and bar.icons and bar.icons[1]
@@ -3245,11 +3324,7 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
                         hasSlotEntry = true
                         -- Update icon texture immediately
                         local info = GetCachedSlotInfo(slot)
-                        if info and info.icon then
-                            icon.tex:SetTexture(info.icon)
-                        else
-                            icon.tex:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-                        end
+                        ApplyTrackerIconVisuals(icon, bar.config, info)
                         -- Defer secure attribute updates if in combat
                         if InCombatLockdown() then
                             icon._pendingSecureUpdate = true
@@ -3334,9 +3409,7 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
                 for _, icon in ipairs(bar.icons or {}) do
                     if icon.entry and icon.entry.type == "item" and icon.entry.id == itemID then
                         local info = GetCachedItemInfo(itemID)
-                        if info and info.icon then
-                            icon.tex:SetTexture(info.icon)
-                        end
+                        ApplyTrackerIconVisuals(icon, bar.config, info)
                         -- Re-apply secure attributes once item info is available.
                         if InCombatLockdown() then
                             icon._pendingSecureUpdate = true
@@ -3350,9 +3423,7 @@ initFrame:SetScript("OnEvent", function(self, event, ...)
                             -- Invalidate slot cache so it re-fetches with the now-available item info
                             CustomTrackers.infoCache["slot_" .. icon.entry.id] = nil
                             local info = GetCachedSlotInfo(icon.entry.id)
-                            if info and info.icon then
-                                icon.tex:SetTexture(info.icon)
-                            end
+                            ApplyTrackerIconVisuals(icon, bar.config, info)
                             -- Keep slot clickability in sync when delayed item data resolves.
                             if InCombatLockdown() then
                                 icon._pendingSecureUpdate = true

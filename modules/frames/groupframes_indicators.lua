@@ -23,6 +23,8 @@ local pcall = pcall
 local wipe = wipe
 local CreateFrame = CreateFrame
 local UnitExists = UnitExists
+local UnitGUID = UnitGUID
+local UnitIsUnit = UnitIsUnit
 local GetTime = GetTime
 local C_UnitAuras = C_UnitAuras
 local math_max = math.max
@@ -93,6 +95,8 @@ local FILTER_RAID = "PLAYER|HELPFUL|RAID"
 local FILTER_RIC = "PLAYER|HELPFUL|RAID_IN_COMBAT"
 local FILTER_EXT = "PLAYER|HELPFUL|EXTERNAL_DEFENSIVE"
 local FILTER_DISP = "PLAYER|HELPFUL|RAID_PLAYER_DISPELLABLE"
+local FILTER_PLAYER_HELPFUL = "HELPFUL|PLAYER"
+local FILTER_PLAYER_HARMFUL = "HARMFUL|PLAYER"
 local SECRET_TRACKED_AURAS = {
     [10060] = {
         name = "Power Infusion",
@@ -191,6 +195,93 @@ local function GetAuraFilterMatch(unit, auraInstanceID, filterString)
     return not filteredOut
 end
 
+local function AuraMatchesPlayerCast(unit, auraData)
+    if not unit or not auraData then
+        return false
+    end
+
+    local auraInstanceID = SafeValue(auraData.auraInstanceID, nil)
+    local helpfulPlayerMatch, harmfulPlayerMatch = nil, nil
+    if auraInstanceID then
+        helpfulPlayerMatch = GetAuraFilterMatch(unit, auraInstanceID, FILTER_PLAYER_HELPFUL)
+        if helpfulPlayerMatch == true then
+            return true
+        end
+
+        harmfulPlayerMatch = GetAuraFilterMatch(unit, auraInstanceID, FILTER_PLAYER_HARMFUL)
+        if harmfulPlayerMatch == true then
+            return true
+        end
+
+        if helpfulPlayerMatch == false and harmfulPlayerMatch == false then
+            return false
+        end
+    end
+
+    local fromPlayer = SafeValue(auraData.isFromPlayerOrPlayerPet, nil)
+    if fromPlayer ~= nil then
+        return fromPlayer == true
+    end
+
+    local sourceUnit = SafeValue(auraData.sourceUnit, nil)
+    if type(sourceUnit) == "string" then
+        if sourceUnit == "player" then
+            return true
+        end
+        if UnitIsUnit then
+            local ok, isPlayer = pcall(UnitIsUnit, sourceUnit, "player")
+            if ok and not IsSecretValue(isPlayer) then
+                return isPlayer == true
+            end
+        end
+    end
+
+    local sourceGUID = SafeValue(auraData.sourceGUID, nil)
+    if sourceGUID and UnitGUID then
+        local playerGUID = UnitGUID("player")
+        if playerGUID then
+            return sourceGUID == playerGUID
+        end
+    end
+
+    return true
+end
+
+local function AuraMatchesTrackedSpell(auraData, spellID, spellName)
+    if not auraData then
+        return false
+    end
+
+    local auraSpellID = SafeValue(auraData.spellId, nil)
+    if auraSpellID and auraSpellID == spellID then
+        return true
+    end
+
+    if spellName then
+        local auraName = SafeValue(auraData.name, nil)
+        if auraName and auraName == spellName then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function FindTrackedAuraInList(unit, spellID, spellName, auraList, onlyMine)
+    if not auraList then
+        return nil
+    end
+
+    for _, auraData in ipairs(auraList) do
+        if AuraMatchesTrackedSpell(auraData, spellID, spellName)
+            and (not onlyMine or AuraMatchesPlayerCast(unit, auraData)) then
+            return auraData
+        end
+    end
+
+    return nil
+end
+
 local function IsSecretTrackedAura(unit, auraData, config)
     if not config then
         return false
@@ -223,7 +314,7 @@ local function IsSecretTrackedAura(unit, auraData, config)
     return MakeAuraSignature(passesRaid, passesRic, passesExt, passesDisp) == config.signature
 end
 
-local function FindSecretTrackedAura(unit, spellID, helpfulAuras)
+local function FindSecretTrackedAura(unit, spellID, helpfulAuras, onlyMine)
     local config = SECRET_TRACKED_AURAS[spellID]
     if not config then
         return nil
@@ -231,7 +322,8 @@ local function FindSecretTrackedAura(unit, spellID, helpfulAuras)
 
     if helpfulAuras then
         for _, helpfulAura in ipairs(helpfulAuras) do
-            if IsSecretTrackedAura(unit, helpfulAura, config) then
+            if IsSecretTrackedAura(unit, helpfulAura, config)
+                and (not onlyMine or AuraMatchesPlayerCast(unit, helpfulAura)) then
                 return helpfulAura
             end
         end
@@ -247,7 +339,8 @@ local function FindSecretTrackedAura(unit, spellID, helpfulAuras)
         local ok, allAuras = pcall(C_UnitAuras.GetUnitAuras, unit, scanFilter, scanLimit)
         if ok and allAuras then
             for _, auraData in ipairs(allAuras) do
-                if IsSecretTrackedAura(unit, auraData, config) then
+                if IsSecretTrackedAura(unit, auraData, config)
+                    and (not onlyMine or AuraMatchesPlayerCast(unit, auraData)) then
                     return auraData
                 end
             end
@@ -257,35 +350,54 @@ local function FindSecretTrackedAura(unit, spellID, helpfulAuras)
     return nil
 end
 
-local function FindTrackedAuraData(unit, spellID, activeAurasByID, activeAurasByName, helpfulAuras)
+local function FindTrackedAuraData(unit, spellID, activeAurasByID, activeAurasByName, helpfulAuras, harmfulAuras, onlyMine)
+    local function CandidateMatches(auraData)
+        if not auraData then
+            return false
+        end
+        return not onlyMine or AuraMatchesPlayerCast(unit, auraData)
+    end
+
     local auraData = activeAurasByID[spellID]
-    if auraData then
+    if CandidateMatches(auraData) then
         return auraData
     end
 
-    local secretAura = FindSecretTrackedAura(unit, spellID, helpfulAuras)
+    local secretAura = FindSecretTrackedAura(unit, spellID, helpfulAuras, onlyMine)
     if secretAura then
         return secretAura
     end
 
     local spellName = GetTrackedSpellName(spellID)
+    if onlyMine then
+        auraData = FindTrackedAuraInList(unit, spellID, spellName, helpfulAuras, true)
+        if auraData then
+            return auraData
+        end
+
+        auraData = FindTrackedAuraInList(unit, spellID, spellName, harmfulAuras, true)
+        if auraData then
+            return auraData
+        end
+    end
+
     if not spellName then
         return nil
     end
 
     auraData = activeAurasByName[spellName]
-    if auraData then
+    if CandidateMatches(auraData) then
         return auraData
     end
 
     if not InCombatLockdown() and C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
         local okHelpful, helpfulAura = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, spellName, "HELPFUL")
-        if okHelpful and helpfulAura then
+        if okHelpful and helpfulAura and CandidateMatches(helpfulAura) then
             return helpfulAura
         end
 
         local okHarmful, harmfulAura = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, spellName, "HARMFUL")
-        if okHarmful and harmfulAura then
+        if okHarmful and harmfulAura and CandidateMatches(harmfulAura) then
             return harmfulAura
         end
     end
@@ -646,6 +758,7 @@ local function BuildActiveAuraLookup(unit)
     wipe(activeAuras)
     wipe(activeAuraNames)
     local helpfulAuras = nil
+    local harmfulAuras = nil
 
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
@@ -662,6 +775,7 @@ local function BuildActiveAuraLookup(unit)
             end
         end
         if cache.harmful then
+            harmfulAuras = cache.harmful
             for _, auraData in ipairs(cache.harmful) do
                 local spellID = SafeValue(auraData.spellId, nil)
                 if spellID then activeAuras[spellID] = auraData end
@@ -679,6 +793,8 @@ local function BuildActiveAuraLookup(unit)
             if ok and auras then
                 if filter == "HELPFUL" then
                     helpfulAuras = auras
+                else
+                    harmfulAuras = auras
                 end
                 for _, auraData in ipairs(auras) do
                     local spellID = SafeValue(auraData.spellId, nil)
@@ -692,7 +808,7 @@ local function BuildActiveAuraLookup(unit)
         end
     end
 
-    return activeAuras, activeAuraNames, helpfulAuras
+    return activeAuras, activeAuraNames, helpfulAuras, harmfulAuras
 end
 
 local function RenderIconIndicators(frame, ai, iconPayloads)
@@ -807,7 +923,7 @@ local function UpdateFrameIndicators(frame)
         return
     end
 
-    local activeAuras, activeAuraNames, helpfulAuras = BuildActiveAuraLookup(unit)
+    local activeAuras, activeAuraNames, helpfulAuras, harmfulAuras = BuildActiveAuraLookup(unit)
     local iconPayloads = _scratchIconPayloads
     local barPayloads = _scratchBarPayloads
     wipe(iconPayloads)
@@ -823,7 +939,15 @@ local function UpdateFrameIndicators(frame)
 
     for _, entry in ipairs(entries) do
         if entry.enabled ~= false and entry.spellID then
-            local auraData = FindTrackedAuraData(unit, entry.spellID, activeAuras, activeAuraNames, helpfulAuras)
+            local auraData = FindTrackedAuraData(
+                unit,
+                entry.spellID,
+                activeAuras,
+                activeAuraNames,
+                helpfulAuras,
+                harmfulAuras,
+                entry.onlyMine == true
+            )
             if auraData then
                 local auraInstanceID = auraData.auraInstanceID
                 if auraInstanceID then
@@ -877,9 +1001,12 @@ function QUI_GFI:RefreshAll()
         return
     end
 
-    for _, frame in pairs(GF.unitFrameMap) do
-        if frame and frame:IsShown() then
-            UpdateFrameIndicators(frame)
+    for _, list in pairs(GF.unitFrameMap) do
+        for i = 1, #list do
+            local frame = list[i]
+            if frame and frame:IsShown() then
+                UpdateFrameIndicators(frame)
+            end
         end
     end
 end

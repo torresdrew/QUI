@@ -4,6 +4,7 @@
     <Script file="spec_cache.lua"/>
     <Script file="observer.lua"/>
     <Script file="brain.lua"/>
+    <Script file="ui_helpers.lua"/>
     <Script file="cc_icons.lua"/>
     <Script file="kick_timer.lua"/>
     <Script file="cooldown_display.lua"/>

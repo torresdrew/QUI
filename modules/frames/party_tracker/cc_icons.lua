@@ -33,6 +33,7 @@ ns.PartyTracker_CCIcons = CCIcons
 local MAX_ICONS = 5
 local GF = nil
 local SpecCache = nil
+local SyncIconLayer = ns.PartyTracker_SyncIconLayer
 
 local IsActive = ns.PartyTracker_IsActive
 local IsPartyUnit = ns.PartyTracker_IsPartyUnit
@@ -150,8 +151,7 @@ end
 local function CreateIcon(parent, px)
     local icon = CreateFrame("Frame", nil, parent)
     icon:SetSize(20, 20)
-    icon:SetFrameStrata("HIGH")
-    icon:SetFrameLevel(100)
+    SyncIconLayer(icon, parent)
 
     local border = icon:CreateTexture(nil, "BACKGROUND")
     border:SetAllPoints()
@@ -334,8 +334,7 @@ function CCIcons.UpdateFrame(frame)
 
         local icon = icons[idx]
         icon:SetSize(iconSize, iconSize)
-        icon:SetFrameStrata("HIGH")
-        icon:SetFrameLevel(100)
+        SyncIconLayer(icon, frame)
         icon:ClearAllPoints()
         icon:SetPoint(anchor, frame, anchor, offsetX + (idx - 1) * stepX, offsetY + (idx - 1) * stepY)
 

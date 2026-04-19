@@ -1173,6 +1173,7 @@ local defaults = {
             visibility = "FLYING_ONLY",
             fadeDelay = 1,
             fadeDuration = 0.3,
+            hideWhenFarmHudShown = false,
         },
 
         -- Chat Frame Customization
@@ -1301,6 +1302,7 @@ local defaults = {
                 glossAlpha = 0.3,           -- Gloss opacity (0-1)
                 showFlash = "qui",          -- Pushed texture style: "off", "blizzard", "qui"
                 showBorders = true,         -- Show button borders
+                showProfessionQuality = true, -- Show crafted/profession-quality marker
                 showKeybinds = true,        -- Show hotkey text
                 showMacroNames = true,     -- Show macro name text
                 showCounts = true,          -- Show stack/charge count
@@ -2615,49 +2617,6 @@ local defaults = {
                     reverseSwipe = false,
                     specSlots = {},
                 },
-                partyTracker = {
-                    ccIcons = {
-                        enabled = true,
-                        showCC = true,
-                        showDefensives = true,
-                        showImportant = true,
-                        maxIcons = 3,
-                        iconSize = 20,
-                        anchor = "LEFT",
-                        growDirection = "LEFT",
-                        spacing = 2,
-                        offsetX = -4,
-                        offsetY = 0,
-                        reverseSwipe = true,
-                        showDurationText = true,
-                    },
-                    kickTimer = {
-                        enabled = true,
-                        iconSize = 20,
-                        anchor = "TOPRIGHT",
-                        offsetX = 2,
-                        offsetY = 2,
-                        reverseSwipe = true,
-                        showDurationText = true,
-                    },
-                    partyCooldowns = {
-                        enabled = true,
-                        displayMode = "static",
-                        filter = "all",
-                        maxIcons = 6,
-                        iconSize = 18,
-                        iconRows = 1,
-                        anchor = "BOTTOM",
-                        growDirection = "RIGHT",
-                        spacing = 2,
-                        offsetX = 0,
-                        offsetY = -4,
-                        reverseSwipe = true,
-                        showDurationText = true,
-                        dimReadyAlpha = 0.3,
-                        disabledSpells = {},
-                    },
-                },
                 castbar = { enabled = false, height = 8, showIcon = false, showText = false },
                 portrait = { showPortrait = false, portraitSide = "LEFT", portraitSize = 30 },
                 pets = {
@@ -2829,49 +2788,6 @@ local defaults = {
                     showSwipe = true,
                     reverseSwipe = false,
                     specSlots = {},
-                },
-                partyTracker = {
-                    ccIcons = {
-                        enabled = false,
-                        showCC = true,
-                        showDefensives = true,
-                        showImportant = true,
-                        maxIcons = 3,
-                        iconSize = 20,
-                        anchor = "LEFT",
-                        growDirection = "LEFT",
-                        spacing = 2,
-                        offsetX = -4,
-                        offsetY = 0,
-                        reverseSwipe = true,
-                        showDurationText = true,
-                    },
-                    kickTimer = {
-                        enabled = false,
-                        iconSize = 20,
-                        anchor = "TOPRIGHT",
-                        offsetX = 2,
-                        offsetY = 2,
-                        reverseSwipe = true,
-                        showDurationText = true,
-                    },
-                    partyCooldowns = {
-                        enabled = false,
-                        displayMode = "static",
-                        filter = "all",
-                        maxIcons = 6,
-                        iconSize = 18,
-                        iconRows = 1,
-                        anchor = "BOTTOM",
-                        growDirection = "RIGHT",
-                        spacing = 2,
-                        offsetX = 0,
-                        offsetY = -4,
-                        reverseSwipe = true,
-                        showDurationText = true,
-                        dimReadyAlpha = 0.3,
-                        disabledSpells = {},
-                    },
                 },
                 castbar = { enabled = false, height = 8, showIcon = false, showText = false },
                 portrait = { showPortrait = false, portraitSide = "LEFT", portraitSize = 30 },
@@ -3486,6 +3402,7 @@ local defaults = {
                     -- Background
                     bgOpacity = 0,
                     bgColor = {0, 0, 0, 1},
+                    showProfessionQuality = true, -- Show crafted/profession-quality marker
                     hideGCD = true,
                     hideNonUsable = false,
                     showOnlyOnCooldown = false,

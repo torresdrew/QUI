@@ -344,12 +344,43 @@ local ProcessQueuedRequest
 
 local function FinalizeRequest(matchingGUID)
     if activeRequest and IsSafeGUID(activeRequest.guid) and IsSafeGUID(matchingGUID) and activeRequest.guid == matchingGUID then
-        if type(ClearInspectPlayer) == "function" then
-            pcall(ClearInspectPlayer)
+        -- Do not ClearInspectPlayer while the user has InspectFrame open --
+        -- it wipes the addon's cached inventory data for the unit they're
+        -- looking at, producing the "items flash then disappear" symptom.
+        -- Just release our own state and let the user's inspect keep the data.
+        local inspectFrame = GetInspectFrame()
+        if not (inspectFrame and inspectFrame:IsShown()) then
+            if type(ClearInspectPlayer) == "function" then
+                pcall(ClearInspectPlayer)
+            end
         end
         ClearActiveRequest()
         ProcessQueuedRequest()
     end
+end
+
+-- When the user opens InspectFrame, abandon any in-flight tooltip request
+-- without calling ClearInspectPlayer (which would wipe the user's data).
+local function AbandonForUserInspect()
+    ClearActiveRequest()
+    queuedRequest = nil
+end
+
+local function InstallInspectFrameOnShowGuard()
+    if not InspectFrame or InspectFrame.__qui_tooltip_inspect_hook then return end
+    InspectFrame.__qui_tooltip_inspect_hook = true
+    InspectFrame:HookScript("OnShow", AbandonForUserInspect)
+end
+
+do
+    local ev = CreateFrame("Frame")
+    ev:RegisterEvent("ADDON_LOADED")
+    ev:SetScript("OnEvent", function(_, _, addon)
+        if addon == "Blizzard_InspectUI" then
+            InstallInspectFrameOnShowGuard()
+        end
+    end)
+    InstallInspectFrameOnShowGuard()
 end
 
 function TooltipInspect:RegisterRefreshCallback(callback)

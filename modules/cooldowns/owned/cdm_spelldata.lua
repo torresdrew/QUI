@@ -67,6 +67,54 @@ local _spellIDToChild = {}  -- [spellID] = { child1, child2, ... } (built OOC du
 -- linkedSpellID via a buff-viewer CDM entry).
 local _resolveIconMemo = {}          -- [spellID] = iconID (false = negative lookup)
 local _resolveAuraActiveMemo = {}    -- [lsid]    = bool   (true = active aura present)
+do local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "CDM_resolveIconMemo", tbl = _resolveIconMemo }
+    mp[#mp + 1] = { name = "CDM_resolveAuraMemo", tbl = _resolveAuraActiveMemo }
+end
+
+-- Per-tick caches for Blizzard aura queries. Same aura instance is frequently
+-- queried by multiple icons in one UpdateAllCooldowns batch (~100-150 icons).
+-- GetAuraDataByAuraInstanceID allocates a fresh ~600-byte Blizzard table every
+-- call; caching per batch cuts 12-30KB/tick of short-lived garbage. Wiped via
+-- CDMSpellData:WipeTickAuraCache() at the start of each batch.
+-- auraInstanceID is globally unique across units, so the unit is not part of
+-- the cache key.
+local _tickAuraDataCache = {}        -- [auraInstanceID] = data | false (false = negative)
+local _tickAuraDurationCache = {}    -- [auraInstanceID] = durObj | false
+do local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "CDM_tickAuraData",     tbl = _tickAuraDataCache }
+    mp[#mp + 1] = { name = "CDM_tickAuraDuration", tbl = _tickAuraDurationCache }
+end
+
+local function TickCacheGetAuraData(unit, instanceID)
+    if not instanceID then return nil end
+    local cached = _tickAuraDataCache[instanceID]
+    if cached ~= nil then
+        return cached or nil
+    end
+    local ok, data = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, instanceID)
+    if ok and data then
+        _tickAuraDataCache[instanceID] = data
+        return data
+    end
+    _tickAuraDataCache[instanceID] = false
+    return nil
+end
+
+local function TickCacheGetAuraDuration(unit, instanceID)
+    if not instanceID or not C_UnitAuras.GetAuraDuration then return nil end
+    local cached = _tickAuraDurationCache[instanceID]
+    if cached ~= nil then
+        return cached or nil
+    end
+    local ok, durObj = pcall(C_UnitAuras.GetAuraDuration, unit, instanceID)
+    if ok and durObj then
+        _tickAuraDurationCache[instanceID] = durObj
+        return durObj
+    end
+    _tickAuraDurationCache[instanceID] = false
+    return nil
+end
 
 --- Check if a Blizzard viewer child matches a given spell ID.
 --- Tries cooldownInfo.overrideSpellID, cooldownInfo.spellID (may be secret),
@@ -125,6 +173,7 @@ local function _safeGetChildren(viewer) _collectChildren(viewer:GetChildren()) e
 
 local _childBySpellID = {}  -- [spellID] = { child1, child2, ... } (may span viewers)
 local _childMapDirty = true -- set true on aura/cooldown events, not per-cycle
+do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "CDM_childBySpellID", tbl = _childBySpellID } end
 
 local SafeValue = Helpers.SafeValue
 
@@ -285,9 +334,94 @@ function CDMSpellData:InvalidateChildMap()
     _childMapDirty = true
 end
 
+function CDMSpellData:WipeTickAuraCache()
+    wipe(_tickAuraDataCache)
+    wipe(_tickAuraDurationCache)
+end
+
 CDMSpellData.FindChildForSpell = FindChildForSpell
 CDMSpellData.FindBuffChildForSpell = FindBuffChildForSpell
 CDMSpellData._childBySpellID = _childBySpellID
+
+---------------------------------------------------------------------------
+-- CHILD METADATA HELPERS — single source of truth for extracting spell ID
+-- and display name from a Blizzard viewer child. Used by cdm_bars (and
+-- previously duplicated inline there).
+---------------------------------------------------------------------------
+
+-- Returns the C_CooldownViewer info for a child, with per-child caching
+-- (matches the pattern ResolveChildIDs uses internally).
+local function GetCachedCooldownInfo(child)
+    local cdID = child.cooldownID
+    if not cdID or not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        return nil
+    end
+    local info = child._cachedCdInfo
+    if info and child._cachedCdInfoID == cdID then return info end
+    local iok
+    iok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
+    if iok and info then
+        child._cachedCdInfo = info
+        child._cachedCdInfoID = cdID
+        return info
+    end
+    return nil
+end
+
+--- Single best spellID for a Blizzard viewer child.
+--- Priority: cooldownInfo.overrideSpellID → cooldownInfo.spellID
+--- → cached C_CooldownViewer info → cooldownID.
+function CDMSpellData.GetChildPrimarySpellID(child)
+    if not child then return nil end
+    local cinfo = child.cooldownInfo
+    if cinfo then
+        local override = SafeValue(cinfo.overrideSpellID, nil); if override then return override end
+        local sid = SafeValue(cinfo.spellID, nil); if sid then return sid end
+    end
+    local info = GetCachedCooldownInfo(child)
+    if info then
+        local override = SafeValue(info.overrideSpellID, nil); if override then return override end
+        local sid = SafeValue(info.spellID, nil); if sid then return sid end
+    end
+    return child.cooldownID
+end
+
+--- Override and base spell IDs as a pair (callers that need them separately —
+--- e.g. bars' color-override lookup). Either or both may be nil.
+function CDMSpellData.GetChildSpellIDPair(child)
+    if not child then return nil, nil end
+    local override, base
+    local cinfo = child.cooldownInfo
+    if cinfo then
+        override = SafeValue(cinfo.overrideSpellID, nil)
+        base = SafeValue(cinfo.spellID, nil)
+    end
+    if not override or not base then
+        local info = GetCachedCooldownInfo(child)
+        if info then
+            override = override or SafeValue(info.overrideSpellID, nil)
+            base = base or SafeValue(info.spellID, nil)
+        end
+    end
+    return override, base
+end
+
+--- Best display name for a Blizzard viewer child.
+--- Priority: cooldownInfo.name → cached info.name → caller-provided
+--- nameFromRegions fallback (FontString scan is caller-specific).
+function CDMSpellData.GetChildSpellName(child, nameFromRegions)
+    if not child then return nil end
+    local cinfo = child.cooldownInfo
+    if cinfo then
+        local name = SafeValue(cinfo.name, nil); if name then return name end
+    end
+    local info = GetCachedCooldownInfo(child)
+    if info then
+        local name = SafeValue(info.name, nil); if name then return name end
+    end
+    if nameFromRegions then return nameFromRegions(child) end
+    return nil
+end
 
 ---------------------------------------------------------------------------
 -- HOOK CACHE QUERIES
@@ -419,15 +553,13 @@ function CDMSpellData:ResolveAuraState(params)
     end
 
     if childAuraInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
-        local vok, vdata = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, auraUnit, childAuraInstID)
-        if vok and vdata then
+        local vdata = TickCacheGetAuraData(auraUnit, childAuraInstID)
+        if vdata then
             isActive = true
             r.auraData = vdata
-            if C_UnitAuras.GetAuraDuration then
-                local dok, durObj = pcall(C_UnitAuras.GetAuraDuration, auraUnit, childAuraInstID)
-                if dok and durObj then
-                    r.durObj = durObj
-                end
+            local durObj = TickCacheGetAuraDuration(auraUnit, childAuraInstID)
+            if durObj then
+                r.durObj = durObj
             end
         end
     end
@@ -499,8 +631,8 @@ function CDMSpellData:ResolveAuraState(params)
     end
     -- 5. Validate child auraInstanceID via GetAuraDataByAuraInstanceID
     if not isActive and childAuraInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
-        local vok, vdata = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, auraUnit, childAuraInstID)
-        if vok and vdata then
+        local vdata = TickCacheGetAuraData(auraUnit, childAuraInstID)
+        if vdata then
             isActive = true
             r.auraData = vdata
         end
@@ -527,17 +659,15 @@ function CDMSpellData:ResolveAuraState(params)
         local dynChild = FindChildForSpell(auraSpellID, entrySpellID, entryID)
         if dynChild and dynChild.auraInstanceID and C_UnitAuras.GetAuraDataByAuraInstanceID then
             local dynUnit = dynChild.auraDataUnit or "player"
-            local vok2, vdata2 = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, dynUnit, dynChild.auraInstanceID)
-            if vok2 and vdata2 then
+            local vdata2 = TickCacheGetAuraData(dynUnit, dynChild.auraInstanceID)
+            if vdata2 then
                 isActive = true
                 childAuraInstID = dynChild.auraInstanceID
                 auraUnit = dynUnit
                 r.auraData = vdata2
-                if C_UnitAuras.GetAuraDuration then
-                    local dok2, durObj2 = pcall(C_UnitAuras.GetAuraDuration, dynUnit, dynChild.auraInstanceID)
-                    if dok2 and durObj2 then
-                        r.durObj = durObj2
-                    end
+                local durObj2 = TickCacheGetAuraDuration(dynUnit, dynChild.auraInstanceID)
+                if durObj2 then
+                    r.durObj = durObj2
                 end
             end
         end
@@ -579,8 +709,8 @@ function CDMSpellData:ResolveAuraState(params)
 
     -- Get DurationObject from auraInstanceID
     if isActive and childAuraInstID and C_UnitAuras.GetAuraDuration then
-        local dok, durObj = pcall(C_UnitAuras.GetAuraDuration, auraUnit, childAuraInstID)
-        if dok and durObj then
+        local durObj = TickCacheGetAuraDuration(auraUnit, childAuraInstID)
+        if durObj then
             r.durObj = durObj
         end
     end
@@ -611,8 +741,8 @@ function CDMSpellData:ResolveAuraState(params)
             end
         end
         if not apps and childAuraInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
-            local aok, instData = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, auraUnit, childAuraInstID)
-            if aok and instData and instData.applications then
+            local instData = TickCacheGetAuraData(auraUnit, childAuraInstID)
+            if instData and instData.applications then
                 apps = instData.applications
             end
         end
@@ -3340,6 +3470,12 @@ function CDMSpellData:Initialize()
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("SPELLS_CHANGED")
     eventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+    -- 12.0.5: auraInstanceID values re-randomize on encounter/M+/PvP start,
+    -- so the auraInstanceID-keyed tick caches must be evicted to avoid stale
+    -- negative entries masking newly-applied auras.
+    eventFrame:RegisterEvent("ENCOUNTER_START")
+    eventFrame:RegisterEvent("CHALLENGE_MODE_START")
+    eventFrame:RegisterEvent("PVP_MATCH_ACTIVE")
     eventFrame:SetScript("OnEvent", function(self, event, arg)
         if event == "SPELL_UPDATE_COOLDOWN" then
             -- No-op: ScanAll runs on its own 0.5s ticker (line 3178).
@@ -3391,6 +3527,13 @@ function CDMSpellData:Initialize()
             if not InCombatLockdown() then
                 CDMSpellData:ReconcileAllContainers()
             end
+        elseif event == "ENCOUNTER_START" or event == "CHALLENGE_MODE_START" or event == "PVP_MATCH_ACTIVE" then
+            -- Blizzard re-randomizes auraInstanceID values on these events
+            -- (12.0.5+). Wipe the auraInstanceID-keyed tick caches so old
+            -- negative entries (`false`) don't mask newly-applied auras that
+            -- happen to land on a previously-seen ID.
+            wipe(_tickAuraDataCache)
+            wipe(_tickAuraDurationCache)
         elseif event == "PLAYER_ENTERING_WORLD" then
             -- Suppress SPELLS_CHANGED dormant checks during zone transitions.
             -- APIs are stale for ~1-2s after entering a new zone/instance.

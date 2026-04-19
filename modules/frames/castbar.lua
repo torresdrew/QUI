@@ -168,6 +168,10 @@ local CHANNEL_TICK_RUNTIME_CACHE = {}
 local CHANNEL_TICK_ACTIVE_BY_GUID = {}
 local CHANNEL_TICK_EVENT_FRAME = CreateFrame("Frame")
 local CHANNEL_TICK_EVENT_REGISTERED = false
+do local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "CB_channelTickRuntime", tbl = CHANNEL_TICK_RUNTIME_CACHE }
+    mp[#mp + 1] = { name = "CB_channelTickActive",  tbl = CHANNEL_TICK_ACTIVE_BY_GUID }
+end
 
 local CHANNEL_TICK_SUBEVENTS = {
     SPELL_PERIODIC_DAMAGE = true,
@@ -1052,6 +1056,40 @@ local function StoreChannelTickCalibration(observation)
     end
 end
 
+-- Pool of recycled observation structs. Each channel start was allocating a
+-- fresh table + nested tickTimes={}; in heavy channel-cast content (Mind
+-- Flay, Fists of Fury, etc.) those add up to a steady drip of GC garbage.
+-- StoreChannelTickCalibration consumes the observation before disposal, so
+-- recycling is safe.
+local CHANNEL_TICK_OBSERVATION_POOL = {}
+local CHANNEL_TICK_OBSERVATION_POOL_MAX = 4
+do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "CB_channelTickPool", tbl = CHANNEL_TICK_OBSERVATION_POOL } end
+
+local function ReleaseChannelTickObservation(observation)
+    if not observation then return end
+    if observation.tickTimes then wipe(observation.tickTimes) end
+    if #CHANNEL_TICK_OBSERVATION_POOL < CHANNEL_TICK_OBSERVATION_POOL_MAX then
+        observation.spellID = nil
+        observation.spellName = nil
+        observation.sourceGUID = nil
+        observation.startTime = nil
+        observation.endTime = nil
+        observation.matchQuality = nil
+        observation.lastTickTime = nil
+        CHANNEL_TICK_OBSERVATION_POOL[#CHANNEL_TICK_OBSERVATION_POOL + 1] = observation
+    end
+end
+
+local function AcquireChannelTickObservation()
+    local n = #CHANNEL_TICK_OBSERVATION_POOL
+    if n > 0 then
+        local obs = CHANNEL_TICK_OBSERVATION_POOL[n]
+        CHANNEL_TICK_OBSERVATION_POOL[n] = nil
+        return obs
+    end
+    return { tickTimes = {} }
+end
+
 local function StopChannelTickObservation(bar)
     if not bar then return end
     local guid = NormalizeChannelTickGUID(bar.channelTickObservationGUID)
@@ -1068,6 +1106,7 @@ local function StopChannelTickObservation(bar)
     if observation then
         StoreChannelTickCalibration(observation)
         CHANNEL_TICK_ACTIVE_BY_GUID[guid] = nil
+        ReleaseChannelTickObservation(observation)
     end
     bar.channelTickObservationGUID = nil
 end
@@ -1091,6 +1130,7 @@ local function OnChannelTickCombatLogEvent()
     if observation.endTime and now > (observation.endTime + 0.5) then
         StoreChannelTickCalibration(observation)
         CHANNEL_TICK_ACTIVE_BY_GUID[sourceGUID] = nil
+        ReleaseChannelTickObservation(observation)
         return
     end
 
@@ -1133,16 +1173,15 @@ local function StartChannelTickObservation(bar, spellID, spellName, startTime, e
     EnsureChannelTickEventRegistration()
     StopChannelTickObservation(bar)
 
-    CHANNEL_TICK_ACTIVE_BY_GUID[sourceGUID] = {
-        spellID = NormalizeChannelTickSpellID(spellID),
-        spellName = spellName,
-        sourceGUID = sourceGUID,
-        startTime = startTime or GetTime(),
-        endTime = endTime,
-        tickTimes = {},
-        matchQuality = 0,
-        lastTickTime = nil,
-    }
+    local observation = AcquireChannelTickObservation()
+    observation.spellID = NormalizeChannelTickSpellID(spellID)
+    observation.spellName = spellName
+    observation.sourceGUID = sourceGUID
+    observation.startTime = startTime or GetTime()
+    observation.endTime = endTime
+    observation.matchQuality = 0
+    observation.lastTickTime = nil
+    CHANNEL_TICK_ACTIVE_BY_GUID[sourceGUID] = observation
     bar.channelTickObservationGUID = sourceGUID
 end
 
@@ -2360,9 +2399,18 @@ function QUI_Castbar:SetupCastbar(castbar, unit, unitKey, castSettings)
                 -- directly to C-side SetFormattedText (no SafeToNumber needed).
 
                 if self.timeText and self.durationObj then
-                    local getter = self.durationObj.GetRemainingDuration or self.durationObj.GetRemaining
+                    -- Cache the getter method lookup across OnUpdate ticks
+                    -- (same durationObj for the duration of a cast, OnUpdate
+                    -- runs ~60 Hz — recomputing the `or` chain each frame is
+                    -- wasted metatable work).
+                    local obj = self.durationObj
+                    if self._durationGetterObj ~= obj then
+                        self._durationGetter = obj.GetRemainingDuration or obj.GetRemaining
+                        self._durationGetterObj = obj
+                    end
+                    local getter = self._durationGetter
                     if getter then
-                        local ok, rem = pcall(getter, self.durationObj)
+                        local ok, rem = pcall(getter, obj)
                         if ok and rem ~= nil then
                             self.timeText:SetFormattedText("%.1f", rem)
                         end
@@ -2938,9 +2986,18 @@ function QUI_Castbar:CreateBossCastbar(unitFrame, unit, bossIndex)
             -- Timer-driven mode: engine animates the bar, we just update time text
             if self.timerDriven then
                 if self.timeText and self.durationObj then
-                    local getter = self.durationObj.GetRemainingDuration or self.durationObj.GetRemaining
+                    -- Cache the getter method lookup across OnUpdate ticks
+                    -- (same durationObj for the duration of a cast, OnUpdate
+                    -- runs ~60 Hz — recomputing the `or` chain each frame is
+                    -- wasted metatable work).
+                    local obj = self.durationObj
+                    if self._durationGetterObj ~= obj then
+                        self._durationGetter = obj.GetRemainingDuration or obj.GetRemaining
+                        self._durationGetterObj = obj
+                    end
+                    local getter = self._durationGetter
                     if getter then
-                        local ok, rem = pcall(getter, self.durationObj)
+                        local ok, rem = pcall(getter, obj)
                         if ok and rem ~= nil then
                             self.timeText:SetFormattedText("%.1f", rem)
                         end

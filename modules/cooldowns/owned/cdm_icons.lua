@@ -261,6 +261,7 @@ end
 -- swap / spec change), so we keep it across ticks.  Wiped on SPELLS_CHANGED
 -- and PLAYER_SPECIALIZATION_CHANGED to pick up new icons.
 local _textureCycleCache = {}
+do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "CDM_textureCycleCache", tbl = _textureCycleCache } end
 
 local function GetSpellTexture(spellID)
     if not spellID then return nil end
@@ -1187,10 +1188,21 @@ local function CreateIcon(parent, spellEntry)
     icon:EnableMouse(true)
     icon:SetScript("OnEnter", function(self)
         if GameTooltip.IsForbidden and GameTooltip:IsForbidden() then return end
+        local tooltipProvider = ns.TooltipProvider
+        if tooltipProvider then
+            if tooltipProvider.IsOwnerFadedOut and tooltipProvider:IsOwnerFadedOut(self) then
+                pcall(GameTooltip.Hide, GameTooltip)
+                return
+            end
+            if tooltipProvider.ShouldShowTooltip and not tooltipProvider:ShouldShowTooltip("cdm") then
+                pcall(GameTooltip.Hide, GameTooltip)
+                return
+            end
+        end
         local entry = self._spellEntry
         if not entry then return end
         local tooltipSettings = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.tooltip
-        if tooltipSettings and tooltipSettings.hideInCombat and InCombatLockdown() then return end
+        if (not tooltipProvider) and tooltipSettings and tooltipSettings.hideInCombat and InCombatLockdown() then return end
         if tooltipSettings and tooltipSettings.anchorToCursor then
             local anchorTooltip = ns.QUI_AnchorTooltipToCursor
             if anchorTooltip then
@@ -1352,6 +1364,7 @@ end
 -- Session cache: spellID → macroName or false. Invalidated on UPDATE_MACROS.
 local _macroCache = {}
 local _macroCacheDirty = true
+do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "CDM_macroCache", tbl = _macroCache } end
 
 local function InvalidateMacroCache()
     wipe(_macroCache)
@@ -2982,6 +2995,9 @@ function CDMIcons:UpdateAllCooldowns()
     wipe(_tickChargeCache)
     wipe(_tickCooldownCache)
     wipe(_tickDurationCache)
+    if ns.CDMSpellData and ns.CDMSpellData.WipeTickAuraCache then
+        ns.CDMSpellData:WipeTickAuraCache()
+    end
 
     -- Child map is invalidated by aura/cooldown event subscribers via
     -- CDMSpellData:InvalidateChildMap(). RebuildChildMap is a no-op when clean.
@@ -3114,17 +3130,25 @@ function CDMIcons:UpdateAllCooldowns()
                         if isOnCD then
                             if not icon:IsShown() then icon:Show() end
                         else
-                            -- Keep icon visible if procOnUsable glow would trigger
-                            local keepForProc = false
-                            if ns._OwnedGlows and ns._OwnedGlows.IsSpellCastable then
-                                local spellOvr = ns.CDMSpellData and ns.CDMSpellData:GetSpellOverride(viewerType, entry.spellID or entry.id)
-                                if spellOvr and spellOvr.procOnUsable then
-                                    keepForProc = ns._OwnedGlows.IsSpellCastable(icon)
-                                end
+                            -- Keep proc-ready icons visible in active mode, not just
+                            -- procOnUsable overrides. Blizzard CDM can raise overlay
+                            -- glows for off-cooldown spells that should still appear.
+                            local keepForGlow = false
+                            if ns._OwnedGlows and ns._OwnedGlows.ShouldIconGlow then
+                                keepForGlow = ns._OwnedGlows.ShouldIconGlow(icon)
                             end
-                            if keepForProc then
-                                if not icon:IsShown() then icon:Show() end
+                            if keepForGlow then
+                                local wasHidden = not icon:IsShown()
+                                if wasHidden then
+                                    icon:Show()
+                                end
+                                if ns._OwnedGlows and ns._OwnedGlows.SyncGlowForIcon then
+                                    ns._OwnedGlows.SyncGlowForIcon(icon)
+                                end
                             elseif icon:IsShown() then
+                                if ns._OwnedGlows and ns._OwnedGlows.StopGlow then
+                                    ns._OwnedGlows.StopGlow(icon)
+                                end
                                 icon:Hide()
                             end
                         end
@@ -3646,6 +3670,9 @@ cdEventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 cdEventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 cdEventFrame:RegisterEvent("UPDATE_MACROS")
 cdEventFrame:RegisterEvent("SPELLS_CHANGED")
+cdEventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
+cdEventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
+cdEventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
 -- UNIT_AURA handled by centralized dispatcher subscription (below)
 
 -- C_Timer coalescing for cooldown events: batches SPELL_UPDATE_COOLDOWN,
@@ -3718,6 +3745,7 @@ cdEventFrame:SetScript("OnEvent", function(self, event, arg1)
     end
     if event == "PLAYER_SOFT_ENEMY_CHANGED" then
         CDMIcons:UpdateAllIconRanges()
+        ScheduleCDMUpdate()
         return
     end
     if event == "PLAYER_EQUIPMENT_CHANGED" then

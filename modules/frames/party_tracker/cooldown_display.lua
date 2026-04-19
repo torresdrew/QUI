@@ -46,6 +46,7 @@ local SpecCache = nil
 local Rules = nil
 local Brain = nil
 local Observer = nil
+local SyncIconLayer = ns.PartyTracker_SyncIconLayer
 
 ---------------------------------------------------------------------------
 -- SPELL TEXTURE CACHE
@@ -76,8 +77,7 @@ end
 local function CreateIcon(parent, px)
     local icon = CreateFrame("Frame", nil, parent)
     icon:SetSize(18, 18)
-    icon:SetFrameStrata("HIGH")
-    icon:SetFrameLevel(100)
+    SyncIconLayer(icon, parent)
 
     local border = icon:CreateTexture(nil, "BACKGROUND")
     border:SetAllPoints()
@@ -323,8 +323,7 @@ function CooldownDisplay.UpdateFrame(frame)
 
             local icon = icons[idx]
             icon:SetSize(iconSize, iconSize)
-            icon:SetFrameStrata("HIGH")
-            icon:SetFrameLevel(100)
+            SyncIconLayer(icon, frame)
             icon:ClearAllPoints()
             icon:SetPoint(anchor, frame, anchor, offsetX + (idx - 1) * stepX, offsetY + (idx - 1) * stepY)
 
@@ -373,8 +372,7 @@ function CooldownDisplay.UpdateFrame(frame)
 
                 local icon = icons[idx]
                 icon:SetSize(iconSize, iconSize)
-                icon:SetFrameStrata("HIGH")
-                icon:SetFrameLevel(100)
+                SyncIconLayer(icon, frame)
                 icon:ClearAllPoints()
                 icon:SetPoint(anchor, frame, anchor, offsetX + (idx - 1) * stepX, offsetY + (idx - 1) * stepY)
 

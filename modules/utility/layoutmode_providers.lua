@@ -198,6 +198,9 @@ local function RegisterAllProviders()
         local db = U.GetProfileDB()
         if not db or not db.rotationAssistIcon then return 80 end
         local ra = db.rotationAssistIcon
+        if ra.frameStrata ~= "LOW" and ra.frameStrata ~= "MEDIUM" then
+            ra.frameStrata = "MEDIUM"
+        end
         local sections = {}
         local function relayout() U.StandardRelayout(content, sections) end
         local function Refresh() if _G.QUI_RefreshRotationAssistIcon then _G.QUI_RefreshRotationAssistIcon() end end
@@ -207,7 +210,7 @@ local function RegisterAllProviders()
             sy = P(GUI:CreateFormCheckbox(body, "Lock Position", "isLocked", ra, Refresh), body, sy)
             sy = P(GUI:CreateFormCheckbox(body, "Cooldown Swipe", "cooldownSwipeEnabled", ra, Refresh), body, sy)
             sy = P(GUI:CreateFormDropdown(body, "Visibility", {{value="always",text="Always"},{value="combat",text="In Combat"},{value="hostile",text="Hostile Target"}}, "visibility", ra, Refresh), body, sy)
-            sy = P(GUI:CreateFormDropdown(body, "Frame Strata", {{value="LOW",text="Low"},{value="MEDIUM",text="Medium"},{value="HIGH",text="High"},{value="DIALOG",text="Dialog"}}, "frameStrata", ra, Refresh), body, sy)
+            sy = P(GUI:CreateFormDropdown(body, "Frame Strata", {{value="LOW",text="Low"},{value="MEDIUM",text="Medium"}}, "frameStrata", ra, Refresh), body, sy)
             sy = P(GUI:CreateFormSlider(body, "Icon Size", 16, 400, 1, "iconSize", ra, Refresh), body, sy)
             P(GUI:CreateFormSlider(body, "Border Size", 0, 15, 1, "borderThickness", ra, Refresh), body, sy)
         end, sections, relayout)
@@ -1993,7 +1996,7 @@ local function RegisterAllProviders()
         local function Refresh() if _G.QUI_RefreshSkyriding then _G.QUI_RefreshSkyriding() end end
 
         -- Visibility
-        U.CreateCollapsible(content, "Visibility", 3 * FORM_ROW + 8, function(body)
+        U.CreateCollapsible(content, "Visibility", 4 * FORM_ROW + 8, function(body)
             local sy = -4
             sy = P(GUI:CreateFormDropdown(body, "Visibility Mode", {
                 {value = "ALWAYS", text = "Always Visible"},
@@ -2001,7 +2004,8 @@ local function RegisterAllProviders()
                 {value = "AUTO", text = "Auto (fade when grounded)"},
             }, "visibility", sr, Refresh), body, sy)
             sy = P(GUI:CreateFormSlider(body, "Fade Delay (sec)", 0, 10, 0.5, "fadeDelay", sr, Refresh), body, sy)
-            P(GUI:CreateFormSlider(body, "Fade Speed (sec)", 0.1, 1.0, 0.1, "fadeDuration", sr, Refresh), body, sy)
+            sy = P(GUI:CreateFormSlider(body, "Fade Speed (sec)", 0.1, 1.0, 0.1, "fadeDuration", sr, Refresh), body, sy)
+            P(GUI:CreateFormCheckbox(body, "Hide When FarmHud Is Active", "hideWhenFarmHudShown", sr, Refresh), body, sy)
         end, sections, relayout)
 
         -- Bar Size

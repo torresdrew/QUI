@@ -39,11 +39,6 @@ local inCombat = false
 
 -- Performance: Ticker instead of OnUpdate
 
--- Cache for keybind lookup (reuse from keybinds.lua)
-local spellToKeybind = {}
-local lastKeybindCacheTime = 0
-local KEYBIND_CACHE_INTERVAL = 1.0
-
 -- GCD spell ID (standard global cooldown reference)
 local GCD_SPELL_ID = 61304
 
@@ -199,6 +194,31 @@ local function GetDB()
     return nil
 end
 
+local function NormalizeFrameStrata(strata)
+    if strata == "LOW" then
+        return "LOW"
+    end
+    return "MEDIUM"
+end
+
+local function ApplyIconFrameLayering(frame, db)
+    if not frame then return end
+
+    local normalizedStrata = NormalizeFrameStrata(db and db.frameStrata)
+    if db and db.frameStrata ~= normalizedStrata then
+        db.frameStrata = normalizedStrata
+    end
+    frame:SetFrameStrata(normalizedStrata)
+
+    local core = GetCore()
+    if core and core.GetHUDFrameLevel then
+        local profile = core.db and core.db.profile
+        local hudLayering = profile and profile.hudLayering
+        local layerPriority = hudLayering and hudLayering.essential or 5
+        frame:SetFrameLevel(core:GetHUDFrameLevel(layerPriority))
+    end
+end
+
 --------------------------------------------------------------------------------
 -- Icon Frame Creation
 --------------------------------------------------------------------------------
@@ -210,7 +230,7 @@ CreateIconFrame = function()
     iconFrame = CreateFrame("Button", "QUI_RotationAssistIcon", UIParent, "BackdropTemplate")
     iconFrame:SetSize(56, 56)
     iconFrame:SetPoint("CENTER", UIParent, "CENTER", 0, -180)
-    iconFrame:SetFrameStrata("MEDIUM")
+    ApplyIconFrameLayering(iconFrame, GetDB())
     iconFrame:SetClampedToScreen(true)
     iconFrame:EnableMouse(true)
     iconFrame:SetMovable(true)
@@ -502,6 +522,8 @@ RefreshIconFrame = function()
         return
     end
 
+    ApplyIconFrameLayering(iconFrame, db)
+
     if not db.enabled then
         iconFrame:Hide()
         return
@@ -520,9 +542,6 @@ RefreshIconFrame = function()
         local posY = db.positionY or -180
         iconFrame:SetPoint("CENTER", UIParent, "CENTER", posX, posY)
     end
-
-    -- Frame strata
-    iconFrame:SetFrameStrata(db.frameStrata or "MEDIUM")
 
     -- Border (uses SafeSetBackdrop to avoid secret value errors during combat)
     local inset = 0
