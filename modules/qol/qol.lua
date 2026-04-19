@@ -500,7 +500,6 @@ local helpTipSweepEvents = {
     "NEW_MOUNT_ADDED",              -- Collections: new mount
     "NEW_PET_ADDED",                -- Collections: new pet
     "NEW_TOY_ADDED",                -- Collections: new toy
-    "NEW_COSMETIC_ADDED",           -- Collections: new cosmetic / appearance
     "ACHIEVEMENT_EARNED",           -- Achievements button
     "TRAIT_CONFIG_UPDATED",         -- PlayerSpells/Talents button
     "PLAYER_TALENT_UPDATE",         -- Legacy talent event
@@ -515,8 +514,10 @@ local function RefreshHelpTipSweeper()
     local shouldRun = IsPopupBlockEnabled("blockMicroButtonGlows")
         or IsMicrobarEffectivelyHidden()
     if shouldRun then
+        -- pcall each RegisterEvent so an event renamed/removed in a future
+        -- WoW patch doesn't break the whole handler chain.
         for _, ev in ipairs(helpTipSweepEvents) do
-            helpTipSweepFrame:RegisterEvent(ev)
+            pcall(helpTipSweepFrame.RegisterEvent, helpTipSweepFrame, ev)
         end
         -- Immediate sweep for any HelpTips currently showing
         SweepMicroButtonHelpTips()
