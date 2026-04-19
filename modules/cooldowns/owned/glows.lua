@@ -128,7 +128,9 @@ local function ForEachIconSpellID(icon, callback)
 
     local CDMSpellData = ns.CDMSpellData
     if CDMSpellData and CDMSpellData.ResolveDisplaySpellID then
-        VisitRaw(CDMSpellData:ResolveDisplaySpellID(entry))
+        -- ResolveDisplaySpellID returns child:GetSpellID() which can be a secret
+        -- value in combat; sanitize before using as a Lua table key downstream.
+        VisitRaw(Helpers.SafeValue(CDMSpellData:ResolveDisplaySpellID(entry), nil))
     end
 
     local info = child and child.cooldownInfo
