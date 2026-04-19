@@ -1350,6 +1350,55 @@ function Helpers.SafeHide(frame)
     return pcall(frame.Hide, frame)
 end
 
+--- Apply a cooldown using a DurationObject when possible, falling back to
+--- numeric APIs only when the numeric values are confirmed non-secret.
+--- This keeps combat-time aura cooldown rendering on the C-side path and
+--- avoids doing Lua math on secret values.
+--- @param cooldownFrame table
+--- @param unit string|nil
+--- @param auraInstanceID any
+--- @param expirationTime any
+--- @param duration any
+--- @param reverse boolean|nil
+--- @return boolean applied True when a cooldown was applied
+function Helpers.ApplyCooldownFromAura(cooldownFrame, unit, auraInstanceID, expirationTime, duration, reverse)
+    if not cooldownFrame then
+        return false
+    end
+
+    if cooldownFrame.SetCooldownFromDurationObject
+        and unit and auraInstanceID
+        and C_UnitAuras and C_UnitAuras.GetAuraDuration then
+        local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraInstanceID)
+        if ok and durationObj then
+            local applied = pcall(cooldownFrame.SetCooldownFromDurationObject, cooldownFrame, durationObj, reverse)
+            if applied then
+                return true
+            end
+        end
+    end
+
+    if expirationTime ~= nil and duration ~= nil then
+        if Helpers.IsSecretValue(expirationTime) or Helpers.IsSecretValue(duration) then
+            if cooldownFrame.Clear then
+                cooldownFrame:Clear()
+            end
+            return false
+        end
+
+        if cooldownFrame.SetCooldownFromExpirationTime then
+            return pcall(cooldownFrame.SetCooldownFromExpirationTime, cooldownFrame, expirationTime, duration)
+        end
+
+        return pcall(cooldownFrame.SetCooldown, cooldownFrame, expirationTime - duration, duration)
+    end
+
+    if cooldownFrame.Clear then
+        cooldownFrame:Clear()
+    end
+    return false
+end
+
 ---------------------------------------------------------------------------
 -- FORM LAYOUT HELPERS
 ---------------------------------------------------------------------------
