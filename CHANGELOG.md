@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v3.4.3 - 2026-04-21
+
+### Fixed
+- fix(chat): defer to Blizzard history on Midnight
+- Fix loot frame combat height taint
+- fix: avoid minimap middle-click pass-through taint
+- fix(actionbars): avoid combat taint when flyout owner remaps
+- fix(actionbars): stop forcing Blizzard multibar cvars
+- fix(actionbars): hide managed Blizzard bars via safe helper
+- feat(actionbars): add secure owned spell flyout for retail
+- fix(cdm): harden proc glow detection via Blizzard child state
+- refactor(actionbars): unify owned standard bar setup
+- refactor: centralize cooldown timing helpers
 ## v3.4.2 - 2026-04-20
 
 ### Added
