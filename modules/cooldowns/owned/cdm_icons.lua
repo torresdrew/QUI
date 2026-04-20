@@ -19,6 +19,8 @@ local LSM = ns.LSM
 ---------------------------------------------------------------------------
 local CDMIcons = {}
 ns.CDMIcons = CDMIcons
+local CDMCooldown = ns.CDMCooldown or {}
+ns.CDMCooldown = CDMCooldown
 
 -- CustomCDM exposed on CDMIcons for engine access (provider wires to ns.CustomCDM)
 local CustomCDM = {}
@@ -29,6 +31,7 @@ CDMIcons.CustomCDM = CustomCDM
 ---------------------------------------------------------------------------
 local GetGeneralFont = Helpers.GetGeneralFont
 local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
+local ApplyCooldownFromStart = Helpers.ApplyCooldownFromStart
 local IsSecretValue = Helpers.IsSecretValue
 local SafeToNumber = Helpers.SafeToNumber
 local SafeValue = Helpers.SafeValue
@@ -384,6 +387,7 @@ local function GetBestSpellCooldown(spellID)
     local bestStart, bestDuration = nil, nil
     local secretStart, secretDuration = nil, nil
     local bestDurObj = nil
+    local isActive = false
 
     -- Check primary spell (per-tick cached)
     local cdInfo = TickCacheGetCooldown(spellID)
@@ -399,14 +403,7 @@ local function GetBestSpellCooldown(spellID)
         -- recharge timer is running.  Falls back to manual comparison for
         -- older API versions.  isActive is non-secret even in combat,
         -- fixing charge detection that failed with secret currentCharges.
-        local chargeActive = false
-        if chargeInfo.isActive ~= nil then
-            chargeActive = chargeInfo.isActive == true
-        else
-            local currentCharges = SafeToNumber(chargeInfo.currentCharges, 0)
-            local maxCharges = SafeToNumber(chargeInfo.maxCharges, 0)
-            chargeActive = currentCharges < maxCharges
-        end
+        local chargeActive = chargeInfo.isActive == true
         if chargeActive then
             bestStart, bestDuration, secretStart, secretDuration, bestDurObj =
                 AccumulateCooldown(chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration, chargeInfo,
@@ -431,14 +428,7 @@ local function GetBestSpellCooldown(spellID)
             end
             chargeInfo = TickCacheGetCharges(overrideID)
             if chargeInfo then
-                local chargeActive2 = false
-                if chargeInfo.isActive ~= nil then
-                    chargeActive2 = chargeInfo.isActive == true
-                else
-                    local cc = SafeToNumber(chargeInfo.currentCharges, 0)
-                    local mc = SafeToNumber(chargeInfo.maxCharges, 0)
-                    chargeActive2 = cc < mc
-                end
+                local chargeActive2 = chargeInfo.isActive == true
                 if chargeActive2 then
                     bestStart, bestDuration, secretStart, secretDuration, bestDurObj =
                         AccumulateCooldown(chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration, chargeInfo,
@@ -448,13 +438,19 @@ local function GetBestSpellCooldown(spellID)
         end
     end
 
-    -- DurationObject APIs (12.0+, secret-safe).  These return objects that
-    -- can be forwarded directly to SetCooldownFromDurationObject without
-    -- reading values in Lua — the Blizzard-blessed path for addon code.
-    -- Gate: only query when a cooldown is known active.  12.0.5+ returns
-    -- zero-span DurationObjects for inactive spells.
-    local hasActiveCooldown = bestStart or secretStart
-    if not bestDurObj and hasActiveCooldown then
+    -- isActive: non-secret boolean from cooldown APIs (12.0.5+).
+    if cdInfo and cdInfo.isActive ~= nil then
+        isActive = cdInfo.isActive == true
+    end
+    if chargeInfo and chargeInfo.isActive == true then
+        isActive = true
+    end
+
+    -- DurationObject APIs (12.0+, secret-safe). These are the only
+    -- authoritative spell timing source we forward to owned cooldowns.
+    -- Gate queries behind the non-secret isActive signal so zero-span
+    -- ready-state objects do not drive false cooldown renders.
+    if not bestDurObj and isActive then
         -- Check charge duration FIRST — for charged spells, the charge
         -- recharge DurationObject is what we want to display, not the
         -- spell's own cooldown DurationObject (which may be a shorter
@@ -485,42 +481,12 @@ local function GetBestSpellCooldown(spellID)
     -- Discard DurationObjects extracted from cdInfo when no source confirms
     -- an active cooldown.  12.0.5+ cooldown info tables may carry zero-span
     -- DurationObjects for ready-to-use spells.
-    if not hasActiveCooldown then
+    if not isActive then
         bestDurObj = nil
     end
 
-    -- isActive: non-secret boolean from cooldown APIs (12.0.5+).
-    local isActive = false
-    if cdInfo and cdInfo.isActive ~= nil then
-        isActive = cdInfo.isActive == true
-    end
-    if chargeInfo and chargeInfo.isActive == true then
-        isActive = true
-    end
-
-    -- Prefer safe numeric values, then DurationObject, then hook cache
-    if bestStart then
-        return bestStart, bestDuration, bestDurObj, isActive
-    end
     if bestDurObj then
         return nil, nil, bestDurObj, isActive
-    end
-    -- Secret fallback: no longer forward raw secrets to SetCooldown (12.0.5+).
-    -- Query aura DurationObject from viewer child's auraInstanceID.
-    -- Validate aura still exists via GetAuraDataByAuraInstanceID (nil-check),
-    -- then get DurationObject for C-side display.
-    if secretStart and ns.CDMSpellData and ns.CDMSpellData.FindChildForSpellID then
-        local child = ns.CDMSpellData:FindChildForSpellID(spellID)
-        if child and child.auraInstanceID and C_UnitAuras.GetAuraDataByAuraInstanceID then
-            local cUnit = child.auraDataUnit or "player"
-            local vok, vdata = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, cUnit, child.auraInstanceID)
-            if vok and vdata and C_UnitAuras.GetAuraDuration then
-                local dok, durObj = pcall(C_UnitAuras.GetAuraDuration, cUnit, child.auraInstanceID)
-                if dok and durObj then
-                    return nil, nil, durObj, isActive
-                end
-            end
-        end
     end
     return nil, nil, nil, isActive
 end
@@ -540,24 +506,28 @@ local function GetItemCooldown(itemID)
     return startTime, duration, nil
 end
 
+local function GetSlotCooldown(slotID)
+    if not slotID or not GetInventoryItemCooldown then return nil, nil, nil end
+    local startTime, duration, enabled = GetInventoryItemCooldown("player", slotID)
+    if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) then
+        return nil, nil, nil
+    end
+    if enabled ~= 1 or duration <= 1.5 then
+        return nil, nil, nil
+    end
+    return startTime, duration, nil
+end
+
 local function ApplyResolvedCooldown(cd, startTime, duration, durObj, reverse)
-    if not cd then
-        return false
-    end
-
-    if durObj and cd.SetCooldownFromDurationObject then
-        return pcall(cd.SetCooldownFromDurationObject, cd, durObj, reverse)
-    end
-
-    if IsSafeNumeric(startTime) and IsSafeNumeric(duration) and duration > 0 then
-        return pcall(cd.SetCooldown, cd, startTime, duration)
-    end
-
-    return false
+    return ApplyCooldownFromStart(cd, durObj, startTime, duration, nil, reverse)
 end
 
 -- Expose for external use
 CDMIcons.GetBestSpellCooldown = GetBestSpellCooldown
+CDMCooldown.GetBestSpellCooldown = GetBestSpellCooldown
+CDMCooldown.GetItemCooldown = GetItemCooldown
+CDMCooldown.GetSlotCooldown = GetSlotCooldown
+CDMCooldown.ApplyResolvedCooldown = ApplyResolvedCooldown
 
 ---------------------------------------------------------------------------
 -- SWIPE STYLING
@@ -1992,15 +1962,7 @@ local function UpdateIconCooldown(icon)
             local slotID = entry.id
             local itemID = GetInventoryItemID("player", slotID)
             if itemID then
-                -- Use GetInventoryItemCooldown for equipped items (not GetItemCooldown).
-                -- Guard comparisons: startTime/duration may be secret in combat.
-                if GetInventoryItemCooldown then
-                    local s, d, e = GetInventoryItemCooldown("player", slotID)
-                    if IsSafeNumeric(s) and IsSafeNumeric(d) and d > 1.5 and e == 1 then
-                        startTime = s
-                        duration = d
-                    end
-                end
+                startTime, duration, durObj = GetSlotCooldown(slotID)
                 -- Update texture in case trinket was swapped
                 if icon.Icon then
                     local ok, tex = pcall(C_Item.GetItemIconByID, itemID)

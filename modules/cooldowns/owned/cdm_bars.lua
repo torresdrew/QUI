@@ -22,6 +22,7 @@ local LSM = ns.LSM
 ---------------------------------------------------------------------------
 local CDMBars = {}
 ns.CDMBars = CDMBars
+local CDMCooldown = ns.CDMCooldown
 
 ---------------------------------------------------------------------------
 -- HELPERS
@@ -1141,22 +1142,12 @@ local function UpdateItemBarCooldown(bar, entry)
     -- Cooldown display
     local startTime, duration
     if entry.type == "slot" or entry.type == "trinket" then
-        if GetInventoryItemCooldown then
-            local s, d, enabled = GetInventoryItemCooldown("player", entry.id)
-            local safeStart = SafeToNumber(s, nil)
-            local safeDuration = SafeToNumber(d, nil)
-            if safeStart and safeDuration and safeDuration > 1.5 and enabled == 1 then
-                startTime = safeStart
-                duration = safeDuration
-            end
+        if CDMCooldown and CDMCooldown.GetSlotCooldown then
+            startTime, duration = CDMCooldown.GetSlotCooldown(entry.id)
         end
     elseif itemID and C_Item.GetItemCooldown then
-        local s, d = C_Item.GetItemCooldown(itemID)
-        local safeStart = SafeToNumber(s, nil)
-        local safeDuration = SafeToNumber(d, nil)
-        if safeStart and safeDuration and safeDuration > 0 then
-            startTime = safeStart
-            duration = safeDuration
+        if CDMCooldown and CDMCooldown.GetItemCooldown then
+            startTime, duration = CDMCooldown.GetItemCooldown(itemID)
         end
     end
 
@@ -1666,15 +1657,16 @@ barTimerGroup:SetScript("OnLoop", function()
                         -- Update bar fill ONLY if C-side SetTimerDuration isn't driving it.
                         if not bar._cSideFill then
                             local total = bar._totalDuration
-                            if (not total or total <= 0) and remaining > 1 then
-                                bar._totalDuration = remaining
-                                total = remaining
-                            end
                             if total and total > 0 and bar.StatusBar then
                                 local fill = remaining / total
                                 if fill > 1 then fill = 1 end
                                 pcall(bar.StatusBar.SetMinMaxValues, bar.StatusBar, 0, 1)
                                 pcall(bar.StatusBar.SetValue, bar.StatusBar, fill)
+                            elseif bar.StatusBar then
+                                -- Remaining-only fallback: keep the bar visibly active
+                                -- without inventing a fake total duration in Lua.
+                                pcall(bar.StatusBar.SetMinMaxValues, bar.StatusBar, 0, 1)
+                                pcall(bar.StatusBar.SetValue, bar.StatusBar, 1)
                             end
                         end
                     elseif isSecret then

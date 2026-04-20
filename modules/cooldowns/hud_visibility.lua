@@ -160,6 +160,7 @@ local CDMVisibility = {
     fadeStart = 0,
     fadeStartAlpha = 1,
     fadeTargetAlpha = 1,
+    fadeTargets = nil,
     fadeFrame = nil,
     mouseOver = false,
     mouseoverDetector = nil,
@@ -216,7 +217,7 @@ local function OnCDMFadeUpdate(self, elapsed)
     local alpha = CDMVisibility.fadeStartAlpha +
         (CDMVisibility.fadeTargetAlpha - CDMVisibility.fadeStartAlpha) * progress
 
-    local frames = GetCDMFrames()
+    local frames = CDMVisibility.fadeTargets or GetCDMFrames()
     for i = #frames, 1, -1 do
         local frame = frames[i]
         local ok = false
@@ -225,13 +226,13 @@ local function OnCDMFadeUpdate(self, elapsed)
         end
         if not ok then
             table.remove(frames, i)
-            _cdmFramesDirty = true
         end
     end
 
     if progress >= 1 then
         CDMVisibility.isFading = false
         CDMVisibility.currentlyHidden = (CDMVisibility.fadeTargetAlpha < 1)
+        CDMVisibility.fadeTargets = nil
         self:SetScript("OnUpdate", nil)
     end
 end
@@ -252,6 +253,10 @@ local function StartCDMFade(targetAlpha)
     CDMVisibility.fadeStart = GetTime()
     CDMVisibility.fadeStartAlpha = currentAlpha
     CDMVisibility.fadeTargetAlpha = targetAlpha
+    CDMVisibility.fadeTargets = {}
+    for i = 1, #frames do
+        CDMVisibility.fadeTargets[i] = frames[i]
+    end
 
     if not CDMVisibility.fadeFrame then
         CDMVisibility.fadeFrame = CreateFrame("Frame")
@@ -407,6 +412,7 @@ local UnitframesVisibility = {
     fadeStart = 0,
     fadeStartAlpha = 1,
     fadeTargetAlpha = 1,
+    fadeTargets = nil,
     fadeFrame = nil,
     mouseOver = false,
     mouseoverDetector = nil,
@@ -513,7 +519,7 @@ local function OnUnitframesFadeUpdate(self, elapsed)
     local alpha = UnitframesVisibility.fadeStartAlpha +
         (UnitframesVisibility.fadeTargetAlpha - UnitframesVisibility.fadeStartAlpha) * progress
 
-    local frames = GetUnitframeFrames()
+    local frames = UnitframesVisibility.fadeTargets or GetUnitframeFrames()
     for _, frame in ipairs(frames) do
         ApplyUnitframeVisibilityAlpha(frame, alpha)
     end
@@ -521,6 +527,7 @@ local function OnUnitframesFadeUpdate(self, elapsed)
     if progress >= 1 then
         UnitframesVisibility.isFading = false
         UnitframesVisibility.currentlyHidden = (UnitframesVisibility.fadeTargetAlpha < 1)
+        UnitframesVisibility.fadeTargets = nil
         self:SetScript("OnUpdate", nil)
     end
 end
@@ -541,6 +548,7 @@ local function StartUnitframesFade(targetAlpha)
     UnitframesVisibility.fadeStart = GetTime()
     UnitframesVisibility.fadeStartAlpha = currentAlpha
     UnitframesVisibility.fadeTargetAlpha = targetAlpha
+    UnitframesVisibility.fadeTargets = frames
 
     if not UnitframesVisibility.fadeFrame then
         UnitframesVisibility.fadeFrame = CreateFrame("Frame")
@@ -661,6 +669,7 @@ local ActionBarsVisibility = {
     fadeStart = 0,
     fadeStartAlpha = 1,
     fadeTargetAlpha = 1,
+    fadeTargets = nil,
     fadeFrame = nil,
     mouseOver = false,
     mouseoverDetector = nil,
@@ -735,7 +744,7 @@ local function OnActionBarsFadeUpdate(self, elapsed)
     local alpha = ActionBarsVisibility.fadeStartAlpha +
         (ActionBarsVisibility.fadeTargetAlpha - ActionBarsVisibility.fadeStartAlpha) * progress
 
-    local frames = GetActionBarFrames()
+    local frames = ActionBarsVisibility.fadeTargets or GetActionBarFrames()
     local setBarAlpha = ns.ActionBarsOwned and ns.ActionBarsOwned.SetBarAlpha
     for _, entry in ipairs(frames) do
         if setBarAlpha then
@@ -748,6 +757,7 @@ local function OnActionBarsFadeUpdate(self, elapsed)
     if progress >= 1 then
         ActionBarsVisibility.isFading = false
         ActionBarsVisibility.currentlyHidden = (ActionBarsVisibility.fadeTargetAlpha < 1)
+        ActionBarsVisibility.fadeTargets = nil
         self:SetScript("OnUpdate", nil)
     end
 end
@@ -767,6 +777,7 @@ local function StartActionBarsFade(targetAlpha)
     ActionBarsVisibility.fadeStart = GetTime()
     ActionBarsVisibility.fadeStartAlpha = currentAlpha
     ActionBarsVisibility.fadeTargetAlpha = targetAlpha
+    ActionBarsVisibility.fadeTargets = frames
 
     if not ActionBarsVisibility.fadeFrame then
         ActionBarsVisibility.fadeFrame = CreateFrame("Frame")
@@ -776,6 +787,7 @@ end
 
 local function StopActionBarsFade()
     ActionBarsVisibility.isFading = false
+    ActionBarsVisibility.fadeTargets = nil
     if ActionBarsVisibility.fadeFrame then
         ActionBarsVisibility.fadeFrame:SetScript("OnUpdate", nil)
     end
@@ -928,6 +940,7 @@ local ChatVisibility = {
     fadeStart = 0,
     fadeStartAlpha = 1,
     fadeTargetAlpha = 1,
+    fadeTargets = nil,
     fadeFrame = nil,
     mouseOver = false,
     mouseoverDetector = nil,
@@ -1004,7 +1017,7 @@ local function OnChatFadeUpdate(self, elapsed)
     local alpha = ChatVisibility.fadeStartAlpha +
         (ChatVisibility.fadeTargetAlpha - ChatVisibility.fadeStartAlpha) * progress
 
-    local frames = GetChatFrames()
+    local frames = ChatVisibility.fadeTargets or GetChatFrames()
     for _, frame in ipairs(frames) do
         if frame and frame.SetAlpha then
             pcall(frame.SetAlpha, frame, alpha)
@@ -1014,6 +1027,7 @@ local function OnChatFadeUpdate(self, elapsed)
     if progress >= 1 then
         ChatVisibility.isFading = false
         ChatVisibility.currentlyHidden = (ChatVisibility.fadeTargetAlpha < 1)
+        ChatVisibility.fadeTargets = nil
         self:SetScript("OnUpdate", nil)
     end
 end
@@ -1033,6 +1047,7 @@ local function StartChatFade(targetAlpha)
     ChatVisibility.fadeStart = GetTime()
     ChatVisibility.fadeStartAlpha = currentAlpha
     ChatVisibility.fadeTargetAlpha = targetAlpha
+    ChatVisibility.fadeTargets = frames
 
     if not ChatVisibility.fadeFrame then
         ChatVisibility.fadeFrame = CreateFrame("Frame")
