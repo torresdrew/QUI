@@ -369,6 +369,34 @@ hiddenBarParent:Hide()
 
 local noop = function() end
 
+local function HideManagedBlizzardBarFrame(frame, clearEvents)
+    if not frame then return end
+
+    if clearEvents then
+        frame:UnregisterAllEvents()
+    end
+
+    -- Purge Edit Mode's tainted show flag before reparenting, matching the
+    -- safer HideBlizzard patterns used elsewhere in this module and by BT4.
+    if frame.system then
+        frame.isShownExternal = nil
+        local c = 42
+        repeat
+            if frame[c] == nil then
+                frame[c] = nil
+            end
+            c = c + 1
+        until issecurevariable(frame, "isShownExternal")
+    end
+
+    frame:SetParent(hiddenBarParent)
+    if frame.HideBase then
+        frame:HideBase()
+    else
+        frame:Hide()
+    end
+end
+
 -- QUI uses ActionButtonTemplate + SecureActionButtonTemplate (not
 -- ActionBarButtonTemplate) to avoid auto-registering with the secure
 -- ActionBarButtonEventsFrame dispatch.  Adding tainted buttons to that
@@ -2173,9 +2201,7 @@ local function BuildBar(barKey)
         -- BAR 1: Create new ActionButtonTemplate buttons with paging
         -- Hide Blizzard's bar frame and original buttons
         if barFrame then
-            barFrame:UnregisterAllEvents()
-            barFrame:SetParent(hiddenBarParent)
-            barFrame:Hide()
+            HideManagedBlizzardBarFrame(barFrame, true)
         end
         local origButtons = GetOriginalBlizzButtons(barKey)
         for _, blizzBtn in ipairs(origButtons) do
@@ -2840,9 +2866,7 @@ local function BuildBar(barKey)
         -- Fully dispose Blizzard's bar frame and original buttons to prevent
         -- double event processing and taint propagation from hidden frames.
         if barFrame then
-            barFrame:UnregisterAllEvents()
-            barFrame:SetParent(hiddenBarParent)
-            barFrame:Hide()
+            HideManagedBlizzardBarFrame(barFrame, true)
         end
         -- Fully suppress hidden Blizzard buttons via shared helper.
         local origButtons = GetOriginalBlizzButtons(barKey)
