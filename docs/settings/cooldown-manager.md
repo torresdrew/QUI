@@ -226,7 +226,7 @@ Control cooldown swipe (clock-hand sweep) visibility on various frame types. Sto
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `cooldownSwipe.showGCDSwipe` | boolean | `false` | Show GCD swipe on CDM icons |
-| `cooldownSwipe.showCooldownSwipe` | boolean | `false` | Show spell cooldown swipe on CDM icons |
+| `cooldownSwipe.showCooldownSwipe` | boolean | `true` | Show spell cooldown swipe on CDM icons |
 | `cooldownSwipe.showBuffSwipe` | boolean | `false` | Show buff/aura duration swipe on Essential/Utility bars |
 | `cooldownSwipe.showBuffIconSwipe` | boolean | `false` | Show swipe on Buff Icon viewer |
 

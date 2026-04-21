@@ -3021,7 +3021,7 @@ local defaults = {
             showBuffSwipe = false,      -- Buff/aura duration swipe (Essential/Utility)
             showBuffIconSwipe = true,   -- BuffIcon viewer swipe (opt-in)
             showGCDSwipe = false,       -- GCD swipe (~1.5s)
-            showCooldownSwipe = false,  -- Actual spell cooldown swipe
+            showCooldownSwipe = true,   -- Actual spell cooldown swipe
 
             showRechargeEdge = true,    -- Show edge texture on cooldown swipe (recharge edge)
 
