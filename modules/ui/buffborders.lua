@@ -1283,6 +1283,15 @@ local function FullRefresh()
     if settings and not InCombatLockdown() then
         SyncHeaderAttributes(buffContainer, settings, "buff")
         SyncHeaderAttributes(debuffContainer, settings, "debuff")
+        -- Keep secure headers alive in normal gameplay. Layout mode preview
+        -- already does this explicitly; without it, first login/reload can
+        -- leave the headers hidden until layout mode is toggled once.
+        if settings.enableBuffs and not settings.hideBuffFrame and not buffContainer:IsShown() then
+            buffContainer:Show()
+        end
+        if settings.enableDebuffs and not settings.hideDebuffFrame and not debuffContainer:IsShown() then
+            debuffContainer:Show()
+        end
     end
 
     if previewActive then
@@ -1315,6 +1324,12 @@ local function Init()
     if settings then
         SyncHeaderAttributes(buffContainer, settings, "buff")
         SyncHeaderAttributes(debuffContainer, settings, "debuff")
+        -- Secure aura headers are visible by default after CreateFrame. Do NOT
+        -- call :Show() here — on /reload during combat, an addon-initiated
+        -- Show() runs SecureAuraHeader_Update in the tainted stack, which
+        -- compares the secret `expires` field and poisons the secure env.
+        -- Blizzard's own OnShow/OnUpdate path handles initial rendering safely
+        -- during the addon-load window.
     end
 
     -- Offset debuff container below buff container by default. This is a
