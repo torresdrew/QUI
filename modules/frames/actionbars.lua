@@ -1195,13 +1195,17 @@ local function CreateBarContainer(barKey)
     -- duplicate or empty icons.  We can't use the reserved "visibility"
     -- state driver because it unconditionally Show()s the frame when the
     -- macro doesn't match, which would clobber bars the user has
-    -- disabled (bar7/8 off, no-pet pet bar, no-stance stance bar, etc.).
+    -- disabled (bar7/8 off, no-stance stance bar, etc.).
     --
     -- Instead, use a custom state handler that hides on override but
     -- only re-shows when the frame's "qui-user-shown" attribute is true.
-    -- Lua code that controls visibility (disable, HasPetUI,
-    -- GetNumShapeshiftForms) sets qui-user-shown alongside Show/Hide
-    -- calls via SetBarContainerShown() below.
+    -- Lua code that controls visibility (disable, GetNumShapeshiftForms)
+    -- sets qui-user-shown alongside Show/Hide calls via
+    -- SetBarContainerShown() below.
+    --
+    -- Pet bar additionally folds the [nopet] macro condition into its
+    -- driver below so pet summon/dismiss flips visibility from inside
+    -- the secure snippet (works in combat without any tainted Lua).
     container:SetAttribute("qui-user-shown", true)
     container:SetAttribute("_onstate-quioverride", [[
         if newstate == "hide" then
@@ -1210,8 +1214,21 @@ local function CreateBarContainer(barKey)
             self:Show()
         end
     ]])
-    RegisterStateDriver(container, "quioverride",
-        "[overridebar][vehicleui][possessbar][petbattle] hide; show")
+    local driver = "[overridebar][vehicleui][possessbar][petbattle] hide; show"
+    if barKey == "pet" then
+        driver = "[overridebar][vehicleui][possessbar][petbattle][nopet] hide; show"
+        -- The [nopet] secure driver flips Show/Hide asynchronously when pet
+        -- status changes (including in combat). Notify dependents (e.g.
+        -- stance bar anchored to petBar) so they re-anchor when that happens.
+        local function notifyAnchor()
+            if _G.QUI_UpdateFramesAnchoredTo then
+                _G.QUI_UpdateFramesAnchoredTo("petBar")
+            end
+        end
+        container:HookScript("OnShow", notifyAnchor)
+        container:HookScript("OnHide", notifyAnchor)
+    end
+    RegisterStateDriver(container, "quioverride", driver)
 
     return container
 end
@@ -3371,58 +3388,48 @@ UpdatePetBarVisibility = function()
     local container = ActionBarsOwned.containers["pet"]
     if not container then return end
 
+    local wasShown = container:IsShown()
+
     local barDB = GetBarSettings("pet")
     if barDB and barDB.enabled == false then
-        container:SetAttribute("qui-user-shown", false)
-        if not InCombatLockdown() or inInitSafeWindow then
-            if ActionBarsOwned.HideOwnedFlyout then
-                ActionBarsOwned.HideOwnedFlyout()
-            end
-            container:Hide()
-        else
-            ActionBarsOwned.pendingPetUpdate = true
-        end
-        -- Notify anchoring system so dependents (e.g. stance bar) can re-anchor
+        SetBarContainerShown(container, false)
         if _G.QUI_UpdateFramesAnchoredTo then _G.QUI_UpdateFramesAnchoredTo("petBar") end
         return
     end
 
-    -- HasPetUI() returns true when the player has a controllable pet with a bar
-    if InCombatLockdown() and not inInitSafeWindow then
-        -- Show/Hide are protected — defer to PLAYER_REGEN_ENABLED
-        ActionBarsOwned.pendingPetUpdate = true
-        return
-    end
-    local wasShown = container:IsShown()
-    local hasPet = HasPetUI and HasPetUI()
-    if hasPet then
-        container:SetAttribute("qui-user-shown", true)
-        container:Show()
-        -- Populate pet button icons/state (PetActionBarMixin:Update on the
-        -- original bar is suppressed, so QUI drives visuals directly).
-        ActionBarsOwned.UpdateAllPetButtons()
+    -- The pet container's state driver includes [nopet], so the secure
+    -- snippet flips Show/Hide automatically as pet status changes (works
+    -- in combat without any tainted Lua). qui-user-shown is set to true
+    -- at container creation and only flipped when the bar is disabled
+    -- via SetBarContainerShown (above), so no SetAttribute is needed
+    -- here — which is critical because SetAttribute on a frame with a
+    -- registered state driver is protected during combat.
+    --
+    -- Populate pet button icons/state (PetActionBarMixin:Update on the
+    -- original bar is suppressed, so QUI drives visuals directly).
+    ActionBarsOwned.UpdateAllPetButtons()
+    -- Re-layout buttons only out of combat. SecureLayoutBar writes to the
+    -- shared QUI_ActionBarLayoutHandler, whose SetAttribute is protected
+    -- during combat (it has an _onattributechanged secure snippet). The
+    -- layout from the previous PLAYER_ENTERING_WORLD pass still applies
+    -- when the [nopet] driver shows the container mid-combat — buttons
+    -- are positioned and sized correctly without re-running layout.
+    if not InCombatLockdown() then
         LayoutNativeButtons("pet")
-        -- Re-evaluate mouseover fade so alwaysShow / fade alpha are correct
-        SetupOwnedBarMouseover("pet")
-        -- Let the HUD visibility system re-assert its fade state so mounting
-        -- / flying / vehicle hide rules take precedence over the mouseover
-        -- fade alpha that SetupOwnedBarMouseover just applied.
-        if _G.QUI_RefreshActionBarsVisibility then
-            _G.QUI_RefreshActionBarsVisibility()
-        end
-    elseif inInitSafeWindow and InCombatLockdown() then
-        -- During a combat reload, pet data may not be available yet at PEW
-        -- time (HasPetUI returns false). Don't hide — defer to
-        -- PLAYER_REGEN_ENABLED so pet events have a chance to populate.
-        ActionBarsOwned.pendingPetUpdate = true
     else
-        container:SetAttribute("qui-user-shown", false)
-        if ActionBarsOwned.HideOwnedFlyout then
-            ActionBarsOwned.HideOwnedFlyout()
-        end
-        container:Hide()
+        ActionBarsOwned.pendingPetUpdate = true
     end
-    -- Notify anchoring system when visibility changed so dependents re-anchor
+    -- Re-evaluate mouseover fade so alwaysShow / fade alpha are correct
+    SetupOwnedBarMouseover("pet")
+    -- Let the HUD visibility system re-assert its fade state so mounting
+    -- / flying / vehicle hide rules take precedence over the mouseover
+    -- fade alpha that SetupOwnedBarMouseover just applied.
+    if _G.QUI_RefreshActionBarsVisibility then
+        _G.QUI_RefreshActionBarsVisibility()
+    end
+    -- Notify anchoring system when visibility changed so dependents re-anchor.
+    -- The [nopet] state driver may flip Show/Hide asynchronously after this
+    -- call, so also schedule a deferred check to catch that transition.
     local isShown = container:IsShown()
     if wasShown ~= isShown and _G.QUI_UpdateFramesAnchoredTo then
         _G.QUI_UpdateFramesAnchoredTo("petBar")
@@ -4662,11 +4669,9 @@ local function OnOwnedEvent(self, event, ...)
         -- PetActionBarMixin:Update on the suppressed bar won't fire, so QUI
         -- drives pet button visuals (icons, active state, autocast) directly.
         ActionBarsOwned.UpdateAllPetButtons()
-        if not InCombatLockdown() then
-            UpdatePetBarVisibility()
-        else
-            ActionBarsOwned.pendingPetUpdate = true
-        end
+        -- UpdatePetBarVisibility is combat-safe (Show/Hide drive through the
+        -- container's secure attribute snippet, layout via SecureLayoutBar).
+        UpdatePetBarVisibility()
 
     elseif event == "PET_UI_UPDATE" or event == "UNIT_PET" then
         local unit = ...
@@ -4674,10 +4679,6 @@ local function OnOwnedEvent(self, event, ...)
         -- Pet summoned/dismissed/swapped — update container visibility
         C_Timer.After(0.1, function()
             if not ActionBarsOwned.initialized then return end
-            if InCombatLockdown() then
-                ActionBarsOwned.pendingPetUpdate = true
-                return
-            end
             UpdatePetBarVisibility()
         end)
 
