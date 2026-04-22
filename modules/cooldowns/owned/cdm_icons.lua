@@ -32,6 +32,7 @@ CDMIcons.CustomCDM = CustomCDM
 local GetGeneralFont = Helpers.GetGeneralFont
 local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
 local ApplyCooldownFromStart = Helpers.ApplyCooldownFromStart
+local ApplyCooldownFromSpell = Helpers.ApplyCooldownFromSpell
 local IsSecretValue = Helpers.IsSecretValue
 local SafeToNumber = Helpers.SafeToNumber
 local SafeValue = Helpers.SafeValue
@@ -81,6 +82,8 @@ end
 local MAX_RECYCLE_POOL_SIZE = 20
 local DEFAULT_ICON_SIZE = 39
 local BASE_CROP = 0.08
+local GCD_SPELL_ID = 61304
+local GCD_MAX_DURATION = 1.75
 
 ---------------------------------------------------------------------------
 -- STATE
@@ -522,6 +525,7 @@ local function GetBestSpellCooldown(spellID)
     if bestDurObj then
         return nil, nil, bestDurObj, isActive
     end
+
     return nil, nil, nil, isActive
 end
 
@@ -557,21 +561,54 @@ local function ApplyResolvedCooldown(cd, startTime, duration, durObj, reverse)
 end
 
 local function CooldownHasExpiredNow(startTime, duration, durObj, now)
-    if durObj and durObj.IsZero then
-        local ok, isZero = pcall(durObj.IsZero, durObj)
-        if ok and isZero then
-            return true
-        end
-    end
-    if durObj and durObj.GetRemainingDuration then
-        local ok, remaining = pcall(durObj.GetRemainingDuration, durObj)
-        if ok and remaining and not IsSecretValue(remaining) then
-            return remaining <= 0.02
-        end
-    end
+    -- Never inspect DurationObject state in Lua during combat. Secret values
+    -- must be forwarded directly to C-side APIs; expiry decisions here are
+    -- limited to safe numeric cooldown payloads only.
     if IsSafeNumeric(startTime) and IsSafeNumeric(duration) and duration > 0 then
         return ((startTime + duration) - (now or GetTime())) <= 0.02
     end
+    return false
+end
+
+local function HasRealCooldownState(icon, entry, duration, apiIsActive, mirrorActive, blizzRealCooldownActive)
+    if not icon or not entry then
+        return false
+    end
+
+    if icon._auraActive or entry.viewerType == "buff" then
+        return false
+    end
+
+    if blizzRealCooldownActive then
+        return true
+    end
+
+    if icon._showingRealCooldownSwipe then
+        return true
+    end
+
+    if entry.hasCharges then
+        return apiIsActive == true
+    end
+
+    if mirrorActive then
+        return true
+    end
+
+    if IsSafeNumeric(icon and icon._lastStart) and IsSafeNumeric(icon and icon._lastDuration)
+        and icon._lastStart > 0 and icon._lastDuration > 0 then
+        return true
+    end
+
+    if type(duration) == "number" and duration > GCD_MAX_DURATION then
+        return true
+    end
+
+    local lastDuration = icon._lastDuration
+    if type(lastDuration) == "number" and lastDuration > GCD_MAX_DURATION then
+        return true
+    end
+
     return false
 end
 
@@ -594,6 +631,12 @@ local function ReapplySwipeStyle(cd, icon)
     if CooldownSwipe and CooldownSwipe.ApplyToIcon then
         CooldownSwipe.ApplyToIcon(icon)
     end
+end
+
+local function IsGCDSwipeEnabled()
+    local swipe = ns._OwnedSwipe
+    local settings = swipe and swipe.GetSettings and swipe.GetSettings()
+    return settings and settings.showGCDSwipe == true
 end
 
 local function GetIconCooldownIdentifier(icon)
@@ -671,13 +714,27 @@ local function MirrorCurrentBlizzCooldown(icon, blizzCD)
     if not addonCD or not blizzCD then return false end
 
     local synced = false
-    local entry = icon._spellEntry
-    if entry and entry.viewerType ~= "buff" then
-        local startTime, duration, durObj = GetBestSpellCooldown(GetIconCooldownIdentifier(icon))
-        synced = ApplyResolvedCooldown(addonCD, startTime, duration, durObj, false)
+    if blizzCD.GetCooldownDuration and addonCD.SetCooldownFromDurationObject then
+        local okDur, durObj = pcall(blizzCD.GetCooldownDuration, blizzCD)
+        -- Prefer Blizzard's live DurationObject when present. This remains
+        -- the only secret-safe way for addon code to mirror cooldown state in
+        -- combat, including rune/resource waits that do not classify cleanly
+        -- through the numeric GetCooldownTimes snapshot.
+        if okDur and durObj then
+            synced = pcall(addonCD.SetCooldownFromDurationObject, addonCD, durObj) and true or false
+        end
     end
 
-    if not synced and blizzCD.GetCooldownTimes then
+    if synced then
+        icon._durObjHookSync = GetTime()
+        icon._showingGCDSwipe = nil
+        icon._showingRealCooldownSwipe = true
+        SyncMirroredCooldownState(icon, blizzCD, true)
+        RefreshIconGCDState(icon)
+        return true
+    end
+
+    if blizzCD.GetCooldownTimes then
         local ok, rawStart, rawDuration, isEnabled = pcall(blizzCD.GetCooldownTimes, blizzCD)
         if ok and not IsSecretValue(rawStart) and not IsSecretValue(rawDuration) then
             local start = (type(rawStart) == "number") and rawStart or nil
@@ -707,6 +764,36 @@ local function MirrorCurrentBlizzCooldown(icon, blizzCD)
     SyncMirroredCooldownState(icon, blizzCD, synced)
     RefreshIconGCDState(icon)
     return synced
+end
+
+local function GetBlizzCooldownPayload(blizzCD)
+    if not blizzCD then
+        return nil, nil, nil
+    end
+
+    if blizzCD.GetCooldownDuration then
+        local okDur, durObj = pcall(blizzCD.GetCooldownDuration, blizzCD)
+        if okDur and durObj and (IsSecretValue(durObj) or durObj ~= 0) then
+            return nil, nil, durObj
+        end
+    end
+
+    if blizzCD.GetCooldownTimes then
+        local okTimes, rawStart, rawDuration = pcall(blizzCD.GetCooldownTimes, blizzCD)
+        if okTimes and not IsSecretValue(rawStart) and not IsSecretValue(rawDuration) then
+            local start = (type(rawStart) == "number") and rawStart or nil
+            local duration = (type(rawDuration) == "number") and rawDuration or nil
+            if start and duration then
+                if start > 100000 or duration > 100000 then
+                    start = start / 1000
+                    duration = duration / 1000
+                end
+                return start, duration, nil
+            end
+        end
+    end
+
+    return nil, nil, nil
 end
 
 -- Keep CooldownFrame ready-flash ("bling") hidden when icon is effectively invisible.
@@ -789,48 +876,23 @@ local function MirrorBlizzCooldown(icon, blizzChild)
                 local cd = targetIcon.Cooldown
                 local tSkipCharge = tEntry and tEntry.hasCharges
                 local tSkipAura = targetIcon._auraActive
+                RefreshIconGCDState(targetIcon)
 
-                -- Suppress mirror forwarding when the tick has determined
-                -- the CD is over (apiIsActive=false).  Without this, Blizzard's
-                -- viewer child can fire stale DurationObjects after our Clear(),
-                -- re-applying the swipe and causing a visual delay on procs/resets.
-                local tSkipInactive = (targetIcon._hasCooldownActive == false)
-                local tIsZero = false
-                if durationObj and durationObj.IsZero then
-                    local okZero, isZero = pcall(durationObj.IsZero, durationObj)
-                    if okZero and isZero then
-                        tIsZero = true
-                    end
-                end
-
-                if tIsZero then
-                    if cd and cd.Clear then
-                        pcall(cd.Clear, cd)
-                    end
-                    targetIcon._durObjHookSync = nil
-                    DebugIconSwipe(targetIcon, "mirror-clear-zero",
-                        "shown=", tostring(targetIcon:IsShown()),
-                        "auraActive=", tostring(targetIcon._auraActive),
-                        "hasCooldownActive=", tostring(targetIcon._hasCooldownActive))
-                elseif not tSkipCharge and not tSkipAura and not tSkipInactive and cd and cd.SetCooldownFromDurationObject then
+                if not tSkipCharge and not tSkipAura and cd and cd.SetCooldownFromDurationObject then
                     pcall(cd.SetCooldownFromDurationObject, cd, durationObj)
                     -- Track that this hook successfully forwarded a DurationObject
                     -- so the API path can skip competing CooldownFrame writes.
                     targetIcon._durObjHookSync = GetTime()
-                    DebugIconSwipe(targetIcon, "mirror-apply-durObj",
-                        "shown=", tostring(targetIcon:IsShown()),
-                        "auraActive=", tostring(targetIcon._auraActive),
-                        "hasCooldownActive=", tostring(targetIcon._hasCooldownActive))
+                    targetIcon._showingGCDSwipe = nil
+                    targetIcon._showingRealCooldownSwipe = true
                 end
                 ChargeDebug(tEntry and tEntry.name, "MIRROR hook: tSkipCharge=", tSkipCharge,
-                    "tSkipAura=", tSkipAura, "tSkipInactive=", tSkipInactive,
-                    "tIsZero=", tIsZero,
+                    "tSkipAura=", tSkipAura,
                     "_hasCooldownActive=", targetIcon._hasCooldownActive)
 
                 if not tSkipCharge and not tSkipAura then
                     SyncMirroredCooldownState(targetIcon, self, true)
                 end
-                RefreshIconGCDState(targetIcon)
 
                 ReapplySwipeStyle(cd, targetIcon)
             end)
@@ -2031,7 +2093,7 @@ local function UpdateIconCooldown(icon)
         end
 
         -- Custom entry: use addon-created CD with our cooldown resolution
-        local startTime, duration, durObj, apiIsActive
+        local startTime, duration, durObj, apiIsActive, blizzRealCooldownActive
         if entry.type == "macro" then
             local resolvedID, resolvedType, fallbackTex = ResolveMacro(entry)
             if resolvedID then
@@ -2169,8 +2231,11 @@ local function UpdateIconCooldown(icon)
                 local cdSid = _runtimeSid
 
                 if not _ncAuraActive then
-                    -- Cooldown state + DurationObject from the override spell
-                    -- (per-tick cached to avoid fresh Blizzard table per icon).
+                    -- Blizzard-backed non-charged entries are mirror-driven.
+                    -- Use non-secret API fields only for GCD/usability gating
+                    -- and keep the owned cooldown frame synced from the live
+                    -- Blizzard child instead of reconstructing cooldown state
+                    -- in Lua every tick.
                     local childCi = TickCacheGetCooldown(cdSid)
                     if childCi and childCi.isActive ~= nil then
                         apiIsActive = childCi.isActive
@@ -2182,7 +2247,33 @@ local function UpdateIconCooldown(icon)
                     if childCi and not IsSecretValue(childCi.isOnGCD) then
                         icon._isOnGCD = childCi.isOnGCD or false
                     end
-                    durObj = TickCacheGetDuration(cdSid)
+                    -- Forward the spell's DurationObject from
+                    -- C_Spell.GetSpellCooldownDuration via SetCooldownFromDurationObject
+                    -- (the one secret-safe setter). This reflects resource waits for
+                    -- resource-gated spells (rune spenders, etc.) — the spell's own
+                    -- Cooldown frame GetCooldownDuration returns a plain number per
+                    -- FrameAPICooldownDocumentation, not a DurationObject, so the
+                    -- spell-level API is required. _mirrorDriven lets the C-side own
+                    -- draw/no-draw decisions (SetCooldownFromDurationObject clears at
+                    -- zero) and skips the numeric tick-apply/clear fallback below.
+                    if entry._blizzChild and icon.Cooldown and icon.Cooldown.SetCooldownFromDurationObject and not icon._auraActive then
+                        local spellDurObj = TickCacheGetDuration(cdSid)
+                        if spellDurObj then
+                            pcall(icon.Cooldown.SetCooldownFromDurationObject, icon.Cooldown, spellDurObj)
+                            icon._durObjHookSync = GetTime()
+                            icon._showingRealCooldownSwipe = true
+                            icon._showingGCDSwipe = nil
+                            icon._mirrorDriven = true
+                            blizzRealCooldownActive = true
+                            ReapplySwipeStyle(icon.Cooldown, icon)
+                        else
+                            icon._mirrorDriven = false
+                        end
+                        if entry._blizzChild.Cooldown then
+                            SyncMirroredCooldownState(icon, entry._blizzChild.Cooldown, apiIsActive)
+                        end
+                    end
+                    startTime, duration, durObj = nil, nil, nil
                 else
                     -- Aura active: still refresh GCD + cooldown activity
                     -- from API so desaturation clears when the CD ends.
@@ -2312,6 +2403,7 @@ local function UpdateIconCooldown(icon)
                         icon._hasCooldownActive = _auraApiActive
                     end
                 end
+
                 -- Refresh _isOnGCD from tick-cached API data (same query
                 -- GetBestSpellCooldown already performed via TickCacheGetCooldown).
                 local _tickCi = TickCacheGetCooldown(_runtimeSid)
@@ -2376,46 +2468,80 @@ local function UpdateIconCooldown(icon)
         local mirrorActive = not entry.hasCharges
             and not _chargeCountForwarded
             and icon._durObjHookSync
+            and apiIsActive ~= false
             and (_batchTime - icon._durObjHookSync) < 10
 
 
         if icon.Cooldown then
-            -- isActive (non-secret, 12.0.5+) is the authoritative signal for
-            -- whether the UI should render a cooldown.  It handles overrides,
-            -- GCD filtering, and charge states correctly.
-            -- When GCD swipe is enabled, allow GCD-only cooldowns through so
-            -- the swipe animation renders instead of being cleared every tick.
-            local gcdSwipeWanted = icon._isOnGCD and _showGCDSwipe
+            -- isOnGCD means this spell participates in the global cooldown
+            -- system, not that the current icon state is "only GCD".
+            -- Decide what to draw from the actual rendered state first:
+            -- aura swipe wins, then real cooldown/recharge, then GCD.
+            local auraSwipeActive = icon._auraActive or entry.viewerType == "buff"
+            local spellUsable = nil
+            if _runtimeSid and C_Spell and C_Spell.IsSpellUsable then
+                local okUsable, isUsable = pcall(C_Spell.IsSpellUsable, _runtimeSid)
+                if okUsable then
+                    spellUsable = (isUsable == true)
+                end
+            end
+            local realCooldownActive = HasRealCooldownState(icon, entry, duration, apiIsActive, mirrorActive, blizzRealCooldownActive)
+            -- For non-charged spells, spell usability is the best runtime split
+            -- between "pure GCD" (still usable) and "real cooldown/resource
+            -- wait" (not usable).  Do not let a mirrored GCD DurationObject
+            -- masquerade as a real cooldown.
+            if not entry.hasCharges and not auraSwipeActive then
+                if spellUsable == true then
+                    mirrorActive = false
+                    blizzRealCooldownActive = false
+                    realCooldownActive = false
+                elseif spellUsable == false and (mirrorActive or blizzRealCooldownActive) then
+                    realCooldownActive = true
+                end
+            end
+            -- Treat the remaining active-cooldown case as GCD when there is
+            -- no aura swipe and no real cooldown/recharge swipe to render.
+            -- For owned cooldown icons, apiIsActive=true is the reliable
+            -- runtime signal that "something is active right now"; if the
+            -- active state is not explained by aura/recharge/real cooldown,
+            -- the shared GCD swipe should fill that gap.
+            local gcdSwipeWanted = _showGCDSwipe
+                and not auraSwipeActive
+                and not realCooldownActive
+                and icon._isOnGCD == true
+                and apiIsActive == true
+                and spellUsable == true
+            if realCooldownActive and not mirrorActive and not startTime and not duration and not durObj
+                and not entry.hasCharges and entry._blizzChild and entry._blizzChild.Cooldown then
+                startTime, duration, durObj = GetBlizzCooldownPayload(entry._blizzChild.Cooldown)
+            end
             local expiredNow = CooldownHasExpiredNow(startTime, duration, durObj, _batchTime)
-            if (apiIsActive == false or expiredNow) and not gcdSwipeWanted then
+            local cooldownInactive = (apiIsActive == false)
+                or (apiIsActive == nil and expiredNow)
+            if icon._mirrorDriven then
+                -- ISOLATED TEST: mirror path already wrote via
+                -- SetCooldownFromDurationObject upstream. Skip all Clear/apply
+                -- gating and let the C-side CooldownFrame decide draw state.
+            elseif cooldownInactive and not gcdSwipeWanted and not realCooldownActive then
                 icon.Cooldown:Clear()
                 icon._durObjHookSync = nil
-                DebugIconSwipe(icon, "tick-clear",
-                    "apiIsActive=", tostring(apiIsActive),
-                    "expiredNow=", tostring(expiredNow),
-                    "start=", tostring(startTime),
-                    "duration=", tostring(duration),
-                    "mirrorActive=", tostring(mirrorActive))
-            elseif not mirrorActive then
-                -- Skip applying the swipe during GCD — the override system
-                -- lags by one tick, so the base CD briefly shows before the
-                -- override (e.g., Hammer of Light) clears it.  Deferring
-                -- during GCD lets the override resolve first.
-                -- Exception: when GCD swipe is enabled, apply so it renders.
-                if not icon._isOnGCD or gcdSwipeWanted then
-                    ApplyResolvedCooldown(icon.Cooldown, startTime, duration, durObj, false)
-                    DebugIconSwipe(icon, "tick-apply",
-                        "apiIsActive=", tostring(apiIsActive),
-                        "expiredNow=", tostring(expiredNow),
-                        "start=", tostring(startTime),
-                        "duration=", tostring(duration),
-                        "durObj=", durObj and "yes" or "no")
+                icon._showingGCDSwipe = nil
+                icon._showingRealCooldownSwipe = nil
+            elseif realCooldownActive and not mirrorActive then
+                local applied = ApplyResolvedCooldown(icon.Cooldown, startTime, duration, durObj, false)
+                icon._showingGCDSwipe = nil
+                icon._showingRealCooldownSwipe = applied and true or nil
+                if applied then
+                    icon._durObjHookSync = GetTime()
                 end
-            else
-                DebugIconSwipe(icon, "tick-skip-mirror",
-                    "apiIsActive=", tostring(apiIsActive),
-                    "expiredNow=", tostring(expiredNow),
-                    "durObjHookAge=", tostring(icon._durObjHookSync and (_batchTime - icon._durObjHookSync) or nil))
+            elseif gcdSwipeWanted then
+                -- GCD fallback should not be blocked by stale mirrored state.
+                -- If there is no real cooldown active for this icon, let the
+                -- owned frame render the shared global cooldown directly.
+                icon._durObjHookSync = nil
+                local applied = ApplyCooldownFromSpell(icon.Cooldown, GCD_SPELL_ID, false)
+                icon._showingRealCooldownSwipe = nil
+                icon._showingGCDSwipe = applied and true or nil
             end
 
             -- Reapply swipe styling when GCD or cooldown-active state
@@ -2425,12 +2551,12 @@ local function UpdateIconCooldown(icon)
             -- isActive transition: ensures edge/color switches correctly
             -- when a cooldown starts (ready → active) or ends (active → ready)
             -- without waiting for a mirror hook that may not fire.
-            local prevGCD = icon._wasOnGCD or false
-            local curGCD = icon._isOnGCD or false
+            local prevGCD = icon._wasShowingGCDSwipe or false
+            local curGCD = icon._showingGCDSwipe or false
             local prevActive = icon._wasApiActive
             local curActive = apiIsActive
             if prevGCD ~= curGCD or prevActive ~= curActive then
-                icon._wasOnGCD = curGCD
+                icon._wasShowingGCDSwipe = curGCD
                 icon._wasApiActive = curActive
                 ReapplySwipeStyle(icon.Cooldown, icon)
             end
@@ -2672,19 +2798,11 @@ local function UpdateIconCooldown(icon)
                     return
                 end
 
-                -- Not on GCD: check if there's a real cooldown active.
-                -- Use DurationObject remaining time (works with secret values)
-                -- combined with _hasCooldownActive as fallback.
+                -- Not on GCD: use the cooldown state we already resolved above.
+                -- Do not inspect DurationObjects in Lua here.
                 local hasRealCD = false
                 if not entry.hasCharges then
-                    if durObj and durObj.GetRemainingDuration then
-                        local rok, remaining = pcall(durObj.GetRemainingDuration, durObj)
-                        if rok and remaining then
-                            if IsSecretValue(remaining) or remaining > 0 then
-                                hasRealCD = true
-                            end
-                        end
-                    end
+                    hasRealCD = realCooldownActive == true
                 end
                 -- _hasCooldownActive fallback: works for both charged and
                 -- non-charged entries (isActive accounts for charge state).
@@ -2768,6 +2886,9 @@ function CDMIcons:AcquireIcon(parent, spellEntry)
         icon._lastDuration = nil
         icon._isOnGCD = nil
         icon._wasOnGCD = nil
+        icon._showingGCDSwipe = nil
+        icon._showingRealCooldownSwipe = nil
+        icon._wasShowingGCDSwipe = nil
         icon._hasCooldownActive = nil
         icon._isTotemInstance = nil
         icon._totemSlot = spellEntry and spellEntry._totemSlot or nil
@@ -2841,6 +2962,9 @@ function CDMIcons:ReleaseIcon(icon)
     icon._lastDuration = nil
     icon._isOnGCD = nil
     icon._wasOnGCD = nil
+    icon._showingGCDSwipe = nil
+    icon._showingRealCooldownSwipe = nil
+    icon._wasShowingGCDSwipe = nil
     icon._hasCooldownActive = nil
     icon._isTotemInstance = nil
     icon._totemSlot = nil
@@ -3174,7 +3298,6 @@ function CDMIcons:UpdateAllCooldowns()
             else
                 UpdateIconCooldown(icon)
             end
-            DumpDebugIcon(icon)
 
             -- Per-spell hidden override: always hide regardless of display mode
             local spellOvr = (not editMode) and GetIconSpellOverride(icon) or nil
@@ -3404,12 +3527,10 @@ function CDMIcons:UpdateCooldownsForType(viewerType)
     if pool then
         for _, icon in ipairs(pool) do
             UpdateIconCooldown(icon)
-            DumpDebugIcon(icon)
         end
     end
 end
 
----------------------------------------------------------------------------
 -- DEBUG: /cdmicondebug — toggle per-tick icon state dump.
 ---------------------------------------------------------------------------
 SLASH_QUI_CDMICONDEBUG1 = "/cdmicondebug"
@@ -3428,7 +3549,7 @@ local function ShouldDebugIcon(icon)
     local dbg = _G.QUI_CDM_ICON_DEBUG
     if not dbg then return false end
     local entry = icon and icon._spellEntry
-    if not entry or entry.viewerType ~= "buff" then
+    if not entry then
         return false
     end
     if dbg == true then return true end

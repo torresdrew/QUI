@@ -62,8 +62,8 @@ local BLIZZ_BUFF_R, BLIZZ_BUFF_G, BLIZZ_BUFF_B, BLIZZ_BUFF_A = 0.93, 0.77, 0.0, 
 
 ---------------------------------------------------------------------------
 -- APPLY SWIPE TO A SINGLE ICON
--- Classification uses icon._auraActive (from hook) and icon._isOnGCD (from API)
--- (set by cdm_icons.lua during cooldown updates).
+-- Classification prefers the icon's active rendered swipe state:
+-- aura wins, then explicit GCD render flag, then cooldown.
 ---------------------------------------------------------------------------
 local function ApplySwipeToIcon(icon, settings)
     if not icon or not icon.Cooldown or not icon._spellEntry then return end
@@ -118,7 +118,7 @@ local function ApplySwipeToIcon(icon, settings)
         end
     end
     if not mode then
-        if icon._isOnGCD then
+        if icon._showingGCDSwipe then
             mode = "gcd"
         else
             mode = "cooldown"

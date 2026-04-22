@@ -158,9 +158,30 @@ local function IsAuraOwnedByPlayerOrPet(auraData, strictSource)
     return false
 end
 
+-- Units whose auras are inherently "ours" — buffs on player/pet/vehicle
+-- don't need a source check (other players' buffs on us are still ours to see).
+-- Any other unit (target, focus, raid*, party*, arena*, boss*, nameplate*) is
+-- a foreign frame and the aura must be sourced from us to count as active on
+-- our CDM tracker. blzChild.auraDataUnit is unreliable — it can be nil (resolved
+-- to "player" via `or "player"`) or transiently stale on first show — so we
+-- defensively require ownership whenever the source isn't player/pet/vehicle
+-- AND whenever auraData itself reports a non-self source.
+local function IsSelfUnit(auraUnit)
+    return auraUnit == "player" or auraUnit == "pet" or auraUnit == "vehicle"
+end
+
 local function IsUsableResolvedAuraData(auraUnit, auraData)
     if not auraData then return false end
-    if auraUnit == "target" then
+    if not IsSelfUnit(auraUnit) then
+        return IsAuraOwnedByPlayerOrPet(auraData, true)
+    end
+    -- Self-unit aura (player/pet/vehicle): trust unit, but if the data carries
+    -- explicit non-self source info, still reject. Guards against Blizzard
+    -- viewer children that report auraDataUnit="player" while pointing at a
+    -- foreign aura instance (observed for some tracked debuffs).
+    local sourceUnit = Helpers.SafeValue(auraData.sourceUnit, nil)
+    local sourceGUID = Helpers.SafeValue(auraData.sourceGUID, nil)
+    if sourceUnit or sourceGUID then
         return IsAuraOwnedByPlayerOrPet(auraData, true)
     end
     return true
@@ -1337,11 +1358,10 @@ function CDMSpellData:ResolveAuraState(params)
             local bok, bshown = pcall(blzChild.IsShown, blzChild)
             if bok and bshown then
                 local shownAuraUnit = blzChild.auraDataUnit or "player"
-                local shownAuraData = shownAuraUnit == "target"
-                    and C_UnitAuras.GetAuraDataByAuraInstanceID
+                local shownAuraData = C_UnitAuras.GetAuraDataByAuraInstanceID
                     and TickCacheGetAuraData(shownAuraUnit, blzChild.auraInstanceID)
                     or nil
-                if shownAuraUnit ~= "target" or IsAuraOwnedByPlayerOrPet(shownAuraData, true) then
+                if IsUsableResolvedAuraData(shownAuraUnit, shownAuraData) then
                     AuraStateDebug(debugAura, "phase5b-primary-shown", "unit=", shownAuraUnit, "inst=", blzChild.auraInstanceID)
                     childAuraInstID = blzChild.auraInstanceID
                     auraUnit = shownAuraUnit
@@ -1364,11 +1384,10 @@ function CDMSpellData:ResolveAuraState(params)
             local bok, bshown = pcall(blzBarChild.IsShown, blzBarChild)
             if bok and bshown then
                 local shownAuraUnit = blzBarChild.auraDataUnit or "player"
-                local shownAuraData = shownAuraUnit == "target"
-                    and C_UnitAuras.GetAuraDataByAuraInstanceID
+                local shownAuraData = C_UnitAuras.GetAuraDataByAuraInstanceID
                     and TickCacheGetAuraData(shownAuraUnit, blzBarChild.auraInstanceID)
                     or nil
-                if shownAuraUnit ~= "target" or IsAuraOwnedByPlayerOrPet(shownAuraData, true) then
+                if IsUsableResolvedAuraData(shownAuraUnit, shownAuraData) then
                     AuraStateDebug(debugAura, "phase6-bar-shown", "unit=", shownAuraUnit, "inst=", blzBarChild.auraInstanceID)
                     childAuraInstID = blzBarChild.auraInstanceID
                     auraUnit = shownAuraUnit

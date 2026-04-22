@@ -1323,13 +1323,18 @@ local function LayoutContainer(trackerKey)
         end
         local fingerprint = table.concat(parts, ",")
 
-        local currentPool = ns.CDMIcons:GetIconPool("buff")
+        local currentPool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff") or {}
         if fingerprint == (buffFingerprint or "") and #currentPool > 0 then
             -- Same buff set -- skip destructive rebuild
             applying[trackerKey] = false
             return
         end
         buffFingerprint = fingerprint
+
+        if not ns.CDMIcons then
+            applying[trackerKey] = false
+            return
+        end
 
         -- Build addon-owned icons (adopts Blizzard CooldownFrames)
         local allIcons = ns.CDMIcons:BuildIcons("buff", container)
