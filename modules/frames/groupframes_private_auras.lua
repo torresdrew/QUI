@@ -15,6 +15,13 @@ local ADDON_NAME, ns = ...
 -- API guard — private auras require WoW 10.1.0+
 if not C_UnitAuras or not C_UnitAuras.AddPrivateAuraAnchor then return end
 
+-- 12.0.5+ introduced the `isContainer` discriminator on AddPrivateAuraAnchor args.
+-- Non-container anchors must pass `isContainer = false` or the registration silently
+-- fails on 12.0.5+ clients. On older clients the field is unknown and must not be
+-- set at all.
+local CLIENT_VERSION = select(4, GetBuildInfo())
+local IS_CONTAINER_SUPPORTED = CLIENT_VERSION and CLIENT_VERSION >= 120005
+
 local Helpers = ns.Helpers
 local GetDB = Helpers.CreateDBGetter("quiGroupFrames")
 
@@ -38,7 +45,6 @@ local ipairs = ipairs
 local pcall = pcall
 local wipe = wipe
 local CreateFrame = CreateFrame
-local InCombatLockdown = InCombatLockdown
 local C_Timer = C_Timer
 local GetTime = GetTime
 local UnitExists = UnitExists
@@ -64,8 +70,6 @@ do local mp = ns._memprobes or {}; ns._memprobes = mp
 end
 
 -- Deferred work
-local pendingReanchor = false
-local pendingCleanup = false
 local reanchorTimer = nil
 
 local PRIVATE_DISPEL_FILTER = "HARMFUL|RAID_PLAYER_DISPELLABLE"
@@ -217,7 +221,7 @@ local function RegisterDualAnchor(unit, auraIndex, container, scaleFrame, settin
     local mainShowNumbers = (textScale == 1) and (settings.showCountdownNumbers ~= false)
 
     -- Main anchor: icon + cooldown spiral
-    local ok1, mainID = pcall(AddPrivateAuraAnchor, {
+    local mainArgs = {
         unitToken = unit,
         auraIndex = auraIndex,
         parent = container,
@@ -235,7 +239,9 @@ local function RegisterDualAnchor(unit, auraIndex, container, scaleFrame, settin
                 offsetY = 0,
             },
         },
-    })
+    }
+    if IS_CONTAINER_SUPPORTED then mainArgs.isContainer = false end
+    local ok1, mainID = pcall(AddPrivateAuraAnchor, mainArgs)
 
     local mainAnchorID = (ok1 and mainID) or nil
 
@@ -256,7 +262,7 @@ local function RegisterDualAnchor(unit, auraIndex, container, scaleFrame, settin
         local anchorOffX = textOffsetX / textScale
         local anchorOffY = textOffsetY / textScale
 
-        local ok2, textID = pcall(AddPrivateAuraAnchor, {
+        local textArgs = {
             unitToken = unit,
             auraIndex = auraIndex,
             parent = scaleFrame,
@@ -274,7 +280,9 @@ local function RegisterDualAnchor(unit, auraIndex, container, scaleFrame, settin
                     offsetY = anchorOffY,
                 },
             },
-        })
+        }
+        if IS_CONTAINER_SUPPORTED then textArgs.isContainer = false end
+        local ok2, textID = pcall(AddPrivateAuraAnchor, textArgs)
 
         textAnchorID = (ok2 and textID) or nil
     end
@@ -284,11 +292,6 @@ end
 
 --- Remove all anchors (main + text) from a state table
 local function RemoveAllAnchors(state)
-    -- Private aura anchor APIs are restricted in combat (12.0.5+)
-    if InCombatLockdown() then
-        pendingReanchor = true
-        return
-    end
     for i, anchorID in ipairs(state.anchorIDs) do
         pcall(RemovePrivateAuraAnchor, anchorID)
         state.anchorIDs[i] = nil
@@ -297,11 +300,12 @@ local function RemoveAllAnchors(state)
         pcall(RemovePrivateAuraAnchor, anchorID)
         state.textAnchorIDs[i] = nil
     end
-    -- Hide stale WoW-rendered children left on containers
+    -- Hide stale WoW-rendered children left on containers. pcall in case any
+    -- child is a protected C-side frame that can't be hidden in combat.
     for _, container in ipairs(state.containers) do
         for j = 1, container:GetNumChildren() do
             local child = select(j, container:GetChildren())
-            if child then child:Hide() end
+            if child then pcall(child.Hide, child) end
         end
     end
 end
@@ -346,12 +350,6 @@ end
 -- CORE: Setup private auras on a single frame
 ---------------------------------------------------------------------------
 local function SetupPrivateAuras(frame)
-    -- Private aura anchor APIs are restricted in combat (12.0.5+)
-    if InCombatLockdown() then
-        pendingReanchor = true
-        return
-    end
-
     local settings = GetSettings(frame._isRaid)
     if not settings or not settings.enabled then return end
 
@@ -421,11 +419,6 @@ end
 -- CORE: Clear private auras from a single frame
 ---------------------------------------------------------------------------
 local function ClearPrivateAuras(frame)
-    if InCombatLockdown() then
-        pendingCleanup = true
-        return
-    end
-
     local state = frameState[frame]
     if not state then return end
 
@@ -451,11 +444,6 @@ end
 -- CORE: Reanchor — unit token changed, rebuild anchors (reuse containers)
 ---------------------------------------------------------------------------
 local function ReanchorPrivateAuras(frame)
-    if InCombatLockdown() then
-        pendingReanchor = true
-        return
-    end
-
     local settings = GetSettings(frame._isRaid)
     if not settings or not settings.enabled then return end
 
@@ -515,11 +503,6 @@ end
 
 --- Setup private auras on all visible group frames
 function QUI_GFPA:SetupAll()
-    if InCombatLockdown() then
-        pendingReanchor = true
-        return
-    end
-
     local GF = ns.QUI_GroupFrames
     if not GF or not GF.initialized then return end
 
@@ -540,11 +523,6 @@ end
 
 --- Reanchor all frames (unit tokens may have changed)
 function QUI_GFPA:ReanchorAll()
-    if InCombatLockdown() then
-        pendingReanchor = true
-        return
-    end
-
     local GF = ns.QUI_GroupFrames
     if not GF or not GF.initialized then return end
 
@@ -567,11 +545,6 @@ end
 
 --- Remove all private aura anchors and return containers to pool
 function QUI_GFPA:CleanupAll()
-    if InCombatLockdown() then
-        pendingCleanup = true
-        return
-    end
-
     for frame in pairs(frameState) do
         ClearPrivateAuras(frame)
     end
@@ -581,12 +554,6 @@ end
 
 --- Full refresh — tear down and rebuild everything
 function QUI_GFPA:RefreshAll()
-    if InCombatLockdown() then
-        pendingCleanup = true
-        pendingReanchor = true
-        return
-    end
-
     -- Clear existing anchors
     for frame in pairs(frameState) do
         ClearPrivateAuras(frame)
@@ -599,11 +566,6 @@ end
 
 --- Refresh a single frame
 function QUI_GFPA:RefreshFrame(frame)
-    if InCombatLockdown() then
-        pendingReanchor = true
-        return
-    end
-
     ClearPrivateAuras(frame)
     frameState[frame] = nil
     SetupPrivateAuras(frame)
@@ -678,7 +640,6 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 -- UNIT_AURA: use centralized dispatcher instead of a duplicate global registration
 -- (eliminates a second handler that fired for every unit in the game)
 
@@ -714,11 +675,6 @@ if ns.AuraEvents then
 
         RefreshPrivateDispelState(unit)
 
-        -- Private aura anchor APIs are restricted in combat (12.0.5+)
-        if InCombatLockdown() then
-            pendingReanchor = true
-            return
-        end
         -- Per-frame: rate-limited reanchor for any frame showing this unit.
         local now = GetTime()
         for f = 1, nFrames do
@@ -752,17 +708,6 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         C_Timer.After(1.5, function()
             QUI_GFPA:SetupAll()
         end)
-
-    elseif event == "PLAYER_REGEN_ENABLED" then
-        -- Process deferred cleanup after combat ends
-        if pendingCleanup then
-            pendingCleanup = false
-            QUI_GFPA:CleanupAll()
-        end
-        if pendingReanchor then
-            pendingReanchor = false
-            QUI_GFPA:ReanchorAll()
-        end
     end
 end)
 

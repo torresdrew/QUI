@@ -1819,6 +1819,25 @@ local defaults = {
                     xOffset = -8,
                     yOffset = 8,
                 },
+                -- Private auras (boss debuffs invisible to the addon API)
+                privateAuras = {
+                    enabled = true,
+                    maxPerFrame = 3,
+                    iconSize = 24,
+                    growDirection = "RIGHT",
+                    spacing = 2,
+                    anchor = "BOTTOMLEFT",
+                    anchorOffsetX = 2,
+                    anchorOffsetY = 2,
+                    showCountdown = true,
+                    showCountdownNumbers = true,
+                    reverseSwipe = false,
+                    borderScale = 1,
+                    textScale = 1,
+                    textOffsetX = 0,
+                    textOffsetY = 0,
+                    frameLevel = 50,
+                },
             },
             -- Target frame settings
             target = {
@@ -2001,6 +2020,25 @@ local defaults = {
                     anchor = "LEFT",
                     xOffset = -8,
                     yOffset = 0,
+                },
+                -- Private auras (boss debuffs invisible to the addon API)
+                privateAuras = {
+                    enabled = true,
+                    maxPerFrame = 4,
+                    iconSize = 24,
+                    growDirection = "RIGHT",
+                    spacing = 2,
+                    anchor = "TOPLEFT",
+                    anchorOffsetX = 2,
+                    anchorOffsetY = -2,
+                    showCountdown = true,
+                    showCountdownNumbers = true,
+                    reverseSwipe = false,
+                    borderScale = 1,
+                    textScale = 1,
+                    textOffsetX = 0,
+                    textOffsetY = 0,
+                    frameLevel = 50,
                 },
             },
             -- Target of Target
@@ -2335,6 +2373,25 @@ local defaults = {
                     anchor = "LEFT",
                     xOffset = -8,
                     yOffset = 0,
+                },
+                -- Private auras (boss debuffs invisible to the addon API)
+                privateAuras = {
+                    enabled = true,
+                    maxPerFrame = 3,
+                    iconSize = 22,
+                    growDirection = "RIGHT",
+                    spacing = 2,
+                    anchor = "TOPLEFT",
+                    anchorOffsetX = 2,
+                    anchorOffsetY = -2,
+                    showCountdown = true,
+                    showCountdownNumbers = true,
+                    reverseSwipe = false,
+                    borderScale = 1,
+                    textScale = 1,
+                    textOffsetX = 0,
+                    textOffsetY = 0,
+                    frameLevel = 50,
                 },
             },
             -- Boss frames
@@ -3021,7 +3078,7 @@ local defaults = {
             showBuffSwipe = false,      -- Buff/aura duration swipe (Essential/Utility)
             showBuffIconSwipe = true,   -- BuffIcon viewer swipe (opt-in)
             showGCDSwipe = false,       -- GCD swipe (~1.5s)
-            showCooldownSwipe = false,  -- Actual spell cooldown swipe
+            showCooldownSwipe = true,   -- Actual spell cooldown swipe
 
             showRechargeEdge = true,    -- Show edge texture on cooldown swipe (recharge edge)
 

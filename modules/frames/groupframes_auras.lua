@@ -24,6 +24,7 @@ local format = format
 local GetTime = GetTime
 local UnitExists = UnitExists
 local C_UnitAuras = C_UnitAuras
+local table_remove = table.remove
 local sub = string.sub
 local CreateFrame = CreateFrame
 local table_insert = table.insert
@@ -50,21 +51,30 @@ local framePrevBuffCount = Helpers.CreateStateTable()
 -- eliminates the double-coalescing layer that added 1 frame of latency)
 
 ---------------------------------------------------------------------------
--- SHARED AURA CACHE: Single scan feeds aura icons, dispel, and defensive
+-- SHARED AURA CACHE: One authoritative per-unit aura state for group frames
 ---------------------------------------------------------------------------
 -- Populated once per throttle window, read by all consumers.
 -- Structure: unitAuraCache[unit] = {
---     helpful = {auraData...},
---     harmful = {auraData...},
---     playerDispellable = { [instID] = true },  -- scan-time classification
---     defensives        = { [instID] = true },  -- scan-time classification
+--     helpful                = {auraData...},
+--     harmful                = {auraData...},
+--     helpfulByInstanceID    = { [instID] = auraData },
+--     harmfulByInstanceID    = { [instID] = auraData },
+--     helpfulIndexByID       = { [instID] = arrayIndex },
+--     harmfulIndexByID       = { [instID] = arrayIndex },
+--     helpfulBySpellID       = { [spellID] = auraData },
+--     harmfulBySpellID       = { [spellID] = auraData },
+--     helpfulByName          = { [spellName] = auraData },
+--     harmfulByName          = { [spellName] = auraData },
+--     playerDispellable      = { [instID] = true },
+--     playerDispellableOrder = { instID, ... },
+--     defensives             = { [instID] = true },
+--     defensiveOrder         = { instID, ... },
+--     hasFullScan            = boolean,
 -- }
 --
--- `playerDispellable` and `defensives` are classified at scan/add time so the
--- dispel overlay and defensive indicator collapse from "iterate aura list and
--- filter-check each" into "next(set)" / "for id in pairs(set)". Classification
--- is invariant per aura instance ID, so the sets only need maintenance on
--- add/remove — in-place updates leave them untouched.
+-- This cache is the shared source of truth for aura icons, dispel, defensive,
+-- indicators, and pinned aura consumers. Full scans populate it, and set
+-- changes mutate it incrementally from UNIT_AURA updateInfo payloads.
 local unitAuraCache = {}
 do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "GF_unitAuraCache", tbl = unitAuraCache } end
 
@@ -92,17 +102,243 @@ local function ClassifyDefensive(unit, auraData)
     return GF.IsVerifiedDefensiveAura(unit, auraData) == true
 end
 
-local function ScanUnitAuras(unit)
+local function CreateAuraCacheEntry()
+    return {
+        helpful = {},
+        harmful = {},
+        helpfulByInstanceID = {},
+        harmfulByInstanceID = {},
+        helpfulIndexByID = {},
+        harmfulIndexByID = {},
+        helpfulBySpellID = {},
+        harmfulBySpellID = {},
+        helpfulByName = {},
+        harmfulByName = {},
+        playerDispellable = {},
+        playerDispellableOrder = {},
+        defensives = {},
+        defensiveOrder = {},
+        hasFullScan = false,
+    }
+end
+
+local function EnsureAuraCache(unit)
     local cache = unitAuraCache[unit]
-    if not cache then
-        cache = { helpful = {}, harmful = {}, playerDispellable = {}, defensives = {} }
-        unitAuraCache[unit] = cache
-    else
-        wipe(cache.helpful)
-        wipe(cache.harmful)
-        wipe(cache.playerDispellable)
-        wipe(cache.defensives)
+    if cache then
+        return cache
     end
+    cache = CreateAuraCacheEntry()
+    unitAuraCache[unit] = cache
+    return cache
+end
+
+local function ResetAuraCache(cache)
+    wipe(cache.helpful)
+    wipe(cache.harmful)
+    wipe(cache.helpfulByInstanceID)
+    wipe(cache.harmfulByInstanceID)
+    wipe(cache.helpfulIndexByID)
+    wipe(cache.harmfulIndexByID)
+    wipe(cache.helpfulBySpellID)
+    wipe(cache.harmfulBySpellID)
+    wipe(cache.helpfulByName)
+    wipe(cache.harmfulByName)
+    wipe(cache.playerDispellable)
+    wipe(cache.playerDispellableOrder)
+    wipe(cache.defensives)
+    wipe(cache.defensiveOrder)
+    cache.hasFullScan = false
+end
+
+local function RebuildHelpfulMaps(unit, cache)
+    wipe(cache.helpfulByInstanceID)
+    wipe(cache.helpfulIndexByID)
+    wipe(cache.helpfulBySpellID)
+    wipe(cache.helpfulByName)
+    wipe(cache.defensives)
+    wipe(cache.defensiveOrder)
+
+    local helpful = cache.helpful
+    local helpfulByInstanceID = cache.helpfulByInstanceID
+    local helpfulIndexByID = cache.helpfulIndexByID
+    local helpfulBySpellID = cache.helpfulBySpellID
+    local helpfulByName = cache.helpfulByName
+    local defensives = cache.defensives
+    local defensiveOrder = cache.defensiveOrder
+
+    for i = 1, #helpful do
+        local auraData = helpful[i]
+        local instID = auraData and auraData.auraInstanceID
+        if instID then
+            helpfulByInstanceID[instID] = auraData
+            helpfulIndexByID[instID] = i
+            if ClassifyDefensive(unit, auraData) then
+                defensives[instID] = true
+                defensiveOrder[#defensiveOrder + 1] = instID
+            end
+        end
+
+        local spellID = SafeValue(auraData and auraData.spellId, nil)
+        if spellID then
+            helpfulBySpellID[spellID] = auraData
+        end
+
+        local spellName = SafeValue(auraData and auraData.name, nil)
+        if spellName then
+            helpfulByName[spellName] = auraData
+        end
+    end
+end
+
+local function RebuildHarmfulMaps(unit, cache)
+    wipe(cache.harmfulByInstanceID)
+    wipe(cache.harmfulIndexByID)
+    wipe(cache.harmfulBySpellID)
+    wipe(cache.harmfulByName)
+    wipe(cache.playerDispellable)
+    wipe(cache.playerDispellableOrder)
+
+    local harmful = cache.harmful
+    local harmfulByInstanceID = cache.harmfulByInstanceID
+    local harmfulIndexByID = cache.harmfulIndexByID
+    local harmfulBySpellID = cache.harmfulBySpellID
+    local harmfulByName = cache.harmfulByName
+    local playerDispellable = cache.playerDispellable
+    local playerDispellableOrder = cache.playerDispellableOrder
+
+    for i = 1, #harmful do
+        local auraData = harmful[i]
+        local instID = auraData and auraData.auraInstanceID
+        if instID then
+            harmfulByInstanceID[instID] = auraData
+            harmfulIndexByID[instID] = i
+
+            local classified = ClassifyDispellable(unit, instID)
+            if classified == true or (classified == nil and auraData.dispelName and not IsSecretValue(auraData.dispelName)) then
+                playerDispellable[instID] = true
+                playerDispellableOrder[#playerDispellableOrder + 1] = instID
+            end
+        end
+
+        local spellID = SafeValue(auraData and auraData.spellId, nil)
+        if spellID then
+            harmfulBySpellID[spellID] = auraData
+        end
+
+        local spellName = SafeValue(auraData and auraData.name, nil)
+        if spellName then
+            harmfulByName[spellName] = auraData
+        end
+    end
+end
+
+local function ResolveAuraBucket(unit, auraData)
+    if not auraData then return nil end
+
+    local instID = auraData.auraInstanceID
+    if instID and IsAuraFilteredOut then
+        local helpfulFiltered = IsAuraFilteredOut(unit, instID, "HELPFUL")
+        if helpfulFiltered ~= nil and not IsSecretValue(helpfulFiltered) then
+            if helpfulFiltered == false then
+                return "helpful"
+            end
+            local harmfulFiltered = IsAuraFilteredOut(unit, instID, "HARMFUL")
+            if harmfulFiltered ~= nil and not IsSecretValue(harmfulFiltered) then
+                if harmfulFiltered == false then
+                    return "harmful"
+                end
+            end
+        end
+    end
+
+    local isHelpful = SafeValue(auraData.isHelpful, nil)
+    if isHelpful == true then
+        return "helpful"
+    end
+
+    local isHarmful = SafeValue(auraData.isHarmful, nil)
+    if isHarmful == true then
+        return "harmful"
+    end
+
+    return nil
+end
+
+local function AppendAuraToBucket(cache, bucketName, auraData)
+    local bucket = bucketName == "helpful" and cache.helpful or cache.harmful
+    bucket[#bucket + 1] = auraData
+
+    local instID = auraData and auraData.auraInstanceID
+    if not instID then
+        return
+    end
+
+    if bucketName == "helpful" then
+        cache.helpfulByInstanceID[instID] = auraData
+        cache.helpfulIndexByID[instID] = #bucket
+    else
+        cache.harmfulByInstanceID[instID] = auraData
+        cache.harmfulIndexByID[instID] = #bucket
+    end
+end
+
+local function RemoveAuraFromBucket(cache, bucketName, instID)
+    local bucket, indexMap, byInstanceID
+    if bucketName == "helpful" then
+        bucket = cache.helpful
+        indexMap = cache.helpfulIndexByID
+        byInstanceID = cache.helpfulByInstanceID
+    else
+        bucket = cache.harmful
+        indexMap = cache.harmfulIndexByID
+        byInstanceID = cache.harmfulByInstanceID
+    end
+
+    local idx = indexMap[instID]
+    if not idx then
+        return false
+    end
+
+    table_remove(bucket, idx)
+    indexMap[instID] = nil
+    byInstanceID[instID] = nil
+
+    for i = idx, #bucket do
+        local auraData = bucket[i]
+        local auraInstID = auraData and auraData.auraInstanceID
+        if auraInstID then
+            indexMap[auraInstID] = i
+        end
+    end
+
+    return true
+end
+
+local function ReplaceAuraInBucket(cache, bucketName, instID, auraData)
+    local bucket, indexMap, byInstanceID
+    if bucketName == "helpful" then
+        bucket = cache.helpful
+        indexMap = cache.helpfulIndexByID
+        byInstanceID = cache.helpfulByInstanceID
+    else
+        bucket = cache.harmful
+        indexMap = cache.harmfulIndexByID
+        byInstanceID = cache.harmfulByInstanceID
+    end
+
+    local idx = indexMap[instID]
+    if not idx then
+        return false
+    end
+
+    bucket[idx] = auraData
+    byInstanceID[instID] = auraData
+    return true
+end
+
+local function ScanUnitAuras(unit)
+    local cache = EnsureAuraCache(unit)
+    ResetAuraCache(cache)
 
     local GetUnitAuras = C_UnitAuras.GetUnitAuras
     if not GetUnitAuras then return cache end
@@ -111,49 +347,108 @@ local function ScanUnitAuras(unit)
     local harmful = GetUnitAuras(unit, "HARMFUL", 40)
     if harmful then
         local dst = cache.harmful
-        local dispellable = cache.playerDispellable
         for i = 1, #harmful do
             local ad = harmful[i]
             dst[i] = ad
-            -- Scan-time dispel classification (C-side, no pcall needed).
-            -- Fall back to dispelName when filter API unavailable.
-            local instID = ad.auraInstanceID
-            if instID then
-                local classified = ClassifyDispellable(unit, instID)
-                if classified == true then
-                    dispellable[instID] = true
-                elseif classified == nil and ad.dispelName and not IsSecretValue(ad.dispelName) then
-                    dispellable[instID] = true
-                end
-            end
         end
     end
 
     local helpful = GetUnitAuras(unit, "HELPFUL", 40)
     if helpful then
         local dst = cache.helpful
-        local defensives = cache.defensives
         for i = 1, #helpful do
             local ad = helpful[i]
             dst[i] = ad
-            -- Scan-time defensive classification: the IsVerifiedDefensiveAura
-            -- spell-ID fast path makes most checks a single table lookup, and
-            -- the rare filter-API path gets memoized in _defensive.cache for
-            -- subsequent adds.
-            local instID = ad.auraInstanceID
-            if instID and ClassifyDefensive(unit, ad) then
-                defensives[instID] = true
+        end
+    end
+
+    RebuildHarmfulMaps(unit, cache)
+    RebuildHelpfulMaps(unit, cache)
+    cache.hasFullScan = true
+    return cache
+end
+
+local function ApplyAuraDelta(unit, updateInfo)
+    local cache = unitAuraCache[unit]
+    if not cache or not cache.hasFullScan or type(updateInfo) ~= "table" then
+        return false
+    end
+
+    local helpfulDirty = false
+    local harmfulDirty = false
+    local GetAuraByInstanceID = C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID
+
+    if updateInfo.addedAuras then
+        for i = 1, #updateInfo.addedAuras do
+            local auraData = updateInfo.addedAuras[i]
+            local bucketName = ResolveAuraBucket(unit, auraData)
+            if not bucketName then
+                return false
+            end
+            AppendAuraToBucket(cache, bucketName, auraData)
+            if bucketName == "helpful" then
+                helpfulDirty = true
+            else
+                harmfulDirty = true
             end
         end
     end
 
-    return cache
-end
+    if updateInfo.updatedAuraInstanceIDs and #updateInfo.updatedAuraInstanceIDs > 0 then
+        if not GetAuraByInstanceID then
+            return false
+        end
 
--- (IncrementalUpdateAuras removed: always full-scan via ScanUnitAuras.
--- Eliminates hundreds of GetAuraDataByAuraInstanceID calls per second in raids
--- that each allocate a fresh ~600-byte Blizzard table, overwhelming the GC.
--- Full scan uses GetUnitAuras which returns one bulk table per filter type.)
+        for i = 1, #updateInfo.updatedAuraInstanceIDs do
+            local instID = updateInfo.updatedAuraInstanceIDs[i]
+            local bucketName = nil
+            if cache.helpfulByInstanceID[instID] then
+                bucketName = "helpful"
+            elseif cache.harmfulByInstanceID[instID] then
+                bucketName = "harmful"
+            end
+
+            if bucketName then
+                local freshAura = GetAuraByInstanceID(unit, instID)
+                if not freshAura then
+                    return false
+                end
+                if not ReplaceAuraInBucket(cache, bucketName, instID, freshAura) then
+                    return false
+                end
+                if bucketName == "helpful" then
+                    helpfulDirty = true
+                else
+                    harmfulDirty = true
+                end
+            end
+        end
+    end
+
+    if updateInfo.removedAuraInstanceIDs then
+        for i = 1, #updateInfo.removedAuraInstanceIDs do
+            local instID = updateInfo.removedAuraInstanceIDs[i]
+            if cache.helpfulByInstanceID[instID] then
+                if RemoveAuraFromBucket(cache, "helpful", instID) then
+                    helpfulDirty = true
+                end
+            elseif cache.harmfulByInstanceID[instID] then
+                if RemoveAuraFromBucket(cache, "harmful", instID) then
+                    harmfulDirty = true
+                end
+            end
+        end
+    end
+
+    if helpfulDirty then
+        RebuildHelpfulMaps(unit, cache)
+    end
+    if harmfulDirty then
+        RebuildHarmfulMaps(unit, cache)
+    end
+
+    return true
+end
 
 -- Evict stale cache entries for units no longer in the group.
 -- Called on GROUP_ROSTER_UPDATE from the centralized event dispatcher.
@@ -170,12 +465,13 @@ end
 -- Expose cache for other modules (dispel overlay, defensive indicator)
 QUI_GFA.unitAuraCache = unitAuraCache
 QUI_GFA.ScanUnitAuras = ScanUnitAuras
+QUI_GFA.ApplyAuraDelta = ApplyAuraDelta
 QUI_GFA.PruneAuraCache = PruneAuraCache
 
--- Table reuse: unitAuraCache[unit] sub-tables (helpful, harmful, etc.) are
--- created once per unit and wiped+refilled on each scan. Blizzard's auraData
--- tables from GetUnitAuras are C-side allocated and can't be pooled, but the
--- bulk-return pattern (one table per filter type) minimizes Lua-side garbage.
+-- Table reuse: unitAuraCache[unit] sub-tables are created once per unit and
+-- then mutated in place across full scans and deltas. Blizzard auraData tables
+-- are still C-side allocated, but the shared cache avoids rebuilding per-
+-- consumer lookup tables on every roster aura change.
 
 ---------------------------------------------------------------------------
 -- SHARED AURA TIMER: Single animation drives all icon duration updates
@@ -499,7 +795,7 @@ local function UpdateAuraIcon(icon, auraData, unit)
         auraIconState[icon] = state  -- register for tooltip lookups
     end
 
-    -- Cache always has fresh data from full ScanUnitAuras — no refetch needed.
+    -- Cache owns the latest aura snapshot for set changes and full refreshes.
     local auraID = auraData.auraInstanceID
     local displayData = auraData
 
@@ -614,10 +910,10 @@ local DEBUFF_CLASSIFICATION_MAP = {
 local filterCaches = { party = {}, raid = {} }
 local cachedFilterVersion = -1
 
--- (Per-auraInstanceID classification cache removed: grew unboundedly during
--- long encounters. Now classify inline during each full scan — same approach
--- as reference addons. Cost is minimal since full scans only run once per
--- unit per coalesce tick, and IsAuraFilteredOutByInstanceID is C-side.)
+-- (Per-auraInstanceID classification cache removed: it grew unboundedly during
+-- long encounters. Classification now happens inline during each full scan.
+-- Cost stays bounded because full scans are coalesced and the filter checks
+-- are C-side.)
 
 local function InitFilterCache()
     return {
@@ -776,9 +1072,8 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Auras for a single frame
 ---------------------------------------------------------------------------
--- (RefreshUpdatedIcons / delta-aware icon refresh removed: always full-scan
--- now, so every dispatch does ScanUnitAuras → UpdateFrameAuras. Simpler,
--- and avoids the per-aura GetAuraDataByAuraInstanceID allocation overhead.)
+-- Pure duration/stack updates stay on the icon fast path below. Set changes
+-- flow through the shared cache first, then refresh consumers from that state.
 
 local sortedAuras = {} -- Reusable sort table
 
@@ -1132,9 +1427,8 @@ local function FixAllIconMouse()
     pendingMouseFix = false
 end
 
--- (FlushPendingAuras removed: aura processing is inline in the dispatcher.
--- IncrementalUpdateAuras also removed: always full-scan now for simplicity
--- and to avoid per-aura GetAuraDataByAuraInstanceID table allocations.)
+-- Aura processing is inline in the dispatcher callback so all group-frame
+-- consumers render from the same shared cache mutation.
 
 -- PLAYER_REGEN_ENABLED handler (mouse fix deferred from combat)
 local regenFrame = CreateFrame("Frame")
@@ -1144,14 +1438,14 @@ regenFrame:SetScript("OnEvent", function(self, event)
 end)
 
 -- Subscribe to centralized aura dispatcher for group frame aura updates.
--- Hybrid approach: use updateInfo to DECIDE whether to full-scan, but never
--- call GetAuraDataByAuraInstanceID (which allocated ~600-byte tables per aura).
+-- Stack/duration-only updates stay on the icon fast path. Add/remove/full
+-- changes mutate the shared cache first, then all consumers read that state.
 --
 -- Pure stack/duration updates (the dominant raid path — 80%+ of events) skip
 -- the entire scan + overlay + filter/sort pipeline and just refresh visible
 -- icon cooldown swipes via DurationObject (zero Lua allocation).
 --
--- Set changes (add/remove) and full updates trigger the full pipeline.
+-- Set changes try the shared delta path first; full updates still rescan.
 if ns.AuraEvents then
     ns.AuraEvents:Subscribe("roster", function(unit, updateInfo)
         local GF = ns.QUI_GroupFrames
@@ -1172,6 +1466,7 @@ if ns.AuraEvents then
             and not updateInfo.removedAuraInstanceIDs
             and updateInfo.updatedAuraInstanceIDs
             and unitAuraCache[unit]
+            and unitAuraCache[unit].hasFullScan
         then
             local updated = updateInfo.updatedAuraInstanceIDs
             local nUpdated = #updated
@@ -1219,9 +1514,16 @@ if ns.AuraEvents then
             return
         end
 
-        -- Set change or full update: full scan (once per unit) + all consumers
-        -- for every frame displaying the unit.
-        ScanUnitAuras(unit)
+        -- Set change or full update: keep the shared cache authoritative.
+        -- Full scan on cold/full/fallback; otherwise patch the cache from the
+        -- UNIT_AURA delta and let every consumer read that shared state.
+        local cacheUpdated = false
+        if type(updateInfo) == "table" and not updateInfo.isFullUpdate then
+            cacheUpdated = ApplyAuraDelta(unit, updateInfo)
+        end
+        if not cacheUpdated then
+            ScanUnitAuras(unit)
+        end
         local GFI = ns.QUI_GroupFrameIndicators
         local GFP = ns.QUI_GroupFramePinnedAuras
         for f = 1, nFrames do

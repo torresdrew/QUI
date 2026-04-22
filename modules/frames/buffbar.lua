@@ -1309,17 +1309,6 @@ LayoutBuffIcons = function()
         end
     end
 
-    local icons = GetBuffIconFrames()
-    local currentCount = #icons
-
-    -- Handle empty state
-    if currentCount == 0 then
-        iconState.lastCount = 0
-        iconState.isInitialized = false
-        isIconLayoutRunning = false
-        return
-    end
-
     -- Get settings
     local iconSize = settings.iconSize or 42
     local padding = settings.padding or 0
@@ -1334,6 +1323,22 @@ LayoutBuffIcons = function()
     elseif aspectRatio < 1.0 then
         -- Taller: width shrinks
         iconWidth = iconSize * aspectRatio
+    end
+
+    local icons = GetBuffIconFrames()
+    local currentCount = #icons
+
+    -- Empty state: size container to one icon so the anchored edge's
+    -- midpoint stays fixed across populated ↔ empty transitions.
+    if currentCount == 0 then
+        viewer:SetSize(iconWidth, iconHeight)
+        if _G.QUI_SetCDMViewerBounds then
+            _G.QUI_SetCDMViewerBounds(viewer, iconWidth, iconHeight)
+        end
+        iconState.lastCount = 0
+        iconState.isInitialized = false
+        isIconLayoutRunning = false
+        return
     end
 
     local targetCount = currentCount

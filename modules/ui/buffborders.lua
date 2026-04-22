@@ -12,6 +12,7 @@ local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
 local IsSecretValue = Helpers.IsSecretValue
 local SafeValue = Helpers.SafeValue
 local SafeToNumber = Helpers.SafeToNumber
+local ApplyCooldownFromAura = Helpers.ApplyCooldownFromAura
 
 -- Upvalue caching
 local type = type
@@ -28,6 +29,11 @@ local InCombatLockdown = InCombatLockdown
 -- Private aura API (WoW 10.1.0+)
 local AddPrivateAuraAnchor = C_UnitAuras and C_UnitAuras.AddPrivateAuraAnchor
 local RemovePrivateAuraAnchor = C_UnitAuras and C_UnitAuras.RemovePrivateAuraAnchor
+
+-- 12.0.5+ requires `isContainer` on AddPrivateAuraAnchor args; non-container
+-- anchors must pass `isContainer = false` or registration silently fails.
+local CLIENT_VERSION = select(4, GetBuildInfo())
+local IS_CONTAINER_SUPPORTED = CLIENT_VERSION and CLIENT_VERSION >= 120005
 
 ---------------------------------------------------------------------------
 -- DEFAULTS
@@ -127,11 +133,23 @@ local previewActive = false
 local PA_MAX_SLOTS = 3
 local paSlots = {}
 local paAnchorIDs = {}
-local paPendingSetup = false   -- deferred AddPrivateAuraAnchor after combat
 
 ---------------------------------------------------------------------------
 -- ICON STYLING
 ---------------------------------------------------------------------------
+local function ConfigureAuraCooldownFrame(cooldown)
+    if not cooldown then return end
+
+    -- Buff/debuff timers need Blizzard's aura countdown rules or long-duration
+    -- auras can round like generic cooldowns.
+    if cooldown.SetUseAuraDisplayTime then
+        pcall(cooldown.SetUseAuraDisplayTime, cooldown, true)
+    end
+    if cooldown.SetHideCountdownNumbers then
+        pcall(cooldown.SetHideCountdownNumbers, cooldown, false)
+    end
+end
+
 local function StyleIcon(icon, settings, isBuff, debuffType)
     if not icon or not settings then return end
 
@@ -386,20 +404,18 @@ local function StyleHeaderChildren(header, settings, isBuff)
             end)
         end
 
-        -- Cooldown via DurationObject — the only secret-safe path in 12.0.5+.
-        -- GetAuraDuration returns a DurationObject; SetCooldownFromDurationObject
-        -- is C-side and accepts it natively without tainting.
+        -- Aura cooldowns prefer DurationObjects for 12.0.5+ secret-safe updates,
+        -- and fall back to numeric timing only when the values are readable.
         if child.Cooldown then
-            if C_UnitAuras.GetAuraDuration and data.auraInstanceID then
-                local ok, durObj = pcall(C_UnitAuras.GetAuraDuration, "player", data.auraInstanceID)
-                if ok then
-                    pcall(child.Cooldown.SetCooldownFromDurationObject, child.Cooldown, durObj, true)
-                else
-                    pcall(child.Cooldown.Clear, child.Cooldown)
-                end
-            else
-                pcall(child.Cooldown.Clear, child.Cooldown)
-            end
+            ConfigureAuraCooldownFrame(child.Cooldown)
+            ApplyCooldownFromAura(
+                child.Cooldown,
+                "player",
+                data.auraInstanceID,
+                data.expirationTime,
+                data.duration,
+                true
+            )
             -- Swipe settings
             local showSwipe = not settings.hideSwipe
             child.Cooldown:SetDrawSwipe(showSwipe)
@@ -445,6 +461,7 @@ local function StyleHeaderChildren(header, settings, isBuff)
                 end
                 -- Enchant cooldown from GetWeaponEnchantInfo
                 if child.Cooldown then
+                    ConfigureAuraCooldownFrame(child.Cooldown)
                     local hasMain, mainExp, _, _, hasOff, offExp = GetWeaponEnchantInfo()
                     local expMs = (slot == 16) and (hasMain and mainExp) or (slot == 17) and (hasOff and offExp) or nil
                     if expMs and not IsSecretValue(expMs) and expMs > 0 then
@@ -621,22 +638,19 @@ end
 ---------------------------------------------------------------------------
 local function ClearPrivateAuraAnchors()
     if not RemovePrivateAuraAnchor then return end
-    if InCombatLockdown() then
-        paPendingSetup = true
-        return
-    end
     for i = 1, #paAnchorIDs do
         local id = paAnchorIDs[i]
         if id then pcall(RemovePrivateAuraAnchor, id) end
     end
     wipe(paAnchorIDs)
-    -- Hide any stale WoW-rendered children left on anchor slots
+    -- Hide any stale WoW-rendered children left on anchor slots. pcall in
+    -- case any child is a protected C-side frame that can't be hidden in combat.
     for i = 1, PA_MAX_SLOTS do
         local slot = paSlots[i]
         if slot then
             for j = 1, slot:GetNumChildren() do
                 local child = select(j, slot:GetChildren())
-                if child then child:Hide() end
+                if child then pcall(child.Hide, child) end
             end
         end
     end
@@ -748,10 +762,6 @@ end
 
 local function SetupPrivateAuras()
     if not AddPrivateAuraAnchor or not debuffContainer then return end
-    if InCombatLockdown() then
-        paPendingSetup = true
-        return
-    end
     ClearPrivateAuraAnchors()
 
     local settings = GetSettings()
@@ -777,7 +787,7 @@ local function SetupPrivateAuras()
         StyleSlotBorders(slot, settings)
 
         -- Inset the icon by borderSize so the border is visible around it
-        local ok, anchorID = pcall(AddPrivateAuraAnchor, {
+        local anchorArgs = {
             unitToken = "player",
             auraIndex = i,
             parent = slot,
@@ -795,7 +805,9 @@ local function SetupPrivateAuras()
                     offsetY = 0,
                 },
             },
-        })
+        }
+        if IS_CONTAINER_SUPPORTED then anchorArgs.isContainer = false end
+        local ok, anchorID = pcall(AddPrivateAuraAnchor, anchorArgs)
         paAnchorIDs[i] = ok and anchorID or nil
     end
 
@@ -1101,14 +1113,8 @@ UpdateBuffIcons = function()
     if not settings then return end
     if previewActive then return end
     if not settings.enableBuffs or settings.hideBuffFrame then
-        if not InCombatLockdown() then
-            buffContainer:Hide()
-        end
         buffContainer:SetAlpha(0)
         return
-    end
-    if not buffContainer:IsShown() and not InCombatLockdown() then
-        buffContainer:Show()
     end
     buffContainer:SetAlpha(1)
     StyleHeaderChildren(buffContainer, settings, true)
@@ -1122,10 +1128,6 @@ local PA_REFRESH_CD = 1.0
 
 local function RefreshPrivateAuraAnchors()
     if not AddPrivateAuraAnchor or not debuffContainer then return end
-    if InCombatLockdown() then
-        paPendingSetup = true
-        return
-    end
     local now = GetTime()
     if now - paLastRefresh < PA_REFRESH_CD then return end
     paLastRefresh = now
@@ -1139,14 +1141,8 @@ UpdateDebuffIcons = function()
     if not settings then return end
     if previewActive then return end
     if not settings.enableDebuffs or settings.hideDebuffFrame then
-        if not InCombatLockdown() then
-            debuffContainer:Hide()
-        end
         debuffContainer:SetAlpha(0)
         return
-    end
-    if not debuffContainer:IsShown() and not InCombatLockdown() then
-        debuffContainer:Show()
     end
     debuffContainer:SetAlpha(1)
     StyleHeaderChildren(debuffContainer, settings, false)
@@ -1295,6 +1291,15 @@ local function FullRefresh()
     if settings and not InCombatLockdown() then
         SyncHeaderAttributes(buffContainer, settings, "buff")
         SyncHeaderAttributes(debuffContainer, settings, "debuff")
+        -- Keep secure headers alive in normal gameplay. Layout mode preview
+        -- already does this explicitly; without it, first login/reload can
+        -- leave the headers hidden until layout mode is toggled once.
+        if settings.enableBuffs and not settings.hideBuffFrame and not buffContainer:IsShown() then
+            buffContainer:Show()
+        end
+        if settings.enableDebuffs and not settings.hideDebuffFrame and not debuffContainer:IsShown() then
+            debuffContainer:Show()
+        end
     end
 
     if previewActive then
@@ -1314,6 +1319,18 @@ local function FullRefresh()
     UpdateDebuffIcons()
 end
 
+-- Secure aura headers can populate a little after Init() finishes on
+-- /reload. If the first Update*Icons pass lands before real children exist,
+-- the container stays at its 1x1 bootstrap size until something else
+-- (layout mode, a new aura event) forces another pass. Use a couple of
+-- out-of-combat retries so the headers settle into their real anchored size.
+local function TryDeferredFullRefresh()
+    if previewActive then return end
+    if not buffContainer or not debuffContainer then return end
+    if InCombatLockdown() then return end
+    FullRefresh()
+end
+
 ---------------------------------------------------------------------------
 -- INITIALIZATION
 ---------------------------------------------------------------------------
@@ -1327,6 +1344,12 @@ local function Init()
     if settings then
         SyncHeaderAttributes(buffContainer, settings, "buff")
         SyncHeaderAttributes(debuffContainer, settings, "debuff")
+        -- Secure aura headers are visible by default after CreateFrame. Do NOT
+        -- call :Show() here — on /reload during combat, an addon-initiated
+        -- Show() runs SecureAuraHeader_Update in the tainted stack, which
+        -- compares the secret `expires` field and poisons the secure env.
+        -- Blizzard's own OnShow/OnUpdate path handles initial rendering safely
+        -- during the addon-load window.
     end
 
     -- Offset debuff container below buff container by default. This is a
@@ -1355,13 +1378,11 @@ local function Init()
     -- Setup private aura display for player
     SetupPrivateAuras()
 
-    -- Show headers to activate aura tracking (only if enabled)
-    if settings and settings.enableBuffs and not settings.hideBuffFrame then
-        buffContainer:Show()
-    end
-    if settings and settings.enableDebuffs and not settings.hideDebuffFrame then
-        debuffContainer:Show()
-    end
+    -- Keep secure headers alive and drive runtime visibility with alpha.
+    -- Addon-driven Show()/Hide() on SecureAuraHeaderTemplate can taint
+    -- Blizzard's restricted aura sort path when it compares secret values.
+    buffContainer:SetAlpha((settings and settings.enableBuffs and not settings.hideBuffFrame) and 1 or 0)
+    debuffContainer:SetAlpha((settings and settings.enableDebuffs and not settings.hideDebuffFrame) and 1 or 0)
 
     -- Hook the header's OnEvent to style children when auras change.
     buffContainer:HookScript("OnEvent", function()
@@ -1386,6 +1407,9 @@ local function Init()
         UpdateBuffIcons()
         UpdateDebuffIcons()
     end)
+
+    C_Timer.After(0.5, TryDeferredFullRefresh)
+    C_Timer.After(2.0, TryDeferredFullRefresh)
 end
 
 ---------------------------------------------------------------------------
@@ -1409,24 +1433,12 @@ enchantEventFrame:SetScript("OnEvent", function(self, event, unit)
     end
 end)
 
--- Combat-end handler: process deferred private aura anchor work and re-sync
+-- Combat-end handler: re-sync secure header attributes (SetAttribute on
+-- SecureAuraHeaderTemplate is protected in combat) and force a restyle.
 local paRegenFrame = CreateFrame("Frame")
 paRegenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 paRegenFrame:SetScript("OnEvent", function()
-    if paPendingSetup then
-        paPendingSetup = false
-        SetupPrivateAuras()
-        LayoutPrivateAuraSlots()
-    end
-    -- Re-sync header attributes that couldn't be changed during combat
-    local settings = GetSettings()
-    if settings then
-        SyncHeaderAttributes(buffContainer, settings, "buff")
-        SyncHeaderAttributes(debuffContainer, settings, "debuff")
-    end
-    -- Force re-style
-    UpdateBuffIcons()
-    UpdateDebuffIcons()
+    TryDeferredFullRefresh()
 end)
 
 -- Initialize after AceDB is ready (called from core/main.lua OnEnable)

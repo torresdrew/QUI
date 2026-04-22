@@ -1,6 +1,6 @@
 --[[
     QUI Centralized Aura Event Dispatcher
-    Single UNIT_AURA registration with pub-sub dispatch to all consumers.
+    Shared UNIT_AURA routing with roster units filtered at RegisterUnitEvent.
     Eliminates 7+ independent event handlers each doing their own aura scanning.
 
     Usage:
@@ -195,16 +195,9 @@ local function IsNonRosterEventInteresting(unit)
 end
 
 ---------------------------------------------------------------------------
--- SINGLE EVENT REGISTRATION
+-- SHARED QUEUEING
 ---------------------------------------------------------------------------
-local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("UNIT_AURA")
-eventFrame:SetScript("OnEvent", function(self, event, unit, updateInfo)
-    -- Drop non-roster events nobody will do work for (the common case in raids).
-    if not rosterUnits[unit] and not IsNonRosterEventInteresting(unit) then
-        return
-    end
-
+local function QueueAuraEvent(unit, updateInfo)
     -- Store updateInfo; if any event for this unit is a full update, mark full.
     local existing = pendingUnits[unit]
     if existing == true then
@@ -232,6 +225,36 @@ eventFrame:SetScript("OnEvent", function(self, event, unit, updateInfo)
         pendingUnits[unit] = updateInfo
     end
     coalesceFrame:Show()
+end
+
+---------------------------------------------------------------------------
+-- ROSTER UNIT REGISTRATION
+---------------------------------------------------------------------------
+local rosterFrames = {}
+local function OnRosterUnitAura(self, event, unit, updateInfo)
+    QueueAuraEvent(unit, updateInfo)
+end
+
+for unit in pairs(rosterUnits) do
+    local f = CreateFrame("Frame")
+    f:RegisterUnitEvent("UNIT_AURA", unit)
+    f:SetScript("OnEvent", OnRosterUnitAura)
+    rosterFrames[unit] = f
+end
+
+---------------------------------------------------------------------------
+-- NON-ROSTER REGISTRATION
+---------------------------------------------------------------------------
+local eventFrame = CreateFrame("Frame")
+eventFrame:RegisterEvent("UNIT_AURA")
+eventFrame:SetScript("OnEvent", function(self, event, unit, updateInfo)
+    if rosterUnits[unit] then
+        return
+    end
+    if not IsNonRosterEventInteresting(unit) then
+        return
+    end
+    QueueAuraEvent(unit, updateInfo)
 end)
 
 -- Perf profiler opt-in: coalesceFrame.OnUpdate runs the aura subscriber fan-out

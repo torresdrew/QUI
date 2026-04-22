@@ -239,6 +239,24 @@ function ActionBarsOwned.SafeUpdate(self)
     if not action then return end
 
     if HasAction(action) then
+        if not InCombatLockdown() then
+            local flyoutID
+            local actionType, actionID, subType = GetActionInfo(action)
+            if actionType == "flyout" then
+                flyoutID = actionID or subType
+            end
+            local prevFlyoutID = self:GetAttribute("qui-flyout-id")
+            self:SetAttribute("qui-flyout-id", flyoutID)
+            if prevFlyoutID and prevFlyoutID ~= flyoutID then
+                local popup = _G.QUI_SpellFlyout
+                if popup and popup:IsShown()
+                    and popup:GetParent() == self
+                    and ActionBarsOwned.HideOwnedFlyout then
+                    ActionBarsOwned.HideOwnedFlyout()
+                end
+            end
+        end
+
         ActionBarsOwned._activeButtons[self] = true
         -- Icon — GSE override buttons use the sequence macro icon instead
         -- of the action slot texture, so SafeUpdate doesn't overwrite it.
@@ -347,6 +365,18 @@ function ActionBarsOwned.SafeUpdate(self)
             end
         end
     else
+        if not InCombatLockdown() then
+            local prevFlyoutID = self:GetAttribute("qui-flyout-id")
+            self:SetAttribute("qui-flyout-id", nil)
+            if prevFlyoutID then
+                local popup = _G.QUI_SpellFlyout
+                if popup and popup:IsShown()
+                    and popup:GetParent() == self
+                    and ActionBarsOwned.HideOwnedFlyout then
+                    ActionBarsOwned.HideOwnedFlyout()
+                end
+            end
+        end
         -- Empty slot
         ActionBarsOwned._activeButtons[self] = nil
         self.icon:Hide()
@@ -1165,13 +1195,17 @@ local function CreateBarContainer(barKey)
     -- duplicate or empty icons.  We can't use the reserved "visibility"
     -- state driver because it unconditionally Show()s the frame when the
     -- macro doesn't match, which would clobber bars the user has
-    -- disabled (bar7/8 off, no-pet pet bar, no-stance stance bar, etc.).
+    -- disabled (bar7/8 off, no-stance stance bar, etc.).
     --
     -- Instead, use a custom state handler that hides on override but
     -- only re-shows when the frame's "qui-user-shown" attribute is true.
-    -- Lua code that controls visibility (disable, HasPetUI,
-    -- GetNumShapeshiftForms) sets qui-user-shown alongside Show/Hide
-    -- calls via SetBarContainerShown() below.
+    -- Lua code that controls visibility (disable, GetNumShapeshiftForms)
+    -- sets qui-user-shown alongside Show/Hide calls via
+    -- SetBarContainerShown() below.
+    --
+    -- Pet bar additionally folds the [nopet] macro condition into its
+    -- driver below so pet summon/dismiss flips visibility from inside
+    -- the secure snippet (works in combat without any tainted Lua).
     container:SetAttribute("qui-user-shown", true)
     container:SetAttribute("_onstate-quioverride", [[
         if newstate == "hide" then
@@ -1180,8 +1214,21 @@ local function CreateBarContainer(barKey)
             self:Show()
         end
     ]])
-    RegisterStateDriver(container, "quioverride",
-        "[overridebar][vehicleui][possessbar][petbattle] hide; show")
+    local driver = "[overridebar][vehicleui][possessbar][petbattle] hide; show"
+    if barKey == "pet" then
+        driver = "[overridebar][vehicleui][possessbar][petbattle][nopet] hide; show"
+        -- The [nopet] secure driver flips Show/Hide asynchronously when pet
+        -- status changes (including in combat). Notify dependents (e.g.
+        -- stance bar anchored to petBar) so they re-anchor when that happens.
+        local function notifyAnchor()
+            if _G.QUI_UpdateFramesAnchoredTo then
+                _G.QUI_UpdateFramesAnchoredTo("petBar")
+            end
+        end
+        container:HookScript("OnShow", notifyAnchor)
+        container:HookScript("OnHide", notifyAnchor)
+    end
+    RegisterStateDriver(container, "quioverride", driver)
 
     return container
 end
@@ -2492,11 +2539,13 @@ local function SetupStandardOwnedButtonRuntime(container, btn)
                 local flyoutHandler = owner:GetFrameRef("qui-flyout-handler")
                 if self:GetAttribute("type") == "action" then
                     local action = self:GetAttribute("action")
-                    local actionType, flyoutID = action and GetActionInfo(action)
+                    local actionType, flyoutID, subType = action and GetActionInfo(action)
                     if actionType == "flyout" and flyoutHandler then
                         if not down then
+                            local effectiveFlyoutID = self:GetAttribute("qui-flyout-id")
                             flyoutHandler:SetAttribute("flyoutParentHandle", self)
-                            flyoutHandler:RunAttribute("HandleFlyout", flyoutID)
+                            flyoutHandler:SetAttribute("flyoutID", effectiveFlyoutID)
+                            flyoutHandler:RunAttribute("HandleFlyout")
                         end
                         return false
                     end
@@ -3339,58 +3388,48 @@ UpdatePetBarVisibility = function()
     local container = ActionBarsOwned.containers["pet"]
     if not container then return end
 
+    local wasShown = container:IsShown()
+
     local barDB = GetBarSettings("pet")
     if barDB and barDB.enabled == false then
-        container:SetAttribute("qui-user-shown", false)
-        if not InCombatLockdown() or inInitSafeWindow then
-            if ActionBarsOwned.HideOwnedFlyout then
-                ActionBarsOwned.HideOwnedFlyout()
-            end
-            container:Hide()
-        else
-            ActionBarsOwned.pendingPetUpdate = true
-        end
-        -- Notify anchoring system so dependents (e.g. stance bar) can re-anchor
+        SetBarContainerShown(container, false)
         if _G.QUI_UpdateFramesAnchoredTo then _G.QUI_UpdateFramesAnchoredTo("petBar") end
         return
     end
 
-    -- HasPetUI() returns true when the player has a controllable pet with a bar
-    if InCombatLockdown() and not inInitSafeWindow then
-        -- Show/Hide are protected — defer to PLAYER_REGEN_ENABLED
-        ActionBarsOwned.pendingPetUpdate = true
-        return
-    end
-    local wasShown = container:IsShown()
-    local hasPet = HasPetUI and HasPetUI()
-    if hasPet then
-        container:SetAttribute("qui-user-shown", true)
-        container:Show()
-        -- Populate pet button icons/state (PetActionBarMixin:Update on the
-        -- original bar is suppressed, so QUI drives visuals directly).
-        ActionBarsOwned.UpdateAllPetButtons()
+    -- The pet container's state driver includes [nopet], so the secure
+    -- snippet flips Show/Hide automatically as pet status changes (works
+    -- in combat without any tainted Lua). qui-user-shown is set to true
+    -- at container creation and only flipped when the bar is disabled
+    -- via SetBarContainerShown (above), so no SetAttribute is needed
+    -- here — which is critical because SetAttribute on a frame with a
+    -- registered state driver is protected during combat.
+    --
+    -- Populate pet button icons/state (PetActionBarMixin:Update on the
+    -- original bar is suppressed, so QUI drives visuals directly).
+    ActionBarsOwned.UpdateAllPetButtons()
+    -- Re-layout buttons only out of combat. SecureLayoutBar writes to the
+    -- shared QUI_ActionBarLayoutHandler, whose SetAttribute is protected
+    -- during combat (it has an _onattributechanged secure snippet). The
+    -- layout from the previous PLAYER_ENTERING_WORLD pass still applies
+    -- when the [nopet] driver shows the container mid-combat — buttons
+    -- are positioned and sized correctly without re-running layout.
+    if not InCombatLockdown() then
         LayoutNativeButtons("pet")
-        -- Re-evaluate mouseover fade so alwaysShow / fade alpha are correct
-        SetupOwnedBarMouseover("pet")
-        -- Let the HUD visibility system re-assert its fade state so mounting
-        -- / flying / vehicle hide rules take precedence over the mouseover
-        -- fade alpha that SetupOwnedBarMouseover just applied.
-        if _G.QUI_RefreshActionBarsVisibility then
-            _G.QUI_RefreshActionBarsVisibility()
-        end
-    elseif inInitSafeWindow and InCombatLockdown() then
-        -- During a combat reload, pet data may not be available yet at PEW
-        -- time (HasPetUI returns false). Don't hide — defer to
-        -- PLAYER_REGEN_ENABLED so pet events have a chance to populate.
-        ActionBarsOwned.pendingPetUpdate = true
     else
-        container:SetAttribute("qui-user-shown", false)
-        if ActionBarsOwned.HideOwnedFlyout then
-            ActionBarsOwned.HideOwnedFlyout()
-        end
-        container:Hide()
+        ActionBarsOwned.pendingPetUpdate = true
     end
-    -- Notify anchoring system when visibility changed so dependents re-anchor
+    -- Re-evaluate mouseover fade so alwaysShow / fade alpha are correct
+    SetupOwnedBarMouseover("pet")
+    -- Let the HUD visibility system re-assert its fade state so mounting
+    -- / flying / vehicle hide rules take precedence over the mouseover
+    -- fade alpha that SetupOwnedBarMouseover just applied.
+    if _G.QUI_RefreshActionBarsVisibility then
+        _G.QUI_RefreshActionBarsVisibility()
+    end
+    -- Notify anchoring system when visibility changed so dependents re-anchor.
+    -- The [nopet] state driver may flip Show/Hide asynchronously after this
+    -- call, so also schedule a deferred check to catch that transition.
     local isShown = container:IsShown()
     if wasShown ~= isShown and _G.QUI_UpdateFramesAnchoredTo then
         _G.QUI_UpdateFramesAnchoredTo("petBar")
@@ -4630,11 +4669,9 @@ local function OnOwnedEvent(self, event, ...)
         -- PetActionBarMixin:Update on the suppressed bar won't fire, so QUI
         -- drives pet button visuals (icons, active state, autocast) directly.
         ActionBarsOwned.UpdateAllPetButtons()
-        if not InCombatLockdown() then
-            UpdatePetBarVisibility()
-        else
-            ActionBarsOwned.pendingPetUpdate = true
-        end
+        -- UpdatePetBarVisibility is combat-safe (Show/Hide drive through the
+        -- container's secure attribute snippet, layout via SecureLayoutBar).
+        UpdatePetBarVisibility()
 
     elseif event == "PET_UI_UPDATE" or event == "UNIT_PET" then
         local unit = ...
@@ -4642,10 +4679,6 @@ local function OnOwnedEvent(self, event, ...)
         -- Pet summoned/dismissed/swapped — update container visibility
         C_Timer.After(0.1, function()
             if not ActionBarsOwned.initialized then return end
-            if InCombatLockdown() then
-                ActionBarsOwned.pendingPetUpdate = true
-                return
-            end
             UpdatePetBarVisibility()
         end)
 
@@ -7579,7 +7612,17 @@ local function ApplyOwnedFlyoutButtonVisuals(button, spellID)
     if not button then return end
     button._quiFlyoutSpellID = spellID
     if button.icon then
-        button.icon:SetTexture(spellID and GetSpellTexture(spellID) or nil)
+        local texture
+        if spellID then
+            if C_Spell and C_Spell.GetSpellTexture then
+                local ok, result = pcall(C_Spell.GetSpellTexture, spellID)
+                if ok then texture = result end
+            elseif GetSpellTexture then
+                local ok, result = pcall(GetSpellTexture, spellID)
+                if ok then texture = result end
+            end
+        end
+        button.icon:SetTexture(texture)
         if spellID then
             button.icon:Show()
         else
@@ -7605,12 +7648,27 @@ EnsureOwnedFlyoutFrame = function()
     ownedFlyout:SetFrameStrata("DIALOG")
     ownedFlyout:SetClampedToScreen(true)
     ownedFlyout:Hide()
-
     ownedFlyout.Background = CreateFrame("Frame", nil, ownedFlyout)
     ownedFlyout.Background:SetAllPoints()
     ownedFlyout.BackgroundTex = ownedFlyout.Background:CreateTexture(nil, "BACKGROUND")
     ownedFlyout.BackgroundTex:SetAllPoints()
     ownedFlyout.BackgroundTex:SetColorTexture(0, 0, 0, 0.35)
+    ownedFlyout:SetScript("OnShow", function(self)
+        for i = 1, (self:GetAttribute("numFlyoutButtons") or 0) do
+            local btn = ownedFlyoutButtons[i]
+            if btn and btn:IsShown() then
+                ApplyOwnedFlyoutButtonVisuals(btn, btn:GetAttribute("qui-flyout-spell"))
+            end
+        end
+    end)
+    ownedFlyout:SetScript("OnHide", function(self)
+        for i = 1, (self:GetAttribute("numFlyoutButtons") or 0) do
+            local btn = ownedFlyoutButtons[i]
+            if btn then
+                ApplyOwnedFlyoutButtonVisuals(btn, nil)
+            end
+        end
+    end)
     ownedFlyout:SetAttribute("numFlyoutButtons", 0)
     ownedFlyout:Execute([[QUI_FlyoutInfo = newtable()]])
     ownedFlyout:SetAttribute("HandleFlyout", [[
@@ -7627,7 +7685,7 @@ EnsureOwnedFlyoutFrame = function()
             return
         end
 
-        local flyoutID = ...
+        local flyoutID = self:GetAttribute("flyoutID")
         local info = QUI_FlyoutInfo and QUI_FlyoutInfo[flyoutID]
         if not info or not info.slots then
             self:SetAttribute("flyoutID", nil)
@@ -7636,24 +7694,24 @@ EnsureOwnedFlyoutFrame = function()
         end
 
         local direction = parent:GetAttribute("flyoutDirection") or "UP"
-        local width = tonumber(parent:GetWidth()) or 45
-        local height = tonumber(parent:GetHeight()) or 45
-        if width <= 0 then width = 45 end
-        if height <= 0 then height = 45 end
+        local width = 45
+        local height = 45
+        self:SetParent(parent)
 
         local usedSlots = 0
         local prevButton
         for slotID, slotInfo in ipairs(info.slots) do
-            if slotInfo and slotInfo.isKnown and slotInfo.spellID then
+            if slotInfo and slotInfo.spellID and slotInfo.isKnown then
                 usedSlots = usedSlots + 1
                 local slotButton = self:GetFrameRef("flyoutButton" .. usedSlots)
                 if slotButton then
+                    local castSpellID = slotInfo.castSpellID or slotInfo.spellID
                     slotButton:SetAttribute("type", "spell")
-                    slotButton:SetAttribute("spell", slotInfo.spellID)
+                    slotButton:SetAttribute("spell", castSpellID)
                     slotButton:SetAttribute("qui-flyout-spell", slotInfo.spellID)
+                    slotButton:CallMethod("QUI_UpdateOwnedFlyoutVisuals", slotInfo.spellID)
                     slotButton:SetWidth(width)
                     slotButton:SetHeight(height)
-                    slotButton:CallMethod("QUI_UpdateOwnedFlyoutVisuals", slotInfo.spellID)
                     slotButton:ClearAllPoints()
 
                     if direction == "DOWN" then
@@ -7708,13 +7766,14 @@ EnsureOwnedFlyoutFrame = function()
         local extent
         if direction == "LEFT" or direction == "RIGHT" then
             extent = 14 + usedSlots * width + (usedSlots - 1) * 4
-            self:SetSize(extent, height)
+            self:SetWidth(extent)
+            self:SetHeight(height)
         else
             extent = 14 + usedSlots * height + (usedSlots - 1) * 4
-            self:SetSize(width, extent)
+            self:SetWidth(width)
+            self:SetHeight(extent)
         end
 
-        self:SetParent(parent)
         self:SetAttribute("flyoutID", flyoutID)
         self:ClearAllPoints()
         if direction == "DOWN" then
@@ -7788,26 +7847,73 @@ local function EnsureOwnedFlyoutButton(index)
     return btn
 end
 
-local function RebuildOwnedFlyoutIdSet()
-    local activeFlyoutIds = {}
+local ownedFlyoutInfo = {}
+local ownedFlyoutInfoDiscovered = false
 
-    for _, barKey in ipairs(STANDARD_BAR_KEYS) do
-        local buttons = ActionBarsOwned.nativeButtons and ActionBarsOwned.nativeButtons[barKey]
-        if buttons then
-            for _, btn in ipairs(buttons) do
-                local action = btn and btn.action
-                if type(action) == "number" and action > 0 then
-                    local actionType, flyoutID = GetActionInfo(action)
-                    if actionType == "flyout" and type(flyoutID) == "number" and flyoutID > 0 then
-                        activeFlyoutIds[flyoutID] = true
-                    end
-                end
+local function PopulateOwnedFlyoutInfoEntry(info, flyoutID, numSlots, isKnown)
+    if not info then return end
+    info.isKnown = isKnown and true or false
+    info.slots = info.slots or {}
+
+    for slot = 1, numSlots do
+        local spellID, overrideSpellID, isKnownSlot = GetFlyoutSlotInfo(flyoutID, slot)
+        if GetCallPetSpellInfo and type(spellID) == "number" and spellID > 0 then
+            local petIndex, petName = GetCallPetSpellInfo(spellID)
+            if petIndex and (not petName or petName == "") then
+                isKnownSlot = false
             end
+        end
+
+        info.slots[slot] = info.slots[slot] or {}
+        local castSpellID = (overrideSpellID and overrideSpellID > 0) and overrideSpellID or spellID
+        info.slots[slot].spellID = spellID
+        info.slots[slot].castSpellID = castSpellID
+        info.slots[slot].overrideSpellID = overrideSpellID
+        info.slots[slot].isKnown = isKnownSlot and true or false
+    end
+
+    for slot = numSlots + 1, #info.slots do
+        info.slots[slot] = nil
+    end
+end
+
+local function DiscoverOwnedFlyoutInfo()
+    wipe(ownedFlyoutInfo)
+
+    for flyoutID = 1, 300 do
+        local ok, _, _, numSlots, isKnown = pcall(GetFlyoutInfo, flyoutID)
+        if ok and type(numSlots) == "number" and numSlots > 0 then
+            local info = { slots = {} }
+            PopulateOwnedFlyoutInfoEntry(info, flyoutID, numSlots, isKnown)
+            ownedFlyoutInfo[flyoutID] = info
         end
     end
 
-    ActionBarsOwned.activeFlyoutIds = activeFlyoutIds
-    return activeFlyoutIds
+    ownedFlyoutInfoDiscovered = true
+end
+
+local function UpdateOwnedFlyoutInfo()
+    if not ownedFlyoutInfoDiscovered then
+        DiscoverOwnedFlyoutInfo()
+        return
+    end
+
+    local seen = {}
+    for flyoutID = 1, 300 do
+        local ok, _, _, numSlots, isKnown = pcall(GetFlyoutInfo, flyoutID)
+        if ok and type(numSlots) == "number" and numSlots > 0 then
+            local info = ownedFlyoutInfo[flyoutID] or { slots = {} }
+            PopulateOwnedFlyoutInfoEntry(info, flyoutID, numSlots, isKnown)
+            ownedFlyoutInfo[flyoutID] = info
+            seen[flyoutID] = true
+        end
+    end
+
+    for flyoutID in pairs(ownedFlyoutInfo) do
+        if not seen[flyoutID] then
+            ownedFlyoutInfo[flyoutID] = nil
+        end
+    end
 end
 
 HideOwnedFlyout = function()
@@ -7831,35 +7937,22 @@ SyncOwnedFlyoutInfoToHandler = function()
     local flyout = EnsureOwnedFlyoutFrame()
     if not flyout then return end
 
-    local activeFlyoutIds = RebuildOwnedFlyoutIdSet()
-    local infoByFlyout = {}
+    UpdateOwnedFlyoutInfo()
     local maxNumSlots = 0
     local data = "QUI_FlyoutInfo = newtable();\n"
-    for flyoutID in pairs(activeFlyoutIds) do
-        local _, _, numSlots, isKnown = GetFlyoutInfo(flyoutID)
-        if isKnown and type(numSlots) == "number" and numSlots > 0 then
-            local info = { slots = {} }
-            infoByFlyout[flyoutID] = info
-            if numSlots > maxNumSlots then
-                maxNumSlots = numSlots
+    for flyoutID, info in pairs(ownedFlyoutInfo) do
+        if info and info.slots and #info.slots > 0 then
+            if #info.slots > maxNumSlots then
+                maxNumSlots = #info.slots
             end
-            for slot = 1, numSlots do
-                local spellID, overrideSpellID, isKnownSlot = GetFlyoutSlotInfo(flyoutID, slot)
-                local castSpellID = (overrideSpellID and overrideSpellID > 0) and overrideSpellID or spellID
-                info.slots[slot] = {
-                    spellID = castSpellID,
-                    isKnown = isKnownSlot and type(castSpellID) == "number" and castSpellID > 0 or false,
-                }
-            end
-        end
-    end
 
-    for flyoutID, info in pairs(infoByFlyout) do
-        data = data .. ("QUI_FlyoutInfo[%d] = newtable();QUI_FlyoutInfo[%d].slots = newtable();\n"):format(flyoutID, flyoutID)
-        for slotID, slotInfo in ipairs(info.slots) do
-            local spellID = (slotInfo and type(slotInfo.spellID) == "number" and slotInfo.spellID > 0) and slotInfo.spellID or 0
-            data = data .. ("QUI_FlyoutInfo[%d].slots[%d] = newtable();QUI_FlyoutInfo[%d].slots[%d].spellID = %d;QUI_FlyoutInfo[%d].slots[%d].isKnown = %s;\n")
-                :format(flyoutID, slotID, flyoutID, slotID, spellID, flyoutID, slotID, slotInfo and slotInfo.isKnown and "true" or "nil")
+            data = data .. ("QUI_FlyoutInfo[%d] = newtable();QUI_FlyoutInfo[%d].slots = newtable();\n"):format(flyoutID, flyoutID)
+            for slotID, slotInfo in ipairs(info.slots) do
+                local spellID = (slotInfo and type(slotInfo.spellID) == "number" and slotInfo.spellID > 0) and slotInfo.spellID or 0
+                local castSpellID = (slotInfo and type(slotInfo.castSpellID) == "number" and slotInfo.castSpellID > 0) and slotInfo.castSpellID or spellID
+                data = data .. ("QUI_FlyoutInfo[%d].slots[%d] = newtable();QUI_FlyoutInfo[%d].slots[%d].spellID = %d;QUI_FlyoutInfo[%d].slots[%d].castSpellID = %d;QUI_FlyoutInfo[%d].slots[%d].isKnown = %s;\n")
+                    :format(flyoutID, slotID, flyoutID, slotID, spellID, flyoutID, slotID, castSpellID, flyoutID, slotID, slotInfo and slotInfo.isKnown and "true" or "nil")
+            end
         end
     end
 

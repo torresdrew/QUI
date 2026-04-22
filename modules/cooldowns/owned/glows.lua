@@ -20,6 +20,8 @@ local IsSpellOverlayed = (C_SpellActivationOverlay and C_SpellActivationOverlay.
 -- Event-based overlay tracking: ultimate fallback when neither query API exists,
 -- and also used to check override spell IDs that the API might miss.
 local overlayedSpells = {}  -- [spellID] = true
+local overlayedSpellCounts = {}  -- [spellID] = refcount
+local overlayedSourceMap = {}  -- [sourceSpellID] = { [candidateID] = true }
 
 local function ForEachSpellCandidate(spellID, callback)
     if not spellID or not callback then return end
@@ -92,70 +94,34 @@ local function GetPreferredSpellID(icon)
     return entry.overrideSpellID or entry.spellID or entry.id
 end
 
-local PROC_ALERT_REGION_KEYS = {
-    "ProcStartFlipbook",
-    "ProcLoopFlipbook",
-}
-
-local function IsFrameActive(frame)
-    if not frame then return false end
-
-    local ok, active = pcall(function()
-        if type(frame.IsActive) == "function" then
-            return frame:IsActive()
+local function ClearOverlaySource(sourceSpellID)
+    local mapped = sourceSpellID and overlayedSourceMap[sourceSpellID]
+    if not mapped then return end
+    for candidateID in pairs(mapped) do
+        local count = (overlayedSpellCounts[candidateID] or 0) - 1
+        if count > 0 then
+            overlayedSpellCounts[candidateID] = count
+            overlayedSpells[candidateID] = true
+        else
+            overlayedSpellCounts[candidateID] = nil
+            overlayedSpells[candidateID] = nil
         end
-        return frame.active or frame.isActive
-    end)
-    if ok and type(active) == "boolean" and active then
-        return true
     end
-
-    ok, active = pcall(function()
-        return frame:IsShown()
-    end)
-    if ok and active then
-        return true
-    end
-
-    ok, active = pcall(function()
-        return frame:IsVisible()
-    end)
-    if ok and active then
-        return true
-    end
-
-    ok, active = pcall(function()
-        return (frame:GetAlpha() or 0) > 0.05
-    end)
-    if ok and active then
-        return true
-    end
-
-    return false
+    overlayedSourceMap[sourceSpellID] = nil
 end
 
-local function IsBlizzProcVisualActive(icon)
-    if not icon or not icon._spellEntry then return false end
-
-    local child = icon._spellEntry._blizzChild
-    if not child then return false end
-
-    if IsFrameActive(child.SpellActivationAlert)
-        or IsFrameActive(child.OverlayGlow)
-        or IsFrameActive(child._ButtonGlow) then
-        return true
-    end
-
-    local alert = child.SpellActivationAlert
-    if alert then
-        for _, key in ipairs(PROC_ALERT_REGION_KEYS) do
-            if IsFrameActive(alert[key]) then
-                return true
-            end
+local function MarkOverlaySource(sourceSpellID)
+    if not sourceSpellID then return end
+    ClearOverlaySource(sourceSpellID)
+    local mapped = {}
+    ForEachSpellCandidate(sourceSpellID, function(candidateID)
+        if candidateID then
+            mapped[candidateID] = true
+            overlayedSpellCounts[candidateID] = (overlayedSpellCounts[candidateID] or 0) + 1
+            overlayedSpells[candidateID] = true
         end
-    end
-
-    return false
+    end)
+    overlayedSourceMap[sourceSpellID] = mapped
 end
 
 local function ForEachIconSpellID(icon, callback)
@@ -686,14 +652,20 @@ end
 ---------------------------------------------------------------------------
 -- CHECK OVERLAY STATE: query API + event-based tracking
 ---------------------------------------------------------------------------
+local function IsOverlayQueryActive(spellID)
+    if not spellID or not IsSpellOverlayed then return false end
+    local ok, result = pcall(IsSpellOverlayed, spellID)
+    return ok and result and true or false
+end
+
 local function IsOverlayed(spellID)
     if not spellID then return false end
-    -- Query API (works for base spell IDs)
+    -- Prefer the live query API whenever it exists. The event cache is a
+    -- fallback for clients/API paths where the query function is unavailable;
+    -- otherwise a missed HIDE event can leave a spell looking permanently procced.
     if IsSpellOverlayed then
-        local ok, result = pcall(IsSpellOverlayed, spellID)
-        if ok and result then return true end
+        return IsOverlayQueryActive(spellID)
     end
-    -- Event-based tracking (catches override IDs and API gaps)
     return overlayedSpells[spellID] or false
 end
 
@@ -713,18 +685,14 @@ local function EvaluateGlowForIcon(icon, includeHidden)
     elseif spellOvr and spellOvr.glowEnabled == true then
         shouldGlow = true
     else
-        shouldGlow = false
         ForEachIconSpellID(icon, function(spellID)
             if not shouldGlow and IsOverlayed(spellID) then
                 shouldGlow = true
             end
         end)
-        if not shouldGlow and IsBlizzProcVisualActive(icon) then
-            shouldGlow = true
-        end
     end
 
-    if not shouldGlow and spellOvr and spellOvr.procOnUsable then
+    if not shouldGlow and spellOvr and spellOvr.procOnUsable == true then
         shouldGlow = IsSpellCastable(icon)
     end
 
@@ -862,27 +830,17 @@ eventFrame:SetScript("OnEvent", function(_, event, spellID)
         return
     end
     if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" and spellID then
-        overlayedSpells[spellID] = true
-        if C_Spell and C_Spell.GetOverrideSpell then
-            local overrideID = C_Spell.GetOverrideSpell(spellID)
-            if overrideID and overrideID ~= spellID then
-                overlayedSpells[overrideID] = true
-            end
-        end
+        MarkOverlaySource(spellID)
         ScanGlowsForSpell(spellID)
         return
     elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" and spellID then
-        overlayedSpells[spellID] = nil
-        if C_Spell and C_Spell.GetOverrideSpell then
-            local overrideID = C_Spell.GetOverrideSpell(spellID)
-            if overrideID and overrideID ~= spellID then
-                overlayedSpells[overrideID] = nil
-            end
-        end
+        ClearOverlaySource(spellID)
         ScanGlowsForSpell(spellID)
         return
     elseif event == "PLAYER_ENTERING_WORLD" then
         wipe(overlayedSpells)
+        wipe(overlayedSpellCounts)
+        wipe(overlayedSourceMap)
     end
     ScanAllGlows()
 end)

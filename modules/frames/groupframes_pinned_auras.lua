@@ -66,10 +66,11 @@ local DEFAULT_SQUARE_COLOR = { 0.5, 0.5, 0.5, 1 }
 local DEFAULT_INSET = { 0, 0 }
 local AURA_FILTERS = { "HELPFUL", "HARMFUL" }
 
--- Reusable scratch tables for aura lookups (avoids 2 table allocations
--- per frame per UNIT_AURA event — 80+ garbage tables per raid burst).
-local _scratchActiveAuras = {}     -- [spellID] = auraData
-local _scratchActiveAuraNames = {} -- [spellName] = auraData
+-- Reusable scratch tables for cache-miss fallbacks.
+local _scratchHelpfulAurasByID = {}
+local _scratchHarmfulAurasByID = {}
+local _scratchHelpfulAuraNames = {}
+local _scratchHarmfulAuraNames = {}
 
 ---------------------------------------------------------------------------
 -- SECRET AURA HANDLING (shared patterns from groupframes_indicators.lua)
@@ -205,8 +206,13 @@ local function FindSecretTrackedAura(unit, spellID, helpfulAuras)
     return nil
 end
 
-local function FindTrackedAuraData(unit, spellID, activeAurasByID, activeAurasByName, helpfulAuras)
-    local auraData = activeAurasByID[spellID]
+local function FindTrackedAuraData(unit, spellID, helpfulByID, helpfulByName, harmfulByID, harmfulByName, helpfulAuras)
+    local auraData = helpfulByID and helpfulByID[spellID]
+    if auraData then
+        return auraData
+    end
+
+    auraData = harmfulByID and harmfulByID[spellID]
     if auraData then
         return auraData
     end
@@ -221,7 +227,12 @@ local function FindTrackedAuraData(unit, spellID, activeAurasByID, activeAurasBy
         return nil
     end
 
-    auraData = activeAurasByName[spellName]
+    auraData = helpfulByName and helpfulByName[spellName]
+    if auraData then
+        return auraData
+    end
+
+    auraData = harmfulByName and harmfulByName[spellName]
     if auraData then
         return auraData
     end
@@ -474,50 +485,44 @@ local function UpdateFramePinnedAuras(frame)
     local reverseSwipe = pa.reverseSwipe == true
     local inset = pa.edgeInset or 2
 
-    -- Build active aura lookup from shared cache.
-    -- Uses module-level scratch tables (wipe+reuse) to avoid per-call allocation.
-    local activeAuras = _scratchActiveAuras
-    local activeAuraNames = _scratchActiveAuraNames
-    wipe(activeAuras)
-    wipe(activeAuraNames)
+    -- Read prebuilt spell/name indexes from the shared cache when available.
+    local helpfulByID = _scratchHelpfulAurasByID
+    local harmfulByID = _scratchHarmfulAurasByID
+    local helpfulByName = _scratchHelpfulAuraNames
+    local harmfulByName = _scratchHarmfulAuraNames
+    wipe(helpfulByID)
+    wipe(harmfulByID)
+    wipe(helpfulByName)
+    wipe(harmfulByName)
     local helpfulAuras = nil
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
-    if cache then
-        if cache.helpful then
-            helpfulAuras = cache.helpful
-            for _, auraData in ipairs(cache.helpful) do
-                local spID = SafeValue(auraData.spellId, nil)
-                if spID then activeAuras[spID] = auraData end
-                local spName = SafeValue(auraData.name, nil)
-                if spName and not activeAuraNames[spName] then
-                    activeAuraNames[spName] = auraData
-                end
-            end
-        end
-        if cache.harmful then
-            for _, auraData in ipairs(cache.harmful) do
-                local spID = SafeValue(auraData.spellId, nil)
-                if spID then activeAuras[spID] = auraData end
-                local spName = SafeValue(auraData.name, nil)
-                if spName and not activeAuraNames[spName] then
-                    activeAuraNames[spName] = auraData
-                end
-            end
-        end
+    if cache and cache.hasFullScan then
+        helpfulAuras = cache.helpful
+        helpfulByID = cache.helpfulBySpellID or helpfulByID
+        harmfulByID = cache.harmfulBySpellID or harmfulByID
+        helpfulByName = cache.helpfulByName or helpfulByName
+        harmfulByName = cache.harmfulByName or harmfulByName
     elseif not InCombatLockdown() and C_UnitAuras and C_UnitAuras.GetUnitAuras then
         -- Fallback: shared cache missing (should not happen in normal dispatch).
         -- Skip in combat to avoid C-side table allocations that overwhelm the GC.
         for _, filter in ipairs(AURA_FILTERS) do
             local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit, filter, 40)
             if ok and auras then
-                if filter == "HELPFUL" then helpfulAuras = auras end
-                for _, auraData in ipairs(auras) do
-                    local spID = SafeValue(auraData.spellId, nil)
-                    if spID then activeAuras[spID] = auraData end
-                    local spName = SafeValue(auraData.name, nil)
-                    if spName and not activeAuraNames[spName] then
-                        activeAuraNames[spName] = auraData
+                if filter == "HELPFUL" then
+                    helpfulAuras = auras
+                    for _, auraData in ipairs(auras) do
+                        local spID = SafeValue(auraData.spellId, nil)
+                        if spID then helpfulByID[spID] = auraData end
+                        local spName = SafeValue(auraData.name, nil)
+                        if spName then helpfulByName[spName] = auraData end
+                    end
+                else
+                    for _, auraData in ipairs(auras) do
+                        local spID = SafeValue(auraData.spellId, nil)
+                        if spID then harmfulByID[spID] = auraData end
+                        local spName = SafeValue(auraData.name, nil)
+                        if spName then harmfulByName[spName] = auraData end
                     end
                 end
             end
@@ -549,7 +554,7 @@ local function UpdateFramePinnedAuras(frame)
             if spellID then
                 idx = idx + 1
                 local ind = state.indicators[idx]
-                local auraData = FindTrackedAuraData(unit, spellID, activeAuras, activeAuraNames, helpfulAuras)
+                local auraData = FindTrackedAuraData(unit, spellID, helpfulByID, helpfulByName, harmfulByID, harmfulByName, helpfulAuras)
                 if auraData and auraData.auraInstanceID then
                     frame._pinnedAuraIDs[auraData.auraInstanceID] = true
                 end
@@ -570,7 +575,7 @@ local function UpdateFramePinnedAuras(frame)
             local spellID = slot.spellID
             if spellID then
                 local anchor = slot.anchor or "TOPLEFT"
-                local auraData = FindTrackedAuraData(unit, spellID, activeAuras, activeAuraNames, helpfulAuras)
+                local auraData = FindTrackedAuraData(unit, spellID, helpfulByID, helpfulByName, harmfulByID, harmfulByName, helpfulAuras)
                 if auraData and auraData.auraInstanceID then
                     frame._pinnedAuraIDs[auraData.auraInstanceID] = true
                 end

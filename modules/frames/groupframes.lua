@@ -1556,23 +1556,14 @@ local function UpdateDispelOverlay(frame)
     local firstDispellableType = nil
     local fromPrivateSlots = false
 
-    if cache and cache.playerDispellable then
-        local instID = next(cache.playerDispellable)
+    if cache and cache.playerDispellableOrder then
+        local instID = cache.playerDispellableOrder[1]
         if instID then
             hasDispellable = true
             firstDispellableInstID = instID
-            -- Best-effort dispel type for the legacy color fallback path.
-            -- We only need to inspect the one matching aura, not the list.
-            if cache.harmful then
-                for i = 1, #cache.harmful do
-                    local ad = cache.harmful[i]
-                    if ad.auraInstanceID == instID then
-                        if ad.dispelName and not IsSecretValue(ad.dispelName) then
-                            firstDispellableType = SafeValue(ad.dispelName, nil)
-                        end
-                        break
-                    end
-                end
+            local dispelAura = cache.harmfulByInstanceID and cache.harmfulByInstanceID[instID]
+            if dispelAura and dispelAura.dispelName and not IsSecretValue(dispelAura.dispelName) then
+                firstDispellableType = SafeValue(dispelAura.dispelName, nil)
             end
         end
     end
@@ -1752,11 +1743,9 @@ local function UpdateDefensiveIndicator(frame)
 
     -- Scan-time set fast path: the aura scanner already classified every
     -- helpful aura against BigDefensive + ExternalDefensive and stashed the
-    -- matching instance IDs in cache.defensives. Walk that set directly and
-    -- resolve each ID back to its aura data via an index map over cache.helpful.
-    -- This replaces the previous "iterate cache.helpful and filter-check each"
-    -- loop with a 2-pass walk whose cost is bounded by the number of actual
-    -- defensives present (typically 0-3), not the size of the helpful list.
+    -- matching instance IDs in cache.defensives / cache.defensiveOrder. Walk
+    -- the pre-classified order list and resolve each ID through the shared
+    -- instance-ID map so this path scales with actual defensives present.
     local foundAuras = _defensive.foundAuras
     local seen = _defensive.seen
     wipe(foundAuras)
@@ -1764,18 +1753,18 @@ local function UpdateDefensiveIndicator(frame)
 
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
-    if cache and cache.defensives and cache.helpful and next(cache.defensives) then
-        -- Build an instID → auraData lookup for the small set of defensives.
-        -- We only need to walk cache.helpful once, and only hit the IDs in the
-        -- defensive set.
-        local helpful = cache.helpful
-        for i = 1, #helpful do
-            local ad = helpful[i]
-            local instID = ad.auraInstanceID
-            if instID and cache.defensives[instID] and not seen[instID] then
-                seen[instID] = true
-                foundAuras[#foundAuras + 1] = ad
-                if #foundAuras >= maxIcons then break end
+    if cache and cache.defensiveOrder and cache.helpfulByInstanceID and #cache.defensiveOrder > 0 then
+        local defensiveOrder = cache.defensiveOrder
+        local helpfulByInstanceID = cache.helpfulByInstanceID
+        for i = 1, #defensiveOrder do
+            local instID = defensiveOrder[i]
+            if not seen[instID] then
+                local ad = helpfulByInstanceID[instID]
+                if ad then
+                    seen[instID] = true
+                    foundAuras[#foundAuras + 1] = ad
+                    if #foundAuras >= maxIcons then break end
+                end
             end
         end
     end

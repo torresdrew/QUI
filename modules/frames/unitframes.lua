@@ -3541,6 +3541,12 @@ function QUI_UF:RefreshFrame(unitKey)
         end
     end
 
+    -- Refresh private auras (boss debuffs hidden from the addon API)
+    -- Safe to call for any unit — the module gates on supported unit keys.
+    if ns.QUI_UF_PrivateAuras then
+        ns.QUI_UF_PrivateAuras:Refresh(frame)
+    end
+
     -- Restore edit overlay if in Edit Mode (QUI's own Edit Mode)
     if self.editModeActive then
         self:RestoreEditOverlayIfNeeded(unitKey)
@@ -3633,6 +3639,10 @@ function QUI_UF:Initialize()
         end
         -- Setup aura tracking for player
         QUI_UF.SetupAuraTracking(self.frames.player)
+        -- Setup private auras (boss debuffs hidden from the addon API)
+        if ns.QUI_UF_PrivateAuras then
+            ns.QUI_UF_PrivateAuras:Setup(self.frames.player)
+        end
     end
 
     -- Create target frame
@@ -3644,6 +3654,10 @@ function QUI_UF:Initialize()
         end
         -- Setup aura tracking for target (debuffs above, buffs below)
         QUI_UF.SetupAuraTracking(self.frames.target)
+        -- Setup private auras (boss debuffs hidden from the addon API)
+        if ns.QUI_UF_PrivateAuras then
+            ns.QUI_UF_PrivateAuras:Setup(self.frames.target)
+        end
     end
     
     -- Create target of target frame
@@ -3677,6 +3691,10 @@ function QUI_UF:Initialize()
         end
         -- Setup aura tracking for focus (debuffs above, buffs below)
         QUI_UF.SetupAuraTracking(self.frames.focus)
+        -- Setup private auras (boss debuffs hidden from the addon API)
+        if ns.QUI_UF_PrivateAuras then
+            ns.QUI_UF_PrivateAuras:Setup(self.frames.focus)
+        end
     end
     
     -- Create boss frames (boss1 through boss5)
