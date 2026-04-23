@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+## v3.5.1 - 2026-04-24
+
+### Added
+- added configurable Great Vault shortcut icon to the minimap
+
+### Fixed
+- stabilized resource bar swap mechanic across reload, anchors, and toggles
+- fixed CDM startup hover state and tooltip visibility
+- fixed tooltip hide delay handling
+- fix: harden combat death frame updates
+- fix: avoid taint from Blizzard frame anchoring
+- fix: improve character stats panel refresh and secret value handling
+- made hidden CDM containers click through
+- perf(groupframes): avoid caching negative defensive aura matches
 ## v3.5.0 - 2026-04-23
 
 ### Added
