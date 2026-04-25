@@ -768,6 +768,43 @@ local function CalculateSlotOffset(index, iconSize, spacing, direction, totalCou
     return step, 0 -- fallback to RIGHT
 end
 
+local function ComposeAnchor(horizontal, vertical)
+    if vertical == "TOP" then
+        if horizontal == "LEFT" then return "TOPLEFT" end
+        if horizontal == "RIGHT" then return "TOPRIGHT" end
+        return "TOP"
+    elseif vertical == "BOTTOM" then
+        if horizontal == "LEFT" then return "BOTTOMLEFT" end
+        if horizontal == "RIGHT" then return "BOTTOMRIGHT" end
+        return "BOTTOM"
+    end
+
+    if horizontal == "LEFT" then return "LEFT" end
+    if horizontal == "RIGHT" then return "RIGHT" end
+    return "CENTER"
+end
+
+local function GetIconAnchorForGrow(frameAnchor, direction)
+    local horizontal = frameAnchor and frameAnchor:find("LEFT") and "LEFT"
+        or frameAnchor and frameAnchor:find("RIGHT") and "RIGHT"
+        or "CENTER"
+    local vertical = frameAnchor and frameAnchor:find("TOP") and "TOP"
+        or frameAnchor and frameAnchor:find("BOTTOM") and "BOTTOM"
+        or "CENTER"
+
+    if direction == "RIGHT" or direction == "CENTER" then
+        horizontal = "LEFT"
+    elseif direction == "LEFT" then
+        horizontal = "RIGHT"
+    elseif direction == "UP" then
+        vertical = "BOTTOM"
+    elseif direction == "DOWN" then
+        vertical = "TOP"
+    end
+
+    return ComposeAnchor(horizontal, vertical)
+end
+
 -- Track icons that need mouse setup deferred from combat
 local pendingMouseFix = false
 
@@ -1304,6 +1341,7 @@ local function UpdateFrameAuras(frame)
         local dOffX = auraSettings.debuffOffsetX or -2
         local dOffY = auraSettings.debuffOffsetY or -18
         if sub(dAnchor, 1, 6) == "BOTTOM" then dOffY = dOffY + (frame._bottomPad or 0) end
+        local dIconAnchor = GetIconAnchorForGrow(dAnchor, dGrow)
         -- CENTER: only relayout when visible count actually changes (skip thrashing)
         local dVisibleCount = nil
         if dGrow == "CENTER" then
@@ -1323,7 +1361,7 @@ local function UpdateFrameAuras(frame)
             if needsLayout or dVisibleCount then
                 local offX, offY = CalculateSlotOffset(i, iconSize, dSpacing, dGrow, dVisibleCount)
                 frame.debuffIcons[i]:ClearAllPoints()
-                frame.debuffIcons[i]:SetPoint(dAnchor, frame, dAnchor, dOffX + offX, dOffY + offY)
+                frame.debuffIcons[i]:SetPoint(dIconAnchor, frame, dAnchor, dOffX + offX, dOffY + offY)
                 frame.debuffIcons[i]:SetSize(iconSize, iconSize)
             end
             local icon = frame.debuffIcons[i]
@@ -1462,6 +1500,7 @@ local function UpdateFrameAuras(frame)
         local bOffX = auraSettings.buffOffsetX or 2
         local bOffY = auraSettings.buffOffsetY or 16
         if sub(bAnchor, 1, 6) == "BOTTOM" then bOffY = bOffY + (frame._bottomPad or 0) end
+        local bIconAnchor = GetIconAnchorForGrow(bAnchor, bGrow)
         -- CENTER: only relayout when visible count actually changes
         local bVisibleCount = nil
         if bGrow == "CENTER" then
@@ -1481,7 +1520,7 @@ local function UpdateFrameAuras(frame)
             if needsLayout or bVisibleCount then
                 local offX, offY = CalculateSlotOffset(i, iconSize, bSpacing, bGrow, bVisibleCount)
                 frame.buffIcons[i]:ClearAllPoints()
-                frame.buffIcons[i]:SetPoint(bAnchor, frame, bAnchor, bOffX + offX, bOffY + offY)
+                frame.buffIcons[i]:SetPoint(bIconAnchor, frame, bAnchor, bOffX + offX, bOffY + offY)
                 frame.buffIcons[i]:SetSize(iconSize, iconSize)
             end
             local bIcon = frame.buffIcons[i]
