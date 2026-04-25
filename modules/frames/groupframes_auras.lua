@@ -76,14 +76,35 @@ local framePrevBuffCount = Helpers.CreateStateTable()
 -- indicators, and pinned aura consumers. Full scans populate it, and set
 -- changes mutate it incrementally from UNIT_AURA updateInfo payloads.
 local unitAuraCache = {}
-do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "GF_unitAuraCache", tbl = unitAuraCache } end
+local auraStats = {
+    fullScans = 0,
+    slotScans = 0,
+    legacyScans = 0,
+    deltaApplied = 0,
+    deltaFallback = 0,
+    fastUpdates = 0,
+    fullUpdateEvents = 0,
+}
+do local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "GF_unitAuraCache", tbl = unitAuraCache }
+    mp[#mp + 1] = { name = "GF_auraFullScans", fn = function() return auraStats.fullScans end, counter = true }
+    mp[#mp + 1] = { name = "GF_auraSlotScans", fn = function() return auraStats.slotScans end, counter = true }
+    mp[#mp + 1] = { name = "GF_auraLegacyScans", fn = function() return auraStats.legacyScans end, counter = true }
+    mp[#mp + 1] = { name = "GF_auraDeltaApplied", fn = function() return auraStats.deltaApplied end, counter = true }
+    mp[#mp + 1] = { name = "GF_auraDeltaFallback", fn = function() return auraStats.deltaFallback end, counter = true }
+    mp[#mp + 1] = { name = "GF_auraFastUpdates", fn = function() return auraStats.fastUpdates end, counter = true }
+    mp[#mp + 1] = { name = "GF_auraFullUpdateEvents", fn = function() return auraStats.fullUpdateEvents end, counter = true }
+end
 
 local DISPEL_FILTER = "HARMFUL|RAID_PLAYER_DISPELLABLE"
+local MAX_SCAN_AURAS = 40
 
 -- Classify a single harmful aura as dispellable by the current player.
 -- Returns true/false; returns nil when the API is unavailable.
 -- No pcall — IsAuraFilteredOutByInstanceID is C-side, returns nil on error.
 local IsAuraFilteredOut = C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID
+local GetAuraSlots = C_UnitAuras and C_UnitAuras.GetAuraSlots
+local GetAuraDataBySlot = C_UnitAuras and C_UnitAuras.GetAuraDataBySlot
 
 local function ClassifyDispellable(unit, instID)
     if not instID or IsSecretValue(instID) then return nil end
@@ -336,30 +357,62 @@ local function ReplaceAuraInBucket(cache, bucketName, instID, auraData)
     return true
 end
 
+local function AppendSlotAuras(unit, dst, ...)
+    local n = select("#", ...)
+    for i = 2, n do
+        local slot = select(i, ...)
+        if slot then
+            local auraData = GetAuraDataBySlot(unit, slot)
+            if auraData and auraData.auraInstanceID then
+                dst[#dst + 1] = auraData
+            end
+        end
+    end
+end
+
+local function ScanUnitAurasBySlot(unit, cache)
+    if not GetAuraSlots or not GetAuraDataBySlot then
+        return false
+    end
+
+    AppendSlotAuras(unit, cache.harmful, GetAuraSlots(unit, "HARMFUL", MAX_SCAN_AURAS))
+    AppendSlotAuras(unit, cache.helpful, GetAuraSlots(unit, "HELPFUL", MAX_SCAN_AURAS))
+    return true
+end
+
+local function ScanUnitAurasLegacy(unit, cache)
+    local GetUnitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
+    if not GetUnitAuras then return false end
+
+    local harmful = GetUnitAuras(unit, "HARMFUL", MAX_SCAN_AURAS)
+    if harmful then
+        local dst = cache.harmful
+        for i = 1, #harmful do
+            dst[i] = harmful[i]
+        end
+    end
+
+    local helpful = GetUnitAuras(unit, "HELPFUL", MAX_SCAN_AURAS)
+    if helpful then
+        local dst = cache.helpful
+        for i = 1, #helpful do
+            dst[i] = helpful[i]
+        end
+    end
+    return true
+end
+
 local function ScanUnitAuras(unit)
     local cache = EnsureAuraCache(unit)
     ResetAuraCache(cache)
 
-    local GetUnitAuras = C_UnitAuras.GetUnitAuras
-    if not GetUnitAuras then return cache end
-
-    -- No pcall — GetUnitAuras is C-side, returns nil on invalid unit.
-    local harmful = GetUnitAuras(unit, "HARMFUL", 40)
-    if harmful then
-        local dst = cache.harmful
-        for i = 1, #harmful do
-            local ad = harmful[i]
-            dst[i] = ad
-        end
-    end
-
-    local helpful = GetUnitAuras(unit, "HELPFUL", 40)
-    if helpful then
-        local dst = cache.helpful
-        for i = 1, #helpful do
-            local ad = helpful[i]
-            dst[i] = ad
-        end
+    auraStats.fullScans = auraStats.fullScans + 1
+    if ScanUnitAurasBySlot(unit, cache) then
+        auraStats.slotScans = auraStats.slotScans + 1
+    elseif ScanUnitAurasLegacy(unit, cache) then
+        auraStats.legacyScans = auraStats.legacyScans + 1
+    else
+        return cache
     end
 
     RebuildHarmfulMaps(unit, cache)
@@ -464,6 +517,7 @@ end
 
 -- Expose cache for other modules (dispel overlay, defensive indicator)
 QUI_GFA.unitAuraCache = unitAuraCache
+QUI_GFA.auraStats = auraStats
 QUI_GFA.ScanUnitAuras = ScanUnitAuras
 QUI_GFA.ApplyAuraDelta = ApplyAuraDelta
 QUI_GFA.PruneAuraCache = PruneAuraCache
@@ -480,6 +534,7 @@ local timerIcons = {} -- Icons registered for duration updates
 local sharedTimerFrame = CreateFrame("Frame")
 local TIMER_INTERVAL = 0.2 -- Update duration text at 5 Hz (200ms)
 local floor = math.floor
+local timerIconCount = 0
 
 -- Compute the bucket for a remaining duration WITHOUT allocating a string.
 -- Only call FormatDuration when the bucket actually changed.
@@ -543,13 +598,12 @@ local function SharedTimerOnUpdate(self, dt)
     -- Pre-compute aura settings for both contexts (avoids per-icon table walks)
     local raidAuras = db and db.raid and db.raid.auras
     local partyAuras = db and db.party and db.party.auras
-    local hasAny = false
-
     for icon, state in pairs(timerIcons) do
-        hasAny = true
         if not icon:IsShown() then
-            -- Skip hidden icons entirely — overflow icons that exceed
-            -- maxDebuffs/maxBuffs limits in raids.
+            -- Hidden icons no longer need timer work; UpdateFrameAuras will
+            -- re-register them if they become visible again.
+            timerIcons[icon] = nil
+            timerIconCount = timerIconCount - 1
         elseif state.expirationTime then
             -- Values are guaranteed non-secret: UpdateAuraIcon only registers
             -- icons into timerIcons when duration passes IsSecretValue check.
@@ -595,14 +649,17 @@ local function SharedTimerOnUpdate(self, dt)
                 -- Expired
                 if icon.durationText then icon.durationText:SetText("") end
                 timerIcons[icon] = nil
+                timerIconCount = timerIconCount - 1
             end
         else
             timerIcons[icon] = nil
+            timerIconCount = timerIconCount - 1
         end
     end
 
     -- Auto-disable when no icons remain
-    if not hasAny then
+    if timerIconCount <= 0 then
+        timerIconCount = 0
         self:SetScript("OnUpdate", nil)
     end
 end
@@ -611,7 +668,10 @@ end
 sharedTimerFrame:SetScript("OnUpdate", nil)
 
 local function RegisterIconTimer(icon, state)
-    local wasEmpty = next(timerIcons) == nil
+    local wasEmpty = timerIconCount == 0
+    if not timerIcons[icon] then
+        timerIconCount = timerIconCount + 1
+    end
     timerIcons[icon] = state
     if wasEmpty then
         timerElapsed = 0
@@ -620,7 +680,11 @@ local function RegisterIconTimer(icon, state)
 end
 
 local function UnregisterIconTimer(icon)
-    timerIcons[icon] = nil
+    if timerIcons[icon] then
+        timerIcons[icon] = nil
+        timerIconCount = timerIconCount - 1
+        if timerIconCount < 0 then timerIconCount = 0 end
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -1471,6 +1535,7 @@ if ns.AuraEvents then
             local updated = updateInfo.updatedAuraInstanceIDs
             local nUpdated = #updated
             if nUpdated == 0 then return end
+            auraStats.fastUpdates = auraStats.fastUpdates + 1
 
             local GetDuration = C_UnitAuras.GetAuraDuration
             local GetDisplayCount = C_UnitAuras.GetAuraApplicationDisplayCount
@@ -1518,10 +1583,19 @@ if ns.AuraEvents then
         -- Full scan on cold/full/fallback; otherwise patch the cache from the
         -- UNIT_AURA delta and let every consumer read that shared state.
         local cacheUpdated = false
+        local triedDelta = false
         if type(updateInfo) == "table" and not updateInfo.isFullUpdate then
+            triedDelta = true
             cacheUpdated = ApplyAuraDelta(unit, updateInfo)
+        elseif type(updateInfo) == "table" and updateInfo.isFullUpdate then
+            auraStats.fullUpdateEvents = auraStats.fullUpdateEvents + 1
         end
-        if not cacheUpdated then
+        if cacheUpdated then
+            auraStats.deltaApplied = auraStats.deltaApplied + 1
+        else
+            if triedDelta then
+                auraStats.deltaFallback = auraStats.deltaFallback + 1
+            end
             ScanUnitAuras(unit)
         end
         local GFI = ns.QUI_GroupFrameIndicators

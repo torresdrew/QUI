@@ -3806,21 +3806,16 @@ end
 
 local function ForEachSpellCandidate(spellId, callback)
     if not spellId or not callback then return end
+    spellId = Helpers.SafeValue(spellId, nil)
+    if not spellId then return end
 
-    local seen = {}
-    local function Visit(id)
-        if id and not seen[id] then
-            seen[id] = true
-            callback(id)
-        end
-    end
-
-    Visit(spellId)
+    callback(spellId)
 
     if C_Spell and C_Spell.GetOverrideSpell then
         local ok, overrideId = pcall(C_Spell.GetOverrideSpell, spellId)
+        overrideId = ok and Helpers.SafeValue(overrideId, nil) or nil
         if ok and overrideId and overrideId ~= spellId then
-            Visit(overrideId)
+            callback(overrideId)
         end
     end
 end
@@ -3846,13 +3841,29 @@ end
 -- content changes (visual update, slot change).
 local spellIdToButtons = {}
 local flyoutButtons = {}  -- buttons with flyout actions (checked as fallback)
+local spellIdButtonListPool = {}
 do local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "AB_spellIdToButtons", tbl = spellIdToButtons }
     mp[#mp + 1] = { name = "AB_flyoutButtons",    tbl = flyoutButtons }
+    mp[#mp + 1] = { name = "AB_spellIdListPool",  tbl = spellIdButtonListPool }
+end
+
+local function AcquireSpellButtonList()
+    return table.remove(spellIdButtonListPool) or {}
+end
+
+local function ClearSpellIdMap()
+    for _, list in pairs(spellIdToButtons) do
+        wipe(list)
+        if #spellIdButtonListPool < 160 then
+            spellIdButtonListPool[#spellIdButtonListPool + 1] = list
+        end
+    end
+    wipe(spellIdToButtons)
 end
 
 local function RebuildSpellIdMap()
-    wipe(spellIdToButtons)
+    ClearSpellIdMap()
     wipe(flyoutButtons)
     for _, barKey in ipairs(STANDARD_BAR_KEYS) do
         local btns = ActionBarsOwned.nativeButtons[barKey]
@@ -3863,7 +3874,7 @@ local function RebuildSpellIdMap()
                     ForEachSpellCandidate(spellId, function(candidateId)
                         local list = spellIdToButtons[candidateId]
                         if not list then
-                            list = {}
+                            list = AcquireSpellButtonList()
                             spellIdToButtons[candidateId] = list
                         end
                         list[#list + 1] = btn
@@ -4155,11 +4166,13 @@ end
 
 -- Handle SPELL_ACTIVATION_OVERLAY_GLOW_SHOW: O(1) lookup via reverse map,
 -- flyout fallback for rare flyout-containing-spell case.
+local spellGlowVisited = {}
 local function ForEachButtonForSpellGlow(spellId, callback)
     if not spellId or not callback then return false end
 
     local matched = false
-    local visited = {}
+    local visited = spellGlowVisited
+    wipe(visited)
     local slotMap = ActionBarsOwned.slotMap
 
     local function VisitButton(button)
@@ -4197,6 +4210,7 @@ local function ForEachButtonForSpellGlow(spellId, callback)
         end
     end)
 
+    wipe(visited)
     return matched
 end
 

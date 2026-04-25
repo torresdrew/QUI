@@ -15,6 +15,7 @@
 
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
+local GetTime = GetTime
 
 -- Enable CDM immediately when file loads (before any events fire)
 pcall(function() SetCVar("cooldownViewerEnabled", 1) end)
@@ -142,47 +143,161 @@ do local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "CDM_resolveAuraMemo", tbl = _resolveAuraActiveMemo }
 end
 
--- Per-tick caches for Blizzard aura queries. Same aura instance is frequently
--- queried by multiple icons in one UpdateAllCooldowns batch (~100-150 icons).
--- GetAuraDataByAuraInstanceID allocates a fresh ~600-byte Blizzard table every
--- call; caching per batch cuts 12-30KB/tick of short-lived garbage. Wiped via
--- CDMSpellData:WipeTickAuraCache() at the start of each batch.
+-- Short-lived caches for Blizzard aura queries. Same aura instance is
+-- frequently queried by multiple icons across several UpdateAllCooldowns
+-- batches. GetAuraDataByAuraInstanceID allocates a fresh Blizzard table every
+-- call, so a tiny TTL cuts repeated short-lived garbage without letting stale
+-- aura state linger.
 -- auraInstanceID is globally unique across units, so the unit is not part of
 -- the cache key.
+local AURA_QUERY_CACHE_TTL = 0.25
+local AURA_QUERY_CACHE_PRUNE_INTERVAL = 1.0
 local _tickAuraDataCache = {}        -- [auraInstanceID] = data | false (false = negative)
 local _tickAuraDurationCache = {}    -- [auraInstanceID] = durObj | false
+local _tickAuraApplicationCache = {} -- [auraInstanceID] = display string
+local _tickAuraApplicationResolved = {}
+local _tickAuraDataCacheTime = {}    -- [auraInstanceID] = GetTime() cache stamp
+local _tickAuraDurationCacheTime = {}
+local _tickAuraApplicationCacheTime = {}
+local _tickAuraCacheNow = 0
+local _nextAuraCachePrune = 0
+local STACK_SEARCH_UNITS = { "player", "pet" }
+local _tickAuraStats = {
+    dataQueries = 0,
+    durationQueries = 0,
+    durationOnlyHits = 0,
+    applicationQueries = 0,
+    stackNameQueries = 0,
+}
 do local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "CDM_tickAuraData",     tbl = _tickAuraDataCache }
     mp[#mp + 1] = { name = "CDM_tickAuraDuration", tbl = _tickAuraDurationCache }
+    mp[#mp + 1] = { name = "CDM_tickAuraApplications", fn = function()
+        local n = 0
+        for _ in pairs(_tickAuraApplicationResolved) do n = n + 1 end
+        return n, 0
+    end }
+    mp[#mp + 1] = { name = "CDM_tickAuraCacheMeta", fn = function()
+        local dataAge, durationAge = 0, 0
+        for _ in pairs(_tickAuraDataCacheTime) do dataAge = dataAge + 1 end
+        for _ in pairs(_tickAuraDurationCacheTime) do durationAge = durationAge + 1 end
+        return dataAge, durationAge
+    end }
+    mp[#mp + 1] = { name = "CDM_auraDataQueries", counter = true, fn = function()
+        return _tickAuraStats.dataQueries
+    end }
+    mp[#mp + 1] = { name = "CDM_auraDurationQueries", counter = true, fn = function()
+        return _tickAuraStats.durationQueries
+    end }
+    mp[#mp + 1] = { name = "CDM_auraDurationOnlyHits", counter = true, fn = function()
+        return _tickAuraStats.durationOnlyHits
+    end }
+    mp[#mp + 1] = { name = "CDM_auraApplicationQueries", counter = true, fn = function()
+        return _tickAuraStats.applicationQueries
+    end }
+    mp[#mp + 1] = { name = "CDM_auraStackNameQueries", counter = true, fn = function()
+        return _tickAuraStats.stackNameQueries
+    end }
+end
+
+local function ClearTickAuraCache()
+    wipe(_tickAuraDataCache)
+    wipe(_tickAuraDurationCache)
+    wipe(_tickAuraApplicationCache)
+    wipe(_tickAuraApplicationResolved)
+    wipe(_tickAuraDataCacheTime)
+    wipe(_tickAuraDurationCacheTime)
+    wipe(_tickAuraApplicationCacheTime)
+    _tickAuraCacheNow = 0
+    _nextAuraCachePrune = 0
+end
+
+local function GetTickAuraCacheNow()
+    local now = _tickAuraCacheNow
+    if not now or now == 0 then
+        now = GetTime()
+        _tickAuraCacheNow = now
+    end
+    return now
+end
+
+local function PruneTickAuraCache(now)
+    local cutoff = now - AURA_QUERY_CACHE_TTL
+    for instanceID, stamp in pairs(_tickAuraDataCacheTime) do
+        if not stamp or stamp < cutoff then
+            _tickAuraDataCache[instanceID] = nil
+            _tickAuraDataCacheTime[instanceID] = nil
+        end
+    end
+    for instanceID, stamp in pairs(_tickAuraDurationCacheTime) do
+        if not stamp or stamp < cutoff then
+            _tickAuraDurationCache[instanceID] = nil
+            _tickAuraDurationCacheTime[instanceID] = nil
+        end
+    end
+    for instanceID, stamp in pairs(_tickAuraApplicationCacheTime) do
+        if not stamp or stamp < cutoff then
+            _tickAuraApplicationCache[instanceID] = nil
+            _tickAuraApplicationResolved[instanceID] = nil
+            _tickAuraApplicationCacheTime[instanceID] = nil
+        end
+    end
+end
+
+local function BeginTickAuraCache()
+    local now = GetTime()
+    _tickAuraCacheNow = now
+    if now >= _nextAuraCachePrune then
+        _nextAuraCachePrune = now + AURA_QUERY_CACHE_PRUNE_INTERVAL
+        PruneTickAuraCache(now)
+    end
 end
 
 local function TickCacheGetAuraData(unit, instanceID)
     if not instanceID then return nil end
+    local now = GetTickAuraCacheNow()
     local cached = _tickAuraDataCache[instanceID]
     if cached ~= nil then
-        return cached or nil
+        local stamp = _tickAuraDataCacheTime[instanceID]
+        if stamp and (now - stamp) <= AURA_QUERY_CACHE_TTL then
+            return cached or nil
+        end
+        _tickAuraDataCache[instanceID] = nil
+        _tickAuraDataCacheTime[instanceID] = nil
     end
+    _tickAuraStats.dataQueries = _tickAuraStats.dataQueries + 1
     local ok, data = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, instanceID)
     if ok and data then
         _tickAuraDataCache[instanceID] = data
+        _tickAuraDataCacheTime[instanceID] = now
         return data
     end
     _tickAuraDataCache[instanceID] = false
+    _tickAuraDataCacheTime[instanceID] = now
     return nil
 end
 
 local function TickCacheGetAuraDuration(unit, instanceID)
     if not instanceID or not C_UnitAuras.GetAuraDuration then return nil end
+    local now = GetTickAuraCacheNow()
     local cached = _tickAuraDurationCache[instanceID]
     if cached ~= nil then
-        return cached or nil
+        local stamp = _tickAuraDurationCacheTime[instanceID]
+        if stamp and (now - stamp) <= AURA_QUERY_CACHE_TTL then
+            return cached or nil
+        end
+        _tickAuraDurationCache[instanceID] = nil
+        _tickAuraDurationCacheTime[instanceID] = nil
     end
+    _tickAuraStats.durationQueries = _tickAuraStats.durationQueries + 1
     local ok, durObj = pcall(C_UnitAuras.GetAuraDuration, unit, instanceID)
     if ok and durObj then
         _tickAuraDurationCache[instanceID] = durObj
+        _tickAuraDurationCacheTime[instanceID] = now
         return durObj
     end
     _tickAuraDurationCache[instanceID] = false
+    _tickAuraDurationCacheTime[instanceID] = now
     return nil
 end
 
@@ -215,6 +330,74 @@ local function IsUsableResolvedAuraData(auraUnit, auraData)
         return IsAuraOwnedByPlayerOrPet(auraData, true)
     end
     return true
+end
+
+local function ChildLooksLive(child)
+    if not child then return false end
+    local viewer = child.viewerFrame
+    if viewer then
+        local itemPool = rawget(viewer, "itemFramePool")
+        if itemPool and itemPool.EnumerateActive then
+            for activeChild in itemPool:EnumerateActive() do
+                if activeChild == child then
+                    return true
+                end
+            end
+        end
+        local pandemicPool = rawget(viewer, "pandemicIconPool")
+        if pandemicPool and pandemicPool.EnumerateActive then
+            for activeChild in pandemicPool:EnumerateActive() do
+                if activeChild == child then
+                    return true
+                end
+            end
+        end
+    end
+    local ok, shown = pcall(child.IsShown, child)
+    return ok and shown or false
+end
+
+local function TryDurationOnlyAura(child, auraUnit, auraInstanceID)
+    if not child or not auraInstanceID or not C_UnitAuras.GetAuraDuration then
+        return nil
+    end
+    if not IsSelfUnit(auraUnit) then
+        return nil
+    end
+    if not ChildLooksLive(child) then
+        return nil
+    end
+    local durObj = TickCacheGetAuraDuration(auraUnit, auraInstanceID)
+    if durObj then
+        _tickAuraStats.durationOnlyHits = _tickAuraStats.durationOnlyHits + 1
+        return durObj
+    end
+    return nil
+end
+
+local function GetAuraApplications(unit, auraInstanceID)
+    if not unit or not auraInstanceID or not C_UnitAuras.GetAuraApplicationDisplayCount then
+        return false, nil
+    end
+    local now = GetTickAuraCacheNow()
+    if _tickAuraApplicationResolved[auraInstanceID] then
+        local stamp = _tickAuraApplicationCacheTime[auraInstanceID]
+        if stamp and (now - stamp) <= AURA_QUERY_CACHE_TTL then
+            return true, _tickAuraApplicationCache[auraInstanceID]
+        end
+        _tickAuraApplicationCache[auraInstanceID] = nil
+        _tickAuraApplicationResolved[auraInstanceID] = nil
+        _tickAuraApplicationCacheTime[auraInstanceID] = nil
+    end
+    _tickAuraStats.applicationQueries = _tickAuraStats.applicationQueries + 1
+    local ok, stacks = pcall(C_UnitAuras.GetAuraApplicationDisplayCount, unit, auraInstanceID, 2, 99)
+    if ok then
+        _tickAuraApplicationCache[auraInstanceID] = stacks
+        _tickAuraApplicationResolved[auraInstanceID] = true
+        _tickAuraApplicationCacheTime[auraInstanceID] = now
+        return true, stacks
+    end
+    return false, nil
 end
 
 local function ScanOwnedTargetAuraBySpellID(spellID, filter)
@@ -831,13 +1014,7 @@ end
 
 local function ChildHasLiveState(ch, id1, id2, id3)
     if not ch then return false end
-    if ch.auraInstanceID and childTracksSpell(ch, id1, id2, id3) and C_UnitAuras.GetAuraDataByAuraInstanceID then
-        local unit = ch.auraDataUnit or "player"
-        local vdata = TickCacheGetAuraData(unit, ch.auraInstanceID)
-        if vdata then
-            return true
-        end
-    end
+
     local viewer = ch.viewerFrame
     local pool = viewer and rawget(viewer, "itemFramePool")
     if pool and pool.EnumerateActive then
@@ -850,7 +1027,24 @@ local function ChildHasLiveState(ch, id1, id2, id3)
     end
     local ok, shown = pcall(ch.IsShown, ch)
     _totemDbg("live: fallback shown=", tostring(ok and shown), "lidx=", SafeMaybeNumber(rawget(ch, "layoutIndex")) or "?")
-    return ok and shown or false
+    if ok and shown then
+        return true
+    end
+
+    if ch.auraInstanceID and childTracksSpell(ch, id1, id2, id3) then
+        local unit = ch.auraDataUnit or "player"
+        if C_UnitAuras.GetAuraDuration and TickCacheGetAuraDuration(unit, ch.auraInstanceID) then
+            return true
+        end
+        if C_UnitAuras.GetAuraDataByAuraInstanceID then
+            local vdata = TickCacheGetAuraData(unit, ch.auraInstanceID)
+            if vdata then
+                return true
+            end
+        end
+    end
+
+    return false
 end
 
 function CDMSpellData:InvalidateChildMap()
@@ -858,8 +1052,7 @@ function CDMSpellData:InvalidateChildMap()
 end
 
 function CDMSpellData:WipeTickAuraCache()
-    wipe(_tickAuraDataCache)
-    wipe(_tickAuraDurationCache)
+    BeginTickAuraCache()
 end
 
 CDMSpellData.FindChildForSpell = FindChildForSpell
@@ -1349,18 +1542,30 @@ function CDMSpellData:ResolveAuraState(params)
     -----------------------------------------------------------------------
     local isActive = false
     local childAuraInstID = nil
+    local childAuraSource = nil
     local auraUnit = "player"
 
     if blzChild then
         childAuraInstID = blzChild.auraInstanceID
+        childAuraSource = blzChild
         auraUnit = blzChild.auraDataUnit or "player"
     end
     if not childAuraInstID and blzBarChild then
         childAuraInstID = blzBarChild.auraInstanceID
+        childAuraSource = blzBarChild
         auraUnit = blzBarChild.auraDataUnit or "player"
     end
 
-    if childAuraInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
+    if childAuraInstID then
+        local durObj = TryDurationOnlyAura(childAuraSource, auraUnit, childAuraInstID)
+        if durObj then
+            AuraStateDebug(debugAura, "phase3-duration", "unit=", auraUnit, "inst=", childAuraInstID)
+            isActive = true
+            r.durObj = durObj
+        end
+    end
+
+    if not isActive and childAuraInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
         local vdata = TickCacheGetAuraData(auraUnit, childAuraInstID)
         if IsUsableResolvedAuraData(auraUnit, vdata) then
             AuraStateDebug(debugAura, "phase3-inst", "unit=", auraUnit, "inst=", childAuraInstID)
@@ -1455,15 +1660,26 @@ function CDMSpellData:ResolveAuraState(params)
             local bok, bshown = pcall(blzChild.IsShown, blzChild)
             if bok and bshown then
                 local shownAuraUnit = blzChild.auraDataUnit or "player"
-                local shownAuraData = C_UnitAuras.GetAuraDataByAuraInstanceID
-                    and TickCacheGetAuraData(shownAuraUnit, blzChild.auraInstanceID)
-                    or nil
-                if IsUsableResolvedAuraData(shownAuraUnit, shownAuraData) then
-                    AuraStateDebug(debugAura, "phase5b-primary-shown", "unit=", shownAuraUnit, "inst=", blzChild.auraInstanceID)
+                local durObj = TryDurationOnlyAura(blzChild, shownAuraUnit, blzChild.auraInstanceID)
+                if durObj then
+                    AuraStateDebug(debugAura, "phase5b-primary-duration", "unit=", shownAuraUnit, "inst=", blzChild.auraInstanceID)
                     childAuraInstID = blzChild.auraInstanceID
+                    childAuraSource = blzChild
                     auraUnit = shownAuraUnit
-                    r.auraData = shownAuraData or r.auraData
+                    r.durObj = durObj
                     isActive = true
+                else
+                    local shownAuraData = C_UnitAuras.GetAuraDataByAuraInstanceID
+                        and TickCacheGetAuraData(shownAuraUnit, blzChild.auraInstanceID)
+                        or nil
+                    if IsUsableResolvedAuraData(shownAuraUnit, shownAuraData) then
+                        AuraStateDebug(debugAura, "phase5b-primary-shown", "unit=", shownAuraUnit, "inst=", blzChild.auraInstanceID)
+                        childAuraInstID = blzChild.auraInstanceID
+                        childAuraSource = blzChild
+                        auraUnit = shownAuraUnit
+                        r.auraData = shownAuraData or r.auraData
+                        isActive = true
+                    end
                 end
             end
         end
@@ -1481,15 +1697,26 @@ function CDMSpellData:ResolveAuraState(params)
             local bok, bshown = pcall(blzBarChild.IsShown, blzBarChild)
             if bok and bshown then
                 local shownAuraUnit = blzBarChild.auraDataUnit or "player"
-                local shownAuraData = C_UnitAuras.GetAuraDataByAuraInstanceID
-                    and TickCacheGetAuraData(shownAuraUnit, blzBarChild.auraInstanceID)
-                    or nil
-                if IsUsableResolvedAuraData(shownAuraUnit, shownAuraData) then
-                    AuraStateDebug(debugAura, "phase6-bar-shown", "unit=", shownAuraUnit, "inst=", blzBarChild.auraInstanceID)
+                local durObj = TryDurationOnlyAura(blzBarChild, shownAuraUnit, blzBarChild.auraInstanceID)
+                if durObj then
+                    AuraStateDebug(debugAura, "phase6-bar-duration", "unit=", shownAuraUnit, "inst=", blzBarChild.auraInstanceID)
                     childAuraInstID = blzBarChild.auraInstanceID
+                    childAuraSource = blzBarChild
                     auraUnit = shownAuraUnit
-                    r.auraData = shownAuraData or r.auraData
+                    r.durObj = durObj
                     isActive = true
+                else
+                    local shownAuraData = C_UnitAuras.GetAuraDataByAuraInstanceID
+                        and TickCacheGetAuraData(shownAuraUnit, blzBarChild.auraInstanceID)
+                        or nil
+                    if IsUsableResolvedAuraData(shownAuraUnit, shownAuraData) then
+                        AuraStateDebug(debugAura, "phase6-bar-shown", "unit=", shownAuraUnit, "inst=", blzBarChild.auraInstanceID)
+                        childAuraInstID = blzBarChild.auraInstanceID
+                        childAuraSource = blzBarChild
+                        auraUnit = shownAuraUnit
+                        r.auraData = shownAuraData or r.auraData
+                        isActive = true
+                    end
                 end
             end
         end
@@ -1596,26 +1823,42 @@ function CDMSpellData:ResolveAuraState(params)
     -- Get stacks: name search (player → pet → target) → instID fallback
     if isActive then
         local apps
-        if entryName and entryName ~= "" and C_UnitAuras.GetAuraDataBySpellName then
-            for _, stackUnit in ipairs({"player", "pet"}) do
-                if not apps then
+        local appsResolved = false
+        if childAuraInstID then
+            local gotApps, stackApps = GetAuraApplications(auraUnit, childAuraInstID)
+            if gotApps then
+                apps = stackApps
+                appsResolved = true
+            end
+        end
+        if not appsResolved and entryName and entryName ~= "" and C_UnitAuras.GetAuraDataBySpellName then
+            for i = 1, #STACK_SEARCH_UNITS do
+                local stackUnit = STACK_SEARCH_UNITS[i]
+                if not appsResolved then
+                    _tickAuraStats.stackNameQueries = _tickAuraStats.stackNameQueries + 1
                     local nok, nad = pcall(C_UnitAuras.GetAuraDataBySpellName, stackUnit, entryName, "HELPFUL")
-                    if nok and nad and nad.applications and IsAuraOwnedByPlayerOrPet(nad, true) then
-                        apps = nad.applications
+                    local nadApps = nad and nad.applications
+                    if nok and nad and nadApps ~= nil and IsAuraOwnedByPlayerOrPet(nad, true) then
+                        apps = nadApps
+                        appsResolved = true
                     end
                 end
             end
-            if not apps then
+            if not appsResolved then
                 local tad = FindOwnedTargetAuraByName(entryName, "HARMFUL")
-                if tad and tad.applications then
-                    apps = tad.applications
+                local tadApps = tad and tad.applications
+                if tadApps ~= nil then
+                    apps = tadApps
+                    appsResolved = true
                 end
             end
         end
-        if not apps and childAuraInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
+        if not appsResolved and childAuraInstID and C_UnitAuras.GetAuraDataByAuraInstanceID then
             local instData = TickCacheGetAuraData(auraUnit, childAuraInstID)
-            if IsUsableResolvedAuraData(auraUnit, instData) and instData.applications then
-                apps = instData.applications
+            local instApps = instData and instData.applications
+            if IsUsableResolvedAuraData(auraUnit, instData) and instApps ~= nil then
+                apps = instApps
+                appsResolved = true
             end
         end
         r.stacks = apps
@@ -4662,6 +4905,7 @@ function CDMSpellData:Initialize()
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("SPELLS_CHANGED")
     eventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
     -- 12.0.5: auraInstanceID values re-randomize on encounter/M+/PvP start,
     -- so the auraInstanceID-keyed tick caches must be evicted to avoid stale
     -- negative entries masking newly-applied auras.
@@ -4724,9 +4968,11 @@ function CDMSpellData:Initialize()
             -- (12.0.5+). Wipe the auraInstanceID-keyed tick caches so old
             -- negative entries (`false`) don't mask newly-applied auras that
             -- happen to land on a previously-seen ID.
-            wipe(_tickAuraDataCache)
-            wipe(_tickAuraDurationCache)
+            ClearTickAuraCache()
+        elseif event == "PLAYER_REGEN_ENABLED" then
+            ClearTickAuraCache()
         elseif event == "PLAYER_ENTERING_WORLD" then
+            ClearTickAuraCache()
             -- Suppress SPELLS_CHANGED dormant checks during zone transitions.
             -- APIs are stale for ~1-2s after entering a new zone/instance.
             _inZoneTransition = true

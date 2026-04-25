@@ -74,6 +74,43 @@ local _state = {
     rangeCheckTicker = nil,
     unitGuidCache = {},
     cachedMarkers = {},
+    unitEventRegistrationEnabled = false,
+    unitEventFrames = {},
+    unitEventActive = {
+        UNIT_HEALTH = true,
+        UNIT_MAXHEALTH = true,
+        UNIT_POWER_UPDATE = true,
+        UNIT_MAXPOWER = true,
+        UNIT_ABSORB_AMOUNT_CHANGED = true,
+        UNIT_HEAL_ABSORB_AMOUNT_CHANGED = true,
+        UNIT_HEAL_PREDICTION = true,
+        UNIT_NAME_UPDATE = true,
+        UNIT_CONNECTION = true,
+    },
+    unitEventList = {
+        "UNIT_HEALTH",
+        "UNIT_MAXHEALTH",
+        "UNIT_POWER_UPDATE",
+        "UNIT_POWER_FREQUENT",
+        "UNIT_MAXPOWER",
+        "UNIT_ABSORB_AMOUNT_CHANGED",
+        "UNIT_HEAL_ABSORB_AMOUNT_CHANGED",
+        "UNIT_HEAL_PREDICTION",
+        "UNIT_NAME_UPDATE",
+        "UNIT_CONNECTION",
+    },
+    defaultColors = {
+        darkHealth = { 0.15, 0.15, 0.15, 1 },
+        powerBar = { 0.2, 0.4, 0.8, 1 },
+        healAbsorb = { 0.5, 0.1, 0.1, 1 },
+        threat = { 1, 0, 0, 0.8 },
+        targetHighlight = { 1, 1, 1, 0.6 },
+        dispelFallback = { 0.2, 0.6, 1.0, 1 },
+        darkModeBg = { 0.25, 0.25, 0.25, 1 },
+        frameBg = { 0.1, 0.1, 0.1, 0.9 },
+        healPrediction = { 0.2, 1, 0.2, 1 },
+    },
+    backdropReapplyInterval = 0.5,
 }
 
 ---------------------------------------------------------------------------
@@ -113,6 +150,9 @@ local function AddFrameToMap(unit, frame)
         list[#list + 1] = frame
     else
         QUI_GF.unitFrameMap[unit] = { frame }
+        if _state.RegisterUnitEventsForUnit then
+            _state.RegisterUnitEventsForUnit(unit)
+        end
     end
 end
 
@@ -127,6 +167,9 @@ local function RemoveFrameFromMap(unit, frame)
     end
     if #list == 0 then
         QUI_GF.unitFrameMap[unit] = nil
+        if _state.UnregisterUnitEventsForUnit then
+            _state.UnregisterUnitEventsForUnit(unit)
+        end
     end
 end
 
@@ -180,6 +223,9 @@ do local mp = ns._memprobes or {}; ns._memprobes = mp
             if type(list) == "table" then deep = deep + #list end
         end
         return count, deep
+    end }
+    mp[#mp + 1] = { name = "GF_unitEventFrames",  fn = function()
+        local n = 0; for _ in pairs(_state.unitEventFrames) do n = n + 1 end; return n, 0
     end }
     mp[#mp + 1] = { name = "GF_allFrames",      fn = function()
         return #QUI_GF.allFrames, 0
@@ -715,7 +761,7 @@ end
 local function GetHealthBarColor(unit, isRaid)
     local general = GetGeneralSettings(isRaid)
     if general and general.darkMode then
-        local c = general.darkModeHealthColor or { 0.15, 0.15, 0.15, 1 }
+        local c = general.darkModeHealthColor or _state.defaultColors.darkHealth
         return c[1], c[2], c[3], c[4] or 1
     end
 
@@ -738,7 +784,7 @@ end
 local function GetPowerBarColor(unit, isRaid)
     local db = GetPowerSettings(isRaid)
     if db and not db.powerBarUsePowerColor then
-        local c = db.powerBarColor or { 0.2, 0.4, 0.8, 1 }
+        local c = db.powerBarColor or _state.defaultColors.powerBar
         return c[1], c[2], c[3], c[4] or 1
     end
 
@@ -1153,7 +1199,7 @@ local function UpdateHealAbsorb(frame, _unit, _maxHP)
 
     -- Color (dirty-checked: settings-driven, never changes during combat)
     local ha = vdb.healAbsorbs.opacity or 0.6
-    local hc = vdb.healAbsorbs.color or { 0.5, 0.1, 0.1 }
+    local hc = vdb.healAbsorbs.color or _state.defaultColors.healAbsorb
     if hc[1] ~= frame._lastHealAbsorbColorR or ha ~= frame._lastHealAbsorbColorA then
         frame._lastHealAbsorbColorR = hc[1]
         frame._lastHealAbsorbColorA = ha
@@ -1389,7 +1435,7 @@ local function UpdateThreat(frame)
 
     local status = UnitThreatSituation(frame.unit)
     if status and status >= 2 then
-        local tc = indSettings.threatColor or { 1, 0, 0, 0.8 }
+        local tc = indSettings.threatColor or _state.defaultColors.threat
         frame.threatBorder:SetBackdropBorderColor(tc[1], tc[2], tc[3], tc[4] or 0.8)
         -- Keep threat border below icons/indicators — re-level in case frame
         -- base level shifted since decoration (secure header can re-level children)
@@ -1507,7 +1553,7 @@ local function UpdateTargetHighlight(frame)
     end
 
     if frame.unit and UnitIsUnit(frame.unit, "target") then
-        local c = healerSettings.targetHighlight.color or { 1, 1, 1, 0.6 }
+        local c = healerSettings.targetHighlight.color or _state.defaultColors.targetHighlight
         frame.targetHighlight:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 0.6)
         frame.targetHighlight:Show()
         -- Keep fast-path cache in sync (used by PLAYER_TARGET_CHANGED fast unhighlight)
@@ -1657,7 +1703,7 @@ local function UpdateDispelOverlay(frame)
     -- the overlay instead of silently dropping it.
     local fallback = fromPrivateSlots and colors and (colors.Magic or colors.Curse or colors.Disease or colors.Poison)
         or (colors and colors.Magic)
-    fallback = fallback or { 0.2, 0.6, 1.0, 1 }
+    fallback = fallback or _state.defaultColors.dispelFallback
     SetDispelBorderColor(overlay, fallback[1], fallback[2], fallback[3], fallbackOpacity)
     overlay:Show()
 end
@@ -1937,24 +1983,41 @@ end
 ---------------------------------------------------------------------------
 -- UPDATE: Dark Mode Visuals (backdrop, health bar alpha)
 ---------------------------------------------------------------------------
-UpdateDarkModeVisuals = function(frame)
+UpdateDarkModeVisuals = function(frame, force)
     if not frame then return end
     local general = GetGeneralSettings(frame._isRaid)
     local bgColor, healthOpacity, bgOpacity
     if general and general.darkMode then
-        bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
+        bgColor = general.darkModeBgColor or _state.defaultColors.darkModeBg
         healthOpacity = general.darkModeHealthOpacity or 1.0
         bgOpacity = general.darkModeBgOpacity or 1.0
     else
-        bgColor = general and general.defaultBgColor or { 0.1, 0.1, 0.1, 0.9 }
+        bgColor = general and general.defaultBgColor or _state.defaultColors.frameBg
         healthOpacity = general and general.defaultHealthOpacity or 1.0
         bgOpacity = general and general.defaultBgOpacity or 1.0
     end
     local bgAlpha = (bgColor[4] or 1) * bgOpacity
-    -- Do not dirty-check the backdrop tint: BackdropTemplate can rebuild or
-    -- desync the visible backdrop without changing our configured RGBA, and we
-    -- want both live updates and settings changes to force the correct color.
-    frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
+    local now
+    if force
+        or bgColor[1] ~= frame._lastBackdropColorR
+        or bgColor[2] ~= frame._lastBackdropColorG
+        or bgColor[3] ~= frame._lastBackdropColorB
+        or bgAlpha ~= frame._lastBackdropColorA
+    then
+        frame._lastBackdropColorR = bgColor[1]
+        frame._lastBackdropColorG = bgColor[2]
+        frame._lastBackdropColorB = bgColor[3]
+        frame._lastBackdropColorA = bgAlpha
+        now = GetTime()
+        frame._lastBackdropReapplyTime = now
+        frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
+    else
+        now = GetTime()
+        if (now - (frame._lastBackdropReapplyTime or 0)) >= _state.backdropReapplyInterval then
+            frame._lastBackdropReapplyTime = now
+            frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
+        end
+    end
     if frame.healthBar then
         if healthOpacity ~= frame._lastHealthBarAlpha then
             frame._lastHealthBarAlpha = healthOpacity
@@ -1966,7 +2029,7 @@ end
 ---------------------------------------------------------------------------
 local function UpdateFrame(frame)
     if not frame or not frame.unit then return end
-    UpdateDarkModeVisuals(frame)
+    UpdateDarkModeVisuals(frame, true)
     UpdateHealth(frame)
     UpdatePower(frame)
     UpdateName(frame)
@@ -2026,15 +2089,20 @@ local function DecorateGroupFrame(frame)
 
     local bgColor, healthOpacity, bgOpacity
     if general and general.darkMode then
-        bgColor = general.darkModeBgColor or { 0.25, 0.25, 0.25, 1 }
+        bgColor = general.darkModeBgColor or _state.defaultColors.darkModeBg
         healthOpacity = general.darkModeHealthOpacity or 1.0
         bgOpacity = general.darkModeBgOpacity or 1.0
     else
-        bgColor = general and general.defaultBgColor or { 0.1, 0.1, 0.1, 0.9 }
+        bgColor = general and general.defaultBgColor or _state.defaultColors.frameBg
         healthOpacity = general and general.defaultHealthOpacity or 1.0
         bgOpacity = general and general.defaultBgOpacity or 1.0
     end
     local bgAlpha = (bgColor[4] or 1) * bgOpacity
+    frame._lastBackdropColorR = bgColor[1]
+    frame._lastBackdropColorG = bgColor[2]
+    frame._lastBackdropColorB = bgColor[3]
+    frame._lastBackdropColorA = bgAlpha
+    frame._lastBackdropReapplyTime = GetTime()
     frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
     if borderSize > 0 then
         frame:SetBackdropBorderColor(0, 0, 0, 1)
@@ -2078,7 +2146,7 @@ local function DecorateGroupFrame(frame)
     healPredictionBar:SetAllPoints(healthBar)
     healPredictionBar:SetMinMaxValues(0, 1)
     healPredictionBar:SetValue(0)
-    local pc = predSettings and predSettings.color or { 0.2, 1, 0.2 }
+    local pc = predSettings and predSettings.color or _state.defaultColors.healPrediction
     local pa = predSettings and predSettings.opacity or 0.5
     healPredictionBar:SetStatusBarColor(pc[1] or 0.2, pc[2] or 1, pc[3] or 0.2, pa)
     healPredictionBar:Hide()
@@ -2112,7 +2180,7 @@ local function DecorateGroupFrame(frame)
         healAbsorbBar = CreateFrame("StatusBar", nil, healthBar)
     end
     healAbsorbBar:SetStatusBarTexture("Interface\\RaidFrame\\Shield-Fill")
-    local hac = healAbsorbSettings and healAbsorbSettings.color or { 0.5, 0.1, 0.1 }
+    local hac = healAbsorbSettings and healAbsorbSettings.color or _state.defaultColors.healAbsorb
     local haa = healAbsorbSettings and healAbsorbSettings.opacity or 0.6
     healAbsorbBar:SetStatusBarColor(hac[1], hac[2], hac[3], haa)
     healAbsorbBar:SetFrameLevel(healthBar:GetFrameLevel() + 3)
@@ -2593,6 +2661,9 @@ local function CollectHeaderUnits(header)
 end
 
 local function RebuildUnitFrameMap()
+    if _state.UnregisterAllUnitEventFrames then
+        _state.UnregisterAllUnitEventFrames()
+    end
     wipe(QUI_GF.unitFrameMap)
 
     CollectHeaderUnits(QUI_GF.headers.party)
@@ -2607,6 +2678,10 @@ local function RebuildUnitFrameMap()
     end
 
     CollectHeaderUnits(QUI_GF.spotlightHeader)
+
+    if _state.RefreshUnitEventRegistrations then
+        _state.RefreshUnitEventRegistrations()
+    end
 end
 
 local function EnsureAnchorFrame(key)
@@ -4889,6 +4964,74 @@ end
 
 eventFrame:SetScript("OnEvent", OnEvent)
 
+function _state.RegisterUnitEventsForUnit(unit)
+    if not _state.unitEventRegistrationEnabled or not unit or not QUI_GF.unitFrameMap[unit] then return end
+
+    local frame = _state.unitEventFrames[unit]
+    if not frame then
+        frame = CreateFrame("Frame")
+        frame:Hide()
+        frame:SetScript("OnEvent", OnEvent)
+        _state.unitEventFrames[unit] = frame
+    end
+
+    local active = _state.unitEventActive
+    for i = 1, #_state.unitEventList do
+        local event = _state.unitEventList[i]
+        if active[event] then
+            frame:RegisterUnitEvent(event, unit)
+        else
+            frame:UnregisterEvent(event)
+        end
+    end
+end
+
+function _state.UnregisterUnitEventsForUnit(unit)
+    local frame = unit and _state.unitEventFrames[unit]
+    if not frame then return end
+
+    for i = 1, #_state.unitEventList do
+        frame:UnregisterEvent(_state.unitEventList[i])
+    end
+end
+
+function _state.UnregisterAllUnitEventFrames()
+    for unit in pairs(_state.unitEventFrames) do
+        _state.UnregisterUnitEventsForUnit(unit)
+    end
+end
+
+function _state.RefreshUnitEventRegistrations()
+    if not _state.unitEventRegistrationEnabled then return end
+
+    for unit in pairs(_state.unitEventFrames) do
+        if not QUI_GF.unitFrameMap[unit] then
+            _state.UnregisterUnitEventsForUnit(unit)
+        end
+    end
+    for unit in pairs(QUI_GF.unitFrameMap) do
+        _state.RegisterUnitEventsForUnit(unit)
+    end
+end
+
+function _state.SetUnitEventActive(event, active)
+    local enabled = active and true or nil
+    if _state.unitEventActive[event] == enabled then return end
+
+    _state.unitEventActive[event] = enabled
+    if not _state.unitEventRegistrationEnabled then return end
+
+    if enabled then
+        for unit in pairs(QUI_GF.unitFrameMap) do
+            _state.RegisterUnitEventsForUnit(unit)
+        end
+    else
+        for _, frame in pairs(_state.unitEventFrames) do
+            frame:UnregisterEvent(event)
+        end
+    end
+end
+
 -- Perf profiler opt-in (no-op until /qui perf → Modules toggle)
 ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
 ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "GroupFrames", frame = eventFrame }
@@ -4903,18 +5046,16 @@ local function RegisterEvents()
     eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 
-    -- Unit events (will be routed via unitFrameMap)
-    eventFrame:RegisterEvent("UNIT_HEALTH")
-    eventFrame:RegisterEvent("UNIT_MAXHEALTH")
-    eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
-    eventFrame:RegisterEvent("UNIT_MAXPOWER")
-    eventFrame:RegisterEvent("UNIT_ABSORB_AMOUNT_CHANGED")
-    eventFrame:RegisterEvent("UNIT_HEAL_ABSORB_AMOUNT_CHANGED")
-    eventFrame:RegisterEvent("UNIT_HEAL_PREDICTION")
-    eventFrame:RegisterEvent("UNIT_NAME_UPDATE")
+    -- Noisy unit events are registered on per-unit hidden frames via
+    -- RegisterUnitEvent, so unrelated nameplate/target traffic never reaches
+    -- the group-frame dispatcher.
+    _state.unitEventRegistrationEnabled = true
+    _state.RefreshUnitEventRegistrations()
+
+    -- Lower-volume or compatibility-sensitive unit events stay on the central
+    -- frame and are still filtered through unitFrameMap in OnEvent.
     eventFrame:RegisterEvent("UNIT_THREAT_SITUATION_UPDATE")
     -- UNIT_AURA handled by centralized dispatcher (core/aura_events.lua)
-    eventFrame:RegisterEvent("UNIT_CONNECTION")
     eventFrame:RegisterEvent("UNIT_FLAGS")
     eventFrame:RegisterEvent("UNIT_PHASE")
     eventFrame:RegisterEvent("INCOMING_RESURRECT_CHANGED")
@@ -4936,6 +5077,8 @@ end
 
 local function UnregisterEvents()
     eventFrame:UnregisterAllEvents()
+    _state.unitEventRegistrationEnabled = false
+    _state.UnregisterAllUnitEventFrames()
 end
 
 ---------------------------------------------------------------------------
@@ -4950,12 +5093,13 @@ UpdateSelectiveEvents = function()
     -- Power events: unregister in large raids when power bar hidden
     local powerSettings = GetPowerSettings(isRaid)
     if mode == "large" and (not powerSettings or powerSettings.showPowerBar == false) then
-        eventFrame:UnregisterEvent("UNIT_POWER_UPDATE")
-        eventFrame:UnregisterEvent("UNIT_POWER_FREQUENT")
-        eventFrame:UnregisterEvent("UNIT_MAXPOWER")
+        _state.SetUnitEventActive("UNIT_POWER_UPDATE", false)
+        _state.SetUnitEventActive("UNIT_POWER_FREQUENT", false)
+        _state.SetUnitEventActive("UNIT_MAXPOWER", false)
     else
-        eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
-        eventFrame:RegisterEvent("UNIT_MAXPOWER")
+        _state.SetUnitEventActive("UNIT_POWER_UPDATE", true)
+        _state.SetUnitEventActive("UNIT_POWER_FREQUENT", false)
+        _state.SetUnitEventActive("UNIT_MAXPOWER", true)
     end
 
     -- Absorb/heal-prediction events: unregister when their bars are disabled
@@ -4964,16 +5108,16 @@ UpdateSelectiveEvents = function()
     local absorbEnabled = vdb and vdb.absorbs and vdb.absorbs.enabled ~= false
     local healPredEnabled = vdb and vdb.healPrediction and vdb.healPrediction.enabled ~= false
     if absorbEnabled then
-        eventFrame:RegisterEvent("UNIT_ABSORB_AMOUNT_CHANGED")
-        eventFrame:RegisterEvent("UNIT_HEAL_ABSORB_AMOUNT_CHANGED")
+        _state.SetUnitEventActive("UNIT_ABSORB_AMOUNT_CHANGED", true)
+        _state.SetUnitEventActive("UNIT_HEAL_ABSORB_AMOUNT_CHANGED", true)
     else
-        eventFrame:UnregisterEvent("UNIT_ABSORB_AMOUNT_CHANGED")
-        eventFrame:UnregisterEvent("UNIT_HEAL_ABSORB_AMOUNT_CHANGED")
+        _state.SetUnitEventActive("UNIT_ABSORB_AMOUNT_CHANGED", false)
+        _state.SetUnitEventActive("UNIT_HEAL_ABSORB_AMOUNT_CHANGED", false)
     end
     if healPredEnabled then
-        eventFrame:RegisterEvent("UNIT_HEAL_PREDICTION")
+        _state.SetUnitEventActive("UNIT_HEAL_PREDICTION", true)
     else
-        eventFrame:UnregisterEvent("UNIT_HEAL_PREDICTION")
+        _state.SetUnitEventActive("UNIT_HEAL_PREDICTION", false)
     end
 
     -- Threat events: UNIT_THREAT_SITUATION_UPDATE fires for ALL units in the

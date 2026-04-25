@@ -25,23 +25,16 @@ local overlayedSourceMap = {}  -- [sourceSpellID] = { [candidateID] = true }
 
 local function ForEachSpellCandidate(spellID, callback)
     if not spellID or not callback then return end
+    spellID = Helpers.SafeValue(spellID, nil)
+    if not spellID then return end
 
-    local seen = {}
-    local function Visit(id)
-        if id and not seen[id] then
-            seen[id] = true
-            callback(id)
-        end
-    end
-
-    Visit(spellID)
+    callback(spellID)
 
     if C_Spell and C_Spell.GetOverrideSpell then
         local ok, overrideID = pcall(C_Spell.GetOverrideSpell, spellID)
+        overrideID = ok and Helpers.SafeValue(overrideID, nil) or nil
         if ok and overrideID and overrideID ~= spellID then
-            -- GetOverrideSpell can return secret values in combat; sanitize
-            -- before using as a Lua table key downstream.
-            Visit(Helpers.SafeValue(overrideID, nil))
+            callback(overrideID)
         end
     end
 end
@@ -124,13 +117,18 @@ local function MarkOverlaySource(sourceSpellID)
     overlayedSourceMap[sourceSpellID] = mapped
 end
 
+local _iconRawSeen = {}
+local _iconCandidateSeen = {}
+
 local function ForEachIconSpellID(icon, callback)
     if not icon or not icon._spellEntry or not callback then return end
 
     local entry = icon._spellEntry
     local child = entry._blizzChild
-    local rawSeen = {}
-    local candidateSeen = {}
+    local rawSeen = _iconRawSeen
+    local candidateSeen = _iconCandidateSeen
+    wipe(rawSeen)
+    wipe(candidateSeen)
 
     local function VisitRaw(id)
         if not id or rawSeen[id] then return end
@@ -177,6 +175,9 @@ local function ForEachIconSpellID(icon, callback)
             end
         end
     end
+
+    wipe(rawSeen)
+    wipe(candidateSeen)
 end
 
 -- Safe wrapper: C_Spell.IsSpellUsable can return secret values in Midnight.
@@ -251,6 +252,16 @@ do local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "CDM_overlayedSpells", tbl = overlayedSpells }
     mp[#mp + 1] = { name = "CDM_glowSpellMap",    tbl = spellIdToGlowIcons }
     mp[#mp + 1] = { name = "CDM_activeGlows",     tbl = activeGlowIcons }
+end
+
+local function AddGlowMapID(spellID, icon)
+    if not spellID then return end
+    local list = spellIdToGlowIcons[spellID]
+    if not list then
+        list = {}
+        spellIdToGlowIcons[spellID] = list
+    end
+    list[#list + 1] = icon
 end
 
 local function RebuildGlowSpellMap()
@@ -783,15 +794,19 @@ end
 ---------------------------------------------------------------------------
 -- REFRESH ALL GLOWS (called when settings change)
 ---------------------------------------------------------------------------
+local _refreshStopScratch = {}
+
 local function RefreshAllGlows()
     -- Stop all current glows
-    local toStop = {}
+    local toStop = _refreshStopScratch
+    wipe(toStop)
     for icon in pairs(activeGlowIcons) do
         toStop[#toStop + 1] = icon
     end
     for _, icon in ipairs(toStop) do
         StopGlow(icon)
     end
+    wipe(toStop)
     wipe(activeGlowIcons)
     wipe(_pandemicGlowIcons)
 

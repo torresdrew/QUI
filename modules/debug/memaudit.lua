@@ -50,13 +50,15 @@ local function TakeSnapshot()
         if p.fn then
             local ok, count, deep = pcall(p.fn)
             if ok then
-                if type(count) == "table" then
+                if p.counter then
+                    snap[p.name] = { counter = true, value = count or 0, count = 0, deep = 0 }
+                elseif type(count) == "table" then
                     snap[p.name] = count
                 else
                     snap[p.name] = { count = count or 0, deep = deep or 0 }
                 end
             else
-                snap[p.name] = { count = 0, deep = 0 }
+                snap[p.name] = p.counter and { counter = true, value = 0, count = 0, deep = 0 } or { count = 0, deep = 0 }
             end
         elseif p.tbl then
             local count, deep = CountEntries(p.tbl)
@@ -83,10 +85,10 @@ local function ProbeTotal(snap)
     local count, deep = 0, 0
     for name, val in pairs(snap) do
         if name:sub(1, 1) ~= "_" then
-            if type(val) == "table" then
+            if type(val) == "table" and not val.counter then
                 count = count + (val.count or 0)
                 deep = deep + (val.deep or 0)
-            else
+            elseif type(val) ~= "table" then
                 count = count + (val or 0)
             end
         end
@@ -114,9 +116,12 @@ local function PrintSnapshot(snap, prev)
 
     -- Sort probes by total entry count descending
     local sorted = {}
+    local counters = {}
     for name, val in pairs(snap) do
         if name:sub(1, 1) ~= "_" then
-            if type(val) == "table" then
+            if type(val) == "table" and val.counter then
+                counters[#counters + 1] = { name = name, value = val.value or 0 }
+            elseif type(val) == "table" then
                 sorted[#sorted + 1] = { name = name, count = val.count, deep = val.deep }
             else
                 sorted[#sorted + 1] = { name = name, count = val, deep = 0 }
@@ -152,6 +157,23 @@ local function PrintSnapshot(snap, prev)
     if #sorted == 0 then
         P("  |cffFF4444No probes registered.|r Register with ns._memprobes.")
     end
+
+    if #counters > 0 then
+        table.sort(counters, function(a, b) return a.name < b.name end)
+        P("  |cffAAAAAA--- Counters ---|r")
+        for _, entry in ipairs(counters) do
+            local line = string.format("  %-35s %5d", entry.name, entry.value)
+            if prev and prev[entry.name] and prev[entry.name].counter then
+                local d = entry.value - (prev[entry.name].value or 0)
+                if d ~= 0 then
+                    line = line .. string.format("  |cff%s%s%d|r",
+                        d > 0 and "FF8844" or "44FF44",
+                        d > 0 and "+" or "", d)
+                end
+            end
+            P(line)
+        end
+    end
 end
 
 ----------------------------------------------------------------------------
@@ -165,6 +187,7 @@ local autoEnabled = false
 local autoInterval = 5.0
 local autoElapsed = 0
 local autoLastSnap = nil
+local autoCombatStartSnap = nil
 
 local function PrintAutoLine(snap, prev)
     local P = print
@@ -193,19 +216,25 @@ local function PrintAutoLine(snap, prev)
         for name, val in pairs(snap) do
             if name:sub(1, 1) ~= "_" and prev[name] then
                 local prevTotal, curTotal
-                if type(prev[name]) == "table" then
+                if type(prev[name]) == "table" and prev[name].counter then
+                    prevTotal = nil
+                elseif type(prev[name]) == "table" then
                     prevTotal = prev[name].count + prev[name].deep
                 else
                     prevTotal = prev[name]
                 end
-                if type(val) == "table" then
+                if type(val) == "table" and val.counter then
+                    curTotal = nil
+                elseif type(val) == "table" then
                     curTotal = val.count + val.deep
                 else
                     curTotal = val
                 end
-                local d = curTotal - prevTotal
-                if d > 0 then
-                    growers[#growers + 1] = { name = name, delta = d }
+                if prevTotal and curTotal then
+                    local d = curTotal - prevTotal
+                    if d > 0 then
+                        growers[#growers + 1] = { name = name, delta = d }
+                    end
                 end
             end
         end
@@ -218,6 +247,23 @@ local function PrintAutoLine(snap, prev)
             P("  |cffAAAAAA→ probed grew:|r " .. table.concat(parts, ", "))
         else
             P("  |cffAAAAAA→ no probed table grew — retention is outside probes|r")
+        end
+
+        local counterParts = {}
+        for name, val in pairs(snap) do
+            local prevVal = prev[name]
+            if name:sub(1, 1) ~= "_" and type(val) == "table" and val.counter
+                and type(prevVal) == "table" and prevVal.counter
+            then
+                local d = (val.value or 0) - (prevVal.value or 0)
+                if d ~= 0 then
+                    counterParts[#counterParts + 1] = string.format("%s %s%d", name, d > 0 and "+" or "", d)
+                end
+            end
+        end
+        if #counterParts > 0 then
+            table.sort(counterParts)
+            P("  |cffAAAAAA→ counters:|r " .. table.concat(counterParts, ", "))
         end
     end
 end
@@ -241,14 +287,26 @@ autoFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 autoFrame:SetScript("OnEvent", function(self, event)
     if event == "PLAYER_REGEN_DISABLED" then
         autoElapsed = 0
-        autoLastSnap = autoEnabled and TakeSnapshot() or nil
-    elseif event == "PLAYER_REGEN_ENABLED" and autoEnabled and autoLastSnap then
+        autoCombatStartSnap = autoEnabled and TakeSnapshot() or nil
+        autoLastSnap = autoCombatStartSnap
+    elseif event == "PLAYER_REGEN_ENABLED" and autoEnabled and autoCombatStartSnap then
         -- Combat ended: print one final summary line.
         local snap = TakeSnapshot()
+        local startKB = autoCombatStartSnap._totalKB
         print(string.format("|cff60A5FA[memaudit auto]|r combat ended — final %s (Δ from combat-start %s)",
             FormatKB(snap._totalKB),
-            FormatKB(snap._totalKB - autoLastSnap._totalKB)))
+            FormatKB(snap._totalKB - startKB)))
         autoLastSnap = nil
+        autoCombatStartSnap = nil
+        C_Timer.After(0.5, function()
+            if autoEnabled and not InCombatLockdown() then
+                collectgarbage("collect")
+                local post = TakeSnapshot()
+                print(string.format("|cff60A5FA[memaudit auto]|r post-GC — final %s (Δ from combat-start %s)",
+                    FormatKB(post._totalKB),
+                    FormatKB(post._totalKB - startKB)))
+            end
+        end)
     end
 end)
 
@@ -257,6 +315,7 @@ local function ToggleAuto(arg)
         autoEnabled = false
         autoFrame:Hide()
         autoLastSnap = nil
+        autoCombatStartSnap = nil
         print("|cff60A5FAQUI memaudit auto:|r |cffFF4444off|r")
         return
     end
@@ -284,6 +343,7 @@ local function ToggleAuto(arg)
             autoEnabled = false
             autoFrame:Hide()
             autoLastSnap = nil
+            autoCombatStartSnap = nil
             print("|cff60A5FAQUI memaudit auto:|r |cffFF4444off|r")
         end
     end
