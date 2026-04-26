@@ -1386,12 +1386,16 @@ function CDMBars:UpdateOwnedBarAura(bar)
                 -- combat. C_StringUtil.WrapString/TruncateWhenZero are C-side
                 -- but carry the secrecy through to the returned string, so
                 -- the wrapped result cannot be compared in Lua (== / ~= taint).
-                -- Always forward to C-side SetFormattedText: WrapString returns
-                -- "" for nil/empty/zero input, which collapses %s%s to just
-                -- the name when stacks is absent.
-                local stacks = r.stacks ~= nil
-                    and C_StringUtil.WrapString(C_StringUtil.TruncateWhenZero(r.stacks), " (", ")")
-                    or ""
+                -- Always forward to C-side SetFormattedText when formatting
+                -- succeeds; invalid combat stack counts collapse to empty.
+                local stacks = ""
+                if r.stacks ~= nil then
+                    local truncOk, truncText = pcall(C_StringUtil.TruncateWhenZero, r.stacks)
+                    if truncOk then
+                        local wrapOk, wrapped = pcall(C_StringUtil.WrapString, truncText, " (", ")")
+                        stacks = wrapOk and wrapped or ""
+                    end
+                end
                 pcall(bar.NameText.SetFormattedText, bar.NameText, "%s%s", name, stacks)
             end
         end

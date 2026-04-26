@@ -2286,15 +2286,11 @@ local function UpdateIconCooldown(icon)
                             pcall(icon.Cooldown.SetReverse, icon.Cooldown, true)
                         end
 
-                        -- Stacks: forward r.stacks directly to C-side. Blizzard's
-                        -- aura APIs return secret values in combat, so any Lua-
-                        -- side comparison on r.stacks is unsafe — instead, "or 0"
-                        -- maps nil → 0 via short-circuit (no value inspection),
-                        -- and TruncateWhenZero / SetText accept secret integers
-                        -- natively. For charged entries, raw 0 is meaningful
-                        -- (all charges depleted); for non-charged auras,
-                        -- TruncateWhenZero collapses 0 to "" and the stack
-                        -- text simply renders empty.
+                        -- Stacks: forward r.stacks directly to C-side where
+                        -- possible. Blizzard aura APIs can return secret or
+                        -- otherwise non-finite values in combat, so keep stack
+                        -- formatting behind pcall and collapse invalid counts
+                        -- to empty text.
                         local _auraHookActive = (not r.isTotemInstance) and IsHookStackActive(entry, icon)
                         if not _auraHookActive then
                             if r.isTotemInstance then
@@ -2302,8 +2298,11 @@ local function UpdateIconCooldown(icon)
                                 icon.StackText:Hide()
                             else
                                 local stacks = r.stacks or 0
-                                local text = entry.hasCharges and stacks
-                                    or C_StringUtil.TruncateWhenZero(stacks)
+                                local text = stacks
+                                if not entry.hasCharges then
+                                    local truncOk, truncText = pcall(C_StringUtil.TruncateWhenZero, stacks)
+                                    text = truncOk and truncText or ""
+                                end
                                 pcall(icon.StackText.SetText, icon.StackText, text)
                                 icon.StackText:Show()
                             end
