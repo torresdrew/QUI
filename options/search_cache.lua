@@ -3913,7 +3913,7 @@ ns.QUI_SearchCache = {
             ["tabName"] = "Click-Cast",
             ["widgetDescriptor"] = {
                 ["dbKey"] = "boss",
-                ["dbPath"] = "profile.quiGroupFrames.clickCast.unitFrames",
+                ["dbPath"] = "char.clickCast.unitFrames",
                 ["kind"] = "toggle",
             },
             ["widgetType"] = "toggle",
@@ -3928,7 +3928,7 @@ ns.QUI_SearchCache = {
             ["tabName"] = "Click-Cast",
             ["widgetDescriptor"] = {
                 ["dbKey"] = "enabled",
-                ["dbPath"] = "profile.quiGroupFrames.clickCast",
+                ["dbPath"] = "char.clickCast",
                 ["kind"] = "toggle",
             },
             ["widgetType"] = "toggle",
@@ -3943,7 +3943,7 @@ ns.QUI_SearchCache = {
             ["tabName"] = "Click-Cast",
             ["widgetDescriptor"] = {
                 ["dbKey"] = "focus",
-                ["dbPath"] = "profile.quiGroupFrames.clickCast.unitFrames",
+                ["dbPath"] = "char.clickCast.unitFrames",
                 ["kind"] = "toggle",
             },
             ["widgetType"] = "toggle",
@@ -3978,7 +3978,7 @@ ns.QUI_SearchCache = {
             ["tabName"] = "Click-Cast",
             ["widgetDescriptor"] = {
                 ["dbKey"] = "perLoadout",
-                ["dbPath"] = "profile.quiGroupFrames.clickCast",
+                ["dbPath"] = "char.clickCast",
                 ["kind"] = "toggle",
             },
             ["widgetType"] = "toggle",
@@ -3993,7 +3993,7 @@ ns.QUI_SearchCache = {
             ["tabName"] = "Click-Cast",
             ["widgetDescriptor"] = {
                 ["dbKey"] = "perSpec",
-                ["dbPath"] = "profile.quiGroupFrames.clickCast",
+                ["dbPath"] = "char.clickCast",
                 ["kind"] = "toggle",
             },
             ["widgetType"] = "toggle",
@@ -4008,7 +4008,7 @@ ns.QUI_SearchCache = {
             ["tabName"] = "Click-Cast",
             ["widgetDescriptor"] = {
                 ["dbKey"] = "pet",
-                ["dbPath"] = "profile.quiGroupFrames.clickCast.unitFrames",
+                ["dbPath"] = "char.clickCast.unitFrames",
                 ["kind"] = "toggle",
             },
             ["widgetType"] = "toggle",
@@ -4023,7 +4023,7 @@ ns.QUI_SearchCache = {
             ["tabName"] = "Click-Cast",
             ["widgetDescriptor"] = {
                 ["dbKey"] = "player",
-                ["dbPath"] = "profile.quiGroupFrames.clickCast.unitFrames",
+                ["dbPath"] = "char.clickCast.unitFrames",
                 ["kind"] = "toggle",
             },
             ["widgetType"] = "toggle",
@@ -4038,7 +4038,7 @@ ns.QUI_SearchCache = {
             ["tabName"] = "Click-Cast",
             ["widgetDescriptor"] = {
                 ["dbKey"] = "showTooltip",
-                ["dbPath"] = "profile.quiGroupFrames.clickCast",
+                ["dbPath"] = "char.clickCast",
                 ["kind"] = "toggle",
             },
             ["widgetType"] = "toggle",
@@ -4053,7 +4053,7 @@ ns.QUI_SearchCache = {
             ["tabName"] = "Click-Cast",
             ["widgetDescriptor"] = {
                 ["dbKey"] = "smartRes",
-                ["dbPath"] = "profile.quiGroupFrames.clickCast",
+                ["dbPath"] = "char.clickCast",
                 ["kind"] = "toggle",
             },
             ["widgetType"] = "toggle",
@@ -4068,7 +4068,7 @@ ns.QUI_SearchCache = {
             ["tabName"] = "Click-Cast",
             ["widgetDescriptor"] = {
                 ["dbKey"] = "target",
-                ["dbPath"] = "profile.quiGroupFrames.clickCast.unitFrames",
+                ["dbPath"] = "char.clickCast.unitFrames",
                 ["kind"] = "toggle",
             },
             ["widgetType"] = "toggle",
@@ -4083,7 +4083,7 @@ ns.QUI_SearchCache = {
             ["tabName"] = "Click-Cast",
             ["widgetDescriptor"] = {
                 ["dbKey"] = "targettarget",
-                ["dbPath"] = "profile.quiGroupFrames.clickCast.unitFrames",
+                ["dbPath"] = "char.clickCast.unitFrames",
                 ["kind"] = "toggle",
             },
             ["widgetType"] = "toggle",
