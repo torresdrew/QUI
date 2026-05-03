@@ -3,6 +3,7 @@
     <!-- Shared helpers must load first - provides common utilities for all modules -->
     <Script file="utils.lua"/>
     <Script file="diagnostics_console.lua"/>
+    <Script file="dumpspell.lua"/>
     <Script file="aura_events.lua"/>
     <Script file="registry.lua"/>
     <Script file="modules.lua"/>
