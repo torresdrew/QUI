@@ -15,6 +15,28 @@ Run after adding or renaming user-visible settings.
 lua tools/generate_search_cache.lua
 ```
 
+## audit_search_cache.lua
+
+Audits the generated search cache against settings features declared in the
+source tree. Run it after regenerating the cache to catch pages that have
+navigation or registered feature IDs but no cached settings.
+
+```sh
+lua tools/generate_search_cache.lua
+lua tools/audit_search_cache.lua
+
+# Also assert specific search terms have at least one hit
+lua tools/audit_search_cache.lua \
+    --query "desaturate on cooldown" \
+    --query "action bars" \
+    --query "datatext"
+```
+
+The default audit fails only on newly-discovered registered settings features
+with zero cache entries, while known legacy/page-only gaps are reported as
+warnings. Use `--strict-tiles` to also fail on tile feature references with no
+setting entries, and `--verbose` to print per-feature counts.
+
 ## decode_profile.lua
 
 Decodes and inspects a QUI profile import string without loading the addon

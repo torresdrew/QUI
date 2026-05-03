@@ -205,6 +205,33 @@ function CDMIcons.IsCooldownInfoRealCooldown(info)
     return false
 end
 
+function CDMIcons.ClassifySpellCooldownState(spellID, info)
+    if not info and spellID and C_Spell and C_Spell.GetSpellCooldown then
+        local ok, fetchedInfo = pcall(C_Spell.GetSpellCooldown, spellID)
+        if ok then
+            info = fetchedInfo
+        end
+    end
+
+    local active = CDMIcons.IsCooldownInfoActive(info)
+    local realActive = CDMIcons.IsCooldownInfoRealCooldown(info)
+    local onGCD = false
+    local isOnGCD = info and CDMIcons.GetCooldownInfoField(info, "isOnGCD")
+    if type(isOnGCD) == "boolean" then
+        onGCD = isOnGCD
+    end
+
+    if realActive == nil
+       and active == true
+       and spellID
+       and CDMIcons.SpellHasBaseCooldownLongerThanGCD
+       and CDMIcons.SpellHasBaseCooldownLongerThanGCD(spellID) then
+        realActive = true
+    end
+
+    return active, realActive, onGCD, info
+end
+
 ---------------------------------------------------------------------------
 -- STATE
 ---------------------------------------------------------------------------
@@ -890,14 +917,19 @@ local function GetBestSpellCooldown(spellID)
 
     -- Check primary spell (per-tick cached)
     local cdInfo = TickCacheGetCooldown(spellID)
+    local cdActive = false
+    local cdRealUnknown = false
     if cdInfo then
-        if CDMIcons.IsCooldownInfoActive(cdInfo) == true then
+        local realActive
+        cdActive, realActive = CDMIcons.ClassifySpellCooldownState(spellID, cdInfo)
+        if cdActive == true then
             isActive = true
         end
-        local realActive = CDMIcons.IsCooldownInfoRealCooldown(cdInfo)
         if realActive ~= false then
             if realActive == true then
                 realCooldownActive = true
+            else
+                cdRealUnknown = true
             end
             bestStart, bestDuration, secretStart, secretDuration, bestDurObj =
                 AccumulateCooldown(cdInfo.startTime, cdInfo.duration, cdInfo,
@@ -905,12 +937,12 @@ local function GetBestSpellCooldown(spellID)
         end
     end
     local chargeInfo = TickCacheGetCharges(spellID)
+    local chargeBased = false
     if chargeInfo then
-        -- Use the new non-secret isActive boolean (12.0.5+) which is true
-        -- when maxCharges > 1 AND currentCharges < maxCharges AND the
-        -- recharge timer is running.  Falls back to manual comparison for
-        -- older API versions.  isActive is non-secret even in combat,
-        -- fixing charge detection that failed with secret currentCharges.
+        local maxCharges = SafeToNumber(chargeInfo.maxCharges, nil)
+        chargeBased = maxCharges and maxCharges > 1
+        -- Use the non-secret charge isActive boolean for recharge rendering.
+        -- It means the recharge UI should run, not that all charges are gone.
         local chargeActive = chargeInfo.isActive == true
         if chargeActive then
             isActive = true
@@ -919,6 +951,11 @@ local function GetBestSpellCooldown(spellID)
                 AccumulateCooldown(chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration, chargeInfo,
                     bestStart, bestDuration, secretStart, secretDuration, bestDurObj)
         end
+    end
+    if cdActive == true and cdRealUnknown and not chargeBased
+       and CDMIcons.SpellHasBaseCooldownLongerThanGCD
+       and CDMIcons.SpellHasBaseCooldownLongerThanGCD(spellID) then
+        realCooldownActive = true
     end
 
     -- Check override spell (no table allocation — just a second ID)
@@ -931,14 +968,19 @@ local function GetBestSpellCooldown(spellID)
         end
         if isOverridden then
             cdInfo = TickCacheGetCooldown(overrideID)
+            local overrideCdActive = false
+            local overrideCdRealUnknown = false
             if cdInfo then
-                if CDMIcons.IsCooldownInfoActive(cdInfo) == true then
+                local realActive
+                overrideCdActive, realActive = CDMIcons.ClassifySpellCooldownState(overrideID, cdInfo)
+                if overrideCdActive == true then
                     isActive = true
                 end
-                local realActive = CDMIcons.IsCooldownInfoRealCooldown(cdInfo)
                 if realActive ~= false then
                     if realActive == true then
                         realCooldownActive = true
+                    else
+                        overrideCdRealUnknown = true
                     end
                     bestStart, bestDuration, secretStart, secretDuration, bestDurObj =
                         AccumulateCooldown(cdInfo.startTime, cdInfo.duration, cdInfo,
@@ -946,7 +988,10 @@ local function GetBestSpellCooldown(spellID)
                 end
             end
             chargeInfo = TickCacheGetCharges(overrideID)
+            local overrideChargeBased = false
             if chargeInfo then
+                local maxCharges = SafeToNumber(chargeInfo.maxCharges, nil)
+                overrideChargeBased = maxCharges and maxCharges > 1
                 local chargeActive2 = chargeInfo.isActive == true
                 if chargeActive2 then
                     isActive = true
@@ -956,13 +1001,19 @@ local function GetBestSpellCooldown(spellID)
                             bestStart, bestDuration, secretStart, secretDuration, bestDurObj)
                 end
             end
+            if overrideCdActive == true and overrideCdRealUnknown and not overrideChargeBased
+               and CDMIcons.SpellHasBaseCooldownLongerThanGCD
+               and CDMIcons.SpellHasBaseCooldownLongerThanGCD(overrideID) then
+                realCooldownActive = true
+            end
         end
     end
 
     -- DurationObject APIs (12.0+, secret-safe). These are the only
     -- authoritative spell timing source we forward to owned cooldowns.
-    -- Gate queries behind real cooldown/recharge state so GCD, resource
-    -- recovery, and other non-cooldown waits do not drive false renders.
+    -- Gate queries behind cooldown/recharge state. For non-charged spells,
+    -- cooldown.isActive is the combat-safe signal; the later usability split
+    -- clears GCD-only/resource-only waits before desaturation is applied.
     if not bestDurObj and realCooldownActive then
         -- Check charge duration FIRST — for charged spells, the charge
         -- recharge DurationObject is what we want to display, not the
@@ -1079,16 +1130,18 @@ local function HasRealCooldownState(icon, entry, duration, apiIsActive, mirrorAc
         return false
     end
 
+    local chargeInfo = runtimeSpellID and TickCacheGetCharges(runtimeSpellID)
+    local maxCharges = chargeInfo and SafeToNumber(chargeInfo.maxCharges, nil)
+    if maxCharges and maxCharges > 1 then
+        return blizzRealCooldownActive == true
+    end
+
     if blizzRealCooldownActive then
         return true
     end
 
     if icon._showingRealCooldownSwipe then
         return true
-    end
-
-    if entry.hasCharges then
-        return apiIsActive == true
     end
 
     if mirrorActive then
@@ -1101,7 +1154,7 @@ local function HasRealCooldownState(icon, entry, duration, apiIsActive, mirrorAc
     end
 
     if IsSafeNumeric(icon and icon._lastStart) and IsSafeNumeric(icon and icon._lastDuration)
-        and icon._lastStart > 0 and icon._lastDuration > 0 then
+        and icon._lastStart > 0 and icon._lastDuration > GCD_MAX_DURATION then
         return true
     end
 
@@ -1177,6 +1230,7 @@ local function SyncMirroredCooldownState(icon, blizzCD, fallbackActive)
     if not blizzCD or not blizzCD.GetCooldownTimes then
         if fallbackActive ~= nil then
             icon._hasCooldownActive = fallbackActive
+            icon._hasRealCooldownActive = fallbackActive
         end
         return
     end
@@ -1185,6 +1239,7 @@ local function SyncMirroredCooldownState(icon, blizzCD, fallbackActive)
     if not ok or IsSecretValue(rawStart) or IsSecretValue(rawDuration) then
         if fallbackActive ~= nil then
             icon._hasCooldownActive = fallbackActive
+            icon._hasRealCooldownActive = fallbackActive
         end
         return
     end
@@ -1194,6 +1249,7 @@ local function SyncMirroredCooldownState(icon, blizzCD, fallbackActive)
     if not start or not duration then
         if fallbackActive ~= nil then
             icon._hasCooldownActive = fallbackActive
+            icon._hasRealCooldownActive = fallbackActive
         end
         return
     end
@@ -1214,7 +1270,9 @@ local function SyncMirroredCooldownState(icon, blizzCD, fallbackActive)
         icon._lastStart = 0
         icon._lastDuration = 0
     end
-    icon._hasCooldownActive = enabled and start > 0 and duration > 0
+    local realActive = enabled and start > 0 and duration > GCD_MAX_DURATION
+    icon._hasCooldownActive = realActive
+    icon._hasRealCooldownActive = realActive
 end
 
 local function MirrorCurrentBlizzCooldown(icon, blizzCD)
@@ -1231,18 +1289,27 @@ local function MirrorCurrentBlizzCooldown(icon, blizzCD)
         local sid = icon and icon._runtimeSpellID
             or (entry and (entry.spellID or entry.overrideSpellID or entry.id))
         if sid then
+            local apiActive, realActive, onGCD = CDMIcons.ClassifySpellCooldownState(sid)
+            local gcdOnly = realActive ~= true and onGCD == true and apiActive ~= false
             local okDur, durObj = pcall(C_Spell.GetSpellCooldownDuration, sid, true)
-            if okDur and durObj then
+            if okDur and durObj and (realActive == true or (gcdOnly and IsGCDSwipeEnabled())) then
                 synced = pcall(addonCD.SetCooldownFromDurationObject, addonCD, durObj) and true or false
+                if synced then
+                    if realActive == true then
+                        icon._showingRealCooldownSwipe = true
+                        icon._showingGCDSwipe = nil
+                    else
+                        icon._showingRealCooldownSwipe = nil
+                        icon._showingGCDSwipe = true
+                    end
+                end
             end
         end
     end
 
     if synced then
         icon._durObjHookSync = GetTime()
-        icon._showingGCDSwipe = nil
-        icon._showingRealCooldownSwipe = true
-        SyncMirroredCooldownState(icon, blizzCD, true)
+        SyncMirroredCooldownState(icon, blizzCD, icon._showingRealCooldownSwipe == true)
         RefreshIconGCDState(icon)
         return true
     end
@@ -1264,17 +1331,29 @@ local function MirrorCurrentBlizzCooldown(icon, blizzCD)
                     duration = duration / 1000
                 end
 
-                if enabled and start > 0 and duration > 0 then
+                if enabled and start > 0 and duration > 0
+                   and (duration > GCD_MAX_DURATION or IsGCDSwipeEnabled()) then
                     synced = ApplyResolvedCooldown(addonCD, start, duration, nil, false)
+                    if synced then
+                        if duration > GCD_MAX_DURATION then
+                            icon._showingRealCooldownSwipe = true
+                            icon._showingGCDSwipe = nil
+                        else
+                            icon._showingRealCooldownSwipe = nil
+                            icon._showingGCDSwipe = true
+                        end
+                    end
                 elseif duration == 0 or not enabled then
                     addonCD:Clear()
+                    icon._showingRealCooldownSwipe = nil
+                    icon._showingGCDSwipe = nil
                     synced = true
                 end
             end
         end
     end
 
-    SyncMirroredCooldownState(icon, blizzCD, synced)
+    SyncMirroredCooldownState(icon, blizzCD, icon._showingRealCooldownSwipe == true)
     RefreshIconGCDState(icon)
     return synced
 end
@@ -1459,19 +1538,32 @@ local function MirrorBlizzCooldown(icon, blizzChild)
                         local tSkipCharge = tEntry and tEntry.hasCharges
                         local tSkipAura = targetIcon._auraActive
                         RefreshIconGCDState(targetIcon)
+                        local tSid = GetIconCooldownIdentifier(targetIcon)
+                        local tApiActive, tRealActive, tOnGCD = CDMIcons.ClassifySpellCooldownState(tSid)
+                        local tGCDOnly = tRealActive ~= true and tOnGCD == true and tApiActive ~= false
 
-                        if not tSkipCharge and not tSkipAura and cd and cd.SetCooldownFromDurationObject then
-                            pcall(cd.SetCooldownFromDurationObject, cd, durationObj)
-                            targetIcon._durObjHookSync = GetTime()
-                            targetIcon._showingGCDSwipe = nil
-                            targetIcon._showingRealCooldownSwipe = true
+                        if not tSkipCharge and not tSkipAura and cd and cd.SetCooldownFromDurationObject
+                           and (tRealActive == true or (tGCDOnly and IsGCDSwipeEnabled())) then
+                            local applied = pcall(cd.SetCooldownFromDurationObject, cd, durationObj)
+                            if applied then
+                                targetIcon._durObjHookSync = GetTime()
+                                if tRealActive == true then
+                                    targetIcon._showingGCDSwipe = nil
+                                    targetIcon._showingRealCooldownSwipe = true
+                                else
+                                    targetIcon._showingGCDSwipe = true
+                                    targetIcon._showingRealCooldownSwipe = nil
+                                end
+                            end
+                        elseif tGCDOnly then
+                            targetIcon._showingRealCooldownSwipe = nil
                         end
                         ChargeDebug(tEntry and tEntry.name, "MIRROR hook: tSkipCharge=", tSkipCharge,
                             "tSkipAura=", tSkipAura,
                             "_hasCooldownActive=", targetIcon._hasCooldownActive)
 
                         if not tSkipCharge and not tSkipAura then
-                            SyncMirroredCooldownState(targetIcon, self, true)
+                            SyncMirroredCooldownState(targetIcon, self, tRealActive == true)
                         end
 
                         ReapplySwipeStyle(cd, targetIcon)
@@ -1494,12 +1586,28 @@ local function MirrorBlizzCooldown(icon, blizzChild)
                    and ChildStillBoundToIcon(targetIcon, tEntry._blizzChild) then
                     RefreshIconGCDState(targetIcon)
                     local cd = targetIcon.Cooldown
-                    if cd and cd.SetCooldown and not (tEntry and tEntry.hasCharges) and not targetIcon._auraActive then
+                    local tSid = GetIconCooldownIdentifier(targetIcon)
+                    local tApiActive, tRealActive, tOnGCD = CDMIcons.ClassifySpellCooldownState(tSid)
+                    local tGCDOnly = tRealActive ~= true and tOnGCD == true and tApiActive ~= false
+                    if cd and cd.SetCooldown and not (tEntry and tEntry.hasCharges) and not targetIcon._auraActive
+                       and (tRealActive == true or (tGCDOnly and IsGCDSwipeEnabled())) then
                         -- Forward to subscriber's Cooldown. Pcall handles the
                         -- secret-value rejection (12.0.5+ tainted SetCooldown
                         -- bans secret args); when it fails the subscriber
                         -- just stays at its previous state.
-                        pcall(cd.SetCooldown, cd, start, duration)
+                        local applied = pcall(cd.SetCooldown, cd, start, duration)
+                        if applied then
+                            if tRealActive == true then
+                                targetIcon._showingRealCooldownSwipe = true
+                                targetIcon._showingGCDSwipe = nil
+                            else
+                                targetIcon._showingRealCooldownSwipe = nil
+                                targetIcon._showingGCDSwipe = true
+                            end
+                            SyncMirroredCooldownState(targetIcon, self, tRealActive == true)
+                        end
+                    elseif tGCDOnly then
+                        targetIcon._showingRealCooldownSwipe = nil
                     end
                 end
             end
@@ -1564,8 +1672,27 @@ local function MirrorBlizzCooldown(icon, blizzChild)
                    -- C-side stops drawing on its own.
                    and not targetIcon._hasCooldownActive then
                     local cd = targetIcon.Cooldown
-                    if cd and cd[methodName] then
-                        pcall(cd[methodName], cd, unpack(args, 1, nargs))
+                    local tSid = GetIconCooldownIdentifier(targetIcon)
+                    local tApiActive, tRealActive, tOnGCD = CDMIcons.ClassifySpellCooldownState(tSid)
+                    local tGCDOnly = tRealActive ~= true and tOnGCD == true and tApiActive ~= false
+                    local shouldForward = methodName == "Clear"
+                        or tRealActive == true
+                        or (tGCDOnly and IsGCDSwipeEnabled())
+                    if cd and cd[methodName] and shouldForward then
+                        local applied = pcall(cd[methodName], cd, unpack(args, 1, nargs))
+                        if applied then
+                            if methodName == "Clear" then
+                                targetIcon._showingRealCooldownSwipe = nil
+                                targetIcon._showingGCDSwipe = nil
+                            elseif tRealActive == true then
+                                targetIcon._showingRealCooldownSwipe = true
+                                targetIcon._showingGCDSwipe = nil
+                            else
+                                targetIcon._showingRealCooldownSwipe = nil
+                                targetIcon._showingGCDSwipe = true
+                            end
+                            SyncMirroredCooldownState(targetIcon, self, tRealActive == true)
+                        end
                     end
                 end
             end
@@ -1902,46 +2029,49 @@ local function HookBlizzStackText(icon, blizzChild)
         return
     end
 
-    -- Reparent and style Blizzard's native ChargeCount and Applications
-    -- frames onto our CDM icon.  Blizzard manages SetText/Show/Hide
-    -- natively — no hooks needed for stack text forwarding.  This avoids
-    -- all secret-value comparison issues: Blizzard's C-side code handles
-    -- zero detection, visibility toggling, and clearing internally.
-    --
-    -- For non-charged entries (Spirit Bomb / Soul Fragments): the native
-    -- ChargeCount.Current and Applications.Applications FontStrings
-    -- display stacks directly.  Blizzard clears them when stacks deplete.
-    --
-    -- For charged entries (hasCharges=true): the FWD path drives
-    -- icon.StackText via cooldownChargesCount — Blizzard native frames
-    -- are still reparented but the FWD path is the authority.
+    -- Reparent Blizzard's native stack frames only for true multi-charge
+    -- spells. cooldownChargesCount / ChargeCount can also carry class or
+    -- resource display counts for ordinary spells, which looks like bogus
+    -- charges on CDM icons. Non-charge aura stacks are handled by the
+    -- SpellDisplayCount/aura API stack paths below instead.
+    local allowNativeStackFrames = entry and entry.hasCharges
 
     -- Reparent ChargeCount to our icon's TextOverlay so it renders
     -- above the cooldown swipe.  Blizzard still owns the frame and
     -- calls Show/Hide/SetText on it normally.
-    if chargeFrame then
+    if chargeFrame and allowNativeStackFrames then
         local textOverlay = icon.TextOverlay
         if textOverlay then
             local lvl = textOverlay:GetFrameLevel() + 1
             pcall(chargeFrame.SetParent, chargeFrame, textOverlay)
             pcall(chargeFrame.SetFrameLevel, chargeFrame, lvl)
         end
-        -- Show ChargeCount — Blizzard may start it hidden on essential
-        -- viewer children but still updates its text.  Making it visible
-        -- lets the native text display.  Blizzard's Hide() calls will
-        -- still work and correctly hide when stacks deplete.
-        if not (entry and entry.hasCharges) then
-            chargeFrame:Show()
-        end
     end
 
     -- Same for Applications.
-    if appFrame then
+    if appFrame and allowNativeStackFrames then
         local textOverlay = icon.TextOverlay
         if textOverlay then
             local lvl = textOverlay:GetFrameLevel() + 1
             pcall(appFrame.SetParent, appFrame, textOverlay)
             pcall(appFrame.SetFrameLevel, appFrame, lvl)
+        end
+    elseif not allowNativeStackFrames then
+        local textOverlay = icon.TextOverlay
+        local function restoreNativeFrame(frame)
+            if not frame or not textOverlay then return end
+            local okParent, parent = pcall(frame.GetParent, frame)
+            if okParent and parent == textOverlay then
+                pcall(frame.SetParent, frame, blizzChild)
+                pcall(frame.Hide, frame)
+            end
+        end
+        restoreNativeFrame(chargeFrame)
+        restoreNativeFrame(appFrame)
+        icon._stackTextReason = nil
+        if icon.StackText then
+            pcall(icon.StackText.SetText, icon.StackText, "")
+            pcall(icon.StackText.Hide, icon.StackText)
         end
     end
 
@@ -1976,23 +2106,28 @@ local function HookBlizzStackText(icon, blizzChild)
     if not state.subsHooked then
         state.subsHooked = true
         local sharedState = state  -- capture for upvalue
-        local function fanOut(text)
+        local function fanOut(text, source)
             for ic in pairs(sharedState.subscribers) do
                 local ent = ic and ic._spellEntry
-                if ic.StackText and ent and ent._blizzChild == blizzChild then
-                    pcall(ic.StackText.SetText, ic.StackText, text)
-                    pcall(ic.StackText.Show, ic.StackText)
+                if ic.StackText and ent and ent._blizzChild == blizzChild and ent.hasCharges then
+                    if CDMIcons.ShowIconStackText then
+                        CDMIcons.ShowIconStackText(ic, text, GetTrackerSettings(ent.viewerType), source or "native-charge-count")
+                    else
+                        ic._stackTextReason = source or "native-charge-count"
+                        pcall(ic.StackText.SetText, ic.StackText, text)
+                        pcall(ic.StackText.Show, ic.StackText)
+                    end
                 end
             end
         end
         if chargeFrame and chargeFrame.Current then
             hooksecurefunc(chargeFrame.Current, "SetText", function(_, text)
-                fanOut(text)
+                fanOut(text, "native-charge-count")
             end)
         end
         if appFrame and appFrame.Applications then
             hooksecurefunc(appFrame.Applications, "SetText", function(_, text)
-                fanOut(text)
+                fanOut(text, "native-applications-count")
             end)
         end
     end
@@ -2007,6 +2142,7 @@ end
 
 local function ClearIconStackText(icon)
     if not icon or not icon.StackText then return end
+    icon._stackTextReason = nil
     pcall(icon.StackText.SetText, icon.StackText, "")
     pcall(icon.StackText.Hide, icon.StackText)
 end
@@ -3249,6 +3385,8 @@ function CDMIcons.ResolveCooldownActivityState(icon, entry, containerDB, now)
         isOnCooldown = false,
         rechargeActive = false,
         hasChargesRemaining = false,
+        -- Internal QUI metadata only; do not populate this from secret API
+        -- charge predicates.
         hasCharges = entry and entry.hasCharges or false,
     }
     if not icon or not entry then return state end
@@ -3268,41 +3406,38 @@ function CDMIcons.ResolveCooldownActivityState(icon, entry, containerDB, now)
     if spellID and not isItemLike then
         local ci = TickCacheGetCharges(spellID)
         if ci then
-            local current = SafeToNumber(ci.currentCharges, nil)
             local maxC = SafeToNumber(ci.maxCharges, nil)
             if maxC and maxC > 1 then
                 state.hasCharges = true
             end
+        end
 
-            if state.hasCharges then
-                if current and current > 0 then
-                    state.hasChargesRemaining = true
+        if state.hasCharges then
+            local cdInfo = TickCacheGetCooldown(spellID)
+            local cooldownActive = CDMIcons.IsCooldownInfoActive(cdInfo)
+            if cooldownActive == true then
+                state.rechargeActive = true
+                state.isOnCooldown = true
+                return state
+            elseif cooldownActive == false then
+                state.hasChargesRemaining = true
+                state.isOnCooldown = false
+            end
+
+            if ci then
+                local chargeActive = ci.isActive
+                if IsSecretValue(chargeActive) then
+                    chargeActive = nil
                 end
-
-                if ci.isActive == true or (current and maxC and current < maxC) then
+                if chargeActive == true then
                     state.rechargeActive = true
-                end
-
-                if state.rechargeActive and not state.hasChargesRemaining then
-                    local displayCount = TickCacheGetDisplayCount(spellID)
-                    local readableCount = SafeToNumber(displayCount, nil)
-                    if readableCount and readableCount > 0 then
-                        state.hasChargesRemaining = true
-                    end
-                end
-
-                if state.rechargeActive and not state.hasChargesRemaining then
-                    local cdInfo = TickCacheGetCooldown(spellID)
-                    if cdInfo and cdInfo.isActive == false then
-                        state.hasChargesRemaining = true
-                    end
-                end
-
-                if state.rechargeActive then
-                    state.isOnCooldown = not state.hasChargesRemaining
                 end
             end
         end
+    end
+
+    if state.hasCharges then
+        return state
     end
 
     if not state.rechargeActive then
@@ -3325,6 +3460,16 @@ function CDMIcons.ResolveCooldownActivityState(icon, entry, containerDB, now)
     end
 
     return state
+end
+
+function CDMIcons.CooldownHasVisualPriority(icon, entry, containerDB, now)
+    if not icon or not entry then return false end
+    if icon._cdDesaturated or icon._hasCooldownActive or icon._showingRealCooldownSwipe then
+        return true
+    end
+
+    local state = CDMIcons.ResolveCooldownActivityState(icon, entry, containerDB, now or GetTime())
+    return state and state.isOnCooldown == true
 end
 
 function CDMIcons.ResolveCustomBarActiveState(entry, icon, now)
@@ -3694,11 +3839,13 @@ function CDMIcons.ShowIconStackText(icon, value, containerDB, reason)
     if not icon or not icon.StackText then return end
     if CDMIcons.ShouldHideIconStackText(icon, containerDB) then
         CDMIcons.DebugStackText(icon, "hide", value, reason or "setting-hide-stack-text")
+        icon._stackTextReason = nil
         icon.StackText:SetText("")
         icon.StackText:Hide()
         return
     end
     CDMIcons.DebugStackText(icon, "show", value, reason)
+    icon._stackTextReason = reason
     icon.StackText:SetText(value)
     icon.StackText:Show()
 end
@@ -3706,6 +3853,7 @@ end
 function CDMIcons.HideIconStackText(icon, reason)
     if not icon or not icon.StackText then return end
     CDMIcons.DebugStackText(icon, "hide", nil, reason)
+    icon._stackTextReason = nil
     icon.StackText:SetText("")
     icon.StackText:Hide()
 end
@@ -3746,8 +3894,8 @@ function CDMIcons.ShouldUseBuffSwipeForIcon(icon, entry)
     return true
 end
 
-local function WipeUpdateTickCaches()
-    BeginUpdateTickCaches()
+local function WipeUpdateTickCaches(forceClear)
+    BeginUpdateTickCaches(forceClear == true)
     if ns.CDMSpellData and ns.CDMSpellData.WipeTickAuraCache then
         ns.CDMSpellData:WipeTickAuraCache()
     end
@@ -4074,9 +4222,9 @@ local function UpdateIconCooldown(icon)
                     -- Blizzard child instead of reconstructing cooldown state
                     -- in Lua every tick.
                     local childCi = TickCacheGetCooldown(cdSid)
-                    local childRealCooldownActive = CDMIcons.IsCooldownInfoRealCooldown(childCi)
-                    if childCi and childCi.isActive ~= nil then
-                        apiIsActive = childCi.isActive
+                    local childCooldownActive, childRealCooldownActive = CDMIcons.ClassifySpellCooldownState(cdSid, childCi)
+                    if childCooldownActive ~= nil then
+                        apiIsActive = childCooldownActive
                     end
                     -- Refresh _isOnGCD from per-tick API data.  Hooks alone can
                     -- leave it stale after GCD ends (Blizzard may not fire a new
@@ -4104,7 +4252,12 @@ local function UpdateIconCooldown(icon)
                     -- lets the C-side own draw/no-draw decisions
                     -- (SetCooldownFromDurationObject clears at zero) and skips
                     -- the numeric tick-apply/clear fallback below.
-                    if childRealCooldownActive ~= false
+                    local childCooldownMaybeReal = childRealCooldownActive == true
+                        or (childRealCooldownActive == nil
+                            and childCooldownActive == true
+                            and CDMIcons.SpellHasBaseCooldownLongerThanGCD
+                            and CDMIcons.SpellHasBaseCooldownLongerThanGCD(cdSid))
+                    if childCooldownMaybeReal
                         and entry._blizzChild and icon.Cooldown and icon.Cooldown.SetCooldownFromDurationObject and not icon._auraActive then
                         local spellDurObj = TickCacheGetDuration(cdSid)
                         if spellDurObj then
@@ -4119,7 +4272,7 @@ local function UpdateIconCooldown(icon)
                             icon._mirrorDriven = false
                         end
                         if entry._blizzChild.Cooldown then
-                            SyncMirroredCooldownState(icon, entry._blizzChild.Cooldown, apiIsActive)
+                            SyncMirroredCooldownState(icon, entry._blizzChild.Cooldown, childCooldownMaybeReal)
                             if CDMIcons.DebugIconEvent then
                                 local okTimes, rawStart, rawDuration, rawEnabled = pcall(entry._blizzChild.Cooldown.GetCooldownTimes, entry._blizzChild.Cooldown)
                                 local okChildID, childSpellID = false, nil
@@ -4174,12 +4327,10 @@ local function UpdateIconCooldown(icon)
                     if childCi and not IsSecretValue(childCi.isOnGCD) then
                         icon._isOnGCD = childCi.isOnGCD or false
                     end
-                    if childCi and childCi.isActive ~= nil then
-                        local auraRealCooldownActive = CDMIcons.IsCooldownInfoRealCooldown(childCi)
-                        if auraRealCooldownActive ~= nil then
-                            icon._hasCooldownActive = auraRealCooldownActive and true or false
-                            icon._hasRealCooldownActive = auraRealCooldownActive and true or false
-                        end
+                    local _, auraRealCooldownActive = CDMIcons.ClassifySpellCooldownState(cdSid, childCi)
+                    if auraRealCooldownActive ~= nil then
+                        icon._hasCooldownActive = auraRealCooldownActive and true or false
+                        icon._hasRealCooldownActive = auraRealCooldownActive and true or false
                     end
                 end
 
@@ -4444,7 +4595,7 @@ local function UpdateIconCooldown(icon)
             -- the "spell is usable → no real cooldown" override below.
             if not isItemEntry and _runtimeSid and C_Spell and C_Spell.IsSpellUsable then
                 local okUsable, isUsable = pcall(C_Spell.IsSpellUsable, _runtimeSid)
-                if okUsable then
+                if okUsable and not IsSecretValue(isUsable) then
                     spellUsable = (isUsable == true)
                 end
             end
@@ -4456,9 +4607,7 @@ local function UpdateIconCooldown(icon)
             -- spellUsable doesn't apply there.
             if not entry.hasCharges and not auraSwipeActive and not isItemEntry then
                 local hasNumericRealCooldown = IsSafeNumeric(duration) and duration > GCD_MAX_DURATION
-                if spellUsable == true
-                   and not hasNumericRealCooldown
-                   and not (durObj and apiIsActive == true and CDMIcons.SpellHasBaseCooldownLongerThanGCD(_runtimeSid)) then
+                if spellUsable == true and not hasNumericRealCooldown then
                     mirrorActive = false
                     realCooldownActive = false
                 end
@@ -4472,7 +4621,7 @@ local function UpdateIconCooldown(icon)
             local gcdOnlyActive = not auraSwipeActive
                 and not realCooldownActive
                 and icon._isOnGCD == true
-                and apiIsActive == true
+                and apiIsActive ~= false
             local gcdSwipeWanted = _showGCDSwipe and gcdOnlyActive
             icon._hasRealCooldownActive = realCooldownActive and true or false
             icon._hasGCDOnlyCooldown = gcdOnlyActive and true or nil
@@ -4587,7 +4736,7 @@ local function UpdateIconCooldown(icon)
                 -- desaturation gate opens.  Reset _lastVisualState so the
                 -- range poll can reapply usability tint after the CD ends.
                 local cooldownActiveForState = realCooldownActive and true or false
-                if cooldownActiveForState and not icon._hasCooldownActive and icon._usabilityTinted then
+                if cooldownActiveForState and icon._usabilityTinted then
                     icon.Icon:SetVertexColor(1, 1, 1, 1)
                     icon._usabilityTinted = nil
                     icon._lastVisualState = nil
@@ -4638,19 +4787,22 @@ local function UpdateIconCooldown(icon)
     if entry._blizzChild and C_Spell.GetSpellCharges then
         local baseSid = entry.spellID or entry.id
         local ci = baseSid and TickCacheGetCharges(baseSid)
+        local ciMax = ci and SafeToNumber(ci.maxCharges, nil)
         -- When the base spell transforms (e.g., Holy Bulwark → Sacred Weapon),
         -- GetSpellCharges on the base ID may return nil/<=1 even though the
         -- spell is still multi-charge.  Try the override spell ID as fallback.
-        if (not ci or not ci.maxCharges or ci.maxCharges <= 1)
+        if (not ciMax or ciMax <= 1)
             and entry.overrideSpellID and entry.overrideSpellID ~= baseSid then
             local oci = TickCacheGetCharges(entry.overrideSpellID)
-            if oci and oci.maxCharges and oci.maxCharges > 1 then
+            local ociMax = oci and SafeToNumber(oci.maxCharges, nil)
+            if ociMax and ociMax > 1 then
                 ci = oci
+                ciMax = ociMax
                 ChargeDebug(entry.name, "FWD override fallback: overrideSpellID=", entry.overrideSpellID,
-                    "maxCharges=", oci.maxCharges, "currentCharges=", oci.currentCharges)
+                    "maxCharges=", ociMax, "currentCharges=", oci.currentCharges)
             end
         end
-        if ci and ci.maxCharges and ci.maxCharges > 1 then
+        if ciMax and ciMax > 1 then
             -- Read cooldownChargesCount from the correct viewer child.
             -- entry._blizzChild can get reassigned to the buff viewer
             -- child (which lacks charge data), so we look up an alternate
@@ -4684,7 +4836,7 @@ local function UpdateIconCooldown(icon)
                 end
             end
             ChargeDebug(entry.name, "FWD path: baseSid=", baseSid,
-                "maxCharges=", ci.maxCharges, "currentCharges=", ci.currentCharges,
+                "maxCharges=", ciMax, "currentCharges=", ci.currentCharges,
                 "ccc=", ccc, "cccSource=", _dbgCccSource or "nil",
                 "hasCharges=", entry.hasCharges,
                 "overrideSpellID=", entry.overrideSpellID)
@@ -4693,33 +4845,21 @@ local function UpdateIconCooldown(icon)
                 CDMIcons.ShowIconStackText(icon, ccc, GetTrackerSettings(entry.viewerType), "fwd-charge-count")
                 _chargeCountForwarded = true
             end
-        elseif ci and ci.maxCharges then
+        elseif ciMax then
             ChargeDebug(entry.name, "FWD path CLEAR: baseSid=", baseSid,
-                "maxCharges=", ci.maxCharges, "(<=1, clearing stacks)",
+                "maxCharges=", ciMax, "(<=1, clearing stacks)",
                 "overrideSpellID=", entry.overrideSpellID)
             CDMIcons.HideIconStackText(icon, "fwd-clear-max<=1")
             _chargeCountForwarded = true
-        else
-            -- Spell has no charge mechanic (ci nil) but the Blizzard child
-            -- may still track a stack count via cooldownChargesCount — this
-            -- is how the cooldown viewer represents stacking auras like
-            -- Mana Tea. Reparenting the native ChargeCount FontString only
-            -- works for one icon at a time; this per-icon forward lets every
-            -- icon sharing the same _blizzChild render the stack count.
-            -- TruncateWhenZero is C-side and handles secret values: returns
-            -- "" for zero (non-stacking spells like Touch of Death stay
-            -- blank) and the stack count otherwise. Both arms forward via
-            -- pcall + SetText, so the value flows through C-side regardless
-            -- of secret state.
-            local ccc = entry._blizzChild.cooldownChargesCount
-            if ccc ~= nil then
-                local truncOk, truncText = pcall(C_StringUtil.TruncateWhenZero, ccc)
-                local displayText = truncOk and truncText or ccc
-                CDMIcons.ShowIconStackText(icon, displayText, GetTrackerSettings(entry.viewerType), "fwd-stacking-aura")
-                _chargeCountForwarded = true
-                ChargeDebug(entry.name, "FWD path STACKING-AURA: baseSid=", baseSid,
-                    "ccc=", ccc, "displayText=", displayText)
-            end
+        elseif icon._stackTextReason == "fwd-stacking-aura"
+            or icon._stackTextReason == "native-charge-count"
+            or icon._stackTextReason == "native-applications-count" then
+            -- No charge mechanic: do not forward cooldownChargesCount. That
+            -- Blizzard field also carries ordinary class/resource display
+            -- counts for some spells, which makes non-charge abilities look
+            -- charged. Clear only stale values from the old native/fwd path;
+            -- legitimate aura stacks are resolved below via aura APIs/hooks.
+            CDMIcons.HideIconStackText(icon, "fwd-no-charge-clear-native-count")
         end
     end
 
@@ -4744,8 +4884,8 @@ local function UpdateIconCooldown(icon)
 
             -- Only show charge count when maxCharges > 1 (multi-charge spell).
             -- maxCharges is non-secret (12.0.5+), always readable in combat.
-            -- Resource overlay counts (Soul Fragments etc.) are driven by the
-            -- hook path (HookBlizzStackText), not the API path.
+            -- Resource overlay counts (Soul Fragments etc.) use
+            -- GetSpellDisplayCount in the non-charge branch below.
             local isMultiCharge = _cachedChargeInfo
                 and _cachedChargeInfo.maxCharges
                 and _cachedChargeInfo.maxCharges > 1
@@ -4764,11 +4904,22 @@ local function UpdateIconCooldown(icon)
                     "currentCharges=", _cachedChargeInfo.currentCharges,
                     "displayCount=", stackVal, "isMultiCharge=", isMultiCharge)
             else
-                -- Single-charge spells with stacking auras (e.g., Mana Tea):
-                -- the hook path can only render on the one icon that owns the
-                -- reparented Blizzard FontString, so each non-owning icon
-                -- reads its own count via API and writes its own StackText.
-                stackVal = GetAuraApplicationsForSpell(spellID, entry, icon)
+                -- Non-charge resource overlays (Soul Fragments, etc.) use
+                -- SpellDisplayCount. This mirrors action-button count text
+                -- without trusting the CooldownViewer child's native
+                -- cooldownChargesCount, which can carry unrelated counts for
+                -- ordinary cooldown spells.
+                if spellID and C_Spell.GetSpellDisplayCount then
+                    stackVal = TickCacheGetDisplayCount(spellID)
+                end
+                if not stackVal then
+                    -- Single-charge spells with stacking auras (e.g., Mana
+                    -- Tea): the hook path can only render on the one icon
+                    -- that owns the reparented Blizzard FontString, so each
+                    -- non-owning icon reads its own count via API and writes
+                    -- its own StackText.
+                    stackVal = GetAuraApplicationsForSpell(spellID, entry, icon)
+                end
             end
 
 
@@ -4848,7 +4999,7 @@ local function UpdateIconCooldown(icon)
         local auraBlocks = (icon._auraActive or (CDMIcons.IsCustomBarContainer(desatSettings) and icon._customBarActive))
             and not icon._desaturateIgnoreAura
             and not showOnlyCooldownMode
-        if viewerType ~= "buff" and not auraBlocks and not icon._rangeTinted and not icon._usabilityTinted then
+        if viewerType ~= "buff" and not auraBlocks and not icon._rangeTinted then
             -- Per-spell desaturate override takes precedence over tracker-wide setting
             local desatOverride = icon._spellOverrideDesaturate
             local shouldDesaturate = settings and settings.desaturateOnCooldown
@@ -4871,7 +5022,6 @@ local function UpdateIconCooldown(icon)
                 local hasRealCD
                 if cooldownState.hasCharges then
                     hasRealCD = cooldownState.isOnCooldown == true
-                        or cooldownState.rechargeActive == true
                 else
                     hasRealCD = cooldownState.isOnCooldown == true
                         or realCooldownActive == true
@@ -4886,6 +5036,11 @@ local function UpdateIconCooldown(icon)
                     "viewerType=", entry.viewerType)
 
                 if hasRealCD then
+                    if icon._usabilityTinted then
+                        icon.Icon:SetVertexColor(1, 1, 1, 1)
+                        icon._usabilityTinted = nil
+                        icon._lastVisualState = nil
+                    end
                     icon.Icon:SetDesaturated(true)
                     icon._cdDesaturated = true
                     return
@@ -4907,7 +5062,9 @@ local function UpdateIconCooldown(icon)
     -- Self-heal usability tint: icon rebuilds (BuildIcons via ScanAll)
     -- wipe _usabilityTinted.  Restore from _lastVisualState which
     -- persists on the recycled table when the same spell is re-acquired.
-    if icon._lastVisualState == "unusable" and not icon._usabilityTinted and not icon._cdDesaturated then
+    if icon._lastVisualState == "unusable"
+       and not icon._usabilityTinted
+       and not CDMIcons.CooldownHasVisualPriority(icon, entry, GetTrackerSettings(entry.viewerType), _batchTime) then
         icon.Icon:SetVertexColor(0.4, 0.4, 0.4, 1)
         icon._usabilityTinted = true
     end
@@ -4971,6 +5128,7 @@ function CDMIcons:AcquireIcon(parent, spellEntry)
         if icon.Cooldown then
             icon.Cooldown:Clear()
         end
+        icon._stackTextReason = nil
         icon.StackText:SetText("")
         icon.StackText:Hide()
         -- Update click-to-cast secure attributes for recycled icons
@@ -5064,7 +5222,9 @@ function CDMIcons:ReleaseIcon(icon)
     if icon.Cooldown then
         icon.Cooldown:Clear()
     end
+    icon._stackTextReason = nil
     icon.StackText:SetText("")
+    icon.StackText:Hide()
     icon.Border:Hide()
     ClearIconProfessionQuality(icon)
 
@@ -5692,7 +5852,7 @@ end
 function CDMIcons:UpdateAllCooldowns(keepTickCaches)
     -- Wipe per-tick caches: each batch starts fresh so every spellID
     -- is queried at most once via TickCacheGetCharges/TickCacheGetCooldown.
-    WipeUpdateTickCaches()
+    WipeUpdateTickCaches(true)
     _tickCooldownStats.updateBatches = _tickCooldownStats.updateBatches + 1
     _tickCooldownStats.fullUpdateBatches = _tickCooldownStats.fullUpdateBatches + 1
 
@@ -5961,12 +6121,12 @@ function CDMIcons:UpdateAllCooldowns(keepTickCaches)
     DrainLayoutDirty()
 
     if not keepTickCaches then
-        WipeUpdateTickCaches()
+        WipeUpdateTickCaches(true)
     end
 end
 
 function CDMIcons:UpdateCooldownOnly(keepTickCaches)
-    WipeUpdateTickCaches()
+    WipeUpdateTickCaches(true)
     _tickCooldownStats.updateBatches = _tickCooldownStats.updateBatches + 1
     _tickCooldownStats.cooldownOnlyBatches = _tickCooldownStats.cooldownOnlyBatches + 1
 
@@ -5995,7 +6155,7 @@ function CDMIcons:UpdateCooldownOnly(keepTickCaches)
     DrainLayoutDirty()
 
     if not keepTickCaches then
-        WipeUpdateTickCaches()
+        WipeUpdateTickCaches(true)
     end
 end
 
@@ -6412,8 +6572,10 @@ local function SafeIsSpellUsable(spellID)
     if not spellID or not C_Spell or not C_Spell.IsSpellUsable then return true, false end
     local ok, usable, noMana = pcall(C_Spell.IsSpellUsable, spellID)
     if not ok then return true, false end  -- Secret value: assume usable
-    -- Convert potential secret booleans to real booleans
-    return usable and true or false, noMana and true or false
+    if IsSecretValue(usable) then return true, false end
+    if usable == false then return false, noMana == true end
+    if usable == true then return true, noMana == true end
+    return true, noMana == true
 end
 
 -- Per-cycle dedup caches: avoid calling the same C_Spell API for the same
@@ -6478,6 +6640,7 @@ local function UpdateIconVisualState(icon, cachedDB)
     -- Compute desired visual state (API calls use per-cycle dedup caches)
     ---------------------------------------------------------------------------
     local newVisualState = "normal"
+    local cooldownVisualPriority = false
 
     -- Priority 1: Out of range (red tint) — only when attackable unit exists
     -- Respects soft targeting: hard target > soft enemy.
@@ -6504,13 +6667,30 @@ local function UpdateIconVisualState(icon, cachedDB)
         end
     end
 
-    -- Priority 2: Unusable / resource-starved (darken) — only if not already OOR
-    if newVisualState == "normal" and usabilityEnabled then
+    -- Cooldown desaturation owns the neutral/gray visual before usability.
+    -- Range stays above it because red communicates target context.
+    if newVisualState == "normal" then
+        cooldownVisualPriority = CDMIcons.CooldownHasVisualPriority(icon, entry, settings, GetTime())
+        if cooldownVisualPriority and icon._usabilityTinted then
+            icon.Icon:SetVertexColor(1, 1, 1, 1)
+            icon._usabilityTinted = nil
+            icon._lastVisualState = nil
+        end
+    end
+
+    -- Last priority: unusable / resource-starved (darken).
+    if newVisualState == "normal" and usabilityEnabled and not cooldownVisualPriority then
         -- Per-cycle dedup: reuse result for shared spellIDs
         local isUsable = _usableCycleCache[spellID]
         if isUsable == nil then
             isUsable = SafeIsSpellUsable(spellID)
             _usableCycleCache[spellID] = isUsable
+        end
+        if not isUsable then
+            local chargeState = CDMIcons.ResolveCooldownActivityState(icon, entry, settings, GetTime())
+            if chargeState.hasCharges and chargeState.isOnCooldown ~= true then
+                isUsable = true
+            end
         end
         if not isUsable then
             newVisualState = "unusable"
@@ -6523,7 +6703,7 @@ local function UpdateIconVisualState(icon, cachedDB)
     -- icon rebuild or texture update), reapply the vertex color.
     ---------------------------------------------------------------------------
     if icon._lastVisualState == newVisualState then
-        if newVisualState == "unusable" and not icon._usabilityTinted and not icon._cdDesaturated then
+        if newVisualState == "unusable" and not icon._usabilityTinted and not icon._cdDesaturated and not cooldownVisualPriority then
             icon.Icon:SetVertexColor(0.4, 0.4, 0.4, 1)
             icon._usabilityTinted = true
         end
@@ -6649,7 +6829,7 @@ local function _CDMUpdateCallback()
     _cdmUpdateMode = CDM_UPDATE_COOLDOWN
 
     if not CDMIcons:IsRuntimeEnabled() then
-        WipeUpdateTickCaches()
+        WipeUpdateTickCaches(true)
         return
     end
 
@@ -6665,7 +6845,7 @@ local function _CDMUpdateCallback()
         CDMIcons:UpdateCooldownOnly(true)
     end
 
-    WipeUpdateTickCaches()
+    WipeUpdateTickCaches(true)
 end
 
 local function CDMUpdateOnUpdate(self, elapsed)
@@ -6751,7 +6931,7 @@ local function SafetyTickOnUpdate(self, elapsed)
         _barsDirty = false
         ns.CDMBars:UpdateOwnedBars()  -- safety ticker, don't clear oocInactive
     end
-    WipeUpdateTickCaches()
+    WipeUpdateTickCaches(true)
 end
 
 cdEventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3)
@@ -6968,5 +7148,5 @@ function CDMIcons:DisableRuntime()
     _cdmUpdatePending = false
     rangePollActive = false
     _barsDirty = false
-    WipeUpdateTickCaches()
+    WipeUpdateTickCaches(true)
 end

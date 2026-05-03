@@ -295,11 +295,18 @@ local function BuildStaticRegistryKey(entry, extra)
         extra or "",
         entry and entry.label or "",
         entry and entry.navType or "",
+        tostring(entry and entry.tabIndex or 0),
+        tostring(entry and entry.subTabIndex or 0),
         entry and entry.tileId or "",
         tostring(entry and entry.subPageIndex or 0),
         entry and entry.tabName or "",
         entry and entry.subTabName or "",
         entry and entry.sectionName or "",
+        entry and entry.featureId or "",
+        entry and entry.providerKey or "",
+        entry and entry.category or "",
+        entry and entry.surfaceTabKey or "",
+        entry and entry.surfaceUnitKey or "",
     }
     return table.concat(parts, "\31")
 end
@@ -582,6 +589,7 @@ local function BuildSearchSettingsRegistryKey(context, label)
         context and context.tileId or "",
         tostring(context and context.subPageIndex or 0),
         context and context.featureId or "",
+        context and context.providerKey or "",
         context and context.surfaceTabKey or "",
         context and context.surfaceUnitKey or "",
     }, "\31")

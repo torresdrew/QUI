@@ -989,6 +989,8 @@ local function register_capture_setting_entry(entry)
         featureId = context.featureId,
         providerKey = context.providerKey,
         category = context.category,
+        surfaceTabKey = context.surfaceTabKey,
+        surfaceUnitKey = context.surfaceUnitKey,
         widgetDescriptor = entry.widgetDescriptor,
         keywords = entry.keywords,
         description = entry.description,
@@ -1021,16 +1023,97 @@ local function create_captured_widget_stub(kind)
     return stub
 end
 
+local function copy_capture_entry(entry)
+    if type(entry) ~= "table" then
+        return nil
+    end
+
+    local copy = {}
+    for key, value in pairs(entry) do
+        copy[key] = value
+    end
+    return copy
+end
+
+local function register_widget_row_capture(widget, label)
+    if type(widget) ~= "table"
+        or type(label) ~= "string"
+        or label == ""
+        or type(widget._quiSearchCaptureEntry) ~= "table" then
+        return nil
+    end
+
+    if widget._quiSearchCaptureRegisteredLabel == label then
+        return nil
+    end
+
+    local entry = copy_capture_entry(widget._quiSearchCaptureEntry)
+    if not entry then
+        return nil
+    end
+
+    entry.label = label
+    widget._widgetLabel = label
+    widget._quiSearchCaptureRegisteredLabel = label
+    return register_capture_setting_entry(entry)
+end
+
 local function create_captured_search_widget(kind, label, dbKey, dbTable, extra, registryInfo)
-    register_capture_setting_entry({
+    local entry = {
         label = label,
         widgetType = kind,
         widgetDescriptor = GUI:BuildSearchWidgetDescriptor(kind, dbKey, dbTable, extra),
         keywords = registryInfo and registryInfo.keywords or nil,
         description = registryInfo and registryInfo.description or nil,
         relatedTo = registryInfo and registryInfo.relatedTo or nil,
+    }
+
+    register_capture_setting_entry(entry)
+
+    local stub = create_captured_widget_stub(kind)
+    stub._quiSearchCaptureEntry = entry
+    stub._widgetLabel = label
+    return stub
+end
+
+local function register_manual_static_setting(context, label, widget_type, db_path, db_key, extra)
+    if type(context) ~= "table" or type(label) ~= "string" or label == "" then
+        return nil
+    end
+
+    local descriptor = nil
+    if widget_type and db_path and db_key ~= nil then
+        descriptor = {
+            kind = widget_type,
+            dbPath = db_path,
+            dbKey = db_key,
+            providerKey = context.providerKey,
+        }
+        if type(extra) == "table" then
+            for key, value in pairs(extra) do
+                descriptor[key] = value
+            end
+        end
+    end
+
+    return GUI:RegisterStaticSettingEntry({
+        label = label,
+        widgetType = widget_type,
+        tabIndex = context.tabIndex,
+        tabName = context.tabName,
+        subTabIndex = context.subTabIndex,
+        subTabName = context.subTabName,
+        sectionName = context.sectionName,
+        tileId = context.tileId,
+        subPageIndex = context.subPageIndex,
+        featureId = context.featureId,
+        providerKey = context.providerKey,
+        category = context.category,
+        surfaceTabKey = context.surfaceTabKey,
+        surfaceUnitKey = context.surfaceUnitKey,
+        widgetDescriptor = descriptor,
+        keywords = context.keywords,
     })
-    return create_captured_widget_stub(kind)
 end
 
 local function install_search_capture_overrides()
@@ -1055,6 +1138,10 @@ local function install_search_capture_overrides()
             tileId = info.tileId,
             subPageIndex = info.subPageIndex,
             featureId = info.featureId,
+            providerKey = info.providerKey,
+            category = info.category,
+            surfaceTabKey = info.surfaceTabKey,
+            surfaceUnitKey = info.surfaceUnitKey,
             keywords = build_capture_navigation_keywords(info),
         })
     end
@@ -1103,6 +1190,15 @@ local function install_search_capture_overrides()
         return create_captured_search_widget("colorpicker", label, dbKey, dbTable, {
             options = options or {},
         }, registryInfo)
+    end
+
+    local options_api = ns.QUI_Options
+    if options_api and type(options_api.BuildSettingRow) == "function" then
+        local original_build_setting_row = options_api.BuildSettingRow
+        options_api.BuildSettingRow = function(parent, labelText, widget, desc)
+            register_widget_row_capture(widget, labelText)
+            return original_build_setting_row(parent, labelText, widget, desc)
+        end
     end
 end
 
@@ -1242,8 +1338,569 @@ local function capture_all_search_features()
     return #capture_errors == 0
 end
 
+local CDM_SEARCH_CAPTURE_CONTAINERS = {
+    "essential",
+    "utility",
+    "buff",
+    "trackedBar",
+}
+
+local CDM_SEARCH_CAPTURE_TABS = {
+    { key = "layout", label = "Appearance", method = "RenderLayoutTab" },
+    { key = "effects", label = "Effects", method = "RenderEffectsTab" },
+    { key = "keybinds", label = "Keybinds", method = "RenderKeybindsTab" },
+}
+
+local function capture_cdm_settings_tabs()
+    local schema = ns.QUI_CooldownManagerSettingsSchema
+    if type(schema) ~= "table" then
+        return true
+    end
+
+    for _, container_key in ipairs(CDM_SEARCH_CAPTURE_CONTAINERS) do
+        for _, tab in ipairs(CDM_SEARCH_CAPTURE_TABS) do
+            local render = schema[tab.method]
+            if type(render) == "function" then
+                local host = create_stub_node("Frame", nil, false)
+                host:SetSize(760, 1)
+
+                GUI:ClearSearchContext()
+                local ok, err = xpcall(function()
+                    GUI:SetSearchContext({
+                        tabIndex = 4,
+                        tabName = "Cooldown Manager",
+                        subTabIndex = 0,
+                        subTabName = tab.label,
+                        tileId = "cooldown_manager",
+                        subPageIndex = 1,
+                        featureId = "cooldownManagerContainersPage",
+                        providerKey = container_key,
+                        category = "cooldowns",
+                        surfaceTabKey = tab.key,
+                    })
+                    render(host, container_key)
+                    GUI:ClearSearchContext()
+                end, debug.traceback)
+                GUI:ClearSearchContext()
+
+                if not ok then
+                    capture_errors[#capture_errors + 1] = {
+                        featureId = "cooldownManagerContainersPage",
+                        providerKey = container_key .. ":" .. tab.key,
+                        error = err,
+                    }
+                end
+            end
+        end
+    end
+
+    return #capture_errors == 0
+end
+
+local GROUP_FRAMES_SEARCH_CAPTURE_CONTEXTS = {
+    { key = "party", providerKey = "partyFrames" },
+    { key = "raid", providerKey = "raidFrames" },
+}
+
+local GROUP_FRAMES_SEARCH_CAPTURE_TABS = {
+    { key = "general", label = "General", method = "RenderGeneralTab", subTabIndex = 1 },
+    { key = "appearance", label = "Appearance", method = "RenderAppearanceTab", subTabIndex = 2 },
+    { key = "layout", label = "Layout", method = "RenderLayoutTab", subTabIndex = 3 },
+    { key = "dimensions", label = "Dimensions", method = "RenderDimensionsTab", subTabIndex = 4 },
+    { key = "rangepet", label = "Range & Pet", method = "RenderRangePetTab", subTabIndex = 5 },
+    { key = "spotlight", label = "Spotlight", method = "RenderSpotlightTab", subTabIndex = 6, raidOnly = true },
+    { key = "health", label = "Health", method = "RenderHealthTab", subTabIndex = 7 },
+    { key = "power", label = "Power", method = "RenderPowerTab", subTabIndex = 8 },
+    { key = "name", label = "Name", method = "RenderNameTab", subTabIndex = 9 },
+    { key = "buffs", label = "Buffs", method = "RenderBuffsTab", subTabIndex = 10 },
+    { key = "debuffs", label = "Debuffs", method = "RenderDebuffsTab", subTabIndex = 11 },
+    { key = "indicators", label = "Indicators", method = "RenderIndicatorsTab", subTabIndex = 12 },
+    { key = "auraIndicators", label = "Aura Ind.", method = "RenderAuraIndicatorsTab", subTabIndex = 13 },
+    { key = "pinnedAuras", label = "Pinned", method = "RenderPinnedAurasTab", subTabIndex = 14 },
+    { key = "privateAuras", label = "Priv. Auras", method = "RenderPrivateAurasTab", subTabIndex = 15 },
+    { key = "healer", label = "Healer", method = "RenderHealerTab", subTabIndex = 16 },
+    { key = "defensive", label = "Defensive", method = "RenderDefensiveTab", subTabIndex = 17 },
+}
+
+local function capture_group_frames_settings_tabs()
+    local schema = ns.QUI_GroupFramesSettingsSchema
+    if type(schema) ~= "table" then
+        return true
+    end
+
+    for _, group_context in ipairs(GROUP_FRAMES_SEARCH_CAPTURE_CONTEXTS) do
+        for _, tab in ipairs(GROUP_FRAMES_SEARCH_CAPTURE_TABS) do
+            local render = schema[tab.method]
+            if type(render) == "function" and not (tab.raidOnly and group_context.key ~= "raid") then
+                local host = create_stub_node("Frame", nil, false)
+                host:SetSize(760, 1)
+
+                GUI:ClearSearchContext()
+                local ok, err = xpcall(function()
+                    GUI:SetSearchContext({
+                        tabIndex = 6,
+                        tabName = "Group Frames",
+                        subTabIndex = tab.subTabIndex,
+                        subTabName = tab.label,
+                        tileId = "group_frames",
+                        subPageIndex = 2,
+                        featureId = "groupFramesPage",
+                        providerKey = group_context.providerKey,
+                        category = "frames",
+                        surfaceTabKey = tab.key,
+                    })
+                    render(host, group_context.key)
+                    GUI:ClearSearchContext()
+                end, debug.traceback)
+                GUI:ClearSearchContext()
+
+                if not ok then
+                    capture_errors[#capture_errors + 1] = {
+                        featureId = "groupFramesPage",
+                        providerKey = group_context.providerKey .. ":" .. tab.key,
+                        error = err,
+                    }
+                end
+            end
+        end
+    end
+
+    return #capture_errors == 0
+end
+
+local UNIT_FRAMES_SEARCH_CAPTURE_UNITS = {
+    { key = "player", label = "Player" },
+    { key = "target", label = "Target" },
+    { key = "targettarget", label = "Target of Target" },
+    { key = "pet", label = "Pet" },
+    { key = "focus", label = "Focus" },
+    { key = "boss", label = "Boss" },
+}
+
+local UNIT_FRAMES_SEARCH_CAPTURE_TABS = {
+    { key = "frame", label = "Frame", method = "RenderFrameTab" },
+    { key = "bars", label = "Bars", method = "RenderBarsTab" },
+    { key = "castbar", label = "Castbar", method = "RenderCastbarTab" },
+    { key = "text", label = "Text", method = "RenderTextTab" },
+    { key = "icons", label = "Icons", method = "RenderIconsTab" },
+    { key = "indicators", label = "Indicators", method = "RenderIndicatorsTab" },
+    { key = "portrait", label = "Portrait", method = "RenderPortraitTab" },
+    { key = "privateAuras", label = "Priv. Auras", method = "RenderPrivateAurasTab" },
+}
+
+local function capture_unit_frames_settings_tabs()
+    local schema = ns.QUI_UnitFramesSettingsSchema
+    if type(schema) ~= "table" then
+        return true
+    end
+
+    for _, unit_context in ipairs(UNIT_FRAMES_SEARCH_CAPTURE_UNITS) do
+        for _, tab in ipairs(UNIT_FRAMES_SEARCH_CAPTURE_TABS) do
+            local render = schema[tab.method]
+            if type(render) == "function" then
+                local host = create_stub_node("Frame", nil, false)
+                host:SetSize(760, 1)
+
+                GUI:ClearSearchContext()
+                local ok, err = xpcall(function()
+                    GUI:SetSearchContext({
+                        tabIndex = 5,
+                        tabName = "Unit Frames",
+                        subTabIndex = 0,
+                        subTabName = tab.label,
+                        tileId = "unit_frames",
+                        subPageIndex = 1,
+                        featureId = "unitFramesPage",
+                        category = "frames",
+                        surfaceTabKey = tab.key,
+                        surfaceUnitKey = unit_context.key,
+                    })
+                    render(host, unit_context.key)
+                    GUI:ClearSearchContext()
+                end, debug.traceback)
+                GUI:ClearSearchContext()
+
+                if not ok then
+                    capture_errors[#capture_errors + 1] = {
+                        featureId = "unitFramesPage",
+                        providerKey = unit_context.key .. ":" .. tab.key,
+                        error = err,
+                    }
+                end
+            end
+        end
+    end
+
+    return #capture_errors == 0
+end
+
+local ACTION_BAR_ANCHOR_OPTIONS = {
+    { value = "TOPLEFT", text = "Top Left" },
+    { value = "TOP", text = "Top" },
+    { value = "TOPRIGHT", text = "Top Right" },
+    { value = "LEFT", text = "Left" },
+    { value = "CENTER", text = "Center" },
+    { value = "RIGHT", text = "Right" },
+    { value = "BOTTOMLEFT", text = "Bottom Left" },
+    { value = "BOTTOM", text = "Bottom" },
+    { value = "BOTTOMRIGHT", text = "Bottom Right" },
+}
+
+local ACTION_BAR_ORIENTATION_OPTIONS = {
+    { value = "horizontal", text = "Horizontal" },
+    { value = "vertical", text = "Vertical" },
+}
+
+local ACTION_BAR_FLYOUT_OPTIONS = {
+    { value = "AUTO", text = "Auto" },
+    { value = "UP", text = "Up" },
+    { value = "DOWN", text = "Down" },
+    { value = "LEFT", text = "Left" },
+    { value = "RIGHT", text = "Right" },
+}
+
+local ACTION_BAR_PRESSED_OPTIONS = {
+    { value = "off", text = "Off" },
+    { value = "blizzard", text = "Default" },
+    { value = "qui", text = "QUI" },
+}
+
+local ACTION_BAR_TOTEM_GROW_OPTIONS = {
+    { value = "RIGHT", text = "Right" },
+    { value = "LEFT", text = "Left" },
+    { value = "UP", text = "Up" },
+    { value = "DOWN", text = "Down" },
+}
+
+local ACTION_BAR_PER_BAR_CAPTURE_BARS = {
+    { key = "bar1", label = "Bar 1", dbKey = "bar1", layout = true, skinnable = true, flyout = true, hidePageArrow = true },
+    { key = "bar2", label = "Bar 2", dbKey = "bar2", layout = true, skinnable = true, flyout = true, toggleable = true },
+    { key = "bar3", label = "Bar 3", dbKey = "bar3", layout = true, skinnable = true, flyout = true, toggleable = true },
+    { key = "bar4", label = "Bar 4", dbKey = "bar4", layout = true, skinnable = true, flyout = true, toggleable = true },
+    { key = "bar5", label = "Bar 5", dbKey = "bar5", layout = true, skinnable = true, flyout = true, toggleable = true },
+    { key = "bar6", label = "Bar 6", dbKey = "bar6", layout = true, skinnable = true, flyout = true, toggleable = true },
+    { key = "bar7", label = "Bar 7", dbKey = "bar7", layout = true, skinnable = true, flyout = true, toggleable = true },
+    { key = "bar8", label = "Bar 8", dbKey = "bar8", layout = true, skinnable = true, flyout = true, toggleable = true },
+    { key = "stanceBar", label = "Stance Bar", dbKey = "stance", layout = true, skinnable = true },
+    { key = "petBar", label = "Pet Bar", dbKey = "pet", layout = true, skinnable = true },
+    { key = "microMenu", label = "Micro Menu", dbKey = "microbar", layout = true, clickthrough = true },
+    { key = "bagBar", label = "Bag Bar", dbKey = "bags", layout = true, clickthrough = true },
+}
+
+local function capture_action_bar_per_bar_setting(bar, section, label, widget_type, db_path, db_key, extra)
+    register_manual_static_setting({
+        tabIndex = 8,
+        tabName = "Action Bars",
+        subTabIndex = 3,
+        subTabName = "Per-Bar",
+        sectionName = bar.label .. " - " .. section,
+        tileId = "action_bars",
+        subPageIndex = 3,
+        featureId = "actionBarsPerBar",
+        providerKey = bar.key,
+        category = "frames",
+        keywords = { label, bar.label, section, "Action Bars", "Per-Bar" },
+    }, label, widget_type, db_path, db_key, extra)
+end
+
+local function capture_action_bar_text_section(bar, bar_path, section, prefix, toggle_label)
+    local lower_key = section:gsub("%s+", "")
+    capture_action_bar_per_bar_setting(bar, section, toggle_label, "toggle", bar_path, prefix.show)
+    capture_action_bar_per_bar_setting(bar, section, "Font Size", "slider", bar_path, prefix.fontSize, { min = 8, max = section == "Stack Count" and 20 or 18, step = 1 })
+    capture_action_bar_per_bar_setting(bar, section, "Anchor", "dropdown", bar_path, prefix.anchor, { options = ACTION_BAR_ANCHOR_OPTIONS })
+    capture_action_bar_per_bar_setting(bar, section, "X-Offset", "slider", bar_path, prefix.offsetX, { min = -20, max = 20, step = 1 })
+    capture_action_bar_per_bar_setting(bar, section, "Y-Offset", "slider", bar_path, prefix.offsetY, { min = -20, max = 20, step = 1 })
+    capture_action_bar_per_bar_setting(bar, section, "Color", "colorpicker", bar_path, prefix.color)
+    return lower_key
+end
+
+local function capture_action_bar_per_bar_settings()
+    for _, bar in ipairs(ACTION_BAR_PER_BAR_CAPTURE_BARS) do
+        local bar_path = "profile.actionBars.bars." .. bar.dbKey
+        local layout_path = bar_path .. ".ownedLayout"
+
+        if bar.toggleable then
+            capture_action_bar_per_bar_setting(bar, "Bar", "Enabled", "toggle", bar_path, "enabled")
+        end
+        if bar.hidePageArrow then
+            capture_action_bar_per_bar_setting(bar, "Bar", "Hide Default Paging Arrow", "toggle", bar_path, "hidePageArrow")
+        end
+        if bar.clickthrough then
+            capture_action_bar_per_bar_setting(bar, "Bar", "Clickthrough", "toggle", bar_path, "clickthrough")
+        end
+
+        if bar.layout then
+            capture_action_bar_per_bar_setting(bar, "Layout", "Orientation", "dropdown", layout_path, "orientation", { options = ACTION_BAR_ORIENTATION_OPTIONS })
+            capture_action_bar_per_bar_setting(bar, "Layout", "Buttons Per Row", "slider", layout_path, "columns", { min = 1, max = 12, step = 1 })
+            capture_action_bar_per_bar_setting(bar, "Layout", "Visible Buttons", "slider", layout_path, "iconCount", { min = 1, max = 12, step = 1 })
+            capture_action_bar_per_bar_setting(bar, "Layout", "Button Size", "slider", layout_path, "buttonSize", { min = 20, max = 64, step = 1 })
+            capture_action_bar_per_bar_setting(bar, "Layout", "Button Spacing", "slider", layout_path, "buttonSpacing", { min = 0, max = 12, step = 1 })
+            capture_action_bar_per_bar_setting(bar, "Layout", "Grow Upward", "toggle", layout_path, "growUp")
+            capture_action_bar_per_bar_setting(bar, "Layout", "Grow Left", "toggle", layout_path, "growLeft")
+            if bar.flyout then
+                capture_action_bar_per_bar_setting(bar, "Layout", "Flyout Direction", "dropdown", layout_path, "flyoutDirection", { options = ACTION_BAR_FLYOUT_OPTIONS })
+            end
+        end
+
+        if bar.skinnable then
+            capture_action_bar_per_bar_setting(bar, "Visual", "Icon Crop", "slider", bar_path, "iconZoom", { min = 0.05, max = 0.15, step = 0.01 })
+            capture_action_bar_per_bar_setting(bar, "Visual", "Show Backdrop", "toggle", bar_path, "showBackdrop")
+            capture_action_bar_per_bar_setting(bar, "Visual", "Backdrop Opacity", "slider", bar_path, "backdropAlpha", { min = 0, max = 1, step = 0.05 })
+            capture_action_bar_per_bar_setting(bar, "Visual", "Show Gloss", "toggle", bar_path, "showGloss")
+            capture_action_bar_per_bar_setting(bar, "Visual", "Gloss Opacity", "slider", bar_path, "glossAlpha", { min = 0, max = 1, step = 0.05 })
+            capture_action_bar_per_bar_setting(bar, "Visual", "Show Borders", "toggle", bar_path, "showBorders")
+            capture_action_bar_per_bar_setting(bar, "Visual", "Pressed Effect", "dropdown", bar_path, "showFlash", { options = ACTION_BAR_PRESSED_OPTIONS })
+
+            capture_action_bar_per_bar_setting(bar, "Keybind Text", "Show Keybinds", "toggle", bar_path, "showKeybinds")
+            capture_action_bar_per_bar_setting(bar, "Keybind Text", "Hide Empty Keybinds", "toggle", bar_path, "hideEmptyKeybinds")
+            capture_action_bar_text_section(bar, bar_path, "Keybind Text", {
+                show = "showKeybinds",
+                fontSize = "keybindFontSize",
+                anchor = "keybindAnchor",
+                offsetX = "keybindOffsetX",
+                offsetY = "keybindOffsetY",
+                color = "keybindColor",
+            }, "Show Keybinds")
+
+            capture_action_bar_text_section(bar, bar_path, "Macro Names", {
+                show = "showMacroNames",
+                fontSize = "macroNameFontSize",
+                anchor = "macroNameAnchor",
+                offsetX = "macroNameOffsetX",
+                offsetY = "macroNameOffsetY",
+                color = "macroNameColor",
+            }, "Show Macro Names")
+
+            capture_action_bar_text_section(bar, bar_path, "Stack Count", {
+                show = "showCounts",
+                fontSize = "countFontSize",
+                anchor = "countAnchor",
+                offsetX = "countOffsetX",
+                offsetY = "countOffsetY",
+                color = "countColor",
+            }, "Show Counts")
+        end
+    end
+
+    register_manual_static_setting({
+        tabIndex = 8,
+        tabName = "Action Bars",
+        subTabIndex = 3,
+        subTabName = "Per-Bar",
+        sectionName = "Totem Bar - Layout",
+        tileId = "action_bars",
+        subPageIndex = 3,
+        featureId = "actionBarsPerBar",
+        providerKey = "totemBar",
+        category = "frames",
+        keywords = { "Grow Direction", "Totem Bar", "Action Bars", "Per-Bar" },
+    }, "Grow Direction", "dropdown", "profile.totemBar", "growDirection", { options = ACTION_BAR_TOTEM_GROW_OPTIONS })
+end
+
+local MINIMAP_CORNER_OPTIONS = {
+    { value = "TOPRIGHT", text = "Top Right" },
+    { value = "TOPLEFT", text = "Top Left" },
+    { value = "BOTTOMRIGHT", text = "Bottom Right" },
+    { value = "BOTTOMLEFT", text = "Bottom Left" },
+}
+
+local MINIMAP_DRAWER_ANCHOR_OPTIONS = {
+    { value = "RIGHT", text = "Right" },
+    { value = "LEFT", text = "Left" },
+    { value = "TOP", text = "Top" },
+    { value = "BOTTOM", text = "Bottom" },
+    { value = "TOPLEFT", text = "Top Left" },
+    { value = "TOPRIGHT", text = "Top Right" },
+    { value = "BOTTOMLEFT", text = "Bottom Left" },
+    { value = "BOTTOMRIGHT", text = "Bottom Right" },
+}
+
+local MINIMAP_DRAWER_GROWTH_OPTIONS = {
+    { value = "RIGHT", text = "Right" },
+    { value = "LEFT", text = "Left" },
+    { value = "DOWN", text = "Down" },
+    { value = "UP", text = "Up" },
+}
+
+local MINIMAP_DRAWER_TOGGLE_ICON_OPTIONS = {
+    { value = "hammer", text = "Hammer" },
+    { value = "grid", text = "Grid Dots" },
+}
+
+local DATATEXT_SLOT_OPTIONS = {
+    { value = "", text = "(empty)" },
+    { value = "bags", text = "Bags" },
+    { value = "coords", text = "Coordinates" },
+    { value = "currencies", text = "Currencies" },
+    { value = "durability", text = "Durability" },
+    { value = "experience", text = "Experience" },
+    { value = "fps", text = "FPS" },
+    { value = "friends", text = "Friends" },
+    { value = "gold", text = "Gold" },
+    { value = "guild", text = "Guild" },
+    { value = "latency", text = "Latency" },
+    { value = "lootspec", text = "Loot Specialization" },
+    { value = "mythickey", text = "Mythic+ Key" },
+    { value = "playerspec", text = "Player Spec" },
+    { value = "system", text = "System" },
+    { value = "time", text = "Time" },
+    { value = "volume", text = "Volume" },
+}
+
+local DATATEXT_SPEC_DISPLAY_OPTIONS = {
+    { value = "icon", text = "Icon Only" },
+    { value = "loadout", text = "Icon + Loadout" },
+    { value = "full", text = "Full (Spec / Loadout)" },
+}
+
+local DATATEXT_TIME_FORMAT_OPTIONS = {
+    { value = "local", text = "Local Time" },
+    { value = "server", text = "Server Time" },
+}
+
+local DATATEXT_CLOCK_FORMAT_OPTIONS = {
+    { value = true, text = "24-Hour Clock" },
+    { value = false, text = "AM/PM" },
+}
+
+local function capture_minimap_setting(section, label, widget_type, db_path, db_key, extra)
+    register_manual_static_setting({
+        tabIndex = 9,
+        tabName = "Minimap & Datatext",
+        subTabIndex = 1,
+        subTabName = "Minimap",
+        sectionName = section,
+        tileId = "minimap",
+        subPageIndex = 1,
+        featureId = "minimap",
+        providerKey = "minimap",
+        category = "ui",
+        keywords = { label, section, "Minimap", "Minimap & Datatext" },
+    }, label, widget_type, db_path, db_key, extra)
+end
+
+local function capture_datatext_setting(section, label, widget_type, db_path, db_key, extra)
+    register_manual_static_setting({
+        tabIndex = 9,
+        tabName = "Minimap & Datatext",
+        subTabIndex = 2,
+        subTabName = "Datatext",
+        sectionName = section,
+        tileId = "minimap",
+        subPageIndex = 2,
+        featureId = "datatextPanel",
+        providerKey = "datatextPanel",
+        category = "ui",
+        keywords = { label, section, "Datatext", "Data Text", "Data Ext", "Minimap & Datatext" },
+    }, label, widget_type, db_path, db_key, extra)
+end
+
+local function capture_datatext_slot(slot_index, slot_label, slot_path)
+    capture_datatext_setting("Slot Configuration", "Slot " .. slot_index .. " (" .. slot_label .. ")", "dropdown", "profile.datatext.slots", slot_index, { options = DATATEXT_SLOT_OPTIONS })
+    capture_datatext_setting("Slot Configuration", "Slot " .. slot_index .. " Short Label", "toggle", slot_path, "shortLabel")
+    capture_datatext_setting("Slot Configuration", "Slot " .. slot_index .. " No Label", "toggle", slot_path, "noLabel")
+    capture_datatext_setting("Slot Configuration", "Slot " .. slot_index .. " X Offset", "slider", slot_path, "xOffset", { min = -50, max = 50, step = 1 })
+    capture_datatext_setting("Slot Configuration", "Slot " .. slot_index .. " Y Offset", "slider", slot_path, "yOffset", { min = -20, max = 20, step = 1 })
+end
+
+local function capture_minimap_datatext_settings()
+    capture_minimap_setting("General", "Map Dimensions", "slider", "profile.minimap", "size", { min = 120, max = 380, step = 1 })
+    capture_minimap_setting("General", "Map Zoom Level", "slider", "profile.minimap", "zoomLevel", { min = 0, max = 5, step = 1 })
+    capture_minimap_setting("General", "Middle-Click Menu", "toggle", "profile.minimap", "middleClickMenuEnabled")
+    capture_minimap_setting("General", "Auto-Zoom After Idle", "toggle", "profile.minimap", "autoZoom")
+    capture_minimap_setting("General", "Coord Update Interval (sec)", "slider", "profile.minimap", "coordUpdateInterval", { min = 1, max = 10, step = 1 })
+    capture_minimap_setting("General", "Addon Button Corner Radius", "slider", "profile.minimap", "buttonRadius", { min = 0, max = 12, step = 1 })
+    capture_minimap_setting("General", "Hide Addon Buttons Until Hover", "toggle", "profile.minimap", "hideAddonButtons")
+
+    capture_minimap_setting("Border", "Border Size", "slider", "profile.minimap", "borderSize", { min = 1, max = 16, step = 1 })
+    capture_minimap_setting("Border", "Border Color", "colorpicker", "profile.minimap", "borderColor")
+    capture_minimap_setting("Border", "Class Color Border", "toggle", "profile.minimap", "useClassColorBorder")
+    capture_minimap_setting("Border", "Accent Color Border", "toggle", "profile.minimap", "useAccentColorBorder")
+
+    capture_minimap_setting("Hide Elements", "Hide Mail (reload after)", "toggle_inverted", "profile.minimap", "showMail")
+    capture_minimap_setting("Hide Elements", "Hide Work Order Notification", "toggle_inverted", "profile.minimap", "showCraftingOrder")
+    capture_minimap_setting("Hide Elements", "Hide Tracking", "toggle_inverted", "profile.minimap", "showTracking")
+    capture_minimap_setting("Hide Elements", "Hide Difficulty", "toggle_inverted", "profile.minimap", "showDifficulty")
+    capture_minimap_setting("Hide Elements", "Hide Garrison/Mission Report", "toggle_inverted", "profile.minimap", "showMissions")
+    capture_minimap_setting("Hide Elements", "Hide Border (Top)", "toggle", "profile.uiHider", "hideMinimapBorder")
+    capture_minimap_setting("Hide Elements", "Hide Clock Button", "toggle", "profile.uiHider", "hideTimeManager")
+    capture_minimap_setting("Hide Elements", "Hide Calendar Button", "toggle", "profile.uiHider", "hideGameTime")
+    capture_minimap_setting("Hide Elements", "Hide Zone Text (Native)", "toggle", "profile.uiHider", "hideMinimapZoneText")
+    capture_minimap_setting("Hide Elements", "Hide Zoom Buttons", "toggle_inverted", "profile.minimap", "showZoomButtons")
+
+    capture_minimap_setting("Zone Label", "Show Zone Label", "toggle", "profile.minimap", "showZoneText")
+    capture_minimap_setting("Zone Label", "Horizontal Offset", "slider", "profile.minimap.zoneTextConfig", "offsetX", { min = -150, max = 150, step = 1 })
+    capture_minimap_setting("Zone Label", "Vertical Offset", "slider", "profile.minimap.zoneTextConfig", "offsetY", { min = -150, max = 150, step = 1 })
+    capture_minimap_setting("Zone Label", "Label Size", "slider", "profile.minimap.zoneTextConfig", "fontSize", { min = 8, max = 20, step = 1 })
+    capture_minimap_setting("Zone Label", "Uppercase Text", "toggle", "profile.minimap.zoneTextConfig", "allCaps")
+    capture_minimap_setting("Zone Label", "Use Class Color", "toggle", "profile.minimap.zoneTextConfig", "useClassColor")
+
+    capture_minimap_setting("Dungeon Eye", "Enable Dungeon Eye", "toggle", "profile.minimap.dungeonEye", "enabled")
+    capture_minimap_setting("Dungeon Eye", "Corner Position", "dropdown", "profile.minimap.dungeonEye", "corner", { options = MINIMAP_CORNER_OPTIONS })
+    capture_minimap_setting("Dungeon Eye", "Icon Scale", "slider", "profile.minimap.dungeonEye", "scale", { min = 0.1, max = 2.0, step = 0.1 })
+    capture_minimap_setting("Dungeon Eye", "X Offset", "slider", "profile.minimap.dungeonEye", "offsetX", { min = -30, max = 30, step = 1 })
+    capture_minimap_setting("Dungeon Eye", "Y Offset", "slider", "profile.minimap.dungeonEye", "offsetY", { min = -30, max = 30, step = 1 })
+
+    capture_minimap_setting("Great Vault", "Enable Great Vault Button", "toggle", "profile.minimap.greatVault", "enabled")
+    capture_minimap_setting("Great Vault", "Fade When Not Hovered", "toggle", "profile.minimap.greatVault", "fadeWhenMouseOut")
+    capture_minimap_setting("Great Vault", "Fade Opacity", "slider", "profile.minimap.greatVault", "fadeOpacity", { min = 0, max = 1, step = 0.05, options = { precision = 2 } })
+    capture_minimap_setting("Great Vault", "Anchor", "dropdown", "profile.minimap.greatVault", "anchor", { options = ACTION_BAR_ANCHOR_OPTIONS })
+    capture_minimap_setting("Great Vault", "Icon Scale", "slider", "profile.minimap.greatVault", "scale", { min = 0.5, max = 2.0, step = 0.1 })
+    capture_minimap_setting("Great Vault", "X Offset", "slider", "profile.minimap.greatVault", "offsetX", { min = -200, max = 200, step = 1 })
+    capture_minimap_setting("Great Vault", "Y Offset", "slider", "profile.minimap.greatVault", "offsetY", { min = -200, max = 200, step = 1 })
+
+    capture_minimap_setting("Button Drawer", "Enable Button Drawer", "toggle", "profile.minimap.buttonDrawer", "enabled")
+    capture_minimap_setting("Button Drawer", "Open on Mouseover", "toggle", "profile.minimap.buttonDrawer", "openOnMouseover")
+    capture_minimap_setting("Button Drawer", "Anchor Side", "dropdown", "profile.minimap.buttonDrawer", "anchor", { options = MINIMAP_DRAWER_ANCHOR_OPTIONS })
+    capture_minimap_setting("Button Drawer", "Drawer X Offset", "slider", "profile.minimap.buttonDrawer", "offsetX", { min = -200, max = 200, step = 1 })
+    capture_minimap_setting("Button Drawer", "Drawer Y Offset", "slider", "profile.minimap.buttonDrawer", "offsetY", { min = -200, max = 200, step = 1 })
+    capture_minimap_setting("Button Drawer", "Button X Offset", "slider", "profile.minimap.buttonDrawer", "toggleOffsetX", { min = -200, max = 200, step = 1 })
+    capture_minimap_setting("Button Drawer", "Button Y Offset", "slider", "profile.minimap.buttonDrawer", "toggleOffsetY", { min = -200, max = 200, step = 1 })
+    capture_minimap_setting("Button Drawer", "Toggle Size", "slider", "profile.minimap.buttonDrawer", "toggleSize", { min = 12, max = 40, step = 1 })
+    capture_minimap_setting("Button Drawer", "Toggle Icon", "dropdown", "profile.minimap.buttonDrawer", "toggleIcon", { options = MINIMAP_DRAWER_TOGGLE_ICON_OPTIONS })
+    capture_minimap_setting("Button Drawer", "Auto-Hide Delay (0=manual)", "slider", "profile.minimap.buttonDrawer", "autoHideDelay", { min = 0, max = 5, step = 0.5 })
+    capture_minimap_setting("Button Drawer", "Button Size", "slider", "profile.minimap.buttonDrawer", "buttonSize", { min = 20, max = 40, step = 1 })
+    capture_minimap_setting("Button Drawer", "Button Spacing", "slider", "profile.minimap.buttonDrawer", "buttonSpacing", { min = 0, max = 12, step = 1 })
+    capture_minimap_setting("Button Drawer", "Inner Padding", "slider", "profile.minimap.buttonDrawer", "padding", { min = 0, max = 20, step = 1 })
+    capture_minimap_setting("Button Drawer", "Columns", "slider", "profile.minimap.buttonDrawer", "columns", { min = 1, max = 6, step = 1 })
+    capture_minimap_setting("Button Drawer", "Growth Direction", "dropdown", "profile.minimap.buttonDrawer", "growthDirection", { options = MINIMAP_DRAWER_GROWTH_OPTIONS })
+    capture_minimap_setting("Button Drawer", "Center Growth", "toggle", "profile.minimap.buttonDrawer", "centerGrowth")
+    capture_minimap_setting("Button Drawer", "Auto-Hide Toggle Button", "toggle", "profile.minimap.buttonDrawer", "autoHideToggle")
+
+    capture_minimap_setting("Drawer Appearance", "Background Color", "colorpicker", "profile.minimap.buttonDrawer", "bgColor", { options = { noAlpha = true } })
+    capture_minimap_setting("Drawer Appearance", "Background Opacity", "slider", "profile.minimap.buttonDrawer", "bgOpacity", { min = 0, max = 100, step = 1 })
+    capture_minimap_setting("Drawer Appearance", "Border Size (0=hidden)", "slider", "profile.minimap.buttonDrawer", "borderSize", { min = 0, max = 8, step = 1 })
+    capture_minimap_setting("Drawer Appearance", "Border Color", "colorpicker", "profile.minimap.buttonDrawer", "borderColor", { options = { noAlpha = true } })
+
+    capture_datatext_setting("Panel Settings", "Enable Minimap Datatext", "toggle", "profile.datatext", "enabled")
+    capture_datatext_setting("Panel Settings", "Force Single Line", "toggle", "profile.datatext", "forceSingleLine")
+    capture_datatext_setting("Panel Settings", "Panel Height (Per Row)", "slider", "profile.datatext", "height", { min = 18, max = 50, step = 1 })
+    capture_datatext_setting("Panel Settings", "Background Transparency", "slider", "profile.datatext", "bgOpacity", { min = 0, max = 100, step = 5 })
+    capture_datatext_setting("Panel Settings", "Border Size (0=hidden)", "slider", "profile.datatext", "borderSize", { min = 0, max = 8, step = 1 })
+    capture_datatext_setting("Panel Settings", "Border Color", "colorpicker", "profile.datatext", "borderColor")
+    capture_datatext_setting("Panel Settings", "Vertical Offset", "slider", "profile.datatext", "offsetY", { min = -40, max = 40, step = 1 })
+    capture_datatext_setting("Panel Settings", "Text Size", "slider", "profile.datatext", "fontSize", { min = 9, max = 18, step = 1 })
+
+    capture_datatext_slot(1, "Left", "profile.datatext.slot1")
+    capture_datatext_slot(2, "Center", "profile.datatext.slot2")
+    capture_datatext_slot(3, "Right", "profile.datatext.slot3")
+
+    capture_datatext_setting("Text Styling", "Use Class Color", "toggle", "profile.datatext", "useClassColor")
+    capture_datatext_setting("Text Styling", "Custom Text Color", "colorpicker", "profile.datatext", "valueColor")
+
+    capture_datatext_setting("Spec Display", "Spec Display Mode", "dropdown", "profile.datatext", "specDisplayMode", { options = DATATEXT_SPEC_DISPLAY_OPTIONS })
+    capture_datatext_setting("Time Options", "Time Format", "dropdown", "profile.datatext", "timeFormat", { options = DATATEXT_TIME_FORMAT_OPTIONS })
+    capture_datatext_setting("Time Options", "Clock Format", "dropdown", "profile.datatext", "use24Hour", { options = DATATEXT_CLOCK_FORMAT_OPTIONS })
+    capture_datatext_setting("Time Options", "Lockout Refresh (minutes)", "slider", "profile.datatext", "lockoutCacheMinutes", { min = 1, max = 30, step = 1 })
+end
+
 install_search_capture_overrides()
 capture_all_search_features()
+capture_cdm_settings_tabs()
+capture_group_frames_settings_tabs()
+capture_unit_frames_settings_tabs()
+capture_action_bar_per_bar_settings()
+capture_minimap_datatext_settings()
 
 if type(GUI.SeedStaticSearchRoutesFromTiles) == "function" then
     GUI:SeedStaticSearchRoutesFromTiles(frame)
@@ -1299,11 +1956,16 @@ local function entry_sort_key(entry)
     return table.concat({
         entry.tileId or "",
         tostring(entry.subPageIndex or 0),
+        tostring(entry.tabIndex or 0),
+        tostring(entry.subTabIndex or 0),
         entry.sectionName or "",
         entry.label or "",
         entry.navType or "",
         entry.featureId or "",
         entry.providerKey or "",
+        entry.category or "",
+        entry.surfaceTabKey or "",
+        entry.surfaceUnitKey or "",
     }, "\31")
 end
 

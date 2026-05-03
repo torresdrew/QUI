@@ -74,6 +74,16 @@ local function SyncSelectedBar(barKey, origin)
     end
 end
 
+local function SelectBarForNavigation(barKey, origin)
+    if type(barKey) ~= "string" or not VALID_BAR_KEYS[barKey] then
+        return false
+    end
+
+    pendingSelectionKey = NormalizeBarKey(barKey)
+    SyncSelectedBar(pendingSelectionKey, origin)
+    return true
+end
+
 local function CopyTableInto(destination, source)
     if type(destination) == "table" then
         for key in pairs(destination) do
@@ -275,8 +285,10 @@ local feature = Schema.Feature({
     },
     lookupKeys = LOOKUP_KEYS,
     onNavigate = function(lookupKey)
-        pendingSelectionKey = NormalizeBarKey(lookupKey)
-        SyncSelectedBar(pendingSelectionKey, "lookup-nav")
+        SelectBarForNavigation(lookupKey, "lookup-nav")
+    end,
+    searchNavigate = function(entry)
+        return SelectBarForNavigation(entry and entry.providerKey, "search")
     end,
     getDB = function(profile)
         return profile and profile.actionBars

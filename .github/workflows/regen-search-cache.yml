@@ -44,7 +44,9 @@ jobs:
 
       - name: Regenerate search cache
         if: steps.bot-check.outputs.skip != 'true'
-        run: lua5.1 tools/generate_search_cache.lua
+        run: |
+          lua5.1 tools/generate_search_cache.lua
+          lua5.1 tools/audit_search_cache.lua
 
       - name: Commit and push if cache changed
         if: steps.bot-check.outputs.skip != 'true'

@@ -2,6 +2,9 @@ local ADDON_NAME, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
 local Opts = ns.QUI_Options
+local ACTION_BARS_SEARCH_TILE_ID = "action_bars"
+local ACTION_BARS_BUFF_DEBUFF_FEATURE_ID = "actionBarsBuffDebuff"
+local ACTION_BARS_BUFF_DEBUFF_SUB_PAGE_INDEX = 2
 
 local GROW_DIRECTION_OPTIONS = {
     { value = "right_down", text = "Right then Down" },
@@ -199,7 +202,16 @@ local function BuildBuffDebuffTab(tabContent)
     local SECTION_GAP = 14
     local y = -10
 
-    GUI:SetSearchContext({tabIndex = 2, tabName = "Unit Frames", subTabIndex = 4, subTabName = "Buff & Debuff"})
+    GUI:SetSearchContext({
+        tabIndex = 8,
+        tabName = "Action Bars",
+        subTabIndex = 2,
+        subTabName = "Buff/Debuff",
+        tileId = ACTION_BARS_SEARCH_TILE_ID,
+        subPageIndex = ACTION_BARS_BUFF_DEBUFF_SUB_PAGE_INDEX,
+        featureId = ACTION_BARS_BUFF_DEBUFF_FEATURE_ID,
+        category = "frames",
+    })
 
     local function headerAt(text)
         local header = Opts.CreateAccentDotLabel(tabContent, text, y)

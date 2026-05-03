@@ -122,6 +122,25 @@ local function SetActiveContainer(key)
     ContainerSelection:Set(key)
 end
 
+local function SetActiveTab(tabKey)
+    if type(tabKey) ~= "string" or tabKey == "" then
+        return
+    end
+
+    local tabModel = EnsureTabModel()
+    if not tabModel or type(tabModel.SetActiveKey) ~= "function" then
+        return
+    end
+
+    tabModel:SetActiveKey(tabKey)
+    if type(tabModel.ApplyNormalized) == "function" then
+        tabModel:ApplyNormalized()
+    end
+    if State.repaintTabs then
+        State.repaintTabs()
+    end
+end
+
 ---------------------------------------------------------------------------
 -- ClearFrame helper — wipes a frame's children + regions. Also scrubs
 -- any composer-layout cache flag so the composer rebuilds when the
@@ -324,5 +343,6 @@ ns.QUI_CooldownManagerSettingsSurface = {
         build = BuildPreviewBlock,
     },
     SetActiveContainer = SetActiveContainer,
+    SetActiveTab = SetActiveTab,
     RenderPage = BuildTileBody,
 }

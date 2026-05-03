@@ -79,6 +79,64 @@ local function SetContextMode(key)
     ContextSelection:Set(key)
 end
 
+local function SetActiveTab(tabKey)
+    if type(tabKey) ~= "string" or tabKey == "" then
+        return false
+    end
+
+    local tabModel = EnsureTabModel()
+    if not tabModel or type(tabModel.GetTabs) ~= "function" or type(tabModel.SetActiveKey) ~= "function" then
+        return false
+    end
+
+    local found = false
+    for _, tab in ipairs(tabModel:GetTabs() or {}) do
+        if tab.key == tabKey then
+            found = true
+            break
+        end
+    end
+    if not found then
+        return false
+    end
+
+    tabModel:SetActiveKey(tabKey)
+    if type(tabModel.ApplyNormalized) == "function" then
+        tabModel:ApplyNormalized()
+    end
+
+    if State.repaintTabs then
+        State.repaintTabs()
+    end
+
+    return true
+end
+
+local function NavigateSearchEntry(entry)
+    if type(entry) ~= "table" then
+        return false
+    end
+
+    local handled = false
+    if entry.providerKey == "raidFrames" or entry.providerKey == "spotlightFrames" then
+        SetContextMode("raid")
+        handled = true
+    elseif entry.providerKey == "partyFrames" then
+        SetContextMode("party")
+        handled = true
+    end
+
+    if SetActiveTab(entry.surfaceTabKey) then
+        handled = true
+    end
+
+    return handled
+end
+
+local function GetSearchRoot()
+    return State.activeBody
+end
+
 ---------------------------------------------------------------------------
 -- PREVIEW BLOCK — Party/Raid dropdown + hoisted composer preview.
 ---------------------------------------------------------------------------
@@ -178,5 +236,8 @@ ns.QUI_GroupFramesSettingsSurface = {
         build = BuildPreviewBlock,
     },
     SetContextMode = SetContextMode,
+    SetActiveTab = SetActiveTab,
+    NavigateSearchEntry = NavigateSearchEntry,
+    GetSearchRoot = GetSearchRoot,
     RenderPage = BuildTileBody,
 }

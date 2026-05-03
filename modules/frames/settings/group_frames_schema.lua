@@ -104,6 +104,9 @@ local TAB_SEARCH_CONTEXTS = {
     healer = { subTabIndex = 16, subTabName = "Healer" },
     defensive = { subTabIndex = 17, subTabName = "Defensive" },
 }
+local GROUP_FRAMES_SEARCH_TILE_ID = "group_frames"
+local GROUP_FRAMES_SEARCH_FEATURE_ID = "groupFramesPage"
+local GROUP_FRAMES_SEARCH_SUB_PAGE_INDEX = 2
 local VISUAL_DB_KEYS = {
     general = true, layout = true, health = true, power = true, name = true,
     absorbs = true, healPrediction = true, indicators = true,
@@ -132,6 +135,14 @@ local function NormalizeContextMode(contextMode)
     return "party"
 end
 
+local function GetSearchProviderKey(contextMode)
+    return NormalizeContextMode(contextMode) == "raid" and "raidFrames" or "partyFrames"
+end
+
+local function GetRenderContextMode(ctx)
+    return ctx and ((ctx.options and ctx.options.contextMode) or ctx.contextMode) or nil
+end
+
 local function ResolveGroupFramesDB(contextMode)
     local profile = GetProfileDB()
     local gfdb = profile and profile.quiGroupFrames
@@ -158,13 +169,19 @@ local function SetSearchContext(searchContext)
     end
 end
 
-local function CreateSearchContext(tabKey)
+local function CreateSearchContext(tabKey, contextMode)
     local context = TAB_SEARCH_CONTEXTS[tabKey] or TAB_SEARCH_CONTEXTS.general
     return {
         tabIndex = 6,
         tabName = "Group Frames",
         subTabIndex = context.subTabIndex,
         subTabName = context.subTabName,
+        tileId = GROUP_FRAMES_SEARCH_TILE_ID,
+        subPageIndex = GROUP_FRAMES_SEARCH_SUB_PAGE_INDEX,
+        featureId = GROUP_FRAMES_SEARCH_FEATURE_ID,
+        providerKey = GetSearchProviderKey(contextMode),
+        category = "frames",
+        surfaceTabKey = tabKey,
     }
 end
 
@@ -213,6 +230,9 @@ local function CreateSectionBuilder(sectionHost, ctx, searchContext)
     end
 
     PrepareSectionHost(sectionHost, ctx)
+    if type(searchContext) == "table" then
+        searchContext.providerKey = GetSearchProviderKey(GetRenderContextMode(ctx))
+    end
     SetSearchContext(searchContext)
 
     local y = 0
@@ -537,7 +557,7 @@ local function RenderGeneralEnableSection(sectionHost, ctx)
         return nil
     end
 
-    SetSearchContext(CreateSearchContext("general"))
+    SetSearchContext(CreateSearchContext("general", groupFrames.contextMode))
 
     local enableCheck = gui:CreateFormCheckbox(
         sectionHost,
@@ -572,7 +592,7 @@ local function RenderGeneralCopySettingsSection(sectionHost, ctx)
         return nil
     end
 
-    SetSearchContext(CreateSearchContext("general"))
+    SetSearchContext(CreateSearchContext("general", groupFrames.contextMode))
 
     local header = optionsAPI.CreateAccentDotLabel(sectionHost, "Copy Settings", 0)
     header:ClearAllPoints()

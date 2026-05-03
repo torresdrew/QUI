@@ -25,6 +25,10 @@ local TAB_SEARCH_CONTEXTS = {
     keybinds = "Keybinds",
 }
 
+local CDM_SEARCH_TILE_ID = "cooldown_manager"
+local CDM_SEARCH_FEATURE_ID = "cooldownManagerContainersPage"
+local CDM_SEARCH_SUB_PAGE_INDEX = 1
+
 local HEADER_GAP = 22
 local SECTION_BOTTOM_PAD = 12
 
@@ -147,7 +151,7 @@ local function BuildStatusbarTextureOptions()
     return textureOptions
 end
 
-local function SetSearchContext(tabKey)
+local function SetSearchContext(tabKey, containerKey)
     local gui = GetGUI()
     if gui and type(gui.SetSearchContext) == "function" then
         gui:SetSearchContext({
@@ -155,6 +159,12 @@ local function SetSearchContext(tabKey)
             tabName = "Cooldown Manager",
             subTabIndex = 0,
             subTabName = TAB_SEARCH_CONTEXTS[tabKey] or "Containers",
+            tileId = CDM_SEARCH_TILE_ID,
+            subPageIndex = CDM_SEARCH_SUB_PAGE_INDEX,
+            featureId = CDM_SEARCH_FEATURE_ID,
+            providerKey = containerKey,
+            category = "cooldowns",
+            surfaceTabKey = tabKey,
         })
     end
 end
@@ -340,7 +350,7 @@ local function CreateSectionBuilder(sectionHost, ctx, tabKey)
     end
 
     PrepareSectionHost(sectionHost, ctx)
-    SetSearchContext(tabKey)
+    SetSearchContext(tabKey, ResolveContainerKey(ctx))
 
     local y = 0
     local builder = {}
@@ -879,7 +889,7 @@ end
 
 local function RenderEntriesSection(sectionHost, ctx)
     local containerKey = ResolveContainerKey(ctx)
-    SetSearchContext("entries")
+    SetSearchContext("entries", containerKey)
 
     if not containerKey then
         return nil

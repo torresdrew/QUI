@@ -15,6 +15,14 @@ local LOOKUP_TO_CONTAINER = {
     buffIcon = "buff",
     buffBar = "trackedBar",
 }
+local SEARCH_TAB_TO_KEY = {
+    Entries = "entries",
+    Appearance = "layout",
+    Filters = "filters",
+    ["Per-Spec"] = "perspec",
+    Effects = "effects",
+    Keybinds = "keybinds",
+}
 
 local function GetSurface()
     return ns.QUI_CooldownManagerSettingsSurface
@@ -103,6 +111,31 @@ local function RenderLayoutRoute(host, options)
     return math.max(totalHeight, 80)
 end
 
+local function SearchNavigate(entry)
+    local surface = GetSurface()
+    if not surface then
+        return false
+    end
+
+    local handled = false
+    local containerKey = ResolveContainerKey(entry and entry.providerKey)
+    if containerKey and type(surface.SetActiveContainer) == "function" then
+        surface.SetActiveContainer(containerKey)
+        handled = true
+    end
+
+    local tabKey = entry and entry.surfaceTabKey
+    if type(tabKey) ~= "string" or tabKey == "" then
+        tabKey = SEARCH_TAB_TO_KEY[entry and entry.subTabName]
+    end
+    if type(tabKey) == "string" and tabKey ~= "" and type(surface.SetActiveTab) == "function" then
+        surface.SetActiveTab(tabKey)
+        handled = true
+    end
+
+    return handled
+end
+
 local feature = SurfaceFeatures:Register({
     id = FEATURE_ID,
     moverKey = "cdmEssential",
@@ -123,6 +156,7 @@ local feature = SurfaceFeatures:Register({
         resolve = ResolveContainerKey,
         method = "SetActiveContainer",
     },
+    searchNavigate = SearchNavigate,
 })
 
 local CDMContainers = ns.CDMContainers

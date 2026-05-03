@@ -11,6 +11,9 @@ local CreateScrollableContent = Shared.CreateScrollableContent
 local GetDB = Shared.GetDB
 local GetTextureList = Shared.GetTextureList
 local GetFontList = Shared.GetFontList
+local ACTION_BARS_SEARCH_TILE_ID = "action_bars"
+local ACTION_BARS_GENERAL_FEATURE_ID = "actionBarsGeneral"
+local ACTION_BARS_GENERAL_SUB_PAGE_INDEX = 1
 
 local Helpers = ns.Helpers
 local GetCore = Helpers.GetCore
@@ -773,7 +776,16 @@ local function BuildMasterSettingsTab(tabContent)
     local HEADER_GAP = 26
     local SECTION_GAP = 14
 
-    GUI:SetSearchContext({tabIndex = 8, tabName = "Action Bars", subTabIndex = 1, subTabName = "General"})
+    GUI:SetSearchContext({
+        tabIndex = 8,
+        tabName = "Action Bars",
+        subTabIndex = 1,
+        subTabName = "General",
+        tileId = ACTION_BARS_SEARCH_TILE_ID,
+        subPageIndex = ACTION_BARS_GENERAL_SUB_PAGE_INDEX,
+        featureId = ACTION_BARS_GENERAL_FEATURE_ID,
+        category = "frames",
+    })
 
     local y = -10
 
