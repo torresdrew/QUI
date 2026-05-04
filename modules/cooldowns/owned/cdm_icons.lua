@@ -5967,3 +5967,13 @@ SlashCmdList["CDMFLICKER"] = function(msg)
 
     frame:SetScript("OnUpdate", snapshot)
 end
+
+---------------------------------------------------------------------------
+-- LATE-BIND CROSS-FILE IMPORTS
+-- cdm_resolvers.lua and cdm_icon_factory.lua load before this file (per
+-- owned.xml) and cannot capture ns.CDMIcons at their own load time. They
+-- declare the upvalues uninitialized; here we hand them the populated
+-- CDMIcons table after every `CDMIcons.X = X` exposure above has run.
+---------------------------------------------------------------------------
+ns.CDMResolvers._FinalizeImports(CDMIcons)
+ns.CDMIconFactory._FinalizeImports(CDMIcons)

@@ -10,6 +10,11 @@ local Helpers = ns.Helpers
 local CDMResolvers = {}
 ns.CDMResolvers = CDMResolvers
 
+-- Forward reference to ns.CDMIcons. Bound by _FinalizeImports() at the
+-- end of cdm_icons.lua's load. Cannot be `local CDMIcons = ns.CDMIcons`
+-- here because cdm_resolvers.lua loads before cdm_icons.lua per owned.xml.
+local CDMIcons
+
 ---------------------------------------------------------------------------
 -- TICK CACHES: wiped at the start of each UpdateAllCooldowns batch.
 -- Avoids redundant C API calls when the same spellID appears in multiple
@@ -485,8 +490,6 @@ local function SafeBoolean(val)
 end
 
 local GCD_MAX_DURATION = 1.75
-
-local CDMIcons = ns.CDMIcons  -- forward ref; populated before these functions are called
 
 function CDMResolvers.ClassifySpellCooldownState(spellID, info)
     if not info and spellID and C_Spell and C_Spell.GetSpellCooldown then
@@ -969,4 +972,14 @@ function CDMResolvers.ResolveIconDurationObject(icon)
     end
 
     return nil, "inactive", nil
+end
+
+---------------------------------------------------------------------------
+-- DEFERRED IMPORT BINDING
+-- Called from the tail of cdm_icons.lua once ns.CDMIcons is fully populated.
+-- Reassigns the file-level upvalues; every function defined in this file
+-- closes over those upvalues, so they all see the late-bound values.
+---------------------------------------------------------------------------
+function CDMResolvers._FinalizeImports(icons)
+    CDMIcons = icons
 end

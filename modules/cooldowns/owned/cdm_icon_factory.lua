@@ -7,7 +7,11 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local Resolvers = ns.CDMResolvers
-local CDMIcons = ns.CDMIcons
+
+-- Forward reference to ns.CDMIcons. Bound by _FinalizeImports() at the
+-- end of cdm_icons.lua's load. Cannot be `local CDMIcons = ns.CDMIcons`
+-- here because cdm_icon_factory.lua loads before cdm_icons.lua per owned.xml.
+local CDMIcons
 
 local CDMIconFactory = {}
 ns.CDMIconFactory = CDMIconFactory
@@ -34,10 +38,12 @@ local ResolveMacro               = Resolvers.ResolveMacro
 local IsAuraEntry                = Resolvers.IsAuraEntry
 -- Cooldown getters + entry helpers from cdm_icons.lua (local functions there;
 -- imported via CDMIcons shims so the factory never calls bare globals).
-local GetBestSpellCooldown  = CDMIcons.GetBestSpellCooldown
-local GetItemCooldown       = CDMIcons.GetItemCooldown
-local GetSlotCooldown       = CDMIcons.GetSlotCooldown
-local IsTotemSlotEntry      = CDMIcons.IsTotemSlotEntry
+-- These four are bound late by _FinalizeImports() at the end of cdm_icons.lua's
+-- load — at this point in the load order, ns.CDMIcons is still nil.
+local GetBestSpellCooldown
+local GetItemCooldown
+local GetSlotCooldown
+local IsTotemSlotEntry
 
 local InCombatLockdown = InCombatLockdown
 local CreateFrame      = CreateFrame
@@ -1405,3 +1411,18 @@ local function UpdateIconCooldown(icon)
 end
 
 CDMIconFactory.UpdateIconCooldown = UpdateIconCooldown
+
+---------------------------------------------------------------------------
+-- DEFERRED IMPORT BINDING
+-- Called from the tail of cdm_icons.lua once ns.CDMIcons is fully populated
+-- (including all `CDMIcons.X = X` exposure lines). Reassigns the file-level
+-- upvalues; every function defined in this file closes over those upvalues,
+-- so they all see the late-bound values.
+---------------------------------------------------------------------------
+function CDMIconFactory._FinalizeImports(icons)
+    CDMIcons              = icons
+    GetBestSpellCooldown  = icons.GetBestSpellCooldown
+    GetItemCooldown       = icons.GetItemCooldown
+    GetSlotCooldown       = icons.GetSlotCooldown
+    IsTotemSlotEntry      = icons.IsTotemSlotEntry
+end
