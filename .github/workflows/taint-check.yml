@@ -1,0 +1,64 @@
+name: taint-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  self-test:
+    name: Analyzer self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Run analyzer self-test
+        run: lua tools/test_taint.lua --self-test
+
+  api-index-sync:
+    name: api-index in sync with corpus
+    runs-on: ubuntu-latest
+    needs: self-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Regenerate api-index
+        run: lua tools/test_taint.lua --update-index
+      - name: Verify no diff
+        run: |
+          if ! git diff --exit-code tests/api-docs/api-index.lua; then
+            echo "::error::api-index.lua is out of sync with the vendored corpus."
+            echo "::error::Run 'lua tools/test_taint.lua --update-index' locally and commit."
+            exit 1
+          fi
+
+  strict-mode:
+    name: Strict-mode enforcement
+    runs-on: ubuntu-latest
+    needs: self-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Strict-mode analyzer
+        run: lua tools/test_taint.lua --report github --strict-only
+
+  advisory-report:
+    name: Advisory report (informational)
+    runs-on: ubuntu-latest
+    needs: self-test
+    if: always()
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+      - name: Generate JSON report
+        run: lua tools/test_taint.lua --report json > taint-report.json || true
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: taint-report
+          path: taint-report.json
