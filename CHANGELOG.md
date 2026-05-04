@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha15 - 2026-05-04
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha15: back up `WTF/` and export your profile first.
+
+### Fixed
+- **CDM aura icons no longer flicker mid-encounter when the in-combat aura query races with the next tick.** When the resolver returned "inactive" for an aura-mode icon during combat but the cached aura DurObj still matched the last known binding, the icon would briefly clear and re-bind on the next tick. The pipeline now holds the last good aura DurObj across that single-tick race and lets the resolver re-converge naturally. Also re-evaluates the resolver inline on the aura-bind path so the new DurObj is applied immediately instead of one event later.
+
+
+
 ## v3.6.0-alpha14 - 2026-05-04
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha14: back up `WTF/` and export your profile first.
