@@ -10,6 +10,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha16 - 2026-05-04
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha16: back up `WTF/` and export your profile first.
+>
+> **Heads-up: this alpha adds a new `SavedVariablesPerCharacter` file (`QUI_ChatHistory`).** Existing chat history stored in the previous account-wide AceDB slot is migrated automatically on first login per character — no action required, but the legacy slot is left in place as a safety net.
+
+### Added
+- **Persistent chat history is now stored per-character in a separate SavedVariables file** (`QUI_ChatHistory`), as a single AceSerializer+LibDeflate-encoded blob that's decoded on demand. Idle Lua heap drops from O(all-characters × all-entries) to one compressed string per character — large historical snapshots that previously contributed ~150 MB of resident memory should no longer balloon the addon's footprint.
+- **"Max stored messages" slider** in the Persistent History section caps the FIFO retention at 500–50000 entries (default 5000). The pre-existing edit-box recall slider was relabeled to **"Max command history"** to disambiguate.
+- **"Clear all characters" button** next to the per-character Clear in Persistent History. Walks every character's storage slot (both the new SV and any unmigrated legacy slots) and reports the totals it cleared. Routed through `GUI:ShowConfirmation` with destructive styling.
+- **Copy popup source dropdown** in the History section. Surfaces the existing `chat.copyHistorySource` setting as a UI control with two values: *Live* (current chat scrollback, default) or *Persisted* (full saved history). Gated by the Persistent History toggle.
+- **Static combat-taint analyzer** under `tools/` plus a CI workflow (`.github/workflows/taint-check.yml`) that runs it on every PR. `modules/cooldowns/` and `modules/chat/` are configured as *strict* — any new analyzer warning fails CI. Driven by a vendored Blizzard API-docs index in `tests/api-docs/`.
+
+### Changed
+- **History buffer now flushes on a 5-minute timer and at `PLAYER_LOGOUT`** rather than every event, applying the time-prune + entry cap together. Live captures still go to a session buffer immediately so reload-replay is unaffected.
+
+### Fixed
+- **Five taint-prone patterns flagged by the new analyzer** were corrected across cooldowns and chat code. (Internal hardening; no specific user-visible symptoms reported, but reduces the surface area for future combat-taint regressions.)
+
+
+
 ## v3.6.0-alpha15 - 2026-05-04
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha15: back up `WTF/` and export your profile first.
