@@ -3138,13 +3138,6 @@ function ownedEngine:Initialize()
                 end
             end
         elseif event == "PLAYER_REGEN_ENABLED" then
-            if ns.CDMSpellData then
-                ns.CDMSpellData:ForceScan()
-                for _, key in ipairs(BUILTIN_KEYS) do
-                    ns.CDMSpellData:SnapshotBlizzardCDM(key)
-                end
-            end
-
             local readyNow = specTrackingReady
             if not specTrackingReady then
                 readyNow = InitSpecTracking()
@@ -3158,12 +3151,6 @@ function ownedEngine:Initialize()
 
             if specTrackingPendingRefresh then
                 FinalizeSpecTracking()
-            else
-                if ns.CDMSpellData then
-                    ns.CDMSpellData:CheckAllDormantSpells()
-                    ns.CDMSpellData:ReconcileAllContainers()
-                end
-                RefreshAll()
             end
         elseif event == "CHALLENGE_MODE_START" then
             -- Restore dormant spells before refreshing — SPELLS_CHANGED
