@@ -10,6 +10,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha14 - 2026-05-04
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha14: back up `WTF/` and export your profile first.
+>
+> This alpha rewrites large parts of the CDM owned-engine internals around a resolver-based pipeline (DurationObject + stack text + aura mode all flow through three central resolvers). Behavior is intended to be unchanged, but if you see CDM icons render incorrectly compared to alpha13, please report the spell + container so we can check the resolver path.
+
+### Added
+- **Custom chat button-bar buttons can now fire protected slash commands.** Custom-command buttons switched from `RunMacroText` through an OnClick handler to a `SecureActionButtonTemplate` with the `macrotext` attribute, so `/cast`, `/use`, `/click`, and other protected commands actually fire instead of silently failing under taint. The built-in *Reload* button also routes through `QUI:SafeReload` now so combat-deferred reloads behave consistently. Bars with custom buttons refuse to mutate during combat (would be blocked anyway).
+- **Item-trigger cooldowns resolve through a dedicated identity path.** Custom CDM bar entries that point at an item (trinkets, on-use consumables) now resolve their cooldown identity through `C_Item.GetItemSpell` with `C_Item.GetFirstTriggeredSpellForItem` as a fallback (passing item quality when available), and look up active auras either by spell ID or by item name.
+
+### Changed
+- **CDM owned engine internals reorganized around three resolvers.** `IsAuraCurrentlyActive(entry)` for the shared aura-detection check (combat-safe), `ResolveIconDurationObject(icon)` for *which* DurationObject to apply (linear priority `aura > charge > cooldown > gcd > inactive`), and `ResolveIconStackText(icon)` for charge / aura-application / linked-aura rollup text. The previous patchwork of mirror / sync / hook functions has been folded into this pipeline so visual aura mode and the chosen DurationObject source can no longer diverge.
+- **Cooldown-expiry refresh now runs on a per-icon timer.** Each icon schedules its own one-shot refresh at expiration (with a small fudge factor) instead of the engine running a global per-tick ticker. Less idle CPU; no lingering refreshes on icons whose cooldown has already finished.
+- **Combat-end (`PLAYER_REGEN_ENABLED`) no longer triggers a full CDM rescan.** The previous `ForceScan` + per-container snapshot + dormant-spell check + reconcile + refresh-all pass was redundant once the resolver picks up state on the next event. The spec-tracking finalize step is preserved.
+- **Chat filters bail before addon-side string work if any vararg is secret.** Same defensive ordering across the pipeline, the master message filter, `channel_shorten`, `redundant_text`, and `sounds`: check `IsSecret(msg)`, then `HasSecretValue(...)` on the rest of the chat varargs *before* doing any modifier string operations. Prevents secret tokens in sender / channel / GUID args from tainting Blizzard's downstream HistoryKeeper / chat-formatter path even when the filter ultimately returns nil.
+
+### Fixed
+- **Charge counters on cooldown icons backed by a buff-viewer child no longer blank briefly during fast refreshes.** A per-icon last-good-value cache and new linked-aura / buff-viewer-backed lookup helpers keep the count steady through native + addon repaint races.
+
+
+
 ## v3.6.0-alpha13 - 2026-05-03
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha13: back up `WTF/` and export your profile first.
