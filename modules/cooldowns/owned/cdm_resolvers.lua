@@ -15,6 +15,27 @@ ns.CDMResolvers = CDMResolvers
 -- here because cdm_resolvers.lua loads before cdm_icons.lua per owned.xml.
 local CDMIcons
 
+-- Taint helpers (Option A: imported from Helpers; Option B: local wrappers for
+-- SafeBoolean and IsSafeNumeric which are not exported on Helpers).
+-- Declared at file top so every function below sees them — Lua locals are
+-- lexically scoped and don't resolve forward, so a tick-cache function at
+-- line 200 referencing IsSecretValue would otherwise hit a nil global.
+local IsSecretValue = Helpers.IsSecretValue
+local SafeToNumber  = Helpers.SafeToNumber
+
+local function IsSafeNumeric(val)
+    if IsSecretValue(val) then return false end
+    return type(val) == "number"
+end
+
+local function SafeBoolean(val)
+    if IsSecretValue(val) then return nil end
+    if type(val) == "boolean" then return val end
+    return nil
+end
+
+local GCD_MAX_DURATION = 1.75
+
 ---------------------------------------------------------------------------
 -- TICK CACHES: wiped at the start of each UpdateAllCooldowns batch.
 -- Avoids redundant C API calls when the same spellID appears in multiple
@@ -471,25 +492,10 @@ end
 
 ---------------------------------------------------------------------------
 -- CLASSIFICATION
+-- (Taint helpers IsSecretValue/SafeToNumber/IsSafeNumeric/SafeBoolean and
+--  GCD_MAX_DURATION are declared at the top of this file so tick-cache
+--  functions earlier in the file can also use them.)
 ---------------------------------------------------------------------------
-
--- Taint helpers (Option A: imported from Helpers; Option B: local wrappers for
--- SafeBoolean and IsSafeNumeric which are not exported on Helpers).
-local IsSecretValue = Helpers.IsSecretValue
-local SafeToNumber  = Helpers.SafeToNumber
-
-local function IsSafeNumeric(val)
-    if IsSecretValue(val) then return false end
-    return type(val) == "number"
-end
-
-local function SafeBoolean(val)
-    if IsSecretValue(val) then return nil end
-    if type(val) == "boolean" then return val end
-    return nil
-end
-
-local GCD_MAX_DURATION = 1.75
 
 function CDMResolvers.ClassifySpellCooldownState(spellID, info)
     if not info and spellID and C_Spell and C_Spell.GetSpellCooldown then
