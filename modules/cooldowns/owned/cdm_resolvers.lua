@@ -365,6 +365,18 @@ function CDMResolvers.TickCacheGetDisplayCount(spellID)
     return result
 end
 
+-- Upvalue aliases so resolver functions below can call TickCacheGetX(spellID)
+-- bare instead of CDMResolvers.TickCacheGetX(spellID). Must come after the
+-- function definitions above; the TickCache GETs are attached to CDMResolvers
+-- (not file-scoped locals) so without these aliases the bare references
+-- earlier in the file resolve to nil globals.
+local TickCacheGetCharges        = CDMResolvers.TickCacheGetCharges
+local TickCacheGetCooldown       = CDMResolvers.TickCacheGetCooldown
+local TickCacheGetDuration       = CDMResolvers.TickCacheGetDuration
+local TickCacheGetChargeDuration = CDMResolvers.TickCacheGetChargeDuration
+local TickCacheGetOverrideSpell  = CDMResolvers.TickCacheGetOverrideSpell
+local TickCacheGetDisplayCount   = CDMResolvers.TickCacheGetDisplayCount
+
 
 -- IDENTITY RESOLVERS
 
