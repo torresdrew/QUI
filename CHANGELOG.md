@@ -10,6 +10,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha21 - 2026-05-05
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha21: back up `WTF/` and export your profile first.
+
+### Added
+- **Appearance > Damage Meter sub-page** with user-pickable LSM textures (bar, background, border) and fonts (row name, row value, header — each with size + outline) on top of QUI's existing meter skin. Promotes the damage meter settings out of the Skinning page collapsible into a dedicated sub-page; the Skinning page no longer references the damage meter. Defaults use sentinel values (nil/0/_inherit) so existing rendering for row text is preserved on upgrade. Header text now uses the QUI general font on default install (deliberate — matches the rest of QUI's text). Live preview is wired through `RefreshAll`, which re-runs the skin pipeline and restyles the four header-area fontstrings (session timer, session/type dropdowns, minimize-container hint).
+
+### Changed
+- **CDM owned engine: less idle CPU on range/glow polls and the OOC safety tick.**
+  - Range gate (`UpdateIconVisualState`) and glow check (`IsSpellCastable`) now read the resolved override spell ID off `icon._runtimeSpellID` instead of resolving it via `TickCacheGetOverrideSpell` on every poll. The cooldown event path already writes `_runtimeSpellID` on every refresh, so this just stops re-resolving the same value.
+  - `SafetyTickOnUpdate` now early-returns when out of combat. Nothing the safety tick is meant to catch (cooldown events, aura updates, override flips) can change OOC without an event firing, so the tick was running its full body at idle and producing tick-cache allocation churn for unchanged state.
+- **Action Bars settings preview no longer refreshes while the panel is hidden.** `RefreshPreview` was hooked to `ACTIONBAR_SLOT_CHANGED`, which fires ~10/s even at idle, so the hidden panel was running its full preview update continuously. The `OnEvent` body now gates on `self:IsVisible()`; the existing 0.25s `OnUpdate` already keeps an open panel current.
+- **New load-profiler memprobes for Action Bars cooldown work.** `ns._memprobes.AB_cooldownEvents` / `AB_cooldownBatches` / `AB_cooldownButtons` let the profiler attribute action-bar cooldown CPU — events received, throttled batches actually run, and per-button `ApplyCooldown` invocations.
+
+
+
 ## v3.6.0-alpha20 - 2026-05-05
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha20: back up `WTF/` and export your profile first.
