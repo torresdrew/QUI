@@ -1184,10 +1184,10 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end, { description = "Replace verbose channel tags like [Guild] with compact labels like [G] in chat output." })
             sy = P(channelShortenCheckbox, body, sy)
             local presetOptions = {
-                {value = "letter", text = "Letter \226\128\148 [G], [O], [P]"},
-                {value = "number", text = "Number \226\128\148 same as Letter; numbered channels deferred"},
+                {value = "letter", text = "Letter \226\128\148 [G], [O], [P] + [Gen], [T], [LFG]"},
+                {value = "number", text = "Number \226\128\148 [G], [O], [P] + [1], [2], [3]"},
             }
-            channelPresetDropdown = GUI:CreateFormDropdown(body, "Preset", presetOptions, "preset", channelShorten, Refresh, { description = "Channel label preset. Letter uses [G]/[O]/[P]/[R]/[I] etc. Number is currently identical to Letter for the 11 covered Blizzard chat events; numbered custom channels (CHAT_MSG_CHANNEL) are out of scope for Phase A." })
+            channelPresetDropdown = GUI:CreateFormDropdown(body, "Preset", presetOptions, "preset", channelShorten, Refresh, { description = "Channel label preset. Both presets shorten chat types ([G]/[O]/[P]/[R]/[I] etc.). For numbered chat channels: Letter abbreviates the channel name ([1. General] \226\134\146 [Gen], [2. Trade] \226\134\146 [T], [4. Trade (Services)] \226\134\146 [S]; unknown / custom channels get the first 3 letters), Number keeps just the channel number ([1. General] \226\134\146 [1])." })
             P(channelPresetDropdown, body, sy)
             UpdateMessageModifierStates()
         end, sections, relayout)

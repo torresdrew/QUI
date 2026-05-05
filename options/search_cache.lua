@@ -29469,7 +29469,7 @@ ns.QUI_SearchCache = {
         },
         {
             ["category"] = "chat",
-            ["description"] = "Channel label preset. Letter uses [G]/[O]/[P]/[R]/[I] etc. Number is currently identical to Letter for the 11 covered Blizzard chat events; numbered custom channels (CHAT_MSG_CHANNEL) are out of scope for Phase A.",
+            ["description"] = "Channel label preset. Both presets shorten chat types ([G]/[O]/[P]/[R]/[I] etc.). For numbered chat channels: Letter abbreviates the channel name ([1. General] → [Gen], [2. Trade] → [T], [4. Trade (Services)] → [S]; unknown / custom channels get the first 3 letters), Number keeps just the channel number ([1. General] → [1]).",
             ["featureId"] = "chatFrame1Alerts",
             ["label"] = "Preset",
             ["providerKey"] = "chatFrame1",
@@ -29488,11 +29488,11 @@ ns.QUI_SearchCache = {
                 ["kind"] = "dropdown",
                 ["options"] = {
                     {
-                        ["text"] = "Letter — [G], [O], [P]",
+                        ["text"] = "Letter — [G], [O], [P] + [Gen], [T], [LFG]",
                         ["value"] = "letter",
                     },
                     {
-                        ["text"] = "Number — same as Letter; numbered channels deferred",
+                        ["text"] = "Number — [G], [O], [P] + [1], [2], [3]",
                         ["value"] = "number",
                     },
                 },

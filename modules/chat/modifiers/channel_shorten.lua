@@ -5,10 +5,13 @@
 --
 -- Two preset modes:
 --   Letter -> [Guild]/[G], [Officer]/[O], [Party]/[P], [Raid]/[R],
---             [Instance]/[I], [Say]/[S], [Yell]/[Y]
---   Number -> same; numbered chat channels (handled by ChatFrame_GetMessageEventGroup)
---             keep their leading number ([2.T]) — but this modifier is for
---             the Blizzard CHAT_*_GET template events, not custom channels.
+--             [Instance]/[I], [Say]/[S], [Yell]/[Y]; numbered chat channels
+--             use a name-based abbreviation: [1. General] -> [Gen],
+--             [2. Trade - Stormwind] -> [T], [4. Trade (Services)] -> [S],
+--             [N. CustomChannel] -> [Cus] (first 3 chars capitalized).
+--   Number -> static chat types shorten the same way as Letter; numbered
+--             chat channels are reduced to just the number, e.g.
+--             [1. General] -> [1], [4. Trade (Services)] -> [4].
 --
 -- Important: do not override CHAT_<EVENT>_GET globals. Blizzard reads those
 -- templates on protected chat paths before creating chat-history access IDs;
@@ -42,13 +45,27 @@ local letterShort = {
     YELL                 = "Y",
 }
 
--- For now, "number" preset uses the same labels as "letter" for these
--- non-numbered chat types. Numbered chat channels (CHAT_MSG_CHANNEL) are
--- rendered by Blizzard differently — they don't use a CHAT_*_GET template
--- and the channel-name shortening for those would require a separate
--- approach (e.g., gsub on the channel-name token in messages). Out of
--- scope for this Phase A modifier.
+-- Both presets reuse the static letterShort table for chat-type events
+-- (CHAT_MSG_GUILD, CHAT_MSG_PARTY, …). Numbered chat channels
+-- (CHAT_MSG_CHANNEL) don't use a CHAT_*_GET template — they're rendered
+-- inline as "[N. ChannelName]" — and are handled separately below: Letter
+-- abbreviates the channel name, Number drops the name and keeps the number.
 local numberShort = letterShort
+
+-- Built-in abbreviations for well-known Blizzard channels (Letter preset).
+-- Lookup tries the full channel name first (so "Trade (Services)" -> "S"),
+-- then strips a trailing " - Zone" suffix and tries again. Unknown channels
+-- fall through to the first-three-alphanumerics rule in abbrevForChannel.
+local DEFAULT_CHANNEL_ABBREV = {
+    General              = "Gen",
+    Trade                = "T",
+    ["Trade (Services)"] = "S",
+    LocalDefense         = "LD",
+    WorldDefense         = "WD",
+    LookingForGroup      = "LFG",
+    GuildRecruitment     = "GR",
+    World                = "W",
+}
 
 -- ---------------------------------------------------------------------------
 -- Template manipulation
@@ -111,6 +128,48 @@ local function IsChatMessagingLockedDown()
     return I.IsChatMessagingLockedDown and I.IsChatMessagingLockedDown()
 end
 
+-- ---------------------------------------------------------------------------
+-- Numbered-channel transforms (Letter / Number presets)
+-- ---------------------------------------------------------------------------
+
+local function abbrevForChannel(name)
+    if type(name) ~= "string" or name == "" then return name end
+
+    -- Try the full channel name first (handles "Trade (Services)" -> "S").
+    local hit = DEFAULT_CHANNEL_ABBREV[name]
+    if hit then return hit end
+
+    -- Strip optional " - Zone" suffix (handles "Trade - Stormwind" -> "Trade").
+    local base = name:match("^(.-)%s%-%s")
+    if base then
+        hit = DEFAULT_CHANNEL_ABBREV[base]
+        if hit then return hit end
+    end
+
+    -- Fallback: first three alphanumeric chars, capitalized first letter.
+    local source = base or name
+    local stripped = source:gsub("[^%w]", "")
+    if stripped == "" then return source end
+    local short = stripped:sub(1, 3)
+    return short:sub(1, 1):upper() .. short:sub(2):lower()
+end
+
+-- Letter preset: rewrite "[N. ChannelName]" -> "[Abbrev]" using the name
+-- table (or the 3-char fallback for unknown / custom channels). count=1 so
+-- only the channel header at the start of the rendered line is replaced.
+local function transformLetterChannel(message)
+    if type(message) ~= "string" then return message end
+    return (message:gsub("%[(%d+)%. ([^%]]+)%]", function(_, channelStr)
+        return "[" .. abbrevForChannel(channelStr) .. "]"
+    end, 1))
+end
+
+-- Number preset: rewrite "[N. ChannelName]" -> "[N]" (channel name dropped).
+local function transformNumberedChannel(message)
+    if type(message) ~= "string" then return message end
+    return (message:gsub("(%[%d+)%. [^%]]+(%])", "%1%2", 1))
+end
+
 local function shouldTransformMessage(message, r, g, b, infoID, accessID, typeID, event)
     if not ACTIVE_REPLACEMENTS or not event then return false end
     if IsChatMessagingLockedDown() then return false end
@@ -118,8 +177,21 @@ local function shouldTransformMessage(message, r, g, b, infoID, accessID, typeID
     if type(message) ~= "string" or message == "" then return false end
 
     local tag = EVENT_TO_TAG[event]
-    local replacement = tag and ACTIVE_REPLACEMENTS[tag]
-    return replacement and message:find(replacement.pattern) ~= nil
+    if tag then
+        local replacement = ACTIVE_REPLACEMENTS[tag]
+        if replacement and message:find(replacement.pattern) ~= nil then
+            return true
+        end
+    end
+
+    if event == "CHAT_MSG_CHANNEL"
+       and (CURRENT_PRESET == "letter" or CURRENT_PRESET == "number") then
+        if message:find("%[%d+%. ") then
+            return true
+        end
+    end
+
+    return false
 end
 
 local function transformMessage(message, r, g, b, infoID, accessID, typeID, event, eventArgs, formatter, ...)
@@ -136,14 +208,29 @@ local function transformMessage(message, r, g, b, infoID, accessID, typeID, even
         end
     end
 
+    if event == "CHAT_MSG_CHANNEL"
+       and type(message) == "string"
+       and not IsSecret(message) then
+        if CURRENT_PRESET == "letter" then
+            message = transformLetterChannel(message)
+        elseif CURRENT_PRESET == "number" then
+            message = transformNumberedChannel(message)
+        end
+    end
+
     return message, r, g, b, infoID, accessID, typeID, event, eventArgs, formatter, ...
 end
 
 local function onAddMessage(frame, message, r, g, b, infoID, accessID, typeID, event)
     if not ACTIVE_REPLACEMENTS or not event then return end
     if IsChatMessagingLockedDown() then return end
+
     local tag = EVENT_TO_TAG[event]
-    if not tag or not ACTIVE_REPLACEMENTS[tag] then return end
+    local hasStaticReplacement = tag and ACTIVE_REPLACEMENTS[tag]
+    local hasChannelReplacement = (event == "CHAT_MSG_CHANNEL"
+        and (CURRENT_PRESET == "letter" or CURRENT_PRESET == "number"))
+
+    if not hasStaticReplacement and not hasChannelReplacement then return end
     if not frame or not frame.TransformMessages then return end
 
     frame:TransformMessages(shouldTransformMessage, transformMessage)
