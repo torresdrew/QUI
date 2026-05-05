@@ -49,6 +49,12 @@ local ApplyEnabled
 -- so we don't recursively store messages we are replaying.
 History._repumping = false
 
+-- Pending FCF_Close prunes. Map of frameID -> closeTimestamp. Drained by
+-- flushNow's retention-prune pass. Declared up here so flushNow (defined
+-- below) can see it; the FCF_Close hook that populates it lives near the
+-- bottom of the file.
+local pendingPrunes
+
 -- ---------------------------------------------------------------------------
 -- SV access
 -- ---------------------------------------------------------------------------
@@ -186,6 +192,7 @@ local function flushNow()
     local globalCutoff = now - (s.retentionDays or 7) * 86400
     local perChannel = s.perChannelRetention or {}
 
+    local prunes = pendingPrunes  -- localize; nil-safe below
     local kept = {}
     for i = 1, #entries do
         local e = entries[i]
@@ -194,7 +201,13 @@ local function flushNow()
             cutoff = now - perChannel[e.c] * 86400
         end
         if e.t and e.t >= cutoff then
-            kept[#kept + 1] = e
+            -- FCF_Close-driven prune: drop entries from a slot that was
+            -- closed, but only those captured before the close (preserves
+            -- new content if the slot has been recycled mid-session).
+            local closedAt = prunes and prunes[e.f]
+            if not (closedAt and e.t <= closedAt) then
+                kept[#kept + 1] = e
+            end
         end
     end
 
@@ -211,6 +224,7 @@ local function flushNow()
     end
 
     Storage.Flush(kept)
+    pendingPrunes = nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -438,27 +452,31 @@ local function getFrameID(frame)
     return nil
 end
 
-local function pruneFrameID(frameID)
+-- Per-frameID timestamp at which the slot was last closed. Drained by
+-- flushNow during its retention-prune pass: entries with f==frameID and
+-- t<=closeTimestamp are dropped (they're stale, the slot may be recycled).
+-- Entries captured after the close timestamp are new content from a
+-- recycled slot and survive — preserves correctness if the user closes
+-- and reopens a slot mid-session.
+--
+-- Why a queue instead of pruning eagerly: Blizzard fires FCF_Close ~15
+-- times during login layout restoration. Eagerly running the full
+-- decompress + iterate + re-encode cycle on every fire was the dominant
+-- login-time cost (~9 sec). Queueing reduces the hook to a table-set
+-- and folds the actual prune into flushNow's existing retention pass,
+-- so login pays nothing and a single pass at the next 5-min ticker tick
+-- (or PLAYER_LOGOUT) handles every closed slot together.
+-- (`pendingPrunes` upvalue is declared at file top so flushNow can see it.)
+
+local function queuePruneFrameID(frameID)
     if not frameID then return end
-    local Storage = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.HistoryStorage
-    if not Storage then return end
-
-    local entries = Storage.Snapshot()
-    if #entries == 0 then return end
-
-    local kept = {}
-    for i = 1, #entries do
-        local e = entries[i]
-        if e.f ~= frameID then
-            kept[#kept + 1] = e
-        end
-    end
-    Storage.Flush(kept)
+    pendingPrunes = pendingPrunes or {}
+    pendingPrunes[frameID] = (GetServerTime and GetServerTime()) or time()
 end
 
 if hooksecurefunc and _G.FCF_Close then
     hooksecurefunc("FCF_Close", function(frame)
-        pruneFrameID(getFrameID(frame))
+        queuePruneFrameID(getFrameID(frame))
     end)
 end
 
