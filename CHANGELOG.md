@@ -10,6 +10,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha18 - 2026-05-04
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha18: back up `WTF/` and export your profile first.
+>
+> This alpha picks up several fixes from the v3.5.7 / v3.5.8 stable line that hadn't yet landed on the v3.6.0 alpha track.
+
+### Added
+- **Buff Overlay Color controls on aura-type CDM containers.** The Buff Overlay Color mode + custom swatch were previously only surfaced on cooldown containers, even though the keys are consumed for buff icons. Both controls are now exposed alongside the Buff/Debuff Swipe toggle in the aura container's Effects card.
+
+### Fixed
+- **Buff/Debuff Swipe toggle (added in alpha17) was wired to the wrong DB key.** The aura-container Effects panel wrote `showBuffSwipe`, but `swipe.lua` reads `showBuffIconSwipe` for buff-viewer icons — so toggling the new control had no effect. Rebound to the correct key.
+- **Buff icon stack text now stays above icon borders** instead of being clipped/occluded by them. (Backport from v3.5.8.)
+- **Raid frame sorting stabilized.** Resolves jitter in raid frame ordering during composition changes. (Backport from v3.5.8.)
+- **Selective profile export now includes `layoutMode` and `optionsPanelCollapsibleStates`.** Two lazy-created profile keys (mover handles / snap / side panel state, and which options-panel sections you have collapsed) were missing from the export categories, so a Select-All export silently dropped them. Both now travel with the export under their correct categories. (Backport from v3.5.8.)
+
+
+
 ## v3.6.0-alpha17 - 2026-05-04
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha17: back up `WTF/` and export your profile first.
