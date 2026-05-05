@@ -1659,11 +1659,23 @@ local function RenderEffectsSection(sectionHost, ctx)
         if profile.customGlow.buffPandemicEnabled == nil then
             profile.customGlow.buffPandemicEnabled = true
         end
+        if type(profile.cooldownSwipe) ~= "table" then
+            profile.cooldownSwipe = {}
+        end
 
         local builder = CreateSectionBuilder(sectionHost, ctx, "effects")
         if not builder then
             return nil
         end
+
+        builder.Header("Cooldown Swipe")
+        local swipeCard = builder.Card()
+        local buffSwipeCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showBuffSwipe", profile.cooldownSwipe, RefreshSwipe, {
+            description = "Play a swipe animation on buff/debuff icons to represent remaining duration. This is a global setting shared with other containers.",
+        })
+        swipeCard.AddRow(optionsAPI.BuildSettingRow(swipeCard.frame, "Buff/Debuff Swipe", buffSwipeCheckbox))
+        builder.CloseCard(swipeCard)
+        builder.Spacer(10)
 
         builder.Header("Effects")
         local card = builder.Card()
