@@ -3630,6 +3630,13 @@ local ApplyPageArrowVisibility
 -- 200 file-scope local variable limit.  Public functions are stored as
 -- ActionBarsOwned fields.
 
+local _abCooldownStats = { events = 0, batches = 0, buttons = 0 }
+do local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "AB_cooldownEvents",  counter = true, fn = function() return _abCooldownStats.events  end }
+    mp[#mp + 1] = { name = "AB_cooldownBatches", counter = true, fn = function() return _abCooldownStats.batches end }
+    mp[#mp + 1] = { name = "AB_cooldownButtons", counter = true, fn = function() return _abCooldownStats.buttons end }
+end
+
 do
     -- Build 66562+ removed the secure delegate from ActionButton_ApplyCooldown
     -- and blocked SetCooldown from accepting secret values in tainted context.
@@ -3688,6 +3695,7 @@ do
         -- saved Lua op compounds to measurable ms/sec in raid combat.
         -- `button.action` is always set by SafeSyncAction/state driver,
         -- so the GetAttribute fallback is dead code and has been removed.
+        _abCooldownStats.buttons = _abCooldownStats.buttons + 1
         local action = button.action
         if not action or action == 0 then return end
 
@@ -3762,6 +3770,7 @@ do
         local now = GetTime()
         if now == _lastCdUpdateTime then return end
         _lastCdUpdateTime = now
+        _abCooldownStats.batches = _abCooldownStats.batches + 1
 
         -- Fast path: iterate only buttons with actions (LibActionButton
         -- pattern). Typical raid: ~30-50 active of 96 total.
@@ -4857,6 +4866,7 @@ local function OnOwnedEvent(self, event, ...)
         -- Per-button OnEvent is suppressed (addon-created frames are
         -- tainted).  DurationObject path is secret-safe.
         -- Coalesced: fires 20+/sec in combat, throttled to ~30Hz.
+        _abCooldownStats.events = _abCooldownStats.events + 1
         ScheduleABCooldownUpdate()
 
     elseif event == "ACTIONBAR_UPDATE_STATE" then

@@ -750,7 +750,12 @@ local function BuildActionBarsPreview(pv)
     pv:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
     pv:RegisterEvent("UPDATE_BINDINGS")
     pv:RegisterEvent("PLAYER_ENTERING_WORLD")
-    pv:SetScript("OnEvent", function() RefreshPreview() end)
+    -- ACTIONBAR_SLOT_CHANGED fires constantly (~10/s) even at idle, so
+    -- gate refresh on visibility. OnUpdate already only ticks while shown
+    -- and runs every 0.25s, so a freshly-opened panel catches up quickly.
+    pv:SetScript("OnEvent", function(self)
+        if self:IsVisible() then RefreshPreview() end
+    end)
 
     -- Throttled OnUpdate picks up setting changes from the sub-tabs
     -- below without us having to hook every onChange callback. Every
