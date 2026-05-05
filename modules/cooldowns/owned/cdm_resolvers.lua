@@ -335,9 +335,6 @@ function CDMResolvers.TickCacheGetOverrideSpell(spellID)
     _tickCooldownStats.overrideQueries = _tickCooldownStats.overrideQueries + 1
     local ok, overrideID = pcall(C_Spell.GetOverrideSpell, spellID)
     if not ok then return nil end
-    if IsSecretValue(overrideID) then
-        return nil
-    end
     _tickOverrideCache[spellID] = overrideID or false
     _tickOverrideCacheTime[spellID] = now
     return overrideID
@@ -358,9 +355,6 @@ function CDMResolvers.TickCacheGetDisplayCount(spellID)
     _tickCooldownStats.displayCountQueries = _tickCooldownStats.displayCountQueries + 1
     local ok, val = pcall(C_Spell.GetSpellDisplayCount, spellID)
     local result = (ok and val) or nil
-    if IsSecretValue(result) then
-        return result
-    end
     _tickDisplayCountCache[spellID] = result or false
     _tickDisplayCountCacheTime[spellID] = now
     return result

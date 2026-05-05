@@ -188,12 +188,12 @@ local function ApplyHighlight(icon)
 end
 
 ---------------------------------------------------------------------------
--- EVENT HANDLING
+-- DISPATCH
+-- Called by cdm_icons.lua's central UNIT_SPELLCAST_SUCCEEDED handler. The
+-- highlighter no longer registers the event itself — single registration on
+-- cdEventFrame avoids the duplicate per-cast dispatch.
 ---------------------------------------------------------------------------
-local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
-
-eventFrame:SetScript("OnEvent", function(_, _, _, _, castSpellID)
+local function OnPlayerCastSucceeded(castSpellID)
     if not IsCDMRuntimeEnabled() then return end
 
     local settings = GetSettings()
@@ -204,10 +204,7 @@ eventFrame:SetScript("OnEvent", function(_, _, _, _, castSpellID)
     if icon then
         ApplyHighlight(icon)
     end
-end)
-
-ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
-ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "CDM_Highlighter", frame = eventFrame }
+end
 
 local function ClearHighlights()
     for icon, timer in pairs(activeHighlights) do
@@ -219,13 +216,12 @@ local function ClearHighlights()
 end
 
 local function DisableRuntime()
-    eventFrame:UnregisterAllEvents()
-    eventFrame:SetScript("OnEvent", nil)
     ClearHighlights()
 end
 
 ns._OwnedHighlighter = {
     DisableRuntime = DisableRuntime,
+    OnPlayerCastSucceeded = OnPlayerCastSucceeded,
 }
 
 ---------------------------------------------------------------------------

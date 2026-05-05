@@ -1130,7 +1130,7 @@ end
 
 function CDMIcons.CaptureTrustedGCDState()
     if not C_Spell or not C_Spell.GetSpellCooldown then
-        return
+        return false
     end
 
     local spellState = CDMIcons._trustedGCDSpellState or {}
@@ -1139,6 +1139,7 @@ function CDMIcons.CaptureTrustedGCDState()
     local stamp = GetTime()
     CDMIcons._trustedGCDStamp = stamp
 
+    local anyChanged = false
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             if icon and icon._spellEntry then
@@ -1155,20 +1156,25 @@ function CDMIcons.CaptureTrustedGCDState()
                             spellState[sid] = trusted
                         end
                     end
+                    local prev = icon._isOnGCD
                     if type(trusted) == "boolean" then
+                        if prev ~= trusted then anyChanged = true end
                         icon._isOnGCD = trusted
                         icon._isOnGCDTrustedAt = stamp
                     else
+                        if prev ~= nil then anyChanged = true end
                         icon._isOnGCD = nil
                         icon._isOnGCDTrustedAt = nil
                     end
                 else
+                    if icon._isOnGCD ~= nil then anyChanged = true end
                     icon._isOnGCD = nil
                     icon._isOnGCDTrustedAt = nil
                 end
             end
         end
     end
+    return anyChanged
 end
 
 local ApplyResolvedCooldown
@@ -5146,11 +5152,11 @@ cdEventFrame:RegisterEvent("SPELLS_CHANGED")
 cdEventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
 cdEventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
 cdEventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
-cdEventFrame:RegisterEvent("UNIT_SPELLCAST_START")
-cdEventFrame:RegisterEvent("UNIT_SPELLCAST_STOP")
-cdEventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-cdEventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
-cdEventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
+cdEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
+cdEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_STOP", "player")
+cdEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+cdEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
+cdEventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
 -- Server-side cooldown table hotfix. User /cdm edits route through
 -- EventRegistry's "CooldownViewerSettings.OnDataChanged" callback (see
 -- registration below) — they are NOT the same event.
@@ -5311,6 +5317,27 @@ local function ApplyResolvedCooldownAll()
         for _, icon in ipairs(pool) do
             if icon and icon._spellEntry then
                 ApplyResolvedCooldown(icon)
+            end
+        end
+    end
+end
+
+-- SPELL_UPDATE_COOLDOWN payload: { spellID, baseSpellID, category, startRecoveryCategory }.
+-- When spellID is non-nil, only one spell changed — re-resolve icons whose base
+-- matches spellID or baseSpellID instead of walking every icon. baseSpellID is set
+-- by Blizzard when spellID is an override, so checking both covers base-keyed and
+-- override-keyed icons without consulting (potentially secret) override caches.
+local function ApplyResolvedCooldownForSpellID(eventSpellID, eventBaseSpellID)
+    if not eventSpellID and not eventBaseSpellID then return end
+    WipeUpdateTickCaches(true)
+    for _, pool in pairs(iconPools) do
+        for _, icon in ipairs(pool) do
+            local entry = icon and icon._spellEntry
+            if entry then
+                local base = entry.spellID or entry.id
+                if base and (base == eventSpellID or base == eventBaseSpellID) then
+                    ApplyResolvedCooldown(icon)
+                end
             end
         end
     end
@@ -5606,20 +5633,60 @@ function CDMIcons.EventFrameOnEvent(self, event, arg1, arg2, arg3)
         ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
         return
     end
+    if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" or event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" then
+        -- Both events carry a non-nil spellID (Nilable=false in the live FrameXML
+        -- payload). At most one spell's cooldown state can be affected by a proc,
+        -- so re-resolve only matching icons instead of triggering a full batch.
+        -- glows.lua's dedicated handler owns the visual glow side.
+        if arg1 then
+            ApplyResolvedCooldownForSpellID(arg1, nil)
+        end
+        return
+    end
+    if event == "UNIT_SPELLCAST_SUCCEEDED" then
+        -- Payload: (unitTarget, castGUID, spellID, castBarID). Filtered to
+        -- "player" via RegisterUnitEvent; explicit arg1 check is a belt-and-
+        -- suspenders guard. Player's spellID is non-restricted-scope so safe
+        -- to compare against icon entries. Highlighter consumes the same
+        -- event via dispatch — single registration, two consumers.
+        if arg1 == "player" and arg3 then
+            ApplyResolvedCooldownForSpellID(arg3, nil)
+            local Highlighter = ns._OwnedHighlighter
+            if Highlighter and Highlighter.OnPlayerCastSucceeded then
+                Highlighter.OnPlayerCastSucceeded(arg3)
+            end
+        end
+        return
+    end
     local trustIsOnGCD = event == "SPELL_UPDATE_COOLDOWN"
     if event == "SPELL_UPDATE_CHARGES" then
         CDMIcons.NoteChargeDurationObjectsUpdated()
     end
+    local gcdChanged = false
     if trustIsOnGCD then
-        CDMIcons.CaptureTrustedGCDState()
+        gcdChanged = CDMIcons.CaptureTrustedGCDState()
     end
     -- Coalesce cooldown events via the reusable update frame. isOnGCD is
     -- only trusted for batches caused by SPELL_UPDATE_COOLDOWN.
     ScheduleCDMUpdate(nil, CDM_UPDATE_COOLDOWN, trustIsOnGCD)
-    -- Per-icon resolver walk so cross-icon GCD and charge-state transitions
-    -- land without waiting for the tick path. The resolver short-circuits
-    -- irrelevant icons; WoW already coalesces these events heavily.
-    if trustIsOnGCD or event == "SPELL_UPDATE_CHARGES" or event == "BAG_UPDATE_COOLDOWN" then
+    -- Per-icon resolver walk. Single-spell SPELL_UPDATE_COOLDOWN fires can be
+    -- scoped to matching icons. Three cases force a full walk:
+    --   1. arg1 == nil — Blizzard's "update all" signal
+    --   2. arg1 == GCD_SPELL_ID (61304) — explicit GCD spell signal
+    --   3. gcdChanged — any icon's _isOnGCD just flipped
+    -- NOTE: GCD swipe rendering still has a known issue (deferred-batch path
+    -- in UpdateIconCooldown vs immediate ApplyResolvedCooldown path use
+    -- different GCD signals); this scoping does not regress that further.
+    -- Tracked for a followup session.
+    if trustIsOnGCD then
+        CDMIcons._trustIsOnGCDForBatch = true
+        if arg1 and arg1 ~= GCD_SPELL_ID and not gcdChanged then
+            ApplyResolvedCooldownForSpellID(arg1, arg2)
+        else
+            ApplyResolvedCooldownAll()
+        end
+        CDMIcons._trustIsOnGCDForBatch = false
+    elseif event == "SPELL_UPDATE_CHARGES" or event == "BAG_UPDATE_COOLDOWN" then
         ApplyResolvedCooldownAll()
     end
 end
