@@ -1668,21 +1668,45 @@ local function RenderEffectsSection(sectionHost, ctx)
             return nil
         end
 
-        builder.Header("Cooldown Swipe")
-        local swipeCard = builder.Card()
-        local buffSwipeCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showBuffSwipe", profile.cooldownSwipe, RefreshSwipe, {
-            description = "Play a swipe animation on buff/debuff icons to represent remaining duration. This is a global setting shared with other containers.",
-        })
-        swipeCard.AddRow(optionsAPI.BuildSettingRow(swipeCard.frame, "Buff/Debuff Swipe", buffSwipeCheckbox))
-        builder.CloseCard(swipeCard)
-        builder.Spacer(10)
-
         builder.Header("Effects")
         local card = builder.Card()
+
+        local buffSwipeCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showBuffIconSwipe", profile.cooldownSwipe, RefreshSwipe, {
+            description = "Play a swipe animation on buff/debuff icons in this container to represent remaining duration.",
+        })
         local pandemicCheckbox = gui:CreateFormCheckbox(card.frame, nil, "buffPandemicEnabled", profile.customGlow, RefreshGlows, {
             description = "Emit a refresh glow during the pandemic window (the last ~30% of the buff's duration) so you know when refreshing is optimal.",
         })
-        card.AddRow(optionsAPI.BuildSettingRow(card.frame, "Mirror Pandemic Refresh Glow", pandemicCheckbox))
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, "Buff/Debuff Swipe", buffSwipeCheckbox),
+            optionsAPI.BuildSettingRow(card.frame, "Mirror Pandemic Refresh Glow", pandemicCheckbox)
+        )
+
+        local overlayColorPicker
+        local overlayColorRow
+        local function UpdateOverlayColorState()
+            local isCustom = (profile.cooldownSwipe.overlayColorMode or "default") == "custom"
+            if overlayColorRow then
+                overlayColorRow:SetEnabled(isCustom)
+            elseif overlayColorPicker then
+                overlayColorPicker:SetEnabled(isCustom)
+            end
+        end
+        local overlayModeDropdown = gui:CreateFormDropdown(card.frame, nil, COLOR_MODE_OPTIONS, "overlayColorMode", profile.cooldownSwipe, function()
+            RefreshSwipe()
+            UpdateOverlayColorState()
+        end, {
+            description = "How the buff/debuff overlay is colored: Blizzard default, class color, UI accent, or the custom swatch.",
+        })
+        overlayColorPicker = gui:CreateFormColorPicker(card.frame, nil, "overlayColor", profile.cooldownSwipe, RefreshSwipe, nil, {
+            description = "Custom color used for the buff/debuff overlay when Buff Overlay Color is set to Custom.",
+        })
+        overlayColorRow = optionsAPI.BuildSettingRow(card.frame, "Overlay Custom Color", overlayColorPicker)
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, "Buff Overlay Color", overlayModeDropdown),
+            overlayColorRow
+        )
+        UpdateOverlayColorState()
         builder.CloseCard(card)
         return builder.Height()
     end
