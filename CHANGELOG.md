@@ -10,6 +10,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha17 - 2026-05-04
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha17: back up `WTF/` and export your profile first.
+>
+> This alpha decomposes the 8157-line `modules/cooldowns/owned/cdm_icons.lua` into three focused files (resolvers + factory + view). Behavior is intended to be unchanged — the headless profile harness is green and luac is clean — but if you see a CDM regression compared to alpha16, please report the spell + container so we can check the right layer.
+
+### Added
+- **"Cooldown Swipe" toggle on aura-type CDM containers.** The aura-container Effects panel previously short-circuited to the pandemic-glow checkbox only, leaving no UI surface for disabling the swipe animation on aura entries. There's now a Cooldown Swipe card with the `showBuffSwipe` checkbox above the existing Effects card. (Setting is profile-global.)
+
+### Changed
+- **CDM owned-engine internals split into three files:**
+  - `cdm_resolvers.lua` (new, ~970 LOC) — pure resolution layer with no frame writes. Owns the per-tick cache subsystem, identity/texture/macro/classification resolvers, and the DurationObject resolver group.
+  - `cdm_icon_factory.lua` (new, ~1400 LOC) — pool lifecycle + the per-tick `UpdateIconCooldown` driver. Allowed to write frames.
+  - `cdm_icons.lua` (slimmed by ~27%) — view layer: `ConfigureIcon`, aura binding, expiry timers, Blizz texture mirror.
+
+  Load order: `cdm_spelldata.lua` → `cdm_resolvers.lua` → `cdm_icon_factory.lua` → `cdm_icons.lua`.
+
+### Fixed
+- **CDM aura icons no longer hold a stale duration on refresh.** The dedupe key for aura-mode `ApplyResolvedCooldown` matched on `auraInstanceID`, which is preserved across refreshes, so the resolver's freshly-fetched DurationObject was never bound and the swipe stayed on the original (now-stale) duration. The dedupe now also compares `durObj` userdata identity for aura mode (Blizzard returns a new userdata wrapper on refresh), matching the pattern already used in `cdm_bars.lua`.
+- **Layout Mode no longer clamps the chat frame to the screen.** ChatFrame1's mover was inheriting the framework default that prevents dragging past the edge — overridden in the chat element's `onOpen` so the chat can be positioned partially off-screen if desired.
+
+
+
 ## v3.6.0-alpha16 - 2026-05-04
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha16: back up `WTF/` and export your profile first.
