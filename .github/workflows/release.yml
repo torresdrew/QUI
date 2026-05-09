@@ -157,7 +157,8 @@ jobs:
             LABEL="New QUI ${CHANNEL_LABEL}"
             EMOJI="🧪"
             COLOR=16761095
-            FOOTER="\n\n⚠️ *This is a ${RELEASE_TYPE} build — expect bugs. Please report issues on GitHub!*\n\n"
+            if [[ "$RELEASE_TYPE" =~ ^[aeiou] ]]; then ARTICLE="an"; else ARTICLE="a"; fi
+            FOOTER="\n\n⚠️ *This is ${ARTICLE} ${RELEASE_TYPE} build — expect bugs. Please report issues on GitHub!*\n\n"
           fi
 
           # Use jq to safely format the multi-line text into valid JSON

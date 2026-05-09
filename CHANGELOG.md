@@ -10,6 +10,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha22 - 2026-05-08
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** New schema migration (v36) splits the per-container pandemic-glow toggle in two; existing profiles auto-migrate with both halves enabled. v3.5.x → alpha22: back up `WTF/` and export your profile first.
+>
+> **Heads-up: this alpha ships as two folders — `QUI/` and `QUI_Options/`.** Both must live next to each other in `Interface/AddOns/`. The release zip already contains both.
+
+### Added
+- **"Open QUI" entry in the Blizzard Settings panel** — loads the full options on first click.
+- **Per-aura-type pandemic glow.** Each container now has separate "Debuffs/DoTs" and "Buffs/HoTs" toggles. Existing profiles keep current behavior with both enabled.
+- **Channel Colors.** New chat options section lets you recolor any channel by name; custom colors follow the channel across rejoins.
+- **Per-channel exclusion checkboxes** replace the old free-form editbox in the persistent history settings.
+
+### Changed
+- **Settings UI loads on demand.** The options panel was extracted into a sister addon, `QUI_Options`, that doesn't load until you open it — faster login and lower idle memory if you never open settings.
+- **Character / Inspect gear panels build widgets lazily** on first open.
+- **Action bars: lower idle CPU.** Cooldown scans throttle to ~5Hz out of combat; in-combat updates unchanged.
+- **Group frames:** snappier aura rendering, up to **5 defensive icons per frame** (was 1), and zero per-frame aura cost when you're solo.
+- **Chat history loads faster on `/reload`.** Storage split into a hot recent slice plus older chunks; only what's needed is decoded.
+- **Skyriding:** Thrill of the Skies buff probe replaced with a direct spell-ID lookup instead of scanning 40 buff slots every tick.
+
+### Fixed
+- **Cooldowns and aura icons are way more reliable.** Stuck "always on" states gone, durationless auras (stances, forms, permanent buffs) display, and target debuffs that Blizzard mis-files (Virulent Plague, Dread Plague) route to the correct unit.
+- **Anti-Magic Zone, totems, and split buff/debuff entries** light up correctly whether the aura sits on you or your target.
+- **Reaping and similar Blizzard cooldowns** without their own swipe duration now show the swipe.
+- **`/reload` during combat** no longer leaves Blizz-backed cooldowns blank until combat ends.
+- **Target switching** clears previous-target debuffs instantly — no more swap lag in PvP / dungeons.
+- **Always-mode icons** stay at full opacity instead of dimming when their aura is absent.
+- **Permanent buffs no longer flash a stuck pandemic glow.**
+- **Pandemic-glow dropdown changes apply immediately** instead of waiting for the next cooldown tick.
+- **Damage meter skin survives** lowering the window's background opacity.
+- **BonusRollFrame stays where you put it** — Blizzard's per-roll re-position no longer wins.
+- **Chat editbox no longer left unskinned** after `/reload` in combat / M+ / encounters / PvP.
+
+
+
 ## v3.6.0-alpha21 - 2026-05-05
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing v34 profiles carry over unchanged. v3.5.x → alpha21: back up `WTF/` and export your profile first.
