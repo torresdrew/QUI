@@ -1166,6 +1166,34 @@ end
 -- children get hooked the first time an aura event fires after their
 -- creation.
 ---------------------------------------------------------------------------
+-- Listeners notified when a previously-unknown cdID is freshly indexed
+-- by BindNewChildren. Used by cdm_icon_factory to retry TryBindIconToBlizz
+-- on icons that failed their initial bind because the Blizzard child
+-- didn't exist yet (e.g. DT buff cdID 27925 is created lazily by
+-- BuffIconCooldownViewer only when the buff applies — well after icon
+-- creation at addon load).
+--
+-- Listener signature: function(cooldownID, viewerCategoryName)
+-- Listeners run in UNIT_AURA dispatch context (potentially in combat),
+-- so they must do Lua-table reads + safe frame ops only.
+local _onChildBoundListeners = {}
+
+function CDMBlizzMirror.AddOnChildBoundListener(callback)
+    if type(callback) ~= "function" then return end
+    _onChildBoundListeners[#_onChildBoundListeners + 1] = callback
+end
+
+local function FireOnChildBound(cdID, catName)
+    if not (cdID and catName) then return end
+    for i = 1, #_onChildBoundListeners do
+        local ok, err = pcall(_onChildBoundListeners[i], cdID, catName)
+        if not ok and CDMBlizzMirror.TaintLog then
+            CDMBlizzMirror.TaintLog("OnChildBound.error",
+                "cdID", cdID, "cat", catName, "err", tostring(err))
+        end
+    end
+end
+
 local function BindNewChildren()
     if not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCategorySet then
         return
@@ -1200,6 +1228,16 @@ local function BindNewChildren()
                         CDMBlizzMirror.TaintLog("LazyBind", "cdID", cdID,
                             "cat", CATEGORY_NAMES[catNum])
                     end
+                    -- Fire the new-child signal whenever BindChildHooks
+                    -- newly attaches to a child. The outer
+                    -- `not child._quiMirrorBound` gate guarantees this is
+                    -- a fresh attach, regardless of whether the cdID's
+                    -- info struct was already cached by an earlier Walk.
+                    -- The QUI icon factory needs the *child-bound* signal,
+                    -- not the info-cached signal — a child being bound is
+                    -- what flips HasChildForCooldownID from false to true,
+                    -- which is the gate that previously rejected its bind.
+                    FireOnChildBound(cdID, CATEGORY_NAMES[catNum])
                 end
             end
         end

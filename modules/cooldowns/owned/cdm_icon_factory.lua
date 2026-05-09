@@ -585,13 +585,24 @@ local function ResolveBlizzCooldownIDForEntry(entry)
             seen[id] = true
             ids[#ids + 1] = id
         end
-        add(entry.overrideSpellID)
-        add(entry.spellID)
-        add(entry.id)
-        add(sid)
+        -- Talent overrides (e.g. apex talents) renumber spellIDs at runtime:
+        -- the user-facing tooltip ID stays stable while CDM's spellID→cdID
+        -- map keys on Blizzard's current override IDs. Probe the override of
+        -- each candidate so saved entries pinned to pre-override IDs still
+        -- bind. QueryOverrideSpell is pcall-wrapped and returns nil on miss.
+        local function addWithOverride(id)
+            add(id)
+            if type(id) == "number" and id > 0 then
+                add(QueryOverrideSpell(id))
+            end
+        end
+        addWithOverride(entry.overrideSpellID)
+        addWithOverride(entry.spellID)
+        addWithOverride(entry.id)
+        addWithOverride(sid)
         if not strictAuraBinding and type(entry.linkedSpellIDs) == "table" then
             for _, linkedID in ipairs(entry.linkedSpellIDs) do
-                add(linkedID)
+                addWithOverride(linkedID)
             end
         end
         return ids
@@ -702,6 +713,57 @@ local function TryBindIconToBlizz(icon, spellEntry)
 end
 
 CDMIconFactory.TryBindIconToBlizz = TryBindIconToBlizz
+
+-- Retry binding for icons that lost their initial bind because Blizzard's
+-- viewer hadn't created a child for the cdID yet. The mirror invokes this
+-- via its OnChildBound listener (fired from BindNewChildren) after a new
+-- cdID is freshly indexed mid-session — typical case: DT's buff cdID is
+-- created lazily by BuffIconCooldownViewer when the buff applies, well
+-- after addon load.
+--
+-- Filter heuristic: only retry icons whose entry's viewerType matches
+-- the bound child's category (or that have no Blizzard-mapping
+-- viewerType — custom-bar entries probe all categories during bind).
+-- Skips icons that are already bound; TryBindIconToBlizz would otherwise
+-- clear-and-rebind on a transient miss, which we want to avoid.
+local function CategoryMatchesViewerType(catName, viewerType)
+    if not catName then return false end
+    if catName == "essential" or catName == "utility" then
+        return viewerType == "essential" or viewerType == "utility"
+            or viewerType == nil or type(viewerType) ~= "string"
+            or not (viewerType == "buff" or viewerType == "trackedBar")
+    end
+    if catName == "buff" or catName == "trackedBar" then
+        return viewerType == "buff" or viewerType == "trackedBar"
+            or viewerType == nil or type(viewerType) ~= "string"
+            or not (viewerType == "essential" or viewerType == "utility")
+    end
+    return false
+end
+
+local function RetryUnboundIconsForChild(cdID, catName)
+    if not (cdID and catName) then return end
+    for _, pool in pairs(iconPools) do
+        if type(pool) == "table" then
+            for _, icon in ipairs(pool) do
+                local entry = icon and icon._spellEntry
+                if entry
+                    and icon._isBlizzBacked == nil
+                    and CategoryMatchesViewerType(catName, entry.viewerType) then
+                    TryBindIconToBlizz(icon, entry)
+                end
+            end
+        end
+    end
+end
+
+-- Register the listener with the mirror as soon as the mirror module is
+-- available. The icon factory loads after the mirror per owned.xml, so
+-- ns.CDMBlizzMirror should be present already; gate on existence to keep
+-- load-order assumptions explicit.
+if ns.CDMBlizzMirror and ns.CDMBlizzMirror.AddOnChildBoundListener then
+    ns.CDMBlizzMirror.AddOnChildBoundListener(RetryUnboundIconsForChild)
+end
 
 
 -- DRIVER
