@@ -10,6 +10,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha23 - 2026-05-09
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing alpha22 profiles carry over unchanged. v3.5.x → alpha23: back up `WTF/` and export your profile first.
+>
+> **Reminder: QUI ships as two folders — `QUI/` and `QUI_Options/`.** Both must live next to each other in `Interface/AddOns/`. The release zip already contains both.
+
+### Added
+- **Per-frame aura filter and sort settings on Buff Borders.** Each frame (player buff, target buff, target debuff, focus debuff, etc.) now exposes its own filter checkboxes — Buffs: PLAYER, RAID, CANCELABLE, NOT_CANCELABLE, BIG_DEFENSIVE; Debuffs: PLAYER, RAID, INCLUDE_NAME_PLATE_ONLY, RAID_PLAYER_DISPELLABLE, IMPORTANT, CROWD_CONTROL — and a sort dropdown (Default, Expiration, Expiration only, Name, Name only, Big Defensive, API order) plus a Reverse toggle. Defaults are unchanged (all flags off, sort = API order) so existing profiles look identical.
+- **Optional `ignoreGCD` parameter on `Helpers.ApplyCooldownFromSpell`.** Internal API addition — used by the rotation-assist and reticle modules to render the GCD swipe correctly.
+
+### Changed
+- **Faster CDM container layout refresh.** The sync and async paths in RefreshAll now share a single `RunPostLayoutRefresh` helper instead of duplicating the same post-layout work twice.
+- **Rotation Assist:** the "Cooldown Swipe" toggle is now labeled **"GCD Swipe"** — the swipe it drives is always the global cooldown, and the previous label implied the spell's own cooldown.
+
+### Fixed
+- **Permanent / durationless auras (stances, forms, pet-presence indicators, perma buffs) no longer flicker.** They reliably stay shown without a countdown swipe. Previously they oscillated active/inactive and never visually settled.
+- **Late-bound CDM icons now appear on first cast.** Some Blizzard cooldown entries (Death Knight DT buff, etc.) are created lazily when the relevant aura first applies — those icons used to stay permanently empty until `/reload`. They now bind on the spot when Blizzard publishes the entry.
+- **Talent-renumbered spell IDs bind correctly.** Saved entries pinned to a pre-override spell ID now still find their cooldown when Blizzard's runtime override changes the ID (e.g. apex talents).
+- **Pandemic refresh glow is continuous through combat.** A defensive nil-return in the in-combat aura duration query was flipping `_auraActive` off whenever a duration query had a transient miss between UNIT_AURA ticks; the glow now stays on through those misses.
+- **Group-frame backdrop updates no longer emit taint warnings.** Health-update repaints route the backdrop fill color through `Texture:SetVertexColor` instead of `BackdropTemplateMixin:SetBackdropColor` — silences ~80+ taint events per session on the raid frames.
+- **Tooltips no longer clip their content in combat.** The chrome-refit's Y-axis measurement now anchors off the last text line directly, instead of comparing every line's bottom coordinate (which errored on combat-restricted secret coords and silently no-op'd, leaving tooltips clipped).
+- **Absorb / heal-prediction bar visibility** is now driven by a step curve evaluated C-side, removing a defensive `pcall` against secret values on every health update.
+- **GCD swipe renders correctly on the rotation-assist and reticle icons.** The shared cooldown helper used to short-circuit on the GCD spell itself; now those callers explicitly request "include GCD" and get the full sweep.
+
+
+
 ## v3.6.0-alpha22 - 2026-05-08
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** New schema migration (v36) splits the per-container pandemic-glow toggle in two; existing profiles auto-migrate with both halves enabled. v3.5.x → alpha22: back up `WTF/` and export your profile first.
