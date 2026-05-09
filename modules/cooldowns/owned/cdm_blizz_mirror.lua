@@ -257,7 +257,37 @@ local function VerifyStateFreshness(s)
     end
     if not ok then return end
     if not durObj then
-        if s.isActive == true or s.durObj or s.auraInstanceID then
+        -- GetAuraDuration returning nil has two meanings:
+        --   (a) aura expired or was removed from the unit
+        --   (b) aura is on the unit but durationless (permanent buffs
+        --       like Lesser Ghoul's pet-presence indicator, stances,
+        --       forms — no expiration time)
+        -- Disambiguate via GetAuraDataByAuraInstanceID, which returns
+        -- AuraData when the aura still exists on the unit (regardless
+        -- of duration) and nil when it's gone. Without this check we
+        -- invalidate permanent auras every tick and the icon oscillates
+        -- false/true, never visually settling into "shown."
+        local auraStillOnUnit = false
+        if C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID then
+            local okData, ad = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID,
+                s.auraUnit or "player", s.auraInstanceID)
+            if okData and ad then
+                auraStillOnUnit = true
+            end
+        end
+        if auraStillOnUnit then
+            -- Permanent aura: keep isActive=true, drop the (nil) durObj
+            -- so consumers don't try to render a swipe. Icon factory
+            -- treats active+durObj=nil as "show without countdown."
+            if s.isActive ~= true then
+                s.isActive = true
+                s.lastTouch = GetTime()
+            end
+            if s.durObj then
+                s.durObj = nil
+                s.lastTouch = GetTime()
+            end
+        elseif s.isActive == true or s.durObj or s.auraInstanceID then
             s.isActive = false
             s.durObj = nil
             s.auraInstanceID = nil

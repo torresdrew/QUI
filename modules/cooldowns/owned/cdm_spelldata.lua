@@ -152,7 +152,9 @@ local AURA_CAPTURE_LOOKUP_UNITS = SELF_AURA_CAPTURE_LOOKUP_UNITS
 -- active.
 --
 -- The auraInstanceID re-randomizes on combat enter (PLAYER_REGEN_DISABLED)
--- and is delivered as a *secret value* during combat. Two implications:
+-- and is delivered as a *secret value* during combat (the AuraData payload
+-- inside `addedAuras` is `ConditionalSecretContents` per the API docs).
+-- Two implications:
 --   1. The cache is rebuilt on PLAYER_REGEN_DISABLED via
 --      RescanCapturedAurasForUnit (and likewise on encounter/M+/PvP start
 --      and isFullUpdate).
@@ -160,9 +162,17 @@ local AURA_CAPTURE_LOOKUP_UNITS = SELF_AURA_CAPTURE_LOOKUP_UNITS
 --      used as a Lua table key, never compared with `==` against another
 --      instID. It is forwarded straight to C-side sinks
 --      (C_UnitAuras.GetAuraDuration, C_UnitAuras.GetAuraDataByAuraInstanceID).
--- Because instIDs cannot be Lua-keyed in combat, eager eviction by
--- `removedAuraInstanceIDs` is impossible; we rely on lazy eviction at
--- lookup time (tryCapturedAura) plus the periodic rescan paths above.
+--
+-- Eviction strategy is event-driven, not ID-matched. The `removedAuraInstanceIDs`
+-- payload field is documented `NeverSecretContents = true` (see
+-- UnitAuraUpdateInfo in tests/api-docs/blizzard/UnitConstantsDocumentation.lua),
+-- but matching its clean numbers against the cache's possibly-secret stored
+-- IDs would still need a `==` compare and would taint. Instead, any non-empty
+-- `removedAuraInstanceIDs` for a unit is treated as a "something on this unit
+-- just died" trigger: walk the unit's cache and validate each entry by
+-- forwarding its stored instID to GetAuraDataByAuraInstanceID — nil response
+-- → evict by Lua identity. Periodic full rescans (PLAYER_REGEN_DISABLED,
+-- encounter/M+/PvP start, isFullUpdate) remain as a backstop.
 ---------------------------------------------------------------------------
 local _capturedAuraBySpellID = {}    -- [spellID]      -> {auraInstanceID, unit, spellID, name, filter}
 local _capturedAuraByName    = {}    -- [name:lower()] -> same entry
@@ -548,6 +558,36 @@ local function ReleaseCapturedEntry(entry)
     end
 end
 
+-- Eager eviction triggered by UNIT_AURA's `removedAuraInstanceIDs` payload.
+-- Walks every cached entry on `unit` and forwards its stored auraInstanceID
+-- to GetAuraDataByAuraInstanceID; nil response means the instance is gone.
+-- The stored instID may be secret (in-combat addedAuras payload) — it is
+-- used here only as a forward-only argument to a C-side API, never compared
+-- with `==` and never used as a Lua key. Eviction is by Lua table identity
+-- via ReleaseCapturedEntry. Inlined pcall avoids a forward reference to
+-- QueryAuraData, which is declared later in the file.
+local function EvictDeadCacheEntriesForUnit(unit)
+    if type(unit) ~= "string" or unit == "" then return end
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID) then return end
+
+    local visited = {}
+    local function probe(map)
+        if not map then return end
+        for _, entry in pairs(map) do
+            if entry and not visited[entry] and entry.auraInstanceID then
+                visited[entry] = true
+                local ok, data = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID,
+                    unit, entry.auraInstanceID)
+                if not ok or not data then
+                    ReleaseCapturedEntry(entry)
+                end
+            end
+        end
+    end
+    probe(_capturedAuraByUnitSpellID[unit])
+    probe(_capturedAuraByUnitName[unit])
+end
+
 -- Full rescan via AuraUtil.ForEachAura. Used on isFullUpdate (which carries
 -- no addedAuras list — it's a "rescan everything" signal), on
 -- PLAYER_REGEN_DISABLED (auraInstanceIDs re-randomize at combat enter), and
@@ -659,8 +699,17 @@ local function AuraCaptureFrameOnEvent(self, event, ...)
             CaptureAuraFromPayload(unit, ad)
         end
     end
-    -- updatedAuraInstanceIDs / removedAuraInstanceIDs intentionally not
-    -- handled here. See comment above the target branch.
+    -- Eager cache eviction: any non-empty removedAuraInstanceIDs means at
+    -- least one aura on `unit` just expired or was dispelled. Walk the
+    -- unit's cache and drop dead entries immediately so the next bar/icon
+    -- update sees an accurate state instead of waiting for a lazy lookup
+    -- (which has its own combat-side fallback hazards in
+    -- ResolveAuraInstanceDurationState). updatedAuraInstanceIDs is still
+    -- ignored — duration changes don't affect cache liveness.
+    if updateInfo.removedAuraInstanceIDs
+        and #updateInfo.removedAuraInstanceIDs > 0 then
+        EvictDeadCacheEntriesForUnit(unit)
+    end
     NotifyAuraConsumers(unit, updateInfo)
 end
 
@@ -941,6 +990,25 @@ local function ResolveAuraInstanceDurationState(result, auraUnit, auraInstanceID
     end
 
     if InCombatLockdown() then
+        -- In combat, both QueryAuraHasExpirationTime (bails on lockdown) and
+        -- QueryAuraDuration can transiently return nil for live auras with
+        -- restricted-scope payloads — a nil return is NOT proof the aura is
+        -- gone. Returning `false, nil` from this defensive fallback caused
+        -- the resolver to flip the icon's `_auraActive`/`_lastAuraDurObj` to
+        -- nil mid-combat, gating off pandemic glow for any aura whose
+        -- duration query had a transient miss between UNIT_AURA ticks.
+        --
+        -- Liveness in combat is owned by eager eviction in
+        -- AuraCaptureFrameOnEvent (driven by removedAuraInstanceIDs), which
+        -- walks the unit's cache on every aura-removal payload and drops
+        -- entries whose stored instID no longer resolves via
+        -- GetAuraDataByAuraInstanceID. Genuinely-expired auras get evicted
+        -- there, so by the time tryCapturedAura runs the cache reflects
+        -- reality — there's nothing to defensively probe at this point.
+        --
+        -- Optimistic `true, nil` lets ApplyAuraStateToIcon preserve the
+        -- icon's prior `_lastAuraDurObj` (cdm_icons.lua:980-981), keeping
+        -- pandemic glow continuous through combat.
         return true, nil
     end
 
@@ -1347,11 +1415,21 @@ function CDMSpellData:ResolveAuraState(params)
                 local function tryAuraEntry(tryID)
                     if not tryID then return false end
                     local m, hostCat = lookupAuraState(tryID)
-                    if m and m.isActive and m.durObj then
+                    -- m.isActive without m.durObj is a valid mirror state:
+                    -- VerifyStateFreshness promotes permanent auras (stances,
+                    -- forms, durationless buffs) to isActive=true with
+                    -- durObj=nil after GetAuraDataByAuraInstanceID confirms
+                    -- presence on the unit. ApplyAuraStateToIcon treats
+                    -- active+durObj=nil as "show without countdown swipe."
+                    -- Requiring both flips _auraActive each tick, which makes
+                    -- ComputeCustomBarVisibility.layoutVisible oscillate and
+                    -- traps DrainLayoutDirty in unbounded recursion.
+                    if m and m.isActive then
                         AuraStateDebug(debugAura, "phase0-aura",
                             "spellID=", tryID, "hostCat=", hostCat,
                             "selfAura=", tostring(m.selfAura),
-                            "cdID=", m.cooldownID, "epoch=", m.mirrorEpoch)
+                            "cdID=", m.cooldownID, "epoch=", m.mirrorEpoch,
+                            "durObj=", m.durObj and "yes" or "nil")
                         r.isActive = true
                         r.durObj = m.durObj
                         -- Aura's destination unit comes from the cdID's own

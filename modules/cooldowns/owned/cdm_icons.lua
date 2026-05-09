@@ -3607,17 +3607,39 @@ local function MarkLayoutDirtyOnFilterFlip(icon, entry, containerDB, filterHides
     end
 end
 
+-- Re-entry guard. force(trackerKey) → QUI_ForceLayoutContainer →
+-- ns.CDMIcons:UpdateAllCooldowns() → DrainLayoutDirty recursively. Bailing
+-- the inner call prevents infinite recursion when the per-icon visibility
+-- verdict diverges from LayoutContainer's (each pass re-marks the same
+-- container, never settles). _DRAIN_MAX_ROUNDS caps the bounded outer loop
+-- so a runaway oscillation can't burn the watchdog budget.
+local _drainingLayoutDirty = false
+local _DRAIN_MAX_ROUNDS = 3
+
 local function DrainLayoutDirty()
+    if _drainingLayoutDirty then return end
     if next(_layoutNeedsRefresh) == nil then return end
+    _drainingLayoutDirty = true
     local force = _G.QUI_ForceLayoutContainer
     if not force then
         wipe(_layoutNeedsRefresh)
+        _drainingLayoutDirty = false
         return
     end
-    for trackerKey in pairs(_layoutNeedsRefresh) do
-        force(trackerKey)
+    local toProcess = {}
+    for round = 1, _DRAIN_MAX_ROUNDS do
+        if next(_layoutNeedsRefresh) == nil then break end
+        wipe(toProcess)
+        for trackerKey in pairs(_layoutNeedsRefresh) do
+            toProcess[#toProcess + 1] = trackerKey
+        end
+        wipe(_layoutNeedsRefresh)
+        for _, trackerKey in ipairs(toProcess) do
+            force(trackerKey)
+        end
     end
     wipe(_layoutNeedsRefresh)
+    _drainingLayoutDirty = false
 end
 
 local function GetIconRowOpacity(icon)
