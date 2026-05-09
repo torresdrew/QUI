@@ -49,11 +49,9 @@ local SPIKE_THRESHOLD = 0.05    -- 50 ms
 -- Suspect functions to wrap. Resolved at enable time so missing modules
 -- (e.g. CDM disabled) don't error.
 local SUSPECTS = {
-    { path = "CDMSpellData", method = "ForceScan",              label = "ForceScan" },
     { path = "CDMSpellData", method = "SnapshotBlizzardCDM",    label = "SnapshotBlizzardCDM" },
     { path = "CDMSpellData", method = "CheckAllDormantSpells",  label = "CheckAllDormantSpells" },
     { path = "CDMSpellData", method = "ReconcileAllContainers", label = "ReconcileAllContainers" },
-    { path = "CDMSpellData", method = "InvalidateChildMap",     label = "InvalidateChildMap" },
 }
 
 local originals = {}        -- [label] = { tbl, method, fn }

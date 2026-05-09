@@ -1,7 +1,7 @@
 <Bindings>
   <Binding name="QUI_TOGGLE_OPTIONS" category="QUI">
-    if QUI and QUI.GUI then
-      QUI.GUI:Toggle()
+    if QUI and QUI.OpenOptions then
+      QUI:OpenOptions()
     end
   </Binding>
 </Bindings>

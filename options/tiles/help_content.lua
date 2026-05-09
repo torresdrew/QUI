@@ -268,10 +268,6 @@ QUI_HelpContent.Diagnostics = {
     { label = "GSE Tail (last 20)",   command = "/qui gse tail 20",
       tooltip = "Print the last 20 entries from the GSE log.",
       run = function() QUI:SlashCommandOpen("gse tail 20") end },
-    -- Recovery
-    { label = "Legacy Tracker Recovery", command = "/qui legacyrecover",
-      tooltip = "Show usage for the legacy tracker resolver. To recover a specific tracker, type /qui legacyrecover <handle> in chat.",
-      run = function() QUI:SlashCommandOpen("legacyrecover") end },
 }
 
 ---------------------------------------------------------------------------

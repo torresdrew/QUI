@@ -21,3 +21,4 @@ tests/fixtures/test/selected.txt
 tests/fixtures/test/selected.txt.dump.txt
 tests/fixtures/test/everything.txt
 tests/fixtures/test/QUI3.lua
+tools/view_sv.html

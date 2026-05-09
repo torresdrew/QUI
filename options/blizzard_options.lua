@@ -8,15 +8,19 @@ local QUI = QUI
 local ADDON_DISPLAY_NAME = "QUI"
 
 local function OpenQUI()
-    if QUI.GUI then
-        QUI.GUI:Toggle()
+    if QUI.OpenOptions then
+        QUI:OpenOptions()
         return true
     end
-    print("|cFF56D1FFQUI:|r GUI not loaded yet. Try /qui instead.")
+    print("|cFF56D1FFQUI:|r Options are not available yet. Try /qui instead.")
     return false
 end
 
 local function CreateSettingsPanel()
+    if _G.QUI_BlizzardSettingsPanel then
+        return
+    end
+
     -- Check API availability (TWW/Midnight)
     if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then
         return

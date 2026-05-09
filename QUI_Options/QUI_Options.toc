@@ -1,0 +1,12 @@
+## Interface: 120000, 120001, 120005, 120007
+## Title: |cFF30D1FFQUI Options|r
+## IconTexture: Interface\AddOns\QUI\assets\QUI
+## Notes: Load-on-demand configuration UI for QUI
+## Author: Zol
+## Version: 3.6.0-alpha21
+## Category: User Interface
+## RequiredDeps: QUI
+## LoadOnDemand: 1
+
+bootstrap.lua
+options.xml

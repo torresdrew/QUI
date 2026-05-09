@@ -58,6 +58,44 @@ local function collect_scripts_from_xml(xml_path, out, seen)
     end
 end
 
+-- QUI_Options/options.xml lives in a sibling LoD addon and references this
+-- repo's files via "..\QUI\..." (i.e., one level up from the QUI_Options
+-- addon root, then into the QUI addon root). The headless generator runs
+-- from the QUI repo root, so strip that prefix to get repo-relative paths.
+local function collect_qui_options_scripts(out, seen)
+    local xml_path = normalize_path("QUI_Options/options.xml")
+    if seen[xml_path] then
+        return
+    end
+    seen[xml_path] = true
+
+    local probe = io.open(xml_path, "r")
+    if not probe then
+        return
+    end
+    probe:close()
+
+    local emitted = {}
+    for _, existing in ipairs(out) do
+        emitted[existing] = true
+    end
+
+    for _, line in ipairs(read_lines(xml_path)) do
+        local script_path = line:match('<Script file="([^"]+)"')
+        if script_path then
+            local normalized = normalize_path(script_path)
+            local repo_path = normalized:match("^%.%./QUI/(.+)$")
+            if repo_path then
+                repo_path = normalize_path(repo_path)
+                if not emitted[repo_path] then
+                    emitted[repo_path] = true
+                    out[#out + 1] = repo_path
+                end
+            end
+        end
+    end
+end
+
 local function should_load_script(path)
     path = normalize_path(path)
 
@@ -821,7 +859,9 @@ local function load_script(path)
 end
 
 local scripts = {}
-collect_scripts_from_xml("load.xml", scripts, {})
+local script_xml_seen = {}
+collect_scripts_from_xml("load.xml", scripts, script_xml_seen)
+collect_qui_options_scripts(scripts, script_xml_seen)
 
 local failures = {}
 local loaded_count = 0

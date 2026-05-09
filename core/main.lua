@@ -242,6 +242,10 @@ function QUICore:OnProfileChanged(event, db, profileKey)
     -- Update spec tracking (kept for reference)
     self._lastKnownSpec = GetSpecialization() or 0
 
+    if ns.CDMResolvers and ns.CDMResolvers._RebuildCatalog then
+        ns.CDMResolvers._RebuildCatalog()
+    end
+
     local pins = ns.Settings and ns.Settings.Pins
     if pins and type(pins.HandleProfileEvent) == "function" then
         pins:HandleProfileEvent(event, self.db, effectiveProfileKey)
@@ -696,8 +700,8 @@ end
 
 function QUICore:OpenConfig()
     -- Open the new custom GUI instead of AceConfig
-    if QUI and QUI.GUI then
-        QUI.GUI:Toggle()
+    if QUI and QUI.OpenOptions then
+        QUI:OpenOptions()
     end
 end
 
@@ -774,9 +778,9 @@ function QUICore:HookEditMode()
             "PetActionBar", "ExtraAbilityContainer",
             "ExtraActionBarFrame", "ZoneAbilityFrame",
             "OverrideActionBar", "MainMenuBarVehicleLeaveButton",
-            -- Cooldown viewers
-            "EssentialCooldownViewer", "UtilityCooldownViewer",
-            "BuffIconCooldownViewer", "BuffBarCooldownViewer",
+            -- Cooldown viewers omitted: QUI no longer hides Blizzard's CDM
+            -- (data-decoupling commit), so the user must be able to drag and
+            -- toggle them through Blizzard's Edit Mode normally.
             -- Objective tracker
             "ObjectiveTrackerFrame",
             -- Cast bar

@@ -12,6 +12,8 @@ ns.SkinBase = SkinBase
 -- Weak-keyed table to store backdrop references WITHOUT writing to Blizzard frames
 -- All code that previously used frame.quiBackdrop should use SkinBase.GetBackdrop(frame) instead
 local frameBackdrops = Helpers.CreateStateTable()
+local manualBackdropData = Helpers.CreateStateTable()
+local DEFAULT_BACKDROP_TEXTURE = "Interface\\Buttons\\WHITE8x8"
 
 ---------------------------------------------------------------------------
 -- GetPixelSize(frame, default)
@@ -48,7 +50,7 @@ end
 -- with default white vertex color but does NOT re-apply stored colors.
 -- Instead of hooking the global mixin (which fires for EVERY BackdropTemplate
 -- resize in the entire UI — hundreds/sec in raids), we hook individual
--- QUI-skinned frames in CreateBackdrop / ApplyFullBackdrop.
+-- QUI-skinned BackdropTemplate frames in ApplyFullBackdrop.
 ---------------------------------------------------------------------------
 local function HookBackdropSizeChanged(frame)
     if not frame or frame._quiSizeHooked then return end
@@ -64,6 +66,145 @@ local function HookBackdropSizeChanged(frame)
     end)
 end
 
+local function SetTextureColor(texture, r, g, b, a)
+    if texture then
+        texture:SetVertexColor(r or 1, g or 1, b or 1, a == nil and 1 or a)
+    end
+end
+
+local function ManualSetBackdropColor(self, r, g, b, a)
+    self._quiBgR, self._quiBgG, self._quiBgB, self._quiBgA = r, g, b, a
+    local data = manualBackdropData[self]
+    if data then
+        SetTextureColor(data.bg, r, g, b, a)
+    end
+end
+
+local function ManualSetBackdropBorderColor(self, r, g, b, a)
+    self._quiBorderR, self._quiBorderG, self._quiBorderB, self._quiBorderA = r, g, b, a
+    local data = manualBackdropData[self]
+    if data then
+        SetTextureColor(data.top, r, g, b, a)
+        SetTextureColor(data.bottom, r, g, b, a)
+        SetTextureColor(data.left, r, g, b, a)
+        SetTextureColor(data.right, r, g, b, a)
+    end
+end
+
+local function EnsureManualBackdrop(frame)
+    local data = manualBackdropData[frame]
+    if data then return data end
+
+    data = {
+        bg = frame:CreateTexture(nil, "BACKGROUND"),
+        top = frame:CreateTexture(nil, "BORDER"),
+        bottom = frame:CreateTexture(nil, "BORDER"),
+        left = frame:CreateTexture(nil, "BORDER"),
+        right = frame:CreateTexture(nil, "BORDER"),
+    }
+    manualBackdropData[frame] = data
+
+    frame.SetBackdropColor = ManualSetBackdropColor
+    frame.SetBackdropBorderColor = ManualSetBackdropBorderColor
+
+    return data
+end
+
+local function ResetBorderTexture(texture, edgeFile, showBorder)
+    texture:ClearAllPoints()
+    if showBorder then
+        texture:SetTexture(edgeFile)
+        texture:Show()
+    else
+        texture:Hide()
+    end
+end
+
+function SkinBase.ApplyTextureBackdrop(frame, bgFile, edgeFile, edgeSize, borderColor, bgColor)
+    if not frame then return false end
+
+    local data = EnsureManualBackdrop(frame)
+    local px = Helpers.SafeToNumber(edgeSize, 1)
+    if px < 0 then px = 0 end
+
+    bgFile = bgFile or DEFAULT_BACKDROP_TEXTURE
+    edgeFile = edgeFile or DEFAULT_BACKDROP_TEXTURE
+
+    data.bg:ClearAllPoints()
+    if bgFile then
+        data.bg:SetTexture(bgFile)
+        data.bg:SetPoint("TOPLEFT", frame, "TOPLEFT", px, -px)
+        data.bg:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -px, px)
+        data.bg:Show()
+    else
+        data.bg:Hide()
+    end
+
+    local showBorder = edgeFile and px > 0
+    ResetBorderTexture(data.top, edgeFile, showBorder)
+    ResetBorderTexture(data.bottom, edgeFile, showBorder)
+    ResetBorderTexture(data.left, edgeFile, showBorder)
+    ResetBorderTexture(data.right, edgeFile, showBorder)
+
+    if showBorder then
+        data.top:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+        data.top:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+        data.top:SetHeight(px)
+
+        data.bottom:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+        data.bottom:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+        data.bottom:SetHeight(px)
+
+        data.left:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -px)
+        data.left:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, px)
+        data.left:SetWidth(px)
+
+        data.right:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -px)
+        data.right:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, px)
+        data.right:SetWidth(px)
+    end
+
+    if bgColor then
+        frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4])
+    else
+        frame:SetBackdropColor(frame._quiBgR or 1, frame._quiBgG or 1, frame._quiBgB or 1, frame._quiBgA)
+    end
+
+    if borderColor then
+        frame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4])
+    else
+        frame:SetBackdropBorderColor(frame._quiBorderR or 1, frame._quiBorderG or 1, frame._quiBorderB or 1, frame._quiBorderA)
+    end
+
+    frame:Show()
+    return true
+end
+
+local function ApplySafeBackdrop(frame, backdropInfo, borderColor, bgColor)
+    if not frame or not frame.SetBackdrop then return false end
+
+    local core = Helpers.GetCore()
+    local safeSetBackdrop = core and core.SafeSetBackdrop
+    if type(safeSetBackdrop) == "function" then
+        return safeSetBackdrop(frame, backdropInfo, borderColor, bgColor)
+    end
+
+    local ok = pcall(frame.SetBackdrop, frame, backdropInfo)
+    if ok and backdropInfo then
+        if borderColor then
+            frame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4] or 1)
+        end
+        if bgColor then
+            frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
+        end
+    end
+    return ok
+end
+
+function SkinBase.SafeSetBackdrop(frame, backdropInfo, borderColor, bgColor)
+    return ApplySafeBackdrop(frame, backdropInfo, borderColor, bgColor)
+end
+
 ---------------------------------------------------------------------------
 -- CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 -- Creates (or updates) a pixel-perfect QUI backdrop on the given frame.
@@ -73,7 +214,7 @@ end
 ---------------------------------------------------------------------------
 function SkinBase.CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not frameBackdrops[frame] then
-        local backdrop = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        local backdrop = CreateFrame("Frame", nil, frame)
         backdrop:SetAllPoints()
         backdrop:SetFrameLevel(frame:GetFrameLevel())
         backdrop:EnableMouse(false)
@@ -92,15 +233,11 @@ function SkinBase.CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     backdrop._quiBorderG = sg or 0
     backdrop._quiBorderB = sb or 0
     backdrop._quiBorderA = sa or 1
-    backdrop:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-        insets = { left = px, right = px, top = px, bottom = px },
+    SkinBase.ApplyTextureBackdrop(backdrop, DEFAULT_BACKDROP_TEXTURE, DEFAULT_BACKDROP_TEXTURE, px, {
+        backdrop._quiBorderR, backdrop._quiBorderG, backdrop._quiBorderB, backdrop._quiBorderA,
+    }, {
+        backdrop._quiBgR, backdrop._quiBgG, backdrop._quiBgB, backdrop._quiBgA,
     })
-    backdrop:SetBackdropColor(backdrop._quiBgR, backdrop._quiBgG, backdrop._quiBgB, backdrop._quiBgA)
-    backdrop:SetBackdropBorderColor(backdrop._quiBorderR, backdrop._quiBorderG, backdrop._quiBorderB, backdrop._quiBorderA)
-    HookBackdropSizeChanged(backdrop)
 end
 
 ---------------------------------------------------------------------------
@@ -122,14 +259,16 @@ function SkinBase.ApplyFullBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     frame._quiBorderG = sg or 0
     frame._quiBorderB = sb or 0
     frame._quiBorderA = sa or 1
-    frame:SetBackdrop({
+    ApplySafeBackdrop(frame, {
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = px,
         insets = { left = px, right = px, top = px, bottom = px },
+    }, {
+        frame._quiBorderR, frame._quiBorderG, frame._quiBorderB, frame._quiBorderA,
+    }, {
+        frame._quiBgR, frame._quiBgG, frame._quiBgB, frame._quiBgA,
     })
-    frame:SetBackdropColor(frame._quiBgR, frame._quiBgG, frame._quiBgB, frame._quiBgA)
-    frame:SetBackdropBorderColor(frame._quiBorderR, frame._quiBorderG, frame._quiBorderB, frame._quiBorderA)
     HookBackdropSizeChanged(frame)
 end
 

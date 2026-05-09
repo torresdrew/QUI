@@ -1076,8 +1076,10 @@ local function CreateInspectSettingsButton()
     if not InspectFrame then return end
     if (frameState[InspectFrame] or EMPTY).gearBtn then return end
 
-    local GUI = _G.QUI and _G.QUI.GUI
-    if not GUI then return end
+    -- The QUI.GUI widget-API check (and the QUI_Options companion-addon
+    -- load that comes with it) used to live here. It now lives inside
+    -- BuildPanelContent below so QUI_Options stays unloaded until the
+    -- user actually opens this panel.
 
     local core = GetCore()
     if not (core and core.db and core.db.profile and core.db.profile.character) then
@@ -1240,6 +1242,24 @@ local function CreateInspectSettingsButton()
 
         RefreshInspect()
     end
+
+    -- Defer the form-widget construction (and the QUI.GUI widget-API load
+    -- that comes with it) until the user opens the inspect settings
+    -- panel. The scaffold above is cheap native frames; only the form
+    -- widgets below need the QUI_Options companion addon.
+    local panelContentBuilt = false
+    local function BuildPanelContent()
+        if panelContentBuilt then return true end
+
+        local GUI = _G.QUI and _G.QUI.GUI
+        if GUI and type(GUI.EnsureWidgetAPI) == "function" then
+            GUI = GUI:EnsureWidgetAPI()
+        end
+        if not (GUI and type(GUI.HasWidgetAPI) == "function" and GUI:HasWidgetAPI()) then
+            return false
+        end
+
+        panelContentBuilt = true
 
     ---------------------------------------------------------------------------
     -- APPEARANCE Section
@@ -1414,9 +1434,22 @@ local function CreateInspectSettingsButton()
     end)
     resetBtn:SetPoint("BOTTOM", inspectSettingsPanel, "BOTTOM", 0, 10)
 
-    -- Toggle panel on gear click
+        return true
+    end
+    -- (BuildPanelContent body kept at the original indent to keep this
+    -- patch a small diff. Closing 'end' above terminates the function.)
+
+    -- Toggle panel on gear click. Lazily build the form widgets (and
+    -- load QUI_Options as a side effect) on first open so the
+    -- companion addon stays unloaded when the user never opens this
+    -- panel.
     gearBtn:SetScript("OnClick", function()
-        inspectSettingsPanel:SetShown(not inspectSettingsPanel:IsShown())
+        if inspectSettingsPanel:IsShown() then
+            inspectSettingsPanel:Hide()
+            return
+        end
+        BuildPanelContent()
+        inspectSettingsPanel:Show()
     end)
 end
 
@@ -1604,6 +1637,39 @@ local function HookInspectFrame()
 end
 
 ---------------------------------------------------------------------------
+-- Patch: guildless inspect target crashes Blizzard's Guild tab.
+-- InspectGuildFrame_Update (FrameXML, unchanged since 11.0) calls
+--   guildRealmName:SetFormattedText(INSPECT_GUILD_REALM, guildRealmName)
+-- without checking GetInspectGuildInfo for nil. Inspecting a player with
+-- no guild and clicking the Guild tab throws at line 22. Override the
+-- global to clear the fields and early-return when there is no guild.
+---------------------------------------------------------------------------
+local function PatchInspectGuildNilGuard()
+    local orig = _G.InspectGuildFrame_Update
+    if not orig or not InspectGuildFrame or InspectGuildFrame.__qui_guild_nil_guard then
+        return
+    end
+    InspectGuildFrame.__qui_guild_nil_guard = true
+
+    _G.InspectGuildFrame_Update = function(...)
+        local unit = InspectFrame and InspectFrame.unit
+        if unit and C_PaperDollInfo and C_PaperDollInfo.GetInspectGuildInfo then
+            local _, _, guildName = C_PaperDollInfo.GetInspectGuildInfo(unit)
+            if not guildName then
+                if InspectGuildFrame.guildName then InspectGuildFrame.guildName:SetText("") end
+                if InspectGuildFrame.guildRealmName then InspectGuildFrame.guildRealmName:SetText("") end
+                if InspectGuildFrame.guildLevel then InspectGuildFrame.guildLevel:SetText("") end
+                if InspectGuildFrame.guildNumMembers then InspectGuildFrame.guildNumMembers:SetText("") end
+                local points = InspectGuildFrame.Points
+                if points and points.SumText then points.SumText:SetText("") end
+                return
+            end
+        end
+        return orig(...)
+    end
+end
+
+---------------------------------------------------------------------------
 -- Event frame for inspect-specific events
 ---------------------------------------------------------------------------
 local eventFrame = CreateFrame("Frame")
@@ -1616,6 +1682,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             -- Run immediately: Blizzard's own code shows InspectFrame in the
             -- same tick as ADDON_LOADED, so deferring races the first OnShow.
             HookInspectFrame()
+            PatchInspectGuildNilGuard()
         end
     elseif event == "INSPECT_READY" then
         -- arg1 is the GUID of the inspected unit

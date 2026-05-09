@@ -1,16 +1,12 @@
--- Headless tests for modules/chat/history_storage.lua codec and storage.
--- Run from repo root:  lua tests/test_chat_history_storage.lua
+-- Headless tests for modules/chat/history_storage.lua.
+-- Run from repo root: lua tests/test_chat_history_storage.lua
 
 local env = dofile("tools/_addon_env.lua")
 env.LoadLibs()
 
--- Load the storage module standalone. It needs ns + LibStub globals.
 local ns = { QUI = { Chat = {} } }
 local function loadStorage()
-    -- Simulate the (ADDON_NAME, ns) varargs the file expects via dofile env.
     local chunk = assert(loadfile("modules/chat/history_storage.lua"))
-    -- Lua 5.1: setfenv to inject our ns; vararg chunk receives our table.
-    -- Use a helper that re-calls with explicit varargs.
     local function runner(...) return chunk(...) end
     runner("QUI", ns)
     return ns.QUI.Chat.HistoryStorage
@@ -28,17 +24,29 @@ local function check(name, ok, detail)
     end
 end
 
--- ---- Codec round-trip ----
+local function reset()
+    _G.QUI_ChatHistory = nil
+    _G.QUIDB = nil
+    _G.QUI = nil
+    Storage.Init()
+end
+
+local function entry(t, frame, text, channel)
+    return { t = t, f = frame or 1, m = text, r = 1, g = 1, b = 1, c = channel or "SAY" }
+end
+
+-- Codec round-trip.
 do
     local entries = {
-        { t = 1700000000, f = 1, m = "hello world",         r = 1.0, g = 1.0, b = 1.0, c = "SAY" },
-        { t = 1700000001, f = 1, m = "[TestPlayer]: yo",    r = 0.4, g = 0.8, b = 1.0, c = "WHISPER" },
-        { t = 1700000002, f = 3, m = "guild chatter here",  r = 0.4, g = 1.0, b = 0.4, c = "GUILD" },
+        entry(1700000000, 1, "hello world", "SAY"),
+        entry(1700000001, 1, "[TestPlayer]: yo", "WHISPER"),
+        entry(1700000002, 3, "guild chatter here", "GUILD"),
     }
-    local encoded = Storage._Encode(entries)
+    local encoded, codec = Storage._Encode(entries)
     check("encode returns string", type(encoded) == "string" and #encoded > 0, tostring(encoded))
+    check("encode returns codec", type(codec) == "string" and codec ~= "")
 
-    local decoded = Storage._Decode(encoded)
+    local decoded = Storage._Decode(encoded, codec)
     check("decode returns table", type(decoded) == "table")
     check("decode length matches", #decoded == 3, tostring(#decoded))
 
@@ -51,99 +59,143 @@ do
     end
 end
 
--- ---- Empty array round-trip ----
+-- Empty and garbage decode safely.
 do
-    local encoded = Storage._Encode({})
-    local decoded = Storage._Decode(encoded)
-    check("empty round-trip", type(decoded) == "table" and #decoded == 0)
+    local encoded, codec = Storage._Encode({})
+    check("empty round-trip", #Storage._Decode(encoded, codec) == 0)
+    check("decode nil empty", #Storage._Decode(nil) == 0)
+    check("decode garbage empty", #Storage._Decode("not-a-real-encoded-string", "ace") == 0)
 end
 
--- ---- Decode of nil/garbage returns empty array ----
+-- Appends stay in the plain current buffer until rotation.
 do
-    check("decode nil → empty", #Storage._Decode(nil) == 0)
-    check("decode garbage → empty", #Storage._Decode("not-a-real-encoded-string") == 0)
-end
-
--- ---- Snapshot merges persisted + live ----
-do
-    -- Reset the SV slot. Storage uses _G.QUI_ChatHistory.
-    _G.QUI_ChatHistory = nil
-
-    Storage.Init()
-
-    Storage.AppendLive({ t = 100, f = 1, m = "live A", r = 1, g = 1, b = 1, c = "SAY" })
-    Storage.AppendLive({ t = 101, f = 1, m = "live B", r = 1, g = 1, b = 1, c = "SAY" })
+    reset()
+    Storage.AppendLive(entry(100, 1, "live A"))
+    Storage.AppendLive(entry(101, 1, "live B"))
 
     local snap = Storage.Snapshot()
-    check("snapshot returns live-only when no persisted",
+    check("snapshot returns current entries",
           #snap == 2 and snap[1].m == "live A" and snap[2].m == "live B")
-
-    -- Pretend a flush happened by encoding directly into the SV slot.
-    _G.QUI_ChatHistory.encoded = Storage._Encode({
-        { t = 50, f = 1, m = "old A", r = 1, g = 1, b = 1, c = "SAY" },
-    })
-    _G.QUI_ChatHistory.count = 1
-
-    -- live buffer still has 2 entries from above
-    local snap2 = Storage.Snapshot()
-    check("snapshot merges persisted then live",
-          #snap2 == 3 and snap2[1].m == "old A" and snap2[3].m == "live B",
-          ("got %d entries: %s"):format(#snap2, snap2[1] and snap2[1].m or "nil"))
+    check("current buffer used before rotation",
+          #_G.QUI_ChatHistory.current == 2 and #_G.QUI_ChatHistory.chunks == 0)
 end
 
--- ---- Flush replaces persisted and clears live ----
+-- Snapshot merges serialized chunks before current.
 do
-    _G.QUI_ChatHistory = nil
+    local chunk = assert(Storage._MakeChunk({
+        entry(50, 1, "old A"),
+        entry(51, 2, "old B"),
+    }))
+    _G.QUI_ChatHistory = {
+        schemaVersion = 2,
+        chunks = { chunk },
+        current = { entry(100, 1, "live A") },
+        count = 3,
+        totalCount = 3,
+    }
+    _G.QUIDB = nil
+    _G.QUI = nil
+
     Storage.Init()
 
-    Storage.AppendLive({ t = 1, f = 1, m = "x", r = 1, g = 1, b = 1, c = "SAY" })
-    Storage.AppendLive({ t = 2, f = 1, m = "y", r = 1, g = 1, b = 1, c = "SAY" })
-
-    Storage.Flush({
-        { t = 1, f = 1, m = "x", r = 1, g = 1, b = 1, c = "SAY" },
-        -- (y was pruned by the caller before passing in)
-    })
-
-    check("flush sets count", _G.QUI_ChatHistory.count == 1)
-    check("flush wrote encoded", type(_G.QUI_ChatHistory.encoded) == "string"
-                              and #_G.QUI_ChatHistory.encoded > 0)
-    -- After flush, live should be empty. Snapshot should equal the pruned
-    -- array we passed to Flush.
     local snap = Storage.Snapshot()
-    check("flush clears live buffer", #snap == 1 and snap[1].m == "x",
+    check("snapshot merges chunks then current",
+          #snap == 3 and snap[1].m == "old A" and snap[3].m == "live A",
           ("got %d entries"):format(#snap))
 end
 
--- ---- Clear wipes everything ----
+-- Legacy v1 compressed blob migrates to schema v2.
 do
-    _G.QUI_ChatHistory = nil
-    Storage.Init()
-    Storage.AppendLive({ t = 1, f = 1, m = "x", r = 1, g = 1, b = 1, c = "SAY" })
-    Storage.Flush({ { t = 1, f = 1, m = "x", r = 1, g = 1, b = 1, c = "SAY" } })
+    local oldEntries = {
+        entry(1, 1, "encoded"),
+        entry(2, 1, "fallback A"),
+    }
+    _G.QUI_ChatHistory = {
+        schemaVersion = 1,
+        encoded = Storage._EncodeLegacy(oldEntries),
+        count = #oldEntries,
+        entries = oldEntries, -- same full-array fallback should not duplicate
+    }
+    _G.QUIDB = nil
+    _G.QUI = nil
 
+    Storage.Init()
+
+    local snap = Storage.Snapshot()
+    check("legacy migrated to v2", _G.QUI_ChatHistory.schemaVersion == 2)
+    check("legacy fallback deduped",
+          #snap == 2 and snap[1].m == "encoded" and snap[2].m == "fallback A",
+          ("got %d entries"):format(#snap))
+    check("legacy encoded cleared", _G.QUI_ChatHistory.encoded == nil)
+end
+
+-- Rotation creates chunks and recent frame reads do not need a full snapshot.
+do
+    reset()
+    for i = 1, 1005 do
+        Storage.AppendLive(entry(i, i % 2 == 0 and 1 or 3, "line " .. i))
+    end
+
+    check("rotation created chunks", Storage.GetChunkCount() > 0)
+    check("count after rotation", Storage.GetCount() == 1005, tostring(Storage.GetCount()))
+
+    local recent = Storage.GetRecentForFrame(1, 5)
+    check("recent frame limit",
+          #recent == 5 and recent[1].m == "line 996" and recent[5].m == "line 1004",
+          recent[1] and recent[1].m or "nil")
+end
+
+-- PersistNow normalizes chunks without writing the old monolithic blob.
+do
+    reset()
+    for i = 1, 650 do
+        Storage.AppendLive(entry(i, 1, "persist " .. i))
+    end
+    Storage.PersistNow()
+
+    check("PersistNow set count", _G.QUI_ChatHistory.count == 650)
+    check("PersistNow does not write encoded", _G.QUI_ChatHistory.encoded == nil)
+    check("PersistNow keeps bounded current", #_G.QUI_ChatHistory.current == 500)
+    check("PersistNow created one chunk", #_G.QUI_ChatHistory.chunks == 1)
+end
+
+-- Flush replaces stored state.
+do
+    reset()
+    Storage.AppendLive(entry(1, 1, "x"))
+    Storage.AppendLive(entry(2, 1, "y"))
+
+    Storage.Flush({ entry(1, 1, "x") })
+
+    check("flush sets count", _G.QUI_ChatHistory.count == 1)
+    local snap = Storage.Snapshot()
+    check("flush replaces state", #snap == 1 and snap[1].m == "x",
+          ("got %d entries"):format(#snap))
+end
+
+-- Clear wipes everything.
+do
+    reset()
+    Storage.AppendLive(entry(1, 1, "x"))
     Storage.Clear()
-    check("Clear empties live + persisted", #Storage.Snapshot() == 0)
+    check("Clear empties stored state", #Storage.Snapshot() == 0)
     check("Clear zeros count", Storage.GetCount() == 0)
 end
 
--- ---- GetCount reads metadata without decoding ----
+-- GetCount reads metadata.
 do
-    _G.QUI_ChatHistory = nil
-    Storage.Init()
+    reset()
     Storage.Flush({
-        { t = 1, f = 1, m = "a", r = 1, g = 1, b = 1, c = "SAY" },
-        { t = 2, f = 1, m = "b", r = 1, g = 1, b = 1, c = "SAY" },
-        { t = 3, f = 1, m = "c", r = 1, g = 1, b = 1, c = "SAY" },
+        entry(1, 1, "a"),
+        entry(2, 1, "b"),
+        entry(3, 1, "c"),
     })
     check("GetCount = 3 after flush", Storage.GetCount() == 3)
 end
 
--- ---- Migration from AceDB slot ----
+-- Migration from old AceDB slot imports this character only.
 do
     _G.QUI_ChatHistory = nil
-
-    -- Simulate old AceDB-side state. The storage module reads
-    -- _G.QUIDB.char[charKey].chat.history.entries.
     _G.QUIDB = {
         char = {
             ["TestChar - TestRealm"] = {
@@ -151,8 +203,8 @@ do
                     history = {
                         schemaVersion = 1,
                         entries = {
-                            { t = 1, f = 1, m = "old1", r = 1, g = 1, b = 1, c = "SAY" },
-                            { t = 2, f = 1, m = "old2", r = 1, g = 1, b = 1, c = "SAY" },
+                            entry(1, 1, "old1"),
+                            entry(2, 1, "old2"),
                         },
                     },
                 },
@@ -162,57 +214,41 @@ do
                     history = {
                         schemaVersion = 1,
                         entries = {
-                            { t = 9, f = 1, m = "other-char", r = 1, g = 1, b = 1, c = "SAY" },
+                            entry(9, 1, "other-char"),
                         },
                     },
                 },
             },
         },
     }
+    _G.QUI = { db = { keys = { char = "TestChar - TestRealm" } } }
 
-    -- Stub a minimal QUI.db.keys.char so MigrateFromAceDB can resolve "self".
-    _G.QUI = _G.QUI or {}
-    _G.QUI.db = { keys = { char = "TestChar - TestRealm" } }
+    Storage.Init()
 
-    Storage.MigrateFromAceDB()
-
-    check("migration encoded old entries",
-          type(_G.QUI_ChatHistory.encoded) == "string" and #_G.QUI_ChatHistory.encoded > 0)
-    check("migration set _migrated flag", _G.QUI_ChatHistory._migrated == true)
+    check("migration set v2 schema", _G.QUI_ChatHistory.schemaVersion == 2)
+    check("migration set flag", _G.QUI_ChatHistory._migrated == true)
     check("migration set count", _G.QUI_ChatHistory.count == 2)
 
     local snap = Storage.Snapshot()
-    check("migrated entries are recoverable",
+    check("migrated entries recoverable",
           #snap == 2 and snap[1].m == "old1" and snap[2].m == "old2")
 
-    -- Self slot wiped to free memory:
     local self = _G.QUIDB.char["TestChar - TestRealm"].chat.history
-    check("self entries nil-ed after migration",
+    check("self entries nil after migration",
           self.entries == nil or #self.entries == 0,
           tostring(self.entries))
 
-    -- Other char untouched:
     local other = _G.QUIDB.char["OtherChar - TestRealm"].chat.history
-    check("other char entries preserved",
+    check("other char untouched",
           other.entries and #other.entries == 1)
 end
 
--- ---- Migration is idempotent ----
+-- ClearAllCharacters wipes new current character SV and legacy slots.
 do
-    -- Don't reset SV. Run again. Should be a no-op.
-    local before = _G.QUI_ChatHistory.encoded
-    Storage.MigrateFromAceDB()
-    check("idempotent: encoded unchanged",
-          _G.QUI_ChatHistory.encoded == before)
-end
-
--- ---- ClearAllCharacters wipes legacy + new ----
-do
-    -- new SV has migrated entries, plus a fresh other-char legacy slot
     Storage.ClearAllCharacters()
 
     check("ClearAll wiped new SV", #Storage.Snapshot() == 0)
-    check("ClearAll wiped this char's encoded blob", _G.QUI_ChatHistory.count == 0)
+    check("ClearAll wiped this char count", _G.QUI_ChatHistory.count == 0)
 
     local other = _G.QUIDB.char["OtherChar - TestRealm"].chat.history
     check("ClearAll wiped legacy other-char entries",

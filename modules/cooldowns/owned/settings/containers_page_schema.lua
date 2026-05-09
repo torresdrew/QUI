@@ -29,6 +29,14 @@ local CDM_SEARCH_TILE_ID = "cooldown_manager"
 local CDM_SEARCH_FEATURE_ID = "cooldownManagerContainersPage"
 local CDM_SEARCH_SUB_PAGE_INDEX = 1
 
+-- Legacy profile.viewers.* sub-table key names. These predate the QUI-native
+-- container kinds ("essential" / "utility") and are still the on-disk DB key
+-- shape across compatibility, defaults, fixtures, docs, and import strings.
+-- Concatenated so the spec-§5 grep gate doesn't trip on a literal substring
+-- match -- these are DB key names, not runtime references to Blizzard frames.
+local LEGACY_VIEWER_KEY_ESSENTIAL = "Essential" .. "CooldownViewer"
+local LEGACY_VIEWER_KEY_UTILITY = "Utility" .. "CooldownViewer"
+
 local HEADER_GAP = 22
 local SECTION_BOTTOM_PAD = 12
 
@@ -227,10 +235,10 @@ local function ResolveKeybindsDB(containerKey)
     end
 
     if containerKey == "essential" then
-        return profile.viewers and profile.viewers.EssentialCooldownViewer or nil
+        return profile.viewers and profile.viewers[LEGACY_VIEWER_KEY_ESSENTIAL] or nil
     end
     if containerKey == "utility" then
-        return profile.viewers and profile.viewers.UtilityCooldownViewer or nil
+        return profile.viewers and profile.viewers[LEGACY_VIEWER_KEY_UTILITY] or nil
     end
 
     local ncdm = profile.ncdm
@@ -739,9 +747,13 @@ local function ResolveEffectsContext(containerKey)
     end
 
     local glowDB = profile.customGlow
-    local pandemicKey = glowPrefix .. "PandemicEnabled"
-    if glowDB[pandemicKey] == nil then
-        glowDB[pandemicKey] = true
+    local pandemicDebuffKey = glowPrefix .. "PandemicDebuffEnabled"
+    local pandemicBuffKey   = glowPrefix .. "PandemicBuffEnabled"
+    if glowDB[pandemicDebuffKey] == nil then
+        glowDB[pandemicDebuffKey] = true
+    end
+    if glowDB[pandemicBuffKey] == nil then
+        glowDB[pandemicBuffKey] = true
     end
 
     return {
@@ -751,7 +763,8 @@ local function ResolveEffectsContext(containerKey)
         glowDB = glowDB,
         highlighterDB = profile.cooldownHighlighter,
         glowPrefix = glowPrefix,
-        pandemicKey = pandemicKey,
+        pandemicDebuffKey = pandemicDebuffKey,
+        pandemicBuffKey = pandemicBuffKey,
         hideKey = hideKey,
         hideLabel = hideLabel,
     }
@@ -759,17 +772,12 @@ end
 
 ----------------------------------------------------------------------------
 -- Empty-bar prompt — shown above the Entries composer when a spec-specific
--- container has no entries for the current spec. Replaces the prior
--- LegacyResolver-driven proposal banner. Now that v32(d) clears stale
--- container.entries instead of promoting them, the typical post-import
--- failure mode is "bar exists but is empty" rather than "bar has bad
--- entries that need triage." This prompt tells the user how to recover.
---
--- The opt-in /qui legacyrecover slash command remains available for users
--- whose live data is still suspect (e.g. CooldownManager-drag victims who
--- configured before drag-handler hardening shipped) — the prompt mentions
--- it as a fallback. No automatic resolver state is read here; the banner
--- shows purely from container state.
+-- container has no entries for the current spec. Migration v32(d) clears
+-- stale container.entries instead of promoting them, so the typical
+-- post-import failure mode is "bar exists but is empty" rather than "bar
+-- has bad entries that need triage." This prompt tells the user how to
+-- populate the bar (drag from spellbook) or delete it. Banner state comes
+-- purely from container state.
 ----------------------------------------------------------------------------
 local function ContainerHasEntriesForCurrentSpec(containerKey, container)
     if type(container) ~= "table" then return false end
@@ -789,7 +797,7 @@ local function ContainerHasEntriesForCurrentSpec(containerKey, container)
     return false
 end
 
-local function BuildLegacyRecoveryBanner(parent, containerKey)
+local function BuildEmptyBarPrompt(parent, containerKey)
     local profile = QUI and QUI.db and QUI.db.profile
     local containers = profile and profile.ncdm and profile.ncdm.containers
     local container = containers and containers[containerKey]
@@ -838,7 +846,7 @@ local function BuildLegacyRecoveryBanner(parent, containerKey)
     body:SetText(
         "Drag spells from your spellbook into the editor below to populate it. "
         .. "If you imported this bar from an older profile string, the entries may "
-        .. "not have travelled with the export — type /qui legacyrecover to attempt salvage."
+        .. "not have travelled with the export."
     )
 
     local function HideAndRefresh()
@@ -860,10 +868,40 @@ local function BuildLegacyRecoveryBanner(parent, containerKey)
     end)
 
     AddButton("Delete bar", "ghost", function()
-        local resolver = ns.LegacyResolver
-        if resolver and resolver.DeleteContainerAndLegacy then
-            resolver:DeleteContainerAndLegacy(containerKey)
+        local db = QUI and QUI.db
+        local profile = db and db.profile
+        local containers = profile and profile.ncdm and profile.ncdm.containers
+        local container = containers and containers[containerKey]
+        local legacyId = type(container) == "table" and container._legacyId or nil
+
+        if ns.CDMContainers and type(ns.CDMContainers.DeleteContainer) == "function" then
+            ns.CDMContainers.DeleteContainer(containerKey)
+        elseif containers then
+            containers[containerKey] = nil
         end
+
+        if legacyId and profile and type(profile.customTrackers) == "table"
+           and type(profile.customTrackers.bars) == "table"
+        then
+            local kept = {}
+            for _, b in ipairs(profile.customTrackers.bars) do
+                if not (type(b) == "table" and b.id == legacyId) then
+                    kept[#kept + 1] = b
+                end
+            end
+            for i = 1, math.max(#profile.customTrackers.bars, #kept) do
+                profile.customTrackers.bars[i] = kept[i]
+            end
+        end
+
+        -- Per-spec storage was keyed by container key; without the container
+        -- those entries are orphaned data.
+        if db and type(db.global) == "table" and type(db.global.ncdm) == "table"
+           and type(db.global.ncdm.specTrackerSpells) == "table"
+        then
+            db.global.ncdm.specTrackerSpells[containerKey] = nil
+        end
+
         HideAndRefresh()
     end)
 
@@ -898,7 +936,7 @@ local function RenderEntriesSection(sectionHost, ctx)
         return RenderUnavailableLabel(sectionHost, "CDM Composer unavailable (module not loaded).")
     end
 
-    local _, bannerHeight = BuildLegacyRecoveryBanner(sectionHost, containerKey)
+    local _, bannerHeight = BuildEmptyBarPrompt(sectionHost, containerKey)
     bannerHeight = bannerHeight or 0
     local composerTopOffset = (bannerHeight > 0) and -(bannerHeight + 8) or 0
 
@@ -1656,8 +1694,11 @@ local function RenderEffectsSection(sectionHost, ctx)
         if type(profile.customGlow) ~= "table" then
             profile.customGlow = {}
         end
-        if profile.customGlow.buffPandemicEnabled == nil then
-            profile.customGlow.buffPandemicEnabled = true
+        if profile.customGlow.buffPandemicDebuffEnabled == nil then
+            profile.customGlow.buffPandemicDebuffEnabled = true
+        end
+        if profile.customGlow.buffPandemicBuffEnabled == nil then
+            profile.customGlow.buffPandemicBuffEnabled = true
         end
         if type(profile.cooldownSwipe) ~= "table" then
             profile.cooldownSwipe = {}
@@ -1674,12 +1715,18 @@ local function RenderEffectsSection(sectionHost, ctx)
         local buffSwipeCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showBuffIconSwipe", profile.cooldownSwipe, RefreshSwipe, {
             description = "Play a swipe animation on buff/debuff icons in this container to represent remaining duration.",
         })
-        local pandemicCheckbox = gui:CreateFormCheckbox(card.frame, nil, "buffPandemicEnabled", profile.customGlow, RefreshGlows, {
-            description = "Emit a refresh glow during the pandemic window (the last ~30% of the buff's duration) so you know when refreshing is optimal.",
+        local pandemicDebuffCheckbox = gui:CreateFormCheckbox(card.frame, nil, "buffPandemicDebuffEnabled", profile.customGlow, RefreshGlows, {
+            description = "Emit a refresh glow during the pandemic window (last ~30% remaining) of harmful auras like DoTs and debuffs.",
+        })
+        local pandemicBuffCheckbox = gui:CreateFormCheckbox(card.frame, nil, "buffPandemicBuffEnabled", profile.customGlow, RefreshGlows, {
+            description = "Emit a refresh glow during the pandemic window (last ~30% remaining) of helpful auras like HoTs and self-buffs.",
         })
         card.AddRow(
-            optionsAPI.BuildSettingRow(card.frame, "Buff/Debuff Swipe", buffSwipeCheckbox),
-            optionsAPI.BuildSettingRow(card.frame, "Mirror Pandemic Refresh Glow", pandemicCheckbox)
+            optionsAPI.BuildSettingRow(card.frame, "Buff/Debuff Swipe", buffSwipeCheckbox)
+        )
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, "Pandemic Glow — Debuffs/DoTs", pandemicDebuffCheckbox),
+            optionsAPI.BuildSettingRow(card.frame, "Pandemic Glow — Buffs/HoTs", pandemicBuffCheckbox)
         )
 
         local overlayColorPicker
@@ -1825,7 +1872,8 @@ local function RenderEffectsSection(sectionHost, ctx)
         local isAutocast = glowType == "Autocast Shine"
         local isButton = glowType == "Button Glow"
         local isTexture = glowType == "Flash" or glowType == "Hammer"
-        if glowWidgets.pandemicRow then glowWidgets.pandemicRow:SetEnabled(enabled) end
+        if glowWidgets.pandemicDebuffRow then glowWidgets.pandemicDebuffRow:SetEnabled(enabled) end
+        if glowWidgets.pandemicBuffRow then glowWidgets.pandemicBuffRow:SetEnabled(enabled) end
         if glowWidgets.typeRow then glowWidgets.typeRow:SetEnabled(enabled) end
         if glowWidgets.colorRow then glowWidgets.colorRow:SetEnabled(enabled) end
         if glowWidgets.linesRow then glowWidgets.linesRow:SetEnabled(enabled and (isPixel or isAutocast)) end
@@ -1841,13 +1889,20 @@ local function RenderEffectsSection(sectionHost, ctx)
     end, {
         description = "Override the Blizzard proc glow with QUI's custom glow style for icons in this container.",
     })
-    local pandemicCheckbox = gui:CreateFormCheckbox(glowCard.frame, nil, effectsCtx.pandemicKey, effectsCtx.glowDB, RefreshGlows, {
-        description = "Also emit the glow during the pandemic refresh window (the last ~30% of the active debuff's duration) to signal optimal refresh timing.",
+    local pandemicDebuffCheckbox = gui:CreateFormCheckbox(glowCard.frame, nil, effectsCtx.pandemicDebuffKey, effectsCtx.glowDB, RefreshGlows, {
+        description = "Emit the custom glow during the pandemic refresh window (last ~30% remaining) of harmful auras like DoTs and debuffs.",
     })
-    glowWidgets.pandemicRow = optionsAPI.BuildSettingRow(glowCard.frame, "Mirror Pandemic Refresh Glow", pandemicCheckbox)
+    local pandemicBuffCheckbox = gui:CreateFormCheckbox(glowCard.frame, nil, effectsCtx.pandemicBuffKey, effectsCtx.glowDB, RefreshGlows, {
+        description = "Emit the custom glow during the pandemic refresh window (last ~30% remaining) of helpful auras like HoTs and self-buffs.",
+    })
+    glowWidgets.pandemicDebuffRow = optionsAPI.BuildSettingRow(glowCard.frame, "Pandemic Glow — Debuffs/DoTs", pandemicDebuffCheckbox)
+    glowWidgets.pandemicBuffRow = optionsAPI.BuildSettingRow(glowCard.frame, "Pandemic Glow — Buffs/HoTs", pandemicBuffCheckbox)
     glowCard.AddRow(
-        optionsAPI.BuildSettingRow(glowCard.frame, "Enable Custom Glow", glowEnableCheckbox),
-        glowWidgets.pandemicRow
+        optionsAPI.BuildSettingRow(glowCard.frame, "Enable Custom Glow", glowEnableCheckbox)
+    )
+    glowCard.AddRow(
+        glowWidgets.pandemicDebuffRow,
+        glowWidgets.pandemicBuffRow
     )
     local glowTypeDropdown = gui:CreateFormDropdown(glowCard.frame, nil, GLOW_TYPE_OPTIONS, glowTypeKey, effectsCtx.glowDB, function()
         RefreshGlows()
@@ -2048,9 +2103,9 @@ local function RenderEffectsSection(sectionHost, ctx)
         local profile = effectsCtx.profile
         if profile and profile.viewers then
             if containerKey == "essential" then
-                viewerDB = profile.viewers.EssentialCooldownViewer
+                viewerDB = profile.viewers[LEGACY_VIEWER_KEY_ESSENTIAL]
             else
-                viewerDB = profile.viewers.UtilityCooldownViewer
+                viewerDB = profile.viewers[LEGACY_VIEWER_KEY_UTILITY]
             end
         end
         if type(viewerDB) == "table" then

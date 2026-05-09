@@ -253,6 +253,37 @@ end
 local CARD_ROW_HEIGHT = 32
 local dualColumnSequence = 0
 
+local function GetInitialLayoutY(item, body)
+    if not item or type(item.GetNumPoints) ~= "function" or type(item.GetPoint) ~= "function" then
+        return nil
+    end
+
+    local bestY, bestRank
+    local numPoints = item:GetNumPoints() or 0
+    for pointIndex = 1, numPoints do
+        local point, relativeTo, _, _, y = item:GetPoint(pointIndex)
+        if type(y) == "number" then
+            local rank = 1
+            if point == "TOPLEFT" or point == "TOP" or point == "TOPRIGHT" then
+                rank = 3
+            elseif point == "LEFT" or point == "CENTER" or point == "RIGHT" then
+                rank = 2
+            end
+
+            if relativeTo == body then
+                rank = rank + 3
+            end
+
+            if not bestY or rank > bestRank then
+                bestY = y
+                bestRank = rank
+            end
+        end
+    end
+
+    return bestY
+end
+
 local function GetDualColumnRowHeight(widget)
     if not widget then return CARD_ROW_HEIGHT end
     local customHeight = widget._quiDualColumnRowHeight
@@ -287,6 +318,9 @@ local function ApplyDualColumnLayout(section)
 
         table.insert(layoutItems, item)
         itemOrder[item] = #layoutItems
+        if item._quiDualColumnOriginalY == nil then
+            item._quiDualColumnOriginalY = GetInitialLayoutY(item, body)
+        end
         if not item._quiDualColumnSequence then
             dualColumnSequence = dualColumnSequence + 1
             item._quiDualColumnSequence = dualColumnSequence
@@ -331,10 +365,17 @@ local function ApplyDualColumnLayout(section)
         if item._quiCardGroup then return end
     end
 
-    -- Stable sort by creation sequence. The next-frame relayout below still
-    -- corrects geometry, but ordering no longer depends primarily on GetTop()
-    -- before hidden tile pages have settled.
+    -- Stable sort by the builder's original row offsets. The old child-first,
+    -- region-second collection moved direct FontString helper copy to the
+    -- bottom of settings sections; preserving the initial TOPLEFT offsets keeps
+    -- inline labels in the same flow while avoiding hidden-page GetTop() math.
     table.sort(layoutItems, function(a, b)
+        local ay = a._quiDualColumnOriginalY
+        local by = b._quiDualColumnOriginalY
+        if type(ay) == "number" and type(by) == "number" and ay ~= by then
+            return ay > by
+        end
+
         local as = a._quiDualColumnSequence or 0
         local bs = b._quiDualColumnSequence or 0
         if as == bs then

@@ -17,7 +17,7 @@ local GUI = QUI.GUI
 ---------------------------------------------------------------------------
 -- THEME COLORS - "Mint Condition" Palette
 ---------------------------------------------------------------------------
-GUI.Colors = {
+GUI.Colors = GUI.Colors or {
     -- Backgrounds
     bg = {0.051, 0.067, 0.09, 0.97},          -- #0d1117 deep dark
     bgLight = {0.094, 0.11, 0.14, 1},         -- slightly lighter for inactive tabs
@@ -167,7 +167,7 @@ end
 ---------------------------------------------------------------------------
 -- THEME PRESETS
 ---------------------------------------------------------------------------
-GUI.ThemePresets = {
+GUI.ThemePresets = GUI.ThemePresets or {
     { name = "Sky Blue",     color = {0.376, 0.647, 0.980} },
     { name = "Classic Mint", color = {0.204, 0.827, 0.600} },
     { name = "Horde",        color = {0.780, 0.192, 0.192} },
@@ -3804,22 +3804,29 @@ function GUI:CreateFormEditBox(parent, label, dbKey, dbTable, onChange, options,
     local UIKit = ns.UIKit
 
     local container = CreateFrame("Frame", nil, parent)
-    container:SetHeight(FORM_ROW_HEIGHT)
     container._widgetLabel = label  -- For search jump-to-setting (V2)
     ApplyWidgetSyncContext(container, dbTable, dbKey)
 
-    local text = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    SetFont(text, 12, "", C.text)
-    text:SetText(label or "Text")
-    text:SetPoint("LEFT", 0, 0)
-    text:SetWidth(170)
-    text:SetWordWrap(true)
-    text:SetJustifyH("LEFT")
+    local text
+    local fieldLeftOffset = 180
+    if label then
+        container:SetHeight(FORM_ROW_HEIGHT)
+        text = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        SetFont(text, 12, "", C.text)
+        text:SetText(label)
+        text:SetPoint("LEFT", 0, 0)
+        text:SetWidth(170)
+        text:SetWordWrap(true)
+        text:SetJustifyH("LEFT")
+    else
+        container:SetSize((options.width and options.width > 0) and options.width or 180, FORM_ROW_HEIGHT)
+        fieldLeftOffset = 0
+    end
 
     local field = CreateFrame("Frame", nil, container)
     field:SetHeight(24)
-    field:SetPoint("LEFT", container, "LEFT", 180, 0)
-    if options.width and options.width > 0 then
+    field:SetPoint("LEFT", container, "LEFT", fieldLeftOffset, 0)
+    if label and options.width and options.width > 0 then
         field:SetWidth(options.width)
     else
         field:SetPoint("RIGHT", container, "RIGHT", 0, 0)

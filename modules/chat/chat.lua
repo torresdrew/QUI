@@ -762,10 +762,39 @@ end
 ---------------------------------------------------------------------------
 -- Initialize
 ---------------------------------------------------------------------------
+-- StyleEditBox (editbox_basics.lua) and ApplyMessagePadding (skinning.lua)
+-- bail early when InCombatLockdown() or chat messaging lockdown is active.
+-- If we /reload mid-combat or mid-key, the editbox strip stays unstyled
+-- (no QUI backdrop, focus hooks, or texture stripping) until lockdown ends.
+-- Track a pending flag and reapply when both lockdowns clear.
+local pendingCombatReskin = false
+
+local function IsAnyChatLayoutLocked()
+    return (type(InCombatLockdown) == "function" and InCombatLockdown())
+        or (I.IsChatMessagingLockedDown and I.IsChatMessagingLockedDown())
+end
+
+local function FlushPendingCombatReskin()
+    if not pendingCombatReskin then return end
+    if IsAnyChatLayoutLocked() then return end
+    pendingCombatReskin = false
+    ns.QUI.Chat.Skinning.SkinAll()
+    ns.QUI.Chat.Skinning.StyleAllTabs()
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("CVAR_UPDATE")
+-- Lockdown-end events. PLAYER_REGEN_ENABLED covers plain combat; the
+-- remainder cover chat messaging lockdown sources (M+ keys, encounters,
+-- PvP matches) that persist past combat exit.
+eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+eventFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
+eventFrame:RegisterEvent("CHALLENGE_MODE_RESET")
+eventFrame:RegisterEvent("ENCOUNTER_END")
+eventFrame:RegisterEvent("PVP_MATCH_COMPLETE")
+eventFrame:RegisterEvent("PVP_MATCH_INACTIVE")
 eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
         self:UnregisterEvent("ADDON_LOADED")
@@ -794,8 +823,21 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         ns.QUI.Chat.Skinning.SkinAll()
         ns.QUI.Chat.Skinning.StyleAllTabs()
         ApplyTimestampMode()
+
+        -- If we loaded under any chat layout lockdown, the per-frame editbox
+        -- styling bailed. Mark for retry on the next lockdown-end event.
+        if IsAnyChatLayoutLocked() then
+            pendingCombatReskin = true
+        end
     elseif event == "PLAYER_LOGIN" or event == "CVAR_UPDATE" then
         ApplyTimestampMode()
+    elseif event == "PLAYER_REGEN_ENABLED"
+        or event == "CHALLENGE_MODE_COMPLETED"
+        or event == "CHALLENGE_MODE_RESET"
+        or event == "ENCOUNTER_END"
+        or event == "PVP_MATCH_COMPLETE"
+        or event == "PVP_MATCH_INACTIVE" then
+        FlushPendingCombatReskin()
     end
 end)
 

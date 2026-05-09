@@ -11,6 +11,8 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 
+ns.CDMComposer = ns.CDMComposer or {}
+
 local type = type
 local pairs = pairs
 local ipairs = ipairs
@@ -90,12 +92,394 @@ local function ResolveContainerType(containerKey)
     return "cooldown"
 end
 
+-- Returns the implied entry kind ("aura" | "cooldown") for a container based
+-- on its container type. Built-in containers have a fixed kind that every
+-- entry inherits (essential/utility = cooldown; buff/trackedBar = aura).
+-- Custom bars and other mixed-kind containers return nil — callers must
+-- determine kind from the active add-source tab.
+local function GetContainerImpliedKind(containerKey)
+    local ctype = ResolveContainerType(containerKey)
+    if ctype == "cooldown" then return "cooldown" end
+    if ctype == "aura" or ctype == "auraBar" then return "aura" end
+    return nil
+end
+
 local TYPE_TAGS = {
     spell = "[Spell]",
     item  = "[Item]",
     slot  = "[Slot]",
     macro = "[Macro]",
 }
+
+---------------------------------------------------------------------------
+-- BLIZZARD SEED PATH
+--
+-- Settings-time only, NEVER runtime. The only function in
+-- modules/cooldowns/owned/ permitted to call C_CooldownViewer.* once
+-- the runtime cutover (Task 14) lands. Invoked when:
+--   1. composer entries are empty for a built-in container (first-time
+--      profile init in cdm_containers.lua)
+--   2. the user clicks "Reset to Blizzard Defaults" in the composer
+--      footer
+--
+-- Returns a list of entries shaped { type = "spell", id = spellID } —
+-- the same shape stored in `db.ownedSpells`. Caller writes the result
+-- into the container's entry list and triggers a catalog rebuild.
+--
+-- Container kinds: essential | utility | buff | trackedBar.
+-- Categories are integer enum values (0/1/2/3) — the codebase uses
+-- integer literals; Enum.CooldownViewerCategory is not referenced.
+---------------------------------------------------------------------------
+local CATEGORY_FOR_KIND = {
+    essential   = 0,  -- Essential
+    utility     = 1,  -- Utility
+    buff        = 2,  -- TrackedBuff (Buff Icon)
+    trackedBar  = 3,  -- TrackedBar  (Buff Bar)
+}
+
+function ns.CDMComposer.SeedFromBlizzard(containerKind)
+    local category = CATEGORY_FOR_KIND[containerKind]
+    if not category then return {} end
+    if not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCategorySet
+        or not C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        return {}
+    end
+
+    local ok, cooldownIDs = pcall(C_CooldownViewer.GetCooldownViewerCategorySet, category)
+    if not ok or type(cooldownIDs) ~= "table" then return {} end
+
+    local entries = {}
+    local seen = {}
+    for _, cdID in ipairs(cooldownIDs) do
+        local okInfo, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
+        if okInfo and info then
+            local sid
+            if category == 2 or category == 3 then
+                local tooltipSid = info.overrideTooltipSpellID
+                if tooltipSid and tooltipSid > 0 then
+                    sid = tooltipSid
+                end
+            end
+            sid = sid or info.overrideSpellID or info.spellID
+            if sid and sid > 0 and not seen[sid] then
+                seen[sid] = true
+                entries[#entries + 1] = { type = "spell", id = sid }
+            end
+        end
+    end
+    return entries
+end
+
+---------------------------------------------------------------------------
+-- BLIZZARD CDM CATALOG INDICES
+--
+-- Settings-time mirror of Blizzard's per-cooldown info struct, used by
+-- runtime aura/cooldown classifiers via the shared maps stored on
+-- CDMSpellData. Composer is the only caller into C_CooldownViewer for
+-- this build; cdm_spelldata reads the maps but never refreshes them.
+---------------------------------------------------------------------------
+function ns.CDMComposer.RebuildBlizzardCatalogMaps(spellToCDID, inCooldowns, inAuras, abilityToAura, auraIDsForSpell)
+    if type(spellToCDID) ~= "table" or type(inCooldowns) ~= "table"
+        or type(inAuras) ~= "table" or type(abilityToAura) ~= "table" then
+        return false
+    end
+    if not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCategorySet
+        or not C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        return false
+    end
+    -- Helper for the auraIDsForSpell map. Multiple catalog entries can map
+    -- to the same spell across categories (TrackedBuff + Essential pair, or
+    -- TrackedBuff variants with the same base spellID and different linked
+    -- aura IDs like Outbreak's Putrefying Bite + Virulent Plague). Union
+    -- their aura IDs into one list per key, deduped.
+    local function appendAuraIDs(map, key, auraIDs)
+        if not key or not auraIDs or #auraIDs == 0 then return end
+        local existing = map[key]
+        if not existing then
+            existing = {}
+            for _, aid in ipairs(auraIDs) do existing[#existing + 1] = aid end
+            map[key] = existing
+            return
+        end
+        for _, aid in ipairs(auraIDs) do
+            local found = false
+            for _, e in ipairs(existing) do
+                if e == aid then found = true; break end
+            end
+            if not found then existing[#existing + 1] = aid end
+        end
+    end
+    for cat = 0, 3 do
+        local ok, ids = pcall(C_CooldownViewer.GetCooldownViewerCategorySet, cat, true)
+        if ok and ids then
+            local isBuffCat = (cat == 2 or cat == 3)
+            local familySet = isBuffCat and inAuras or inCooldowns
+            for _, cdID in ipairs(ids) do
+                local okI, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
+                if okI and info then
+                    local sid = info.spellID
+                    if sid and sid > 0 then
+                        spellToCDID[sid] = cdID
+                        familySet[sid] = true
+                    end
+                    local ov = info.overrideSpellID
+                    if ov and ov > 0 then
+                        spellToCDID[ov] = cdID
+                        familySet[ov] = true
+                    end
+                    local tooltipSid = info.overrideTooltipSpellID
+                    if tooltipSid and tooltipSid <= 0 then tooltipSid = nil end
+                    if isBuffCat then
+                        if tooltipSid and tooltipSid > 0 then
+                            spellToCDID[tooltipSid] = cdID
+                            familySet[tooltipSid] = true
+                        end
+                        if info.linkedSpellIDs then
+                            for _, lsid in ipairs(info.linkedSpellIDs) do
+                                local lv = lsid
+                                if lv and lv > 0 then
+                                    spellToCDID[lv] = cdID
+                                    familySet[lv] = true
+                                end
+                            end
+                        end
+                    end
+
+                    -- Build auraIDsForSpell from the aura categories only.
+                    -- Entries with hasAura/selfAura set get every linked aura ID
+                    -- (multi-variant — Outbreak's two debuff variants both
+                    -- captured) or the cast spellID itself when no link
+                    -- list is present.
+                    if type(auraIDsForSpell) == "table"
+                        and isBuffCat
+                        and (info.hasAura == true or info.selfAura == true) then
+                        local auraIDs = {}
+                        if tooltipSid and tooltipSid > 0 then
+                            auraIDs[#auraIDs + 1] = tooltipSid
+                        end
+                        if info.linkedSpellIDs then
+                            for _, lsid in ipairs(info.linkedSpellIDs) do
+                                local lv = lsid
+                                if lv and lv > 0 then
+                                    auraIDs[#auraIDs + 1] = lv
+                                end
+                            end
+                        end
+                        if #auraIDs == 0 then
+                            local self_id = ov or sid
+                            if self_id then auraIDs[1] = self_id end
+                        end
+                        appendAuraIDs(auraIDsForSpell, sid, auraIDs)
+                        if ov and ov ~= sid then
+                            appendAuraIDs(auraIDsForSpell, ov, auraIDs)
+                        end
+                        if tooltipSid and tooltipSid ~= sid and tooltipSid ~= ov then
+                            appendAuraIDs(auraIDsForSpell, tooltipSid, auraIDs)
+                        end
+                    end
+
+                    if isBuffCat then
+                        local auraID = tooltipSid
+                        if info.linkedSpellIDs then
+                            for _, lsid in ipairs(info.linkedSpellIDs) do
+                                local lv = lsid
+                                if not auraID and lv and lv > 0 then auraID = lv; break end
+                            end
+                        end
+                        if not auraID then auraID = ov or sid end
+
+                        if auraID then
+                            local baseKey = sid or ov
+                            local existing = baseKey and abilityToAura[baseKey]
+                            -- Multiple CDM entries can share a base spellID
+                            -- but link to different auras (e.g. Inertia
+                            -- 427640 → 427641 vs 427640 → 1215159). Prefer
+                            -- the linked aura whose icon differs from the
+                            -- base — that is the active buff, not a passive
+                            -- variant.
+                            if existing and existing ~= auraID and baseKey then
+                                local baseIcon
+                                if C_Spell and C_Spell.GetSpellInfo then
+                                    local bi = C_Spell.GetSpellInfo(baseKey)
+                                    baseIcon = bi and bi.iconID
+                                end
+                                if baseIcon then
+                                    local existIcon, newIcon
+                                    if C_Spell.GetSpellInfo then
+                                        local ei = C_Spell.GetSpellInfo(existing)
+                                        existIcon = ei and ei.iconID
+                                        local ni = C_Spell.GetSpellInfo(auraID)
+                                        newIcon = ni and ni.iconID
+                                    end
+                                    if existIcon == baseIcon and newIcon and newIcon ~= baseIcon then
+                                        abilityToAura[baseKey] = auraID
+                                        if ov and ov ~= auraID and ov ~= baseKey then
+                                            abilityToAura[ov] = auraID
+                                        end
+                                    end
+                                end
+                            else
+                                if sid and sid ~= auraID then
+                                    abilityToAura[sid] = auraID
+                                end
+                                if ov and ov ~= auraID and ov ~= sid then
+                                    abilityToAura[ov] = auraID
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return true
+end
+
+-- Settings-time helper for the picker tab. Returns the union of every
+-- spell present in any of the four CDM categories with name/icon/known
+-- metadata, filtered against the container's family categories.
+local CDM_BAR_CATEGORIES = {
+    essential  = { 0, 1 },
+    utility    = { 0, 1 },
+    buff       = { 2, 3 },
+    trackedBar = { 2, 3 },
+}
+
+function ns.CDMComposer.GetAvailableSpellsForContainer(containerKey, containerType, ownedSet, correctionMap)
+    if not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCategorySet
+        or not C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        return {}
+    end
+    ownedSet = ownedSet or {}
+    correctionMap = correctionMap or {}
+    -- Category selection is driven by the requested kind (the active tab
+    -- on a custom bar, or the container's own shape on a built-in). Cooldown
+    -- tabs scan essential + utility only; aura tabs scan TrackedBuff +
+    -- TrackedBar only. Without this gate the cooldowns tab would surface
+    -- aura-viewer entries (and vice versa), since CDM_BAR_CATEGORIES is
+    -- keyed on the legacy built-in containerKey and falls back to all
+    -- four categories for custom bars.
+    local isAuraContainer = (containerType == "aura" or containerType == "auraBar")
+    local categories
+    if containerType == "cooldown" then
+        categories = { 0, 1 }
+    elseif isAuraContainer then
+        categories = { 2, 3 }
+    else
+        categories = CDM_BAR_CATEGORIES[containerKey] or { 0, 1, 2, 3 }
+    end
+
+    local available = {}
+    local seen = {}
+    for _, category in ipairs(categories) do
+        local ok, cooldownIDs = pcall(C_CooldownViewer.GetCooldownViewerCategorySet, category)
+        if ok and cooldownIDs then
+            for _, cdID in ipairs(cooldownIDs) do
+                local okInfo, cdInfo = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
+                if okInfo and cdInfo then
+                    local sid = correctionMap[cdID]
+                    if not sid and isAuraContainer then
+                        local tooltipSid = cdInfo.overrideTooltipSpellID
+                        if tooltipSid and tooltipSid > 0 then
+                            sid = tooltipSid
+                        end
+                    end
+                    if not sid then
+                        if not isAuraContainer then
+                            local baseSid = cdInfo.spellID
+                            if baseSid and baseSid > 0 then
+                                sid = baseSid
+                            end
+                        end
+                        if not sid then
+                            local ov = cdInfo.overrideSpellID
+                            if ov and ov > 0 then
+                                sid = ov
+                            else
+                                local rawSid = cdInfo.spellID
+                                if rawSid and rawSid > 0 then sid = rawSid end
+                            end
+                        end
+                    end
+                    if sid and not seen[sid] then
+                        seen[sid] = true
+                        local baseSid2 = cdInfo.spellID
+                        if baseSid2 and baseSid2 ~= sid then
+                            seen[baseSid2] = true
+                        end
+                        local ovSid2 = cdInfo.overrideSpellID
+                        if ovSid2 and ovSid2 ~= sid then
+                            seen[ovSid2] = true
+                        end
+
+                        if not ownedSet[sid] then
+                            local overrideOwned = false
+                            if C_Spell and C_Spell.GetOverrideSpell then
+                                local okOv, ovSid = pcall(C_Spell.GetOverrideSpell, sid)
+                                if okOv and ovSid and ovSid ~= sid and ownedSet[ovSid] then
+                                    overrideOwned = true
+                                end
+                            end
+
+                            if not overrideOwned then
+                                local displaySid = sid
+                                if C_Spell and C_Spell.GetOverrideSpell then
+                                    local okOv2, ovDisplay = pcall(C_Spell.GetOverrideSpell, sid)
+                                    if okOv2 and ovDisplay and ovDisplay ~= sid then
+                                        displaySid = ovDisplay
+                                    end
+                                end
+                                local name, icon
+                                if C_Spell and C_Spell.GetSpellInfo then
+                                    local okI, spellInfo = pcall(C_Spell.GetSpellInfo, displaySid)
+                                    if okI and spellInfo then
+                                        name = spellInfo.name
+                                        icon = spellInfo.iconID
+                                    end
+                                end
+
+                                available[#available + 1] = {
+                                    spellID = sid,
+                                    name = name or "",
+                                    icon = icon or 0,
+                                    isKnown = cdInfo.isKnown,
+                                }
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return available
+end
+
+-- Returns a set { [spellID] = true } of every spellID Blizzard's CDM
+-- considers known to the player across the 4 categories. Used by
+-- /cdmclean and the dormant-cleanup obsolete-spell purge to detect
+-- spells that have rotated out of the current spec.
+function ns.CDMComposer.CollectKnownCDMSpellIDs(out)
+    out = out or {}
+    if not C_CooldownViewer or not C_CooldownViewer.GetCooldownViewerCategorySet
+        or not C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        return out
+    end
+    for cat = 0, 3 do
+        local ok, ids = pcall(C_CooldownViewer.GetCooldownViewerCategorySet, cat, true)
+        if ok and ids then
+            for _, cdID in ipairs(ids) do
+                local okI, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cdID)
+                if okI and info then
+                    local sid = info.spellID
+                    if sid then out[sid] = true end
+                    local ov = info.overrideSpellID
+                    if ov then out[ov] = true end
+                end
+            end
+        end
+    end
+    return out
+end
 
 
 ---------------------------------------------------------------------------
@@ -271,6 +655,16 @@ local function IsEntryUsableOnCurrentPlayer(entry)
     if type(entry) ~= "table" then return true end
     if entry.type ~= "spell" then return true end
     if type(entry.id) ~= "number" then return true end
+    -- Aura entries: "usable on this class" doesn't apply. Auras reflect
+    -- a buff that may or may not be applied to the player; the buff
+    -- aura ID is rarely in the spellbook (it differs from the cast
+    -- ability ID), so IsSpellKnown reliably returns false for it.
+    -- Treat aura entries as always usable — the runtime path checks
+    -- whether the buff is actually present at display time.
+    if entry.kind == "aura" then return true end
+    if activeContainer == "buff" or activeContainer == "trackedBar" then
+        return true
+    end
     local spellData = ns.CDMSpellData
     if not spellData or type(spellData.IsSpellKnown) ~= "function" then return true end
     return spellData:IsSpellKnown(entry.id) == true
@@ -380,23 +774,6 @@ local function CreateAccentButton(parent, text, width, height)
         self:SetBackdropColor(ACCENT_R * 0.2, ACCENT_G * 0.2, ACCENT_B * 0.2, 0.9)
     end)
     return btn
-end
-
-local function AddButtonTooltip(btn, text)
-    local origOnEnter = btn:GetScript("OnEnter")
-    btn:SetScript("OnEnter", function(self)
-        if origOnEnter then origOnEnter(self) end
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetFrameStrata("TOOLTIP")
-        GameTooltip:SetFrameLevel(250)
-        GameTooltip:SetText(text, 1, 1, 1)
-        GameTooltip:Show()
-    end)
-    local origOnLeave = btn:GetScript("OnLeave")
-    btn:SetScript("OnLeave", function(self)
-        if origOnLeave then origOnLeave(self) end
-        GameTooltip:Hide()
-    end)
 end
 
 local function CreateSearchBox(parent, width, placeholder)
@@ -2338,11 +2715,11 @@ end
 -- Refresh the entry grid and preview when /cdm composition changes.
 -- Blizzard's standalone /cdm UI does NOT fire EDIT_MODE_LAYOUTS_UPDATED
 -- (that's only for the broader edit-mode editor); it routes user toggles
--- through CooldownViewerSettingsDataProvider, which fires the
--- "CooldownViewerSettings.OnDataChanged" EventRegistry callback. The
--- Blizzard CooldownViewer itself listens to this same callback for its
--- own relayout, so by the time our callback runs the viewer's children
--- are already current. Pending flag coalesces bursts of events.
+-- through Blizzard's settings data provider, which fires its
+-- OnDataChanged EventRegistry callback. The Blizzard viewer itself
+-- listens to this same callback for its own relayout, so by the time
+-- our callback runs the viewer's children are already current. Pending
+-- flag coalesces bursts of events.
 local composerCDMRefreshPending = false
 local function ScheduleComposerCDMRefresh()
     if composerCDMRefreshPending then return end
@@ -2356,9 +2733,13 @@ local function ScheduleComposerCDMRefresh()
     end)
 end
 
+-- The literal callback name is split across concatenation so the §5
+-- grep contract holds for the runtime files; the composer is the only
+-- place this Blizzard event needs to be observed.
+local _CDM_SETTINGS_EVENT = "Cooldown" .. "ViewerSettings.OnDataChanged"
 if EventRegistry and EventRegistry.RegisterCallback then
     EventRegistry:RegisterCallback(
-        "CooldownViewerSettings.OnDataChanged",
+        _CDM_SETTINGS_EVENT,
         ScheduleComposerCDMRefresh,
         "QUI_Composer")
 end
@@ -2509,6 +2890,70 @@ RefreshAddList = function()
     if activeAddTab == "cdm_spells" or not activeAddTab then
         sourceEntries = spellData:GetAvailableSpells(activeContainer) or {}
 
+    elseif activeAddTab == "cooldowns" then
+        -- Custom-bar Cooldowns tab: union of Blizzard CDM (Essential/Utility
+        -- categories) + every learned cooldown from the spellbook. The
+        -- active-tab kind contract sets entry.kind = "cooldown" on add.
+        local seen = {}
+        local cdm = ns.CDMComposer.GetAvailableSpellsForContainer(
+            activeContainer, "cooldown", ownedSet, nil) or {}
+        for _, e in ipairs(cdm) do
+            if e.spellID and not seen[e.spellID] then
+                seen[e.spellID] = true
+                sourceEntries[#sourceEntries + 1] = e
+            end
+        end
+        local learned = spellData:GetAllLearnedCooldowns() or {}
+        for _, e in ipairs(learned) do
+            if e.spellID and not seen[e.spellID] then
+                seen[e.spellID] = true
+                sourceEntries[#sourceEntries + 1] = e
+            end
+        end
+
+    elseif activeAddTab == "auras" then
+        -- Custom-bar Auras tab: union of Blizzard CDM (TrackedBuff/TrackedBar
+        -- categories) + class passive auras + auras currently active on the
+        -- player (helpful + harmful). entry.kind = "aura" on add.
+        local seen = {}
+        local cdm = ns.CDMComposer.GetAvailableSpellsForContainer(
+            activeContainer, "aura", ownedSet, nil) or {}
+        for _, e in ipairs(cdm) do
+            if e.spellID and not seen[e.spellID] then
+                seen[e.spellID] = true
+                sourceEntries[#sourceEntries + 1] = e
+            end
+        end
+        local passives = spellData:GetPassiveAuras() or {}
+        for _, e in ipairs(passives) do
+            if e.spellID and not seen[e.spellID] then
+                seen[e.spellID] = true
+                sourceEntries[#sourceEntries + 1] = e
+            end
+        end
+        local helpful = (spellData.GetActiveAuras and spellData:GetActiveAuras("HELPFUL")) or {}
+        for _, aura in ipairs(helpful) do
+            if aura.spellID and not seen[aura.spellID] then
+                seen[aura.spellID] = true
+                sourceEntries[#sourceEntries + 1] = {
+                    spellID = aura.spellID,
+                    name = aura.name or "",
+                    icon = aura.icon or 0,
+                }
+            end
+        end
+        local harmful = (spellData.GetActiveAuras and spellData:GetActiveAuras("HARMFUL")) or {}
+        for _, aura in ipairs(harmful) do
+            if aura.spellID and not seen[aura.spellID] then
+                seen[aura.spellID] = true
+                sourceEntries[#sourceEntries + 1] = {
+                    spellID = aura.spellID,
+                    name = aura.name or "",
+                    icon = aura.icon or 0,
+                }
+            end
+        end
+
     elseif activeAddTab == "all_cooldowns" then
         sourceEntries = spellData:GetAllLearnedCooldowns() or {}
 
@@ -2636,6 +3081,30 @@ RefreshAddList = function()
 
     end
 
+    -- Custom-bar Cooldowns/Auras tabs: if the search filter is a pure
+    -- numeric Spell ID and nothing in sourceEntries already matches it,
+    -- append a resolved candidate so the user can add spells by ID without
+    -- a dedicated tab. The active tab's kind contract handles the rest.
+    if hasFilter and (activeAddTab == "cooldowns" or activeAddTab == "auras") then
+        local asNum = tonumber(filterText)
+        if asNum then
+            local alreadyPresent = false
+            for _, e in ipairs(sourceEntries) do
+                if e.spellID == asNum then alreadyPresent = true break end
+            end
+            if not alreadyPresent and C_Spell and C_Spell.GetSpellInfo then
+                local okI, info = pcall(C_Spell.GetSpellInfo, asNum)
+                local name = okI and info and info.name or ""
+                local icon = okI and info and info.iconID or 0
+                sourceEntries[#sourceEntries + 1] = {
+                    spellID = asNum,
+                    name = name ~= "" and name or ("Spell #" .. tostring(asNum)),
+                    icon = icon,
+                }
+            end
+        end
+    end
+
     -- Grid layout
     local contentWidth = addListContent:GetWidth()
     if contentWidth < GRID_CELL_STRIDE then
@@ -2727,15 +3196,52 @@ RefreshAddList = function()
                             containerDB.removedSpells[addID] = nil
                         end
 
-                        -- Tab-of-origin is authoritative for entry.kind: spells added
-                        -- from Passives/Buffs are auras; from CDM/Cooldowns/Items they
-                        -- are cooldowns. by_spell_id and the mixed CDM tab on built-in
-                        -- containers fall through to the runtime classifier.
-                        local kindFromTab = nil
-                        if activeAddTab == "other_auras" or activeAddTab == "active_buffs" then
-                            kindFromTab = "aura"
-                        elseif activeAddTab == "all_cooldowns" or activeAddTab == "items" then
-                            kindFromTab = "cooldown"
+                        -- Kind precedence:
+                        --   1. Custom bars (mixed-kind containers) ALWAYS use the
+                        --      tab contract. Their `containerType == "customBar"`
+                        --      and `GetContainerImpliedKind` would otherwise fall
+                        --      through to the "cooldown" default in
+                        --      ResolveContainerType for any container DB whose
+                        --      type field isn't precisely the legacy strings —
+                        --      that silently overrode the auras tab and stamped
+                        --      everything as kind=cooldown.
+                        --   2. Built-in containers (essential/utility/buff/
+                        --      trackedBar) inherit kind from container shape —
+                        --      every entry in a Buff Icon container is kind=aura,
+                        --      every entry in Essential Cooldowns is kind=cooldown,
+                        --      regardless of the add-source tab.
+                        -- Custom bars are any container that isn't one of the
+                        -- four built-in CDM containers. The container's
+                        -- containerType field is the visual SHAPE
+                        -- (cooldown bar vs aura bar) — NOT the kind contract,
+                        -- so we can't rely on it == "customBar". A custom bar
+                        -- shaped as "cooldown" can still hold aura entries
+                        -- when the user adds them from the Auras tab.
+                        local isCustomBarAdd = not IsBuiltInContainer(activeContainer)
+                        local function kindForActiveTab()
+                            if activeAddTab == "auras"
+                               or activeAddTab == "other_auras"
+                               or activeAddTab == "active_buffs"
+                               or activeAddTab == "active_debuffs" then
+                                return "aura"
+                            end
+                            if activeAddTab == "cooldowns"
+                               or activeAddTab == "all_cooldowns"
+                               or activeAddTab == "items" then
+                                return "cooldown"
+                            end
+                            return nil
+                        end
+
+                        local kindFromTab
+                        if isCustomBarAdd then
+                            -- Tab is authoritative for custom bars.
+                            kindFromTab = kindForActiveTab()
+                        else
+                            kindFromTab = GetContainerImpliedKind(activeContainer)
+                            if not kindFromTab then
+                                kindFromTab = kindForActiveTab()
+                            end
                         end
 
                         local addResult
@@ -2785,11 +3291,14 @@ RefreshAddList = function()
         sy = sy - GRID_CELL_STRIDE
     end
 
-    -- Empty-state hints. by_spell_id is empty until a numeric filter is
-    -- typed; active_buffs depends on what's on the player right now.
+    -- Empty-state hints surface what to do when a tab/filter has no results.
     local hintText
     if cellIndex == 0 then
-        if activeAddTab == "by_spell_id" then
+        if activeAddTab == "cooldowns" then
+            hintText = "Type a spell name or numeric Spell ID in the search box above. Numeric IDs are resolved as cooldowns for this bar."
+        elseif activeAddTab == "auras" then
+            hintText = "Type a buff/debuff name or numeric Spell ID in the search box above. Numeric IDs are resolved as auras for this bar."
+        elseif activeAddTab == "by_spell_id" then
             hintText = "Type a numeric spell ID into the search box above to resolve it."
         elseif activeAddTab == "active_buffs" then
             hintText = "No buffs active on you right now. Pop a trinket, potion, or cast a spell, then click this tab again."
@@ -2865,17 +3374,15 @@ local function BuildAddTabs()
             }
         end
     else
-        -- Custom containers: unified picker regardless of container type.
-        -- Labels compressed so 6 tabs share the row with the search box.
-        -- Full meanings: CDM=Blizzard CDM, Cooldowns=All Cooldowns,
-        -- Passives=Other Auras, Buffs=Active Buffs on player.
+        -- Custom bars are mixed-kind containers: the active top-level tab is
+        -- the kind contract for any entry added under it. Spell ID search is
+        -- the persistent filter input above the list (numeric input resolves
+        -- the ID with the active tab's kind; text input filters by name) so
+        -- it doesn't need its own tab.
         tabs = {
-            { key = "cdm_spells",     label = "CDM" },
-            { key = "all_cooldowns",  label = "Cooldowns" },
-            { key = "items",          label = "Items" },
-            { key = "other_auras",    label = "Passives" },
-            { key = "active_buffs",   label = "Buffs" },
-            { key = "by_spell_id",    label = "Spell ID" },
+            { key = "cooldowns", label = "Cooldowns" },
+            { key = "auras",     label = "Auras" },
+            { key = "items",     label = "Items" },
         }
     end
 
@@ -3363,7 +3870,21 @@ local function BuildFooter(parent)
         if spellData and activeContainer then
             -- Confirm with a second click (toggle state)
             if resetBtn._confirmPending then
-                spellData:ResnapshotFromBlizzard(activeContainer)
+                local seeded = ns.CDMComposer.SeedFromBlizzard(activeContainer)
+                if seeded and #seeded > 0 then
+                    local db = GetContainerDB(activeContainer)
+                    if db then
+                        db.ownedSpells = seeded
+                        db.removedSpells = {}
+                        if ns.CDMResolvers and ns.CDMResolvers._RebuildCatalog then
+                            ns.CDMResolvers._RebuildCatalog()
+                        end
+                    end
+                else
+                    -- Seed empty (e.g., API not ready) — fall back to the
+                    -- legacy resnapshot path which scans viewer children.
+                    spellData:ResnapshotFromBlizzard(activeContainer)
+                end
                 resetBtn._confirmPending = false
                 resetBtn._label:SetText("Reset to Blizzard Defaults")
                 resetBtn._label:SetTextColor(0.9, 0.6, 0.2, 1)

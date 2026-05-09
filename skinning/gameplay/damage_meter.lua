@@ -21,6 +21,19 @@ local securecallfunction = securecallfunction
 
 local FALLBACK_TEXTURE = "Interface\\Buttons\\WHITE8x8"
 
+-- Forward declarations. Defined later in the file but referenced by earlier
+-- functions:
+--   * DeferSkinRow / DeferStripRowBackground (defined ~line 980) are called
+--     from EnsureWindowSkinned (line 831) and InstallEntrySkinHooks.
+--   * InstallEntrySkinHooks (defined after DeferStripRowBackground) is called
+--     from PatchEntryFrameDisplayMethods (line 295) to wire per-instance
+--     UpdateBackground / UpdateStyle hooks. Needed for frames whose mixin
+--     methods were Mixin()-copied at creation (LocalPlayerEntry XML children
+--     created in DamageMeter:OnLoad before our ADDON_LOADED hook fires).
+local DeferSkinRow
+local DeferStripRowBackground
+local InstallEntrySkinHooks
+
 local function SecureCallFunction(fn, ...)
     if type(fn) ~= "function" then return nil end
     if securecallfunction then
@@ -278,8 +291,16 @@ end
 -- Frame-instance patcher. Setting a Lua field on a frame is not a protected
 -- operation, so this is safe in combat — and combat is exactly when the
 -- stock-method failure mode trips, so a combat guard would defeat the fix.
+--
+-- Also wires per-instance UpdateBackground / UpdateStyle hooks. The mixin-
+-- level hooks at InstallMixinHooks don't fire on frames whose methods were
+-- Mixin()-copied at frame creation (LocalPlayerEntry XML children created
+-- during DamageMeter:OnLoad, before our ADDON_LOADED handler installs the
+-- mixin hook). Without per-instance hooks, combat-driven UpdateBackground /
+-- UpdateStyle on those rows re-asserts stock chrome and our skin disappears.
 local function PatchEntryFrameDisplayMethods(frame)
     PatchEntryDisplayMethods(frame)
+    if InstallEntrySkinHooks then InstallEntrySkinHooks(frame) end
 end
 
 -- SetSessionDuration replacement. Stock body is:
@@ -477,10 +498,25 @@ end
 local function ResolveAllWindows()
     local list = {}
     local mgr = ResolveManager()
-    if not mgr or type(mgr.windowDataList) ~= "table" then return list end
-    for _, data in pairs(mgr.windowDataList) do
-        if data and data.sessionWindow then list[#list+1] = data.sessionWindow end
+    local seen = {}
+
+    local function add(window)
+        if window and not seen[window] then
+            seen[window] = true
+            list[#list + 1] = window
+        end
     end
+
+    if mgr and type(mgr.windowDataList) == "table" then
+        for _, data in pairs(mgr.windowDataList) do
+            add(data and data.sessionWindow)
+        end
+    end
+
+    for i = 1, 3 do
+        add(_G["DamageMeterSessionWindow" .. i])
+    end
+
     return list
 end
 
@@ -809,6 +845,49 @@ local function StyleWindowHeaderText(window)
     end
 end
 
+local function RestyleWindowChrome(window, sr, sg, sb)
+    if not window then return end
+
+    StripWindowChrome(window)
+    StyleDamageMeterScrollBar(ResolveWindowScrollBar(window), sr, sg, sb)
+
+    if window.SessionDropdown         then SkinDropdown(window.SessionDropdown) end
+    if window.DamageMeterTypeDropdown then SkinDropdown(window.DamageMeterTypeDropdown) end
+    if window.SettingsDropdown        then SkinDropdown(window.SettingsDropdown) end
+
+    StyleWindowHeaderText(window)
+
+    local mc = window.MinimizeContainer
+    if mc and mc.SourceWindow then
+        SkinSourceWindow(mc.SourceWindow)
+    end
+end
+
+local function DeferRestyleWindowChrome(window)
+    if not window then return end
+    DeferDamageMeterWork(function(frame)
+        if not IsModuleEnabled() then return end
+        RestyleWindowChrome(frame)
+    end, window)
+end
+
+local function InstallWindowSkinHooks(window)
+    if not window or SkinBase.GetFrameData(window, "qdmWindowSkinHooks") then return end
+    SkinBase.SetFrameData(window, "qdmWindowSkinHooks", true)
+
+    local function refresh(self)
+        if not IsModuleEnabled() then return end
+        DeferRestyleWindowChrome(self)
+    end
+
+    if type(window.UpdateBackground) == "function" then
+        hooksecurefunc(window, "UpdateBackground", refresh)
+    end
+    if type(window.OnBackgroundAlphaChanged) == "function" then
+        hooksecurefunc(window, "OnBackgroundAlphaChanged", refresh)
+    end
+end
+
 ---------------------------------------------------------------------------
 -- EnsureWindowSkinned(window)
 -- Idempotent. Skins the session window's chrome.
@@ -833,42 +912,34 @@ local function EnsureWindowSkinned(window)
     local localEntry = ResolveLocalPlayerEntry(window)
     if localEntry then
         PatchEntryFrameDisplayMethods(localEntry)
+        -- Initial visual skin within the addon-load window. LocalPlayerEntry
+        -- never reaches SetupEntry/InitEntry (it's an XML child, not pool-
+        -- acquired), so without this call its first skin would only happen
+        -- via the PLAYER_LOGIN+0.5s registry refresh — outside the addon-
+        -- load safe period. SkinRow's qdmRowSkinned sentinel keeps it
+        -- idempotent against the later refresh.
+        DeferSkinRow(localEntry)
     end
     if window.ForEachEntryFrame then
-        window:ForEachEntryFrame(PatchEntryFrameDisplayMethods)
+        window:ForEachEntryFrame(function(frame)
+            PatchEntryFrameDisplayMethods(frame)
+            DeferSkinRow(frame)
+        end)
     end
+    InstallWindowSkinHooks(window)
 
     local g = GetGeneralSettings()
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(g, "damageMeter")
 
     if SkinBase.IsSkinned(window) then
-        StyleDamageMeterScrollBar(ResolveWindowScrollBar(window), sr, sg, sb)
-        local mc = window.MinimizeContainer
-        if mc and mc.SourceWindow then
-            SkinSourceWindow(mc.SourceWindow)
-        end
-        StyleWindowHeaderText(window)
+        SkinBase.CreateBackdrop(window, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        RestyleWindowChrome(window, sr, sg, sb)
         return
     end
 
     -- Backdrop on a child frame — never written onto the Blizzard frame itself.
     SkinBase.CreateBackdrop(window, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    StripWindowChrome(window)
-    StyleDamageMeterScrollBar(ResolveWindowScrollBar(window), sr, sg, sb)
-
-    -- Skin dropdowns (segment / type / settings). All three are direct children of the session window.
-    if window.SessionDropdown        then SkinDropdown(window.SessionDropdown)        end
-    if window.DamageMeterTypeDropdown then SkinDropdown(window.DamageMeterTypeDropdown) end
-    if window.SettingsDropdown       then SkinDropdown(window.SettingsDropdown)       end
-
-    StyleWindowHeaderText(window)
-
-    -- The SourceWindow exists as a child of MinimizeContainer at all times
-    -- but is hidden until first row click. Skin proactively so first show is clean.
-    local mc = window.MinimizeContainer
-    if mc and mc.SourceWindow then
-        SkinSourceWindow(mc.SourceWindow)
-    end
+    RestyleWindowChrome(window, sr, sg, sb)
 
     SkinBase.MarkSkinned(window)
     trackedWindows[window] = true
@@ -920,7 +991,7 @@ local function SkinRow(row)
     -- Row backdrop child for the dark row bg + accent border.
     local backdrop = SkinBase.GetFrameData(row, "qdmRowBackdrop")
     if not backdrop then
-        backdrop = CreateFrame("Frame", nil, row, "BackdropTemplate")
+        backdrop = CreateFrame("Frame", nil, row)
         local rowLevel = row:GetFrameLevel()
         backdrop:SetFrameLevel(rowLevel > 0 and (rowLevel - 1) or 0)
         backdrop:SetPoint("TOPLEFT", statusBar, "TOPLEFT", -1, 1)
@@ -929,14 +1000,14 @@ local function SkinRow(row)
         SkinBase.SetFrameData(row, "qdmRowBackdrop", backdrop)
     end
     local px = SkinBase.GetPixelSize(backdrop, 1)
-    backdrop:SetBackdrop({
-        bgFile = ResolveTexture(row, "background", "background"),
-        edgeFile = ResolveTexture(row, "border", "border"),
-        edgeSize = px,
-        insets = { left = px, right = px, top = px, bottom = px },
-    })
-    backdrop:SetBackdropColor(0.18, 0.18, 0.20, 1)
-    backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
+    SkinBase.ApplyTextureBackdrop(
+        backdrop,
+        ResolveTexture(row, "background", "background"),
+        ResolveTexture(row, "border", "border"),
+        px,
+        { sr, sg, sb, sa },
+        { 0.18, 0.18, 0.20, 1 }
+    )
 
     -- Restyle name / value fontstrings using user-pickable fonts (or fall
     -- back to QUI's general font / outline / existing fontstring size when
@@ -953,7 +1024,7 @@ local function SkinRow(row)
     SkinBase.SetFrameData(row, "qdmRowSkinned", true)
 end
 
-local function DeferSkinRow(row, forceRefresh)
+DeferSkinRow = function(row, forceRefresh)
     if not row then return end
     DeferDamageMeterWork(function(frame)
         if not IsModuleEnabled() then return end
@@ -964,7 +1035,7 @@ local function DeferSkinRow(row, forceRefresh)
     end, row)
 end
 
-local function DeferStripRowBackground(row)
+DeferStripRowBackground = function(row)
     if not row then return end
     DeferDamageMeterWork(function(frame)
         if not IsModuleEnabled() then return end
@@ -980,6 +1051,36 @@ local function DeferStripRowBackground(row)
 end
 
 ---------------------------------------------------------------------------
+-- InstallEntrySkinHooks(frame)
+-- Per-instance hooksecurefunc on UpdateBackground / UpdateStyle. The mixin-
+-- level hooks installed in InstallMixinHooks only fire when Blizzard reaches
+-- DamageMeterEntryMixin.UpdateBackground / UpdateStyle through the mixin
+-- table. Frames that were Mixin()-copied at creation time carry their own
+-- instance copy of those methods (LocalPlayerEntry XML children created in
+-- DamageMeter:OnLoad before our ADDON_LOADED handler runs); for those, only
+-- a per-instance hook catches Blizzard's combat-driven re-style passes.
+--
+-- Idempotent via weak-keyed SkinBase state; avoid writing sentinel keys onto
+-- Blizzard row frames.
+InstallEntrySkinHooks = function(frame)
+    if not frame or SkinBase.GetFrameData(frame, "qdmEntrySkinHooks") then return end
+    SkinBase.SetFrameData(frame, "qdmEntrySkinHooks", true)
+
+    if type(frame.UpdateBackground) == "function" then
+        hooksecurefunc(frame, "UpdateBackground", function(self)
+            if not IsModuleEnabled() then return end
+            DeferStripRowBackground(self)
+        end)
+    end
+    if type(frame.UpdateStyle) == "function" then
+        hooksecurefunc(frame, "UpdateStyle", function(self)
+            if not IsModuleEnabled() then return end
+            DeferSkinRow(self, true)
+        end)
+    end
+end
+
+---------------------------------------------------------------------------
 -- SkinDropdown(dropdown)
 -- 1px accent border + dark bg around any of the meter's dropdowns.
 -- Strips stock common-dropdown texture and blizz arrow chrome.
@@ -991,7 +1092,7 @@ local DROPDOWN_STOCK_TEXTURE_FIELDS = {
 }
 
 SkinDropdown = function(dropdown)
-    if not dropdown or SkinBase.GetFrameData(dropdown, "qdmDdSkinned") then return end
+    if not dropdown then return end
 
     -- Strip stock textures (set alpha 0 — don't destroy, dropdown logic may inspect them).
     for _, field in ipairs(DROPDOWN_STOCK_TEXTURE_FIELDS) do
@@ -1003,10 +1104,16 @@ SkinDropdown = function(dropdown)
     if dropdown.GetPushedTexture    then HideRegion(dropdown:GetPushedTexture())    end
     if dropdown.GetHighlightTexture then HideRegion(dropdown:GetHighlightTexture()) end
 
-    -- Borderless: dark fill, transparent border. Stock chrome already stripped above.
-    -- Keep the dark fill so text reads cleanly over the meter window's backdrop.
+    -- CreateBackdrop is idempotent and also re-shows a previously hidden child
+    -- backdrop when the skin is toggled back on.
     SkinBase.CreateBackdrop(dropdown, 0, 0, 0, 0, 0.05, 0.05, 0.05, 0.95)
 
+    if SkinBase.GetFrameData(dropdown, "qdmDdSkinned") then
+        return
+    end
+
+    -- Borderless: dark fill, transparent border. Stock chrome already stripped above.
+    -- Keep the dark fill so text reads cleanly over the meter window's backdrop.
     SkinBase.SetFrameData(dropdown, "qdmDdSkinned", true)
 end
 
@@ -1024,7 +1131,14 @@ SkinSourceWindow = function(popup)
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(g, "damageMeter")
 
     if SkinBase.IsSkinned(popup) then
+        HideRegion(popup.Background)
+        SkinBase.CreateBackdrop(popup, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         StyleDamageMeterScrollBar(ResolvePopupScrollBar(popup), sr, sg, sb)
+        if popup.ResizeButton then
+            HideRegion(popup.ResizeButton:GetNormalTexture())
+            HideRegion(popup.ResizeButton:GetHighlightTexture())
+            HideRegion(popup.ResizeButton:GetPushedTexture())
+        end
         return
     end
 
@@ -1739,9 +1853,72 @@ local function SnapshotFromBlizzard()
 end
 
 ---------------------------------------------------------------------------
+-- CurrentBlizzardValue(key)
+-- Mirror of SnapshotFromBlizzard's per-key reads, returned as a single value
+-- (no shadow side effects). Used by WriteOneToBlizzard's equality guard so we
+-- can skip writes whose net effect would be identity. Returns nil only when
+-- the underlying getter is unavailable; that case falls through to the write.
+---------------------------------------------------------------------------
+local function CurrentBlizzardValue(key)
+    local mgr = _G.DamageMeter
+    if not mgr then return nil end
+
+    if key == "enabled" then
+        if CVarCallbackRegistry and CVarCallbackRegistry.GetCVarValueBool then
+            return CVarCallbackRegistry:GetCVarValueBool("damageMeterEnabled") or false
+        end
+        return nil
+    elseif key == "visibility" then
+        return mgr.visibility
+    elseif key == "style" then
+        return mgr.GetStyle and mgr:GetStyle() or nil
+    elseif key == "numberDisplay" then
+        return mgr.GetNumberDisplayType and mgr:GetNumberDisplayType() or nil
+    elseif key == "useClassColor" then
+        if mgr.ShouldUseClassColor then return mgr:ShouldUseClassColor() and true or false end
+        return nil
+    elseif key == "showBarIcons" then
+        if mgr.ShouldShowBarIcons then return mgr:ShouldShowBarIcons() and true or false end
+        return nil
+    elseif key == "barHeight" then
+        return mgr.GetBarHeight and mgr:GetBarHeight() or nil
+    elseif key == "barSpacing" then
+        return mgr.GetBarSpacing and mgr:GetBarSpacing() or nil
+    elseif key == "textSize" then
+        return mgr.GetTextSize and mgr:GetTextSize() or nil
+    elseif key == "windowAlpha" then
+        return mgr.GetWindowAlpha and (mgr:GetWindowAlpha() * 100) or nil
+    elseif key == "backgroundAlpha" then
+        return mgr.GetBackgroundAlpha and (mgr:GetBackgroundAlpha() * 100) or nil
+    end
+    return nil
+end
+
+local function ShadowMatchesBlizzard(key, target, current)
+    if current == nil or target == nil then return false end
+    if key == "windowAlpha" or key == "backgroundAlpha" then
+        if type(current) ~= "number" or type(target) ~= "number" then return false end
+        return math.abs(current - target) < 0.5
+    end
+    return current == target
+end
+
+---------------------------------------------------------------------------
 -- WriteOneToBlizzard(key, value)
 -- Push a single shadow value to Blizzard via the documented setter. Combat
 -- lockdown queues the write to be flushed at PLAYER_REGEN_ENABLED.
+--
+-- Identity guard: writes that would set the same value Blizzard already has
+-- are skipped. Critical for PLAYER_ENTERING_WORLD / ADDON_LOADED, where
+-- ApplyShadowValuesToBlizzard re-pushes every key but Blizzard's persisted
+-- layout already matches. Calling Blizzard's setters (especially anything
+-- mapped through Edit Mode's UpdateSystemSettingValue) triggers
+-- DamageMeter:SetBarSpacing → ForEachSessionWindow → SourceWindow:Refresh →
+-- BuildDataProvider, which compares secret sourceGUID values from prior
+-- combat session sources. Initiated under QUI taint, those comparisons fault.
+-- securecallfunction at the call site doesn't help: the cascade modifies
+-- Edit Mode layout state and propagates through Blizzard's own
+-- secureexecuterange iteration over registered systems.
 ---------------------------------------------------------------------------
 local function WriteOneToBlizzard(key, value)
     if syncInProgress then return end
@@ -1754,6 +1931,11 @@ local function WriteOneToBlizzard(key, value)
     end
 
     if not _G.DamageMeter then
+        syncInProgress = false
+        return
+    end
+
+    if ShadowMatchesBlizzard(key, value, CurrentBlizzardValue(key)) then
         syncInProgress = false
         return
     end
@@ -1896,48 +2078,70 @@ InstallMeterHooks = function()
     local mgr = ResolveManager()
     if not mgr then return end
 
+    local function PatchSessionWindow(sessionWindow)
+        if not sessionWindow then return end
+
+        -- Synchronous taint-safety patches. Blizzard can fire Refresh →
+        -- ShowLocalPlayerEntry → InitEntry → Init → (stock) UpdateName in the
+        -- same frame as window setup, so deferring these patches would be too
+        -- late for the first payload refresh.
+        PatchSessionWindowDisplayMethods(sessionWindow)
+        InstallWindowSkinHooks(sessionWindow)
+
+        local localEntry = ResolveLocalPlayerEntry(sessionWindow)
+        if localEntry then
+            PatchEntryFrameDisplayMethods(localEntry)
+        end
+        if sessionWindow.ForEachEntryFrame then
+            sessionWindow:ForEachEntryFrame(PatchEntryFrameDisplayMethods)
+        end
+    end
+
+    local function DeferSkinSessionWindow(sessionWindow, idx, reapplyAnchor)
+        if not IsModuleEnabled() then return end
+        DeferDamageMeterWork(function(window, windowIndex, shouldReapplyAnchor)
+            if not IsModuleEnabled() then return end
+            EnsureWindowSkinned(window)
+            -- Re-assert lock unconditionally: Blizzard re-enables SetMovable
+            -- on every setup. EnsureWindowSkinned can early-exit on already-
+            -- skinned windows, so keep the lock outside that branch too.
+            ForceLockWindow(window)
+
+            -- For secondary windows, Blizzard hardcoded SetPoint("TOPLEFT",
+            -- UIParent, ...) on setup. Re-apply our QUI saved anchor after
+            -- Blizzard finishes. Primary inherits manager position.
+            if shouldReapplyAnchor and windowIndex and windowIndex ~= 1
+                and _G.QUI_ApplyFrameAnchor and not InCombatLockdown() then
+                local key = LayoutModeKeyForWindow(window)
+                _G.QUI_ApplyFrameAnchor(key)
+            end
+        end, sessionWindow, idx, reapplyAnchor and true or false)
+    end
+
+    local function HandleSessionWindow(sessionWindow, idx, reapplyAnchor)
+        if not sessionWindow then return end
+        PatchSessionWindow(sessionWindow)
+        DeferSkinSessionWindow(sessionWindow, idx, reapplyAnchor)
+    end
+
+    -- New window detection at the data-construction layer. SetupSessionWindow
+    -- is still the main hook, but CreateWindowData catches windows that become
+    -- addressable before setup reaches its post-hook.
+    if type(mgr.CreateWindowData) == "function" then
+        hooksecurefunc(mgr, "CreateWindowData", function(self, idx)
+            local data = idx and type(self.windowDataList) == "table" and self.windowDataList[idx] or nil
+            local sessionWindow = (data and data.sessionWindow)
+                or (idx and _G["DamageMeterSessionWindow" .. idx] or nil)
+            HandleSessionWindow(sessionWindow, idx, false)
+        end)
+    end
+
     -- New window detection: SetupSessionWindow runs whenever a session window
     -- is created/reused (primary at startup, secondaries via "Show New Window").
     if type(mgr.SetupSessionWindow) == "function" then
         hooksecurefunc(mgr, "SetupSessionWindow", function(self, idx, data)
             if data and data.sessionWindow then
-                local sessionWindow = data.sessionWindow
-
-                -- Synchronous taint-safety patches. Blizzard can fire
-                -- Refresh → ShowLocalPlayerEntry → InitEntry → Init →
-                -- (stock) UpdateName in the SAME frame as SetupSessionWindow,
-                -- so deferring these patches via DeferDamageMeterWork would
-                -- be too late: the first stock UpdateName would already have
-                -- compared a secret string and faulted. Setting Lua fields
-                -- on a frame is not a protected operation, so this is safe
-                -- in combat. Idempotent on re-entry.
-                PatchSessionWindowDisplayMethods(sessionWindow)
-                local localEntry = ResolveLocalPlayerEntry(sessionWindow)
-                if localEntry then
-                    PatchEntryFrameDisplayMethods(localEntry)
-                end
-                if sessionWindow.ForEachEntryFrame then
-                    sessionWindow:ForEachEntryFrame(PatchEntryFrameDisplayMethods)
-                end
-
-                if not IsModuleEnabled() then return end
-                DeferDamageMeterWork(function(window, windowIndex)
-                    if not IsModuleEnabled() then return end
-                    EnsureWindowSkinned(window)
-                    -- Re-assert lock unconditionally: Blizzard re-enables SetMovable on every
-                    -- SetupSessionWindow call (line 314 of DamageMeter.lua); EnsureWindowSkinned
-                    -- early-exits on already-skinned windows so we can't rely on the call inside.
-                    ForceLockWindow(window)
-
-                    -- For secondary windows, Blizzard hardcoded SetPoint("TOPLEFT", UIParent, ...)
-                    -- on every setup. Re-apply our QUI saved anchor after Blizzard finishes.
-                    -- Primary inherits manager position via TOPLEFT/BOTTOMRIGHT anchors set by
-                    -- Blizzard, so it needs no re-apply here.
-                    if windowIndex and windowIndex ~= 1 and _G.QUI_ApplyFrameAnchor and not InCombatLockdown() then
-                        local key = LayoutModeKeyForWindow(window)
-                        _G.QUI_ApplyFrameAnchor(key)
-                    end
-                end, sessionWindow, idx)
+                HandleSessionWindow(data.sessionWindow, idx, true)
             end
         end)
     end
@@ -1969,18 +2173,23 @@ RefreshAll = function()
         RemoveAllSkin()
         return
     end
+
+    -- A live toggle from off -> on can happen after the meter windows already
+    -- exist. Scan first so refresh does not only touch the old tracked set.
+    ScanExistingWindows()
+
     local g = GetGeneralSettings()
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(g, "damageMeter")
 
     for window in pairs(trackedWindows) do
-        local backdrop = SkinBase.GetBackdrop(window)
-        if backdrop then
-            backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
-            backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
-        end
-        StyleDamageMeterScrollBar(ResolveWindowScrollBar(window), sr, sg, sb)
-        StyleWindowHeaderText(window)
+        SkinBase.CreateBackdrop(window, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        RestyleWindowChrome(window, sr, sg, sb)
+
         -- Re-skin every visible row.
+        local localEntry = ResolveLocalPlayerEntry(window)
+        if localEntry then
+            DeferSkinRow(localEntry, true)
+        end
         if window.ForEachEntryFrame then
             window:ForEachEntryFrame(function(frame)
                 DeferSkinRow(frame, true)
@@ -2016,13 +2225,20 @@ RemoveAllSkin = function()
 
         -- Per-row: hide our backdrops; do NOT restore stock backgrounds because
         -- the next Blizzard UpdateBackground re-asserts them automatically.
+        local function restoreRow(frame)
+            if not frame then return end
+            local rb = SkinBase.GetFrameData(frame, "qdmRowBackdrop")
+            if rb then rb:Hide() end
+            SkinBase.SetFrameData(frame, "qdmRowSkinned", nil)
+            if frame.UpdateBackground then SecureCallMethod(frame, "UpdateBackground") end
+        end
+
+        local localEntry = ResolveLocalPlayerEntry(window)
+        if localEntry then
+            restoreRow(localEntry)
+        end
         if window.ForEachEntryFrame then
-            window:ForEachEntryFrame(function(frame)
-                local rb = SkinBase.GetFrameData(frame, "qdmRowBackdrop")
-                if rb then rb:Hide() end
-                SkinBase.SetFrameData(frame, "qdmRowSkinned", nil)
-                if frame.UpdateBackground then SecureCallMethod(frame, "UpdateBackground") end
-            end)
+            window:ForEachEntryFrame(restoreRow)
         end
     end
 

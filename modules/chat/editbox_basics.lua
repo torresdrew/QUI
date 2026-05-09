@@ -102,7 +102,6 @@ local function StyleEditBox(chatFrame)
     if not (I.IsChatEnabled and I.IsChatEnabled(settings)) then return end
     if not settings or not settings.editBox or not settings.editBox.enabled then return end
     if not settings.glass or not settings.glass.enabled then return end
-    if IsChatLayoutLockedDown() then return end
 
     local frameName = chatFrame:GetName()
     if not frameName then return end

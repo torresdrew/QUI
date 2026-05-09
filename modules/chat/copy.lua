@@ -34,6 +34,16 @@ local COPY_BUTTON_FADE_IN = 0.12
 local COPY_BUTTON_FADE_OUT = 0.2
 local COPY_GLYPH_STROKE = 2
 
+-- Cap how many persisted lines the viewer renders. Storage keeps the full
+-- retention buffer; the cap only bounds what hits the multi-line EditBox so
+-- WoW's per-frame layout cost (O(total chars)) doesn't tank FPS in M+/raid
+-- when the viewer falls back to persisted history under chat lockdown.
+local MAX_PERSISTED_VIEWER_LINES = 500
+-- Skip the on-open Select-All when the rendered text is large — the
+-- selection walk is another full-text pass on top of SetText. Users can
+-- still hit the Select All button on demand.
+local AUTO_HIGHLIGHT_MAX_CHARS = 8000
+
 ---------------------------------------------------------------------------
 -- Module-local state
 ---------------------------------------------------------------------------
@@ -466,7 +476,7 @@ local function GetPersistedChatLines(chatFrame)
     local history = ns.QUI.Chat and ns.QUI.Chat.History
     if not history or not history.GetMessagesForFrame then return {} end
 
-    local messages = history.GetMessagesForFrame(frameID)
+    local messages = history.GetMessagesForFrame(frameID, MAX_PERSISTED_VIEWER_LINES)
     local lines = {}
     for i = 1, #messages do
         local message = messages[i]
@@ -627,7 +637,9 @@ local function ShowChatCopyFrame(chatFrame)
     frame.editBox:SetWidth(math.max(1, frame.scrollFrame:GetWidth() - 10))
     frame:Show()
     frame.editBox:SetFocus()
-    frame.editBox:HighlightText()
+    if #text <= AUTO_HIGHLIGHT_MAX_CHARS then
+        frame.editBox:HighlightText()
+    end
 end
 
 ---------------------------------------------------------------------------

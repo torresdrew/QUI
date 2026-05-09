@@ -1034,9 +1034,22 @@ local function ResizeHealthForPower(frame, showPowerForUnit)
     local bottomPad = borderSize
     if showPowerForUnit then
         local powerSettings = GetPowerSettings(isRaid)
-        local powerHeight = QUICore.PixelRound and QUICore:PixelRound(powerSettings.powerBarHeight or 4, frame) or 4
+        local rawPowerHeight = (powerSettings and powerSettings.powerBarHeight) or 4
+        local powerHeight = QUICore.PixelRound and QUICore:PixelRound(rawPowerHeight, frame) or rawPowerHeight
         bottomPad = borderSize + powerHeight + px
     end
+
+    local state = GetFrameState(frame)
+    if state.healthPowerShow == showPowerForUnit
+        and state.healthPowerBorder == borderSize
+        and state.healthPowerBottom == bottomPad
+    then
+        return
+    end
+    state.healthPowerShow = showPowerForUnit
+    state.healthPowerBorder = borderSize
+    state.healthPowerBottom = bottomPad
+    frame._bottomPad = bottomPad
 
     frame.healthBar:ClearAllPoints()
     frame.healthBar:SetPoint("TOPLEFT", frame, "TOPLEFT", borderSize, -borderSize)
@@ -1088,8 +1101,15 @@ local function UpdatePower(frame)
 
     -- Color (dirty-checked: power color changes only on form/spec change, not every tick)
     local r, g, b, a = GetPowerBarColor(unit, frame._isRaid)
-    if r ~= frame._lastPowerColorR then
+    if r ~= frame._lastPowerColorR
+        or g ~= frame._lastPowerColorG
+        or b ~= frame._lastPowerColorB
+        or a ~= frame._lastPowerColorA
+    then
         frame._lastPowerColorR = r
+        frame._lastPowerColorG = g
+        frame._lastPowerColorB = b
+        frame._lastPowerColorA = a
         frame.powerBar:SetStatusBarColor(r, g, b, a)
     end
 end
@@ -1795,7 +1815,7 @@ local function UpdateDispelOverlay(frame)
         if instID then
             hasDispellable = true
             firstDispellableInstID = instID
-            local dispelAura = cache.harmfulByInstanceID and cache.harmfulByInstanceID[instID]
+            local dispelAura = cache.debuffsByID and cache.debuffsByID[instID]
             if dispelAura and dispelAura.dispelName and not IsSecretValue(dispelAura.dispelName) then
                 firstDispellableType = SafeValue(dispelAura.dispelName, nil)
             end
@@ -1957,26 +1977,100 @@ end
 -- out of the per-event UpdateDefensiveIndicator hot path.
 QUI_GF.IsVerifiedDefensiveAura = IsVerifiedDefensiveAura
 
+_state.maxDefensiveIcons = 5
+
+_state.HideDefensiveIcons = function(frame)
+    local icons = frame and frame.defensiveIcons
+    if frame and frame._defensiveAuraIDs then
+        wipe(frame._defensiveAuraIDs)
+    end
+    if icons then
+        for _, icon in ipairs(icons) do
+            icon:Hide()
+        end
+    end
+end
+
+_state.EnsureDefensiveIcons = function(frame, reverseSwipe)
+    local icons = frame.defensiveIcons
+    local maxIconFrames = _state.maxDefensiveIcons
+    if icons and #icons >= maxIconFrames then
+        for i = 1, #icons do
+            local cd = icons[i].cooldown
+            if cd then cd:SetReverse(reverseSwipe) end
+        end
+        return icons
+    end
+
+    if InCombatLockdown() then
+        return icons
+    end
+
+    if not icons then
+        icons = {}
+        frame.defensiveIcons = icons
+    end
+
+    local px = QUICore.GetPixelSize and QUICore:GetPixelSize(frame) or 1
+    for i = #icons + 1, maxIconFrames do
+        local defIcon = CreateFrame("Frame", nil, frame, "BackdropTemplate")
+        defIcon:SetSize(16, 16)
+        defIcon:ClearAllPoints()
+        defIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
+        defIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
+
+        local defTex = defIcon:CreateTexture(nil, "ARTWORK")
+        defTex:SetAllPoints()
+        defTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        defIcon.icon = defTex
+
+        defIcon:SetBackdrop(GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", px))
+        defIcon:SetBackdropBorderColor(0, 0.8, 0, 1)
+
+        local defCD = CreateFrame("Cooldown", nil, defIcon, "CooldownFrameTemplate")
+        defCD:SetAllPoints(defTex)
+        defCD:SetDrawEdge(false)
+        defCD:SetDrawSwipe(true)
+        defCD:SetHideCountdownNumbers(false)
+        defCD:SetReverse(reverseSwipe)
+        defIcon.cooldown = defCD
+
+        if defIcon.SetMouseClickEnabled then
+            defIcon:SetMouseClickEnabled(false)
+        end
+        defIcon:EnableMouse(false)
+
+        defIcon:Hide()
+        icons[i] = defIcon
+    end
+
+    frame.defensiveIcon = icons[1]
+    return icons
+end
+
 local function UpdateDefensiveIndicator(frame)
-    if not frame or not frame.unit or not frame.defensiveIcons then return end
+    if not frame or not frame.unit then return end
 
     local isRaid = frame._isRaid
     local healerSettings = GetHealerSettings(isRaid)
     if not healerSettings or not healerSettings.defensiveIndicator
        or not healerSettings.defensiveIndicator.enabled then
-        for _, icon in ipairs(frame.defensiveIcons) do icon:Hide() end
+        _state.HideDefensiveIcons(frame)
         return
     end
 
     local unit = frame.unit
     local _, isDeadOrGhost = GetUnitLifeState(unit)
     if not UnitExists(unit) or isDeadOrGhost then
-        for _, icon in ipairs(frame.defensiveIcons) do icon:Hide() end
+        _state.HideDefensiveIcons(frame)
         return
     end
 
     local defSettings = healerSettings.defensiveIndicator
     local maxIcons = defSettings.maxIcons or 3
+    local reverseSwipe = defSettings.reverseSwipe ~= false
+    local defensiveIcons = _state.EnsureDefensiveIcons(frame, reverseSwipe)
+    if not defensiveIcons or #defensiveIcons == 0 then return end
 
     -- Scan-time set fast path: the aura scanner already classified every
     -- helpful aura against BigDefensive + ExternalDefensive and stashed the
@@ -1990,13 +2084,13 @@ local function UpdateDefensiveIndicator(frame)
 
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
-    if cache and cache.defensiveOrder and cache.helpfulByInstanceID and #cache.defensiveOrder > 0 then
+    if cache and cache.defensiveOrder and cache.buffsByID and #cache.defensiveOrder > 0 then
         local defensiveOrder = cache.defensiveOrder
-        local helpfulByInstanceID = cache.helpfulByInstanceID
+        local buffsByID = cache.buffsByID
         for i = 1, #defensiveOrder do
             local instID = defensiveOrder[i]
             if not seen[instID] then
-                local ad = helpfulByInstanceID[instID]
+                local ad = buffsByID[instID]
                 if ad then
                     seen[instID] = true
                     foundAuras[#foundAuras + 1] = ad
@@ -2013,10 +2107,9 @@ local function UpdateDefensiveIndicator(frame)
     local offsetY = defSettings.offsetY or 0
     local spacing = defSettings.spacing or 2
     local growDir = defSettings.growDirection or "RIGHT"
-    local reverseSwipe = defSettings.reverseSwipe ~= false
     local growFn = DEFENSIVE_GROWTH_OFFSETS[growDir] or DEFENSIVE_GROWTH_OFFSETS.RIGHT
     local stepX, stepY = growFn(iconSize, spacing)
-    local visibleCount = math_min(#foundAuras, #frame.defensiveIcons)
+    local visibleCount = math_min(#foundAuras, #defensiveIcons)
 
     -- CENTER: calculate centering offset based on visible count
     local centerOffX = 0
@@ -2049,7 +2142,7 @@ local function UpdateDefensiveIndicator(frame)
         frame._defensiveAuraIDs[id] = true
     end
 
-    for i, defIcon in ipairs(frame.defensiveIcons) do
+    for i, defIcon in ipairs(defensiveIcons) do
         local aura = foundAuras[i]
         if aura then
             -- Update icon texture
@@ -2602,54 +2695,10 @@ local function DecorateGroupFrame(frame)
     dispelOverlay:Hide()
     frame.dispelOverlay = dispelOverlay
 
-    -- Defensive indicator icons (pool of up to MAX_DEFENSIVE_ICONS).
-    -- One-time init per icon is split from per-refresh config: SetBackdrop
-    -- on a BackdropTemplate frame goes through NineSliceUtil.ApplyLayout
-    -- on every call (Blizzard's SetBackdrop does not short-circuit on
-    -- identical backdropInfo). In large raids, re-running SetBackdrop on
-    -- 5 icons × 40 frames per redecoration is enough to exhaust WoW's
-    -- 200ms script budget ("script ran too long" in NineSlice.lua).
-    local MAX_DEFENSIVE_ICONS = 5
-    if not frame.defensiveIcons then frame.defensiveIcons = {} end
-    local healerDB = GetHealerSettings(isRaid)
-    local defReverse = healerDB and healerDB.defensiveIndicator and healerDB.defensiveIndicator.reverseSwipe ~= false
-    for i = 1, MAX_DEFENSIVE_ICONS do
-        local defIcon = frame.defensiveIcons[i]
-        if not defIcon then
-            defIcon = CreateFrame("Frame", nil, frame, "BackdropTemplate")
-            defIcon:SetSize(16, 16)
-            defIcon:ClearAllPoints()
-            defIcon:SetPoint("CENTER", frame, "CENTER", 0, 0)
-            defIcon:SetFrameLevel(frame:GetFrameLevel() + 10)
-
-            local defTex = defIcon:CreateTexture(nil, "ARTWORK")
-            defTex:SetAllPoints()
-            defTex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-            defIcon.icon = defTex
-
-            defIcon:SetBackdrop(GetCachedBackdrop(nil, "Interface\\Buttons\\WHITE8x8", px))
-            defIcon:SetBackdropBorderColor(0, 0.8, 0, 1)
-
-            local defCD = CreateFrame("Cooldown", nil, defIcon, "CooldownFrameTemplate")
-            defCD:SetAllPoints(defTex)
-            defCD:SetDrawEdge(false)
-            defCD:SetDrawSwipe(true)
-            defCD:SetHideCountdownNumbers(false)
-            defIcon.cooldown = defCD
-
-            if defIcon.SetMouseClickEnabled then
-                defIcon:SetMouseClickEnabled(false)
-            end
-            defIcon:EnableMouse(false)
-
-            defIcon:Hide()
-            frame.defensiveIcons[i] = defIcon
-        end
-        -- Per-refresh: reverse-swipe can change via settings
-        defIcon.cooldown:SetReverse(defReverse)
-    end
-    -- Keep backward compat alias for single-icon references
-    frame.defensiveIcon = frame.defensiveIcons[1]
+    -- Defensive indicator icons are allocated lazily by UpdateDefensiveIndicator
+    -- so profiles with the feature disabled do not pay for 5 cooldown frames
+    -- on every group member.
+    _state.HideDefensiveIcons(frame)
 
     -- Portrait (optional, side-attached)
     local portraitSettings = GetPortraitSettings(isRaid)
@@ -4895,6 +4944,7 @@ local function GRU_DeferredWork()
     -- Refresh GUID cache so OnAttributeChanged skip has fresh data
     for unit, list in pairs(QUI_GF.unitFrameMap) do
         local guid = UnitGUID(unit)
+        if guid and IsSecretValue(guid) then guid = nil end
         for i = 1, #list do
             _state.unitGuidCache[list[i]] = guid
         end
@@ -4909,7 +4959,7 @@ local function GRU_DeferredWork()
     local GFA = ns.QUI_GroupFrameAuras
     if GFA and GFA.PruneAuraCache then GFA.PruneAuraCache() end
     UpdateFrameScaling(true)
-    QUI_GF:RefreshAllFrames()
+    QUI_GF:RefreshAllFrames("roster")
     -- Ensure ticker is running (may not have started yet on first roster event)
     StartRangeCheck()
 end
@@ -5183,6 +5233,14 @@ local function OnEvent(self, event, arg1, ...)
         wipe(_range.cache)
         wipe(_range.cacheTime)
 
+    elseif event == "ENCOUNTER_START"
+        or event == "CHALLENGE_MODE_START"
+        or event == "PVP_MATCH_ACTIVE"
+    then
+        -- Aura instance IDs reset at encounter / M+ / PvP match start, so
+        -- any positive classification hits from the previous context are stale.
+        wipe(_defensive.cache)
+
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Combat ended: clear range cache so combat-era results
         -- don't prevent OOC methods from updating.
@@ -5329,6 +5387,9 @@ local function RegisterEvents()
     eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
     eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    eventFrame:RegisterEvent("ENCOUNTER_START")
+    eventFrame:RegisterEvent("CHALLENGE_MODE_START")
+    eventFrame:RegisterEvent("PVP_MATCH_ACTIVE")
 
     -- Noisy unit events are registered on per-unit hidden frames via
     -- RegisterUnitEvent, so unrelated nameplate/target traffic never reaches
@@ -5438,34 +5499,47 @@ end
 ---------------------------------------------------------------------------
 -- REFRESH ALL: Update all visible frames
 ---------------------------------------------------------------------------
-function QUI_GF:RefreshAllFrames()
+function QUI_GF:RefreshAllFrames(reason)
     -- Pre-loop setup that each module's RefreshAll does once before iteration.
     -- Inlining per-frame work from auras + indicators avoids 2 extra full
     -- iterations of unitFrameMap (was 4 passes, now 1 + private auras).
     local GFA = ns.QUI_GroupFrameAuras
     if GFA and GFA.InvalidateLayout then GFA:InvalidateLayout() end
+    local auraCacheRender = GFA and GFA.ScanUnitAuras and GFA.RenderFrame
     local GFI = ns.QUI_GroupFrameIndicators
 
-    for _, list in pairs(self.unitFrameMap) do
+    for unit, list in pairs(self.unitFrameMap) do
+        local auraScanned = false
         for i = 1, #list do
             local frame = list[i]
             if frame and frame:IsShown() then
                 if frame.healthBar then ApplyStatusBarTexture(frame.healthBar) end
                 if frame.healPredictionBar then ApplyStatusBarTexture(frame.healPredictionBar) end
                 if frame.powerBar then ApplyStatusBarTexture(frame.powerBar) end
+                if auraCacheRender and not auraScanned then
+                    GFA.ScanUnitAuras(unit)
+                    auraScanned = true
+                end
                 UpdateFrame(frame)
 
-                -- Auras: scan + render (was a separate full iteration)
-                if GFA and GFA.RefreshFrame then GFA:RefreshFrame(frame) end
+                -- Auras: render from the per-unit cache when available.
+                if auraCacheRender then
+                    GFA:RenderFrame(frame)
+                elseif GFA and GFA.RefreshFrame then
+                    GFA:RefreshFrame(frame)
+                end
                 -- Indicators: update tracked spells (was a separate full iteration)
                 if GFI and GFI.RefreshFrame then GFI:RefreshFrame(frame) end
             end
         end
     end
 
-    -- Private auras use a different clear-all + rebuild pattern that can't
-    -- be inlined into the per-frame loop (needs wipe(frameState) first).
-    if ns.QUI_GroupFramePrivateAuras and ns.QUI_GroupFramePrivateAuras.RefreshAll then
+    -- Private auras use a different clear-all + rebuild pattern for settings
+    -- changes. Roster changes are handled by their lighter reanchor debounce.
+    if reason ~= "roster"
+        and ns.QUI_GroupFramePrivateAuras
+        and ns.QUI_GroupFramePrivateAuras.RefreshAll
+    then
         ns.QUI_GroupFramePrivateAuras:RefreshAll()
     end
 end

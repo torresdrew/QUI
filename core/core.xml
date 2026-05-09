@@ -8,6 +8,7 @@
     <Script file="registry.lua"/>
     <Script file="modules.lua"/>
     <Script file="media.lua"/>
+    <Script file="gui_shell.lua"/>
     <Script file="compatibility.lua"/>
     <Script file="migrations.lua"/>
     <Script file="defaults.lua"/>

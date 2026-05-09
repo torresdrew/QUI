@@ -2,27 +2,31 @@
 -- QUI Chat Module — Persistent History
 -- Captures all displayed chat messages into per-character SV. Replays
 -- them on next login with session separators. Time-based retention with
--- per-channel overrides. Opt-in whisper storage.
+-- per-channel overrides. Opt-in whisper storage. Per-channel exclude list.
 --
 -- Storage layout:
 --   Settings : db.profile.chat.history       (toggles, retention sliders)
---   Entries  : db.char.chat.history.entries  (the captured messages)
+--   Entries  : QUI_ChatHistory (per-character SV file via Storage)
 --
--- Per-character semantics come from AceDB's `char` namespace, which
--- Blizzard ultimately writes to QUIDB.char.<charKey>.chat.history. This
--- diverges from the original plan's literal "QUIDB.<charKey>.chat.history"
--- because QUIDB's top-level is owned by AceDB-3.0 (profileKeys / profiles
--- / char / factionrealm); writing under db.char delivers the same
--- per-character semantics through the established API.
+-- Per-character semantics come from Blizzard's per-character SavedVariables
+-- file (declared in QUI.toc as `SavedVariablesPerCharacter`). The earlier
+-- AceDB-backed slot (`db.char.chat.history.entries`) is migrated once on
+-- first load via Storage.MigrateFromAceDB.
 --
 -- Chat-type detection:
 --   Blizzard's chat code calls `frame:AddMessage(msg, r, g, b, info.id)`
 --   where `info.id` is the integer ChatTypeInfo[<key>].id. We capture that
 --   5th positional arg and reverse it back to the chatTypeKey ("WHISPER",
---   "GUILD", etc.) via a one-shot map built from ChatTypeInfo. The key is
---   stamped on each entry as `c` for per-channel retention, and gates the
---   storeWhispers filter — locale-independent, replaces the older heuristic
---   that sniffed rendered text for "whispers:" / "To <name>:".
+--   "GUILD", "CHANNEL5", etc.) via a one-shot map built from ChatTypeInfo.
+--   The key is stamped on each entry as `c` for per-channel retention,
+--   gates the storeWhispers filter, and feeds the channel-exclusion gate
+--   (CHANNEL%d+ keys are resolved to channel names via GetChannelName).
+--
+-- Persistence model:
+--   Captures append to Storage's plain `current` SV array. Older entries are
+--   rotated into small serialized chunks, so normal reloads no longer
+--   compress or decompress the entire history. Login replay and copy request
+--   bounded recent slices and only decode the newest chunks they need.
 ---------------------------------------------------------------------------
 
 local ADDON_NAME, ns = ...
@@ -40,6 +44,8 @@ local Helpers = ns.Helpers
 -- code path that needs db.profile / db.char access.
 local QUI = _G.QUI
 
+local LOGIN_REPLAY_LIMIT = 500
+
 -- Forward declaration. ApplyEnabled is referenced by the _afterRefresh
 -- registration below before its body is defined; without the forward decl
 -- closures would capture nil. Same pattern other chat modifiers use.
@@ -48,16 +54,6 @@ local ApplyEnabled
 -- File-local re-pump flag. When true, the AddMessage hook drops captures
 -- so we don't recursively store messages we are replaying.
 History._repumping = false
-
--- Pending FCF_Close prunes. Map of frameID -> closeTimestamp. Drained by
--- flushNow's retention-prune pass. Declared up here so flushNow (defined
--- below) can see it; the FCF_Close hook that populates it lives near the
--- bottom of the file.
-local pendingPrunes
-
--- ---------------------------------------------------------------------------
--- SV access
--- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
 -- Capture: hooksecurefunc on each managed ChatFrame's AddMessage
@@ -97,6 +93,17 @@ local WHISPER_KEYS = {
     BN_WHISPER_INFORM = true,
 }
 
+local function isExcludedChannel(chatTypeKey, excludedSet)
+    if not excludedSet or not chatTypeKey then return false end
+    local slotStr = chatTypeKey:match("^CHANNEL(%d+)$")
+    if not slotStr then return false end
+    local slot = tonumber(slotStr)
+    if not slot or not GetChannelName then return false end
+    local _, channelName = GetChannelName(slot)
+    if not channelName or channelName == "" then return false end
+    return excludedSet[channelName] == true
+end
+
 local function captureToHistory(frame, msg, r, g, b, chatTypeID, ...)
     if History._repumping then return end
 
@@ -127,6 +134,10 @@ local function captureToHistory(frame, msg, r, g, b, chatTypeID, ...)
     local chatTypeKey = resolveChatTypeKey(chatTypeID)
 
     if not s.storeWhispers and chatTypeKey and WHISPER_KEYS[chatTypeKey] then
+        return
+    end
+
+    if isExcludedChannel(chatTypeKey, s.excludedChannels) then
         return
     end
 
@@ -165,66 +176,26 @@ local function hookAllManagedFrames()
 end
 
 -- ---------------------------------------------------------------------------
--- Pruning (time-based, with per-channel overrides)
+-- Pruning
 -- ---------------------------------------------------------------------------
 
--- Snapshot, time-prune, cap to settings.maxEntries, write back. Called
--- by the periodic ticker and by PLAYER_LOGOUT. Cheap when live buffer
--- is empty (pure no-op except for the encode round-trip — skip in that
--- case via the early-return below).
-local function flushNow()
+-- Single logout pass: prune by retention, cap by count, and normalize chunk
+-- metadata. Forced even in combat because /reload mid-combat fires LOGOUT.
+local function pruneAndPersist()
     local Storage = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.HistoryStorage
     if not Storage then return end
 
     local settings = I.GetSettings and I.GetSettings()
     local s = settings and settings.history
-    if not s or not s.enabled then return end
-
-    -- Skip if there's nothing in the live buffer AND no time-pruning is
-    -- due. Heuristic: if liveCount==0 we'd just re-encode an unchanged
-    -- persisted blob. Storage exposes GetCount which sums both sides;
-    -- compare against persisted-only count via lastFlushPersistedCount.
-    -- Cheap proxy: if Snapshot length equals last flush count, skip.
-    local entries = Storage.Snapshot()
-    if #entries == 0 then return end
-
-    local now = (GetServerTime and GetServerTime()) or time()
-    local globalCutoff = now - (s.retentionDays or 7) * 86400
-    local perChannel = s.perChannelRetention or {}
-
-    local prunes = pendingPrunes  -- localize; nil-safe below
-    local kept = {}
-    for i = 1, #entries do
-        local e = entries[i]
-        local cutoff = globalCutoff
-        if e.c and perChannel[e.c] then
-            cutoff = now - perChannel[e.c] * 86400
-        end
-        if e.t and e.t >= cutoff then
-            -- FCF_Close-driven prune: drop entries from a slot that was
-            -- closed, but only those captured before the close (preserves
-            -- new content if the slot has been recycled mid-session).
-            local closedAt = prunes and prunes[e.f]
-            if not (closedAt and e.t <= closedAt) then
-                kept[#kept + 1] = e
-            end
-        end
+    if not s or not s.enabled then
+        Storage.PersistNow()
+        return
     end
 
-    local cap = s.maxEntries or 5000
-    if #kept > cap then
-        -- Drop oldest. Entries from Snapshot are persisted-then-live, so
-        -- earlier indexes are older. Slice to the last `cap`.
-        local trimmed = {}
-        local start = #kept - cap + 1
-        for i = start, #kept do
-            trimmed[#trimmed + 1] = kept[i]
-        end
-        kept = trimmed
+    if Storage.Prune then
+        Storage.Prune(s)
     end
-
-    Storage.Flush(kept)
-    pendingPrunes = nil
+    Storage.PersistNow()
 end
 
 -- ---------------------------------------------------------------------------
@@ -247,40 +218,23 @@ local function repump()
         local Storage = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.HistoryStorage
         if not Storage then return end
 
-        local entries = Storage.Snapshot()
+        if Storage.Prune then
+            Storage.Prune(s)
+        end
+
+        local replayLimit = tonumber(s.replayLines) or LOGIN_REPLAY_LIMIT
+        local entries = Storage.GetRecentEntries and Storage.GetRecentEntries(replayLimit) or {}
         if #entries == 0 then return end
 
-        -- Time-prune in-place before replay. We use a temp `kept` list
-        -- because the snapshot must not be mutated (Storage holds the
-        -- canonical array reference internally).
-        local now = (GetServerTime and GetServerTime()) or time()
-        local globalCutoff = now - (s.retentionDays or 7) * 86400
-        local perChannel = s.perChannelRetention or {}
-        local kept = {}
+        -- Group by frame, replay.
+        local byFrame = {}
         for i = 1, #entries do
             local e = entries[i]
-            local cutoff = globalCutoff
-            if e.c and perChannel[e.c] then
-                cutoff = now - perChannel[e.c] * 86400
-            end
-            if e.t and e.t >= cutoff then
-                kept[#kept + 1] = e
-            end
-        end
-        entries = nil  -- release the unpruned snapshot for GC.
-
-        -- Group by frame, sort, replay.
-        local byFrame = {}
-        for i = 1, #kept do
-            local e = kept[i]
             if e.f then
                 byFrame[e.f] = byFrame[e.f] or {}
                 local list = byFrame[e.f]
                 list[#list + 1] = e
             end
-        end
-        for _, list in pairs(byFrame) do
-            table.sort(list, function(a, b) return (a.t or 0) < (b.t or 0) end)
         end
 
         local sepBefore = "──── Previous session ────"
@@ -302,13 +256,6 @@ local function repump()
                 end
             end
         end
-
-        -- After replay, write the pruned set back through Storage so the
-        -- on-disk blob is also pruned. Live buffer is empty at this point
-        -- (we're seconds into PLAYER_LOGIN, before any capture).
-        Storage.Flush(kept)
-        kept = nil
-        byFrame = nil
     end)
 
     History._repumping = false
@@ -333,28 +280,21 @@ function History.ClearAllCharacters()
     return Storage.ClearAllCharacters()
 end
 
-function History.GetMessagesForFrame(frameID)
+function History.GetMessagesForFrame(frameID, limit)
     frameID = tonumber(frameID)
     if not frameID then return {} end
 
     local Storage = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.HistoryStorage
     if not Storage then return {} end
 
-    local entries = Storage.Snapshot()
-    local matches = {}
+    local cap = tonumber(limit)
+    local entries = Storage.GetRecentForFrame and Storage.GetRecentForFrame(frameID, cap) or {}
+    local messages = {}
     for i = 1, #entries do
         local e = entries[i]
-        if e and e.f == frameID and type(e.m) == "string" then
-            matches[#matches + 1] = e
+        if e and type(e.m) == "string" then
+            messages[#messages + 1] = e.m
         end
-    end
-    entries = nil  -- release decoded snapshot for GC.
-
-    table.sort(matches, function(a, b) return (a.t or 0) < (b.t or 0) end)
-
-    local messages = {}
-    for i = 1, #matches do
-        messages[#messages + 1] = matches[i].m
     end
     return messages
 end
@@ -405,18 +345,9 @@ addonFrame:SetScript("OnEvent", function(self, event, name)
         end
         self:UnregisterEvent("PLAYER_LOGIN")
     elseif event == "PLAYER_LOGOUT" then
-        flushNow()
+        pruneAndPersist()
     end
 end)
-
--- Periodic flush. Every 5 minutes, merge live buffer into the persisted
--- blob, prune by time, cap by count. 300s is short enough that worst-case
--- live-buffer growth on a chatty character stays under ~10k entries (rough
--- ceiling at typical capture rates), and long enough that the encode CPU
--- cost is amortized.
-if C_Timer and C_Timer.NewTicker then
-    C_Timer.NewTicker(300, flushNow)
-end
 
 -- New permanent windows opened mid-session also need capture hooks.
 -- Idempotent via hookedFrames weak table (re-hooking is a no-op).
@@ -436,12 +367,15 @@ end
 -- Closing a chat tab (right-click "Close Chat Window", /close, X on a
 -- popped-out window — all route through FCF_Close) frees the ChatFrameN
 -- slot for FCF_OpenNewWindow to recycle. Without cleanup the closed tab's
--- captured entries linger in SV keyed to that frame ID, then on next login
--- replay into whatever new tab inherits the slot — cross-contaminating an
--- unrelated window. Prune entries for the closed slot at close time.
+-- captured entries linger keyed to that frame ID, then on next login
+-- replay into whatever new tab inherits the slot — cross-contaminating
+-- an unrelated window.
 --
 -- ChatFrame2 (combat log) can't be closed and was never captured into, so
 -- the hook is a no-op for that slot in practice.
+--
+-- Eager prune delegates to Storage, which rewrites only affected chunks and
+-- the plain current buffer.
 
 local function getFrameID(frame)
     if not frame then return nil end
@@ -452,31 +386,17 @@ local function getFrameID(frame)
     return nil
 end
 
--- Per-frameID timestamp at which the slot was last closed. Drained by
--- flushNow during its retention-prune pass: entries with f==frameID and
--- t<=closeTimestamp are dropped (they're stale, the slot may be recycled).
--- Entries captured after the close timestamp are new content from a
--- recycled slot and survive — preserves correctness if the user closes
--- and reopens a slot mid-session.
---
--- Why a queue instead of pruning eagerly: Blizzard fires FCF_Close ~15
--- times during login layout restoration. Eagerly running the full
--- decompress + iterate + re-encode cycle on every fire was the dominant
--- login-time cost (~9 sec). Queueing reduces the hook to a table-set
--- and folds the actual prune into flushNow's existing retention pass,
--- so login pays nothing and a single pass at the next 5-min ticker tick
--- (or PLAYER_LOGOUT) handles every closed slot together.
--- (`pendingPrunes` upvalue is declared at file top so flushNow can see it.)
-
-local function queuePruneFrameID(frameID)
+local function pruneClosedFrame(frameID)
     if not frameID then return end
-    pendingPrunes = pendingPrunes or {}
-    pendingPrunes[frameID] = (GetServerTime and GetServerTime()) or time()
+    local Storage = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.HistoryStorage
+    if Storage and Storage.RemoveFrame then
+        Storage.RemoveFrame(frameID)
+    end
 end
 
 if hooksecurefunc and _G.FCF_Close then
     hooksecurefunc("FCF_Close", function(frame)
-        queuePruneFrameID(getFrameID(frame))
+        pruneClosedFrame(getFrameID(frame))
     end)
 end
 

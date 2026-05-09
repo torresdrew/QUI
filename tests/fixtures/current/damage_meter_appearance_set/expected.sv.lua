@@ -20,7 +20,7 @@ return {
       Default = {
         _defaultsVersion = 3,
         _needsLateAbImport = true,
-        _schemaVersion = 35,
+        _schemaVersion = 36,
         _shippedDefaults = {
           abilityTimeline = {
             bigIcon = {
@@ -640,6 +640,7 @@ return {
           },
           chat = {
             buttonBars = {},
+            channelColors = {},
             copyButtonMode = "always",
             copyHistorySource = "live",
             defaultTab = 1,
@@ -683,6 +684,7 @@ return {
             hideButtons = true,
             history = {
               enabled = true,
+              excludedChannels = {},
               maxEntries = 5000,
               perChannelRetention = {},
               retentionDays = 7,
@@ -917,7 +919,8 @@ return {
             thickness = 3
           },
           customGlow = {
-            buffPandemicEnabled = true,
+            buffPandemicBuffEnabled = true,
+            buffPandemicDebuffEnabled = true,
             essentialColor = {
               [1] = 0.94999999999999996,
               [2] = 0.94999999999999996,
@@ -928,7 +931,8 @@ return {
             essentialFrequency = 0.25,
             essentialGlowType = "Pixel Glow",
             essentialLines = 14,
-            essentialPandemicEnabled = true,
+            essentialPandemicBuffEnabled = true,
+            essentialPandemicDebuffEnabled = true,
             essentialScale = 1,
             essentialThickness = 2,
             essentialXOffset = 0,
@@ -943,7 +947,8 @@ return {
             utilityFrequency = 0.25,
             utilityGlowType = "Pixel Glow",
             utilityLines = 14,
-            utilityPandemicEnabled = true,
+            utilityPandemicBuffEnabled = true,
+            utilityPandemicDebuffEnabled = true,
             utilityScale = 1,
             utilityThickness = 2,
             utilityXOffset = 0,

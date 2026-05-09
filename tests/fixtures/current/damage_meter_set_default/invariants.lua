@@ -26,7 +26,7 @@ return {
     {
         name = "no migration triggered for additive damageMeter shelf",
         assert = function(sv, ctx)
-            return sv.QUI_DB.profiles.Default._schemaVersion == 35
+            return sv.QUI_DB.profiles.Default._schemaVersion == 36
         end,
     },
 }

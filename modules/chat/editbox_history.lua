@@ -85,8 +85,26 @@ local function IsChatAttributeLockedDown()
 end
 
 -- ---------------------------------------------------------------------------
--- Capture: post-hook on ChatEdit_OnEnterPressed
+-- Capture: mirror state on OnTextChanged, then read from the mirror in a
+-- post-hook OnEnterPressed
 -- ---------------------------------------------------------------------------
+-- Pre-hooking via SetScript("OnEnterPressed", wrapper) taints the Blizzard
+-- OnEnterPressed → SendText → SendChatMessage chain, and 12.0+ blocks
+-- SendChatMessage from tainted execution context (ADDON_ACTION_BLOCKED).
+-- HookScript is post-hook — by the time it fires, SendText has cleared the
+-- editbox text and the chat-type attribute. Mirror what we need on every
+-- OnTextChanged so the post-hook capture sees the pre-send values.
+local mirrorByEditBox = setmetatable({}, { __mode = "k" })
+
+local function MirrorEditBoxState(editBox)
+    if not editBox then return end
+    local m = mirrorByEditBox[editBox]
+    if not m then m = {}; mirrorByEditBox[editBox] = m end
+    m.text = editBox:GetText() or ""
+    m.chatType = editBox:GetAttribute("chatType")
+    m.tellTarget = editBox:GetAttribute("tellTarget")
+    m.channelTarget = editBox:GetAttribute("channelTarget")
+end
 
 local function captureSent(editBox)
     local settings = I.GetSettings and I.GetSettings()
@@ -94,7 +112,8 @@ local function captureSent(editBox)
     local s = settings and settings.editboxHistory
     if not s or not s.enabled then return end
 
-    local text = editBox:GetText()
+    local mirror = mirrorByEditBox[editBox]
+    local text = mirror and mirror.text
     if not text or text == "" then return end
 
     -- Filter sensitive commands.
@@ -104,14 +123,14 @@ local function captureSent(editBox)
         return
     end
 
-    -- Build entry. Pull chat type and (when applicable) target from the
-    -- secure attributes the chat edit box maintains.
-    local chatType = editBox:GetAttribute("chatType")
+    -- Build entry. Use mirrored chat type/target captured at the last
+    -- OnTextChanged (post-hook OnEnterPressed sees attributes already reset).
+    local chatType = mirror.chatType
     local target = nil
     if chatType == "WHISPER" or chatType == "BN_WHISPER" then
-        target = editBox:GetAttribute("tellTarget")
+        target = mirror.tellTarget
     elseif chatType == "CHANNEL" then
-        target = editBox:GetAttribute("channelTarget")
+        target = mirror.channelTarget
     end
 
     local store = getStore()
@@ -252,25 +271,32 @@ function InitializeForFrame(chatFrame)
     local editBox = chatFrame.editBox or (frameName and _G[frameName .. "EditBox"]) or nil
     if not editBox then return end
 
-    -- This can run before DB-backed settings are ready. Re-apply every time
-    -- so a later login/refresh call can restore plain Up/Down recall.
+    -- Always sync alt-arrow mode (cheap, idempotent) so disable→enable→disable
+    -- toggles always end at native behavior, even if no send-capture hook is
+    -- ever installed for this editBox.
     ApplyAltArrowModeToEditBox(editBox)
+
+    -- Skip send-capture hook installation when chat or editboxHistory is off.
+    -- The hooks below are post-hooks via HookScript and taint-safe, but
+    -- skipping when the feature is disabled keeps Blizzard's chat editbox
+    -- completely untouched for users who don't want the recall behavior.
+    if not IsEditBoxHistoryEnabled() then return end
 
     if hookedEditBoxes[editBox] then return end
     hookedEditBoxes[editBox] = true
 
-    -- Pre-hook OnEnterPressed by SetScript-wrapping. HookScript only adds
-    -- post-hooks, by which time Blizzard's OnEnterPressed has already
-    -- cleared the editbox and hidden the frame — editBox:GetText() returns
-    -- "". hooksecurefunc on globals like ChatEdit_SendText also doesn't
-    -- fire on the 12.0 chat send path. SetScript wrapping is the standard
-    -- workaround: we capture the existing handler, install our wrapper,
-    -- and chain. captureSent runs in pcall so a bug in our code can never
-    -- break sending.
-    local origOnEnter = editBox:GetScript("OnEnterPressed")
-    editBox:SetScript("OnEnterPressed", function(self, ...)
+    -- Mirror text + chat-type on every text change so the post-hook
+    -- OnEnterPressed below has the pre-send values (SendText clears text and
+    -- resets chatType before HookScript fires).
+    editBox:HookScript("OnTextChanged", function(self)
+        MirrorEditBoxState(self)
+    end)
+
+    -- Capture sent text into history. HookScript is taint-safe (post-hook,
+    -- not a SetScript replacement). pcall isolates capture errors from any
+    -- subsequent post-hook handlers.
+    editBox:HookScript("OnEnterPressed", function(self)
         pcall(captureSent, self)
-        if origOnEnter then return origOnEnter(self, ...) end
     end)
 
     -- Hook OnArrowPressed for recall.
@@ -303,11 +329,13 @@ EBH.InitializeForAllFrames = InitializeForAllFrames
 -- ---------------------------------------------------------------------------
 -- ApplyEnabled: settings change hook
 -- ---------------------------------------------------------------------------
--- Settings drive per-call behavior in capture/recall. Hooks remain in place;
--- ApplyEnabled just restores native arrow-key behavior when the feature or
--- chat master toggle is off.
+-- Sync alt-arrow mode on already-hooked editboxes, then arm hooks on any
+-- editboxes that weren't hooked at load (toggle off→on flow). Once installed,
+-- the post-hooks are taint-safe and stay in place — disabling later is
+-- handled by the IsEditBoxHistoryEnabled() gate inside captureSent / navigate.
 local function ApplyEnabled()
     ApplyAltArrowMode()
+    InitializeForAllFrames()
 end
 
 -- Initial hook setup at file-load (defensive — frames may not exist yet).

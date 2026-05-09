@@ -64,13 +64,6 @@ end
 
 local DEFAULT_SQUARE_COLOR = { 0.5, 0.5, 0.5, 1 }
 local DEFAULT_INSET = { 0, 0 }
-local AURA_FILTERS = { "HELPFUL", "HARMFUL" }
-
--- Reusable scratch tables for cache-miss fallbacks.
-local _scratchHelpfulAurasByID = {}
-local _scratchHarmfulAurasByID = {}
-local _scratchHelpfulAuraNames = {}
-local _scratchHarmfulAuraNames = {}
 
 ---------------------------------------------------------------------------
 -- SECRET AURA HANDLING (shared patterns from groupframes_indicators.lua)
@@ -206,7 +199,7 @@ local function FindSecretTrackedAura(unit, spellID, helpfulAuras)
     return nil
 end
 
-local function FindTrackedAuraData(unit, spellID, helpfulByID, helpfulByName, harmfulByID, harmfulByName, helpfulAuras)
+local function FindTrackedAuraData(unit, spellID, helpfulByID, buffsByName, harmfulByID, debuffsByName, helpfulAuras)
     local auraData = helpfulByID and helpfulByID[spellID]
     if auraData then
         return auraData
@@ -227,12 +220,12 @@ local function FindTrackedAuraData(unit, spellID, helpfulByID, helpfulByName, ha
         return nil
     end
 
-    auraData = helpfulByName and helpfulByName[spellName]
+    auraData = buffsByName and buffsByName[spellName]
     if auraData then
         return auraData
     end
 
-    auraData = harmfulByName and harmfulByName[spellName]
+    auraData = debuffsByName and debuffsByName[spellName]
     if auraData then
         return auraData
     end
@@ -418,6 +411,49 @@ local function GetPinnedAuraSettings(isRaid)
 end
 
 ---------------------------------------------------------------------------
+-- PHASE 4: Cache-time match population
+---------------------------------------------------------------------------
+-- Called from QUI_GroupFrameAuras.RebuildPanelSubsetsAndSort once per delta.
+-- Walks the active spec's pinned slots, runs FindTrackedAuraData against the
+-- shared cache's lookup tables, and stashes matches in cache.pinnedMatches
+-- keyed by slot index. UpdateFramePinnedAuras then reads that map directly.
+function QUI_GFP:PopulateCacheMatches(unit, cache)
+    if not cache or not cache.pinnedMatches then return end
+    wipe(cache.pinnedMatches)
+
+    local pa = GetPinnedAuraSettings(IsInRaid())
+    if not pa or not pa.enabled then return end
+
+    local specID = GetPlayerSpecID()
+    if not specID then return end
+
+    local specSlots = pa.specSlots
+    if not specSlots then return end
+    local slots = specSlots[specID]
+    if not slots or #slots == 0 then return end
+
+    local helpfulByID = cache.buffsBySpellID
+    local buffsByName = cache.buffsByName
+    local harmfulByID = cache.debuffsBySpellID
+    local debuffsByName = cache.debuffsByName
+    local helpfulAuras = cache.buffs
+
+    for slotIdx, slot in ipairs(slots) do
+        if slot.spellID then
+            local auraData = FindTrackedAuraData(
+                unit, slot.spellID,
+                helpfulByID, buffsByName,
+                harmfulByID, debuffsByName,
+                helpfulAuras
+            )
+            if auraData then
+                cache.pinnedMatches[slotIdx] = auraData
+            end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- STATE PER FRAME
 ---------------------------------------------------------------------------
 local framePinnedState = Helpers.CreateStateTable()
@@ -485,49 +521,12 @@ local function UpdateFramePinnedAuras(frame)
     local reverseSwipe = pa.reverseSwipe == true
     local inset = pa.edgeInset or 2
 
-    -- Read prebuilt spell/name indexes from the shared cache when available.
-    local helpfulByID = _scratchHelpfulAurasByID
-    local harmfulByID = _scratchHarmfulAurasByID
-    local helpfulByName = _scratchHelpfulAuraNames
-    local harmfulByName = _scratchHarmfulAuraNames
-    wipe(helpfulByID)
-    wipe(harmfulByID)
-    wipe(helpfulByName)
-    wipe(harmfulByName)
-    local helpfulAuras = nil
+    -- Phase 4: cache.pinnedMatches[slotIdx] = auraData was populated once
+    -- per delta by QUI_GFP:PopulateCacheMatches. Read directly; no per-frame
+    -- lookup tables, no inline FindTrackedAuraData.
     local GFA = ns.QUI_GroupFrameAuras
     local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
-    if cache and cache.hasFullScan then
-        helpfulAuras = cache.helpful
-        helpfulByID = cache.helpfulBySpellID or helpfulByID
-        harmfulByID = cache.harmfulBySpellID or harmfulByID
-        helpfulByName = cache.helpfulByName or helpfulByName
-        harmfulByName = cache.harmfulByName or harmfulByName
-    elseif not InCombatLockdown() and C_UnitAuras and C_UnitAuras.GetUnitAuras then
-        -- Fallback: shared cache missing (should not happen in normal dispatch).
-        -- Skip in combat to avoid C-side table allocations that overwhelm the GC.
-        for _, filter in ipairs(AURA_FILTERS) do
-            local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit, filter, 40)
-            if ok and auras then
-                if filter == "HELPFUL" then
-                    helpfulAuras = auras
-                    for _, auraData in ipairs(auras) do
-                        local spID = SafeValue(auraData.spellId, nil)
-                        if spID then helpfulByID[spID] = auraData end
-                        local spName = SafeValue(auraData.name, nil)
-                        if spName then helpfulByName[spName] = auraData end
-                    end
-                else
-                    for _, auraData in ipairs(auras) do
-                        local spID = SafeValue(auraData.spellId, nil)
-                        if spID then harmfulByID[spID] = auraData end
-                        local spName = SafeValue(auraData.name, nil)
-                        if spName then harmfulByName[spName] = auraData end
-                    end
-                end
-            end
-        end
-    end
+    local pinnedMatches = cache and cache.pinnedMatches
 
     -- Expose pinned aura IDs for buff deduplication
     if not frame._pinnedAuraIDs then frame._pinnedAuraIDs = {} end
@@ -549,12 +548,12 @@ local function UpdateFramePinnedAuras(frame)
     if canReuse then
         -- In-place update: just refresh data/state on existing indicators
         local idx = 0
-        for _, slot in ipairs(slots) do
+        for slotIdx, slot in ipairs(slots) do
             local spellID = slot.spellID
             if spellID then
                 idx = idx + 1
                 local ind = state.indicators[idx]
-                local auraData = FindTrackedAuraData(unit, spellID, helpfulByID, helpfulByName, harmfulByID, harmfulByName, helpfulAuras)
+                local auraData = pinnedMatches and pinnedMatches[slotIdx]
                 if auraData and auraData.auraInstanceID then
                     frame._pinnedAuraIDs[auraData.auraInstanceID] = true
                 end
@@ -571,11 +570,11 @@ local function UpdateFramePinnedAuras(frame)
 
         local bottomPad = frame._bottomPad or 0
 
-        for _, slot in ipairs(slots) do
+        for slotIdx, slot in ipairs(slots) do
             local spellID = slot.spellID
             if spellID then
                 local anchor = slot.anchor or "TOPLEFT"
-                local auraData = FindTrackedAuraData(unit, spellID, helpfulByID, helpfulByName, harmfulByID, harmfulByName, helpfulAuras)
+                local auraData = pinnedMatches and pinnedMatches[slotIdx]
                 if auraData and auraData.auraInstanceID then
                     frame._pinnedAuraIDs[auraData.auraInstanceID] = true
                 end
@@ -615,6 +614,11 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "PLAYER_SPECIALIZATION_CHANGED" then
         -- Spec change: evict spell name cache (spell roster changes per spec)
         wipe(spellNameCache)
+        -- Phase 4: cache.pinnedMatches is populated against slots that vary
+        -- per spec. Force a rescan so PopulateCacheMatches reruns with the
+        -- new spec's slot list before frames re-render.
+        local GFA = ns.QUI_GroupFrameAuras
+        if GFA and GFA.RescanCachedUnits then GFA:RescanCachedUnits() end
         QUI_GFP:RefreshAll()
     end
 end)

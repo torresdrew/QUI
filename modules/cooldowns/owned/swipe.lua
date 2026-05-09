@@ -9,7 +9,7 @@ local Helpers = ns.Helpers
 -- Default settings
 local DEFAULTS = {
     showBuffSwipe = true,
-    showBuffIconSwipe = false,
+    showBuffIconSwipe = true,
     showGCDSwipe = true,
     showCooldownSwipe = true,
     -- Overlay color: shown when spell/buff is ACTIVE (aura duration)
@@ -59,6 +59,14 @@ end
 local CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A = 0, 0, 0, 0.8
 -- Blizzard default buff/aura overlay color (yellow)
 local BLIZZ_BUFF_R, BLIZZ_BUFF_G, BLIZZ_BUFF_B, BLIZZ_BUFF_A = 0.93, 0.77, 0.0, 0.45
+local FULL_FRAME_SWIPE_TEXTURE = "Interface\\Buttons\\WHITE8X8"
+
+local function SettingEnabled(value, fallback)
+    if value == nil then
+        return fallback == true
+    end
+    return value == true
+end
 
 ---------------------------------------------------------------------------
 -- APPLY SWIPE TO A SINGLE ICON
@@ -133,36 +141,58 @@ local function ApplySwipeToIcon(icon, settings)
     local showSwipe
     if mode == "aura" then
         if isBuffIcon then
-            showSwipe = settings.showBuffIconSwipe
+            showSwipe = SettingEnabled(settings.showBuffIconSwipe, true)
         else
-            showSwipe = settings.showBuffSwipe
+            showSwipe = SettingEnabled(settings.showBuffSwipe, true)
         end
     elseif mode == "gcd" then
-        showSwipe = settings.showGCDSwipe
+        showSwipe = SettingEnabled(settings.showGCDSwipe, true)
     else
-        showSwipe = settings.showCooldownSwipe
+        showSwipe = SettingEnabled(settings.showCooldownSwipe, true)
     end
 
-    icon.Cooldown:SetDrawSwipe(showSwipe)
+    -- Apply swipe styling to BOTH our native icon.Cooldown AND the
+    -- reparented Blizzard child.Cooldown (if Blizzard-backed). Writing to
+    -- both keeps QUI styling consistent regardless of which Cooldown
+    -- frame is currently driving the visible swipe.
     local showEdge = showSwipe and (mode == "aura" or (mode == "cooldown" and settings.showRechargeEdge))
-    icon.Cooldown:SetDrawEdge(showEdge)
 
-    -- Apply color and texture based on mode.
-    -- When swipe is disabled, force alpha-0 color as a failsafe —
-    -- SetCooldownFromDurationObject + SetReverse (aura path) can
-    -- internally re-enable drawSwipe on the C-side animation system,
-    -- so a transparent color ensures the swipe is invisible regardless.
-    if not showSwipe then
-        icon.Cooldown:SetSwipeColor(0, 0, 0, 0)
-    elseif mode == "aura" then
-        local oR, oG, oB, oA = ResolveColor(settings.overlayColorMode or "default", settings.overlayColor)
-        if not oR then oR, oG, oB, oA = BLIZZ_BUFF_R, BLIZZ_BUFF_G, BLIZZ_BUFF_B, BLIZZ_BUFF_A end
-        icon.Cooldown:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
-        icon.Cooldown:SetSwipeColor(oR, oG, oB, oA)
-    else
-        local sR, sG, sB, sA = ResolveColor(settings.swipeColorMode or "default", settings.swipeColor)
-        if not sR then sR, sG, sB, sA = CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A end
-        icon.Cooldown:SetSwipeColor(sR, sG, sB, sA)
+    local function applyToCooldown(cd)
+        if not cd then return end
+        -- Stash intended state on the frame so the mirror's swipe-defense
+        -- hook (HookSwipeStyleDefense in cdm_blizz_mirror.lua) can revert
+        -- Blizzard's mixin if it tries to re-apply template defaults.
+        cd._quiIntendedDrawSwipe = showSwipe and true or false
+        cd._quiIntendedDrawEdge  = showEdge and true or false
+        cd._quiIntendedSwipeTexture = FULL_FRAME_SWIPE_TEXTURE
+        pcall(cd.SetSwipeTexture, cd, FULL_FRAME_SWIPE_TEXTURE)
+        pcall(cd.SetDrawSwipe, cd, showSwipe and true or false)
+        pcall(cd.SetDrawEdge,  cd, showEdge and true or false)
+
+        -- Apply color and texture based on mode.
+        -- When swipe is disabled, force alpha-0 color as a failsafe —
+        -- SetCooldownFromDurationObject + SetReverse (aura path) can
+        -- internally re-enable drawSwipe on the C-side animation system,
+        -- so a transparent color ensures the swipe is invisible regardless.
+        local cR, cG, cB, cA
+        if not showSwipe then
+            cR, cG, cB, cA = 0, 0, 0, 0
+        elseif mode == "aura" then
+            local oR, oG, oB, oA = ResolveColor(settings.overlayColorMode or "default", settings.overlayColor)
+            if not oR then oR, oG, oB, oA = BLIZZ_BUFF_R, BLIZZ_BUFF_G, BLIZZ_BUFF_B, BLIZZ_BUFF_A end
+            cR, cG, cB, cA = oR, oG, oB, oA
+        else
+            local sR, sG, sB, sA = ResolveColor(settings.swipeColorMode or "default", settings.swipeColor)
+            if not sR then sR, sG, sB, sA = CDM_DEFAULT_R, CDM_DEFAULT_G, CDM_DEFAULT_B, CDM_DEFAULT_A end
+            cR, cG, cB, cA = sR, sG, sB, sA
+        end
+        cd._quiIntendedSwipeColor = { cR, cG, cB, cA or 1 }
+        pcall(cd.SetSwipeColor, cd, cR, cG, cB, cA)
+    end
+
+    applyToCooldown(icon.Cooldown)
+    if not icon._blizzAuraFallbackActive then
+        applyToCooldown(icon._blizzCooldownFrame)
     end
 end
 
@@ -176,7 +206,7 @@ local function ApplySwipeToBuffChild(icon, settings)
     settings = settings or GetSettings()
 
     -- Buff viewer children are always auras in the buff viewer
-    local showSwipe = settings.showBuffIconSwipe
+    local showSwipe = SettingEnabled(settings.showBuffIconSwipe, true)
 
     icon.Cooldown:SetDrawSwipe(showSwipe)
     icon.Cooldown:SetDrawEdge(showSwipe)

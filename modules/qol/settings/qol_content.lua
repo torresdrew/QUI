@@ -91,9 +91,6 @@ local function BuildGeneralTab(tabContent, searchContext, selectedSectionKey)
                 { description = "Global scale factor applied to the entire Blizzard UI. Lower values make elements smaller; the presets below pick pixel-perfect values for common resolutions." })
             sy = P(scaleSlider, body, sy)
 
-            local presetLabel = GUI:CreateLabel(body, "Quick UI Scale Presets:", 12, C.text)
-            presetLabel:SetPoint("TOPLEFT", 0, sy)
-
             local function ApplyPreset(val, name)
                 if InCombatLockdown() then return end
                 db.general.uiScale = val
@@ -111,10 +108,18 @@ local function BuildGeneralTab(tabContent, searchContext, selectedSectionKey)
                 ApplyPreset(scale, "Auto")
             end
 
-            local buttonContainer = CreateFrame("Frame", nil, body)
-            buttonContainer:SetPoint("LEFT", scaleSlider, "LEFT", 180, 0)
-            buttonContainer:SetPoint("RIGHT", scaleSlider, "RIGHT", 0, 0)
-            buttonContainer:SetPoint("TOP", presetLabel, "TOP", 0, 0)
+            local PRESET_BLOCK_HEIGHT = 104
+            local presetBlock = CreateFrame("Frame", nil, body)
+            presetBlock:SetPoint("TOPLEFT", 0, sy)
+            presetBlock:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+            presetBlock:SetHeight(PRESET_BLOCK_HEIGHT)
+
+            local presetLabel = GUI:CreateLabel(presetBlock, "Quick UI Scale Presets:", 12, C.text)
+            presetLabel:SetPoint("TOPLEFT", presetBlock, "TOPLEFT", 0, 0)
+
+            local buttonContainer = CreateFrame("Frame", nil, presetBlock)
+            buttonContainer:SetPoint("TOPLEFT", presetBlock, "TOPLEFT", 180, 0)
+            buttonContainer:SetPoint("RIGHT", presetBlock, "RIGHT", 0, 0)
             buttonContainer:SetHeight(26)
 
             local BUTTON_GAP = 6
@@ -159,21 +164,22 @@ local function BuildGeneralTab(tabContent, searchContext, selectedSectionKey)
                 btn:HookScript("OnLeave", function() GameTooltip:Hide() end)
             end
 
-            sy = sy - FORM_ROW - 6
+            local presetSummary = GUI:CreateLabel(presetBlock, "Hover over any preset for details. 1440p+ is Quazii's personal setting.", 11, C.textMuted)
+            presetSummary:SetPoint("TOPLEFT", buttonContainer, "BOTTOMLEFT", 0, -8)
+            presetSummary:SetPoint("RIGHT", presetBlock, "RIGHT", 0, 0)
+            presetSummary:SetJustifyH("LEFT")
 
-            local presetSummary = GUI:CreateLabel(body, "Hover over any preset for details. 1440p+ is Quazii's personal setting.", 11, C.textMuted)
-            presetSummary:SetPoint("TOPLEFT", 0, sy)
-            sy = sy - 20
-
-            local bigPicture = GUI:CreateLabel(body,
-                "UI scale is highly personal-it depends on your monitor size, resolution, and preference. If you already have a scale you like from years of playing WoW, stick with it. These presets are just common values people tend to use.",
+            local bigPicture = GUI:CreateLabel(presetBlock,
+                "UI scale is highly personal: it depends on your monitor size, resolution, and preference. If you already have a scale you like from years of playing WoW, stick with it. These presets are just common values people tend to use.",
                 11, C.textMuted)
-            bigPicture:SetPoint("TOPLEFT", 0, sy)
-            bigPicture:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+            bigPicture:SetPoint("TOPLEFT", presetSummary, "BOTTOMLEFT", 0, -8)
+            bigPicture:SetPoint("RIGHT", presetBlock, "RIGHT", 0, 0)
             bigPicture:SetJustifyH("LEFT")
 
+            sy = sy - PRESET_BLOCK_HEIGHT
+
             local section = body:GetParent()
-            section._contentHeight = FORM_ROW + FORM_ROW + 6 + 20 + 36 + 8
+            section._contentHeight = FORM_ROW + PRESET_BLOCK_HEIGHT + 8
         end)
     end
 

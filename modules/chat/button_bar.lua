@@ -47,10 +47,10 @@ local BUILTINS = {
     qui_options = {
         label = "QUI",
         action = function()
-            if _G.QUI and _G.QUI.GUI then
-                _G.QUI.GUI:Toggle()
+            if _G.QUI and _G.QUI.OpenOptions then
+                _G.QUI:OpenOptions()
             else
-                print("|cFF56D1FFQUI:|r GUI not loaded yet. Try again in a moment.")
+                print("|cFF56D1FFQUI:|r Options are not available yet. Try again in a moment.")
             end
         end,
         tooltip = "Open QUI options",

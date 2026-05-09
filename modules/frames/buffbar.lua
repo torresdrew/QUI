@@ -1660,11 +1660,7 @@ local forcePopulateDone = false
 
 local function ForcePopulateBuffIcons()
     if forcePopulateDone then return end
-
     forcePopulateDone = true
-    if ns.CDMSpellData then
-        ns.CDMSpellData:ForceScan()
-    end
 end
 
 ---------------------------------------------------------------------------

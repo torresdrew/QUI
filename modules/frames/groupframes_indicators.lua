@@ -48,10 +48,6 @@ do local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "GF_Ind_spellNameCache", tbl = spellNameCache }
 end
 
-local _scratchHelpfulAurasByID = {}
-local _scratchHarmfulAurasByID = {}
-local _scratchHelpfulAuraNames = {}
-local _scratchHarmfulAuraNames = {}
 local _scratchIconPayloads = {}
 local _scratchBarPayloads = {}
 
@@ -92,7 +88,6 @@ end
 
 local EMPTY_TABLE = {}
 local DEFAULT_HEALTH_COLOR = { 0.2, 0.8, 0.2, 1 }
-local AURA_FILTERS = { "HELPFUL", "HARMFUL" }
 local HEALTH_TINT_ANIMATION_DEFAULT = "fill"
 local HEALTH_TINT_ANIMATION_DURATIONS = {
     instant = 0,
@@ -545,9 +540,9 @@ local function FindTrackedAuraData(
     unit,
     spellID,
     helpfulByID,
-    helpfulByName,
+    buffsByName,
     harmfulByID,
-    harmfulByName,
+    debuffsByName,
     helpfulAuras,
     harmfulAuras,
     onlyMine
@@ -590,12 +585,12 @@ local function FindTrackedAuraData(
         return nil
     end
 
-    auraData = helpfulByName and helpfulByName[spellName]
+    auraData = buffsByName and buffsByName[spellName]
     if CandidateMatches(auraData) then
         return auraData
     end
 
-    auraData = harmfulByName and harmfulByName[spellName]
+    auraData = debuffsByName and debuffsByName[spellName]
     if CandidateMatches(auraData) then
         return auraData
     end
@@ -613,6 +608,50 @@ local function FindTrackedAuraData(
     end
 
     return nil
+end
+
+---------------------------------------------------------------------------
+-- PHASE 4: Cache-time match population
+---------------------------------------------------------------------------
+-- Called from QUI_GroupFrameAuras.RebuildPanelSubsetsAndSort once per delta.
+-- Walks the active entry list, runs FindTrackedAuraData against the shared
+-- cache's lookup tables, and stashes matches in cache.indicatorMatches keyed
+-- by entry index. UpdateFrameIndicators then reads that map directly instead
+-- of building per-call lookup tables and running FindTrackedAuraData inline.
+function QUI_GFI:PopulateCacheMatches(unit, cache)
+    if not cache or not cache.indicatorMatches then return end
+    wipe(cache.indicatorMatches)
+
+    local ai = GetAuraIndicatorSettings(IsInRaid())
+    if not ai or ai.enabled == false then return end
+    local entries = ai.entries
+    if type(entries) ~= "table" or #entries == 0 then return end
+
+    local helpfulByID = cache.buffsBySpellID
+    local buffsByName = cache.buffsByName
+    local harmfulByID = cache.debuffsBySpellID
+    local debuffsByName = cache.debuffsByName
+    local helpfulAuras = cache.buffs
+    local harmfulAuras = cache.debuffs
+
+    for i, entry in ipairs(entries) do
+        if entry.enabled ~= false and entry.spellID then
+            local auraData = FindTrackedAuraData(
+                unit,
+                entry.spellID,
+                helpfulByID,
+                buffsByName,
+                harmfulByID,
+                debuffsByName,
+                helpfulAuras,
+                harmfulAuras,
+                entry.onlyMine == true
+            )
+            if auraData then
+                cache.indicatorMatches[i] = auraData
+            end
+        end
+    end
 end
 
 local function CreateIconIndicator(parent)
@@ -1077,60 +1116,6 @@ local function ClearIndicators(frame)
     end
 end
 
-local function BuildActiveAuraLookup(unit)
-    local helpfulByID = _scratchHelpfulAurasByID
-    local harmfulByID = _scratchHarmfulAurasByID
-    local helpfulByName = _scratchHelpfulAuraNames
-    local harmfulByName = _scratchHarmfulAuraNames
-    wipe(helpfulByID)
-    wipe(harmfulByID)
-    wipe(helpfulByName)
-    wipe(harmfulByName)
-    local helpfulAuras = nil
-    local harmfulAuras = nil
-
-    local GFA = ns.QUI_GroupFrameAuras
-    local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
-    if cache and cache.hasFullScan then
-        helpfulAuras = cache.helpful
-        harmfulAuras = cache.harmful
-        return
-            cache.helpfulBySpellID or helpfulByID,
-            cache.helpfulByName or helpfulByName,
-            cache.harmfulBySpellID or harmfulByID,
-            cache.harmfulByName or harmfulByName,
-            helpfulAuras,
-            harmfulAuras
-    elseif not InCombatLockdown() and C_UnitAuras and C_UnitAuras.GetUnitAuras then
-        -- Fallback: shared cache missing (should not happen in normal dispatch).
-        -- Skip in combat to avoid C-side table allocations that overwhelm the GC.
-        for _, filter in ipairs(AURA_FILTERS) do
-            local ok, auras = pcall(C_UnitAuras.GetUnitAuras, unit, filter, 40)
-            if ok and auras then
-                if filter == "HELPFUL" then
-                    helpfulAuras = auras
-                    for _, auraData in ipairs(auras) do
-                        local spellID = SafeValue(auraData.spellId, nil)
-                        if spellID then helpfulByID[spellID] = auraData end
-                        local spellName = SafeValue(auraData.name, nil)
-                        if spellName then helpfulByName[spellName] = auraData end
-                    end
-                else
-                    harmfulAuras = auras
-                    for _, auraData in ipairs(auras) do
-                        local spellID = SafeValue(auraData.spellId, nil)
-                        if spellID then harmfulByID[spellID] = auraData end
-                        local spellName = SafeValue(auraData.name, nil)
-                        if spellName then harmfulByName[spellName] = auraData end
-                    end
-                end
-            end
-        end
-    end
-
-    return helpfulByID, helpfulByName, harmfulByID, harmfulByName, helpfulAuras, harmfulAuras
-end
-
 local function RenderIconIndicators(frame, ai, iconPayloads)
     local state = GetIndicatorState(frame)
 
@@ -1282,7 +1267,13 @@ local function UpdateFrameIndicators(frame)
         return
     end
 
-    local helpfulByID, helpfulByName, harmfulByID, harmfulByName, helpfulAuras, harmfulAuras = BuildActiveAuraLookup(unit)
+    -- Phase 4: cache.indicatorMatches[entryIdx] = auraData was populated
+    -- once per delta by QUI_GFI:PopulateCacheMatches. Read directly; no
+    -- per-frame lookup tables, no inline FindTrackedAuraData.
+    local GFA = ns.QUI_GroupFrameAuras
+    local cache = GFA and GFA.unitAuraCache and GFA.unitAuraCache[unit]
+    local indicatorMatches = cache and cache.indicatorMatches
+
     local iconPayloads = _scratchIconPayloads
     local barPayloads = _scratchBarPayloads
     wipe(iconPayloads)
@@ -1297,19 +1288,9 @@ local function UpdateFrameIndicators(frame)
     local healthIndicator = nil
     local healthAuraData = nil
 
-    for _, entry in ipairs(entries) do
+    for entryIdx, entry in ipairs(entries) do
         if entry.enabled ~= false and entry.spellID then
-            local auraData = FindTrackedAuraData(
-                unit,
-                entry.spellID,
-                helpfulByID,
-                helpfulByName,
-                harmfulByID,
-                harmfulByName,
-                helpfulAuras,
-                harmfulAuras,
-                entry.onlyMine == true
-            )
+            local auraData = indicatorMatches and indicatorMatches[entryIdx]
             if auraData then
                 local auraInstanceID = auraData.auraInstanceID
                 if auraInstanceID then
@@ -1355,6 +1336,11 @@ eventFrame:SetScript("OnEvent", function()
     if not GF or not GF.initialized then
         return
     end
+    -- Phase 4: cache.indicatorMatches is populated against entries that vary
+    -- per spec. Force a rescan so PopulateCacheMatches reruns with the new
+    -- spec's entry list before we refresh frames.
+    local GFA = ns.QUI_GroupFrameAuras
+    if GFA and GFA.RescanCachedUnits then GFA:RescanCachedUnits() end
     QUI_GFI:RefreshAll()
 end)
 

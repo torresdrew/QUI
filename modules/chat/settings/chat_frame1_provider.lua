@@ -74,21 +74,17 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     -- Build dropdown options for the per-frame editor selectors. Excludes
     -- combat log frames — neither tab filters nor a custom button bar make
     -- sense on a frame whose purpose is the system-driven combat-log feed.
+    -- WoW preallocates all NUM_CHAT_WINDOWS frames, so _G["ChatFrame3"]
+    -- survives FCF_Close; the saved name from GetChatWindowInfo is the
+    -- canonical "is this slot active?" signal — FCF_Close clears it to "".
     local function buildFrameOptions()
         local opts = {}
         local n = _G.NUM_CHAT_WINDOWS or 10
         for i = 1, n do
             local f = _G["ChatFrame" .. i]
-            if f and not f.isCombatLog then
-                local tab = _G["ChatFrame" .. i .. "Tab"]
-                local tabName = tab and tab.GetText and tab:GetText()
-                local label
-                if type(tabName) == "string" and tabName ~= "" then
-                    label = "ChatFrame" .. i .. " (" .. tabName .. ")"
-                else
-                    label = "ChatFrame" .. i
-                end
-                opts[#opts + 1] = { value = i, text = label }
+            local name = GetChatWindowInfo(i)
+            if f and not f.isCombatLog and type(name) == "string" and name ~= "" then
+                opts[#opts + 1] = { value = i, text = "ChatFrame" .. i .. " (" .. name .. ")" }
             end
         end
         if #opts == 0 then  -- defensive: always offer at least ChatFrame1
@@ -113,6 +109,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 "chatModule", "frameSize", "introMessage", "defaultTab",
                 "chatBackground", "inputBoxBackground", "messageFade",
                 "urlDetection", "chatHyperlinks",
+                "channelColors",
                 "uiCleanup", "copyButton",
             },
             filters = { "tabFilters" },
@@ -1356,7 +1353,59 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         -- expose a nested-tile primitive, and the inline form keeps every control
         -- visible and reachable without extra clicks. Per-channel override toggles
         -- and sliders sit at the bottom of the tile, after a divider label.
-        CreateChatSection("persistentMessageHistory", "Persistent Message History", 17 * FORM_ROW + 12, function(body)
+        --
+        -- Excluded-channels checkbox list: the CreateChatSection call below needs
+        -- a fixed body height set at build time, so the joined/stale channel
+        -- snapshots are computed here in the outer scope and used both for the
+        -- height calc and inside the body closure. CreateChatSection bodies are
+        -- rebuilt on structural NotifyProviderFor pulses, so a join/leave during
+        -- a session refreshes the list on next reopen.
+        local excludedJoinedSnapshot, excludedStaleSnapshot = {}, {}
+        do
+            local histLocal = (type(chat.history) == "table") and chat.history or nil
+            local storedSet = (histLocal and type(histLocal.excludedChannels) == "table")
+                              and histLocal.excludedChannels or {}
+            -- Inline channel-list walk (the tabFilters section's getChannelNamesNow
+            -- is scoped inside its ShouldRenderSection block and not reachable here).
+            -- GetChannelList returns id1, name1, header1, ... — skip header rows.
+            local joinedSet = {}
+            if type(GetChannelList) == "function" then
+                local data = { GetChannelList() }
+                local i = 1
+                while i + 1 <= #data do
+                    local name = data[i + 1]
+                    local isHeader = data[i + 2]
+                    if type(name) == "string" and name ~= "" and not isHeader then
+                        excludedJoinedSnapshot[#excludedJoinedSnapshot + 1] = name
+                        joinedSet[name] = true
+                    end
+                    i = i + 3
+                end
+            end
+            for n, on in pairs(storedSet) do
+                if on and type(n) == "string" and n ~= ""
+                   and not joinedSet[n] then
+                    excludedStaleSnapshot[#excludedStaleSnapshot + 1] = n
+                end
+            end
+            table.sort(excludedJoinedSnapshot)
+            table.sort(excludedStaleSnapshot)
+        end
+        local persistentHistoryListRows
+        if #excludedJoinedSnapshot == 0 then
+            persistentHistoryListRows = 1  -- empty-state placeholder line
+        else
+            persistentHistoryListRows = #excludedJoinedSnapshot
+        end
+        if #excludedStaleSnapshot > 0 then
+            persistentHistoryListRows = persistentHistoryListRows + 1 + #excludedStaleSnapshot
+        end
+        -- Base 22 rows covered the old design (which spent 2 rows on editbox + button);
+        -- subtract those, add the live list. Floor at the original 22*FORM_ROW + 12 so
+        -- a small list never shrinks the section below its prior visual footprint.
+        local persistentHistorySectionHeight = (22 + math.max(0, persistentHistoryListRows - 2)) * FORM_ROW + 12
+
+        CreateChatSection("persistentMessageHistory", "Persistent Message History", persistentHistorySectionHeight, function(body)
             local sy = -4
             if not chat.history then
                 chat.history = {
@@ -1365,11 +1414,15 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                     storeWhispers = false,
                     showSeparators = true,
                     perChannelRetention = {},
+                    excludedChannels = {},
                 }
             end
             local hist = chat.history
             if type(hist.perChannelRetention) ~= "table" then
                 hist.perChannelRetention = {}
+            end
+            if type(hist.excludedChannels) ~= "table" then
+                hist.excludedChannels = {}
             end
 
             local historyDependentControls = {}
@@ -1581,7 +1634,216 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             resetHelp:SetPoint("LEFT", resetBtn, "RIGHT", 12, 0)
             resetHelp:SetPoint("RIGHT", resetRow, "RIGHT", 0, 0)
             resetHelp:SetJustifyH("LEFT")
+            sy = sy - FORM_ROW - 4
+
+            -- Excluded channels.
+            -- Renders one toggle per channel name. The "Currently joined"
+            -- group comes from a GetChannelList() snapshot taken when the
+            -- section was built (see excludedJoinedSnapshot above); names
+            -- previously excluded but no longer in the join list (left,
+            -- renamed, or relogged) appear under "Stored but not joined"
+            -- so they remain manageable. Storage is unchanged from the old
+            -- design: hist.excludedChannels stays a set keyed by channel
+            -- name, with nil for not-excluded — the proxy below mirrors
+            -- toggle state to set membership and never writes a literal
+            -- false (keeps the SV clean).
+            local excludedHeader = TrackPersistentHistoryRegion(GUI:CreateLabel(body, "Excluded channels", 11, {0.7, 0.85, 0.7, 1}))
+            excludedHeader:SetPoint("TOPLEFT", 0, sy - 4)
+            excludedHeader:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+            excludedHeader:SetJustifyH("LEFT")
+            sy = sy - 18
+
+            local excludedHelp = TrackPersistentHistoryRegion(GUI:CreateLabel(body, "Captures from enabled channels are dropped before storage. Re-open settings after joining or leaving a channel to refresh the list.", 10, {0.5, 0.5, 0.5, 1}))
+            excludedHelp:SetPoint("TOPLEFT", 0, sy)
+            excludedHelp:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+            excludedHelp:SetJustifyH("LEFT")
+            sy = sy - 26
+
+            local excludedProxy = MarkTransientOptionsBinding(setmetatable({}, {
+                __index = function(_, k)
+                    return hist.excludedChannels[k] == true
+                end,
+                __newindex = function(_, k, v)
+                    if v then
+                        hist.excludedChannels[k] = true
+                    else
+                        hist.excludedChannels[k] = nil
+                    end
+                end,
+            }))
+
+            if #excludedJoinedSnapshot == 0 and #excludedStaleSnapshot == 0 then
+                local emptyLabel = TrackPersistentHistoryRegion(GUI:CreateLabel(body, "    (Not currently joined to any channels.)", 10, {0.5, 0.5, 0.5, 1}))
+                emptyLabel:SetPoint("TOPLEFT", 0, sy)
+                emptyLabel:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+                emptyLabel:SetJustifyH("LEFT")
+                sy = sy - FORM_ROW
+            else
+                for _, channelName in ipairs(excludedJoinedSnapshot) do
+                    local cb = TrackPersistentHistoryControl(GUI:CreateFormToggle(body, "    " .. channelName, channelName, excludedProxy, nil,
+                        { description = "Drop captures from '" .. channelName .. "' before they reach persistent history." }))
+                    cb:SetPoint("TOPLEFT", 0, sy)
+                    cb:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+                    sy = sy - FORM_ROW
+                end
+
+                if #excludedStaleSnapshot > 0 then
+                    local staleHeader = TrackPersistentHistoryRegion(GUI:CreateLabel(body, "Stored but not joined", 11, {0.85, 0.78, 0.55, 1}))
+                    staleHeader:SetPoint("TOPLEFT", 0, sy - 4)
+                    staleHeader:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+                    staleHeader:SetJustifyH("LEFT")
+                    sy = sy - 18
+
+                    for _, channelName in ipairs(excludedStaleSnapshot) do
+                        local cb = TrackPersistentHistoryControl(GUI:CreateFormToggle(body, "    " .. channelName, channelName, excludedProxy, nil,
+                            { description = "Stored exclusion for '" .. channelName .. "'. Disable to remove from the persistent exclusion set." }))
+                        cb:SetPoint("TOPLEFT", 0, sy)
+                        cb:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+                        sy = sy - FORM_ROW
+                    end
+                end
+            end
             UpdatePersistentHistoryStates()
+        end, sections, relayout)
+
+        -- Channel Colors
+        -- Per-channel color overrides via ns.QUI.Chat.ChannelColors. The
+        -- dropdown lists every editable built-in chat type and every joined
+        -- custom channel; the swatch + reset row act on the current selection.
+        CreateChatSection("channelColors", "Channel Colors", 4 * FORM_ROW + 8, function(body)
+            local sy = -4
+            local CC = ns.QUI.Chat.ChannelColors
+
+            -- Session-only selection state (not persisted to SV).
+            local selected = {
+                current = (CC and CC.BUILTIN_KEYS and CC.BUILTIN_KEYS[1]) or "SAY",
+            }
+
+            local UpdateRow  -- forward declaration; assigned below.
+
+            local function buildOptions()
+                local out = {}
+                if CC and CC.BUILTIN_KEYS and CC.BUILTIN_LABELS then
+                    for i = 1, #CC.BUILTIN_KEYS do
+                        local key = CC.BUILTIN_KEYS[i]
+                        out[#out + 1] = {
+                            value = key,
+                            text = "Built-in: " .. (CC.BUILTIN_LABELS[key] or key),
+                        }
+                    end
+                end
+                if type(GetChannelList) == "function" then
+                    local data = { GetChannelList() }
+                    for i = 1, #data, 3 do
+                        local slot, name, header = data[i], data[i + 1], data[i + 2]
+                        if slot and name and not header then
+                            out[#out + 1] = { value = name, text = "Channel: " .. name }
+                        end
+                    end
+                end
+                return out
+            end
+
+            local options = buildOptions()
+            local dropdown = GUI:CreateFormDropdown(
+                body,
+                "Channel",
+                options,
+                "current",
+                selected,
+                function(v)
+                    selected.current = v
+                    if UpdateRow then UpdateRow() end
+                end,
+                nil,
+                { searchable = true }
+            )
+            sy = P(dropdown, body, sy)
+
+            -- Swatch + reset row (custom horizontal layout — CreateColorPicker
+            -- is hard-bound to a single dbKey/dbTable, but our key changes
+            -- with the dropdown selection, so we wire the swatch by hand).
+            local row = CreateFrame("Frame", nil, body)
+            row:SetHeight(FORM_ROW)
+            row:SetPoint("TOPLEFT", 0, sy)
+            row:SetPoint("RIGHT", body, "RIGHT", 0, 0)
+
+            local rowLabel = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            rowLabel:SetPoint("LEFT", 0, 0)
+            rowLabel:SetText("Color")
+
+            local swatch = CreateFrame("Button", nil, row, "BackdropTemplate")
+            swatch:SetSize(16, 16)
+            swatch:SetPoint("LEFT", row, "LEFT", 180, 0)
+            swatch:SetBackdrop({
+                bgFile = "Interface\\Buttons\\WHITE8x8",
+                edgeFile = "Interface\\Buttons\\WHITE8x8",
+                edgeSize = 1,
+            })
+            swatch:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
+            swatch:SetScript("OnEnter", function(self)
+                pcall(self.SetBackdropBorderColor, self, 0.2, 0.83, 0.6, 1)
+            end)
+            swatch:SetScript("OnLeave", function(self)
+                pcall(self.SetBackdropBorderColor, self, 0.4, 0.4, 0.4, 1)
+            end)
+
+            local resetBtn = GUI:CreateButton(row, "Reset", 80, 22, function()
+                if not CC then return end
+                CC.Clear(selected.current)
+                if UpdateRow then UpdateRow() end
+            end)
+            resetBtn:SetPoint("LEFT", swatch, "RIGHT", 12, 0)
+
+            UpdateRow = function()
+                if not CC then return end
+                local r, g, b = CC.GetEffective(selected.current)
+                swatch:SetBackdropColor(r, g, b, 1)
+                if CC.HasOverride(selected.current) then
+                    if resetBtn.Enable then resetBtn:Enable() end
+                    resetBtn:SetAlpha(1)
+                else
+                    if resetBtn.Disable then resetBtn:Disable() end
+                    resetBtn:SetAlpha(0.5)
+                end
+            end
+
+            swatch:SetScript("OnClick", function()
+                if not CC then return end
+                local r, g, b = CC.GetEffective(selected.current)
+                local hadOverride = CC.HasOverride(selected.current)
+                local info = {
+                    r = r, g = g, b = b,
+                    opacity = 1,
+                    hasOpacity = false,
+                    swatchFunc = function()
+                        local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+                        CC.Set(selected.current, nr, ng, nb)
+                        if UpdateRow then UpdateRow() end
+                    end,
+                    cancelFunc = function(prev)
+                        if hadOverride then
+                            CC.Set(selected.current, prev.r, prev.g, prev.b)
+                        else
+                            CC.Clear(selected.current)
+                        end
+                        if UpdateRow then UpdateRow() end
+                    end,
+                }
+                ColorPickerFrame:SetupColorPickerAndShow(info)
+            end)
+
+            sy = sy - (FORM_ROW or 24)
+
+            local resetAllBtn = GUI:CreateButton(body, "Reset All Colors", 180, 24, function()
+                if not CC then return end
+                CC.ClearAll()
+                if UpdateRow then UpdateRow() end
+            end)
+            resetAllBtn:SetPoint("TOPLEFT", 0, sy)
+            sy = sy - (FORM_ROW or 24)
+
+            UpdateRow()
         end, sections, relayout)
 
         -- UI Cleanup

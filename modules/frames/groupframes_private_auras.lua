@@ -142,10 +142,9 @@ local function RefreshPrivateDispelState(unit)
 
     local auraOk, auraData = pcall(GetAuraDataBySlot, unit, firstSlot)
     if not auraOk or not auraData then
-        -- DandersFrames' latest private-dispel path relies on GetAuraSlots
-        -- alone: private auras can be player-dispellable but still hide their
-        -- normal auraData.  Keep a slot-only hit so the group-frame dispel
-        -- overlay can fall back to Magic coloring instead of dropping it.
+        -- Private auras can be player-dispellable while still hiding normal
+        -- auraData. Keep a slot-only hit so the dispel overlay can fall back
+        -- to Magic coloring instead of dropping it.
         return SetPrivateDispelState(unit, nil, firstSlot, true)
     end
 

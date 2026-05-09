@@ -11,6 +11,35 @@ local function IsCDMRuntimeEnabled()
     return type(checker) ~= "function" or checker()
 end
 
+-- Pandemic step curve: lazily built, cached. The curve evaluates C-side and
+-- yields a secret userdata (LuaCurveEvaluatedResult) that flows directly into
+-- SetAlpha — never compared, arithmetic'd, or read into Lua. Mirrors the HP
+-- alpha-curve pattern in hud_visibility.lua.
+local _pandemicCurve
+
+local function GetPandemicCurve()
+    if _pandemicCurve then return _pandemicCurve end
+    if not C_CurveUtil or not C_CurveUtil.CreateCurve
+       or not Enum or not Enum.LuaCurveType then
+        return nil
+    end
+    local curve = C_CurveUtil.CreateCurve()
+    curve:SetType(Enum.LuaCurveType.Step)
+    -- Negative-side anchor: if the cached _lastAuraDurObj outlives the
+    -- aura it represents (icon-side state didn't observe the removal in
+    -- time, or the resolver returned r.durObj=nil while r.isActive=true
+    -- and ApplyAuraStateToIcon kept the stale cached durObj), then
+    -- EvaluateRemainingPercent on that durObj produces a NEGATIVE value
+    -- once GetTime() is past startTime+duration. Without this anchor the
+    -- step curve falls back to the lowest defined point's value (1) for
+    -- any x below 0, leaving the glow stuck on permanently.
+    curve:AddPoint(-1.0, 0) -- expired / negative percent → hide
+    curve:AddPoint(0.0, 1)  -- 0..<30% remaining → glow visible
+    curve:AddPoint(0.3, 0)  -- 30%+ remaining → glow hidden
+    _pandemicCurve = curve
+    return curve
+end
+
 -- Get LibCustomGlow for custom glow styles
 local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 
@@ -30,52 +59,24 @@ local overlayedSourceMap = {}  -- [sourceSpellID] = { [candidateID] = true }
 
 local function ForEachSpellCandidate(spellID, callback)
     if not spellID or not callback then return end
-    spellID = Helpers.SafeValue(spellID, nil)
+    spellID = spellID
     if not spellID then return end
 
     callback(spellID)
 
     if C_Spell and C_Spell.GetOverrideSpell then
         local ok, overrideID = pcall(C_Spell.GetOverrideSpell, spellID)
-        overrideID = ok and Helpers.SafeValue(overrideID, nil) or nil
+        overrideID = ok and overrideID or nil
         if ok and overrideID and overrideID ~= spellID then
             callback(overrideID)
         end
     end
 end
 
-local function GetChildSpellID(child)
-    if not child or not child.GetSpellID then return nil end
-    local ok, spellID = pcall(child.GetSpellID, child)
-    if ok and spellID then
-        return spellID
-    end
-    return nil
-end
-
-local function GetChildAuraSpellID(child)
-    if not child or not child.GetAuraSpellID then return nil end
-    local ok, spellID = pcall(child.GetAuraSpellID, child)
-    if ok and spellID then
-        return spellID
-    end
-    return nil
-end
-
 local function GetPreferredSpellID(icon)
     if not icon or not icon._spellEntry then return nil end
 
     local entry = icon._spellEntry
-    local child = entry._blizzChild
-    local childSpellID = GetChildSpellID(child)
-    if childSpellID then
-        return childSpellID
-    end
-
-    local childAuraSpellID = GetChildAuraSpellID(child)
-    if childAuraSpellID then
-        return childAuraSpellID
-    end
 
     if icon._runtimeSpellID then
         return icon._runtimeSpellID
@@ -129,7 +130,6 @@ local function ForEachIconSpellID(icon, callback)
     if not icon or not icon._spellEntry or not callback then return end
 
     local entry = icon._spellEntry
-    local child = entry._blizzChild
     local rawSeen = _iconRawSeen
     local candidateSeen = _iconCandidateSeen
     wipe(rawSeen)
@@ -151,33 +151,20 @@ local function ForEachIconSpellID(icon, callback)
     VisitRaw(entry.overrideSpellID)
     VisitRaw(entry.id)
 
-    -- Blizzard-sourced IDs (runtime override, child GetSpellID/GetAuraSpellID,
-    -- cooldownInfo.*) can be secret values in combat. Sanitize at the boundary;
-    -- downstream dedup/lookup tables are keyed by non-secret IDs from overlay
-    -- event payloads and registered spell entries, so secret IDs couldn't match
-    -- anyway. Combat misses here are covered by SPELL_ACTIVATION_OVERLAY_GLOW
-    -- events, which deliver non-secret spellIDs directly to ScanGlowsForSpell.
-    VisitRaw(Helpers.SafeValue(icon._runtimeSpellID, nil))
-    VisitRaw(Helpers.SafeValue(GetChildSpellID(child), nil))
-    VisitRaw(Helpers.SafeValue(GetChildAuraSpellID(child), nil))
+    -- Runtime override may be a secret value in combat; sanitize at the
+    -- boundary. Combat misses here are covered by
+    -- SPELL_ACTIVATION_OVERLAY_GLOW events, which deliver non-secret
+    -- spellIDs directly to ScanGlowsForSpell.
+    VisitRaw(icon._runtimeSpellID)
 
     local CDMSpellData = ns.CDMSpellData
     if CDMSpellData and CDMSpellData.ResolveDisplaySpellID then
-        -- ResolveDisplaySpellID returns child:GetSpellID() which can be a secret
-        -- value in combat; sanitize before using as a Lua table key downstream.
-        VisitRaw(Helpers.SafeValue(CDMSpellData:ResolveDisplaySpellID(entry), nil))
+        VisitRaw(CDMSpellData:ResolveDisplaySpellID(entry))
     end
 
-    local info = child and child.cooldownInfo
-    if info then
-        VisitRaw(Helpers.SafeValue(info.spellID, nil))
-        VisitRaw(Helpers.SafeValue(info.overrideSpellID, nil))
-        VisitRaw(Helpers.SafeValue(info.overrideTooltipSpellID, nil))
-
-        if info.linkedSpellIDs then
-            for _, linkedSpellID in ipairs(info.linkedSpellIDs) do
-                VisitRaw(Helpers.SafeValue(linkedSpellID, nil))
-            end
+    if entry.linkedSpellIDs then
+        for _, linkedSpellID in ipairs(entry.linkedSpellIDs) do
+            VisitRaw(linkedSpellID)
         end
     end
 
@@ -226,25 +213,29 @@ local function IsPandemicMirroringEnabled(icon)
     if not settings then return true end
 
     local viewerType = icon._spellEntry.viewerType
-    if viewerType == "essential" then
-        return settings.essentialPandemicEnabled ~= false
-    elseif viewerType == "utility" then
-        return settings.utilityPandemicEnabled ~= false
-    elseif viewerType == "buff" then
-        return settings.buffPandemicEnabled ~= false
-    elseif viewerType then
-        -- Custom container: uses viewerType as prefix
-        return settings[viewerType .. "PandemicEnabled"] ~= false
-    end
+    if not viewerType then return false end
 
-    return false
+    -- Built-in viewers and custom containers all use the viewerType as
+    -- the settings-key prefix.
+    local debuffKey = viewerType .. "PandemicDebuffEnabled"
+    local buffKey   = viewerType .. "PandemicBuffEnabled"
+    local debuffOn = settings[debuffKey] ~= false
+    local buffOn   = settings[buffKey]   ~= false
+
+    -- Pick the relevant toggle from the cached aura type. When the type
+    -- is unknown (aura first observed in combat without auraData), fall
+    -- back to "show if either toggle is on" so combat-applied auras
+    -- don't suddenly lose their pandemic glow.
+    local isHarmful = icon._auraIsHarmful
+    if isHarmful == true  then return debuffOn end
+    if isHarmful == false then return buffOn   end
+    return debuffOn or buffOn
 end
 
--- Forward declarations for hook-driven pandemic helpers.
-local HookBlizzPandemic
+-- Forward declarations.
 local ClearPandemicState
 local SyncGlowForIcon
-local ResyncPandemicGlows
+local UpdatePandemicGlow
 
 -- Track which icons currently have active glows
 local activeGlowIcons = {}  -- [icon] = true
@@ -558,109 +549,99 @@ StopGlow = function(icon)
 end
 
 ---------------------------------------------------------------------------
--- PANDEMIC GLOW: hook Blizzard CDM children's ShowPandemicStateFrame /
--- HidePandemicStateFrame. Blizzard calls these every OnUpdate tick.
--- Zero polling, zero API queries, zero secret value issues.
+-- PANDEMIC GLOW: dedicated overlay frame whose alpha is driven by a
+-- C_CurveUtil step curve evaluated against the icon's active aura
+-- DurationObject. The curve evaluates C-side and the result is secret
+-- userdata that flows directly into SetAlpha — no Lua-side compare or
+-- arithmetic. Mirrors hud_visibility's UnitHealthPercent + curve pattern.
 ---------------------------------------------------------------------------
-local PANDEMIC_LINGER = 0.1
-local _pandemicState = setmetatable({}, { __mode = "k" })
-local _pandemicGlowIcons = setmetatable({}, { __mode = "k" })  -- [icon] = true when glow is pandemic-driven
+local PANDEMIC_TEXTURE = FLASH_TEXTURE  -- reuse the proc-glow flash sheet
 
-local function StartPandemicGlow(icon)
-    if not icon or not icon._spellEntry or not icon:IsShown() then return end
-    if not IsPandemicMirroringEnabled(icon) then return end
+local function EnsurePandemicGlowFrame(icon)
+    if not icon then return nil end
+    local frame = icon.PandemicGlow
+    if frame then return frame end
 
-    local spellOvr = GetSpellGlowOverride(icon)
-    if spellOvr and spellOvr.glowEnabled == false then return end
+    frame = CreateFrame("Frame", nil, icon)
+    frame:SetAllPoints(icon)
+    frame:SetAlpha(0)
 
-    _pandemicGlowIcons[icon] = true
-    if not activeGlowIcons[icon] then
-        StartGlow(icon, spellOvr)
-    end
+    local tex = frame:CreateTexture(nil, "OVERLAY")
+    tex:SetTexture(PANDEMIC_TEXTURE)
+    tex:SetTexCoord(0, 1, 0, 1)
+    tex:SetBlendMode("ADD")
+    tex:SetAllPoints(frame)
+    tex:SetVertexColor(1, 0.85, 0.2, 1)
+    frame.texture = tex
+
+    icon.PandemicGlow = frame
+    EnsureGlowAboveCooldown(icon, frame)
+    return frame
 end
 
-HookBlizzPandemic = function(icon, blizzChild)
-    if not blizzChild or not blizzChild.ShowPandemicStateFrame then return end
+UpdatePandemicGlow = function(icon)
+    if not icon or not icon._spellEntry then return end
 
-    local state = _pandemicState[blizzChild]
-    if not state then
-        state = {}
-        _pandemicState[blizzChild] = state
+    local frame = icon.PandemicGlow
+    local enabled = IsPandemicMirroringEnabled(icon)
+    if not enabled then
+        if frame then frame:SetAlpha(0) end
+        return
     end
-    local wasActive = state.active
-    if state.icon and state.icon ~= icon then
-        local oldIcon = state.icon
-        _pandemicGlowIcons[oldIcon] = nil
-        if activeGlowIcons[oldIcon] then
-            if oldIcon._spellEntry then
-                SyncGlowForIcon(oldIcon)
-            else
-                StopGlow(oldIcon)
+
+    local spellOvr = GetSpellGlowOverride(icon)
+    if spellOvr and spellOvr.glowEnabled == false then
+        if frame then frame:SetAlpha(0) end
+        return
+    end
+
+    if not icon._auraActive or not icon._lastAuraDurObj then
+        if frame then frame:SetAlpha(0) end
+        return
+    end
+
+    local curve = GetPandemicCurve()
+    if not curve then
+        if frame then frame:SetAlpha(0) end
+        return
+    end
+
+    frame = frame or EnsurePandemicGlowFrame(icon)
+    if not frame then return end
+
+    local durObj = icon._lastAuraDurObj
+
+    -- Gate against permanent / no-duration auras. For an aura with no
+    -- duration, EvaluateRemainingPercent lands at the start of the step
+    -- curve (alpha 1) and the glow shows permanently. DurationObject:IsZero
+    -- is a stable per-aura property (not derived from elapsed/remaining),
+    -- and EvaluateColorValueFromBoolean keeps the (potentially-secret) bool
+    -- C-side — the result is a normal scalar safe for SetAlpha. Same pattern
+    -- as cdm_bars.lua's permanent-aura overlay drive.
+    --   IsZero=true  (permanent) → texture alpha 0 → glow hidden
+    --   IsZero=false (timed)     → texture alpha 1 → curve drives frame alpha
+    if frame.texture
+       and durObj.IsZero
+       and C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
+        local okZ, isZero = pcall(durObj.IsZero, durObj)
+        if okZ then
+            local okA, gate = pcall(C_CurveUtil.EvaluateColorValueFromBoolean,
+                isZero, 0, 1)
+            if okA then
+                pcall(frame.texture.SetAlpha, frame.texture, gate)
             end
         end
     end
-    state.icon = icon
 
-    if wasActive then
-        if icon and icon._spellEntry and icon:IsShown() then
-            StartPandemicGlow(icon)
-        else
-            state.active = nil
-            state.lastFire = nil
-        end
-    end
-
-    if state.hooked then return end
-    state.hooked = true
-
-    hooksecurefunc(blizzChild, "ShowPandemicStateFrame", function(self)
-        local s = _pandemicState[self]
-        if not s or not s.icon then return end
-        s.lastFire = GetTime()
-        if not s.active then
-            s.active = true
-            StartPandemicGlow(s.icon)
-            if not _pandemicGlowIcons[s.icon]
-                and (not s.icon._spellEntry or not s.icon:IsShown()) then
-                s.active = nil
-                s.lastFire = nil
-            end
-        end
-    end)
-
-    hooksecurefunc(blizzChild, "HidePandemicStateFrame", function(self)
-        local s = _pandemicState[self]
-        if not s or not s.active then return end
-        local last = s.lastFire
-        if last and (GetTime() - last) < PANDEMIC_LINGER then return end
-        local icon = s.icon
-        s.active = nil
-        if icon then
-            _pandemicGlowIcons[icon] = nil
-            if icon._spellEntry then
-                SyncGlowForIcon(icon)
-            elseif activeGlowIcons[icon] then
-                StopGlow(icon)
-            end
-        end
-    end)
+    -- Curve evaluates C-side; result is secret userdata; SetAlpha accepts it
+    -- natively. Never read back into Lua.
+    frame:SetAlpha(durObj:EvaluateRemainingPercent(curve))
 end
 
 ClearPandemicState = function(icon)
     if not icon then return end
-
-    _pandemicGlowIcons[icon] = nil
-
-    for _, state in pairs(_pandemicState) do
-        if state.icon == icon then
-            state.icon = nil
-            state.active = nil
-            state.lastFire = nil
-        end
-    end
-
-    if activeGlowIcons[icon] then
-        StopGlow(icon)
+    if icon.PandemicGlow then
+        icon.PandemicGlow:SetAlpha(0)
     end
 end
 
@@ -721,18 +702,11 @@ SyncGlowForIcon = function(icon)
 
     if shouldGlow and not activeGlowIcons[icon] then
         StartGlow(icon, spellOvr)
-    elseif not shouldGlow and activeGlowIcons[icon] and not _pandemicGlowIcons[icon] then
+    elseif not shouldGlow and activeGlowIcons[icon] then
         StopGlow(icon)
     end
-end
 
-ResyncPandemicGlows = function()
-    for _, state in pairs(_pandemicState) do
-        local icon = state.icon
-        if state.active and icon and icon._spellEntry and icon:IsShown() then
-            StartPandemicGlow(icon)
-        end
-    end
+    UpdatePandemicGlow(icon)
 end
 
 ---------------------------------------------------------------------------
@@ -821,10 +795,12 @@ local function StopAllTrackedGlows()
     end
     for _, icon in ipairs(toStop) do
         StopGlow(icon)
+        if icon.PandemicGlow then
+            icon.PandemicGlow:SetAlpha(0)
+        end
     end
     wipe(toStop)
     wipe(activeGlowIcons)
-    wipe(_pandemicGlowIcons)
 end
 
 local function RefreshAllGlows()
@@ -838,7 +814,6 @@ local function RefreshAllGlows()
     -- Rebuild reverse lookup and re-scan with current settings
     RebuildGlowSpellMap()
     ScanAllGlows()
-    ResyncPandemicGlows()
 end
 
 ---------------------------------------------------------------------------
@@ -940,6 +915,26 @@ local function DisableRuntime()
 end
 
 ---------------------------------------------------------------------------
+-- PANDEMIC AURA REFRESH
+-- cdm_spelldata.lua owns UNIT_AURA and calls this after it captures the
+-- batched payload. The icon's _lastAuraDurObj (cached by the resolver in
+-- ApplyAuraStateToIcon) feeds the C-side curve evaluation; pandemic state
+-- never enters Lua.
+---------------------------------------------------------------------------
+local function HandleUnitAuraChanged(_unit, _updateInfo)
+    if not IsCDMRuntimeEnabled() then return end
+
+    for _, icons in pairs(spellIdToGlowIcons) do
+        for i = 1, #icons do
+            local icon = icons[i]
+            if icon and icon:IsShown() and icon._spellEntry then
+                UpdatePandemicGlow(icon)
+            end
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- EXPORTS
 ---------------------------------------------------------------------------
 -- Store on ns for engine init to wire
@@ -952,8 +947,9 @@ ns._OwnedGlows = {
     activeGlowIcons = activeGlowIcons,
     ScheduleGlowScan = ScanAllGlows,
     IsSpellCastable = IsSpellCastable,
-    HookBlizzPandemic = HookBlizzPandemic,
+    UpdatePandemicGlow = UpdatePandemicGlow,
     ClearPandemicState = ClearPandemicState,
+    HandleUnitAuraChanged = HandleUnitAuraChanged,
     DisableRuntime = DisableRuntime,
     GetGlowState = function(icon)
         return activeGlowIcons[icon] and { active = true } or nil

@@ -119,44 +119,46 @@ function Helpers.SafeToString(value, fallback)
 end
 
 --- Is an aura sourced from the player / pet / vehicle?
---- Taint-safe: reads sourceUnit / sourceGUID / isFromPlayerOrPlayerPet via
---- SafeValue so secret values become nil instead of returning into Lua.
+--- Trusts auraData.isFromPlayerOrPlayerPet — Blizzard's authoritative,
+--- non-secret ownership answer (computed C-side, readable in combat).
+--- sourceUnit / sourceGUID are secret in combat (the dump confirms this:
+--- sourceUnit=<no value> while isFromPlayerOrPlayerPet=true), so they
+--- can't be the primary check. The strictSource parameter is retained
+--- for call-site compat but treated as a no-op: there's no scenario
+--- where isFromPlayerOrPlayerPet=true should be overridden by a
+--- secret-stripped sourceUnit comparison.
 --- @param auraData table AuraData struct from C_UnitAuras.*
---- @param strictSource boolean? When true, require explicit sourceUnit/sourceGUID
----        to match; do not trust isFromPlayerOrPlayerPet alone. Use for defenses
----        against Blizzard viewer children that report "player" while carrying
----        a foreign aura instance.
+--- @param strictSource boolean? Retained for call-site compat; no-op.
 --- @return boolean
 function Helpers.IsAuraOwnedByPlayerOrPet(auraData, strictSource)
     if not auraData then return false end
 
-    local ownedFlag = Helpers.SafeValue(auraData.isFromPlayerOrPlayerPet, nil)
-    if ownedFlag ~= nil and not strictSource then
-        return ownedFlag == true
+    local okFlag, ownedFlag = pcall(function() return auraData.isFromPlayerOrPlayerPet end)
+    if okFlag and ownedFlag == true then
+        return true
+    end
+    if okFlag and ownedFlag == false then
+        return false
     end
 
-    local sourceUnit = Helpers.SafeValue(auraData.sourceUnit, nil)
-    if sourceUnit then
-        if sourceUnit == "player" or sourceUnit == "pet" or sourceUnit == "vehicle" then
-            return true
-        end
-        if UnitIsUnit then
-            if UnitExists("player") and UnitIsUnit(sourceUnit, "player") then return true end
-            if UnitExists("pet") and UnitIsUnit(sourceUnit, "pet") then return true end
-            if UnitExists("vehicle") and UnitIsUnit(sourceUnit, "vehicle") then return true end
-        end
+    -- ownedFlag was nil/secret. Fall back to sourceUnit via UnitIsUnit
+    -- (C-side, secret-tolerant) and sourceGUID compare. Both fields are
+    -- secret in combat; these branches matter mainly OOC.
+    local okUnit, sourceUnit = pcall(function() return auraData.sourceUnit end)
+    if okUnit and sourceUnit and UnitIsUnit then
+        if UnitExists("player") and UnitIsUnit(sourceUnit, "player") then return true end
+        if UnitExists("pet") and UnitIsUnit(sourceUnit, "pet") then return true end
+        if UnitExists("vehicle") and UnitIsUnit(sourceUnit, "vehicle") then return true end
     end
 
-    local sourceGUID = Helpers.SafeValue(auraData.sourceGUID, nil)
-    if sourceGUID then
+    local okGUID, sourceGUID = pcall(function() return auraData.sourceGUID end)
+    if okGUID and sourceGUID then
         local playerGUID = UnitGUID and UnitGUID("player") or nil
+        if playerGUID and sourceGUID == playerGUID then return true end
         local petGUID = UnitGUID and UnitGUID("pet") or nil
+        if petGUID and sourceGUID == petGUID then return true end
         local vehicleGUID = UnitGUID and UnitGUID("vehicle") or nil
-        return sourceGUID == playerGUID or sourceGUID == petGUID or sourceGUID == vehicleGUID
-    end
-
-    if ownedFlag ~= nil then
-        return strictSource and false or ownedFlag == true
+        if vehicleGUID and sourceGUID == vehicleGUID then return true end
     end
 
     return false
@@ -1571,7 +1573,10 @@ function Helpers.ApplyCooldownFromSpell(cooldownFrame, spellID, reverse)
     local durationObj = nil
     if cooldownFrame.SetCooldownFromDurationObject
         and C_Spell and C_Spell.GetSpellCooldownDuration then
-        local ok, fetchedDurationObj = pcall(C_Spell.GetSpellCooldownDuration, spellID)
+        -- ignoreGCD=true so the swipe tracks the spell's real cooldown
+        -- instead of being overwritten by the 1.5s GCD sweep when the
+        -- spell goes on cooldown at the same instant the GCD starts.
+        local ok, fetchedDurationObj = pcall(C_Spell.GetSpellCooldownDuration, spellID, true)
         if ok and fetchedDurationObj then
             durationObj = fetchedDurationObj
         end

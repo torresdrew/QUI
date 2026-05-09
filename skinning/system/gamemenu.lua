@@ -371,8 +371,8 @@ local function GetOrCreateStandaloneButton()
         PlaySound(SOUNDKIT.IG_MAINMENU_OPTION)
         HideUIPanel(GameMenuFrame)
         local QUI = _G.QUI
-        if QUI and QUI.GUI then
-            QUI.GUI:Show()
+        if QUI and QUI.ShowOptions then
+            QUI:ShowOptions()
         end
     end)
     quiStandaloneButton:Hide()

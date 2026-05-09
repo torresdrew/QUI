@@ -41,21 +41,24 @@ jobs:
 
       - name: Create addon zip
         run: |
-          mkdir -p build/QUI
+          mkdir -p build/QUI build/QUI_Options
 
           rsync -av --progress . build/QUI/ \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='.gitignore' \
             --exclude='.claude' \
-            --exclude='build'
+            --exclude='build' \
+            --exclude='QUI_Options'
+
+          rsync -av --progress QUI_Options/ build/QUI_Options/
 
           cp README.md build/QUI/ 2>/dev/null || true
           cp CHANGELOG.md build/QUI/ 2>/dev/null || true
           cp LICENSE build/QUI/ 2>/dev/null || true
 
           cd build
-          zip -r ../${{ steps.info.outputs.filename }} QUI
+          zip -r ../${{ steps.info.outputs.filename }} QUI QUI_Options
 
       - name: Post to Discord
         env:

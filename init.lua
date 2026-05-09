@@ -4,10 +4,12 @@ local ADDON_NAME, ns = ...
 BINDING_NAME_QUI_TOGGLE_OPTIONS = "Open QUI Options"
 ---@type table|AceAddon
 QUI = LibStub("AceAddon-3.0"):NewAddon("QUI", "AceConsole-3.0", "AceEvent-3.0")
+QUI._ns = ns
 QUI.DEBUG_MODE = false
 QUI.pullAliasOwned = false
 
 local QUI_PULL_SLASH_KEY = "QUIPULL_ALIAS"
+local QUI_OPTIONS_ADDON = "QUI_Options"
 local PULL_COMMAND_OWNERS = {
     ["BigWigs"] = true,
     ["BigWigs_Core"] = true,
@@ -16,6 +18,122 @@ local PULL_COMMAND_OWNERS = {
 
 -- Version info
 QUI.versionString = C_AddOns.GetAddOnMetadata("QUI", "Version") or "2.00"
+
+local function IsAddonLoaded(addonName)
+    if C_AddOns and C_AddOns.IsAddOnLoaded then
+        return C_AddOns.IsAddOnLoaded(addonName)
+    end
+    if IsAddOnLoaded then
+        return IsAddOnLoaded(addonName)
+    end
+    return false
+end
+
+local function LoadAddon(addonName)
+    if C_AddOns and C_AddOns.LoadAddOn then
+        return C_AddOns.LoadAddOn(addonName)
+    end
+    if LoadAddOn then
+        return LoadAddOn(addonName)
+    end
+    return nil, "LoadAddOn unavailable"
+end
+
+function QUI:IsOptionsLoaded()
+    return self.GUI and type(self.GUI.InitializeOptions) == "function"
+end
+
+function QUI:EnsureOptionsLoaded()
+    if self:IsOptionsLoaded() then
+        return true
+    end
+
+    if not IsAddonLoaded(QUI_OPTIONS_ADDON) then
+        local ok, reason = LoadAddon(QUI_OPTIONS_ADDON)
+        if not ok then
+            return false, reason or "missing companion addon"
+        end
+    end
+
+    if self:IsOptionsLoaded() then
+        return true
+    end
+
+    return false, "settings UI did not initialize"
+end
+
+function QUI:OpenOptions()
+    local ok, reason = self:EnsureOptionsLoaded()
+    if not ok then
+        print("|cFF56D1FFQUI:|r Options could not be loaded (" .. tostring(reason) .. ").")
+        return false
+    end
+
+    if self.GUI and type(self.GUI.Toggle) == "function" then
+        self.GUI:Toggle()
+        return true
+    end
+
+    print("|cFF56D1FFQUI:|r Options are not available yet. Try again in a moment.")
+    return false
+end
+
+function QUI:ShowOptions()
+    local ok, reason = self:EnsureOptionsLoaded()
+    if not ok then
+        print("|cFF56D1FFQUI:|r Options could not be loaded (" .. tostring(reason) .. ").")
+        return false
+    end
+
+    if self.GUI and type(self.GUI.Show) == "function" then
+        self.GUI:Show()
+        return true
+    end
+
+    return false
+end
+
+local function OpenQUIOptions()
+    QUI:OpenOptions()
+end
+
+local blizzardSettingsAttempts = 0
+local function CreateBlizzardSettingsPanel()
+    if _G.QUI_BlizzardSettingsPanel then
+        return
+    end
+    if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then
+        blizzardSettingsAttempts = blizzardSettingsAttempts + 1
+        if blizzardSettingsAttempts < 20 and C_Timer and C_Timer.After then
+            C_Timer.After(0.5, CreateBlizzardSettingsPanel)
+        end
+        return
+    end
+
+    local panel = CreateFrame("Frame", "QUI_BlizzardSettingsPanel")
+    panel.name = "QUI"
+
+    local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText("QUI")
+
+    local desc = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    desc:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+    desc:SetWidth(520)
+    desc:SetJustifyH("LEFT")
+    desc:SetText("Open the QUI configuration window.")
+
+    local btn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    btn:SetSize(180, 32)
+    btn:SetPoint("TOPLEFT", desc, "BOTTOMLEFT", 0, -16)
+    btn:SetText("Open QUI")
+    btn:SetScript("OnClick", OpenQUIOptions)
+
+    local category = Settings.RegisterCanvasLayoutCategory(panel, "QUI")
+    Settings.RegisterAddOnCategory(category)
+end
+
+C_Timer.After(0.1, CreateBlizzardSettingsPanel)
 
 -- Deferred importstring loading: importstring files register loaders
 -- instead of eagerly constructing large tables at login. Data is built
@@ -180,12 +298,8 @@ function QUI:SlashCommandOpen(input)
             -- Wipe — order doesn't matter, all are independent.
             if ns.InvalidateCDMFrameCache then ns.InvalidateCDMFrameCache() end
             if SD.InvalidateLearnedCache then SD:InvalidateLearnedCache() end
-            if SD.InvalidateChildMap     then SD:InvalidateChildMap()     end
-            if SD.WipeTickAuraCache      then SD:WipeTickAuraCache()      end
-            if SD.ClearResolveMemos      then SD:ClearResolveMemos()      end
             if SD.ClearChildCaches       then SD:ClearChildCaches()       end
             if IC and IC.ClearTextureCycleCache then IC:ClearTextureCycleCache() end
-            if IC and IC.ClearTickCaches        then IC:ClearTickCaches()        end
             if BR and BR.ClearPerBarCaches      then BR:ClearPerBarCaches()      end
             -- Rebuild — re-derive owned spells from current viewer state.
             if SD.CheckAllDormantSpells   then SD:CheckAllDormantSpells()   end
@@ -200,12 +314,44 @@ function QUI:SlashCommandOpen(input)
             print("  usage: |cFFFFFF00/qui cdm_cache|r [status|reset]")
             return
         end
-    elseif input and input:match("^legacyrecover") then
-        if not _G.QUI_LegacyRecoverHandle then
-            print("|cff60A5FAQUI:|r Legacy tracker resolver not loaded.")
+    elseif input and input:match("^cdm_taint") then
+        -- /qui cdm_taint              → toggle the taint logger on/off
+        -- /qui cdm_taint on           → enable
+        -- /qui cdm_taint off          → disable
+        -- Forces the diagnostic FontString frame to be created if not yet
+        -- visible, so you can confirm it's there even before any TaintLog
+        -- call has fired.
+        local sub = input:match("^cdm_taint%s+(%S+)") or "toggle"
+        if sub == "on" then
+            _G.QUI_CDM_TAINT_DEBUG = true
+        elseif sub == "off" then
+            _G.QUI_CDM_TAINT_DEBUG = false
+        else
+            _G.QUI_CDM_TAINT_DEBUG = not _G.QUI_CDM_TAINT_DEBUG
+        end
+        print(("|cff60A5FAQUI cdm_taint:|r %s"):format(
+            _G.QUI_CDM_TAINT_DEBUG and "ON (logs to QUI_CDMTaintDebugFrame)" or "OFF"))
+        if _G.QUI_CDM_TAINT_DEBUG and ns.CDMBlizzMirror and ns.CDMBlizzMirror.TaintLog then
+            ns.CDMBlizzMirror.TaintLog("toggle.on", "ts", GetTime())
+            print("  Frame should appear at TOPLEFT (60, -50). It's draggable.")
+        end
+        return
+    elseif input and input:match("^cdm_info") then
+        -- /qui cdm_info               → dump every walked Blizzard CDM cdID
+        -- /qui cdm_info <substr>      → filter entries whose spell name contains substring
+        -- /qui cdm_info <spellID>     → filter entries matching the numeric spell ID
+        --
+        -- Pretty-prints C_CooldownViewer.GetCooldownViewerCooldownInfo plus
+        -- the QUI mirror's per-cdID state so the live values of
+        -- selfAura/hasAura/linkedSpellIDs/etc. can be inspected.
+        local arg = input:match("^cdm_info%s*(.*)$")
+        if arg == "" then arg = nil end
+        local mirror = ns.CDMBlizzMirror
+        if not (mirror and mirror.DumpInfoForSpell) then
+            print("|cff60A5FAQUI:|r CDM mirror not loaded.")
             return
         end
-        _G.QUI_LegacyRecoverHandle(input:match("^legacyrecover%s*(.*)$") or "")
+        mirror.DumpInfoForSpell(arg)
         return
     elseif input and input:match("^gse") then
         -- /qui gse          → dump current override state
@@ -470,11 +616,7 @@ function QUI:SlashCommandOpen(input)
     end
 
     -- Default: Open custom GUI
-    if self.GUI then
-        self.GUI:Toggle()
-    else
-        print("|cFF56D1FFQUI:|r GUI not loaded yet. Try again in a moment.")
-    end
+    self:OpenOptions()
 end
 
 function QUI:SlashCommandReload()
@@ -627,10 +769,7 @@ end
 
 -- ADDON COMPARTMENT FUNCTIONS --
 function QUI_CompartmentClick()
-    -- Open the new GUI
-    if QUI.GUI then
-        QUI.GUI:Toggle()
-    end
+    QUI:OpenOptions()
 end
 
 local GameTooltip = GameTooltip

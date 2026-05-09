@@ -4381,14 +4381,18 @@ end
 -- interval hasn't elapsed, the frame stays shown and retries next frame.
 -- Zero closure allocation.
 --
--- Out of combat all updates flush immediately (next frame) for zero-latency
--- visual changes.  In combat, high-frequency events (ACTIONBAR_UPDATE_COOLDOWN,
--- ACTIONBAR_UPDATE_STATE) are coalesced behind these interval gates (~30Hz).
+-- Out of combat visual/state updates flush immediately (next frame) for
+-- zero-latency visual changes. Cooldown-only updates are coalesced lightly
+-- out of combat to reduce short-lived allocation churn from C_ActionBar
+-- structured queries. In combat, high-frequency events
+-- (ACTIONBAR_UPDATE_COOLDOWN, ACTIONBAR_UPDATE_STATE) are coalesced behind
+-- these interval gates (~30Hz).
 -- Low-frequency events (SPELL_UPDATE_ICON, PLAYER_ENTER/LEAVE_COMBAT) set the
 -- _immediate flag to bypass the combat throttle for that tick.
-local AB_CD_UPDATE_INTERVAL    = 0.033  -- 33ms in-combat cooldown gate (~30Hz)
-local AB_STATE_UPDATE_INTERVAL = 0.033  -- 33ms in-combat checked-state gate
-local AB_VIS_UPDATE_INTERVAL   = 0.033  -- 33ms in-combat visual gate
+local AB_CD_UPDATE_INTERVAL_COMBAT = 0.033  -- 33ms in-combat cooldown gate (~30Hz)
+local AB_CD_UPDATE_INTERVAL_IDLE   = 0.20   -- 200ms out-of-combat cooldown gate
+local AB_STATE_UPDATE_INTERVAL     = 0.033  -- 33ms in-combat checked-state gate
+local AB_VIS_UPDATE_INTERVAL       = 0.033  -- 33ms in-combat visual gate
 
 -- Unified update frame: merges cooldown, state and visual update into a
 -- single OnUpdate handler with dirty flags. When visuals are dirty,
@@ -4409,11 +4413,14 @@ abUpdateFrame._immediate = false  -- bypass combat throttle for this tick
 abUpdateFrame._lastCount = 0
 abUpdateFrame:SetScript("OnUpdate", function(self)
     local now = GetTime()
-    -- Out of combat: flush immediately (no throttle).
-    -- In combat: coalesce high-frequency events behind interval gates.
+    -- Out of combat: flush visual/state immediately; lightly coalesce
+    -- cooldown-only scans. In combat: coalesce high-frequency events behind
+    -- interval gates.
     -- _immediate flag lets low-frequency events (icon change, form swap)
     -- bypass the combat throttle for a single tick.
-    local throttle = InCombatLockdown() and not self._immediate
+    local inCombat = InCombatLockdown()
+    local throttle = inCombat and not self._immediate
+    local cdInterval = inCombat and AB_CD_UPDATE_INTERVAL_COMBAT or AB_CD_UPDATE_INTERVAL_IDLE
     self._immediate = false
 
     local doVis = self._dirtyVisuals
@@ -4442,10 +4449,14 @@ abUpdateFrame:SetScript("OnUpdate", function(self)
         self._lastState = now
         self._dirtyStates = false
         ActionBarsOwned.UpdateAllButtonStates()
-        if doCd and (not throttle or (now - self._lastCd >= AB_CD_UPDATE_INTERVAL)) then
-            self._lastCd = now
-            self._dirtyCooldowns = false
-            ActionBarsOwned.UpdateAllCooldowns()
+        if doCd then
+            if now - self._lastCd >= cdInterval then
+                self._lastCd = now
+                self._dirtyCooldowns = false
+                ActionBarsOwned.UpdateAllCooldowns()
+            else
+                self:Show()
+            end
         end
         if doCount then
             self._lastCount = now
@@ -4453,7 +4464,7 @@ abUpdateFrame:SetScript("OnUpdate", function(self)
             ActionBarsOwned.UpdateAllButtonCounts()
         end
     elseif doCd then
-        if throttle and (now - self._lastCd < AB_CD_UPDATE_INTERVAL) then return end
+        if now - self._lastCd < cdInterval then return end
         self:Hide()
         self._lastCd = now
         self._dirtyCooldowns = false
@@ -7782,7 +7793,9 @@ local function UpdateOwnedFlyoutButtonCooldown(button)
     local showNormal = enabled and dur > 0
 
     if showNormal then
-        local ok, durObj = pcall(C_Spell.GetSpellCooldownDuration, spellID)
+        -- ignoreGCD=true so the flyout button's swipe tracks the spell's
+        -- real cooldown instead of being masked by the 1.5s GCD sweep.
+        local ok, durObj = pcall(C_Spell.GetSpellCooldownDuration, spellID, true)
         if ok and durObj then
             cooldown:SetCooldownFromDurationObject(durObj)
         else

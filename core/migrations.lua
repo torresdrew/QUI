@@ -194,11 +194,20 @@ if _G.QUI then _G.QUI.Migrations = Migrations end
 --        no-op stamp on the profile. Per-character storage is reached
 --        through QUI.db.char (not the profile), and gets initialized
 --        lazily by editbox_history.lua's getStore().)
+-- v36 = SplitPandemicByAuraType
+--       (3.6.0+: split each customGlow.<viewer>PandemicEnabled toggle into
+--        two aura-type-aware toggles: <viewer>PandemicDebuffEnabled (DoTs
+--        / harmful auras) and <viewer>PandemicBuffEnabled (HoTs / helpful
+--        auras). Existing single-toggle profiles get the value copied into
+--        both new keys to preserve current "show pandemic glow on every
+--        active aura" behavior; the old key is then nilled. Covers built-in
+--        viewers (essential / utility / buff) and custom containers via
+--        any *PandemicEnabled key under customGlow.)
 --
 -- When adding a new migration: bump CURRENT_SCHEMA_VERSION, add it to the
 -- linear gate chain in RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 35
+local CURRENT_SCHEMA_VERSION = 36
 
 ---------------------------------------------------------------------------
 -- Shared helpers
@@ -750,6 +759,35 @@ local function MigrateUnitFrameAuraFilters(profile)
             end
             auraDB.onlyMyDebuffs = nil
         end
+    end
+end
+
+-- v36: Split each customGlow.<viewer>PandemicEnabled toggle into two
+-- aura-type-aware toggles: <viewer>PandemicDebuffEnabled (DoTs / harmful)
+-- and <viewer>PandemicBuffEnabled (HoTs / helpful). Existing single-toggle
+-- profiles get the value copied into both new keys to preserve current
+-- "show pandemic glow on every active aura" behavior.
+local function SplitPandemicByAuraType(profile)
+    local glowDB = profile and profile.customGlow
+    if type(glowDB) ~= "table" then return end
+
+    -- Snapshot keys before mutating so we don't touch keys mid-iteration.
+    local oldKeys = {}
+    for k, v in pairs(glowDB) do
+        if type(k) == "string" and type(v) == "boolean" then
+            local prefix = k:match("^(.+)PandemicEnabled$")
+            if prefix and prefix ~= "" then
+                oldKeys[#oldKeys + 1] = { key = k, prefix = prefix, value = v }
+            end
+        end
+    end
+
+    for _, entry in ipairs(oldKeys) do
+        local debuffKey = entry.prefix .. "PandemicDebuffEnabled"
+        local buffKey   = entry.prefix .. "PandemicBuffEnabled"
+        if glowDB[debuffKey] == nil then glowDB[debuffKey] = entry.value end
+        if glowDB[buffKey]   == nil then glowDB[buffKey]   = entry.value end
+        glowDB[entry.key] = nil
     end
 end
 
@@ -3787,6 +3825,10 @@ function Migrations.RunOnProfile(profile)
     if stored < 35 then
         -- intentionally empty
     end
+
+    -- v36: split single PandemicEnabled toggle per viewer into separate
+    -- Debuff/Buff toggles, copying old value to both to preserve behavior.
+    if stored < 36 then SplitPandemicByAuraType(profile) end
 
     if type(profile.frameAnchoring) == "table" and profile.frameAnchoring.debuffFrame then
         local d = profile.frameAnchoring.debuffFrame

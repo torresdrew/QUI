@@ -833,27 +833,17 @@ local function UpdateAbsorbs(frame)
     local c = absorbSettings.color or { 1, 1, 1 }
     local a = absorbSettings.opacity or 0.7
 
-    -- Safe check for zero absorb using pcall (secret values throw on comparison)
-    -- If absorbAmount is nil, treat as zero
-    -- If comparison succeeds and equals 0, hide bars
-    -- If comparison fails (secret value), let StatusBar handle it (renders 0-width for 0)
-    local hideAbsorb = false
+    -- StatusBar:SetValue handles secret values natively, and a value of 0
+    -- renders as 0-width (invisible). We skip the secret-value compare and
+    -- pipe the amount straight to the C-side sink. The only branch that
+    -- truly needs to short-circuit is nil (no unit / no data).
     if not absorbAmount then
-        hideAbsorb = true
-    else
-        local success, isZero = pcall(function() return absorbAmount == 0 end)
-        if success and isZero then
-            hideAbsorb = true
-        end
-    end
-
-    if hideAbsorb then
         frame.absorbBar:Hide()
         if frame.absorbOverflowBar then frame.absorbOverflowBar:Hide() end
         return
     end
 
-    -- For secret values OR non-zero absorbs, proceed with display
+    -- Proceed with display for any non-nil amount (zero, positive, or secret)
     do
         -- Create overflow bar once if needed (for overlay mode when absorb too big)
         -- Use stripe texture directly on StatusBar (no overlay) to avoid 1px sliver at 0 width
@@ -977,21 +967,13 @@ local function UpdateAbsorbs(frame)
         frame.healAbsorbBar:SetMinMaxValues(0, maxHealth or 1)
         frame.healAbsorbBar:SetValue(healAbsorbAmount or 0)
 
-        -- Safe check for zero using pcall (secret values throw on comparison)
-        local hideHealAbsorb = false
-        if not healAbsorbAmount then
-            hideHealAbsorb = true
-        else
-            local success, isZero = pcall(function() return healAbsorbAmount == 0 end)
-            if success and isZero then
-                hideHealAbsorb = true
-            end
-        end
-
-        if hideHealAbsorb then
-            frame.healAbsorbBar:Hide()
-        else
+        -- Skip the zero-check compare: StatusBar at value 0 is 0-width
+        -- (invisible), so always Show is visually equivalent without
+        -- touching the (potentially secret) heal-absorb amount in Lua.
+        if healAbsorbAmount then
             frame.healAbsorbBar:Show()
+        else
+            frame.healAbsorbBar:Hide()
         end
     end
 end

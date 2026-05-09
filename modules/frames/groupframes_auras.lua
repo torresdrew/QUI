@@ -53,28 +53,45 @@ local framePrevBuffCount = Helpers.CreateStateTable()
 ---------------------------------------------------------------------------
 -- SHARED AURA CACHE: One authoritative per-unit aura state for group frames
 ---------------------------------------------------------------------------
--- Populated once per throttle window, read by all consumers.
+-- Populated once per throttle window, read by all consumers. All
+-- classification, filtering, and sorting work happens here at delta time so
+-- frame render is a trivial walk over pre-computed subsets.
+--
 -- Structure: unitAuraCache[unit] = {
---     helpful                = {auraData...},
---     harmful                = {auraData...},
---     helpfulByInstanceID    = { [instID] = auraData },
---     harmfulByInstanceID    = { [instID] = auraData },
---     helpfulIndexByID       = { [instID] = arrayIndex },
---     harmfulIndexByID       = { [instID] = arrayIndex },
---     helpfulBySpellID       = { [spellID] = auraData },
---     harmfulBySpellID       = { [spellID] = auraData },
---     helpfulByName          = { [spellName] = auraData },
---     harmfulByName          = { [spellName] = auraData },
---     playerDispellable      = { [instID] = true },
+--     -- Raw aura arrays (single source of truth)
+--     buffs                  = {auraData...},
+--     debuffs                = {auraData...},
+--     -- Instance-ID-keyed lookups (used by render-time map probes)
+--     buffsByID              = { [instID] = auraData },
+--     debuffsByID            = { [instID] = auraData },
+--     buffsIndexByID         = { [instID] = arrayIndex },
+--     debuffsIndexByID       = { [instID] = arrayIndex },
+--     buffsBySpellID         = { [spellID] = auraData },
+--     debuffsBySpellID       = { [spellID] = auraData },
+--     buffsByName            = { [spellName] = auraData },
+--     debuffsByName          = { [spellName] = auraData },
+--     -- Pre-classified subsets — render walks the orders / probes the sets
+--     playerDispellable      = { [instID] = true },     -- player can dispel
 --     playerDispellableOrder = { instID, ... },
---     defensives             = { [instID] = true },
+--     allDispellable         = { [instID] = true },     -- anyone can dispel (any dispelName)
+--     defensives             = { [instID] = true },     -- matches defensive classifier
 --     defensiveOrder         = { instID, ... },
+--     panelBuffs             = { [instID] = true },     -- passes user buff filter
+--     panelDebuffs           = { [instID] = true },     -- passes user debuff filter
+--     -- Curated-list matches keyed by entry index (per-spec)
+--     indicatorMatches       = { [entryIdx] = auraData },
+--     pinnedMatches          = { [slotIdx]  = auraData },
+--     -- Pre-sorted display arrays — UpdateFrameAuras walks these directly
+--     panelBuffsSorted       = { [i] = auraData },
+--     panelDebuffsSorted     = { [i] = auraData },
+--     -- Bookkeeping
+--     panelBuffsDirty        = boolean,
+--     panelDebuffsDirty      = boolean,
 --     hasFullScan            = boolean,
 -- }
 --
--- This cache is the shared source of truth for aura icons, dispel, defensive,
--- indicators, and pinned aura consumers. Full scans populate it, and set
--- changes mutate it incrementally from UNIT_AURA updateInfo payloads.
+-- Full scans rebuild the entire structure; UNIT_AURA deltas patch it
+-- incrementally and re-run the rebuilders for any side that changed.
 local unitAuraCache = {}
 local auraStats = {
     fullScans = 0,
@@ -123,22 +140,44 @@ local function ClassifyDefensive(unit, auraData)
     return GF.IsVerifiedDefensiveAura(unit, auraData) == true
 end
 
+-- Forward declaration: defined later in the file, near the filter cache and
+-- comparator helpers it depends on. Called from ScanUnitAuras and
+-- ApplyAuraDelta to populate the Phase-1 panel-filter subsets and pre-sorted
+-- display arrays. Kept as an upvalue so the cache-mutation path can call it
+-- without taking on a load-order dependency on the filter infrastructure.
+local RebuildPanelSubsetsAndSort
+
 local function CreateAuraCacheEntry()
     return {
-        helpful = {},
-        harmful = {},
-        helpfulByInstanceID = {},
-        harmfulByInstanceID = {},
-        helpfulIndexByID = {},
-        harmfulIndexByID = {},
-        helpfulBySpellID = {},
-        harmfulBySpellID = {},
-        helpfulByName = {},
-        harmfulByName = {},
+        -- Raw aura arrays (single source of truth)
+        buffs = {},
+        debuffs = {},
+        -- Instance-ID-keyed lookups
+        buffsByID = {},
+        debuffsByID = {},
+        buffsIndexByID = {},
+        debuffsIndexByID = {},
+        buffsBySpellID = {},
+        debuffsBySpellID = {},
+        buffsByName = {},
+        debuffsByName = {},
+        -- Pre-classified subsets maintained by the rebuilders
         playerDispellable = {},
         playerDispellableOrder = {},
+        allDispellable = {},
         defensives = {},
         defensiveOrder = {},
+        panelBuffs = {},
+        panelDebuffs = {},
+        -- Curated-list matches populated by sibling modules at delta time
+        indicatorMatches = {},
+        pinnedMatches = {},
+        -- Pre-sorted display arrays
+        panelBuffsSorted = {},
+        panelDebuffsSorted = {},
+        -- Bookkeeping
+        panelBuffsDirty = false,
+        panelDebuffsDirty = false,
         hasFullScan = false,
     }
 end
@@ -154,45 +193,54 @@ local function EnsureAuraCache(unit)
 end
 
 local function ResetAuraCache(cache)
-    wipe(cache.helpful)
-    wipe(cache.harmful)
-    wipe(cache.helpfulByInstanceID)
-    wipe(cache.harmfulByInstanceID)
-    wipe(cache.helpfulIndexByID)
-    wipe(cache.harmfulIndexByID)
-    wipe(cache.helpfulBySpellID)
-    wipe(cache.harmfulBySpellID)
-    wipe(cache.helpfulByName)
-    wipe(cache.harmfulByName)
+    wipe(cache.buffs)
+    wipe(cache.debuffs)
+    wipe(cache.buffsByID)
+    wipe(cache.debuffsByID)
+    wipe(cache.buffsIndexByID)
+    wipe(cache.debuffsIndexByID)
+    wipe(cache.buffsBySpellID)
+    wipe(cache.debuffsBySpellID)
+    wipe(cache.buffsByName)
+    wipe(cache.debuffsByName)
     wipe(cache.playerDispellable)
     wipe(cache.playerDispellableOrder)
+    wipe(cache.allDispellable)
     wipe(cache.defensives)
     wipe(cache.defensiveOrder)
+    wipe(cache.panelBuffs)
+    wipe(cache.panelDebuffs)
+    wipe(cache.indicatorMatches)
+    wipe(cache.pinnedMatches)
+    wipe(cache.panelBuffsSorted)
+    wipe(cache.panelDebuffsSorted)
+    cache.panelBuffsDirty = false
+    cache.panelDebuffsDirty = false
     cache.hasFullScan = false
 end
 
-local function RebuildHelpfulMaps(unit, cache)
-    wipe(cache.helpfulByInstanceID)
-    wipe(cache.helpfulIndexByID)
-    wipe(cache.helpfulBySpellID)
-    wipe(cache.helpfulByName)
+local function RebuildBuffMaps(unit, cache)
+    wipe(cache.buffsByID)
+    wipe(cache.buffsIndexByID)
+    wipe(cache.buffsBySpellID)
+    wipe(cache.buffsByName)
     wipe(cache.defensives)
     wipe(cache.defensiveOrder)
 
-    local helpful = cache.helpful
-    local helpfulByInstanceID = cache.helpfulByInstanceID
-    local helpfulIndexByID = cache.helpfulIndexByID
-    local helpfulBySpellID = cache.helpfulBySpellID
-    local helpfulByName = cache.helpfulByName
+    local buffs = cache.buffs
+    local buffsByID = cache.buffsByID
+    local buffsIndexByID = cache.buffsIndexByID
+    local buffsBySpellID = cache.buffsBySpellID
+    local buffsByName = cache.buffsByName
     local defensives = cache.defensives
     local defensiveOrder = cache.defensiveOrder
 
-    for i = 1, #helpful do
-        local auraData = helpful[i]
+    for i = 1, #buffs do
+        local auraData = buffs[i]
         local instID = auraData and auraData.auraInstanceID
         if instID then
-            helpfulByInstanceID[instID] = auraData
-            helpfulIndexByID[instID] = i
+            buffsByID[instID] = auraData
+            buffsIndexByID[instID] = i
             if ClassifyDefensive(unit, auraData) then
                 defensives[instID] = true
                 defensiveOrder[#defensiveOrder + 1] = instID
@@ -201,41 +249,49 @@ local function RebuildHelpfulMaps(unit, cache)
 
         local spellID = SafeValue(auraData and auraData.spellId, nil)
         if spellID then
-            helpfulBySpellID[spellID] = auraData
+            buffsBySpellID[spellID] = auraData
         end
 
         local spellName = SafeValue(auraData and auraData.name, nil)
         if spellName then
-            helpfulByName[spellName] = auraData
+            buffsByName[spellName] = auraData
         end
     end
 end
 
-local function RebuildHarmfulMaps(unit, cache)
-    wipe(cache.harmfulByInstanceID)
-    wipe(cache.harmfulIndexByID)
-    wipe(cache.harmfulBySpellID)
-    wipe(cache.harmfulByName)
+local function RebuildDebuffMaps(unit, cache)
+    wipe(cache.debuffsByID)
+    wipe(cache.debuffsIndexByID)
+    wipe(cache.debuffsBySpellID)
+    wipe(cache.debuffsByName)
     wipe(cache.playerDispellable)
     wipe(cache.playerDispellableOrder)
+    wipe(cache.allDispellable)
 
-    local harmful = cache.harmful
-    local harmfulByInstanceID = cache.harmfulByInstanceID
-    local harmfulIndexByID = cache.harmfulIndexByID
-    local harmfulBySpellID = cache.harmfulBySpellID
-    local harmfulByName = cache.harmfulByName
+    local debuffs = cache.debuffs
+    local debuffsByID = cache.debuffsByID
+    local debuffsIndexByID = cache.debuffsIndexByID
+    local debuffsBySpellID = cache.debuffsBySpellID
+    local debuffsByName = cache.debuffsByName
     local playerDispellable = cache.playerDispellable
     local playerDispellableOrder = cache.playerDispellableOrder
+    local allDispellable = cache.allDispellable
 
-    for i = 1, #harmful do
-        local auraData = harmful[i]
+    for i = 1, #debuffs do
+        local auraData = debuffs[i]
         local instID = auraData and auraData.auraInstanceID
         if instID then
-            harmfulByInstanceID[instID] = auraData
-            harmfulIndexByID[instID] = i
+            debuffsByID[instID] = auraData
+            debuffsIndexByID[instID] = i
+
+            local dispelName = auraData.dispelName
+            local hasDispelType = dispelName ~= nil and not IsSecretValue(dispelName)
+            if hasDispelType then
+                allDispellable[instID] = true
+            end
 
             local classified = ClassifyDispellable(unit, instID)
-            if classified == true or (classified == nil and auraData.dispelName and not IsSecretValue(auraData.dispelName)) then
+            if classified == true or (classified == nil and hasDispelType) then
                 playerDispellable[instID] = true
                 playerDispellableOrder[#playerDispellableOrder + 1] = instID
             end
@@ -243,12 +299,12 @@ local function RebuildHarmfulMaps(unit, cache)
 
         local spellID = SafeValue(auraData and auraData.spellId, nil)
         if spellID then
-            harmfulBySpellID[spellID] = auraData
+            debuffsBySpellID[spellID] = auraData
         end
 
         local spellName = SafeValue(auraData and auraData.name, nil)
         if spellName then
-            harmfulByName[spellName] = auraData
+            debuffsByName[spellName] = auraData
         end
     end
 end
@@ -258,15 +314,15 @@ local function ResolveAuraBucket(unit, auraData)
 
     local instID = auraData.auraInstanceID
     if instID and IsAuraFilteredOut then
-        local helpfulFiltered = IsAuraFilteredOut(unit, instID, "HELPFUL")
-        if helpfulFiltered ~= nil and not IsSecretValue(helpfulFiltered) then
-            if helpfulFiltered == false then
-                return "helpful"
+        local buffFiltered = IsAuraFilteredOut(unit, instID, "HELPFUL")
+        if buffFiltered ~= nil and not IsSecretValue(buffFiltered) then
+            if buffFiltered == false then
+                return "buffs"
             end
-            local harmfulFiltered = IsAuraFilteredOut(unit, instID, "HARMFUL")
-            if harmfulFiltered ~= nil and not IsSecretValue(harmfulFiltered) then
-                if harmfulFiltered == false then
-                    return "harmful"
+            local debuffFiltered = IsAuraFilteredOut(unit, instID, "HARMFUL")
+            if debuffFiltered ~= nil and not IsSecretValue(debuffFiltered) then
+                if debuffFiltered == false then
+                    return "debuffs"
                 end
             end
         end
@@ -274,19 +330,19 @@ local function ResolveAuraBucket(unit, auraData)
 
     local isHelpful = SafeValue(auraData.isHelpful, nil)
     if isHelpful == true then
-        return "helpful"
+        return "buffs"
     end
 
     local isHarmful = SafeValue(auraData.isHarmful, nil)
     if isHarmful == true then
-        return "harmful"
+        return "debuffs"
     end
 
     return nil
 end
 
 local function AppendAuraToBucket(cache, bucketName, auraData)
-    local bucket = bucketName == "helpful" and cache.helpful or cache.harmful
+    local bucket = bucketName == "buffs" and cache.buffs or cache.debuffs
     bucket[#bucket + 1] = auraData
 
     local instID = auraData and auraData.auraInstanceID
@@ -294,25 +350,25 @@ local function AppendAuraToBucket(cache, bucketName, auraData)
         return
     end
 
-    if bucketName == "helpful" then
-        cache.helpfulByInstanceID[instID] = auraData
-        cache.helpfulIndexByID[instID] = #bucket
+    if bucketName == "buffs" then
+        cache.buffsByID[instID] = auraData
+        cache.buffsIndexByID[instID] = #bucket
     else
-        cache.harmfulByInstanceID[instID] = auraData
-        cache.harmfulIndexByID[instID] = #bucket
+        cache.debuffsByID[instID] = auraData
+        cache.debuffsIndexByID[instID] = #bucket
     end
 end
 
 local function RemoveAuraFromBucket(cache, bucketName, instID)
     local bucket, indexMap, byInstanceID
-    if bucketName == "helpful" then
-        bucket = cache.helpful
-        indexMap = cache.helpfulIndexByID
-        byInstanceID = cache.helpfulByInstanceID
+    if bucketName == "buffs" then
+        bucket = cache.buffs
+        indexMap = cache.buffsIndexByID
+        byInstanceID = cache.buffsByID
     else
-        bucket = cache.harmful
-        indexMap = cache.harmfulIndexByID
-        byInstanceID = cache.harmfulByInstanceID
+        bucket = cache.debuffs
+        indexMap = cache.debuffsIndexByID
+        byInstanceID = cache.debuffsByID
     end
 
     local idx = indexMap[instID]
@@ -337,14 +393,14 @@ end
 
 local function ReplaceAuraInBucket(cache, bucketName, instID, auraData)
     local bucket, indexMap, byInstanceID
-    if bucketName == "helpful" then
-        bucket = cache.helpful
-        indexMap = cache.helpfulIndexByID
-        byInstanceID = cache.helpfulByInstanceID
+    if bucketName == "buffs" then
+        bucket = cache.buffs
+        indexMap = cache.buffsIndexByID
+        byInstanceID = cache.buffsByID
     else
-        bucket = cache.harmful
-        indexMap = cache.harmfulIndexByID
-        byInstanceID = cache.harmfulByInstanceID
+        bucket = cache.debuffs
+        indexMap = cache.debuffsIndexByID
+        byInstanceID = cache.debuffsByID
     end
 
     local idx = indexMap[instID]
@@ -375,8 +431,8 @@ local function ScanUnitAurasBySlot(unit, cache)
         return false
     end
 
-    AppendSlotAuras(unit, cache.harmful, GetAuraSlots(unit, "HARMFUL", MAX_SCAN_AURAS))
-    AppendSlotAuras(unit, cache.helpful, GetAuraSlots(unit, "HELPFUL", MAX_SCAN_AURAS))
+    AppendSlotAuras(unit, cache.debuffs, GetAuraSlots(unit, "HARMFUL", MAX_SCAN_AURAS))
+    AppendSlotAuras(unit, cache.buffs, GetAuraSlots(unit, "HELPFUL", MAX_SCAN_AURAS))
     return true
 end
 
@@ -384,19 +440,19 @@ local function ScanUnitAurasLegacy(unit, cache)
     local GetUnitAuras = C_UnitAuras and C_UnitAuras.GetUnitAuras
     if not GetUnitAuras then return false end
 
-    local harmful = GetUnitAuras(unit, "HARMFUL", MAX_SCAN_AURAS)
-    if harmful then
-        local dst = cache.harmful
-        for i = 1, #harmful do
-            dst[i] = harmful[i]
+    local debuffs = GetUnitAuras(unit, "HARMFUL", MAX_SCAN_AURAS)
+    if debuffs then
+        local dst = cache.debuffs
+        for i = 1, #debuffs do
+            dst[i] = debuffs[i]
         end
     end
 
-    local helpful = GetUnitAuras(unit, "HELPFUL", MAX_SCAN_AURAS)
-    if helpful then
-        local dst = cache.helpful
-        for i = 1, #helpful do
-            dst[i] = helpful[i]
+    local buffs = GetUnitAuras(unit, "HELPFUL", MAX_SCAN_AURAS)
+    if buffs then
+        local dst = cache.buffs
+        for i = 1, #buffs do
+            dst[i] = buffs[i]
         end
     end
     return true
@@ -415,8 +471,13 @@ local function ScanUnitAuras(unit)
         return cache
     end
 
-    RebuildHarmfulMaps(unit, cache)
-    RebuildHelpfulMaps(unit, cache)
+    RebuildDebuffMaps(unit, cache)
+    RebuildBuffMaps(unit, cache)
+    cache.panelBuffsDirty = true
+    cache.panelDebuffsDirty = true
+    if RebuildPanelSubsetsAndSort then
+        RebuildPanelSubsetsAndSort(unit, cache)
+    end
     cache.hasFullScan = true
     return cache
 end
@@ -427,8 +488,8 @@ local function ApplyAuraDelta(unit, updateInfo)
         return false
     end
 
-    local helpfulDirty = false
-    local harmfulDirty = false
+    local buffsDirty = false
+    local debuffsDirty = false
     local GetAuraByInstanceID = C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID
 
     if updateInfo.addedAuras then
@@ -439,10 +500,10 @@ local function ApplyAuraDelta(unit, updateInfo)
                 return false
             end
             AppendAuraToBucket(cache, bucketName, auraData)
-            if bucketName == "helpful" then
-                helpfulDirty = true
+            if bucketName == "buffs" then
+                buffsDirty = true
             else
-                harmfulDirty = true
+                debuffsDirty = true
             end
         end
     end
@@ -455,10 +516,10 @@ local function ApplyAuraDelta(unit, updateInfo)
         for i = 1, #updateInfo.updatedAuraInstanceIDs do
             local instID = updateInfo.updatedAuraInstanceIDs[i]
             local bucketName = nil
-            if cache.helpfulByInstanceID[instID] then
-                bucketName = "helpful"
-            elseif cache.harmfulByInstanceID[instID] then
-                bucketName = "harmful"
+            if cache.buffsByID[instID] then
+                bucketName = "buffs"
+            elseif cache.debuffsByID[instID] then
+                bucketName = "debuffs"
             end
 
             if bucketName then
@@ -469,10 +530,10 @@ local function ApplyAuraDelta(unit, updateInfo)
                 if not ReplaceAuraInBucket(cache, bucketName, instID, freshAura) then
                     return false
                 end
-                if bucketName == "helpful" then
-                    helpfulDirty = true
+                if bucketName == "buffs" then
+                    buffsDirty = true
                 else
-                    harmfulDirty = true
+                    debuffsDirty = true
                 end
             end
         end
@@ -481,23 +542,29 @@ local function ApplyAuraDelta(unit, updateInfo)
     if updateInfo.removedAuraInstanceIDs then
         for i = 1, #updateInfo.removedAuraInstanceIDs do
             local instID = updateInfo.removedAuraInstanceIDs[i]
-            if cache.helpfulByInstanceID[instID] then
-                if RemoveAuraFromBucket(cache, "helpful", instID) then
-                    helpfulDirty = true
+            if cache.buffsByID[instID] then
+                if RemoveAuraFromBucket(cache, "buffs", instID) then
+                    buffsDirty = true
                 end
-            elseif cache.harmfulByInstanceID[instID] then
-                if RemoveAuraFromBucket(cache, "harmful", instID) then
-                    harmfulDirty = true
+            elseif cache.debuffsByID[instID] then
+                if RemoveAuraFromBucket(cache, "debuffs", instID) then
+                    debuffsDirty = true
                 end
             end
         end
     end
 
-    if helpfulDirty then
-        RebuildHelpfulMaps(unit, cache)
+    if buffsDirty then
+        RebuildBuffMaps(unit, cache)
+        cache.panelBuffsDirty = true
     end
-    if harmfulDirty then
-        RebuildHarmfulMaps(unit, cache)
+    if debuffsDirty then
+        RebuildDebuffMaps(unit, cache)
+        cache.panelDebuffsDirty = true
+    end
+
+    if (buffsDirty or debuffsDirty) and RebuildPanelSubsetsAndSort then
+        RebuildPanelSubsetsAndSort(unit, cache)
     end
 
     return true
@@ -521,6 +588,23 @@ QUI_GFA.auraStats = auraStats
 QUI_GFA.ScanUnitAuras = ScanUnitAuras
 QUI_GFA.ApplyAuraDelta = ApplyAuraDelta
 QUI_GFA.PruneAuraCache = PruneAuraCache
+-- Phase 1 redesign: callers can force a panel-subset rebuild (e.g. after
+-- settings change before any UNIT_AURA delta arrives). Returns silently if
+-- the assignment hasn't run yet (load order during early init).
+QUI_GFA.RebuildPanelSubsetsAndSort = function(unit, cache)
+    if RebuildPanelSubsetsAndSort then
+        RebuildPanelSubsetsAndSort(unit, cache or unitAuraCache[unit])
+    end
+end
+
+-- Phase 4 hook: spec-change handlers in indicator/pinned modules call this
+-- before refreshing frames so cache.indicatorMatches / cache.pinnedMatches
+-- repopulate with the new spec's entry/slot list. Does not re-render frames.
+function QUI_GFA:RescanCachedUnits()
+    for unit in pairs(unitAuraCache) do
+        ScanUnitAuras(unit)
+    end
+end
 
 -- Table reuse: unitAuraCache[unit] sub-tables are created once per unit and
 -- then mutated in place across full scans and deltas. Blizzard auraData tables
@@ -651,7 +735,12 @@ local function SharedTimerOnUpdate(self, dt)
 
     -- Skip when no group frames are active (solo play)
     local GF = ns.QUI_GroupFrames
-    if not GF or not next(GF.unitFrameMap) then return end
+    if not GF or not next(GF.unitFrameMap) then
+        wipe(timerIcons)
+        timerIconCount = 0
+        self:SetScript("OnUpdate", nil)
+        return
+    end
 
     local now = GetTime()
     local db = GetDB()
@@ -933,6 +1022,22 @@ local function SafeSetDrawSwipe(cooldown, showSwipe)
     end
 end
 
+local function ClearAuraIcon(icon)
+    if not icon then return end
+    icon:Hide()
+    UnregisterIconTimer(icon)
+    local state = icon._auraState
+    if state then
+        wipe(state)
+    end
+    if icon.durationText then icon.durationText:SetText("") end
+    if icon.stackText then icon.stackText:SetText("") end
+    if icon.cooldown then icon.cooldown:Clear() end
+    if icon.pulseGroup and icon.pulseGroup:IsPlaying() then
+        icon.pulseGroup:Stop()
+    end
+end
+
 -- Dispel border colors (file-level to avoid per-call allocation)
 local AURA_DISPEL_COLORS = {
     Magic   = { 0.2, 0.6, 1.0, 1 },
@@ -944,7 +1049,7 @@ local AURA_DISPEL_COLORS = {
 
 local function UpdateAuraIcon(icon, auraData, unit)
     if not icon or not auraData then
-        if icon then icon:Hide() end
+        ClearAuraIcon(icon)
         return
     end
 
@@ -1088,6 +1193,7 @@ local function InitFilterCache()
         debuffFilters = {},
         filterMode = "off",
         onlyMine = false,
+        hidePermanent = false,
         buffWhitelist = nil,
         buffBlacklist = nil,
         debuffWhitelist = nil,
@@ -1102,6 +1208,7 @@ local function RebuildFilterCacheForContext(cache, auraSettings)
 
     cache.filterMode = auraSettings.filterMode or "off"
     cache.onlyMine = auraSettings.buffFilterOnlyMine or false
+    cache.hidePermanent = auraSettings.buffHidePermanent or false
 
     wipe(cache.buffFilters)
     wipe(cache.debuffFilters)
@@ -1237,12 +1344,147 @@ local function GetAuraPriority(auraData)
 end
 
 ---------------------------------------------------------------------------
+-- PHASE 1: Pre-classified panel subsets + pre-sorted display arrays
+---------------------------------------------------------------------------
+-- Populates cache.panelBuffs / panelDebuffs (instID-keyed sets passing the
+-- user filter) and cache.panelBuffsSorted / panelDebuffsSorted (priority-
+-- sorted auraData arrays). Render code does not yet read these — Phase 2
+-- migrates UpdateFrameAuras over. Until then this is parallel work; the
+-- spec accepts the cost (§6 R5) in exchange for landing the foundation.
+--
+-- Private prio map kept separate from render's _auraPrioMap so cache-time
+-- and render-time sorts cannot clobber each other's state mid-frame.
+local _cacheAuraPrioMap = {}
+
+local function CachePrioritySort(a, b)
+    return (_cacheAuraPrioMap[a] or 0) > (_cacheAuraPrioMap[b] or 0)
+end
+
+RebuildPanelSubsetsAndSort = function(unit, cache)
+    if not cache then return end
+
+    if cachedFilterVersion ~= layoutVersion then
+        RebuildFilterCache()
+    end
+
+    local fCache = IsInRaid() and filterCaches.raid or filterCaches.party
+    local useClassification = fCache.filterMode == "classification"
+    local useWhitelist = fCache.filterMode == "whitelist"
+    local onlyMine = fCache.onlyMine
+    local hidePermanent = fCache.hidePermanent
+
+    local panelBuffs = cache.panelBuffs
+    local panelBuffsSorted = cache.panelBuffsSorted
+    wipe(panelBuffs)
+    wipe(panelBuffsSorted)
+
+    local buffFilters = useClassification and #fCache.buffFilters > 0 and fCache.buffFilters or nil
+    local buffs = cache.buffs
+    for i = 1, #buffs do
+        local auraData = buffs[i]
+        local instID = auraData and auraData.auraInstanceID
+        if instID then
+            local passes = true
+            -- hidePermanent: drop duration==0 buffs
+            if hidePermanent then
+                local dur = SafeToNumber(auraData.duration, -1)
+                if dur == 0 then
+                    passes = false
+                end
+            end
+            -- onlyMine: HELPFUL|PLAYER filter (player-cast buffs only)
+            if passes and onlyMine and IsAuraFilteredOut and not IsSecretValue(instID) then
+                local fo = IsAuraFilteredOut(unit, instID, "HELPFUL|PLAYER")
+                if fo and not IsSecretValue(fo) then
+                    passes = false
+                end
+            end
+            if passes and buffFilters and not AuraPassesFilter(unit, instID, buffFilters) then
+                passes = false
+            end
+            if passes and useWhitelist and fCache.buffWhitelist then
+                if not AuraPassesSpellFilter(auraData, fCache.buffWhitelist, nil) then
+                    passes = false
+                end
+            end
+            if passes and fCache.buffBlacklist then
+                if not AuraPassesSpellFilter(auraData, nil, fCache.buffBlacklist) then
+                    passes = false
+                end
+            end
+            if passes then
+                panelBuffs[instID] = true
+                panelBuffsSorted[#panelBuffsSorted + 1] = auraData
+            end
+        end
+    end
+
+    -- Buffs have equal priority — no sort needed (matches existing render
+    -- behavior where the buff path skips table.sort entirely).
+    cache.panelBuffsDirty = false
+
+    local panelDebuffs = cache.panelDebuffs
+    local panelDebuffsSorted = cache.panelDebuffsSorted
+    wipe(panelDebuffs)
+    wipe(panelDebuffsSorted)
+
+    local debuffFilters = useClassification and #fCache.debuffFilters > 0 and fCache.debuffFilters or nil
+    local debuffs = cache.debuffs
+    for i = 1, #debuffs do
+        local auraData = debuffs[i]
+        local instID = auraData and auraData.auraInstanceID
+        if instID then
+            local passes = true
+            if debuffFilters and not AuraPassesFilter(unit, instID, debuffFilters) then
+                passes = false
+            end
+            if passes and useWhitelist and fCache.debuffWhitelist then
+                if not AuraPassesSpellFilter(auraData, fCache.debuffWhitelist, nil) then
+                    passes = false
+                end
+            end
+            if passes and fCache.debuffBlacklist then
+                if not AuraPassesSpellFilter(auraData, nil, fCache.debuffBlacklist) then
+                    passes = false
+                end
+            end
+            if passes then
+                panelDebuffs[instID] = true
+                panelDebuffsSorted[#panelDebuffsSorted + 1] = auraData
+            end
+        end
+    end
+
+    if #panelDebuffsSorted > 1 then
+        wipe(_cacheAuraPrioMap)
+        for i = 1, #panelDebuffsSorted do
+            _cacheAuraPrioMap[panelDebuffsSorted[i]] = GetAuraPriority(panelDebuffsSorted[i])
+        end
+        table.sort(panelDebuffsSorted, CachePrioritySort)
+    end
+    cache.panelDebuffsDirty = false
+
+    -- Phase 4: indicator + pinned modules populate cache.indicatorMatches /
+    -- cache.pinnedMatches keyed by entry index. Each module computes once
+    -- per delta; render walks its configured entry list and looks up.
+    local GFI = ns.QUI_GroupFrameIndicators
+    if GFI and GFI.PopulateCacheMatches then
+        GFI:PopulateCacheMatches(unit, cache)
+    end
+    local GFP = ns.QUI_GroupFramePinnedAuras
+    if GFP and GFP.PopulateCacheMatches then
+        GFP:PopulateCacheMatches(unit, cache)
+    end
+end
+
+---------------------------------------------------------------------------
 -- UPDATE: Auras for a single frame
 ---------------------------------------------------------------------------
 -- Pure duration/stack updates stay on the icon fast path below. Set changes
 -- flow through the shared cache first, then refresh consumers from that state.
 
-local sortedAuras = {} -- Reusable sort table
+local EMPTY_AURA_LIST = {}  -- Sentinel for missing-cache reads (do not mutate)
+local _renderBuffs = {}     -- Reusable scratch: pre-sorted buffs after frame-local dedup
 
 local function UpdateFrameAuras(frame)
     if not frame or not frame.unit then return end
@@ -1266,29 +1508,25 @@ local function UpdateFrameAuras(frame)
         -- Hide all icons
         if frame.debuffIcons then
             for _, icon in ipairs(frame.debuffIcons) do
-                icon:Hide()
-                UnregisterIconTimer(icon)
+                ClearAuraIcon(icon)
             end
         end
         if frame.buffIcons then
             for _, icon in ipairs(frame.buffIcons) do
-                icon:Hide()
-                UnregisterIconTimer(icon)
+                ClearAuraIcon(icon)
             end
         end
         return
     end
 
-    -- Rebuild classification filter cache if settings changed
-    if cachedFilterVersion ~= layoutVersion then
-        RebuildFilterCache()
+    -- Phase 2: cache rebuild owns classification + filter + sort. The render
+    -- path reads pre-classified, pre-sorted arrays. Lazy-rebuild covers the
+    -- case where layoutVersion bumped (settings changed) but no UNIT_AURA
+    -- delta has fired since to refresh the panel arrays.
+    local cache = unitAuraCache[unit]
+    if cache and (cache.panelBuffsDirty or cache.panelDebuffsDirty) then
+        RebuildPanelSubsetsAndSort(unit, cache)
     end
-
-    local fCache = GetFilterCache(isRaid)
-    local useClassification = fCache.filterMode == "classification"
-    local useWhitelist = fCache.filterMode == "whitelist"
-    local onlyMine = fCache.onlyMine
-    local playerUnit = "player"
 
     -- Process debuffs
     if auraSettings.showDebuffs then
@@ -1300,45 +1538,9 @@ local function UpdateFrameAuras(frame)
             frame.debuffIcons = {}
         end
 
-        -- Collect harmful auras from shared cache (already scanned)
-        wipe(sortedAuras)
-        wipe(_auraPrioMap)
-        local debuffFilters = useClassification and #fCache.debuffFilters > 0 and fCache.debuffFilters or nil
-        local cache = unitAuraCache[unit]
-        if cache and cache.harmful then
-            for _, auraData in ipairs(cache.harmful) do
-                local dominated = false
-
-                -- Classification filter
-                if debuffFilters and not AuraPassesFilter(unit, auraData.auraInstanceID, debuffFilters) then
-                    dominated = true
-                end
-
-                -- Whitelist filter
-                if not dominated and useWhitelist and fCache.debuffWhitelist then
-                    if not AuraPassesSpellFilter(auraData, fCache.debuffWhitelist, nil) then
-                        dominated = true
-                    end
-                end
-
-                -- Blacklist filter (always applies)
-                if not dominated and fCache.debuffBlacklist then
-                    if not AuraPassesSpellFilter(auraData, nil, fCache.debuffBlacklist) then
-                        dominated = true
-                    end
-                end
-
-                if not dominated then
-                    _auraPrioMap[auraData] = GetAuraPriority(auraData)
-                    sortedAuras[#sortedAuras + 1] = auraData
-                end
-            end
-        end
-
-        -- Sort by priority (higher first)
-        if #sortedAuras > maxDebuffs then
-            table.sort(sortedAuras, AuraPrioritySort)
-        end
+        -- Read pre-sorted debuff array directly. Cache rebuild already ran
+        -- classification, whitelist, blacklist, and priority sort.
+        local sortedDebuffs = (cache and cache.panelDebuffsSorted) or EMPTY_AURA_LIST
 
         -- Display up to maxDebuffs
         local dAnchor = auraSettings.debuffAnchor or "BOTTOMRIGHT"
@@ -1351,14 +1553,14 @@ local function UpdateFrameAuras(frame)
         -- CENTER: only relayout when visible count actually changes (skip thrashing)
         local dVisibleCount = nil
         if dGrow == "CENTER" then
-            local vc = math.min(#sortedAuras, maxDebuffs)
+            local vc = math.min(#sortedDebuffs, maxDebuffs)
             if vc ~= (framePrevDebuffCount[frame] or -1) then
                 dVisibleCount = vc
                 framePrevDebuffCount[frame] = vc
             end
         end
         for i = 1, maxDebuffs do
-            local auraData = sortedAuras[i]
+            local auraData = sortedDebuffs[i]
             if not frame.debuffIcons[i] then
                 frame.debuffIcons[i] = CreateAuraIcon(frame, iconSize)
                 needsLayout = true -- New icon always needs positioning
@@ -1381,20 +1583,17 @@ local function UpdateFrameAuras(frame)
                 icon._cachedShowPulse = showPulse
                 UpdateAuraIcon(icon, auraData, unit)
             else
-                icon:Hide()
-                UnregisterIconTimer(icon)
+                ClearAuraIcon(icon)
             end
         end
 
         -- Hide excess icons
         for i = maxDebuffs + 1, #frame.debuffIcons do
-            frame.debuffIcons[i]:Hide()
-            UnregisterIconTimer(frame.debuffIcons[i])
+            ClearAuraIcon(frame.debuffIcons[i])
         end
     elseif frame.debuffIcons then
         for _, icon in ipairs(frame.debuffIcons) do
-            icon:Hide()
-            UnregisterIconTimer(icon)
+            ClearAuraIcon(icon)
         end
     end
 
@@ -1407,11 +1606,11 @@ local function UpdateFrameAuras(frame)
             frame.buffIcons = {}
         end
 
-        wipe(sortedAuras)
-        local hidePermanent = auraSettings.buffHidePermanent
+        -- Cache rebuild owns hidePermanent + onlyMine + classification +
+        -- whitelist + blacklist filters. Render only applies the dedup set,
+        -- which is per-frame state (defensive/indicator/pinned spell IDs
+        -- already shown elsewhere on this frame).
         local dedup = auraSettings.buffDeduplicateDefensives ~= false
-
-        -- Build dedup set from defensives + aura indicators + pinned auras (reuse per frame)
         local dedupSet
         if dedup then
             local defIDs = frame._defensiveAuraIDs
@@ -1437,68 +1636,20 @@ local function UpdateFrameAuras(frame)
             end
         end
 
-        local cache = unitAuraCache[unit]
-        if cache and cache.helpful then
-            for _, auraData in ipairs(cache.helpful) do
-                local dominated = false
-
-                -- Dedup: skip buffs already shown as defensives or indicators
-                if not dominated and dedupSet and auraData.auraInstanceID then
-                    if dedupSet[auraData.auraInstanceID] then
-                        dominated = true
-                    end
-                end
-
-                -- Hide permanent (duration 0) buffs
-                if not dominated and hidePermanent then
-                    local dur = SafeToNumber(auraData.duration, -1)
-                    if dur == 0 then
-                        dominated = true
-                    end
-                end
-
-                -- "Only My Buffs" filter (use C-side API to avoid secret value on isFromPlayerOrPlayerPet)
-                if onlyMine and not dominated then
-                    local instID = auraData.auraInstanceID
-                    if IsAuraFilteredOut and instID and not IsSecretValue(instID) then
-                        local fo = IsAuraFilteredOut(unit, instID, "HELPFUL|PLAYER")
-                        if fo and not IsSecretValue(fo) then
-                            dominated = true
-                        end
-                    elseif not IsSecretValue(auraData.isFromPlayerOrPlayerPet) then
-                        if not auraData.isFromPlayerOrPlayerPet then
-                            dominated = true
-                        end
-                    end
-                end
-
-                -- Classification filter
-                if useClassification and not dominated and #fCache.buffFilters > 0 then
-                    if not AuraPassesFilter(unit, auraData.auraInstanceID, fCache.buffFilters) then
-                        dominated = true
-                    end
-                end
-
-                -- Whitelist filter
-                if not dominated and useWhitelist and fCache.buffWhitelist then
-                    if not AuraPassesSpellFilter(auraData, fCache.buffWhitelist, nil) then
-                        dominated = true
-                    end
-                end
-
-                -- Blacklist filter (always applies)
-                if not dominated and fCache.buffBlacklist then
-                    if not AuraPassesSpellFilter(auraData, nil, fCache.buffBlacklist) then
-                        dominated = true
-                    end
-                end
-
-                if not dominated then
-                    sortedAuras[#sortedAuras + 1] = auraData
-                end
+        -- Pre-filtered, pre-sorted buff candidates from cache (already passed
+        -- onlyMine/hidePermanent/classification/whitelist/blacklist). Walk in
+        -- order, applying the per-frame dedup gate, capped at maxBuffs.
+        local sortedBuffs = (cache and cache.panelBuffsSorted) or EMPTY_AURA_LIST
+        wipe(_renderBuffs)
+        local nSrc = #sortedBuffs
+        for i = 1, nSrc do
+            if #_renderBuffs >= maxBuffs then break end
+            local ad = sortedBuffs[i]
+            local instID = ad and ad.auraInstanceID
+            if not (dedupSet and instID and dedupSet[instID]) then
+                _renderBuffs[#_renderBuffs + 1] = ad
             end
         end
-        -- Buffs have equal priority — no sort needed
 
         local bAnchor = auraSettings.buffAnchor or "TOPLEFT"
         local bGrow = auraSettings.buffGrowDirection or "RIGHT"
@@ -1510,14 +1661,14 @@ local function UpdateFrameAuras(frame)
         -- CENTER: only relayout when visible count actually changes
         local bVisibleCount = nil
         if bGrow == "CENTER" then
-            local vc = math.min(#sortedAuras, maxBuffs)
+            local vc = #_renderBuffs
             if vc ~= (framePrevBuffCount[frame] or -1) then
                 bVisibleCount = vc
                 framePrevBuffCount[frame] = vc
             end
         end
         for i = 1, maxBuffs do
-            local auraData = sortedAuras[i]
+            local auraData = _renderBuffs[i]
             if not frame.buffIcons[i] then
                 frame.buffIcons[i] = CreateAuraIcon(frame, iconSize)
                 needsLayout = true
@@ -1540,19 +1691,16 @@ local function UpdateFrameAuras(frame)
                 bIcon._cachedShowPulse = showPulse
                 UpdateAuraIcon(bIcon, auraData, unit)
             else
-                bIcon:Hide()
-                UnregisterIconTimer(frame.buffIcons[i])
+                ClearAuraIcon(bIcon)
             end
         end
 
         for i = maxBuffs + 1, #frame.buffIcons do
-            frame.buffIcons[i]:Hide()
-            UnregisterIconTimer(frame.buffIcons[i])
+            ClearAuraIcon(frame.buffIcons[i])
         end
     elseif frame.buffIcons then
         for _, icon in ipairs(frame.buffIcons) do
-            icon:Hide()
-            UnregisterIconTimer(icon)
+            ClearAuraIcon(icon)
         end
     end
 
@@ -1723,6 +1871,13 @@ function QUI_GFA:InvalidateLayout()
     -- Refresh cached setting for shared timer
     local db = GetDB()
     cachedShowDurationColor = db and db.auras and db.auras.showDurationColor ~= false
+    -- Phase 2: panel subsets depend on filter settings that may have changed.
+    -- Mark every cached unit dirty so the next render or delta re-runs the
+    -- panel rebuild pass against the fresh filter cache.
+    for _, cache in pairs(unitAuraCache) do
+        cache.panelBuffsDirty = true
+        cache.panelDebuffsDirty = true
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -1754,5 +1909,9 @@ function QUI_GFA:RefreshFrame(frame)
     if frame and frame.unit then
         ScanUnitAuras(frame.unit)
     end
+    UpdateFrameAuras(frame)
+end
+
+function QUI_GFA:RenderFrame(frame)
     UpdateFrameAuras(frame)
 end

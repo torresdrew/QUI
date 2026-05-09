@@ -170,26 +170,19 @@ end
 
 ---------------------------------------------------------------------------
 -- Buff Detection Helper
--- Uses pcall to avoid "secret value" errors when spellId is protected in combat
+-- Direct spellID lookup avoids the secret-value comparisons that the
+-- iterating GetBuffDataByIndex path produced (40 blocked compares per call
+-- in combat). The returned table reference itself is non-secret; only its
+-- fields can be secret in combat, and we don't read any.
 ---------------------------------------------------------------------------
 local function RefreshThrillOfTheSkiesBuffState()
     hasThrillOfTheSkiesBuff = false
-    if not (C_UnitAuras and C_UnitAuras.GetBuffDataByIndex) then
-        return false
-    end
-
-    for i = 1, 40 do
-        local buffData = C_UnitAuras.GetBuffDataByIndex("player", i, "HELPFUL")
-        if not buffData then break end
-        local ok, matches = pcall(function()
-            return buffData.spellId == THRILL_OF_THE_SKIES_BUFF_ID
-        end)
-        if ok and matches then
+    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
+        if C_UnitAuras.GetPlayerAuraBySpellID(THRILL_OF_THE_SKIES_BUFF_ID) then
             hasThrillOfTheSkiesBuff = true
             return true
         end
     end
-
     return false
 end
 

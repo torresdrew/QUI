@@ -3761,11 +3761,28 @@ local function HookCharacterFrame()
         scrollChild:SetHeight(1)  -- Will be updated after adding widgets
         scrollFrame:SetScrollChild(scrollChild)
 
-        -- Get GUI reference and settings
-        local GUI = _G.QUI and _G.QUI.GUI
-        if not GUI then return end
-        local settings = GetSettings()
-        local charDB = settings
+        -- Defer the form-widget construction (and the QUI.GUI widget-API load
+        -- that comes with it) until the user actually opens the settings
+        -- panel. The scaffold above is cheap native frames; only the form
+        -- widgets below need the QUI_Options companion addon, so building
+        -- them lazily keeps QUI_Options unloaded at login when the user
+        -- never opens this panel.
+        local panelContentBuilt = false
+        local function BuildPanelContent()
+            if panelContentBuilt then return true end
+
+            local GUI = _G.QUI and _G.QUI.GUI
+            if GUI and type(GUI.EnsureWidgetAPI) == "function" then
+                GUI = GUI:EnsureWidgetAPI()
+            end
+            if not (GUI and type(GUI.HasWidgetAPI) == "function" and GUI:HasWidgetAPI()) then
+                return false
+            end
+
+            panelContentBuilt = true
+
+            local settings = GetSettings()
+            local charDB = settings
 
         -- Layout constants
         local PAD = 8
@@ -4046,9 +4063,22 @@ local function HookCharacterFrame()
         end)
         resetBtn:SetPoint("BOTTOM", settingsPanel, "BOTTOM", 0, 10)
 
-        -- Toggle panel on gear click
+            return true
+        end
+        -- (BuildPanelContent body kept at the original indent to keep this
+        -- patch a small diff. Closing 'end' above terminates the function.)
+
+        -- Toggle panel on gear click. Lazily build the form widgets (and
+        -- load QUI_Options as a side effect) on first open so the
+        -- companion addon stays unloaded when the user never opens this
+        -- panel.
         gearBtn:SetScript("OnClick", function()
-            settingsPanel:SetShown(not settingsPanel:IsShown())
+            if settingsPanel:IsShown() then
+                settingsPanel:Hide()
+                return
+            end
+            BuildPanelContent()
+            settingsPanel:Show()
         end)
     end
 

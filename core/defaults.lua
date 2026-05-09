@@ -1336,7 +1336,8 @@ local defaults = {
                 storeWhispers = false,                -- opt-in; warns about Blizzard HistoryKeeper duplicate restoration
                 showSeparators = true,                -- "── Previous session ──" / "── Resumed ──" markers around restored block
                 perChannelRetention = {},             -- map: chatTypeKey -> override days. Empty = use default.
-                maxEntries = 5000,                    -- hard FIFO cap; flush trims oldest beyond this.
+                maxEntries = 5000,                    -- hard FIFO cap; logout pass trims oldest beyond this.
+                excludedChannels = {},                -- set: channelName -> true. Captures from these named channels are dropped before storage.
             },
             -- Persistent edit-box command history (Phase C)
             -- Settings live on profile; captured entries live per-character at db.char.chat.editboxHistory.entries
@@ -1382,6 +1383,12 @@ local defaults = {
                     { channel = "guild_officer", sound = "None" },
                 },
             },
+            -- Per-channel color overrides. Stored by name for custom channels
+            -- (e.g. "Trade") and by chat-type key for built-ins (SAY, RAID,
+            -- WHISPER, ...). Empty by default — until a user sets a color via
+            -- the Channel Colors options section, this map stays empty and
+            -- ChangeChatColor is never called, so Blizzard's defaults apply.
+            channelColors = {},
         },
 
         -- Tooltip Management
@@ -3262,7 +3269,8 @@ local defaults = {
         customGlow = {
             -- Essential Cooldowns
             essentialEnabled = true,
-            essentialPandemicEnabled = true,
+            essentialPandemicDebuffEnabled = true,
+            essentialPandemicBuffEnabled = true,
             essentialGlowType = "Pixel Glow",  -- "Pixel Glow", "Autocast Shine", "Button Glow"
             essentialColor = {0.95, 0.95, 0.32, 1},  -- Default yellow/gold
             essentialLines = 14,       -- Number of lines for Pixel Glow / spots for Autocast Shine
@@ -3275,7 +3283,8 @@ local defaults = {
 
             -- Utility Cooldowns
             utilityEnabled = true,
-            utilityPandemicEnabled = true,
+            utilityPandemicDebuffEnabled = true,
+            utilityPandemicBuffEnabled = true,
             utilityGlowType = "Pixel Glow",
             utilityColor = {0.95, 0.95, 0.32, 1},
             utilityLines = 14,
@@ -3287,7 +3296,8 @@ local defaults = {
             utilityYOffset = 0,
 
             -- Buff Icon Bar
-            buffPandemicEnabled = true,
+            buffPandemicDebuffEnabled = true,
+            buffPandemicBuffEnabled = true,
         },
         
         -- Cooldown Highlighter (flash on spell cast)
