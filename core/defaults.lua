@@ -1774,6 +1774,11 @@ local defaults = {
                     debuffStackOffsetX = -1,
                     debuffStackOffsetY = 1,
                     debuffStackColor = {1, 1, 1, 1},
+                    buffFilterMode = "off",
+                    debuffFilterMode = "off",
+                    buffFilterOnlyMine = true,
+                    buffClassifications = { helpful = false, cancelable = false, notCancelable = false, important = false, bigDefensive = false, externalDefensive = false },
+                    debuffClassifications = { harmful = false, dispellable = false, crowdControl = false, important = false },
                 },
                 -- Status indicators (player only)
                 indicators = {
@@ -1997,6 +2002,11 @@ local defaults = {
                     debuffStackOffsetX = -1,
                     debuffStackOffsetY = 1,
                     debuffStackColor = {1, 1, 1, 1},
+                    buffFilterMode = "off",
+                    debuffFilterMode = "off",
+                    buffFilterOnlyMine = true,
+                    buffClassifications = { helpful = false, cancelable = false, notCancelable = false, important = false, bigDefensive = false, externalDefensive = false },
+                    debuffClassifications = { harmful = false, dispellable = false, crowdControl = false, important = false },
                 },
                 -- Target marker (raid icons like skull, cross, etc.)
                 targetMarker = {

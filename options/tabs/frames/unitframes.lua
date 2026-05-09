@@ -906,6 +906,36 @@ local function CreateUnitFramesPage(parent)
             if auraDB.buffOffsetY == nil then auraDB.buffOffsetY = -2 end
             if auraDB.debuffMaxIcons == nil then auraDB.debuffMaxIcons = 16 end
             if auraDB.buffMaxIcons == nil then auraDB.buffMaxIcons = 16 end
+            local isPlayerTargetAuraFilterUnit = unitKey == "player" or unitKey == "target"
+            if isPlayerTargetAuraFilterUnit then
+                if auraDB.buffFilterMode == nil then auraDB.buffFilterMode = "off" end
+                if auraDB.debuffFilterMode == nil then auraDB.debuffFilterMode = "off" end
+                if auraDB.buffFilterOnlyMine == nil then auraDB.buffFilterOnlyMine = true end
+                if auraDB.buffClassifications == nil then auraDB.buffClassifications = {} end
+                if auraDB.debuffClassifications == nil then auraDB.debuffClassifications = {} end
+                local buffClassifications = auraDB.buffClassifications
+                if rawget(buffClassifications, "helpful") == nil and (buffClassifications.raid or buffClassifications.raidInCombat) then
+                    buffClassifications.helpful = true
+                end
+                Helpers.EnsureDefaults(buffClassifications, {
+                    helpful = false,
+                    cancelable = false,
+                    notCancelable = false,
+                    important = false,
+                    bigDefensive = false,
+                    externalDefensive = false,
+                })
+                local debuffClassifications = auraDB.debuffClassifications
+                if rawget(debuffClassifications, "harmful") == nil and (debuffClassifications.raid or debuffClassifications.raidInCombat) then
+                    debuffClassifications.harmful = true
+                end
+                Helpers.EnsureDefaults(debuffClassifications, {
+                    harmful = false,
+                    dispellable = false,
+                    crowdControl = false,
+                    important = false,
+                })
+            end
 
             local auraAnchorOptions = {
                 {value = "TOPLEFT", text = "Top Left"},
@@ -930,6 +960,20 @@ local function CreateUnitFramesPage(parent)
                 {value = "BOTTOM", text = "Bottom"},
                 {value = "BOTTOMRIGHT", text = "Bottom Right"},
             }
+            local filterModeOptions = {
+                {value = "off", text = "Off (Show All)"},
+                {value = "classification", text = "Classification"},
+            }
+            local function SetClassificationRowsEnabled(rows, enabled)
+                if not rows then return end
+                for _, row in ipairs(rows) do
+                    if row.SetEnabled then
+                        row:SetEnabled(enabled)
+                    else
+                        row:SetAlpha(enabled and 1 or 0.4)
+                    end
+                end
+            end
 
             -- === DEBUFF ICONS SECTION ===
             local debuffHeader = GUI:CreateSectionHeader(tabContent, "Debuff Icons")
@@ -951,6 +995,31 @@ local function CreateUnitFramesPage(parent)
                 onlyMyDebuffsCheck:SetPoint("TOPLEFT", PAD, y)
                 onlyMyDebuffsCheck:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
                 y = y - FORM_ROW
+            end
+
+            if isPlayerTargetAuraFilterUnit then
+                local debuffClassRows = {}
+                local function UpdateDebuffClassRows()
+                    SetClassificationRowsEnabled(debuffClassRows, auraDB.debuffFilterMode == "classification")
+                end
+                local debuffFilterMode = GUI:CreateFormDropdown(tabContent, "Debuff Filter Mode", filterModeOptions, "debuffFilterMode", auraDB, function()
+                    UpdateDebuffClassRows()
+                    RefreshAuras()
+                end)
+                debuffFilterMode:SetPoint("TOPLEFT", PAD, y)
+                debuffFilterMode:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+                y = y - FORM_ROW
+
+                local debuffClass = auraDB.debuffClassifications
+                local row = GUI:CreateFormCheckbox(tabContent, "Harmful", "harmful", debuffClass, RefreshAuras)
+                row:SetPoint("TOPLEFT", PAD, y); row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0); debuffClassRows[#debuffClassRows + 1] = row; y = y - FORM_ROW
+                row = GUI:CreateFormCheckbox(tabContent, "Dispellable", "dispellable", debuffClass, RefreshAuras)
+                row:SetPoint("TOPLEFT", PAD, y); row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0); debuffClassRows[#debuffClassRows + 1] = row; y = y - FORM_ROW
+                row = GUI:CreateFormCheckbox(tabContent, "Crowd Control", "crowdControl", debuffClass, RefreshAuras)
+                row:SetPoint("TOPLEFT", PAD, y); row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0); debuffClassRows[#debuffClassRows + 1] = row; y = y - FORM_ROW
+                row = GUI:CreateFormCheckbox(tabContent, "Important", "important", debuffClass, RefreshAuras)
+                row:SetPoint("TOPLEFT", PAD, y); row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0); debuffClassRows[#debuffClassRows + 1] = row; y = y - FORM_ROW
+                UpdateDebuffClassRows()
             end
 
             -- Debuff Preview toggle (pill-shaped, matches Castbar Preview style)
@@ -1143,6 +1212,40 @@ local function CreateUnitFramesPage(parent)
             buffHideSwipe:SetPoint("TOPLEFT", PAD, y)
             buffHideSwipe:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
             y = y - FORM_ROW
+
+            if isPlayerTargetAuraFilterUnit then
+                local buffClassRows = {}
+                local function UpdateBuffClassRows()
+                    SetClassificationRowsEnabled(buffClassRows, auraDB.buffFilterMode == "classification")
+                end
+                local buffFilterMode = GUI:CreateFormDropdown(tabContent, "Buff Filter Mode", filterModeOptions, "buffFilterMode", auraDB, function()
+                    UpdateBuffClassRows()
+                    RefreshAuras()
+                end)
+                buffFilterMode:SetPoint("TOPLEFT", PAD, y)
+                buffFilterMode:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+                y = y - FORM_ROW
+
+                local onlyMyBuffs = GUI:CreateFormCheckbox(tabContent, "Only My Buffs", "buffFilterOnlyMine", auraDB, RefreshAuras)
+                onlyMyBuffs:SetPoint("TOPLEFT", PAD, y)
+                onlyMyBuffs:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+                y = y - FORM_ROW
+
+                local buffClass = auraDB.buffClassifications
+                local row = GUI:CreateFormCheckbox(tabContent, "Helpful", "helpful", buffClass, RefreshAuras)
+                row:SetPoint("TOPLEFT", PAD, y); row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0); buffClassRows[#buffClassRows + 1] = row; y = y - FORM_ROW
+                row = GUI:CreateFormCheckbox(tabContent, "Cancelable", "cancelable", buffClass, RefreshAuras)
+                row:SetPoint("TOPLEFT", PAD, y); row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0); buffClassRows[#buffClassRows + 1] = row; y = y - FORM_ROW
+                row = GUI:CreateFormCheckbox(tabContent, "Not Cancelable", "notCancelable", buffClass, RefreshAuras)
+                row:SetPoint("TOPLEFT", PAD, y); row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0); buffClassRows[#buffClassRows + 1] = row; y = y - FORM_ROW
+                row = GUI:CreateFormCheckbox(tabContent, "Important", "important", buffClass, RefreshAuras)
+                row:SetPoint("TOPLEFT", PAD, y); row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0); buffClassRows[#buffClassRows + 1] = row; y = y - FORM_ROW
+                row = GUI:CreateFormCheckbox(tabContent, "Big Defensive", "bigDefensive", buffClass, RefreshAuras)
+                row:SetPoint("TOPLEFT", PAD, y); row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0); buffClassRows[#buffClassRows + 1] = row; y = y - FORM_ROW
+                row = GUI:CreateFormCheckbox(tabContent, "External Defensive", "externalDefensive", buffClass, RefreshAuras)
+                row:SetPoint("TOPLEFT", PAD, y); row:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0); buffClassRows[#buffClassRows + 1] = row; y = y - FORM_ROW
+                UpdateBuffClassRows()
+            end
 
             -- Buff Preview toggle (pill-shaped, matches Castbar Preview style)
             local buffPreviewContainer = CreateFrame("Frame", nil, tabContent)

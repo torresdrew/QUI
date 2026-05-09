@@ -167,6 +167,28 @@ local function FormatDuration(remaining)
     return format("%dh", floor(remaining / 3600 + 0.5))
 end
 
+local function GetAuraDurationObject(unit, auraInstanceID)
+    if not unit or auraInstanceID == nil or IsSecretValue(auraInstanceID) then return nil end
+    if not C_UnitAuras or not C_UnitAuras.GetAuraDuration then return nil end
+
+    local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraInstanceID)
+    if ok and durationObj then
+        return durationObj
+    end
+    return nil
+end
+
+local function GetDurationObjectRemaining(durationObj)
+    if not durationObj or type(durationObj) == "number" then return nil end
+    if not durationObj.GetRemainingDuration then return nil end
+
+    local ok, remaining = pcall(durationObj.GetRemainingDuration, durationObj)
+    if ok and remaining ~= nil and not IsSecretValue(remaining) then
+        return tonumber(remaining)
+    end
+    return nil
+end
+
 local trackedDurationChildren = {}
 do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "BB_durationTrack", tbl = trackedDurationChildren } end
 
@@ -199,13 +221,19 @@ sharedDurationTimer:SetScript("OnUpdate", function(_, elapsed)
         if fs then
             if not child:IsShown() then
                 fs:SetText("")
+            elseif child._quiUseNativeDuration then
+                fs:SetText("")
             else
                 local exp = child._quiExpiration
                 local dur = child._quiDuration_secs
-                -- During combat aura fields can be secret values; preserve the
-                -- previous text rather than blanking, so the display doesn't
-                -- flicker each tick.
-                if not (IsSecretValue(exp) or IsSecretValue(dur)) then
+                -- Restricted instances can redact numeric aura fields. Prefer
+                -- the aura DurationObject when available so refreshed buffs
+                -- update immediately instead of ticking from old expiration
+                -- fields.
+                local durationObjRemaining = GetDurationObjectRemaining(child._quiDurationObject)
+                if durationObjRemaining ~= nil then
+                    fs:SetText(FormatDuration(durationObjRemaining))
+                elseif not (IsSecretValue(exp) or IsSecretValue(dur)) then
                     local expN = tonumber(exp) or 0
                     local durN = tonumber(dur) or 0
                     if expN > 0 and durN > 0 then
@@ -496,9 +524,22 @@ local function StyleHeaderChildren(header, settings, isBuff)
                 true
             )
             -- Custom duration text (Blizzard's countdown floors; we round to nearest)
-            EnsureDurationText(child)
+            local durationText = EnsureDurationText(child)
             child._quiExpiration = data.expirationTime
             child._quiDuration_secs = data.duration
+            child._quiDurationObject = GetAuraDurationObject("player", data.auraInstanceID)
+            local hasReadableNumericDuration =
+                not (IsSecretValue(data.expirationTime) or IsSecretValue(data.duration))
+                and tonumber(data.expirationTime) ~= nil
+                and tonumber(data.duration) ~= nil
+            local hasReadableObjectDuration = GetDurationObjectRemaining(child._quiDurationObject) ~= nil
+            child._quiUseNativeDuration = not (hasReadableNumericDuration or hasReadableObjectDuration)
+            if child._quiUseNativeDuration then
+                durationText:SetText("")
+            end
+            if child.Cooldown.SetHideCountdownNumbers then
+                pcall(child.Cooldown.SetHideCountdownNumbers, child.Cooldown, not child._quiUseNativeDuration)
+            end
             -- Swipe settings
             local showSwipe = not settings.hideSwipe
             child.Cooldown:SetDrawSwipe(showSwipe)

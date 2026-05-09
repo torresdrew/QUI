@@ -222,6 +222,21 @@ local function ClearTickAuraCache()
     _nextAuraCachePrune = 0
 end
 
+local function ClearTickAuraCacheForInstance(instanceID)
+    if instanceID == nil or Helpers.IsSecretValue(instanceID) then return end
+
+    _tickAuraDataCache[instanceID] = nil
+    _tickAuraDurationCache[instanceID] = nil
+    _tickAuraExpirationCache[instanceID] = nil
+    _tickAuraExpirationResolved[instanceID] = nil
+    _tickAuraApplicationCache[instanceID] = nil
+    _tickAuraApplicationResolved[instanceID] = nil
+    _tickAuraDataCacheTime[instanceID] = nil
+    _tickAuraDurationCacheTime[instanceID] = nil
+    _tickAuraExpirationCacheTime[instanceID] = nil
+    _tickAuraApplicationCacheTime[instanceID] = nil
+end
+
 local function GetTickAuraCacheNow()
     local now = _tickAuraCacheNow
     if not now or now == 0 then
@@ -299,7 +314,8 @@ local function CaptureAuraFromPayload(unit, ad)
     local instID = ad.auraInstanceID
     -- instID itself must be a clean number for use as a table key. If it's
     -- secret (rare — usually it's the only clean field on AuraData), skip.
-    if not instID or Helpers.IsSecretValue(instID) then return end
+    if instID == nil or Helpers.IsSecretValue(instID) then return end
+    ClearTickAuraCacheForInstance(instID)
 
     -- spellId and name come back as secret values when the addedAuras
     -- payload fires under restricted-scope (mid-combat re-application of
@@ -334,7 +350,9 @@ local function CaptureAuraFromPayload(unit, ad)
 end
 
 local function ReleaseCapturedAuraByInstanceID(instID)
-    if not instID then return end
+    if instID == nil or Helpers.IsSecretValue(instID) then return end
+    ClearTickAuraCacheForInstance(instID)
+
     local sid = _capturedAuraIDToSpellID[instID]
     if sid then
         _capturedAuraBySpellID[sid] = nil
@@ -403,6 +421,11 @@ auraCaptureFrame:SetScript("OnEvent", function(self, event, unit, updateInfo)
     if updateInfo.addedAuras then
         for _, ad in ipairs(updateInfo.addedAuras) do
             CaptureAuraFromPayload(unit, ad)
+        end
+    end
+    if updateInfo.updatedAuraInstanceIDs then
+        for _, uid in ipairs(updateInfo.updatedAuraInstanceIDs) do
+            ClearTickAuraCacheForInstance(uid)
         end
     end
     if updateInfo.removedAuraInstanceIDs then

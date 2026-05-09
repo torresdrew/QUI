@@ -51,8 +51,14 @@ local QUAZII_FONT_PATH = [[Interface\AddOns\QUI\assets\Quazii.ttf]]
 --   - Chat frames: per-frame SetFont below
 --   - ObjectiveTracker: per-frame ApplyFontToFrameRecursive below
 
--- Track if hooks are already set up (one-time)
-local globalFontHooksInitialized = false
+-- Track if hooks are already set up (one-time per API; some Blizzard frames
+-- are loaded lazily, so hook setup is retried until each target exists).
+local objectiveTrackerFrameHooked = false
+local objectiveTrackerAddObjectiveHooked = false
+local objectiveTrackerSetHeaderHooked = false
+local chatFontHooksInitialized = false
+local originalGlobalFonts = ns.Helpers.CreateStateTable()
+local originalChatFonts = ns.Helpers.CreateStateTable()
 
 local function GetGlobalFontPath()
     if not QUICore.db or not QUICore.db.profile or not QUICore.db.profile.general then
@@ -63,12 +69,73 @@ local function GetGlobalFontPath()
     return fontPath or QUAZII_FONT_PATH
 end
 
+local function IsGlobalFontEnabled()
+    return QUICore.db
+        and QUICore.db.profile
+        and QUICore.db.profile.general
+        and QUICore.db.profile.general.applyGlobalFontToBlizzard
+end
+
+local function GetGeneralSettings()
+    return QUICore.db and QUICore.db.profile and QUICore.db.profile.general
+end
+
 -- Apply font to a single FontString (preserving size/flags)
 local function ApplyFontToFontString(fontString, fontPath)
     if not fontString or not fontString.GetFont or not fontString.SetFont then return end
+    if fontString.IsForbidden and fontString:IsForbidden() then return end
+    local currentFont, size, flags = fontString:GetFont()
+    if size and size > 0 then
+        if not originalGlobalFonts[fontString] then
+            originalGlobalFonts[fontString] = { font = currentFont, flags = flags }
+        end
+        if currentFont ~= fontPath then
+            fontString:SetFont(fontPath, size, flags or "")
+        end
+    end
+end
+
+local function RestoreFontString(fontString)
+    if not fontString or not fontString.GetFont or not fontString.SetFont then return end
+    if fontString.IsForbidden and fontString:IsForbidden() then return end
+
+    local original = originalGlobalFonts[fontString]
+    if not original or not original.font then return end
+
     local _, size, flags = fontString:GetFont()
     if size and size > 0 then
-        fontString:SetFont(fontPath, size, flags or "")
+        fontString:SetFont(original.font, size, flags or original.flags or "")
+    end
+    originalGlobalFonts[fontString] = nil
+end
+
+local function ForEachFontStringInFrame(frame, callback)
+    if not frame then return end
+    if frame.IsForbidden and frame:IsForbidden() then return end
+
+    -- Skip UIWidget template frames (have widgetType) and widget containers
+    -- (have RegisterForWidgetSet). Their FontStrings are read by secure
+    -- Blizzard code that fails on tainted GetStringHeight() results.
+    if frame.widgetType or frame.RegisterForWidgetSet then return end
+
+    local okRegions, regions = pcall(function()
+        return { frame:GetRegions() }
+    end)
+    if okRegions then
+        for _, region in ipairs(regions) do
+            if region and region.IsObjectType and region:IsObjectType("FontString") then
+                callback(region)
+            end
+        end
+    end
+
+    local okChildren, children = pcall(function()
+        return { frame:GetChildren() }
+    end)
+    if okChildren then
+        for _, child in ipairs(children) do
+            ForEachFontStringInFrame(child, callback)
+        end
     end
 end
 
@@ -77,61 +144,125 @@ end
 -- Calling SetFont() on widget FontStrings taints them; Blizzard's
 -- ProcessWidget → Setup() then gets secret values from GetStringHeight().
 local function ApplyFontToFrameRecursive(frame, fontPath)
-    if not frame then return end
+    ForEachFontStringInFrame(frame, function(fontString)
+        ApplyFontToFontString(fontString, fontPath)
+    end)
+end
 
-    -- Skip UIWidget template frames (have widgetType) and widget containers
-    -- (have RegisterForWidgetSet). Their FontStrings are read by secure
-    -- Blizzard code that fails on tainted GetStringHeight() results.
-    if frame.widgetType or frame.RegisterForWidgetSet then return end
+local function RestoreFontInFrameRecursive(frame)
+    ForEachFontStringInFrame(frame, RestoreFontString)
+end
 
-    -- Apply to direct regions
-    local regions = { frame:GetRegions() }
-    for _, region in ipairs(regions) do
-        if region:IsObjectType("FontString") then
-            ApplyFontToFontString(region, fontPath)
-        end
+local function ApplyOrRestoreGlobalFontForFrame(frame, fontPath, shouldApply)
+    if shouldApply then
+        ApplyFontToFrameRecursive(frame, fontPath)
+    else
+        RestoreFontInFrameRecursive(frame)
+    end
+end
+
+function QUICore:ApplyGlobalFontToObjectiveTracker()
+    if not ObjectiveTrackerFrame then return end
+    local settings = GetGeneralSettings()
+    local shouldApply = IsGlobalFontEnabled()
+
+    -- If the objective tracker skin is enabled, its skin module owns tracker
+    -- typography. The global font system should not restore over it when the
+    -- global Blizzard font toggle is turned off.
+    if not shouldApply and settings and settings.skinObjectiveTracker then
+        return
     end
 
-    -- Recurse into children
-    local children = { frame:GetChildren() }
-    for _, child in ipairs(children) do
-        ApplyFontToFrameRecursive(child, fontPath)
+    ApplyOrRestoreGlobalFontForFrame(ObjectiveTrackerFrame, GetGlobalFontPath(), shouldApply)
+end
+
+function QUICore:ApplyGlobalFontToGameMenu()
+    if not GameMenuFrame then return end
+    local settings = GetGeneralSettings()
+    local shouldApply = IsGlobalFontEnabled()
+
+    -- Game menu skinning has its own font sizing and overlay text. When that
+    -- skin is active, disabling the global font should not undo the skin.
+    if not shouldApply and settings and settings.skinGameMenu then
+        return
+    end
+
+    ApplyOrRestoreGlobalFontForFrame(GameMenuFrame, GetGlobalFontPath(), shouldApply)
+end
+
+local function ApplyGlobalFontToChatFrames(fontPath, shouldApply)
+    for i = 1, (NUM_CHAT_WINDOWS or 0) do
+        local chatFrame = _G["ChatFrame" .. i]
+        if chatFrame and chatFrame.GetFont and chatFrame.SetFont then
+            local currentFont, size, flags = chatFrame:GetFont()
+            if size then
+                if shouldApply then
+                    if not originalChatFonts[chatFrame] then
+                        originalChatFonts[chatFrame] = { font = currentFont, flags = flags }
+                    end
+                    if currentFont ~= fontPath then
+                        chatFrame:SetFont(fontPath, size, flags or "")
+                    end
+                else
+                    local original = originalChatFonts[chatFrame]
+                    if original and original.font then
+                        chatFrame:SetFont(original.font, size, flags or original.flags or "")
+                        originalChatFonts[chatFrame] = nil
+                    end
+                end
+            end
+        end
     end
 end
 
 function QUICore:ApplyGlobalFont()
     -- Check if feature is enabled
     if not self.db or not self.db.profile or not self.db.profile.general then return end
-    if not self.db.profile.general.applyGlobalFontToBlizzard then return end
+    local shouldApply = IsGlobalFontEnabled()
 
     local fontPath = GetGlobalFontPath()
 
-    -- Set up hooks (one-time)
-    if not globalFontHooksInitialized then
-        globalFontHooksInitialized = true
-
-        -- Hook ObjectiveTracker updates (check if function exists - API varies by expansion)
-        if ObjectiveTrackerFrame then
-            -- TAINT SAFETY: Defer all work to break taint chain from secure context.
-            if type(ObjectiveTracker_Update) == "function" then
-                hooksecurefunc("ObjectiveTracker_Update", function()
-                    C_Timer.After(0, function()
-                        if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
-                        local fp = GetGlobalFontPath()
-                        ApplyFontToFrameRecursive(ObjectiveTrackerFrame, fp)
-                    end)
+    -- Hook ObjectiveTracker updates (check if function exists - API varies by expansion)
+    if not objectiveTrackerFrameHooked and ObjectiveTrackerFrame then
+        -- TAINT SAFETY: Defer all work to break taint chain from secure context.
+        if type(ObjectiveTracker_Update) == "function" then
+            hooksecurefunc("ObjectiveTracker_Update", function()
+                C_Timer.After(0, function()
+                    QUICore:ApplyGlobalFontToObjectiveTracker()
                 end)
-            else
-                -- Fallback: hook frame's OnShow for expansion versions without ObjectiveTracker_Update
-                ObjectiveTrackerFrame:HookScript("OnShow", function(self)
-                    C_Timer.After(0, function()
-                        if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
-                        local fp = GetGlobalFontPath()
-                        ApplyFontToFrameRecursive(self, fp)
-                    end)
+            end)
+        else
+            -- Fallback: hook frame's OnShow for expansion versions without ObjectiveTracker_Update
+            ObjectiveTrackerFrame:HookScript("OnShow", function(self)
+                C_Timer.After(0, function()
+                    QUICore:ApplyGlobalFontToObjectiveTracker()
                 end)
-            end
+            end)
         end
+        objectiveTrackerFrameHooked = true
+    end
+
+    if not objectiveTrackerAddObjectiveHooked and ObjectiveTrackerBlockMixin and ObjectiveTrackerBlockMixin.AddObjective then
+        hooksecurefunc(ObjectiveTrackerBlockMixin, "AddObjective", function()
+            C_Timer.After(0, function()
+                QUICore:ApplyGlobalFontToObjectiveTracker()
+            end)
+        end)
+        objectiveTrackerAddObjectiveHooked = true
+    end
+
+    if not objectiveTrackerSetHeaderHooked and ObjectiveTrackerBlockMixin and ObjectiveTrackerBlockMixin.SetHeader then
+        hooksecurefunc(ObjectiveTrackerBlockMixin, "SetHeader", function()
+            C_Timer.After(0, function()
+                QUICore:ApplyGlobalFontToObjectiveTracker()
+            end)
+        end)
+        objectiveTrackerSetHeaderHooked = true
+    end
+
+    -- Set up chat hooks (one-time)
+    if not chatFontHooksInitialized then
+        chatFontHooksInitialized = true
 
         -- Tooltip font display is handled per-instance by
         -- skinning/system/tooltips.lua (ApplyTooltipFontSizeToFrame).
@@ -144,11 +275,14 @@ function QUICore:ApplyGlobalFont()
             -- TAINT SAFETY: Defer to break taint chain from secure context.
             hooksecurefunc("FCF_SetChatWindowFontSize", function(chatFrame, fontSize)
                 C_Timer.After(0, function()
-                    if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
+                    if not IsGlobalFontEnabled() then return end
                     local fp = GetGlobalFontPath()
                     if chatFrame and type(chatFrame.GetFont) == "function" and type(chatFrame.SetFont) == "function" then
                         -- Apply global font directly to ScrollingMessageFrame (not just children)
-                        local _, size, flags = chatFrame:GetFont()
+                        local currentFont, size, flags = chatFrame:GetFont()
+                        if not originalChatFonts[chatFrame] then
+                            originalChatFonts[chatFrame] = { font = currentFont, flags = flags }
+                        end
                         chatFrame:SetFont(fp, fontSize or size or 14, flags or "")
                     end
                 end)
@@ -161,32 +295,19 @@ function QUICore:ApplyGlobalFont()
         chatFontEventFrame:RegisterEvent("UPDATE_FLOATING_CHAT_WINDOWS")
         chatFontEventFrame:SetScript("OnEvent", function()
             if not QUICore.db or not QUICore.db.profile then return end
-            if not QUICore.db.profile.general.applyGlobalFontToBlizzard then return end
+            if not IsGlobalFontEnabled() then return end
             C_Timer.After(0.05, function()
                 local fp = GetGlobalFontPath()
-                for i = 1, NUM_CHAT_WINDOWS do
-                    local chatFrame = _G["ChatFrame" .. i]
-                    if chatFrame and chatFrame.SetFont then
-                        local _, size, flags = chatFrame:GetFont()
-                        if size then
-                            chatFrame:SetFont(fp, size, flags or "")
-                        end
-                    end
-                end
+                ApplyGlobalFontToChatFrames(fp, true)
             end)
         end)
     end
 
+    self:ApplyGlobalFontToObjectiveTracker()
+    self:ApplyGlobalFontToGameMenu()
+
     -- Apply to existing chat frames (SetFont on the frame itself for new message persistence)
-    for i = 1, NUM_CHAT_WINDOWS do
-        local chatFrame = _G["ChatFrame" .. i]
-        if chatFrame and chatFrame.SetFont then
-            local _, size, flags = chatFrame:GetFont()
-            if size then
-                chatFrame:SetFont(fontPath, size, flags or "")
-            end
-        end
-    end
+    ApplyGlobalFontToChatFrames(fontPath, shouldApply)
 
     -- Tooltip fonts are applied per-instance by skinning/system/tooltips.lua.
     -- Recursive application here would taint UIWidget child FontStrings.
@@ -194,7 +315,7 @@ function QUICore:ApplyGlobalFont()
     -- Override scrolling combat text (floating damage/heal numbers) font.
     -- DAMAGE_TEXT_FONT is a simple global string variable used by Blizzard's
     -- CombatText system — safe to override without taint concerns.
-    if self.db.profile.general.overrideSCTFont then
+    if shouldApply and self.db.profile.general.overrideSCTFont then
         _G.DAMAGE_TEXT_FONT = fontPath
     end
 end
