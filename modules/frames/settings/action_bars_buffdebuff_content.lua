@@ -13,6 +13,20 @@ local GROW_DIRECTION_OPTIONS = {
     { value = "left_up",    text = "Left then Up" },
 }
 
+-- Sort rule keys mirror SORT_TRANSLATIONS in modules/ui/buffborders.lua, which
+-- maps each key to a UnitAuraSortRule enum (for GetUnitAuras) AND the legacy
+-- SecureAuraHeader sortMethod string. Both must change together — single
+-- source of truth lives in buffborders.lua's translation table.
+local SORT_OPTIONS = {
+    { value = "INDEX",         text = "API order (raw slot)" },
+    { value = "DEFAULT",       text = "Default (player-applied first)" },
+    { value = "EXPIRY",        text = "Expiration (player-first, soonest)" },
+    { value = "EXPIRY_ONLY",   text = "Expiration only (soonest)" },
+    { value = "NAME",          text = "Name (player-first, A\226\134\146Z)" },
+    { value = "NAME_ONLY",     text = "Name only (A\226\134\146Z)" },
+    { value = "BIG_DEFENSIVE", text = "Big Defensive priority" },
+}
+
 local function RefreshBuffBorders()
     if Opts and Opts.RefreshBuffBorders then
         Opts.RefreshBuffBorders()
@@ -183,6 +197,93 @@ local function BuildAuraSection(tabContent, headerAt, sectionAt, closeSection, s
         Opts.BuildSettingRow(text.frame, "Duration Y Offset", durationY)
     )
     closeSection(text)
+
+    -- Filters section. spec.filters is a list of { dbKey, label, description };
+    -- spec.filterMutex (optional) is a list of {a, b} pairs whose toggles
+    -- mutually exclude each other — turning one ON force-clears the partner
+    -- and dithers + click-locks it via SetEnabled (alpha 0.4 + EnableMouse=false).
+    if spec.filters and #spec.filters > 0 then
+        local filterCard = sectionAt()
+        local boxes = {}
+
+        local function UpdateMutex()
+            if not spec.filterMutex then return end
+            for _, pair in ipairs(spec.filterMutex) do
+                local a, b = pair[1], pair[2]
+                local aBox, bBox = boxes[a], boxes[b]
+                if aBox and bBox then
+                    local aVal = settings[a]
+                    local bVal = settings[b]
+                    -- Defensive: if both true on entry (hand-edited SV), clear b
+                    -- so neither toggle is stuck "checked while disabled".
+                    if aVal and bVal then
+                        settings[b] = false
+                        bBox:Refresh()
+                        bVal = false
+                    end
+                    aBox:SetEnabled(not bVal)
+                    bBox:SetEnabled(not aVal)
+                end
+            end
+        end
+
+        local function MakeFilterOnChange(dbKey)
+            return function(val)
+                if val and spec.filterMutex then
+                    for _, pair in ipairs(spec.filterMutex) do
+                        local partner
+                        if pair[1] == dbKey then partner = pair[2]
+                        elseif pair[2] == dbKey then partner = pair[1]
+                        end
+                        if partner and settings[partner] then
+                            settings[partner] = false
+                            if boxes[partner] then boxes[partner]:Refresh() end
+                        end
+                    end
+                end
+                UpdateMutex()
+                RefreshBuffBorders()
+            end
+        end
+
+        for _, f in ipairs(spec.filters) do
+            boxes[f.dbKey] = GUI:CreateFormToggle(filterCard.frame, nil, f.dbKey, settings,
+                MakeFilterOnChange(f.dbKey),
+                { description = f.description })
+        end
+
+        for i = 1, #spec.filters, 2 do
+            local f1 = spec.filters[i]
+            local f2 = spec.filters[i + 1]
+            if f2 then
+                filterCard.AddRow(
+                    Opts.BuildSettingRow(filterCard.frame, f1.label, boxes[f1.dbKey]),
+                    Opts.BuildSettingRow(filterCard.frame, f2.label, boxes[f2.dbKey])
+                )
+            else
+                filterCard.AddRow(
+                    Opts.BuildSettingRow(filterCard.frame, f1.label, boxes[f1.dbKey])
+                )
+            end
+        end
+
+        UpdateMutex()
+        closeSection(filterCard)
+    end
+
+    -- Sort section: dropdown + reverse toggle.
+    if spec.sortRuleKey then
+        local sortCard = sectionAt()
+        local sortDropdown = GUI:CreateFormDropdown(sortCard.frame, nil, SORT_OPTIONS, spec.sortRuleKey, settings, RefreshBuffBorders, nil,
+            { description = "Sort order. Sent to both the secure header and C_UnitAuras.GetUnitAuras so child\226\134\148aura pairing stays valid." })
+        local sortReverse = GUI:CreateFormToggle(sortCard.frame, nil, spec.sortReverseKey, settings, RefreshBuffBorders,
+            { description = "Flip the sort order. With Expiration sort this swaps soonest-first \226\134\148 longest-first." })
+        sortCard.AddRow(
+            Opts.BuildSettingRow(sortCard.frame, "Sort", sortDropdown),
+            Opts.BuildSettingRow(sortCard.frame, "Reverse", sortReverse)
+        )
+        closeSection(sortCard)
+    end
 end
 
 local function BuildBuffDebuffTab(tabContent)
@@ -258,6 +359,23 @@ local function BuildBuffDebuffTab(tabContent)
         borderDescription = "Draw borders around buff icons.",
         hideDescription = "Hide the buff frame entirely, even when hovering its anchor area.",
         fadeDescription = "Fade the buff frame out until you hover it.",
+        filters = {
+            { dbKey = "buffFilterPlayer",        label = "Only My Buffs (PLAYER)",
+              description = "Show only buffs you applied yourself. Hides everything cast on you by others." },
+            { dbKey = "buffFilterRaid",          label = "Only Raid-Relevant (RAID)",
+              description = "Show only buffs flagged as raid-relevant for your class \226\128\148 typically the ones you'd track on a raid frame." },
+            { dbKey = "buffFilterCancelable",    label = "Only Cancellable",
+              description = "Show only buffs you can right-click to cancel. Excludes most consumables, talents, and gear procs. Mutually exclusive with Only Persistent." },
+            { dbKey = "buffFilterNotCancelable", label = "Only Persistent",
+              description = "Show only buffs that cannot be cancelled \226\128\148 flasks, food, world buffs, gear procs, and similar. Mutually exclusive with Only Cancellable." },
+            { dbKey = "buffFilterBigDefensive",  label = "Big Defensive Only",
+              description = "Show only big-defensive buffs (Aspect of the Turtle, Divine Shield, Ice Block, etc.). Patch 12.0.1+." },
+        },
+        filterMutex = {
+            { "buffFilterCancelable", "buffFilterNotCancelable" },
+        },
+        sortRuleKey = "buffSortRule",
+        sortReverseKey = "buffSortReverse",
     })
 
     BuildAuraSection(tabContent, headerAt, sectionAt, closeSection, settings, {
@@ -282,6 +400,22 @@ local function BuildBuffDebuffTab(tabContent)
         borderDescription = "Draw borders around debuff icons.",
         hideDescription = "Hide the debuff frame entirely, even when hovering its anchor area.",
         fadeDescription = "Fade the debuff frame out until you hover it.",
+        filters = {
+            { dbKey = "debuffFilterPlayer",                label = "Only My Debuffs (PLAYER)",
+              description = "Show only debuffs you applied \226\128\148 useful for DoT trackers and similar." },
+            { dbKey = "debuffFilterRaid",                  label = "Only Raid-Relevant (RAID)",
+              description = "Show only debuffs flagged as raid-relevant \226\128\148 typically what raid frames would surface." },
+            { dbKey = "debuffFilterIncludeNameplateOnly",  label = "Include Nameplate-Only",
+              description = "Expand results to include auras flagged for nameplate-only display, which are normally hidden from the debuff frame." },
+            { dbKey = "debuffFilterRaidPlayerDispellable", label = "Only Dispellable by You",
+              description = "Show only debuffs whose dispel type your class can remove. Patch 12.0.1+." },
+            { dbKey = "debuffFilterImportant",             label = "Important Spells Only",
+              description = "Show only spells flagged as important by C_Spell.IsSpellImportant. Patch 12.0.1+." },
+            { dbKey = "debuffFilterCrowdControl",          label = "Crowd Control Only",
+              description = "Show only crowd-control effects (stuns, fears, roots, etc.). Patch 12.0.1+." },
+        },
+        sortRuleKey = "debuffSortRule",
+        sortReverseKey = "debuffSortReverse",
     })
 
     tabContent:SetHeight(math.abs(y) + 40)

@@ -196,7 +196,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         U.CreateCollapsible(content, "General", 6 * FORM_ROW + 8, function(body)
             local sy = -4
             sy = P(GUI:CreateFormCheckbox(body, "Lock Position", "isLocked", ra, Refresh, { description = "Lock the rotation assist icon so it can't be accidentally dragged from its current position." }), body, sy)
-            sy = P(GUI:CreateFormCheckbox(body, "Cooldown Swipe", "cooldownSwipeEnabled", ra, Refresh, { description = "Show the clockwise cooldown swipe animation over the spell icon." }), body, sy)
+            sy = P(GUI:CreateFormCheckbox(body, "GCD Swipe", "cooldownSwipeEnabled", ra, Refresh, { description = "Show the global cooldown sweep (~1.5s) over the recommended spell icon." }), body, sy)
             sy = P(GUI:CreateFormDropdown(body, "Visibility", {{value="always",text="Always"},{value="combat",text="In Combat"},{value="hostile",text="Hostile Target"}}, "visibility", ra, Refresh, { description = "When to show the icon: always visible, only in combat, or only when you have a hostile target." }), body, sy)
             sy = P(GUI:CreateFormDropdown(body, "Frame Strata", {{value="LOW",text="Low"},{value="MEDIUM",text="Medium"}}, "frameStrata", ra, Refresh, { description = "Draw layer for the icon. Medium sits above most UI; Low sits underneath nameplates and other mid-layer elements." }), body, sy)
             sy = P(GUI:CreateFormSlider(body, "Icon Size", 16, 400, 1, "iconSize", ra, Refresh, nil, { description = "Pixel size of the spell icon." }), body, sy)

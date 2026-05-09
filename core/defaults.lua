@@ -3354,6 +3354,27 @@ local defaults = {
             debuffDurationTextAnchor = "CENTER",
             debuffDurationTextOffsetX = 0,
             debuffDurationTextOffsetY = 0,
+            -- Filter flags (HELPFUL/HARMFUL is implicit per frame). Each enabled
+            -- flag is appended to the AuraFilters string passed to both the
+            -- SecureAuraHeader and C_UnitAuras.GetUnitAuras — they must stay in
+            -- sync or child↔aura pairing breaks.
+            buffFilterPlayer = false,
+            buffFilterRaid = false,
+            buffFilterCancelable = false,
+            buffFilterNotCancelable = false,
+            buffFilterBigDefensive = false,
+            debuffFilterPlayer = false,
+            debuffFilterRaid = false,
+            debuffFilterIncludeNameplateOnly = false,
+            debuffFilterRaidPlayerDispellable = false,
+            debuffFilterImportant = false,
+            debuffFilterCrowdControl = false,
+            -- Sort: keys map to SORT_TRANSLATIONS in modules/ui/buffborders.lua.
+            -- INDEX = raw API slot order (matches existing behavior pre-3.6).
+            buffSortRule = "INDEX",
+            buffSortReverse = false,
+            debuffSortRule = "INDEX",
+            debuffSortReverse = false,
         },
         
         -- QUI Autohides

@@ -351,20 +351,6 @@ function CDMBlizzMirror.GetStateByCooldownID(cooldownID)
     return PackState(cooldownID)
 end
 
--- "Look up across the aura viewers" helper. For an entry that *might* be
--- a player buff or a target debuff, check buff first, then trackedBar,
--- and return whichever matches. Cooldown resolvers should use the
--- explicit GetMirroredStateForViewer with their entry.viewerType — this
--- helper is for legacy paths still discovering which viewer hosts an aura.
-function CDMBlizzMirror.GetAuraStateForSpellID(spellID)
-    if not spellID then return nil end
-    local cdID = _directCDIDByCatSpell.buff[spellID]
-        or _directCDIDByCatSpell.trackedBar[spellID]
-        or _cdIDByCatSpell.buff[spellID]
-        or _cdIDByCatSpell.trackedBar[spellID]
-    return PackState(cdID)
-end
-
 ---------------------------------------------------------------------------
 -- Custom-bar / unknown-viewer helpers.
 --
@@ -372,14 +358,11 @@ end
 -- CDM children live in any category (essential / utility / buff /
 -- trackedBar). The bar's own viewerType is a QUI identifier, not a
 -- CooldownViewer category, so the resolver can't gate on viewerType to
--- find the right child. These helpers probe the categories in priority
--- order:
---   * Cooldown probe: essential -> utility   (cooldown-only viewers)
---   * Aura probe:     buff      -> trackedBar (player buffs / target debuffs)
--- The first category whose map contains the spellID wins. Built-in
--- containers should still pass their explicit viewerType to
--- GetMirroredStateForViewer; these helpers exist for the custom-bar
--- and `unknown viewerType` cases only.
+-- find the right child. FindCooldownState/FindCooldownInfo probe the
+-- cooldown viewers in priority order (essential -> utility); the first
+-- category whose map contains the spellID wins. Built-in containers should
+-- still pass their explicit viewerType to GetMirroredStateForViewer;
+-- these helpers exist for the custom-bar and `unknown viewerType` cases.
 ---------------------------------------------------------------------------
 function CDMBlizzMirror.FindCooldownState(spellID)
     if not spellID then return nil end
@@ -388,26 +371,10 @@ function CDMBlizzMirror.FindCooldownState(spellID)
     return PackState(cdID)
 end
 
-function CDMBlizzMirror.FindAuraState(spellID)
-    if not spellID then return nil end
-    local cdID = _directCDIDByCatSpell.buff[spellID]
-        or _directCDIDByCatSpell.trackedBar[spellID]
-        or _cdIDByCatSpell.buff[spellID]
-        or _cdIDByCatSpell.trackedBar[spellID]
-    return PackState(cdID)
-end
-
 function CDMBlizzMirror.FindCooldownInfo(spellID)
     if not spellID then return nil end
     local cdID = _cdIDByCatSpell.essential[spellID]
         or _cdIDByCatSpell.utility[spellID]
-    return cdID and _cooldownInfoByID[cdID] or nil
-end
-
-function CDMBlizzMirror.FindAuraInfo(spellID)
-    if not spellID then return nil end
-    local cdID = _cdIDByCatSpell.buff[spellID]
-        or _cdIDByCatSpell.trackedBar[spellID]
     return cdID and _cooldownInfoByID[cdID] or nil
 end
 
@@ -421,15 +388,6 @@ function CDMBlizzMirror.FindCategoryForSpellID(spellID)
     if _cdIDByCatSpell.buff[spellID]       then return "buff"       end
     if _cdIDByCatSpell.trackedBar[spellID] then return "trackedBar" end
     return nil
-end
-
-function CDMBlizzMirror.IsTrackedSpellID(spellID)
-    if not spellID then return false end
-    return _cdIDByCatSpell.essential[spellID]
-        or _cdIDByCatSpell.utility[spellID]
-        or _cdIDByCatSpell.buff[spellID]
-        or _cdIDByCatSpell.trackedBar[spellID]
-        and true or false
 end
 
 -- Returns the CooldownViewer info struct (hasAura, selfAura, linkedSpellIDs,
@@ -715,117 +673,14 @@ end
 --
 -- Toggle: /run QUI_CDM_TAINT_DEBUG = true; /rl
 --
--- Instrumented call sites use TaintLog(label, k1, v1, k2, v2, ...) to
--- emit a single line describing each field's secrecy status. Secrets
--- are rendered as "<SECRET:type>" so the message string itself never
--- carries secret content (table.concat / SetText both work). Non-secret
--- values render with their type and literal value, so we can see
--- exactly what we're comparing against.
---
--- Output goes to a draggable on-screen FontString frame
--- (QUI_CDMTaintDebugFrame) — print/chat would crash if any value
--- managed to slip through unstripped.
+-- Implementation lives in cdm_debug.lua. The placeholder below is rebound
+-- by cdm_debug.lua's BindAll() at the end of its load; cdm_debug.lua
+-- also re-attaches the public CDMBlizzMirror.TaintLog method.
 ---------------------------------------------------------------------------
-local function _formatTaintField(name, v)
-    local prefix = tostring(name) .. "="
-    if issecretvalue and issecretvalue(v) then
-        return prefix .. "<SECRET:" .. type(v) .. ">"
-    end
-    if v == nil then return prefix .. "nil" end
-    local t = type(v)
-    if t == "boolean" then return prefix .. (v and "true" or "false") .. ":bool" end
-    if t == "number"  then return prefix .. tostring(v) .. ":num" end
-    if t == "string"  then return prefix .. "\"" .. v .. "\":str" end
-    return prefix .. "<" .. t .. ">"
+local TaintLog = function() end
+function CDMBlizzMirror.TaintLog(...)
+    return TaintLog(...)
 end
-
--- Scrolling EditBox-based panel: each TaintLog appends a line. EditBox
--- lets the user click to position the cursor and Ctrl+A / Ctrl+C to copy
--- a selection. Lines stack with proper line height (no overdraw). The
--- buffer keeps the last N messages so the EditBox text stays bounded
--- (huge text in a single SetText causes UI lag).
-local _taintFrame
-local _taintEditBox
-local _taintScroll
-local _taintBuffer = {}
-local _taintBufferMax = 200
-local _taintAutoScroll = true
-
-local function _ensureTaintFrame()
-    if _taintFrame then return end
-    _taintFrame = CreateFrame("Frame", "QUI_CDMTaintDebugFrame", UIParent)
-    _taintFrame:SetSize(1100, 500)
-    _taintFrame:SetPoint("TOPLEFT", 60, -50)
-    _taintFrame:SetFrameStrata("DIALOG")
-    _taintFrame:EnableMouse(true)
-    _taintFrame:SetMovable(true)
-    _taintFrame:RegisterForDrag("LeftButton")
-    _taintFrame:SetScript("OnDragStart", _taintFrame.StartMoving)
-    _taintFrame:SetScript("OnDragStop", _taintFrame.StopMovingOrSizing)
-
-    local bg = _taintFrame:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetColorTexture(0, 0, 0, 0.85)
-
-    local title = _taintFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    title:SetPoint("TOPLEFT", 8, -4)
-    title:SetText("|cffFF6699[CDM Taint]|r drag to move \194\183 click text to select \194\183 Ctrl+A / Ctrl+C to copy \194\183 ESC to unfocus")
-
-    _taintScroll = CreateFrame("ScrollFrame", "QUI_CDMTaintDebugScroll", _taintFrame, "UIPanelScrollFrameTemplate")
-    _taintScroll:SetPoint("TOPLEFT", 8, -22)
-    _taintScroll:SetPoint("BOTTOMRIGHT", -28, 8)
-
-    _taintEditBox = CreateFrame("EditBox", nil, _taintScroll)
-    _taintEditBox:SetMultiLine(true)
-    _taintEditBox:SetMaxLetters(0)
-    _taintEditBox:SetFontObject("GameFontHighlightSmall")
-    _taintEditBox:SetWidth(1060)
-    _taintEditBox:SetAutoFocus(false)
-    _taintEditBox:EnableMouse(true)
-    _taintEditBox:SetScript("OnEscapePressed", _taintEditBox.ClearFocus)
-    -- Pause auto-scroll while the user has focus (so we don't yank them
-    -- away from the line they're highlighting). Resume on un-focus.
-    _taintEditBox:SetScript("OnEditFocusGained", function() _taintAutoScroll = false end)
-    _taintEditBox:SetScript("OnEditFocusLost",   function() _taintAutoScroll = true end)
-    _taintScroll:SetScrollChild(_taintEditBox)
-end
-
-function CDMBlizzMirror.TaintLog(label, ...)
-    if not _G.QUI_CDM_TAINT_DEBUG then return end
-    _ensureTaintFrame()
-    if not _taintEditBox then return end
-
-    local n = select("#", ...)
-    local message = "[Taint] " .. tostring(label)
-    for i = 1, n, 2 do
-        local k = select(i, ...)
-        local v = select(i + 1, ...)
-        message = message .. " | " .. _formatTaintField(k, v)
-    end
-
-    _taintBuffer[#_taintBuffer + 1] = message
-    while #_taintBuffer > _taintBufferMax do
-        table.remove(_taintBuffer, 1)
-    end
-
-    -- Rebuilding the full text on each log is O(N) but keeps the buffer
-    -- bounded and avoids managing cursor position. Acceptable up to ~200
-    -- lines × ~200 chars = 40KB.
-    _taintEditBox:SetText(table.concat(_taintBuffer, "\n"))
-
-    if _taintAutoScroll and _taintScroll then
-        -- Defer one frame so the EditBox lays out before we ask for the
-        -- max scroll value.
-        C_Timer.After(0, function()
-            if _taintScroll and _taintScroll.SetVerticalScroll then
-                local max = _taintScroll:GetVerticalScrollRange() or 0
-                _taintScroll:SetVerticalScroll(max)
-            end
-        end)
-    end
-end
-
-local TaintLog = CDMBlizzMirror.TaintLog
 
 ---------------------------------------------------------------------------
 -- CooldownInfo sanitization.
@@ -2474,3 +2329,13 @@ _eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     HandlePlayerTotemUpdate()
     CDMBlizzMirror.SyncSuppressionToMaster()
 end)
+
+---------------------------------------------------------------------------
+-- DEBUG IMPORT BINDING (rebound by cdm_debug.lua's BindAll())
+---------------------------------------------------------------------------
+function CDMBlizzMirror._BindDebugImports()
+    local d = ns.CDMDebug
+    if d then
+        TaintLog = d.Taint or TaintLog
+    end
+end

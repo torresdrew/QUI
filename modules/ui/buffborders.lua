@@ -25,9 +25,6 @@ local tremove = table.remove
 local CreateFrame = CreateFrame
 local GetTime = GetTime
 local InCombatLockdown = InCombatLockdown
-local format = string.format
-local floor = math.floor
-local ceil = math.ceil
 
 -- Private aura API (WoW 10.1.0+)
 local AddPrivateAuraAnchor = C_UnitAuras and C_UnitAuras.AddPrivateAuraAnchor
@@ -107,6 +104,77 @@ local BORDER_COLOR_BUFF = { 0, 0, 0 }
 local BORDER_COLOR_DEBUFF_DEFAULT = { 0.50, 0.00, 0.00 }
 
 ---------------------------------------------------------------------------
+-- AURA FILTER / SORT CONFIG
+--
+-- Filter flags and sort rules are exposed as user options. Both the secure
+-- header (string attributes) and C_UnitAuras.GetUnitAuras (enum args) must
+-- receive equivalent values so child[i] in the header pairs to auras[i] in
+-- the API result. Anything that diverges breaks the slot/index mapping the
+-- way GetAuraDataByIndex(child:GetID()) used to.
+---------------------------------------------------------------------------
+
+-- DB key (per-frame) → AuraFilters flag appended to the filter string.
+-- HELPFUL/HARMFUL is implicit on the per-frame call site.
+local BUFF_FILTER_FLAGS = {
+    { dbKey = "buffFilterPlayer",        flag = "PLAYER" },
+    { dbKey = "buffFilterRaid",          flag = "RAID" },
+    { dbKey = "buffFilterCancelable",    flag = "CANCELABLE" },
+    { dbKey = "buffFilterNotCancelable", flag = "NOT_CANCELABLE" },
+    { dbKey = "buffFilterBigDefensive",  flag = "BIG_DEFENSIVE" },
+}
+
+local DEBUFF_FILTER_FLAGS = {
+    { dbKey = "debuffFilterPlayer",                flag = "PLAYER" },
+    { dbKey = "debuffFilterRaid",                  flag = "RAID" },
+    { dbKey = "debuffFilterIncludeNameplateOnly",  flag = "INCLUDE_NAME_PLATE_ONLY" },
+    { dbKey = "debuffFilterRaidPlayerDispellable", flag = "RAID_PLAYER_DISPELLABLE" },
+    { dbKey = "debuffFilterImportant",             flag = "IMPORTANT" },
+    { dbKey = "debuffFilterCrowdControl",          flag = "CROWD_CONTROL" },
+}
+
+-- DB sort key → { rule = UnitAuraSortRule enum, legacy = SecureAuraHeader sortMethod }.
+-- The legacy header has only INDEX/TIME/NAME, so Default and BigDefensive map
+-- to their nearest legacy fit; the API side gets the precise enum.
+local _sortRules = (Enum and Enum.UnitAuraSortRule) or {}
+local SORT_TRANSLATIONS = {
+    INDEX        = { rule = _sortRules.Unsorted       or 0, legacy = "INDEX" },
+    DEFAULT      = { rule = _sortRules.Default        or 1, legacy = "INDEX" },
+    EXPIRY       = { rule = _sortRules.Expiration     or 3, legacy = "TIME"  },
+    EXPIRY_ONLY  = { rule = _sortRules.ExpirationOnly or 4, legacy = "TIME"  },
+    NAME         = { rule = _sortRules.Name           or 5, legacy = "NAME"  },
+    NAME_ONLY    = { rule = _sortRules.NameOnly       or 6, legacy = "NAME"  },
+    BIG_DEFENSIVE = { rule = _sortRules.BigDefensive  or 2, legacy = "INDEX" },
+}
+
+local _sortDirs = (Enum and Enum.UnitAuraSortDirection) or {}
+local SORT_DIR_NORMAL  = _sortDirs.Normal  or 0
+local SORT_DIR_REVERSE = _sortDirs.Reverse or 1
+
+local function BuildAuraFilter(settings, isBuff)
+    local s = isBuff and "HELPFUL" or "HARMFUL"
+    if not settings then return s end
+    local list = isBuff and BUFF_FILTER_FLAGS or DEBUFF_FILTER_FLAGS
+    for i = 1, #list do
+        local entry = list[i]
+        if settings[entry.dbKey] then
+            s = s .. " " .. entry.flag
+        end
+    end
+    return s
+end
+
+-- Returns: enumRule, legacyMethod, legacyDirection, enumDirection
+local function GetSortConfig(settings, isBuff)
+    local key = isBuff and (settings and settings.buffSortRule) or (settings and settings.debuffSortRule)
+    local cfg = SORT_TRANSLATIONS[key] or SORT_TRANSLATIONS.INDEX
+    local reverse = isBuff and (settings and settings.buffSortReverse) or (settings and settings.debuffSortReverse)
+    if reverse then
+        return cfg.rule, cfg.legacy, "-", SORT_DIR_REVERSE
+    end
+    return cfg.rule, cfg.legacy, "+", SORT_DIR_NORMAL
+end
+
+---------------------------------------------------------------------------
 -- STATE
 ---------------------------------------------------------------------------
 -- Weapon enchant cached total duration per slot
@@ -141,116 +209,19 @@ local paAnchorIDs = {}
 ---------------------------------------------------------------------------
 -- ICON STYLING
 ---------------------------------------------------------------------------
-local function ConfigureAuraCooldownFrame(cooldown, showCountdownNumbers)
+local function ConfigureAuraCooldownFrame(cooldown)
     if not cooldown then return end
 
     if cooldown.SetUseAuraDisplayTime then
         pcall(cooldown.SetUseAuraDisplayTime, cooldown, true)
     end
-    -- Blizzard's built-in countdown text floors remaining time, so when aura
-    -- timing is readable we render our own rounded text. In combat, timing
-    -- fields can be secret; let the C-side countdown render those safely.
+    -- Always render Blizzard's C-side countdown. The aura's remaining time
+    -- can be secret in combat; only the C-side renderer can format secret
+    -- numbers without surfacing them to Lua. No QUI Lua-side timer.
     if cooldown.SetHideCountdownNumbers then
-        pcall(cooldown.SetHideCountdownNumbers, cooldown, not showCountdownNumbers)
+        pcall(cooldown.SetHideCountdownNumbers, cooldown, false)
     end
 end
-
----------------------------------------------------------------------------
--- DURATION TEXT (round-to-nearest, replaces Blizzard's floor-rounded text)
----------------------------------------------------------------------------
--- Round to nearest hour above 1h, nearest minute above 1m, ceil seconds
--- below 1m. 2h45m -> "3h", 2h20m -> "2h", 59m -> "59m", 30s -> "30s".
-local function FormatDuration(remaining)
-    if remaining <= 0 then return "" end
-    if remaining < 60 then return format("%ds", ceil(remaining)) end
-    if remaining < 3600 then return format("%dm", floor(remaining / 60 + 0.5)) end
-    return format("%dh", floor(remaining / 3600 + 0.5))
-end
-
-local durationTextState, GetDurationTextState = Helpers.CreateStateTable()
-local trackedDurationChildren = {}
-do local mp = ns._memprobes or {}; ns._memprobes = mp; mp[#mp + 1] = { name = "BB_durationTrack", tbl = trackedDurationChildren } end
-
-local function EnsureDurationText(child)
-    local state = GetDurationTextState(child)
-    if state.fs then return state.fs end
-    local fs = child:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(GetGeneralFont(), 12, GetGeneralFontOutline() or "OUTLINE")
-    fs:SetPoint("CENTER", child, "CENTER", 0, 0)
-    fs:SetJustifyH("CENTER")
-    fs:SetTextColor(1, 1, 1, 1)
-    fs:SetShadowColor(0, 0, 0, 1)
-    fs:SetShadowOffset(1, -1)
-    fs:SetText("")
-    state.fs = fs
-    trackedDurationChildren[child] = true
-    return fs
-end
-
-local function ClearCustomDurationText(child)
-    local state = durationTextState[child]
-    if not state then return end
-    state.expiration = nil
-    state.duration = nil
-    state.customActive = nil
-    if state.fs then
-        pcall(state.fs.SetText, state.fs, "")
-        pcall(state.fs.Hide, state.fs)
-    end
-end
-
-local function HasCustomDurationText(child)
-    local state = durationTextState[child]
-    return state and state.fs ~= nil
-end
-
-local function NeedsCsideDurationText(child, timingIsSecret)
-    return timingIsSecret
-        or (InCombatLockdown() and not ns._inInitSafeWindow and not HasCustomDurationText(child))
-end
-
-local function UseCustomDurationText(child, expiration, duration)
-    local fs = EnsureDurationText(child)
-    local state = GetDurationTextState(child)
-    state.expiration = expiration
-    state.duration = duration
-    state.customActive = true
-    fs:Show()
-end
-
-local sharedDurationTimer = CreateFrame("Frame")
-local durationTimerElapsed = 0
-local DURATION_TIMER_INTERVAL = 0.2
-
-sharedDurationTimer:SetScript("OnUpdate", function(_, elapsed)
-    durationTimerElapsed = durationTimerElapsed + elapsed
-    if durationTimerElapsed < DURATION_TIMER_INTERVAL then return end
-    durationTimerElapsed = 0
-    local now = GetTime()
-    for child in pairs(trackedDurationChildren) do
-        local state = durationTextState[child]
-        local fs = state and state.fs
-        if fs then
-            if not child:IsShown() or not state.customActive then
-                fs:SetText("")
-            else
-                local exp = state.expiration
-                local dur = state.duration
-                -- Secret timing is normally handled by the C-side countdown.
-                -- If stale secret state survives here, preserve the last text.
-                if not (IsSecretValue(exp) or IsSecretValue(dur)) then
-                    local expN = tonumber(exp) or 0
-                    local durN = tonumber(dur) or 0
-                    if expN > 0 and durN > 0 then
-                        fs:SetText(FormatDuration(expN - now))
-                    else
-                        fs:SetText("")
-                    end
-                end
-            end
-        end
-    end
-end)
 
 local function StyleIcon(icon, settings, isBuff, debuffType)
     if not icon or not settings then return end
@@ -338,18 +309,6 @@ local function StyleIcon(icon, settings, isBuff, debuffType)
             pcall(cdText.SetPoint, cdText, cdAnchor, icon.Cooldown, cdAnchor, cdOffX, cdOffY)
         end
     end
-
-    -- Position the custom duration text we render in place of Blizzard's
-    -- countdown (see EnsureDurationText). Honors the same user settings.
-    do
-        local state = durationTextState[icon]
-        local fs = state and state.fs
-        if fs then
-            if fs.SetFont then fs:SetFont(font, fontSize, outline) end
-            pcall(fs.ClearAllPoints, fs)
-            pcall(fs.SetPoint, fs, cdAnchor, icon, cdAnchor, cdOffX, cdOffY)
-        end
-    end
 end
 
 ---------------------------------------------------------------------------
@@ -383,6 +342,16 @@ end
 local function SyncHeaderAttributes(header, settings, prefix)
     if InCombatLockdown() and not ns._inInitSafeWindow then return end
     if not header or not settings then return end
+
+    -- Filter string + sort attributes are settings-driven. SetAttribute on a
+    -- secure aura header is protected in combat — the early return above
+    -- defers all such writes until PLAYER_REGEN_ENABLED triggers a refresh.
+    local isBuff = (prefix == "buff")
+    local filterString = BuildAuraFilter(settings, isBuff)
+    header:SetAttribute("filter", filterString)
+    local _, legacyMethod, legacyDir = GetSortConfig(settings, isBuff)
+    header:SetAttribute("sortMethod", legacyMethod)
+    header:SetAttribute("sortDirection", legacyDir)
 
     local iconSize = settings[prefix .. "IconSize"] or 0
     if iconSize <= 0 then iconSize = DEFAULT_ICON_SIZE end
@@ -438,24 +407,31 @@ end
 local function StyleHeaderChildren(header, settings, isBuff)
     if not header or not settings then return end
 
-    local filter = isBuff and "HELPFUL" or "HARMFUL"
     local iconSize = settings[(isBuff and "buff" or "debuff") .. "IconSize"] or 0
     if iconSize <= 0 then iconSize = DEFAULT_ICON_SIZE end
     local prefix = isBuff and "buff" or "debuff"
     local visibleCount = 0
+
+    -- Filter string and sort rule MUST match what SyncHeaderAttributes wrote
+    -- to the secure header — child[i] in the header pairs to auras[i] only
+    -- when both sides see the same flags + ordering. Single source of truth:
+    -- BuildAuraFilter / GetSortConfig, both keyed off `settings`.
+    local filter = BuildAuraFilter(settings, isBuff)
+    local enumRule, _, _, enumDir = GetSortConfig(settings, isBuff)
+    local auras = C_UnitAuras.GetUnitAuras("player", filter, 40, enumRule, enumDir)
 
     for i = 1, 40 do
         local child = header:GetAttribute("child" .. i)
         if not child or not child:IsShown() then break end
         visibleCount = visibleCount + 1
 
-
-        -- Get aura data. GetAuraDataByIndex is "AllowedWhenTainted" — it
-        -- does not taint the execution context. But its return FIELDS are
-        -- secret values during combat. NEVER branch on them (if/and/or).
-        -- Pass directly to C-side functions which accept secrets natively.
-        local data = C_UnitAuras.GetAuraDataByIndex("player", child:GetID(), filter)
-        -- data is nil or a table — tables are not secret, nil check is safe.
+        -- Pair child[i] to auras[i] — both are in slot order. AuraData fields
+        -- can be ConditionalSecretContents in combat; pass directly to C-side
+        -- sinks (SetTexture, SetText, SetCooldownFromDurationObject) without
+        -- comparing or arithmetic. The auraInstanceID itself is the only
+        -- field we use as a Lua handle — and only as an arg to C_UnitAuras.*
+        -- calls that accept it.
+        local data = auras and auras[i]
         if not data then break end
 
         -- Resize child (out of combat only — protected on secure children)
@@ -519,12 +495,16 @@ local function StyleHeaderChildren(header, settings, isBuff)
             end)
         end
 
-        -- Aura cooldowns prefer DurationObjects for 12.0.5+ secret-safe updates,
-        -- and fall back to numeric timing only when the values are readable.
+        -- Cooldown swipe + text: both go fully C-side.
+        --   • Swipe via DurationObject (ApplyCooldownFromAura prefers
+        --     C_UnitAuras.GetAuraDuration → SetCooldownFromDurationObject —
+        --     never touches expirationTime/duration in Lua when an
+        --     auraInstanceID is available).
+        --   • Text via Blizzard's built-in countdown (ConfigureAuraCooldownFrame
+        --     calls SetHideCountdownNumbers(false)). Blizzard's C-side renderer
+        --     handles secret remaining time natively.
         if child.Cooldown then
-            local timingIsSecret = IsSecretValue(data.expirationTime) or IsSecretValue(data.duration)
-            local useCsideText = NeedsCsideDurationText(child, timingIsSecret)
-            ConfigureAuraCooldownFrame(child.Cooldown, useCsideText)
+            ConfigureAuraCooldownFrame(child.Cooldown)
             ApplyCooldownFromAura(
                 child.Cooldown,
                 "player",
@@ -533,13 +513,6 @@ local function StyleHeaderChildren(header, settings, isBuff)
                 data.duration,
                 true
             )
-            -- Custom duration text uses readable numeric fields. In combat,
-            -- secret timing is rendered by the CooldownFrame's C-side text.
-            if useCsideText then
-                ClearCustomDurationText(child)
-            else
-                UseCustomDurationText(child, data.expirationTime, data.duration)
-            end
             -- Swipe settings
             local showSwipe = not settings.hideSwipe
             child.Cooldown:SetDrawSwipe(showSwipe)
@@ -583,10 +556,10 @@ local function StyleHeaderChildren(header, settings, isBuff)
                 if child.Icon and texture then
                     pcall(child.Icon.SetTexture, child.Icon, texture)
                 end
-                -- Enchant cooldown from GetWeaponEnchantInfo
+                -- Enchant cooldown from GetWeaponEnchantInfo. Text rendered
+                -- by Blizzard's C-side countdown via ConfigureAuraCooldownFrame.
                 if child.Cooldown then
-                    local useCsideText = NeedsCsideDurationText(child, false)
-                    ConfigureAuraCooldownFrame(child.Cooldown, useCsideText)
+                    ConfigureAuraCooldownFrame(child.Cooldown)
                     local hasMain, mainExp, _, _, hasOff, offExp = GetWeaponEnchantInfo()
                     local expMs = (slot == 16) and (hasMain and mainExp) or (slot == 17) and (hasOff and offExp) or nil
                     if expMs and not IsSecretValue(expMs) and expMs > 0 then
@@ -597,14 +570,8 @@ local function StyleHeaderChildren(header, settings, isBuff)
                         local total = enchantCachedDuration[slot]
                         local startTime = GetTime() - (total - remainingSec)
                         pcall(child.Cooldown.SetCooldown, child.Cooldown, startTime, total)
-                        if useCsideText then
-                            ClearCustomDurationText(child)
-                        else
-                            UseCustomDurationText(child, GetTime() + remainingSec, total)
-                        end
                     else
                         pcall(child.Cooldown.Clear, child.Cooldown)
-                        ClearCustomDurationText(child)
                     end
                 end
                 StyleIcon(child, settings, true, nil)

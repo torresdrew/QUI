@@ -1559,11 +1559,16 @@ end
 --- @param cooldownFrame table
 --- @param spellID any
 --- @param reverse boolean|nil
+--- @param ignoreGCD boolean|nil Defaults to true. Pass false when rendering the
+---        GCD spell itself (61304); ignoreGCD=true returns nil for the GCD spell
+---        because it has no cooldown when the GCD is excluded.
 --- @return boolean applied True when a cooldown was applied
-function Helpers.ApplyCooldownFromSpell(cooldownFrame, spellID, reverse)
+function Helpers.ApplyCooldownFromSpell(cooldownFrame, spellID, reverse, ignoreGCD)
     if not cooldownFrame or not spellID then
         return false
     end
+
+    if ignoreGCD == nil then ignoreGCD = true end
 
     local start, duration, modRate, isActive = Helpers.ReadSpellCooldown(spellID)
     if not Helpers.IsCooldownActive(start, duration, isActive) then
@@ -1573,10 +1578,11 @@ function Helpers.ApplyCooldownFromSpell(cooldownFrame, spellID, reverse)
     local durationObj = nil
     if cooldownFrame.SetCooldownFromDurationObject
         and C_Spell and C_Spell.GetSpellCooldownDuration then
-        -- ignoreGCD=true so the swipe tracks the spell's real cooldown
-        -- instead of being overwritten by the 1.5s GCD sweep when the
-        -- spell goes on cooldown at the same instant the GCD starts.
-        local ok, fetchedDurationObj = pcall(C_Spell.GetSpellCooldownDuration, spellID, true)
+        -- ignoreGCD=true (default) so the swipe tracks the spell's real
+        -- cooldown instead of being overwritten by the 1.5s GCD sweep when
+        -- the spell goes on cooldown at the same instant the GCD starts.
+        -- Callers rendering the GCD spell itself must pass ignoreGCD=false.
+        local ok, fetchedDurationObj = pcall(C_Spell.GetSpellCooldownDuration, spellID, ignoreGCD)
         if ok and fetchedDurationObj then
             durationObj = fetchedDurationObj
         end

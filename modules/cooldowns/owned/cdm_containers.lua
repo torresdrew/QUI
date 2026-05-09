@@ -2258,6 +2258,37 @@ end
 ---------------------------------------------------------------------------
 -- REFRESH ALL
 ---------------------------------------------------------------------------
+-- Post-layout work shared by both sync and async paths: re-apply locked
+-- bars, anchored unit frames, mouseover state, swipe/glow, range poll, icon
+-- visibility, and container mouse state. Same body, same order; previously
+-- duplicated inline.
+local function RunPostLayoutRefresh()
+    UpdateAllLockedBars()
+    if _G.QUI_UpdateCDMAnchoredUnitFrames then
+        _G.QUI_UpdateCDMAnchoredUnitFrames()
+    end
+    if _G.QUI_RefreshCDMMouseover then
+        _G.QUI_RefreshCDMMouseover()
+    end
+    -- Apply swipe settings and glow state to newly created/rebuilt icons.
+    if _G.QUI_RefreshCooldownSwipe then
+        _G.QUI_RefreshCooldownSwipe()
+    end
+    if _G.QUI_RefreshCustomGlows then
+        _G.QUI_RefreshCustomGlows()
+    end
+    -- Sync range poll OnUpdate based on current settings.
+    if ns.CDMIcons and ns.CDMIcons.SyncRangePoll then
+        ns.CDMIcons:SyncRangePoll()
+    end
+    -- Reapply icon visibility after layout so "active only" display mode
+    -- hides inactive icons that LayoutContainer() showed.
+    if ns.CDMIcons and ns.CDMIcons.UpdateAllCooldowns then
+        ns.CDMIcons:UpdateAllCooldowns()
+    end
+    SyncAllContainerMouseStates(true)
+end
+
 RefreshAll = function(forceSync)
     if not initialized then
         return
@@ -2337,32 +2368,10 @@ RefreshAll = function(forceSync)
             ApplyUtilityAnchor()
         end
         LayoutContainer("buff")
-        -- Layout custom containers
         for _, key in ipairs(customKeys) do
             LayoutContainer(key)
         end
-        UpdateAllLockedBars()
-        if _G.QUI_UpdateCDMAnchoredUnitFrames then
-            _G.QUI_UpdateCDMAnchoredUnitFrames()
-        end
-        if _G.QUI_RefreshCDMMouseover then
-            _G.QUI_RefreshCDMMouseover()
-        end
-        if _G.QUI_RefreshCooldownSwipe then
-            _G.QUI_RefreshCooldownSwipe()
-        end
-        if _G.QUI_RefreshCustomGlows then
-            _G.QUI_RefreshCustomGlows()
-        end
-        if ns.CDMIcons and ns.CDMIcons.SyncRangePoll then
-            ns.CDMIcons:SyncRangePoll()
-        end
-        -- Reapply icon visibility after layout so "active only" display
-        -- mode hides inactive icons that LayoutContainer() showed.
-        if ns.CDMIcons and ns.CDMIcons.UpdateAllCooldowns then
-            ns.CDMIcons:UpdateAllCooldowns()
-        end
-        SyncAllContainerMouseStates(true)
+        RunPostLayoutRefresh()
     else
         refreshTimers[1] = C_Timer.NewTimer(0.01, function()
             refreshTimers[1] = nil
@@ -2390,7 +2399,7 @@ RefreshAll = function(forceSync)
             end)
         end
 
-        -- Update locked bars and refresh swipe/glow after all layouts complete
+        -- Run shared post-layout work after all per-container timers complete.
         local finalTimerDelay = 0.10 + #customKeys * 0.01
         refreshTimers[100] = C_Timer.NewTimer(finalTimerDelay, function()
             refreshTimers[100] = nil
@@ -2398,30 +2407,7 @@ RefreshAll = function(forceSync)
                 specTrackingPendingRefresh = true
                 return
             end
-            UpdateAllLockedBars()
-            if _G.QUI_UpdateCDMAnchoredUnitFrames then
-                _G.QUI_UpdateCDMAnchoredUnitFrames()
-            end
-            if _G.QUI_RefreshCDMMouseover then
-                _G.QUI_RefreshCDMMouseover()
-            end
-            -- Apply swipe settings and glow state to newly created/rebuilt icons
-            if _G.QUI_RefreshCooldownSwipe then
-                _G.QUI_RefreshCooldownSwipe()
-            end
-            if _G.QUI_RefreshCustomGlows then
-                _G.QUI_RefreshCustomGlows()
-            end
-            -- Sync range poll OnUpdate based on current settings
-            if ns.CDMIcons and ns.CDMIcons.SyncRangePoll then
-                ns.CDMIcons:SyncRangePoll()
-            end
-            -- Reapply icon visibility after layout so "active only" display
-            -- mode hides inactive icons that LayoutContainer() showed.
-            if ns.CDMIcons and ns.CDMIcons.UpdateAllCooldowns then
-                ns.CDMIcons:UpdateAllCooldowns()
-            end
-            SyncAllContainerMouseStates(true)
+            RunPostLayoutRefresh()
         end)
     end
 end

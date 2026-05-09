@@ -227,10 +227,19 @@ end
 
 local function GetCleanAuraIcon(auraData)
     if not auraData then return nil end
+    -- AuraData.icon can be a secret number for restricted auras in combat.
+    -- Callers compare with `==` (texture-equality validation), which taints
+    -- on secret values, so filter to non-secret only — matches the
+    -- secret-filter convention of GetCleanAuraSpellID / GetCleanAuraName.
+    -- Truthy `if ok and icon` (not `~= nil`) is secret-safe.
     local ok, icon = pcall(function() return auraData.icon end)
-    if ok and icon ~= nil then return icon end
+    if ok and icon and not (issecretvalue and issecretvalue(icon)) then
+        return icon
+    end
     ok, icon = pcall(function() return auraData.iconID end)
-    if ok then return icon end
+    if ok and icon and not (issecretvalue and issecretvalue(icon)) then
+        return icon
+    end
     return nil
 end
 
@@ -1128,16 +1137,6 @@ local function ResolveVirtualAuraState(explicitSlot)
     return state
 end
 
-local _totemDebugEnabled = false
-local function _totemDbg(...) if _totemDebugEnabled then print("|cffFF8800[Totem]|r", ...) end end
-
-SLASH_QUI_TOTEMDBG1 = "/totemdbg"
-SlashCmdList["QUI_TOTEMDBG"] = function()
-    _totemDebugEnabled = not _totemDebugEnabled
-    print("Totem debug:", _totemDebugEnabled and "ON" or "OFF")
-end
-
-
 ---------------------------------------------------------------------------
 -- UNIFIED AURA DETECTION
 -- Single detection path shared by both icons (cdm_icons.lua) and bars
@@ -1189,142 +1188,13 @@ local function SetResolvedAuraSpellID(result, auraData, fallbackID)
     end
 end
 
-local function ShouldDebugAuraState(entryName, spellID, entryID)
-    local filter = _G.QUI_CDM_AURA_DEBUG
-    if not filter then return false end
-    if filter == true then return true end
-    local text = tostring(filter):lower()
-    if entryName and type(entryName) == "string" and entryName:lower():find(text, 1, true) then
-        return true
-    end
-    if tostring(spellID or "") == text or tostring(entryID or "") == text then
-        return true
-    end
-    return false
-end
-
----------------------------------------------------------------------------
--- Debug output is split between two sinks so secret values are never
--- destroyed nor crash the resolver:
---
---   * Clean (no secret args) → print() to chat. table.concat is fine
---     when nothing in the parts array is secret-typed.
---   * Secret-bearing → SetText to a dedicated FontString. table.concat
---     errors with "invalid value (secret) at index N" because secrets
---     can't flow through it; C_StringUtil.WrapString (AllowedWhenTainted)
---     produces a string whose secret content is renderable through
---     FontString:SetText (also AllowedWhenTainted) without ever being
---     compared, arithmetic'd, or tostring'd in Lua.
----------------------------------------------------------------------------
-local _auraDebugFrame
-local _auraDebugFontStrings
-local _auraDebugMaxLines = 30
-local _auraDebugWriteIdx = 0
-
-local function EnsureAuraDebugFrame()
-    if _auraDebugFrame then return end
-    _auraDebugFrame = CreateFrame("Frame", "QUI_CDMAuraDebugFrame", UIParent)
-    _auraDebugFrame:SetSize(900, _auraDebugMaxLines * 16 + 16)
-    _auraDebugFrame:SetPoint("TOPLEFT", 60, -120)
-    _auraDebugFrame:SetFrameStrata("DIALOG")
-    _auraDebugFrame:EnableMouse(true)
-    _auraDebugFrame:SetMovable(true)
-    _auraDebugFrame:RegisterForDrag("LeftButton")
-    _auraDebugFrame:SetScript("OnDragStart", _auraDebugFrame.StartMoving)
-    _auraDebugFrame:SetScript("OnDragStop", _auraDebugFrame.StopMovingOrSizing)
-    local bg = _auraDebugFrame:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetColorTexture(0, 0, 0, 0.7)
-    _auraDebugFontStrings = {}
-    for i = 1, _auraDebugMaxLines do
-        local fs = _auraDebugFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        fs:SetPoint("TOPLEFT", 8, -8 - (i - 1) * 16)
-        fs:SetPoint("RIGHT", -8, 0)
-        fs:SetJustifyH("LEFT")
-        _auraDebugFontStrings[i] = fs
-    end
-end
-
-local function HasSecretArg(...)
-    if not issecretvalue then return false end
-    for i = 1, select("#", ...) do
-        if issecretvalue(select(i, ...)) then return true end
-    end
-    return false
-end
-
-local function AuraStateDebug(enabled, ...)
-    if not enabled then return end
-
-    if not HasSecretArg(...) then
-        -- Fast path: no secrets in the payload, print to chat as before.
-        local parts = { "|cff34D399[CDM-Aura]|r" }
-        for i = 1, select("#", ...) do
-            parts[#parts + 1] = tostring(select(i, ...))
-        end
-        print(table.concat(parts, " "))
-        return
-    end
-
-    -- Secret-bearing path: route to a FontString in the dedicated debug
-    -- frame. Build the message by chaining C_StringUtil.WrapString
-    -- (AllowedWhenTainted) for the secret args and Lua concat for the
-    -- non-secret ones. The final string can carry secret content; SetText
-    -- accepts it and renders without exposing the value to Lua-level ops.
-    EnsureAuraDebugFrame()
-    _auraDebugWriteIdx = (_auraDebugWriteIdx % _auraDebugMaxLines) + 1
-    local fs = _auraDebugFontStrings and _auraDebugFontStrings[_auraDebugWriteIdx]
-    if not fs then return end
-
-    local message = "|cff34D399[CDM-Aura]|r"
-    for i = 1, select("#", ...) do
-        local v = select(i, ...)
-        if issecretvalue and issecretvalue(v)
-            and C_StringUtil and C_StringUtil.WrapString then
-            -- WrapString(infix, prefix, suffix) folds infix between
-            -- prefix and suffix into a single SetText-safe string. We
-            -- lift the running message into the prefix slot so the
-            -- secret value lands in-line with the surrounding labels.
-            message = C_StringUtil.WrapString(v, message .. " ", "")
-        else
-            message = message .. " " .. tostring(v)
-        end
-    end
-
-    fs:SetText(message)
-end
-
-local function FormatAuraDebugIDList(ids)
-    if type(ids) ~= "table" or #ids == 0 then return "nil" end
-    local out = {}
-    for i, id in ipairs(ids) do
-        out[i] = tostring(id)
-    end
-    return table.concat(out, ",")
-end
-
-local function FormatAuraMirrorState(state)
-    if not state then return "nil" end
-    return "cdID=" .. tostring(state.cooldownID)
-        .. "/cat=" .. tostring(state.viewerCategory)
-        .. "/active=" .. tostring(state.isActive == true)
-        .. "/spell=" .. tostring(state.spellID)
-        .. "/ov=" .. tostring(state.overrideSpellID)
-        .. "/tooltip=" .. tostring(state.overrideTooltipSpellID)
-        .. "/links=" .. FormatAuraDebugIDList(state.linkedSpellIDs)
-end
-
-SLASH_QUI_CDMAURADEBUG1 = "/cdmauradebug"
-SlashCmdList["QUI_CDMAURADEBUG"] = function(msg)
-    local filter = msg and strtrim(msg) or ""
-    if filter == "" then
-        _G.QUI_CDM_AURA_DEBUG = not _G.QUI_CDM_AURA_DEBUG
-        print("|cff34D399[CDM-Aura]|r", _G.QUI_CDM_AURA_DEBUG and "ON (all auras)" or "OFF")
-        return
-    end
-    _G.QUI_CDM_AURA_DEBUG = filter
-    print("|cff34D399[CDM-Aura]|r ON - filter:", filter)
-end
+-- Aura-debug helpers (ShouldDebugAuraState, AuraStateDebug,
+-- FormatAuraMirrorState) live in cdm_debug.lua. The placeholders below
+-- are rebound by cdm_debug.lua's BindAll() at the end of its load.
+local ShouldDebugAuraState = function() return false end
+local AuraStateDebug       = function() end
+local FormatAuraMirrorState = function() return "nil" end
+local FormatIDList         = function() return "nil" end
 
 function CDMSpellData:ResolveAuraState(params)
     WipeAuraResult()
@@ -1529,7 +1399,7 @@ function CDMSpellData:ResolveAuraState(params)
                         "tryID=", auraMirrorMatchedID,
                         "hostCat=", auraMirrorMatchedCat,
                         "state=", FormatAuraMirrorState(auraMirrorMatchedState),
-                        "restrictIDs=", FormatAuraDebugIDList(mirrorRestrictedAuraIDs))
+                        "restrictIDs=", FormatIDList(mirrorRestrictedAuraIDs))
                 end
             end
 
@@ -1731,14 +1601,14 @@ function CDMSpellData:ResolveAuraState(params)
             if not (entryTexture and capturedIcon and capturedIcon == entryTexture) then
                 AuraStateDebug(debugAura, phaseName .. "-reject",
                     "capturedSpellID=", captured.spellID,
-                    "allowed=", FormatAuraDebugIDList(mirrorRestrictedAuraIDs),
+                    "allowed=", FormatIDList(mirrorRestrictedAuraIDs),
                     "capturedIcon=", capturedIcon,
                     "entryIcon=", entryTexture)
                 return false
             end
             AuraStateDebug(debugAura, phaseName .. "-accept-icon",
                 "capturedSpellID=", captured.spellID,
-                "allowed=", FormatAuraDebugIDList(mirrorRestrictedAuraIDs),
+                "allowed=", FormatIDList(mirrorRestrictedAuraIDs),
                 "icon=", capturedIcon)
         end
 
@@ -2773,7 +2643,9 @@ function CDMSpellData:BuildSpellListFromOwned(containerKey)
         end)
     end
 
-    _totemDbg("BuildSpellListFromOwned container=", containerKey, "result=", #result)
+    if _G.QUI_CDM_TOTEM_DEBUG then
+        print("|cffFF8800[Totem]|r", "BuildSpellListFromOwned container=", containerKey, "result=", #result)
+    end
     return result
 end
 
@@ -4286,227 +4158,17 @@ function CDMSpellData:ResolveDisplayName(entry)
     return (entry and entry.name) or ""
 end
 
----------------------------------------------------------------------------
--- DEBUG: /cdmprofiles — dump _specProfiles contents and current spec state.
----------------------------------------------------------------------------
-SLASH_QUI_CDMPROFILES1 = "/cdmprofiles"
-SlashCmdList["QUI_CDMPROFILES"] = function()
-    local P = "|cff34D399[CDM-Profiles]|r"
-    local db = ns.Addon and ns.Addon.db and ns.Addon.db.profile and ns.Addon.db.profile.ncdm
-    if not db then
-        print(P, "No ncdm database found.")
-        return
-    end
-
-    local currentSpecID = GetSpecialization and GetSpecializationInfo(GetSpecialization()) or "?"
-    print(P, "Current spec ID:", currentSpecID)
-    print(P, "_lastSpecID:", db._lastSpecID or "nil")
-
-    local profiles = db._specProfiles
-    if not profiles or not next(profiles) then
-        print(P, "_specProfiles: empty/nil")
-        return
-    end
-
-    for specID, specData in pairs(profiles) do
-        local label = specID
-        -- Try to get spec name for readability
-        if GetSpecializationInfoByID then
-            local _, name, _, _, role = GetSpecializationInfoByID(specID)
-            if name then label = specID .. " (" .. name .. ")" end
-        end
-        local containerCount = 0
-        local totalSpells = 0
-        for key, cData in pairs(specData) do
-            if type(cData) == "table" and cData.ownedSpells then
-                containerCount = containerCount + 1
-                local count = type(cData.ownedSpells) == "table" and #cData.ownedSpells or 0
-                totalSpells = totalSpells + count
-                -- Print first few spell names/IDs
-                local spellNames = {}
-                if type(cData.ownedSpells) == "table" then
-                    for i = 1, math.min(5, #cData.ownedSpells) do
-                        local entry = cData.ownedSpells[i]
-                        if entry and entry.id then
-                            local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(entry.id)
-                            spellNames[#spellNames + 1] = (name or "?") .. "(" .. entry.id .. ")"
-                        end
-                    end
-                end
-                local dormantCount = 0
-                if type(cData.dormantSpells) == "table" then
-                    for _ in pairs(cData.dormantSpells) do dormantCount = dormantCount + 1 end
-                end
-                local removedCount = 0
-                if type(cData.removedSpells) == "table" then
-                    for _ in pairs(cData.removedSpells) do removedCount = removedCount + 1 end
-                end
-                print(P, "  " .. key .. ":", count, "owned,", dormantCount, "dormant,", removedCount, "removed")
-                if #spellNames > 0 then
-                    local suffix = count > 5 and (" +" .. (count - 5) .. " more") or ""
-                    print(P, "    ", table.concat(spellNames, ", ") .. suffix)
-                end
-            end
-        end
-        print(P, label .. ":", containerCount, "containers,", totalSpells, "total spells")
-    end
-end
-
----------------------------------------------------------------------------
--- DEBUG: /cdmclean — purge cross-class spell corruption from _specProfiles.
--- For each spec belonging to the current character's class, removes spells
--- that IsSpellKnownByPlayer says aren't learned (cross-class contamination).
--- Specs belonging to other classes are left untouched — run the command on
--- each character to clean their own specs.
----------------------------------------------------------------------------
-SLASH_QUI_CDMCLEAN1 = "/cdmclean"
-SlashCmdList["QUI_CDMCLEAN"] = function()
-    local P = "|cff34D399[CDM-Clean]|r"
-
-    if InCombatLockdown() then
-        print(P, "Cannot clean during combat.")
-        return
-    end
-
-    local db = ns.Addon and ns.Addon.db and ns.Addon.db.profile and ns.Addon.db.profile.ncdm
-    if not db or not db._specProfiles then
-        print(P, "No spec profiles to clean.")
-        return
-    end
-
-    local _, playerClass = UnitClass("player")
-    if not playerClass then
-        print(P, "Could not determine player class.")
-        return
-    end
-
-    -- Build set of all spells the current character knows (any spec)
-    -- by querying the composer's Blizzard CDM index + spellbook for
-    -- comprehensive coverage.
-    local knownSpells = {}
-    local composer = ns.CDMComposer
-    if composer and composer.CollectKnownCDMSpellIDs then
-        composer.CollectKnownCDMSpellIDs(knownSpells)
-    end
-    -- Also include spellbook spells
-    if C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines then
-        local okT, numTabs = pcall(C_SpellBook.GetNumSpellBookSkillLines)
-        if okT and numTabs then
-            for tab = 1, numTabs do
-                local okL, sli = pcall(C_SpellBook.GetSpellBookSkillLineInfo, tab)
-                if okL and sli then
-                    local offset = sli.itemIndexOffset or 0
-                    for i = 1, (sli.numSpellBookItems or 0) do
-                        local okI, ii = pcall(C_SpellBook.GetSpellBookItemInfo, offset + i, Enum.SpellBookSpellBank.Player)
-                        if okI and ii and ii.spellID then knownSpells[ii.spellID] = true end
-                    end
-                end
-            end
-        end
-    end
-
-    local totalCleaned = 0
-    local profilesChecked = 0
-
-    for specID, specData in pairs(db._specProfiles) do
-        local specLabel = tostring(specID)
-        local specClass
-        if GetSpecializationInfoByID then
-            local _, specName, _, _, _, classFile = GetSpecializationInfoByID(specID)
-            if specName then specLabel = specID .. " (" .. specName .. ")" end
-            specClass = classFile
-        end
-
-        if specClass == playerClass then
-            -- This spec belongs to our class — surgically remove foreign spells
-            profilesChecked = profilesChecked + 1
-            local specCleaned = 0
-            for containerKey, cData in pairs(specData) do
-                if type(cData) == "table" and type(cData.ownedSpells) == "table" then
-                    local cleaned = {}
-                    local removed = 0
-                    for _, entry in ipairs(cData.ownedSpells) do
-                        if entry and entry.id and entry.type == "spell" then
-                            if knownSpells[entry.id] or IsSpellKnownByPlayer(entry.id) then
-                                cleaned[#cleaned + 1] = entry
-                            else
-                                removed = removed + 1
-                                local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(entry.id) or "?"
-                                print(P, "  Removed", spellName .. "(" .. entry.id .. ") from", specLabel, containerKey)
-                            end
-                        else
-                            -- Keep non-spell entries (macros, items) as-is
-                            cleaned[#cleaned + 1] = entry
-                        end
-                    end
-                    if removed > 0 then
-                        cData.ownedSpells = cleaned
-                        specCleaned = specCleaned + removed
-                    end
-                    -- Also clean dormantSpells of foreign entries
-                    if type(cData.dormantSpells) == "table" then
-                        for sid in pairs(cData.dormantSpells) do
-                            if type(sid) == "number" and not knownSpells[sid] and not IsSpellKnownByPlayer(sid) then
-                                cData.dormantSpells[sid] = nil
-                                specCleaned = specCleaned + 1
-                            end
-                        end
-                    end
-                end
-            end
-            if specCleaned > 0 then
-                totalCleaned = totalCleaned + specCleaned
-                print(P, specLabel .. ": cleaned", specCleaned, "foreign spells")
-            else
-                print(P, specLabel .. ": clean")
-            end
-        elseif specClass and specClass ~= playerClass then
-            -- Different class — surgically remove any of OUR spells that
-            -- leaked into their profile, preserving their legitimate spells.
-            local specCleaned = 0
-            for containerKey, cData in pairs(specData) do
-                if type(cData) == "table" and type(cData.ownedSpells) == "table" then
-                    local cleaned = {}
-                    local removed = 0
-                    for _, entry in ipairs(cData.ownedSpells) do
-                        if entry and entry.id and entry.type == "spell"
-                           and (knownSpells[entry.id] or IsSpellKnownByPlayer(entry.id)) then
-                            -- This spell belongs to US, not to that class
-                            removed = removed + 1
-                            local spellName = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(entry.id) or "?"
-                            print(P, "  Removed", spellName .. "(" .. entry.id .. ") from", specLabel, containerKey)
-                        else
-                            cleaned[#cleaned + 1] = entry
-                        end
-                    end
-                    if removed > 0 then
-                        cData.ownedSpells = cleaned
-                        specCleaned = specCleaned + removed
-                    end
-                    -- Also clean dormantSpells
-                    if type(cData.dormantSpells) == "table" then
-                        for sid in pairs(cData.dormantSpells) do
-                            if type(sid) == "number" and (knownSpells[sid] or IsSpellKnownByPlayer(sid)) then
-                                cData.dormantSpells[sid] = nil
-                                specCleaned = specCleaned + 1
-                            end
-                        end
-                    end
-                end
-            end
-            if specCleaned > 0 then
-                totalCleaned = totalCleaned + specCleaned
-                print(P, specLabel .. ": cleaned", specCleaned, "foreign spells")
-            else
-                print(P, specLabel .. ": clean")
-            end
-        else
-            print(P, specLabel .. ": skipped (unknown spec)")
-        end
-    end
-
-    print(P, "Done.", profilesChecked, "profiles checked,", totalCleaned, "foreign spells removed.")
-    print(P, "Run /cdmprofiles to verify. Run this on each character to clean their specs.")
-end
-
 ns.CDMSpellData = CDMSpellData
+
+---------------------------------------------------------------------------
+-- DEBUG IMPORT BINDING (rebound by cdm_debug.lua's BindAll())
+---------------------------------------------------------------------------
+function CDMSpellData._BindDebugImports()
+    local d = ns.CDMDebug
+    if d then
+        ShouldDebugAuraState  = d.ShouldAura            or ShouldDebugAuraState
+        AuraStateDebug        = d.Aura                  or AuraStateDebug
+        FormatAuraMirrorState = d.FormatAuraMirrorState or FormatAuraMirrorState
+        FormatIDList          = d.FormatIDList          or FormatIDList
+    end
+end

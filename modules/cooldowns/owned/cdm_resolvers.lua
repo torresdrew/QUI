@@ -13,9 +13,12 @@ ns.CDMResolvers = CDMResolvers
 ---------------------------------------------------------------------------
 -- Event bus
 --
--- Synchronous, allocation-free dispatch. Subscribers run in the resolver's
--- tick. Events carry IDs only; subscribers pull fresh state through the
--- runtime query wrappers. See spec:
+-- Synchronous dispatch with a per-call snapshot of the subscriber list. The
+-- snapshot is intentional: it freezes which handlers fire for the current
+-- publish so that subscribing during dispatch doesn't include the new
+-- handler in the in-flight event (verified by tests/cdm_bus_test.lua).
+-- Subscribers run in the resolver's tick. Events carry IDs only; subscribers
+-- pull fresh state through the runtime query wrappers. See spec:
 -- docs/superpowers/specs/2026-05-05-cdm-blizzard-child-decoupling-design.md
 ---------------------------------------------------------------------------
 local _subscribers = {} -- [eventName] = { handler1, handler2, ... }

@@ -102,7 +102,6 @@ local C_Spell = C_Spell
 local C_Item = C_Item
 local C_StringUtil = C_StringUtil
 local issecretvalue = issecretvalue
-local DebugIconSwipe
 
 local function IsSafeNumeric(val)
     return type(val) == "number" and true
@@ -266,30 +265,10 @@ local UpdateIconCooldown = Factory.UpdateIconCooldown
 -- Disable via: /run QUI_CDM_CHARGE_DEBUG = false
 -- Optionally filter to a specific spell name:
 --   /run QUI_CDM_CHARGE_DEBUG = "Holy Bulwark"
+-- Implementation lives in cdm_debug.lua. The placeholder below is rebound
+-- by cdm_debug.lua's BindAll() at the end of its load.
 ---------------------------------------------------------------------------
-local _chargeDebugThrottle = {}  -- [key] = lastTime
-local function ChargeDebug(spellName, ...)
-    if not _G.QUI_CDM_CHARGE_DEBUG then return end
-    -- If debug is a string, only log that spell
-    local filter = _G.QUI_CDM_CHARGE_DEBUG
-    if type(filter) == "string" and spellName and not spellName:find(filter) then return end
-    -- Throttle tick-based messages to 1 per second per spell+tag combo
-    local tag = select(1, ...) or ""
-    if tag == "FWD path:" or tag == "SKIP API path:" or tag == "API path:" or tag == "FWD path CLEAR:"
-        or tag == "DESAT charged check:" or tag == "DESAT result:"
-        or tag == "MIRROR hook:" then
-        local key = (spellName or "") .. tag
-        local now = GetTime()
-        if _chargeDebugThrottle[key] and now - _chargeDebugThrottle[key] < 1 then return end
-        _chargeDebugThrottle[key] = now
-    end
-    local parts = { "|cff34D399[CDM-Charge]|r", spellName or "?", "-" }
-    for i = 1, select("#", ...) do
-        parts[#parts + 1] = tostring(select(i, ...))
-    end
-    print(table.concat(parts, " "))
-end
-CDMIcons.ChargeDebug = ChargeDebug
+local ChargeDebug = function() end
 
 ---------------------------------------------------------------------------
 -- DYNAMIC CHILD LOOKUP: Scan ALL viewer children to find the one with
@@ -301,8 +280,6 @@ local function IsTotemSlotEntry(entry)
     return entry and entry._isTotemInstance and entry._totemSlot ~= nil
 end
 CDMIcons.IsTotemSlotEntry = IsTotemSlotEntry
-
-local DumpDebugIcon
 
 ---------------------------------------------------------------------------
 -- DB ACCESS
@@ -3162,39 +3139,7 @@ function CDMIcons.ShouldHideIconStackText(icon, containerDB)
     return containerDB and containerDB.hideStackText == true
 end
 
-function CDMIcons.DebugStackText(icon, action, value, reason)
-    if not _G.QUI_CDM_CHARGE_DEBUG then return end
-    local entry = icon and icon._spellEntry
-    local okShown, shown = false, nil
-    local okText, text = false, nil
-    if icon then
-        okShown, shown = pcall(icon.IsShown, icon)
-    end
-    if icon and icon.StackText and icon.StackText.GetText then
-        okText, text = pcall(icon.StackText.GetText, icon.StackText)
-    end
-    ChargeDebug(entry and entry.name,
-        "STACKTEXT", action,
-        "reason=", reason or "nil",
-        "value=", tostring(value),
-        "oldText=", okText and tostring(text) or "err",
-        "iconShown=", okShown and tostring(shown) or "err",
-        "entryType=", entry and entry.type,
-        "viewerType=", entry and entry.viewerType,
-        "hasCharges=", entry and entry.hasCharges,
-        "spellID=", entry and entry.spellID,
-        "overrideSpellID=", entry and entry.overrideSpellID,
-        "runtimeSpellID=", icon and icon._runtimeSpellID,
-        "auraActive=", icon and icon._auraActive)
-end
-
-function CDMIcons.DebugNativeChargeText(icon, reason)
-    if not _G.QUI_CDM_CHARGE_DEBUG then return end
-    local entry = icon and icon._spellEntry
-    -- Native charge frames were retired with the viewer-child mirror; this
-    -- debug entrypoint is kept as a no-op marker for /run trace points.
-    ChargeDebug(entry and entry.name, "NATIVE-CHARGE", reason or "nil", "retired")
-end
+-- CDMIcons.DebugStackText is defined in cdm_debug.lua.
 
 function CDMIcons.ShowIconStackText(icon, value, containerDB, reason)
     if not icon or not icon.StackText then return end
@@ -4170,156 +4115,6 @@ function CDMIcons:UpdateCooldownsForType(viewerType)
     end
 end
 
--- DEBUG: /cdmicondebug — toggle per-tick icon state dump.
----------------------------------------------------------------------------
-SLASH_QUI_CDMICONDEBUG1 = "/cdmicondebug"
-SlashCmdList["QUI_CDMICONDEBUG"] = function(msg)
-    local filter = msg and strtrim(msg) or ""
-    local cmd, rest = filter:match("^(%S+)%s*(.-)$")
-    local lower = cmd and cmd:lower() or ""
-    if filter == "" then
-        _G.QUI_CDM_ICON_DEBUG = not _G.QUI_CDM_ICON_DEBUG
-        print("|cff34D399[CDM-IconDebug]|r", _G.QUI_CDM_ICON_DEBUG and "ON (all icons)" or "OFF")
-        return
-    end
-    if lower == "off" or lower == "0" or lower == "false" then
-        _G.QUI_CDM_ICON_DEBUG = nil
-        print("|cff34D399[CDM-IconDebug]|r OFF")
-        return
-    end
-    if lower == "dump" then
-        _G.QUI_CDM_ICON_DEBUG = (rest and rest ~= "") and rest or true
-        print("|cff34D399[CDM-IconDebug]|r dump - filter:", tostring(_G.QUI_CDM_ICON_DEBUG))
-        if DumpDebugIcon then
-            CDMIcons:ForEachIcon(function(icon)
-                DumpDebugIcon(icon)
-            end)
-        end
-        return
-    end
-    if lower == "all" then
-        _G.QUI_CDM_ICON_DEBUG = true
-    else
-        _G.QUI_CDM_ICON_DEBUG = filter
-    end
-    print("|cff34D399[CDM-IconDebug]|r ON - filter:", tostring(_G.QUI_CDM_ICON_DEBUG))
-end
-
--- Icon-level debug filter promoted to CDMIcons so cdm_debug.lua can share
--- it. Pure debug helpers (ShouldDebugSpell + DebugSpellEvent + DebugIconEvent
--- + DebugEntryBuild + DebugLayoutFilter) live in cdm_debug.lua.
-local function ShouldDebugIcon(icon)
-    local dbg = _G.QUI_CDM_ICON_DEBUG
-    if not dbg then return false end
-    local entry = icon and icon._spellEntry
-    if not entry then
-        return false
-    end
-    if dbg == true then return true end
-    local filter = tostring(dbg):lower()
-    local name = entry and entry.name and tostring(entry.name):lower() or ""
-    local sid = icon and icon._runtimeSpellID and tostring(icon._runtimeSpellID) or ""
-    local eid = entry and entry.id and tostring(entry.id) or ""
-    return name:find(filter, 1, true) ~= nil
-        or sid == filter
-        or eid == filter
-end
-CDMIcons.ShouldDebugIcon = ShouldDebugIcon
-
-DebugIconSwipe = function(icon, ...)
-    if not ShouldDebugIcon(icon) then return end
-    local entry = icon and icon._spellEntry
-    print("|cff34D399[CDM-IconSwipe]|r",
-        entry and (entry.name or "?") or "?",
-        "viewer=", entry and tostring(entry.viewerType) or "nil",
-        "entryID=", entry and tostring(entry.id) or "nil",
-        ...)
-end
-
-DumpDebugIcon = function(icon)
-    if not ShouldDebugIcon(icon) then return end
-    local Helpers = ns.Helpers
-    local entry = icon and icon._spellEntry
-    if not entry then return end
-    local P = "|cff34D399[CDM-IconDbg]|r"
-    print(P, entry.name or "?", "viewerType=", tostring(entry.viewerType),
-        "spellID=", tostring(entry.spellID), "entry.id=", tostring(entry.id))
-    print(P, "  shown=", tostring(icon:IsShown()),
-        "alpha=", tostring(icon.GetAlpha and icon:GetAlpha() or nil),
-        "auraActive=", tostring(icon._auraActive),
-        "customActive=", tostring(icon._customBarActive),
-        "hasCooldownActive=", tostring(icon._hasCooldownActive),
-        "hasRealCooldown=", tostring(icon._hasRealCooldownActive),
-        "isOnGCD=", tostring(icon._isOnGCD),
-        "lastStart=", tostring(icon._lastStart),
-        "lastDuration=", tostring(icon._lastDuration),
-        "isTotemInstance=", tostring(icon._isTotemInstance),
-        "entry._totemSlot=", tostring(entry._totemSlot),
-        "icon._totemSlot=", tostring(icon._totemSlot),
-        "instanceKey=", tostring(entry._instanceKey))
-    local containerDB = GetTrackerSettings(entry.viewerType)
-    if CDMIcons.IsCustomBarContainer(containerDB) then
-        local visibility = CDMIcons.ComputeCustomBarVisibility(icon, entry, containerDB, GetTime())
-        print(P, "  customVisibility mode=", tostring(visibility.visibilityMode),
-            "layout=", tostring(visibility.layoutVisible),
-            "render=", tostring(visibility.renderVisible),
-            "usable=", tostring(visibility.isUsable),
-            "onCD=", tostring(visibility.isOnCooldown),
-            "recharge=", tostring(visibility.rechargeActive),
-            "active=", tostring(visibility.isActive),
-            "dynamic=", tostring(containerDB.dynamicLayout),
-            "displayMode=", tostring(containerDB.iconDisplayMode))
-    end
-    if icon.Icon and icon.Icon.GetTexture then
-        local okTex, tex = pcall(icon.Icon.GetTexture, icon.Icon)
-        print(P, "  iconTexture=", okTex and tostring(tex) or "err")
-    end
-    if icon.StackText and icon.StackText.GetText then
-        local okStack, stack = pcall(icon.StackText.GetText, icon.StackText)
-        print(P, "  stackText=", okStack and tostring(tostring(stack)) or "err")
-    end
-    if icon.DurationText and icon.DurationText.GetText then
-        local okDur, dur = pcall(icon.DurationText.GetText, icon.DurationText)
-        print(P, "  durationText=", okDur and tostring(tostring(dur)) or "err")
-    end
-    if icon._blizzAuraFallbackActive and icon.Cooldown then
-        local okShown, shown = pcall(icon.Cooldown.IsShown, icon.Cooldown)
-        local okTimes, startMS, durationMS = pcall(icon.Cooldown.GetCooldownTimes, icon.Cooldown)
-        local okDraw, drawSwipe = pcall(icon.Cooldown.GetDrawSwipe, icon.Cooldown)
-        print(P, "  nativeAuraFallback cooldownShown=", okShown and tostring(shown) or "err",
-            "times=", okTimes and tostring(startMS) or "err", "/", okTimes and tostring(durationMS) or "err",
-            "drawSwipe=", okDraw and tostring(drawSwipe) or "err")
-    end
-    if icon._isBlizzBacked and ns.CDMBlizzMirror
-       and ns.CDMBlizzMirror.GetStateByCooldownID then
-        local m = ns.CDMBlizzMirror.GetStateByCooldownID(icon._isBlizzBacked)
-        local links = "nil"
-        if m and type(m.linkedSpellIDs) == "table" then
-            local out = {}
-            for i, id in ipairs(m.linkedSpellIDs) do
-                out[i] = tostring(id)
-            end
-            links = table.concat(out, ",")
-        end
-        print(P, "  blizzBacked=", tostring(icon._isBlizzBacked),
-            "cat=", tostring(m and m.viewerCategory),
-            "active=", tostring(m and m.isActive),
-            "nativeFallback=", tostring(icon._blizzAuraFallbackActive),
-            "spellID=", tostring(m and m.spellID),
-            "override=", tostring(m and m.overrideSpellID),
-            "tooltip=", tostring(m and m.overrideTooltipSpellID),
-            "links=", links)
-        if ns.CDMBlizzMirror.GetChildDebugLines then
-            local childLines = ns.CDMBlizzMirror.GetChildDebugLines(icon._isBlizzBacked)
-            if type(childLines) == "table" then
-                for _, line in ipairs(childLines) do
-                    print(P, "  blizzChild", line)
-                end
-            end
-        end
-    end
-end
-
 ---------------------------------------------------------------------------
 -- CONFIGURE ICON (public wrapper)
 ---------------------------------------------------------------------------
@@ -5149,21 +4944,18 @@ local function OnCDMCooldownChanged(_, spellID, kind)
         -- Pre-cutover UNIT_SPELLCAST_START on player: ScheduleCDMUpdate only.
         ScheduleCDMUpdate(true, CDM_UPDATE_COOLDOWN)
     elseif kind == "cast_succeeded" then
-        -- Pre-cutover UNIT_SPELLCAST_SUCCEEDED on player: RecordRecent +
-        -- InvalidateGCDOnly + ApplyResolvedCooldownAll + ScheduleCDMUpdate.
-        -- The compatibility invalidation call is retained for old flow shape;
-        -- runtime cooldown data is queried fresh.
-        -- The second pre-cutover SUCCEEDED block (with Highlighter +
-        -- ApplyResolvedCooldownForSpellID) was unreachable due to the
-        -- earlier return; preserved as dead code here for the same reason.
+        -- UNIT_SPELLCAST_SUCCEEDED on player: refresh recent-cast tracking,
+        -- invalidate the GCD-only binding cache, re-resolve cooldown state
+        -- across icons, and dispatch to the cooldown highlighter so its
+        -- visual feedback fires for the spell the player just cast.
         CDMIcons.RecordRecentPlayerSpellCast(spellID)
         InvalidateGCDOnlyBindings()
         ApplyResolvedCooldownAll()
         ScheduleCDMUpdate(true, CDM_UPDATE_COOLDOWN)
-        -- local Highlighter = ns._OwnedHighlighter
-        -- if Highlighter and Highlighter.OnPlayerCastSucceeded then
-        --     Highlighter.OnPlayerCastSucceeded(spellID)
-        -- end
+        local Highlighter = ns._OwnedHighlighter
+        if Highlighter and Highlighter.OnPlayerCastSucceeded then
+            Highlighter.OnPlayerCastSucceeded(spellID)
+        end
     end
 end
 
@@ -5238,271 +5030,6 @@ function CDMIcons:DisableRuntime()
 end
 
 ---------------------------------------------------------------------------
--- /cdmprobe — Resolver parity probe. Walks every visible CDM icon and
--- prints (entry name, kind, resolver mode, mirror active?, parity?).
----------------------------------------------------------------------------
-SLASH_CDMPROBE1 = "/cdmprobe"
-SlashCmdList["CDMPROBE"] = function()
-    if not CDMIcons:IsRuntimeEnabled() then
-        print("|cffffaa00[cdmprobe]|r Owned engine not enabled.")
-        return
-    end
-
-    local rows = 0
-    local agree = 0
-    local disagree = 0
-    local resolverInactive = 0
-
-    print("|cff34d399[cdmprobe]|r begin parity sweep")
-    print("name | kind | mode | mActive | parity | rText | curText | textPar")
-
-    for poolKey, pool in pairs(iconPools) do
-        for _, icon in ipairs(pool) do
-            if icon and icon:IsShown() and icon._spellEntry then
-                local entry = icon._spellEntry
-                local name = entry.name or "?"
-                local kind = entry.kind or "?"
-
-                local durObj, mode, sourceID = CDMIcons.ResolveIconDurationObject(icon)
-                local rText, rSource = CDMIcons.ResolveIconStackText(icon)
-                local curText = icon.StackText and icon.StackText:GetText() or ""
-                local textParity
-                local rIsSecret = (rText ~= nil) and false
-                local cIsSecret = (curText ~= nil) and false
-                if rIsSecret or cIsSecret then
-                    textParity = "secret"
-                elseif not HookTextHasDisplay(rText) and not HookTextHasDisplay(curText) then
-                    textParity = "OK"
-                elseif rText == curText then
-                    textParity = "OK"
-                else
-                    textParity = "MISMATCH"
-                end
-                local resolverActive = (mode ~= "inactive")
-                local mirrorActive = icon._hasRealCooldownActive == true
-                                  or icon._showingRealCooldownSwipe == true
-                                  or icon._auraActive == true
-
-                local parity
-                if resolverActive == mirrorActive then
-                    parity = "OK"
-                    agree = agree + 1
-                else
-                    parity = "MISMATCH"
-                    disagree = disagree + 1
-                end
-                if mode == "inactive" then
-                    resolverInactive = resolverInactive + 1
-                end
-
-                rows = rows + 1
-                local rTextDisplay = rIsSecret and "<secret>" or (rText == nil and "nil" or tostring(rText))
-                local curTextDisplay = cIsSecret and "<secret>" or (curText == nil and "nil" or tostring(curText))
-                print(string.format("%s | %s | %s | %s | %s | %s | %s | %s",
-                    name, kind, mode,
-                    mirrorActive and "yes" or "no",
-                    parity,
-                    rTextDisplay, curTextDisplay, textParity))
-
-                -- Secret values can't be Lua-concatenated into the row above,
-                -- but C_StringUtil.WrapString is AllowedWhenTainted and produces
-                -- a (possibly-secret) string that AddMessage renders correctly.
-                -- Emit one follow-up line per secret column so the actual value
-                -- is visible during debugging.
-                if rIsSecret and C_StringUtil and C_StringUtil.WrapString then
-                    local ok, wrapped = pcall(C_StringUtil.WrapString, rText,
-                        "  |cff888888\\_ rText[" .. name .. "]:|r ", "")
-                    if ok and wrapped then
-                        DEFAULT_CHAT_FRAME:AddMessage(wrapped)
-                    end
-                end
-                if cIsSecret and C_StringUtil and C_StringUtil.WrapString then
-                    local ok, wrapped = pcall(C_StringUtil.WrapString, curText,
-                        "  |cff888888\\_ curText[" .. name .. "]:|r ", "")
-                    if ok and wrapped then
-                        DEFAULT_CHAT_FRAME:AddMessage(wrapped)
-                    end
-                end
-            end
-        end
-    end
-
-    print(string.format(
-        "|cff34d399[cdmprobe]|r end — %d icons, %d agree, %d mismatch (%.1f%%), %d inactive",
-        rows, agree, disagree,
-        rows > 0 and (100 * agree / rows) or 0,
-        resolverInactive))
-end
-
----------------------------------------------------------------------------
--- /cdmflicker <spell name> — diagnose flicker by snapshotting icon state
--- every frame for 5 seconds. Logs only TRANSITIONS (when the captured
--- state changes), so output is compact. Used to trace which flag is
--- toggling sub-tick during the aura→cooldown transition.
----------------------------------------------------------------------------
----------------------------------------------------------------------------
--- /cdmcharge <name> — Diagnostic for charge-spell recharge swipe issues.
--- Walks visible CDM icons, finds entries matching the name, prints the
--- relevant gates: hasCharges, classifier output, charge/cd DurObj presence.
----------------------------------------------------------------------------
----------------------------------------------------------------------------
--- /cdmtrace <spell name> — Log every isActive/isOnGCD transition that
--- ApplyResolvedCooldown sees for the named spell. Empty name to clear.
----------------------------------------------------------------------------
-SLASH_CDMEVENTS1 = "/cdmevents"
-SlashCmdList["CDMEVENTS"] = function(msg)
-    local text = msg and msg:gsub("^%s+", ""):gsub("%s+$", "") or ""
-    if text == "" or text == "off" or text == "clear" then
-        CDMIcons._eventTraceSpellID = nil
-        CDMIcons._eventTraceStartedAt = nil
-        print("|cffffaa00[cdmevents]|r cleared")
-        return
-    end
-
-    local spellID = tonumber(text:match("^(%d+)"))
-    if not spellID then
-        print("|cffffaa00[cdmevents]|r Usage: /cdmevents <spellID>")
-        return
-    end
-    if not CDMIcons:IsRuntimeEnabled() then
-        print("|cffffaa00[cdmevents]|r Owned engine not enabled.")
-        return
-    end
-
-    CDMIcons._eventTraceSpellID = spellID
-    CDMIcons._eventTraceStartedAt = GetTime and GetTime() or 0
-    print(string.format(
-        "|cff34d399[cdmevents]|r tracing events for spellID %d. Use /cdmevents off to stop.",
-        spellID))
-    print("|cff34d399[cdmevents]|r " .. CDMIcons.EventTraceAPISummary(spellID))
-    print("|cff34d399[cdmevents]|r " .. CDMIcons.EventTraceIconSummary(spellID))
-end
-
-SLASH_CDMTRACE1 = "/cdmtrace"
-SlashCmdList["CDMTRACE"] = function(msg)
-    local name = msg and msg:gsub("^%s+", ""):gsub("%s+$", "") or ""
-    if name == "" then
-        CDMIcons._desatTraceName = nil
-        for _, pool in pairs(iconPools) do
-            for _, icon in ipairs(pool) do
-                if icon then icon._desatTracePrev = nil end
-            end
-        end
-        print("|cffffaa00[cdmtrace]|r cleared")
-        return
-    end
-    CDMIcons._desatTraceName = name
-    for _, pool in pairs(iconPools) do
-        for _, icon in ipairs(pool) do
-            if icon then icon._desatTracePrev = nil end
-        end
-    end
-    print("|cff34d399[cdmtrace]|r tracing transitions for '" .. name .. "'")
-end
-
-SLASH_CDMCHARGE1 = "/cdmcharge"
-SlashCmdList["CDMCHARGE"] = function(msg)
-    local name = msg and msg:gsub("^%s+", ""):gsub("%s+$", "") or ""
-    if name == "" then
-        print("|cffffaa00[cdmcharge]|r Usage: /cdmcharge <spell name>")
-        return
-    end
-    local matches = 0
-    for _, pool in pairs(iconPools) do
-        for _, icon in ipairs(pool) do
-            local entry = icon and icon._spellEntry
-            if entry and entry.name == name then
-                matches = matches + 1
-                local sid = icon._runtimeSpellID
-                    or entry.overrideSpellID or entry.spellID or entry.id
-                local apiA, realA, onGCD = CDMIcons.ClassifySpellCooldownState(sid)
-                local chargeDur = C_Spell and C_Spell.GetSpellChargeDuration
-                    and C_Spell.GetSpellChargeDuration(sid)
-                local cdDur = C_Spell and C_Spell.GetSpellCooldownDuration
-                    and C_Spell.GetSpellCooldownDuration(sid, true)
-                print(string.format(
-                    "|cff34d399[cdmcharge]|r %s sid=%s hasCharges=%s apiA=%s realA=%s onGCD=%s chargeDur=%s cdDur=%s",
-                    tostring(entry.name), tostring(sid),
-                    tostring(entry.hasCharges),
-                    tostring(apiA), tostring(realA), tostring(onGCD),
-                    chargeDur and "yes" or "nil",
-                    cdDur and "yes" or "nil"))
-            end
-        end
-    end
-    if matches == 0 then
-        print("|cffffaa00[cdmcharge]|r no icon found with name '" .. name .. "'")
-    end
-end
-
-SLASH_CDMFLICKER1 = "/cdmflicker"
-SlashCmdList["CDMFLICKER"] = function(msg)
-    local name = msg and msg:gsub("^%s+", ""):gsub("%s+$", "") or ""
-    if name == "" then
-        print("|cffffaa00[cdmflicker]|r Usage: /cdmflicker <spell name>")
-        return
-    end
-    if not CDMIcons:IsRuntimeEnabled() then
-        print("|cffffaa00[cdmflicker]|r Owned engine not enabled.")
-        return
-    end
-
-    local target
-    for _, pool in pairs(iconPools) do
-        for _, icon in ipairs(pool) do
-            if icon and icon._spellEntry and icon._spellEntry.name == name then
-                target = icon
-                break
-            end
-        end
-        if target then break end
-    end
-    if not target then
-        print("|cffffaa00[cdmflicker]|r Icon not found: " .. name)
-        return
-    end
-
-    print(string.format(
-        "|cff34d399[cdmflicker]|r logging '%s' for 5s — cast the spell NOW so the flicker happens within the window",
-        name))
-
-    local samples = {}
-    local lastSig = nil
-    local startTime = GetTime()
-    local frame = CreateFrame("Frame")
-
-    local function snapshot()
-        local now = GetTime() - startTime
-        local _, rMode = CDMIcons.ResolveIconDurationObject(target)
-
-        local sig = string.format(
-            "aA=%s sRC=%s hRC=%s sGCD=%s rMode=%s",
-            tostring(target._auraActive),
-            tostring(target._showingRealCooldownSwipe),
-            tostring(target._hasRealCooldownActive),
-            tostring(target._showingGCDSwipe),
-            tostring(rMode))
-
-        if sig ~= lastSig then
-            samples[#samples+1] = string.format("+%.3f  %s", now, sig)
-            lastSig = sig
-        end
-
-        if now > 5 then
-            frame:SetScript("OnUpdate", nil)
-            print(string.format(
-                "|cff34d399[cdmflicker]|r '%s' end — %d transitions over 5s",
-                name, #samples))
-            for _, s in ipairs(samples) do
-                print(s)
-            end
-        end
-    end
-
-    frame:SetScript("OnUpdate", snapshot)
-end
-
----------------------------------------------------------------------------
 -- LATE-BIND CROSS-FILE IMPORTS
 -- cdm_resolvers.lua and cdm_icon_factory.lua load before this file (per
 -- owned.xml) and cannot capture ns.CDMIcons at their own load time. They
@@ -5511,3 +5038,16 @@ end
 ---------------------------------------------------------------------------
 ns.CDMResolvers._FinalizeImports(CDMIcons)
 ns.CDMIconFactory._FinalizeImports(CDMIcons)
+
+---------------------------------------------------------------------------
+-- DEBUG IMPORT BINDING
+-- ChargeDebug is a placeholder until cdm_debug.lua loads (last in
+-- owned.xml) and rebinds it via BindAll(). Hot-path callers in this file
+-- keep their existing `ChargeDebug(...)` upvalue calls.
+---------------------------------------------------------------------------
+function CDMIcons._BindDebugImports()
+    local d = ns.CDMDebug
+    if d then
+        ChargeDebug = d.Charge or ChargeDebug
+    end
+end

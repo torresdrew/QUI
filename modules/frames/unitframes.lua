@@ -380,6 +380,35 @@ local function GetAbsorbTexturePath(textureName)
 end
 
 ---------------------------------------------------------------------------
+-- HELPER: Step curve for prediction-bar visibility (absorbs / incoming heals)
+--
+-- Paired with UnitHealPredictionCalculator:EvaluateCurrentHealthPercent the
+-- calc evaluates this curve C-side against its (secret) currentHealth%, so
+-- we never touch the secret value in Lua. Mirrors the HP-curve trick in
+-- hud_visibility.lua and the duration-curve trick in cooldowns/owned/glows.
+--
+-- For absorbs: configure the calc with MaximumHealthMode = WithAbsorbs so
+-- the percent reflects damage taken AND shields applied — then percent<1.0
+-- gates "show this bar group" (alpha=1) and percent==1.0 hides it (alpha=0).
+-- For incoming heals: leave MaximumHealthMode at Default so percent only
+-- drops below 1.0 when the unit has actually taken damage.
+---------------------------------------------------------------------------
+local _predictionVisCurve
+local function GetPredictionVisibilityCurve()
+    if _predictionVisCurve then return _predictionVisCurve end
+    if not C_CurveUtil or not C_CurveUtil.CreateCurve
+       or not Enum or not Enum.LuaCurveType then
+        return nil
+    end
+    local curve = C_CurveUtil.CreateCurve()
+    curve:SetType(Enum.LuaCurveType.Step)
+    curve:AddPoint(0.0, 1)  -- below full → bar visible
+    curve:AddPoint(1.0, 0)  -- exactly full → bar hidden
+    _predictionVisCurve = curve
+    return curve
+end
+
+---------------------------------------------------------------------------
 -- HELPER: Get class color for a unit (or the player if unit is nil)
 -- Returns the unit's actual class color for player characters,
 -- or hostility-based color for NPCs.
@@ -893,6 +922,14 @@ local function UpdateAbsorbs(frame)
             -- Clamp mode 1 = Missing Health (clamp to space between current HP and 0)
             pcall(function() calc:SetDamageAbsorbClampMode(1) end)
 
+            -- WithAbsorbs makes the calc's currentHealthPercent reflect both
+            -- missing HP and active shields, so the visibility curve below
+            -- evaluates to "hide" only when the unit is at full HP with no
+            -- absorbs — the only state where this bar group should disappear.
+            if Enum and Enum.UnitMaximumHealthMode and Enum.UnitMaximumHealthMode.WithAbsorbs then
+                pcall(function() calc:SetMaximumHealthMode(Enum.UnitMaximumHealthMode.WithAbsorbs) end)
+            end
+
             -- Populate calculator with unit data
             UnitGetDetailedHealPrediction(unit, nil, calc)
 
@@ -906,13 +943,27 @@ local function UpdateAbsorbs(frame)
                 -- Store clampedValue directly - it goes straight to StatusBar which handles secrets
                 clampedAbsorbs = results[2]
 
-                -- Use SetAlphaFromBoolean to convert secret boolean → alpha
-                -- isClamped = true → attached alpha=0, overflow alpha=1
-                -- isClamped = false → attached alpha=1, overflow alpha=0
-                -- We pass the result directly to SetAlpha without reading it
+                -- Group visibility via curve — calc evaluates the Step curve
+                -- C-side against its (secret) currentHealthPercent. Result is
+                -- 1 when there's missing HP or absorbs, 0 at full HP no shield.
+                local visCurve = GetPredictionVisibilityCurve()
+                local visAlpha = 1
+                if visCurve then
+                    local visOK, visResult = pcall(function()
+                        return calc:EvaluateCurrentHealthPercent(visCurve)
+                    end)
+                    if visOK then visAlpha = visResult end
+                end
+
+                -- Combine clamp split (attached vs overflow) with group
+                -- visibility — SetAlphaFromBoolean's alpha args are
+                -- AllowedWhenTainted, so visAlpha (potentially secret) flows
+                -- through C-side and is multiplied with the bool selector.
+                --   isClamped = true  → attached 0,        overflow visAlpha
+                --   isClamped = false → attached visAlpha, overflow 0
                 pcall(function()
-                    frame.attachedVisHelper:SetAlphaFromBoolean(results[3], 0, 1)
-                    frame.overflowVisHelper:SetAlphaFromBoolean(results[3], 1, 0)
+                    frame.attachedVisHelper:SetAlphaFromBoolean(results[3], 0, visAlpha)
+                    frame.overflowVisHelper:SetAlphaFromBoolean(results[3], visAlpha, 0)
                 end)
             end
         end
@@ -1037,13 +1088,10 @@ local function UpdateHealPrediction(frame)
         return
     end
 
-    local okZero, isZero = pcall(function()
-        return incomingHeals == 0
-    end)
-    if okZero and isZero then
-        frame.healPredictionBar:Hide()
-        return
-    end
+    -- Visibility is gated below via the same prediction-visibility curve
+    -- pattern used for absorbs (calc:EvaluateCurrentHealthPercent + Step
+    -- curve), so we don't need a Lua-side `incomingHeals == 0` compare.
+    -- StatusBar at value 0 is 0-width regardless; the curve drives alpha.
 
     local healthTexture = frame.healthBar:GetStatusBarTexture()
     local healthBarWidth, healthBarHeight = GetCachedHealthBarExtents(frame, settings)
@@ -1067,6 +1115,24 @@ local function UpdateHealPrediction(frame)
     local c = predictionSettings.color or { 0.2, 1, 0.2 }
     local a = predictionSettings.opacity or 0.5
     frame.healPredictionBar:SetStatusBarColor(c[1] or 0.2, c[2] or 1, c[3] or 0.2, a)
+
+    -- Curve-driven visibility (mirrors HP visibility / pandemic glow):
+    -- calc evaluates the Step curve C-side against its (secret)
+    -- currentHealthPercent. With MaximumHealthMode = Default that's
+    -- < 1.0 only when the unit has actually taken damage, so the bar
+    -- alpha is 0 at full HP and 1 below — replacing the prior
+    -- pcall(incomingHeals == 0) hide branch with a pure C-side gate.
+    local visCurve = GetPredictionVisibilityCurve()
+    if visCurve and frame.healPredictionCalculator
+       and frame.healPredictionCalculator.EvaluateCurrentHealthPercent then
+        local visOK, visAlpha = pcall(function()
+            return frame.healPredictionCalculator:EvaluateCurrentHealthPercent(visCurve)
+        end)
+        if visOK then
+            frame.healPredictionBar:SetAlpha(visAlpha)
+        end
+    end
+
     frame.healPredictionBar:Show()
 end
 

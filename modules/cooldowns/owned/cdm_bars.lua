@@ -259,22 +259,9 @@ local function GetBarSpellData(bar)
     }
 end
 
-local function ShouldDebugBarEntry(entry, spellID)
-    local dbg = _G.QUI_CDM_BAR_DEBUG
-    if not dbg then return false end
-    if dbg == true then return true end
-    if type(dbg) ~= "string" then return false end
-    local entryName = entry and entry.name
-    if type(entryName) == "string" and entryName:lower():find(dbg, 1, true) then
-        return true
-    end
-    return tostring(spellID) == dbg
-end
-
-local function DebugBarLabel(entry, spellID, ...)
-    if not ShouldDebugBarEntry(entry, spellID) then return end
-    print("|cff34D399[CDM-BarDbg]|r", ...)
-end
+-- DebugBarLabel implementation lives in cdm_debug.lua. The placeholder
+-- below is rebound by cdm_debug.lua's BindAll() at the end of its load.
+local DebugBarLabel = function() end
 
 local function ShouldHideAuraDurationText(r)
     if not r or not r.isActive then return false end
@@ -1131,6 +1118,10 @@ function CDMBars:UpdateOwnedBarAura(bar)
             pcall(bar.NameText.SetText, bar.NameText, entry.name)
         end
     end
+
+    if ns.CDMIcons and ns.CDMIcons._OnBarUpdate then
+        ns.CDMIcons._OnBarUpdate(bar)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -1485,63 +1476,12 @@ barTimerGroup:SetScript("OnLoop", function()
 end)
 
 ---------------------------------------------------------------------------
--- DEBUG: /cdmbardebug — toggle per-tick bar state dump.
--- Shows spellID, active state, DurationObject, fill mode — everything
--- needed to diagnose Roll the Bones etc. without any Blizzard CDM viewer
--- child reads.
+-- DEBUG IMPORT BINDING (rebound by cdm_debug.lua's BindAll())
 ---------------------------------------------------------------------------
-SLASH_QUI_CDMBARDEBUG1 = "/cdmbardebug"
-SlashCmdList["QUI_CDMBARDEBUG"] = function(msg)
-    local filter = msg and strtrim(msg) or ""
-    if filter == "" then
-        _G.QUI_CDM_BAR_DEBUG = not _G.QUI_CDM_BAR_DEBUG
-        print("|cff34D399[CDM-BarDebug]|r", _G.QUI_CDM_BAR_DEBUG and "ON (all bars)" or "OFF")
-        return
-    end
-    _G.QUI_CDM_BAR_DEBUG = filter:lower()
-    print("|cff34D399[CDM-BarDebug]|r ON — filter:", filter)
-end
-
--- Inject debug print into UpdateOwnedBarAura (post-resolve)
-local _origUpdateOwnedBarAura = CDMBars.UpdateOwnedBarAura
-function CDMBars:UpdateOwnedBarAura(bar)
-    _origUpdateOwnedBarAura(self, bar)
-
-    local dbg = _G.QUI_CDM_BAR_DEBUG
-    if not dbg then return end
-    if not bar or not bar._spellEntry then return end
-    local entry = bar._spellEntry
-    local entryName = entry.name or "?"
-
-    -- Filter check
-    if type(dbg) == "string" then
-        if not entryName:lower():find(dbg, 1, true)
-           and tostring(bar._spellID) ~= dbg then
-            return
-        end
-    end
-
-    local P = "|cff34D399[CDM-BarDbg]|r"
-    local Helpers = ns.Helpers
-    print(P, entryName, "spellID=", bar._spellID, "entry.id=", entry.id,
-          "entry.spellID=", entry.spellID, "entry.overrideSpellID=", entry.overrideSpellID)
-    print(P, "  active=", bar._active, "cSideFill=", bar._cSideFill,
-          "durObj=", bar._durObj and "yes" or "nil",
-          "hideDuration=", tostring(bar._hideDurationText),
-          "hasExpiration=", tostring(bar._hasAuraExpirationTime))
-    print(P, "  isTotemInstance=", tostring(bar._isTotemInstance),
-          "totemSlot=", tostring(bar._totemSlot),
-          "instanceKey=", tostring(bar._instanceKey))
-    if bar.NameText then
-        local okName, curName = pcall(bar.NameText.GetText, bar.NameText)
-        print(P, "  owned NameText=", okName and tostring(curName) or "err")
-    end
-    if bar.DurationText then
-        local okDur, curDur = pcall(bar.DurationText.GetText, bar.DurationText)
-        print(P, "  owned DurationText=", okDur and tostring(curDur) or "err")
-    end
-    if bar.IconTexture and bar.IconTexture.GetTexture then
-        local okTex, tex = pcall(bar.IconTexture.GetTexture, bar.IconTexture)
-        print(P, "  owned IconTexture=", okTex and tostring(tex) or "err")
+ns.CDMBars = ns.CDMBars or CDMBars
+function ns.CDMBars._BindDebugImports()
+    local d = ns.CDMDebug
+    if d then
+        DebugBarLabel = d.Bar or DebugBarLabel
     end
 end

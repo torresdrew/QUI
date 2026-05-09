@@ -268,6 +268,27 @@ local function EnsureBackdrop(frame, bd)
     frame:SetBackdrop(bd)
 end
 
+-- Color the bg fill of a BackdropTemplate frame WITHOUT going through the
+-- Lua mixin SetBackdropColor.
+--
+-- BackdropTemplateMixin:SetBackdropColor reads self.Center to find the
+-- texture to color. Because EnsureBackdrop -> frame:SetBackdrop runs in
+-- QUI's tainted execution context, the assignment to self.Center inherits
+-- QUI's taint stamp. Every subsequent frame:SetBackdropColor(...) call
+-- crosses from Blizzard secure code into a QUI-tainted field read,
+-- emitting "Execution tainted by QUI while reading field Center" on every
+-- raid-frame health update (~80+ events/session in the taint log).
+--
+-- SetVertexColor is C-side on the Texture object, so reading frame.Center
+-- inside our own tainted code (no Blizzard-secure boundary crossed) and
+-- forwarding straight to a C-side sink avoids the propagation entirely.
+local function SetBackdropFillColor(frame, r, g, b, a)
+    local center = frame and frame.Center
+    if center then
+        center:SetVertexColor(r, g, b, a)
+    end
+end
+
 ---------------------------------------------------------------------------
 -- GROUP_ROSTER_UPDATE coalescing: GRU fires in bursts of 5-20 during roster
 -- changes. Showing an already-shown frame is a no-op (automatic dedup), so
@@ -2246,12 +2267,12 @@ UpdateDarkModeVisuals = function(frame, force)
         frame._lastBackdropColorA = bgAlpha
         now = GetTime()
         frame._lastBackdropReapplyTime = now
-        frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
+        SetBackdropFillColor(frame, bgColor[1], bgColor[2], bgColor[3], bgAlpha)
     else
         now = GetTime()
         if (now - (frame._lastBackdropReapplyTime or 0)) >= _state.backdropReapplyInterval then
             frame._lastBackdropReapplyTime = now
-            frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
+            SetBackdropFillColor(frame, bgColor[1], bgColor[2], bgColor[3], bgAlpha)
         end
     end
     if frame.healthBar then
@@ -2339,7 +2360,7 @@ local function DecorateGroupFrame(frame)
     frame._lastBackdropColorB = bgColor[3]
     frame._lastBackdropColorA = bgAlpha
     frame._lastBackdropReapplyTime = GetTime()
-    frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgAlpha)
+    SetBackdropFillColor(frame, bgColor[1], bgColor[2], bgColor[3], bgAlpha)
     if borderSize > 0 then
         frame:SetBackdropBorderColor(0, 0, 0, 1)
     end

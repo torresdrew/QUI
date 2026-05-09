@@ -191,9 +191,7 @@ local function ApplySwipeToIcon(icon, settings)
     end
 
     applyToCooldown(icon.Cooldown)
-    if not icon._blizzAuraFallbackActive then
-        applyToCooldown(icon._blizzCooldownFrame)
-    end
+    applyToCooldown(icon._blizzCooldownFrame)
 end
 
 ---------------------------------------------------------------------------

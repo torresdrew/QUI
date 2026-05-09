@@ -332,7 +332,10 @@ local function UpdateGCDCooldown()
     if not iconFrame:IsShown() then return end
 
     local cd = iconFrame.cooldown
-    if ApplyCooldownFromSpell(cd, GCD_SPELL_ID) then
+    -- ignoreGCD=false: we ARE the GCD swipe. With ignoreGCD=true (the helper
+    -- default) the API returns nil for spell 61304 because the GCD has no
+    -- spell-specific cooldown when the GCD is excluded from the query.
+    if ApplyCooldownFromSpell(cd, GCD_SPELL_ID, nil, false) then
         cd:Show()
         return
     end

@@ -45,8 +45,11 @@ local ApplyAuraStateToIcon
 local ApplyResolvedCooldown
 local ReapplySwipeStyle
 local UpdateIconProfessionQuality
-local ChargeDebug
 local HookTextHasDisplay
+-- ChargeDebug now lives in cdm_debug.lua and is bound via _BindDebugImports.
+-- Initialized as a no-op so calls before binding (none expected, but defensive)
+-- don't crash.
+local ChargeDebug = function() end
 
 local InCombatLockdown = InCombatLockdown
 local CreateFrame      = CreateFrame
@@ -524,72 +527,9 @@ local function ShowNativeIconWidgets(icon)
     if icon.TextOverlay  then pcall(icon.TextOverlay.Show,  icon.TextOverlay)  end
 end
 
-local function SetBlizzAuraFallbackActive(icon, enabled)
-    if not icon then return false end
-    enabled = enabled == true
-    -- Field is stored as true/nil (not true/false), so a direct == against
-    -- a normalized boolean misfires as "changed" every tick when enabled is
-    -- false and the field is nil (nil ~= false in Lua). Normalize first.
-    local prior = icon._blizzAuraFallbackActive == true
-    if prior == enabled then
-        return false
-    end
-    icon._blizzAuraFallbackActive = enabled or nil
-
-    if enabled then
-        if icon.Icon then
-            pcall(icon.Icon.Show, icon.Icon)
-        end
-        if icon.Cooldown then
-            pcall(icon.Cooldown.SetAlpha, icon.Cooldown, 1)
-            pcall(icon.Cooldown.SetDrawSwipe, icon.Cooldown, true)
-            pcall(icon.Cooldown.SetSwipeTexture, icon.Cooldown, "Interface\\Buttons\\WHITE8X8")
-            pcall(icon.Cooldown.SetSwipeColor, icon.Cooldown, 0, 0, 0, 0.8)
-            pcall(icon.Cooldown.SetDrawBling, icon.Cooldown, false)
-            pcall(icon.Cooldown.SetHideCountdownNumbers, icon.Cooldown, false)
-            pcall(icon.Cooldown.Show, icon.Cooldown)
-        end
-        if icon._blizzCooldownFrame then
-            pcall(icon._blizzCooldownFrame.SetAlpha, icon._blizzCooldownFrame, 0)
-            pcall(icon._blizzCooldownFrame.SetDrawSwipe, icon._blizzCooldownFrame, false)
-            pcall(icon._blizzCooldownFrame.SetDrawEdge, icon._blizzCooldownFrame, false)
-            pcall(icon._blizzCooldownFrame.SetSwipeColor, icon._blizzCooldownFrame, 0, 0, 0, 0)
-        end
-        if icon._blizzDurationText then
-            pcall(icon._blizzDurationText.Hide, icon._blizzDurationText)
-        end
-        if icon._blizzApplications then
-            pcall(icon._blizzApplications.Hide, icon._blizzApplications)
-        end
-        if icon._blizzApplicationsText then
-            pcall(icon._blizzApplicationsText.Hide, icon._blizzApplicationsText)
-        end
-    else
-        icon._showingRealCooldownSwipe = nil
-        icon._nativeAuraNoDurationCleared = nil
-        if icon.Cooldown then
-            pcall(icon.Cooldown.Clear, icon.Cooldown)
-        end
-        HideNativeIconWidgets(icon)
-        if icon._blizzCooldownFrame then
-            pcall(icon._blizzCooldownFrame.SetAlpha, icon._blizzCooldownFrame, 1)
-            pcall(icon._blizzCooldownFrame.Show, icon._blizzCooldownFrame)
-        end
-        if icon._blizzDurationText and icon._rowConfig
-           and icon._rowConfig.hideDurationText ~= true then
-            pcall(icon._blizzDurationText.Show, icon._blizzDurationText)
-        end
-        if icon._blizzApplications then
-            pcall(icon._blizzApplications.Show, icon._blizzApplications)
-        end
-    end
-
-    return true
-end
-
 local function SetIconBlizzBacking(icon, cooldownID)
     if not (icon and cooldownID) then return end
-    icon._blizzAuraFallbackActive = nil
+    icon._blizzFallbackPushed = nil
     icon._isBlizzBacked = cooldownID
     HideNativeIconWidgets(icon)
     local mirror = ns.CDMBlizzMirror
@@ -600,7 +540,7 @@ end
 
 local function ClearIconBlizzBacking(icon)
     if not icon or not icon._isBlizzBacked then return end
-    icon._blizzAuraFallbackActive = nil
+    icon._blizzFallbackPushed = nil
     icon._isBlizzBacked = nil
     local mirror = ns.CDMBlizzMirror
     if mirror and mirror.UnregisterHostSlot then
@@ -612,87 +552,12 @@ end
 CDMIconFactory.SetIconBlizzBacking   = SetIconBlizzBacking
 CDMIconFactory.ClearIconBlizzBacking = ClearIconBlizzBacking
 
-local function GetBlizzDebugFilter()
-    return _G.QUI_CDM_BLIZZ_DEBUG or _G.QUI_CDM_ICON_DEBUG
-end
-
-local function DebugValueMatches(filter, value)
-    if not value then return false end
-    local needle = tostring(filter):lower()
-    if needle == "" then return false end
-    return tostring(value):lower():find(needle, 1, true) ~= nil
-end
-
-local function ShouldDebugBlizzEntry(entry, lookupIDs)
-    local filter = GetBlizzDebugFilter()
-    if not filter then return false end
-    if filter == true then return true end
-    if DebugValueMatches(filter, entry and entry.name) then return true end
-    if DebugValueMatches(filter, entry and entry.id) then return true end
-    if DebugValueMatches(filter, entry and entry.spellID) then return true end
-    if DebugValueMatches(filter, entry and entry.overrideSpellID) then return true end
-    if type(lookupIDs) == "table" then
-        for _, id in ipairs(lookupIDs) do
-            if DebugValueMatches(filter, id) then return true end
-        end
-    end
-    return false
-end
-
-local function FormatIDList(ids)
-    if type(ids) ~= "table" or #ids == 0 then return "nil" end
-    local out = {}
-    for i, id in ipairs(ids) do
-        out[i] = tostring(id)
-    end
-    return table.concat(out, ",")
-end
-
-local function FormatMirrorState(state)
-    if not state then return "nil" end
-    return "cdID=" .. tostring(state.cooldownID)
-        .. " cat=" .. tostring(state.viewerCategory)
-        .. " active=" .. tostring(state.isActive == true)
-        .. " spell=" .. tostring(state.spellID)
-        .. " ov=" .. tostring(state.overrideSpellID)
-        .. " tooltip=" .. tostring(state.overrideTooltipSpellID)
-        .. " links=" .. FormatIDList(state.linkedSpellIDs)
-end
-
-local function DebugBlizzEntry(enabled, entry, label, ...)
-    if not enabled then return end
-    print("|cff34D399[CDM-BlizzBind]|r",
-        tostring(label),
-        entry and (entry.name or "?") or "?",
-        "viewer=", entry and tostring(entry.viewerType) or "nil",
-        "kind=", entry and tostring(entry.kind) or "nil",
-        "entryID=", entry and tostring(entry.id) or "nil",
-        "spellID=", entry and tostring(entry.spellID) or "nil",
-        "override=", entry and tostring(entry.overrideSpellID) or "nil",
-        ...)
-end
-
-SLASH_QUI_CDMBLIZZDEBUG1 = "/cdmblizzdebug"
-SlashCmdList["QUI_CDMBLIZZDEBUG"] = function(msg)
-    local filter = msg and strtrim(msg) or ""
-    local lower = filter:lower()
-    if filter == "" then
-        _G.QUI_CDM_BLIZZ_DEBUG = not _G.QUI_CDM_BLIZZ_DEBUG
-        print("|cff34D399[CDM-BlizzBind]|r", _G.QUI_CDM_BLIZZ_DEBUG and "ON (all bindings)" or "OFF")
-        return
-    end
-    if lower == "off" or lower == "0" or lower == "false" then
-        _G.QUI_CDM_BLIZZ_DEBUG = nil
-        print("|cff34D399[CDM-BlizzBind]|r OFF")
-        return
-    end
-    if lower == "all" then
-        _G.QUI_CDM_BLIZZ_DEBUG = true
-    else
-        _G.QUI_CDM_BLIZZ_DEBUG = filter
-    end
-    print("|cff34D399[CDM-BlizzBind]|r ON - filter:", tostring(_G.QUI_CDM_BLIZZ_DEBUG))
-end
+-- Blizz-bind debug helpers live in cdm_debug.lua. Placeholders below are
+-- rebound by cdm_debug.lua's BindAll() at the end of its load.
+local ShouldDebugBlizzEntry = function() return false end
+local FormatMirrorState     = function() return "nil" end
+local FormatIDList          = function() return "nil" end
+local DebugBlizzEntry       = function() end
 
 -- Resolve (entry, viewerType) -> cooldownID via the mirror's per-category
 -- maps. Returns nil if the entry doesn't map to a Blizzard child.
@@ -1035,60 +900,72 @@ local function SyncBlizzBackedIconState(icon)
         icon._auraIsHarmful = nil
     end
 
-    -- The reparented child Cooldown subframe is owned by Blizzard's
-    -- CooldownViewer mixin when it's actually pushing — for "Stage 1"
-    -- mirror durObjs we must NOT touch icon.Cooldown (writes would race
-    -- the mixin and cause cross-aura duration mix-ups).
+    -- Two write paths share the same C-side sink, the reparented child
+    -- Cooldown subframe (icon._blizzCooldownFrame):
+    --   * Stage 1 — Blizzard's CooldownViewer mixin pushes durObjs into
+    --     it directly. We don't touch it.
+    --   * Stage 2 — when our spellID-fallback resolved a durObj that
+    --     Blizzard's mixin didn't push (e.g. Reaping, or combat staleness
+    --     where our mirror cache lost the auraInstanceID), forward the
+    --     durObj through the same SetCooldownFromDurationObject sink.
     --
-    -- For Stage 2 fallback, Blizzard's mixin isn't pushing, so the
-    -- reparented Cooldown frame is empty. Forward our recovered durObj
-    -- via SetCooldownFromDurationObject so the swipe renders. Per the
-    -- 12.0.5 restriction, only SetCooldownFromDurationObject (NOT
-    -- SetCooldown / SetCooldownFromExpirationTime / etc.) accepts secret
-    -- values from tainted code, which durObj may be in combat.
-    -- fallbackUsesNativeOverlay only when we have a durObj to push.
+    -- Why target _blizzCooldownFrame and not icon.Cooldown: an icon hosts
+    -- both frames simultaneously, and our previous "push to icon.Cooldown
+    -- + try to hide _blizzCooldownFrame" path could not reliably suppress
+    -- the Blizzard frame (HookSwipeStyleDefense reverts SetDrawSwipe /
+    -- SetSwipeColor to QUI's intent, and SetAlpha(0) gets restored by
+    -- Blizzard's mixin on its next push). Two frames could end up with
+    -- swipes and countdown text rendering at once. Pushing into the same
+    -- frame Blizzard uses guarantees a single visible swipe regardless of
+    -- which side wrote last — they share one C-side widget.
+    --
+    -- Per the 12.0.5 restriction, only SetCooldownFromDurationObject (not
+    -- SetCooldown / SetCooldownFromExpirationTime) accepts secret values
+    -- from tainted code, which durObj may be in combat.
+    --
     -- A durationless active aura (fallbackFoundAura=true, durObj=nil) is
-    -- still active but renders without a swipe — never push, never clear
-    -- (Blizzard's mixin will manage icon.Cooldown's empty state).
-    local fallbackUsesNativeOverlay = durObjSource == "spellID-fallback"
-    local fallbackChanged = SetBlizzAuraFallbackActive(icon, fallbackUsesNativeOverlay)
+    -- still active but renders without a swipe — never push, never clear.
+    local blizzCD = icon._blizzCooldownFrame
+    local pushFallback = durObjSource == "spellID-fallback"
     local nativeAuraApplied = false
-    if fallbackUsesNativeOverlay and icon.Cooldown
-        and icon.Cooldown.SetCooldownFromDurationObject then
-        local okPush = pcall(icon.Cooldown.SetCooldownFromDurationObject,
-            icon.Cooldown, durObj)
+    if pushFallback and blizzCD and blizzCD.SetCooldownFromDurationObject then
+        local okPush = pcall(blizzCD.SetCooldownFromDurationObject, blizzCD, durObj)
         nativeAuraApplied = okPush
-    elseif fallbackChanged then
-        -- Transitioned out of QUI-driven swipe (fallback active → inactive).
-        -- Clear our previously-pushed durObj so it doesn't persist when
-        -- the aura's gone or when Stage 1 / Blizzard's mixin takes over.
-        if icon.Cooldown and icon.Cooldown.Clear then
-            pcall(icon.Cooldown.Clear, icon.Cooldown)
+        icon._blizzFallbackPushed = okPush or nil
+    elseif icon._blizzFallbackPushed then
+        -- Transitioned out of fallback push: clear our last push so a stale
+        -- durObj doesn't keep animating when Blizzard's mixin stays silent
+        -- (Reaping case) or when the aura's gone. If Blizzard's mixin is
+        -- pushing again, its next write overwrites ours — the Clear is a
+        -- no-op for that case.
+        if blizzCD and blizzCD.Clear then
+            pcall(blizzCD.Clear, blizzCD)
         end
         if CDMIcons and CDMIcons.ClearIconStackText then
             CDMIcons.ClearIconStackText(icon)
         end
+        icon._blizzFallbackPushed = nil
     end
 
     local epoch = m.mirrorEpoch or 0
     icon._lastBlizzSwipeEpoch = epoch
-    if (priorActive ~= active or fallbackChanged)
+    if priorActive ~= active
        and entry.viewerType == "buff"
        and CDMIcons
        and CDMIcons.RequestBuffIconLayoutRefresh then
         CDMIcons.RequestBuffIconLayoutRefresh()
     end
-    if priorActive ~= active or priorEpoch ~= epoch or fallbackChanged or nativeAuraApplied then
+    if priorActive ~= active or priorEpoch ~= epoch or nativeAuraApplied then
         DebugBlizzEntry(debugBlizz, entry, "state-sync",
             FormatMirrorState(m),
             "runtimeSid=", tostring(runtimeSid),
             "durObjSource=", tostring(durObjSource),
             "fallbackInstID=", tostring(fallbackInstID),
             "source=", tostring(icon._lastAuraSourceID),
-            "nativeFallback=", tostring(fallbackUsesNativeOverlay),
+            "nativeFallback=", tostring(pushFallback),
             "nativeApplied=", tostring(nativeAuraApplied))
     end
-    return priorActive ~= active or priorEpoch ~= epoch or fallbackChanged or nativeAuraApplied
+    return priorActive ~= active or priorEpoch ~= epoch or nativeAuraApplied
 end
 
 local function UpdateIconCooldown(icon)
@@ -1595,7 +1472,6 @@ local function UpdateIconCooldown(icon)
                 "ccc=", ccc, "cccSource=", _dbgCccSource or "nil",
                 "hasCharges=", entry.hasCharges,
                 "overrideSpellID=", entry.overrideSpellID)
-            CDMIcons.DebugNativeChargeText(icon, "fwd-before-stacktext")
             if ccc ~= nil then
                 CDMIcons.ShowIconStackText(icon, ccc, CDMIcons.GetTrackerSettings(entry.viewerType), "fwd-charge-count")
                 _chargeCountForwarded = true
@@ -1755,6 +1631,22 @@ function CDMIconFactory._FinalizeImports(icons)
     ApplyResolvedCooldown       = icons.ApplyResolvedCooldown
     ReapplySwipeStyle           = icons.ReapplySwipeStyle
     UpdateIconProfessionQuality = icons.UpdateIconProfessionQuality
-    ChargeDebug                 = icons.ChargeDebug
     HookTextHasDisplay          = icons.HookTextHasDisplay
+end
+
+---------------------------------------------------------------------------
+-- DEBUG IMPORT BINDING
+-- ChargeDebug, ShouldDebugBlizzEntry, FormatMirrorState, DebugBlizzEntry
+-- are all defined in cdm_debug.lua (loads last). Hot-path callers in this
+-- file keep their existing local-upvalue calls.
+---------------------------------------------------------------------------
+function CDMIconFactory._BindDebugImports()
+    local d = ns.CDMDebug
+    if d then
+        ChargeDebug            = d.Charge        or ChargeDebug
+        ShouldDebugBlizzEntry  = d.ShouldBlizz   or ShouldDebugBlizzEntry
+        FormatMirrorState      = d.FormatMirrorState or FormatMirrorState
+        FormatIDList           = d.FormatIDList  or FormatIDList
+        DebugBlizzEntry        = d.Blizz         or DebugBlizzEntry
+    end
 end
