@@ -5,9 +5,9 @@
     spell lists. QUI reads the spell list from hidden Blizzard icons,
     then renders with addon-owned frames.
 
-    All three viewers are hidden (alpha=0, mouse disabled). QUI creates
-    addon-owned containers and reparents Blizzard's children into them.
-    Blizzard continues managing all data — textures, cooldowns, stacks.
+    All three viewers are hidden (alpha=0, mouse disabled). Blizzard children
+    remain in those viewers and feed the mirror; QUI renders addon-owned
+    containers from mirrored state and direct API reads.
 
     Initialization is driven externally by cdm_containers.lua calling
     CDMSpellData:Initialize() — no self-bootstrapping event frame.
@@ -627,6 +627,10 @@ local function RefreshCapturedAuras()
 end
 
 local function NotifyAuraConsumers(unit, updateInfo)
+    local mirror = ns.CDMBlizzMirror
+    if mirror and mirror.HandleUnitAuraChanged then
+        mirror.HandleUnitAuraChanged(unit, updateInfo)
+    end
     local icons = ns.CDMIcons
     if icons and icons.HandleUnitAuraChanged then
         icons.HandleUnitAuraChanged(unit, updateInfo)
@@ -1277,7 +1281,7 @@ function CDMSpellData:ResolveAuraState(params)
     local entryIsAura = params.entryIsAura == true or entryKind == "aura"
     local entryTexture = params.entryTexture
     local viewerType = params.viewerType
-    local blizzardBackedCooldownID = params.blizzardBackedCooldownID
+    local blizzardMirrorCooldownID = params.blizzardMirrorCooldownID
     local debugAura = ShouldDebugAuraState(entryName, spellID, entryID)
     local isBuiltinAuraViewer = viewerType == "buff" or viewerType == "trackedBar"
 
@@ -1292,6 +1296,41 @@ function CDMSpellData:ResolveAuraState(params)
     local mirrorRestrictedAuraIDs = nil
     local mirrorRestrictedAuraIDSet = nil
     local mirrorRestrictsAuraFallbacks = false
+    local mirrorRestrictedAuraRequiresExactSpellID = false
+    local cooldownLinkedAuraIDs = nil
+    local cooldownLinkedAuraIDSet = nil
+    local cooldownLinkedAuraModeKnown = false
+    local cooldownLinkedAuraModeAllowsAura = false
+    local function rememberCooldownLinkedAuraID(id)
+        if not IsUsableTableKey(id) then return end
+        cooldownLinkedAuraIDs = cooldownLinkedAuraIDs or {}
+        cooldownLinkedAuraIDSet = cooldownLinkedAuraIDSet or {}
+        if cooldownLinkedAuraIDSet[id] then return end
+        cooldownLinkedAuraIDSet[id] = true
+        cooldownLinkedAuraIDs[#cooldownLinkedAuraIDs + 1] = id
+    end
+    local function rememberCooldownLinkedAuraIDs(linkedIDs)
+        if type(linkedIDs) ~= "table" then return end
+        for _, linkedID in ipairs(linkedIDs) do
+            rememberCooldownLinkedAuraID(linkedID)
+        end
+    end
+    local function rememberCooldownInfoLinkedAuraIDs(info)
+        if not info or info.hasAura == false then return end
+        rememberCooldownLinkedAuraIDs(info.linkedSpellIDs)
+    end
+    local function rememberCooldownLinkedAuraMode(state)
+        if not state then return end
+        if state.wasSetFromAura ~= nil
+            or state.wasSetFromCooldown ~= nil
+            or state.wasSetFromCharges ~= nil then
+            cooldownLinkedAuraModeKnown = true
+            cooldownLinkedAuraModeAllowsAura = state.wasSetFromAura == true
+        end
+    end
+    local function cooldownLinkedAuraFallbackAllowed()
+        return cooldownLinkedAuraModeKnown and cooldownLinkedAuraModeAllowsAura
+    end
 
     -----------------------------------------------------------------------
     -- Phase 0: Blizzard child mirror — driven by entry.viewerType when it
@@ -1352,8 +1391,8 @@ function CDMSpellData:ResolveAuraState(params)
                         auraMirrorMatchedID = tryID
                     end
                 end
-                if blizzardBackedCooldownID and mirror.GetStateByCooldownID then
-                    local backedState = mirror.GetStateByCooldownID(blizzardBackedCooldownID)
+                if blizzardMirrorCooldownID and mirror.GetStateByCooldownID then
+                    local backedState = mirror.GetStateByCooldownID(blizzardMirrorCooldownID)
                     local backedCat = backedState and backedState.viewerCategory
                     if backedCat == "buff" or backedCat == "trackedBar" then
                         local backedID = backedState.overrideTooltipSpellID
@@ -1367,8 +1406,8 @@ function CDMSpellData:ResolveAuraState(params)
                             end
                         end
                         rememberAuraMirrorMatch(backedState, backedCat, backedID or spellID)
-                        AuraStateDebug(debugAura, "phase0-backed-child",
-                            "cdID=", blizzardBackedCooldownID,
+                        AuraStateDebug(debugAura, "phase0-mirror-child",
+                            "cdID=", blizzardMirrorCooldownID,
                             "state=", FormatAuraMirrorState(backedState))
                     end
                 end
@@ -1411,6 +1450,25 @@ function CDMSpellData:ResolveAuraState(params)
                     end
                     return nil, nil
                 end
+                local function applyAuraMirrorState(m, hostCat, tryID, phaseName)
+                    if not (m and m.isActive) then return false end
+                    AuraStateDebug(debugAura, phaseName or "phase0-aura",
+                        "spellID=", tryID, "hostCat=", hostCat,
+                        "selfAura=", tostring(m.selfAura),
+                        "cdID=", m.cooldownID, "epoch=", m.mirrorEpoch,
+                        "durObj=", m.durObj and "yes" or "nil")
+                    r.isActive = true
+                    r.durObj = m.durObj
+                    -- Aura's destination unit comes from the cdID's own
+                    -- selfAura field, not the host viewer cat. Empirically
+                    -- buff cat carries selfAura=false target-side entries
+                    -- (Virulent Plague, Dread Plague), so cat-derived
+                    -- unit assignment misroutes those to "player".
+                    r.auraUnit = (m.selfAura == false) and "target" or "player"
+                    SetResolvedAuraSpellID(r, nil, tryID)
+                    return true
+                end
+
                 local function tryAuraEntry(tryID)
                     if not tryID then return false end
                     local m, hostCat = lookupAuraState(tryID)
@@ -1423,24 +1481,7 @@ function CDMSpellData:ResolveAuraState(params)
                     -- Requiring both flips _auraActive each tick, which makes
                     -- ComputeCustomBarVisibility.layoutVisible oscillate and
                     -- traps DrainLayoutDirty in unbounded recursion.
-                    if m and m.isActive then
-                        AuraStateDebug(debugAura, "phase0-aura",
-                            "spellID=", tryID, "hostCat=", hostCat,
-                            "selfAura=", tostring(m.selfAura),
-                            "cdID=", m.cooldownID, "epoch=", m.mirrorEpoch,
-                            "durObj=", m.durObj and "yes" or "nil")
-                        r.isActive = true
-                        r.durObj = m.durObj
-                        -- Aura's destination unit comes from the cdID's own
-                        -- selfAura field, not the host viewer cat. Empirically
-                        -- buff cat carries selfAura=false target-side entries
-                        -- (Virulent Plague, Dread Plague), so cat-derived
-                        -- unit assignment misroutes those to "player".
-                        r.auraUnit = (m.selfAura == false) and "target" or "player"
-                        SetResolvedAuraSpellID(r, nil, tryID)
-                        return true
-                    end
-                    return false
+                    return applyAuraMirrorState(m, hostCat, tryID, "phase0-aura")
                 end
                 if tryAuraEntry(spellID)
                    or tryAuraEntry(entrySpellID)
@@ -1487,6 +1528,20 @@ function CDMSpellData:ResolveAuraState(params)
             -- If info.hasAura, only accept linked aura state when that
             -- linked ID resolves to a direct BuffIcon/BuffBar child.
             if not entryIsAura then
+                if blizzardMirrorCooldownID and mirror.GetStateByCooldownID then
+                    local backedState = mirror.GetStateByCooldownID(blizzardMirrorCooldownID)
+                    local backedCat = backedState and backedState.viewerCategory
+                    if backedCat == "essential" or backedCat == "utility" then
+                        rememberCooldownInfoLinkedAuraIDs(backedState)
+                        rememberCooldownLinkedAuraMode(backedState)
+                        AuraStateDebug(debugAura, "phase0-cd-backed-child",
+                            "cdID=", blizzardMirrorCooldownID,
+                            "state=", FormatAuraMirrorState(backedState),
+                            "fromAura=", tostring(backedState.wasSetFromAura),
+                            "fromCooldown=", tostring(backedState.wasSetFromCooldown),
+                            "fromCharges=", tostring(backedState.wasSetFromCharges))
+                    end
+                end
                 local function lookupCooldownInfo(tryID)
                     if not tryID then return nil end
                     if isBuiltinCooldownCat and mirror.GetCooldownInfoForViewer then
@@ -1505,8 +1560,10 @@ function CDMSpellData:ResolveAuraState(params)
                 local function tryParentLinkedAura(tryID)
                     if not tryID then return false end
                     local info = lookupCooldownInfo(tryID)
+                    rememberCooldownInfoLinkedAuraIDs(info)
                     if not info or not info.hasAura then return false end
                     if type(info.linkedSpellIDs) ~= "table" then return false end
+                    if not cooldownLinkedAuraFallbackAllowed() then return false end
                     if not mirror.GetMirroredStateForViewer then return false end
                     local getAuraState = mirror.GetDirectMirroredStateForViewer
                         or mirror.GetMirroredStateForViewer
@@ -1544,9 +1601,61 @@ function CDMSpellData:ResolveAuraState(params)
                     end
                     return false
                 end
+                local function trySiblingAuraMirror()
+                    if not mirror.GetMirroredStateForViewer then return false end
+                    local getAuraState = mirror.GetDirectMirroredStateForViewer
+                        or mirror.GetMirroredStateForViewer
+                    local seenIDs = {}
+                    local probeIDs = {}
+                    local function addProbeID(id)
+                        if not IsUsableTableKey(id) or seenIDs[id] then return end
+                        seenIDs[id] = true
+                        probeIDs[#probeIDs + 1] = id
+                    end
+                    local function addInfoIDs(info)
+                        if not info then return end
+                        addProbeID(info.overrideTooltipSpellID)
+                        addProbeID(info.overrideSpellID)
+                        addProbeID(info.spellID)
+                    end
+
+                    addProbeID(spellID)
+                    addProbeID(entrySpellID)
+                    addProbeID(entryID)
+                    addInfoIDs(lookupCooldownInfo(spellID))
+                    addInfoIDs(lookupCooldownInfo(entrySpellID))
+                    addInfoIDs(lookupCooldownInfo(entryID))
+
+                    for _, tryID in ipairs(probeIDs) do
+                        for _, cat in ipairs({ "buff", "trackedBar" }) do
+                            local lm = getAuraState(tryID, cat)
+                            if lm and lm.isActive and lm.durObj then
+                                local resolvedID = lm.overrideTooltipSpellID
+                                    or lm.overrideSpellID
+                                    or tryID
+                                    or lm.spellID
+                                AuraStateDebug(debugAura, "phase0-cd-sibling-aura",
+                                    "spellID=", tryID,
+                                    "hostCat=", cat,
+                                    "linkedSelfAura=", tostring(lm.selfAura),
+                                    "cdID=", lm.cooldownID,
+                                    "epoch=", lm.mirrorEpoch,
+                                    "resolvedID=", resolvedID)
+                                r.isActive = true
+                                r.durObj = lm.durObj
+                                r.auraUnit = lm.auraUnit
+                                    or ((lm.selfAura == false) and "target" or "player")
+                                SetResolvedAuraSpellID(r, nil, resolvedID)
+                                return true
+                            end
+                        end
+                    end
+                    return false
+                end
                 if tryParentLinkedAura(spellID)
                    or tryParentLinkedAura(entrySpellID)
-                   or tryParentLinkedAura(entryID) then
+                   or tryParentLinkedAura(entryID)
+                   or trySiblingAuraMirror() then
                     return r
                 end
             end
@@ -1632,6 +1741,20 @@ function CDMSpellData:ResolveAuraState(params)
             appendID(aid)
         end
     end
+    if not entryIsAura
+       and not mirrorRestrictsAuraFallbacks
+       and cooldownLinkedAuraIDs
+       and cooldownLinkedAuraFallbackAllowed()
+       and #cooldownLinkedAuraIDs > 0 then
+        mirrorRestrictedAuraIDs = cooldownLinkedAuraIDs
+        mirrorRestrictedAuraIDSet = cooldownLinkedAuraIDSet
+        mirrorRestrictsAuraFallbacks = true
+        mirrorRestrictedAuraRequiresExactSpellID = true
+        AuraStateDebug(debugAura, "phase0-cd-linked-aura-inactive",
+            "restrictIDs=", FormatIDList(mirrorRestrictedAuraIDs),
+            "modeKnown=", tostring(cooldownLinkedAuraModeKnown),
+            "modeAura=", tostring(cooldownLinkedAuraModeAllowsAura))
+    end
     if mirrorRestrictedAuraIDs then
         for _, id in ipairs(mirrorRestrictedAuraIDs) do
             appendID(id)
@@ -1674,19 +1797,34 @@ function CDMSpellData:ResolveAuraState(params)
            and (not captured.spellID or not mirrorRestrictedAuraIDSet[captured.spellID]) then
             local capturedUnit = captured.unit or "player"
             local capturedData = QueryAuraData(capturedUnit, captured.auraInstanceID)
-            local capturedIcon = GetCleanAuraIcon(capturedData)
-            if not (entryTexture and capturedIcon and capturedIcon == entryTexture) then
-                AuraStateDebug(debugAura, phaseName .. "-reject",
+            if mirrorRestrictedAuraRequiresExactSpellID then
+                local capturedSpellID = captured.spellID or GetCleanAuraSpellID(capturedData)
+                if capturedSpellID and mirrorRestrictedAuraIDSet[capturedSpellID] then
+                    captured.spellID = capturedSpellID
+                    AuraStateDebug(debugAura, phaseName .. "-accept-strict",
+                        "capturedSpellID=", capturedSpellID,
+                        "allowed=", FormatIDList(mirrorRestrictedAuraIDs))
+                else
+                    AuraStateDebug(debugAura, phaseName .. "-reject-strict",
+                        "capturedSpellID=", capturedSpellID,
+                        "allowed=", FormatIDList(mirrorRestrictedAuraIDs))
+                    return false
+                end
+            else
+                local capturedIcon = GetCleanAuraIcon(capturedData)
+                if not (entryTexture and capturedIcon and capturedIcon == entryTexture) then
+                    AuraStateDebug(debugAura, phaseName .. "-reject",
+                        "capturedSpellID=", captured.spellID,
+                        "allowed=", FormatIDList(mirrorRestrictedAuraIDs),
+                        "capturedIcon=", capturedIcon,
+                        "entryIcon=", entryTexture)
+                    return false
+                end
+                AuraStateDebug(debugAura, phaseName .. "-accept-icon",
                     "capturedSpellID=", captured.spellID,
                     "allowed=", FormatIDList(mirrorRestrictedAuraIDs),
-                    "capturedIcon=", capturedIcon,
-                    "entryIcon=", entryTexture)
-                return false
+                    "icon=", capturedIcon)
             end
-            AuraStateDebug(debugAura, phaseName .. "-accept-icon",
-                "capturedSpellID=", captured.spellID,
-                "allowed=", FormatIDList(mirrorRestrictedAuraIDs),
-                "icon=", capturedIcon)
         end
 
         -- Validate through auraInstanceID-only DurationObject APIs.
@@ -1718,15 +1856,15 @@ function CDMSpellData:ResolveAuraState(params)
     -----------------------------------------------------------------------
     -- Cooldown-entry short-circuit. The mirror match was attempted in
     -- Phase 0 (above) using the entry's explicit viewerType; if it didn't
-    -- find an active aura there, the spell either has no aura overlay
-    -- (hasAura=false in the CooldownViewerCooldown info) or the aura
-    -- isn't currently active. Skip the API fallback chain — those phases
-    -- match against a candidate ID list polluted by GetCooldownAuraBySpellID,
-    -- which can resolve to unrelated spells (Outbreak -> "Skyfury").
-    -- Aura-kind entries continue through the API fallback chain for
-    -- legacy aura tracking that lives outside any Blizzard CDM viewer.
+    -- find an active aura there, continue only when that cooldown has
+    -- explicit linked aura IDs from its Blizzard info. Otherwise skip the
+    -- API fallback chain — those phases match against a candidate ID list
+    -- polluted by GetCooldownAuraBySpellID, which can resolve to unrelated
+    -- spells (Outbreak -> "Skyfury"). Aura-kind entries continue through
+    -- the API fallback chain for legacy aura tracking that lives outside
+    -- any Blizzard CDM viewer.
     -----------------------------------------------------------------------
-    if not entryIsAura then
+    if not entryIsAura and not mirrorRestrictsAuraFallbacks then
         AuraStateDebug(debugAura, "cooldown-no-mirror", "skip-api-fallbacks")
         return r
     end

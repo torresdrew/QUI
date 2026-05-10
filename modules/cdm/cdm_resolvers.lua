@@ -433,6 +433,19 @@ end
 --  functions earlier in the file can also use them.)
 ---------------------------------------------------------------------------
 
+local function GetTrustedIsOnGCD(spellID)
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(spellID) then
+        return nil
+    end
+    if CDMIcons and CDMIcons._trustIsOnGCDForBatch == true then
+        local trusted = CDMIcons._trustedGCDSpellState and spellID and CDMIcons._trustedGCDSpellState[spellID]
+        if type(trusted) == "boolean" then
+            return trusted
+        end
+    end
+    return nil
+end
+
 function CDMResolvers.ClassifySpellCooldownState(spellID, info)
     if not info and spellID then
         info = QueryCooldown(spellID)
@@ -441,15 +454,8 @@ function CDMResolvers.ClassifySpellCooldownState(spellID, info)
     local active = CDMIcons.IsCooldownInfoActive(info)
     local realActive = CDMIcons.IsCooldownInfoRealCooldown(info)
     local onGCD = false
-    if CDMIcons._trustIsOnGCDForBatch == true then
-        local trusted = CDMIcons._trustedGCDSpellState and spellID and CDMIcons._trustedGCDSpellState[spellID]
-        if type(trusted) == "boolean" then
-            onGCD = trusted
-        end
-    end
-    -- isOnGCD is treated as a safe cooldown classifier signal.
-    local infoOnGCD = type(info) == "table" and info.isOnGCD
-    if onGCD == false and infoOnGCD == true then
+    local trustedOnGCD = GetTrustedIsOnGCD(spellID)
+    if trustedOnGCD == true then
         onGCD = true
     end
 
@@ -479,6 +485,11 @@ function CDMResolvers.HasRealCooldownState(icon, entry, duration, apiIsActive, b
 
     if apiIsActive == false then
         return false
+    end
+
+    if apiIsActive == true
+       and (icon._hasRealCooldownActive == true or icon._showingRealCooldownSwipe == true) then
+        return true
     end
 
     local chargeInfo = runtimeSpellID and QueryCharges(runtimeSpellID)
@@ -805,7 +816,7 @@ function CDMResolvers.ResolveAuraStateForIcon(icon, entry, sid)
     p.viewerType = entry.viewerType
     p.totemSlot = CDMIcons.IsTotemSlotEntry(entry) and entry._totemSlot or nil
     p.disableLooseVisibilityFallback = true
-    p.blizzardBackedCooldownID = icon._isBlizzBacked
+    p.blizzardMirrorCooldownID = icon._blizzMirrorCooldownID
 
     return CDMSpellData:ResolveAuraState(p)
 end
@@ -878,7 +889,7 @@ function CDMResolvers.ResolveItemDurationObjectForIcon(icon, entry)
     if itemSpellID then
         local cdInfo = QueryCooldown(itemSpellID)
         local cdInfoActive = cdInfo and CDMIcons.GetCooldownInfoField(cdInfo, "isActive")
-        if cdInfoActive == true and cdInfo.isOnGCD ~= true then
+        if cdInfoActive == true and GetTrustedIsOnGCD(itemSpellID) ~= true then
             local durObj = QueryDuration(itemSpellID)
             if durObj then
                 return durObj, "item-cooldown",
@@ -958,25 +969,34 @@ function CDMResolvers.ResolveIconDurationObject(icon)
         return nil, "inactive", nil
     end
 
-    -- 1.5. Blizzard CDM mirror — for cooldown-kind entries with a bound
+    -- 1.5. Blizzard CDM mirror — for cooldown-kind entries with a known
     -- viewer child, prefer Blizzard's privileged durObj over our own
     -- spell cooldown source query. Blizzard's child receives
     -- SetCooldownFromDurationObject from the same data feed that drives
     -- their UI, including talent-modified durations and per-charge
     -- cooldowns.
     --
-    -- Built-in containers (essential / utility): pass viewerType for an
-    -- exact per-viewer lookup. Custom bars carry a QUI-side viewer ID,
-    -- so they fall back to FindCooldownState which probes essential then
-    -- utility in priority order. Aura viewers (buff / trackedBar) are
+    -- Exact cID binding wins first. It keeps custom containers and duplicate
+    -- placements tied to the same Blizzard child without guessing from a
+    -- spellID map. The spellID lookup remains as a fallback for icons built
+    -- before the child exists. Aura viewers (buff / trackedBar) are
     -- intentionally NOT probed here — that's the aura resolver's job.
     do
         local m
-        if Sources and Sources.QueryMirroredCooldownState then
+        local mirrorCooldownID = icon._blizzMirrorCooldownID
+        local mirror = ns.CDMBlizzMirror
+        if mirrorCooldownID and mirror and mirror.GetStateByCooldownID then
+            m = mirror.GetStateByCooldownID(mirrorCooldownID)
+        end
+        if not m and Sources and Sources.QueryMirroredCooldownState then
             m = Sources.QueryMirroredCooldownState(sid, entry.viewerType)
         end
         if m and m.isActive and m.durObj then
-            return m.durObj, "cooldown", "mirror:" .. tostring(sid) .. ":" .. tostring(m.mirrorEpoch)
+            local sourceCooldownID = m.cooldownID or mirrorCooldownID or sid
+            local sourceSpellID = m.overrideSpellID or m.spellID or sid
+            return m.durObj, "cooldown",
+                "mirror:" .. tostring(sourceCooldownID) .. ":" .. tostring(m.mirrorEpoch),
+                nil, nil, sourceSpellID
         end
     end
 
@@ -995,8 +1015,9 @@ function CDMResolvers.ResolveIconDurationObject(icon)
         end
     end
 
-    -- 3. Spell cooldown active → spell DurObj. cdInfo.isOnGCD
-    -- distinguishes real CD from GCD overlay. Two distinct queries:
+    -- 3. Spell cooldown active → spell DurObj. The trusted
+    -- SPELL_UPDATE_COOLDOWN snapshot distinguishes real CD from GCD overlay.
+    -- Two distinct queries:
     --   real CD branch:   GetSpellCooldownDuration(sid, true)  via QueryDuration
     --                     — returns the spell's own CD, ignoring the GCD that
     --                     would otherwise mask it during the first 1.5s
@@ -1011,7 +1032,11 @@ function CDMResolvers.ResolveIconDurationObject(icon)
         local cdInfo = QueryCooldown(sid)
         local cdInfoActive = cdInfo and CDMIcons.GetCooldownInfoField(cdInfo, "isActive")
         if cdInfoActive == true then
-            local cdInfoOnGCD = cdInfo.isOnGCD
+            local cdInfoOnGCD = GetTrustedIsOnGCD(sid)
+            local durObj = QueryDuration(sid)
+            if durObj then
+                return durObj, "cooldown", sid
+            end
             if cdInfoOnGCD == true then
                 if CDMIcons.IsGCDSwipeEnabled() then
                     local gcdDur
@@ -1021,11 +1046,6 @@ function CDMResolvers.ResolveIconDurationObject(icon)
                     if gcdDur then
                         return gcdDur, "gcd-only", sid
                     end
-                end
-            else
-                local durObj = QueryDuration(sid)
-                if durObj then
-                    return durObj, "cooldown", sid
                 end
             end
         end

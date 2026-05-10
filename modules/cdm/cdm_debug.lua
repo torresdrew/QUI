@@ -357,18 +357,9 @@ local okStack = true; local stack = icon.StackText.GetText(icon.StackText)
 local okDur = true; local dur = icon.DurationText.GetText(icon.DurationText)
         print(P, "  durationText=", okDur and tostring(tostring(dur)) or "err")
     end
-    if icon._blizzFallbackPushed and icon._blizzCooldownFrame then
-        local cd = icon._blizzCooldownFrame
-local okShown = true; local shown = cd.IsShown(cd)
-local okTimes = true; local startMS, durationMS = cd.GetCooldownTimes(cd)
-local okDraw = true; local drawSwipe = cd.GetDrawSwipe(cd)
-        print(P, "  nativeAuraFallback blizzCDShown=", okShown and tostring(shown) or "err",
-            "times=", okTimes and tostring(startMS) or "err", "/", okTimes and tostring(durationMS) or "err",
-            "drawSwipe=", okDraw and tostring(drawSwipe) or "err")
-    end
-    if icon._isBlizzBacked and ns.CDMBlizzMirror
+    if icon._blizzMirrorCooldownID and ns.CDMBlizzMirror
        and ns.CDMBlizzMirror.GetStateByCooldownID then
-        local m = ns.CDMBlizzMirror.GetStateByCooldownID(icon._isBlizzBacked)
+        local m = ns.CDMBlizzMirror.GetStateByCooldownID(icon._blizzMirrorCooldownID)
         local links = "nil"
         if m and type(m.linkedSpellIDs) == "table" then
             local out = {}
@@ -377,16 +368,19 @@ local okDraw = true; local drawSwipe = cd.GetDrawSwipe(cd)
             end
             links = table.concat(out, ",")
         end
-        print(P, "  blizzBacked=", tostring(icon._isBlizzBacked),
+        print(P, "  blizzMirror=", tostring(icon._blizzMirrorCooldownID),
             "cat=", tostring(m and m.viewerCategory),
             "active=", tostring(m and m.isActive),
-            "nativeFallback=", tostring(icon._blizzFallbackPushed),
+            "fromAura=", tostring(m and m.wasSetFromAura),
+            "fromCooldown=", tostring(m and m.wasSetFromCooldown),
+            "fromCharges=", tostring(m and m.wasSetFromCharges),
+            "nativeDurObj=", tostring(icon._mirrorNativeDurObjApplied),
             "spellID=", tostring(m and m.spellID),
             "override=", tostring(m and m.overrideSpellID),
             "tooltip=", tostring(m and m.overrideTooltipSpellID),
             "links=", links)
         if ns.CDMBlizzMirror.GetChildDebugLines then
-            local childLines = ns.CDMBlizzMirror.GetChildDebugLines(icon._isBlizzBacked)
+            local childLines = ns.CDMBlizzMirror.GetChildDebugLines(icon._blizzMirrorCooldownID)
             if type(childLines) == "table" then
                 for _, line in ipairs(childLines) do
                     print(P, "  blizzChild", line)
@@ -1103,6 +1097,12 @@ function CDMDebug.FormatMirrorState(state, sep)
     return "cdID=" .. tostring(state.cooldownID)
         .. sep .. "cat=" .. tostring(state.viewerCategory)
         .. sep .. "active=" .. tostring(state.isActive == true)
+        .. sep .. "dur=" .. tostring(state.durObj and true or false)
+        .. sep .. "inst=" .. tostring(state.hasAuraInstanceID == true)
+        .. sep .. "unit=" .. tostring(state.auraUnit)
+        .. sep .. "fromAura=" .. tostring(state.wasSetFromAura)
+        .. sep .. "fromCd=" .. tostring(state.wasSetFromCooldown)
+        .. sep .. "fromCharges=" .. tostring(state.wasSetFromCharges)
         .. sep .. "spell=" .. tostring(state.spellID)
         .. sep .. "ov=" .. tostring(state.overrideSpellID)
         .. sep .. "tooltip=" .. tostring(state.overrideTooltipSpellID)

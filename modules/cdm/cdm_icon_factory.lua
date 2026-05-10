@@ -353,7 +353,7 @@ function CDMIconFactory:AcquireIcon(parent, spellEntry)
     if spellEntry.viewerType ~= "buff" then
         CDMIcons.UpdateIconSecureAttributes(newIcon, spellEntry, spellEntry.viewerType)
     end
-    -- Bind to a Blizzard CDM child if this entry has one.
+    -- Bind to a Blizzard mirror child if this entry has one.
     CDMIconFactory.TryBindIconToBlizz(newIcon, spellEntry)
     -- Notify rotation helper that an icon was assigned a spell
     if ns._onIconAssigned then ns._onIconAssigned(newIcon) end
@@ -367,10 +367,9 @@ function CDMIconFactory:ReleaseIcon(icon)
             "viewerType=", icon._spellEntry and icon._spellEntry.viewerType,
             "shown=", icon.IsShown and icon:IsShown())
     end
-    -- Drop any Blizzard child reparent and restore native widget visibility
-    -- before the rest of release-state cleanup runs. Table-routed because
-    -- the helper is defined later in this file.
-    CDMIconFactory.ClearIconBlizzBacking(icon)
+    -- Drop any Blizzard mirror binding before the rest of release-state
+    -- cleanup runs. Table-routed because the helper is defined later here.
+    CDMIconFactory.ClearIconBlizzMirrorBinding(icon)
     CDMIcons.CancelCooldownExpiryRefresh(icon)
     if ns.CDMRuntimeStore and ns.CDMRuntimeStore.ClearFrame then
         ns.CDMRuntimeStore.ClearFrame(icon)
@@ -480,40 +479,14 @@ CDMIconFactory.SyncCooldownBling = SyncCooldownBling
 
 
 ---------------------------------------------------------------------------
--- BLIZZARD CHILD HOSTING
+-- BLIZZARD MIRROR CONSUMERS
 --
--- For entries that map to a Blizzard CDM cooldownID, the icon hosts the
--- viewer's child frame directly: Blizzard's own swipe / charge / aura-stack
--- widgets render inside our QUI icon and Blizzard remains the sole writer
--- of secret-safe state (DurationObjects flow through C-side sinks the
--- viewer mixin already drives). UpdateIconCooldown short-circuits when
--- _isBlizzBacked is set.
+-- For entries that map to a Blizzard CDM cooldownID, the Blizzard child stays
+-- in Blizzard's hidden viewer and acts only as the producer for the mirror.
+-- QUI icons keep their native widgets and render from that exact cID state.
+-- Aura entries use the mirror for visibility plus duration; cooldown entries
+-- use it only as a preferred duration source.
 ---------------------------------------------------------------------------
-local function HideNativeIconWidgets(icon)
-    if icon.Icon then icon.Icon.Hide(icon.Icon) end
-    if icon.Cooldown then
-        -- Hide() alone is not sufficient: CooldownFrame's swipe state can be
-        -- redrawn by SetCooldown calls or by other QUI paths that bypass
-        -- our short-circuits. Neutralize every rendering primitive so even
-        -- if the frame becomes visible again, nothing paints over the
-        -- reparented Blizzard child below.
-        icon.Cooldown.Clear(icon.Cooldown)
-        icon.Cooldown.SetDrawSwipe(icon.Cooldown, false)
-        icon.Cooldown.SetDrawEdge(icon.Cooldown, false)
-        icon.Cooldown.SetDrawBling(icon.Cooldown, false)
-        icon.Cooldown.SetSwipeColor(icon.Cooldown, 0, 0, 0, 0)
-        icon.Cooldown.SetHideCountdownNumbers(icon.Cooldown, true)
-        icon.Cooldown.Hide(icon.Cooldown)
-    end
-    if icon.DurationText then icon.DurationText.Hide(icon.DurationText) end
-    if icon.StackText    then icon.StackText.Hide(icon.StackText)    end
-    -- icon.Border intentionally NOT hidden: QUI's border styling stays
-    -- in effect for Blizzard-backed icons too. The shape mismatch (square
-    -- Border behind a circular masked Icon) is fixed in
-    -- ApplyCircularMaskToBorder, called from SetIconBlizzBacking.
-    if icon.TextOverlay  then icon.TextOverlay.Hide(icon.TextOverlay)  end
-end
-
 local function ShowNativeIconWidgets(icon)
     if icon.Icon then icon.Icon.Show(icon.Icon) end
     if icon.Cooldown then
@@ -533,37 +506,97 @@ local function ShowNativeIconWidgets(icon)
     if icon.TextOverlay  then icon.TextOverlay.Show(icon.TextOverlay)  end
 end
 
-local function SetIconBlizzBacking(icon, cooldownID)
+local function SetIconBlizzMirrorBinding(icon, cooldownID)
     if not (icon and cooldownID) then return end
-    icon._blizzFallbackPushed = nil
-    icon._isBlizzBacked = cooldownID
-    HideNativeIconWidgets(icon)
-    local mirror = ns.CDMBlizzMirror
-    if mirror and mirror.RegisterHostSlot then
-        mirror.RegisterHostSlot(icon, cooldownID)
+    icon._mirrorNativeDurObjApplied = nil
+    icon._lastMirrorNativeAuraSourceID = nil
+    icon._blizzMirrorCooldownID = cooldownID
+    ShowNativeIconWidgets(icon)
+    local icons = ns.CDMIcons
+    if icons and icons.ConfigureIcon and icon._rowConfig then
+        icons.ConfigureIcon(icon, icon._rowConfig)
     end
 end
 
-local function ClearIconBlizzBacking(icon)
-    if not icon or not icon._isBlizzBacked then return end
-    icon._blizzFallbackPushed = nil
-    icon._isBlizzBacked = nil
-    local mirror = ns.CDMBlizzMirror
-    if mirror and mirror.UnregisterHostSlot then
-        mirror.UnregisterHostSlot(icon)
-    end
+local function ClearIconBlizzMirrorBinding(icon)
+    if not icon or not icon._blizzMirrorCooldownID then return end
+    icon._mirrorNativeDurObjApplied = nil
+    icon._lastMirrorNativeAuraSourceID = nil
+    icon._blizzMirrorCooldownID = nil
     ShowNativeIconWidgets(icon)
 end
 
-CDMIconFactory.SetIconBlizzBacking   = SetIconBlizzBacking
-CDMIconFactory.ClearIconBlizzBacking = ClearIconBlizzBacking
+CDMIconFactory.SetIconBlizzMirrorBinding   = SetIconBlizzMirrorBinding
+CDMIconFactory.ClearIconBlizzMirrorBinding = ClearIconBlizzMirrorBinding
 
--- Blizz-bind debug helpers live in cdm_debug.lua. Placeholders below are
+-- Blizzard mirror debug helpers live in cdm_debug.lua. Placeholders below are
 -- rebound by cdm_debug.lua's BindAll() at the end of its load.
 local ShouldDebugBlizzEntry = function() return false end
 local FormatMirrorState     = function() return "nil" end
 local FormatIDList          = function() return "nil" end
 local DebugBlizzEntry       = function() end
+
+local function DebugSafeShown(frame)
+    if frame and frame.IsShown then
+        return frame:IsShown() and true or false
+    end
+    return nil
+end
+
+local function DebugSafeAlpha(frame)
+    if frame and frame.GetAlpha then
+        local alpha = frame:GetAlpha()
+        if not (Helpers.IsSecretValue and Helpers.IsSecretValue(alpha)) then
+            return alpha
+        end
+    end
+    return nil
+end
+
+local function DebugBlizzSyncSnapshot(enabled, icon, entry, mirrorState, resolvedState,
+                                      active, mirrorActive, fallbackFoundAura,
+                                      durObj, durObjSource)
+    if not enabled or not icon then return end
+
+    local signature = table.concat({
+        tostring(active == true),
+        tostring(mirrorActive == true),
+        tostring(mirrorState and mirrorState.durObj and true or false),
+        tostring(mirrorState and mirrorState.hasAuraInstanceID == true),
+        tostring(mirrorState and mirrorState.auraUnit),
+        tostring(resolvedState and resolvedState.isActive == true),
+        tostring(resolvedState and resolvedState.durObj and true or false),
+        tostring(resolvedState and resolvedState.auraInstanceID and true or false),
+        tostring(resolvedState and resolvedState.auraUnit),
+        tostring(resolvedState and resolvedState.durationStateUnknown == true),
+        tostring(fallbackFoundAura == true),
+        tostring(durObj and true or false),
+        tostring(durObjSource),
+        tostring(DebugSafeShown(icon)),
+        tostring(DebugSafeAlpha(icon)),
+    }, "|")
+
+    if icon._lastBlizzSyncTraceSig == signature then return end
+    icon._lastBlizzSyncTraceSig = signature
+
+    DebugBlizzEntry(enabled, entry, "state-sync-trace",
+        "active=", tostring(active == true),
+        "mirrorActive=", tostring(mirrorActive == true),
+        "mirrorDur=", tostring(mirrorState and mirrorState.durObj and true or false),
+        "mirrorInst=", tostring(mirrorState and mirrorState.hasAuraInstanceID == true),
+        "mirrorUnit=", tostring(mirrorState and mirrorState.auraUnit),
+        "resolverActive=", tostring(resolvedState and resolvedState.isActive == true),
+        "resolverDur=", tostring(resolvedState and resolvedState.durObj and true or false),
+        "resolverInst=", tostring(resolvedState and resolvedState.auraInstanceID and true or false),
+        "resolverUnit=", tostring(resolvedState and resolvedState.auraUnit),
+        "unknown=", tostring(resolvedState and resolvedState.durationStateUnknown == true),
+        "fallbackAura=", tostring(fallbackFoundAura == true),
+        "durObj=", tostring(durObj and true or false),
+        "durObjSource=", tostring(durObjSource),
+        "hostShown=", tostring(DebugSafeShown(icon)),
+        "hostAlpha=", tostring(DebugSafeAlpha(icon)),
+        FormatMirrorState(mirrorState))
+end
 
 -- Resolve (entry, viewerType) -> cooldownID via the mirror's per-category
 -- maps. Returns nil if the entry doesn't map to a Blizzard child.
@@ -707,14 +740,14 @@ local function TryBindIconToBlizz(icon, spellEntry)
     if not cdID then
         -- Recycled icon may carry a stale Blizzard binding; clear it so
         -- native rendering takes over.
-        ClearIconBlizzBacking(icon)
+        ClearIconBlizzMirrorBinding(icon)
         return false
     end
-    -- Same binding as before — no-op
-    if icon._isBlizzBacked == cdID then return true end
+    -- Same binding as before: no-op.
+    if icon._blizzMirrorCooldownID == cdID then return true end
     -- Different binding — clear and rebind
-    if icon._isBlizzBacked then ClearIconBlizzBacking(icon) end
-    SetIconBlizzBacking(icon, cdID)
+    if icon._blizzMirrorCooldownID then ClearIconBlizzMirrorBinding(icon) end
+    SetIconBlizzMirrorBinding(icon, cdID)
     return true
 end
 
@@ -754,7 +787,7 @@ local function RetryUnboundIconsForChild(cdID, catName)
             for _, icon in ipairs(pool) do
                 local entry = icon and icon._spellEntry
                 if entry
-                    and icon._isBlizzBacked == nil
+                    and icon._blizzMirrorCooldownID == nil
                     and CategoryMatchesViewerType(catName, entry.viewerType) then
                     TryBindIconToBlizz(icon, entry)
                 end
@@ -774,9 +807,9 @@ end
 
 -- DRIVER
 
-local function SyncBlizzBackedIconState(icon)
+local function SyncBlizzMirrorIconState(icon)
     local entry = icon and icon._spellEntry
-    local cooldownID = icon and icon._isBlizzBacked
+    local cooldownID = icon and icon._blizzMirrorCooldownID
     if not (entry and cooldownID) then return false end
 
     local runtimeSid = entry.spellID or entry.overrideSpellID or entry.id
@@ -812,8 +845,8 @@ local function SyncBlizzBackedIconState(icon)
         r = ResolveAuraStateForIcon(icon, entry, runtimeSid)
     end
 
-    -- Mirror is authoritative for Blizz-backed icons. `m` is the mirror
-    -- state for the EXACT cdID this icon is bound to (icon._isBlizzBacked).
+    -- Mirror is authoritative for Blizzard-mirrored icons. `m` is the mirror
+    -- state for the exact cdID this icon is bound to.
     -- The resolver's `r.isActive` can come from a different cdID's aura
     -- (spellID→cdID maps have collisions: e.g. VP and Dread Plague both
     -- carry info.spellID=77575, so Outbreak's spellID resolves to whichever
@@ -839,6 +872,13 @@ local function SyncBlizzBackedIconState(icon)
             "m.spellID", m.spellID,
             "m.overrideTooltipSpellID", m.overrideTooltipSpellID,
             "m.durObj", m.durObj,
+            "m.hasAuraInstanceID", m.hasAuraInstanceID,
+            "m.auraUnit", m.auraUnit,
+            "r.isActive", r and r.isActive,
+            "r.durObj", r and r.durObj,
+            "r.auraInstanceID", r and r.auraInstanceID,
+            "r.auraUnit", r and r.auraUnit,
+            "r.durationStateUnknown", r and r.durationStateUnknown,
             "m.viewerCategory", m.viewerCategory,
             "auraUnit", auraUnit,
             "mirrorActive", mirrorActive)
@@ -847,8 +887,7 @@ local function SyncBlizzBackedIconState(icon)
     -- Two-stage durObj resolution.
     --
     -- Stage 1: trust m.durObj. The mirror's durObj came either from
-    -- Blizzard's SetCooldownFromDurationObject hook (so it matches what's
-    -- driving the reparented child Cooldown swipe) or from
+    -- Blizzard's SetCooldownFromDurationObject hook on the child Cooldown or from
     -- VerifyStateFreshness (C_UnitAuras.GetAuraDuration on the stamped
     -- instID — same value Blizzard's mixin would resolve to).
     --
@@ -861,15 +900,14 @@ local function SyncBlizzBackedIconState(icon)
     -- subsequently returns nil (durationless / permanent auras like
     -- stances and forms). When we DO get a durObj from the fallback we
     -- push it onto icon.Cooldown ourselves since Blizzard's mixin isn't.
-    -- If both stages report no aura at all, the icon is inactive — no
-    -- further fallback.
+    -- If both stages report no aura at all, a Blizzard-active mirror still
+    -- shows the icon without a swipe; otherwise the icon is inactive.
     local durObj = m.durObj
     local durObjSource = durObj and "mirror" or nil
     local fallbackFoundAura = false   -- aura is on unit per GetUnitAuraBySpellID
     local fallbackInstID
 
-    if not mirrorActive
-        and not durObj
+    if not durObj
         and Sources
         and Sources.QueryUnitAuraBySpellID then
         local filter = (auraUnit == "target") and "HARMFUL" or "HELPFUL"
@@ -932,6 +970,8 @@ local function SyncBlizzBackedIconState(icon)
     -- active without a durObj — the icon should display, just without
     -- a countdown swipe.
     local active = mirrorActive or fallbackFoundAura or (durObj and true or false)
+    DebugBlizzSyncSnapshot(debugBlizz, icon, entry, m, r, active, mirrorActive,
+        fallbackFoundAura, durObj, durObjSource)
     local priorActive = icon._auraActive == true
     local priorEpoch = icon._lastBlizzSwipeEpoch
     local priorHadAuraDurObj = icon._lastAuraDurObj and true or false
@@ -969,56 +1009,66 @@ local function SyncBlizzBackedIconState(icon)
         icon._auraIsHarmful = nil
     end
 
-    -- Two write paths share the same C-side sink, the reparented child
-    -- Cooldown subframe (icon._blizzCooldownFrame):
-    --   * Stage 1 — Blizzard's CooldownViewer mixin pushes durObjs into
-    --     it directly. We don't touch it.
-    --   * Stage 2 — when our spellID-fallback resolved a durObj that
-    --     Blizzard's mixin didn't push (e.g. Reaping, or combat staleness
-    --     where our mirror cache lost the auraInstanceID), forward the
-    --     durObj through the same SetCooldownFromDurationObject sink.
-    --
-    -- Why target _blizzCooldownFrame and not icon.Cooldown: an icon hosts
-    -- both frames simultaneously, and our previous "push to icon.Cooldown
-    -- + try to hide _blizzCooldownFrame" path could not reliably suppress
-    -- the Blizzard frame (HookSwipeStyleDefense reverts SetDrawSwipe /
-    -- SetSwipeColor to QUI's intent, and SetAlpha(0) gets restored by
-    -- Blizzard's mixin on its next push). Two frames could end up with
-    -- swipes and countdown text rendering at once. Pushing into the same
-    -- frame Blizzard uses guarantees a single visible swipe regardless of
-    -- which side wrote last — they share one C-side widget.
-    --
-    -- Per the 12.0.5 restriction, only SetCooldownFromDurationObject (not
-    -- SetCooldown / SetCooldownFromExpirationTime) accepts secret values
-    -- from tainted code, which durObj may be in combat.
-    --
-    -- A durationless active aura is still active but renders without a
-    -- swipe. If this icon previously had a DurationObject, clear that stale
-    -- native swipe so timed-to-durationless transitions settle correctly.
-    local blizzCD = icon._blizzCooldownFrame
-    local pushFallback = durObjSource == "spellID-fallback"
-    local clearDurationlessSwipe = active and not durObj and priorHadAuraDurObj
-    local nativeAuraApplied = false
-    if pushFallback and blizzCD and blizzCD.SetCooldownFromDurationObject then
-local okPush = true; blizzCD.SetCooldownFromDurationObject(blizzCD, durObj)
-        nativeAuraApplied = okPush
-        icon._blizzFallbackPushed = okPush or nil
-    elseif icon._blizzFallbackPushed or clearDurationlessSwipe then
-        -- Transitioned out of a duration-bearing aura path: clear the last
-        -- swipe so a stale durObj doesn't keep animating when the mixin stays
-        -- silent, the aura is gone, or the aura is still active but no longer
-        -- has an expiration.
-        if blizzCD and blizzCD.Clear then
-            blizzCD.Clear(blizzCD)
-            nativeAuraApplied = true
+    local priorPandemicKnown = icon._blizzPandemicStateKnown == true
+    local priorPandemicActive = icon._blizzPandemicActive == true
+    if m.pandemicStateKnown == true then
+        icon._blizzPandemicActive = m.pandemicActive == true
+        icon._blizzPandemicStateKnown = true
+    else
+        icon._blizzPandemicActive = nil
+        icon._blizzPandemicStateKnown = nil
+    end
+    if priorPandemicKnown ~= (icon._blizzPandemicStateKnown == true)
+        or priorPandemicActive ~= (icon._blizzPandemicActive == true) then
+        local glows = ns._OwnedGlows
+        if glows and glows.UpdatePandemicGlow then
+            glows.UpdatePandemicGlow(icon)
         end
+    end
+
+    if active then
+        if m.stackTextShown == false and CDMIcons and CDMIcons.ClearIconStackText then
+            CDMIcons.ClearIconStackText(icon)
+            icon._lastMirrorStackTextEpoch = m.stackTextEpoch
+        elseif m.stackText and icon.StackText and CDMIcons then
+            local stackSettings = CDMIcons.GetTrackerSettings and CDMIcons.GetTrackerSettings(entry.viewerType) or nil
+            if CDMIcons.ShouldHideIconStackText and CDMIcons.ShouldHideIconStackText(icon, stackSettings) then
+                if CDMIcons.ClearIconStackText then
+                    CDMIcons.ClearIconStackText(icon)
+                end
+            else
+                icon.StackText.SetText(icon.StackText, m.stackText)
+                icon.StackText.Show(icon.StackText)
+                icon._stackTextSource = m.stackTextSource or "Applications"
+            end
+            icon._lastMirrorStackTextEpoch = m.stackTextEpoch
+        elseif r and r.isActive and not r.isTotemInstance and CDMIcons and CDMIcons.ApplyAuraStackText then
+            CDMIcons.ApplyAuraStackText(icon, r.stacks, entry.hasCharges, InCombatLockdown(), r.stackSource)
+        elseif not InCombatLockdown() and CDMIcons and CDMIcons.ClearIconStackText then
+            CDMIcons.ClearIconStackText(icon)
+        end
+    else
         if CDMIcons and CDMIcons.ClearIconStackText then
             CDMIcons.ClearIconStackText(icon)
         end
-        icon._blizzFallbackPushed = nil
+        if icon.Icon then
+            local baseTex = GetEntryTexture(entry) or GetSpellTexture(runtimeSid)
+            icon._desiredTexture = nil
+            if baseTex and baseTex ~= icon._lastTexture then
+                icon.Icon.SetTexture(icon.Icon, baseTex)
+                icon._lastTexture = baseTex
+            end
+        end
     end
 
     local epoch = m.mirrorEpoch or 0
+    local mirrorDurationSourceID = active and durObj
+        and ((durObjSource or "mirror") .. ":" .. tostring(cooldownID) .. ":" .. tostring(epoch))
+        or nil
+    local priorMirrorDurationSourceID = icon._lastMirrorNativeAuraSourceID
+    icon._lastMirrorNativeAuraSourceID = mirrorDurationSourceID
+    icon._mirrorNativeDurObjApplied = nil
+
     icon._lastBlizzSwipeEpoch = epoch
     if priorActive ~= active
        and entry.viewerType == "buff"
@@ -1026,28 +1076,31 @@ local okPush = true; blizzCD.SetCooldownFromDurationObject(blizzCD, durObj)
        and CDMIcons.RequestBuffIconLayoutRefresh then
         CDMIcons.RequestBuffIconLayoutRefresh()
     end
-    if priorActive ~= active or priorEpoch ~= epoch or nativeAuraApplied then
+    local durationSourceChanged = priorMirrorDurationSourceID ~= mirrorDurationSourceID
+        or priorHadAuraDurObj ~= (durObj and true or false)
+    if priorActive ~= active or priorEpoch ~= epoch or durationSourceChanged then
         DebugBlizzEntry(debugBlizz, entry, "state-sync",
             FormatMirrorState(m),
             "runtimeSid=", tostring(runtimeSid),
             "durObjSource=", tostring(durObjSource),
             "fallbackInstID=", tostring(fallbackInstID),
             "source=", tostring(icon._lastAuraSourceID),
-            "nativeFallback=", tostring(pushFallback),
-            "nativeApplied=", tostring(nativeAuraApplied))
+            "durationSourceChanged=", tostring(durationSourceChanged))
     end
-    return priorActive ~= active or priorEpoch ~= epoch or nativeAuraApplied
+    return priorActive ~= active or priorEpoch ~= epoch or durationSourceChanged
 end
 
 local function UpdateIconCooldown(icon)
     if not icon or not icon._spellEntry then return end
-    -- Blizzard-backed icons render via the reparented viewer child; the
-    -- viewer's mixin owns swipe/stacks/charges via secret-safe C-side sinks.
-    -- Keep QUI's host-side state in sync so visibility/layout code does not
-    -- hide the host while the reparented Blizzard child is rendering.
-    if icon._isBlizzBacked then
-        local refreshSwipe = SyncBlizzBackedIconState(icon)
-        if refreshSwipe then
+    -- Blizzard-mirrored aura icons render with QUI-native widgets from the
+    -- exact cID mirror. The Blizzard child stays in its own viewer.
+    if icon._blizzMirrorCooldownID and IsAuraEntry(icon._spellEntry) then
+        local refreshSwipe = SyncBlizzMirrorIconState(icon)
+        local resolvedSwipe = false
+        if ApplyResolvedCooldown then
+            resolvedSwipe = ApplyResolvedCooldown(icon) == true
+        end
+        if refreshSwipe or resolvedSwipe then
             local swipe = ns._OwnedSwipe
             if swipe and swipe.ApplyToIcon then
                 swipe.ApplyToIcon(icon)

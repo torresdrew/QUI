@@ -1330,6 +1330,7 @@ end
 local _editModeActive = false
 local _disabledMouseFrames = {}
 local _forceLayoutKey = nil  -- set temporarily to bypass edit mode check for one container
+local _containerMouseSyncPending = false
 
 local function IsCDMMouseoverFadeEnabled()
     local vis = QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.cdmVisibility
@@ -1483,18 +1484,23 @@ SyncContainerMouseState = function(container, alphaOverride, force)
     local hoverOnly = IsCDMMouseoverFadeEnabled()
     local stateChanged = (container._quiAlphaHidden ~= hidden) or (container._quiHoverOnly ~= hoverOnly)
 
-    if hoverOnly then
-        SetFrameHoverOnly(container)
-    else
-        SetFrameMouseDisabled(container)
-    end
-
     if not (force or stateChanged) then
         return
     end
 
     container._quiAlphaHidden = hidden
     container._quiHoverOnly = hoverOnly
+
+    if InCombatLockdown() and not inInitSafeWindow then
+        _containerMouseSyncPending = true
+        return
+    end
+
+    if hoverOnly then
+        SetFrameHoverOnly(container)
+    else
+        SetFrameMouseDisabled(container)
+    end
 
     if GetContainerShape(containerKey) == "bar" then
         SyncContainerBarsForVisibility(container)
@@ -2536,7 +2542,7 @@ function ownedEngine:Initialize()
 
     -- Build the Blizzard CDM mirror catalog NOW, inside the safe window, so
     -- BuildIcons → TryBindIconToBlizz can resolve cooldownIDs for every
-    -- Blizz-backed icon. The mirror's own PLAYER_LOGIN / PLAYER_ENTERING_WORLD
+    -- Blizzard-mirrored icon. The mirror's own PLAYER_LOGIN / PLAYER_ENTERING_WORLD
     -- Walk fires on a separate event frame and can run after this window has
     -- closed; on a combat /reload it would otherwise bail until combat ends.
     if ns.CDMBlizzMirror and ns.CDMBlizzMirror.ForceRescan then
@@ -2648,6 +2654,9 @@ function ownedEngine:Initialize()
                 local previousInitSafeWindow = ns._inInitSafeWindow
                 inInitSafeWindow = true
                 ns._inInitSafeWindow = true
+                if ns.CDMBlizzMirror and ns.CDMBlizzMirror.ForceRescan then
+                    ns.CDMBlizzMirror.ForceRescan()
+                end
                 RefreshAll(true)
                 if _G.QUI_ApplyAllFrameAnchors then
                     _G.QUI_ApplyAllFrameAnchors()
@@ -2720,6 +2729,11 @@ function ownedEngine:Initialize()
 
             if specTrackingPendingRefresh then
                 FinalizeSpecTracking()
+            end
+
+            if _containerMouseSyncPending and not InCombatLockdown() then
+                _containerMouseSyncPending = false
+                SyncAllContainerMouseStates(true)
             end
         elseif event == "CHALLENGE_MODE_START" then
             -- Restore dormant spells before refreshing — SPELLS_CHANGED

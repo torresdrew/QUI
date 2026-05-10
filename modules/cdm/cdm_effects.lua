@@ -1375,17 +1375,12 @@ local function ApplySwipeToIcon(icon, settings)
         showSwipe = SettingEnabled(settings.showCooldownSwipe, true)
     end
 
-    -- Apply swipe styling to BOTH our native icon.Cooldown AND the
-    -- reparented Blizzard child.Cooldown (if Blizzard-backed). Writing to
-    -- both keeps QUI styling consistent regardless of which Cooldown
-    -- frame is currently driving the visible swipe.
+    -- Apply swipe styling to QUI's native icon.Cooldown.
     local showEdge = showSwipe and (mode == "aura" or (mode == "cooldown" and settings.showRechargeEdge))
 
     local function applyToCooldown(cd)
         if not cd then return end
-        -- Stash intended state on the frame so the mirror's swipe-defense
-        -- hook (HookSwipeStyleDefense in cdm_blizz_mirror.lua) can revert
-        -- Blizzard's mixin if it tries to re-apply template defaults.
+        -- Stash intended state on the cooldown frame for later style reapplies.
         cd._quiIntendedDrawSwipe = showSwipe and true or false
         cd._quiIntendedDrawEdge  = showEdge and true or false
         cd._quiIntendedSwipeTexture = FULL_FRAME_SWIPE_TEXTURE
@@ -1415,7 +1410,6 @@ local function ApplySwipeToIcon(icon, settings)
     end
 
     applyToCooldown(icon.Cooldown)
-    applyToCooldown(icon._blizzCooldownFrame)
 end
 
 ---------------------------------------------------------------------------

@@ -42,8 +42,6 @@ local ADDON_NAME, ns = ...
 local CDMIndex = {}
 ns.CDMIndex = CDMIndex
 
-local Sources = ns.CDMSources
-local C_CooldownViewer = C_CooldownViewer
 local ipairs = ipairs
 local pairs = pairs
 local type = type
@@ -52,6 +50,14 @@ local wipe = wipe
 -- issecretvalue is global on 12.0+. Stub when running outside WoW (the
 -- profile test harness loads no CDM code, so this is defensive only).
 local issecretvalue = issecretvalue or function() return false end
+
+local function GetCooldownViewerAPI()
+    return _G.C_CooldownViewer
+end
+
+local function GetSources()
+    return ns.CDMSources
+end
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -63,6 +69,7 @@ end
 
 function CDMIndex.ToBaseSpellID(id)
     if not CDMIndex.IsUsableID(id) then return nil end
+    local Sources = GetSources()
     local base = Sources and Sources.QueryBaseSpell and Sources.QueryBaseSpell(id)
     if not CDMIndex.IsUsableID(base) then return id end
     return base
@@ -119,9 +126,10 @@ function CDMIndex.Rebuild()
     _built = true
     _version = _version + 1
 
-    if not (C_CooldownViewer
-            and C_CooldownViewer.GetCooldownViewerCategorySet
-            and C_CooldownViewer.GetCooldownViewerCooldownInfo) then
+    local api = GetCooldownViewerAPI()
+    if not (api
+            and api.GetCooldownViewerCategorySet
+            and api.GetCooldownViewerCooldownInfo) then
         return
     end
 
@@ -131,12 +139,12 @@ function CDMIndex.Rebuild()
     local seenCooldown = {}
     for _, cat in ipairs(cats) do
         if cat ~= nil then
-            local ids = C_CooldownViewer.GetCooldownViewerCategorySet(cat, true)
+            local ids = api.GetCooldownViewerCategorySet(cat, true)
             if ids then
                 for _, cdID in ipairs(ids) do
                     if not seenCooldown[cdID] then
                         seenCooldown[cdID] = true
-                        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                        local info = api.GetCooldownViewerCooldownInfo(cdID)
                         if info then
                             local primarySid = info.overrideTooltipSpellID
                                 or info.overrideSpellID or info.spellID
@@ -300,6 +308,10 @@ function CDMIndex.GetOrderedSpellMap()
     if not (CooldownViewerSettings and CooldownViewerSettings.GetDataProvider) then
         return map
     end
+    local api = GetCooldownViewerAPI()
+    if not (api and api.GetCooldownViewerCooldownInfo) then
+        return map
+    end
     local provider = CooldownViewerSettings:GetDataProvider()
     if not (provider and provider.GetOrderedCooldownIDsForCategory) then
         return map
@@ -317,7 +329,7 @@ function CDMIndex.GetOrderedSpellMap()
 ids = provider.GetOrderedCooldownIDsForCategory(provider, cat, true)
             if ids then
                 for _, cdID in ipairs(ids) do
-                    local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(cdID)
+                    local info = api.GetCooldownViewerCooldownInfo(cdID)
                     if info then
                         local entry = { cooldownID = cdID, category = cat }
                         CDMIndex.ForEachCooldownInfoID(info, function(id)

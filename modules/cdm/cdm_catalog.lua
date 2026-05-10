@@ -11,8 +11,6 @@ local ADDON_NAME, ns = ...
 local CDMCatalog = {}
 ns.CDMCatalog = CDMCatalog
 
-local C_CooldownViewer = C_CooldownViewer
-local Sources = ns.CDMSources
 local ipairs = ipairs
 local pairs = pairs
 local type = type
@@ -20,6 +18,14 @@ local tostring = tostring
 local table_sort = table.sort
 
 local issecretvalue = issecretvalue or function() return false end
+
+local function GetCooldownViewerAPI()
+    return _G.C_CooldownViewer
+end
+
+local function GetSources()
+    return ns.CDMSources
+end
 
 local CATEGORY_FOR_KIND = {
     essential   = 0,
@@ -56,6 +62,7 @@ function CDMCatalog.ToBaseSpellID(id)
         return ns.CDMIndex.ToBaseSpellID(id)
     end
     if not CDMCatalog.IsUsableID(id) then return nil end
+    local Sources = GetSources()
     local base = Sources and Sources.QueryBaseSpell and Sources.QueryBaseSpell(id)
     if CDMCatalog.IsUsableID(base) then
         return base
@@ -79,14 +86,16 @@ function CDMCatalog.ForEachCooldownInfoID(info, callback)
 end
 
 local function HasCooldownViewerAPI()
-    return C_CooldownViewer
-        and C_CooldownViewer.GetCooldownViewerCategorySet
-        and C_CooldownViewer.GetCooldownViewerCooldownInfo
+    local api = GetCooldownViewerAPI()
+    return api
+        and api.GetCooldownViewerCategorySet
+        and api.GetCooldownViewerCooldownInfo
 end
 
 function CDMCatalog.GetCategorySet(category, includeHidden)
     if not HasCooldownViewerAPI() then return nil end
-    local ok, ids = pcall(C_CooldownViewer.GetCooldownViewerCategorySet, category, includeHidden and true or false)
+    local api = GetCooldownViewerAPI()
+    local ok, ids = pcall(api.GetCooldownViewerCategorySet, category, includeHidden and true or false)
     if ok and type(ids) == "table" then
         return ids
     end
@@ -95,7 +104,8 @@ end
 
 function CDMCatalog.GetCooldownInfo(cooldownID)
     if not HasCooldownViewerAPI() or not cooldownID then return nil end
-    local ok, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cooldownID)
+    local api = GetCooldownViewerAPI()
+    local ok, info = pcall(api.GetCooldownViewerCooldownInfo, cooldownID)
     if ok then
         return info
     end
@@ -305,6 +315,7 @@ function CDMCatalog.GetAvailableSpellsForContainer(containerKey, containerType, 
 
                         if not ownedSet[sid] then
                             local displaySid = sid
+                            local Sources = GetSources()
                             local ovDisplay = Sources and Sources.QueryOverrideSpell
                                 and Sources.QueryOverrideSpell(sid)
                             if ovDisplay and ovDisplay ~= sid then

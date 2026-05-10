@@ -439,6 +439,7 @@ local function GetBestSpellCooldown(spellID)
     local bestDurObj = nil
     local isActive = false
     local realCooldownActive = false
+    local durationObjectEligible = false
 
     -- Check primary spell with a fresh C_Spell query.
     local cdInfo = QueryCooldown(spellID)
@@ -449,6 +450,7 @@ local function GetBestSpellCooldown(spellID)
         cdActive, realActive = CDMIcons.ClassifySpellCooldownState(spellID, cdInfo)
         if cdActive == true then
             isActive = true
+            durationObjectEligible = true
         end
         if cdActive == true and realActive == false then
             bestStart, bestDuration, bestDurObj =
@@ -500,6 +502,7 @@ local function GetBestSpellCooldown(spellID)
                 overrideCdActive, realActive = CDMIcons.ClassifySpellCooldownState(overrideID, cdInfo)
                 if overrideCdActive == true then
                     isActive = true
+                    durationObjectEligible = true
                 end
                 if overrideCdActive == true and realActive == false then
                     bestStart, bestDuration, bestDurObj =
@@ -545,8 +548,11 @@ local function GetBestSpellCooldown(spellID)
     -- Gate queries behind real cooldown/recharge state. isActive is already
     -- the non-secret "Blizzard would render cooldown UI" signal; isOnGCD and
     -- the later usability split keep GCD/resource states from becoming real
-    -- cooldown swipes.
-    if not bestDurObj and realCooldownActive then
+    -- cooldown swipes. Some overridden CDM spellIDs expose only a 1.5s
+    -- numeric cooldown table while GetSpellCooldownDuration(spell, true)
+    -- still returns the real cooldown DurationObject. Let that object prove
+    -- real cooldown state instead of blocking the query on the numeric table.
+    if not bestDurObj and (realCooldownActive or durationObjectEligible) then
         -- Check charge duration FIRST — for charged spells, the charge
         -- recharge DurationObject is what we want to display, not the
         -- spell's own cooldown DurationObject (which may be a shorter
@@ -565,7 +571,7 @@ local function GetBestSpellCooldown(spellID)
         end
     end
 
-    if not bestDurObj and realCooldownActive then
+    if not bestDurObj and (realCooldownActive or durationObjectEligible) then
         -- Fall back to spell cooldown duration for non-charged spells.
         bestDurObj = QueryDuration(spellID)
         if not bestDurObj then
@@ -910,11 +916,6 @@ local function ApplyAuraStateToIcon(icon, entry, sid, r)
         ClearAuraStateForIcon(icon, entry)
         return nil, false, nil
     end
-    -- Blizzard-backed icons inherit aura state from the reparented viewer
-    -- child (Blizzard's mixin owns swipe + applications text).
-    if icon and icon._isBlizzBacked then
-        return r.durObj, r.isActive, r.sourceID
-    end
 
     if r.isActive then
         local sourceID = GetAuraDisplaySourceID(r, sid)
@@ -1126,6 +1127,7 @@ function CDMIcons.CaptureTrustedGCDState()
         for _, icon in ipairs(pool) do
             if icon and icon._spellEntry then
                 local sid = GetIconCooldownIdentifier(icon)
+                sid = Helpers.SafeValue and Helpers.SafeValue(sid, nil) or sid
                 if sid then
                     local trusted = spellState[sid]
                     if trusted == nil then
@@ -1267,10 +1269,6 @@ end
 ApplyResolvedCooldown = function(icon)
     local addonCD = icon and icon.Cooldown
     if not addonCD then return false end
-    -- Blizzard-backed icons: the reparented viewer child's own Cooldown
-    -- subframe receives DurationObjects from Blizzard's mixin. Skip the
-    -- entire Lua resolve+apply path so we don't compete on the swipe.
-    if icon._isBlizzBacked then return false end
 
     local durObj, mode, sourceID, resolvedStart, resolvedDuration, resolvedSpellID =
         CDMIcons.ResolveIconDurationObject(icon)
@@ -1318,11 +1316,21 @@ ApplyResolvedCooldown = function(icon)
         if cdInfo then
             resolvedCdInfo = cdInfo
             local cdInfoActive = CDMIcons.GetCooldownInfoField(cdInfo, "isActive")
-            local cdInfoOnGCD = cdInfo.isOnGCD
+            local cdInfoOnGCD = nil
+            if CDMIcons._trustIsOnGCDForBatch == true then
+                local trustedSid = Helpers.SafeValue and Helpers.SafeValue(sid, nil) or sid
+                local trusted = trustedSid and CDMIcons._trustedGCDSpellState and CDMIcons._trustedGCDSpellState[trustedSid]
+                if type(trusted) == "boolean" then
+                    cdInfoOnGCD = trusted
+                end
+            end
             _dbgIsActive = cdInfoActive
             _dbgIsOnGCD = cdInfoOnGCD
             local cdInfoNotGCD = cdInfoOnGCD ~= true
-            if cdInfoActive == true and cdInfoNotGCD then
+            local cooldownModeActive = mode == "cooldown"
+                or mode == "charge"
+                or mode == "item-cooldown"
+            if cdInfoActive == true and cdInfoNotGCD and cooldownModeActive then
                 cdActive = true
             end
         end
@@ -1525,6 +1533,7 @@ local function ClearIconStackText(icon)
     if not icon or not icon.StackText then return end
     icon.StackText.SetText(icon.StackText, "")
     icon.StackText.Hide(icon.StackText)
+    icon._stackTextSource = nil
 end
 CDMIcons.ClearIconStackText = ClearIconStackText
 
@@ -1891,9 +1900,6 @@ CDMIcons.GetAuraApplicationsForSpell = GetAuraApplicationsForSpell
 
 local function ApplyAuraStackText(icon, stackValue, showZero, preserveWhenMissing, stackSource)
     if not icon or not icon.StackText then return end
-    -- Blizzard-backed icons render Applications/ChargeCount text via the
-    -- reparented viewer child; we keep our native StackText hidden.
-    if icon._isBlizzBacked then return end
 
     if CDMIcons.ValueIsMissing(stackValue) then
         if not preserveWhenMissing then
@@ -1905,6 +1911,7 @@ local function ApplyAuraStackText(icon, stackValue, showZero, preserveWhenMissin
     if stackSource == "display-count" then
         if icon.StackText.SetText(icon.StackText, stackValue) then
             icon.StackText.Show(icon.StackText)
+            icon._stackTextSource = "Applications"
         end
         return
     end
@@ -1912,6 +1919,7 @@ local function ApplyAuraStackText(icon, stackValue, showZero, preserveWhenMissin
     if showZero then
         if icon.StackText.SetText(icon.StackText, stackValue) then
             icon.StackText.Show(icon.StackText)
+            icon._stackTextSource = "Applications"
         end
         return
     end
@@ -1924,6 +1932,7 @@ local function ApplyAuraStackText(icon, stackValue, showZero, preserveWhenMissin
     if HookTextHasDisplay(displayText) then
         if icon.StackText.SetText(icon.StackText, displayText) then
             icon.StackText.Show(icon.StackText)
+            icon._stackTextSource = "Applications"
         end
     else
         ClearIconStackText(icon)
@@ -2383,17 +2392,7 @@ local function ApplyTexCoord(icon, zoom, aspectRatioCrop)
     local left, right, top, bottom = BuildTexCoord(zoom, aspectRatioCrop)
 
     ApplyTexCoordToTarget(icon.Icon, left, right, top, bottom)
-    ApplyTexCoordToTarget(icon._blizzIcon, left, right, top, bottom)
 end
-
-local function ApplyBlizzIconTexCoord(icon)
-    if not (icon and icon._rowConfig and icon._blizzIcon) then return end
-    local rowConfig = icon._rowConfig
-    local left, right, top, bottom = BuildTexCoord(rowConfig.zoom or 0, rowConfig.aspectRatioCrop or 1.0)
-    ApplyTexCoordToTarget(icon._blizzIcon, left, right, top, bottom)
-end
-
-CDMIcons.ApplyBlizzIconTexCoord = ApplyBlizzIconTexCoord
 
 local function ConfigureIcon(icon, rowConfig)
     if not icon or not rowConfig then return end
@@ -2473,8 +2472,7 @@ local function ConfigureIcon(icon, rowConfig)
         local doy = rowConfig.durationOffsetY or 0
 
         -- Helper: style any FontString regions inside a Cooldown frame.
-        -- Used for both QUI's native icon.Cooldown and the reparented
-        -- Blizzard child.Cooldown (when icon is Blizzard-backed).
+        -- Blizzard-mirrored icons use QUI's native icon.Cooldown.
         local function styleDurationFontString(region)
             if not (region and region.GetObjectType and region:GetObjectType() == "FontString") then return end
             region:SetFont(durationFont, durationSize, generalOutline)
@@ -2503,9 +2501,6 @@ local ok = true; local regions = { cd:GetRegions() }
 
         -- Style QUI's native cooldown text
         styleCDFontStrings(icon.Cooldown)
-        -- Style the reparented Blizzard cooldown text (if Blizzard-backed)
-        styleCDFontStrings(icon._blizzCooldownFrame)
-        styleDurationFontString(icon._blizzDurationText)
 
         -- Also style our DurationText
         icon.DurationText:SetFont(durationFont, durationSize, generalOutline)
@@ -2536,8 +2531,6 @@ local ok = true; local regions = { cd:GetRegions() }
             end
         end
         hideCDFontStrings(icon.Cooldown)
-        hideCDFontStrings(icon._blizzCooldownFrame)
-        hideDurationFontString(icon._blizzDurationText)
         icon.DurationText:Hide()
     end
 
@@ -2556,63 +2549,8 @@ local ok = true; local regions = { cd:GetRegions() }
         icon.StackText:SetPoint(sAnchor, icon, sAnchor, sox, soy)
         icon.StackText:SetDrawLayer("OVERLAY", 7)
 
-        -- Style the reparented Blizzard ChargeCount / Applications
-        -- FontStrings the same way. Their parent Frame was reparented to
-        -- the host by the mirror, but they keep Blizzard's default font/
-        -- color/position until styled.
-        --
-        -- IMPORTANT: do NOT call region:Show() here. Blizzard's mixin
-        -- toggles visibility on the parent FRAME (chargeCountFrame:SetShown)
-        -- — calling Show() on the inner FontString defeats Blizzard's
-        -- "hide-when-no-charges" logic, leaving stale text from a previous
-        -- pool-member assignment visible (e.g. Death Strike showing Death
-        -- Charge's count). Same for stack/applications text.
-        local function styleStackFontString(region)
-            if not (region and region.GetObjectType and region:GetObjectType() == "FontString") then return end
-            region:SetFont(stackFont, stackSize, generalOutline)
-            region:SetTextColor(stc[1], stc[2], stc[3], stc[4] or 1)
-
-;(function()
-                region:ClearAllPoints()
-                region:SetPoint(sAnchor, icon, sAnchor, sox, soy)
-                region:SetDrawLayer("OVERLAY", 7)
-            end)()
-        end
-
-        local function styleStackContainer(container)
-            if not container or not container.GetRegions then return end
-local ok = true; local regions = { container:GetRegions() }
-            if not (ok and regions) then return end
-            for _, region in ipairs(regions) do
-                styleStackFontString(region)
-            end
-        end
-        styleStackContainer(icon._blizzChargeCount)
-        styleStackContainer(icon._blizzApplications)
-        styleStackFontString(icon._blizzChargeCountText)
-        styleStackFontString(icon._blizzApplicationsText)
-
     elseif hideStackText then
         icon.StackText:Hide()
-        local function hideStackFontString(region)
-            if region and region.GetObjectType
-               and region:GetObjectType() == "FontString"
-               and region.Hide then
-                region:Hide()
-            end
-        end
-        local function hideStackContainer(container)
-            if not container or not container.GetRegions then return end
-local ok = true; local regions = { container:GetRegions() }
-            if not (ok and regions) then return end
-            for _, region in ipairs(regions) do
-                hideStackFontString(region)
-            end
-        end
-        hideStackContainer(icon._blizzChargeCount)
-        hideStackContainer(icon._blizzApplications)
-        hideStackFontString(icon._blizzChargeCountText)
-        hideStackFontString(icon._blizzApplicationsText)
     end
 
     -- Apply row opacity
@@ -2663,17 +2601,10 @@ local ok = true; local regions = { cd:GetRegions() }
                 end
             end
             hideDurationForCooldown(icon.Cooldown)
-            hideDurationForCooldown(icon._blizzCooldownFrame)
-            if icon._blizzDurationText and icon._blizzDurationText.Hide then
-                icon._blizzDurationText.Hide(icon._blizzDurationText)
-            end
             icon.DurationText:Hide()
         elseif spellOvr.showDurationText == true then
             if icon.Cooldown and icon.Cooldown.SetHideCountdownNumbers then
                 icon.Cooldown.SetHideCountdownNumbers(icon.Cooldown, false)
-            end
-            if icon._blizzCooldownFrame and icon._blizzCooldownFrame.SetHideCountdownNumbers then
-                icon._blizzCooldownFrame.SetHideCountdownNumbers(icon._blizzCooldownFrame, false)
             end
             icon.DurationText:Show()
         end
@@ -4355,6 +4286,8 @@ end
 -- poll; legacy paths run on cooldown events) and the text flickers.
 local function ApplyIconStackTextFromResolver(icon)
     if not icon or not icon.StackText then return end
+    local entry = icon._spellEntry
+    if icon._blizzMirrorCooldownID and IsAuraEntry(entry) then return end
     local text, source = CDMIcons.ResolveIconStackText(icon)
     if text == nil then
         -- Only clear if WE last wrote. Don't stomp on item-count or
@@ -4785,6 +4718,32 @@ local function InvalidateGCDOnlyBindings()
     end
 end
 
+local function InvalidateSpellCooldownBinding(spellID)
+    spellID = Helpers.SafeValue and Helpers.SafeValue(spellID, nil) or spellID
+    if not spellID then return end
+    for _, pool in pairs(iconPools) do
+        for _, icon in ipairs(pool) do
+            local entry = icon and icon._spellEntry
+            local lk = icon and icon._lastDurObjKey
+            if entry and lk then
+                local base = entry.spellID or entry.id
+                local override = entry.overrideSpellID
+                local runtime = Helpers.SafeValue and Helpers.SafeValue(icon._runtimeSpellID, nil) or icon._runtimeSpellID
+                if base == spellID or override == spellID or runtime == spellID then
+                    local isCooldownKey = lk:sub(1, 9) == "cooldown:"
+                        or lk:sub(1, 7) == "charge:"
+                        or lk:sub(1, 9) == "gcd-only:"
+                        or lk:sub(1, 14) == "item-cooldown:"
+                    if isCooldownKey then
+                        icon._lastDurObjKey = nil
+                        icon._lastDurObj = nil
+                    end
+                end
+            end
+        end
+    end
+end
+
 -- SPELL_UPDATE_COOLDOWN payload: { spellID, baseSpellID, category, startRecoveryCategory }.
 -- When spellID is non-nil, only one spell changed — re-resolve icons whose base
 -- matches spellID or baseSpellID instead of walking every icon. baseSpellID is set
@@ -4998,6 +4957,7 @@ local function OnCDMCooldownChanged(_, spellID, kind)
         -- visual feedback fires for the spell the player just cast.
         CDMIcons.RecordRecentPlayerSpellCast(spellID)
         InvalidateGCDOnlyBindings()
+        InvalidateSpellCooldownBinding(spellID)
         ApplyResolvedCooldownAll()
         ScheduleCDMUpdate(true, CDM_UPDATE_COOLDOWN)
         local Highlighter = ns._OwnedHighlighter
