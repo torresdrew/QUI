@@ -10,6 +10,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha27 - 2026-05-12
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing alpha26 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **Icons no longer get stuck greyed out during proc windows.** When a proc (e.g. Festering Scythe substituting for Festering Strike) held Blizzard's mirror cooldown active after the underlying spell was actually usable, the icon stayed desaturated for the full proc window (12+ seconds) and `procOnUsable` glows were suppressed. The resolver now treats the live cooldown API as authoritative — if the underlying spell reports usable, the icon lifts immediately.
+- **Icons no longer stay greyed out for seconds after a real cooldown ends.** Previously, if a GCD chain started the instant the real CD finished, the icon stayed desaturated through the entire GCD-after-CD-end window (often 3+ seconds visible). GCD-only swipes now correctly clear any leftover cooldown desaturation.
+- **Stopped a per-tick flicker** on usability tints (range / not-enough-resources greying) when a stale numeric duration cached on the icon was being misread as "still on real cooldown."
+
+### Performance
+- **Removed a UNIT_AURA-driven full-refresh storm during combat.** A defensive fallback was scanning every icon on most player aura events (rune CDs, hidden state auras, talent procs — most of which CDM doesn't track), producing an `UpdateAllCooldowns` sweep on nearly every combat aura pulse. Player/pet aura updates now only touch the icons whose instance IDs actually changed.
+
+### Added
+- **`/cdmevents` write-probe instrumentation.** When event tracing is enabled for a spell, QUI now also hooks the icon's texture and cooldown writes (`SetVertexColor`, `SetDesaturated`, `SetAlpha`, `SetSwipeColor`, `SetDrawSwipe`, `SetDrawEdge`) and prints each write with its previous value. Diagnostic only — no cost when tracing is off.
+
+
+
 ## v3.6.0-alpha26 - 2026-05-12
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing alpha25 profiles carry over unchanged.
