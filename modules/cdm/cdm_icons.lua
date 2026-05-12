@@ -1496,8 +1496,17 @@ ApplyResolvedCooldown = function(icon)
         and (mode == "cooldown"
             or mode == "charge"
             or mode == "item-cooldown")
+    -- cdInfo.isActive is authoritative (feedback_blizz_cd_state_signals).
+    -- The Blizzard mirror reports a cooldownID as active when a proc fires
+    -- (mirror cooldownID 27927 for Festering Strike showed isActive on the
+    -- proc-substitute's behalf), but the underlying spell's cdInfo.isActive
+    -- correctly returns false once the proc is no longer holding the slot.
+    -- Without this override the icon stayed mode=cooldown / desaturated for
+    -- 12+ seconds during a proc window, and procOnUsable glows were
+    -- suppressed because IsSpellCastable checks icon._hasCooldownActive.
+    -- Skip when numericCooldownActive (item path) to preserve the
+    -- numeric-driven item-cooldown classification.
     if mirrorBackedRealMode
-       and not durObj
        and not numericCooldownActive
        and sid
        and not entryIsAura then
@@ -1511,6 +1520,26 @@ ApplyResolvedCooldown = function(icon)
                 icon._resolvedCooldownMode = mode
                 mirrorCooldownActive = false
                 mirrorBackedRealMode = false
+            else
+                -- isActive=true + isOnGCD=true means the visible swipe is
+                -- a GCD pulse, not a real CD (feedback_blizz_cd_state_signals).
+                -- We release the cooldown-active flag so desaturation lifts
+                -- and procOnUsable glows can fire, but we DO NOT flip the
+                -- resolved mode to gcd-only. The mirror still has the real
+                -- CD's durObj bound; forcing mode=gcd-only here would re-key
+                -- the dedupe (cooldown→gcd-only) and re-style the cooldown
+                -- frame as a GCD swipe while it's still bound to the real
+                -- CD durObj — the visible result is the swipe vanishing for
+                -- the brief window until the mirror's own state catches up
+                -- and emits a real gcd-only durObj. Let the mirror handle the
+                -- mode/durObj transition; we just gate the side effects
+                -- (desat, _hasCooldownActive) on cdInfo authority.
+                local cdInfoOnGCD, cdInfoOnGCDSecret =
+                    CDMIcons.GetCooldownInfoField(cdInfo, "isOnGCD")
+                if not cdInfoOnGCDSecret and cdInfoOnGCD == true then
+                    mirrorCooldownActive = false
+                    mirrorBackedRealMode = false
+                end
             end
         end
     end
@@ -1576,19 +1605,17 @@ ApplyResolvedCooldown = function(icon)
     icon._hasRealCooldownActive = cdActive
     -- Resolver is the single writer of desaturation. Action depends on
     -- the resolved mode (ApplyCooldownDesaturation's hasRealCD gate at
-    -- cdm_icons.lua:1199-1202 makes the call):
+    -- cdm_icons.lua:1217-1220 makes the call):
     --   * real-CD modes (cooldown / charge / item-cooldown) → desat ON
-    --   * aura / inactive                                   → desat OFF
-    --   * gcd-only is a transient pulse that must preserve pre-existing
-    --     desat (covered by cdm_icons_gcd_style_test.lua) — leave the
-    --     icon untouched; the next real-CD or inactive transition will
-    --     rewrite it correctly.
-    -- Mirror-backed and non-mirror paths are unified here: mirror-backed
-    -- icons still desaturate on real CD so the swipe is paired with the
-    -- "unavailable" visual, matching non-mirror behavior.
-    if mode ~= "gcd-only" then
-        ApplyCooldownDesaturation(icon, entry, nil, mode)
-    end
+    --   * aura / inactive / gcd-only                        → desat OFF
+    -- gcd-only means the visible swipe is a GCD, not a real CD
+    -- (feedback_blizz_cd_state_signals). If the resolver returns gcd-only
+    -- the real CD is either over or shorter than the remaining GCD, so the
+    -- spell is effectively usable and the icon must not be desaturated.
+    -- Without this call the prior real-CD desat=true persists through the
+    -- entire GCD-after-CD-end chain (mode stays gcd-only until GCDs stop),
+    -- leaving the icon greyed out for seconds after the real CD ended.
+    ApplyCooldownDesaturation(icon, entry, nil, mode)
 
     local hasNumericCooldown = mode == "item-cooldown" and numericCooldownActive
     local keySource = sourceID
@@ -5703,25 +5730,30 @@ local function HandleCDMAuraRefresh(unit, updateInfo)
     CDMIcons.EventTracePrint("aura-pre", "UNIT_AURA", unit, nil, nil,
         CDMIcons.EventTraceAuraInfo(updateInfo))
 
+    -- UNIT_AURA scoping per the API contract (UnitAuraUpdateInfo in
+    -- tests/api-docs/blizzard/UnitConstantsDocumentation.lua):
+    --
+    --   * isFullUpdate = true  → no instance lists; consumer MUST rescan
+    --                            (here: full ScheduleCDMUpdate + aura-scope
+    --                            refresh). This is the only case that walks
+    --                            every icon.
+    --   * isFullUpdate = false → addedAuras / updatedAuraInstanceIDs /
+    --                            removedAuraInstanceIDs are authoritative
+    --                            and complete. Walk only icons keyed by
+    --                            those instance IDs. The "no match → fall
+    --                            back to full refresh" defensive sweep is
+    --                            removed: it produced a UpdateAllCooldowns
+    --                            storm during combat (most player auras —
+    --                            rune CDs, hidden state auras, talent
+    --                            procs — aren't tracked, so refreshed=0
+    --                            on nearly every player UNIT_AURA pulse).
     if not updateInfo or updateInfo.isFullUpdate then
-        -- isFullUpdate carries no aura list; refresh aura-relevant icons via
-        -- ApplyResolvedCooldownForAuraScope. Cooldown-only icons are not
-        -- affected by an aura delta and stay out of the UNIT_AURA pipeline.
         _barsDirty = true
         ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
         ApplyResolvedCooldownForAuraScope()
     else
         local refreshed = ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
-        if refreshed == 0 and unit ~= "target" then
-            -- Player/pet payloads may represent a newly active non-mirrored
-            -- aura whose instance ID is not on any icon yet. Same scoping
-            -- rule: aura-relevant icons only. Cooldown-only icons get their
-            -- updates from SPELL_UPDATE_COOLDOWN / SPELL_UPDATE_USABLE / cast
-            -- events.
-            _barsDirty = true
-            ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
-            ApplyResolvedCooldownForAuraScope()
-        elseif refreshed > 0 then
+        if refreshed > 0 then
             _barsDirty = true
             RunDirtyBarUpdate()
         end

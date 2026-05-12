@@ -839,20 +839,16 @@ function CDMResolvers.HasRealCooldownState(icon, entry, duration, apiIsActive, b
         end
     end
 
-    if IsSafeNumeric(icon and icon._lastStart) and IsSafeNumeric(icon and icon._lastDuration)
-        and icon._lastStart > 0 and icon._lastDuration > GCD_MAX_DURATION then
-        return true
-    end
-
-    if IsSafeNumeric(duration) and duration > GCD_MAX_DURATION then
-        return true
-    end
-
-    local lastDuration = icon._lastDuration
-    if IsSafeNumeric(lastDuration) and lastDuration > GCD_MAX_DURATION then
-        return true
-    end
-
+    -- Real-CD authority is the resolver: line 808 (apiIsActive +
+    -- _hasRealCooldownActive stamped by ApplyResolvedCooldown), line 815-822
+    -- (charge / blizzRealCooldownActive), and line 824-840 (live cdInfo with
+    -- isOnGCD == false). Stale numeric fallbacks on icon._lastDuration /
+    -- icon._lastStart and on the `duration` parameter were removed: those
+    -- values are usually secret in 12.0+ (IsSafeNumeric returns false), and
+    -- when they are readable, claiming "real CD" from a stale duration after
+    -- the resolver has already classified the icon as gcd-only / inactive
+    -- caused the per-tick clear at cdm_icon_factory.lua line 1411 to revert
+    -- legitimate usability tints — visible flicker.
     return false
 end
 
@@ -965,21 +961,17 @@ function CDMResolvers.ResolveCooldownActivityState(icon, entry, containerDB, now
     end
 
     if not state.rechargeActive then
+        -- Resolver-stamped state is authoritative. _hasRealCooldownActive and
+        -- _hasCooldownActive are both written by ApplyResolvedCooldown; the
+        -- previous `_lastDuration > GCD_MAX_DURATION` fallback was a stale
+        -- numeric guess and has been removed (see HasRealCooldownState for
+        -- the full rationale).
         if icon._hasRealCooldownActive == true then
             state.isOnCooldown = true
         elseif icon._hasRealCooldownActive == false then
             state.isOnCooldown = false
-        else
-            local dur = IsSafeNumeric(icon._lastDuration) and icon._lastDuration or 0
-            local start = IsSafeNumeric(icon._lastStart) and icon._lastStart or 0
-            if icon._hasCooldownActive then
-                state.isOnCooldown = true
-            elseif dur > GCD_MAX_DURATION and start > 0 then
-                local remaining = (start + dur) - now
-                if remaining > 0 then
-                    state.isOnCooldown = true
-                end
-            end
+        elseif icon._hasCooldownActive then
+            state.isOnCooldown = true
         end
     end
 

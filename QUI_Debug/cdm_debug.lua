@@ -244,6 +244,153 @@ function CDMIcons.EventTracePrint(source, event, arg1, arg2, arg3, extra)
 end
 
 ---------------------------------------------------------------------------
+-- WRITE PROBE (event-trace)
+-- Hooks per-instance writes on the matched icon's textures and the rotation
+-- assistant icon. Each hook is installed once via hooksecurefunc and gated
+-- at fire time by CDMIcons._eventTraceSpellID, so /cdmevents off silences
+-- the output without needing to detach (hooksecurefunc has no inverse).
+---------------------------------------------------------------------------
+
+local function FormatColorTuple(r, g, b, a)
+    return string.format("(%.2f,%.2f,%.2f,%.2f)", r or 1, g or 1, b or 1, a or 1)
+end
+
+function CDMIcons.EventTracePrintWrite(label, icon, value, extra)
+    local targetID = CDMIcons._eventTraceSpellID
+    if not targetID then return end
+    if icon and not CDMIcons.EventTraceIconMatches(icon, targetID) then return end
+
+    local now = GetTime and GetTime() or 0
+    local start = CDMIcons._eventTraceStartedAt or now
+    local prevField = "_cdmevents_prev_" .. label
+    local prev = icon and icon[prevField]
+    if icon then icon[prevField] = value end
+    local changedNote = (prev == nil) and "(new)"
+        or (prev == value and "(unchanged)")
+        or ("(was " .. tostring(prev) .. ")")
+
+    print(string.format(
+        "|cffff8800[cdmwrites]|r +%.3f sid=%d %s=%s %s%s",
+        now - start,
+        targetID,
+        label,
+        tostring(value),
+        changedNote,
+        extra and (" " .. extra) or ""))
+end
+
+local function InstallIconWriteProbe(icon)
+    if not icon or icon._cdmevents_probed then return end
+    icon._cdmevents_probed = true
+
+    if icon.Icon then
+        if icon.Icon.SetVertexColor then
+            hooksecurefunc(icon.Icon, "SetVertexColor", function(_, r, g, b, a)
+                local extra = string.format(
+                    "rangeTinted=%s usabilityTinted=%s lastVisualState=%s cdDesat=%s greyedOut=%s mode=%s",
+                    tostring(icon._rangeTinted),
+                    tostring(icon._usabilityTinted),
+                    tostring(icon._lastVisualState),
+                    tostring(icon._cdDesaturated),
+                    tostring(icon._greyedOut),
+                    tostring(icon._resolvedCooldownMode))
+                CDMIcons.EventTracePrintWrite("Icon:SetVertexColor", icon, FormatColorTuple(r, g, b, a), extra)
+            end)
+        end
+        if icon.Icon.SetDesaturated then
+            hooksecurefunc(icon.Icon, "SetDesaturated", function(_, value)
+                local extra = string.format(
+                    "cdDesat=%s greyedOut=%s mode=%s hasCD=%s hasRealCD=%s",
+                    tostring(icon._cdDesaturated),
+                    tostring(icon._greyedOut),
+                    tostring(icon._resolvedCooldownMode),
+                    tostring(icon._hasCooldownActive),
+                    tostring(icon._hasRealCooldownActive))
+                CDMIcons.EventTracePrintWrite("Icon:SetDesaturated", icon, tostring(value), extra)
+            end)
+        end
+        if icon.Icon.SetAlpha then
+            hooksecurefunc(icon.Icon, "SetAlpha", function(_, value)
+                CDMIcons.EventTracePrintWrite("Icon:SetAlpha", icon, tostring(value), nil)
+            end)
+        end
+    end
+    if icon.Cooldown then
+        if icon.Cooldown.SetSwipeColor then
+            hooksecurefunc(icon.Cooldown, "SetSwipeColor", function(_, r, g, b, a)
+                CDMIcons.EventTracePrintWrite("Cooldown:SetSwipeColor", icon, FormatColorTuple(r, g, b, a), nil)
+            end)
+        end
+        if icon.Cooldown.SetDrawSwipe then
+            hooksecurefunc(icon.Cooldown, "SetDrawSwipe", function(_, value)
+                CDMIcons.EventTracePrintWrite("Cooldown:SetDrawSwipe", icon, tostring(value), nil)
+            end)
+        end
+        if icon.Cooldown.SetDrawEdge then
+            hooksecurefunc(icon.Cooldown, "SetDrawEdge", function(_, value)
+                CDMIcons.EventTracePrintWrite("Cooldown:SetDrawEdge", icon, tostring(value), nil)
+            end)
+        end
+    end
+end
+
+-- Rotation assistant has its own iconFrame.icon (Texture) and writes
+-- SetVertexColor on every Ticker tick. Gate by _eventTraceSpellID being set
+-- (any target) — the rotation icon's spell changes per recommendation, so
+-- we don't tie its probe to the trace target's ID.
+local _raProbed = false
+local _raPrev = { r = nil, g = nil, b = nil, a = nil }
+
+local function InstallRotationAssistProbe()
+    if _raProbed then return end
+    local raAccessor = _G.QUI and _G.QUI.RotationAssistIcon and _G.QUI.RotationAssistIcon.GetFrame
+    local raFrame = raAccessor and raAccessor()
+    if not raFrame or not raFrame.icon or not raFrame.icon.SetVertexColor then return end
+    _raProbed = true
+
+    hooksecurefunc(raFrame.icon, "SetVertexColor", function(_, r, g, b, a)
+        if not CDMIcons._eventTraceSpellID then return end
+        local now = GetTime and GetTime() or 0
+        local start = CDMIcons._eventTraceStartedAt or now
+        local changed = (r ~= _raPrev.r) or (g ~= _raPrev.g)
+            or (b ~= _raPrev.b) or (a ~= _raPrev.a)
+        local prevNote
+        if _raPrev.r == nil then
+            prevNote = "(new)"
+        elseif not changed then
+            prevNote = "(unchanged)"
+        else
+            prevNote = "(was " .. FormatColorTuple(_raPrev.r, _raPrev.g, _raPrev.b, _raPrev.a) .. ")"
+        end
+        _raPrev.r, _raPrev.g, _raPrev.b, _raPrev.a = r, g, b, a
+        print(string.format(
+            "|cffff8800[cdmwrites]|r +%.3f rotassist:SetVertexColor=%s %s",
+            now - start,
+            FormatColorTuple(r, g, b, a),
+            prevNote))
+    end)
+end
+
+function CDMIcons.EventTraceInstallWriteProbes(targetID)
+    if not targetID then return 0, false end
+    local installed = 0
+    for _, pool in pairs(iconPools) do
+        for _, icon in ipairs(pool) do
+            if CDMIcons.EventTraceIconMatches(icon, targetID) then
+                if not icon._cdmevents_probed then
+                    InstallIconWriteProbe(icon)
+                    installed = installed + 1
+                end
+            end
+        end
+    end
+    local raPrior = _raProbed
+    InstallRotationAssistProbe()
+    local raJustInstalled = _raProbed and not raPrior
+    return installed, raJustInstalled
+end
+
+---------------------------------------------------------------------------
 -- ICON-DEBUG HELPERS
 -- Cheap text-print helpers for /run QUI_CDM_ICON_DEBUG = "spell name"
 -- workflow.
@@ -593,6 +740,12 @@ SlashCmdList["CDMEVENTS"] = function(msg)
         spellID))
     print("|cff34d399[cdmevents]|r " .. CDMIcons.EventTraceAPISummary(spellID))
     print("|cff34d399[cdmevents]|r " .. CDMIcons.EventTraceIconSummary(spellID))
+
+    local installed, raInstalled = CDMIcons.EventTraceInstallWriteProbes(spellID)
+    print(string.format(
+        "|cff34d399[cdmwrites]|r write-probe installed on %d icon(s)%s. Hooks are permanent (gated by trace state); rerun if icons are recycled.",
+        installed,
+        raInstalled and " + rotation assistant" or ""))
 end
 
 -- /cdmtrace <spell name> — Log every isActive/isOnGCD transition that

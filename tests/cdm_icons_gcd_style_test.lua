@@ -244,9 +244,15 @@ local gcdVisualIcon = {
 
 applied = ns.CDMIcons.ApplyResolvedCooldown(gcdVisualIcon)
 
+-- gcd-only means the visible swipe is a GCD, not a real CD
+-- (feedback_blizz_cd_state_signals). The real CD is either over or shorter
+-- than the remaining GCD, so the icon must NOT remain desaturated even if
+-- a prior real-CD pass set _cdDesaturated=true. Without releasing here the
+-- icon stayed grey through the entire GCD-after-CD-end chain until the
+-- next inactive transition (3+ second visible stuck-desat window).
 assert(applied == true, "GCD-only duration should still be applied when icon has existing visual state")
-assert(gcdVisualDesaturated == nil, "GCD-only duration should not overwrite existing icon desaturation")
-assert(gcdVisualIcon._cdDesaturated == true, "GCD-only duration should leave existing desaturation ownership untouched")
+assert(gcdVisualDesaturated == false, "GCD-only must clear prior real-CD desat; the visible swipe is a GCD, the spell is usable")
+assert(gcdVisualIcon._cdDesaturated == nil, "GCD-only must clear the _cdDesaturated ownership flag along with the visual state")
 
 local realCooldownIcon = {
     Cooldown = {
@@ -361,12 +367,23 @@ local mirroredCooldownIcon = {
 
 applied = ns.CDMIcons.ApplyResolvedCooldown(mirroredCooldownIcon)
 
-assert(applied == true, "active mirrored cooldown duration should win over live API inactive")
-assert(mirroredCooldownIcon._hasCooldownActive == true, "active mirrored cooldown should be marked cooldown-active")
-assert(mirroredCooldownIcon._hasRealCooldownActive == true, "active mirrored cooldown should be marked real-cooldown-active")
-assert(mirrorDesaturated == true,
-    "active mirrored real cooldown should desaturate the icon (resolver-owned, paired with the Blizzard swipe)")
-assert(cooldownQueryCounts[86420] == nil, "active mirrored cooldown should not query live cooldown state")
+-- cdInfo.isActive is authoritative per feedback_blizz_cd_state_signals.
+-- When the mirror reports an active duration but the live API cleanly
+-- returns isActive=false (proc-window scenario: Festering Scythe holds
+-- Festering Strike's mirror cooldownID active even though the underlying
+-- spell isn't on a real cooldown), the resolver must flip to inactive and
+-- release the desaturation. Without this override the icon stayed
+-- desaturated for the full 12+s proc window and procOnUsable glows were
+-- suppressed because IsSpellCastable checks _hasCooldownActive.
+assert(applied == false, "mirror with active durObj but cdInfo isActive=false should resolve to inactive")
+assert(mirroredCooldownIcon._hasCooldownActive == false,
+    "cdInfo isActive=false overrides mirror; icon must not be marked cooldown-active")
+assert(mirroredCooldownIcon._hasRealCooldownActive == false,
+    "cdInfo isActive=false overrides mirror; icon must not be marked real-cooldown-active")
+assert(mirrorDesaturated == false,
+    "cdInfo isActive=false overrides mirror; icon must not desaturate")
+assert(cooldownQueryCounts[86420] ~= nil,
+    "mirror-active resolution must consult live cdInfo so stale mirror state can be overridden")
 
 mirrorDesaturated = nil
 
@@ -393,13 +410,16 @@ local usableMirroredCooldownIcon = {
 
 applied = ns.CDMIcons.ApplyResolvedCooldown(usableMirroredCooldownIcon)
 
-assert(applied == true, "usable mirrored cooldown duration should win over live API inactive")
-assert(usableMirroredCooldownIcon._hasCooldownActive == true,
-    "usable active mirrored cooldown should be marked cooldown-active")
-assert(usableMirroredCooldownIcon._hasRealCooldownActive == true,
-    "usable active mirrored cooldown should be marked real-cooldown-active")
-assert(mirrorDesaturated == true,
-    "usable + mirror-payload-active is authoritative: mirror says real CD, so the icon desaturates alongside the Blizzard swipe")
+-- Same authority rule as 86420: cdInfo.isActive=false beats mirror-active.
+-- Spell being usable + mirror reporting active is still a stale-mirror
+-- signal when the live API disagrees.
+assert(applied == false, "mirror-active + usable but cdInfo isActive=false should still resolve to inactive")
+assert(usableMirroredCooldownIcon._hasCooldownActive == false,
+    "cdInfo isActive=false overrides mirror even when QuerySpellUsable says true")
+assert(usableMirroredCooldownIcon._hasRealCooldownActive == false,
+    "cdInfo isActive=false overrides mirror even when QuerySpellUsable says true")
+assert(mirrorDesaturated == false,
+    "cdInfo isActive=false overrides mirror; icon must not desaturate")
 
 local mirrorClearedPriorDesaturated
 local priorDesaturatedMirrorIcon = {
@@ -426,11 +446,15 @@ local priorDesaturatedMirrorIcon = {
 
 applied = ns.CDMIcons.ApplyResolvedCooldown(priorDesaturatedMirrorIcon)
 
-assert(applied == true, "mirrored cooldown should still apply when prior CD desaturation exists")
-assert(mirrorClearedPriorDesaturated == true,
-    "mirrored real cooldown should reaffirm desaturation (paired with the Blizzard swipe), not release it")
-assert(priorDesaturatedMirrorIcon._cdDesaturated == true,
-    "mirrored real cooldown should keep the desaturation flag set")
+-- Same authority rule: cdInfo says isActive=false, so the prior _cdDesaturated
+-- flag must be released. The icon is no longer on a real cooldown even though
+-- it WAS desaturated by an earlier pass. This is the recovery path for the
+-- proc-stuck scenario from the trace.
+assert(applied == false, "cdInfo isActive=false flips to inactive even with prior _cdDesaturated set")
+assert(mirrorClearedPriorDesaturated == false,
+    "cdInfo isActive=false releases prior desat; SetDesaturated must be called with false")
+assert(priorDesaturatedMirrorIcon._cdDesaturated == nil,
+    "cdInfo isActive=false clears the _cdDesaturated flag")
 
 local mirrorNoCooldownInfoDesaturated
 local mirrorNoCooldownInfoIcon = {
@@ -488,27 +512,40 @@ local mirroredCooldownGapIcon = {
     },
 }
 
--- Resolver mode transitions are honored directly — no "mirror gap"
--- preservation. Per the directive (feedback_blizz_cd_state_signals):
--- isActive/isOnGCD are authoritative; we don't override the resolver from
--- stale icon state. If the resolver flips cooldown→gcd-only this pass,
--- the icon reflects gcd-only. Pre-existing desat is preserved across the
--- transition because gcd-only is the resolver's "no-op" desat mode.
+-- When the mirror still reports cooldown but cdInfo.isOnGCD=true, the
+-- override at cdm_icons.lua:1532+ releases the cooldown-active flag and
+-- desat WITHOUT flipping the resolver's mode. Flipping mode to gcd-only
+-- while the cooldown frame is still bound to the real CD's durObj caused
+-- a visible "swipe vanishes" blip until the mirror's own state caught up
+-- and emitted a gcd-only durObj. Let the mirror own the mode/durObj
+-- transition; we only gate the side effects.
 applied = ns.CDMIcons.ApplyResolvedCooldown(mirroredCooldownGapIcon)
-assert(applied == true, "initial mirror-cooldown setup should apply")
+-- 86424's QueryCooldown stub returns isActive=true + isOnGCD=true. Per
+-- feedback_blizz_cd_state_signals that means the visible swipe is a GCD
+-- (real CD is functionally over or shorter than remaining GCD). The mirror
+-- still has the real CD durObj bound, so we keep mode=cooldown (preserving
+-- the swipe binding) while flipping _hasCooldownActive=false and releasing
+-- desat. Once the mirror itself emits gcd-only, the second-pass assertions
+-- below cover the natural transition.
+assert(applied == true,
+    "mirror still has a durObj so the resolver still applies it; the binding stays as cooldown until the mirror itself flips")
 assert(mirroredCooldownGapIcon._resolvedCooldownMode == "cooldown",
-    "initial pass should resolve cooldown mode")
-assert(mirrorDesaturated == true,
-    "initial mirror real-cooldown should desaturate the icon")
+    "override does NOT change mode — flipping to gcd-only with the real-CD durObj re-keys dedupe and re-styles, causing the swipe to vanish briefly")
+assert(mirroredCooldownGapIcon._hasCooldownActive == false,
+    "cdInfo.isOnGCD=true releases _hasCooldownActive so procOnUsable glows can fire and IsSpellCastable returns true")
+assert(mirroredCooldownGapIcon._hasRealCooldownActive == false,
+    "cdInfo.isOnGCD=true also releases _hasRealCooldownActive")
+assert(mirrorDesaturated == false,
+    "cdInfo.isOnGCD=true releases desat — the visible swipe is a GCD, real CD is over (or shorter than GCD); icon must not look unavailable")
 
 mirrorGapMode = "gcd-only"
 applied = ns.CDMIcons.ApplyResolvedCooldown(mirroredCooldownGapIcon)
 
 assert(applied == true, "resolver gcd-only flip should still apply")
 assert(mirroredCooldownGapIcon._resolvedCooldownMode == "gcd-only",
-    "resolver gcd-only output should NOT be overridden back to cooldown — preservation is removed; the directive (isActive/isOnGCD) is authoritative")
-assert(mirrorDesaturated == true,
-    "gcd-only is the resolver's no-op desat mode — pre-existing desat from the prior cooldown pass must be preserved (not rewritten)")
+    "once the mirror itself emits gcd-only, the resolver's mode flips naturally — and the icon picks up the mirror's gcd-only durObj for a clean swipe binding")
+assert(mirrorDesaturated == false,
+    "second pass with native mirror gcd-only must also keep desat cleared — every gcd-only pass writes desat=false unconditionally")
 assert(mirroredCooldownGapIcon._mirrorCooldownPreserveUntil == nil,
     "regression guard: the _mirrorCooldownPreserveUntil mechanism was removed and must not be reintroduced")
 
@@ -539,17 +576,25 @@ local mirrorCdEndIcon = {
 }
 
 applied = ns.CDMIcons.ApplyResolvedCooldown(mirrorCdEndIcon)
-assert(applied == true, "initial mirror-cooldown setup should apply")
-assert(cdEndDesaturated == true,
-    "initial mirror real-cooldown should desaturate the icon")
+-- 86426's QueryCooldown stub returns isActive=false (genuine CD-end). With
+-- cdInfo authority, the resolver flips to inactive on the very first pass
+-- even though the mirror reports an active duration. No "initial setup"
+-- desaturation is expected anymore.
+assert(applied == false,
+    "cdInfo isActive=false flips to inactive even when mirror reports active duration")
+assert(cdEndDesaturated == false,
+    "cdInfo isActive=false must not desaturate the icon")
+assert(mirrorCdEndIcon._resolvedCooldownMode == "inactive",
+    "resolver inactive output must be reflected on the icon")
 
 mirrorGapMode = "inactive"
 applied = ns.CDMIcons.ApplyResolvedCooldown(mirrorCdEndIcon)
 
+-- Steady-state confirmation: mirror itself now reports inactive too.
 assert(mirrorCdEndIcon._resolvedCooldownMode == "inactive",
     "resolver inactive output must be reflected on the icon — no preservation reverts it back to cooldown")
 assert(cdEndDesaturated == false,
-    "CD end must release desaturation on the next ApplyResolvedCooldown pass")
+    "CD end must keep desaturation released")
 assert(mirrorCdEndIcon._cdDesaturated == nil,
     "CD end must clear the _cdDesaturated flag")
 assert(mirrorCdEndIcon._mirrorCooldownPreserveUntil == nil,

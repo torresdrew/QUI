@@ -1406,9 +1406,23 @@ local okI = true; local aIcon = r.auraData.icon
             -- apiIsActive may also mean GCD or resource recovery.
             if apiIsActive ~= nil then
                 -- When a real cooldown starts, clear usability tint so the
-                -- desaturation gate opens.  Reset _lastVisualState so the
+                -- desaturation gate opens. Reset _lastVisualState so the
                 -- range poll can reapply usability tint after the CD ends.
-                local cooldownActiveForState = realCooldownActive and true or false
+                --
+                -- Gate on the resolver's current mode classification, NOT
+                -- on HasRealCooldownState. The resolver is the single
+                -- authority on real-CD state; reading any other signal here
+                -- (numeric durations, _lastDuration, etc.) re-introduces
+                -- the stale-state flicker we removed from the resolver
+                -- helpers. Allowed real-CD modes are exactly the modes
+                -- ApplyCooldownDesaturation classifies as hasRealCD=true
+                -- (cdm_icons.lua:1217-1220): cooldown / charge /
+                -- item-cooldown.
+                local resolvedMode = icon._resolvedCooldownMode
+                local cooldownActiveForState =
+                    resolvedMode == "cooldown"
+                    or resolvedMode == "charge"
+                    or resolvedMode == "item-cooldown"
                 if cooldownActiveForState and icon._usabilityTinted then
                     icon.Icon:SetVertexColor(1, 1, 1, 1)
                     icon._usabilityTinted = nil
