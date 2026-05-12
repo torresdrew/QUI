@@ -3545,7 +3545,7 @@ FireChangeCallback = function()
         _G.QUI_OnSpellDataChanged()
     end
     -- Keep spec profile in sync so /reload or spec-switch never
-    -- overwrites Composer edits with a stale _specProfiles copy.
+    -- overwrites Composer edits with stale spec-scoped data.
     if ns.CDMContainers and ns.CDMContainers.SaveActiveSpecProfile then
         ns.CDMContainers.SaveActiveSpecProfile()
     end

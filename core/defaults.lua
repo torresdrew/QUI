@@ -392,7 +392,7 @@ local defaults = {
         ncdm = {
             enabled = true,         -- Master CDM enable/disable
             _snapshotVersion = 0,   -- Incremented each time ownedSpells are snapshotted
-            _specProfiles = nil,    -- Future: per-spec owned spell profiles
+            _specProfiles = nil,    -- Legacy shared spec profiles; runtime storage is character-scoped
             essential = {
                 enabled = true,
                 pos = nil,  -- { ox = number, oy = number } saved container position (nil = first-time, seed from Blizzard)

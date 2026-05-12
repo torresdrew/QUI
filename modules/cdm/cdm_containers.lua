@@ -146,6 +146,79 @@ local function GetCurrentSpecID()
     return nil
 end
 
+local function GetCurrentCharacterKey()
+    if not UnitName then return nil end
+    local name, realm = UnitName("player")
+    if type(name) ~= "string" or name == "" then
+        return nil
+    end
+    if type(realm) ~= "string" or realm == "" then
+        realm = GetRealmName and GetRealmName() or nil
+    end
+    if type(realm) ~= "string" or realm == "" then
+        return name
+    end
+    return name .. " - " .. realm
+end
+
+local function GetCurrentProfileName()
+    local db = QUICore and QUICore.db
+    if db and db.GetCurrentProfile then
+        local ok, profileName = pcall(db.GetCurrentProfile, db)
+        if ok and type(profileName) == "string" and profileName ~= "" then
+            return profileName
+        end
+    end
+    return "Default"
+end
+
+local function GetCharNcdmDB(create)
+    local db = QUICore and QUICore.db
+    local charDB = db and db.char
+    if type(charDB) ~= "table" then
+        return nil
+    end
+    if type(charDB.ncdm) ~= "table" then
+        if not create then return nil end
+        charDB.ncdm = {}
+    end
+    return charDB.ncdm
+end
+
+local function GetSpecStateDB(create)
+    return GetCharNcdmDB(create) or GetDB()
+end
+
+local function GetSpecProfileStore(create)
+    local charNcdm = GetCharNcdmDB(create)
+    if not charNcdm then
+        return nil
+    end
+
+    if type(charNcdm._specProfilesByProfile) ~= "table" then
+        if not create then return nil end
+        charNcdm._specProfilesByProfile = {}
+    end
+    local profileName = GetCurrentProfileName()
+    if type(charNcdm._specProfilesByProfile[profileName]) ~= "table" then
+        if not create then return nil end
+        charNcdm._specProfilesByProfile[profileName] = {}
+    end
+    return charNcdm._specProfilesByProfile[profileName]
+end
+
+local function StampActiveProfileSpecOwner(specID)
+    if not specID or specID == 0 then
+        return
+    end
+    local db = GetDB()
+    if not db then
+        return
+    end
+    db._lastSpecID = specID
+    db._lastSpecCharKey = GetCurrentCharacterKey()
+end
+
 local function ClearContainerSpecState(containerDB)
     if not containerDB then
         return
@@ -216,14 +289,9 @@ local function SaveSpecProfile(specID)
         return
     end
 
-    local db = GetDB()
-    if not db then
+    local store = GetSpecProfileStore(true)
+    if not store then
         return
-    end
-
-    -- Ensure _specProfiles table exists
-    if not db._specProfiles then
-        db._specProfiles = {}
     end
 
     local specData = {}
@@ -250,7 +318,8 @@ local function SaveSpecProfile(specID)
     -- profile untouched — it may contain good data from a previous session
     -- that we'll need when the user swaps back to this spec.
     if hasAnySpells then
-        db._specProfiles[specID] = specData
+        store[specID] = specData
+        StampActiveProfileSpecOwner(specID)
     end
 end
 
@@ -275,7 +344,8 @@ local function LoadOrSnapshotSpecProfile(specID, attempt, retryToken)
     end
 
     local containerKeys = CDMContainers_API:GetAllContainerKeys()
-    local savedProfile = db._specProfiles and db._specProfiles[specID]
+    local store = GetSpecProfileStore(false)
+    local savedProfile = store and store[specID]
 
     -- Validate the saved profile actually contains spell data. An empty
     -- profile (all containers nil/empty) was likely persisted from a failed
@@ -290,8 +360,45 @@ local function LoadOrSnapshotSpecProfile(specID, attempt, retryToken)
             end
         end
         if not profileHasSpells then
-            db._specProfiles[specID] = nil
+            if store then
+                store[specID] = nil
+            end
             savedProfile = nil
+        end
+    end
+
+    -- Upgrade path for the active character/profile: if no scoped spec store
+    -- exists yet, seed it from the current live container state only when the
+    -- shared profile state was last written by this character (or predates the
+    -- character stamp entirely). If another character wrote the shared state,
+    -- ignore it and snapshot clean data for this character instead.
+    if not savedProfile then
+        local currentCharKey = GetCurrentCharacterKey()
+        local profileCharKey = db._lastSpecCharKey
+        if (not profileCharKey) or profileCharKey == currentCharKey then
+            local specData = {}
+            local hasAnySpells = false
+            for _, key in ipairs(containerKeys) do
+                local containerDB = GetTrackerSettings(key)
+                if containerDB and containerDB.ownedSpells ~= nil then
+                    specData[key] = {
+                        ownedSpells = CopyTable(containerDB.ownedSpells),
+                        removedSpells = CopyTable(containerDB.removedSpells or {}),
+                        dormantSpells = CopyTable(containerDB.dormantSpells or {}),
+                        dormantSequence = containerDB._dormantSequence or 0,
+                    }
+                    if type(containerDB.ownedSpells) == "table" and #containerDB.ownedSpells > 0 then
+                        hasAnySpells = true
+                    end
+                end
+            end
+            if hasAnySpells then
+                store = GetSpecProfileStore(true)
+                if store then
+                    store[specID] = specData
+                    savedProfile = specData
+                end
+            end
         end
     end
 
@@ -323,6 +430,7 @@ local function LoadOrSnapshotSpecProfile(specID, attempt, retryToken)
         if ns.CDMSpellData then
             ns.CDMSpellData:CheckAllDormantSpells()
         end
+        StampActiveProfileSpecOwner(specID)
         return true
     else
         -- No saved profile for this spec — fresh snapshot from Blizzard CDM
@@ -337,6 +445,7 @@ local function LoadOrSnapshotSpecProfile(specID, attempt, retryToken)
             end
             local snapshotReady = TrySnapshotBuiltInContainers(containerKeys)
             if snapshotReady or attempt >= SPEC_TRACKING_MAX_RETRIES then
+                SaveSpecProfile(specID)
                 return true
             end
 
@@ -368,33 +477,43 @@ end
 -- profile save/load so stale spells from another class never display.
 
 -- Cross-session detection extracted so the 1.0s retry can re-run it.
--- Returns true if a spec mismatch was detected and profiles were swapped.
+-- Returns profile hydration readiness and whether a spec mismatch was detected.
 local function RunCrossSessionDetection(specID)
-    local db = GetDB()
+    local db = GetSpecStateDB(true)
     if not db or not specID or specID == 0 then return false, false end
 
     local lastSpecID = db._lastSpecID
+    local currentCharKey = GetCurrentCharacterKey()
     local detected = lastSpecID ~= nil and lastSpecID ~= specID
     local readyNow = true
-    if lastSpecID and lastSpecID ~= specID then
+    local shouldLoadActiveSpec = true
+    local profileDB = GetDB()
+    local profileCharKey = profileDB and profileDB._lastSpecCharKey
+    local liveStateOwnedByCurrentChar = (not profileCharKey) or profileCharKey == currentCharKey
+    if lastSpecID and lastSpecID ~= specID and liveStateOwnedByCurrentChar then
         -- Save stale ownedSpells under the old spec before overwriting
         local oldPrevious = _previousSpecID
         _previousSpecID = lastSpecID
         SaveCurrentSpecProfile()
         _previousSpecID = oldPrevious
+    end
 
-        -- Invalidate caches — old spec data is stale
+    if shouldLoadActiveSpec then
+        -- Invalidate caches before hydrating the active spec. Even when the
+        -- spec ID did not change, the profile's live containers may belong
+        -- to a different character sharing the same AceDB profile.
         if ns.InvalidateCDMFrameCache then ns.InvalidateCDMFrameCache() end
         if ns.CDMSpellData and ns.CDMSpellData.InvalidateLearnedCache then
             ns.CDMSpellData:InvalidateLearnedCache()
         end
 
-        -- Load the correct spec profile (or fresh snapshot if first time)
+        -- Load the correct spec profile (or fresh snapshot if first time).
         specTrackingRetryToken = specTrackingRetryToken + 1
         readyNow = LoadOrSnapshotSpecProfile(specID, 1, specTrackingRetryToken)
     end
     -- Persist the current spec ID for next session
     db._lastSpecID = specID
+    db._lastSpecCharKey = currentCharKey
     return readyNow, detected
 end
 
@@ -441,13 +560,28 @@ local function InitSpecTracking()
     -- combat lockdown until PLAYER_REGEN_ENABLED — making CDM invisible
     -- for the entire combat /reload. Cross-session character swap
     -- protection (the original reason for the spec gate) is preserved:
-    -- _lastSpecID lives per-profile, so a swap picks up the new
-    -- character's own cached value, and RunCrossSessionDetection still
+    -- _lastSpecID lives in character state, with a guarded legacy profile
+    -- fallback for old combat reloads, and RunCrossSessionDetection still
     -- reconciles if the spec changed while logged out.
     if (not _previousSpecID) or _previousSpecID == 0 then
-        local db = GetDB()
+        local db = GetSpecStateDB(false)
         local cached = db and db._lastSpecID
-        if cached and cached ~= 0 then
+        local currentCharKey = GetCurrentCharacterKey()
+        local cachedCharKey = db and db._lastSpecCharKey
+        if not cached then
+            local profileDB = GetDB()
+            local profileCached = profileDB and profileDB._lastSpecID
+            local profileCharKey = profileDB and profileDB._lastSpecCharKey
+            if profileCached and profileCached ~= 0
+                and (profileCharKey == currentCharKey or (not profileCharKey and InCombatLockdown()))
+            then
+                cached = profileCached
+                cachedCharKey = profileCharKey
+            end
+        end
+        if cached and cached ~= 0
+            and (cachedCharKey == currentCharKey or (not cachedCharKey and InCombatLockdown()))
+        then
             _previousSpecID = cached
         end
     end
@@ -2720,9 +2854,12 @@ function ownedEngine:Initialize()
                 specTrackingRetryToken = specTrackingRetryToken + 1
                 local readyNow = LoadOrSnapshotSpecProfile(newSpecID, 1, specTrackingRetryToken)
                 _previousSpecID = newSpecID
-                -- Persist for cross-session detection
-                local specDB = GetDB()
-                if specDB then specDB._lastSpecID = newSpecID end
+                -- Persist for cross-session detection.
+                local specDB = GetSpecStateDB(true)
+                if specDB then
+                    specDB._lastSpecID = newSpecID
+                    specDB._lastSpecCharKey = GetCurrentCharacterKey()
+                end
                 -- Profile is now correct — SPELLS_CHANGED can safely run
                 -- dormant/reconcile on the new spec's data.
                 buffFingerprint = nil
@@ -2947,7 +3084,7 @@ ns.CDMContainers = {
     GetAllContainerKeys = function() return CDMContainers_API:GetAllContainerKeys() end,
     RegisterDynamicLayoutElement = function(key, settings) return CDMContainers_API:RegisterDynamicLayoutElement(key, settings) end,
     SyncSettingsFeatureLookups = SyncSettingsFeatureLookups,
-    -- Save current spec's ownedSpells to _specProfiles (called after Composer mutations).
+    -- Save current spec's ownedSpells to the scoped spec profile store (called after Composer mutations).
     -- Guard: refuse to save while spec tracking is still initialising — the live
     -- containerDB may still hold stale data from a previous character/spec.
     SaveActiveSpecProfile = function()
