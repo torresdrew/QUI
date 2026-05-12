@@ -10,6 +10,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha26 - 2026-05-12
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing alpha25 profiles carry over unchanged.
+>
+> **Heads up: this release adds a third folder, `QUI_Debug/`.** It's load-on-demand — it only loads when you run `/qui debug`, so retail users pay zero startup cost. The release zip already contains all three folders (`QUI/`, `QUI_Options/`, `QUI_Debug/`). Drop them into `Interface/AddOns/` side by side.
+
+### Fixed
+- **Cooldown swipes now follow a strict priority — aura, then charges/recharge, then cooldown, then GCD.** Previously the wrong timer could win in mixed states: a real cooldown could hide an active aura, or a GCD pulse could overwrite a real cooldown swipe. The priority is now locked end-to-end across the mirror and resolver.
+- **Buff viewers render swipes correctly for guardian-summoning self-buffs** like Raise Abomination and Army of the Dead. The buff timer is now surfaced as the swipe duration instead of dead-ending blank.
+- **Cooldown swipes no longer disappear when you drop or change targets mid-fight.** Target-debuff spells (Soul Reaper, Reaper's Mark, Festering Wound, etc.) stay lit while still on cooldown, instead of the swipe being wiped on target change.
+- **GCD pulses no longer get mis-classified as real cooldowns** on spells that happen to have a base cooldown entry in the catalog.
+- **Stack counts on Blizzard mirror icons stop getting clobbered** when both the mirror and the resolver report a count.
+- **Combat /reload no longer leaves the cooldown manager invisible** until combat ends. Spec ID now falls back to the cached value during the addon-load window so the layout can refresh immediately.
+- **Death Charge (and other override-spell IDs) resolve correctly** to the base ability in your spellbook, so the icon picker recognizes them as known.
+- **No more visible full CDM reset on every combat exit.** The aura pipeline no longer force-pushes a refresh from combat / encounter / M+ / PvP end.
+
+### Performance
+- **Major reduction in raid-combat allocations.** Pooled scratch tables replace per-tick closures and temporary tables in the resolver, mirror, and icon factory hot paths — multi-MB/s of garbage in raid combat eliminated.
+- **Events now refresh only the icons they can affect.** Aura events touch aura icons, item events touch item icons, etc., instead of sweeping every icon every time. Cuts cross-scope flicker on unrelated cooldown-only spells.
+- **Blizzard API queries are cached within a tick** so each one is hit at most once per pass.
+- **Per-spell range and usability refresh** replaces the global range OnUpdate poll.
+
+### Added
+- **QUI_Debug companion addon (load-on-demand).** Diagnostics, memaudit, performance profiling, and the aura/CDM probes moved into a sibling addon that only loads when `/qui debug` is enabled. Zero startup cost for retail users.
+- **Right-clicking a mover in Layout Mode now opens its settings panel on first use.** Options addon loads automatically when needed.
+
+### Internal
+- Full Lua test suite now runs on every push and PR (new `lua-tests.yml` workflow).
+- 30+ new regression tests covering the fixes above (aura priority contract, target-change cooldown preservation, GC churn refactors, scoped event resolves, mirror identity, GCD dedupe).
+
+
+
 ## v3.6.0-alpha25 - 2026-05-10
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing alpha24 profiles carry over unchanged.
