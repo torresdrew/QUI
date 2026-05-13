@@ -1436,18 +1436,21 @@ local function ResolveMirrorPayloadMode(m, active)
     return mode
 end
 
-local function BuildMirrorRenderPayload(m, fallbackCooldownID, fallbackCategory, fallbackSpellID)
+local function BuildMirrorRenderPayload(
+    m, fallbackCooldownID, fallbackCategory, fallbackSpellID,
+    overrideDurObj, overrideSource, overrideMode, overrideUnknown)
     if not m then return nil end
 
+    local payloadDurObj = overrideDurObj or m.durObj
     local active = SafeBoolean(m.isActive)
-    if active == nil and m.durObj then
+    if active == nil and payloadDurObj then
         active = true
     end
     active = active == true
 
     local sourceCooldownID = m.cooldownID or fallbackCooldownID or fallbackSpellID
     local sourceSpellID = m.overrideSpellID or m.spellID or fallbackSpellID
-    local mode = ResolveMirrorPayloadMode(m, active)
+    local mode = overrideMode or ResolveMirrorPayloadMode(m, active)
     local sourceKey = BuildMirrorDurationSourceKey(
         mode, sourceCooldownID, sourceSpellID, m.mirrorEpoch)
     local selfAura = SafeBoolean(m.selfAura)
@@ -1465,8 +1468,11 @@ local function BuildMirrorRenderPayload(m, fallbackCooldownID, fallbackCategory,
     payload.category = NormalizeMirrorCategory(m.viewerCategory) or fallbackCategory
     payload.spellID = sourceSpellID
     payload.auraInstanceID = m.auraInstanceID
-    payload.durObj = m.durObj
-    payload.durationStateUnknown = m.durationStateUnknown
+    payload.durObj = payloadDurObj
+    payload.durationStateUnknown = overrideUnknown
+    if payload.durationStateUnknown == nil then
+        payload.durationStateUnknown = m.durationStateUnknown
+    end
     payload.auraUnit = auraUnit
     payload.totemSlot = m.totemSlot
     payload.totemName = m.totemName
@@ -1474,12 +1480,44 @@ local function BuildMirrorRenderPayload(m, fallbackCooldownID, fallbackCategory,
     payload.isTotemInstance = m.totemSlot and true or false
     payload.count = BuildMirrorCountPayload(m)
 
-    if active and mode == "aura" and not m.durObj then
+    if active and mode == "aura" and not payloadDurObj then
         payload.hasExpirationTime = false
         payload.hideDurationText = true
     end
 
     return payload
+end
+
+local function SelectMirrorCooldownPhase(m)
+    if not m then return nil end
+    if m.resourceDurObj then
+        return m.resourceDurObj, m.resourceDurObjSource or "resource-duration", m.resourceDurationStateUnknown
+    end
+    if m.cooldownDurObj then
+        return m.cooldownDurObj, m.cooldownDurObjSource or "cooldown-frame", m.cooldownDurationStateUnknown
+    end
+    if m.gcdDurObj then
+        return m.gcdDurObj, m.gcdDurObjSource or "gcd-duration", m.gcdDurationStateUnknown
+    end
+    return nil
+end
+
+local function BuildMirrorCooldownPhasePayload(payload)
+    local m = payload and payload.state
+    if not m then return nil end
+
+    local durObj, source, unknown = SelectMirrorCooldownPhase(m)
+    if not durObj then return nil end
+
+    local mode = ClassifyMirrorDurationMode(source)
+    if mode == "aura" or mode == "inactive" then
+        return nil
+    end
+
+    local cooldownID = payload.cooldownID
+    local category = payload.category
+    local spellID = payload.spellID
+    return BuildMirrorRenderPayload(m, cooldownID, category, spellID, durObj, source, mode, unknown)
 end
 
 local function EntryMirrorBindingIsStrictAura(entry, viewerCategory)
@@ -1687,11 +1725,12 @@ function CDMResolvers.ResolveIconDurationObject(icon)
 
     -- Swipe priority:
     --   aura entries:     aura -> charge/recharge -> cd -> gcd
-    --   cooldown entries: charge/recharge -> cd -> gcd
+    --   cooldown entries: aura -> charge/recharge -> cd -> gcd unless
+    --                     cooldown-icon aura phase is disabled.
     -- Two paths enforce this single rule:
     --   * Mirror-backed icons:  the mirror's SelectDurationForState
-    --     picks lanes in this order, and BuildMirrorRenderPayload carries
-    --     the resolved mode out via this short-circuit.
+    --     picks lanes in this order. The cooldown-icon aura phase option
+    --     can remap an aura payload to the next cooldown/recharge lane here.
     --   * Non-mirror icons:     the explicit ResolveAuraDurationObjectForIcon
     --     check below enforces the same rule for aura entries with no
     --     Blizzard CDM mirror.
@@ -1702,6 +1741,12 @@ function CDMResolvers.ResolveIconDurationObject(icon)
         icon._blizzMirrorCategory,
         sid)
     if mirrorPayload then
+        if mirrorPayload.mode == "aura"
+           and CDMIcons
+           and CDMIcons.ShouldSkipAuraPhaseForCooldownIcon
+           and CDMIcons.ShouldSkipAuraPhaseForCooldownIcon(icon, entry) then
+            mirrorPayload = BuildMirrorCooldownPhasePayload(mirrorPayload) or mirrorPayload
+        end
         return mirrorPayload.durObj,
             mirrorPayload.mode,
             mirrorPayload.sourceID,
@@ -1715,8 +1760,8 @@ function CDMResolvers.ResolveIconDurationObject(icon)
     -- 1. Aura-kind entries: aura up on player -> aura DurObj. Use the same
     -- ResolveAuraState path as UpdateIconCooldown so the event-driven
     -- CooldownFrame binding and the per-icon active-state update cannot
-    -- disagree in combat. Cooldown-kind entries skip this through
-    -- ShouldUseBuffSwipeForIcon.
+    -- disagree in combat. Cooldown-kind entries can skip this through the
+    -- cooldown-icon aura phase option.
     local auraDur, auraActive, auraSourceID = CDMResolvers.ResolveAuraDurationObjectForIcon(icon, entry, sid)
     if auraActive then
         return auraDur, "aura", auraSourceID

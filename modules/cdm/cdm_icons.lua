@@ -3454,9 +3454,10 @@ CDMIcons._batchTime = 0       -- kept in sync at every write site below
 -- instead of being cleared, so the GCD swipe animation can render.
 local _showGCDSwipe = false
 -- _showBuffSwipe is hoisted once per batch from swipe module settings.
--- Cooldown-kind icons always skip aura detection so they render recharge /
--- cooldown swipes instead of aura duration swipes.
+-- _showCooldownIconAuraPhase controls whether cooldown-kind icons can enter
+-- aura phase before charge/cooldown phase.
 local _showBuffSwipe = true
+local _showCooldownIconAuraPhase = true
 
 CDMIcons._trustIsOnGCDForBatch = false
 CDMIcons._pendingTrustIsOnGCD = false
@@ -3466,12 +3467,23 @@ function CDMIcons.RefreshSwipeBatchSettings()
     local swipeSettings = swipeMod and swipeMod.GetSettings and swipeMod.GetSettings()
     _showGCDSwipe = swipeSettings and swipeSettings.showGCDSwipe or false
     _showBuffSwipe = swipeSettings and (swipeSettings.showBuffSwipe ~= false) or false
+    if swipeSettings then
+        _showCooldownIconAuraPhase = swipeSettings.showCooldownIconAuraPhase ~= false
+    else
+        _showCooldownIconAuraPhase = true
+    end
+end
+
+function CDMIcons.ShouldSkipAuraPhaseForCooldownIcon(icon, entry)
+    if not entry then return false end
+    if IsAuraEntry(entry) then return false end
+    return _showCooldownIconAuraPhase == false
 end
 
 function CDMIcons.ShouldUseBuffSwipeForIcon(icon, entry)
     if not entry then return false end
     if not _showBuffSwipe then return false end
-    if not IsAuraEntry(entry) then
+    if CDMIcons.ShouldSkipAuraPhaseForCooldownIcon(icon, entry) then
         return false
     end
     local settings = ResolveTrackerSettingsNow(entry and entry.viewerType)

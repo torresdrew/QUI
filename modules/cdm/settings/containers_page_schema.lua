@@ -1784,11 +1784,17 @@ local function RenderEffectsSection(sectionHost, ctx)
     local buffSwipeCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showBuffSwipe", effectsCtx.swipeDB, RefreshSwipe, {
         description = "Play a swipe animation on buff/debuff icons to represent remaining duration.",
     })
+    local cooldownIconAuraPhaseCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showCooldownIconAuraPhase", effectsCtx.swipeDB, RefreshSwipe, {
+        description = "Let cooldown icons show their linked buff/debuff phase before switching to recharge or cooldown.",
+    })
     local rechargeEdgeCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showRechargeEdge", effectsCtx.swipeDB, RefreshSwipe, {
         description = "Show a bright edge on the active recharge slice for spells with charges.",
     })
     swipeCard.AddRow(
         optionsAPI.BuildSettingRow(swipeCard.frame, "Buff/Debuff Swipe", buffSwipeCheckbox),
+        optionsAPI.BuildSettingRow(swipeCard.frame, "Show Buff/Debuff Phase on Cooldown Icons", cooldownIconAuraPhaseCheckbox)
+    )
+    swipeCard.AddRow(
         optionsAPI.BuildSettingRow(swipeCard.frame, "Recharge Edge", rechargeEdgeCheckbox)
     )
     builder.CloseCard(swipeCard)

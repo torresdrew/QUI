@@ -3250,6 +3250,7 @@ local defaults = {
         -- Cooldown Manager Effects
         cooldownSwipe = {
             showBuffSwipe = false,      -- Buff/aura duration swipe (Essential/Utility)
+            showCooldownIconAuraPhase = true, -- Let cooldown icons show their linked buff/debuff phase before cooldown/recharge
             showBuffIconSwipe = true,   -- BuffIcon viewer swipe (opt-in)
             showGCDSwipe = false,       -- GCD swipe (~1.5s)
             showCooldownSwipe = true,   -- Actual spell cooldown swipe

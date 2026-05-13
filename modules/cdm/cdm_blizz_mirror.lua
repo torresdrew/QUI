@@ -303,8 +303,12 @@ local function SelectDurationForState(cdID, s)
         return nil, nil, s.auraDurationStateUnknown
     end
 
-    -- Cooldown viewers keep aura/totem lanes for active state and text, but
-    -- their swipe should represent recharge/cooldown state, not aura uptime.
+    if s.auraDurObj then
+        return s.auraDurObj, s.auraDurObjSource or "aura-duration", nil
+    end
+    if s.totemDurObj then
+        return s.totemDurObj, s.totemDurObjSource or "totem-duration", nil
+    end
     if s.resourceDurObj then
         return s.resourceDurObj, s.resourceDurObjSource or "resource-duration", nil
     end
@@ -316,7 +320,8 @@ local function SelectDurationForState(cdID, s)
     end
 
     return nil, nil,
-        s.cooldownDurationStateUnknown
+        s.auraDurationStateUnknown
+        or s.cooldownDurationStateUnknown
         or s.resourceDurationStateUnknown
         or s.gcdDurationStateUnknown
 end

@@ -1242,6 +1242,7 @@ local Shared = ns.CDMShared
 -- Default settings
 local DEFAULTS = {
     showBuffSwipe = true,
+    showCooldownIconAuraPhase = true,
     showBuffIconSwipe = true,
     showGCDSwipe = true,
     showCooldownSwipe = true,
@@ -1304,7 +1305,7 @@ end
 ---------------------------------------------------------------------------
 -- APPLY SWIPE TO A SINGLE ICON
 -- Classification prefers the icon's active rendered swipe state:
--- aura-kind state, then explicit GCD render flag, then cooldown.
+-- aura phase, then explicit GCD render flag, then cooldown.
 ---------------------------------------------------------------------------
 local function ApplySwipeToIcon(icon, settings)
     if not icon or not icon.Cooldown or not icon._spellEntry then return end

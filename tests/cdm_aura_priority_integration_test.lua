@@ -5,23 +5,25 @@
 -- and resolver payload classification:
 --
 --     aura entries:     aura > charge/recharge > cd > gcd
---     cooldown entries: charge/recharge > cd > gcd
+--     cooldown entries: aura > charge/recharge > cd > gcd by default,
+--                       charge/recharge > cd > gcd when
+--                       Show Buff/Debuff Phase on Cooldown Icons is off.
 --
 -- Regression coverage for cooldown entries that also have a player aura up.
 -- The aura lane is still mirrored for stack/active state, but cooldown-kind
--- icons must not render the aura DurationObject as their swipe. The fix lives
--- at two layers:
+-- icons can be configured to skip the aura DurationObject as their swipe.
+-- The fix lives at two layers:
 --
---   1. cdm_blizz_mirror.lua's SelectDurationForState skips aura lanes for
---      cooldown viewers and SetDurationLane(gcd) no longer wipes the
---      cooldown lane.
+--   1. cdm_blizz_mirror.lua's SelectDurationForState keeps aura-first mirror
+--      state and SetDurationLane(gcd) no longer wipes the cooldown lane.
 --      Verified end-to-end in cdm_blizz_mirror_duration_test.lua.
 --   2. cdm_resolvers.lua's ResolveMirrorRenderPayloadForEntry passes the
 --      mirror's selected mode through to the icon factory.  Verified here.
 --
--- Failure mode this test catches: a cooldown entry selects the aura lane
--- ahead of recharge/cooldown, causing the icon to render the buff/debuff
--- duration swipe instead of the actual charge or cooldown swipe.
+-- Failure mode this test catches: when the new option is disabled, a cooldown
+-- entry still selects the aura lane ahead of recharge/cooldown, causing the
+-- icon to render the buff/debuff duration phase instead of the actual charge
+-- or cooldown phase.
 
 local function noop() end
 
@@ -68,15 +70,16 @@ local function makeState(cooldownID, category, lanes, selected)
 end
 
 -- Scenario A: aura up + cooldown running on a non-aura cooldown entry.
--- Mirror's SelectDurationForState skips aura and picks cooldown.
+-- Mirror's SelectDurationForState picks aura; the resolver can override it
+-- when the cooldown-icon aura phase option is off.
 makeState(50001, "essential",
     { aura = auraDur, cooldown = cooldownDur },
-    { durObj = cooldownDur, durObjSource = "cooldown-frame", resolvedMode = "cooldown" })
+    { durObj = auraDur, durObjSource = "aura-duration", resolvedMode = "aura" })
 
--- Scenario B: aura up + recharge + cooldown.  Recharge wins.
+-- Scenario B: aura up + recharge + cooldown.
 makeState(50002, "essential",
     { aura = auraDur, resource = chargeDur, cooldown = cooldownDur },
-    { durObj = chargeDur, durObjSource = "spell-charge", resolvedMode = "charge" })
+    { durObj = auraDur, durObjSource = "aura-duration", resolvedMode = "aura" })
 
 -- Scenario C: recharge + cooldown, no aura.  Recharge wins over cooldown.
 makeState(50003, "essential",
@@ -137,22 +140,22 @@ local function entry(spellID)
     }
 end
 
--- Scenario A: cooldown > aura for cooldown entries
+-- Scenario A: default keeps aura phase for cooldown entries
 local payload = resolveMirror(entry(50001), 50001, "essential", 50001)
 assert(payload, "scenario A: aura+cooldown state should produce a mirror payload")
-assert(payload.mode == "cooldown",
-    "scenario A: cooldown entry with aura up should resolve to cooldown mode (got " .. tostring(payload.mode) .. ")")
-assert(payload.durObj == cooldownDur,
-    "scenario A: cooldown entry with aura up should carry the cooldown DurationObject")
+assert(payload.mode == "aura",
+    "scenario A: cooldown entry with aura up should resolve to aura mode by default (got " .. tostring(payload.mode) .. ")")
+assert(payload.durObj == auraDur,
+    "scenario A: cooldown entry with aura up should carry the aura DurationObject by default")
 assert(payload.active == true, "scenario A: payload should be active")
 
--- Scenario B: charge > cooldown > aura for cooldown entries
+-- Scenario B: mirror payload keeps aura phase by default when recharge exists
 payload = resolveMirror(entry(50002), 50002, "essential", 50002)
 assert(payload, "scenario B: aura+charge+cooldown state should produce a mirror payload")
-assert(payload.mode == "charge",
-    "scenario B: cooldown entry with aura up + recharge should resolve to charge mode (got " .. tostring(payload.mode) .. ")")
-assert(payload.durObj == chargeDur,
-    "scenario B: cooldown entry with aura up + recharge should carry the charge DurationObject")
+assert(payload.mode == "aura",
+    "scenario B: cooldown entry with aura up + recharge should resolve to aura mode by default (got " .. tostring(payload.mode) .. ")")
+assert(payload.durObj == auraDur,
+    "scenario B: cooldown entry with aura up + recharge should carry the aura DurationObject by default")
 
 -- Scenario C: charge > cooldown
 payload = resolveMirror(entry(50003), 50003, "essential", 50003)
@@ -193,15 +196,46 @@ assert(payload.mode == "aura",
 assert(payload.durObj == auraDur,
     "scenario F: aura-viewer entry should carry the aura DurationObject")
 
--- Negative: reorder regression detector.  If a future change restores aura
--- as the selected lane for cooldown entries, scenario A flips to mode ==
--- "aura". This explicit assertion makes the failure unambiguous.
-local regressionPayload = resolveMirror(entry(50001), 50001, "essential", 50001)
-assert(regressionPayload.mode ~= "aura",
-    "REGRESSION: cooldown entry with aura up resolved to aura mode - "
-    .. "cooldown icons must skip the aura swipe lane.  "
-    .. "Check (a) cdm_blizz_mirror.lua SelectDurationForState lane order, "
-    .. "(b) cdm_icons.lua ShouldUseBuffSwipeForIcon, "
-    .. "(c) cdm_resolvers.lua mirror payload classification.")
+local showCooldownIconAuraPhase = true
+resolvers._FinalizeImports({
+    ShouldSkipAuraPhaseForCooldownIcon = function(_, e)
+        return e and e.kind == "cooldown" and showCooldownIconAuraPhase == false
+    end,
+    ApplyAuraStateToIcon = function()
+        return nil, false, nil
+    end,
+    IsGCDSwipeEnabled = function()
+        return false
+    end,
+})
+
+local function resolveIcon(spellID)
+    return resolvers.ResolveIconDurationObject({
+        _spellEntry = entry(spellID),
+        _blizzMirrorCooldownID = spellID,
+        _blizzMirrorCategory = "essential",
+    })
+end
+
+-- Default-on option: cooldown icons keep the buff/debuff phase.
+local durObj, mode = resolveIcon(50001)
+assert(mode == "aura",
+    "default option state should keep cooldown icons on aura phase (got " .. tostring(mode) .. ")")
+assert(durObj == auraDur,
+    "default option state should keep the aura DurationObject")
+
+-- Option disabled: cooldown icons skip aura and use cooldown/recharge phase.
+showCooldownIconAuraPhase = false
+durObj, mode = resolveIcon(50001)
+assert(mode == "cooldown",
+    "disabled cooldown-icon aura phase should resolve aura+cooldown to cooldown mode (got " .. tostring(mode) .. ")")
+assert(durObj == cooldownDur,
+    "disabled cooldown-icon aura phase should carry the cooldown DurationObject")
+
+durObj, mode = resolveIcon(50002)
+assert(mode == "charge",
+    "disabled cooldown-icon aura phase should resolve aura+charge+cooldown to charge mode (got " .. tostring(mode) .. ")")
+assert(durObj == chargeDur,
+    "disabled cooldown-icon aura phase should carry the charge DurationObject")
 
 print("OK: cdm_aura_priority_integration_test")

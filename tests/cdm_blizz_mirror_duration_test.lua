@@ -569,8 +569,8 @@ child.Cooldown:SetCooldownFromDurationObject(auraHookDuration)
 state = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902), "mirror state missing after aura hook")
 assert(state.auraDurObj == auraHookDuration, "non-aura entries should keep Blizzard aura duration in the aura lane")
 assert(state.cooldownDurObj == cooldownDuration, "aura duration must not overwrite cooldown duration lane")
-assert(state.durObj == cooldownDuration, "non-aura cooldown entries should keep selecting cooldown duration over aura")
-assert(state.durObjSource == "spell-cooldown", "selected duration source should identify the cooldown lane")
+assert(state.durObj == auraHookDuration, "non-aura entries should select aura duration ahead of cooldown")
+assert(state.durObjSource == "aura-duration", "selected duration source should identify the aura lane")
 
 child.wasSetFromAura = false
 child.wasSetFromCooldown = true
@@ -578,10 +578,10 @@ child.wasSetFromCharges = false
 child.Cooldown:SetCooldownFromDurationObject(cooldownDuration)
 
 state = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902), "mirror state missing after cooldown hook")
-assert(state.auraDurObj == auraHookDuration, "cooldown hook should preserve the aura duration lane")
+assert(state.auraDurObj == auraHookDuration, "cooldown hook should preserve higher-priority aura duration")
 assert(state.cooldownDurObj == cooldownDuration, "cooldown duration should stay in the cooldown lane")
-assert(state.durObj == cooldownDuration, "cooldown duration should stay selected ahead of aura")
-assert(state.durObjSource == "cooldown-frame", "selected duration source should still identify the cooldown lane")
+assert(state.durObj == auraHookDuration, "aura duration should stay selected ahead of cooldown")
+assert(state.durObjSource == "aura-duration", "selected duration source should still identify the aura lane")
 
 child.wasSetFromAura = false
 child.wasSetFromCooldown = false
@@ -589,10 +589,10 @@ child.wasSetFromCharges = true
 child.Cooldown:SetCooldownFromDurationObject(chargeDuration)
 
 state = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902), "mirror state missing after charge hook")
-assert(state.auraDurObj == auraHookDuration, "charge hook should preserve the aura duration lane")
+assert(state.auraDurObj == auraHookDuration, "charge hook should preserve higher-priority aura duration")
 assert(state.resourceDurObj == chargeDuration, "charge duration should be carried in the resource lane")
 assert(state.cooldownDurObj == cooldownDuration, "charge duration must not overwrite cooldown duration lane")
-assert(state.durObj == chargeDuration, "charge/recharge duration should be selected ahead of cooldown and aura")
+assert(state.durObj == auraHookDuration, "aura duration should stay selected ahead of charge and cooldown")
 
 child.isActive = true
 child.cooldownIsActive = nil
@@ -604,7 +604,7 @@ state = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902), "mirror state miss
 assert(state.isActive == true, "transient non-aura Clear should preserve active child state")
 assert(state.cooldownDurObj == cooldownDuration, "transient non-aura Clear should preserve the cooldown duration lane")
 assert(state.resourceDurObj == chargeDuration, "transient non-aura Clear should preserve the charge duration lane")
-assert(state.durObj == chargeDuration, "transient non-aura Clear should preserve the selected charge duration")
+assert(state.durObj == auraHookDuration, "transient non-aura Clear should preserve the higher-priority aura duration")
 
 child.cooldownIsActive = false
 child.Cooldown:Clear()
@@ -886,8 +886,8 @@ assert(amzUtilityState.cooldownDurObj == amzCooldownDuration, "AMZ utility shoul
 assert(amzUtilityState.hasAuraInstanceID == true, "AMZ utility should borrow the related buff child aura instance")
 assert(amzUtilityState.auraUnit == "player", "AMZ utility should trust the related buff child aura unit")
 assert(amzUtilityState.auraDurObj == amzAuraDuration, "AMZ utility should borrow the related buff child aura duration")
-assert(amzUtilityState.durObj == amzCooldownDuration, "AMZ utility should keep selecting its cooldown duration over the related aura")
-assert(amzUtilityState.durObjSource == "spell-cooldown", "AMZ utility selected duration should identify the cooldown lane")
+assert(amzUtilityState.durObj == amzAuraDuration, "AMZ utility should select the related aura duration ahead of cooldown")
+assert(amzUtilityState.durObjSource == "aura-related-child", "AMZ utility selected duration should identify the related aura child")
 
 local reapingState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(70765, "buff"), "Reaping buff mirror state missing")
 assert(reapingState.isActive == false, "Reaping test should start inactive")

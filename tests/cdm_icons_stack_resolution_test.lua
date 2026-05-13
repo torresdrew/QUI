@@ -100,13 +100,29 @@ assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local icons = ns.CDMIcons
 
-assert(icons.ShouldUseBuffSwipeForIcon({}, {
+local cooldownEntry = {
     type = "spell",
     id = 55090,
     spellID = 55090,
     kind = "cooldown",
     viewerType = "essential",
-}) == false, "cooldown icons should skip buff/debuff swipe aura detection")
+}
+
+assert(icons.ShouldUseBuffSwipeForIcon({}, cooldownEntry) == true,
+    "cooldown icons should allow buff/debuff phase by default")
+
+ns._OwnedSwipe = {
+    GetSettings = function()
+        return {
+            showBuffSwipe = true,
+            showCooldownIconAuraPhase = false,
+        }
+    end,
+}
+icons.RefreshSwipeBatchSettings()
+
+assert(icons.ShouldUseBuffSwipeForIcon({}, cooldownEntry) == false,
+    "cooldown icons should skip buff/debuff phase when the option is disabled")
 
 assert(icons.ShouldUseBuffSwipeForIcon({}, {
     type = "spell",

@@ -954,6 +954,7 @@ return {
             showActionSwipe = true,
             showBuffIconSwipe = true,
             showBuffSwipe = false,
+            showCooldownIconAuraPhase = true,
             showCooldownSwipe = true,
             showCustomTrackerSwipe = true,
             showGCDSwipe = false,

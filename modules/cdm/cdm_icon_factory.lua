@@ -1187,9 +1187,9 @@ local okI = true; local aIcon = r.auraData.icon
                 end
             end
         else
-            -- Unified non-item path: aura-kind entries detect aura state via
-            -- the resolver; cooldown-kind entries go straight to cooldown /
-            -- recharge resolution. No Blizzard CDM viewer child reads.
+            -- Unified non-item path: entries detect aura state via the
+            -- resolver unless cooldown-icon aura phase is disabled. No
+            -- Blizzard CDM viewer child reads.
             local _chargedAuraActive = false
             local _chargedTotemTexture = nil
             local useBuffSwipe = CDMIcons.ShouldUseBuffSwipeForIcon(icon, entry)
