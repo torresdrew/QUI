@@ -504,6 +504,9 @@ local ns = {
         IsSecretValue = function() return false end,
     },
     CDMIcons = {
+        RequestMirrorTextRefresh = function()
+            iconRefreshCount = iconRefreshCount + 1
+        end,
         UpdateAllCooldowns = function()
             iconRefreshCount = iconRefreshCount + 1
         end,

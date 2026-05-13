@@ -54,7 +54,7 @@ assertContains(
 
 assertContains(
     "QUI_Debug/performance.lua",
-    'local TARGET_ADDON_NAME = "QUI"',
+    'local PRIMARY_ADDON_NAME = "QUI"',
     "performance monitor must still measure the main addon")
 
 assertContains(

@@ -49,7 +49,6 @@ local _categoryByFrame     = {}    -- [child frame] = catNum (lazy-init category
 local _childByCooldownFrame = setmetatable({}, { __mode = "k" }) -- [child.Cooldown] = child frame
 local _forceShowingChild    = setmetatable({}, { __mode = "k" }) -- [child] = true for mirror-internal Show()
 local _textOwnerHooked      = setmetatable({}, { __mode = "k" }) -- [Applications/ChargeCount owner] = true
-local _mirrorTextRefreshPending = false
 local SetHostPandemicState
 local GCD_MAX_DURATION = 1.75
 -- CooldownViewerCooldown info captured from C_CooldownViewer.GetCooldownViewerCooldownInfo:
@@ -105,6 +104,9 @@ local SafeFrameBooleanField
 local SafeFrameShownField
 local RawFrameField
 local RequestMirrorTextRefresh
+local RequestMirrorTextRefreshForState
+local RequestMirrorTextRefreshForChild
+local RequestMirrorTextRefreshForMappedSpells
 local ClearMirrorStackState
 local AuraInstanceMatchesExpectedOwner
 local CleanScalar
@@ -527,7 +529,7 @@ local function ClearMirrorAuraState(cdID, s, reason)
         SetHostPandemicState(cdID, nil, false)
     end
     if clearedStack then
-        RequestMirrorTextRefresh()
+        RequestMirrorTextRefreshForState(cdID, s, "aura-clear")
     end
     if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
         CDMBlizzMirror.TaintLog("ClearAuraState",
@@ -2141,17 +2143,51 @@ local function BuildAuraProbeLines(cdID, viewerCategory)
     return lines
 end
 
-RequestMirrorTextRefresh = function()
-    if _mirrorTextRefreshPending then return end
-    if not (C_Timer and C_Timer.After) then return end
-    _mirrorTextRefreshPending = true
-    C_Timer.After(0, function()
-        _mirrorTextRefreshPending = false
-        local icons = ns.CDMIcons
-        if icons and icons.UpdateAllCooldowns then
-            icons:UpdateAllCooldowns()
+RequestMirrorTextRefresh = function(cooldownID, viewerCategory, reason)
+    local icons = ns.CDMIcons
+    if icons and icons.RequestMirrorTextRefresh then
+        icons:RequestMirrorTextRefresh(cooldownID, viewerCategory, reason)
+    end
+end
+
+RequestMirrorTextRefreshForState = function(cooldownID, state, reason)
+    if not cooldownID then return end
+    RequestMirrorTextRefresh(cooldownID,
+        state and state.viewerCategory or GetInstanceCategoryName(cooldownID),
+        reason)
+end
+
+RequestMirrorTextRefreshForChild = function(child, cooldownID, state, reason)
+    if not cooldownID then return end
+    RequestMirrorTextRefresh(cooldownID,
+        state and state.viewerCategory
+            or GetFrameCategoryName(child)
+            or GetInstanceCategoryName(cooldownID),
+        reason)
+end
+
+RequestMirrorTextRefreshForMappedSpells = function(reason, ...)
+    local requested = false
+    for i = 1, select("#", ...) do
+        local spellID = select(i, ...)
+        if spellID then
+            for catName, catMap in pairs(_cdIDByCatSpell) do
+                local cdID = catMap[spellID]
+                if cdID then
+                    RequestMirrorTextRefresh(cdID, catName, reason)
+                    requested = true
+                end
+            end
+            for catName, directMap in pairs(_directCDIDByCatSpell) do
+                local cdID = directMap[spellID]
+                if cdID then
+                    RequestMirrorTextRefresh(cdID, catName, reason)
+                    requested = true
+                end
+            end
         end
-    end)
+    end
+    return requested
 end
 
 local function FindMirrorFontString(owner)
@@ -2308,7 +2344,7 @@ local function CaptureChildStackText(child, source, text, fromTextWrite)
     if source == "ChargeCount" and not ChildHasAuthoritativeCountText(child, fromTextWrite) then
         if (not s.stackTextSource or s.stackTextSource == source) and ClearMirrorStackState(s) then
             s.lastTouch = GetTime()
-            RequestMirrorTextRefresh()
+            RequestMirrorTextRefreshForChild(child, cdID, s, "stack-clear")
         end
         return
     end
@@ -2322,13 +2358,13 @@ local function CaptureChildStackText(child, source, text, fromTextWrite)
         s.stackTextShown = true
         s.stackTextEpoch = (s.stackTextEpoch or 0) + 1
         s.lastTouch = GetTime()
-        RequestMirrorTextRefresh()
+        RequestMirrorTextRefreshForChild(child, cdID, s, "stack-text")
         return
     end
 
     if (not s.stackTextSource or s.stackTextSource == source) and ClearMirrorStackState(s) then
         s.lastTouch = GetTime()
-        RequestMirrorTextRefresh()
+        RequestMirrorTextRefreshForChild(child, cdID, s, "stack-empty")
     end
 end
 
@@ -2340,7 +2376,7 @@ local function ClearChildStackText(child, source)
     if s.stackTextSource and source and s.stackTextSource ~= source then return end
     if ClearMirrorStackState(s) then
         s.lastTouch = GetTime()
-        RequestMirrorTextRefresh()
+        RequestMirrorTextRefreshForChild(child, cdID, s, "stack-clear")
     end
 end
 
@@ -2494,7 +2530,7 @@ local function RefreshChildSemanticState(child, cdID, fallbackActive)
     end
     if changed then
         s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
-        RequestMirrorTextRefresh()
+        RequestMirrorTextRefreshForChild(child, cdID, s, "active-state")
     end
     s.isActive = active
     if active then
@@ -2519,7 +2555,7 @@ local function RefreshChildSemanticState(child, cdID, fallbackActive)
         s.pandemicActive = false
         s.pandemicStateKnown = nil
         if ClearMirrorStackState(s) then
-            RequestMirrorTextRefresh()
+            RequestMirrorTextRefreshForChild(child, cdID, s, "inactive-stack-clear")
         end
         if SetHostPandemicState then
             SetHostPandemicState(cdID, nil, false)
@@ -2564,6 +2600,7 @@ local function RefreshCooldownViewerRelatedAuraStates()
                 local hadRelatedAura = s.auraDurObjSource == "aura-related-child"
                     or s.auraInstanceIDSource == "aura-related-child"
                 if CaptureAuraInstanceFromRelatedAuraChildren(cdID, cat) then
+                    RequestMirrorTextRefreshForState(cdID, s, "related-aura")
                     changed = true
                 elseif hadRelatedAura then
                     ClearAuraDurationLane(cdID, s)
@@ -2572,15 +2609,13 @@ local function RefreshCooldownViewerRelatedAuraStates()
                     s.auraUnit = nil
                     s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
                     s.lastTouch = GetTime()
+                    RequestMirrorTextRefreshForState(cdID, s, "related-aura-clear")
                     changed = true
                 end
             end
         end
     end
 
-    if changed then
-        RequestMirrorTextRefresh()
-    end
     return changed
 end
 
@@ -3880,6 +3915,7 @@ local function _ActivateTotemCooldownID(cdID, slot, durObj, totemName, totemIcon
     if durObj then
         SetDurationLane(cdID, s, "totem", durObj, "totem-duration")
     end
+    RequestMirrorTextRefreshForState(cdID, s, "totem-active")
     return true
 end
 
@@ -3913,7 +3949,6 @@ function HandlePlayerTotemUpdate(updatedSlot)
     end
 
     local seen = {}
-    local changed = false
     for slot = 1, maxSlots do
         local tok = true; local hasTotem, totemName, _, _, totemIcon, _, totemSpellID = GetTotemInfo(slot)
         local nameSecret = issecretvalue and issecretvalue(totemName) or false
@@ -3981,8 +4016,7 @@ function HandlePlayerTotemUpdate(updatedSlot)
 
             for cdID in pairs(matches) do
                 seen[cdID] = true
-                changed = _ActivateTotemCooldownID(cdID, slot, durObj, cleanTotemName, cleanTotemIcon, cleanTotemSpellID)
-                    or changed
+                _ActivateTotemCooldownID(cdID, slot, durObj, cleanTotemName, cleanTotemIcon, cleanTotemSpellID)
                 if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
                     CDMBlizzMirror.TaintLog("totem.activate",
                         "slot", slot,
@@ -4008,7 +4042,7 @@ function HandlePlayerTotemUpdate(updatedSlot)
                 local rawDurObj = GetTotemDuration(slot)
                 if rawDurObj and type(rawDurObj) ~= "number" then
                     seen[cdID] = true
-                    changed = _ActivateTotemCooldownID(cdID, nil, rawDurObj) or changed
+                    _ActivateTotemCooldownID(cdID, nil, rawDurObj)
                 end
             end
         end
@@ -4031,7 +4065,7 @@ function HandlePlayerTotemUpdate(updatedSlot)
                 s.totemSpellID = nil
                 s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
                 s.lastTouch   = GetTime()
-                changed       = true
+                RequestMirrorTextRefreshForState(cdID, s, "totem-inactive")
             end
             if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
                 CDMBlizzMirror.TaintLog("totem.deactivate", "cdID", cdID)
@@ -4039,9 +4073,6 @@ function HandlePlayerTotemUpdate(updatedSlot)
         end
     end
 
-    if changed then
-        RequestMirrorTextRefresh()
-    end
 end
 
 CDMBlizzMirror.HandlePlayerTotemUpdate = HandlePlayerTotemUpdate
@@ -4121,10 +4152,6 @@ _eventFrame:RegisterEvent("TRAIT_TREE_CHANGED")
 -- now flow through the ns.CDMIndex broker; subscription installed at the
 -- bottom of this file at priority 10 (rebuilds before consumers read).
 _eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
--- UNIT_AURA is the aura-viewer state edge: refresh exact child isActive
--- fields and stamp auraInstanceIDs when Blizzard exposes them.
--- Target included for trackedBar(selfAura=false) — target debuff entries.
-_eventFrame:RegisterUnitEvent("UNIT_AURA", "player", "pet", "target")
 -- Proc-style buff icons can update through the spell activation overlay path
 -- without a normal UNIT_AURA payload or cooldown setter. Re-read child
 -- isActive for those durationless aura-viewer entries.
@@ -4171,17 +4198,14 @@ local function RefreshSpellOverridePair(baseSpellID, overrideSpellID)
 end
 
 _eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
-    if event == "UNIT_AURA" then
-        CDMBlizzMirror.HandleUnitAuraChanged(arg1, arg2)
-        return
-    end
-
     if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW"
         or event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" then
         BindNewChildren()
         RefreshAuraViewerChildActiveStates()
         RefreshCooldownViewerRelatedAuraStates()
-        RequestMirrorTextRefresh()
+        if not RequestMirrorTextRefreshForMappedSpells("overlay", arg1) then
+            RequestMirrorTextRefresh(nil, nil, "overlay")
+        end
         return
     end
 

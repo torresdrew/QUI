@@ -520,6 +520,9 @@ local function SetIconBlizzMirrorBinding(icon, cooldownID, viewerCategory)
     icon._lastMirrorNativeAuraSourceEpoch = nil
     icon._blizzMirrorCooldownID = cooldownID
     icon._blizzMirrorCategory = viewerCategory
+    if CDMIcons and CDMIcons.RegisterBlizzMirrorIcon then
+        CDMIcons.RegisterBlizzMirrorIcon(icon, cooldownID, viewerCategory)
+    end
     ShowNativeIconWidgets(icon)
     local icons = ns.CDMIcons
     if icons and icons.ConfigureIcon and icon._rowConfig then
@@ -529,6 +532,9 @@ end
 
 local function ClearIconBlizzMirrorBinding(icon)
     if not icon or not icon._blizzMirrorCooldownID then return end
+    if CDMIcons and CDMIcons.UnregisterBlizzMirrorIcon then
+        CDMIcons.UnregisterBlizzMirrorIcon(icon)
+    end
     icon._mirrorNativeDurObjApplied = nil
     icon._lastMirrorNativeAuraSourceCat = nil
     icon._lastMirrorNativeAuraSourceCDID = nil

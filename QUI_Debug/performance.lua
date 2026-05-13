@@ -1,9 +1,61 @@
 local ADDON_NAME, ns = ...
-local TARGET_ADDON_NAME = "QUI"
+local PRIMARY_ADDON_NAME = "QUI"
 local Helpers = ns.Helpers
 
 local QUI_PerfMonitor = {}
 ns.QUI_PerfMonitor = QUI_PerfMonitor
+
+local metricTargets = { PRIMARY_ADDON_NAME }
+if ADDON_NAME and ADDON_NAME ~= PRIMARY_ADDON_NAME then
+    metricTargets[#metricTargets + 1] = ADDON_NAME
+end
+
+function QUI_PerfMonitor.GetMetricTargetNames()
+    local copy = {}
+    for i = 1, #metricTargets do
+        copy[i] = metricTargets[i]
+    end
+    return copy
+end
+
+local function SumAddonMemoryUsage()
+    local total = 0
+    local found = false
+    for _, addonName in ipairs(metricTargets) do
+        local ok, mem = pcall(GetAddOnMemoryUsage, addonName)
+        if ok and mem then
+            total = total + mem
+            found = true
+        end
+    end
+    return found and total or nil
+end
+
+local function SumProfilerMetric(metric)
+    local total = 0
+    local found = false
+    for _, addonName in ipairs(metricTargets) do
+        local ok, val = pcall(C_AddOnProfiler.GetAddOnMetric, addonName, metric)
+        if ok and val then
+            total = total + val
+            found = true
+        end
+    end
+    return found and total or nil
+end
+
+local function SumScriptCPUUsage()
+    local total = 0
+    local found = false
+    for _, addonName in ipairs(metricTargets) do
+        local ok, val = pcall(GetAddOnCPUUsage, addonName)
+        if ok and val then
+            total = total + val
+            found = true
+        end
+    end
+    return found and total or nil
+end
 
 -- Constants
 local SAMPLE_INTERVAL = 1.0
@@ -74,8 +126,8 @@ local graphContainer        -- the memory graph frame
 local function DetectCPUAPI()
     -- Tier 1: C_AddOnProfiler (12.0+, no CVar needed)
     if C_AddOnProfiler and C_AddOnProfiler.GetAddOnMetric and Enum and Enum.AddOnProfilerMetric then
-        local ok, val = pcall(C_AddOnProfiler.GetAddOnMetric, TARGET_ADDON_NAME, Enum.AddOnProfilerMetric.RecentAverageTime)
-        if ok then
+        local val = SumProfilerMetric(Enum.AddOnProfilerMetric.RecentAverageTime)
+        if val ~= nil then
             cpuAPITier = "profiler"
             return
         end
@@ -89,6 +141,10 @@ local function DetectCPUAPI()
 
     -- Tier 3: memory only
     cpuAPITier = nil
+end
+
+function QUI_PerfMonitor.GetCPUAPITier()
+    return cpuAPITier
 end
 
 -- ─── Module Profiler ─────────────────────────────────────────────────────────
@@ -338,8 +394,8 @@ end
 local function Sample()
     -- Memory
     pcall(UpdateAddOnMemoryUsage)
-    local ok, mem = pcall(GetAddOnMemoryUsage, TARGET_ADDON_NAME)
-    if ok and mem then
+    local mem = SumAddonMemoryUsage()
+    if mem then
         currentMem = mem
         if mem > peakMem then peakMem = mem end
         totalMem = totalMem + mem
@@ -351,15 +407,15 @@ local function Sample()
     local frameTimeMs = fps > 0 and (1000 / fps) or 16.667
 
     if cpuAPITier == "profiler" then
-        local cpuOk, val = pcall(C_AddOnProfiler.GetAddOnMetric, TARGET_ADDON_NAME, Enum.AddOnProfilerMetric.RecentAverageTime)
-        if cpuOk and val then
+        local val = SumProfilerMetric(Enum.AddOnProfilerMetric.RecentAverageTime)
+        if val then
             currentCPU = val
             currentCPUPct = (val / frameTimeMs) * 100
         end
     elseif cpuAPITier == "scriptProfile" then
         pcall(UpdateAddOnCPUUsage)
-        local cpuOk, val = pcall(GetAddOnCPUUsage, TARGET_ADDON_NAME)
-        if cpuOk and val then
+        local val = SumScriptCPUUsage()
+        if val then
             local now = GetTime()
             local dt = now - lastScriptTime
             if dt > 0 and lastScriptTime > 0 then
@@ -755,6 +811,7 @@ local function ResetSession()
 end
 
 local function StartTracking()
+    DetectCPUAPI()
     if not monitorFrame then
         CreateMonitorFrame()
     end

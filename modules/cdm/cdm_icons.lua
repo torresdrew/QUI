@@ -290,6 +290,69 @@ local SetStackTextWritesForBatch
 local SyncSpellRangeChecks
 local DisableSpellRangeChecks
 
+CDMIcons._mirrorIconsByCategory = {}
+CDMIcons._pendingMirrorRefreshByCategory = {}
+CDMIcons._mirrorRefreshPending = false
+CDMIcons._mirrorRefreshStats = {
+    targeted = 0,
+    fallback = 0,
+    maxBatch = 0,
+}
+CDMIcons._eventProfileStats = {}
+CDMIcons._eventProfileLast = {
+    time = GetTime and GetTime() or 0,
+    counts = {},
+    ms = {},
+}
+
+function CDMIcons.RecordEventProfile(event, elapsedMS)
+    if not event then return end
+    local stats = CDMIcons._eventProfileStats[event]
+    if not stats then
+        stats = { calls = 0, ms = 0 }
+        CDMIcons._eventProfileStats[event] = stats
+    end
+    stats.calls = stats.calls + 1
+    stats.ms = stats.ms + (elapsedMS or 0)
+end
+
+function CDMIcons.SnapshotEventProfile(limit)
+    local now = GetTime and GetTime() or 0
+    local last = CDMIcons._eventProfileLast
+    local elapsed = now - (last.time or now)
+    if elapsed <= 0 then elapsed = 1 end
+
+    local rows = {}
+    for event, stats in pairs(CDMIcons._eventProfileStats) do
+        local prevCalls = last.counts[event] or 0
+        local prevMS = last.ms[event] or 0
+        local calls = (stats.calls or 0) - prevCalls
+        local ms = (stats.ms or 0) - prevMS
+        if calls > 0 or ms > 0 then
+            rows[#rows + 1] = {
+                event = event,
+                calls = calls,
+                ms = ms,
+                callsPerSec = calls / elapsed,
+                msPerSec = ms / elapsed,
+            }
+        end
+        last.counts[event] = stats.calls or 0
+        last.ms[event] = stats.ms or 0
+    end
+    last.time = now
+
+    table.sort(rows, function(a, b)
+        if a.ms ~= b.ms then return a.ms > b.ms end
+        return a.calls > b.calls
+    end)
+    limit = limit or 5
+    while #rows > limit do
+        rows[#rows] = nil
+    end
+    return rows, elapsed
+end
+
 ---------------------------------------------------------------------------
 -- DEBUG: Charge/stack transform debugging.
 -- Enable via:  /run QUI_CDM_CHARGE_DEBUG = true
@@ -3518,6 +3581,64 @@ function CDMIcons:ForEachIcon(callback)
     end
 end
 
+function CDMIcons.GetMirrorIconSet(category, cooldownID, create)
+    if not (category and cooldownID) then return nil end
+    local byCategory = CDMIcons._mirrorIconsByCategory[category]
+    if not byCategory then
+        if not create then return nil end
+        byCategory = {}
+        CDMIcons._mirrorIconsByCategory[category] = byCategory
+    end
+
+    local iconSet = byCategory[cooldownID]
+    if not iconSet then
+        if not create then return nil end
+        iconSet = setmetatable({}, { __mode = "k" })
+        byCategory[cooldownID] = iconSet
+    end
+    return iconSet
+end
+
+function CDMIcons.UnregisterBlizzMirrorIcon(icon)
+    if not icon then return end
+    local category = icon._blizzMirrorIndexCategory
+    local cooldownID = icon._blizzMirrorIndexCooldownID
+    if category and cooldownID then
+        local iconSet = CDMIcons.GetMirrorIconSet(category, cooldownID, false)
+        if iconSet then
+            iconSet[icon] = nil
+        end
+    end
+    icon._blizzMirrorIndexCategory = nil
+    icon._blizzMirrorIndexCooldownID = nil
+end
+
+function CDMIcons.RegisterBlizzMirrorIcon(icon, cooldownID, category)
+    if not (icon and cooldownID and category) then return end
+    if icon._blizzMirrorIndexCooldownID ~= nil
+        or icon._blizzMirrorIndexCategory ~= nil then
+        CDMIcons.UnregisterBlizzMirrorIcon(icon)
+    end
+
+    local iconSet = CDMIcons.GetMirrorIconSet(category, cooldownID, true)
+    iconSet[icon] = true
+    icon._blizzMirrorIndexCategory = category
+    icon._blizzMirrorIndexCooldownID = cooldownID
+end
+
+function CDMIcons.RebuildBlizzMirrorIconIndex()
+    wipe(CDMIcons._mirrorIconsByCategory)
+    for _, pool in pairs(iconPools) do
+        for _, icon in ipairs(pool) do
+            if icon and icon._blizzMirrorCooldownID and icon._blizzMirrorCategory then
+                CDMIcons.RegisterBlizzMirrorIcon(icon,
+                    icon._blizzMirrorCooldownID,
+                    icon._blizzMirrorCategory)
+            end
+        end
+    end
+end
+
 --- Ensure an icon pool exists for the given container key (Phase G).
 function CDMIcons:EnsurePool(viewerType)
     if not iconPools[viewerType] then
@@ -4104,6 +4225,7 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
         return
     end
 
+    local entryIsAura = IsAuraEntry(entry)
     if CDMIcons.IsCustomBarContainer(containerDB) then
         local visibility = CDMIcons.ComputeCustomBarVisibility(icon, entry, containerDB, _batchTime)
         local effectiveMode = containerDB and containerDB.iconDisplayMode or "always"
@@ -4135,6 +4257,31 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
                 "dynamic=", tostring(containerDB and containerDB.dynamicLayout))
         end
         CDMIcons.ApplyCustomBarActiveGlow(icon, containerDB, visibility)
+        SyncCooldownBling(icon)
+        return
+    end
+
+    if entryIsAura then
+        local isActive = icon._auraActive == true
+        local effectiveMode = containerDB and containerDB.iconDisplayMode or "always"
+        if effectiveMode == "combat" then
+            effectiveMode = inCombat and "always" or "active"
+        end
+
+        if effectiveMode == "always" then
+            SetIconRowAlpha(icon)
+            if not icon:IsShown() then icon:Show() end
+        elseif effectiveMode == "active" then
+            if isActive then
+                SetIconRowAlpha(icon)
+                if not icon:IsShown() then icon:Show() end
+            else
+                if icon:IsShown() then icon:Hide() end
+            end
+        else
+            if icon:IsShown() then icon:Hide() end
+        end
+
         SyncCooldownBling(icon)
         return
     end
@@ -5265,6 +5412,100 @@ end
     cdmUpdateFrame:SetScript("OnUpdate", CDMUpdateOnUpdate)
 end
 
+function CDMIcons.CountPendingMirrorRefreshKeys(pendingByCategory)
+    local count = 0
+    for _, byCooldownID in pairs(pendingByCategory) do
+        for _ in pairs(byCooldownID) do
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function CDMIcons.RefreshIndexedMirrorIcon(icon, editMode, ncdm, ncdmContainers, inCombat)
+    local entry = icon and icon._spellEntry
+    if not entry then return false end
+
+    local wasAuraActive = icon._auraActive == true
+    UpdateIconCooldown(icon)
+    if entry.viewerType == "buff"
+        and wasAuraActive ~= (icon._auraActive == true) then
+        RequestBuffIconLayoutRefresh()
+    end
+
+    local containerDB = ncdm and (ncdm[entry.viewerType]
+        or (ncdmContainers and ncdmContainers[entry.viewerType]))
+    UpdateCooldownContainerVisibility(icon, entry, containerDB, editMode, inCombat)
+    return true
+end
+
+function CDMIcons.DrainMirrorTextRefreshQueue()
+    CDMIcons._mirrorRefreshPending = false
+    local pendingByCategory = CDMIcons._pendingMirrorRefreshByCategory
+    CDMIcons._pendingMirrorRefreshByCategory = {}
+
+    local batchKeys = CDMIcons.CountPendingMirrorRefreshKeys(pendingByCategory)
+    if batchKeys == 0 then return end
+
+    if batchKeys > CDMIcons._mirrorRefreshStats.maxBatch then
+        CDMIcons._mirrorRefreshStats.maxBatch = batchKeys
+    end
+    CDMIcons._mirrorRefreshStats.targeted = CDMIcons._mirrorRefreshStats.targeted + batchKeys
+
+    local editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
+    local refreshed = 0
+
+    SetStackTextWritesForBatch(true)
+    BeginResolverQueryBatch()
+    for category, byCooldownID in pairs(pendingByCategory) do
+        for cooldownID in pairs(byCooldownID) do
+            local iconSet = CDMIcons.GetMirrorIconSet(category, cooldownID, false)
+            if iconSet then
+                for icon in pairs(iconSet) do
+                    if icon
+                        and icon._blizzMirrorCooldownID == cooldownID
+                        and icon._blizzMirrorCategory == category
+                        and CDMIcons.RefreshIndexedMirrorIcon(icon, editMode, ncdm, ncdmContainers, inCombat) then
+                        refreshed = refreshed + 1
+                    end
+                end
+            end
+        end
+    end
+    SetStackTextWritesForBatch(false)
+    EndResolverQueryBatch()
+
+    if refreshed > 0 then
+        DrainLayoutDirty()
+    end
+end
+
+function CDMIcons:RequestMirrorTextRefresh(cooldownID, category)
+    if not CDMIcons:IsRuntimeEnabled() then return end
+
+    if not (cooldownID and category) then
+        CDMIcons._mirrorRefreshStats.fallback = CDMIcons._mirrorRefreshStats.fallback + 1
+        ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
+        return
+    end
+
+    local byCooldownID = CDMIcons._pendingMirrorRefreshByCategory[category]
+    if not byCooldownID then
+        byCooldownID = {}
+        CDMIcons._pendingMirrorRefreshByCategory[category] = byCooldownID
+    end
+    byCooldownID[cooldownID] = true
+
+    if CDMIcons._mirrorRefreshPending then return end
+    if not (C_Timer and C_Timer.After) then
+        CDMIcons.DrainMirrorTextRefreshQueue()
+        return
+    end
+
+    CDMIcons._mirrorRefreshPending = true
+    C_Timer.After(0, CDMIcons.DrainMirrorTextRefreshQueue)
+end
+
 -- Scoping rule for event-driven broad resolves: every event that triggers
 -- a broad re-resolve walks ONLY the icons whose state can be affected by
 -- what that event reports on. Sweeping every icon on every event propagates
@@ -5687,9 +5928,15 @@ function CDMIcons.EventFrameOnEvent(self, event, arg1, arg2, arg3)
 end
 
 cdEventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3)
+    local profileStart = debugprofilestop and debugprofilestop()
     CDMIcons.EventTracePrint("frame-pre", event, arg1, arg2, arg3)
     CDMIcons.EventFrameOnEvent(self, event, arg1, arg2, arg3)
     CDMIcons.EventTracePrint("frame-post", event, arg1, arg2, arg3)
+    if profileStart and debugprofilestop then
+        CDMIcons.RecordEventProfile(event, debugprofilestop() - profileStart)
+    else
+        CDMIcons.RecordEventProfile(event, 0)
+    end
 end)
 
 -- /cdm spell add/remove now flows through the composer-driven CATALOG_REBUILT
@@ -5720,9 +5967,22 @@ function CDMIcons:GetCacheStats()
         activePools = activePools + 1
         activeIcons = activeIcons + #pool
     end
+    local mirrorIndexKeys = 0
+    local mirrorIndexIcons = 0
+    for _, byCooldownID in pairs(CDMIcons._mirrorIconsByCategory) do
+        for _, iconSet in pairs(byCooldownID) do
+            mirrorIndexKeys = mirrorIndexKeys + 1
+            for icon in pairs(iconSet) do
+                if icon then
+                    mirrorIndexIcons = mirrorIndexIcons + 1
+                end
+            end
+        end
+    end
     local schedulerPending = ns.CDMScheduler
         and ns.CDMScheduler.IsRuntimeUpdatePending
         and ns.CDMScheduler.IsRuntimeUpdatePending()
+    local iconEventProfileTop, iconEventProfileWindow = CDMIcons.SnapshotEventProfile(5)
     return {
         textureCycleCache = n,
         activeIconPools    = activePools,
@@ -5730,6 +5990,15 @@ function CDMIcons:GetCacheStats()
         recycleIcons       = #recyclePool,
         barsDirty         = _barsDirty and true or false,
         updatePending     = (schedulerPending ~= nil and schedulerPending) or (_cdmUpdatePending and true or false),
+        mirrorIndexKeys    = mirrorIndexKeys,
+        mirrorIndexIcons   = mirrorIndexIcons,
+        mirrorRefreshPending = CDMIcons._mirrorRefreshPending and true or false,
+        mirrorRefreshPendingKeys = CDMIcons.CountPendingMirrorRefreshKeys(CDMIcons._pendingMirrorRefreshByCategory),
+        mirrorRefreshTargeted = CDMIcons._mirrorRefreshStats.targeted,
+        mirrorRefreshFallback = CDMIcons._mirrorRefreshStats.fallback,
+        mirrorRefreshMaxBatch = CDMIcons._mirrorRefreshStats.maxBatch,
+        iconEventProfileTop = iconEventProfileTop,
+        iconEventProfileWindow = iconEventProfileWindow,
     }
 end
 

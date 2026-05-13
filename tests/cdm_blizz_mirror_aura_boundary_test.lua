@@ -3,6 +3,7 @@
 
 local function noop() end
 local eventScript
+local registeredUnitEvents = {}
 
 function hooksecurefunc(owner, method, hook)
     local original = owner[method] or noop
@@ -23,7 +24,9 @@ end
 function CreateFrame()
     return {
         RegisterEvent = noop,
-        RegisterUnitEvent = noop,
+        RegisterUnitEvent = function(_, event)
+            registeredUnitEvents[event] = true
+        end,
         SetScript = function(_, script, handler)
             if script == "OnEvent" then
                 eventScript = handler
@@ -122,6 +125,8 @@ local ns = {
 
 assert(loadfile("modules/cdm/cdm_blizz_mirror.lua"))("QUI", ns)
 assert(type(eventScript) == "function", "mirror event script should be installed")
+assert(registeredUnitEvents.UNIT_AURA ~= true,
+    "mirror should consume UNIT_AURA from cdm_spelldata instead of registering its own raw UNIT_AURA handler")
 
 ns.CDMBlizzMirror.ForceRescan()
 

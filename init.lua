@@ -329,6 +329,16 @@ function QUI:SlashCommandOpen(input)
                 tonumber(br.activeBars) or 0))
             print(("  icon update:              barsDirty=%s pending=%s"):format(
                 tostring(ic.barsDirty), tostring(ic.updatePending)))
+            if ic.iconEventProfileTop and #ic.iconEventProfileTop > 0 then
+                print(("  icon events:              window=%.1fs"):format(
+                    tonumber(ic.iconEventProfileWindow) or 0))
+                for _, row in ipairs(ic.iconEventProfileTop) do
+                    print(("    %-30s %6.2f ms/s  %5.0f/s"):format(
+                        tostring(row.event),
+                        tonumber(row.msPerSec) or 0,
+                        tonumber(row.callsPerSec) or 0))
+                end
+            end
             print("  run |cFFFFFF00/qui cdm_cache reset|r to wipe and rebuild (OOC only).")
             return
         elseif sub == "reset" then

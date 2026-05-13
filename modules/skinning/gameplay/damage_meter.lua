@@ -20,6 +20,8 @@ local LSM       = LibStub("LibSharedMedia-3.0", true)
 local securecallfunction = securecallfunction
 
 local FALLBACK_TEXTURE = "Interface\\Buttons\\WHITE8x8"
+local sourceWindowFocus = Helpers.CreateStateTable()
+local sourceWindowSourceHooks = Helpers.CreateStateTable()
 
 -- Forward declarations. Defined later in the file but referenced by earlier
 -- functions:
@@ -91,6 +93,79 @@ end
 -- clock format via SecondsToClock; when secret (active combat) we render
 -- raw seconds because splitting into minutes/seconds requires arithmetic on
 -- the secret, which no documented API permits.
+---------------------------------------------------------------------------
+-- SecretSafeUpdateName(self)
+-- Stock Blizzard DamageMeterEntry.UpdateName does `text ~= self.nameText`
+-- in Lua to gate redundant SetText calls. When `text` (from `self:GetNameText()`
+-- which returns the `name` ConditionalSecret field per DamageMeterDocumentation.lua)
+-- lands as a secret string under tainted execution, the Lua-side compare faults.
+--
+-- Bypass the cache-compare: pipe the (possibly-secret) name string straight into
+-- C-side SetText, which accepts secret values natively.
+---------------------------------------------------------------------------
+local function SecretSafeUpdateName(self)
+    local fontString = self:GetName()
+    if not fontString then return end
+    fontString:SetText(self:GetNameText())
+end
+
+---------------------------------------------------------------------------
+-- SecretSafeIsShowingSource(self, source)
+-- Stock Blizzard DamageMeterSourceWindow:IsShowingSource compares
+-- `source.sourceGUID == self.sourceGUID` in Lua. Both are secret in
+-- combat (sourceGUID has no NeverSecret annotation on
+-- DamageMeterCombatSource per DamageMeterDocumentation.lua), and the
+-- compare faults under QUI's accumulated taint chain (mixin method swaps
+-- earlier in this file poisoned the secure-execute range).
+--
+-- Bypass: identify "this row matches the focused source" using only
+-- NeverSecret fields cached on the source window by our ShowSourceWindow
+-- hook. Trade-off: two same-class-same-spec players can't be disambiguated
+-- (the highlight matches whichever iteration hits first); the breakdown
+-- DATA in the source window is still correct (Blizzard builds it from
+-- sourceGUID internally — we only override the visual "currently focused"
+-- predicate).
+---------------------------------------------------------------------------
+local function SecretSafeIsShowingSource(self, source)
+    if not source then return false end
+    local focus = self and sourceWindowFocus[self]
+    if not focus then return false end
+
+    if focus.isLocalPlayer ~= source.isLocalPlayer then return false end
+    -- isLocalPlayer is unique per combat session, so a match here is exact.
+    if focus.isLocalPlayer then return true end
+
+    if focus.classFilename  ~= source.classFilename  then return false end
+    if focus.specIconID     ~= source.specIconID     then return false end
+    if focus.deathRecapID   ~= source.deathRecapID   then return false end
+    if focus.classification ~= source.classification then return false end
+    return true
+end
+
+---------------------------------------------------------------------------
+-- CaptureFocusedSource(sourceWindow, source)
+-- Snapshot NeverSecret identity fields of `source` in weak side state for
+-- SecretSafeIsShowingSource to compare against. Called from SetSource and
+-- ShowSourceWindow hooks each time the user opens a breakdown popup.
+-- Storing only NeverSecret fields keeps the side table clean of secret values.
+---------------------------------------------------------------------------
+local function CaptureFocusedSource(sourceWindow, source)
+    if not sourceWindow or type(source) ~= "table" then return end
+    sourceWindowFocus[sourceWindow] = {
+        isLocalPlayer   = source.isLocalPlayer,
+        classFilename   = source.classFilename,
+        specIconID      = source.specIconID,
+        deathRecapID    = source.deathRecapID,
+        classification  = source.classification,
+    }
+end
+
+local function ClearFocusedSource(sourceWindow)
+    if sourceWindow then
+        sourceWindowFocus[sourceWindow] = nil
+    end
+end
+
 local function SecretSafeSetSessionDuration(self, durationSeconds)
     local fontString = self:GetSessionTimerFontString()
     if not fontString then return end
@@ -114,6 +189,44 @@ local function PatchSessionWindowDisplayMethods(target)
     if not target then return false end
     if type(target.GetSessionTimerFontString) ~= "function" then return false end
     target.SetSessionDuration = SecretSafeSetSessionDuration
+    return true
+end
+
+---------------------------------------------------------------------------
+-- PatchEntryDisplayMethods(target)
+-- Install SecretSafeUpdateName on a DamageMeterEntry mixin or instance.
+-- Idempotent (re-assignment is a no-op). Only swaps UpdateName — other
+-- entry-update methods (UpdateValue/UpdateIcon/UpdateStatusBar) remain stock
+-- per Fix A.
+---------------------------------------------------------------------------
+local function PatchEntryDisplayMethods(target)
+    if not target or type(target.GetNameText) ~= "function" then return false end
+    target.UpdateName = SecretSafeUpdateName
+    return true
+end
+
+---------------------------------------------------------------------------
+-- PatchSourceWindowDisplayMethods(target)
+-- Install SecretSafeIsShowingSource on a DamageMeterSourceWindow mixin or
+-- instance. Only swaps IsShowingSource — no other source-window methods
+-- are restored.
+---------------------------------------------------------------------------
+local function PatchSourceWindowDisplayMethods(target)
+    if not target then return false end
+    target.IsShowingSource = SecretSafeIsShowingSource
+    if not sourceWindowSourceHooks[target] then
+        if type(target.SetSource) == "function" then
+            hooksecurefunc(target, "SetSource", function(self, source)
+                CaptureFocusedSource(self, source)
+            end)
+        end
+        if type(target.ClearSource) == "function" then
+            hooksecurefunc(target, "ClearSource", function(self)
+                ClearFocusedSource(self)
+            end)
+        end
+        sourceWindowSourceHooks[target] = true
+    end
     return true
 end
 
@@ -612,6 +725,14 @@ local function RestyleWindowChrome(window, sr, sg, sb)
 
     local mc = window.MinimizeContainer
     if mc and mc.SourceWindow then
+        -- Per-instance taint-safety BEFORE visual skin: the SourceWindow
+        -- instance exists at session-window creation (before our addon
+        -- loaded), so the mixin-level install in InstallMixinHooks doesn't
+        -- reach it. SessionWindow.Refresh → BuildDataProvider →
+        -- SourceWindow:IsShowingSource fires from background event handlers
+        -- before any user click, so we must patch this instance BEFORE the
+        -- next refresh tick.
+        PatchSourceWindowDisplayMethods(mc.SourceWindow)
         SkinSourceWindow(mc.SourceWindow)
     end
 end
@@ -809,11 +930,21 @@ end
 -- DamageMeter:OnLoad before our ADDON_LOADED handler runs); for those, only
 -- a per-instance hook catches Blizzard's combat-driven re-style passes.
 --
+-- Also swaps UpdateName per-instance via PatchEntryDisplayMethods so any
+-- frame that already had its UpdateName method baked in by Mixin() at XML
+-- load time (before the mixin-level swap in InstallMixinHooks landed) still
+-- routes UpdateName through the secret-safe override.
+--
 -- Idempotent via weak-keyed SkinBase state; avoid writing sentinel keys onto
 -- Blizzard row frames.
 InstallEntrySkinHooks = function(frame)
     if not frame or SkinBase.GetFrameData(frame, "qdmEntrySkinHooks") then return end
     SkinBase.SetFrameData(frame, "qdmEntrySkinHooks", true)
+
+    -- Per-instance UpdateName patch: covers Mixin()-copied frames like
+    -- LocalPlayerEntry whose XML created them with their own UpdateName copy
+    -- before our mixin-level swap could land.
+    PatchEntryDisplayMethods(frame)
 
     if type(frame.UpdateBackground) == "function" then
         hooksecurefunc(frame, "UpdateBackground", function(self)
@@ -1751,6 +1882,10 @@ end)
 ---------------------------------------------------------------------------
 local function InstallMixinHooks()
     PatchSessionWindowDisplayMethods(DamageMeterSessionWindowMixin)
+    PatchEntryDisplayMethods(DamageMeterEntryMixin)
+    if DamageMeterSourceEntryMixin then PatchEntryDisplayMethods(DamageMeterSourceEntryMixin) end
+    if DamageMeterSpellEntryMixin then PatchEntryDisplayMethods(DamageMeterSpellEntryMixin) end
+    if DamageMeterSourceWindowMixin then PatchSourceWindowDisplayMethods(DamageMeterSourceWindowMixin) end
 
     if mixinsHooked then return end
     mixinsHooked = true
@@ -1803,12 +1938,18 @@ local function InstallMixinHooks()
 
     -- Skin the breakdown popup (SourceWindow) on first show.
     if DamageMeterSessionWindowMixin and DamageMeterSessionWindowMixin.ShowSourceWindow then
-        hooksecurefunc(DamageMeterSessionWindowMixin, "ShowSourceWindow", function(self)
+        hooksecurefunc(DamageMeterSessionWindowMixin, "ShowSourceWindow", function(self, source)
+            local popup = self.GetSourceWindow and self:GetSourceWindow() or nil
+            if popup then
+                PatchSourceWindowDisplayMethods(popup)
+                CaptureFocusedSource(popup, source)
+            end
+
             if not IsModuleEnabled() then return end
             DeferDamageMeterWork(function(window)
                 if not IsModuleEnabled() then return end
-                local popup = window.GetSourceWindow and window:GetSourceWindow() or nil
-                if popup then SkinSourceWindow(popup) end
+                local deferredPopup = window.GetSourceWindow and window:GetSourceWindow() or nil
+                if deferredPopup then SkinSourceWindow(deferredPopup) end
             end, self)
         end)
     end
@@ -1835,6 +1976,18 @@ InstallMeterHooks = function()
         -- setup, so deferring SecretSafeSetSessionDuration installation would
         -- be too late for the first session-data tick.
         PatchSessionWindowDisplayMethods(sessionWindow)
+
+        -- Per-instance SourceWindow patch. The MinimizeContainer.SourceWindow
+        -- child exists at session-window creation, before our addon loaded,
+        -- so the mixin-level install in InstallMixinHooks doesn't reach it.
+        -- SessionWindow.Refresh → BuildDataProvider → SourceWindow:IsShowingSource
+        -- fires from background event handlers before any user click; patch
+        -- the instance NOW so the override is in place before the next refresh.
+        local mc = sessionWindow.MinimizeContainer
+        if mc and mc.SourceWindow then
+            PatchSourceWindowDisplayMethods(mc.SourceWindow)
+        end
+
         InstallWindowSkinHooks(sessionWindow)
 
         local localEntry = ResolveLocalPlayerEntry(sessionWindow)
@@ -2034,6 +2187,20 @@ local function PatchAllExistingEntryFrames()
         local window = data and data.sessionWindow
         if window then
             PatchSessionWindowDisplayMethods(window)
+
+            -- Per-instance SourceWindow patch on cold-load sweep. These
+            -- session windows pre-existed our addon load; their child
+            -- MinimizeContainer.SourceWindow instances were Mixin()-copied
+            -- from DamageMeterSourceWindowMixin BEFORE we patched the
+            -- mixin in InstallMixinHooks. SessionWindow.Refresh →
+            -- BuildDataProvider → SourceWindow:IsShowingSource fires from
+            -- background event handlers before any user click, so we must
+            -- reach the existing instances directly.
+            local mc = window.MinimizeContainer
+            if mc and mc.SourceWindow then
+                PatchSourceWindowDisplayMethods(mc.SourceWindow)
+            end
+
             local localEntry = ResolveLocalPlayerEntry(window)
             if localEntry then
                 InstallEntrySkinHooks(localEntry)
