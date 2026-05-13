@@ -119,8 +119,8 @@ end
 -- earlier in this file poisoned the secure-execute range).
 --
 -- Bypass: identify "this row matches the focused source" using only
--- NeverSecret fields cached on the source window by our ShowSourceWindow
--- hook. Trade-off: two same-class-same-spec players can't be disambiguated
+-- NeverSecret fields cached in weak side state by SetSource/ShowSourceWindow
+-- hooks. Trade-off: two same-class-same-spec players can't be disambiguated
 -- (the highlight matches whichever iteration hits first); the breakdown
 -- DATA in the source window is still correct (Blizzard builds it from
 -- sourceGUID internally — we only override the visual "currently focused"
@@ -166,6 +166,115 @@ local function ClearFocusedSource(sourceWindow)
     end
 end
 
+---------------------------------------------------------------------------
+-- CanOpenSourceWindow(source)
+-- Source-window refresh calls GetCombatSessionSourceFromType/ID with
+-- sourceGUID/sourceCreatureID. Those APIs reject secret source IDs from
+-- tainted callers, and securecallfunction does not launder addon-owned
+-- arguments for this path. Therefore QUI must not enter the source-window
+-- refresh path while combat/source identity values are secret.
+--
+-- Returning false means "do not open the breakdown popup now"; the session
+-- list itself still updates through SecretSafeBuildDataProvider.
+---------------------------------------------------------------------------
+local function CanOpenSourceWindow(source)
+    if type(source) ~= "table" then return false end
+    if InCombatLockdown() then return false end
+
+    local sourceGUID = source.sourceGUID
+    local sourceCreatureID = source.sourceCreatureID
+    if Helpers.IsSecretValue(sourceGUID) or Helpers.IsSecretValue(sourceCreatureID) then
+        return false
+    end
+
+    return sourceGUID ~= nil or sourceCreatureID ~= nil
+end
+
+---------------------------------------------------------------------------
+-- SecretSafeBuildDataProvider(self, combatSession)
+-- Stock SessionWindow:BuildDataProvider compares the selected source's
+-- totalAmount against SourceWindow:GetTotalAmount() to avoid redundant popup
+-- refreshes. totalAmount is a secret number in restricted contexts, so that
+-- optimization faults under QUI taint.
+--
+-- Preserve the stock data-provider construction, but when the focused source
+-- is present mark the popup stale unconditionally. That is a small refresh
+-- cost only while the breakdown popup is open, and it avoids reading secret
+-- numeric fields in Lua.
+---------------------------------------------------------------------------
+local function SecretSafeBuildDataProvider(self, combatSession)
+    combatSession = combatSession or self:GetCombatSession()
+
+    local sourceWindow = self:GetSourceWindow()
+    local dataProvider = CreateDataProvider()
+    local combatSources = {}
+    local maxAmount = 0
+    local sessionTotalAmount = 0
+    if combatSession then
+        combatSources = combatSession.combatSources or combatSources
+        maxAmount = combatSession.maxAmount
+        sessionTotalAmount = combatSession.totalAmount
+    end
+    local hadLocalPlayerIndex = self.localPlayerIndex ~= nil
+    local showsValuePerSecondAsPrimary = self:ShowsValuePerSecondAsPrimary()
+    local alwaysShowsLocalPlayer = self:AlwaysShowsLocalPlayer()
+    local suppressIcon = self:SuppressIcon()
+    local suppressValuePerSecond = self:SuppressValuePerSecond()
+    local damageMeterType = self:GetDamageMeterType()
+
+    self.localPlayerIndex = nil
+    self.needsSourceWindowRefresh = false
+    if InCombatLockdown() and sourceWindow and sourceWindow:IsShown() then
+        self:HideSourceWindow()
+        sourceWindow = nil
+    end
+
+    for i, combatSource in ipairs(combatSources) do
+        if combatSource.isLocalPlayer and alwaysShowsLocalPlayer then
+            self.localPlayerIndex = i
+        end
+
+        if sourceWindow and sourceWindow:IsShowingSource(combatSource) then
+            self.needsSourceWindowRefresh = true
+        end
+
+        combatSource.maxAmount = maxAmount
+        combatSource.sessionTotalAmount = sessionTotalAmount
+        combatSource.index = i
+        combatSource.showsValuePerSecondAsPrimary = showsValuePerSecondAsPrimary
+        combatSource.suppressIcon = suppressIcon
+        combatSource.suppressValuePerSecond = suppressValuePerSecond
+        combatSource.damageMeterType = damageMeterType
+
+        dataProvider:Insert(combatSource)
+    end
+
+    if hadLocalPlayerIndex and self.localPlayerIndex == nil then
+        self:HideLocalPlayerEntry()
+    end
+
+    return dataProvider
+end
+
+local function SecretSafeShowSourceWindow(self, source)
+    if type(source) ~= "table" then return end
+
+    if source.deathRecapID and source.deathRecapID ~= 0 then
+        OpenDeathRecapUI(source.deathRecapID)
+        return
+    end
+
+    if not CanOpenSourceWindow(source) then
+        self:HideSourceWindow()
+        return
+    end
+
+    local sourceWindow = self:GetSourceWindow()
+    sourceWindow:SetSource(source)
+    sourceWindow:AnchorToSessionWindow(self)
+    sourceWindow:Show()
+end
+
 local function SecretSafeSetSessionDuration(self, durationSeconds)
     local fontString = self:GetSessionTimerFontString()
     if not fontString then return end
@@ -188,6 +297,8 @@ end
 local function PatchSessionWindowDisplayMethods(target)
     if not target then return false end
     if type(target.GetSessionTimerFontString) ~= "function" then return false end
+    target.BuildDataProvider = SecretSafeBuildDataProvider
+    target.ShowSourceWindow = SecretSafeShowSourceWindow
     target.SetSessionDuration = SecretSafeSetSessionDuration
     return true
 end
@@ -207,9 +318,8 @@ end
 
 ---------------------------------------------------------------------------
 -- PatchSourceWindowDisplayMethods(target)
--- Install SecretSafeIsShowingSource on a DamageMeterSourceWindow mixin or
--- instance. Only swaps IsShowingSource — no other source-window methods
--- are restored.
+-- Install source-window overrides that keep secret source identity checks out
+-- of tainted Lua operations.
 ---------------------------------------------------------------------------
 local function PatchSourceWindowDisplayMethods(target)
     if not target then return false end
@@ -1794,8 +1904,8 @@ end
 -- layout already matches. Calling Blizzard's setters (especially anything
 -- mapped through Edit Mode's UpdateSystemSettingValue) triggers
 -- DamageMeter:SetBarSpacing → ForEachSessionWindow → SourceWindow:Refresh →
--- BuildDataProvider, which compares secret sourceGUID values from prior
--- combat session sources. Initiated under QUI taint, those comparisons fault.
+-- BuildDataProvider, which runs secret source identity and amount checks.
+-- Initiated under QUI taint, those checks fault unless our overrides are live.
 -- securecallfunction at the call site doesn't help: the cascade modifies
 -- Edit Mode layout state and propagates through Blizzard's own
 -- secureexecuterange iteration over registered systems.
