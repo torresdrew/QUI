@@ -3,6 +3,15 @@
 
 local function noop() end
 
+local preferredTotemSlotToken = { token = "preferred-totem-slot" }
+
+function issecretvalue(value)
+    if value == preferredTotemSlotToken then
+        error("preferred totem slot must not be inspected for secret status")
+    end
+    return value == preferredTotemSlotToken
+end
+
 local hooks = {}
 local eventScript
 local registeredEvents = {}
@@ -257,6 +266,24 @@ local reapingChild = {
 }
 reapingChild.Cooldown.GetParent = function() return reapingChild end
 
+local raiseAbomChild = {
+    cooldownID = 92923,
+    isActive = true,
+    preferredTotemUpdateSlot = preferredTotemSlotToken,
+    Cooldown = {
+        SetCooldown = noop,
+        SetCooldownFromDurationObject = noop,
+        SetCooldownFromExpirationTime = noop,
+        SetCooldownDuration = noop,
+        SetCooldownUNIX = noop,
+        Clear = noop,
+    },
+    Show = noop,
+    Hide = noop,
+    SetShown = noop,
+}
+raiseAbomChild.Cooldown.GetParent = function() return raiseAbomChild end
+
 local amzUtilityChild = {
     cooldownID = 27911,
     isActive = true,
@@ -304,7 +331,7 @@ UtilityCooldownViewer = {
 }
 BuffIconCooldownViewer = {
     GetChildren = function()
-        return auraChild, auraFallbackChild, trackedBarChild, cooldownAuraMappedChild, reapingChild, amzBuffChild
+        return auraChild, auraFallbackChild, trackedBarChild, cooldownAuraMappedChild, reapingChild, raiseAbomChild, amzBuffChild
     end,
 }
 BuffBarCooldownViewer = { GetChildren = function() end }
@@ -318,7 +345,7 @@ C_CooldownViewer = {
             return { 27911 }
         end
         if category == 2 then
-            return { 73542, 141686, 70765, 103071 }
+            return { 73542, 141686, 70765, 92923, 103071 }
         end
         if category == 3 then
             return { 27925, 69057 }
@@ -424,6 +451,19 @@ C_CooldownViewer = {
                 overrideSpellID = 377514,
                 overrideTooltipSpellID = 1235261,
                 linkedSpellIDs = { 1235261 },
+                selfAura = true,
+                hasAura = false,
+                charges = false,
+                isKnown = true,
+            }
+        end
+        if cooldownID == 92923 then
+            return {
+                cooldownID = 92923,
+                spellID = 1242608,
+                overrideSpellID = 1242608,
+                overrideTooltipSpellID = nil,
+                linkedSpellIDs = { 288853 },
                 selfAura = true,
                 hasAura = false,
                 charges = false,
@@ -987,6 +1027,38 @@ assert(totemBuffState.totemDurObj == highSlotTotemDuration,
     "PLAYER_TOTEM_UPDATE should populate the totem lane from high-numbered slots")
 assert(totemBuffState.durObj == highSlotTotemDuration,
     "totem-backed buff viewer should select the high-slot totem duration")
+
+local preferredSlotTotemDuration = { token = "preferred-slot-totem-duration-object" }
+local preferredSlotDurationArg
+GetNumTotemSlots = function() return 4 end
+GetTotemInfo = function(slot)
+    if slot == preferredTotemSlotToken then
+        return true, "Raise Abomination", 0, 30, "Interface\\Icons\\RaiseAbomination", 0, 288853
+    end
+    return false
+end
+GetTotemDuration = function(slot)
+    preferredSlotDurationArg = slot
+    if slot == preferredTotemSlotToken then
+        return preferredSlotTotemDuration
+    end
+    return nil
+end
+
+ns.CDMBlizzMirror.HandlePlayerTotemUpdate()
+
+local preferredTotemState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(92923, "buff"),
+    "Raise Abomination buff mirror state missing after preferred-slot totem update")
+assert(preferredTotemState.isActive == true,
+    "preferred totem slot should keep the totem-backed buff cdID active")
+assert(preferredSlotDurationArg == preferredTotemSlotToken,
+    "PLAYER_TOTEM_UPDATE should pass the child preferred totem slot opaquely to GetTotemDuration")
+assert(preferredTotemState.totemSlot == nil,
+    "secret preferred totem slots must not be stored in mirror state")
+assert(preferredTotemState.totemDurObj == preferredSlotTotemDuration,
+    "preferred totem slot should populate the totem lane on the buff cdID")
+assert(preferredTotemState.durObj == preferredSlotTotemDuration,
+    "totem-backed buff viewer should select the child preferred-slot duration")
 
 -- Tear down the totem so it doesn't bleed into the mirror stats counts
 -- below (stale active totems hold the buff cdID's mirror state open).

@@ -3866,13 +3866,14 @@ end
 
 local function _ActivateTotemCooldownID(cdID, slot, durObj, totemName, totemIcon, totemSpellID)
     if not cdID then return false end
-    _totemActiveCDID[cdID] = slot
+    local cleanSlot = CleanTotemSlotNumber(slot)
+    _totemActiveCDID[cdID] = cleanSlot or true
     local s = EnsureState(cdID, _childByCooldownID[cdID])
     if not s then return false end
     s.isActive     = true
     s.mirrorEpoch  = (s.mirrorEpoch or 0) + 1
     s.lastTouch    = GetTime()
-    s.totemSlot    = slot
+    s.totemSlot    = cleanSlot
     s.totemName    = totemName
     s.totemIcon    = totemIcon
     s.totemSpellID = totemSpellID
@@ -3987,6 +3988,27 @@ function HandlePlayerTotemUpdate(updatedSlot)
                         "slot", slot,
                         "cdID", cdID,
                         "durObj", durObj)
+                end
+            end
+        end
+    end
+
+    for _, child in pairs(_childByInstanceKey) do
+        local cdID = child and child.cooldownID
+        if cdID and not seen[cdID] and type(GetTotemDuration) == "function" then
+            local slot = RawFrameField(child, "preferredTotemUpdateSlot")
+            if slot == nil then
+                local totemData = RawFrameField(child, "totemData")
+                if type(totemData) == "table" then
+                    slot = totemData.slot
+                end
+            end
+
+            if slot ~= nil then
+                local rawDurObj = GetTotemDuration(slot)
+                if rawDurObj and type(rawDurObj) ~= "number" then
+                    seen[cdID] = true
+                    changed = _ActivateTotemCooldownID(cdID, nil, rawDurObj) or changed
                 end
             end
         end
