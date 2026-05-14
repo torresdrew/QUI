@@ -10,6 +10,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha35 - 2026-05-14
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha34 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Added
+- **Hover tooltips on game hyperlinks in chat.** Hovering an item, spell, achievement, quest, currency, recipe, talent, mount, toy, transmog, etc. link now anchors `GameTooltip` at the cursor with the link's details and clears it on leave. QUI's own addon-link types are excluded (they still respond to click). Failure to render a tooltip silently hides instead of stranding the previous one.
+
+### Fixed
+- **Banish/restore for Blizzard's `BuffFrame` and `DebuffFrame` uses parent reparenting instead of `Show` / `SetAlpha` hooksecurefuncs.** The old approach permanently tainted the frames' dispatch tables; the new path reparents to a hidden frame, snapshots the original parent / alpha / mouse / `ignoreFramePositionManager` into a `Helpers.CreateStateTable()` side-table, and restores from that snapshot on disable. Combat-gated so neither operation runs during lockdown outside the init safe window.
+- **URL detection in chat is stricter and recognizes Discord invites.** URLs are now only highlighted at word boundaries (whitespace / opening paren or bracket / quote / `<`) and trailing punctuation (`.,;:!?)]}>` ) is stripped from the link before it's wrapped, so "see https://example.com." becomes a clickable `https://example.com` followed by the period instead of `https://example.com.`. `discord.gg/invite`, `discord.com/invite/code`, and `discordapp.com/invite/code` are also detected without an explicit `https://` prefix.
+- **Top-positioned chat editbox stays invisible until you press Enter.** The editbox itself is now alpha-driven (not just the backdrop), and focus state is tracked through `editBoxState[editBox].hasFocus` rather than `editBox:HasFocus()` (which is unreliable across editbox swaps). The backdrop and editbox visibility stay in lockstep on focus gain / loss.
+- **Temporary chat tab chrome geometry no longer depends on `tab:GetWidth()`.** Reading the tab's width could surface a secret value and produce a chrome-width math result that QUI couldn't safely forward to `SetWidth`. The backdrop now anchors `BOTTOMRIGHT` to the tab with a negative `sizePadding` offset, so the visible chrome trims away Blizzard's whisper-icon reserve without computing a width from a possibly-secret tab size.
+
+### Internal
+- New regression tests: `buffborders_blizzard_banish_taint_test`, `chat_editbox_top_focus_test`, `chat_hyperlink_tooltip_test`, `chat_tab_secret_geometry_test`, `chat_url_detection_test`.
+
+
+
 ## v3.6.0-alpha34 - 2026-05-14
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha33 profiles carry over unchanged.
