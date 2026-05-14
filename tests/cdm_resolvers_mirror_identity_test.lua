@@ -15,6 +15,18 @@ local states = {
     ["buff:9001"] = { cooldownID = 9001, viewerCategory = "buff" },
     ["trackedBar:9002"] = { cooldownID = 9002, viewerCategory = "trackedBar" },
     ["utility:8002"] = { cooldownID = 8002, viewerCategory = "utility" },
+    ["essential:70759"] = {
+        cooldownID = 70759,
+        viewerCategory = "essential",
+        spellID = 77575,
+        overrideSpellID = 77575,
+    },
+    ["utility:28527"] = {
+        cooldownID = 28527,
+        viewerCategory = "utility",
+        spellID = 48707,
+        overrideSpellID = 48707,
+    },
 }
 
 local bySpell = {
@@ -27,6 +39,10 @@ local bySpell = {
     },
     utility = {
         [202] = 8002,
+        [48707] = 28527,
+    },
+    essential = {
+        [77575] = 70759,
     },
 }
 
@@ -127,5 +143,32 @@ cdID, cat = resolveIdentity({
 
 assert(cdID == nil, "aura entry must not bind to cooldown-category mirror IDs")
 assert(cat == nil, "rejected aura entry should not return a mirror category")
+
+cdID, cat = resolveIdentity({
+    type = "spell",
+    id = 77575,
+    spellID = 77575,
+    kind = "cooldown",
+    viewerType = "essential",
+    cooldownID = 28527,
+    linkedSpellIDs = { 48707 },
+})
+
+assert(cdID == 70759, "mismatched explicit cooldownID should not bind Outbreak to AMS")
+assert(cat == "essential", "mismatched explicit cooldownID should fall back to the entry's own category")
+
+local payload = resolvers.ResolveMirrorRenderPayloadForEntry({
+    type = "spell",
+    id = 77575,
+    spellID = 77575,
+    kind = "cooldown",
+    viewerType = "essential",
+    linkedSpellIDs = { 48707 },
+}, 28527, "utility", 77575)
+
+assert(payload and payload.cooldownID == 70759,
+    "stale icon mirror binding should be rejected during render payload resolution")
+assert(payload and payload.category == "essential",
+    "stale icon mirror binding should fall back to the entry's own render category")
 
 print("OK: cdm_resolvers_mirror_identity_test")

@@ -44,6 +44,8 @@ local CreateFrame = CreateFrame
 -- CONSTANTS
 ---------------------------------------------------------------------------
 local MAX_RECYCLE_POOL_SIZE = 20
+local STATUS_BAR_INTERPOLATION_IMMEDIATE = 0
+local STATUS_BAR_TIMER_REMAINING = 1
 
 local function SetStatusBarValue(statusBar, value)
     if Renderers and Renderers.SetStatusBarValue then
@@ -71,14 +73,45 @@ end
 
 local function SetStatusBarTimerDuration(statusBar, durObj)
     if Renderers and Renderers.SetStatusBarTimerDuration then
-        return Renderers.SetStatusBarTimerDuration(statusBar, durObj, 0, 1)
+        return Renderers.SetStatusBarTimerDuration(statusBar, durObj, STATUS_BAR_TIMER_REMAINING)
     end
     if not statusBar or not durObj or not statusBar.SetTimerDuration then
         return false
     end
-    statusBar:SetMinMaxValues(0, 1)
-    statusBar:SetTimerDuration(durObj, nil, 1)
+    statusBar:SetTimerDuration(durObj, STATUS_BAR_INTERPOLATION_IMMEDIATE, STATUS_BAR_TIMER_REMAINING)
     return true
+end
+
+local function RearmVisibleDurationBarTimer(bar, deferOneFrame)
+    if not (bar and bar._active and not bar._hideDurationText) then
+        return false
+    end
+
+    local durObj = bar._durObj
+    if not durObj or type(durObj) == "number" then
+        return false
+    end
+
+    local statusBar = bar.StatusBar
+    if not (statusBar and statusBar.SetTimerDuration) then
+        return false
+    end
+
+    local ok = SetStatusBarTimerDuration(statusBar, durObj)
+    if ok then
+        bar._cSideFill = true
+        bar._preferDurObjFill = true
+    end
+
+    if deferOneFrame and C_Timer and C_Timer.After and not bar._timerShowRearmPending then
+        bar._timerShowRearmPending = true
+        C_Timer.After(0, function()
+            bar._timerShowRearmPending = nil
+            RearmVisibleDurationBarTimer(bar, false)
+        end)
+    end
+
+    return ok
 end
 
 ---------------------------------------------------------------------------
@@ -303,6 +336,31 @@ local function IsSecretValue(value)
     return Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(value) or false
 end
 
+local function SafeValue(value, fallback)
+    if Helpers and Helpers.SafeValue then
+        return Helpers.SafeValue(value, fallback)
+    end
+    if IsSecretValue(value) then return fallback end
+    return value
+end
+
+local function SafeBoolean(value)
+    value = SafeValue(value, nil)
+    if type(value) == "boolean" then return value end
+    return nil
+end
+
+local function SafeToNumber(value, fallback)
+    if Helpers and Helpers.SafeToNumber then
+        return Helpers.SafeToNumber(value, fallback)
+    end
+    if IsSecretValue(value) then return nil end
+    local valueType = type(value)
+    if valueType == "number" then return value end
+    if valueType == "string" then return tonumber(value) end
+    return fallback
+end
+
 local function NormalizeBarMirrorCategory(category)
     if category == nil or IsSecretValue(category) or type(category) ~= "string" then
         return nil
@@ -356,10 +414,10 @@ local function BuildBarAuraResultFromMirrorPayload(payload)
 
     local r = _mirrorBarResult
     r.isActive = payload.active == true
-    r.auraInstanceID = nil
+    r.auraInstanceID = payload.auraInstanceID
     r.auraUnit = payload.auraUnit
     r.durObj = payload.durObj
-    r.auraData = nil
+    r.auraData = payload.auraData
     -- payload.count is a singleton scratch (cdm_resolvers.lua's
     -- _mirrorCountScratch), not safe to alias across calls — copy fields.
     local rc = r.count
@@ -450,13 +508,31 @@ local function ShouldHideAuraDurationText(r)
     if r.isTotemInstance then return false end
     if r.hideDurationText or r.hasExpirationTime == false then return true end
     if not r.auraData then return false end
+    if InCombatLockdown() then return false end
 
-    local duration = r.auraData.duration
+    local duration = SafeToNumber(r.auraData.duration, nil)
     if duration == nil then
         return true
     end
-    local readableDuration = duration
-    return not readableDuration or readableDuration <= 0
+    return duration <= 0
+end
+
+local function EnsureBarTimerRunning()
+    if barTimerGroup and barTimerGroup.IsPlaying and barTimerGroup.Play
+       and not barTimerGroup:IsPlaying() then
+        barTimerGroup:Play()
+    end
+end
+
+local function WriteDurationTextFromDurationObject(bar, durObj)
+    if not (bar and durObj and durObj.GetRemainingDuration
+        and bar.DurationText and not bar._hideDurationText) then
+        return false
+    end
+
+    local remaining = durObj.GetRemainingDuration(durObj)
+    bar.DurationText.SetFormattedText(bar.DurationText, "%.1f", remaining)
+    return true
 end
 
 local function GetTrackedBarOverrideColor(settings, spellData)
@@ -756,6 +832,7 @@ local function ReleaseBar(bar)
     bar._active = false
     bar._cSideFill = nil
     bar._preferDurObjFill = nil
+    bar._timerShowRearmPending = nil
     bar._lastPosKey = nil
     bar._lastAnchor = nil
     bar._desiredTexture = nil
@@ -1058,6 +1135,89 @@ local function UpdateItemBarCooldown(bar, entry)
     })
 end
 
+local _spellCooldownBarResult = {
+    isActive = false,
+    count = nil,
+}
+
+local function IsSpellCooldownEntry(entry)
+    if not entry then return false end
+    local entryType = entry.type
+    if entryType
+        and entryType ~= "spell"
+        and entryType ~= "cooldown" then
+        return false
+    end
+    return entry.kind == "cooldown" or entryType == "cooldown"
+end
+
+local function ResolveSpellCooldownID(entry, fallbackSpellID)
+    local sid = entry and (entry.overrideSpellID or entry.spellID or entry.id) or fallbackSpellID
+    sid = sid or fallbackSpellID
+    if not sid then return nil end
+
+    local resolvers = ns.CDMResolvers
+    local overrideID = resolvers and resolvers.QueryOverrideSpell
+        and resolvers.QueryOverrideSpell(sid)
+    overrideID = SafeValue(overrideID, nil)
+    return overrideID or sid
+end
+
+local function BuildSpellCooldownBarResult(entry, fallbackSpellID)
+    local r = _spellCooldownBarResult
+    r.isActive = false
+    r.auraInstanceID = nil
+    r.auraUnit = nil
+    r.durObj = nil
+    r.auraData = nil
+    r.resolvedAuraSpellID = nil
+    r.hasExpirationTime = nil
+    r.hideDurationText = nil
+    r.durationStateUnknown = nil
+    r.totemSlot = nil
+    r.totemName = nil
+    r.totemIcon = nil
+    r.isTotemInstance = false
+    r.mode = "inactive"
+    r.mirrorBacked = nil
+    r.mirrorState = nil
+
+    local sid = ResolveSpellCooldownID(entry, fallbackSpellID)
+    if not sid then return r end
+
+    local resolvers = ns.CDMResolvers
+    local cdInfo = resolvers and resolvers.QueryCooldown
+        and resolvers.QueryCooldown(sid)
+    local cooldownActive = SafeBoolean(cdInfo and cdInfo.isActive)
+
+    local chargeDurObj
+    if cooldownActive ~= false and resolvers and resolvers.QueryChargeDuration then
+        local chargeInfo = resolvers.QueryCharges and resolvers.QueryCharges(sid)
+        local maxCharges = SafeToNumber(chargeInfo and chargeInfo.maxCharges)
+        local chargeActive = SafeBoolean(chargeInfo and chargeInfo.isActive)
+        local isChargeSpell = entry.hasCharges or (maxCharges and maxCharges > 1)
+        if isChargeSpell and chargeActive ~= false then
+            chargeDurObj = resolvers.QueryChargeDuration(sid)
+        end
+    end
+
+    local durObj = chargeDurObj
+    local mode = durObj and "charge" or "cooldown"
+    if not durObj and cooldownActive ~= false and resolvers and resolvers.QueryDuration then
+        durObj = resolvers.QueryDuration(sid)
+    end
+
+    if durObj then
+        r.isActive = true
+        r.durObj = durObj
+        r.hasExpirationTime = true
+        r.mode = mode
+        r.resolvedAuraSpellID = sid
+    end
+
+    return r
+end
+
 function CDMBars:UpdateOwnedBarAura(bar)
     if not bar or not bar._spellID then return end
     local spellID = bar._spellID
@@ -1074,22 +1234,26 @@ function CDMBars:UpdateOwnedBarAura(bar)
             return
         end
 
-        local p = bar._auraParams or {}
-        bar._auraParams = p
-        p.spellID = spellID
-        p.entrySpellID = entry and entry.spellID
-        p.entryID = entry and entry.id
-        p.entryName = entry and entry.name
-        p.entryKind = entry and entry.kind
-        p.entryIsAura = entry and ns.CDMSpellData.IsAuraEntry
-            and ns.CDMSpellData.IsAuraEntry(entry, entry.viewerType)
-        p.viewerType = entry and entry.viewerType
-        p.totemSlot = bar._totemSlot
-        p.disableLooseVisibilityFallback = true
-        p.blizzardMirrorCooldownID = mirrorCooldownID
-        p.blizzardMirrorCategory = mirrorCategory
+        if IsSpellCooldownEntry(entry) then
+            r = BuildSpellCooldownBarResult(entry, spellID)
+        else
+            local p = bar._auraParams or {}
+            bar._auraParams = p
+            p.spellID = spellID
+            p.entrySpellID = entry and entry.spellID
+            p.entryID = entry and entry.id
+            p.entryName = entry and entry.name
+            p.entryKind = entry and entry.kind
+            p.entryIsAura = entry and ns.CDMSpellData.IsAuraEntry
+                and ns.CDMSpellData.IsAuraEntry(entry, entry.viewerType)
+            p.viewerType = entry and entry.viewerType
+            p.totemSlot = bar._totemSlot
+            p.disableLooseVisibilityFallback = true
+            p.blizzardMirrorCooldownID = mirrorCooldownID
+            p.blizzardMirrorCategory = mirrorCategory
 
-        r = ns.CDMSpellData:ResolveAuraState(p)
+            r = ns.CDMSpellData:ResolveAuraState(p)
+        end
     end
     local count = r.count
     StoreBarRuntimeState(bar, r.mode or (r.isActive and "aura" or "inactive"), r.isActive, {
@@ -1118,8 +1282,9 @@ function CDMBars:UpdateOwnedBarAura(bar)
         -- secret/nil/non-numeric inputs to 0 via the C-side issecretvalue
         -- check (which doesn't taint), so the comparison is on a plain
         -- non-secret 0 — no Lua compare against any secret value.
-        if not bar._hideDurationText and not r.durObj and r.auraData then
-            local readableDur = (r.auraData.duration or 0)
+        if not bar._hideDurationText and not r.durObj and r.auraData
+            and not InCombatLockdown() then
+            local readableDur = SafeToNumber(r.auraData.duration, 0)
             if readableDur <= 0 then
                 bar._hideDurationText = true
             end
@@ -1150,9 +1315,10 @@ function CDMBars:UpdateOwnedBarAura(bar)
         end
 
         -- Cache readable duration/expiration from OOC auraData (for OnUpdate timer text)
-        if r.auraData and not bar._hideDurationText then
-            local rawDur = r.auraData.duration
-            if rawDur and true and rawDur > 0 then
+        if r.auraData and not bar._hideDurationText
+            and not InCombatLockdown() then
+            local rawDur = SafeToNumber(r.auraData.duration, nil)
+            if rawDur and rawDur > 0 then
                 bar._totalDuration = rawDur
             end
         end
@@ -1214,6 +1380,8 @@ function CDMBars:UpdateOwnedBarAura(bar)
                     bar.DurationText.SetAlpha(bar.DurationText, textAlpha)
                 end
             end
+            WriteDurationTextFromDurationObject(bar, durObj)
+            EnsureBarTimerRunning()
         end
 
         -- Icon: totem instances use slot-bound display from ResolveAuraState's
@@ -1232,7 +1400,7 @@ function CDMBars:UpdateOwnedBarAura(bar)
             else
                 local runtimeTex
                 if r.auraData then
-                    local aIcon = r.auraData.icon
+                    local aIcon = SafeValue(r.auraData.icon, nil)
                     if aIcon and aIcon ~= 0 then runtimeTex = aIcon end
                 end
                 if not runtimeTex and entry and entry.isAura then
@@ -1485,6 +1653,7 @@ function CDMBars:LayoutBars(container, settings)
         end
 
         if shouldShow then
+            local wasShown = bar:IsShown()
             local offsetIndex = visibleIndex
 
             -- Compute desired anchor point and offset, then skip
@@ -1524,6 +1693,9 @@ function CDMBars:LayoutBars(container, settings)
             end
 
             bar:Show()
+            if not wasShown then
+                RearmVisibleDurationBarTimer(bar, true)
+            end
             visibleIndex = visibleIndex + 1
         else
             if bar:IsShown() then
@@ -1652,10 +1824,7 @@ barTimerGroup:SetScript("OnLoop", function()
                 -- by Lua-side comparison here.
                 if durObj and durObj.GetRemainingDuration then
                     anyActive = true
-                    local remaining = durObj.GetRemainingDuration(durObj)
-                    if bar.DurationText and not bar._hideDurationText then
-                        bar.DurationText.SetFormattedText(bar.DurationText, "%.1f", remaining)
-                    end
+                    WriteDurationTextFromDurationObject(bar, durObj)
                     -- StatusBar fill: when C-side SetTimerDuration is bound,
                     -- it owns the fill animation entirely. When it isn't,
                     -- pin the bar visibly active without inventing a Lua

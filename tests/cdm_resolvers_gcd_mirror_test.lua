@@ -19,9 +19,11 @@ local misleadingCooldownDuration = { token = "misleading-cooldown-duration" }
 local realCooldownDuration = { token = "real-cooldown-duration" }
 local auraChildFrameDuration = { token = "aura-child-frame-duration" }
 local auraMirrorDuration = { token = "aura-mirror-duration" }
+local auraMirrorData = { token = "aura-mirror-data", icon = 98765 }
 local mirrorSource = "aura-child-frame"
 local gcdSpellFallbackEnabled = false
 local cooldownQueryCounts = {}
+local auraDataQueryCount = 0
 
 local ns = {
     Helpers = {},
@@ -324,6 +326,13 @@ local ns = {
             return nil, nil
         end,
         QueryOverrideSpell = function() return nil end,
+        QueryAuraDataByAuraInstanceID = function(unit, auraInstanceID)
+            auraDataQueryCount = auraDataQueryCount + 1
+            if unit == "player" and auraInstanceID == 808 then
+                return auraMirrorData
+            end
+            return nil
+        end,
     },
     CDMBlizzMirror = {
         GetStateByCooldownID = function(cooldownID, viewerCategory)
@@ -348,6 +357,8 @@ local ns = {
                     spellID = 70765,
                     viewerCategory = "buff",
                     selfAura = true,
+                    auraInstanceID = 808,
+                    auraUnit = "player",
                 }
             end
             if cooldownID == 890 and viewerCategory == "essential" then
@@ -360,6 +371,22 @@ local ns = {
                     mirrorEpoch = 14,
                     spellID = 232323,
                     viewerCategory = "essential",
+                }
+            end
+            if cooldownID == 891 and viewerCategory == "buff" then
+                return {
+                    cooldownID = cooldownID,
+                    isActive = true,
+                    durObj = auraMirrorDuration,
+                    durObjSource = "aura-duration",
+                    resolvedMode = "aura",
+                    mirrorEpoch = 15,
+                    spellID = 70766,
+                    viewerCategory = "buff",
+                    selfAura = true,
+                    auraInstanceID = 809,
+                    auraUnit = "player",
+                    auraData = auraMirrorData,
                 }
             end
         end,
@@ -870,6 +897,55 @@ assert(sourceID == "mirror:889:13", "valid aura mirror should keep its mirror so
 assert(mirrorBacked == true, "valid aura mirror should mark the result mirror-backed")
 assert(mirrorPayload and mirrorPayload.state and mirrorPayload.state.durObj == auraMirrorDuration,
     "valid aura mirror should pass the mirror payload through to render")
+assert(mirrorPayload.auraData == auraMirrorData,
+    "valid aura mirror should resolve auraData from the stamped auraInstanceID")
+assert(auraDataQueryCount == 1,
+    "valid aura mirror should query auraData exactly once for the payload")
+
+auraDataQueryCount = 0
+function InCombatLockdown() return true end
+durObj, mode, sourceID, _, _, _, mirrorBacked, mirrorPayload =
+    ns.CDMResolvers.ResolveIconDurationObject(auraMirrorIcon)
+function InCombatLockdown() return false end
+
+assert(durObj == auraMirrorDuration, "combat aura mirror should still keep the DurationObject")
+assert(mirrorPayload.auraData == auraMirrorData,
+    "combat aura mirror should resolve auraData from the stamped auraInstanceID")
+assert(auraDataQueryCount == 1,
+    "combat aura mirror should query auraData by non-secret auraInstanceID")
+
+auraDataQueryCount = 0
+local directAuraDataMirrorIcon = {
+    _blizzMirrorCooldownID = 891,
+    _blizzMirrorCategory = "buff",
+    _spellEntry = {
+        id = 70766,
+        spellID = 70766,
+        viewerType = "buff",
+        kind = "aura",
+        type = "spell",
+    },
+}
+durObj, mode, sourceID, _, _, _, mirrorBacked, mirrorPayload =
+    ns.CDMResolvers.ResolveIconDurationObject(directAuraDataMirrorIcon)
+
+assert(durObj == auraMirrorDuration, "direct child auraData mirror should keep the mirror DurationObject")
+assert(mirrorPayload.auraData == auraMirrorData,
+    "direct child auraData mirror should pass through the child-sourced auraData")
+assert(auraDataQueryCount == 0,
+    "direct child auraData mirror should not re-query auraData by auraInstanceID")
+
+auraDataQueryCount = 0
+function InCombatLockdown() return true end
+durObj, mode, sourceID, _, _, _, mirrorBacked, mirrorPayload =
+    ns.CDMResolvers.ResolveIconDurationObject(directAuraDataMirrorIcon)
+function InCombatLockdown() return false end
+
+assert(durObj == auraMirrorDuration, "combat direct child auraData mirror should keep the mirror DurationObject")
+assert(mirrorPayload.auraData == auraMirrorData,
+    "combat direct child auraData mirror should pass through child-sourced auraData")
+assert(auraDataQueryCount == 0,
+    "combat direct child auraData mirror should not query auraData by auraInstanceID")
 
 cooldownQueryCounts[232323] = nil
 local inactiveMirrorIcon = {

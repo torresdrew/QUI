@@ -1168,6 +1168,94 @@ local function SafeEntryField(entry, key)
     return value
 end
 
+local function AddMirrorIdentityID(set, id)
+    if not IsUsableMirrorID(id) then return end
+    set[id] = true
+end
+
+local function AddEntryMirrorIdentityID(set, id)
+    if not IsUsableMirrorID(id) then return end
+    set[id] = true
+    local overrideID = QueryOverrideSpell(id)
+    if overrideID ~= id then
+        AddMirrorIdentityID(set, overrideID)
+    end
+end
+
+local _mirrorEntryIdentityScratch = {}
+
+local function ClearMirrorEntryIdentityScratch()
+    for id in pairs(_mirrorEntryIdentityScratch) do
+        _mirrorEntryIdentityScratch[id] = nil
+    end
+end
+
+local function MirrorStateHasSpellIdentity(state)
+    if not state then return false end
+    if IsUsableMirrorID(state.overrideTooltipSpellID)
+        or IsUsableMirrorID(state.overrideSpellID)
+        or IsUsableMirrorID(state.spellID) then
+        return true
+    end
+    local linkedStateIDs = state.linkedSpellIDs
+    if type(linkedStateIDs) == "table" then
+        for _, linkedID in ipairs(linkedStateIDs) do
+            if IsUsableMirrorID(linkedID) then return true end
+        end
+    end
+    return false
+end
+
+local function MirrorStateMatchesEntryIdentity(state, entry)
+    if not (state and entry) then return true end
+    if not MirrorStateHasSpellIdentity(state) then return true end
+
+    local entryIDs = _mirrorEntryIdentityScratch
+    ClearMirrorEntryIdentityScratch()
+    AddEntryMirrorIdentityID(entryIDs, SafeEntryField(entry, "overrideSpellID"))
+    AddEntryMirrorIdentityID(entryIDs, SafeEntryField(entry, "spellID"))
+    AddEntryMirrorIdentityID(entryIDs, SafeEntryField(entry, "id"))
+
+    local hasEntryIdentity = false
+    for _ in pairs(entryIDs) do
+        hasEntryIdentity = true
+        break
+    end
+    if not hasEntryIdentity then return true end
+
+    local sawStateIdentity = false
+
+    local id = state.overrideTooltipSpellID
+    if IsUsableMirrorID(id) then
+        sawStateIdentity = true
+        if entryIDs[id] == true then return true end
+    end
+
+    id = state.overrideSpellID
+    if IsUsableMirrorID(id) then
+        sawStateIdentity = true
+        if entryIDs[id] == true then return true end
+    end
+
+    id = state.spellID
+    if IsUsableMirrorID(id) then
+        sawStateIdentity = true
+        if entryIDs[id] == true then return true end
+    end
+
+    local linkedStateIDs = state.linkedSpellIDs
+    if type(linkedStateIDs) == "table" then
+        for _, linkedID in ipairs(linkedStateIDs) do
+            if IsUsableMirrorID(linkedID) then
+                sawStateIdentity = true
+                if entryIDs[linkedID] == true then return true end
+            end
+        end
+    end
+
+    return not sawStateIdentity
+end
+
 local function GetMirrorCategoryCandidates(viewerCategory, strictAuraBinding)
     if viewerCategory == "essential" then
         return "essential", "utility"
@@ -1217,6 +1305,19 @@ local function MirrorIdentityStateAccepted(mirror, cooldownID, category, viewerC
     end
 
     return actualCategory, state
+end
+
+local function ExplicitMirrorIdentityStateAccepted(
+    mirror, entry, cooldownID, category, viewerCategory, strictAuraBinding)
+    local acceptedCategory, state = MirrorIdentityStateAccepted(
+        mirror, cooldownID, category, viewerCategory, strictAuraBinding)
+    if not acceptedCategory then
+        return nil, nil
+    end
+    if not MirrorStateMatchesEntryIdentity(state, entry) then
+        return nil, nil
+    end
+    return acceptedCategory, state
 end
 
 local function ResolveMirrorIDInCategory(mirror, id, category, viewerCategory, strictAuraBinding)
@@ -1312,14 +1413,14 @@ function CDMResolvers.ResolveBlizzardMirrorIdentity(entry)
 
     local explicitCooldownID = entry.cooldownID
     if IsUsableMirrorID(explicitCooldownID) and mirror.GetStateByCooldownID then
-        local acceptedCategory, state = MirrorIdentityStateAccepted(
-            mirror, explicitCooldownID, category1, viewerCategory, strictAuraBinding)
+        local acceptedCategory, state = ExplicitMirrorIdentityStateAccepted(
+            mirror, entry, explicitCooldownID, category1, viewerCategory, strictAuraBinding)
         if acceptedCategory then
             return explicitCooldownID, acceptedCategory, state
         end
         if category2 then
-            acceptedCategory, state = MirrorIdentityStateAccepted(
-                mirror, explicitCooldownID, category2, viewerCategory, strictAuraBinding)
+            acceptedCategory, state = ExplicitMirrorIdentityStateAccepted(
+                mirror, entry, explicitCooldownID, category2, viewerCategory, strictAuraBinding)
             if acceptedCategory then
                 return explicitCooldownID, acceptedCategory, state
             end
@@ -1378,6 +1479,7 @@ local _mirrorPayloadScratch = {
     state = nil, active = false, mode = nil, sourceID = nil,
     cooldownID = nil, category = nil, spellID = nil, auraInstanceID = nil,
     durObj = nil, durationStateUnknown = nil, auraUnit = nil,
+    auraData = nil,
     totemSlot = nil, totemName = nil, totemIcon = nil, isTotemInstance = false,
     count = nil, hasExpirationTime = nil, hideDurationText = nil,
 }
@@ -1390,6 +1492,7 @@ local function WipeMirrorPayloadScratch()
     p.state = nil; p.active = false; p.mode = nil; p.sourceID = nil
     p.cooldownID = nil; p.category = nil; p.spellID = nil; p.auraInstanceID = nil
     p.durObj = nil; p.durationStateUnknown = nil; p.auraUnit = nil
+    p.auraData = nil
     p.totemSlot = nil; p.totemName = nil; p.totemIcon = nil
     p.isTotemInstance = false
     p.count = nil
@@ -1436,6 +1539,18 @@ local function ResolveMirrorPayloadMode(m, active)
     return mode
 end
 
+local function ResolveMirrorAuraData(m, auraUnit, active, mode)
+    if not active or mode ~= "aura" then return nil end
+    if m and type(m.auraData) == "table" then
+        return m.auraData
+    end
+    if not (m and m.auraInstanceID and auraUnit
+        and Sources and Sources.QueryAuraDataByAuraInstanceID) then
+        return nil
+    end
+    return Sources.QueryAuraDataByAuraInstanceID(auraUnit, m.auraInstanceID)
+end
+
 local function BuildMirrorRenderPayload(
     m, fallbackCooldownID, fallbackCategory, fallbackSpellID,
     overrideDurObj, overrideSource, overrideMode, overrideUnknown)
@@ -1456,6 +1571,7 @@ local function BuildMirrorRenderPayload(
     local selfAura = SafeBoolean(m.selfAura)
     local auraUnit = SafeMirrorString(m.auraUnit)
         or ((selfAura == false) and "target" or "player")
+    local auraData = ResolveMirrorAuraData(m, auraUnit, active, mode)
 
     WipeMirrorPayloadScratch()
     local payload = _mirrorPayloadScratch
@@ -1474,6 +1590,7 @@ local function BuildMirrorRenderPayload(
         payload.durationStateUnknown = m.durationStateUnknown
     end
     payload.auraUnit = auraUnit
+    payload.auraData = auraData
     payload.totemSlot = m.totemSlot
     payload.totemName = m.totemName
     payload.totemIcon = m.totemIcon
@@ -1550,8 +1667,8 @@ function CDMResolvers.ResolveMirrorRenderPayloadForEntry(entry, explicitCooldown
     local explicitCat = NormalizeMirrorCategory(explicitCategory)
 
     if IsUsableMirrorID(explicitCooldownID) and mirror.GetStateByCooldownID then
-        local acceptedCategory, state = MirrorIdentityStateAccepted(
-            mirror, explicitCooldownID, explicitCat, viewerCategory, strictAuraBinding)
+        local acceptedCategory, state = ExplicitMirrorIdentityStateAccepted(
+            mirror, entry, explicitCooldownID, explicitCat, viewerCategory, strictAuraBinding)
         if acceptedCategory and state then
             return BuildMirrorRenderPayload(
                 state, explicitCooldownID, acceptedCategory, fallbackSpellID)

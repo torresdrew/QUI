@@ -54,6 +54,38 @@ end
 ---------------------------------------------------------------------------
 -- ICON / ITEM MATCHING (event-trace)
 ---------------------------------------------------------------------------
+local function EventTraceIDList(ids)
+    if type(ids) ~= "table" or #ids == 0 then return "nil" end
+    local out = {}
+    for i, id in ipairs(ids) do
+        out[i] = tostring(id)
+    end
+    return table.concat(out, ",")
+end
+
+local function EventTraceMirrorState(icon)
+    local mirror = ns.CDMBlizzMirror
+    if not (icon and icon._blizzMirrorCooldownID
+        and mirror and mirror.GetStateByCooldownID) then
+        return nil
+    end
+    return mirror.GetStateByCooldownID(icon._blizzMirrorCooldownID, icon._blizzMirrorCategory)
+end
+
+local function EventTraceMirrorStateMatches(targetID, state)
+    if not (targetID and state) then return false end
+    if CDMIcons.EventTraceSpellIDMatches(targetID, state.cooldownID) then return true end
+    if CDMIcons.EventTraceSpellIDMatches(targetID, state.spellID) then return true end
+    if CDMIcons.EventTraceSpellIDMatches(targetID, state.overrideSpellID) then return true end
+    if CDMIcons.EventTraceSpellIDMatches(targetID, state.overrideTooltipSpellID) then return true end
+    if type(state.linkedSpellIDs) == "table" then
+        for _, linkedID in ipairs(state.linkedSpellIDs) do
+            if CDMIcons.EventTraceSpellIDMatches(targetID, linkedID) then return true end
+        end
+    end
+    return false
+end
+
 function CDMIcons.EventTraceIconMatches(icon, targetID)
     local entry = icon and icon._spellEntry
     if not entry or not targetID then return false end
@@ -67,6 +99,7 @@ function CDMIcons.EventTraceIconMatches(icon, targetID)
         local itemID = Sources.QueryInventoryItemID("player", entry.id)
         if CDMIcons.EventTraceSpellIDMatches(targetID, itemID) then return true end
     end
+    if EventTraceMirrorStateMatches(targetID, EventTraceMirrorState(icon)) then return true end
     return false
 end
 
@@ -125,18 +158,33 @@ function CDMIcons.EventTraceIconSummary(targetID)
                 matches = matches + 1
                 if #parts < 3 then
                     local entry = icon._spellEntry
+                    local m = EventTraceMirrorState(icon)
                     local shown = icon.IsShown and icon:IsShown() and "shown" or "hidden"
                     parts[#parts + 1] = string.format(
-                        "%s/%s %s mode=%s aura=%s cd=%s real=%s gcd=%s key=%s",
+                        "%s/%s %s eid=%s espell=%s eov=%s ecid=%s runtime=%s kind=%s type=%s elinks=%s mode=%s aura=%s cd=%s real=%s gcd=%s key=%s mirror=%s/%s mspell=%s mov=%s mtooltip=%s mlinks=%s",
                         tostring(entry.name or "?"),
                         tostring(entry.viewerType or "?"),
                         shown,
+                        tostring(entry.id),
+                        tostring(entry.spellID),
+                        tostring(entry.overrideSpellID),
+                        tostring(entry.cooldownID),
+                        tostring(icon._runtimeSpellID),
+                        tostring(entry.kind),
+                        tostring(entry.type),
+                        EventTraceIDList(entry.linkedSpellIDs),
                         tostring(icon._resolvedCooldownMode),
                         tostring(icon._auraActive == true),
                         tostring(icon._hasCooldownActive == true),
                         tostring(icon._hasRealCooldownActive == true),
                         tostring(icon._showingGCDSwipe == true),
-                        tostring(icon._lastDurObjKey))
+                        tostring(icon._lastDurObjKey),
+                        tostring(m and m.viewerCategory or icon._blizzMirrorCategory),
+                        tostring(m and m.cooldownID or icon._blizzMirrorCooldownID),
+                        tostring(m and m.spellID),
+                        tostring(m and m.overrideSpellID),
+                        tostring(m and m.overrideTooltipSpellID),
+                        EventTraceIDList(m and m.linkedSpellIDs))
                 end
             end
         end
@@ -144,6 +192,46 @@ function CDMIcons.EventTraceIconSummary(targetID)
     if matches == 0 then return "icons=0" end
     local more = matches > #parts and string.format(" +%d more", matches - #parts) or ""
     return string.format("icons=%d [%s%s]", matches, table.concat(parts, " | "), more)
+end
+
+function CDMIcons.EventTraceIconWriteState(icon)
+    if not icon then return "" end
+    local m = EventTraceMirrorState(icon)
+    local entry = icon._spellEntry or {}
+    return string.format(
+        "eid=%s espell=%s eov=%s ecid=%s runtime=%s kind=%s type=%s elinks=%s mode=%s aura=%s cd=%s real=%s gcd=%s key=%s auraSource=%s auraInst=%s auraUnit=%s activeAura=%s mirror=%s/%s mactive=%s mmode=%s mdur=%s mdurSrc=%s mauraSrc=%s mInst=%s mUnit=%s mepoch=%s mspell=%s mov=%s mtooltip=%s mlinks=%s",
+        tostring(entry.id),
+        tostring(entry.spellID),
+        tostring(entry.overrideSpellID),
+        tostring(entry.cooldownID),
+        tostring(icon._runtimeSpellID),
+        tostring(entry.kind),
+        tostring(entry.type),
+        EventTraceIDList(entry.linkedSpellIDs),
+        tostring(icon._resolvedCooldownMode),
+        tostring(icon._auraActive == true),
+        tostring(icon._hasCooldownActive == true),
+        tostring(icon._hasRealCooldownActive == true),
+        tostring(icon._showingGCDSwipe == true),
+        tostring(icon._lastDurObjKey),
+        tostring(icon._lastAuraSourceID),
+        tostring(icon._auraInstanceID),
+        tostring(icon._auraUnit),
+        tostring(icon._activeAuraSpellID),
+        tostring(m and m.viewerCategory or icon._blizzMirrorCategory),
+        tostring(m and m.cooldownID or icon._blizzMirrorCooldownID),
+        tostring(m and m.isActive),
+        tostring(m and m.resolvedMode),
+        tostring(m and m.durObj),
+        tostring(m and m.durObjSource),
+        tostring(m and m.auraDurObjSource),
+        tostring(m and m.auraInstanceID),
+        tostring(m and m.auraUnit),
+        tostring(m and m.mirrorEpoch),
+        tostring(m and m.spellID),
+        tostring(m and m.overrideSpellID),
+        tostring(m and m.overrideTooltipSpellID),
+        EventTraceIDList(m and m.linkedSpellIDs))
 end
 
 function CDMIcons.EventTraceAPISummary(spellID)
@@ -268,6 +356,10 @@ function CDMIcons.EventTracePrintWrite(label, icon, value, extra)
     local changedNote = (prev == nil) and "(new)"
         or (prev == value and "(unchanged)")
         or ("(was " .. tostring(prev) .. ")")
+    local writeState = icon and CDMIcons.EventTraceIconWriteState(icon)
+    if writeState and writeState ~= "" then
+        extra = extra and (extra .. " " .. writeState) or writeState
+    end
 
     print(string.format(
         "|cffff8800[cdmwrites]|r +%.3f sid=%d %s=%s %s%s",

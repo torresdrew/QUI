@@ -378,24 +378,20 @@ end
 -- with secret spellId AND secret name (the residual case where neither
 -- direct identity nor name lookup can match). UNIT_SPELLCAST_SUCCEEDED
 -- on the player carries a clean spell ID; if an owned identity-redacted
--- payload lands within CAST_CORRELATION_WINDOW seconds, synthesize an
--- active-aura entry keyed by the cast spellID so configured cast-ID
--- trackers can still resolve the auraInstanceID.
+-- payload lands within CAST_CORRELATION_WINDOW seconds, synthesize a
+-- runtime-only active-aura entry keyed by the cast spellID so configured
+-- cast-ID trackers can still resolve the current auraInstanceID.
 ---------------------------------------------------------------------------
 local CAST_CORRELATION_WINDOW = 0.1
 
 local _recentCasts = {}              -- list of { spellID, time }, pruned
-local _learnedCastToAura             -- lazy proxy to QUI.db.global.cdmLearnedCastToAura
 
-local function GetLearnedCastToAuraDB()
-    if _learnedCastToAura then return _learnedCastToAura end
+local function ClearDeprecatedLearnedCastToAuraDB()
     local QUI = ns.Addon
     if not QUI or not QUI.db or not QUI.db.global then return nil end
-    if type(QUI.db.global.cdmLearnedCastToAura) ~= "table" then
-        QUI.db.global.cdmLearnedCastToAura = {}
+    if QUI.db.global.cdmLearnedCastToAura ~= nil then
+        QUI.db.global.cdmLearnedCastToAura = nil
     end
-    _learnedCastToAura = QUI.db.global.cdmLearnedCastToAura
-    return _learnedCastToAura
 end
 
 local function PruneRecentCasts(now)
@@ -3346,6 +3342,7 @@ local HEALTH_ITEMS = {
 -- composer owns the C_CooldownViewer reads; spelldata only delegates
 -- so the maps stay populated for runtime classification.
 RebuildSpellToCooldownID = function()
+    ClearDeprecatedLearnedCastToAuraDB()
     wipe(_spellToCooldownID)
     wipe(_spellInCDMCooldowns)
     wipe(_spellInCDMAuras)
@@ -4415,6 +4412,8 @@ end
 -- spell data scanning. Replaces the self-bootstrapping event frame.
 ---------------------------------------------------------------------------
 function CDMSpellData:Initialize()
+    ClearDeprecatedLearnedCastToAuraDB()
+
     if not IsCDMRuntimeEnabled() then
         return
     end
@@ -4551,39 +4550,15 @@ end
 CDMSpellData._abilityToAuraSpellID = _abilityToAuraSpellID
 CDMSpellData._auraIDsForSpell = _auraIDsForSpell
 
--- Returns the array of aura spellIDs associated with `spellID`, merging
--- two sources:
---   1. CDM catalog (_auraIDsForSpell) — built from C_CooldownViewer info
---      structs; covers Blizzard-tracked abilities including talent
---      overrides and multi-variant TrackedBuff entries.
---   2. Learned OOC mapping (QUI.db.global.cdmLearnedCastToAura) — built
---      from observed UNIT_SPELLCAST_SUCCEEDED + addedAuras correlations
---      out of combat where ad.spellId is clean. Persists across
---      sessions and supplements the catalog for non-CDM spells.
--- Returns nil when neither source has an entry. Lazily rebuilds the
--- catalog maps on first call.
+-- Returns the catalog aura spellIDs associated with `spellID`.
+-- Aura-instance correlation is runtime-only; stale learned SavedVariable
+-- data is cleared during map rebuild and must not contribute links.
 function CDMSpellData:GetAuraIDsForSpell(spellID)
     if not spellID then return nil end
     if not next(_spellToCooldownID) then
         RebuildSpellToCooldownID()
     end
-    local catalog = _auraIDsForSpell[spellID]
-    local learnedDB = GetLearnedCastToAuraDB()
-    local learned = learnedDB and learnedDB[spellID] or nil
-    if not catalog and not learned then return nil end
-    if not learned then return catalog end
-    if not catalog then return learned end
-    -- Merge — return a fresh table to avoid mutating the catalog. Hot
-    -- path so keep the dedupe simple (typical list size 1-3).
-    local merged = {}
-    local seen = {}
-    for _, aid in ipairs(catalog) do
-        if not seen[aid] then seen[aid] = true; merged[#merged + 1] = aid end
-    end
-    for _, aid in ipairs(learned) do
-        if not seen[aid] then seen[aid] = true; merged[#merged + 1] = aid end
-    end
-    return merged
+    return _auraIDsForSpell[spellID]
 end
 CDMSpellData.ResolveEntryKind = ResolveEntryKind
 CDMSpellData.IsAuraEntry = IsAuraEntry

@@ -819,6 +819,7 @@ function M.functions.createHooks(root, entry)
 	end
 
 	c.onWheelScale = function(d) nudgeScale(d) end
+	local avoidRootHooks = panel.secureFrame
 
 	local function trackScaleHover(widget)
 		if not widget or leafHas(widget, "hover") then return end
@@ -866,10 +867,12 @@ function M.functions.createHooks(root, entry)
 		hookResetClick(h)
 	end
 
-	pinScaleTree(root)
-	hookResetClick(root)
+	if not avoidRootHooks then
+		pinScaleTree(root)
+		hookResetClick(root)
+	end
 
-	if panel.scalePaths then
+	if panel.scalePaths and not avoidRootHooks then
 		local function wireScalePath(p)
 			local w = objectFromDottedPath(p)
 			if w then
@@ -935,10 +938,15 @@ function M.functions.createHooks(root, entry)
 
 	local useStripOverlay = false
 	if not panel.disableMove then
-		useStripOverlay = panel.useRootHandle
-		if useStripOverlay == nil then useStripOverlay = root:IsProtected() end
+		if avoidRootHooks then
+			useStripOverlay = true
+		else
+			useStripOverlay = panel.useRootHandle
+			if useStripOverlay == nil then useStripOverlay = root:IsProtected() end
+		end
 	end
 
+	local refreshDynamicHandles
 	if not panel.disableMove then
 		if useStripOverlay then
 			if panel.useRootHandle ~= false then c.stripOnRoot = makeDragStrip(root) end
@@ -951,9 +959,12 @@ function M.functions.createHooks(root, entry)
 					c.stripChildren[a] = makeDragStrip(a)
 				end
 				for _, p in ipairs(panel.handles) do stripForPath(p) end
-				root:HookScript("OnShow", function()
+				refreshDynamicHandles = function()
 					for _, p in ipairs(panel.handles) do stripForPath(p) end
-				end)
+				end
+				if not avoidRootHooks then
+					root:HookScript("OnShow", refreshDynamicHandles)
+				end
 			end
 		else
 			wireDirectDrag(root)
@@ -963,9 +974,11 @@ function M.functions.createHooks(root, entry)
 					if a then wireDirectDrag(a) end
 				end
 				for _, p in ipairs(panel.handles) do wireHandlePath(p) end
-				root:HookScript("OnShow", function()
-					for _, p in ipairs(panel.handles) do wireHandlePath(p) end
-				end)
+				if not avoidRootHooks then
+					root:HookScript("OnShow", function()
+						for _, p in ipairs(panel.handles) do wireHandlePath(p) end
+					end)
+				end
 			end
 		end
 	end
@@ -1038,13 +1051,16 @@ function M.functions.createHooks(root, entry)
 	-- hooksecurefunc and HookScript taint the frame's dispatch tables;
 	-- the taint propagates through secureexecuterange, causing
 	-- ADDON_ACTION_BLOCKED on protected calls like SetPassThroughButtons
-	-- when map pins are acquired. Use a watcher frame instead.
+	-- when map pins are acquired. Some interaction panels also call
+	-- protected functions after ShowUIPanel returns; root OnShow hooks would
+	-- taint the remaining call chain. Use a watcher frame instead.
 	if panel.secureFrame then
 		local wasShown = root:IsShown()
 		local reassertTicks = 0
 		local watcher = CreateFrame("Frame")
 		watcher:SetScript("OnUpdate", function()
 			local isShown = root:IsShown()
+			if isShown and refreshDynamicHandles then refreshDynamicHandles() end
 			if isShown and not wasShown then
 				if not c.blizzardAnchors then rememberAnchors(root) end
 				M.functions.applyFrameSettings(root, panel)
@@ -1121,8 +1137,10 @@ function M.functions.createHooks(root, entry)
 			local function hover(w)
 				if w and MouseIsOver(w) then M.variables.scaleUnderMouse[w] = true end
 			end
-			hover(root)
-			for surf in pairs(partners) do hover(surf) end
+			if not avoidRootHooks then
+				hover(root)
+				for surf in pairs(partners) do hover(surf) end
+			end
 			hover(c.stripOnRoot)
 			hover(c.stripCharacterTop)
 			if c.stripChildren then

@@ -55,6 +55,19 @@ local InCombatLockdown = InCombatLockdown
 local CreateFrame      = CreateFrame
 local type             = type
 
+local function SafeValue(value, fallback)
+    if Helpers and Helpers.SafeValue then
+        return Helpers.SafeValue(value, fallback)
+    end
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(value) then
+        return fallback
+    end
+    if issecretvalue and issecretvalue(value) then
+        return fallback
+    end
+    return value
+end
+
 ---------------------------------------------------------------------------
 -- CONSTANTS (mirrors cdm_icons.lua; both refer to the same design values)
 ---------------------------------------------------------------------------
@@ -1064,7 +1077,7 @@ local function UpdateIconCooldown(icon)
                             if not mirrored and not r.isTotemInstance then
                                 local texID
                                 if r.auraData then
-local okI = true; local aIcon = r.auraData.icon
+                                    local aIcon = SafeValue(r.auraData.icon, nil)
                                     if aIcon and aIcon ~= 0 then texID = aIcon end
                                 end
                                 if not texID then

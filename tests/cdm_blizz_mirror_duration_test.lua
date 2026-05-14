@@ -4,12 +4,17 @@
 local function noop() end
 
 local preferredTotemSlotToken = { token = "preferred-totem-slot" }
+local secretTotemDataToken = setmetatable({ token = "secret-totem-data" }, {
+    __index = function()
+        error("secret totemData must not be indexed")
+    end,
+})
 
 function issecretvalue(value)
     if value == preferredTotemSlotToken then
         error("preferred totem slot must not be inspected for secret status")
     end
-    return value == preferredTotemSlotToken
+    return value == secretTotemDataToken
 end
 
 local hooks = {}
@@ -62,6 +67,11 @@ local auraUnitFallbackDuration = { token = "aura-unit-fallback-duration-object" 
 local trackedBarAuraDuration = { token = "tracked-bar-aura-duration-object" }
 local cooldownAuraMappedDuration = { token = "cooldown-aura-mapped-duration-object" }
 local childFrameAuraDuration = { token = "child-frame-aura-duration-object" }
+local childFrameAuraData = { token = "child-frame-aura-data", icon = 12345 }
+local childAuraDataOnlyDuration = { token = "child-aura-data-only-duration-object" }
+local childAuraDataOnly = { auraInstanceID = 515, icon = 23456 }
+local childCombatAuraDataOnlyDuration = { token = "child-combat-aura-data-only-duration-object" }
+local childCombatAuraDataOnly = { auraInstanceID = 516, icon = 34567 }
 local relatedChildFrameAuraDuration = { token = "related-child-frame-aura-duration-object" }
 local amzCooldownDuration = { token = "amz-cooldown-duration-object" }
 local amzAuraDuration = { token = "amz-aura-duration-object" }
@@ -501,7 +511,7 @@ C_CooldownViewer = {
 
 local ns = {
     Helpers = {
-        IsSecretValue = function() return false end,
+        IsSecretValue = function(value) return issecretvalue(value) end,
     },
     CDMIcons = {
         RequestMirrorTextRefresh = function()
@@ -826,6 +836,7 @@ assert(foundRelatedEssentialProbe == true, "trackedBar payload should probe the 
 trackedBarChild.Cooldown:Clear()
 trackedBarChild.auraInstanceID = 505
 trackedBarChild.auraDataUnit = "player"
+trackedBarChild.auraData = childFrameAuraData
 ns.CDMSources.QueryPlayerAuraBySpellID = function()
     return nil
 end
@@ -844,10 +855,52 @@ trackedBarState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27925, "trackedB
 assert(trackedBarState.hasAuraInstanceID == true, "trackedBar child auraInstanceID should stamp the mirror")
 assert(trackedBarState.auraDurObj == childFrameAuraDuration, "trackedBar child auraInstanceID should capture the DurationObject")
 assert(trackedBarState.durObj == childFrameAuraDuration, "trackedBar child auraInstanceID should drive the selected duration")
+assert(trackedBarState.auraData == childFrameAuraData, "trackedBar child auraData should be preserved as mirror state")
+
+trackedBarChild.Cooldown:Clear()
+trackedBarChild.auraInstanceID = nil
+trackedBarChild.auraDataUnit = "player"
+trackedBarChild.auraData = childAuraDataOnly
+child.auraInstanceID = nil
+child.auraDataUnit = nil
+ns.CDMSources.QueryAuraDuration = function(unit, auraInstanceID)
+    if unit == "player" and auraInstanceID == 515 then
+        return childAuraDataOnlyDuration
+    end
+end
+
+trackedBarChild.Cooldown:SetCooldown()
+
+trackedBarState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27925, "trackedBar"), "trackedBar child auraData-only state missing")
+assert(trackedBarState.hasAuraInstanceID == true, "trackedBar child auraData.auraInstanceID should stamp the mirror")
+assert(trackedBarState.auraDurObj == childAuraDataOnlyDuration, "trackedBar child auraData.auraInstanceID should capture the DurationObject immediately")
+assert(trackedBarState.durObj == childAuraDataOnlyDuration, "trackedBar child auraData.auraInstanceID should drive the selected duration")
+assert(trackedBarState.auraData == childAuraDataOnly, "trackedBar child auraData-only path should preserve child auraData")
+
+trackedBarChild.Cooldown:Clear()
+trackedBarChild.auraInstanceID = nil
+trackedBarChild.auraDataUnit = "player"
+trackedBarChild.auraData = childCombatAuraDataOnly
+ns.CDMSources.QueryAuraDuration = function(unit, auraInstanceID)
+    if unit == "player" and auraInstanceID == 516 then
+        return childCombatAuraDataOnlyDuration
+    end
+end
+function InCombatLockdown() return true end
+
+trackedBarChild.Cooldown:SetCooldown()
+
+function InCombatLockdown() return false end
+trackedBarState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27925, "trackedBar"), "trackedBar combat child auraData-only state missing")
+assert(trackedBarState.hasAuraInstanceID == true, "combat trackedBar child auraData.auraInstanceID should stamp the mirror")
+assert(trackedBarState.auraDurObj == childCombatAuraDataOnlyDuration, "combat trackedBar child auraData.auraInstanceID should capture the DurationObject immediately")
+assert(trackedBarState.durObj == childCombatAuraDataOnlyDuration, "combat trackedBar child auraData.auraInstanceID should drive the selected duration")
+assert(trackedBarState.auraData == childCombatAuraDataOnly, "combat trackedBar child auraData-only path should preserve child auraData")
 
 trackedBarChild.Cooldown:Clear()
 trackedBarChild.auraInstanceID = nil
 trackedBarChild.auraDataUnit = nil
+trackedBarChild.auraData = nil
 child.auraInstanceID = 606
 child.auraDataUnit = "player"
 ns.CDMSources.QueryAuraDuration = function(unit, auraInstanceID)
@@ -1048,7 +1101,10 @@ GetTotemDuration = function(slot)
     return nil
 end
 
-ns.CDMBlizzMirror.HandlePlayerTotemUpdate()
+reapingChild.totemData = secretTotemDataToken
+local preferredSlotOk, preferredSlotErr = pcall(ns.CDMBlizzMirror.HandlePlayerTotemUpdate)
+reapingChild.totemData = nil
+assert(preferredSlotOk, preferredSlotErr)
 
 local preferredTotemState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(92923, "buff"),
     "Raise Abomination buff mirror state missing after preferred-slot totem update")

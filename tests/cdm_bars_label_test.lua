@@ -5,6 +5,12 @@ local secretValueMT = {
     __eq = function()
         error("secret value compared")
     end,
+    __lt = function()
+        error("secret value compared")
+    end,
+    __le = function()
+        error("secret value compared")
+    end,
     __tostring = function()
         error("secret value stringified")
     end,
@@ -16,7 +22,8 @@ end
 
 local wrappedSecretStacks = { token = "wrapped-secret-stacks" }
 
-function InCombatLockdown() return false end
+local inCombatLockdown = false
+function InCombatLockdown() return inCombatLockdown end
 function CreateFrame()
     local frame = {}
     function frame:SetScript() end
@@ -208,11 +215,13 @@ assert(capturedParams.blizzardMirrorCategory == "buff",
     "bar resolver params should carry shared mirror category")
 
 local barMirrorDuration = { token = "bar-mirror-duration" }
+local barMirrorAuraData = { icon = 98765 }
 local mirrorPayloadEntry
 local mirrorPayloadCooldownID
 local mirrorPayloadCategory
 local mirrorPayloadSpellID
 local resolveAuraStateCalls = 0
+local appliedMirrorAuraTexture
 ns.CDMResolvers = {
     ResolveBlizzardMirrorIdentity = function(entry)
         sharedIdentityEntry = entry
@@ -229,6 +238,7 @@ ns.CDMResolvers = {
             mode = "aura",
             durObj = barMirrorDuration,
             auraUnit = "target",
+            auraData = barMirrorAuraData,
             hasExpirationTime = true,
             count = {
                 value = 4,
@@ -258,6 +268,11 @@ bar._spellEntry = {
     viewerType = "trackedBar",
 }
 bar._spellID = 343294
+bar.IconTexture = {
+    SetTexture = function(_, texture)
+        appliedMirrorAuraTexture = texture
+    end,
+}
 
 bars:UpdateOwnedBarAura(bar)
 
@@ -275,5 +290,243 @@ assert(resolveAuraStateCalls == 0,
     "valid bar mirror payload should bypass ResolveAuraState adjudication")
 assert(bar._active == true, "valid bar mirror payload should render as active")
 assert(bar._auraDataUnit == "target", "valid bar mirror payload should pass aura unit to render")
+assert(appliedMirrorAuraTexture == 98765,
+    "valid bar mirror payload should pass auraData through to runtime texture rendering")
+
+local spellCooldownDurObj = { token = "spell-cooldown-duration" }
+local spellCooldownTimerDuration
+local spellCooldownAuraStateCalls = 0
+local spellCooldownQueryID
+ns.CDMResolvers = {
+    ResolveBlizzardMirrorIdentity = function()
+        return nil
+    end,
+    ResolveMirrorRenderPayloadForEntry = function()
+        return nil
+    end,
+    QueryCooldown = function(spellID)
+        spellCooldownQueryID = spellID
+        return { isActive = true, isOnGCD = false }
+    end,
+    QueryChargeDuration = function()
+        return nil
+    end,
+    QueryDuration = function(spellID)
+        spellCooldownQueryID = spellID
+        return spellCooldownDurObj
+    end,
+}
+ns.CDMSpellData.ResolveAuraState = function()
+    spellCooldownAuraStateCalls = spellCooldownAuraStateCalls + 1
+    return { isActive = false }
+end
+ns.CDMSpellData.ResolveDisplayName = function(_, entry)
+    return entry and entry.name
+end
+
+local spellCooldownBar = {
+    _spellID = 47528,
+    _spellEntry = {
+        id = 47528,
+        spellID = 47528,
+        name = "Mind Freeze",
+        kind = "cooldown",
+        type = "spell",
+        viewerType = "customBar",
+    },
+    StatusBar = {
+        SetMinMaxValues = function() end,
+        SetValue = function() end,
+        SetTimerDuration = function(_, durObj)
+            spellCooldownTimerDuration = durObj
+        end,
+    },
+    DurationText = {
+        SetText = function() end,
+        SetAlpha = function() end,
+    },
+    PermanentFill = {
+        SetAlpha = function() end,
+    },
+    IconTexture = {
+        SetTexture = function() end,
+    },
+    NameText = {
+        SetText = function() end,
+        SetFormattedText = function() end,
+    },
+}
+
+bars:UpdateOwnedBarAura(spellCooldownBar)
+
+assert(spellCooldownQueryID == 47528,
+    "non-mirror spell cooldown bar should query the cooldown spellID")
+assert(spellCooldownAuraStateCalls == 0,
+    "non-mirror spell cooldown bar should not fall through to aura resolution")
+assert(spellCooldownBar._active == true,
+    "non-mirror spell cooldown bar should render active from cooldown state")
+assert(spellCooldownBar._durObj == spellCooldownDurObj,
+    "non-mirror spell cooldown bar should retain the cooldown DurationObject")
+assert(spellCooldownTimerDuration == spellCooldownDurObj,
+    "non-mirror spell cooldown bar should drive status-bar fill from the cooldown DurationObject")
+
+local combatAuraDataDurObj = { token = "combat-auraData-duration" }
+local combatAuraDataTimerDuration
+local combatAuraData = {
+    duration = NewSecretValue("duration"),
+    icon = 87654,
+}
+ns.CDMResolvers = {
+    ResolveBlizzardMirrorIdentity = function()
+        return 80808, "trackedBar"
+    end,
+    ResolveMirrorRenderPayloadForEntry = function()
+        return {
+            mirrorBacked = true,
+            active = true,
+            mode = "aura",
+            durObj = combatAuraDataDurObj,
+            auraUnit = "player",
+            auraData = combatAuraData,
+            hasExpirationTime = true,
+        }
+    end,
+}
+
+local combatAuraDataBar = {
+    _spellID = 80808,
+    _spellEntry = {
+        id = 80808,
+        spellID = 80808,
+        name = "Combat Aura",
+        kind = "aura",
+        type = "spell",
+        viewerType = "trackedBar",
+    },
+    StatusBar = {
+        SetMinMaxValues = function() end,
+        SetValue = function() end,
+        SetTimerDuration = function(_, durObj)
+            combatAuraDataTimerDuration = durObj
+        end,
+    },
+    DurationText = {
+        SetText = function() end,
+        SetAlpha = function() end,
+    },
+    PermanentFill = {
+        SetAlpha = function() end,
+    },
+    IconTexture = {
+        SetTexture = function() end,
+    },
+    NameText = {
+        SetText = function() end,
+        SetFormattedText = function() end,
+    },
+}
+
+inCombatLockdown = true
+ok = pcall(function()
+    bars:UpdateOwnedBarAura(combatAuraDataBar)
+end)
+inCombatLockdown = false
+
+assert(ok == true,
+    "combat bar mirror should not compare secret fields from child-sourced auraData")
+assert(combatAuraDataBar._active == true,
+    "combat bar mirror should render active with child-sourced auraData")
+assert(combatAuraDataTimerDuration == combatAuraDataDurObj,
+    "combat bar mirror should still bind the child DurationObject")
+
+local immediateRemaining = NewSecretValue("remaining-duration")
+local immediateDurObj = {
+    GetRemainingDuration = function()
+        return immediateRemaining
+    end,
+}
+local immediateDurationFormat
+local immediateDurationValue
+local immediateTimerDuration
+local immediateTimerInterpolation
+local immediateTimerDirection
+local immediateMinMaxCalls = 0
+ns.CDMResolvers = {
+    ResolveBlizzardMirrorIdentity = function()
+        return 48707, "trackedBar"
+    end,
+    ResolveMirrorRenderPayloadForEntry = function()
+        return {
+            mirrorBacked = true,
+            active = true,
+            mode = "aura",
+            durObj = immediateDurObj,
+            auraUnit = "player",
+            hasExpirationTime = true,
+        }
+    end,
+}
+
+local immediateTextBar = {
+    _spellID = 48707,
+    _spellEntry = {
+        id = 48707,
+        spellID = 48707,
+        name = "Immediate Text Aura",
+        kind = "aura",
+        type = "spell",
+        viewerType = "trackedBar",
+    },
+    StatusBar = {
+        SetMinMaxValues = function()
+            immediateMinMaxCalls = immediateMinMaxCalls + 1
+        end,
+        SetValue = function() end,
+        SetTimerDuration = function(_, durObj, interpolation, direction)
+            immediateTimerDuration = durObj
+            immediateTimerInterpolation = interpolation
+            immediateTimerDirection = direction
+        end,
+    },
+    DurationText = {
+        SetText = function() end,
+        SetAlpha = function() end,
+        SetFormattedText = function(_, format, value)
+            immediateDurationFormat = format
+            immediateDurationValue = value
+        end,
+    },
+    PermanentFill = {
+        SetAlpha = function() end,
+    },
+    IconTexture = {
+        SetTexture = function() end,
+    },
+    NameText = {
+        SetText = function() end,
+        SetFormattedText = function() end,
+    },
+}
+
+inCombatLockdown = true
+ok = pcall(function()
+    bars:UpdateOwnedBarAura(immediateTextBar)
+end)
+inCombatLockdown = false
+
+assert(ok == true,
+    "combat bar mirror should write initial duration text without reading secrets in Lua")
+assert(immediateTimerDuration == immediateDurObj,
+    "immediate duration text bar should still bind the child DurationObject")
+assert(immediateTimerInterpolation == 0,
+    "bar DurationObject fill should use Immediate interpolation")
+assert(immediateTimerDirection == 1,
+    "bar DurationObject fill should use RemainingTime direction")
+assert(immediateMinMaxCalls == 0,
+    "bar DurationObject fill should leave status-bar range to SetTimerDuration")
+assert(immediateDurationFormat == "%.1f",
+    "active timed bar should write the first duration text immediately")
+assert(rawequal(immediateDurationValue, immediateRemaining),
+    "initial duration text should forward the secret remaining duration to the C-side formatter")
 
 print("OK: cdm_bars_label_test")

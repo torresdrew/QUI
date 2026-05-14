@@ -68,13 +68,19 @@ function CDMRenderers.ClearStatusBar(statusBar)
     return CDMRenderers.SetStatusBarValue(statusBar, 0, 0, 1)
 end
 
-function CDMRenderers.SetStatusBarTimerDuration(statusBar, durObj, minValue, maxValue)
+local STATUS_BAR_INTERPOLATION_IMMEDIATE = 0
+local STATUS_BAR_TIMER_REMAINING = 1
+
+function CDMRenderers.SetStatusBarTimerDuration(statusBar, durObj, direction)
     if not statusBar or not durObj or not statusBar.SetTimerDuration then
         return false
     end
-    if statusBar.SetMinMaxValues then
-        statusBar.SetMinMaxValues(statusBar, minValue or 0, maxValue or 1)
-    end
-    local ok = pcall(statusBar.SetTimerDuration, statusBar, durObj, nil, maxValue or 1)
+    local ok = pcall(
+        statusBar.SetTimerDuration,
+        statusBar,
+        durObj,
+        STATUS_BAR_INTERPOLATION_IMMEDIATE,
+        direction or STATUS_BAR_TIMER_REMAINING
+    )
     return ok and true or false
 end

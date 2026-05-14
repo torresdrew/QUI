@@ -464,6 +464,7 @@ M._FrameRegistryData = {
 			addon = "Blizzard_MailFrame",
 			useRootHandle = true,
 			handles = { "SendMailFrame", "MailFrameInset" },
+			secureFrame = true,
 			defaultEnabled = true,
 		},
 		{
@@ -474,6 +475,7 @@ M._FrameRegistryData = {
 			addon = "Blizzard_MailFrame",
 			useRootHandle = true,
 			handles = { "OpenMailSender", "OpenMailFrameInset" },
+			secureFrame = true,
 			defaultEnabled = true,
 		},
 		{

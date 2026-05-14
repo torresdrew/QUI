@@ -165,6 +165,13 @@ local _spellDurationCandidatesByInfo = setmetatable({}, { __mode = "k" })
 
 local AURA_CHILD_DURATION_SOURCE = "aura-child"
 
+local function DebugAuraStamp(label, ...)
+    local log = CDMBlizzMirror and CDMBlizzMirror.TaintLog
+    if log then
+        log(label, ...)
+    end
+end
+
 local function IsAuraViewerCategoryName(cat)
     return cat == "buff" or cat == "trackedBar"
 end
@@ -492,8 +499,17 @@ local function StampAuraInstanceForCooldown(unit, cdID, ad, viewerCategory)
     end
     s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
     s.lastTouch = GetTime()
-    if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
-        CDMBlizzMirror.TaintLog("Stamp", "unit", unit, "cdID", cdID)
+    if _G.QUI_CDM_TAINT_DEBUG then
+        local info = GetInstanceInfo(cdID, viewerCategory)
+        DebugAuraStamp("AuraStamp.data",
+            "targetCDID", cdID,
+            "targetCat", viewerCategory,
+            "unit", unit,
+            "instID", instID,
+            "stateSpell", info and info.spellID,
+            "stateOverride", info and info.overrideSpellID,
+            "stateTooltip", info and info.overrideTooltipSpellID,
+            "durObj", s.auraDurObj ~= nil)
     end
 end
 
@@ -504,6 +520,7 @@ local function ClearMirrorAuraState(cdID, s, reason)
     -- (aura-owner-mismatch, unit-aura-removed, freshness, target-changed)
     -- only care about aura invalidation.
     if not (s.auraDurObj or s.auraInstanceID
+        or s.auraData
         or s.pandemicActive or s.pandemicStateKnown
         or s.stackText or s.stackTextSource or s.stackTextShown == true) then
         return
@@ -513,6 +530,7 @@ local function ClearMirrorAuraState(cdID, s, reason)
     s.auraInstanceID = nil
     s.auraInstanceIDSource = nil
     s.auraUnit = nil
+    s.auraData = nil
     s.pandemicActive = false
     s.pandemicStateKnown = nil
     local clearedStack = ClearMirrorStackState(s)
@@ -809,6 +827,7 @@ local function PackState(cooldownID, viewerCategory)
     packed.auraInstanceID         = s.auraInstanceID
     packed.hasAuraInstanceID      = s.auraInstanceID and true or false
     packed.auraUnit               = s.auraUnit
+    packed.auraData               = s.auraData
     packed.viewerCategory         = catName
     packed.spellID                = info and info.spellID or nil
     packed.overrideSpellID        = info and info.overrideSpellID or nil
@@ -1335,6 +1354,16 @@ RawFrameField = function(frame, key)
     return frame[key]
 end
 
+local function ReadChildAuraData(child)
+    local auraData = SafeFrameField(child, "auraData")
+    if type(auraData) ~= "table" then return nil end
+    if Helpers and Helpers.CanAccessTable
+        and not Helpers.CanAccessTable(auraData) then
+        return nil
+    end
+    return auraData
+end
+
 local function DecodePotentialSecretBoolean(value)
     if issecretvalue and issecretvalue(value) then
         if C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
@@ -1599,7 +1628,7 @@ AuraInstanceMatchesExpectedOwner = function(unit, auraInstanceID)
     return ad and Helpers.IsAuraOwnedByPlayerOrPet(ad) == true
 end
 
-local function StampAuraInstanceIDForCooldown(unit, cdID, auraInstanceID, viewerCategory, source)
+local function StampAuraInstanceIDForCooldown(unit, cdID, auraInstanceID, viewerCategory, source, auraData)
     if not (cdID and auraInstanceID) then return false end
     local s = EnsureState(cdID, nil, viewerCategory)
     if not s then return false end
@@ -1612,6 +1641,15 @@ local function StampAuraInstanceIDForCooldown(unit, cdID, auraInstanceID, viewer
     if Sources and Sources.QueryAuraDuration then
         if cleanUnit then
             if not AuraInstanceMatchesExpectedOwner(cleanUnit, auraInstanceID) then
+                if _G.QUI_CDM_TAINT_DEBUG then
+                    DebugAuraStamp("AuraStamp.instance.reject",
+                        "reason", "owner",
+                        "source", source or "aura-duration",
+                        "targetCDID", cdID,
+                        "targetCat", viewerCategory,
+                        "unit", cleanUnit,
+                        "instID", auraInstanceID)
+                end
                 return false
             end
             acceptedUnit = cleanUnit
@@ -1638,6 +1676,15 @@ local function StampAuraInstanceIDForCooldown(unit, cdID, auraInstanceID, viewer
     else
         if cleanUnit then
             if not AuraInstanceMatchesExpectedOwner(cleanUnit, auraInstanceID) then
+                if _G.QUI_CDM_TAINT_DEBUG then
+                    DebugAuraStamp("AuraStamp.instance.reject",
+                        "reason", "owner",
+                        "source", source or "aura-duration",
+                        "targetCDID", cdID,
+                        "targetCat", viewerCategory,
+                        "unit", cleanUnit,
+                        "instID", auraInstanceID)
+                end
                 return false
             end
             acceptedUnit = cleanUnit
@@ -1654,11 +1701,22 @@ local function StampAuraInstanceIDForCooldown(unit, cdID, auraInstanceID, viewer
     end
 
     stampedUnit = stampedUnit or acceptedUnit
-    if not stampedUnit then return false end
+    if not stampedUnit then
+        if _G.QUI_CDM_TAINT_DEBUG then
+            DebugAuraStamp("AuraStamp.instance.reject",
+                "reason", "no-unit",
+                "source", source or "aura-duration",
+                "targetCDID", cdID,
+                "targetCat", viewerCategory,
+                "instID", auraInstanceID)
+        end
+        return false
+    end
 
     s.auraInstanceID = auraInstanceID
     s.auraInstanceIDSource = source or "aura-duration"
     s.auraUnit = stampedUnit
+    s.auraData = auraData
     if stampedDurObj then
         SetDurationLane(cdID, s, "aura", stampedDurObj, source or "aura-duration")
     else
@@ -1666,19 +1724,58 @@ local function StampAuraInstanceIDForCooldown(unit, cdID, auraInstanceID, viewer
     end
     s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
     s.lastTouch = GetTime()
+    if _G.QUI_CDM_TAINT_DEBUG then
+        DebugAuraStamp("AuraStamp.instance.ok",
+            "source", source or "aura-duration",
+            "targetCDID", cdID,
+            "targetCat", viewerCategory,
+            "unit", stampedUnit,
+            "instID", auraInstanceID,
+            "auraDataInst", auraData and auraData.auraInstanceID,
+            "auraDataSpell", auraData and auraData.spellId,
+            "auraDataName", auraData and auraData.name,
+            "durObj", stampedDurObj ~= nil)
+    end
     return true
 end
 
 local function CaptureAuraInstanceFromChildFrame(cdID, viewerCategory, child, source)
     if not (cdID and child) then return false end
+    local auraData = ReadChildAuraData(child)
     local auraInstanceID = child.auraInstanceID
+    if not auraInstanceID and auraData then
+        auraInstanceID = auraData.auraInstanceID
+    end
     if not auraInstanceID then return false end
-    return StampAuraInstanceIDForCooldown(
+    if _G.QUI_CDM_TAINT_DEBUG then
+        DebugAuraStamp("AuraStamp.child.try",
+            "source", source or "aura-child-frame",
+            "targetCDID", cdID,
+            "targetCat", viewerCategory,
+            "childCDID", child.cooldownID,
+            "childCat", GetFrameCategoryName(child),
+            "childInst", child.auraInstanceID,
+            "auraDataInst", auraData and auraData.auraInstanceID,
+            "auraDataSpell", auraData and auraData.spellId,
+            "auraDataName", auraData and auraData.name)
+    end
+    local stamped = StampAuraInstanceIDForCooldown(
         child.auraDataUnit or child.auraUnit,
         cdID,
         auraInstanceID,
         viewerCategory,
-        source or "aura-child-frame")
+        source or "aura-child-frame",
+        auraData)
+    if _G.QUI_CDM_TAINT_DEBUG then
+        DebugAuraStamp(stamped and "AuraStamp.child.ok" or "AuraStamp.child.reject",
+            "source", source or "aura-child-frame",
+            "targetCDID", cdID,
+            "targetCat", viewerCategory,
+            "childCDID", child.cooldownID,
+            "childCat", GetFrameCategoryName(child),
+            "instID", auraInstanceID)
+    end
+    return stamped
 end
 
 -- Per-category seen-set pools. These functions fire per UNIT_AURA × every
@@ -1712,8 +1809,28 @@ local function CaptureAuraInstanceFromRelatedCooldownChildren(cdID, viewerCatego
             local relatedID = (catMap and catMap[spellID]) or (directMap and directMap[spellID])
             if relatedID and not seenCat[relatedID] then
                 seenCat[relatedID] = true
+                if _G.QUI_CDM_TAINT_DEBUG then
+                    local relatedInfo = GetInstanceInfo(relatedID, cat)
+                    DebugAuraStamp("AuraStamp.relatedCooldown.try",
+                        "targetCDID", cdID,
+                        "targetCat", viewerCategory,
+                        "candidate", spellID,
+                        "sourceCDID", relatedID,
+                        "sourceCat", cat,
+                        "sourceSpell", relatedInfo and relatedInfo.spellID,
+                        "sourceOverride", relatedInfo and relatedInfo.overrideSpellID,
+                        "sourceTooltip", relatedInfo and relatedInfo.overrideTooltipSpellID)
+                end
                 local child = GetInstanceChild(relatedID, cat)
                 if CaptureAuraInstanceFromChildFrame(cdID, viewerCategory, child, "aura-related-child") then
+                    if _G.QUI_CDM_TAINT_DEBUG then
+                        DebugAuraStamp("AuraStamp.relatedCooldown.ok",
+                            "targetCDID", cdID,
+                            "targetCat", viewerCategory,
+                            "candidate", spellID,
+                            "sourceCDID", relatedID,
+                            "sourceCat", cat)
+                    end
                     return true
                 end
             end
@@ -1743,8 +1860,28 @@ local function CaptureAuraInstanceFromRelatedAuraChildren(cdID, viewerCategory)
             -- `cat .. ":" .. tostring(relatedID)`.
             if relatedID and not (isSelfCat and relatedID == cdID) and not seenCat[relatedID] then
                 seenCat[relatedID] = true
+                if _G.QUI_CDM_TAINT_DEBUG then
+                    local relatedInfo = GetInstanceInfo(relatedID, cat)
+                    DebugAuraStamp("AuraStamp.relatedAura.try",
+                        "targetCDID", cdID,
+                        "targetCat", viewerCategory,
+                        "candidate", spellID,
+                        "sourceCDID", relatedID,
+                        "sourceCat", cat,
+                        "sourceSpell", relatedInfo and relatedInfo.spellID,
+                        "sourceOverride", relatedInfo and relatedInfo.overrideSpellID,
+                        "sourceTooltip", relatedInfo and relatedInfo.overrideTooltipSpellID)
+                end
                 local child = GetInstanceChild(relatedID, cat)
                 if CaptureAuraInstanceFromChildFrame(cdID, viewerCategory, child, "aura-related-child") then
+                    if _G.QUI_CDM_TAINT_DEBUG then
+                        DebugAuraStamp("AuraStamp.relatedAura.child.ok",
+                            "targetCDID", cdID,
+                            "targetCat", viewerCategory,
+                            "candidate", spellID,
+                            "sourceCDID", relatedID,
+                            "sourceCat", cat)
+                    end
                     return true
                 end
 
@@ -1756,6 +1893,16 @@ local function CaptureAuraInstanceFromRelatedAuraChildren(cdID, viewerCategory)
                         relatedState.auraInstanceID,
                         viewerCategory,
                         "aura-related-child") then
+                    if _G.QUI_CDM_TAINT_DEBUG then
+                        DebugAuraStamp("AuraStamp.relatedAura.state.ok",
+                            "targetCDID", cdID,
+                            "targetCat", viewerCategory,
+                            "candidate", spellID,
+                            "sourceCDID", relatedID,
+                            "sourceCat", cat,
+                            "sourceInst", relatedState.auraInstanceID,
+                            "sourceUnit", relatedState.auraUnit)
+                    end
                     return true
                 end
             end
@@ -2552,6 +2699,7 @@ local function RefreshChildSemanticState(child, cdID, fallbackActive)
         s.auraInstanceID = nil
         s.auraInstanceIDSource = nil
         s.auraUnit = nil
+        s.auraData = nil
         s.pandemicActive = false
         s.pandemicStateKnown = nil
         if ClearMirrorStackState(s) then
@@ -2607,6 +2755,7 @@ local function RefreshCooldownViewerRelatedAuraStates()
                     s.auraInstanceID = nil
                     s.auraInstanceIDSource = nil
                     s.auraUnit = nil
+                    s.auraData = nil
                     s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
                     s.lastTouch = GetTime()
                     RequestMirrorTextRefreshForState(cdID, s, "related-aura-clear")
@@ -3659,6 +3808,13 @@ local function AddDebugLine(lines, ...)
     lines[#lines + 1] = table.concat(out, " ")
 end
 
+local function SafeDebugScalar(value)
+    if issecretvalue and issecretvalue(value) then
+        return "<SECRET:" .. type(value) .. ">"
+    end
+    return value
+end
+
 function CDMBlizzMirror.GetChildDebugLines(cooldownID, viewerCategory)
     local lines = {}
     local child = cooldownID and GetInstanceChild(cooldownID, viewerCategory)
@@ -3698,6 +3854,16 @@ function CDMBlizzMirror.GetChildDebugLines(cooldownID, viewerCategory)
         "cooldownStart=", tostring(SafeFrameField(child, "cooldownStartTime")),
         "cooldownDuration=", tostring(SafeFrameField(child, "cooldownDuration")),
         "cooldownShowSwipe=", tostring(SafeFrameBooleanField(child, "cooldownShowSwipe")))
+
+    local childAuraData = ReadChildAuraData(child)
+    AddDebugLine(lines,
+        "child auraInstanceID=", SafeDebugScalar(SafeFrameField(child, "auraInstanceID")),
+        "auraDataUnit=", SafeDebugScalar(SafeFrameField(child, "auraDataUnit")),
+        "auraUnit=", SafeDebugScalar(SafeFrameField(child, "auraUnit")),
+        "auraData.inst=", SafeDebugScalar(childAuraData and childAuraData.auraInstanceID),
+        "auraData.spellId=", SafeDebugScalar(childAuraData and childAuraData.spellId),
+        "auraData.spellID=", SafeDebugScalar(childAuraData and childAuraData.spellID),
+        "auraData.name=", SafeDebugScalar(childAuraData and childAuraData.name))
 
     local icon = child.Icon
     AddDebugLine(lines,
@@ -4031,14 +4197,18 @@ function HandlePlayerTotemUpdate(updatedSlot)
         local cdID = child and child.cooldownID
         if cdID and not seen[cdID] and type(GetTotemDuration) == "function" then
             local slot = RawFrameField(child, "preferredTotemUpdateSlot")
-            if slot == nil then
+            if type(slot) == "nil" then
                 local totemData = RawFrameField(child, "totemData")
-                if type(totemData) == "table" then
+                local totemDataSecret = Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(totemData)
+                local totemDataReadable = not totemDataSecret
+                    and type(totemData) == "table"
+                    and (not (Helpers and Helpers.CanAccessTable) or Helpers.CanAccessTable(totemData))
+                if totemDataReadable then
                     slot = totemData.slot
                 end
             end
 
-            if slot ~= nil then
+            if type(slot) ~= "nil" then
                 local rawDurObj = GetTotemDuration(slot)
                 if rawDurObj and type(rawDurObj) ~= "number" then
                     seen[cdID] = true

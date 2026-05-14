@@ -1016,8 +1016,12 @@ local function ApplyAuraStateToIcon(icon, entry, sid, r)
         icon._isTotemInstance = r.isTotemInstance and true or nil
         icon._activeAuraSpellID = r.resolvedAuraSpellID
         if not icon._activeAuraSpellID and r.auraData then
-local okS = true; local sid2 = r.auraData.spellId
-            if okS then icon._activeAuraSpellID = sid2 end
+            local sid2 = r.auraData.spellId
+            sid2 = Helpers and Helpers.SafeValue and Helpers.SafeValue(sid2, nil) or sid2
+            if not ((Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(sid2))
+                or (issecretvalue and issecretvalue(sid2))) then
+                icon._activeAuraSpellID = sid2
+            end
         end
         if not icon._activeAuraSpellID and sid then
             icon._activeAuraSpellID = sid
@@ -1030,7 +1034,12 @@ local okS = true; local sid2 = r.auraData.spellId
         -- than clobbering — the type doesn't change for a given aura
         -- instance.
         if r.auraData then
-local okH = true; local harmful = r.auraData.isHarmful
+            local harmful = r.auraData.isHarmful
+            harmful = Helpers and Helpers.SafeValue and Helpers.SafeValue(harmful, nil) or harmful
+            if (Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(harmful))
+                or (issecretvalue and issecretvalue(harmful)) then
+                harmful = nil
+            end
             if harmful ~= nil then
                 icon._auraIsHarmful = harmful and true or false
             end
@@ -1071,7 +1080,7 @@ local function ApplyMirrorPayloadToIcon(icon, entry, sid, payload)
         r.auraInstanceID = payload.auraInstanceID
         r.auraUnit = payload.auraUnit
         r.durObj = payload.durObj
-        r.auraData = nil
+        r.auraData = payload.auraData
         -- payload.count is a singleton scratch (BuildMirrorCountPayload pool),
         -- not safe to alias across calls — copy fields into a per-icon table.
         local rc = r.count
@@ -4088,11 +4097,25 @@ CDMIcons.ComputeFilterHides = ComputeFilterHides
 local _layoutNeedsRefresh = {}
 local _buffIconLayoutRefreshPending = false
 
+function CDMIcons.WakeBuffIconContainer()
+    if _G.QUI_IsFrameHiddenByAnchor and _G.QUI_IsFrameHiddenByAnchor("buffIcon") then
+        return
+    end
+
+    local container = ns.CDMContainers and ns.CDMContainers.GetContainer
+        and ns.CDMContainers.GetContainer("buff")
+    if container and container.Show then
+        container:Show()
+    end
+end
+
 local function RequestBuffIconLayoutRefresh()
+    CDMIcons.WakeBuffIconContainer()
     if _buffIconLayoutRefreshPending then return end
     _buffIconLayoutRefreshPending = true
     C_Timer.After(0, function()
         _buffIconLayoutRefreshPending = false
+        CDMIcons.WakeBuffIconContainer()
         if ns.CDMBuffLayout and ns.CDMBuffLayout.OnLayoutReady then
             ns.CDMBuffLayout:OnLayoutReady()
         end
@@ -4214,6 +4237,11 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
 
     if isHiddenOverride then
         if icon:IsShown() then icon:Hide() end
+        if _G.QUI_CDM_ICON_DEBUG and CDMIcons.DebugIconEvent then
+            CDMIcons.DebugIconEvent(icon, "hidden-override",
+                "auraActive=", tostring(icon._auraActive == true),
+                "shown=", tostring(icon:IsShown()))
+        end
         SyncCooldownBling(icon)
         return
     end
@@ -4282,6 +4310,13 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
             if icon:IsShown() then icon:Hide() end
         end
 
+        if _G.QUI_CDM_ICON_DEBUG and CDMIcons.DebugIconEvent then
+            CDMIcons.DebugIconEvent(icon, "aura-show",
+                "active=", tostring(isActive),
+                "shown=", tostring(icon:IsShown()),
+                "effectiveMode=", tostring(effectiveMode),
+                "containerType=", tostring(containerDB and containerDB.containerType))
+        end
         SyncCooldownBling(icon)
         return
     end
@@ -5534,7 +5569,28 @@ end
 -- currently in an aura-active state. Cooldown-only icons (Death Coil, any
 -- spell with no aura tracking) are owned by SPELL_UPDATE_COOLDOWN /
 -- SPELL_UPDATE_USABLE / cast events.
+function CDMIcons.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
+    if not (icon and entry) then return false end
+
+    local wasAuraActive = icon._auraActive == true
+    ApplyResolvedCooldown(icon)
+
+    local containerDB, cType = ResolveContainerDBAndType(entry, ncdm, ncdmContainers)
+    if IsAuraEntry(entry) or cType == "aura" or cType == "auraBar" then
+        UpdateCooldownContainerVisibility(icon, entry, containerDB, editMode, inCombat)
+    end
+
+    if entry.viewerType == "buff"
+       and wasAuraActive ~= (icon._auraActive == true)
+       and CDMIcons.RequestBuffIconLayoutRefresh then
+        CDMIcons.RequestBuffIconLayoutRefresh()
+    end
+
+    return true
+end
+
 local function ApplyResolvedCooldownForAuraScope()
+    local editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
     BeginResolverQueryBatch()
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
@@ -5543,7 +5599,7 @@ local function ApplyResolvedCooldownForAuraScope()
                 local entryIsAura = IsAuraEntry and IsAuraEntry(entry)
                 local iconAuraActive = icon._auraActive == true
                 if entryIsAura or iconAuraActive then
-                    ApplyResolvedCooldown(icon)
+                    CDMIcons.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
                 end
             end
         end
@@ -5655,6 +5711,7 @@ end
 -- override-keyed icons without reading override state in Lua.
 local function ApplyResolvedCooldownForSpellID(eventSpellID, eventBaseSpellID)
     if not eventSpellID and not eventBaseSpellID then return end
+    local editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
     BeginResolverQueryBatch()
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
@@ -5662,7 +5719,12 @@ local function ApplyResolvedCooldownForSpellID(eventSpellID, eventBaseSpellID)
             if entry then
                 local base = entry.spellID or entry.id
                 if base and (base == eventSpellID or base == eventBaseSpellID) then
-                    ApplyResolvedCooldown(icon)
+                    local _, cType = ResolveContainerDBAndType(entry, ncdm, ncdmContainers)
+                    if IsAuraEntry(entry) or cType == "aura" or cType == "auraBar" then
+                        CDMIcons.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
+                    else
+                        ApplyResolvedCooldown(icon)
+                    end
                 end
             end
         end
@@ -5682,12 +5744,65 @@ local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
     end
     local hasIDs = false
 
+    local spellIDs = CDMIcons._auraDeltaSpellIDs
+    if not spellIDs then
+        spellIDs = {}
+        CDMIcons._auraDeltaSpellIDs = spellIDs
+    else
+        wipe(spellIDs)
+    end
+    local hasSpellIDs = false
+
+    local function addAuraSpellID(rawID)
+        local normalized = NormalizeSpellIdentifier(rawID)
+        if normalized == nil then return end
+        spellIDs[normalized] = true
+        spellIDs[tostring(normalized)] = true
+        if type(normalized) == "string" then
+            local numeric = tonumber(normalized)
+            if numeric then spellIDs[numeric] = true end
+        end
+        hasSpellIDs = true
+    end
+
+    local function spellSetHas(rawID)
+        local normalized = NormalizeSpellIdentifier(rawID)
+        if normalized == nil then return false end
+        if spellIDs[normalized] == true or spellIDs[tostring(normalized)] == true then
+            return true
+        end
+        if type(normalized) == "string" then
+            local numeric = tonumber(normalized)
+            return numeric and spellIDs[numeric] == true or false
+        end
+        return false
+    end
+
+    local function iconMatchesAuraSpellIDs(icon, entry)
+        if not hasSpellIDs or not entry then return false end
+        if spellSetHas(icon and icon._runtimeSpellID) then return true end
+        if spellSetHas(entry.overrideSpellID) then return true end
+        if spellSetHas(entry.spellID) then return true end
+        if spellSetHas(entry.id) then return true end
+        local linked = entry.linkedSpellIDs
+        if type(linked) == "table" then
+            for _, linkedID in ipairs(linked) do
+                if spellSetHas(linkedID) then return true end
+            end
+        end
+        return false
+    end
+
     if updateInfo.addedAuras then
         for _, auraData in ipairs(updateInfo.addedAuras) do
             local auraInstanceID = auraData and auraData.auraInstanceID
             if auraInstanceID ~= nil then
                 ids[auraInstanceID] = true
                 hasIDs = true
+            end
+            if auraData then
+                addAuraSpellID(auraData.spellId)
+                addAuraSpellID(auraData.spellID)
             end
         end
     end
@@ -5708,12 +5823,14 @@ local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
         end
     end
 
-    if not hasIDs then return 0 end
+    if not hasIDs and not hasSpellIDs then return 0 end
 
+    local editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
     local refreshed = 0
     BeginResolverQueryBatch()
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
+            local entry = icon and icon._spellEntry
             local iconAuraInstanceID = icon and icon._auraInstanceID
             local matches = iconAuraInstanceID
                 and ids[iconAuraInstanceID]
@@ -5727,8 +5844,11 @@ local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
                     and ids[mirrorAuraInstanceID]
                     and (not unit or state.auraUnit == unit or icon._auraUnit == unit)
             end
-            if matches and icon._spellEntry then
-                ApplyResolvedCooldown(icon)
+            if not matches and iconMatchesAuraSpellIDs(icon, entry) then
+                matches = true
+            end
+            if matches and entry then
+                CDMIcons.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
                 refreshed = refreshed + 1
             end
         end
