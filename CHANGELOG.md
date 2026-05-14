@@ -10,6 +10,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha32 - 2026-05-13
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; the legacy `cdmLearnedCastToAura` global is cleared on first load (see below).
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **Send Mail and Open Mail movers no longer trip `ADDON_ACTION_BLOCKED` while interacting with mail.** Both panels are now treated as `secureFrame`: a watcher frame drives anchor reassertion instead of `HookScript("OnShow")` / `hooksecurefunc` on the root, so the mover's hooks can't taint the protected call chain that the mail UI runs after `ShowUIPanel`.
+- **Cooldown bars keep their countdown text running when they reappear mid-cast.** The status-bar timer is re-armed via `SetTimerDuration` on show, and the duration text is written from `DurationObject:GetRemainingDuration` rather than read off the bar's `value` (which is secret in combat). A deferred-one-frame re-arm covers the case where the bar's `OnShow` fires before its size is final.
+- **Aura-tracked cooldown icons and bars no longer drop stack text and harmful/helpful state in combat.** The Blizzard mirror was nil'ing `auraInstanceID` / `auraUnit` / `auraData` at the payload boundary; they now flow end-to-end into the icon/bar result tables. Secret values are still C-side-only — Lua reads (`spellId`, `isHarmful`, `icon`) go through `IsSecretValue` + `SafeValue` guards rather than ok-flag sentinels.
+- **Resolver refuses to bind an entry to a mirror cooldown whose spell identity doesn't match.** `MirrorStateMatchesEntryIdentity` now compares the entry's `overrideSpellID` / `spellID` / `id` against the mirror state's `spellID` / `overrideSpellID` / `overrideTooltipSpellID` / `linkedSpellIDs` before accepting the bind. Prevents cross-binds when two configured entries collide on the same Blizzard cooldown frame.
+- **Buff icon container wakes itself on layout refresh.** `RequestBuffIconLayoutRefresh` now calls the container's `Show()` (subject to the anchor's hidden flag) so a freshly-added icon doesn't sit invisible until something else forces a repaint.
+
+### Changed
+- **Removed the `cdmLearnedCastToAura` SavedVariable.** Cast→aura correlation is now runtime-only — `UNIT_SPELLCAST_SUCCEEDED` + `UNIT_AURA` correlation within the 100ms window still resolves `auraInstanceID` for cast-keyed trackers, but it no longer persists. The legacy global (and any stale entries from previous sessions) is wiped on `Initialize` and on every `RebuildSpellToCooldownID`. Catalog-derived aura links from `C_CooldownViewer` are unaffected.
+
+### Internal
+- **AuraStamp event tracing logs full target/state context.** Stamp attempts, accepts, and rejects (`owner` / `no-unit`) now print target cooldown ID, viewer category, child-frame source, aura instance, spell IDs, and aura name. `/cdmevents` icon summary lines include the matched mirror state (cooldownID, spell identity, linkedSpellIDs) so cross-bind investigations don't need a debugger.
+- **StatusBar timer renderer hardened.** Uses interpolation=0 (immediate) and direction=1 (remaining); the renderer pcalls `SetTimerDuration` and drops the prior `SetMinMaxValues` call (the timer drives the range internally).
+- **Aura-scoped per-icon resolve API.** `CDMIcons.ApplyAuraScopedResolvedCooldown` runs `ApplyResolvedCooldown` + container visibility + (for buff-viewer entries) a buff layout refresh, scoped to a single icon — used by aura/auraBar event handlers in place of the broader sweep.
+- New regression tests: `blizzard_mover_mail_taint`, `cdm_bars_show_rearm`, `cdm_debug_event_trace_mirror`, `cdm_renderers_statusbar_timer`, `cdm_spelldata_ignores_learned_cast_to_aura`.
+
+
+
 ## v3.6.0-alpha31 - 2026-05-13
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No new schema migrations; existing alpha30 profiles carry over unchanged.
