@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha34 - 2026-05-14
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha33 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **GCD swipes on cooldown-kind icons no longer get recolored as aura swipes** when a live aura on the player happens to match the spell. The effect-classification path now treats the resolver's `_resolvedCooldownMode` as authoritative for cooldown-kind icons (gcd-only / cooldown / charge / item-cooldown / inactive); the live aura probe and `icon._auraActive` fallback only fire for buff/aura entries or when the resolver has not yet produced a mode. Stops a CooldownFrame currently bound to a GCD DurationObject from being repainted with aura colors and edge styling mid-swipe.
+
+### Internal
+- New regression test asserts that a `_resolvedCooldownMode = "gcd-only"` cooldown-kind icon keeps the GCD swipe styling (no edge, cooldown swipe color + alpha) even when `IsAuraCurrentlyActive` would have returned true for its spellID.
+
+
+
 ## v3.6.0-alpha33 - 2026-05-13
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha32 profiles carry over unchanged.
