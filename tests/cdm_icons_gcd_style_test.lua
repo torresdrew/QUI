@@ -29,6 +29,8 @@ C_Timer = {
 
 local gcdDuration = { token = "gcd-duration" }
 local realDuration = { token = "real-duration" }
+local oneChargeCooldownDuration = { token = "one-charge-cooldown-duration" }
+local oneChargeChargeDuration = { token = "one-charge-charge-duration" }
 local styleCalls = 0
 local styleSawGCD = false
 local desaturated
@@ -86,9 +88,17 @@ local ns = {
         _textureCycleCache = {},
         _FinalizeImports = noop,
         Subscribe = noop,
-        QueryCharges = function() return nil end,
+        QueryCharges = function(spellID)
+            if spellID == 33076 then
+                return { currentCharges = 0, maxCharges = 1, isActive = false }
+            end
+            return nil
+        end,
         QueryCooldown = function(spellID)
             cooldownQueryCounts[spellID] = (cooldownQueryCounts[spellID] or 0) + 1
+            if spellID == 33076 then
+                return { isActive = true, isOnGCD = false }
+            end
             if spellID == 24680 then
                 return { isActive = true, isOnGCD = true }
             end
@@ -121,8 +131,18 @@ local ns = {
             end
             return nil
         end,
-        QueryDuration = function() return nil end,
-        QueryChargeDuration = function() return nil end,
+        QueryDuration = function(spellID)
+            if spellID == 33076 then
+                return oneChargeCooldownDuration
+            end
+            return nil
+        end,
+        QueryChargeDuration = function(spellID)
+            if spellID == 33076 then
+                return oneChargeChargeDuration
+            end
+            return nil
+        end,
         QueryOverrideSpell = function() return nil end,
         QueryDisplayCount = function() return nil end,
         QuerySpellCount = function() return nil end,
@@ -137,7 +157,12 @@ local ns = {
         IsItemLikeEntry = function() return false end,
         ResolveItemCooldownIdentity = function() return nil end,
         ResolveEntryItemID = function() return nil end,
-        ClassifySpellCooldownState = function() return nil end,
+        ClassifySpellCooldownState = function(spellID)
+            if spellID == 33076 then
+                return true, nil
+            end
+            return nil
+        end,
         ResolveSpellActiveState = function() return nil end,
         ResolveCooldownActivityState = function() return nil end,
         ResolveIconDurationObject = function(icon)
@@ -194,6 +219,15 @@ local ns = {
 }
 
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
+
+local _, _, oneChargeDurObj, oneChargeActive, oneChargeRealActive =
+    ns.CDMIcons.GetBestSpellCooldown(33076)
+assert(oneChargeDurObj == oneChargeCooldownDuration,
+    "one-charge spells with real cooldowns should prefer the spell cooldown DurationObject over charge duration")
+assert(oneChargeActive == true,
+    "one-charge spell cooldown should remain active")
+assert(oneChargeRealActive == true,
+    "one-charge spell cooldown should be classified as a real cooldown")
 
 local icon = {
     Cooldown = {

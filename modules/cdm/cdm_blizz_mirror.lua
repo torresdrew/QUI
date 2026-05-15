@@ -1528,6 +1528,46 @@ local function ShouldUseSpellGCDDuration(spellID)
     return CooldownInfoRealState(info, spellID) ~= true
 end
 
+function CDMBlizzMirror.GetReadableSpellMaxCharges(spellID)
+    if not (spellID and Sources and Sources.QuerySpellCharges) then
+        return nil
+    end
+
+    local chargeInfo = Sources.QuerySpellCharges(spellID)
+    local maxCharges = chargeInfo and chargeInfo.maxCharges
+    if issecretvalue and issecretvalue(maxCharges) then
+        return nil
+    end
+    if type(maxCharges) == "number" then
+        return maxCharges
+    end
+    return nil
+end
+
+function CDMBlizzMirror.ShouldUseSpellChargeDuration(spellID)
+    local maxCharges = CDMBlizzMirror.GetReadableSpellMaxCharges(spellID)
+    if type(maxCharges) == "number" then
+        return maxCharges > 1
+    end
+    return true
+end
+
+function CDMBlizzMirror.ShouldSuppressChargeDurationForCooldownID(cdID, child, state)
+    local info = cdID and GetInstanceInfo(cdID, state and state.viewerCategory or GetFrameCategoryName(child))
+    local candidates = BuildSpellDurationCandidates(info)
+    local sawSingleCharge = false
+    for _, spellID in ipairs(candidates) do
+        local maxCharges = CDMBlizzMirror.GetReadableSpellMaxCharges(spellID)
+        if type(maxCharges) == "number" then
+            if maxCharges > 1 then
+                return false
+            end
+            sawSingleCharge = true
+        end
+    end
+    return sawSingleCharge
+end
+
 local function ShouldUseGCDDurationForCooldownID(cdID, child, state)
     local info = cdID and GetInstanceInfo(cdID, state and state.viewerCategory or GetFrameCategoryName(child))
     local candidates = BuildSpellDurationCandidates(info)
@@ -1557,9 +1597,12 @@ local function ResolveSpellDurationObjectForCooldownID(cdID, child, state)
 
     local fromCharges = child and SafeFrameBooleanField(child, "wasSetFromCharges") == true
     local chargesFirst = fromCharges or (info and info.charges == true)
+    local suppressChargeDuration = CDMBlizzMirror.ShouldSuppressChargeDurationForCooldownID(cdID, child, state)
 
     for _, spellID in ipairs(candidates) do
-        if chargesFirst and Sources.QuerySpellChargeDuration then
+        local useChargeDuration = not suppressChargeDuration
+            and CDMBlizzMirror.ShouldUseSpellChargeDuration(spellID)
+        if chargesFirst and useChargeDuration and Sources.QuerySpellChargeDuration then
             local durObj = Sources.QuerySpellChargeDuration(spellID)
             if durObj then
                 return durObj, "spell-charge"
@@ -1581,7 +1624,7 @@ local function ResolveSpellDurationObjectForCooldownID(cdID, child, state)
                 return durObj, "spell-cooldown"
             end
         end
-        if not chargesFirst and Sources.QuerySpellChargeDuration then
+        if not chargesFirst and useChargeDuration and Sources.QuerySpellChargeDuration then
             local durObj = Sources.QuerySpellChargeDuration(spellID)
             if durObj then
                 return durObj, "spell-charge"
@@ -3163,6 +3206,17 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
             local lane = fromAura and "aura" or (fromCharges and "resource" or "cooldown")
             local source = fromAura and "aura-duration"
                 or (fromCharges and "spell-charge" or "cooldown-frame")
+            if fromCharges and CDMBlizzMirror.ShouldSuppressChargeDurationForCooldownID(cdID, owner, s) then
+                local resolvedDurObj, resolvedSource = ResolveSpellDurationObjectForCooldownID(cdID, owner, s)
+                if resolvedDurObj and resolvedSource ~= "spell-charge" then
+                    durObj = resolvedDurObj
+                    source = resolvedSource
+                    lane = resolvedSource == "gcd-duration" and "gcd" or "cooldown"
+                    s.resourceDurObj = nil
+                    s.resourceDurObjSource = nil
+                    s.resourceDurationStateUnknown = nil
+                end
+            end
             if not fromAura and not fromCharges
                 and ShouldUseGCDDurationForCooldownID(cdID, owner, s) then
                 lane = "gcd"

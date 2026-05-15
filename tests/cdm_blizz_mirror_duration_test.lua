@@ -60,6 +60,10 @@ C_Timer = {
 local cooldownDuration = { token = "cooldown-duration-object" }
 local gcdDuration = { token = "gcd-duration-object" }
 local chargeDuration = { token = "charge-duration-object" }
+local mindBlastCooldownDuration = { token = "mind-blast-cooldown-duration-object" }
+local mindBlastChargeDuration = { token = "mind-blast-charge-duration-object" }
+local prayerCooldownDuration = { token = "prayer-cooldown-duration-object" }
+local prayerChargeDuration = { token = "prayer-charge-duration-object" }
 local auraSpellCooldownDuration = { token = "aura-spell-cooldown-duration-object" }
 local auraHookDuration = { token = "aura-hook-duration-object" }
 local auraPayloadDuration = { token = "aura-payload-duration-object" }
@@ -114,6 +118,12 @@ C_Spell = {
         end
     end,
     GetSpellCooldownDuration = function(spellID, ignoreGCD)
+        if spellID == 8092 and ignoreGCD == true then
+            return mindBlastCooldownDuration
+        end
+        if spellID == 33076 and ignoreGCD == true then
+            return prayerCooldownDuration
+        end
         if spellID == 555000 then
             if ignoreGCD == false then
                 return gcdDuration
@@ -131,9 +141,32 @@ C_Spell = {
         end
     end,
     GetSpellChargeDuration = function(spellID)
+        if spellID == 8092 then
+            return mindBlastChargeDuration
+        end
+        if spellID == 17 or spellID == 33076 then
+            return prayerChargeDuration
+        end
         if spellID == 444347 then
             return chargeDuration
         end
+    end,
+    GetSpellCharges = function(spellID)
+        if spellID == 8092 then
+            return {
+                currentCharges = 0,
+                maxCharges = 1,
+                isActive = false,
+            }
+        end
+        if spellID == 33076 then
+            return {
+                currentCharges = 0,
+                maxCharges = 1,
+                isActive = false,
+            }
+        end
+        return nil
     end,
 }
 
@@ -175,6 +208,40 @@ local chargedChild = {
 }
 chargedChild.Cooldown.GetParent = function() return chargedChild end
 chargedChild.ChargeCount.DisplayText = MakeTextOwner()
+
+local mindBlastChild = {
+    cooldownID = 809200,
+    isActive = true,
+    wasSetFromCharges = true,
+    Cooldown = {
+        SetCooldown = noop,
+        SetCooldownFromDurationObject = noop,
+        SetCooldownFromExpirationTime = noop,
+        SetCooldownDuration = noop,
+        SetCooldownUNIX = noop,
+        Clear = noop,
+    },
+    Show = noop,
+    Hide = noop,
+}
+mindBlastChild.Cooldown.GetParent = function() return mindBlastChild end
+
+local prayerAliasChild = {
+    cooldownID = 330760,
+    isActive = true,
+    wasSetFromCharges = true,
+    Cooldown = {
+        SetCooldown = noop,
+        SetCooldownFromDurationObject = noop,
+        SetCooldownFromExpirationTime = noop,
+        SetCooldownDuration = noop,
+        SetCooldownUNIX = noop,
+        Clear = noop,
+    },
+    Show = noop,
+    Hide = noop,
+}
+prayerAliasChild.Cooldown.GetParent = function() return prayerAliasChild end
 
 local gcdChild = {
     cooldownID = 27903,
@@ -331,7 +398,7 @@ amzBuffChild.Cooldown.GetParent = function() return amzBuffChild end
 
 EssentialCooldownViewer = {
     GetChildren = function()
-        return child, chargedChild, gcdChild
+        return child, chargedChild, mindBlastChild, prayerAliasChild, gcdChild
     end,
 }
 UtilityCooldownViewer = {
@@ -349,7 +416,7 @@ BuffBarCooldownViewer = { GetChildren = function() end }
 C_CooldownViewer = {
     GetCooldownViewerCategorySet = function(category)
         if category == 0 then
-            return { 27902, 444001, 27903 }
+            return { 27902, 444001, 809200, 330760, 27903 }
         end
         if category == 1 then
             return { 27911 }
@@ -396,6 +463,32 @@ C_CooldownViewer = {
                 overrideSpellID = 444347,
                 overrideTooltipSpellID = nil,
                 linkedSpellIDs = nil,
+                selfAura = false,
+                hasAura = false,
+                charges = true,
+                isKnown = true,
+            }
+        end
+        if cooldownID == 809200 then
+            return {
+                cooldownID = 809200,
+                spellID = 8092,
+                overrideSpellID = 8092,
+                overrideTooltipSpellID = nil,
+                linkedSpellIDs = nil,
+                selfAura = false,
+                hasAura = false,
+                charges = true,
+                isKnown = true,
+            }
+        end
+        if cooldownID == 330760 then
+            return {
+                cooldownID = 330760,
+                spellID = 17,
+                overrideSpellID = nil,
+                overrideTooltipSpellID = nil,
+                linkedSpellIDs = { 33076 },
                 selfAura = false,
                 hasAura = false,
                 charges = true,
@@ -646,6 +739,28 @@ assert(state.auraDurObj == auraHookDuration, "charge hook should preserve higher
 assert(state.resourceDurObj == chargeDuration, "charge duration should be carried in the resource lane")
 assert(state.cooldownDurObj == cooldownDuration, "charge duration must not overwrite cooldown duration lane")
 assert(state.durObj == auraHookDuration, "aura duration should stay selected ahead of charge and cooldown")
+
+mindBlastChild.Cooldown:SetCooldownFromDurationObject(mindBlastChargeDuration)
+
+local mindBlastState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(809200, "essential"),
+    "one-charge cooldown mirror state missing after charged setter")
+assert(mindBlastState.durObj == mindBlastCooldownDuration,
+    "one-charge spells flagged as charges should use the spell cooldown DurationObject")
+assert(mindBlastState.durObjSource == "spell-cooldown",
+    "one-charge spell selected duration should retain spell cooldown source")
+assert(mindBlastState.resolvedMode == "cooldown",
+    "one-charge spells flagged as charges should resolve as cooldown mode")
+
+prayerAliasChild.Cooldown:SetCooldownFromDurationObject(prayerChargeDuration)
+
+local prayerState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(330760, "essential"),
+    "one-charge linked cooldown mirror state missing after charged setter")
+assert(prayerState.durObj == prayerCooldownDuration,
+    "one-charge linked spells flagged as charges should use the linked spell cooldown DurationObject")
+assert(prayerState.durObjSource == "spell-cooldown",
+    "one-charge linked spell selected duration should retain spell cooldown source")
+assert(prayerState.resolvedMode == "cooldown",
+    "one-charge linked spells flagged as charges should resolve as cooldown mode")
 
 child.isActive = true
 child.cooldownIsActive = nil

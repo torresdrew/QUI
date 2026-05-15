@@ -137,6 +137,18 @@ local function SafeBoolean(val)
     return nil
 end
 
+function CDMIcons.GetReadableChargeMaxCharges(chargeInfo)
+    if not chargeInfo then return nil end
+    local maxCharges = chargeInfo.maxCharges
+    if issecretvalue and issecretvalue(maxCharges) then
+        return nil
+    end
+    if type(maxCharges) == "number" then
+        return maxCharges
+    end
+    return nil
+end
+
 function CDMIcons.ApplyDurationObjectCooldown(cd, durObj, clearWhenZero, reverse)
     if ns.CDMRenderers and ns.CDMRenderers.ApplyDurationObjectCooldown then
         return ns.CDMRenderers.ApplyDurationObjectCooldown(cd, durObj, clearWhenZero, reverse)
@@ -531,6 +543,8 @@ local function GetBestSpellCooldown(spellID)
     local isActive = false
     local realCooldownActive = false
     local durationObjectEligible = false
+    local sawSingleChargeSpell = false
+    local sawMultiChargeSpell = false
 
     -- Check primary spell with a fresh C_Spell query.
     local cdInfo = QueryCooldown(spellID)
@@ -563,8 +577,15 @@ local function GetBestSpellCooldown(spellID)
     local chargeInfo = QueryCharges(spellID)
     local chargeBased = false
     if chargeInfo then
-        local maxCharges = chargeInfo.maxCharges
+        local maxCharges = CDMIcons.GetReadableChargeMaxCharges(chargeInfo)
         chargeBased = maxCharges and maxCharges > 1
+        if type(maxCharges) == "number" then
+            if chargeBased then
+                sawMultiChargeSpell = true
+            else
+                sawSingleChargeSpell = true
+            end
+        end
         -- It means the recharge UI should run, not that all charges are gone.
         local chargeActive = SafeBoolean(chargeInfo.isActive) == true
         if chargeActive then
@@ -621,8 +642,15 @@ local function GetBestSpellCooldown(spellID)
             chargeInfo = QueryCharges(overrideID)
             local overrideChargeBased = false
             if chargeInfo then
-                local maxCharges = chargeInfo.maxCharges
+                local maxCharges = CDMIcons.GetReadableChargeMaxCharges(chargeInfo)
                 overrideChargeBased = maxCharges and maxCharges > 1
+                if type(maxCharges) == "number" then
+                    if overrideChargeBased then
+                        sawMultiChargeSpell = true
+                    else
+                        sawSingleChargeSpell = true
+                    end
+                end
                 local chargeActive2 = SafeBoolean(chargeInfo.isActive) == true
                 if chargeActive2 then
                     isActive = true
@@ -652,7 +680,9 @@ local function GetBestSpellCooldown(spellID)
     -- numeric cooldown table while GetSpellCooldownDuration(spell, true)
     -- still returns the real cooldown DurationObject. Let that object prove
     -- real cooldown state instead of blocking the query on the numeric table.
-    if not bestDurObj and (realCooldownActive or durationObjectEligible) then
+    local suppressChargeDuration = sawSingleChargeSpell and not sawMultiChargeSpell
+    if not bestDurObj and not suppressChargeDuration
+        and (realCooldownActive or durationObjectEligible) then
         -- Check charge duration FIRST — for charged spells, the charge
         -- recharge DurationObject is what we want to display, not the
         -- spell's own cooldown DurationObject (which may be a shorter

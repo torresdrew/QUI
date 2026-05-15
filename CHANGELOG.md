@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha42 - 2026-05-15
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha41 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **CDM cooldown swipes now render for one-charge spells that Blizzard flags through the charge path.** Mind Blast, Prayer of Mending, and linked spell aliases now fall back to the real spell cooldown DurationObject instead of treating a `0/1` charge payload as a recharge timer.
+
+### Internal
+- Added regression coverage for one-charge Blizzard mirror cooldowns, linked Prayer of Mending cooldown aliases, and the custom cooldown resolver path used when buff/debuff phase display is disabled.
+
+
+
 ## v3.6.0-alpha41 - 2026-05-15
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha40 profiles carry over unchanged.
