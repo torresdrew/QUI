@@ -2733,15 +2733,16 @@ do
             um:RegisterElement(regDef)
         end
 
-        -- BonusRollFrame: reapply our saved anchor as soon as Blizzard moves
-        -- or shows the prompt. A timer tick here lets the default position
-        -- render for one frame before our saved anchor wins.
+        -- BonusRollFrame: reapply our saved anchor after Blizzard finishes
+        -- showing/moving the prompt so the roll startup animation is not
+        -- interrupted by addon-side ClearAllPoints/SetPoint calls.
         if _G.BonusRollFrame and not _G.BonusRollFrame._QUI_AnchorHooked then
             local bonusRollFrame = _G.BonusRollFrame
             bonusRollFrame._QUI_AnchorHooked = true
 
             local applyingBonusRollAnchor = false
             local pendingBonusRollAnchor = false
+            local bonusRollAnchorScheduled = false
 
             local function ApplyBonusRollAnchor()
                 if applyingBonusRollAnchor then return end
@@ -2760,20 +2761,46 @@ do
                 if not ok then error(err) end
             end
 
-            hooksecurefunc(bonusRollFrame, "SetPoint", ApplyBonusRollAnchor)
-            hooksecurefunc(bonusRollFrame, "Show", ApplyBonusRollAnchor)
-            bonusRollFrame:HookScript("OnShow", ApplyBonusRollAnchor)
+            local function RunScheduledBonusRollAnchor()
+                bonusRollAnchorScheduled = false
+                ApplyBonusRollAnchor()
+            end
+
+            local function ScheduleBonusRollAnchor()
+                if applyingBonusRollAnchor then return end
+                if _G.QUI_IsLayoutModeActive and _G.QUI_IsLayoutModeActive() then return end
+
+                if InCombatLockdown() then
+                    pendingBonusRollAnchor = true
+                    return
+                end
+
+                if bonusRollAnchorScheduled then return end
+                bonusRollAnchorScheduled = true
+
+                if RunNextFrame then
+                    RunNextFrame(RunScheduledBonusRollAnchor)
+                elseif C_Timer and C_Timer.After then
+                    C_Timer.After(0, RunScheduledBonusRollAnchor)
+                else
+                    RunScheduledBonusRollAnchor()
+                end
+            end
+
+            hooksecurefunc(bonusRollFrame, "SetPoint", ScheduleBonusRollAnchor)
+            hooksecurefunc(bonusRollFrame, "Show", ScheduleBonusRollAnchor)
+            bonusRollFrame:HookScript("OnShow", ScheduleBonusRollAnchor)
 
             local bonusRollCombatFrame = CreateFrame("Frame")
             bonusRollCombatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
             bonusRollCombatFrame:SetScript("OnEvent", function()
                 if pendingBonusRollAnchor then
                     pendingBonusRollAnchor = false
-                    ApplyBonusRollAnchor()
+                    ScheduleBonusRollAnchor()
                 end
             end)
 
-            ApplyBonusRollAnchor()
+            ScheduleBonusRollAnchor()
         end
 
         -- Chat frame — child overlay so the handle matches the Blizzard

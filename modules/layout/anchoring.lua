@@ -1548,80 +1548,73 @@ local FRAME_RESOLVERS = {
     focusCastbar = function() return ns.QUI_Castbar and ns.QUI_Castbar.castbars and ns.QUI_Castbar.castbars["focus"] end,
     petCastbar = function() return ns.QUI_Castbar and ns.QUI_Castbar.castbars and ns.QUI_Castbar.castbars["pet"] end,
     totCastbar = function() return ns.QUI_Castbar and ns.QUI_Castbar.castbars and ns.QUI_Castbar.castbars["targettarget"] end,
-    -- Action Bars — engine-aware: owned containers when the module is active,
-    -- Blizzard frames only when module is enabled but containers aren't ready yet.
+    -- Action Bars — prefer owned containers. Bail until QUI-owned containers
+    -- exist because Blizzard's Edit Mode and frame-position systems continue
+    -- to manage the raw Blizzard bars.
     -- When action bars are disabled, return nil so Blizzard/Edit Mode keeps control.
     bar1 = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["bar1"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["MainActionBar"] or _G["MainMenuBar"]
+        return nil
     end,
     bar2 = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["bar2"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["MultiBarBottomLeft"]
+        return nil
     end,
     bar3 = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["bar3"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["MultiBarBottomRight"]
+        return nil
     end,
     bar4 = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["bar4"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["MultiBarRight"]
+        return nil
     end,
     bar5 = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["bar5"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["MultiBarLeft"]
+        return nil
     end,
     bar6 = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["bar6"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["MultiBar5"]
+        return nil
     end,
     bar7 = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["bar7"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["MultiBar6"]
+        return nil
     end,
     bar8 = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["bar8"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["MultiBar7"]
+        return nil
     end,
     petBar = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["pet"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["PetActionBar"]
+        -- Pet/stance/micro/bag bars are managed by Blizzard's Edit Mode and
+        -- frame-position systems. Do not fall back to raw Blizzard frames:
+        -- ApplyFrameAnchor would ClearAllPoints/SetPoint them before QUI owns
+        -- safe containers, tainting later Blizzard layout passes.
+        return nil
     end,
     stanceBar = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["stance"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["StanceBar"]
+        return nil
     end,
     microMenu = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["microbar"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["MicroMenuContainer"]
+        return nil
     end,
     bagBar = function()
         local owned = ns.ActionBarsOwned and ns.ActionBarsOwned.containers and ns.ActionBarsOwned.containers["bags"]
         if owned then return owned end
-        if IsModuleDisabled("actionBars") then return nil end
-        return _G["BagsBar"]
+        return nil
     end,
     extraActionButton = function()
         local owned = _G["QUI_extraActionButtonHolder"]

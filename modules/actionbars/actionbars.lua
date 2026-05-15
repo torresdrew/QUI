@@ -5463,6 +5463,118 @@ local function GetExtraButtonDB(buttonType)
         and core.db.profile.actionBars.bars[buttonType]
 end
 
+local function GetSavedExtraButtonFrameAnchor(buttonType)
+    local core = GetCore()
+    local profile = core and core.db and core.db.profile
+    local fa = profile and profile.frameAnchoring
+    if type(fa) ~= "table" or not buttonType then return nil end
+    local entry = rawget(fa, buttonType)
+    if type(entry) == "table" then
+        return entry
+    end
+    return nil
+end
+
+local function ApplyExtraButtonFrameAnchor(buttonType)
+    local HasAnchor = _G.QUI_HasFrameAnchor
+    local ApplyAnchor = _G.QUI_ApplyFrameAnchor
+    if HasAnchor and ApplyAnchor and HasAnchor(buttonType) then
+        ApplyAnchor(buttonType)
+    end
+end
+
+local function SaveExtraButtonFrameAnchor(buttonType, point, relPoint, x, y)
+    local core = GetCore()
+    local profile = core and core.db and core.db.profile
+    if not profile or not buttonType or not point then return end
+
+    if type(profile.frameAnchoring) ~= "table" then
+        profile.frameAnchoring = {}
+    end
+
+    local fa = profile.frameAnchoring
+    local entry = rawget(fa, buttonType)
+    if type(entry) ~= "table" then
+        entry = {}
+        fa[buttonType] = entry
+    end
+
+    entry.parent = "screen"
+    entry.point = point
+    entry.relative = relPoint or point
+    entry.offsetX = x or 0
+    entry.offsetY = y or 0
+    entry.sizeStable = true
+    entry.autoWidth = false
+    entry.autoHeight = false
+    entry.hideWithParent = false
+    entry.keepInPlace = true
+    entry.widthAdjust = 0
+    entry.heightAdjust = 0
+end
+
+local function SaveExtraButtonHolderPosition(buttonType, holder)
+    if not holder then return end
+
+    local core = GetCore()
+    local point, relPoint, x, y
+
+    if core and core.SnapFramePosition then
+        local snappedPoint, _, snappedRelPoint, snappedX, snappedY = core:SnapFramePosition(holder)
+        point, relPoint, x, y = snappedPoint, snappedRelPoint, snappedX, snappedY
+    end
+
+    if not point and holder.GetPoint then
+        local fallbackPoint, _, fallbackRelPoint, fallbackX, fallbackY = holder:GetPoint(1)
+        point, relPoint, x, y = fallbackPoint, fallbackRelPoint, fallbackX, fallbackY
+    end
+
+    if not point then return end
+
+    x = Helpers.SafeToNumber(x, 0)
+    y = Helpers.SafeToNumber(y, 0)
+    relPoint = relPoint or point
+
+    local db = GetExtraButtonDB(buttonType)
+    if db then
+        db.position = { point = point, relPoint = relPoint, x = x, y = y }
+    end
+
+    SaveExtraButtonFrameAnchor(buttonType, point, relPoint, x, y)
+    ApplyExtraButtonFrameAnchor(buttonType)
+
+    if _G.QUI and _G.QUI.SendMessage then
+        _G.QUI:SendMessage("QUI_FRAME_ANCHOR_CHANGED", buttonType)
+    end
+end
+
+local function GetExtraButtonInitialPosition(buttonType, fallbackPosition)
+    local anchor = GetSavedExtraButtonFrameAnchor(buttonType)
+    if anchor then
+        local parentKey = anchor.parent
+        local parentFrame
+        if not parentKey or parentKey == "screen" or parentKey == "disabled" then
+            parentFrame = UIParent
+        elseif parentKey == "extraActionButton" and buttonType ~= "extraActionButton" then
+            parentFrame = extraBtnState.extraActionHolder or _G["QUI_extraActionButtonHolder"]
+        elseif parentKey == "zoneAbility" and buttonType ~= "zoneAbility" then
+            parentFrame = extraBtnState.zoneAbilityHolder or _G["QUI_zoneAbilityHolder"]
+        end
+
+        if parentFrame then
+            local point = anchor.point or "CENTER"
+            return point, parentFrame, anchor.relative or point, anchor.offsetX or 0, anchor.offsetY or 0
+        end
+    end
+
+    if fallbackPosition and fallbackPosition.point then
+        return fallbackPosition.point, UIParent, fallbackPosition.relPoint or fallbackPosition.point,
+            fallbackPosition.x or 0, fallbackPosition.y or 0
+    end
+
+    return nil
+end
+
 local function CreateExtraButtonNudgeButton(parent, direction, holder, buttonType)
     local btn = CreateFrame("Button", nil, parent)
     btn:SetSize(18, 18)
@@ -5529,14 +5641,7 @@ local function CreateExtraButtonNudgeButton(parent, direction, holder, buttonTyp
                 holder:SetPoint(point, relativeTo, relativePoint, (xOfs or 0) + dx, (yOfs or 0) + dy)
             end
         end
-        local core = GetCore()
-        if core and core.SnapFramePosition then
-            local point, _, relPoint, x, y = core:SnapFramePosition(holder)
-            local db = GetExtraButtonDB(buttonType)
-            if db and point then
-                db.position = { point = point, relPoint = relPoint, x = x, y = y }
-            end
-        end
+        SaveExtraButtonHolderPosition(buttonType, holder)
     end)
 
     return btn
@@ -5551,9 +5656,9 @@ local function CreateExtraButtonHolder(buttonType, displayName)
     holder:SetMovable(true)
     holder:SetClampedToScreen(true)
 
-    local pos = settings.position
-    if pos and pos.point then
-        holder:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x or 0, pos.y or 0)
+    local point, relativeTo, relPoint, x, y = GetExtraButtonInitialPosition(buttonType, settings.position)
+    if point then
+        holder:SetPoint(point, relativeTo or UIParent, relPoint or point, x or 0, y or 0)
     else
         if buttonType == "extraActionButton" then
             holder:SetPoint("CENTER", UIParent, "CENTER", -100, -200)
@@ -5600,13 +5705,7 @@ local function CreateExtraButtonHolder(buttonType, displayName)
 
     mover:SetScript("OnDragStop", function(self)
         holder:StopMovingOrSizing()
-        local core = GetCore()
-        if not core or not core.SnapFramePosition then return end
-        local point, _, relPoint, x, y = core:SnapFramePosition(holder)
-        local db = GetExtraButtonDB(buttonType)
-        if db and point then
-            db.position = { point = point, relPoint = relPoint, x = x, y = y }
-        end
+        SaveExtraButtonHolderPosition(buttonType, holder)
     end)
 
     return holder, mover
@@ -5714,6 +5813,7 @@ local function QueueExtraButtonReanchor(buttonType)
         local settings = GetExtraButtonDB(buttonType)
         if settings and settings.enabled then
             ApplyExtraButtonSettings(buttonType)
+            ApplyExtraButtonFrameAnchor(buttonType)
         end
     end)
 end
@@ -5827,19 +5927,10 @@ InitializeExtraButtons = function()
 
     C_Timer.After(0.5, function()
         ApplyExtraButtonSettings("extraActionButton")
+        ApplyExtraButtonFrameAnchor("extraActionButton")
         ApplyExtraButtonSettings("zoneAbility")
+        ApplyExtraButtonFrameAnchor("zoneAbility")
         HookExtraButtonPositioning()
-        -- If the frame anchoring system manages these frames, let it
-        -- reposition the holders now that they exist.
-        local ApplyAnchor = _G.QUI_ApplyFrameAnchor
-        if ApplyAnchor then
-            if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("extraActionButton") then
-                ApplyAnchor("extraActionButton")
-            end
-            if _G.QUI_HasFrameAnchor and _G.QUI_HasFrameAnchor("zoneAbility") then
-                ApplyAnchor("zoneAbility")
-            end
-        end
     end)
 end
 
@@ -5850,7 +5941,9 @@ RefreshExtraButtons = function()
         return
     end
     ApplyExtraButtonSettings("extraActionButton")
+    ApplyExtraButtonFrameAnchor("extraActionButton")
     ApplyExtraButtonSettings("zoneAbility")
+    ApplyExtraButtonFrameAnchor("zoneAbility")
     -- Set up hooks on any newly available frames (handles late-loaded
     -- frames like ZoneAbilityFrame that may not exist at init time).
     HookExtraButtonPositioning()

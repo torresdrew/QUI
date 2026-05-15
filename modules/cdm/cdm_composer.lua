@@ -110,6 +110,9 @@ local TYPE_TAGS = {
     macro = "[Macro]",
 }
 
+local GetContainerDB
+local AssignCooldownRowsByCapacity
+
 ---------------------------------------------------------------------------
 -- CATALOG WRAPPERS
 --
@@ -120,7 +123,11 @@ local TYPE_TAGS = {
 function ns.CDMComposer.SeedFromBlizzard(containerKind)
     local catalog = ns.CDMCatalog
     if catalog and catalog.SeedFromBlizzard then
-        return catalog.SeedFromBlizzard(containerKind)
+        local entries, ready = catalog.SeedFromBlizzard(containerKind)
+        if ready and AssignCooldownRowsByCapacity then
+            AssignCooldownRowsByCapacity(entries, containerKind)
+        end
+        return entries, ready
     end
     return {}, false
 end
@@ -177,7 +184,7 @@ local function GetNcdmDB()
     return core and core.db and core.db.profile and core.db.profile.ncdm
 end
 
-local function GetContainerDB(containerKey)
+GetContainerDB = function(containerKey)
     local ncdm = GetNcdmDB()
     if not ncdm then return nil end
     -- Built-in containers live at ncdm[key] (user's saved data).
@@ -248,6 +255,20 @@ local function RefreshCDM()
     if _G.QUI_RefreshCDMBuffLayout then _G.QUI_RefreshCDMBuffLayout() end
 end
 
+local function NotifyComposerEntriesChanged(rebuildCatalog)
+    if rebuildCatalog and ns.CDMResolvers and ns.CDMResolvers._RebuildCatalog then
+        ns.CDMResolvers._RebuildCatalog()
+    end
+    if _G.QUI_OnSpellDataChanged then
+        _G.QUI_OnSpellDataChanged()
+    else
+        RefreshCDM()
+    end
+    if ns.CDMContainers and ns.CDMContainers.SaveActiveSpecProfile then
+        ns.CDMContainers.SaveActiveSpecProfile()
+    end
+end
+
 ---------------------------------------------------------------------------
 -- ENTRY HELPERS
 ---------------------------------------------------------------------------
@@ -270,6 +291,77 @@ local function ResolveEntryType(entry)
         return "spell"
     end
     return nil
+end
+
+local function GetCooldownRowLimits(db)
+    local rows = {}
+    if type(db) ~= "table" then return rows end
+    for r = 1, 3 do
+        local rowData = db["row" .. r]
+        local iconCount = rowData and tonumber(rowData.iconCount)
+        if iconCount and iconCount > 0 then
+            rows[#rows + 1] = { rowNum = r, max = iconCount }
+        end
+    end
+    return rows
+end
+
+local function FindCooldownRowWithRoom(activeRowNums, rowCounts, rowMax, preferredRow)
+    if type(activeRowNums) ~= "table" then return nil end
+
+    local startIndex = 1
+    if preferredRow and rowMax and rowMax[preferredRow] then
+        for i, rowNum in ipairs(activeRowNums) do
+            if rowNum == preferredRow then
+                local maxCount = rowMax[rowNum] or 0
+                local count = rowCounts and rowCounts[rowNum] or 0
+                if maxCount > 0 and count < maxCount then
+                    return rowNum
+                end
+                startIndex = i + 1
+                break
+            end
+        end
+    end
+
+    for i = startIndex, #activeRowNums do
+        local rowNum = activeRowNums[i]
+        local maxCount = rowMax and rowMax[rowNum] or 0
+        local count = rowCounts and rowCounts[rowNum] or 0
+        if maxCount > 0 and count < maxCount then
+            return rowNum
+        end
+    end
+    return nil
+end
+
+AssignCooldownRowsByCapacity = function(entries, containerKey)
+    if type(entries) ~= "table" or ResolveContainerType(containerKey) ~= "cooldown" then
+        return entries
+    end
+
+    local db = GetContainerDB and GetContainerDB(containerKey)
+    local rows = GetCooldownRowLimits(db)
+    if #rows == 0 then return entries end
+
+    local rowIdx = 1
+    local rowUsed = 0
+    for _, entry in ipairs(entries) do
+        if type(entry) == "table" then
+            local row = rows[rowIdx]
+            if row and rowUsed < row.max then
+                entry.row = row.rowNum
+                rowUsed = rowUsed + 1
+                if rowUsed >= row.max then
+                    rowIdx = rowIdx + 1
+                    rowUsed = 0
+                end
+            else
+                entry.row = nil
+            end
+        end
+    end
+    return entries
 end
 
 local function GetEntryIcon(entry)
@@ -1845,6 +1937,35 @@ end
 ---------------------------------------------------------------------------
 -- ENTRY CONTEXT MENU (right-click on grid cell)
 ---------------------------------------------------------------------------
+local function ClearSpecTrackerEntries(containerKey)
+    local globalDB = ns.Addon and ns.Addon.db and ns.Addon.db.global
+    local specTrackerSpells = globalDB and globalDB.ncdm and globalDB.ncdm.specTrackerSpells
+    local byContainer = specTrackerSpells and specTrackerSpells[containerKey]
+    if type(byContainer) ~= "table" then return end
+
+    for specKey in pairs(byContainer) do
+        byContainer[specKey] = {}
+    end
+end
+
+local function ClearActiveContainerEntries()
+    if InCombatLockdown() or not activeContainer then return false end
+
+    local db = GetContainerDB(activeContainer)
+    if not db then return false end
+
+    expandedOverride = nil
+    db.ownedSpells = {}
+    if db.entries ~= nil then
+        db.entries = {}
+    end
+    db.dormantSpells = {}
+    db.removedSpells = {}
+    ClearSpecTrackerEntries(activeContainer)
+    NotifyComposerEntriesChanged(true)
+    return true
+end
+
 local function ShowEntryContextMenu(anchorCell, entry, entryIndex, isDormant)
     if _G.QUI_EntryContextMenu then
         _G.QUI_EntryContextMenu:Hide()
@@ -1992,6 +2113,16 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex, isDormant)
             end)
         end }
     end
+
+    items[#items + 1] = { label = "Remove All Entries", color = { 1.0, 0.2, 0.2 }, action = function()
+        if ClearActiveContainerEntries() then
+            C_Timer.After(0.02, function()
+                RefreshEntryList()
+                RefreshAddList()
+                RefreshPreview()
+            end)
+        end
+    end }
 
     local itemHeight = 24
     local menuWidth = 180
@@ -2298,22 +2429,34 @@ RefreshEntryList = function()
 
     -- Build row grouping for cooldown containers
     local activeRowNums = {}
+    local rowMax = {}
+    local rowCounts = {}
     if isCooldown then
         for r = 1, 3 do
             local rd = db["row" .. r]
             if rd and rd.iconCount and rd.iconCount > 0 then
                 activeRowNums[#activeRowNums + 1] = r
+                rowMax[r] = rd.iconCount
+                rowCounts[r] = 0
             end
         end
     end
 
     local rowEntries = {}
+    local overflowEntries = {}
     if isCooldown and #activeRowNums > 0 then
         for i, entry in ipairs(entries) do
             if entry then
-                local r = entry.row or activeRowNums[1]
-                if not rowEntries[r] then rowEntries[r] = {} end
-                rowEntries[r][#rowEntries[r] + 1] = { entry = entry, idx = i }
+                local r = entry.row
+                r = FindCooldownRowWithRoom(activeRowNums, rowCounts, rowMax, r)
+
+                if r and rowCounts[r] and rowCounts[r] < rowMax[r] then
+                    if not rowEntries[r] then rowEntries[r] = {} end
+                    rowEntries[r][#rowEntries[r] + 1] = { entry = entry, idx = i }
+                    rowCounts[r] = rowCounts[r] + 1
+                else
+                    overflowEntries[#overflowEntries + 1] = { entry = entry, idx = i }
+                end
             end
         end
     end
@@ -2352,6 +2495,13 @@ RefreshEntryList = function()
                 end
                 FinishRow()
             end
+        end
+        if #overflowEntries > 0 then
+            RenderSectionHeader("Overflow  (" .. #overflowEntries .. " over row limits)", false)
+            for _, item in ipairs(overflowEntries) do
+                RenderEntryCell(item.entry, item.idx)
+            end
+            FinishRow()
         end
     else
         -- customBar entries render at the bar's anchor corner from index 1
@@ -3565,9 +3715,7 @@ local function BuildFooter(parent)
                     if db then
                         db.ownedSpells = seeded
                         db.removedSpells = {}
-                        if ns.CDMResolvers and ns.CDMResolvers._RebuildCatalog then
-                            ns.CDMResolvers._RebuildCatalog()
-                        end
+                        NotifyComposerEntriesChanged(true)
                     end
                 else
                     -- Seed empty (e.g., API not ready) — fall back to the

@@ -10,6 +10,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha40 - 2026-05-15
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha39 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Added
+- **CDM entries can now be cleared in one action.** The entry context menu includes a Remove All Entries command that clears active, dormant, removed, and spec-tracked entries for the current container.
+
+### Fixed
+- **Extra Action Button and Zone Ability positions stay in sync with Layout Mode anchors.** Dragging or nudging these holders now updates both the action-bar position settings and the shared frame-anchoring data, then reapplies the saved anchor after size refreshes.
+- **Action bar anchoring no longer falls back to raw Blizzard frames before QUI owns safe containers.** Layout Mode now waits for QUI-owned action bar containers instead of moving Blizzard-managed bars directly.
+- **Bonus Roll anchoring waits until Blizzard finishes showing or moving the prompt.** Saved anchors are reapplied on the next frame instead of inside the Show/SetPoint hook.
+- **CDM reset seeds respect cooldown row capacity.** Reset entries are assigned across active rows by configured capacity, and overflow entries are shown separately instead of collapsing everything into the first active row.
+
+### Internal
+- Added regression coverage for extra/zone button anchor sync, action bar resolver taint safety, deferred bonus roll anchoring, and CDM reset/clear-all behavior.
+
+
+
 ## v3.6.0-alpha39 - 2026-05-15
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha38 profiles carry over unchanged.
