@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha41 - 2026-05-15
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha40 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **CDM no longer shows false stack text from spell cast counts.** Mirror-backed cooldown icons now only use Blizzard mirror stack/charge text or the real multi-charge display path, preventing non-charge abilities from showing cast-count values as stacks.
+
+### Internal
+- Added regression coverage for mirror-backed cooldown icons whose spell cast count is non-zero but whose charge API reports no charges.
+
+
+
 ## v3.6.0-alpha40 - 2026-05-15
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha39 profiles carry over unchanged.

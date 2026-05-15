@@ -63,7 +63,7 @@ local ns = {
         QueryOverrideSpell = function() return nil end,
         QueryDisplayCount = function() return nil end,
         QuerySpellCount = function(spellID)
-            if spellID == 55091 then
+            if spellID == 473662 then
                 return 5
             end
             return nil
@@ -218,19 +218,19 @@ assert(mirrorBacked == true, "mirror-backed cooldown icons without mirror text s
 text, textSource, mirrorBacked = icons.ResolveIconStackText({
     _spellEntry = {
         type = "spell",
-        id = 55091,
-        spellID = 55091,
+        id = 473662,
+        spellID = 473662,
         kind = "cooldown",
         viewerType = "essential",
     },
-    _runtimeSpellID = 55091,
+    _runtimeSpellID = 473662,
     _blizzMirrorCooldownID = 73543,
     _blizzMirrorCategory = "essential",
 })
 
-assert(text == 5, "mirror-backed cooldown icons should fall back to spell cast count")
-assert(textSource == "spell-cast-count", "spell cast count fallback should identify its source")
-assert(mirrorBacked == true, "spell cast count fallback should keep the icon mirror-backed")
+assert(text == nil, "mirror-backed non-charge cooldown icons should not synthesize spell cast count as stack text")
+assert(textSource == nil, "spell cast count should not set a stack source")
+assert(mirrorBacked == true, "mirror-backed cooldown icons without mirror text should stay mirror-authoritative")
 
 icons:EnsurePool("essential")
 local pool = icons:GetIconPool("essential")

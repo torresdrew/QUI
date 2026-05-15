@@ -1124,9 +1124,9 @@ end
 -- Aura-kind: stacks via C_UnitAuras.GetAuraApplicationDisplayCount (via
 -- ns.CDMSpellData.GetAuraApplications, which already wraps it with
 -- IsSecretValue-aware caching).
--- Cooldown-kind: mirror text first, then Blizzard's cached cast-count fields
--- or C_Spell.GetSpellCastCount (via QuerySpellCount). Multi-charge fallback
--- still uses C_Spell.GetSpellDisplayCount, gated by cached maxCharges > 1.
+-- Cooldown-kind: mirror text first, then Blizzard's cached charge-count
+-- fields. Multi-charge fallback still uses C_Spell.GetSpellDisplayCount,
+-- gated by cached maxCharges > 1.
 ---------------------------------------------------------------------------
 local GetAuraApplicationsForSpell
 
@@ -1199,13 +1199,6 @@ function CDMIcons.ResolveIconStackText(icon)
         return mirrorText, mirrorSource, true
     end
     if mirrorBacked then
-        local spellCount, countSource
-        if CDMIcons.GetSpellCountForEntry then
-            spellCount, countSource = CDMIcons.GetSpellCountForEntry(sid, entry, icon)
-        end
-        if CDMIcons.ValueIsPresent(spellCount) then
-            return spellCount, countSource or "spell-count", true
-        end
         return nil, mirrorSource, true
     end
 
