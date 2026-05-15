@@ -10,6 +10,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha39 - 2026-05-15
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha38 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **Minimap waypoint pins stay on the minimap after `/reload`.** The addon button drawer now rejects numeric minimap pin/node frames before applying broad minimap button-name matching, while still collecting normal addon launcher buttons.
+
+### Internal
+- Added regression coverage for minimap drawer frame classification so pin-style minimap frames are not collected into the drawer.
+
+
+
 ## v3.6.0-alpha38 - 2026-05-15
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha37 profiles carry over unchanged.

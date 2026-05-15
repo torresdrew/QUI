@@ -2327,11 +2327,11 @@ local function IsMinimapButton(frame)
     if issecurevariable(_G, name) then return false end
     -- LibDBIcon buttons
     if name:match("^LibDBIcon10_") then return true end
+    -- Reject names ending in digits (pin/node/tracking frames)
+    if name:match("%d$") then return false end
     -- Common minimap button naming patterns
     if name:match("MinimapButton") or name:match("MinimapFrame") or name:match("MinimapIcon") then return true end
     if name:match("Minimap$") then return true end
-    -- Reject names ending in digits (pin/node/tracking frames)
-    if name:match("%d$") then return false end
     -- Accept if it has click handlers and is a child of a minimap container
     local parent = frame:GetParent()
     if parent and (parent == Minimap or parent == MinimapBackdrop or parent == MinimapCluster) then
