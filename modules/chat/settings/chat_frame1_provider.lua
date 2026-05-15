@@ -176,13 +176,18 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                 local w, h = SafeFrameNumber(f:GetWidth(), 0), SafeFrameNumber(f:GetHeight(), 0)
                 if k == "width" then w = v end
                 if k == "height" then h = v end
-                if _G.FCF_SetWindowSize then
-                    _G.FCF_SetWindowSize(f, w, h)
+                local sizing = ns.QUI and ns.QUI.ChatFrame1Sizing
+                if sizing and sizing.SetSize then
+                    sizing.SetSize(w, h)
                 else
-                    f:SetSize(w, h)
-                end
-                if _G.FCF_SavePositionAndDimensions then
-                    _G.FCF_SavePositionAndDimensions(f)
+                    if _G.FCF_SetWindowSize then
+                        _G.FCF_SetWindowSize(f, w, h)
+                    else
+                        f:SetSize(w, h)
+                    end
+                    if _G.FCF_SavePositionAndDimensions then
+                        _G.FCF_SavePositionAndDimensions(f)
+                    end
                 end
             end,
         }))

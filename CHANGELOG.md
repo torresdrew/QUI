@@ -10,6 +10,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha37 - 2026-05-15
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha36 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **Chat frame size sliders no longer recurse into a C stack overflow.** ChatFrame1 size writes now short-circuit when the requested width and height already match the live frame, so slider refreshes and initialization do not re-enter Blizzard sizing, Edit Mode persistence, or the slider sync hook.
+- **ChatFrame1 sizing now persists through Blizzard Edit Mode layout data.** Width and height changes from full settings, Layout Mode drawer controls, and Layout Mode corner grips route through the shared ChatFrame1 sizing helper, preserving legacy chat dimensions while also saving the live Edit Mode layout.
+
+### Added
+- **Chat Frame Width and Height controls are available in Layout Mode.** The Chat Frame drawer now resolves to the main chat feature and renders the same Frame Size controls as the full chat settings page, matching the damage meter Layout Mode sizing pattern.
+
+### Internal
+- Added regression coverage for ChatFrame1 Edit Mode size persistence, no-op resize writes, and Layout Mode drawer sizing metadata.
+
+
+
 ## v3.6.0-alpha36 - 2026-05-15
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha35 profiles carry over unchanged. Per-loadout CDM entries are additive and disabled by default.

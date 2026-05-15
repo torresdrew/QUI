@@ -2874,7 +2874,10 @@ do
                             local f = _G.ChatFrame1
                             if f then
                                 f:StopMovingOrSizing()
-                                if _G.FCF_SavePositionAndDimensions then
+                                local sizing = ns.QUI and ns.QUI.ChatFrame1Sizing
+                                if sizing and sizing.PersistCurrentSize then
+                                    sizing.PersistCurrentSize(f)
+                                elseif _G.FCF_SavePositionAndDimensions then
                                     _G.FCF_SavePositionAndDimensions(f)
                                 end
                             end

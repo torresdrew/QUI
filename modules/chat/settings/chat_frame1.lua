@@ -1,16 +1,17 @@
 local ADDON_NAME, ns = ...
 
+local Helpers = ns.Helpers
+ns.QUI = ns.QUI or {}
+local ChatFrame1Sizing = ns.QUI.ChatFrame1Sizing or {}
+ns.QUI.ChatFrame1Sizing = ChatFrame1Sizing
+
 local Settings = ns.Settings
 local ProviderFeatures = Settings and Settings.ProviderFeatures
-if not ProviderFeatures or type(ProviderFeatures.Register) ~= "function" then
-    return
-end
 
 -- ChatFrame1 size bounds. Lower limits match Blizzard's CHAT_FRAME_MIN_*; upper
 -- limits are loose enough to allow large displays without being unbounded.
 local CHAT_RESIZE_MIN_W, CHAT_RESIZE_MAX_W = 296, 1400
 local CHAT_RESIZE_MIN_H, CHAT_RESIZE_MAX_H = 120, 900
-local Helpers = ns.Helpers
 
 local function IsChatLayoutLockedDown()
     local I = ns.QUI and ns.QUI.Chat and ns.QUI.Chat._internals
@@ -25,6 +26,157 @@ local function SafeFrameNumber(value, fallback)
     return tonumber(value) or fallback or 0
 end
 
+local function ReadSafeNumber(value)
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(value) then
+        return nil
+    end
+    return tonumber(value)
+end
+
+local function ReadRoundedFrameNumber(value)
+    value = ReadSafeNumber(value)
+    if not value then return nil end
+    return math.floor(value + 0.5)
+end
+
+local function IsSameFrameSize(frame, width, height)
+    if not frame or type(frame.GetWidth) ~= "function" or type(frame.GetHeight) ~= "function" then
+        return false
+    end
+
+    local currentWidth = ReadRoundedFrameNumber(frame:GetWidth())
+    local currentHeight = ReadRoundedFrameNumber(frame:GetHeight())
+    if not currentWidth or not currentHeight then return false end
+
+    return currentWidth == math.floor(width + 0.5)
+        and currentHeight == math.floor(height + 0.5)
+end
+
+local function SaveLegacyChatDimensions(frame)
+    if frame and _G.FCF_SavePositionAndDimensions then
+        _G.FCF_SavePositionAndDimensions(frame)
+    end
+end
+
+local function SaveEditModeLayouts(manager)
+    if not manager then return false end
+
+    if type(manager.SaveLayouts) == "function" then
+        local ok = pcall(manager.SaveLayouts, manager)
+        return ok == true
+    end
+
+    if _G.C_EditMode and type(_G.C_EditMode.SaveLayouts) == "function" and manager.layoutInfo then
+        local ok = pcall(_G.C_EditMode.SaveLayouts, manager.layoutInfo)
+        return ok == true
+    end
+
+    return false
+end
+
+local function IsEditModeManagerReady(manager)
+    if not manager then return false end
+
+    if type(manager.IsInitialized) == "function" then
+        local ok, initialized = pcall(manager.IsInitialized, manager)
+        if ok then
+            return initialized == true
+        end
+        return false
+    end
+
+    return manager.layoutInfo ~= nil
+end
+
+local function SyncEditModeChatSize(frame, width, height)
+    if not frame then return false end
+    if IsChatLayoutLockedDown() then return false end
+
+    width = ReadSafeNumber(width)
+    height = ReadSafeNumber(height)
+    if not width or not height then return false end
+
+    width = math.floor(width)
+    height = math.floor(height)
+
+    local manager = _G.EditModeManagerFrame
+    if not IsEditModeManagerReady(manager) or type(manager.OnSystemSettingChange) ~= "function" then
+        return false
+    end
+
+    local enum = _G.Enum
+    local display = enum and enum.EditModeChatFrameDisplayOnlySetting
+    if display and display.Width and display.Height then
+        local okWidth = pcall(manager.OnSystemSettingChange, manager, frame, display.Width, width)
+        local okHeight = pcall(manager.OnSystemSettingChange, manager, frame, display.Height, height)
+        if okWidth and okHeight then
+            SaveEditModeLayouts(manager)
+            return true
+        end
+    end
+
+    local settings = enum and enum.EditModeChatFrameSetting
+    if not settings then return false end
+
+    local okWidthHundreds = pcall(manager.OnSystemSettingChange, manager, frame, settings.WidthHundreds, math.floor(width / 100))
+    local okWidthTens = pcall(manager.OnSystemSettingChange, manager, frame, settings.WidthTensAndOnes, math.floor(width % 100))
+    local okHeightHundreds = pcall(manager.OnSystemSettingChange, manager, frame, settings.HeightHundreds, math.floor(height / 100))
+    local okHeightTens = pcall(manager.OnSystemSettingChange, manager, frame, settings.HeightTensAndOnes, math.floor(height % 100))
+    if okWidthHundreds and okWidthTens and okHeightHundreds and okHeightTens then
+        SaveEditModeLayouts(manager)
+        return true
+    end
+
+    return false
+end
+
+function ChatFrame1Sizing.PersistSize(frame, width, height)
+    frame = frame or _G.ChatFrame1
+    SaveLegacyChatDimensions(frame)
+    return SyncEditModeChatSize(frame, width, height)
+end
+
+function ChatFrame1Sizing.PersistCurrentSize(frame)
+    frame = frame or _G.ChatFrame1
+    if not frame or type(frame.GetWidth) ~= "function" or type(frame.GetHeight) ~= "function" then
+        return false
+    end
+
+    local width = ReadSafeNumber(frame:GetWidth())
+    local height = ReadSafeNumber(frame:GetHeight())
+    if not width or not height then
+        SaveLegacyChatDimensions(frame)
+        return false
+    end
+
+    return ChatFrame1Sizing.PersistSize(frame, width, height)
+end
+
+function ChatFrame1Sizing.SetSize(width, height)
+    local frame = _G.ChatFrame1
+    if not frame or type(width) ~= "number" or type(height) ~= "number" then return false end
+    if IsChatLayoutLockedDown() then return false end
+    if IsSameFrameSize(frame, width, height) then return false end
+
+    if _G.FCF_SetWindowSize then
+        _G.FCF_SetWindowSize(frame, width, height)
+    else
+        frame:SetSize(width, height)
+    end
+
+    ChatFrame1Sizing.PersistSize(frame, width, height)
+
+    if _G.QUI_RefreshChatSizeSliders then
+        _G.QUI_RefreshChatSizeSliders()
+    end
+
+    return true
+end
+
+if not ProviderFeatures or type(ProviderFeatures.Register) ~= "function" then
+    return
+end
+
 local function ChatGetSize()
     local f = _G.ChatFrame1
     if not f then return CHAT_RESIZE_MIN_W, CHAT_RESIZE_MIN_H end
@@ -32,20 +184,7 @@ local function ChatGetSize()
 end
 
 local function ChatSetSize(w, h)
-    local f = _G.ChatFrame1
-    if not f or type(w) ~= "number" or type(h) ~= "number" then return end
-    if IsChatLayoutLockedDown() then return end
-    if _G.FCF_SetWindowSize then
-        _G.FCF_SetWindowSize(f, w, h)
-    else
-        f:SetSize(w, h)
-    end
-    if _G.FCF_SavePositionAndDimensions then
-        _G.FCF_SavePositionAndDimensions(f)
-    end
-    if _G.QUI_RefreshChatSizeSliders then
-        _G.QUI_RefreshChatSizeSliders()
-    end
+    ChatFrame1Sizing.SetSize(w, h)
 end
 
 local function ApplyChat()
@@ -91,9 +230,10 @@ local function RenderChatLayout(host, options)
 end
 
 local function RegisterChatFeature(id, subPageIndex, chatSections, includeLayoutRenderer)
-    ProviderFeatures:Register({
+    local feature = {
         id = id,
         moverKey = "chatFrame1",
+        lookupKeys = { id },
         category = "chat",
         nav = {
             tileId = "chat_tooltips",
@@ -110,7 +250,13 @@ local function RegisterChatFeature(id, subPageIndex, chatSections, includeLayout
         render = includeLayoutRenderer and {
             layout = RenderChatLayout,
         } or nil,
-    })
+    }
+
+    if includeLayoutRenderer then
+        feature.layoutPositionOnly = false
+    end
+
+    ProviderFeatures:Register(feature)
 end
 
 RegisterChatFeature("chatFrame1", 1, "general", true)

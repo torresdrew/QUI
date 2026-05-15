@@ -108,6 +108,7 @@ function ProviderFeatures:Register(spec)
         apply = spec.apply,
         createState = spec.createState,
         onNavigate = spec.onNavigate,
+        layoutPositionOnly = spec.layoutPositionOnly,
         searchContext = spec.searchContext,
         preview = spec.preview,
         providerKey = spec.providerKey,
