@@ -8,6 +8,19 @@ local ADDON_NAME, ns = ...
 local QUI = QUI
 local GUI = QUI.GUI
 
+local function IsLockedDown()
+    return type(InCombatLockdown) == "function" and InCombatLockdown()
+end
+
+local function SetKeyboardPropagation(frame, propagate)
+    if IsLockedDown() then return false end
+    if frame and frame.SetPropagateKeyboardInput then
+        frame:SetPropagateKeyboardInput(propagate)
+        return true
+    end
+    return false
+end
+
 function GUI:InitializeOptions()
     local frame = self:CreateMainFrame()
 
@@ -20,25 +33,25 @@ function GUI:InitializeOptions()
     frame:EnableKeyboard(true)
     frame:SetScript("OnKeyDown", function(self, key)
         if key == "ESCAPE" then
-            self:SetPropagateKeyboardInput(false)
+            SetKeyboardPropagation(self, false)
             self:Hide()
             return
         end
         -- Don't intercept if the user is typing in another edit box.
         local focused = GetCurrentKeyBoardFocus and GetCurrentKeyBoardFocus()
         if focused and focused ~= frame._searchBox and focused ~= (frame._searchBox and frame._searchBox.editBox) then
-            self:SetPropagateKeyboardInput(true)
+            SetKeyboardPropagation(self, true)
             return
         end
         local ctrl = IsControlKeyDown and IsControlKeyDown()
         if ctrl and key == "F" then
-            self:SetPropagateKeyboardInput(false)
+            SetKeyboardPropagation(self, false)
             C_Timer.After(0, function()
                 GUI:FocusSearchBox()
             end)
             return
         end
-        self:SetPropagateKeyboardInput(true)
+        SetKeyboardPropagation(self, true)
     end)
 
     -- Welcome tile (top of sidebar)

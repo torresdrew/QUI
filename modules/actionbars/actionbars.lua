@@ -9817,6 +9817,7 @@ do
             bar2 = true, bar3 = true, bar4 = true, bar5 = true,
             bar6 = true, bar7 = true, bar8 = true,
         }
+        local SPECIAL_BUTTON_BARS = { extraActionButton = true, zoneAbility = true }
 
         local copyKeys = {
             "iconZoom", "showBackdrop", "backdropAlpha", "showGloss", "glossAlpha", "showBorders",
@@ -9866,6 +9867,64 @@ do
             return content:GetHeight()
         end
 
+        local function BuildSpecialButtonSettings(content, barKey, barDB)
+            local sections = {}
+            local function relayout() U.StandardRelayout(content, sections) end
+            local DEFER = { deferOnDrag = true }
+
+            local function ShowSpecialButtonReloadPrompt()
+                local QUI = _G.QUI
+                local gui = QUI and QUI.GUI
+                if gui and gui.ShowConfirmation then
+                    gui:ShowConfirmation({
+                        title = "Reload UI?",
+                        message = "Enabling or disabling this special button requires a UI reload to fully take effect.",
+                        acceptText = "Reload",
+                        cancelText = "Later",
+                        onAccept = function()
+                            if QUI and QUI.SafeReload then
+                                QUI:SafeReload()
+                            end
+                        end,
+                    })
+                end
+            end
+
+            local function RefreshSpecialButton()
+                if type(_G.QUI_RefreshExtraButtons) == "function" then
+                    _G.QUI_RefreshExtraButtons()
+                end
+                if type(_G.QUI_RefreshActionBarFade) == "function" then
+                    _G.QUI_RefreshActionBarFade()
+                end
+                if type(_G.QUI_UpdateFramesAnchoredTo) == "function" then
+                    _G.QUI_UpdateFramesAnchoredTo(barKey)
+                end
+            end
+
+            local function RefreshSpecialButtonEnabled()
+                RefreshSpecialButton()
+                ShowSpecialButtonReloadPrompt()
+            end
+
+            CreateCollapsible(content, "Button", 3 * FORM_ROW + 8, function(body)
+                local sy = -4
+                sy = P(GUI:CreateFormToggle(body, "Enabled", "enabled", barDB, RefreshSpecialButtonEnabled,
+                    { description = "Let QUI manage this button's holder, position, scale, artwork, and mouseover behavior." }), body, sy)
+                sy = P(GUI:CreateFormToggle(body, "Hide Artwork", "hideArtwork", barDB, RefreshSpecialButton,
+                    { description = "Hide the decorative Blizzard artwork around this button while keeping the button itself visible." }), body, sy)
+                P(GUI:CreateFormSlider(body, "Scale",
+                    0.5, 2.0, 0.05, "scale", barDB, RefreshSpecialButton, DEFER,
+                    { description = "Scale multiplier applied to this special button frame." }), body, sy)
+            end, sections, relayout)
+
+            U.BuildPositionCollapsible(content, barKey, nil, sections, relayout)
+            U.BuildOpenFullSettingsLink(content, barKey, sections, relayout)
+
+            relayout()
+            return content:GetHeight()
+        end
+
         local function BuildBarSettings(content, barKey, width)
             if barKey == "totemBar" then
                 return BuildTotemBarSettings(content)
@@ -9877,6 +9936,10 @@ do
             local dbKey = SETTINGS_DB_KEY_MAP[barKey] or barKey
             local barDB = db.bars[dbKey]
             if not barDB then return 80 end
+
+            if SPECIAL_BUTTON_BARS[dbKey] then
+                return BuildSpecialButtonSettings(content, dbKey, barDB)
+            end
 
             local global = db.global
             local hasLayout = LAYOUT_BARS[dbKey]

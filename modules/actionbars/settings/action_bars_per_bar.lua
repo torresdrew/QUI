@@ -26,6 +26,8 @@ local BAR_OPTIONS = {
     { value = "petBar",    text = "Pet Bar" },
     { value = "microMenu", text = "Micro Menu" },
     { value = "bagBar",    text = "Bag Bar" },
+    { value = "extraActionButton", text = "Extra Action Button" },
+    { value = "zoneAbility",       text = "Zone Ability" },
     { value = "totemBar",  text = "Totem Bar" },
 }
 
@@ -33,7 +35,10 @@ local LOOKUP_KEYS = {
     "bar1", "bar2", "bar3", "bar4",
     "bar5", "bar6", "bar7", "bar8",
     "stanceBar", "petBar", "microMenu", "bagBar",
+    "extraActionButton", "zoneAbility",
 }
+
+local SPECIAL_BUTTON_OPTION_KEYS = { extraActionButton = true, zoneAbility = true }
 
 local VALID_BAR_KEYS = {}
 for _, option in ipairs(BAR_OPTIONS) do
@@ -58,6 +63,12 @@ end
 local function RefreshActionBars()
     if _G.QUI_RefreshActionBars then
         _G.QUI_RefreshActionBars()
+    end
+    if _G.QUI_RefreshExtraButtons then
+        _G.QUI_RefreshExtraButtons()
+    end
+    if _G.QUI_RefreshActionBarFade then
+        _G.QUI_RefreshActionBarFade()
     end
 end
 
@@ -109,15 +120,19 @@ local function CopySelectedBarToAll(selectionKey)
         return
     end
 
+    local sourceIsSpecial = SPECIAL_BUTTON_OPTION_KEYS[selectionKey] == true
     for _, option in ipairs(BAR_OPTIONS) do
         local destinationKey = option.value
         if destinationKey ~= selectionKey and bars[destinationKey] then
-            for key, value in pairs(source) do
-                if key ~= "enabled" then
-                    if type(value) == "table" then
-                        bars[destinationKey][key] = CopyTableInto(bars[destinationKey][key], value)
-                    else
-                        bars[destinationKey][key] = value
+            local destinationIsSpecial = SPECIAL_BUTTON_OPTION_KEYS[destinationKey] == true
+            if sourceIsSpecial == destinationIsSpecial then
+                for key, value in pairs(source) do
+                    if key ~= "enabled" then
+                        if type(value) == "table" then
+                            bars[destinationKey][key] = CopyTableInto(bars[destinationKey][key], value)
+                        else
+                            bars[destinationKey][key] = value
+                        end
                     end
                 end
             end

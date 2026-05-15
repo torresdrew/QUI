@@ -27,6 +27,13 @@ local COLORS = {
 }
 
 local FONT_FLAGS = "OUTLINE"
+local OVERLAY_LEVEL_OFFSET = 50
+local BUTTON_OVERLAY_LEVEL_OFFSET = OVERLAY_LEVEL_OFFSET + 5
+local BUTTON_OVERLAY_PADDING = 1
+local BUTTON_OVERLAY_STRATA = "TOOLTIP"
+local BUTTON_OVERLAY_BASE_LEVEL = 9000
+local MAX_FRAME_LEVEL = 10000
+local SOLID_TEXTURE = "Interface\\Buttons\\WHITE8x8"
 
 -- Local state (NEVER write to GameMenuFrame or its buttons)
 local skinState = { skinned = false }
@@ -35,6 +42,10 @@ local overlayContainer = nil   -- UIParent-child container for all overlays
 local menuBackdrop = nil       -- backdrop overlay for GameMenuFrame itself
 local quiStandaloneButton = nil -- standalone QUI button (parented to UIParent)
 local editModeButton = nil      -- standalone Edit Mode button (parented to UIParent)
+
+local function IsLockedDown()
+    return type(InCombatLockdown) == "function" and InCombatLockdown()
+end
 
 -- Get game menu font size from settings
 local function GetGameMenuFontSize()
@@ -55,17 +66,74 @@ local function GetOverlayContainer()
     return overlayContainer
 end
 
+local function GetFrameLevel(frame, fallback)
+    if frame and frame.GetFrameLevel then
+        local level = frame:GetFrameLevel()
+        if type(level) == "number" then
+            return level
+        end
+    end
+    return fallback or 0
+end
+
+local function SyncOverlayContainerLevel()
+    local oc = GetOverlayContainer()
+    if not GameMenuFrame then return oc end
+
+    if GameMenuFrame.GetFrameStrata and oc.SetFrameStrata then
+        local strata = GameMenuFrame:GetFrameStrata()
+        if type(strata) == "string" and strata ~= "" then
+            oc:SetFrameStrata(strata)
+        end
+    end
+
+    if oc.SetFrameLevel then
+        oc:SetFrameLevel(GetFrameLevel(GameMenuFrame, 0) + OVERLAY_LEVEL_OFFSET)
+    end
+
+    return oc
+end
+
+local function GetOverlayFrameLevel(button)
+    local buttonLevel = GetFrameLevel(button, 0)
+    return math.min(MAX_FRAME_LEVEL, math.max(BUTTON_OVERLAY_BASE_LEVEL, buttonLevel + BUTTON_OVERLAY_LEVEL_OFFSET))
+end
+
+local function SyncButtonOverlayLayering(overlay, button)
+    if not overlay then return end
+    if overlay.SetFrameStrata then
+        overlay:SetFrameStrata(BUTTON_OVERLAY_STRATA)
+    end
+    if overlay.SetFrameLevel then
+        overlay:SetFrameLevel(GetOverlayFrameLevel(button))
+    end
+end
+
+local function AnchorButtonOverlay(overlay, button)
+    if not overlay or not button then return end
+    overlay:ClearAllPoints()
+    overlay:SetPoint("TOPLEFT", button, "TOPLEFT", -BUTTON_OVERLAY_PADDING, BUTTON_OVERLAY_PADDING)
+    overlay:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", BUTTON_OVERLAY_PADDING, -BUTTON_OVERLAY_PADDING)
+end
+
 ---------------------------------------------------------------------------
 -- BUTTON OVERLAY (child of overlay container, positioned over button)
 ---------------------------------------------------------------------------
 local function GetOrCreateButtonOverlay(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    local oc = SyncOverlayContainerLevel()
     local info = buttonOverlays[button]
-    if info then return info end
+    if info then
+        if info.overlay then
+            AnchorButtonOverlay(info.overlay, button)
+            SyncButtonOverlayLayering(info.overlay, button)
+            info.overlay:Show()
+        end
+        return info
+    end
 
-    local oc = GetOverlayContainer()
     local overlay = CreateFrame("Frame", nil, oc, "BackdropTemplate")
-    overlay:SetAllPoints(button)
-    overlay:SetFrameLevel(button:GetFrameLevel() + 1)
+    AnchorButtonOverlay(overlay, button)
+    SyncButtonOverlayLayering(overlay, button)
     overlay:EnableMouse(false)
 
     local btnBgR = math.min(bgr + 0.07, 1)
@@ -81,79 +149,175 @@ local function GetOrCreateButtonOverlay(button, sr, sg, sb, sa, bgr, bgg, bgb, b
     return info
 end
 
+local function GetPixelSize(frame)
+    if SkinBase and SkinBase.GetPixelSize then
+        return SkinBase.GetPixelSize(frame, 1)
+    end
+    return 1
+end
+
+local function EnsureButtonOverlayTextures(info)
+    local overlay = info and info.overlay
+    if not overlay then return end
+
+    if not overlay.coverTexture then
+        overlay.coverTexture = overlay:CreateTexture(nil, "OVERLAY")
+        overlay.coverTexture:SetTexture(SOLID_TEXTURE)
+    end
+    if overlay.coverTexture.SetDrawLayer then
+        overlay.coverTexture:SetDrawLayer("OVERLAY", 0)
+    end
+    overlay.coverTexture:ClearAllPoints()
+    overlay.coverTexture:SetAllPoints(overlay)
+
+    if not overlay.borderTop then
+        overlay.borderTop = overlay:CreateTexture(nil, "OVERLAY")
+        overlay.borderBottom = overlay:CreateTexture(nil, "OVERLAY")
+        overlay.borderLeft = overlay:CreateTexture(nil, "OVERLAY")
+        overlay.borderRight = overlay:CreateTexture(nil, "OVERLAY")
+        overlay.borderTop:SetTexture(SOLID_TEXTURE)
+        overlay.borderBottom:SetTexture(SOLID_TEXTURE)
+        overlay.borderLeft:SetTexture(SOLID_TEXTURE)
+        overlay.borderRight:SetTexture(SOLID_TEXTURE)
+    end
+    if overlay.borderTop.SetDrawLayer then
+        overlay.borderTop:SetDrawLayer("OVERLAY", 1)
+        overlay.borderBottom:SetDrawLayer("OVERLAY", 1)
+        overlay.borderLeft:SetDrawLayer("OVERLAY", 1)
+        overlay.borderRight:SetDrawLayer("OVERLAY", 1)
+    end
+
+    local px = GetPixelSize(overlay)
+
+    overlay.borderTop:ClearAllPoints()
+    overlay.borderTop:SetPoint("TOPLEFT", overlay, "TOPLEFT", 0, 0)
+    overlay.borderTop:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", 0, 0)
+    overlay.borderTop:SetHeight(px)
+
+    overlay.borderBottom:ClearAllPoints()
+    overlay.borderBottom:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", 0, 0)
+    overlay.borderBottom:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", 0, 0)
+    overlay.borderBottom:SetHeight(px)
+
+    overlay.borderLeft:ClearAllPoints()
+    overlay.borderLeft:SetPoint("TOPLEFT", overlay, "TOPLEFT", 0, -px)
+    overlay.borderLeft:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", 0, px)
+    overlay.borderLeft:SetWidth(px)
+
+    overlay.borderRight:ClearAllPoints()
+    overlay.borderRight:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", 0, -px)
+    overlay.borderRight:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", 0, px)
+    overlay.borderRight:SetWidth(px)
+end
+
+local function SetButtonOverlayColors(info, bgR, bgG, bgB, bgA, borderR, borderG, borderB, borderA)
+    local overlay = info and info.overlay
+    if not overlay then return end
+    EnsureButtonOverlayTextures(info)
+
+    overlay.coverTexture:SetColorTexture(bgR, bgG, bgB, bgA)
+    overlay.borderTop:SetColorTexture(borderR, borderG, borderB, borderA)
+    overlay.borderBottom:SetColorTexture(borderR, borderG, borderB, borderA)
+    overlay.borderLeft:SetColorTexture(borderR, borderG, borderB, borderA)
+    overlay.borderRight:SetColorTexture(borderR, borderG, borderB, borderA)
+end
+
+local function RefreshButtonOverlayVisuals(info)
+    if not info then return end
+    local r, g, b, a = unpack(info.bgColor)
+    local sr, sg, sb, sa = unpack(info.skinColor)
+
+    if info.hovered then
+        SetButtonOverlayColors(
+            info,
+            math.min(r + 0.30, 1), math.min(g + 0.30, 1), math.min(b + 0.30, 1), a,
+            math.min(sr * 1.6, 1), math.min(sg * 1.6, 1), math.min(sb * 1.6, 1), sa
+        )
+        if info.overlayText then info.overlayText:SetTextColor(1, 1, 1, 1) end
+    else
+        SetButtonOverlayColors(info, r, g, b, a, sr, sg, sb, sa)
+        if info.overlayText then info.overlayText:SetTextColor(unpack(COLORS.text)) end
+    end
+end
+
+local function GetButtonText(button, fallback)
+    if fallback then return fallback end
+    if button and button.GetText then
+        local text = button:GetText()
+        if type(text) == "string" and text ~= "" then
+            return text
+        end
+    end
+    local fontString = button and button.GetFontString and button:GetFontString()
+    if fontString and fontString.GetText then
+        local text = fontString:GetText()
+        if type(text) == "string" and text ~= "" then
+            return text
+        end
+    end
+    return ""
+end
+
+local function UpdateOverlayText(info, label)
+    if not info or not info.overlay then return end
+    if not info.overlayText then
+        local text = info.overlay:CreateFontString(nil, "OVERLAY")
+        text:SetPoint("CENTER")
+        text:SetJustifyH("CENTER")
+        text:SetJustifyV("MIDDLE")
+        info.overlayText = text
+    end
+    if info.overlayText.SetDrawLayer then
+        info.overlayText:SetDrawLayer("OVERLAY", 2)
+    end
+
+    local fontPath = Helpers.GetGeneralFont()
+    local fontSize = GetGameMenuFontSize()
+    info.overlayText:SetFont(fontPath, fontSize, FONT_FLAGS)
+    info.overlayText:SetText(label or "")
+    info.overlayText:SetTextColor(unpack(COLORS.text))
+end
+
+local function ApplyOverlayHover(info, hovered)
+    if not info or not info.overlay or info.hovered == hovered then return end
+    info.hovered = hovered
+    RefreshButtonOverlayVisuals(info)
+end
+
+local function UpdateButtonHover(button)
+    local info = buttonOverlays[button]
+    if not info then return end
+    local hovered = button and button.IsMouseOver and button:IsMouseOver() or false
+    ApplyOverlayHover(info, hovered)
+end
+
+local function UpdateVisibleButtonHovers()
+    if GameMenuFrame and GameMenuFrame.buttonPool then
+        for button in GameMenuFrame.buttonPool:EnumerateActive() do
+            UpdateButtonHover(button)
+        end
+    end
+    if quiStandaloneButton and quiStandaloneButton:IsShown() then
+        UpdateButtonHover(quiStandaloneButton)
+    end
+    if editModeButton and editModeButton:IsShown() then
+        UpdateButtonHover(editModeButton)
+    end
+end
+
 ---------------------------------------------------------------------------
 -- STYLE A BUTTON (overlay approach — zero writes to the button itself)
 ---------------------------------------------------------------------------
-local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga, label)
     if not button then return end
 
     local info = GetOrCreateButtonOverlay(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local overlay = info.overlay
 
     local btnBgR, btnBgG, btnBgB = info.bgColor[1], info.bgColor[2], info.bgColor[3]
-    SkinBase.ApplyFullBackdrop(overlay, sr, sg, sb, sa, btnBgR, btnBgG, btnBgB, 1)
-
-    -- Hide default textures (these are reads + method calls, not property writes)
-    if button.Left then button.Left:SetAlpha(0) end
-    if button.Right then button.Right:SetAlpha(0) end
-    if button.Center then button.Center:SetAlpha(0) end
-    if button.Middle then button.Middle:SetAlpha(0) end
-
-    local highlight = button:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-    local pushed = button:GetPushedTexture()
-    if pushed then pushed:SetAlpha(0) end
-    local normal = button:GetNormalTexture()
-    if normal then normal:SetAlpha(0) end
-    local disabled = button:GetDisabledTexture()
-    if disabled then disabled:SetAlpha(0) end
-
-    -- Style button text (SetFont on fontstring child is safe)
-    local text = button:GetFontString()
-    if text then
-        local fontPath = Helpers.GetGeneralFont()
-        local fontSize = GetGameMenuFontSize()
-        text:SetFont(fontPath, fontSize, FONT_FLAGS)
-        text:SetTextColor(unpack(COLORS.text))
-    end
-
-    -- Hover effects: hook the BUTTON's OnEnter/OnLeave to change the overlay's
-    -- visuals. The overlay stays EnableMouse(false) (purely visual) so it never
-    -- intercepts clicks or motion events — the button handles all mouse interaction
-    -- natively. This avoids SetMouseClickEnabled fragility and works for both pool
-    -- buttons and the standalone QUI button.
-    if not info.hoverSetup then
-        info.hoverSetup = true
-        info.hovered = false
-
-        button:HookScript("OnEnter", function()
-            local binfo = buttonOverlays[button]
-            if not binfo or binfo.hovered then return end
-            binfo.hovered = true
-            local ov = binfo.overlay
-            if not ov then return end
-            local r, g, b, a = unpack(binfo.bgColor)
-            ov:SetBackdropColor(math.min(r + 0.30, 1), math.min(g + 0.30, 1), math.min(b + 0.30, 1), a)
-            local sr2, sg2, sb2, sa2 = unpack(binfo.skinColor)
-            ov:SetBackdropBorderColor(math.min(sr2 * 1.6, 1), math.min(sg2 * 1.6, 1), math.min(sb2 * 1.6, 1), sa2)
-            local txt = button:GetFontString()
-            if txt then txt:SetTextColor(1, 1, 1, 1) end
-            if binfo.overlayText then binfo.overlayText:SetTextColor(1, 1, 1, 1) end
-        end)
-
-        button:HookScript("OnLeave", function()
-            local binfo = buttonOverlays[button]
-            if not binfo or not binfo.hovered then return end
-            binfo.hovered = false
-            local ov = binfo.overlay
-            if not ov then return end
-            ov:SetBackdropColor(unpack(binfo.bgColor))
-            ov:SetBackdropBorderColor(unpack(binfo.skinColor))
-            local txt = button:GetFontString()
-            if txt then txt:SetTextColor(unpack(COLORS.text)) end
-            if binfo.overlayText then binfo.overlayText:SetTextColor(unpack(COLORS.text)) end
-        end)
-    end
+    SetButtonOverlayColors(info, btnBgR, btnBgG, btnBgB, 1, sr, sg, sb, sa)
+    UpdateOverlayText(info, GetButtonText(button, label))
+    UpdateButtonHover(button)
 end
 
 -- Update button overlay colors (for live refresh)
@@ -164,14 +328,14 @@ local function UpdateButtonColors(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local btnBgR = math.min(bgr + 0.07, 1)
     local btnBgG = math.min(bgg + 0.07, 1)
     local btnBgB = math.min(bgb + 0.07, 1)
-    info.overlay:SetBackdropColor(btnBgR, btnBgG, btnBgB, 1)
-    info.overlay:SetBackdropBorderColor(sr, sg, sb, sa)
     info.skinColor = { sr, sg, sb, sa }
     info.bgColor = { btnBgR, btnBgG, btnBgB, 1 }
+    RefreshButtonOverlayVisuals(info)
 end
 
 -- Hide Blizzard decorative elements (method calls, not property writes)
 local function HideBlizzardDecorations()
+    if IsLockedDown() then return end
     if GameMenuFrame.Border then GameMenuFrame.Border:Hide() end
     if GameMenuFrame.Header then GameMenuFrame.Header:Hide() end
 end
@@ -233,10 +397,10 @@ end
 local function CreateMenuBackdrop(sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if menuBackdrop then return menuBackdrop end
 
-    local oc = GetOverlayContainer()
+    local oc = SyncOverlayContainerLevel()
     menuBackdrop = CreateFrame("Frame", nil, oc, "BackdropTemplate")
     menuBackdrop:SetAllPoints(GameMenuFrame)
-    menuBackdrop:SetFrameLevel(GameMenuFrame:GetFrameLevel())
+    menuBackdrop:SetFrameLevel(math.max(GetFrameLevel(oc, 0) + 1, GetFrameLevel(GameMenuFrame, 0) + 1))
     menuBackdrop:EnableMouse(false)
 
     return menuBackdrop
@@ -314,9 +478,9 @@ local function RefreshGameMenuFontSize()
 
     if GameMenuFrame.buttonPool then
         for button in GameMenuFrame.buttonPool:EnumerateActive() do
-            local text = button:GetFontString()
-            if text then
-                text:SetFont(fontPath, fontSize, FONT_FLAGS)
+            local info = buttonOverlays[button]
+            if info and info.overlayText then
+                info.overlayText:SetFont(fontPath, fontSize, FONT_FLAGS)
             end
         end
     end
@@ -427,33 +591,7 @@ local function PositionStandaloneButton()
     local stg2 = core2 and core2.db and core2.db.profile and core2.db.profile.general
     if stg2 and stg2.skinGameMenu then
         local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(stg2, "gameMenu")
-        StyleButton(btn, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-
-        -- Ensure the "QUI" text renders above the overlay backdrop.
-        -- The overlay sits at button level+1, which can hide the button's
-        -- own FontString.  Mirror the text on the overlay so it's always visible.
-        local info = buttonOverlays[btn]
-        if info and info.overlay then
-            if not info.overlayText then
-                local ot = info.overlay:CreateFontString(nil, "OVERLAY")
-                ot:SetPoint("CENTER")
-                ot:SetJustifyH("CENTER")
-                ot:SetJustifyV("MIDDLE")
-                info.overlayText = ot
-            end
-            local fp = Helpers.GetGeneralFont()
-            local fs = GetGameMenuFontSize()
-            info.overlayText:SetFont(fp, fs, FONT_FLAGS)
-            info.overlayText:SetText("QUI")
-            info.overlayText:SetTextColor(unpack(COLORS.text))
-            -- Hide the original button text so it doesn't double-render
-            local origText = btn:GetFontString()
-            if origText then origText:SetAlpha(0) end
-
-            -- Overlay stays EnableMouse(false) (its default from creation).
-            -- Hover is driven by the button's HookScript OnEnter/OnLeave
-            -- (set by StyleButton), so clicks pass through natively.
-        end
+        StyleButton(btn, sr, sg, sb, sa, bgr, bgg, bgb, bga, "QUI")
     end
 
 end
@@ -521,26 +659,7 @@ local function PositionEditModeButton()
     local stg2 = core2 and core2.db and core2.db.profile and core2.db.profile.general
     if stg2 and stg2.skinGameMenu then
         local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors(stg2, "gameMenu")
-        StyleButton(btn, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-
-        -- Ensure the text renders above the overlay backdrop
-        local info = buttonOverlays[btn]
-        if info and info.overlay then
-            if not info.overlayText then
-                local ot = info.overlay:CreateFontString(nil, "OVERLAY")
-                ot:SetPoint("CENTER")
-                ot:SetJustifyH("CENTER")
-                ot:SetJustifyV("MIDDLE")
-                info.overlayText = ot
-            end
-            local fp = Helpers.GetGeneralFont()
-            local fs = GetGameMenuFontSize()
-            info.overlayText:SetFont(fp, fs, FONT_FLAGS)
-            info.overlayText:SetText("QUI Edit Mode")
-            info.overlayText:SetTextColor(unpack(COLORS.text))
-            local origText = btn:GetFontString()
-            if origText then origText:SetAlpha(0) end
-        end
+        StyleButton(btn, sr, sg, sb, sa, bgr, bgg, bgb, bga, "QUI Edit Mode")
     end
 end
 
@@ -626,15 +745,8 @@ if GameMenuFrame then
 
             ShowDimBehindGameMenu()
 
-            local oc = GetOverlayContainer()
+            local oc = SyncOverlayContainerLevel()
             oc:Show()
-
-            -- Restore OnUpdate handlers that were saved when menu was hidden
-            for button, info in pairs(buttonOverlays) do
-                if info and info.overlay and info._savedOnUpdate then
-                    info.overlay:SetScript("OnUpdate", info._savedOnUpdate)
-                end
-            end
 
             -- Skin pool buttons first so skinState.skinned is true when
             -- PositionStandaloneButton styles the QUI button.
@@ -659,12 +771,13 @@ if GameMenuFrame then
                 for button in GameMenuFrame.buttonPool:EnumerateActive() do
                     count = count + 1
                     -- Re-style ALL buttons each show (not just new ones).
-                    -- Pool re-acquisition wipes HookScript handlers, so
-                    -- hover hooks must be re-applied via StyleButton.
+                    -- Pool re-acquisition can replace button internals, so
+                    -- overlay anchors and mirrored labels are refreshed.
                     StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
                 end
                 lastButtonCount = count
             end
+            UpdateVisibleButtonHovers()
         elseif isShown then
             -- Already showing — check if buttons changed (InitButtons was called)
             local count = 0
@@ -691,6 +804,7 @@ if GameMenuFrame then
                     end
                 end
             end
+            UpdateVisibleButtonHovers()
         elseif wasShown then
             -- GameMenuFrame just became hidden — stop the polling loop
             wasShown = false
@@ -698,25 +812,12 @@ if GameMenuFrame then
 
             HideDimBehindGameMenu()
 
-            local oc = GetOverlayContainer()
+            local oc = SyncOverlayContainerLevel()
             oc:Hide()
 
-            -- Memory cleanup: nil out OnUpdate handlers on overlay frames to release
-            -- closures that hold references to potentially-recycled pool buttons.
-            -- overlayContainer:Hide() already stops OnUpdate from firing, but nilling
-            -- the script drops the closure references entirely.
-            -- Save the handler functions so we can restore them when menu reopens.
             for button, info in pairs(buttonOverlays) do
                 if info and info.overlay then
-                    if not info._savedOnUpdate then
-                        info._savedOnUpdate = info.overlay:GetScript("OnUpdate")
-                    end
-                    info.overlay:SetScript("OnUpdate", nil)
                     info.hovered = false
-                    -- Reset so hooks are re-applied on next show.
-                    -- Blizzard's pool calls SetScript on re-acquired buttons,
-                    -- which wipes all HookScript handlers.
-                    info.hoverSetup = false
                 end
             end
 

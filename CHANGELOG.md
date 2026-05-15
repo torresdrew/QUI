@@ -10,6 +10,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha43 - 2026-05-15
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha42 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Added
+- **Extra Action Button and Zone Ability can now be configured from Action Bars > Per Bar.** Both special buttons have dedicated Enabled, Hide Artwork, Scale, positioning, and full-settings controls without copying incompatible regular bar settings into their saved data.
+
+### Fixed
+- **Options keyboard handling avoids restricted propagation writes in combat.** Pressing ESC still closes the options panel, but the handler skips `SetPropagateKeyboardInput` while locked down.
+- **Game menu skinning keeps its visuals on addon-owned overlays during combat.** Button labels, hover state, borders, and background fills now render through high-layer overlay textures/text instead of mutating Blizzard button font strings, textures, or hook scripts during lockdown.
+- **Cursor reticle layering stays above other tooltip-level overlays.** The reticle now uses a stable high frame level and keeps the GCD swipe above the ring frame.
+
+### Internal
+- Added regression coverage for special-button per-bar settings, combat-safe options keyboard handling, combat game-menu skinning, and reticle layering.
+
+
+
 ## v3.6.0-alpha42 - 2026-05-15
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha41 profiles carry over unchanged.

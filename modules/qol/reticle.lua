@@ -35,6 +35,9 @@ local EnableCursorUpdate, DisableCursorUpdate
 
 -- GCD spell ID (standard global cooldown reference)
 local GCD_SPELL_ID = 61304
+local RETICLE_FRAME_STRATA = "TOOLTIP"
+local RETICLE_FRAME_LEVEL = 9500
+local GCD_FRAME_LEVEL_OFFSET = 2
 
 ---------------------------------------------------------------------------
 -- Ring texture paths
@@ -53,6 +56,15 @@ local RETICLE_OPTIONS = {
     chevron = { path = "uitools-icon-chevron-down", isAtlas = true },
     diamond = { path = "UF-SoulShard-FX-FrameGlow", isAtlas = true },
 }
+
+local function ApplyReticleLayering()
+    if not ringFrame then return end
+    ringFrame:SetFrameStrata(RETICLE_FRAME_STRATA)
+    ringFrame:SetFrameLevel(RETICLE_FRAME_LEVEL)
+    if gcdCooldown then
+        gcdCooldown:SetFrameLevel(RETICLE_FRAME_LEVEL + GCD_FRAME_LEVEL_OFFSET)
+    end
+end
 
 ---------------------------------------------------------------------------
 -- Get settings from database (cached for performance)
@@ -117,7 +129,6 @@ local function CreateReticle()
 
     -- Main frame (follows cursor)
     ringFrame = CreateFrame("Frame", "QUI_Reticle", UIParent)
-    ringFrame:SetFrameStrata("TOOLTIP")
     ringFrame:EnableMouse(false)  -- CRITICAL: Don't block mouse clicks
     ringFrame:SetSize(80, 80)
 
@@ -134,12 +145,12 @@ local function CreateReticle()
     gcdCooldown:SetHideCountdownNumbers(true)
     if gcdCooldown.SetDrawBling then gcdCooldown:SetDrawBling(false) end
     if gcdCooldown.SetUseCircularEdge then gcdCooldown:SetUseCircularEdge(true) end
-    gcdCooldown:SetFrameLevel(ringFrame:GetFrameLevel() + 2)
 
     -- Reticle texture (overlay layer - always on top)
     reticleTexture = ringFrame:CreateTexture(nil, "OVERLAY")
     reticleTexture:SetPoint("CENTER", ringFrame, "CENTER", 0, 0)
 
+    ApplyReticleLayering()
     ringFrame:Hide()
 end
 
