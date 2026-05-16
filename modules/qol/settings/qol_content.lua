@@ -559,7 +559,7 @@ local function BuildConsumableCheck(L, generalDB)
     if not generalDB then return end
 
     L.headerAt("Consumable Check")
-    L.intro("Display consumable status icons when triggered by events below. Left-click missing icons to use your preferred item; right-click in ready check to choose a different item.")
+    L.intro("Display consumable status icons when triggered by events below. Left-click an icon to use your preferred item; right-click any shown icon to choose or refresh a consumable.")
 
     local function RefreshConsumables()
         if _G.QUI_RefreshConsumables then _G.QUI_RefreshConsumables() end
