@@ -81,6 +81,39 @@ local ns = {
             end
         end,
     },
+    CDMSources = {
+        QuerySpellCooldown = function(spellID)
+            if spellID == 444347 then
+                return { isActive = true, isOnGCD = false }
+            elseif spellID == 555001 then
+                return { isActive = false, isOnGCD = false }
+            end
+            return nil
+        end,
+        QuerySpellCharges = function()
+            return { currentCharges = 1, maxCharges = 2, isActive = true }
+        end,
+        QuerySpellUsable = function()
+            return true, false
+        end,
+        QueryItemCooldown = function(itemID)
+            if itemID == 444347 then
+                return 10, 30, 1
+            end
+            return nil, nil, nil
+        end,
+        QueryItemSpell = function(itemID)
+            if itemID == 444347 then
+                return "Debug Item Use", 555001
+            end
+            return nil, nil
+        end,
+    },
+    CDMResolvers = {
+        GetCooldownInfoField = function(info, key)
+            return info and info[key], false
+        end,
+    },
 }
 
 assert(loadfile("QUI_Debug/cdm_debug.lua"))("QUI_Debug", ns)
@@ -116,5 +149,15 @@ assert(writeState:find("mdurSrc=aura-related-child", 1, true),
     "write trace state should include the mirror duration source")
 assert(writeState:find("mInst=422", 1, true),
     "write trace state should include the mirror aura instance")
+
+local apiSummaryOk, apiSummary = pcall(ns.CDMIcons.EventTraceAPISummary, 444347)
+assert(apiSummaryOk,
+    "event trace API summary should not require legacy CDMIcons helper exports: " .. tostring(apiSummary))
+assert(apiSummary:find("cdActive=true", 1, true),
+    "event trace API summary should read cooldown fields through the resolver seam")
+assert(apiSummary:find("itemSpell=555001", 1, true),
+    "event trace API summary should resolve item use spell IDs through source adapters")
+assert(apiSummary:find("itemSpellCd=false/false", 1, true),
+    "event trace API summary should include item-use spell cooldown state")
 
 print("OK: cdm_debug_event_trace_mirror_test")

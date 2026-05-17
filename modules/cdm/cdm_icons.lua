@@ -487,8 +487,25 @@ local function GetAuraDisplaySourceID(r, fallbackID)
     return sourceID or fallbackID
 end
 
+local function ClearPandemicStateForIcon(icon)
+    if not icon then return end
+    icon._blizzPandemicActive = nil
+    icon._blizzPandemicStateKnown = nil
+
+    local glows = ns._OwnedGlows
+    if glows and glows.ClearPandemicState then
+        glows.ClearPandemicState(icon)
+    elseif icon.PandemicGlow then
+        icon.PandemicGlow:SetAlpha(0)
+    end
+end
+
 local function ClearAuraStateForIcon(icon, entry)
     if not icon then return end
+    local hadAuraState = icon._auraActive == true
+        or icon._lastAuraDurObj ~= nil
+        or icon._blizzPandemicStateKnown == true
+        or icon.PandemicGlow ~= nil
     icon._auraActive = false
     icon._auraUnit = nil
     icon._auraInstanceID = nil
@@ -498,6 +515,9 @@ local function ClearAuraStateForIcon(icon, entry)
     icon._lastAuraSourceID = nil
     icon._activeAuraSpellID = nil
     icon._auraIsHarmful = nil
+    if hadAuraState then
+        ClearPandemicStateForIcon(icon)
+    end
 end
 
 local function ApplyAuraStateToIcon(icon, entry, sid, r)
@@ -1017,6 +1037,8 @@ ApplyResolvedCooldown = function(icon)
                 icon._resolvedCooldownMode = mode
             end
         end
+    elseif mode ~= "aura" then
+        ClearAuraStateForIcon(icon, entry)
     end
 
     _resolverRuntimePolicy.UpdateIconChargeMirrorCycle(icon, mode, sid or resolvedSpellID)

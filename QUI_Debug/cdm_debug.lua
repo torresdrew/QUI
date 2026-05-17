@@ -22,16 +22,101 @@ local Helpers     = ns.Helpers
 local CDMIcons    = ns.CDMIcons
 local iconPools   = ns.CDMIconFactory and ns.CDMIconFactory._iconPools or {}
 local Sources     = ns.CDMSources
+local Resolvers   = ns.CDMResolvers
 local GetTime     = GetTime
 
 local function TrimText(text)
     return (text and tostring(text) or ""):gsub("^%s+", ""):gsub("%s+$", "")
 end
 
+local function DebugIsSecretValue(value)
+    if Helpers and Helpers.IsSecretValue then
+        local ok, isSecret = pcall(Helpers.IsSecretValue, value)
+        if ok and isSecret then return true end
+    end
+    if issecretvalue then
+        local ok, isSecret = pcall(issecretvalue, value)
+        if ok and isSecret then return true end
+    end
+    return false
+end
+
+local function EventTraceCooldownInfoField(info, key)
+    if Resolvers and Resolvers.GetCooldownInfoField then
+        return Resolvers.GetCooldownInfoField(info, key)
+    end
+    if not info then return nil, false end
+
+    local value = info[key]
+    if DebugIsSecretValue(value) then
+        return value, true
+    end
+    return value, false
+end
+
+local function EventTraceGetItemUseSpellID(itemID)
+    if not itemID then return nil end
+
+    if Sources and Sources.QueryItemSpell then
+        local _, spellID = Sources.QueryItemSpell(itemID)
+        if spellID then
+            return spellID
+        end
+    end
+
+    if Sources and Sources.QueryFirstTriggeredSpellForItem then
+        local itemQuality
+        if Sources.QueryItemQualityByID then
+            local quality = Sources.QueryItemQualityByID(itemID)
+            if quality ~= nil then
+                itemQuality = quality
+            end
+        end
+
+        local spellID = Sources.QueryFirstTriggeredSpellForItem(itemID, itemQuality)
+        if spellID then
+            return spellID
+        end
+    end
+
+    return nil
+end
+
+local function EventTraceIsItemLikeEntry(entry)
+    return entry and (entry.type == "item" or entry.type == "trinket" or entry.type == "slot")
+end
+
+local function EventTraceResolveItemCooldownIdentity(entry)
+    if not entry then return nil, nil, nil, nil end
+
+    local itemID, slotID
+    if entry.type == "item" then
+        itemID = entry.id
+    elseif entry.type == "trinket" or entry.type == "slot" then
+        slotID = entry.id
+        if Sources and Sources.QueryInventoryItemID then
+            itemID = Sources.QueryInventoryItemID("player", slotID)
+        end
+        itemID = itemID or entry.itemID
+    elseif entry.type == "macro" and Resolvers and Resolvers.ResolveMacro then
+        local resolvedID, resolvedType = Resolvers.ResolveMacro(entry)
+        if resolvedType == "item" then
+            itemID = resolvedID
+        end
+    end
+
+    if not itemID then return nil, slotID, nil, nil end
+
+    local itemSpellID = EventTraceGetItemUseSpellID(itemID)
+    local keySource = slotID and (tostring(slotID) .. ":" .. tostring(itemID)) or tostring(itemID)
+    return itemID, slotID, itemSpellID, keySource
+end
+
 ---------------------------------------------------------------------------
 -- VALUE FORMATTING (event-trace)
 ---------------------------------------------------------------------------
 function CDMIcons.EventTraceValue(value)
+    if DebugIsSecretValue(value) then return "<SECRET:" .. type(value) .. ">" end
     if value == nil then return "nil" end
     return tostring(value)
 end
@@ -102,8 +187,8 @@ function CDMIcons.EventTraceItemUseSpellMatches(targetID, value)
         for _, icon in ipairs(pool) do
             local entry = icon and icon._spellEntry
             if CDMIcons.EventTraceIconMatches(icon, targetID)
-               and CDMIcons.IsItemLikeEntry(entry) then
-                local _, _, itemSpellID = CDMIcons.ResolveItemCooldownIdentity(entry)
+               and EventTraceIsItemLikeEntry(entry) then
+                local _, _, itemSpellID = EventTraceResolveItemCooldownIdentity(entry)
                 if itemSpellID == spellID then
                     return true
                 end
@@ -229,19 +314,19 @@ function CDMIcons.EventTraceAPISummary(spellID)
     local chargeActive, currentCharges, maxCharges = nil, nil, nil
     local usable, resourceBlocked = nil, nil
     local itemStart, itemDuration, itemEnabled = nil, nil, nil
-    local itemSpellID = CDMIcons.GetItemUseSpellID(spellID)
+    local itemSpellID = EventTraceGetItemUseSpellID(spellID)
     local itemSpellCdActive, itemSpellCdOnGCD = nil, nil
 
     if Sources and Sources.QuerySpellCooldown then
         local cdInfo = Sources.QuerySpellCooldown(spellID)
         if cdInfo then
-            cdActive = CDMIcons.GetCooldownInfoField(cdInfo, "isActive")
+            cdActive = EventTraceCooldownInfoField(cdInfo, "isActive")
             cdOnGCD = cdInfo.isOnGCD
         end
         if itemSpellID then
             local itemSpellCdInfo = Sources.QuerySpellCooldown(itemSpellID)
             if itemSpellCdInfo then
-                itemSpellCdActive = CDMIcons.GetCooldownInfoField(itemSpellCdInfo, "isActive")
+                itemSpellCdActive = EventTraceCooldownInfoField(itemSpellCdInfo, "isActive")
                 itemSpellCdOnGCD = itemSpellCdInfo.isOnGCD
             end
         end
@@ -892,14 +977,15 @@ local function CDMGCDCall(owner, methodName)
 end
 
 local function CDMGCDResolveCooldownState(icon)
-    if not CDMIcons.ResolveCooldownState then
+    local resolveCooldownState = Resolvers and Resolvers.ResolveCooldownState or CDMIcons.ResolveCooldownState
+    if not resolveCooldownState then
         return nil
     end
     local entry = icon and icon._spellEntry
     if not entry then
         return nil
     end
-    return CDMIcons.ResolveCooldownState({
+    return resolveCooldownState({
         entry = entry,
         runtimeSpellID = icon._runtimeSpellID,
         mirrorCooldownID = icon._blizzMirrorCooldownID,
@@ -1014,10 +1100,8 @@ local function CDMGCDPrintWatchSample(elapsed, needle, targetID)
                     entry.itemID)
                 local cdInfo = sid and Sources and Sources.QuerySpellCooldown
                     and Sources.QuerySpellCooldown(sid)
-                local cdActive = cdInfo and CDMIcons.GetCooldownInfoField
-                    and CDMIcons.GetCooldownInfoField(cdInfo, "isActive")
-                local cdOnGCD = cdInfo and CDMIcons.GetCooldownInfoField
-                    and CDMIcons.GetCooldownInfoField(cdInfo, "isOnGCD")
+                local cdActive = cdInfo and EventTraceCooldownInfoField(cdInfo, "isActive")
+                local cdOnGCD = cdInfo and EventTraceCooldownInfoField(cdInfo, "isOnGCD")
                 local gcdDur = sid and Sources and Sources.QuerySpellCooldownDuration
                     and Sources.QuerySpellCooldownDuration(sid, false)
                 local realDur = sid and Sources and Sources.QuerySpellCooldownDuration
@@ -1148,10 +1232,8 @@ local function RunCDMDebugGCD(msg)
                     entry.itemID)
                 local cdInfo = sid and Sources and Sources.QuerySpellCooldown
                     and Sources.QuerySpellCooldown(sid)
-                local cdActive = cdInfo and CDMIcons.GetCooldownInfoField
-                    and CDMIcons.GetCooldownInfoField(cdInfo, "isActive")
-                local cdOnGCD = cdInfo and CDMIcons.GetCooldownInfoField
-                    and CDMIcons.GetCooldownInfoField(cdInfo, "isOnGCD")
+                local cdActive = cdInfo and EventTraceCooldownInfoField(cdInfo, "isActive")
+                local cdOnGCD = cdInfo and EventTraceCooldownInfoField(cdInfo, "isOnGCD")
                 local gcdDur = sid and Sources and Sources.QuerySpellCooldownDuration
                     and Sources.QuerySpellCooldownDuration(sid, false)
                 local realDur = sid and Sources and Sources.QuerySpellCooldownDuration
@@ -1228,6 +1310,41 @@ local function RunCDMDebugGCD(msg)
     end
 end
 
+local function CDMDebugClassifySpellCooldownState(spellID)
+    if CDMIcons.ClassifySpellCooldownState then
+        return CDMIcons.ClassifySpellCooldownState(spellID)
+    end
+    if not (spellID and Sources and Sources.QuerySpellCooldown) then
+        return nil, nil, nil
+    end
+
+    local cdInfo = Sources.QuerySpellCooldown(spellID)
+    if not cdInfo then
+        return nil, nil, nil
+    end
+
+    local apiActive, apiSecret = EventTraceCooldownInfoField(cdInfo, "isActive")
+    local onGCD, gcdSecret = EventTraceCooldownInfoField(cdInfo, "isOnGCD")
+    if apiSecret or gcdSecret then
+        return nil, nil, nil
+    end
+
+    local realActive
+    if apiActive == true then
+        if onGCD == true then
+            local realDur = Sources.QuerySpellCooldownDuration
+                and Sources.QuerySpellCooldownDuration(spellID, true)
+            realActive = realDur and true or false
+        else
+            realActive = true
+        end
+    elseif apiActive == false then
+        realActive = false
+    end
+
+    return apiActive, realActive, onGCD
+end
+
 -- Diagnostic for charge-spell recharge swipe issues.
 -- Walks visible CDM icons, finds entries matching the name, prints the
 -- relevant gates: hasCharges, classifier output, charge/cd DurObj presence.
@@ -1247,7 +1364,7 @@ local function RunCDMDebugCharge(msg)
                 matches = matches + 1
                 local sid = icon._runtimeSpellID
                     or entry.overrideSpellID or entry.spellID or entry.id
-                local apiA, realA, onGCD = CDMIcons.ClassifySpellCooldownState(sid)
+                local apiA, realA, onGCD = CDMDebugClassifySpellCooldownState(sid)
                 local chargeDur = Sources and Sources.QuerySpellChargeDuration
                     and Sources.QuerySpellChargeDuration(sid)
                 local cdDur = Sources and Sources.QuerySpellCooldownDuration

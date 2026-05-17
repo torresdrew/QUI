@@ -17,6 +17,27 @@ local auraDur = { token = "aura-dur" }
 local cooldownDur = { token = "cooldown-dur" }
 local chargeDur = { token = "charge-dur" }
 local gcdDur = { token = "gcd-dur" }
+local secretChargeZero = { token = "secret-current-charges", value = 0 }
+local secretChargeOne = { token = "secret-current-charges", value = 1 }
+
+function issecretvalue(value)
+    return value == secretChargeZero or value == secretChargeOne
+end
+
+Enum = { LuaCurveType = { Step = "Step" } }
+C_CurveUtil = {
+    CreateCurve = function()
+        return {
+            SetType = noop,
+            AddPoint = noop,
+            Evaluate = function(_, value)
+                if value == secretChargeZero then return 1 end
+                if value == secretChargeOne then return 0 end
+                error("unexpected curve input")
+            end,
+        }
+    end,
+}
 
 local states = {}
 
@@ -64,13 +85,38 @@ local ns = {
             if spellID == 60001 then
                 return { maxCharges = 2, isActive = true }
             end
+            if spellID == 60002 then
+                return { currentCharges = secretChargeOne, maxCharges = 2, isActive = true }
+            end
+            if spellID == 60003 then
+                return { currentCharges = secretChargeZero, maxCharges = 2, isActive = true }
+            end
+            if spellID == 60004 then
+                return { currentCharges = secretChargeZero, maxCharges = 2, isActive = true }
+            end
+            if spellID == 60005 then
+                return { currentCharges = secretChargeOne, maxCharges = 2, isActive = true }
+            end
             return nil
         end,
         QuerySpellChargeDuration = function(spellID)
             if spellID == 60001 then return chargeDur end
+            if spellID == 60002 then return chargeDur end
+            if spellID == 60003 then return chargeDur end
+            if spellID == 60004 then return chargeDur end
+            if spellID == 60005 then return chargeDur end
             return nil
         end,
         QuerySpellCooldown = function(spellID)
+            if spellID == 60002 then
+                return { isActive = false, isOnGCD = false }
+            end
+            if spellID == 60003 or spellID == 60004 then
+                return { isActive = true, isOnGCD = false }
+            end
+            if spellID == 60005 then
+                return { isActive = true, isOnGCD = false }
+            end
             if spellID == 70001 then
                 return { isActive = true, isOnGCD = true }
             end
@@ -82,7 +128,16 @@ local ns = {
             end
             return nil
         end,
-        QuerySpellUsable = function()
+        QuerySpellUsable = function(spellID)
+            if spellID == 60002 then
+                return true
+            elseif spellID == 60003 then
+                return false
+            elseif spellID == 60004 then
+                return true
+            elseif spellID == 60005 then
+                return true
+            end
             return nil
         end,
     },
@@ -185,6 +240,89 @@ assert(state.mirrorBacked == nil, "live recharge without mirror should not be mi
 assert(state.hasCharges == true, "charge mode should publish hasCharges")
 assert(state.isRealCooldownMode == true, "charge mode should publish real cooldown mode")
 assert(state.hasDurationObject == true, "charge mode should report its DurationObject")
+
+state = resolve({
+    entry = {
+        type = "spell",
+        kind = "cooldown",
+        id = 60002,
+        spellID = 60002,
+        viewerType = "essential",
+        hasCharges = true,
+    },
+    runtimeSpellID = 60002,
+    containerKey = "essential",
+    useBuffSwipe = false,
+})
+
+assert(state.mode == "charge", "usable live recharge should resolve as charge")
+assert(state.rechargeActive == true, "usable live recharge should publish rechargeActive")
+assert(state.isOnCooldown == false, "usable live recharge with charges remaining should not be treated as unavailable")
+assert(state.hasChargesRemaining == true,
+    "usable live recharge should publish hasChargesRemaining for desaturation and visibility policy")
+
+state = resolve({
+    entry = {
+        type = "spell",
+        kind = "cooldown",
+        id = 60003,
+        spellID = 60003,
+        viewerType = "essential",
+        hasCharges = true,
+    },
+    runtimeSpellID = 60003,
+    containerKey = "essential",
+    useBuffSwipe = false,
+})
+
+assert(state.mode == "charge", "zero-charge live recharge should still resolve as charge")
+assert(state.rechargeActive == true, "zero-charge live recharge should publish rechargeActive")
+assert(state.isOnCooldown == true,
+    "unusable live recharge must be treated as unavailable without reading currentCharges")
+assert(state.hasChargesRemaining == false,
+    "zero-charge live recharge must not publish hasChargesRemaining")
+
+state = resolve({
+    entry = {
+        type = "spell",
+        kind = "cooldown",
+        id = 60004,
+        spellID = 60004,
+        viewerType = "essential",
+        hasCharges = true,
+    },
+    runtimeSpellID = 60004,
+    containerKey = "essential",
+    useBuffSwipe = false,
+})
+
+assert(state.mode == "charge", "active cooldown with a secret charge count should stay in charge mode")
+assert(state.rechargeActive == true, "active cooldown with a secret charge count should keep the recharge swipe")
+assert(state.isOnCooldown == true,
+    "active cooldown should mark the charged spell unavailable even when the usable boolean is true")
+assert(state.hasChargesRemaining == false,
+    "active cooldown should not publish hasChargesRemaining when charge count is secret")
+
+state = resolve({
+    entry = {
+        type = "spell",
+        kind = "cooldown",
+        id = 60005,
+        spellID = 60005,
+        viewerType = "essential",
+        hasCharges = true,
+    },
+    runtimeSpellID = 60005,
+    containerKey = "essential",
+    useBuffSwipe = false,
+})
+
+assert(state.mode == "charge", "active cooldown with one secret charge should stay in charge mode")
+assert(state.rechargeActive == true, "active cooldown with one secret charge should keep the recharge swipe")
+assert(state.isOnCooldown == false,
+    "one-charge live recharge should decode currentCharges to a Lua-safe available state")
+assert(state.hasChargesRemaining == true,
+    "one-charge live recharge should publish hasChargesRemaining even while the cooldown API is active")
 
 state = resolve({
     entry = cooldownEntry(70001),

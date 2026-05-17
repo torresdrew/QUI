@@ -104,6 +104,14 @@ makeState(50006, "buff",
     { aura = auraDur },
     { durObj = auraDur, durObjSource = "aura-duration", resolvedMode = "aura" })
 
+-- Scenario G: cooldown utility entry with a live aura and active recharge.
+-- The mirror can only see the charge/cooldown lanes, while the captured
+-- UNIT_AURA runtime owns the aura overlay. With the option enabled, aura
+-- still wins; with it disabled, recharge wins.
+makeState(50007, "utility",
+    { resource = chargeDur, cooldown = cooldownDur },
+    { durObj = chargeDur, durObjSource = "spell-charge", resolvedMode = "charge" })
+
 local ns = {
     Helpers = {
         IsSecretValue = function() return false end,
@@ -121,6 +129,20 @@ local ns = {
         end,
         GetCooldownIDForViewer = function() return nil end,
         GetDirectCooldownIDForViewer = function() return nil end,
+    },
+    CDMAuraRuntime = {
+        ResolveState = function(params)
+            if params and params.spellID == 50007 then
+                return {
+                    isActive = true,
+                    durObj = auraDur,
+                    auraInstanceID = 7007,
+                    auraUnit = "player",
+                    resolvedAuraSpellID = 50007,
+                }
+            end
+            return nil
+        end,
     },
 }
 
@@ -205,6 +227,40 @@ assert(state.mode == "aura",
     "scenario F: aura-viewer entry with aura lane should resolve to aura mode (got " .. tostring(state.mode) .. ")")
 assert(state.durObj == auraDur,
     "scenario F: aura-viewer entry should carry the aura DurationObject")
+
+local utilityEntry = entry(50007)
+utilityEntry.viewerType = "utility"
+utilityEntry.hasCharges = true
+state = resolvers.ResolveCooldownState({
+    entry = utilityEntry,
+    runtimeSpellID = 50007,
+    mirrorCooldownID = 50007,
+    mirrorCategory = "utility",
+    containerKey = "utility",
+    useBuffSwipe = true,
+})
+
+assert(state and state.mode == "aura",
+    "scenario G: utility cooldown entry should show active aura before recharge when aura phase is enabled")
+assert(state.durObj == auraDur,
+    "scenario G: utility cooldown entry should carry the captured aura DurationObject first")
+assert(state.auraActive == true,
+    "scenario G: utility cooldown entry should publish auraActive from runtime capture")
+
+state = resolvers.ResolveCooldownState({
+    entry = utilityEntry,
+    runtimeSpellID = 50007,
+    mirrorCooldownID = 50007,
+    mirrorCategory = "utility",
+    containerKey = "utility",
+    useBuffSwipe = false,
+    skipAuraPhase = true,
+})
+
+assert(state and state.mode == "charge",
+    "scenario G: disabled aura phase should fall back to recharge before cooldown")
+assert(state.durObj == chargeDur,
+    "scenario G: disabled aura phase should carry the recharge DurationObject")
 
 local showCooldownIconAuraPhase = true
 

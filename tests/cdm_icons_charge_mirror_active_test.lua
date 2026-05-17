@@ -31,6 +31,7 @@ C_Timer = {
 
 local chargeDuration = { token = "charge-duration" }
 local storedState
+local pandemicCleared = false
 
 local ns = {
     Helpers = {
@@ -88,7 +89,25 @@ local ns = {
         IsAuraEntry = function(entry) return entry and entry.kind == "aura" end,
         ResolveSpellActiveState = function() return nil end,
         ResolveCooldownActivityState = function() return nil end,
-        ResolveCooldownState = function()
+        ResolveCooldownState = function(context)
+            local entry = context and context.entry
+            if entry and entry.id == 444348 then
+                return {
+                    mode = "charge",
+                    active = true,
+                    isActive = true,
+                    durObj = chargeDuration,
+                    sourceID = "444348:2",
+                    spellID = 444348,
+                    mirrorBacked = nil,
+                    isOnCooldown = true,
+                    rechargeActive = true,
+                    hasCharges = true,
+                    hasChargesRemaining = false,
+                    gcdOnly = false,
+                }
+            end
+
             local state = {
                 cooldownID = 8203,
                 viewerCategory = "essential",
@@ -135,6 +154,14 @@ local ns = {
             storedState = state
         end,
     },
+    _OwnedGlows = {
+        ClearPandemicState = function(icon)
+            pandemicCleared = icon and true or false
+            if icon and icon.PandemicGlow then
+                icon.PandemicGlow:SetAlpha(0)
+            end
+        end,
+    },
 }
 
 dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
@@ -143,6 +170,7 @@ assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 local appliedDuration
 local cleared = false
 local desaturated
+local pandemicAlpha = 1
 
 local icon = {
     Cooldown = {
@@ -161,6 +189,14 @@ local icon = {
         end,
         SetVertexColor = noop,
     },
+    PandemicGlow = {
+        SetAlpha = function(_, alpha)
+            pandemicAlpha = alpha
+        end,
+    },
+    _auraActive = true,
+    _lastAuraDurObj = { token = "prior-aura-duration" },
+    _auraIsHarmful = false,
     _spellEntry = {
         id = 444347,
         spellID = 444347,
@@ -181,6 +217,10 @@ assert(icon._resolvedCooldownMode == "charge",
 assert(icon._hasCooldownActive == false, "charge mirror with inactive spell cooldown should not mark the spell unavailable")
 assert(icon._hasRealCooldownActive == false, "charge mirror with inactive spell cooldown should not mark a real cooldown")
 assert(desaturated == false, "charge mirror with inactive spell cooldown should keep the icon saturated")
+assert(icon._auraActive == false, "charge mirror transition should clear stale aura-active state")
+assert(icon._lastAuraDurObj == nil, "charge mirror transition should clear stale aura duration state")
+assert(pandemicCleared == true, "charge mirror transition should clear stale pandemic glow state")
+assert(pandemicAlpha == 0, "charge mirror transition should hide the existing pandemic glow frame")
 assert(storedState and storedState.mode == "charge", "runtime store should keep charge mode")
 assert(storedState and storedState.active == false, "runtime store should store availability separately from recharge mode")
 assert(storedState and storedState.hasCharges == true, "runtime store should mark charge-mode activity facts")
@@ -188,5 +228,56 @@ assert(storedState and storedState.rechargeActive == true, "runtime store should
 assert(storedState and storedState.isOnCooldown == false, "runtime store should preserve cooldown lock separately")
 assert(storedState and storedState.hasChargesRemaining == true,
     "runtime store should preserve remaining-charge activity for custom bars")
+
+pandemicCleared = false
+pandemicAlpha = 1
+storedState = nil
+
+local liveChargeIcon = {
+    Cooldown = {
+        SetCooldownFromDurationObject = function(_, durObj)
+            appliedDuration = durObj
+        end,
+        SetReverse = noop,
+        SetSwipeTexture = noop,
+        Clear = function()
+            cleared = true
+        end,
+    },
+    Icon = {
+        SetDesaturated = function(_, value)
+            desaturated = value
+        end,
+        SetVertexColor = noop,
+    },
+    PandemicGlow = {
+        SetAlpha = function(_, alpha)
+            pandemicAlpha = alpha
+        end,
+    },
+    _auraActive = true,
+    _lastAuraDurObj = { token = "prior-live-aura-duration" },
+    _auraIsHarmful = false,
+    _spellEntry = {
+        id = 444348,
+        spellID = 444348,
+        kind = "aura",
+        type = "spell",
+        viewerType = "buff",
+        name = "Live Charged Aura Spell",
+    },
+}
+
+applied = ns.CDMIcons.ApplyResolvedCooldown(liveChargeIcon)
+
+assert(applied == true, "live charge fallback should still report an applied cooldown")
+assert(liveChargeIcon._resolvedCooldownMode == "charge",
+    "live charge fallback should stay in charge mode")
+assert(liveChargeIcon._auraActive == false,
+    "live charge fallback should clear stale aura-active state")
+assert(liveChargeIcon._lastAuraDurObj == nil,
+    "live charge fallback should clear stale aura duration state")
+assert(pandemicCleared == true, "live charge fallback should clear stale pandemic glow state")
+assert(pandemicAlpha == 0, "live charge fallback should hide the existing pandemic glow frame")
 
 print("OK: cdm_icons_charge_mirror_active_test")

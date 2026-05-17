@@ -166,6 +166,7 @@ end
 local GCD_MAX_DURATION = 1.75
 local GCD_SPELL_ID = 61304
 local WoW_IsSecretValue = issecretvalue
+local _chargeZeroCurve
 
 local function ResolverIsSecretValue(value)
     if WoW_IsSecretValue then
@@ -567,6 +568,54 @@ local function ResolveLiveChargeDurationObject(spellID, entry)
     end
 
     return nil, nil, nil
+end
+
+local function GetChargeZeroCurve()
+    if _chargeZeroCurve then return _chargeZeroCurve end
+    if not (C_CurveUtil and C_CurveUtil.CreateCurve)
+        or not (Enum and Enum.LuaCurveType and Enum.LuaCurveType.Step) then
+        return nil
+    end
+    local curve = C_CurveUtil.CreateCurve()
+    curve:SetType(Enum.LuaCurveType.Step)
+    curve:AddPoint(0, 1)
+    curve:AddPoint(1, 0)
+    _chargeZeroCurve = curve
+    return curve
+end
+
+-- Decode SpellChargeInfo.currentCharges without a Lua-side compare when the
+-- count is secret. The step curve maps 0 -> 1 and 1+ -> 0 C-side; once that
+-- scalar is clean, the >= 0.5 comparison produces a normal Lua boolean.
+local function ResolveChargeZeroState(chargeInfo, cooldownActive)
+    if cooldownActive ~= true or not chargeInfo then
+        return nil
+    end
+
+    local currentCharges = chargeInfo.currentCharges
+    if ResolverIsSecretValue(currentCharges) then
+        local curve = GetChargeZeroCurve()
+        if curve and curve.Evaluate then
+            local ok, value = pcall(curve.Evaluate, curve, currentCharges)
+            if ok and not ResolverIsSecretValue(value) then
+                local decodeOk, decoded = pcall(function()
+                    if type(value) == "number" then
+                        return value >= 0.5
+                    end
+                    return nil
+                end)
+                if decodeOk then
+                    return decoded
+                end
+            end
+        end
+        return nil
+    end
+
+    if type(currentCharges) ~= "number" then
+        return nil
+    end
+    return currentCharges <= 0
 end
 
 local function ShouldTreatLiveDurationAsGCD(spellID, entry, cdInfo, currentOnGCD, spellUsable)
@@ -2510,10 +2559,20 @@ local function FinalizeCooldownStateActivity(state, context, entry, sid, entryIs
 
         local cdInfo = GetResolvedCooldownInfo(state, sid)
         local cdInfoActive, cdInfoOnGCD = StampCooldownInfoBooleans(state, cdInfo, sid)
+        local spellUsable = QuerySpellUsableState(sid)
+        local chargeInfo = QueryCharges(sid)
+        local chargeZero = ResolveChargeZeroState(chargeInfo, cdInfoActive)
+        -- Some charged spells report usable while their recharge is active.
+        -- Decode the secret currentCharges number through a C-side step curve
+        -- when possible so 0 charges is the only unavailable charge state.
         if cdInfoOnGCD == true or cdInfoActive == false then
             state.isOnCooldown = false
+        elseif chargeZero ~= nil then
+            state.isOnCooldown = chargeZero == true
         elseif cdInfoActive == true then
             state.isOnCooldown = true
+        elseif spellUsable == true then
+            state.isOnCooldown = false
         elseif state.mirrorBacked == true then
             state.isOnCooldown = mirrorBackedRealMode == true
         end
@@ -2602,6 +2661,12 @@ function CDMResolvers.ResolveCooldownState(context)
         context.mirrorCategory,
         sid)
     if mirrorPayload then
+        if mirrorPayload.mode ~= "aura" and context.skipAuraPhase ~= true then
+            local aura = ResolveAuraRuntimeStateForContext(context, entry, sid, entryIsAura)
+            if ApplyAuraStateToCooldownState(state, aura, sid) then
+                return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
+            end
+        end
         if mirrorPayload.mode == "aura" and context.skipAuraPhase == true then
             mirrorPayload = BuildMirrorCooldownPhasePayload(mirrorPayload) or mirrorPayload
         end

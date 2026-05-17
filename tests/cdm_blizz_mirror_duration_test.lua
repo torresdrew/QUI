@@ -87,6 +87,8 @@ local childCombatAuraDataOnly = { auraInstanceID = 516, icon = 34567 }
 local relatedChildFrameAuraDuration = { token = "related-child-frame-aura-duration-object" }
 local amzCooldownDuration = { token = "amz-cooldown-duration-object" }
 local amzAuraDuration = { token = "amz-aura-duration-object" }
+local deathChargeRelatedAuraDuration = { token = "death-charge-related-aura-duration-object" }
+local deathChargeCooldownDuration = { token = "death-charge-cooldown-duration-object" }
 local iconRefreshCount = 0
 
 local function MakeTextOwner()
@@ -150,6 +152,9 @@ C_Spell = {
         if spellID == 51052 and ignoreGCD == true then
             return amzCooldownDuration
         end
+        if spellID == 444347 and ignoreGCD == true then
+            return deathChargeCooldownDuration
+        end
     end,
     GetSpellChargeDuration = function(spellID)
         if spellID == 8092 then
@@ -167,6 +172,13 @@ C_Spell = {
     end,
     GetSpellCharges = function(spellID)
         if spellID == 1227280 then
+            return {
+                currentCharges = 1,
+                maxCharges = 2,
+                isActive = true,
+            }
+        end
+        if spellID == 444347 then
             return {
                 currentCharges = 1,
                 maxCharges = 2,
@@ -499,6 +511,44 @@ local amzBuffChild = {
 }
 amzBuffChild.Cooldown.GetParent = function() return amzBuffChild end
 
+local deathChargeUtilityChild = {
+    cooldownID = 27920,
+    isActive = true,
+    wasSetFromCooldown = true,
+    wasSetFromCharges = false,
+    cooldownChargesShown = true,
+    Cooldown = {
+        SetCooldown = noop,
+        SetCooldownFromDurationObject = noop,
+        SetCooldownFromExpirationTime = noop,
+        SetCooldownDuration = noop,
+        SetCooldownUNIX = noop,
+        Clear = noop,
+    },
+    Show = noop,
+    Hide = noop,
+}
+deathChargeUtilityChild.Cooldown.GetParent = function() return deathChargeUtilityChild end
+
+local deathChargeBuffChild = {
+    cooldownID = 92603,
+    auraInstanceID = nil,
+    auraDataUnit = nil,
+    isActive = true,
+    Cooldown = {
+        SetCooldown = noop,
+        SetCooldownFromDurationObject = noop,
+        SetCooldownFromExpirationTime = noop,
+        SetCooldownDuration = noop,
+        SetCooldownUNIX = noop,
+        Clear = noop,
+    },
+    Show = noop,
+    Hide = noop,
+    SetShown = noop,
+}
+deathChargeBuffChild.Cooldown.GetParent = function() return deathChargeBuffChild end
+
 EssentialCooldownViewer = {
     GetChildren = function()
         return child, chargedChild, unflaggedCountChild, uncountedChargeFlagChild,
@@ -507,12 +557,12 @@ EssentialCooldownViewer = {
 }
 UtilityCooldownViewer = {
     GetChildren = function()
-        return amzUtilityChild
+        return amzUtilityChild, deathChargeUtilityChild
     end,
 }
 BuffIconCooldownViewer = {
     GetChildren = function()
-        return auraChild, auraFallbackChild, trackedBarChild, cooldownAuraMappedChild, reapingChild, raiseAbomChild, amzBuffChild
+        return auraChild, auraFallbackChild, trackedBarChild, cooldownAuraMappedChild, reapingChild, raiseAbomChild, amzBuffChild, deathChargeBuffChild
     end,
 }
 BuffBarCooldownViewer = { GetChildren = function() return trackedBarStackChild end }
@@ -523,10 +573,10 @@ C_CooldownViewer = {
             return { 27902, 444001, 777001, 1227280, 809200, 330760, 27903, 195182 }
         end
         if category == 1 then
-            return { 27911 }
+            return { 27911, 27920 }
         end
         if category == 2 then
-            return { 73542, 141686, 70765, 92923, 103071 }
+            return { 73542, 141686, 70765, 92923, 103071, 92603 }
         end
         if category == 3 then
             return { 27925, 69057, 888123 }
@@ -742,6 +792,19 @@ C_CooldownViewer = {
                 isKnown = true,
             }
         end
+        if cooldownID == 27920 then
+            return {
+                cooldownID = 27920,
+                spellID = 48265,
+                overrideSpellID = 444347,
+                overrideTooltipSpellID = nil,
+                linkedSpellIDs = nil,
+                selfAura = true,
+                hasAura = false,
+                charges = true,
+                isKnown = true,
+            }
+        end
         if cooldownID == 103071 then
             return {
                 cooldownID = 103071,
@@ -752,6 +815,19 @@ C_CooldownViewer = {
                 selfAura = false,
                 hasAura = true,
                 charges = false,
+                isKnown = true,
+            }
+        end
+        if cooldownID == 92603 then
+            return {
+                cooldownID = 92603,
+                spellID = 48265,
+                overrideSpellID = 444347,
+                overrideTooltipSpellID = nil,
+                linkedSpellIDs = nil,
+                selfAura = true,
+                hasAura = false,
+                charges = true,
                 isKnown = true,
             }
         end
@@ -1435,6 +1511,9 @@ ns.CDMSources.QueryAuraDuration = function(unit, auraInstanceID)
     if unit == "player" and auraInstanceID == 707 then
         return amzAuraDuration
     end
+    if unit == "player" and auraInstanceID == 808 then
+        return deathChargeRelatedAuraDuration
+    end
 end
 
 amzBuffChild.auraInstanceID = nil
@@ -1460,6 +1539,40 @@ assert(amzUtilityState.auraUnit == "player", "AMZ utility should trust the relat
 assert(amzUtilityState.auraDurObj == amzAuraDuration, "AMZ utility should borrow the related buff child aura duration")
 assert(amzUtilityState.durObj == amzAuraDuration, "AMZ utility should select the related aura duration ahead of cooldown")
 assert(amzUtilityState.durObjSource == "aura-related-child", "AMZ utility selected duration should identify the related aura child")
+
+deathChargeBuffChild.auraInstanceID = nil
+deathChargeBuffChild.auraDataUnit = nil
+ns.CDMSources.QuerySpellCharges = originalQuerySpellCharges
+deathChargeUtilityChild.Cooldown:SetCooldownFromDurationObject(deathChargeCooldownDuration)
+local deathChargeUtilityState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27920, "utility"),
+    "Death Charge utility mirror state missing before related buff aura")
+assert(deathChargeUtilityState.resourceDurObj == chargeDuration,
+    "Death Charge utility should select the charge lane when the live charge API says it is recharging")
+assert(deathChargeUtilityState.cooldownDurObj == nil,
+    "Death Charge utility should not keep the aura-modified spell cooldown ahead of an active recharge")
+assert(deathChargeUtilityState.durObj == chargeDuration,
+    "Death Charge utility should render the charge DurationObject before any spell cooldown")
+assert(deathChargeUtilityState.durObjSource == "spell-charge",
+    "Death Charge utility selected duration should identify the charge lane")
+assert(deathChargeUtilityState.auraDurObj == nil,
+    "Death Charge utility should not have an aura lane before the related buff child has an instance")
+
+deathChargeBuffChild.auraInstanceID = 808
+deathChargeBuffChild.auraDataUnit = "player"
+deathChargeBuffChild:SetShown(true)
+local deathChargeBuffState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(92603, "buff"),
+    "Death Charge buff mirror state missing")
+assert(deathChargeBuffState.hasAuraInstanceID == true,
+    "Death Charge buff child auraInstanceID should be stamped on the buff mirror")
+
+deathChargeUtilityState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27920, "utility"),
+    "Death Charge utility mirror state missing after related buff aura")
+assert(deathChargeUtilityState.auraDurObj == nil,
+    "Death Charge utility must not borrow a hasAura=false related buff child aura duration")
+assert(deathChargeUtilityState.durObj == chargeDuration,
+    "Death Charge utility should keep the charge duration selected")
+assert(deathChargeUtilityState.durObjSource == "spell-charge",
+    "Death Charge utility should keep the selected duration in the charge lane")
 
 local reapingState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(70765, "buff"), "Reaping buff mirror state missing")
 assert(reapingState.isActive == false, "Reaping test should start inactive")

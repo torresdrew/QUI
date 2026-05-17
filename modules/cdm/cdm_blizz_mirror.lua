@@ -1535,9 +1535,6 @@ function CDMBlizzMirror.ResolveChargeDurationObjectForCooldownID(cdID, child, st
     if IsAuraViewerCategory(cdID, state or GetFrameCategoryName(child)) then
         return nil, nil
     end
-    if SafeFrameBooleanField(child, "cooldownChargesShown") == true then
-        return nil, nil
-    end
     if not (Sources and Sources.QuerySpellCharges and Sources.QuerySpellChargeDuration) then
         return nil, nil
     end
@@ -1916,8 +1913,8 @@ local function CaptureAuraInstanceFromRelatedAuraChildren(cdID, viewerCategory)
             -- `cat .. ":" .. tostring(relatedID)`.
             if relatedID and not (isSelfCat and relatedID == cdID) and not seenCat[relatedID] then
                 seenCat[relatedID] = true
+                local relatedInfo = GetInstanceInfo(relatedID, cat)
                 if _G.QUI_CDM_TAINT_DEBUG then
-                    local relatedInfo = GetInstanceInfo(relatedID, cat)
                     DebugAuraStamp("AuraStamp.relatedAura.try",
                         "targetCDID", cdID,
                         "targetCat", viewerCategory,
@@ -1928,38 +1925,40 @@ local function CaptureAuraInstanceFromRelatedAuraChildren(cdID, viewerCategory)
                         "sourceOverride", relatedInfo and relatedInfo.overrideSpellID,
                         "sourceTooltip", relatedInfo and relatedInfo.overrideTooltipSpellID)
                 end
-                local child = GetInstanceChild(relatedID, cat)
-                if CaptureAuraInstanceFromChildFrame(cdID, viewerCategory, child, "aura-related-child") then
-                    if _G.QUI_CDM_TAINT_DEBUG then
-                        DebugAuraStamp("AuraStamp.relatedAura.child.ok",
-                            "targetCDID", cdID,
-                            "targetCat", viewerCategory,
-                            "candidate", spellID,
-                            "sourceCDID", relatedID,
-                            "sourceCat", cat)
+                if CleanBool(relatedInfo and relatedInfo.hasAura) == true then
+                    local child = GetInstanceChild(relatedID, cat)
+                    if CaptureAuraInstanceFromChildFrame(cdID, viewerCategory, child, "aura-related-child") then
+                        if _G.QUI_CDM_TAINT_DEBUG then
+                            DebugAuraStamp("AuraStamp.relatedAura.child.ok",
+                                "targetCDID", cdID,
+                                "targetCat", viewerCategory,
+                                "candidate", spellID,
+                                "sourceCDID", relatedID,
+                                "sourceCat", cat)
+                        end
+                        return true
                     end
-                    return true
-                end
 
-                local relatedState = _mirrorState[ResolveInstanceKey(relatedID, cat)]
-                if relatedState and relatedState.auraInstanceID
-                    and StampAuraInstanceIDForCooldown(
-                        relatedState.auraUnit,
-                        cdID,
-                        relatedState.auraInstanceID,
-                        viewerCategory,
-                        "aura-related-child") then
-                    if _G.QUI_CDM_TAINT_DEBUG then
-                        DebugAuraStamp("AuraStamp.relatedAura.state.ok",
-                            "targetCDID", cdID,
-                            "targetCat", viewerCategory,
-                            "candidate", spellID,
-                            "sourceCDID", relatedID,
-                            "sourceCat", cat,
-                            "sourceInst", relatedState.auraInstanceID,
-                            "sourceUnit", relatedState.auraUnit)
+                    local relatedState = _mirrorState[ResolveInstanceKey(relatedID, cat)]
+                    if relatedState and relatedState.auraInstanceID
+                        and StampAuraInstanceIDForCooldown(
+                            relatedState.auraUnit,
+                            cdID,
+                            relatedState.auraInstanceID,
+                            viewerCategory,
+                            "aura-related-child") then
+                        if _G.QUI_CDM_TAINT_DEBUG then
+                            DebugAuraStamp("AuraStamp.relatedAura.state.ok",
+                                "targetCDID", cdID,
+                                "targetCat", viewerCategory,
+                                "candidate", spellID,
+                                "sourceCDID", relatedID,
+                                "sourceCat", cat,
+                                "sourceInst", relatedState.auraInstanceID,
+                                "sourceUnit", relatedState.auraUnit)
+                        end
+                        return true
                     end
-                    return true
                 end
             end
         end
