@@ -8,7 +8,7 @@ local ADDON_NAME, ns = ...
 -- bound child and tracks visibility via Show/Hide hooks. Two consumers
 -- ratified by spec 2026-05-07-cdm-blizzard-aura-mirror-design.md:
 --
---   * aura resolver Phase 3.0   (cdm_spelldata.lua, ResolveAuraState)
+--   * runtime aura resolver Phase 3.0   (cdm_spelldata.lua)
 --   * cooldown resolver Phase 3.0 (cdm_resolvers.lua)
 --
 -- Plus ResolveEntryKind reads `viewerCategory` for custom-bar entry kind
@@ -18,6 +18,9 @@ local ADDON_NAME, ns = ...
 -- `LuaDurationObject` is secret-safe — it flows through C-side sinks
 -- (`SetCooldownFromDurationObject`) without taint. We never read its fields
 -- in Lua.
+--
+-- Secret-safe Blizzard API policy lives in docs/blizzard/cdm-api-reference.md
+-- and tests/api-docs/cdm_blizzard_reference.lua.
 ---------------------------------------------------------------------------
 
 local CDMBlizzMirror = {}
@@ -521,8 +524,7 @@ local function ClearMirrorAuraState(cdID, s, reason)
     -- only care about aura invalidation.
     if not (s.auraDurObj or s.auraInstanceID
         or s.auraData
-        or s.pandemicActive or s.pandemicStateKnown
-        or s.stackText or s.stackTextSource or s.stackTextShown == true) then
+        or s.pandemicActive or s.pandemicStateKnown) then
         return
     end
 
@@ -533,7 +535,6 @@ local function ClearMirrorAuraState(cdID, s, reason)
     s.auraData = nil
     s.pandemicActive = false
     s.pandemicStateKnown = nil
-    local clearedStack = ClearMirrorStackState(s)
     -- Only flip the overall isActive flag if no other lane is still
     -- holding state. Preserves real cooldowns that outlive their aura
     -- (e.g., target debuff faded mid-CD; spell is still on cooldown so
@@ -546,9 +547,7 @@ local function ClearMirrorAuraState(cdID, s, reason)
     if SetHostPandemicState then
         SetHostPandemicState(cdID, nil, false)
     end
-    if clearedStack then
-        RequestMirrorTextRefreshForState(cdID, s, "aura-clear")
-    end
+    RequestMirrorTextRefreshForState(cdID, s, "aura-clear")
     if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
         CDMBlizzMirror.TaintLog("ClearAuraState",
             "cdID", cdID, "reason", reason or "unknown")
@@ -625,9 +624,7 @@ local function GetPayloadAuraSpellID(ad)
     if not ad then return nil end
     local sid = ad.spellId
     if not sid then sid = ad.spellID end
-    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(sid) then
-        return nil
-    end
+    if issecretvalue and issecretvalue(sid) then return nil end
     if type(sid) == "number" and sid > 0 then
         return sid
     end
@@ -1034,7 +1031,7 @@ end
 -- contain for a given spell — Blizzard's field semantics are not always
 -- intuitive from the documentation.
 --
--- Wired to /qui cdm_info [filter] in init.lua.
+-- Wired to /cdmdebug mirror [filter] in the debug companion addon.
 ---------------------------------------------------------------------------
 local function FormatLinkedIDs(ids)
     if type(ids) ~= "table" then return tostring(ids) end
@@ -1357,24 +1354,31 @@ end
 local function ReadChildAuraData(child)
     local auraData = SafeFrameField(child, "auraData")
     if type(auraData) ~= "table" then return nil end
-    if Helpers and Helpers.CanAccessTable
-        and not Helpers.CanAccessTable(auraData) then
-        return nil
-    end
     return auraData
 end
 
 local function DecodePotentialSecretBoolean(value)
-    if issecretvalue and issecretvalue(value) then
-        if C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
-            local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(value, 1, 0)
-            if not (issecretvalue and issecretvalue(scalar)) and type(scalar) == "number" then
+    if value == nil then return nil end
+    local valueIsSecret = issecretvalue and issecretvalue(value)
+    if valueIsSecret and C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
+        local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(value, 1, 0)
+        if issecretvalue and issecretvalue(scalar) then
+            return nil
+        end
+        local ok, decoded = pcall(function()
+            if type(scalar) == "number" then
                 return scalar >= 0.5
             end
+            return nil
+        end)
+        if ok then
+            return decoded
         end
-        return nil
     end
 
+    if valueIsSecret then
+        return nil
+    end
     if type(value) == "boolean" then
         return value
     end
@@ -1410,7 +1414,6 @@ end
 
 local function AddDurationSpellCandidate(candidates, seen, spellID)
     if not spellID then return end
-    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(spellID) then return end
     if type(spellID) ~= "number" or spellID <= 0 then return end
     if seen[spellID] then return end
     seen[spellID] = true
@@ -1548,7 +1551,6 @@ function CDMBlizzMirror.ResolveChargeDurationObjectForCooldownID(cdID, child, st
     for _, spellID in ipairs(candidates) do
         local chargeInfo = Sources.QuerySpellCharges(spellID)
         if chargeInfo
-            and (not Helpers or not Helpers.CanAccessTable or Helpers.CanAccessTable(chargeInfo))
             and CleanBool(chargeInfo.isActive) == true then
             local maxCharges = CleanScalar(chargeInfo.maxCharges)
             if type(maxCharges) == "number" and maxCharges > 1 then
@@ -1584,7 +1586,8 @@ function CDMBlizzMirror.ShouldSuppressChargeDurationForCooldownID(cdID, child, s
         return true
     end
 
-    if state and state.stackTextSource == "ChargeCount" and state.stackText ~= nil then
+    if state and state.stackTextSource == "ChargeCount"
+        and ((issecretvalue and issecretvalue(state.stackText)) or state.stackText ~= nil) then
         return false
     end
 
@@ -2201,9 +2204,7 @@ local function GetAuraDataSpellID(ad)
     if not ad then return nil end
     local sid = ad.spellId
     if not sid then sid = ad.spellID end
-    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(sid) then
-        return nil
-    end
+    if issecretvalue and issecretvalue(sid) then return nil end
     if type(sid) == "number" and sid > 0 then
         return sid
     end
@@ -2213,9 +2214,7 @@ end
 local function GetAuraDataName(ad)
     if not ad then return nil end
     local name = ad.name
-    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(name) then
-        return nil
-    end
+    if issecretvalue and issecretvalue(name) then return nil end
     if type(name) == "string" and name ~= "" then
         return name
     end
@@ -2229,7 +2228,7 @@ local function BuildAuraCandidateNameSet(candidates)
     end
     for _, spellID in ipairs(candidates) do
         local name = Sources.QuerySpellName(spellID)
-        if not (Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(name))
+        if not (issecretvalue and issecretvalue(name))
             and type(name) == "string"
             and name ~= "" then
             names[name] = true
@@ -2434,8 +2433,12 @@ local function FindNamedMirrorTextOwner(owner, ...)
     for i = 1, select("#", ...) do
         local key = select(i, ...)
         local candidate = owner[key]
-        if candidate and (candidate.GetText or candidate.SetText or candidate.SetFormattedText) then
-            return candidate
+        if candidate then
+            if candidate.GetText or candidate.SetText or candidate.SetFormattedText then
+                return candidate
+            end
+            local textOwner = FindMirrorFontString(candidate)
+            if textOwner then return textOwner end
         end
     end
     return nil
@@ -2451,7 +2454,8 @@ end
 
 ClearMirrorStackState = function(s)
     if not s then return false end
-    if not (s.stackText or s.stackTextSource or s.stackTextShown == true) then
+    local stackTextPresent = (issecretvalue and issecretvalue(s.stackText)) or s.stackText ~= nil
+    if not (stackTextPresent or s.stackTextSource or s.stackTextShown == true) then
         return false
     end
     s.stackText = nil
@@ -2476,30 +2480,14 @@ local function CanReplaceStackTextSource(currentSource, source)
     return StackTextSourcePriority(source) >= StackTextSourcePriority(currentSource)
 end
 
-local function MirrorStackTextHasDisplay(source, text)
-    if text == nil then return false end
-    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(text) then
-        return true
-    end
+local function MirrorStackTextHasDisplay(_source, text)
     if issecretvalue and issecretvalue(text) then
         return true
     end
-
-    local textType = type(text)
-    if source == "Applications" then
-        if textType == "string" then
-            return not (text == "" or text == "0" or text == "1")
-        end
-        if textType == "number" then
-            return text > 1
-        end
-        return true
-    end
-
-    if textType == "string" then
+    if type(text) == "string" then
         return text ~= ""
     end
-    return true
+    return text ~= nil
 end
 
 local function ChildHasAuthoritativeCountText(child)
@@ -2531,7 +2519,8 @@ local function CaptureChildStackText(child, source, text, fromTextWrite)
     local s = EnsureState(cdID, child)
     if not s then return end
 
-    if source == "ChargeCount" and not ChildHasAuthoritativeCountText(child) then
+    local textIsSecret = issecretvalue and issecretvalue(text)
+    if source == "ChargeCount" and not textIsSecret and not ChildHasAuthoritativeCountText(child) then
         if (not s.stackTextSource or s.stackTextSource == source) and ClearMirrorStackState(s) then
             s.lastTouch = GetTime()
             RequestMirrorTextRefreshForChild(child, cdID, s, "stack-clear")
@@ -2558,38 +2547,30 @@ local function CaptureChildStackText(child, source, text, fromTextWrite)
     end
 end
 
-local function ClearChildStackText(child, source)
-    local cdID = child and child.cooldownID
-    if not cdID then return end
-    local s = EnsureState(cdID, child)
-    if not s then return end
-    if s.stackTextSource and source and s.stackTextSource ~= source then return end
-    if ClearMirrorStackState(s) then
-        s.lastTouch = GetTime()
-        RequestMirrorTextRefreshForChild(child, cdID, s, "stack-clear")
-    end
-end
-
 local function CaptureTextFromOwner(child, source, owner, fromTextWrite)
     if not (owner and owner.GetText) then return end
     CaptureChildStackText(child, source, owner:GetText(), fromTextWrite)
 end
 
 local function CaptureTextFromPreferredOwner(child, source, owner, readOwner, fallbackText, fromTextWrite)
+    if fromTextWrite and MirrorStackTextHasDisplay(source, fallbackText) then
+        CaptureChildStackText(child, source, fallbackText, fromTextWrite)
+        return
+    end
     if readOwner and readOwner ~= owner and readOwner.GetText then
         local text = readOwner:GetText()
         if MirrorStackTextHasDisplay(source, text) then
             CaptureChildStackText(child, source, text, fromTextWrite)
             return
         end
-        if fallbackText ~= nil and MirrorStackTextHasDisplay(source, fallbackText) then
+        if MirrorStackTextHasDisplay(source, fallbackText) then
             CaptureChildStackText(child, source, fallbackText, fromTextWrite)
             return
         end
         CaptureChildStackText(child, source, text, fromTextWrite)
         return
     end
-    if fallbackText ~= nil then
+    if MirrorStackTextHasDisplay(source, fallbackText) then
         CaptureChildStackText(child, source, fallbackText, fromTextWrite)
         return
     end
@@ -2600,6 +2581,17 @@ local function HookTextOwner(child, source, owner, readOwner)
     if not owner or _textOwnerHooked[owner] then return end
     _textOwnerHooked[owner] = true
     readOwner = readOwner or owner
+    local function ClearChildStackText()
+        local cdID = child and child.cooldownID
+        if not (cdID and source) then return end
+        local s = EnsureState(cdID, child)
+        if not s then return end
+        if s.stackTextSource and s.stackTextSource ~= source then return end
+        if ClearMirrorStackState(s) then
+            s.lastTouch = GetTime()
+            RequestMirrorTextRefreshForChild(child, cdID, s, "stack-clear")
+        end
+    end
 
     if owner.SetText then
         hooksecurefunc(owner, "SetText", function(_, text)
@@ -2618,14 +2610,17 @@ local function HookTextOwner(child, source, owner, readOwner)
     end
     if owner.Hide then
         hooksecurefunc(owner, "Hide", function()
-            ClearChildStackText(child, source)
+            if source == "ChargeCount" then
+                ClearChildStackText()
+            else
+                CaptureTextFromPreferredOwner(child, source, owner, readOwner)
+            end
         end)
     end
     if owner.SetShown then
         hooksecurefunc(owner, "SetShown", function(_, shown)
-            local decoded = DecodePotentialSecretBoolean(shown)
-            if decoded == false then
-                ClearChildStackText(child, source)
+            if source == "ChargeCount" and DecodePotentialSecretBoolean(shown) == false then
+                ClearChildStackText()
             else
                 CaptureTextFromPreferredOwner(child, source, owner, readOwner)
             end
@@ -2635,26 +2630,28 @@ local function HookTextOwner(child, source, owner, readOwner)
     CaptureTextFromPreferredOwner(child, source, owner, readOwner)
 end
 
+local function HookMirrorTextPath(child, source, owner, ...)
+    if not owner then return end
+    local textOwner = FindMirrorTextOwner(owner, ...)
+    if not textOwner and not (owner.GetText or owner.SetText or owner.SetFormattedText) then
+        return
+    end
+    HookTextOwner(child, source, owner, textOwner)
+    if textOwner and textOwner ~= owner then
+        HookTextOwner(child, source, textOwner)
+    end
+end
+
 local function BindChildTextHooks(child)
     if not child then return end
 
-    local applications = child.Applications
-    if applications then
-        local textOwner = FindMirrorTextOwner(applications, "DisplayText", "Applications")
-        HookTextOwner(child, "Applications", applications, textOwner)
-        if textOwner and textOwner ~= applications then
-            HookTextOwner(child, "Applications", textOwner)
-        end
-    end
+    HookMirrorTextPath(child, "Applications", child.Applications, "DisplayText", "Applications")
+    HookMirrorTextPath(child, "Applications", child.Icon, "Applications", "DisplayText")
 
-    local chargeCount = child.ChargeCount
-    if chargeCount then
-        local textOwner = FindMirrorTextOwner(chargeCount, "Current", "DisplayText")
-        HookTextOwner(child, "ChargeCount", chargeCount, textOwner)
-        if textOwner and textOwner ~= chargeCount then
-            HookTextOwner(child, "ChargeCount", textOwner)
-        end
-    end
+    local barIcon = child.Bar and child.Bar.Icon
+    HookMirrorTextPath(child, "Applications", barIcon, "Applications", "DisplayText")
+
+    HookMirrorTextPath(child, "ChargeCount", child.ChargeCount, "Current", "DisplayText")
 
     local frameText = FindDirectMirrorTextOwner(child, "DisplayText", "Text", "Count", "StackText", "Stacks")
     HookTextOwner(child, "FrameText", frameText)
@@ -2703,7 +2700,7 @@ local function RefreshChildSemanticState(child, cdID, fallbackActive)
     -- Target-side aura viewer children can report active for a matching
     -- target debuff regardless of caster. Only trust them after the
     -- source-filtered auraInstance path has stamped this state.
-    if active and AuraViewerNeedsTargetOwnershipProof(cdID, s, child) and not s.auraInstanceID then
+    if active == true and AuraViewerNeedsTargetOwnershipProof(cdID, s, child) and not s.auraInstanceID then
         local captured = CaptureAuraInstanceFromChildFrame(cdID, s.viewerCategory, child)
             or CaptureAuraInstanceFromRelatedCooldownChildren(cdID, s.viewerCategory)
         if not captured and not s.auraInstanceID then
@@ -2713,7 +2710,7 @@ local function RefreshChildSemanticState(child, cdID, fallbackActive)
 
     local priorActive = s.isActive == true
     local changed = priorActive ~= active
-    if not active and (s.durObj or s.auraDurObj or s.cooldownDurObj
+    if active ~= true and (s.durObj or s.auraDurObj or s.cooldownDurObj
         or s.resourceDurObj or s.gcdDurObj or s.totemDurObj
         or s.pandemicActive or s.pandemicStateKnown) then
         changed = true
@@ -2723,7 +2720,7 @@ local function RefreshChildSemanticState(child, cdID, fallbackActive)
         RequestMirrorTextRefreshForChild(child, cdID, s, "active-state")
     end
     s.isActive = active
-    if active then
+    if active == true then
         local info = GetInstanceInfo(cdID, s.viewerCategory)
         if not s.auraUnit then
             s.auraUnit = GetChildAuraUnit(child)
@@ -2745,9 +2742,6 @@ local function RefreshChildSemanticState(child, cdID, fallbackActive)
         s.auraData = nil
         s.pandemicActive = false
         s.pandemicStateKnown = nil
-        if ClearMirrorStackState(s) then
-            RequestMirrorTextRefreshForChild(child, cdID, s, "inactive-stack-clear")
-        end
         if SetHostPandemicState then
             SetHostPandemicState(cdID, nil, false)
         end
@@ -2883,16 +2877,24 @@ CleanBool = function(v)
     if issecretvalue and issecretvalue(v) then
         if C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
             local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(v, 1, 0)
-            if not (issecretvalue and issecretvalue(scalar))
-                and type(scalar) == "number" then
-                return scalar >= 0.5
+            if issecretvalue and issecretvalue(scalar) then
+                return nil
+            end
+            local ok, decoded = pcall(function()
+                if type(scalar) == "number" then
+                    return scalar >= 0.5
+                end
+                return nil
+            end)
+            if ok then
+                return decoded
             end
         end
         return nil
     end
     if v == nil then return nil end
-    if v then return true end
-    return false
+    if type(v) == "boolean" then return v end
+    return nil
 end
 
 local function CleanLinkedIDs(ids)
@@ -2944,13 +2946,6 @@ end
 local function MapCooldownInfoIDs(catMap, info, cdID)
     if not (catMap and info and cdID) then return end
 
-    local function add(id, overwrite)
-        if type(id) ~= "number" or id <= 0 then return end
-        if overwrite or not catMap[id] then
-            catMap[id] = cdID
-        end
-    end
-
     local catName
     for name, map in pairs(_cdIDByCatSpell) do
         if map == catMap then
@@ -2959,48 +2954,50 @@ local function MapCooldownInfoIDs(catMap, info, cdID)
         end
     end
     local directMap = catName and _directCDIDByCatSpell[catName] or nil
-    local function addDirect(id, overwrite)
-        if not directMap or type(id) ~= "number" or id <= 0 then return end
-        if overwrite or not directMap[id] then
-            directMap[id] = cdID
+
+    local Catalog = ns.CDMCatalog
+    if Catalog and Catalog.MapCooldownInfoIDs then
+        Catalog.MapCooldownInfoIDs(catMap, directMap, info, cdID, catName)
+        return
+    end
+
+    local function add(map, id, overwrite)
+        if not map or type(id) ~= "number" or id <= 0 then return end
+        if overwrite or not map[id] then
+            map[id] = cdID
         end
     end
 
     local isAuraCat = catName == "buff" or catName == "trackedBar"
 
-    add(info.overrideSpellID or info.spellID, true)
-    add(info.spellID, false)
-    add(info.overrideSpellID, false)
+    add(catMap, info.overrideSpellID or info.spellID, true)
+    add(catMap, info.spellID, false)
+    add(catMap, info.overrideSpellID, false)
     if isAuraCat then
-        add(info.overrideTooltipSpellID, true)
-
+        add(catMap, info.overrideTooltipSpellID, true)
         if type(info.linkedSpellIDs) == "table" then
             for _, linkedID in ipairs(info.linkedSpellIDs) do
-                add(linkedID, false)
+                add(catMap, linkedID, false)
             end
         end
     end
 
     if isAuraCat then
-        -- The documented CooldownViewerCooldown struct exposes every
-        -- identity Blizzard associates with this aura child. Treat all of
-        -- them as direct identities for binding, with tooltip/linked aura
-        -- IDs winning over source ability IDs on collisions.
-        addDirect(info.overrideTooltipSpellID, true)
+        add(directMap, info.overrideTooltipSpellID, true)
         if type(info.linkedSpellIDs) == "table" then
             for _, linkedID in ipairs(info.linkedSpellIDs) do
-                addDirect(linkedID, true)
+                add(directMap, linkedID, true)
             end
         end
-        addDirect(info.overrideSpellID or info.spellID, false)
-        addDirect(info.spellID, false)
-        addDirect(info.overrideSpellID, false)
+        add(directMap, info.overrideSpellID or info.spellID, false)
+        add(directMap, info.spellID, false)
+        add(directMap, info.overrideSpellID, false)
         return
     end
 
-    addDirect(info.overrideSpellID or info.spellID, true)
-    addDirect(info.spellID, false)
-    addDirect(info.overrideSpellID, false)
+    add(directMap, info.overrideSpellID or info.spellID, true)
+    add(directMap, info.spellID, false)
+    add(directMap, info.overrideSpellID, false)
 end
 
 local function CaptureCooldownInfoForCategory(cdID, catName, child)
@@ -3825,6 +3822,9 @@ end
 
 local function SafeFieldText(owner)
     local text = SafeCall(owner, "GetText")
+    if issecretvalue and issecretvalue(text) then
+        return "<SECRET:" .. type(text) .. ">"
+    end
     if text == nil then return "nil" end
     return tostring(text)
 end
@@ -3832,14 +3832,20 @@ end
 local function SafeShown(owner)
     if not owner then return "nil" end
     local shown = SafeCall(owner, "IsShown")
+    if issecretvalue and issecretvalue(shown) then
+        return "<SECRET:" .. type(shown) .. ">"
+    end
+    if shown == nil then return "nil" end
     return tostring(shown == true)
 end
 
 local function SafeTexture(owner)
     if not owner then return "nil" end
     local tex = SafeCall(owner, "GetTexture")
+    if issecretvalue and issecretvalue(tex) then return "<SECRET:" .. type(tex) .. ">" end
     if tex ~= nil then return tostring(tex) end
     local atlas = SafeCall(owner, "GetAtlas")
+    if issecretvalue and issecretvalue(atlas) then return "atlas:<SECRET:" .. type(atlas) .. ">" end
     if atlas ~= nil then return "atlas:" .. tostring(atlas) end
     return "nil"
 end
@@ -3847,14 +3853,20 @@ end
 local function SafeName(owner)
     if not owner then return "nil" end
     local name = SafeCall(owner, "GetName")
-    return tostring(name or owner)
+    if issecretvalue and issecretvalue(name) then return "<SECRET:" .. type(name) .. ">" end
+    if name ~= nil then return tostring(name) end
+    return tostring(owner)
 end
 
 local function FormatDebugIDList(ids)
     if type(ids) ~= "table" or #ids == 0 then return "nil" end
     local out = {}
     for i, id in ipairs(ids) do
-        out[i] = tostring(id)
+        if issecretvalue and issecretvalue(id) then
+            out[i] = "<SECRET:" .. type(id) .. ">"
+        else
+            out[i] = tostring(id)
+        end
     end
     return table.concat(out, ",")
 end
@@ -3862,7 +3874,14 @@ end
 local function AddDebugLine(lines, ...)
     local out = {}
     for i = 1, select("#", ...) do
-        out[#out + 1] = tostring(select(i, ...))
+        local value = select(i, ...)
+        if issecretvalue and issecretvalue(value) then
+            out[#out + 1] = "<SECRET:" .. type(value) .. ">"
+        elseif value == nil then
+            out[#out + 1] = "nil"
+        else
+            out[#out + 1] = tostring(value)
+        end
     end
     lines[#lines + 1] = table.concat(out, " ")
 end
@@ -3871,19 +3890,33 @@ local function SafeDebugScalar(value)
     if issecretvalue and issecretvalue(value) then
         return "<SECRET:" .. type(value) .. ">"
     end
+    if value == nil then return "nil" end
     return value
 end
 
 function CDMBlizzMirror.GetChildDebugLines(cooldownID, viewerCategory)
     local lines = {}
+    local function AddTextOwnerDebugLine(label, owner)
+        if not owner then
+            AddDebugLine(lines, "Text", label, "owner=nil")
+            return
+        end
+        AddDebugLine(lines,
+            "Text", label,
+            "owner=", SafeName(owner),
+            "type=", SafeDebugScalar(SafeCall(owner, "GetObjectType")),
+            "shown=", SafeShown(owner),
+            "text=", SafeFieldText(owner))
+    end
+
     local child = cooldownID and GetInstanceChild(cooldownID, viewerCategory)
     local state = PackState(cooldownID, viewerCategory)
     AddDebugLine(lines,
         "state cdID=", cooldownID,
         "cat=", state and state.viewerCategory,
-        "active=", state and tostring(state.isActive == true),
-        "hasDurObj=", state and tostring(state.durObj ~= nil),
-        "hasInst=", state and tostring(state.hasAuraInstanceID == true),
+        "active=", state and state.isActive,
+        "durObj=", state and state.durObj,
+        "hasInst=", state and state.hasAuraInstanceID,
         "auraUnit=", state and state.auraUnit,
         "epoch=", state and state.mirrorEpoch,
         "spell=", state and state.spellID,
@@ -3903,16 +3936,16 @@ function CDMBlizzMirror.GetChildDebugLines(cooldownID, viewerCategory)
         "shown=", SafeShown(child),
         "alpha=", SafeCall(child, "GetAlpha"),
         "cooldownID=", child.cooldownID,
-        "wasSetFromAura=", tostring(SafeFrameBooleanField(child, "wasSetFromAura")),
+        "wasSetFromAura=", SafeFrameBooleanField(child, "wasSetFromAura"),
         "parent=", SafeName(SafeCall(child, "GetParent")))
     AddDebugLine(lines,
-        "child fields isActive=", tostring(SafeFrameBooleanField(child, "isActive")),
-        "cooldownIsActive=", tostring(SafeFrameBooleanField(child, "cooldownIsActive")),
-        "wasSetFromCooldown=", tostring(SafeFrameBooleanField(child, "wasSetFromCooldown")),
-        "wasSetFromCharges=", tostring(SafeFrameBooleanField(child, "wasSetFromCharges")),
-        "cooldownStart=", tostring(SafeFrameField(child, "cooldownStartTime")),
-        "cooldownDuration=", tostring(SafeFrameField(child, "cooldownDuration")),
-        "cooldownShowSwipe=", tostring(SafeFrameBooleanField(child, "cooldownShowSwipe")))
+        "child fields isActive=", SafeFrameBooleanField(child, "isActive"),
+        "cooldownIsActive=", SafeFrameBooleanField(child, "cooldownIsActive"),
+        "wasSetFromCooldown=", SafeFrameBooleanField(child, "wasSetFromCooldown"),
+        "wasSetFromCharges=", SafeFrameBooleanField(child, "wasSetFromCharges"),
+        "cooldownStart=", SafeFrameField(child, "cooldownStartTime"),
+        "cooldownDuration=", SafeFrameField(child, "cooldownDuration"),
+        "cooldownShowSwipe=", SafeFrameBooleanField(child, "cooldownShowSwipe"))
 
     local childAuraData = ReadChildAuraData(child)
     AddDebugLine(lines,
@@ -3936,10 +3969,10 @@ function CDMBlizzMirror.GetChildDebugLines(cooldownID, viewerCategory)
     AddDebugLine(lines,
         "Cooldown shown=", SafeShown(cd),
         "alpha=", SafeCall(cd, "GetAlpha"),
-        "times=", tostring(startMS), "/", tostring(durationMS),
-        "duration=", tostring(SafeCall(cd, "GetCooldownDuration")),
-        "drawSwipe=", tostring(SafeCall(cd, "GetDrawSwipe")),
-        "drawEdge=", tostring(SafeCall(cd, "GetDrawEdge")),
+        "times=", startMS, "/", durationMS,
+        "duration=", SafeCall(cd, "GetCooldownDuration"),
+        "drawSwipe=", SafeCall(cd, "GetDrawSwipe"),
+        "drawEdge=", SafeCall(cd, "GetDrawEdge"),
         "parent=", SafeName(SafeCall(cd, "GetParent")))
 
     AddDebugLine(lines,
@@ -3947,22 +3980,43 @@ function CDMBlizzMirror.GetChildDebugLines(cooldownID, viewerCategory)
         "text=", SafeFieldText(FindFirstFontString(cd)))
 
     local apps = child.Applications
+    AddTextOwnerDebugLine("Applications", apps)
+    AddTextOwnerDebugLine("Applications.Applications", apps and apps.Applications)
+    AddTextOwnerDebugLine("Applications.DisplayText", apps and apps.DisplayText)
+    AddTextOwnerDebugLine("Applications.FirstFontString", FindFirstFontString(apps))
     AddDebugLine(lines,
         "Applications shown=", SafeShown(apps),
         "text=", SafeFieldText(apps and (apps.Applications or FindFirstFontString(apps))),
         "parent=", SafeName(SafeCall(apps, "GetParent")))
 
     local charges = child.ChargeCount
+    AddTextOwnerDebugLine("ChargeCount", charges)
+    AddTextOwnerDebugLine("ChargeCount.Current", charges and charges.Current)
+    AddTextOwnerDebugLine("ChargeCount.DisplayText", charges and charges.DisplayText)
+    AddTextOwnerDebugLine("ChargeCount.FirstFontString", FindFirstFontString(charges))
     AddDebugLine(lines,
         "ChargeCount shown=", SafeShown(charges),
         "text=", SafeFieldText(charges and (charges.Current or FindFirstFontString(charges))),
         "parent=", SafeName(SafeCall(charges, "GetParent")))
 
+    AddTextOwnerDebugLine("Icon.Applications", icon and icon.Applications)
+    AddTextOwnerDebugLine("Icon.DisplayText", icon and icon.DisplayText)
+
     local bar = child.Bar
     AddDebugLine(lines,
         "Bar shown=", SafeShown(bar),
-        "value=", tostring(SafeCall(bar, "GetValue")),
+        "value=", SafeCall(bar, "GetValue"),
         "parent=", SafeName(SafeCall(bar, "GetParent")))
+    local barIcon = bar and bar.Icon
+    AddTextOwnerDebugLine("Bar.Icon.Applications", barIcon and barIcon.Applications)
+    AddTextOwnerDebugLine("Bar.Icon.DisplayText", barIcon and barIcon.DisplayText)
+
+    AddTextOwnerDebugLine("Frame.DisplayText", child.DisplayText)
+    AddTextOwnerDebugLine("Frame.Text", child.Text)
+    AddTextOwnerDebugLine("Frame.Text.FirstFontString", FindFirstFontString(child.Text))
+    AddTextOwnerDebugLine("Frame.Count", child.Count)
+    AddTextOwnerDebugLine("Frame.StackText", child.StackText)
+    AddTextOwnerDebugLine("Frame.Stacks", child.Stacks)
 
     return lines
 end
@@ -4258,12 +4312,13 @@ function HandlePlayerTotemUpdate(updatedSlot)
             local slot = RawFrameField(child, "preferredTotemUpdateSlot")
             if type(slot) == "nil" then
                 local totemData = RawFrameField(child, "totemData")
-                local totemDataSecret = Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(totemData)
-                local totemDataReadable = not totemDataSecret
-                    and type(totemData) == "table"
-                    and (not (Helpers and Helpers.CanAccessTable) or Helpers.CanAccessTable(totemData))
-                if totemDataReadable then
-                    slot = totemData.slot
+                if type(totemData) == "table" then
+                    local okSlot, dataSlot = pcall(function()
+                        return totemData.slot
+                    end)
+                    if okSlot then
+                        slot = dataSlot
+                    end
                 end
             end
 

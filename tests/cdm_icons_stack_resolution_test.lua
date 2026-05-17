@@ -1,7 +1,14 @@
 -- tests/cdm_icons_stack_resolution_test.lua
 -- Run: lua tests/cdm_icons_stack_resolution_test.lua
 
+local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub.lua")
+
 local function noop() end
+local secretStackText = { token = "secret-stack-text" }
+
+function issecretvalue(value)
+    return value == secretStackText
+end
 
 function InCombatLockdown() return false end
 function GetTime() return 100 end
@@ -21,8 +28,14 @@ function CreateFrame()
 end
 
 C_Timer = { After = function(_, callback) callback() end }
+C_StringUtil = {
+    TruncateWhenZero = function(value)
+        return value == 0 and "" or tostring(value)
+    end,
+}
 
 local queriedMinApplications
+local lastCooldownStateContext
 
 local ns = {
     Helpers = {
@@ -33,6 +46,8 @@ local ns = {
         end,
         IsSecretValue = function() return false end,
         CanAccessTable = function(tbl) return type(tbl) == "table" end,
+        IsEditModeActive = function() return false end,
+        IsLayoutModeActive = function() return false end,
     },
     Addon = {
         db = {
@@ -43,6 +58,16 @@ local ns = {
     CDMShared = {
         IsRuntimeEnabled = function() return true end,
         IsSafeNumeric = function(value) return type(value) == "number" end,
+        GetBuiltinContainerEntryKind = function(containerKey)
+            return ({
+                essential = "cooldown",
+                utility = "cooldown",
+                buff = "aura",
+                trackedBar = "aura",
+                aliasAura = "aura",
+                aliasCooldown = "cooldown",
+            })[containerKey]
+        end,
     },
     CDMSources = {
         QueryAuraApplicationDisplayCount = function(unit, auraInstanceID, minApplications)
@@ -52,16 +77,14 @@ local ns = {
             end
             return nil
         end,
-    },
-    CDMResolvers = {
-        _textureCycleCache = {},
-        _FinalizeImports = noop,
-        Subscribe = noop,
-        IsAuraEntry = function(entry)
-            return entry and entry.kind == "aura"
+        QuerySpellCooldown = function()
+            return {
+                startTime = 0,
+                duration = 0,
+                isActive = false,
+            }
         end,
-        QueryOverrideSpell = function() return nil end,
-        QueryDisplayCount = function(spellID)
+        QuerySpellDisplayCount = function(spellID)
             if spellID == 1227280 then
                 return 2
             end
@@ -73,14 +96,18 @@ local ns = {
             end
             return nil
         end,
-        GetChargeMetadataDB = function()
-            return {
-                [1227280] = 2,
-            }
+    },
+    CDMResolvers = {
+        BuildCooldownStateContext = BuildCooldownStateContext,
+        _textureCycleCache = {},
+        _FinalizeImports = noop,
+        Subscribe = noop,
+        IsAuraEntry = function(entry)
+            return entry and entry.kind == "aura"
         end,
-        ResolveBlizzardMirrorIdentity = function(entry)
+        ResolveBlizzardMirrorIdentityState = function(entry)
             if entry and entry.spellID == 1227280 then
-                return 8203, "essential", {
+                local state = {
                     cooldownID = 8203,
                     spellID = 1227280,
                     overrideSpellID = 1227280,
@@ -91,15 +118,49 @@ local ns = {
                     cooldownChargesShown = false,
                     chargeCountFrameShown = false,
                 }
+                return {
+                    cooldownID = 8203,
+                    category = "essential",
+                    state = state,
+                }
             end
             return nil
         end,
+        ResolveCooldownState = function(context)
+            lastCooldownStateContext = context
+            return {
+                mode = "inactive",
+                active = false,
+                isActive = false,
+                auraActive = false,
+                isOnCooldown = false,
+            }
+        end,
+        ResolveCooldownActivityState = function()
+            return { isOnCooldown = false, rechargeActive = false }
+        end,
+        ResolveMacro = function(entry)
+            return entry and entry._macroSpellID, "spell", nil
+        end,
+        GetSpellTexture = function() return nil end,
+        GetEntryTexture = function() return nil end,
+        ResolveAuraActiveState = function() return false end,
     },
     CDMIconFactory = {
         _iconPools = {},
         _FinalizeImports = noop,
         AcquireIcon = noop,
         ReleaseIcon = noop,
+        SyncCooldownBling = noop,
+        GetIconPool = function(self, viewerType)
+            return self._iconPools[viewerType] or {}
+        end,
+        EnsurePool = function(self, viewerType)
+            if not self._iconPools[viewerType] then
+                self._iconPools[viewerType] = {}
+            end
+            return self._iconPools[viewerType]
+        end,
     },
     CDMBlizzMirror = {
         GetStateByCooldownID = function(cooldownID, category)
@@ -117,10 +178,18 @@ local ns = {
                     stackTextShown = false,
                 }
             end
+            if cooldownID == 73545 and category == "essential" then
+                return {
+                    stackText = secretStackText,
+                    stackTextSource = "ChargeCount",
+                    stackTextShown = true,
+                }
+            end
         end,
     },
 }
 
+dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local icons = ns.CDMIcons
@@ -133,7 +202,52 @@ local cooldownEntry = {
     viewerType = "essential",
 }
 
-assert(icons.ShouldUseBuffSwipeForIcon({}, cooldownEntry) == true,
+local function makePolicyProbeIcon(entry)
+    local icon = {
+        _spellEntry = entry,
+        Cooldown = {
+            Clear = noop,
+            SetReverse = noop,
+        },
+        Icon = {
+            SetDesaturated = noop,
+            SetVertexColor = noop,
+        },
+        StackText = {
+            SetText = noop,
+            Hide = noop,
+            Show = noop,
+        },
+    }
+    function icon:IsShown() return true end
+    function icon:Show() end
+    function icon:Hide() end
+    function icon:SetAlpha() end
+    return icon
+end
+
+local function resolvePolicyForEntry(entry)
+    local icon = makePolicyProbeIcon(entry)
+    local viewerType = entry.viewerType or "__policy"
+    local priorPool = ns.CDMIconFactory._iconPools[viewerType]
+    ns.CDMIconFactory._iconPools[viewerType] = { icon }
+    lastCooldownStateContext = nil
+    icons:UpdateCooldownsForType(viewerType)
+    ns.CDMIconFactory._iconPools[viewerType] = priorPool
+    return lastCooldownStateContext
+end
+
+ns._OwnedSwipe = {
+    GetSettings = function()
+        return {
+            showBuffSwipe = true,
+            showCooldownIconAuraPhase = true,
+        }
+    end,
+}
+
+local policyContext = resolvePolicyForEntry(cooldownEntry)
+assert(policyContext and policyContext.useBuffSwipe == true,
     "cooldown icons should allow buff/debuff phase by default")
 
 ns._OwnedSwipe = {
@@ -144,137 +258,118 @@ ns._OwnedSwipe = {
         }
     end,
 }
-icons.RefreshSwipeBatchSettings()
 
-assert(icons.ShouldUseBuffSwipeForIcon({}, cooldownEntry) == false,
+policyContext = resolvePolicyForEntry(cooldownEntry)
+assert(policyContext and policyContext.useBuffSwipe == false,
     "cooldown icons should skip buff/debuff phase when the option is disabled")
+assert(policyContext.skipAuraPhase == true,
+    "cooldown icons should pass the disabled aura-phase policy into the resolver context")
 
-assert(icons.ShouldUseBuffSwipeForIcon({}, {
+policyContext = resolvePolicyForEntry({
     type = "spell",
     id = 194310,
     spellID = 194310,
     kind = "aura",
     viewerType = "buff",
-}) == true, "aura icons should still use buff/debuff swipe aura detection")
-
-local text, textSource, mirrorBacked = icons.ResolveIconStackText({
-    _spellEntry = {
-        type = "spell",
-        id = 55090,
-        spellID = 55090,
-        kind = "cooldown",
-        viewerType = "essential",
-    },
-    _blizzMirrorCooldownID = 73542,
-    _blizzMirrorCategory = "essential",
 })
+assert(policyContext and policyContext.useBuffSwipe == true,
+    "aura icons should still use buff/debuff swipe aura detection")
 
-assert(text == "6", "cooldown icons should render Blizzard mirror application text")
-assert(textSource == "Applications", "cooldown icons should preserve Blizzard mirror text source")
+local function makeMirrorStackProbe(cooldownID)
+    local stackWrites = {}
+    local icon = {
+        _spellEntry = {
+            type = "spell",
+            id = 55090,
+            spellID = 55090,
+            kind = "cooldown",
+            viewerType = "essential",
+        },
+        _blizzMirrorCooldownID = cooldownID,
+        _blizzMirrorCategory = "essential",
+        StackText = {
+            SetText = function(_, value)
+                stackWrites[#stackWrites + 1] = { op = "set", value = value }
+            end,
+            Show = function()
+                stackWrites[#stackWrites + 1] = { op = "show" }
+            end,
+            Hide = function()
+                stackWrites[#stackWrites + 1] = { op = "hide" }
+            end,
+        },
+    }
+    return icon, stackWrites
+end
 
-text, textSource, mirrorBacked = icons.ResolveIconStackText({
-    _spellEntry = {
-        type = "spell",
-        id = 55090,
-        spellID = 55090,
-        kind = "cooldown",
-        viewerType = "essential",
-    },
-    _blizzMirrorCooldownID = 73544,
-    _blizzMirrorCategory = "essential",
-})
+local icon, stackWrites = makeMirrorStackProbe(73542)
+icons.OnFactoryMirrorBound(icon, 73542, "essential")
 
-assert(text == "7", "cooldown icons should mirror Blizzard's cached cast count field")
-assert(textSource == "ChargeCount", "cached cast count should keep the ChargeCount source")
-assert(mirrorBacked == true, "cached cast count should remain mirror-backed")
+assert(stackWrites[1].op == "set" and stackWrites[1].value == "6",
+    "cooldown icons should render Blizzard mirror application text")
+assert(stackWrites[2].op == "show",
+    "cooldown icons should show Blizzard mirror application text")
 
-ns.CDMSpellData = {
-    _abilityToAuraSpellID = {
-        [55090] = 194310,
-    },
-    ResolveAuraState = function(_, params)
-        if params and params.spellID == 55090 then
-            return {
-                isActive = true,
-                isTotemInstance = false,
-                count = {
-                    sinkText = "4",
-                    value = 4,
-                    shown = true,
-                    source = "display-count",
-                },
-            }
-        end
-        return { isActive = false }
-    end,
-}
+icon, stackWrites = makeMirrorStackProbe(73544)
+icons.OnFactoryMirrorBound(icon, 73544, "essential")
 
-text, textSource = icons.ResolveIconStackText({
-    _spellEntry = {
-        type = "spell",
-        id = 55090,
-        spellID = 55090,
-        kind = "cooldown",
-        viewerType = "essential",
-    },
-    _runtimeSpellID = 55090,
-})
+assert(stackWrites[1].op == "set" and stackWrites[1].value == "7",
+    "cooldown icons should mirror Blizzard's cached cast count field")
+assert(stackWrites[2].op == "show",
+    "cached cast count should remain visible")
 
-assert(text == nil, "cooldown icons should not synthesize mapped aura application text")
-assert(textSource == nil, "cooldown action icons should leave stack text to the mirror")
+icon, stackWrites = makeMirrorStackProbe(73545)
+icons.OnFactoryMirrorBound(icon, 73545, "essential")
 
-text, textSource, mirrorBacked = icons.ResolveIconStackText({
-    _spellEntry = {
-        type = "spell",
-        id = 55090,
-        spellID = 55090,
-        kind = "cooldown",
-        viewerType = "essential",
-    },
-    _runtimeSpellID = 55090,
-    _blizzMirrorCooldownID = 73543,
-    _blizzMirrorCategory = "essential",
-})
+assert(stackWrites[1].op == "set" and stackWrites[1].value == secretStackText,
+    "secret mirror stack text should be forwarded unchanged")
+assert(stackWrites[2].op == "show",
+    "secret mirror stack text should show the FontString")
 
-assert(text == nil, "mirror-backed cooldown icons should not synthesize mapped aura application text")
-assert(textSource == nil, "mirror-backed cooldown icons without mirror text should not set a stack source")
-assert(mirrorBacked == true, "mirror-backed cooldown icons without mirror text should mark the mirror authoritative")
+ns.CDMAuraRuntime.SetAbilityAuraSpellIDResolver(function(spellID)
+    if spellID == 55090 then
+        return 194310, true
+    end
+    return spellID, false
+end)
+ns.CDMAuraRuntime.SetResolver(function(params)
+    if params and params.spellID == 55090 then
+        return {
+            isActive = true,
+            isTotemInstance = false,
+            count = {
+                sinkText = "4",
+                value = 4,
+                shown = true,
+                source = "display-count",
+            },
+        }
+    end
+    return { isActive = false }
+end)
 
-text, textSource, mirrorBacked = icons.ResolveIconStackText({
-    _spellEntry = {
-        type = "spell",
-        id = 473662,
-        spellID = 473662,
-        kind = "cooldown",
-        viewerType = "essential",
-    },
-    _runtimeSpellID = 473662,
-    _blizzMirrorCooldownID = 73543,
-    _blizzMirrorCategory = "essential",
-})
+icon, stackWrites = makeMirrorStackProbe(73543)
+icons.OnFactoryMirrorBound(icon, 73543, "essential")
 
-assert(text == nil, "mirror-backed non-charge cooldown icons should not synthesize spell cast count as stack text")
-assert(textSource == nil, "spell cast count should not set a stack source")
-assert(mirrorBacked == true, "mirror-backed cooldown icons without mirror text should stay mirror-authoritative")
+assert(stackWrites[1].op == "set" and stackWrites[1].value == "",
+    "mirror-backed cooldown icons without mirror text should clear stale stack text")
+assert(stackWrites[2].op == "hide",
+    "mirror-backed cooldown icons without mirror text should hide stale stack text")
 
-text, textSource, mirrorBacked = icons.ResolveIconStackText({
-    _spellEntry = {
-        type = "spell",
-        id = 1227280,
-        spellID = 1227280,
-        overrideSpellID = 1227280,
-        kind = "cooldown",
-        viewerType = "essential",
-    },
-    _runtimeSpellID = 1227280,
-})
+icon, stackWrites = makeMirrorStackProbe(73543)
+icon._spellEntry.spellID = 473662
+icon._spellEntry.id = 473662
+icon._runtimeSpellID = 473662
+icons.OnFactoryMirrorBound(icon, 73543, "essential")
 
-assert(text == nil, "unbound mirror-backed cooldown icons should not synthesize spell display count")
-assert(textSource == nil, "unbound mirror-backed cooldown icons should not set an API stack source")
-assert(mirrorBacked == true, "unbound mirror-backed cooldown icons should still mark the mirror authoritative")
+assert(stackWrites[1].op == "set" and stackWrites[1].value == "",
+    "mirror-backed non-charge cooldown icons should not synthesize spell cast count as stack text")
+assert(stackWrites[2].op == "hide",
+    "mirror-backed non-charge cooldown icons without mirror text should stay mirror-authoritative")
 
-icons:EnsurePool("essential")
-local pool = icons:GetIconPool("essential")
+local factory = assert(ns.CDMIconFactory, "CDMIconFactory should be exported")
+factory:EnsurePool("essential")
+local pool = factory:GetIconPool("essential")
 local stackWrites = 0
 pool[#pool + 1] = {
     _stackTextSource = "spell-display-count",
@@ -304,73 +399,77 @@ icons:UpdateAllIconRanges()
 
 assert(stackWrites == 0, "range/usability refresh must not write stack text")
 
-local apps, source = icons._GetAuraApplicationsFromData({
-    applications = 1,
-    auraInstanceID = 8001,
-}, "target", "direct")
+local auraQueryIDs = {}
+ns.CDMSources.QueryUnitAuraBySpellID = function(unit, spellID)
+    auraQueryIDs[#auraQueryIDs + 1] = spellID
+    if spellID == 99102 then
+        return {
+            applications = 5,
+            auraInstanceID = 99102,
+        }
+    end
+    return nil
+end
 
-assert(apps == nil, "single numeric aura applications should not be displayed as stack text")
-assert(source == nil, "single numeric aura applications should not set a stack source")
+local function makeMacroStackProbe(viewerType)
+    local writes = {}
+    local probe = {
+        _spellEntry = {
+            type = "macro",
+            kind = "cooldown",
+            id = 99101,
+            _macroSpellID = 99101,
+            viewerType = viewerType,
+            linkedSpellIDs = { 99102 },
+            name = viewerType,
+        },
+        Icon = {
+            SetTexture = noop,
+            SetDesaturated = noop,
+            SetVertexColor = noop,
+        },
+        Cooldown = {
+            SetDrawSwipe = noop,
+            SetDrawBling = noop,
+            SetSwipeColor = noop,
+            SetHideCountdownNumbers = noop,
+            SetReverse = noop,
+            Clear = noop,
+            Show = noop,
+        },
+        StackText = {
+            SetText = function(_, value)
+                writes[#writes + 1] = { op = "set", value = value }
+            end,
+            Show = function()
+                writes[#writes + 1] = { op = "show" }
+            end,
+            Hide = function()
+                writes[#writes + 1] = { op = "hide" }
+            end,
+            SetTextColor = noop,
+        },
+    }
+    return probe, writes
+end
 
-apps, source = icons._GetAuraApplicationsFromData({
-    applications = "1",
-    auraInstanceID = 8002,
-}, "target", "direct")
+icons.ShouldAllowStackTextWrites = function() return true end
 
-assert(apps == nil, "single string aura applications should not be displayed as stack text")
-assert(source == nil, "single string aura applications should not set a stack source")
+local aliasIcon, aliasWrites = makeMacroStackProbe("aliasAura")
+icons.OnContainerIconPlaced(aliasIcon)
 
-apps, source = icons._GetAuraApplicationsFromData({
-    applications = 4,
-    auraInstanceID = 8003,
-}, "target", "direct")
+assert(aliasWrites[1] and aliasWrites[1].op == "set" and aliasWrites[1].value == "",
+    "shared aura-family containers should clear instead of synthesizing linked cooldown stack text")
+assert(#auraQueryIDs == 1 and auraQueryIDs[1] == 99101,
+    "shared aura-family containers should skip linked aura stack probes")
 
-assert(apps == 4, "multi-application aura data should keep its application count")
-assert(source == "direct", "multi-application aura data should keep its source")
+auraQueryIDs = {}
+aliasIcon, aliasWrites = makeMacroStackProbe("aliasCooldown")
+icons.OnContainerIconPlaced(aliasIcon)
 
-apps, source = icons._GetAuraApplicationsFromData({
-    auraInstanceID = 9001,
-}, "target", "direct")
-
-assert(queriedMinApplications == 2, "display-count fallback should request only visible stack counts")
-assert(apps == "4", "display-count fallback should return C-side stack text")
-assert(source == "display-count", "display-count fallback should identify its source")
-
-local stackCalls = {}
-local icon = {
-    StackText = {
-        SetText = function(self, value)
-            stackCalls[#stackCalls + 1] = { op = "set", value = value }
-            return true
-        end,
-        Show = function()
-            stackCalls[#stackCalls + 1] = { op = "show" }
-        end,
-        Hide = function()
-            stackCalls[#stackCalls + 1] = { op = "hide" }
-        end,
-    },
-}
-
-icons.ApplyAuraCountText(icon, {
-    sinkText = "9",
-    value = 9,
-    shown = true,
-    source = "display-count",
-}, false, false)
-
-assert(stackCalls[1].op == "set" and stackCalls[1].value == "9",
-    "icon renderer should consume shared count sink text")
-assert(stackCalls[2].op == "show", "icon renderer should show shared count sink text")
-
-stackCalls = {}
-icons.ApplyAuraCountText(icon, {
-    shown = false,
-    source = "display-count",
-}, false, false)
-
-assert(stackCalls[1].op == "set" and stackCalls[1].value == "",
-    "hidden shared count should clear icon stack text")
-assert(stackCalls[2].op == "hide", "hidden shared count should hide icon stack text")
+assert(aliasWrites[1] and aliasWrites[1].op == "set" and aliasWrites[1].value == "5",
+    "shared cooldown-family containers should still render linked aura stack probes")
+assert(aliasWrites[2] and aliasWrites[2].op == "show",
+    "linked aura stack probes should show stack text through the icon runtime")
 
 print("OK: cdm_icons_stack_resolution_test")

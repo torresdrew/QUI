@@ -62,6 +62,7 @@ function _G.QUI_OnSpellDataChanged()
     changeCallbacks = changeCallbacks + 1
 end
 
+dofile("tests/helpers/load_cdm_spelldata_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_spelldata.lua"))("QUI", ns)
 
 local ok = ns.CDMSpellData:AddSpell("custom_bar", 67890, "cooldown", 2, false)

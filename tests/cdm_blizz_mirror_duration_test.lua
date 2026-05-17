@@ -9,12 +9,18 @@ local secretTotemDataToken = setmetatable({ token = "secret-totem-data" }, {
         error("secret totemData must not be indexed")
     end,
 })
+local secretDebugValue = { token = "secret-debug-value" }
+local secretChargeText = { token = "secret-charge-text" }
+local secretShownValue = { token = "secret-shown-value" }
 
 function issecretvalue(value)
     if value == preferredTotemSlotToken then
         error("preferred totem slot must not be inspected for secret status")
     end
     return value == secretTotemDataToken
+        or value == secretDebugValue
+        or value == secretChargeText
+        or value == secretShownValue
 end
 
 local hooks = {}
@@ -243,6 +249,30 @@ local unflaggedCountChild = {
 unflaggedCountChild.Cooldown.GetParent = function() return unflaggedCountChild end
 unflaggedCountChild.ChargeCount.Current = MakeTextOwner()
 
+local nestedFrameText = MakeTextOwner()
+nestedFrameText.GetObjectType = function() return "FontString" end
+
+local nestedFrameTextChild = {
+    cooldownID = 195182,
+    isActive = true,
+    Text = {
+        GetChildren = function()
+            return nestedFrameText
+        end,
+    },
+    Cooldown = {
+        SetCooldown = noop,
+        SetCooldownFromDurationObject = noop,
+        SetCooldownFromExpirationTime = noop,
+        SetCooldownDuration = noop,
+        SetCooldownUNIX = noop,
+        Clear = noop,
+    },
+    Show = noop,
+    Hide = noop,
+}
+nestedFrameTextChild.Cooldown.GetParent = function() return nestedFrameTextChild end
+
 local uncountedChargeFlagChild = {
     cooldownID = 1227280,
     isActive = true,
@@ -361,6 +391,28 @@ local trackedBarChild = {
 }
 trackedBarChild.Cooldown.GetParent = function() return trackedBarChild end
 
+local trackedBarApplicationsText = MakeTextOwner()
+trackedBarApplicationsText.GetObjectType = function() return "FontString" end
+
+local trackedBarStackChild = {
+    cooldownID = 888123,
+    isActive = true,
+    Icon = {
+        Applications = trackedBarApplicationsText,
+    },
+    Cooldown = {
+        SetCooldown = noop,
+        SetCooldownFromDurationObject = noop,
+        SetCooldownFromExpirationTime = noop,
+        SetCooldownDuration = noop,
+        SetCooldownUNIX = noop,
+        Clear = noop,
+    },
+    Show = noop,
+    Hide = noop,
+}
+trackedBarStackChild.Cooldown.GetParent = function() return trackedBarStackChild end
+
 local cooldownAuraMappedChild = {
     cooldownID = 69057,
     isActive = true,
@@ -450,7 +502,7 @@ amzBuffChild.Cooldown.GetParent = function() return amzBuffChild end
 EssentialCooldownViewer = {
     GetChildren = function()
         return child, chargedChild, unflaggedCountChild, uncountedChargeFlagChild,
-            mindBlastChild, prayerAliasChild, gcdChild
+            mindBlastChild, prayerAliasChild, gcdChild, nestedFrameTextChild
     end,
 }
 UtilityCooldownViewer = {
@@ -463,12 +515,12 @@ BuffIconCooldownViewer = {
         return auraChild, auraFallbackChild, trackedBarChild, cooldownAuraMappedChild, reapingChild, raiseAbomChild, amzBuffChild
     end,
 }
-BuffBarCooldownViewer = { GetChildren = function() end }
+BuffBarCooldownViewer = { GetChildren = function() return trackedBarStackChild end }
 
 C_CooldownViewer = {
     GetCooldownViewerCategorySet = function(category)
         if category == 0 then
-            return { 27902, 444001, 777001, 1227280, 809200, 330760, 27903 }
+            return { 27902, 444001, 777001, 1227280, 809200, 330760, 27903, 195182 }
         end
         if category == 1 then
             return { 27911 }
@@ -477,7 +529,7 @@ C_CooldownViewer = {
             return { 73542, 141686, 70765, 92923, 103071 }
         end
         if category == 3 then
-            return { 27925, 69057 }
+            return { 27925, 69057, 888123 }
         end
         return {}
     end,
@@ -526,6 +578,32 @@ C_CooldownViewer = {
                 cooldownID = 777001,
                 spellID = 777002,
                 overrideSpellID = 777002,
+                overrideTooltipSpellID = nil,
+                linkedSpellIDs = nil,
+                selfAura = false,
+                hasAura = false,
+                charges = false,
+                isKnown = true,
+            }
+        end
+        if cooldownID == 888123 then
+            return {
+                cooldownID = 888123,
+                spellID = 888124,
+                overrideSpellID = 888124,
+                overrideTooltipSpellID = nil,
+                linkedSpellIDs = nil,
+                selfAura = true,
+                hasAura = true,
+                charges = false,
+                isKnown = true,
+            }
+        end
+        if cooldownID == 195182 then
+            return {
+                cooldownID = 195182,
+                spellID = 195182,
+                overrideSpellID = 195182,
                 overrideTooltipSpellID = nil,
                 linkedSpellIDs = nil,
                 selfAura = false,
@@ -712,12 +790,81 @@ child.ChargeCount.DisplayText:SetText("")
 child.ChargeCount.Current:SetText("4")
 chargedChild.ChargeCount:SetText("1")
 chargedChild.ChargeCount.DisplayText:SetText("2")
+nestedFrameText:SetText("8")
+trackedBarApplicationsText:SetText("7")
+auraChild.auraInstanceID = 1901
+auraChild.auraDataUnit = "player"
+ns.CDMSources.QueryAuraDuration = function() return nil end
+ns.CDMSources.QueryAuraDataByAuraInstanceID = function() return nil end
 ns.CDMBlizzMirror.ForceRescan()
 
 local stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(73542, "buff"),
     "aura mirror stack state missing")
 assert(stackState.stackText == "5", "applications DisplayText should be preferred over parent text")
 assert(stackState.stackTextSource == "Applications", "applications DisplayText should keep its mirror source")
+
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(888123, "trackedBar"),
+    "trackedBar stack mirror state missing")
+assert(stackState.stackText == "7", "buff bar icon Applications text should be mirrored")
+assert(stackState.stackTextSource == "Applications", "buff bar icon Applications text should keep its mirror source")
+
+trackedBarApplicationsText:SetText("8")
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(888123, "trackedBar"),
+    "trackedBar stack mirror state missing after text write")
+assert(stackState.stackText == "8", "buff bar icon Applications text writes should be mirrored")
+assert(stackState.stackTextSource == "Applications", "buff bar icon Applications text writes should keep their mirror source")
+
+local childDebugLines = ns.CDMBlizzMirror.GetChildDebugLines(888123, "trackedBar")
+local foundIconApplicationsText = false
+for _, line in ipairs(childDebugLines) do
+    if line:find("Icon.Applications", 1, true) and line:find("text= 8", 1, true) then
+        foundIconApplicationsText = true
+        break
+    end
+end
+assert(foundIconApplicationsText == true, "child debug lines should include buff bar Icon.Applications text")
+
+local originalGetCooldownTimes = trackedBarStackChild.Cooldown.GetCooldownTimes
+local originalGetCooldownDuration = trackedBarStackChild.Cooldown.GetCooldownDuration
+local originalGetDrawSwipe = trackedBarStackChild.Cooldown.GetDrawSwipe
+local originalGetDrawEdge = trackedBarStackChild.Cooldown.GetDrawEdge
+trackedBarStackChild.Cooldown.GetCooldownTimes = function()
+    return secretDebugValue, secretDebugValue
+end
+trackedBarStackChild.Cooldown.GetCooldownDuration = function()
+    return secretDebugValue
+end
+trackedBarStackChild.Cooldown.GetDrawSwipe = function()
+    return secretDebugValue
+end
+trackedBarStackChild.Cooldown.GetDrawEdge = function()
+    return secretDebugValue
+end
+local originalTostring = tostring
+_G.tostring = function(value)
+    if value == secretDebugValue then
+        return secretDebugValue
+    end
+    return originalTostring(value)
+end
+local okSecretDebug, secretDebugLinesOrErr = pcall(function()
+    return ns.CDMBlizzMirror.GetChildDebugLines(888123, "trackedBar")
+end)
+_G.tostring = originalTostring
+trackedBarStackChild.Cooldown.GetCooldownTimes = originalGetCooldownTimes
+trackedBarStackChild.Cooldown.GetCooldownDuration = originalGetCooldownDuration
+trackedBarStackChild.Cooldown.GetDrawSwipe = originalGetDrawSwipe
+trackedBarStackChild.Cooldown.GetDrawEdge = originalGetDrawEdge
+assert(okSecretDebug == true,
+    "child debug lines should not stringify secret values: " .. originalTostring(secretDebugLinesOrErr))
+local foundSecretPlaceholder = false
+for _, line in ipairs(secretDebugLinesOrErr) do
+    if line:find("<SECRET:table>", 1, true) then
+        foundSecretPlaceholder = true
+        break
+    end
+end
+assert(foundSecretPlaceholder == true, "child debug lines should mark secret values")
 
 stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902, "essential"),
     "non-charge mirror stack state missing")
@@ -731,7 +878,51 @@ stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902, "essential"),
 assert(stackState.stackText == nil, "hidden non-charge cooldown count text should not be mirrored")
 assert(stackState.stackTextSource == nil, "hidden non-charge cooldown count text should not keep a source")
 
+child.cooldownChargesShown = secretShownValue
+child.ChargeCount.IsShown = function()
+    return secretShownValue
+end
+child.ChargeCount.Current:SetText(secretChargeText)
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902, "essential"),
+    "secret charge text mirror state missing")
+assert(stackState.stackText == secretChargeText, "secret child charge text should be mirrored as an opaque value")
+assert(stackState.stackTextSource == "ChargeCount", "secret child charge text should keep the ChargeCount source")
+
+child.ChargeCount.Current:SetText("")
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902, "essential"),
+    "secret charge text mirror state missing after clear")
+assert(stackState.stackText == nil, "empty child charge text should clear the mirrored stack text")
+assert(stackState.stackTextSource == nil, "empty child charge text should clear the stack source")
+
+child.ChargeCount.IsShown = nil
 child.cooldownChargesShown = true
+child.ChargeCount.Current:SetText("4")
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902, "essential"),
+    "visible charge text mirror state missing after reset")
+assert(stackState.stackText == "4", "visible child charge text should be mirrored after reset")
+
+child.ChargeCount.Current:Hide()
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902, "essential"),
+    "visible charge text mirror state missing after text owner hide")
+assert(stackState.stackText == nil, "hiding the child charge text should clear the mirrored stack text")
+assert(stackState.stackTextSource == nil, "hiding the child charge text should clear the stack source")
+
+child.ChargeCount.Current:SetText("4")
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902, "essential"),
+    "visible charge text mirror state missing before SetShown clear")
+assert(stackState.stackText == "4", "visible child charge text should be mirrored before SetShown clear")
+child.ChargeCount.Current:SetShown(false)
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902, "essential"),
+    "visible charge text mirror state missing after SetShown false")
+assert(stackState.stackText == nil, "SetShown(false) on child charge text should clear the mirrored stack text")
+assert(stackState.stackTextSource == nil, "SetShown(false) on child charge text should clear the stack source")
+
+child.ChargeCount.Current:SetText("4")
+child.ChargeCount.Current:SetText("")
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(27902, "essential"),
+    "visible charge text mirror state missing after empty clear")
+assert(stackState.stackText == nil, "visible empty child charge text should clear the mirrored stack text")
+assert(stackState.stackTextSource == nil, "visible empty child charge text should clear the stack source")
 child.ChargeCount.Current:SetText("4")
 
 stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(444001, "essential"),
@@ -742,8 +933,8 @@ assert(stackState.stackTextSource == "ChargeCount", "real charge DisplayText sho
 auraChild.Applications.DisplayText:SetText("1")
 stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(73542, "buff"),
     "aura mirror stack state missing after single stack text")
-assert(stackState.stackText == nil, "single application text should not be mirrored as stack text")
-assert(stackState.stackTextSource == nil, "single application text should not set a mirror stack source")
+assert(stackState.stackText == "1", "source-child application text should be mirrored verbatim")
+assert(stackState.stackTextSource == "Applications", "source-child application text should keep its mirror source")
 
 auraChild.Applications.DisplayText:SetText("4")
 stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(73542, "buff"),
@@ -751,16 +942,37 @@ stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(73542, "buff"),
 assert(stackState.stackText == "4", "multi-application text should be mirrored")
 assert(stackState.stackTextSource == "Applications", "multi-application text should keep its mirror source")
 
+auraChild.Applications.DisplayText:Hide()
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(73542, "buff"),
+    "aura mirror stack state missing after text owner hide")
+assert(stackState.stackText == "4", "text owner hide must not clear source-child text")
+assert(stackState.stackTextSource == "Applications", "text owner hide must preserve the source-child text owner")
+
+auraChild.Applications.DisplayText:SetShown(false)
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(73542, "buff"),
+    "aura mirror stack state missing after text owner SetShown(false)")
+assert(stackState.stackText == "4", "text owner SetShown(false) must not clear source-child text")
+assert(stackState.stackTextSource == "Applications", "text owner SetShown(false) must preserve the source-child text owner")
+
 auraChild.Applications.DisplayText:SetText("")
 stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(73542, "buff"),
     "aura mirror stack state missing after empty stack text")
-assert(stackState.stackText == nil, "empty application text should clear mirrored stack text")
+assert(stackState.stackText == nil, "empty source-child application text should clear mirrored stack text")
+assert(stackState.stackTextSource == nil, "empty source-child application text should clear the mirror source")
 
 auraChild.Applications:SetText("6")
 stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(73542, "buff"),
     "aura mirror stack state missing after parent stack text")
 assert(stackState.stackText == "6", "parent Applications text should be mirrored when nested text is empty")
 assert(stackState.stackTextSource == "Applications", "parent Applications text should keep its mirror source")
+
+ns.CDMBlizzMirror.HandleUnitAuraChanged("player", { removedAuraInstanceIDs = { 1901 } })
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(73542, "buff"),
+    "aura mirror stack state missing after aura removal")
+assert(stackState.stackText == "6", "aura removal must not clear source-child text")
+assert(stackState.stackTextSource == "Applications", "aura removal must preserve the source-child text owner")
+auraChild.auraInstanceID = nil
+auraChild.auraDataUnit = nil
 
 chargedChild.ChargeCount.DisplayText:SetText("1")
 stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(444001, "essential"),
@@ -780,6 +992,29 @@ stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(777001, "essential"),
     "unflagged count mirror state missing")
 assert(stackState.stackText == nil, "unflagged non-charge cooldown text writes should not be mirrored")
 assert(stackState.stackTextSource == nil, "unflagged non-charge cooldown text writes should not keep a source")
+
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(195182, "essential"),
+    "nested frame text mirror state missing")
+assert(stackState.stackText == "8", "nested frame-level source text should be mirrored")
+assert(stackState.stackTextSource == "FrameText", "nested frame-level text should keep its mirror source")
+
+nestedFrameText:SetText("9")
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(195182, "essential"),
+    "nested frame text mirror state missing after text write")
+assert(stackState.stackText == "9", "nested frame-level source text writes should be mirrored")
+assert(stackState.stackTextSource == "FrameText", "nested frame-level text writes should keep their mirror source")
+
+nestedFrameTextChild:Hide()
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(195182, "essential"),
+    "nested frame text mirror state missing after inactive child")
+assert(stackState.stackText == "9", "inactive state must not clear source-child text")
+assert(stackState.stackTextSource == "FrameText", "inactive state must preserve the source-child text owner")
+
+nestedFrameText:SetText("")
+stackState = assert(ns.CDMBlizzMirror.GetStateByCooldownID(195182, "essential"),
+    "nested frame text mirror state missing after empty text write")
+assert(stackState.stackText == nil, "empty nested source text should clear mirrored stack text")
+assert(stackState.stackTextSource == nil, "empty nested source text should clear the mirror text source")
 
 child.Cooldown:SetCooldown()
 

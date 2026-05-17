@@ -7,28 +7,14 @@
 --   * Reach into engine internals (iconPools, ns.CDMSpellData, ...) at
 --     call time without forward-reference juggling.
 --
--- Slash commands:
---   /cdmdebug                       List all subsystem flags + current state.
---   /cdmdebug <name> [filter|on|off|all]
---       <name> ∈ icon | bar | blizz | aura | charge | totem | taint
---       Toggles or sets the per-subsystem flag. Filter strings match
---       substring-of-name or exact-of-id. Use "off" to disable, "all"/"on"
---       for global enable. /cdmdebug icon dump [filter] also walks every
---       icon and dumps state. /cdmdebug taint [filter] requires /rl after
---       enabling.
---   /cdmdebug off                   Clear every flag at once.
---
---   /cdmevents <spellID>            Trace events for spellID (off/clear to stop).
---   /cdmtrace <name>                Log isActive/isOnGCD transitions for a spell.
---   /cdmgcd <spellID|name> [sec]    Watch the GCD swipe decision chain.
---   /cdmcharge <name>               Charge-spell recharge swipe diagnostic.
---   /cdmflicker <name>              5-second sub-tick flicker probe.
---   /cdmprobe                       Resolver/mirror parity sweep.
---   /cdmcdtest <cooldownID>         Mirror one child onto test cooldowns.
---   /cdmraw                         Dump raw C_CooldownViewer/category data.
---   /cdmprofiles                    Dump _specProfiles state.
---   /cdmclean                       Purge cross-class spell corruption from
---                                   _specProfiles.
+-- Slash command:
+--   /cdmdebug                       List command groups and subsystem flags.
+--   /cdmdebug flags <name> [...]    Toggle icon/bar/blizz/aura/charge/totem/taint flags.
+--   /cdmdebug spell <target> [...]  One-spell report/watch/events/trace/charge/flicker.
+--   /cdmdebug mirror [...]          Mirror info, child dumps, raw dumps, cooldown tests.
+--   /cdmdebug cache [status|reset]  CDM cache status/reset via the always-loaded support path.
+--   /cdmdebug profile [status|clean] Dump or clean CDM profile/spec state.
+--   /cdmdebug probe                 Resolver/mirror parity sweep.
 
 local _, ns = ...
 
@@ -37,6 +23,10 @@ local CDMIcons    = ns.CDMIcons
 local iconPools   = ns.CDMIconFactory and ns.CDMIconFactory._iconPools or {}
 local Sources     = ns.CDMSources
 local GetTime     = GetTime
+
+local function TrimText(text)
+    return (text and tostring(text) or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
 
 ---------------------------------------------------------------------------
 -- VALUE FORMATTING (event-trace)
@@ -335,7 +325,7 @@ end
 -- WRITE PROBE (event-trace)
 -- Hooks per-instance writes on the matched icon's textures and the rotation
 -- assistant icon. Each hook is installed once via hooksecurefunc and gated
--- at fire time by CDMIcons._eventTraceSpellID, so /cdmevents off silences
+-- at fire time by CDMIcons._eventTraceSpellID, so /cdmdebug spell off silences
 -- the output without needing to detach (hooksecurefunc has no inverse).
 ---------------------------------------------------------------------------
 
@@ -554,7 +544,7 @@ function CDMIcons.DebugLayoutFilter(icon, filterHides, settings, effectiveOnCD)
 end
 
 ---------------------------------------------------------------------------
--- ICON DUMP (used by /cdmicondebug dump)
+-- ICON DUMP (used by /cdmdebug flags icon dump)
 ---------------------------------------------------------------------------
 local function DumpDebugIcon(icon)
     if not CDMIcons.ShouldDebugIcon(icon) then return end
@@ -644,20 +634,16 @@ end
 ---------------------------------------------------------------------------
 
 ---------------------------------------------------------------------------
--- /cdmdebug — unified flag-toggle command
---
--- Replaces five per-flag slashes (/cdmicondebug, /cdmbardebug,
--- /cdmblizzdebug, /cdmauradebug, /totemdbg) and exposes two flags that
--- previously only had /run access (charge, taint).
+-- Flag command group.
 --
 -- Usage:
---   /cdmdebug                       list subsystems + current state
---   /cdmdebug off                   clear all flags
---   /cdmdebug <name>                toggle on/off
---   /cdmdebug <name> on|all         enable globally (true)
---   /cdmdebug <name> off            disable
---   /cdmdebug <name> <filter>       enable with substring filter
---   /cdmdebug icon dump [filter]    set filter and walk all icons now
+--   /cdmdebug flags                         list subsystems + current state
+--   /cdmdebug flags off                     clear all flags
+--   /cdmdebug flags <name>                  toggle on/off
+--   /cdmdebug flags <name> on|all           enable globally (true)
+--   /cdmdebug flags <name> off              disable
+--   /cdmdebug flags <name> <filter>         enable with substring filter
+--   /cdmdebug flags icon dump [filter]      set filter and walk all icons now
 ---------------------------------------------------------------------------
 local DEBUG_FLAGS = {
     icon   = { global = "QUI_CDM_ICON_DEBUG",   label = "[CDM-Icon]",   takesFilter = true  },
@@ -683,19 +669,18 @@ local function PrintFlagState(key)
 end
 
 local function ListDebugFlags()
-    print("|cff34D399[CDM-Debug]|r subsystems (use /cdmdebug <name> [filter|on|off|all]):")
+    print("|cff34D399[CDM-Debug]|r subsystems (use /cdmdebug flags <name> [filter|on|off|all]):")
     for _, key in ipairs(DEBUG_FLAG_ORDER) do
         local def = DEBUG_FLAGS[key]
         local note = def.requiresReload and "  (requires /rl)" or ""
         print(string.format("  %-7s %s%s", key, FormatFlagState(_G[def.global]), note))
     end
-    print("  /cdmdebug off          → clear all flags")
-    print("  /cdmdebug icon dump    → also walk every icon and dump state")
+    print("  /cdmdebug flags off          -> clear all flags")
+    print("  /cdmdebug flags icon dump    -> also walk every icon and dump state")
 end
 
-SLASH_QUI_CDMDEBUG1 = "/cdmdebug"
-SlashCmdList["QUI_CDMDEBUG"] = function(msg)
-    local text = msg and strtrim(msg) or ""
+local function RunCDMDebugFlags(msg)
+    local text = TrimText(msg)
     if text == "" then
         ListDebugFlags()
         return
@@ -719,7 +704,7 @@ SlashCmdList["QUI_CDMDEBUG"] = function(msg)
         return
     end
 
-    local arg = rest and strtrim(rest) or ""
+    local arg = TrimText(rest)
     local argLower = arg:lower()
 
     -- /cdmdebug icon dump [filter] — set filter (or default true) and walk now.
@@ -763,7 +748,7 @@ end
 ---------------------------------------------------------------------------
 -- BAR-DEBUG DUMP HOOK
 -- Called from the tail of CDMBars:UpdateOwnedBarAura. No-op until
--- /cdmbardebug toggles _G.QUI_CDM_BAR_DEBUG, so the cost on the bar
+-- /cdmdebug flags bar toggles _G.QUI_CDM_BAR_DEBUG, so the cost on the bar
 -- update path is one global lookup + branch.
 ---------------------------------------------------------------------------
 function CDMIcons._OnBarUpdate(bar)
@@ -804,10 +789,9 @@ local okTex = true; local tex = bar.IconTexture.GetTexture(bar.IconTexture)
     end
 end
 
--- /cdmevents <spellID> — Trace events for a specific spellID.
-SLASH_CDMEVENTS1 = "/cdmevents"
-SlashCmdList["CDMEVENTS"] = function(msg)
-    local text = msg and msg:gsub("^%s+", ""):gsub("%s+$", "") or ""
+-- Trace events for a specific spellID.
+local function RunCDMDebugEvents(msg)
+    local text = TrimText(msg)
     if text == "" or text == "off" or text == "clear" then
         CDMIcons._eventTraceSpellID = nil
         CDMIcons._eventTraceStartedAt = nil
@@ -817,7 +801,7 @@ SlashCmdList["CDMEVENTS"] = function(msg)
 
     local spellID = tonumber(text:match("^(%d+)"))
     if not spellID then
-        print("|cffffaa00[cdmevents]|r Usage: /cdmevents <spellID>")
+        print("|cffffaa00[cdmevents]|r Usage: /cdmdebug spell <spellID> events")
         return
     end
     if not CDMIcons:IsRuntimeEnabled() then
@@ -828,7 +812,7 @@ SlashCmdList["CDMEVENTS"] = function(msg)
     CDMIcons._eventTraceSpellID = spellID
     CDMIcons._eventTraceStartedAt = GetTime and GetTime() or 0
     print(string.format(
-        "|cff34d399[cdmevents]|r tracing events for spellID %d. Use /cdmevents off to stop.",
+        "|cff34d399[cdmevents]|r tracing events for spellID %d. Use /cdmdebug spell off to stop.",
         spellID))
     print("|cff34d399[cdmevents]|r " .. CDMIcons.EventTraceAPISummary(spellID))
     print("|cff34d399[cdmevents]|r " .. CDMIcons.EventTraceIconSummary(spellID))
@@ -840,11 +824,10 @@ SlashCmdList["CDMEVENTS"] = function(msg)
         raInstalled and " + rotation assistant" or ""))
 end
 
--- /cdmtrace <spell name> — Log every isActive/isOnGCD transition that
--- ApplyResolvedCooldown sees for the named spell. Empty name to clear.
-SLASH_CDMTRACE1 = "/cdmtrace"
-SlashCmdList["CDMTRACE"] = function(msg)
-    local name = msg and msg:gsub("^%s+", ""):gsub("%s+$", "") or ""
+-- Log every isActive/isOnGCD transition that ApplyResolvedCooldown sees for
+-- the named spell. Empty name to clear.
+local function RunCDMDebugTrace(msg)
+    local name = TrimText(msg)
     if name == "" then
         CDMIcons._desatTraceName = nil
         for _, pool in pairs(iconPools) do
@@ -908,11 +891,26 @@ local function CDMGCDCall(owner, methodName)
     return CDMGCDValue(value)
 end
 
-local function CDMGCDResolveIconDurationObject(icon)
-    if not CDMIcons.ResolveIconDurationObject then
-        return nil, nil, nil
+local function CDMGCDResolveCooldownState(icon)
+    if not CDMIcons.ResolveCooldownState then
+        return nil
     end
-    return CDMIcons.ResolveIconDurationObject(icon)
+    local entry = icon and icon._spellEntry
+    if not entry then
+        return nil
+    end
+    return CDMIcons.ResolveCooldownState({
+        entry = entry,
+        runtimeSpellID = icon._runtimeSpellID,
+        mirrorCooldownID = icon._blizzMirrorCooldownID,
+        mirrorCategory = icon._blizzMirrorCategory,
+        containerKey = entry.viewerType,
+        totemSlot = icon._totemSlot,
+        useBuffSwipe = CDMIcons.ShouldUseBuffSwipeForIcon
+            and CDMIcons.ShouldUseBuffSwipeForIcon(icon, entry) or nil,
+        skipAuraPhase = CDMIcons.ShouldSkipAuraPhaseForCooldownIcon
+            and CDMIcons.ShouldSkipAuraPhaseForCooldownIcon(icon, entry) or nil,
+    })
 end
 
 local function CDMGCDMirrorState(icon)
@@ -1028,7 +1026,8 @@ local function CDMGCDPrintWatchSample(elapsed, needle, targetID)
                 if sid and Sources and Sources.QuerySpellUsable then
                     usable, resourceBlocked = Sources.QuerySpellUsable(sid)
                 end
-                local _, mode = CDMGCDResolveIconDurationObject(icon)
+                local resolvedState = CDMGCDResolveCooldownState(icon)
+                local mode = resolvedState and resolvedState.mode
                 local cd = icon.Cooldown
 
                 print(string.format(
@@ -1104,16 +1103,15 @@ local function CDMGCDStartWatch(text, needle, targetID, duration)
     end)
 end
 
--- /cdmgcd <spellID|name> [sec|once|off] - Watch every gate that can suppress GCD swipe.
-SLASH_CDMGCD1 = "/cdmgcd"
-SlashCmdList["CDMGCD"] = function(msg)
+-- Watch every gate that can suppress GCD swipe.
+local function RunCDMDebugGCD(msg)
     local text, duration, once, stop = CDMGCDParseRequest(msg)
     if stop then
         CDMGCDStopWatch(false)
         return
     end
     if text == "" then
-        print("|cffffaa00[cdmgcd]|r Usage: /cdmgcd <spellID or spell name> [seconds|once|off]")
+        print("|cffffaa00[cdmgcd]|r Usage: /cdmdebug spell <spellID or spell name> [once|watch [seconds]|off]")
         return
     end
     if not CDMIcons:IsRuntimeEnabled() then
@@ -1168,7 +1166,10 @@ SlashCmdList["CDMGCD"] = function(msg)
                 if sid and Sources and Sources.QuerySpellUsable then
                     usable, resourceBlocked = Sources.QuerySpellUsable(sid)
                 end
-                local durObj, mode, sourceID = CDMGCDResolveIconDurationObject(icon)
+                local resolvedState = CDMGCDResolveCooldownState(icon)
+                local durObj = resolvedState and resolvedState.durObj
+                local mode = resolvedState and resolvedState.mode
+                local sourceID = resolvedState and resolvedState.sourceID
                 local cd = icon.Cooldown
 
                 print(string.format(
@@ -1227,21 +1228,22 @@ SlashCmdList["CDMGCD"] = function(msg)
     end
 end
 
--- /cdmcharge <name> — Diagnostic for charge-spell recharge swipe issues.
+-- Diagnostic for charge-spell recharge swipe issues.
 -- Walks visible CDM icons, finds entries matching the name, prints the
 -- relevant gates: hasCharges, classifier output, charge/cd DurObj presence.
-SLASH_CDMCHARGE1 = "/cdmcharge"
-SlashCmdList["CDMCHARGE"] = function(msg)
-    local name = msg and msg:gsub("^%s+", ""):gsub("%s+$", "") or ""
-    if name == "" then
-        print("|cffffaa00[cdmcharge]|r Usage: /cdmcharge <spell name>")
+local function RunCDMDebugCharge(msg)
+    local targetText = TrimText(msg)
+    if targetText == "" then
+        print("|cffffaa00[cdmcharge]|r Usage: /cdmdebug spell <spell name> charge")
         return
     end
+    local targetID = tonumber(targetText:match("^(%d+)$"))
+    local needle = targetID and nil or targetText:lower()
     local matches = 0
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             local entry = icon and icon._spellEntry
-            if entry and entry.name == name then
+            if entry and CDMGCDIconMatches(icon, needle, targetID) then
                 matches = matches + 1
                 local sid = icon._runtimeSpellID
                     or entry.overrideSpellID or entry.spellID or entry.id
@@ -1261,19 +1263,18 @@ SlashCmdList["CDMCHARGE"] = function(msg)
         end
     end
     if matches == 0 then
-        print("|cffffaa00[cdmcharge]|r no icon found with name '" .. name .. "'")
+        print("|cffffaa00[cdmcharge]|r no icon found for '" .. targetText .. "'")
     end
 end
 
--- /cdmflicker <spell name> — diagnose flicker by snapshotting icon state
+-- Diagnose flicker by snapshotting icon state
 -- every frame for 5 seconds. Logs only TRANSITIONS (when the captured
 -- state changes), so output is compact. Used to trace which flag is
 -- toggling sub-tick during the aura→cooldown transition.
-SLASH_CDMFLICKER1 = "/cdmflicker"
-SlashCmdList["CDMFLICKER"] = function(msg)
-    local name = msg and msg:gsub("^%s+", ""):gsub("%s+$", "") or ""
-    if name == "" then
-        print("|cffffaa00[cdmflicker]|r Usage: /cdmflicker <spell name>")
+local function RunCDMDebugFlicker(msg)
+    local targetText = TrimText(msg)
+    if targetText == "" then
+        print("|cffffaa00[cdmflicker]|r Usage: /cdmdebug spell <spell name> flicker")
         return
     end
     if not CDMIcons:IsRuntimeEnabled() then
@@ -1282,9 +1283,11 @@ SlashCmdList["CDMFLICKER"] = function(msg)
     end
 
     local target
+    local targetID = tonumber(targetText:match("^(%d+)$"))
+    local needle = targetID and nil or targetText:lower()
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
-            if icon and icon._spellEntry and icon._spellEntry.name == name then
+            if icon and icon._spellEntry and CDMGCDIconMatches(icon, needle, targetID) then
                 target = icon
                 break
             end
@@ -1292,13 +1295,13 @@ SlashCmdList["CDMFLICKER"] = function(msg)
         if target then break end
     end
     if not target then
-        print("|cffffaa00[cdmflicker]|r Icon not found: " .. name)
+        print("|cffffaa00[cdmflicker]|r Icon not found: " .. targetText)
         return
     end
 
     print(string.format(
         "|cff34d399[cdmflicker]|r logging '%s' for 5s — cast the spell NOW so the flicker happens within the window",
-        name))
+        targetText))
 
     local samples = {}
     local lastSig = nil
@@ -1307,7 +1310,8 @@ SlashCmdList["CDMFLICKER"] = function(msg)
 
     local function snapshot()
         local now = GetTime() - startTime
-        local _, rMode = CDMIcons.ResolveIconDurationObject(target)
+        local rState = CDMGCDResolveCooldownState(target)
+        local rMode = rState and rState.mode
 
         local sig = string.format(
             "aA=%s sRC=%s hRC=%s sGCD=%s rMode=%s",
@@ -1326,7 +1330,7 @@ SlashCmdList["CDMFLICKER"] = function(msg)
             frame:SetScript("OnUpdate", nil)
             print(string.format(
                 "|cff34d399[cdmflicker]|r '%s' end — %d transitions over 5s",
-                name, #samples))
+                targetText, #samples))
             for _, s in ipairs(samples) do
                 print(s)
             end
@@ -1336,10 +1340,9 @@ SlashCmdList["CDMFLICKER"] = function(msg)
     frame:SetScript("OnUpdate", snapshot)
 end
 
--- /cdmprobe — Resolver parity probe. Walks every visible CDM icon and
+-- Resolver parity probe. Walks every visible CDM icon and
 -- prints (entry name, kind, resolver mode, mirror active?, parity?).
-SLASH_CDMPROBE1 = "/cdmprobe"
-SlashCmdList["CDMPROBE"] = function()
+local function RunCDMDebugProbe()
     if not CDMIcons:IsRuntimeEnabled() then
         print("|cffffaa00[cdmprobe]|r Owned engine not enabled.")
         return
@@ -1362,7 +1365,8 @@ SlashCmdList["CDMPROBE"] = function()
                 local name = entry.name or "?"
                 local kind = entry.kind or "?"
 
-                local _, mode = CDMIcons.ResolveIconDurationObject(icon)
+                local state = CDMGCDResolveCooldownState(icon)
+                local mode = state and state.mode
                 local rText = CDMIcons.ResolveIconStackText(icon)
                 local curText = icon.StackText and icon.StackText:GetText() or ""
                 local textParity
@@ -1706,7 +1710,7 @@ end
 local function EnsureCooldownMethodTestFrame()
     if _cooldownMethodTestFrame then return _cooldownMethodTestFrame end
     if InCombatLockdown and InCombatLockdown() then
-        return nil, "Run /cdmcdtest once out of combat to create the test frame."
+        return nil, "Run /cdmdebug cdtest <cooldownID> once out of combat to create the test frame."
     end
 
     local f = CreateFrame("Frame", "QUI_CDMCooldownMethodTestFrame", UIParent)
@@ -1842,13 +1846,12 @@ local function ApplyCooldownMethodCell(row, payload, methodKey)
     return false, "unknown method", CooldownTestSummary(cd)
 end
 
-SLASH_CDMCDTEST1 = "/cdmcdtest"
-SlashCmdList["CDMCDTEST"] = function(msg)
-    local text = msg and msg:gsub("^%s+", ""):gsub("%s+$", "") or ""
+local function RunCDMDebugCooldownTest(msg)
+    local text = TrimText(msg)
     local cooldownID = tonumber(text:match("^(%d+)"))
     local P = "|cff34d399[cdmcdtest]|r"
     if not cooldownID then
-        print(P, "Usage: /cdmcdtest <cooldownID>")
+        print(P, "Usage: /cdmdebug cdtest <cooldownID>")
         return
     end
 
@@ -1926,9 +1929,8 @@ SlashCmdList["CDMCDTEST"] = function(msg)
     end
 end
 
--- /cdmprofiles — dump _specProfiles contents and current spec state.
-SLASH_QUI_CDMPROFILES1 = "/cdmprofiles"
-SlashCmdList["QUI_CDMPROFILES"] = function()
+-- Dump _specProfiles contents and current spec state.
+local function RunCDMDebugProfiles()
     local P = "|cff34D399[CDM-Profiles]|r"
     local db = ns.Addon and ns.Addon.db and ns.Addon.db.profile and ns.Addon.db.profile.ncdm
     if not db then
@@ -1988,13 +1990,12 @@ SlashCmdList["QUI_CDMPROFILES"] = function()
     end
 end
 
--- /cdmclean — purge cross-class spell corruption from _specProfiles.
+-- Purge cross-class spell corruption from _specProfiles.
 -- For each spec belonging to the current character's class, removes spells
 -- that IsSpellKnownByPlayer says aren't learned (cross-class contamination).
 -- Specs belonging to other classes are left untouched — run the command on
 -- each character to clean their own specs.
-SLASH_QUI_CDMCLEAN1 = "/cdmclean"
-SlashCmdList["QUI_CDMCLEAN"] = function()
+local function RunCDMDebugClean()
     local P = "|cff34D399[CDM-Clean]|r"
 
     if InCombatLockdown() then
@@ -2135,7 +2136,7 @@ local okI = true; local ii = C_SpellBook.GetSpellBookItemInfo(offset + i, Enum.S
     end
 
     print(P, "Done.", profilesChecked, "profiles checked,", totalCleaned, "foreign spells removed.")
-    print(P, "Run /cdmprofiles to verify. Run this on each character to clean their specs.")
+    print(P, "Run /cdmdebug profile to verify. Run this on each character to clean their specs.")
 end
 
 ---------------------------------------------------------------------------
@@ -2293,7 +2294,7 @@ end
 
 ---------------------------------------------------------------------------
 -- BLIZZ-BIND DEBUG
--- /cdmblizzdebug toggle. Pre-checked predicate is passed in as `enabled`
+-- /cdmdebug flags blizz toggle. Pre-checked predicate is passed in as `enabled`
 -- so caller can compute it once outside a loop.
 ---------------------------------------------------------------------------
 function CDMDebug.Blizz(enabled, entry, label, ...)
@@ -2405,8 +2406,8 @@ end
 ---------------------------------------------------------------------------
 -- TAINT DEBUG (EditBox sink)
 --
--- Toggle: /run QUI_CDM_TAINT_DEBUG = true; /rl
--- Filter: /run QUI_CDM_TAINT_FILTER = "Sync"; /rl
+-- Toggle: /cdmdebug flags taint on; /rl
+-- Filter: /cdmdebug flags taint Sync; /rl
 -- Buffer: /run QUI_CDM_TAINT_BUFFER_MAX = 1000; /rl
 --
 -- Instrumented call sites use Taint(label, k1, v1, k2, v2, ...) to emit a
@@ -2566,8 +2567,7 @@ local function _renderDebugLinesToEditBox(lines)
     end
 end
 
-SLASH_QUI_CDMRAW1 = "/cdmraw"
-SlashCmdList["QUI_CDMRAW"] = function()
+local function RunCDMDebugRaw()
     local P = "|cff34d399[CDM raw]|r"
     local mirror = ns.CDMBlizzMirror
     if mirror and mirror.BindNewChildren then
@@ -2582,6 +2582,269 @@ SlashCmdList["QUI_CDMRAW"] = function()
     local lines = mirror.GetRawCooldownViewerDebugLines()
     _renderDebugLinesToEditBox(lines)
     print(P, "dumped", tostring(type(lines) == "table" and #lines or 0), "line(s) to the CDM debug text window.")
+end
+
+local function RunCDMDebugInfo(msg)
+    local arg = TrimText(msg)
+    if arg == "" then arg = nil end
+    local mirror = ns.CDMBlizzMirror
+    if not (mirror and mirror.DumpInfoForSpell) then
+        print("|cff60A5FAQUI:|r CDM mirror not loaded.")
+        return
+    end
+    mirror.DumpInfoForSpell(arg)
+end
+
+local function RunCDMDebugChild(msg)
+    local arg = TrimText(msg)
+    local cdIDText, category = arg:match("^(%S+)%s*(%S*)")
+    local cdID = tonumber(cdIDText)
+    if not cdID then
+        print("|cff60A5FAQUI:|r usage: /cdmdebug mirror child <cooldownID> [essential|utility|buff|trackedBar]")
+        return
+    end
+    if category == "" then category = nil end
+    local mirror = ns.CDMBlizzMirror
+    if not (mirror and mirror.GetChildDebugLines) then
+        print("|cff60A5FAQUI:|r CDM mirror not loaded.")
+        return
+    end
+    local lines = mirror.GetChildDebugLines(cdID, category)
+    print(("|cff60A5FAQUI CDM child:|r cdID=%d category=%s"):format(cdID, tostring(category or "auto")))
+    if type(lines) == "table" then
+        for _, line in ipairs(lines) do
+            print("  " .. tostring(line))
+        end
+    end
+end
+
+local function FindDebugTargetID(target)
+    local numeric = tonumber(target and target:match("^(%d+)$"))
+    if numeric then return numeric end
+    local needle = TrimText(target):lower()
+    if needle == "" then return nil end
+
+    for _, pool in pairs(iconPools) do
+        for _, icon in ipairs(pool) do
+            local entry = icon and icon._spellEntry
+            local name = entry and entry.name
+            if type(name) == "string" and name:lower():find(needle, 1, true) then
+                return CDMGCDFirstID(
+                    icon._runtimeSpellID,
+                    entry.overrideSpellID,
+                    entry.spellID,
+                    entry.id,
+                    entry.itemID)
+            end
+        end
+    end
+    return nil
+end
+
+local function FindDebugTargetName(target)
+    local targetText = TrimText(target)
+    if targetText == "" then return nil end
+    local targetID = tonumber(targetText:match("^(%d+)$"))
+    local needle = targetID and nil or targetText:lower()
+    for _, pool in pairs(iconPools) do
+        for _, icon in ipairs(pool) do
+            local entry = icon and icon._spellEntry
+            if entry and CDMGCDIconMatches(icon, needle, targetID) then
+                return entry.name
+            end
+        end
+    end
+    return nil
+end
+
+local SPELL_MODES = {
+    once = true,
+    watch = true,
+    events = true,
+    event = true,
+    writes = true,
+    write = true,
+    trace = true,
+    desat = true,
+    charge = true,
+    flicker = true,
+}
+
+local function ParseSpellDebugRequest(msg)
+    local text = TrimText(msg)
+    local lower = text:lower()
+    if lower == "" then return "", "help", nil end
+    if lower == "off" or lower == "clear" or lower == "stop" then
+        return "", "off", nil
+    end
+
+    local seconds
+    local base, tail = text:match("^(.-)%s+(%S+)$")
+    if base and tonumber(tail) then
+        seconds = tonumber(tail)
+        text = TrimText(base)
+        lower = text:lower()
+    end
+
+    local mode = seconds and "watch" or "once"
+    base, tail = text:match("^(.-)%s+(%S+)$")
+    if base and tail then
+        local tailLower = tail:lower()
+        if SPELL_MODES[tailLower] then
+            mode = tailLower
+            text = TrimText(base)
+        end
+    elseif SPELL_MODES[lower] then
+        return "", lower, seconds
+    end
+
+    if mode == "event" then mode = "events" end
+    if mode == "write" or mode == "writes" then mode = "events" end
+    if mode == "desat" then mode = "trace" end
+
+    return text, mode, seconds
+end
+
+local function RunCDMDebugSpell(msg)
+    local target, mode, seconds = ParseSpellDebugRequest(msg)
+    if mode == "help" then
+        print("|cff34D399[CDM-Debug]|r spell usage:")
+        print("  /cdmdebug spell <spellID|name>              -> one-shot resolver/API/icon report")
+        print("  /cdmdebug spell <spellID|name> watch [sec]  -> timed GCD/swipe watch")
+        print("  /cdmdebug spell <spellID|name> events       -> event + write trace")
+        print("  /cdmdebug spell <spell name> trace          -> desaturation transition trace")
+        print("  /cdmdebug spell <spell name> charge         -> charge-path report")
+        print("  /cdmdebug spell <spell name> flicker        -> 5-second transition sampler")
+        print("  /cdmdebug spell off                         -> stop spell traces/watchers")
+        return
+    end
+
+    if mode == "off" then
+        RunCDMDebugEvents("off")
+        RunCDMDebugTrace("")
+        CDMGCDStopWatch(false)
+        return
+    end
+
+    if target == "" then
+        RunCDMDebugSpell("")
+        return
+    end
+
+    if mode == "events" then
+        local targetID = FindDebugTargetID(target)
+        if not targetID then
+            print("|cffffaa00[cdmevents]|r no spellID found for '" .. tostring(target) .. "'")
+            return
+        end
+        RunCDMDebugEvents(tostring(targetID))
+    elseif mode == "trace" then
+        RunCDMDebugTrace(FindDebugTargetName(target) or target)
+    elseif mode == "charge" then
+        RunCDMDebugCharge(target)
+    elseif mode == "flicker" then
+        RunCDMDebugFlicker(target)
+    elseif mode == "watch" then
+        local duration = tonumber(seconds) or 5
+        RunCDMDebugGCD(target .. " " .. tostring(duration))
+    else
+        RunCDMDebugGCD(target .. " once")
+    end
+end
+
+local function RunCDMDebugMirror(msg)
+    local text = TrimText(msg)
+    if text == "" then
+        print("|cff34D399[CDM-Debug]|r mirror usage:")
+        print("  /cdmdebug mirror [filter|spellID|cooldownID]       -> sanitized mirror info")
+        print("  /cdmdebug mirror child <cooldownID> [category]      -> child frame/text dump")
+        print("  /cdmdebug mirror raw                                -> raw viewer/category dump")
+        print("  /cdmdebug mirror cdtest <cooldownID>                -> cooldown setter test frame")
+        return
+    end
+
+    local cmd, rest = text:match("^(%S+)%s*(.-)$")
+    local lower = cmd and cmd:lower() or ""
+    if lower == "child" then
+        RunCDMDebugChild(rest)
+    elseif lower == "raw" then
+        RunCDMDebugRaw()
+    elseif lower == "cdtest" or lower == "test" then
+        RunCDMDebugCooldownTest(rest)
+    else
+        RunCDMDebugInfo(text)
+    end
+end
+
+local function RunCDMDebugCache(msg)
+    local sub = TrimText(msg)
+    if sub == "" then sub = "status" end
+    if QUI and QUI.SlashCommandOpen then
+        QUI:SlashCommandOpen("cdm_cache " .. sub)
+    else
+        print("|cffffaa00[CDM-Debug]|r cache command unavailable.")
+    end
+end
+
+local function RunCDMDebugProfile(msg)
+    local sub = TrimText(msg):lower()
+    if sub == "" or sub == "status" then
+        RunCDMDebugProfiles()
+    elseif sub == "clean" then
+        RunCDMDebugClean()
+    else
+        print("|cffffaa00[CDM-Debug]|r profile usage: /cdmdebug profile [status|clean]")
+    end
+end
+
+local function PrintCDMDebugHelp()
+    print("|cff34D399[CDM-Debug]|r commands:")
+    print("  /cdmdebug status                         -> command help + flag state")
+    print("  /cdmdebug flags [name] [on|off|filter]   -> debug flags")
+    print("  /cdmdebug spell <target> [mode]           -> spell/icon case report")
+    print("  /cdmdebug mirror [filter|child|raw|cdtest] -> mirror/child diagnostics")
+    print("  /cdmdebug cache [status|reset]            -> cache status/reset")
+    print("  /cdmdebug profile [status|clean]          -> CDM profile tools")
+    print("  /cdmdebug probe                           -> resolver/mirror parity sweep")
+    print("  direct flag shorthand: /cdmdebug icon on, /cdmdebug taint Sync, /cdmdebug off")
+    ListDebugFlags()
+end
+
+local function RunCDMDebugCommand(msg)
+    local text = TrimText(msg)
+    if text == "" or text:lower() == "help" or text:lower() == "status" then
+        PrintCDMDebugHelp()
+        return
+    end
+
+    local cmd, rest = text:match("^(%S+)%s*(.-)$")
+    local lower = cmd and cmd:lower() or ""
+    if lower == "flags" then
+        RunCDMDebugFlags(rest)
+    elseif DEBUG_FLAGS[lower] or lower == "off" or lower == "clear" then
+        RunCDMDebugFlags(text)
+    elseif lower == "spell" then
+        RunCDMDebugSpell(rest)
+    elseif lower == "mirror" then
+        RunCDMDebugMirror(rest)
+    elseif lower == "cache" then
+        RunCDMDebugCache(rest)
+    elseif lower == "profile" or lower == "profiles" then
+        RunCDMDebugProfile(rest)
+    elseif lower == "raw" then
+        RunCDMDebugRaw()
+    elseif lower == "probe" then
+        RunCDMDebugProbe()
+    elseif lower == "cdtest" then
+        RunCDMDebugCooldownTest(rest)
+    else
+        print("|cffffaa00[CDM-Debug]|r unknown command '" .. tostring(cmd) .. "'. Use /cdmdebug help.")
+    end
+end
+
+SLASH_QUI_CDMDEBUG1 = "/cdmdebug"
+SlashCmdList["QUI_CDMDEBUG"] = function(msg)
+    RunCDMDebugCommand(msg)
 end
 
 ---------------------------------------------------------------------------

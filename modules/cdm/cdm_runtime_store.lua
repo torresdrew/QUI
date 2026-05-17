@@ -1,6 +1,4 @@
 local ADDON_NAME, ns = ...
-local Helpers = ns.Helpers or {}
-
 ---------------------------------------------------------------------------
 -- CDM Runtime Store
 --
@@ -16,6 +14,7 @@ local type = type
 local tostring = tostring
 local pairs = pairs
 local wipe = wipe
+local rawequal = rawequal
 
 local _stateByKey = {}
 local _keyByFrame = setmetatable({}, { __mode = "k" })
@@ -78,15 +77,8 @@ local function GetFrameEntryKey(frame, fallbackContainer)
     return key
 end
 
-local function IsSecretValue(value)
-    return Helpers.IsSecretValue and Helpers.IsSecretValue(value) or false
-end
-
 local function ValuesEqual(left, right)
-    if IsSecretValue(left) or IsSecretValue(right) then
-        return nil
-    end
-    return left == right
+    return rawequal(left, right)
 end
 
 local function IsStoreMetadataKey(key)

@@ -33,25 +33,23 @@ CDMIcons.EventTraceAuraInfo = function() return nil end
 -- IMPORTS
 ---------------------------------------------------------------------------
 local Resolvers = ns.CDMResolvers
+local RuntimeQueries = ns.CDMRuntimeQueries
 local Sources = ns.CDMSources
-local QueryCharges = Resolvers.QueryCharges
-local QueryCooldown = Resolvers.QueryCooldown
-local QueryDuration = Resolvers.QueryDuration
-local QueryChargeDuration = Resolvers.QueryChargeDuration
-local QueryOverrideSpell = Resolvers.QueryOverrideSpell
-local QueryDisplayCount = Resolvers.QueryDisplayCount
-local QuerySpellCount = Resolvers.QuerySpellCount
+local QueryCharges = RuntimeQueries.QueryCharges
+local QueryCooldown = RuntimeQueries.QueryCooldown
+local QueryDuration = RuntimeQueries.QueryDuration
+local QueryOverrideSpell = RuntimeQueries.QueryOverrideSpell
+local QueryDisplayCount = RuntimeQueries.QueryDisplayCount
+local QuerySpellCount = RuntimeQueries.QuerySpellCount
 local _textureCycleCache = Resolvers._textureCycleCache
 local GetSpellTexture = Resolvers.GetSpellTexture
 local ResolveMacro = Resolvers.ResolveMacro
 local GetEntryTexture = Resolvers.GetEntryTexture
-local HasRealCooldownState = Resolvers.HasRealCooldownState
-local ResolveAuraStateForIcon = Resolvers.ResolveAuraStateForIcon
-local ResolveAuraDurationObjectForIcon = Resolvers.ResolveAuraDurationObjectForIcon
 local IsAuraEntry = Resolvers.IsAuraEntry
-local GetChargeMetadataDB = Resolvers.GetChargeMetadataDB
-local BeginRuntimeQueryBatch = Resolvers.BeginRuntimeQueryBatch
-local EndRuntimeQueryBatch = Resolvers.EndRuntimeQueryBatch
+local ResolveAuraActiveState = Resolvers.ResolveAuraActiveState
+local GetChargeMetadataDB = RuntimeQueries.GetChargeMetadataDB
+local BeginRuntimeQueryBatch = RuntimeQueries.BeginRuntimeQueryBatch
+local EndRuntimeQueryBatch = RuntimeQueries.EndRuntimeQueryBatch
 
 local function BeginResolverQueryBatch()
     if BeginRuntimeQueryBatch then
@@ -65,32 +63,45 @@ local function EndResolverQueryBatch()
     end
 end
 
----------------------------------------------------------------------------
--- COMPAT SHIMS
--- Resolver functions forwarded onto CDMIcons so callers in containers,
--- bars, and cdm_resolvers.lua itself can reach them via CDMIcons.X.
--- cdm_resolvers.lua loads before this file (cdm.xml ordering).
----------------------------------------------------------------------------
-CDMIcons.IsItemLikeEntry = ns.CDMResolvers.IsItemLikeEntry
-CDMIcons.ResolveItemCooldownIdentity = ns.CDMResolvers.ResolveItemCooldownIdentity
-CDMIcons.ResolveEntryItemID = ns.CDMResolvers.ResolveEntryItemID
-CDMIcons.ClassifySpellCooldownState = ns.CDMResolvers.ClassifySpellCooldownState
-CDMIcons.ResolveSpellActiveState = ns.CDMResolvers.ResolveSpellActiveState
-CDMIcons.ResolveCooldownActivityState = ns.CDMResolvers.ResolveCooldownActivityState
-CDMIcons.ResolveIconDurationObject = ns.CDMResolvers.ResolveIconDurationObject
-
--- Factory delegation: callers in cdm_containers.lua + self use
--- CDMIcons:AcquireIcon / CDMIcons:ReleaseIcon; the real impl is in
--- cdm_icon_factory.lua (loads before this file via cdm.xml ordering).
-function CDMIcons:AcquireIcon(...)
-    return ns.CDMIconFactory.AcquireIcon(ns.CDMIconFactory, ...)
+local function GetBuiltinContainerType(containerKey)
+    return Shared and Shared.GetBuiltinContainerType
+        and Shared.GetBuiltinContainerType(containerKey)
+        or nil
 end
 
-function CDMIcons:ReleaseIcon(...)
-    return ns.CDMIconFactory.ReleaseIcon(ns.CDMIconFactory, ...)
+local function GetBuiltinContainerEntryKind(containerKey)
+    return Shared and Shared.GetBuiltinContainerEntryKind
+        and Shared.GetBuiltinContainerEntryKind(containerKey)
+        or nil
 end
 
-CDMIcons._LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
+local function IsBuiltinCooldownContainerKey(containerKey)
+    if Shared and Shared.IsBuiltinCooldownContainerKey then
+        return Shared.IsBuiltinCooldownContainerKey(containerKey)
+    end
+    return GetBuiltinContainerEntryKind(containerKey) == "cooldown"
+end
+
+local function IsBuiltinAuraContainerKey(containerKey)
+    if Shared and Shared.IsBuiltinAuraContainerKey then
+        return Shared.IsBuiltinAuraContainerKey(containerKey)
+    end
+    return GetBuiltinContainerEntryKind(containerKey) == "aura"
+end
+
+local function IsCustomBarContainer(containerDB)
+    return Shared and Shared.IsCustomBarContainer
+        and Shared.IsCustomBarContainer(containerDB)
+        or false
+end
+
+local function GetCustomBarVisibilityMode(containerDB)
+    return Shared and Shared.GetCustomBarVisibilityMode
+        and Shared.GetCustomBarVisibilityMode(containerDB)
+        or "always"
+end
+
+local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 local CDMCooldown = ns.CDMCooldown or {}
 ns.CDMCooldown = CDMCooldown
 
@@ -117,17 +128,21 @@ local GetTime = GetTime
 local wipe = wipe
 local select = select
 local tostring = tostring
-local format = format
 local InCombatLockdown = InCombatLockdown
 local C_StringUtil = C_StringUtil
 local issecretvalue = issecretvalue
 
 local function IsSafeNumeric(val)
+    if issecretvalue and issecretvalue(val) then return false end
     return Shared and Shared.IsSafeNumeric(val) or type(val) == "number"
 end
-CDMIcons.IsSafeNumeric = IsSafeNumeric
+
+local _resolverRuntimePolicy = {}
 
 local function SafeBoolean(val)
+    if issecretvalue and issecretvalue(val) then
+        return nil
+    end
     if Shared and Shared.SafeBoolean then
         return Shared.SafeBoolean(val)
     end
@@ -137,19 +152,7 @@ local function SafeBoolean(val)
     return nil
 end
 
-function CDMIcons.GetReadableChargeMaxCharges(chargeInfo)
-    if not chargeInfo then return nil end
-    local maxCharges = chargeInfo.maxCharges
-    if issecretvalue and issecretvalue(maxCharges) then
-        return nil
-    end
-    if type(maxCharges) == "number" then
-        return maxCharges
-    end
-    return nil
-end
-
-function CDMIcons.ApplyDurationObjectCooldown(cd, durObj, clearWhenZero, reverse)
+function _resolverRuntimePolicy.ApplyDurationObjectCooldown(cd, durObj, clearWhenZero, reverse)
     if ns.CDMRenderers and ns.CDMRenderers.ApplyDurationObjectCooldown then
         return ns.CDMRenderers.ApplyDurationObjectCooldown(cd, durObj, clearWhenZero, reverse)
     end
@@ -191,102 +194,8 @@ local ICON_FRAME_LEVEL_OFFSET = 1
 local COOLDOWN_FRAME_LEVEL_OFFSET = 1
 local TEXT_OVERLAY_FRAME_LEVEL_OFFSET = 6
 local GCD_SPELL_ID = 61304
-local GCD_MAX_DURATION = 1.75
-CDMIcons.COOLDOWN_EXPIRY_REFRESH_FUDGE = 0.2
-CDMIcons.COOLDOWN_EXPIRY_RESCHEDULE_EPSILON = 0.1
-
-function CDMIcons.GetCooldownInfoField(info, key)
-    -- Returns (value, isSecret). Combat-restricted fields (startTime,
-    -- duration, timeUntilEndOfStartRecovery, activeCategory) may be secret
-    -- when the Blizzard CDM data feed is active. Callers should forward
-    -- the raw value to C-side sinks (SetCooldownFromDurationObject etc.)
-    -- and gate any Lua-side compare/branch on the secret flag —
-    -- `value > 0` faults on a secret number even when `type(value)` is
-    -- "number", because secret numbers are typed but unsafe to compare.
-    if not info then return nil, false end
-    local v = info[key]
-    if v == nil then return nil, false end
-    if issecretvalue and issecretvalue(v) then
-        return v, true
-    end
-    return v, false
-end
-
-function CDMIcons.GetCooldownInfoStartDuration(info)
-    local start, startSecret = CDMIcons.GetCooldownInfoField(info, "startTime")
-    if start == nil and not startSecret then
-        start, startSecret = CDMIcons.GetCooldownInfoField(info, "start")
-    end
-    local duration, durationSecret = CDMIcons.GetCooldownInfoField(info, "duration")
-    return start, duration, startSecret or durationSecret
-end
-
-function CDMIcons.IsCooldownInfoActive(info)
-    -- cdInfo.isActive is a non-secret boolean per API contract. Trust it
-    -- exclusively. The legacy start/duration fallback was removed because
-    -- those fields can be secret in combat and comparing them in Lua
-    -- (start > 0) taints. If isActive isn't a boolean, the cooldown's
-    -- state is unknown — return nil so callers fall back to event-driven
-    -- refresh.
-    local active = CDMIcons.GetCooldownInfoField(info, "isActive")
-    if type(active) == "boolean" then
-        return active
-    end
-    return nil
-end
-
-function CDMIcons.IsCooldownInfoRealCooldown(info)
-    if not info then return false end
-
-    local active = CDMIcons.IsCooldownInfoActive(info)
-    if active == false then
-        return false
-    end
-
-    local enabled = CDMIcons.GetCooldownInfoField(info, "isEnabled")
-    if enabled == false then
-        return false
-    end
-
-    local start, duration, timingSecret = CDMIcons.GetCooldownInfoStartDuration(info)
-    if not timingSecret and IsSafeNumeric(duration) then
-        if duration <= GCD_MAX_DURATION then
-            return false
-        end
-        if IsSafeNumeric(start) and start <= 0 then
-            return false
-        end
-        if active == true then
-            return true
-        end
-    end
-
-    local activeCategory, categorySecret = CDMIcons.GetCooldownInfoField(info, "activeCategory")
-    -- Check secret before the `~= nil` test so a secret category (which
-    -- can compare against nil safely but not deduce an "unknown" branch)
-    -- doesn't get treated as a real cooldown by accident.
-    if categorySecret then
-        return nil
-    end
-    if activeCategory ~= nil then
-        return true
-    end
-
-    local startRecovery, recoverySecret = CDMIcons.GetCooldownInfoField(info, "timeUntilEndOfStartRecovery")
-    if not recoverySecret and IsSafeNumeric(startRecovery) and startRecovery > 0 then
-        return false
-    elseif startRecovery ~= nil and not timingSecret and not recoverySecret then
-        return false
-    end
-    if recoverySecret or timingSecret then
-        return nil
-    end
-
-    -- No active cooldown category, no readable >GCD duration, and no secret
-    -- timing means the duration came from GCD, resource recovery, spell hold,
-    -- or other non-cooldown logic.
-    return false
-end
+local COOLDOWN_EXPIRY_REFRESH_FUDGE = 0.2
+local COOLDOWN_EXPIRY_RESCHEDULE_EPSILON = 0.1
 
 ---------------------------------------------------------------------------
 -- POOL STATE ALIASES
@@ -297,21 +206,29 @@ local iconPools   = ns.CDMIconFactory._iconPools
 local recyclePool = ns.CDMIconFactory._recyclePool
 local Factory = ns.CDMIconFactory
 local SyncCooldownBling  = Factory.SyncCooldownBling
-local UpdateIconCooldown = Factory.UpdateIconCooldown
+local UpdateIconCooldown
 local SetStackTextWritesForBatch
 local SyncSpellRangeChecks
 local DisableSpellRangeChecks
+local GetTrackerSettings
+local stackPolicy
+local GetAuraApplicationsForSpell
+local customBarPolicy
 
-CDMIcons._mirrorIconsByCategory = {}
-CDMIcons._pendingMirrorRefreshByCategory = {}
-CDMIcons._mirrorRefreshPending = false
-CDMIcons._mirrorRefreshStats = {
-    targeted = 0,
-    fallback = 0,
-    maxBatch = 0,
-}
-CDMIcons._eventProfileStats = {}
-CDMIcons._eventProfileLast = {
+local cooldownPolicy = ns.CDMIconCooldownPolicy and ns.CDMIconCooldownPolicy.Create({
+    getMirror = function()
+        return ns.CDMBlizzMirror
+    end,
+    queryCooldown = function(spellID)
+        return QueryCooldown and QueryCooldown(spellID) or nil
+    end,
+    queryOverrideSpell = function(spellID)
+        return QueryOverrideSpell and QueryOverrideSpell(spellID) or nil
+    end,
+})
+
+_resolverRuntimePolicy.eventProfileStats = {}
+_resolverRuntimePolicy.eventProfileLast = {
     time = GetTime and GetTime() or 0,
     counts = {},
     ms = {},
@@ -319,10 +236,10 @@ CDMIcons._eventProfileLast = {
 
 function CDMIcons.RecordEventProfile(event, elapsedMS)
     if not event then return end
-    local stats = CDMIcons._eventProfileStats[event]
+    local stats = _resolverRuntimePolicy.eventProfileStats[event]
     if not stats then
         stats = { calls = 0, ms = 0 }
-        CDMIcons._eventProfileStats[event] = stats
+        _resolverRuntimePolicy.eventProfileStats[event] = stats
     end
     stats.calls = stats.calls + 1
     stats.ms = stats.ms + (elapsedMS or 0)
@@ -330,12 +247,12 @@ end
 
 function CDMIcons.SnapshotEventProfile(limit)
     local now = GetTime and GetTime() or 0
-    local last = CDMIcons._eventProfileLast
+    local last = _resolverRuntimePolicy.eventProfileLast
     local elapsed = now - (last.time or now)
     if elapsed <= 0 then elapsed = 1 end
 
     local rows = {}
-    for event, stats in pairs(CDMIcons._eventProfileStats) do
+    for event, stats in pairs(_resolverRuntimePolicy.eventProfileStats) do
         local prevCalls = last.counts[event] or 0
         local prevMS = last.ms[event] or 0
         local calls = (stats.calls or 0) - prevCalls
@@ -375,6 +292,9 @@ end
 -- below is rebound by cdm_debug.lua's BindAll() when loaded.
 ---------------------------------------------------------------------------
 local ChargeDebug = function() end
+CDMIcons._ShouldDebugBlizzEntry = function() return false end
+CDMIcons._FormatMirrorState     = function() return "nil" end
+CDMIcons._DebugBlizzEntry       = function() end
 
 ---------------------------------------------------------------------------
 -- DYNAMIC CHILD LOOKUP: Scan ALL viewer children to find the one with
@@ -385,7 +305,6 @@ local ChargeDebug = function() end
 local function IsTotemSlotEntry(entry)
     return entry and entry._isTotemInstance and entry._totemSlot ~= nil
 end
-CDMIcons.IsTotemSlotEntry = IsTotemSlotEntry
 
 ---------------------------------------------------------------------------
 -- DB ACCESS
@@ -486,332 +405,9 @@ local function UpdateIconProfessionQuality(icon)
     overlay:SetAtlas(atlas, (TextureKitConstants and TextureKitConstants.UseAtlasSize) or true)
     overlay:Show()
 end
-CDMIcons.ClearIconProfessionQuality = ClearIconProfessionQuality
-CDMIcons.UpdateIconProfessionQuality = UpdateIconProfessionQuality
-
 ---------------------------------------------------------------------------
--- COOLDOWN RESOLUTION
+-- ITEM COOLDOWN RESOLUTION
 ---------------------------------------------------------------------------
--- Zero-allocation cooldown resolution: no table, no closure per call.
--- This function is called once per cooldown icon per tick (~12-24x per cycle).
--- Consider logic is fully inlined to avoid closure overhead.
--- Extract a DurationObject from a cooldown info table if the API provides one.
--- 12.0.5+ may expose DurationObjects on SpellCooldownInfo/SpellChargeInfo.
--- Field names are probed defensively; returns nil when unavailable.
-local function ExtractCooldownDurObj(info)
-    if not info then return nil end
-    local obj = info.cooldownDurationObject or info.durationObject
-    if obj and type(obj) == "table" then return obj end
-    return nil
-end
-
--- Evaluate a single SpellCooldownInfo/SpellChargeInfo result and accumulate
--- readable numeric values plus any DurationObject fallback. Secret numbers
--- (combat / Blizzard CDM data feed) skip the numeric branch — DurationObject
--- is the authoritative input for C-side rendering when values are secret.
-local function AccumulateCooldown(st, dur, info, bestStart, bestDur, bestDurObj)
-    local durObj = ExtractCooldownDurObj(info)
-    if durObj and not bestDurObj then
-        bestDurObj = durObj
-    end
-    if issecretvalue and (issecretvalue(st) or issecretvalue(dur)) then
-        if durObj and not bestDurObj then
-            bestDurObj = durObj
-        end
-        return bestStart, bestDur, bestDurObj
-    end
-    if IsSafeNumeric(st) and IsSafeNumeric(dur) and dur > 0 then
-        if not bestDur or dur > bestDur then
-            bestStart, bestDur = st, dur
-            -- Always sync durObj with the longest duration — even if
-            -- this source has no durObj (nil clears a stale one from a
-            -- shorter cooldown like GCD, so Priority 2 numeric values
-            -- are used instead of the wrong DurationObject).
-            bestDurObj = durObj
-        elseif not bestDurObj and durObj then
-            bestDurObj = durObj  -- any durObj is better than none
-        end
-    end
-    return bestStart, bestDur, bestDurObj
-end
-
-local function GetBestSpellCooldown(spellID)
-    if not spellID then return nil, nil, nil, false, false end
-
-    local bestStart, bestDuration = nil, nil
-    local bestDurObj = nil
-    local isActive = false
-    local realCooldownActive = false
-    local durationObjectEligible = false
-    local sawSingleChargeSpell = false
-    local sawMultiChargeSpell = false
-
-    -- Check primary spell with a fresh C_Spell query.
-    local cdInfo = QueryCooldown(spellID)
-    local cdActive = false
-    local cdRealUnknown = false
-    if cdInfo then
-        local realActive
-        cdActive, realActive = CDMIcons.ClassifySpellCooldownState(spellID, cdInfo)
-        if cdActive == true then
-            isActive = true
-            durationObjectEligible = true
-        end
-        if cdActive == true and realActive == false then
-            bestStart, bestDuration, bestDurObj =
-                AccumulateCooldown(cdInfo.startTime, cdInfo.duration, cdInfo,
-                    bestStart, bestDuration, bestDurObj)
-        end
-        if realActive ~= false then
-            if realActive == true then
-                realCooldownActive = true
-                isActive = true
-            else
-                cdRealUnknown = true
-            end
-            bestStart, bestDuration, bestDurObj =
-                AccumulateCooldown(cdInfo.startTime, cdInfo.duration, cdInfo,
-                    bestStart, bestDuration, bestDurObj)
-        end
-    end
-    local chargeInfo = QueryCharges(spellID)
-    local chargeBased = false
-    if chargeInfo then
-        local maxCharges = CDMIcons.GetReadableChargeMaxCharges(chargeInfo)
-        chargeBased = maxCharges and maxCharges > 1
-        if type(maxCharges) == "number" then
-            if chargeBased then
-                sawMultiChargeSpell = true
-            else
-                sawSingleChargeSpell = true
-            end
-        end
-        -- It means the recharge UI should run, not that all charges are gone.
-        local chargeActive = SafeBoolean(chargeInfo.isActive) == true
-        if chargeActive then
-            isActive = true
-            realCooldownActive = true
-            bestStart, bestDuration, bestDurObj =
-                AccumulateCooldown(chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration, chargeInfo,
-                    bestStart, bestDuration, bestDurObj)
-        end
-    end
-    if cdActive == true and cdRealUnknown and not chargeBased then
-        -- Trust Blizzard's per-event signal: active + isOnGCD==false is a
-        -- real cooldown; isOnGCD==true is a GCD pulse. Catalog-based
-        -- inference (SpellHasBaseCooldownLongerThanGCD) is banned because
-        -- it answers a category question, not a state question, and
-        -- mis-classifies GCD pulses on spells that have a base CD entry.
-        local onGCD, onGCDSecret = CDMIcons.GetCooldownInfoField(cdInfo, "isOnGCD")
-        if onGCDSecret ~= true and onGCD == false then
-            realCooldownActive = true
-        end
-    end
-
-    -- Check override spell (no table allocation; just a second ID).
-    do
-        local overrideID = QueryOverrideSpell(spellID)
-        if overrideID and overrideID ~= spellID then
-            cdInfo = QueryCooldown(overrideID)
-            local overrideCdActive = false
-            local overrideCdRealUnknown = false
-            if cdInfo then
-                local realActive
-                overrideCdActive, realActive = CDMIcons.ClassifySpellCooldownState(overrideID, cdInfo)
-                if overrideCdActive == true then
-                    isActive = true
-                    durationObjectEligible = true
-                end
-                if overrideCdActive == true and realActive == false then
-                    bestStart, bestDuration, bestDurObj =
-                        AccumulateCooldown(cdInfo.startTime, cdInfo.duration, cdInfo,
-                            bestStart, bestDuration, bestDurObj)
-                end
-                if realActive ~= false then
-                    if realActive == true then
-                        realCooldownActive = true
-                        isActive = true
-                    else
-                        overrideCdRealUnknown = true
-                    end
-                    bestStart, bestDuration, bestDurObj =
-                        AccumulateCooldown(cdInfo.startTime, cdInfo.duration, cdInfo,
-                            bestStart, bestDuration, bestDurObj)
-                end
-            end
-            chargeInfo = QueryCharges(overrideID)
-            local overrideChargeBased = false
-            if chargeInfo then
-                local maxCharges = CDMIcons.GetReadableChargeMaxCharges(chargeInfo)
-                overrideChargeBased = maxCharges and maxCharges > 1
-                if type(maxCharges) == "number" then
-                    if overrideChargeBased then
-                        sawMultiChargeSpell = true
-                    else
-                        sawSingleChargeSpell = true
-                    end
-                end
-                local chargeActive2 = SafeBoolean(chargeInfo.isActive) == true
-                if chargeActive2 then
-                    isActive = true
-                    realCooldownActive = true
-                    bestStart, bestDuration, bestDurObj =
-                        AccumulateCooldown(chargeInfo.cooldownStartTime, chargeInfo.cooldownDuration, chargeInfo,
-                            bestStart, bestDuration, bestDurObj)
-                end
-            end
-            if overrideCdActive == true and overrideCdRealUnknown and not overrideChargeBased then
-                -- See sibling block above for the spellID variant.
-                -- cdInfo here is the override's cdInfo from QueryCooldown(overrideID).
-                local onGCD, onGCDSecret = CDMIcons.GetCooldownInfoField(cdInfo, "isOnGCD")
-                if onGCDSecret ~= true and onGCD == false then
-                    realCooldownActive = true
-                end
-            end
-        end
-    end
-
-    -- DurationObject APIs (12.0+, secret-safe). These are the only
-    -- authoritative spell timing source we forward to owned cooldowns.
-    -- Gate queries behind real cooldown/recharge state. isActive is already
-    -- the non-secret "Blizzard would render cooldown UI" signal; isOnGCD and
-    -- the later usability split keep GCD/resource states from becoming real
-    -- cooldown swipes. Some overridden CDM spellIDs expose only a 1.5s
-    -- numeric cooldown table while GetSpellCooldownDuration(spell, true)
-    -- still returns the real cooldown DurationObject. Let that object prove
-    -- real cooldown state instead of blocking the query on the numeric table.
-    local suppressChargeDuration = sawSingleChargeSpell and not sawMultiChargeSpell
-    if not bestDurObj and not suppressChargeDuration
-        and (realCooldownActive or durationObjectEligible) then
-        -- Check charge duration FIRST — for charged spells, the charge
-        -- recharge DurationObject is what we want to display, not the
-        -- spell's own cooldown DurationObject (which may be a shorter
-        -- per-use CD or GCD).  GetSpellChargeDuration returns the
-        -- recharge timer DurationObject, secret-safe for combat.
-        bestDurObj = QueryChargeDuration(spellID)
-        if not bestDurObj then
-            local overrideID = QueryOverrideSpell(spellID)
-            if overrideID and true and overrideID ~= spellID then
-                bestDurObj = QueryChargeDuration(overrideID)
-            end
-        end
-        if bestDurObj then
-            isActive = true
-            realCooldownActive = true
-        end
-    end
-
-    if not bestDurObj and (realCooldownActive or durationObjectEligible) then
-        -- Fall back to spell cooldown duration for non-charged spells.
-        bestDurObj = QueryDuration(spellID)
-        if not bestDurObj then
-            local overrideID = QueryOverrideSpell(spellID)
-            if overrideID and true and overrideID ~= spellID then
-                bestDurObj = QueryDuration(overrideID)
-            end
-        end
-        if bestDurObj then
-            isActive = true
-            realCooldownActive = true
-        end
-    end
-    -- Discard DurationObjects extracted from cdInfo when no source confirms
-    -- a real cooldown.  12.0.5+ cooldown info tables may carry zero-span
-    -- or non-cooldown DurationObjects for ready/resource-wait states.
-    if not realCooldownActive then
-        bestDurObj = nil
-    end
-
-    if bestDurObj then
-        return nil, nil, bestDurObj, isActive, realCooldownActive
-    end
-
-    -- Some normal spells still expose only readable numeric cooldown timing
-    -- here while the newer isActive flag is absent/false. Custom CDM bars do
-    -- not have a Blizzard viewer child to mirror from, so dropping this safe
-    -- payload makes non-charged custom entries disappear under "show only on
-    -- cooldown" while charged entries keep working. The duration > GCD guard
-    -- already proves this is a real cooldown, so set realCooldownActive=true.
-    -- Secret numeric values can't enter the SetCooldown fallback path
-    -- (12.0.5+ rejects them from tainted code), so bail to the (nil, nil)
-    -- return when they're secret — caller treats as "no cooldown data".
-    local secretNumeric = issecretvalue
-        and (issecretvalue(bestStart) or issecretvalue(bestDuration))
-    if not secretNumeric
-       and IsSafeNumeric(bestStart) and IsSafeNumeric(bestDuration)
-       and bestStart > 0 and bestDuration > GCD_MAX_DURATION
-       and (bestStart + bestDuration) > GetTime()
-    then
-        return bestStart, bestDuration, nil, true, true
-    end
-
-    if not secretNumeric
-       and isActive == true
-       and IsSafeNumeric(bestStart) and IsSafeNumeric(bestDuration)
-       and bestStart > 0 and bestDuration > 0
-    then
-        return bestStart, bestDuration, nil, true, false
-    end
-
-    return nil, nil, nil, isActive, realCooldownActive
-end
-
--- Item cooldown resolution
-function CDMIcons.GetItemUseSpellID(itemID)
-    if not itemID then return nil end
-
-    if Sources and Sources.QueryItemSpell then
-        local _, spellID = Sources.QueryItemSpell(itemID)
-        if spellID then
-            return spellID
-        end
-    end
-
-    if Sources and Sources.QueryFirstTriggeredSpellForItem then
-        local itemQuality
-        if Sources.QueryItemQualityByID then
-            local quality = Sources.QueryItemQualityByID(itemID)
-            if quality ~= nil then
-                itemQuality = quality
-            end
-        end
-
-        local spellID = Sources.QueryFirstTriggeredSpellForItem(itemID, itemQuality)
-        if spellID then
-            return spellID
-        end
-    end
-
-    return nil
-end
-
-function CDMIcons.GetRawItemUseSpellIDForAuraQuery(itemID)
-    if not itemID then return nil end
-
-    if Sources and Sources.QueryItemSpell then
-        local _, spellID = Sources.QueryItemSpell(itemID)
-        if spellID then
-            return spellID
-        end
-    end
-
-    if Sources and Sources.QueryFirstTriggeredSpellForItem then
-        local itemQuality
-        if Sources.QueryItemQualityByID then
-            local quality = Sources.QueryItemQualityByID(itemID)
-            if quality ~= nil then
-                itemQuality = quality
-            end
-        end
-
-        local spellID = Sources.QueryFirstTriggeredSpellForItem(itemID, itemQuality)
-        if spellID then
-            return spellID
-        end
-    end
-
-    return nil
-end
 
 local function GetItemCooldown(itemID)
     if not itemID or not (Sources and Sources.QueryItemCooldown) then return nil, nil, nil end
@@ -838,25 +434,21 @@ local ok = true; local startTime, duration, enabled = GetInventoryItemCooldown("
     return startTime, duration, nil
 end
 
-function CDMIcons.MarkGCDSwipe(icon)
-    if not icon then return end
-    icon._showingGCDSwipe = true
-    icon._showingRealCooldownSwipe = nil
+function _resolverRuntimePolicy.MarkGCDSwipe(icon)
+    if cooldownPolicy then
+        cooldownPolicy:MarkGCDSwipe(icon)
+    end
 end
 
-function CDMIcons.ClearGCDSwipe(icon)
-    if not icon then return end
-    icon._showingGCDSwipe = nil
+function _resolverRuntimePolicy.ClearGCDSwipe(icon)
+    if cooldownPolicy then
+        cooldownPolicy:ClearGCDSwipe(icon)
+    end
 end
 
--- Expose for external use (cdm_icon_factory.lua imports these as upvalues;
--- cdm_resolvers.lua + cdm_bars.lua call GetItemCooldown/GetSlotCooldown via
--- CDMIcons.X / CDMCooldown.X)
-CDMIcons.GetBestSpellCooldown = GetBestSpellCooldown
+-- Expose inventory cooldown adapters for cdm_resolvers.lua + cdm_bars.lua.
 CDMCooldown.GetItemCooldown = GetItemCooldown
 CDMCooldown.GetSlotCooldown = GetSlotCooldown
-CDMIcons.GetItemCooldown = GetItemCooldown
-CDMIcons.GetSlotCooldown = GetSlotCooldown
 
 ---------------------------------------------------------------------------
 -- SWIPE STYLING
@@ -872,8 +464,8 @@ local function ReapplySwipeStyle(cd, icon)
     if CooldownSwipe and CooldownSwipe.ApplyToIcon then
         CooldownSwipe.ApplyToIcon(icon)
     end
-    if CDMIcons.ApplyCustomBarSwipeStyle then
-        CDMIcons.ApplyCustomBarSwipeStyle(icon)
+    if _resolverRuntimePolicy.ApplyCustomBarSwipeStyle then
+        _resolverRuntimePolicy.ApplyCustomBarSwipeStyle(icon)
     end
 end
 
@@ -888,128 +480,6 @@ local function GetAuraDataInstanceID(auraData)
     if not auraData then return nil end
     return auraData.auraInstanceID
 end
-
----------------------------------------------------------------------------
--- IsAuraCurrentlyActive: detect whether an entry's associated aura is
--- currently up on the player or its target. Returns (isActive, auraUnit,
--- auraInstanceID). Used by cdm_effects.lua and aura stack text resolution.
----------------------------------------------------------------------------
-local function IsAuraCurrentlyActive(entry)
-    if not entry then return false, nil, nil end
-
-    local sid = entry.overrideSpellID or entry.spellID or entry.id
-    if not sid then
-        return false, nil, nil
-    end
-
-    -- Step C: captured-aura cache (combat-safe, encounter-safe).
-    -- Encounter/M+/PvP starts wipe this cache so stale instIDs don't leak.
-    -- Lookup IDs combine the entry's own IDs AND every linked aura ID
-    -- the CDM catalog associates with this spell — captured payloads are
-    -- keyed by the actual aura's spellID, which often differs from the
-    -- cast/ability ID the user added. Without the catalog IDs, the
-    -- captured cache silently misses every cast-vs-aura ID mismatch in
-    -- combat (when GetPlayerAuraBySpellID's restriction kicks in).
-    local CDMSpellData = ns.CDMSpellData
-    if CDMSpellData and CDMSpellData.GetCapturedAuraForLookup then
-        local lookupIDs = {}
-        local seenLookup = {}
-        local function addLookup(id)
-            if not id or seenLookup[id] then return end
-            seenLookup[id] = true
-            lookupIDs[#lookupIDs + 1] = id
-        end
-        local function addMappedLookups(id)
-            if not (id and CDMSpellData.GetAuraIDsForSpell) then return end
-            local mappedIDs = CDMSpellData:GetAuraIDsForSpell(id)
-            if mappedIDs then
-                for _, aid in ipairs(mappedIDs) do addLookup(aid) end
-            end
-        end
-        addLookup(sid)
-        addLookup(entry.spellID)
-        addLookup(entry.id)
-        addMappedLookups(sid)
-        addMappedLookups(entry.spellID)
-        addMappedLookups(entry.id)
-        local captured = CDMSpellData.GetCapturedAuraForLookup(lookupIDs, entry.name)
-        if captured and captured.auraInstanceID then
-            return true, captured.unit or "player", captured.auraInstanceID
-        end
-    end
-
-    -- Step D: direct player aura query fallback. In combat the captured
-    -- UNIT_AURA payload above is the authoritative source; direct spell
-    -- lookups can be restricted and may miss auras that are otherwise
-    -- visible through the event payload. If a direct query succeeds, the
-    -- returned AuraData's existence is enough to classify the icon as an
-    -- aura; auraInstanceID is forwarded to downstream C-side consumers.
-    --
-    -- Prefer GetUnitAuraBySpellID when present. The OOC ownership check
-    -- (IsAuraOwnedByPlayerOrPet) is removed because reading sourceUnit /
-    -- isFromPlayerOrPlayerPet in Lua fails in combat where those fields are
-    -- secret, so the check would silently reject every in-combat hit.
-    if Sources and (Sources.QueryUnitAuraBySpellID or Sources.QueryPlayerAuraBySpellID) then
-        local seen = {}
-        local function tryQuery(id)
-            if not id or seen[id] then return nil end
-            seen[id] = true
-            if Sources.QueryUnitAuraBySpellID then
-                local ad = Sources.QueryUnitAuraBySpellID("player", id)
-                if ad then return ad end
-            end
-            if Sources.QueryPlayerAuraBySpellID then
-                local ad = Sources.QueryPlayerAuraBySpellID(id)
-                if ad then return ad end
-            end
-            return nil
-        end
-        -- Try the cast/configured IDs first; some player auras are returned
-        -- directly by that ID. Mapped aura IDs remain the fallback for
-        -- cast->aura mismatches.
-        local ad1 = tryQuery(sid)
-        if ad1 then return true, "player", GetAuraDataInstanceID(ad1) end
-        local ad2 = tryQuery(entry.spellID)
-        if ad2 then return true, "player", GetAuraDataInstanceID(ad2) end
-        local ad3 = tryQuery(entry.id)
-        if ad3 then return true, "player", GetAuraDataInstanceID(ad3) end
-        local CDMSpellData = ns.CDMSpellData
-        if CDMSpellData and CDMSpellData.GetAuraIDsForSpell then
-            local function tryMappedIDs(id)
-                if not id then return false end
-                local mappedIDs = CDMSpellData:GetAuraIDsForSpell(id)
-                if mappedIDs then
-                    for _, aid in ipairs(mappedIDs) do
-                        local ad = tryQuery(aid)
-                        if ad then return true, "player", GetAuraDataInstanceID(ad) end
-                    end
-                end
-                return false
-            end
-            local active, unit, instID = tryMappedIDs(sid)
-            if active then return active, unit, instID end
-            active, unit, instID = tryMappedIDs(entry.spellID)
-            if active then return active, unit, instID end
-            active, unit, instID = tryMappedIDs(entry.id)
-            if active then return active, unit, instID end
-        end
-        -- tryQuery de-duplicates, so all direct IDs have already had a
-        -- chance before mapped-ID fallback above.
-    end
-    -- Name fallback for cast-id vs aura-id mismatches that share names
-    -- and aren't in the CDM catalog (rare).
-    if entry.name and entry.name ~= ""
-        and Sources and Sources.QueryAuraDataBySpellName then
-        local ad = Sources.QueryAuraDataBySpellName("player", entry.name, "HELPFUL")
-        if ad then
-            return true, "player", GetAuraDataInstanceID(ad)
-        end
-    end
-
-    return false, nil, nil
-end
-
-CDMIcons.IsAuraCurrentlyActive = IsAuraCurrentlyActive
 
 local function GetAuraDisplaySourceID(r, fallbackID)
     if not r then return fallbackID end
@@ -1029,7 +499,6 @@ local function ClearAuraStateForIcon(icon, entry)
     icon._activeAuraSpellID = nil
     icon._auraIsHarmful = nil
 end
-CDMIcons.ClearAuraStateForIcon = ClearAuraStateForIcon
 
 local function ApplyAuraStateToIcon(icon, entry, sid, r)
     if not r then
@@ -1037,7 +506,12 @@ local function ApplyAuraStateToIcon(icon, entry, sid, r)
         return nil, false, nil
     end
 
-    if r.isActive then
+    local auraActive = r.auraActive
+    if auraActive == nil then
+        auraActive = r.isActive
+    end
+
+    if auraActive then
         local sourceID = GetAuraDisplaySourceID(r, sid)
         icon._auraActive = true
         icon._auraUnit = r.auraUnit
@@ -1047,9 +521,7 @@ local function ApplyAuraStateToIcon(icon, entry, sid, r)
         icon._activeAuraSpellID = r.resolvedAuraSpellID
         if not icon._activeAuraSpellID and r.auraData then
             local sid2 = r.auraData.spellId
-            sid2 = Helpers and Helpers.SafeValue and Helpers.SafeValue(sid2, nil) or sid2
-            if not ((Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(sid2))
-                or (issecretvalue and issecretvalue(sid2))) then
+            if type(sid2) == "number" and sid2 > 0 then
                 icon._activeAuraSpellID = sid2
             end
         end
@@ -1065,12 +537,7 @@ local function ApplyAuraStateToIcon(icon, entry, sid, r)
         -- instance.
         if r.auraData then
             local harmful = r.auraData.isHarmful
-            harmful = Helpers and Helpers.SafeValue and Helpers.SafeValue(harmful, nil) or harmful
-            if (Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(harmful))
-                or (issecretvalue and issecretvalue(harmful)) then
-                harmful = nil
-            end
-            if harmful ~= nil then
+            if type(harmful) == "boolean" then
                 icon._auraIsHarmful = harmful and true or false
             end
         end
@@ -1093,7 +560,6 @@ local function ApplyAuraStateToIcon(icon, entry, sid, r)
     ClearAuraStateForIcon(icon, entry)
     return nil, false, nil
 end
-CDMIcons.ApplyAuraStateToIcon = ApplyAuraStateToIcon
 
 local function ApplyMirrorPayloadToIcon(icon, entry, sid, payload)
     if not (icon and payload and payload.mirrorBacked == true) then
@@ -1107,6 +573,10 @@ local function ApplyMirrorPayloadToIcon(icon, entry, sid, payload)
             icon._mirrorAuraResult = r
         end
         r.isActive = payload.active == true
+        r.auraActive = payload.auraActive
+        if r.auraActive == nil then
+            r.auraActive = payload.active == true
+        end
         r.auraInstanceID = payload.auraInstanceID
         r.auraUnit = payload.auraUnit
         r.durObj = payload.durObj
@@ -1151,105 +621,17 @@ end
 --            NOT compare in Lua, only forward to SetText)
 --   source = "Applications" | "ChargeCount" | nil (informational; drives
 --            styling decisions equivalent to the legacy hook source)
--- Aura-kind: stacks via C_UnitAuras.GetAuraApplicationDisplayCount (via
--- ns.CDMSpellData.GetAuraApplications, which already wraps it with
--- IsSecretValue-aware caching).
+-- Aura-kind: stacks via the CDMAuraRuntime application getter, which wraps
+-- C_UnitAuras.GetAuraApplicationDisplayCount with IsSecretValue-aware caching.
 -- Cooldown-kind: mirror text first, then Blizzard's cached charge-count
 -- fields. Multi-charge fallback still uses C_Spell.GetSpellDisplayCount,
 -- gated by cached maxCharges > 1.
 ---------------------------------------------------------------------------
-local GetAuraApplicationsForSpell
-
-local function ValueExists(value)
-    return value and true or false
-end
-
-local function ResolveMirrorStackText(icon)
-    local mirror = ns.CDMBlizzMirror
-    local cooldownID = icon and icon._blizzMirrorCooldownID
-    local category = icon and icon._blizzMirrorCategory
-    local resolvedState
-    if cooldownID == nil then
-        local resolver = Resolvers and Resolvers.ResolveBlizzardMirrorIdentity
-        local entry = icon and icon._spellEntry
-        if resolver and entry then
-            cooldownID, category, resolvedState = resolver(entry)
-        end
-        if cooldownID == nil then
-            return nil, nil, false
-        end
+function _resolverRuntimePolicy.ResolveIconStackText(icon)
+    if stackPolicy then
+        return stackPolicy:ResolveIconStackText(icon)
     end
-    if not (mirror and mirror.GetStateByCooldownID) then
-        return nil, nil, true
-    end
-
-    local m = resolvedState or mirror.GetStateByCooldownID(cooldownID, category)
-    if not m then
-        return nil, nil, true
-    end
-
-    local stackText = m.stackText
-    if m.stackTextShown ~= false and ValueExists(stackText) then
-        return stackText, m.stackTextSource or "Applications", true
-    end
-
-    local countText = m.cooldownChargesCount
-    if ValueExists(countText)
-        and (m.cooldownChargesShown == true or m.chargeCountFrameShown == true) then
-        return countText, "ChargeCount", true
-    end
-
-    if m.stackTextShown == false then
-        return nil, m.stackTextSource, true
-    end
-
-    return nil, m.stackTextSource, true
-end
-
-function CDMIcons.ResolveIconStackText(icon)
-    if not icon or not icon._spellEntry then
-        return nil, nil
-    end
-    local entry = icon._spellEntry
-
-    -- Aura-kind path
-    if IsAuraEntry(entry) then
-        local active, auraUnit, instID = IsAuraCurrentlyActive(entry)
-        if active and instID and ns.CDMSpellData and ns.CDMSpellData.GetAuraApplications then
-            local resolved, stacks = ns.CDMSpellData.GetAuraApplications(auraUnit or "player", instID)
-            if resolved and stacks ~= nil then
-                return stacks, "Applications"
-            end
-        end
-        return nil, nil
-    end
-
-    -- Cooldown-kind path: only spells known to have multiple charges get text.
-    local sid = icon._runtimeSpellID
-        or (entry.overrideSpellID or entry.spellID or entry.id)
-    if not sid then
-        return nil, nil
-    end
-    local overrideID = QueryOverrideSpell(sid)
-    if overrideID then sid = overrideID end
-
-    local mirrorText, mirrorSource, mirrorBacked = ResolveMirrorStackText(icon)
-    if ValueExists(mirrorText) then
-        return mirrorText, mirrorSource, true
-    end
-    if mirrorBacked then
-        return nil, mirrorSource, true
-    end
-
-    local svDB = GetChargeMetadataDB()
-    local maxC = svDB and svDB[sid]
-    if not maxC or maxC <= 1 then
-        return nil, nil
-    end
-
-    local text = QueryDisplayCount(sid)
-    if text == nil then return nil, nil end
-    return text, "ChargeCount"
+    return nil
 end
 
 local function ResolveTrackerSettingsNow(viewerType)
@@ -1260,27 +642,9 @@ local function ResolveTrackerSettingsNow(viewerType)
     if not db or not viewerType then return nil end
     return db[viewerType] or (db.containers and db.containers[viewerType]) or nil
 end
-CDMIcons.ResolveTrackerSettingsNow = ResolveTrackerSettingsNow
 
 local function IsCustomBarSettingsNow(settings)
-    if CDMIcons.IsCustomBarContainer then
-        return CDMIcons.IsCustomBarContainer(settings)
-    end
-    return type(settings) == "table" and settings.containerType == "customBar"
-end
-
-local function QuerySpellUsableState(spellID)
-    if not spellID or not (Sources and Sources.QuerySpellUsable) then
-        return nil
-    end
-    local usable = Sources.QuerySpellUsable(spellID)
-    if Helpers and Helpers.SafeValue then
-        usable = Helpers.SafeValue(usable, nil)
-    end
-    if type(usable) ~= "boolean" then
-        usable = nil
-    end
-    return usable
+    return IsCustomBarContainer(settings)
 end
 
 local function ApplyCooldownDesaturation(icon, entry, settings, resolvedMode)
@@ -1307,8 +671,8 @@ local function ApplyCooldownDesaturation(icon, entry, settings, resolvedMode)
     if customBar
        and settings.noDesaturateWithCharges
        and shouldDesaturate then
-        local cooldownState = CDMIcons.ResolveCooldownActivityState
-            and CDMIcons.ResolveCooldownActivityState(icon, entry, settings, GetTime())
+        local cooldownState = _resolverRuntimePolicy.ResolveIconCooldownActivityState(
+            icon, entry, settings, GetTime())
         if cooldownState
            and (entry.hasCharges or cooldownState.hasCharges)
            and cooldownState.rechargeActive
@@ -1348,7 +712,6 @@ local function ApplyCooldownDesaturation(icon, entry, settings, resolvedMode)
         icon._cdDesaturated = nil
     end
 end
-CDMIcons.ApplyCooldownDesaturation = ApplyCooldownDesaturation
 
 local function ReleaseCooldownDesaturation(icon)
     if not icon then return end
@@ -1360,79 +723,19 @@ local function ReleaseCooldownDesaturation(icon)
     icon._cdDesaturated = nil
 end
 
-local function GetIconCooldownIdentifier(icon)
-    local entry = icon and icon._spellEntry
-    if not entry then return nil end
-    -- Resolve from BASE spell at runtime so dynamic transforms are current
-    local base = entry.spellID or entry.id
-    if base then
-        local ovId = QueryOverrideSpell(base)
-        if ovId then return ovId end
-    end
-    return base
+local ResolverRuntime = RuntimeQueries
+
+function _resolverRuntimePolicy.CaptureTrustedGCDStateForIcon(icon, spellState, stamp)
+    return cooldownPolicy
+        and cooldownPolicy:CaptureTrustedGCDStateForIcon(icon, spellState, stamp)
+        or false
 end
 
-function CDMIcons.CaptureTrustedGCDStateForIcon(icon, spellState, stamp)
-    if not icon or not icon._spellEntry then return false end
-
-    local sid = GetIconCooldownIdentifier(icon)
-    sid = Helpers.SafeValue and Helpers.SafeValue(sid, nil) or sid
-    local prev = icon._isOnGCD
-
-    if not sid or not QueryCooldown then
-        if prev ~= nil then
-            icon._isOnGCD = nil
-            icon._isOnGCDTrustedAt = nil
-            return true
-        end
-        icon._isOnGCD = nil
-        icon._isOnGCDTrustedAt = nil
-        return false
-    end
-
-    local trusted = spellState[sid]
-    if trusted == nil then
-        local cdInfo = QueryCooldown(sid)
-        local onGCD = cdInfo and cdInfo.isOnGCD
-        if type(onGCD) == "boolean" then
-            trusted = onGCD
-        end
-        if trusted ~= nil then
-            spellState[sid] = trusted
-        end
-    end
-
-    if type(trusted) == "boolean" then
-        icon._isOnGCD = trusted
-        icon._isOnGCDTrustedAt = stamp
-        return prev ~= trusted
-    end
-
-    icon._isOnGCD = nil
-    icon._isOnGCDTrustedAt = nil
-    return prev ~= nil
-end
-
-function CDMIcons.CaptureTrustedGCDState()
-    if not QueryCooldown then
-        return false
-    end
-
-    local spellState = CDMIcons._trustedGCDSpellState or {}
-    wipe(spellState)
-    CDMIcons._trustedGCDSpellState = spellState
-    local stamp = GetTime()
-    CDMIcons._trustedGCDStamp = stamp
-
-    local anyChanged = false
-    for _, pool in pairs(iconPools) do
-        for _, icon in ipairs(pool) do
-            if CDMIcons.CaptureTrustedGCDStateForIcon(icon, spellState, stamp) then
-                anyChanged = true
-            end
-        end
-    end
-    return anyChanged
+function _resolverRuntimePolicy.CaptureTrustedGCDState()
+    local spellState, stamp = ResolverRuntime.ResetTrustedGCDSnapshot(GetTime())
+    return cooldownPolicy
+        and cooldownPolicy:CaptureTrustedGCDState(iconPools, spellState, stamp)
+        or false
 end
 
 local ApplyResolvedCooldown
@@ -1448,8 +751,6 @@ local function CancelCooldownExpiryRefresh(icon)
     icon._cooldownExpiryTimerKey = nil
     icon._cooldownExpiryAt = nil
 end
-CDMIcons.CancelCooldownExpiryRefresh = CancelCooldownExpiryRefresh
-
 local function ScheduleCooldownExpiryRefreshAt(icon, key, expiresAt)
     if not icon or not key or not C_Timer then return end
     if not GetTime or not IsSafeNumeric(expiresAt) then return end
@@ -1459,7 +760,7 @@ local function ScheduleCooldownExpiryRefreshAt(icon, key, expiresAt)
     if delta and delta < 0 then delta = -delta end
     if icon._cooldownExpiryTimerKey == key
        and delta
-       and delta <= CDMIcons.COOLDOWN_EXPIRY_RESCHEDULE_EPSILON then
+       and delta <= COOLDOWN_EXPIRY_RESCHEDULE_EPSILON then
         return
     end
 
@@ -1470,7 +771,7 @@ local function ScheduleCooldownExpiryRefreshAt(icon, key, expiresAt)
 
     local delay = expiresAt - GetTime()
     if delay < 0 then delay = 0 end
-    delay = delay + CDMIcons.COOLDOWN_EXPIRY_REFRESH_FUDGE
+    delay = delay + COOLDOWN_EXPIRY_REFRESH_FUDGE
 
     icon._cooldownExpiryTimerKey = key
     icon._cooldownExpiryAt = expiresAt
@@ -1509,11 +810,14 @@ local function ScheduleCooldownExpiryRefresh(icon, key, cdInfo)
     -- (SPELL_UPDATE_COOLDOWN / SPELL_UPDATE_USABLE) handle completion. The
     -- C-side DurationObject still drives the visible swipe; this Lua timer
     -- is just a fast-path for clearing _hasCooldownActive after expiry.
-    local start = CDMIcons.GetCooldownInfoField(cdInfo, "startTime")
+    local getCooldownInfoField = Resolvers and Resolvers.GetCooldownInfoField
+    if not getCooldownInfoField then return end
+
+    local start = getCooldownInfoField(cdInfo, "startTime")
     if start == nil then
-        start = CDMIcons.GetCooldownInfoField(cdInfo, "start")
+        start = getCooldownInfoField(cdInfo, "start")
     end
-    local duration = CDMIcons.GetCooldownInfoField(cdInfo, "duration")
+    local duration = getCooldownInfoField(cdInfo, "duration")
     if issecretvalue and (issecretvalue(start) or issecretvalue(duration)) then
         if icon._cooldownExpiryTimerKey and icon._cooldownExpiryTimerKey ~= key then
             CancelCooldownExpiryRefresh(icon)
@@ -1534,27 +838,158 @@ local function ScheduleCooldownExpiryRefresh(icon, key, cdInfo)
     ScheduleCooldownExpiryRefreshAt(icon, key, start + duration)
 end
 
+function _resolverRuntimePolicy.GetIconMirrorState(icon)
+    return cooldownPolicy and cooldownPolicy:GetIconMirrorState(icon) or nil
+end
+
+function _resolverRuntimePolicy.MirrorStateIsActive(state)
+    return cooldownPolicy and cooldownPolicy:MirrorStateIsActive(state) or false
+end
+
+function _resolverRuntimePolicy.ClearIconChargeMirrorCycle(icon)
+    if cooldownPolicy then
+        cooldownPolicy:ClearIconChargeMirrorCycle(icon)
+    end
+end
+
+function _resolverRuntimePolicy.RememberIconChargeMirrorCycle(icon, runtimeSpellID)
+    if cooldownPolicy then
+        cooldownPolicy:RememberIconChargeMirrorCycle(icon, runtimeSpellID)
+    end
+end
+
+function _resolverRuntimePolicy.UpdateIconChargeMirrorCycle(icon, mode, runtimeSpellID)
+    if cooldownPolicy then
+        cooldownPolicy:UpdateIconChargeMirrorCycle(icon, mode, runtimeSpellID)
+    end
+end
+
+function _resolverRuntimePolicy.MirrorPayloadHasChargeState(mirrorPayload)
+    return cooldownPolicy and cooldownPolicy:MirrorPayloadHasChargeState(mirrorPayload) or false
+end
+
+function _resolverRuntimePolicy.MirrorPayloadMatchesRecentChargeCycle(icon, mirrorPayload)
+    return cooldownPolicy
+        and cooldownPolicy:MirrorPayloadMatchesRecentChargeCycle(icon, mirrorPayload)
+        or false
+end
+
+function _resolverRuntimePolicy.IsRealCooldownDurationMode(mode)
+    return mode == "cooldown"
+        or mode == "charge"
+        or mode == "item-cooldown"
+end
+
+function _resolverRuntimePolicy.GetPreservedRealDurationObject(icon)
+    if not (icon and icon._lastDurObj) then
+        return nil
+    end
+
+    local key = icon._lastDurObjKey
+    if type(key) ~= "string" then
+        return nil
+    end
+
+    local mode, sourceID = key:match("^([^:]+):(.+)$")
+    if not _resolverRuntimePolicy.IsRealCooldownDurationMode(mode) then
+        return nil
+    end
+
+    return icon._lastDurObj, mode, sourceID
+end
+
+local _iconCooldownStateContextOptions = {
+    mirrorIdentityPolicy = "frame-or-entry",
+}
+
+local function BuildIconCooldownStateContext(icon, entry, runtimeSpellID, useBuffSwipe, skipAuraPhase, totemSlot)
+    local builder = Resolvers and Resolvers.BuildCooldownStateContext
+    if not builder then return nil end
+
+    local options = _iconCooldownStateContextOptions
+    local preservedDurObj, preservedMode, preservedSourceID =
+        _resolverRuntimePolicy.GetPreservedRealDurationObject(icon)
+    options.containerKey = entry and entry.viewerType
+    options.totemSlot = totemSlot or (icon and icon._totemSlot)
+    options.useBuffSwipe = useBuffSwipe
+    options.skipAuraPhase = skipAuraPhase == true
+    options.showGCDSwipe = IsGCDSwipeEnabled()
+    options.priorCooldownActive = icon and icon._hasCooldownActive == true
+    options.priorRealCooldownActive = icon and icon._hasRealCooldownActive == true
+    options.priorShowingRealCooldownSwipe = icon and icon._showingRealCooldownSwipe == true
+    options.priorResolvedCooldownMode = icon and icon._resolvedCooldownMode
+    options.preservedRealDurObj = preservedDurObj
+    options.preservedRealMode = preservedMode
+    options.preservedRealSourceID = preservedSourceID
+    options.lastChargeMirrorCooldownID = icon and icon._lastChargeMirrorCooldownID
+    options.lastChargeMirrorCategory = icon and icon._lastChargeMirrorCategory
+    options.lastChargeRuntimeSpellID = icon and icon._lastChargeRuntimeSpellID
+    return builder(icon, entry, runtimeSpellID, options)
+end
+
+function _resolverRuntimePolicy.ResolvedAuraStateIsActive(state)
+    if not state then return false end
+    if state.auraActive ~= nil then
+        return state.auraActive == true
+    end
+    return state.isActive == true
+end
+
+function _resolverRuntimePolicy.ResolveResolvedStateForIcon(icon, entry, runtimeSpellID, useBuffSwipe, skipAuraPhase)
+    if not (Resolvers.ResolveCooldownState and icon and entry) then
+        return nil
+    end
+
+    local totemSlot = icon._totemSlot
+    if IsTotemSlotEntry(entry) then
+        totemSlot = entry._totemSlot
+    end
+
+    local context = BuildIconCooldownStateContext(
+        icon, entry, runtimeSpellID, useBuffSwipe, skipAuraPhase, totemSlot)
+    if not context then return nil end
+
+    return Resolvers.ResolveCooldownState(context)
+end
+
+function _resolverRuntimePolicy.ResolveAuraFactsForIcon(icon, entry, runtimeSpellID, useBuffSwipe)
+    local state = _resolverRuntimePolicy.ResolveResolvedStateForIcon(icon, entry, runtimeSpellID, useBuffSwipe, false)
+    if not state then return nil end
+    if state.auraResolved == true or state.mode == "aura" or state.auraActive ~= nil then
+        return state
+    end
+    return nil
+end
+
 -- Single-writer cooldown apply: ask the resolver, bind icon.Cooldown to the
 -- returned DurationObject. Item entries may fall back to SetCooldown only
 -- with verified non-secret numeric item timing. SetCooldownFromDurationObject
 -- creates a live C-side binding; numeric item fallback gets a one-shot expiry
 -- refresh through this same writer. Flags are derived from the classifier —
 -- no Blizzard frame state mirroring.
+-- See docs/blizzard/cdm-api-reference.md for the cooldown setter policy.
 ApplyResolvedCooldown = function(icon)
     local addonCD = icon and icon.Cooldown
     if not addonCD then return false end
 
-    local durObj, mode, sourceID, resolvedStart, resolvedDuration, resolvedSpellID, mirrorBackedDuration, mirrorPayload =
-        CDMIcons.ResolveIconDurationObject(icon)
+    local entry = icon._spellEntry
+    local useBuffSwipe = _resolverRuntimePolicy.ShouldUseBuffSwipeForIcon(icon, entry)
+    local skipAuraPhase = _resolverRuntimePolicy.ShouldSkipAuraPhaseForCooldownIcon(icon, entry)
+    local stateContext = BuildIconCooldownStateContext(
+        icon, entry, icon._runtimeSpellID, useBuffSwipe, skipAuraPhase)
+    if not stateContext then return false end
+
+    local resolvedState = Resolvers.ResolveCooldownState(stateContext)
+    local durObj = resolvedState.durObj
+    local mode = resolvedState.mode
+    local sourceID = resolvedState.sourceID
+    local resolvedStart = resolvedState.start
+    local resolvedDuration = resolvedState.duration
+    local resolvedSpellID = resolvedState.spellID
+    local mirrorBackedDuration = resolvedState.mirrorBacked == true
+    local mirrorPayload = mirrorBackedDuration and resolvedState or nil
     icon._resolvedCooldownMode = mode
 
-    -- "Real CD active" desaturation gate. The only Lua decision inputs here
-    -- are readable cooldown booleans. Charge counts are restricted during
-    -- combat, so charged spells never consult currentCharges. A charged
-    -- spell's SpellChargeInfo.isActive selects the recharge DurObj in the
-    -- resolver; desaturation follows SpellCooldownInfo.isActive only after the
-    -- resolver has classified the duration as a real cooldown/recharge.
-    local entry = icon._spellEntry
     local entryIsAura = entry and IsAuraEntry(entry)
     local itemEntryForCooldown = entry
         and (entry.type == "item" or entry.type == "trinket" or entry.type == "slot")
@@ -1568,125 +1003,31 @@ ApplyResolvedCooldown = function(icon)
     end
     if mirrorBackedDuration == true then
         ApplyMirrorPayloadToIcon(icon, entry, sid or resolvedSpellID, mirrorPayload)
-    end
-    local cdActive = false
-    local resolvedCdInfo = nil
-    local _dbgIsActive, _dbgIsOnGCD = nil, nil
-    local numericCooldownActive = IsSafeNumeric(resolvedStart)
-        and IsSafeNumeric(resolvedDuration)
-        and resolvedStart > 0
-        and resolvedDuration > GCD_MAX_DURATION
-        and (resolvedStart + resolvedDuration) > GetTime()
-    if mode == "item-cooldown" and numericCooldownActive then
-        cdActive = true
-    end
-    local mirrorCooldownActive = mode == "cooldown"
-        and durObj
-        and type(sourceID) == "string"
-        and sourceID:sub(1, 7) == "mirror:"
-    -- No "transient mirror gap" preservation: cdInfo.isActive / isOnGCD are
-    -- authoritative per the directive (see feedback_blizz_cd_state_signals).
-    -- If the resolver returns a different mode this pass, that's the truth;
-    -- don't override it from stale state.
-    local mirrorBackedRealMode = mirrorBackedDuration == true
-        and (mode == "cooldown"
-            or mode == "charge"
-            or mode == "item-cooldown")
-    local mirrorChargeMode = mirrorBackedDuration == true and mode == "charge"
-    -- cdInfo.isActive is authoritative (feedback_blizz_cd_state_signals).
-    -- The Blizzard mirror reports a cooldownID as active when a proc fires
-    -- (mirror cooldownID 27927 for Festering Strike showed isActive on the
-    -- proc-substitute's behalf), but the underlying spell's cdInfo.isActive
-    -- correctly returns false once the proc is no longer holding the slot.
-    -- Without this override the icon stayed mode=cooldown / desaturated for
-    -- 12+ seconds during a proc window, and procOnUsable glows were
-    -- suppressed because IsSpellCastable checks icon._hasCooldownActive.
-    -- Skip when numericCooldownActive (item path) to preserve the
-    -- numeric-driven item-cooldown classification.
-    if mirrorBackedRealMode
-       and not numericCooldownActive
-       and sid
-       and not entryIsAura
-       and not mirrorChargeMode then
-        local cdInfo = QueryCooldown(sid)
-        if cdInfo then
-            resolvedCdInfo = cdInfo
-            local cdInfoActive = CDMIcons.GetCooldownInfoField(cdInfo, "isActive")
-            if cdInfoActive == false then
+    elseif resolvedState.auraResolved == true then
+        local auraDur, auraActive, auraSourceID =
+            ApplyAuraStateToIcon(icon, entry, sid or resolvedSpellID, resolvedState)
+        if mode == "aura" then
+            durObj = auraDur
+            sourceID = auraSourceID or sourceID
+            resolvedState.durObj = durObj
+            resolvedState.sourceID = sourceID
+            if auraActive ~= true then
                 mode = "inactive"
-                sourceID = nil
+                resolvedState.mode = mode
                 icon._resolvedCooldownMode = mode
-                mirrorCooldownActive = false
-                mirrorBackedRealMode = false
-            else
-                -- isActive=true + isOnGCD=true means the visible swipe is
-                -- a GCD pulse, not a real CD (feedback_blizz_cd_state_signals).
-                -- We release the cooldown-active flag so desaturation lifts
-                -- and procOnUsable glows can fire, but we DO NOT flip the
-                -- resolved mode to gcd-only. The mirror still has the real
-                -- CD's durObj bound; forcing mode=gcd-only here would re-key
-                -- the dedupe (cooldown→gcd-only) and re-style the cooldown
-                -- frame as a GCD swipe while it's still bound to the real
-                -- CD durObj — the visible result is the swipe vanishing for
-                -- the brief window until the mirror's own state catches up
-                -- and emits a real gcd-only durObj. Let the mirror handle the
-                -- mode/durObj transition; we just gate the side effects
-                -- (desat, _hasCooldownActive) on cdInfo authority.
-                local cdInfoOnGCD, cdInfoOnGCDSecret =
-                    CDMIcons.GetCooldownInfoField(cdInfo, "isOnGCD")
-                if not cdInfoOnGCDSecret and cdInfoOnGCD == true then
-                    mirrorCooldownActive = false
-                    mirrorBackedRealMode = false
-                end
             end
         end
     end
-    if mirrorBackedDuration == true then
-        cdActive = mirrorBackedRealMode
-    elseif sid and not entryIsAura then
-        local cdInfo = resolvedCdInfo or QueryCooldown(sid)
-        if cdInfo then
-            resolvedCdInfo = cdInfo
-            local cdInfoActive = CDMIcons.GetCooldownInfoField(cdInfo, "isActive")
-            local cdInfoOnGCD = nil
-            if CDMIcons._trustIsOnGCDForBatch == true then
-                local trustedSid = Helpers.SafeValue and Helpers.SafeValue(sid, nil) or sid
-                local trusted = trustedSid and CDMIcons._trustedGCDSpellState and CDMIcons._trustedGCDSpellState[trustedSid]
-                if type(trusted) == "boolean" then
-                    cdInfoOnGCD = trusted
-                end
-            end
-            if cdInfoOnGCD == nil then
-                local liveOnGCD, liveOnGCDSecret = CDMIcons.GetCooldownInfoField(cdInfo, "isOnGCD")
-                if not liveOnGCDSecret and type(liveOnGCD) == "boolean" then
-                    cdInfoOnGCD = liveOnGCD
-                end
-            end
-            _dbgIsActive = cdInfoActive
-            _dbgIsOnGCD = cdInfoOnGCD
-            local cooldownModeActive = mode == "cooldown"
-                or mode == "charge"
-                or mode == "item-cooldown"
-            local spellUsable = nil
-            if mode == "cooldown" and not mirrorCooldownActive then
-                spellUsable = QuerySpellUsableState(sid)
-            end
-            local nonCooldownUsabilityState = mode == "cooldown"
-                and not mirrorCooldownActive
-                and spellUsable == true
-            if mirrorCooldownActive
-                or ((cdInfoActive == true)
-                    and cooldownModeActive
-                    and not nonCooldownUsabilityState) then
-                cdActive = true
-            end
-        end
-    end
-    if mirrorCooldownActive and not resolvedCdInfo then
-        cdActive = true
-    end
+
+    _resolverRuntimePolicy.UpdateIconChargeMirrorCycle(icon, mode, sid or resolvedSpellID)
+
+    local cdActive = mode ~= "inactive" and resolvedState.isOnCooldown == true
+    local resolvedCdInfo = resolvedState.cooldownInfo
+    local _dbgIsActive = resolvedState.cooldownInfoActive
+    local _dbgIsOnGCD = resolvedState.cooldownInfoOnGCD
+
     -- Diagnostic: log every isActive/isOnGCD transition for icons whose
-    -- name matches CDMIcons._desatTraceName. Set via /cdmtrace <spell name>.
+    -- name matches CDMIcons._desatTraceName. Set via /cdmdebug spell <name> trace.
     if CDMIcons._desatTraceName and entry and entry.name == CDMIcons._desatTraceName then
         local prevActive = icon._desatTracePrev
         if prevActive ~= cdActive then
@@ -1714,9 +1055,16 @@ ApplyResolvedCooldown = function(icon)
     -- leaving the icon greyed out for seconds after the real CD ended.
     ApplyCooldownDesaturation(icon, entry, nil, mode)
 
-    local hasNumericCooldown = mode == "item-cooldown" and numericCooldownActive
+    local hasNumericCooldown = resolvedState.numericCooldownActive == true
     local keySource = sourceID
     local key = mode .. ":" .. tostring(keySource)
+    local hasCharges = resolvedState.hasCharges == true
+    local rechargeActive = resolvedState.rechargeActive == true
+    local hasChargesRemaining = resolvedState.hasChargesRemaining == true
+    local hasRenderableCooldown = resolvedState.hasRenderableCooldown
+    if hasRenderableCooldown == nil then
+        hasRenderableCooldown = durObj ~= nil or hasNumericCooldown == true
+    end
     if ns.CDMRuntimeStore and ns.CDMRuntimeStore.SetIconState then
         ns.CDMRuntimeStore.SetIconState(icon, {
             mode = mode,
@@ -1727,13 +1075,18 @@ ApplyResolvedCooldown = function(icon)
             duration = resolvedDuration,
             active = cdActive,
             numericCooldownActive = hasNumericCooldown,
+            isOnCooldown = cdActive,
+            rechargeActive = rechargeActive == true,
+            hasCharges = hasCharges == true,
+            hasChargesRemaining = hasChargesRemaining == true,
+            gcdOnly = mode == "gcd-only",
             key = key,
             mirrorBacked = mirrorBackedDuration == true,
             mirrorState = mirrorPayload and mirrorPayload.state or nil,
         })
     end
 
-    if (not durObj and not hasNumericCooldown) or mode == "inactive" then
+    if hasRenderableCooldown ~= true or mode == "inactive" then
         CancelCooldownExpiryRefresh(icon)
         if mode == "aura"
            and InCombatLockdown()
@@ -1741,7 +1094,7 @@ ApplyResolvedCooldown = function(icon)
            and icon._lastDurObjKey == key
         then
             icon._showingRealCooldownSwipe = true
-            CDMIcons.ClearGCDSwipe(icon)
+            _resolverRuntimePolicy.ClearGCDSwipe(icon)
             return true
         end
         if mode == "aura" then
@@ -1758,7 +1111,7 @@ ApplyResolvedCooldown = function(icon)
                 end
                 addonCD:Clear()
             end
-            CDMIcons.ClearGCDSwipe(icon)
+            _resolverRuntimePolicy.ClearGCDSwipe(icon)
             icon._showingRealCooldownSwipe = nil
             return false
         end
@@ -1777,7 +1130,7 @@ ApplyResolvedCooldown = function(icon)
                 addonCD:Clear()
             end
         end
-        CDMIcons.ClearGCDSwipe(icon)
+        _resolverRuntimePolicy.ClearGCDSwipe(icon)
         icon._showingRealCooldownSwipe = nil
         return false
     end
@@ -1793,8 +1146,22 @@ ApplyResolvedCooldown = function(icon)
     local shouldScheduleExpiry = cdActive == true
         and (resolvedCdInfo ~= nil or hasNumericCooldown)
         and (mode == "cooldown" or mode == "charge" or mode == "item-cooldown")
-    if icon._lastDurObjKey == key
-       and (mode ~= "aura" or durObj == icon._lastDurObj) then
+    local sameDurationBinding = icon._lastDurObjKey == key
+        and (mode ~= "aura" or durObj == icon._lastDurObj)
+    if sameDurationBinding
+       and mode == "gcd-only"
+       and mirrorBackedDuration == true then
+        local durationChanged = false
+        if issecretvalue and (issecretvalue(durObj) or issecretvalue(icon._lastDurObj)) then
+            durationChanged = true
+        else
+            durationChanged = durObj ~= icon._lastDurObj
+        end
+        if durationChanged then
+            sameDurationBinding = false
+        end
+    end
+    if sameDurationBinding then
         if shouldScheduleExpiry then
             if resolvedCdInfo then
                 ScheduleCooldownExpiryRefresh(icon, key, resolvedCdInfo)
@@ -1809,9 +1176,9 @@ ApplyResolvedCooldown = function(icon)
             icon._lastResolvedSourceID = sourceID
             icon._lastResolvedSpellID = sid or resolvedSpellID
             icon._showingRealCooldownSwipe = true
-            CDMIcons.ClearGCDSwipe(icon)
+            _resolverRuntimePolicy.ClearGCDSwipe(icon)
         elseif mode == "gcd-only" then
-            CDMIcons.MarkGCDSwipe(icon)
+            _resolverRuntimePolicy.MarkGCDSwipe(icon)
         end
         ReapplySwipeStyle(addonCD, icon)
         return true
@@ -1824,7 +1191,7 @@ ApplyResolvedCooldown = function(icon)
 
     local applied
     if durObj then
-        applied = CDMIcons.ApplyDurationObjectCooldown(addonCD, durObj, true, mode == "aura")
+        applied = _resolverRuntimePolicy.ApplyDurationObjectCooldown(addonCD, durObj, true, mode == "aura")
     elseif hasNumericCooldown then
         if ns.CDMRenderers and ns.CDMRenderers.ApplyNumericCooldown then
             applied = ns.CDMRenderers.ApplyNumericCooldown(addonCD, resolvedStart, resolvedDuration, false)
@@ -1852,10 +1219,10 @@ ApplyResolvedCooldown = function(icon)
 
     if mode == "aura" or mode == "charge" or mode == "cooldown" or mode == "item-cooldown" then
         icon._showingRealCooldownSwipe = true
-        CDMIcons.ClearGCDSwipe(icon)
+        _resolverRuntimePolicy.ClearGCDSwipe(icon)
     elseif mode == "gcd-only" then
         icon._showingRealCooldownSwipe = nil
-        CDMIcons.MarkGCDSwipe(icon)
+        _resolverRuntimePolicy.MarkGCDSwipe(icon)
     end
     ReapplySwipeStyle(addonCD, icon)
 
@@ -1871,9 +1238,7 @@ local function UnmirrorBlizzCooldown(icon)
     icon._lastAuraSourceID = nil
     icon._activeAuraSpellID = nil
 end
-CDMIcons.UnmirrorBlizzCooldown = UnmirrorBlizzCooldown
 CDMIcons.ApplyResolvedCooldown = function(icon) return ApplyResolvedCooldown(icon) end
-CDMIcons.ReapplySwipeStyle = function(cd, icon) return ReapplySwipeStyle(cd, icon) end
 
 ---------------------------------------------------------------------------
 -- BLIZZARD STACK/CHARGE TEXT HOOK
@@ -1888,81 +1253,32 @@ CDMIcons.ReapplySwipeStyle = function(cd, icon) return ReapplySwipeStyle(cd, ico
 
 
 local function HookTextHasDisplay(text)
-    -- Only the nil check is taint-safe. Strings flowing through here can be
-    -- secret values from Blizzard CDM children (now active for the mirror's
-    -- data feed), so a Lua-side `text ~= ""` compare taints. Treat any non-
-    -- nil value as "has display" — downstream SetText accepts secret
-    -- strings and renders empty values as no-op visually, so the
-    -- show-vs-hide decision is correct in practice.
+    if stackPolicy then
+        return stackPolicy:TextHasDisplay(text)
+    end
     return text ~= nil
 end
-CDMIcons.HookTextHasDisplay = HookTextHasDisplay  -- consumed by cdm_icon_factory.lua via _FinalizeImports
-
-function CDMIcons.ValueIsPresent(value)
+function _resolverRuntimePolicy.ValueIsPresent(value)
+    if stackPolicy then
+        return stackPolicy:ValueIsPresent(value)
+    end
     return value ~= nil
 end
 
-function CDMIcons.ValueIsMissing(value)
-    return not CDMIcons.ValueIsPresent(value)
+function _resolverRuntimePolicy.ValueIsMissing(value)
+    return stackPolicy and stackPolicy:ValueIsMissing(value)
+        or not _resolverRuntimePolicy.ValueIsPresent(value)
 end
-
-local function GetDisplayableAuraApplicationsFromData(auraData)
-    if not auraData then return nil end
-
-    local apps = auraData.applications
-    if apps == nil then return nil end
-    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(apps) then
-        return nil
-    end
-    if issecretvalue and issecretvalue(apps) then
-        return nil
-    end
-
-    local appType = type(apps)
-    if appType == "number" then
-        return apps > 1 and apps or nil
-    end
-    if appType == "string" then
-        if apps == "" or apps == "0" or apps == "1" then
-            return nil
-        end
-        return apps
-    end
-
-    return nil
-end
-
-local GetTrackerSettings
 
 local function ClearIconStackText(icon)
-    if not icon or not icon.StackText then return end
-    icon.StackText.SetText(icon.StackText, "")
-    icon.StackText.Hide(icon.StackText)
-    icon._stackTextSource = nil
+    if stackPolicy then
+        stackPolicy:Clear(icon)
+    elseif icon and icon.StackText then
+        icon.StackText.SetText(icon.StackText, "")
+        icon.StackText.Hide(icon.StackText)
+        icon._stackTextSource = nil
+    end
 end
-CDMIcons.ClearIconStackText = ClearIconStackText
-
--- Per-icon aura-applications fallback for cooldown-container icons.
--- Returns the raw applications value (may be secret in combat) for
--- C-side forwarding, or nil when no eligible aura is present.
---
--- Resolution order:
---  1. Direct lookup with the supplied spellID.
---  2. _abilityToAuraSpellID mapping (buff-category base → linked aura).
---  3. Spell-name fallback via C_UnitAuras.GetAuraDataBySpellName. Required
---     for entries added via the cooldown-category CDM picker (e.g. Mana
---     Tea added on Utility) — those carry the cast/cooldown spellID,
---     which doesn't match the actual buff aura ID, and the ability→aura
---     map is built only from buff-category cdInfo so the cooldown cast ID
---     isn't a key. Spell names are stable across ID variants.
---  4. Full CDM aura resolver fallback for buff/debuff-category mappings
---     and live Blizzard cooldown-viewer children.
---
--- spellName is the entry's pre-resolved name (set OOC at icon build
--- time). Passing it in avoids a per-tick C_Spell.GetSpellInfo call,
--- which can return secret-value name fields in combat — that breaks
--- the GetAuraDataBySpellName fallback exactly when stacks are most
--- likely to flip (mid-fight). Falls back to GetSpellInfo OOC only.
 
 -- Persistent spell-name cache. C_Spell.GetSpellInfo can return a secret
 -- value in info.name during combat, and a secret name silently breaks
@@ -1972,8 +1288,6 @@ CDMIcons.ClearIconStackText = ClearIconStackText
 -- read a clean string instead of a fresh, possibly-secret one. Cache
 -- entries are stable across the session — spell names don't mutate.
 local _spellNameCache = {}
-CDMIcons._recentCastSpellByName = CDMIcons._recentCastSpellByName or {}
-CDMIcons._recentCastAliasTTL = 600
 
 -- Returns ONLY clean (non-secret) names so the cache value is safe to
 -- compare against "" downstream (cdm_bars.lua, cdm_effects.lua, profile_io.lua
@@ -1994,390 +1308,109 @@ local function GetCachedSpellName(spellID)
     return name
 end
 
-function CDMIcons.GetSpellNameForAlias(spellID)
-    if not spellID then return nil end
-    local cached = GetCachedSpellName(spellID)
-    if cached then return cached end
-    if Sources and Sources.QuerySpellName then
-        local name = Sources.QuerySpellName(spellID)
-        if name then return name end
-    end
-    if not (Sources and Sources.QuerySpellInfo) then return nil end
-    local info = Sources.QuerySpellInfo(spellID)
-    if info and info.name then
-        return info.name
-    end
-    return nil
-end
-
-function CDMIcons.NormalizeSpellAliasName(name)
-    if type(name) ~= "string" or name == "" then return nil end
-    return string.lower(name)
-end
-
-function CDMIcons.RecordRecentPlayerSpellCast(spellID)
-    if not spellID then return end
-    local spellName = CDMIcons.GetSpellNameForAlias(spellID)
-    local key = CDMIcons.NormalizeSpellAliasName(spellName)
-    if not key then return end
-    CDMIcons._recentCastSpellByName[key] = {
-        spellID = spellID,
-        time = GetTime(),
-    }
-    if _G.QUI_CDM_ICON_DEBUG and CDMIcons.DebugSpellEvent then
-        CDMIcons.DebugSpellEvent(spellID, spellName, "spellcast", "recordedAlias=", key)
-    end
-end
-
-function CDMIcons.GetRecentCastAliasForEntry(entry)
-    if not entry then return nil end
-    local key = CDMIcons.NormalizeSpellAliasName(entry.name)
-    if not key then
-        key = CDMIcons.NormalizeSpellAliasName(CDMIcons.GetSpellNameForAlias(entry.spellID or entry.overrideSpellID or entry.id))
-    end
-    local rec = key and CDMIcons._recentCastSpellByName[key]
-    if not rec then return nil end
-    if (GetTime() - (rec.time or 0)) > CDMIcons._recentCastAliasTTL then
-        CDMIcons._recentCastSpellByName[key] = nil
-        return nil
-    end
-    return rec.spellID
-end
-
 -- Shared with cdm_spelldata.lua's ResolveOwnedEntry so harvested spell
 -- entries (essential/utility/buff ownedSpells) and Composer-built custom
 -- entries draw from the same cache.
 ns._GetCachedSpellName = GetCachedSpellName
 
-function CDMIcons._GetAuraApplicationsFromData(auraData, unit, source)
-    if not auraData then return nil end
+stackPolicy = ns.CDMIconStackPolicy and ns.CDMIconStackPolicy.Create({
+    getSink = function()
+        return ns.CDMIconStackText
+    end,
+    getSources = function()
+        return Sources
+    end,
+    getAuraRuntime = function()
+        return ns.CDMAuraRuntime
+    end,
+    getMirror = function()
+        return ns.CDMBlizzMirror
+    end,
+    safeBoolean = SafeBoolean,
+    isAuraEntry = IsAuraEntry,
+    isBuiltinAuraContainerKey = IsBuiltinAuraContainerKey,
+    isTotemSlotEntry = IsTotemSlotEntry,
+    resolveAuraActiveState = function(entry)
+        return ResolveAuraActiveState(entry)
+    end,
+    resolveMirrorIdentityState = function(entry)
+        return Resolvers and Resolvers.ResolveBlizzardMirrorIdentityState
+            and Resolvers.ResolveBlizzardMirrorIdentityState(entry)
+            or nil
+    end,
+    getChargeMetadataDB = function()
+        return GetChargeMetadataDB and GetChargeMetadataDB() or nil
+    end,
+    queryOverrideSpell = function(spellID)
+        return QueryOverrideSpell and QueryOverrideSpell(spellID) or nil
+    end,
+    queryDisplayCount = function(spellID)
+        return QueryDisplayCount and QueryDisplayCount(spellID) or nil
+    end,
+    querySpellCount = function(spellID)
+        return QuerySpellCount and QuerySpellCount(spellID) or nil
+    end,
+    getEntryTexture = function(entry)
+        return GetEntryTexture and GetEntryTexture(entry) or nil
+    end,
+    getAuraDataInstanceID = GetAuraDataInstanceID,
+    getCachedSpellName = GetCachedSpellName,
+    getTrackerSettings = function(viewerType)
+        return GetTrackerSettings and GetTrackerSettings(viewerType) or nil
+    end,
+    debugStackText = function(icon, op, value, reason)
+        return CDMIcons.DebugStackText(icon, op, value, reason)
+    end,
+    chargeDebug = ChargeDebug,
+})
 
-    local apps = GetDisplayableAuraApplicationsFromData(auraData)
-    if CDMIcons.ValueIsPresent(apps) then
-        return apps, source
+function _resolverRuntimePolicy.GetAuraApplicationsFromData(auraData, unit, source)
+    if stackPolicy then
+        return stackPolicy:GetAuraApplicationsFromData(auraData, unit, source)
     end
-
-    local auraInstanceID = GetAuraDataInstanceID(auraData)
-    if auraInstanceID and Sources and Sources.QueryAuraApplicationDisplayCount then
-        local stacks = Sources.QueryAuraApplicationDisplayCount(unit or "player", auraInstanceID, 2, 99)
-        if stacks ~= nil then
-            return stacks, "display-count"
-        end
-    end
-
     return nil
 end
 
-function CDMIcons._TryAuraApplicationsBySpellID(auraID, source)
-    if auraID == nil or not Sources then return nil end
-
-    local function queryPlayerAuraData(spellID)
-        if not spellID then return nil end
-        if Sources.QueryUnitAuraBySpellID then
-            local auraData = Sources.QueryUnitAuraBySpellID("player", spellID)
-            if auraData then return auraData end
-        end
-        if Sources.QueryPlayerAuraBySpellID then
-            local auraData = Sources.QueryPlayerAuraBySpellID(spellID)
-            if auraData then return auraData end
-        end
-        return nil
+function _resolverRuntimePolicy.TryAuraApplicationsBySpellID(auraID, source)
+    if stackPolicy then
+        return stackPolicy:TryAuraApplicationsBySpellID(auraID, source)
     end
-
-    if Sources.QueryCooldownAuraBySpellID then
-        local passiveAuraID = Sources.QueryCooldownAuraBySpellID(auraID)
-        if passiveAuraID then
-            local auraData = queryPlayerAuraData(passiveAuraID)
-            if auraData then
-                local apps, appSource = CDMIcons._GetAuraApplicationsFromData(
-                    auraData, "player", (source or "spell") .. "-cooldown-aura")
-                if CDMIcons.ValueIsPresent(apps) then
-                    return apps, appSource
-                end
-            end
-        end
-    end
-
-    local auraData = queryPlayerAuraData(auraID)
-    if auraData then
-        local apps, appSource = CDMIcons._GetAuraApplicationsFromData(
-            auraData, "player", (source or "spell") .. "-player-spell")
-        if CDMIcons.ValueIsPresent(apps) then
-            return apps, appSource
-        end
-    end
-
     return nil
 end
 
-function CDMIcons._TryLinkedAuraApplications(linkedSpellIDs, entry, icon, seenIDs, source)
-    if type(linkedSpellIDs) ~= "table" or not Helpers.CanAccessTable(linkedSpellIDs) then
-        return nil
+function _resolverRuntimePolicy.TryLinkedAuraApplications(linkedSpellIDs, entry, icon, seenIDs, source)
+    if stackPolicy then
+        return stackPolicy:TryLinkedAuraApplications(linkedSpellIDs, entry, icon, seenIDs, source)
     end
-
-    for _, linkedID in ipairs(linkedSpellIDs) do
-        local queryID = linkedID
-        local auraID = type(linkedID) == "number" and linkedID or nil
-
-        if queryID and (not auraID or (auraID > 0 and not seenIDs[auraID])) then
-            if auraID then
-                seenIDs[auraID] = true
-            end
-
-            local apps, appSource = CDMIcons._TryAuraApplicationsBySpellID(queryID, source or "linked")
-            if CDMIcons.ValueIsPresent(apps) then
-                if _G.QUI_CDM_CHARGE_DEBUG then
-                    ChargeDebug(entry and entry.name, "AURA linked stack",
-                        "auraID=", auraID or "dynamic", "source=", appSource or "nil")
-                end
-                return apps, appSource
-            end
-
-            if auraID then
-                apps, appSource = CDMIcons._ResolveAuraApplicationsForEntry(auraID, entry, icon)
-                if CDMIcons.ValueIsPresent(apps) then
-                    if _G.QUI_CDM_CHARGE_DEBUG then
-                        ChargeDebug(entry and entry.name, "AURA linked resolve",
-                            "auraID=", auraID, "source=", appSource or "nil")
-                    end
-                    return apps, appSource or (source or "linked")
-                end
-            end
-        end
-    end
-
     return nil
 end
 
-local function TryActionButtonSpellCount(spellID, seenIDs)
-    if type(spellID) ~= "number" then return nil end
-    if seenIDs[spellID] then return nil end
-    seenIDs[spellID] = true
-
-    local spellCount = QuerySpellCount and QuerySpellCount(spellID)
-    if CDMIcons.ValueIsMissing(spellCount) then return nil end
-
-    if (Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(spellCount))
-        or (issecretvalue and issecretvalue(spellCount)) then
-        return spellCount, "spell-cast-count"
+function _resolverRuntimePolicy.GetSpellCountForEntry(spellID, entry, icon)
+    if stackPolicy then
+        return stackPolicy:GetSpellCountForEntry(spellID, entry, icon)
     end
-
-    if type(spellCount) ~= "number" then return nil end
-    if spellCount <= 0 then return nil end
-
-    local displayText = spellCount
-    if C_StringUtil and C_StringUtil.TruncateWhenZero then
-        displayText = C_StringUtil.TruncateWhenZero(spellCount)
-    end
-    if not HookTextHasDisplay(displayText) then
-        return nil
-    end
-    return spellCount, "spell-cast-count"
-end
-
-function CDMIcons.GetSpellCountForEntry(spellID, entry, icon)
-    local seenIDs = icon and icon._spellCountSeenIDs or {}
-    if icon then icon._spellCountSeenIDs = seenIDs end
-    wipe(seenIDs)
-
-    local function tryID(id)
-        local count, source = TryActionButtonSpellCount(id, seenIDs)
-        if CDMIcons.ValueIsPresent(count) then return count, source end
-
-        if type(id) == "number" then
-            local overrideID = QueryOverrideSpell(id)
-            count, source = TryActionButtonSpellCount(overrideID, seenIDs)
-            if CDMIcons.ValueIsPresent(count) then return count, source end
-        end
-        return nil
-    end
-
-    local count, source = tryID(spellID)
-    if CDMIcons.ValueIsPresent(count) then return count, source end
-
-    if entry then
-        count, source = tryID(entry.overrideSpellID)
-        if CDMIcons.ValueIsPresent(count) then return count, source end
-        count, source = tryID(entry.spellID)
-        if CDMIcons.ValueIsPresent(count) then return count, source end
-        count, source = tryID(entry.id)
-        if CDMIcons.ValueIsPresent(count) then return count, source end
-    end
-
     return nil
 end
 
-function CDMIcons._ResolveAuraApplicationsForEntry(spellID, entry, icon)
-    if not (spellID and entry and ns.CDMSpellData and ns.CDMSpellData.ResolveAuraState) then
-        return nil
+function _resolverRuntimePolicy.ResolveAuraApplicationsForEntry(spellID, entry, icon)
+    if stackPolicy then
+        return stackPolicy:ResolveAuraApplicationsForEntry(spellID, entry, icon)
     end
-
-    local p = icon and icon._stackAuraParams or {}
-    if icon then icon._stackAuraParams = p end
-    p.spellID = spellID
-    p.entrySpellID = entry.spellID
-    p.entryID = entry.id
-    p.entryName = entry.name
-    p.entryKind = entry.kind
-    p.entryType = entry.type
-    p.entryIsAura = IsAuraEntry(entry)
-    p.entryTexture = GetEntryTexture and GetEntryTexture(entry) or nil
-    p.viewerType = entry.viewerType
-    p.totemSlot = IsTotemSlotEntry(entry) and entry._totemSlot or nil
-    p.disableLooseVisibilityFallback = true
-
-    local r = ns.CDMSpellData:ResolveAuraState(p)
-    if not r then
-        return nil
-    end
-
-    if r.isActive and not r.isTotemInstance then
-        local count = r.count
-        if count and count.shown == true and CDMIcons.ValueIsPresent(count.sinkText) then
-            return count.sinkText, count.source
-        end
-        if count and count.shown == true and CDMIcons.ValueIsPresent(count.value) then
-            return count.value, count.source
-        end
-        return CDMIcons._GetAuraApplicationsFromData(r.auraData, r.auraUnit, "resolved-data")
-    end
-
     return nil
 end
 
 GetAuraApplicationsForSpell = function(spellID, entryOrName, icon)
-    local entry = type(entryOrName) == "table" and entryOrName or nil
-    local spellName = entry and entry.name or entryOrName
-    if CDMIcons.ValueIsMissing(spellID) or not Sources then
-        return nil
+    if stackPolicy then
+        return stackPolicy:GetAuraApplicationsForSpell(spellID, entryOrName, icon)
     end
-
-    if entry and not IsAuraEntry(entry) then
-        local spellCount, countSource = CDMIcons.GetSpellCountForEntry(spellID, entry, icon)
-        if CDMIcons.ValueIsPresent(spellCount) then
-            return spellCount, countSource
-        end
-    end
-
-    local seenIDs = icon and icon._stackAuraSeenIDs or {}
-    if icon then icon._stackAuraSeenIDs = seenIDs end
-    wipe(seenIDs)
-    seenIDs[spellID] = true
-
-    local directApps, directSource = CDMIcons._TryAuraApplicationsBySpellID(spellID, "spell")
-    if CDMIcons.ValueIsPresent(directApps) then
-        return directApps, directSource
-    end
-
-    local auraID = spellID
-    if ns.CDMSpellData and ns.CDMSpellData._abilityToAuraSpellID then
-        local mapped = ns.CDMSpellData._abilityToAuraSpellID[auraID]
-        if mapped then auraID = mapped end
-    end
-    if auraID and not seenIDs[auraID] then
-        seenIDs[auraID] = true
-        local mappedApps, mappedSource = CDMIcons._TryAuraApplicationsBySpellID(auraID, "mapped")
-        if CDMIcons.ValueIsPresent(mappedApps) then
-            return mappedApps, mappedSource
-        end
-    end
-
-    if not (entry and (entry.viewerType == "buff" or entry.viewerType == "trackedBar")) then
-        local linkedApps, linkedSource = CDMIcons._TryLinkedAuraApplications(
-            entry and entry.linkedSpellIDs, entry, icon, seenIDs, "entry-linked")
-        if CDMIcons.ValueIsPresent(linkedApps) then return linkedApps, linkedSource end
-    end
-
-    if not Sources.QueryAuraDataBySpellName then
-        return CDMIcons._ResolveAuraApplicationsForEntry(spellID, entry, icon)
-    end
-
-    -- Resolve a name and forward it transiently. Caller-supplied spellName
-    -- and GetCachedSpellName are both clean strings (or nil), so the `==""`
-    -- comparison below is safe. Only the final fresh-from-GetSpellInfo
-    -- branch can produce a secret value, and that secret is passed straight
-    -- through to GetAuraDataBySpellName via pcall — never compared, never
-    -- stored. C-side handles secrets natively.
-    local nameToUse = spellName
-    if nameToUse == nil or nameToUse == "" then
-        nameToUse = GetCachedSpellName(spellID)
-    end
-    if (nameToUse == nil or nameToUse == "") and Sources.QuerySpellInfo then
-        local info = Sources.QuerySpellInfo(spellID)
-        if info then
-            nameToUse = info.name  -- may be secret in combat — forwarded only
-        end
-    end
-    if CDMIcons.ValueIsPresent(nameToUse) then
-        local nad = Sources.QueryAuraDataBySpellName("player", nameToUse, "HELPFUL")
-        if nad then
-            local apps, source = CDMIcons._GetAuraApplicationsFromData(nad, "player", "name-player")
-            if CDMIcons.ValueIsPresent(apps) then return apps, source end
-        end
-    end
-
-    local resolvedApps, resolvedSource = CDMIcons._ResolveAuraApplicationsForEntry(spellID, entry, icon)
-    if CDMIcons.ValueIsPresent(resolvedApps) then
-        return resolvedApps, resolvedSource
-    end
-
     return nil
 end
-CDMIcons.GetAuraApplicationsForSpell = GetAuraApplicationsForSpell
 
 local function ApplyAuraCountText(icon, count, showZero, preserveWhenMissing)
-    if not icon or not icon.StackText then return end
-
-    if not count or count.shown ~= true then
-        if not preserveWhenMissing then
-            ClearIconStackText(icon)
-        end
-        return
-    end
-
-    local entry = icon._spellEntry
-    local stackSettings = CDMIcons.GetTrackerSettings
-        and CDMIcons.GetTrackerSettings(entry and entry.viewerType)
-        or nil
-    if CDMIcons.ShouldHideIconStackText
-       and CDMIcons.ShouldHideIconStackText(icon, stackSettings) then
-        ClearIconStackText(icon)
-        return
-    end
-
-    local stackValue = count.sinkText
-    if stackValue == nil then
-        stackValue = count.value
-    end
-
-    if CDMIcons.ValueIsMissing(stackValue) then
-        if not preserveWhenMissing then
-            ClearIconStackText(icon)
-        end
-        return
-    end
-
-    if count.sinkText ~= nil or showZero then
-        icon.StackText.SetText(icon.StackText, stackValue)
-        icon.StackText.Show(icon.StackText)
-        icon._stackTextSource = count.source or "Applications"
-        return
-    end
-
-    local displayText = stackValue
-    if type(stackValue) == "number" and C_StringUtil and C_StringUtil.TruncateWhenZero then
-        displayText = C_StringUtil.TruncateWhenZero(stackValue)
-    end
-
-    if HookTextHasDisplay(displayText) then
-        icon.StackText.SetText(icon.StackText, displayText)
-        icon.StackText.Show(icon.StackText)
-        icon._stackTextSource = count.source or "Applications"
-    else
-        ClearIconStackText(icon)
+    if stackPolicy then
+        stackPolicy:ApplyAuraCountText(icon, count, showZero, preserveWhenMissing)
     end
 end
-CDMIcons.ApplyAuraCountText = ApplyAuraCountText
 
 ---------------------------------------------------------------------------
 -- CAST-BASED STALE STACK DETECTION — DISABLED
@@ -2499,8 +1532,6 @@ local function ClearClickButtonAttributes(btn)
     btn:SetAttribute("item", nil)
     btn:SetAttribute("macro", nil)
 end
-CDMIcons.ClearClickButtonAttributes = ClearClickButtonAttributes
-
 ---------------------------------------------------------------------------
 -- MACRO RESOLUTION
 -- Scan all player macros for one that casts the given spell.
@@ -3083,469 +2114,152 @@ function GetTrackerSettings(viewerType)
     if db[viewerType] then return db[viewerType] end
     return db.containers and db.containers[viewerType] or nil
 end
-CDMIcons.GetTrackerSettings = GetTrackerSettings
 
-function CDMIcons.IsCustomBarContainer(containerDB)
-    return type(containerDB) == "table" and containerDB.containerType == "customBar"
-end
-
-function CDMIcons.NormalizeCustomBarVisibilityFlags(containerDB)
-    if not CDMIcons.IsCustomBarContainer(containerDB) then return "always" end
-
-    if containerDB.desaturateOnCooldown == nil then
-        containerDB.desaturateOnCooldown = true
-    end
-
-    local mode = "always"
-    if containerDB.showOnlyOnCooldown then
-        mode = "onCooldown"
-        containerDB.showOnlyWhenActive = false
-        containerDB.showOnlyWhenOffCooldown = false
-    elseif containerDB.showOnlyWhenActive then
-        mode = "active"
-        containerDB.showOnlyWhenOffCooldown = false
-    elseif containerDB.showOnlyWhenOffCooldown then
-        mode = "offCooldown"
-    end
-
-    containerDB.visibilityMode = mode
-
-    if mode ~= "onCooldown" then
-        containerDB.noDesaturateWithCharges = false
-    end
-
-    if containerDB.dynamicLayout == nil then
-        containerDB.dynamicLayout = false
-    end
-    if containerDB.dynamicLayout and containerDB.clickableIcons then
-        containerDB.clickableIcons = false
-    end
-
-    containerDB.tooltipContext = containerDB.tooltipContext or "customTrackers"
-    containerDB.keybindContext = containerDB.keybindContext or "customTrackers"
-
-    return mode
-end
-
-function CDMIcons.GetCustomBarVisibilityMode(containerDB)
-    if not CDMIcons.IsCustomBarContainer(containerDB) then return "always" end
-    return CDMIcons.NormalizeCustomBarVisibilityFlags(containerDB)
-end
-
-function CDMIcons.GetSpellCastInfo(spellID)
-    if not spellID or not UnitCastingInfo then return false end
-    local _, _, _, startMS, endMS, _, _, _, castSpellID = UnitCastingInfo("player")
-    if castSpellID and castSpellID == spellID and startMS and endMS then
-        return true, startMS / 1000, (endMS - startMS) / 1000, "cast"
-    end
-    return false
-end
-
-function CDMIcons.GetSpellChannelInfo(spellID)
-    if not spellID or not UnitChannelInfo then return false end
-    local _, _, _, startMS, endMS, _, _, channelSpellID = UnitChannelInfo("player")
-    if channelSpellID and channelSpellID == spellID and startMS and endMS then
-        return true, startMS / 1000, (endMS - startMS) / 1000, "channel"
-    end
-    return false
-end
-
-function CDMIcons.GetSpellBuffInfo(spellID, icon, entry)
-    if not spellID then return false end
-
-    local scanner = QUI and QUI.SpellScanner
-    if scanner and scanner.IsSpellActive then
-        local active, expiration, duration = scanner.IsSpellActive(spellID)
-        if active then
-            if IsSafeNumeric(expiration) and IsSafeNumeric(duration) then
-                return true, expiration - duration, duration, "buff"
-            end
-            return true, nil, nil, "buff"
+customBarPolicy = ns.CDMIconCustomBarPolicy and ns.CDMIconCustomBarPolicy.Create({
+    getSources = function()
+        return Sources
+    end,
+    getSpellData = function()
+        return ns.CDMSpellData
+    end,
+    getGlowLib = function()
+        return LCG
+    end,
+    getTime = function()
+        return GetTime()
+    end,
+    getTrackerSettings = function(viewerType)
+        return GetTrackerSettings and GetTrackerSettings(viewerType) or nil
+    end,
+    isCustomBarContainer = IsCustomBarContainer,
+    getCustomBarVisibilityMode = GetCustomBarVisibilityMode,
+    resolveMacro = function(entry)
+        return ResolveMacro(entry)
+    end,
+    resolveSpellActiveState = function(spellID, icon, entry)
+        return Resolvers and Resolvers.ResolveSpellActiveState
+            and Resolvers.ResolveSpellActiveState(spellID, icon, entry)
+            or false
+    end,
+    resolveCooldownActivityState = function(icon, entry, containerDB, now)
+        return _resolverRuntimePolicy.ResolveIconCooldownActivityState(icon, entry, containerDB, now)
+    end,
+    reapplySwipeStyle = function(cooldown, icon)
+        return ReapplySwipeStyle(cooldown, icon)
+    end,
+    isPlayerInCombat = function()
+        return UnitAffectingCombat and UnitAffectingCombat("player") or false
+    end,
+    debugIconEvent = function(...)
+        return CDMIcons.DebugIconEvent and CDMIcons.DebugIconEvent(...)
+    end,
+    after = function(delay, callback)
+        if C_Timer and C_Timer.After then
+            return C_Timer.After(delay, callback)
         end
-        if InCombatLockdown() then
-            return false
-        end
-    elseif InCombatLockdown() then
-        return false
-    end
+        callback()
+    end,
+})
 
-    if Sources and Sources.QueryPlayerAuraBySpellID then
-        local auraData = Sources.QueryPlayerAuraBySpellID(spellID)
-        if auraData then
-            local expiration = auraData.expirationTime
-            local duration = auraData.duration
-            if IsSafeNumeric(expiration) and IsSafeNumeric(duration) then
-                return true, expiration - duration, duration, "buff"
-            end
-            return true, nil, nil, "buff"
-        end
-    end
-
-    if icon and icon._auraActive then
-        return true, nil, nil, "buff"
-    end
-
-    return false
+function _resolverRuntimePolicy.ResolveItemActiveState(itemID, icon, entry)
+    return customBarPolicy
+        and customBarPolicy:ResolveItemActiveState(itemID, icon, entry)
+        or false
 end
 
-function CDMIcons.ResolveItemActiveState(itemID, icon, entry)
-    if not itemID or not (Sources and Sources.QueryItemSpell) then return false end
-    local _, itemSpellID = Sources.QueryItemSpell(itemID)
-    if itemSpellID then
-        return CDMIcons.ResolveSpellActiveState(itemSpellID, icon, entry)
-    end
-    return false
+function _resolverRuntimePolicy.CooldownHasVisualPriority(icon, entry, containerDB, now)
+    return customBarPolicy
+        and customBarPolicy:CooldownHasVisualPriority(icon, entry, containerDB, now)
+        or false
 end
 
-function CDMIcons.ResolveEntryRuntimeSpellID(icon, entry)
-    return (icon and icon._runtimeSpellID)
-        or (entry and (entry.spellID or entry.overrideSpellID or entry.id))
+function _resolverRuntimePolicy.ResolveCustomBarActiveState(entry, icon, now)
+    return customBarPolicy
+        and customBarPolicy:ResolveActiveState(entry, icon, now)
+        or false
 end
 
-function CDMIcons.CooldownHasVisualPriority(icon, entry, containerDB, now)
-    if not icon or not entry then return false end
-    if icon._cdDesaturated or icon._hasCooldownActive or icon._showingRealCooldownSwipe then
-        return true
-    end
-
-    local state = CDMIcons.ResolveCooldownActivityState(icon, entry, containerDB, now or GetTime())
-    return state and state.isOnCooldown == true
+function _resolverRuntimePolicy.ResolveCustomBarCooldownState(entry, icon, containerDB, now)
+    return customBarPolicy
+        and customBarPolicy:ResolveCooldownState(entry, icon, containerDB, now)
+        or nil
 end
 
-function CDMIcons.ResolveCustomBarActiveState(entry, icon, now)
-    local containerDB = GetTrackerSettings(entry and entry.viewerType)
-    if not CDMIcons.IsCustomBarContainer(containerDB) then
-        return icon and icon._auraActive or false
-    end
-    if containerDB.showActiveState == false then
-        return false
-    end
-
-    if entry.type == "macro" then
-        local resolvedID, resolvedType = ResolveMacro(entry)
-        if resolvedID then
-            if resolvedType == "item" then
-                return CDMIcons.ResolveItemActiveState(resolvedID, icon, entry)
-            end
-            return CDMIcons.ResolveSpellActiveState(resolvedID, icon, entry)
-        end
-        return false
-    end
-
-    if CDMIcons.IsItemLikeEntry(entry) then
-        local itemID = CDMIcons.ResolveEntryItemID(entry)
-        if itemID then
-            return CDMIcons.ResolveItemActiveState(itemID, icon, entry)
-        end
-        return false
-    end
-
-    local spellID = icon and icon._runtimeSpellID or entry.spellID or entry.overrideSpellID or entry.id
-    return CDMIcons.ResolveSpellActiveState(spellID, icon, entry)
+function _resolverRuntimePolicy.ResolveCustomBarUsability(entry, containerDB, cooldownState)
+    return not customBarPolicy
+        or customBarPolicy:ResolveUsability(entry, containerDB, cooldownState)
 end
 
-function CDMIcons.ResolveCustomBarCooldownState(entry, icon, containerDB, now)
-    return CDMIcons.ResolveCooldownActivityState(icon, entry, containerDB, now)
+function _resolverRuntimePolicy.ComputeCustomBarVisibility(icon, entry, containerDB, now)
+    return customBarPolicy
+        and customBarPolicy:ComputeVisibility(icon, entry, containerDB, now)
+        or {
+            baseVisible = true,
+            layoutVisible = true,
+            renderVisible = true,
+            isActive = false,
+            isUsable = true,
+            isOnCooldown = false,
+            rechargeActive = false,
+            hasChargesRemaining = false,
+            visibilityMode = "always",
+        }
 end
 
-function CDMIcons.ResolveCustomBarUsability(entry, containerDB, cooldownState)
-    if not entry then return true end
-
-    if entry.type == "macro" then
-        local resolvedID, resolvedType = ResolveMacro(entry)
-        if not resolvedID then return true end
-        if resolvedType == "item" then
-            return CDMIcons.ResolveCustomBarUsability({ type = "item", id = resolvedID }, containerDB, cooldownState)
-        end
-        return CDMIcons.ResolveCustomBarUsability({ type = "spell", id = resolvedID, spellID = resolvedID }, containerDB, cooldownState)
-    end
-
-    if entry.type == "item" then
-        if Sources and Sources.QueryItemInfoInstant and Enum and Enum.ItemClass then
-            local instantItemID, instantItemType, instantItemSubType, instantEquipLoc, instantIcon, classID =
-                Sources.QueryItemInfoInstant(entry.id)
-            if instantItemID and (classID == Enum.ItemClass.Armor or classID == Enum.ItemClass.Weapon) then
-                local equipped = Sources.QueryIsEquippedItem and Sources.QueryIsEquippedItem(entry.id)
-                if equipped ~= nil then
-                    return equipped == true
-                end
-            end
-        end
-        if Sources and Sources.QueryItemCount then
-            local count = Sources.QueryItemCount(entry.id, false, containerDB and containerDB.showItemCharges == true, true)
-            return count and count > 0
-        end
-        return true
-    elseif entry.type == "trinket" or entry.type == "slot" then
-        local equippedItemID = Sources and Sources.QueryInventoryItemID and Sources.QueryInventoryItemID("player", entry.id)
-        if not equippedItemID then return false end
-        -- Trinket slots (13/14) track the slot rather than a specific item, so
-        -- a passive stat-stick with no on-use would otherwise report usable
-        -- and sit visible forever under hideNonUsable. Mirrors the legacy-
-        -- container check in ComputeFilterHides so custom containers honor
-        -- hideNonUsable for passive trinkets too.
-        if entry.id == 13 or entry.id == 14 then
-            local spellName = Sources and Sources.QueryItemSpell and Sources.QueryItemSpell(equippedItemID)
-            if not spellName then return false end
-        end
-        return true
-    end
-
-    local sid = entry.spellID or entry.overrideSpellID or entry.id
-    if sid then
-        local spellData = ns.CDMSpellData
-        if spellData and type(spellData.IsSpellKnown) == "function"
-           and not spellData:IsSpellKnown(sid) then
-            return false
-        end
-        -- C_Spell.IsSpellUsable can report false while a known spell is on
-        -- cooldown. For custom bars that combine Hide Non-Usable with Show
-        -- Only On Cooldown, treating that as unusable hides the exact spells
-        -- the user wants to see. Unknown spells were rejected above; active
-        -- cooldown/recharge means the entry is valid and should pass this
-        -- filter.
-        if cooldownState and (cooldownState.isOnCooldown or cooldownState.rechargeActive) then
-            return true
-        end
-        if Sources and Sources.QuerySpellUsable then
-            local usable = Helpers.SafeValue(Sources.QuerySpellUsable(sid), nil)
-            if usable == false then return false end
-        end
-    end
-
-    return true
-end
-
-function CDMIcons.ComputeCustomBarVisibility(icon, entry, containerDB, now)
-    local cooldown = CDMIcons.ResolveCustomBarCooldownState(entry, icon, containerDB, now)
-    local isActive = (icon and icon._customBarActive) or (icon and icon._auraActive) or false
-    local usable = CDMIcons.ResolveCustomBarUsability(entry, containerDB, cooldown)
-    local baseVisible = usable or not (containerDB and containerDB.hideNonUsable)
-    local mode = CDMIcons.GetCustomBarVisibilityMode(containerDB)
-    local layoutVisible = baseVisible
-
-    if layoutVisible then
-        if mode == "onCooldown" then
-            layoutVisible = cooldown.isOnCooldown or cooldown.rechargeActive
-        elseif mode == "active" then
-            layoutVisible = isActive
-        elseif mode == "offCooldown" then
-            layoutVisible = (not cooldown.isOnCooldown)
-                and (not isActive or cooldown.hasChargesRemaining)
-        end
-    end
-
-    local inCombat = UnitAffectingCombat and UnitAffectingCombat("player")
-    local combatVisible = not (containerDB and containerDB.showOnlyInCombat) or inCombat
-
-    if _G.QUI_CDM_ICON_DEBUG and CDMIcons.DebugIconEvent then
-        CDMIcons.DebugIconEvent(icon, "visibility",
-            "mode=", mode,
-            "layout=", tostring((layoutVisible and true) or false),
-            "render=", tostring(((layoutVisible and combatVisible) and true) or false),
-            "base=", tostring((baseVisible and true) or false),
-            "usable=", tostring((usable and true) or false),
-            "onCD=", tostring((cooldown.isOnCooldown and true) or false),
-            "recharge=", tostring((cooldown.rechargeActive and true) or false),
-            "active=", tostring((isActive and true) or false),
-            "gcdOnly=", tostring(cooldown.gcdOnly and true or false),
-            "hideNonUsable=", tostring(containerDB and containerDB.hideNonUsable),
-            "showOnlyOnCooldown=", tostring(containerDB and containerDB.showOnlyOnCooldown))
-    end
-    return {
-        baseVisible = baseVisible,
-        layoutVisible = layoutVisible and true or false,
-        renderVisible = layoutVisible and combatVisible and true or false,
-        isActive = isActive and true or false,
-        isUsable = usable and true or false,
-        isOnCooldown = cooldown.isOnCooldown and true or false,
-        rechargeActive = cooldown.rechargeActive and true or false,
-        hasChargesRemaining = cooldown.hasChargesRemaining and true or false,
-        visibilityMode = mode,
-    }
-end
-
-function CDMIcons.StartCustomBarActiveGlow(icon, containerDB)
-    if not icon or not CDMIcons._LCG or not containerDB or containerDB.activeGlowEnabled == false then return end
-    if icon._customBarActiveGlowShown or icon._customBarActiveGlowPending then return end
-    local width, height = icon:GetSize()
-    if not width or not height or width < 10 or height < 10 then return end
-
-    local glowType = containerDB.activeGlowType or "Pixel Glow"
-    local color = containerDB.activeGlowColor or {1, 0.85, 0.3, 1}
-    local lines = containerDB.activeGlowLines or 8
-    local frequency = containerDB.activeGlowFrequency or 0.25
-    local thickness = containerDB.activeGlowThickness or 2
-    local scale = containerDB.activeGlowScale or 1.0
-
-    if glowType == "Proc Glow" then
-        local duration = 1.0 / ((frequency or 0.25) * 4)
-        duration = math.max(0.5, math.min(2.0, duration))
-        if icon.Border and icon.Border.IsShown and icon.Border:IsShown() then
-            icon._customBarBorderWasShown = true
-            icon.Border:Hide()
-        end
-        if icon.Icon and icon.CreateMaskTexture then
-            if not icon._customBarProcGlowMask then
-                icon._customBarProcGlowMask = icon:CreateMaskTexture()
-                icon._customBarProcGlowMask:SetTexture("Interface\\AddOns\\QUI\\assets\\iconskin\\ProcGlowMask")
-                icon._customBarProcGlowMask:SetAllPoints(icon.Icon)
-            end
-            icon.Icon.AddMaskTexture(icon.Icon, icon._customBarProcGlowMask)
-        end
-        icon._customBarActiveGlowPending = true
-        C_Timer.After(0, function()
-            icon._customBarActiveGlowPending = nil
-            if not icon or not icon:IsShown() or icon._customBarActiveGlowShown or not icon._customBarActive then return end
-            CDMIcons._LCG.ProcGlow_Start(icon, {
-                color = color,
-                duration = duration,
-                startAnim = true,
-                key = "_QUIActiveGlow",
-            })
-            icon._customBarActiveGlowShown = true
-            icon._customBarActiveGlowType = glowType
-        end)
-    elseif glowType == "Autocast Shine" then
-        CDMIcons._LCG.AutoCastGlow_Start(icon, color, lines, frequency, scale, 0, 0, "_QUIActiveGlow")
-        icon._customBarActiveGlowShown = true
-        icon._customBarActiveGlowType = glowType
-    else
-        CDMIcons._LCG.PixelGlow_Start(icon, color, lines, frequency, nil, thickness, 0, 0, true, "_QUIActiveGlow")
-        icon._customBarActiveGlowShown = true
-        icon._customBarActiveGlowType = "Pixel Glow"
+function _resolverRuntimePolicy.StartCustomBarActiveGlow(icon, containerDB)
+    if customBarPolicy then
+        customBarPolicy:StartActiveGlow(icon, containerDB)
     end
 end
 
-function CDMIcons.StopCustomBarActiveGlow(icon)
-    if not icon or not CDMIcons._LCG then return end
-    icon._customBarActiveGlowPending = nil
-    local glowWasShown = icon._customBarActiveGlowShown
-
-    local glowType = icon._customBarActiveGlowType or "Pixel Glow"
-    if glowWasShown and glowType == "Proc Glow" then
-        CDMIcons._LCG.ProcGlow_Stop(icon, "_QUIActiveGlow")
-    elseif glowWasShown and glowType == "Autocast Shine" then
-        CDMIcons._LCG.AutoCastGlow_Stop(icon, "_QUIActiveGlow")
-    elseif glowWasShown then
-        CDMIcons._LCG.PixelGlow_Stop(icon, "_QUIActiveGlow")
-    end
-    if icon.Icon and icon._customBarProcGlowMask then
-        icon.Icon.RemoveMaskTexture(icon.Icon, icon._customBarProcGlowMask)
-    end
-    if icon._customBarBorderWasShown and icon.Border then
-        icon.Border:Show()
-    end
-    icon._customBarBorderWasShown = nil
-    icon._customBarActiveGlowShown = nil
-    icon._customBarActiveGlowType = nil
-end
-
-function CDMIcons.ApplyCustomBarSwipeStyle(icon, containerDB, cooldownState)
-    if not icon or not icon.Cooldown or not icon._spellEntry then return end
-    local entry = icon._spellEntry
-    containerDB = containerDB or GetTrackerSettings(entry.viewerType)
-    if not CDMIcons.IsCustomBarContainer(containerDB) then return end
-
-    cooldownState = cooldownState or CDMIcons.ResolveCustomBarCooldownState(entry, icon, containerDB, GetTime())
-    local showRecharge = cooldownState and cooldownState.rechargeActive and containerDB.showRechargeSwipe == true
-    if cooldownState and (cooldownState.hasCharges or cooldownState.rechargeActive) then
-        icon.Cooldown:SetDrawSwipe(showRecharge)
-        icon.Cooldown:SetDrawEdge(false)
-        if showRecharge then
-            icon.Cooldown:SetSwipeTexture("Interface\\Buttons\\WHITE8X8")
-            icon.Cooldown:SetSwipeColor(0, 0, 0, 0.6)
-        else
-            icon.Cooldown:SetSwipeColor(0, 0, 0, 0)
-        end
-    elseif not icon._customBarActive then
-        icon.Cooldown:SetDrawSwipe(false)
-        icon.Cooldown:SetDrawEdge(false)
-        icon.Cooldown:SetSwipeColor(0, 0, 0, 0)
+function _resolverRuntimePolicy.StopCustomBarActiveGlow(icon)
+    if customBarPolicy then
+        customBarPolicy:StopActiveGlow(icon)
     end
 end
 
-function CDMIcons.ApplyCustomBarActiveState(icon, entry, containerDB)
-    if not icon or not entry or not CDMIcons.IsCustomBarContainer(containerDB) then return end
-
-    local wasActive = icon._customBarActive
-    local wasActiveType = icon._customBarActiveType
-    local active, startTime, duration, activeType = CDMIcons.ResolveCustomBarActiveState(entry, icon, GetTime())
-    icon._customBarActive = active and true or false
-    icon._customBarActiveType = activeType
-    icon._customBarActiveStart = startTime
-    icon._customBarActiveDuration = duration
-
-    if icon.Cooldown
-       and (wasActive ~= icon._customBarActive or wasActiveType ~= icon._customBarActiveType) then
-        ReapplySwipeStyle(icon.Cooldown, icon)
-    end
-
-    if CDMIcons.ApplyCustomBarSwipeStyle then
-        CDMIcons.ApplyCustomBarSwipeStyle(icon, containerDB)
+function _resolverRuntimePolicy.ApplyCustomBarSwipeStyle(icon, containerDB, cooldownState)
+    if customBarPolicy then
+        customBarPolicy:ApplySwipeStyle(icon, containerDB, cooldownState)
     end
 end
 
-function CDMIcons.ApplyCustomBarActiveGlow(icon, containerDB, visibility)
-    if visibility and visibility.renderVisible and visibility.isActive
-       and visibility.visibilityMode ~= "onCooldown" then
-        CDMIcons.StartCustomBarActiveGlow(icon, containerDB)
-    else
-        CDMIcons.StopCustomBarActiveGlow(icon)
+function _resolverRuntimePolicy.ApplyCustomBarActiveState(icon, entry, containerDB)
+    if customBarPolicy then
+        customBarPolicy:ApplyActiveState(icon, entry, containerDB)
     end
 end
 
-function CDMIcons.ShouldHideIconStackText(icon, containerDB)
-    local row = icon and icon._rowConfig
-    if row and row.hideStackText == true then return true end
-    return containerDB and containerDB.hideStackText == true
+function _resolverRuntimePolicy.ApplyCustomBarActiveGlow(icon, containerDB, visibility)
+    if customBarPolicy then
+        customBarPolicy:ApplyActiveGlow(icon, containerDB, visibility)
+    end
+end
+
+function _resolverRuntimePolicy.ShouldHideIconStackText(icon, containerDB)
+    return stackPolicy and stackPolicy:ShouldHideIconStackText(icon, containerDB) or false
 end
 
 -- CDMIcons.DebugStackText is rebound by the load-on-demand debug addon.
 
-function CDMIcons.ShowIconStackText(icon, value, containerDB, reason)
-    if not icon or not icon.StackText then return end
-    if CDMIcons.ShouldHideIconStackText(icon, containerDB) then
-        CDMIcons.DebugStackText(icon, "hide", value, reason or "setting-hide-stack-text")
-        icon.StackText.SetText(icon.StackText, "")
-        icon.StackText.Hide(icon.StackText)
-        return
-    end
-    local setErr
-    local setOk
-setOk = true; setErr = icon.StackText.SetText(icon.StackText, value)
-    if not setOk and icon.StackText.SetFormattedText then
-setOk = true; setErr = icon.StackText.SetFormattedText(icon.StackText, "%s", value)
-    end
-    local showOk = false
-    local showErr
-    if setOk then
-showOk = true; showErr = icon.StackText.Show(icon.StackText)
-    end
-    if _G.QUI_CDM_CHARGE_DEBUG then
-        CDMIcons.DebugStackText(icon, setOk and "show" or "show-failed", value, reason)
-        ChargeDebug(icon._spellEntry and icon._spellEntry.name,
-            "STACKTEXT apply", "reason=", reason or "nil",
-            "setOk=", tostring(setOk), "setErr=", tostring(setErr),
-            "showOk=", tostring(showOk), "showErr=", tostring(showErr))
+function _resolverRuntimePolicy.ShowIconStackText(icon, value, containerDB, reason)
+    if stackPolicy then
+        stackPolicy:ShowIconStackText(icon, value, containerDB, reason)
     end
 end
 
-function CDMIcons.HideIconStackText(icon, reason)
-    if not icon or not icon.StackText then return end
-    CDMIcons.DebugStackText(icon, "hide", nil, reason)
-    icon.StackText.SetText(icon.StackText, "")
-    icon.StackText.Hide(icon.StackText)
+function _resolverRuntimePolicy.HideIconStackText(icon, reason)
+    if stackPolicy then
+        stackPolicy:HideIconStackText(icon, reason)
+    end
 end
 
 -- _hoistedNcdm is set once per UpdateAllCooldowns batch (avoids 4 table
 -- hops per icon).  Local to file scope so UpdateIconCooldown can read it.
 local _hoistedNcdm = nil
-CDMIcons._hoistedNcdm = nil   -- kept in sync at every write site below
 -- _batchTime is set once per UpdateAllCooldowns batch so per-icon code
 -- can read GetTime() without crossing the C boundary for every icon.
 local _batchTime = 0
-CDMIcons._batchTime = 0       -- kept in sync at every write site below
 -- _showGCDSwipe is hoisted once per batch from swipe module settings.
 -- When true, GCD-only cooldowns are allowed through to the CooldownFrame
 -- instead of being cleared, so the GCD swipe animation can render.
@@ -3556,10 +2270,9 @@ local _showGCDSwipe = false
 local _showBuffSwipe = true
 local _showCooldownIconAuraPhase = true
 
-CDMIcons._trustIsOnGCDForBatch = false
-CDMIcons._pendingTrustIsOnGCD = false
+_resolverRuntimePolicy.pendingTrustIsOnGCD = false
 
-function CDMIcons.RefreshSwipeBatchSettings()
+function _resolverRuntimePolicy.RefreshSwipeBatchSettings()
     local swipeMod = ns._OwnedSwipe
     local swipeSettings = swipeMod and swipeMod.GetSettings and swipeMod.GetSettings()
     _showGCDSwipe = swipeSettings and swipeSettings.showGCDSwipe or false
@@ -3571,23 +2284,23 @@ function CDMIcons.RefreshSwipeBatchSettings()
     end
 end
 
-function CDMIcons.ShouldSkipAuraPhaseForCooldownIcon(icon, entry)
+function _resolverRuntimePolicy.ShouldSkipAuraPhaseForCooldownIcon(icon, entry)
     if not entry then return false end
     if IsAuraEntry(entry) then return false end
     return _showCooldownIconAuraPhase == false
 end
 
-function CDMIcons.ShouldUseBuffSwipeForIcon(icon, entry)
+function _resolverRuntimePolicy.ShouldUseBuffSwipeForIcon(icon, entry)
     if not entry then return false end
     if not _showBuffSwipe then return false end
-    if CDMIcons.ShouldSkipAuraPhaseForCooldownIcon(icon, entry) then
+    if _resolverRuntimePolicy.ShouldSkipAuraPhaseForCooldownIcon(icon, entry) then
         return false
     end
     local settings = ResolveTrackerSettingsNow(entry and entry.viewerType)
     if settings and settings.showOnlyOnCooldown == true then
         return false
     end
-    if CDMIcons.IsCustomBarContainer(settings) then
+    if IsCustomBarContainer(settings) then
         if settings.showActiveState == false then
             return false
         end
@@ -3595,103 +2308,774 @@ function CDMIcons.ShouldUseBuffSwipeForIcon(icon, entry)
     return true
 end
 
----------------------------------------------------------------------------
--- ICON POOL MANAGEMENT
----------------------------------------------------------------------------
-local function CreateIconPool()
-    return {}
+function _resolverRuntimePolicy.ResolveIconCooldownActivityState(icon, entry, containerDB, now)
+    local runtimeStore = ns.CDMRuntimeStore
+    local storedState = runtimeStore and runtimeStore.GetFrameState
+        and runtimeStore.GetFrameState(icon)
+    local fromResolved = storedState
+        and Resolvers
+        and Resolvers.ResolveCooldownActivityStateFromResolvedState
+        and Resolvers.ResolveCooldownActivityStateFromResolvedState(entry, storedState)
+    if fromResolved then
+        return fromResolved
+    end
+
+    local resolver = Resolvers and Resolvers.ResolveCooldownActivityState
+    if not resolver then return nil end
+    local options = _resolverRuntimePolicy
+    options.useBuffSwipe = _resolverRuntimePolicy.ShouldUseBuffSwipeForIcon(icon, entry)
+    options.skipAuraPhase = _resolverRuntimePolicy.ShouldSkipAuraPhaseForCooldownIcon(icon, entry)
+    options.showGCDSwipe = IsGCDSwipeEnabled()
+    return resolver(icon, entry, containerDB, now, options)
 end
 
-function CDMIcons:GetIconPool(viewerType)
-    return iconPools[viewerType] or {}
+function _resolverRuntimePolicy.ApplyMirrorStackText(icon, mirrorState, showZero)
+    return stackPolicy and stackPolicy:ApplyMirrorStackText(icon, mirrorState, showZero) or false
 end
 
-function CDMIcons:ForEachIcon(callback)
-    if not callback then return end
-    for viewerType, pool in pairs(iconPools) do
-        for _, icon in ipairs(pool) do
-            callback(icon, viewerType)
+function _resolverRuntimePolicy.DebugBlizzSyncSnapshot(enabled, icon, entry, mirrorState, resolvedState,
+                                                       active, mirrorActive, fallbackFoundAura,
+                                                       durObj, durObjSource)
+    if not enabled or not icon then return end
+
+    local function debugSafeShown(frame)
+        if frame and frame.IsShown then
+            return frame:IsShown() and true or false
+        end
+        return nil
+    end
+
+    local function debugSafeAlpha(frame)
+        if frame and frame.GetAlpha then
+            return frame:GetAlpha()
+        end
+        return nil
+    end
+
+    local signature = table.concat({
+        tostring(active == true),
+        tostring(mirrorActive == true),
+        tostring(mirrorState and mirrorState.durObj and true or false),
+        tostring(mirrorState and mirrorState.hasAuraInstanceID == true),
+        tostring(mirrorState and mirrorState.auraUnit),
+        tostring(resolvedState and resolvedState.isActive == true),
+        tostring(resolvedState and resolvedState.durObj and true or false),
+        tostring(resolvedState and resolvedState.auraInstanceID and true or false),
+        tostring(resolvedState and resolvedState.auraUnit),
+        tostring(resolvedState and resolvedState.durationStateUnknown == true),
+        tostring(fallbackFoundAura == true),
+        tostring(durObj and true or false),
+        tostring(durObjSource),
+        tostring(debugSafeShown(icon)),
+        tostring(debugSafeAlpha(icon)),
+    }, "|")
+
+    if icon._lastBlizzSyncTraceSig == signature then return end
+    icon._lastBlizzSyncTraceSig = signature
+
+    CDMIcons._DebugBlizzEntry(enabled, entry, "state-sync-trace",
+        "active=", tostring(active == true),
+        "mirrorActive=", tostring(mirrorActive == true),
+        "mirrorDur=", tostring(mirrorState and mirrorState.durObj and true or false),
+        "mirrorInst=", tostring(mirrorState and mirrorState.hasAuraInstanceID == true),
+        "mirrorUnit=", tostring(mirrorState and mirrorState.auraUnit),
+        "resolverActive=", tostring(resolvedState and resolvedState.isActive == true),
+        "resolverDur=", tostring(resolvedState and resolvedState.durObj and true or false),
+        "resolverInst=", tostring(resolvedState and resolvedState.auraInstanceID and true or false),
+        "resolverUnit=", tostring(resolvedState and resolvedState.auraUnit),
+        "unknown=", tostring(resolvedState and resolvedState.durationStateUnknown == true),
+        "fallbackAura=", tostring(fallbackFoundAura == true),
+        "durObj=", tostring(durObj and true or false),
+        "durObjSource=", tostring(durObjSource),
+        "hostShown=", tostring(debugSafeShown(icon)),
+        "hostAlpha=", tostring(debugSafeAlpha(icon)),
+        CDMIcons._FormatMirrorState(mirrorState))
+end
+
+function _resolverRuntimePolicy.SyncBlizzMirrorIconState(icon)
+    local entry = icon and icon._spellEntry
+    local cooldownID = icon and icon._blizzMirrorCooldownID
+    if not (entry and cooldownID) then return false end
+
+    local runtimeSid = entry.spellID or entry.overrideSpellID or entry.id
+    if runtimeSid and not IsAuraEntry(entry) then
+        local ovId = QueryOverrideSpell(runtimeSid)
+        if ovId then runtimeSid = ovId end
+    end
+    icon._runtimeSpellID = runtimeSid
+    local debugBlizz
+    if _G.QUI_CDM_BLIZZ_DEBUG or _G.QUI_CDM_ICON_DEBUG then
+        debugBlizz = CDMIcons._ShouldDebugBlizzEntry(entry, {
+            runtimeSid,
+            entry.spellID,
+            entry.overrideSpellID,
+            entry.id,
+        })
+    end
+
+    local mirror = ns.CDMBlizzMirror
+    local m = mirror and mirror.GetStateByCooldownID
+        and mirror.GetStateByCooldownID(cooldownID, icon._blizzMirrorCategory)
+    if not m then
+        if debugBlizz then
+            CDMIcons._DebugBlizzEntry(debugBlizz, entry, "state-sync-missing", "cdID=", tostring(cooldownID))
+        end
+        return false
+    end
+
+    local isAuraBacked = IsAuraEntry(entry)
+        or m.viewerCategory == "buff"
+        or m.viewerCategory == "trackedBar"
+    if not isAuraBacked then
+        if debugBlizz then
+            CDMIcons._DebugBlizzEntry(debugBlizz, entry, "state-sync-skip-cooldown", CDMIcons._FormatMirrorState(m))
+        end
+        return false
+    end
+
+    local r = runtimeSid and _resolverRuntimePolicy.ResolveAuraFactsForIcon(icon, entry, runtimeSid, true) or nil
+
+    -- Mirror is authoritative for Blizzard-mirrored icons. `m` is the mirror
+    -- state for the exact cdID this icon is bound to.
+    -- Resolved aura facts can still come from a different cdID when
+    -- spellID->cdID maps collide. Trusting them for this icon's display
+    -- would let an unrelated aura's state, including its durObj, leak onto
+    -- this icon. Use the exact mirror state for rendering.
+    local mirrorActive = m.isActive == true
+    local auraUnit = (m.selfAura == false) and "target" or "player"
+
+    local mirrorMod = ns.CDMBlizzMirror
+    if _G.QUI_CDM_TAINT_DEBUG and mirrorMod and mirrorMod.TaintLog then
+        mirrorMod.TaintLog("Sync.in",
+            "cdID", cooldownID,
+            "runtimeSid", runtimeSid,
+            "m.isActive", m.isActive,
+            "m.selfAura", m.selfAura,
+            "m.hasAura", m.hasAura,
+            "m.spellID", m.spellID,
+            "m.overrideTooltipSpellID", m.overrideTooltipSpellID,
+            "m.durObj", m.durObj,
+            "m.hasAuraInstanceID", m.hasAuraInstanceID,
+            "m.auraUnit", m.auraUnit,
+            "r.isActive", r and r.isActive,
+            "r.auraActive", r and r.auraActive,
+            "r.durObj", r and r.durObj,
+            "r.auraInstanceID", r and r.auraInstanceID,
+            "r.auraUnit", r and r.auraUnit,
+            "r.durationStateUnknown", r and r.durationStateUnknown,
+            "m.viewerCategory", m.viewerCategory,
+            "auraUnit", auraUnit,
+            "mirrorActive", mirrorActive)
+    end
+
+    -- Aura duration is owned by the mirror. Prefer the Blizzard child
+    -- DurationObject when it exists; UNIT_AURA duration objects are the
+    -- fallback. Icon sync is a pure consumer: if m.durObj is nil, render the
+    -- active aura without a swipe and wait for the next mirror stamp.
+    local durObj = m.durObj
+    local durObjSource = durObj and (m.durObjSource or "mirror") or nil
+    local fallbackFoundAura = false
+    local fallbackInstID
+
+    -- Activeness is "is the aura on the unit", NOT "do we have a swipe
+    -- duration". A durationless aura (form, stance, permanent buff) is
+    -- active without a durObj, so the icon should display without a countdown.
+    local active = mirrorActive or fallbackFoundAura or (durObj and true or false)
+    _resolverRuntimePolicy.DebugBlizzSyncSnapshot(debugBlizz, icon, entry, m, r, active, mirrorActive,
+        fallbackFoundAura, durObj, durObjSource)
+    local priorActive = icon._auraActive == true
+    local priorEpoch = icon._lastBlizzSwipeEpoch
+    local priorHadAuraDurObj = icon._lastAuraDurObj and true or false
+    icon._auraActive = active
+    icon._auraUnit = auraUnit
+    icon._auraInstanceID = active and m.auraInstanceID or nil
+    icon._totemSlot = entry._totemSlot or nil
+    icon._isTotemInstance = nil
+
+    if _G.QUI_CDM_TAINT_DEBUG and ns.CDMBlizzMirror and ns.CDMBlizzMirror.TaintLog then
+        ns.CDMBlizzMirror.TaintLog("Sync.out",
+            "cdID", cooldownID,
+            "active", active,
+            "mirrorActive", mirrorActive,
+            "fallbackFoundAura", fallbackFoundAura,
+            "durObjSource", durObjSource,
+            "durObj", durObj,
+            "fallbackInstID", fallbackInstID)
+    end
+
+    if active then
+        icon._lastAuraDurObj = durObj
+        icon._lastAuraSourceID = (durObjSource or "mirror")
+            .. ":" .. tostring(cooldownID)
+            .. ":" .. tostring(m.mirrorEpoch or 0)
+        icon._activeAuraSpellID = m.overrideTooltipSpellID or runtimeSid
+        icon._auraIsHarmful = (auraUnit == "target") and true or false
+    else
+        icon._lastAuraDurObj = nil
+        icon._lastAuraSourceID = nil
+        icon._activeAuraSpellID = nil
+        icon._auraIsHarmful = nil
+    end
+
+    local priorPandemicKnown = icon._blizzPandemicStateKnown == true
+    local priorPandemicActive = icon._blizzPandemicActive == true
+    if m.pandemicStateKnown == true then
+        icon._blizzPandemicActive = m.pandemicActive == true
+        icon._blizzPandemicStateKnown = true
+    else
+        icon._blizzPandemicActive = nil
+        icon._blizzPandemicStateKnown = nil
+    end
+    if priorPandemicKnown ~= (icon._blizzPandemicStateKnown == true)
+        or priorPandemicActive ~= (icon._blizzPandemicActive == true) then
+        local glows = ns._OwnedGlows
+        if glows and glows.UpdatePandemicGlow then
+            glows.UpdatePandemicGlow(icon)
         end
     end
-end
 
-function CDMIcons.GetMirrorIconSet(category, cooldownID, create)
-    if not (category and cooldownID) then return nil end
-    local byCategory = CDMIcons._mirrorIconsByCategory[category]
-    if not byCategory then
-        if not create then return nil end
-        byCategory = {}
-        CDMIcons._mirrorIconsByCategory[category] = byCategory
-    end
-
-    local iconSet = byCategory[cooldownID]
-    if not iconSet then
-        if not create then return nil end
-        iconSet = setmetatable({}, { __mode = "k" })
-        byCategory[cooldownID] = iconSet
-    end
-    return iconSet
-end
-
-function CDMIcons.UnregisterBlizzMirrorIcon(icon)
-    if not icon then return end
-    local category = icon._blizzMirrorIndexCategory
-    local cooldownID = icon._blizzMirrorIndexCooldownID
-    if category and cooldownID then
-        local iconSet = CDMIcons.GetMirrorIconSet(category, cooldownID, false)
-        if iconSet then
-            iconSet[icon] = nil
+    local mirrorStackApplied = _resolverRuntimePolicy.ApplyMirrorStackText(icon, m, entry.hasCharges)
+    if active then
+        if m.stackTextShown == false then
+            ClearIconStackText(icon)
+            icon._lastMirrorStackTextEpoch = m.stackTextEpoch
+        elseif not mirrorStackApplied
+            and _resolverRuntimePolicy.ResolvedAuraStateIsActive(r) and not r.isTotemInstance then
+            local preserveMissingCount = InCombatLockdown()
+            ApplyAuraCountText(icon, r.count, entry.hasCharges, preserveMissingCount)
+            icon._lastMirrorStackTextEpoch = m.stackTextEpoch
+        elseif not mirrorStackApplied and not InCombatLockdown() then
+            ClearIconStackText(icon)
         end
-    end
-    icon._blizzMirrorIndexCategory = nil
-    icon._blizzMirrorIndexCooldownID = nil
-end
-
-function CDMIcons.RegisterBlizzMirrorIcon(icon, cooldownID, category)
-    if not (icon and cooldownID and category) then return end
-    if icon._blizzMirrorIndexCooldownID ~= nil
-        or icon._blizzMirrorIndexCategory ~= nil then
-        CDMIcons.UnregisterBlizzMirrorIcon(icon)
-    end
-
-    local iconSet = CDMIcons.GetMirrorIconSet(category, cooldownID, true)
-    iconSet[icon] = true
-    icon._blizzMirrorIndexCategory = category
-    icon._blizzMirrorIndexCooldownID = cooldownID
-end
-
-function CDMIcons.RebuildBlizzMirrorIconIndex()
-    wipe(CDMIcons._mirrorIconsByCategory)
-    for _, pool in pairs(iconPools) do
-        for _, icon in ipairs(pool) do
-            if icon and icon._blizzMirrorCooldownID and icon._blizzMirrorCategory then
-                CDMIcons.RegisterBlizzMirrorIcon(icon,
-                    icon._blizzMirrorCooldownID,
-                    icon._blizzMirrorCategory)
+    else
+        if not mirrorStackApplied then
+            ClearIconStackText(icon)
+        end
+        if icon.Icon then
+            local baseTex = GetEntryTexture(entry) or GetSpellTexture(runtimeSid)
+            icon._desiredTexture = nil
+            if baseTex and baseTex ~= icon._lastTexture then
+                icon.Icon.SetTexture(icon.Icon, baseTex)
+                icon._lastTexture = baseTex
             end
         end
     end
-end
 
---- Ensure an icon pool exists for the given container key (Phase G).
-function CDMIcons:EnsurePool(viewerType)
-    if not iconPools[viewerType] then
-        iconPools[viewerType] = CreateIconPool()
+    local epoch = m.mirrorEpoch or 0
+    local mirrorActiveDur = active and durObj
+    local newSrcCat   = mirrorActiveDur and (durObjSource or "mirror") or nil
+    local newSrcCDID  = mirrorActiveDur and cooldownID or nil
+    local newSrcEpoch = mirrorActiveDur and epoch or nil
+    local priorSrcCat   = icon._lastMirrorNativeAuraSourceCat
+    local priorSrcCDID  = icon._lastMirrorNativeAuraSourceCDID
+    local priorSrcEpoch = icon._lastMirrorNativeAuraSourceEpoch
+    icon._lastMirrorNativeAuraSourceCat   = newSrcCat
+    icon._lastMirrorNativeAuraSourceCDID  = newSrcCDID
+    icon._lastMirrorNativeAuraSourceEpoch = newSrcEpoch
+    icon._mirrorNativeDurObjApplied = nil
+
+    icon._lastBlizzSwipeEpoch = epoch
+    if priorActive ~= active
+       and entry.viewerType == "buff"
+       and _resolverRuntimePolicy.RequestBuffIconLayoutRefresh then
+        _resolverRuntimePolicy.RequestBuffIconLayoutRefresh()
     end
+    local durationSourceChanged = priorSrcCat ~= newSrcCat
+        or priorSrcCDID ~= newSrcCDID
+        or priorSrcEpoch ~= newSrcEpoch
+        or priorHadAuraDurObj ~= (durObj and true or false)
+    if debugBlizz and (priorActive ~= active or priorEpoch ~= epoch or durationSourceChanged) then
+        CDMIcons._DebugBlizzEntry(debugBlizz, entry, "state-sync",
+            CDMIcons._FormatMirrorState(m),
+            "runtimeSid=", tostring(runtimeSid),
+            "durObjSource=", tostring(durObjSource),
+            "fallbackInstID=", tostring(fallbackInstID),
+            "source=", tostring(icon._lastAuraSourceID),
+            "durationSourceChanged=", tostring(durationSourceChanged))
+    end
+    return priorActive ~= active or priorEpoch ~= epoch or durationSourceChanged
 end
 
-function CDMIcons:ClearPool(viewerType)
-    local pool = iconPools[viewerType]
-    if pool then
-        for _, icon in ipairs(pool) do
-            self:ReleaseIcon(icon)
+UpdateIconCooldown = function(icon)
+    if not icon or not icon._spellEntry then return end
+    -- Blizzard-mirrored aura icons render with QUI-native widgets from the
+    -- exact cID mirror. The Blizzard child stays in its own viewer.
+    if icon._blizzMirrorCooldownID and IsAuraEntry(icon._spellEntry) then
+        local refreshSwipe = _resolverRuntimePolicy.SyncBlizzMirrorIconState(icon)
+        local resolvedSwipe = ApplyResolvedCooldown(icon) == true
+        if refreshSwipe or resolvedSwipe then
+            local swipe = ns._OwnedSwipe
+            if swipe and swipe.ApplyToIcon then
+                swipe.ApplyToIcon(icon)
+            end
         end
-        wipe(pool)
+        return
+    end
+
+    local entry = icon._spellEntry
+    local stackTextWritesAllowed = CDMIcons.ShouldAllowStackTextWrites and CDMIcons.ShouldAllowStackTextWrites() == true
+    local auraCountAppliedThisTick = false
+
+    -- Runtime override: resolve from the base spell each tick so dynamic
+    -- transforms are always current. Shared across all paths in this function.
+    local _runtimeSid = entry.spellID or entry.overrideSpellID or entry.id
+    if _runtimeSid and not IsAuraEntry(entry) then
+        local ovId = QueryOverrideSpell(_runtimeSid)
+        if ovId then _runtimeSid = ovId end
+    end
+    icon._runtimeSpellID = _runtimeSid
+
+    local macroResolvedID, macroResolvedType, macroFallbackTex
+    if entry.type == "macro" then
+        macroResolvedID, macroResolvedType, macroFallbackTex = ResolveMacro(entry)
+        if macroResolvedID and macroResolvedType == "spell" then
+            _runtimeSid = macroResolvedID
+            icon._runtimeSpellID = macroResolvedID
+        end
+    end
+
+    do
+        if IsAuraEntry(entry) then
+            local auraSpellID = _runtimeSid
+            if not auraSpellID then
+                return
+            end
+
+            local r = _resolverRuntimePolicy.ResolveAuraFactsForIcon(icon, entry, auraSpellID, true)
+            if not r then
+                return
+            end
+            icon._totemSlot = entry._totemSlot or nil
+
+            if _resolverRuntimePolicy.ResolvedAuraStateIsActive(r) then
+                ApplyAuraStateToIcon(icon, entry, auraSpellID, r)
+
+                if r.isTotemInstance then
+                    ClearIconStackText(icon)
+                else
+                    ApplyAuraCountText(icon, r.count, entry.hasCharges, InCombatLockdown())
+                end
+
+                if icon.Icon then
+                    local mirrored = false
+                    if r.isTotemInstance then
+                        if r.totemIcon then
+                            icon._totemIconCache = r.totemIcon
+                        end
+                        local totemTex = r.totemIcon or icon._totemIconCache
+                        if totemTex then
+                            icon._desiredTexture = nil
+                            icon.Icon.SetTexture(icon.Icon, totemTex)
+                            icon._lastTexture = totemTex
+                            mirrored = true
+                        end
+                    end
+                    if not mirrored and not r.isTotemInstance then
+                        local auraIcon = r.auraData and r.auraData.icon
+                        if auraIcon then
+                            icon._desiredTexture = nil
+                            icon.Icon.SetTexture(icon.Icon, auraIcon)
+                            icon._lastTexture = nil
+                            mirrored = true
+                        end
+                        if not mirrored then
+                            local texID = GetSpellTexture(r.resolvedAuraSpellID or auraSpellID)
+                            if texID and texID ~= icon._lastTexture then
+                                icon.Icon:SetTexture(texID)
+                                icon._lastTexture = texID
+                            end
+                        end
+                    end
+                end
+
+                ApplyResolvedCooldown(icon)
+                ReapplySwipeStyle(icon.Cooldown, icon)
+                return
+            else
+                local wasAuraActive = icon._auraActive
+                ApplyAuraStateToIcon(icon, entry, auraSpellID, r)
+
+                if icon.Icon then
+                    local baseTex = GetEntryTexture(entry) or GetSpellTexture(auraSpellID)
+                    icon._desiredTexture = nil
+                    if baseTex and baseTex ~= icon._lastTexture then
+                        icon.Icon.SetTexture(icon.Icon, baseTex)
+                        icon._lastTexture = baseTex
+                    end
+                end
+
+                ClearIconStackText(icon)
+                if wasAuraActive then
+                    ApplyResolvedCooldown(icon)
+                end
+                return
+            end
+        end
+    end
+
+    if entry.type == "macro" then
+        local newTex
+        if macroResolvedID then
+            if macroResolvedType == "item" then
+                local _, _, _, _, tex
+                if Sources and Sources.QueryItemInfoInstant then
+                    _, _, _, _, tex = Sources.QueryItemInfoInstant(macroResolvedID)
+                end
+                newTex = tex
+            else
+                newTex = GetSpellTexture(macroResolvedID)
+            end
+        else
+            newTex = macroFallbackTex
+        end
+        if newTex and icon.Icon and newTex ~= icon._lastTexture then
+            icon.Icon:SetTexture(newTex)
+            icon._lastTexture = newTex
+            UpdateIconProfessionQuality(icon)
+        end
+    elseif entry.type == "trinket" or entry.type == "slot" then
+        local slotID = entry.id
+        local itemID
+        if Sources and Sources.QueryInventoryItemID then
+            itemID = Sources.QueryInventoryItemID("player", slotID)
+        end
+        if itemID and icon.Icon then
+            local tex
+            if Sources and Sources.QueryItemIconByID then
+                tex = Sources.QueryItemIconByID(itemID)
+            end
+            if tex and tex ~= icon._lastTexture then
+                icon.Icon:SetTexture(tex)
+                icon._lastTexture = tex
+                UpdateIconProfessionQuality(icon)
+            end
+        end
+        if stackTextWritesAllowed then
+            _resolverRuntimePolicy.HideIconStackText(icon, "slot-clear")
+        end
+    elseif entry.type == "item" then
+        if stackTextWritesAllowed and Sources and Sources.QueryItemCount then
+            local containerDB = GetTrackerSettings(entry.viewerType)
+            local includeUses = containerDB and containerDB.showItemCharges == true
+            local count = Sources.QueryItemCount(entry.id, false, includeUses, true)
+            if count then
+                local stackColor = icon._rowConfig and icon._rowConfig.stackTextColor or {1, 1, 1, 1}
+                local numericCount = count or 0
+                if numericCount > 1 then
+                    if icon.StackText.SetTextColor then
+                        icon.StackText:SetTextColor(stackColor[1], stackColor[2], stackColor[3], stackColor[4] or 1)
+                    end
+                    _resolverRuntimePolicy.ShowIconStackText(icon, tostring(numericCount), containerDB, "item-count")
+                elseif numericCount == 1 then
+                    _resolverRuntimePolicy.HideIconStackText(icon, "item-count-one")
+                else
+                    if icon.StackText.SetTextColor then
+                        icon.StackText:SetTextColor((stackColor[1] or 1) * 0.5, (stackColor[2] or 1) * 0.5, (stackColor[3] or 1) * 0.5, stackColor[4] or 1)
+                    end
+                    _resolverRuntimePolicy.ShowIconStackText(icon, "0", containerDB, "item-count-zero")
+                end
+            else
+                _resolverRuntimePolicy.ShowIconStackText(icon, "0", containerDB, "item-count-fallback")
+            end
+        end
     else
-        iconPools[viewerType] = CreateIconPool()
+        local _chargedAuraActive = false
+        local _chargedTotemTexture = nil
+        local useBuffSwipe = _resolverRuntimePolicy.ShouldUseBuffSwipeForIcon(icon, entry)
+        if useBuffSwipe then
+            local _cBaseID = _runtimeSid
+            local r = _resolverRuntimePolicy.ResolveAuraFactsForIcon(icon, entry, _cBaseID, true)
+            if _resolverRuntimePolicy.ResolvedAuraStateIsActive(r) then
+                ApplyAuraStateToIcon(icon, entry, _cBaseID, r)
+                if IsTotemSlotEntry(entry) then
+                    icon._isTotemInstance = true
+                    if r.totemIcon then
+                        icon._totemIconCache = r.totemIcon
+                    end
+                    _chargedTotemTexture = r.totemIcon or icon._totemIconCache
+                    icon.StackText:SetText("")
+                    icon.StackText:Hide()
+                else
+                    icon._isTotemInstance = nil
+                end
+                if icon.Cooldown and r.durObj then
+                    _chargedAuraActive = true
+                    ReapplySwipeStyle(icon.Cooldown, icon)
+                end
+                if not entry.hasCharges and not IsTotemSlotEntry(entry) then
+                    local count = r.count
+                    auraCountAppliedThisTick = count and count.shown == true or false
+                    ApplyAuraCountText(icon, r.count, false, InCombatLockdown())
+                end
+            elseif r then
+                local wasAuraActive = icon._auraActive
+                ApplyAuraStateToIcon(icon, entry, _cBaseID, r)
+                if wasAuraActive and icon.Cooldown then
+                    ReapplySwipeStyle(icon.Cooldown, icon)
+                end
+            end
+        elseif icon._auraActive then
+            ClearAuraStateForIcon(icon, entry)
+            if icon.Cooldown then ReapplySwipeStyle(icon.Cooldown, icon) end
+        end
+
+        if icon.Icon and _chargedAuraActive and _chargedTotemTexture then
+            icon._desiredTexture = nil
+            icon.Icon.SetTexture(icon.Icon, _chargedTotemTexture)
+            icon._lastTexture = _chargedTotemTexture
+        elseif icon.Icon and not entry.isAura then
+            local texID = GetSpellTexture(_runtimeSid)
+            if texID and icon._desiredTexture ~= texID then
+                icon._desiredTexture = texID
+                icon.Icon.SetTexture(icon.Icon, texID)
+            end
+        elseif icon.Icon then
+            icon._desiredTexture = nil
+        end
+    end
+
+    local resolvedApplied = ApplyResolvedCooldown(icon) == true
+    local resolvedState = ns.CDMRuntimeStore and ns.CDMRuntimeStore.GetFrameState
+        and ns.CDMRuntimeStore.GetFrameState(icon) or nil
+    local startTime = resolvedState and resolvedState.start
+    local duration = resolvedState and resolvedState.duration
+    local durObj = resolvedState and resolvedState.durObj
+    local resolvedMode = resolvedState and resolvedState.mode or icon._resolvedCooldownMode
+    local resolvedActive = resolvedState and resolvedState.active == true
+        or icon._hasCooldownActive == true
+
+    if _G.QUI_CDM_ICON_DEBUG and CDMIcons.DebugIconEvent then
+        CDMIcons.DebugIconEvent(icon, "resolve",
+            "sid=", tostring(_runtimeSid),
+            "mode=", tostring(resolvedMode),
+            "start=", tostring(startTime),
+            "duration=", tostring(duration),
+            "durObj=", durObj and "yes" or "no",
+            "active=", tostring(resolvedActive),
+            "isOnGCD=", tostring(icon._isOnGCD),
+            "hasCharges=", tostring(entry.hasCharges),
+            "kind=", tostring(entry.kind),
+            "type=", tostring(entry.type))
+    end
+
+    local hasSafeStart = IsSafeNumeric(startTime)
+    local hasSafeDuration = IsSafeNumeric(duration)
+    if hasSafeDuration then
+        icon._lastDuration = duration
+    end
+    if hasSafeStart then
+        icon._lastStart = startTime
+    end
+    if hasSafeDuration and duration == 0 then
+        icon._lastStart = 0
+        icon._lastDuration = 0
+    end
+    if not startTime and not duration then
+        icon._lastStart = 0
+        icon._lastDuration = 0
+    end
+
+    if icon.Cooldown then
+        local realCooldownActive = icon._hasCooldownActive == true
+            and _resolverRuntimePolicy.IsRealCooldownDurationMode(resolvedMode)
+        local trustIsOnGCD = ResolverRuntime.IsTrustingGCDForBatch()
+        local gcdStateTrusted = trustIsOnGCD
+            and icon._isOnGCDTrustedAt == ResolverRuntime.GetTrustedGCDStamp()
+        if _G.QUI_CDM_ICON_DEBUG and CDMIcons.DebugIconEvent then
+            CDMIcons.DebugIconEvent(icon, "classify",
+                "real=", tostring(realCooldownActive),
+                "gcdOnly=", tostring(resolvedMode == "gcd-only"),
+                "gcdTrusted=", tostring(trustIsOnGCD),
+                "gcdSnapshot=", tostring(gcdStateTrusted),
+                "resolvedActive=", tostring(resolvedActive),
+                "durObj=", durObj and "yes" or "no")
+        end
+
+        local prevGCD = icon._wasShowingGCDSwipe or false
+        local curGCD = icon._showingGCDSwipe or false
+        local prevActive = icon._wasResolvedCooldownActive
+        local curActive = icon._hasCooldownActive == true
+        if resolvedApplied or prevGCD ~= curGCD or prevActive ~= curActive then
+            icon._wasShowingGCDSwipe = curGCD
+            icon._wasResolvedCooldownActive = curActive
+            ReapplySwipeStyle(icon.Cooldown, icon)
+        end
+
+        if _resolverRuntimePolicy.IsRealCooldownDurationMode(resolvedMode) and icon._usabilityTinted then
+            icon.Icon:SetVertexColor(1, 1, 1, 1)
+            icon._usabilityTinted = nil
+            icon._lastVisualState = nil
+        end
+    end
+
+    do
+        local containerDB = GetTrackerSettings(entry.viewerType)
+        if IsCustomBarContainer(containerDB) then
+            _resolverRuntimePolicy.ApplyCustomBarActiveState(icon, entry, containerDB)
+        else
+            icon._customBarActive = nil
+            _resolverRuntimePolicy.StopCustomBarActiveGlow(icon)
+        end
+    end
+
+    local _cachedChargeInfo = nil
+    do
+        local spellID = _runtimeSid
+        if spellID then
+            _cachedChargeInfo = QueryCharges(spellID)
+        end
+    end
+
+    local _stackTextResolved = false
+    local _stackVal
+    local _stackSource
+    local _stackMirrorBacked = false
+    local _stackMirrorEmpty = false
+
+    if stackTextWritesAllowed and entry.type == "spell" and _resolverRuntimePolicy.ResolveIconStackText then
+        _stackVal, _stackSource, _stackMirrorBacked = _resolverRuntimePolicy.ResolveIconStackText(icon)
+        _stackTextResolved = true
+        if _stackMirrorBacked and _resolverRuntimePolicy.ValueIsMissing(_stackVal) then
+            _stackMirrorEmpty = true
+            if not auraCountAppliedThisTick then
+                _resolverRuntimePolicy.HideIconStackText(icon, "mirror-stack-empty")
+                icon._stackTextSource = nil
+            end
+        end
+    end
+
+    local _chargeCountForwarded = false
+    if not _stackMirrorBacked then
+        local baseSid = entry.spellID or entry.id
+        local ci = baseSid and QueryCharges(baseSid)
+        local ciMax = ci and ci.maxCharges
+        if (not ciMax or ciMax <= 1)
+            and entry.overrideSpellID and entry.overrideSpellID ~= baseSid then
+            local oci = QueryCharges(entry.overrideSpellID)
+            local ociMax = oci and oci.maxCharges
+            if ociMax and ociMax > 1 then
+                ci = oci
+                ciMax = ociMax
+                if _G.QUI_CDM_CHARGE_DEBUG then
+                    ChargeDebug(entry.name, "FWD override fallback: overrideSpellID=", entry.overrideSpellID,
+                        "maxCharges=", ociMax, "currentCharges=", oci.currentCharges)
+                end
+            end
+        end
+        if ciMax and ciMax > 1 then
+            local ccc = ci.currentCharges
+            if _G.QUI_CDM_CHARGE_DEBUG then
+                local _dbgCccSource = ccc ~= nil and "api" or nil
+                ChargeDebug(entry.name, "FWD path: baseSid=", baseSid,
+                    "maxCharges=", ciMax, "currentCharges=", ci.currentCharges,
+                    "ccc=", ccc, "cccSource=", _dbgCccSource or "nil",
+                    "hasCharges=", entry.hasCharges,
+                    "overrideSpellID=", entry.overrideSpellID)
+            end
+            if ccc ~= nil and stackTextWritesAllowed then
+                _resolverRuntimePolicy.ShowIconStackText(icon, ccc, GetTrackerSettings(entry.viewerType), "fwd-charge-count")
+                _chargeCountForwarded = true
+            end
+        end
+    end
+
+    if _G.QUI_CDM_CHARGE_DEBUG and _chargeCountForwarded then
+        ChargeDebug(entry.name, "SKIP API path: chargeCountForwarded=", _chargeCountForwarded)
+    end
+    if not _chargeCountForwarded and stackTextWritesAllowed then
+        if entry.type == "item" then
+            -- Item stack text was already set above.
+        elseif entry.type == "spell" then
+            local spellID = _runtimeSid
+            local stackVal = _stackVal
+            local stackSource = _stackSource
+            local stackMirrorBacked = _stackMirrorBacked
+            local stackMirrorEmpty = _stackMirrorEmpty
+
+            if not _stackTextResolved and _resolverRuntimePolicy.ResolveIconStackText then
+                stackVal, stackSource, stackMirrorBacked = _resolverRuntimePolicy.ResolveIconStackText(icon)
+            end
+
+            local cachedMaxCharges = _cachedChargeInfo and _cachedChargeInfo.maxCharges
+            local isMultiCharge = cachedMaxCharges and cachedMaxCharges > 1
+
+            if stackMirrorBacked and _resolverRuntimePolicy.ValueIsMissing(stackVal) then
+                if not stackMirrorEmpty then
+                    stackMirrorEmpty = true
+                    _resolverRuntimePolicy.HideIconStackText(icon, "mirror-stack-empty")
+                    icon._stackTextSource = nil
+                end
+            elseif _resolverRuntimePolicy.ValueIsMissing(stackVal) and isMultiCharge then
+                if spellID then
+                    stackVal = QueryDisplayCount(spellID)
+                    if _resolverRuntimePolicy.ValueIsPresent(stackVal) then
+                        stackSource = "spell-display-count"
+                    end
+                end
+                if _G.QUI_CDM_CHARGE_DEBUG then
+                    ChargeDebug(entry.name, "API path: spellID=", spellID,
+                        "maxCharges=", _cachedChargeInfo.maxCharges,
+                        "currentCharges=", _cachedChargeInfo.currentCharges,
+                        "displayCount=", stackVal, "isMultiCharge=", isMultiCharge)
+                end
+            elseif _resolverRuntimePolicy.ValueIsMissing(stackVal) then
+                if _G.QUI_CDM_CHARGE_DEBUG then
+                    ChargeDebug(entry.name, "no stack text: spellID=", spellID,
+                        "mirrorBacked=", tostring(stackMirrorBacked),
+                        "isMultiCharge=", tostring(isMultiCharge))
+                end
+            end
+
+            if _resolverRuntimePolicy.ValueIsPresent(stackVal) then
+                if isMultiCharge then
+                    _resolverRuntimePolicy.ShowIconStackText(icon, stackVal, GetTrackerSettings(entry.viewerType), "api-charge-count")
+                else
+                    local displayText
+                    if type(stackVal) == "number" then
+                        displayText = C_StringUtil.TruncateWhenZero(stackVal)
+                    else
+                        displayText = stackVal
+                    end
+                    local hasText = HookTextHasDisplay(displayText)
+                    if hasText then
+                        _resolverRuntimePolicy.ShowIconStackText(icon, displayText, GetTrackerSettings(entry.viewerType), stackSource or "api-aura-stack")
+                    else
+                        _resolverRuntimePolicy.HideIconStackText(icon, "api-aura-stack-empty")
+                    end
+                end
+            elseif stackMirrorEmpty then
+                -- Mirror-backed icons with no mirror stack text intentionally stay empty.
+            elseif not InCombatLockdown() and not (entry and entry.hasCharges) then
+                _resolverRuntimePolicy.HideIconStackText(icon, "api-stack-nil")
+            end
+        else
+            local stackVal = GetAuraApplicationsForSpell(_runtimeSid, entry, icon)
+            if _resolverRuntimePolicy.ValueIsPresent(stackVal) then
+                local displayText
+                if type(stackVal) == "number" then
+                    displayText = C_StringUtil.TruncateWhenZero(stackVal)
+                else
+                    displayText = stackVal
+                end
+                local hasText = HookTextHasDisplay(displayText)
+                if hasText then
+                    _resolverRuntimePolicy.ShowIconStackText(icon, displayText, GetTrackerSettings(entry.viewerType), "harvested-aura-stack")
+                else
+                    _resolverRuntimePolicy.HideIconStackText(icon, "harvested-aura-stack-empty")
+                end
+            elseif not InCombatLockdown() then
+                _resolverRuntimePolicy.HideIconStackText(icon, "harvested-stack-nil")
+            end
+        end
+    end
+
+    if icon._lastVisualState == "unusable"
+       and not icon._usabilityTinted
+       and not _resolverRuntimePolicy.CooldownHasVisualPriority(icon, entry, GetTrackerSettings(entry.viewerType), _batchTime) then
+        icon.Icon:SetVertexColor(0.4, 0.4, 0.4, 1)
+        icon._usabilityTinted = true
     end
 end
-
 
 ---------------------------------------------------------------------------
 -- Build a spellEntry record from a user-curated custom entry.
@@ -3710,12 +3094,17 @@ local function BuildSpellEntryFromCustom(entry, idx, viewerType)
     if not (kind == "aura" or kind == "cooldown") then
         if not isSpellType then
             kind = "cooldown"
-        elseif viewerType == "buff" or viewerType == "trackedBar" then
-            kind = "aura"
         else
-            local CDMSpellData = ns.CDMSpellData
-            kind = (CDMSpellData and CDMSpellData.ResolveEntryKind
-                and CDMSpellData.ResolveEntryKind(entry, viewerType)) or "cooldown"
+            local impliedKind = Shared and Shared.GetContainerEntryKind
+                and Shared.GetContainerEntryKind(viewerType)
+                or GetBuiltinContainerEntryKind(viewerType)
+            if impliedKind then
+                kind = impliedKind
+            else
+                local CDMSpellData = ns.CDMSpellData
+                kind = (CDMSpellData and CDMSpellData.ResolveEntryKind
+                    and CDMSpellData.ResolveEntryKind(entry, viewerType)) or "cooldown"
+            end
         end
     end
     local isAuraEntry = (kind == "aura")
@@ -3821,7 +3210,7 @@ local function BuildIconListSignature(viewerType, container, spellData)
         AppendEntryListSignature(parts, "containerEntries", entryList)
     end
 
-    if viewerType == "essential" or viewerType == "utility" then
+    if IsBuiltinCooldownContainerKey(viewerType) then
         local customData = GetCustomData(viewerType)
         AppendSignaturePart(parts, "legacyCustom")
         AppendSignaturePart(parts, customData and customData.enabled and 1 or 0)
@@ -3842,8 +3231,6 @@ local function PoolMatchesContainer(pool, container)
     return true
 end
 
-CDMIcons.BuildIconListSignature = BuildIconListSignature
-
 local _customPositionedScratch = {}
 local _customUnpositionedScratch = {}
 
@@ -3855,25 +3242,19 @@ function CDMIcons:BuildIcons(viewerType, container)
 
     local spellData = ns.CDMSpellData and ns.CDMSpellData:GetSpellList(viewerType) or {}
     local signature = BuildIconListSignature(viewerType, container, spellData)
-    local pool = iconPools[viewerType]
+    local pool = Factory:GetIconPool(viewerType)
     local reusePool = pool
         and container._lastBuildSignature == signature
         and container._lastBuildPool == pool
         and PoolMatchesContainer(pool, container)
 
     if not reusePool then
-        -- Release old icons
-        self:ClearPool(viewerType)
-
-        pool = iconPools[viewerType]
-        if not pool then
-            pool = CreateIconPool()
-            iconPools[viewerType] = pool
-        end
+        pool = Factory:ClearPool(viewerType)
+        pool = Factory:EnsurePool(viewerType)
 
         -- Create icons from harvested spell data
         for _, entry in ipairs(spellData) do
-            local icon = self:AcquireIcon(container, entry)
+            local icon = Factory:AcquireIcon(container, entry)
             pool[#pool + 1] = icon
         end
 
@@ -3898,7 +3279,7 @@ function CDMIcons:BuildIcons(viewerType, container)
                         if entry and entry.enabled ~= false then
                             local spellEntry = BuildSpellEntryFromCustom(entry, idx, viewerType)
                             if spellEntry then
-                                local icon = self:AcquireIcon(container, spellEntry)
+                                local icon = Factory:AcquireIcon(container, spellEntry)
                                 pool[#pool + 1] = icon
                             end
                         end
@@ -3907,8 +3288,8 @@ function CDMIcons:BuildIcons(viewerType, container)
             end
         end
 
-        -- Merge custom entries (essential and utility only)
-        if viewerType == "essential" or viewerType == "utility" then
+        -- Merge custom entries for built-in cooldown containers.
+        if IsBuiltinCooldownContainerKey(viewerType) then
             local customData = GetCustomData(viewerType)
             if customData and customData.enabled and customData.entries then
                 local placement = customData.placement or "after"
@@ -3939,11 +3320,11 @@ function CDMIcons:BuildIcons(viewerType, container)
                             pool[i + prefixCount] = pool[i]
                         end
                         for i, entry in ipairs(unpositioned) do
-                            pool[i] = self:AcquireIcon(container, entry)
+                            pool[i] = Factory:AcquireIcon(container, entry)
                         end
                     else
                         for _, entry in ipairs(unpositioned) do
-                            local icon = self:AcquireIcon(container, entry)
+                            local icon = Factory:AcquireIcon(container, entry)
                             pool[#pool + 1] = icon
                         end
                     end
@@ -3955,7 +3336,7 @@ function CDMIcons:BuildIcons(viewerType, container)
                     return a.origIndex < b.origIndex
                 end)
                 for _, item in ipairs(positioned) do
-                    local icon = self:AcquireIcon(container, item.entry)
+                    local icon = Factory:AcquireIcon(container, item.entry)
                     local insertAt = math.min(item.position, #pool + 1)
                     table.insert(pool, insertAt, icon)
                 end
@@ -3974,7 +3355,7 @@ function CDMIcons:BuildIcons(viewerType, container)
         if entry then
             local containerDB = GetTrackerSettings(entry.viewerType)
             local tooltipContext = containerDB and containerDB.tooltipContext
-            if CDMIcons.IsCustomBarContainer(containerDB) then
+            if IsCustomBarContainer(containerDB) then
                 tooltipContext = tooltipContext or "customTrackers"
             end
             icon._quiTooltipContext = tooltipContext or "cdm"
@@ -3998,7 +3379,7 @@ function CDMIcons:BuildIcons(viewerType, container)
     end
 
     -- Buff icons are aura containers, but the active state must still
-    -- come from UpdateIconCooldown/ResolveAuraState. Pre-marking them
+    -- come from UpdateIconCooldown/runtime aura resolution. Pre-marking them
     -- active here makes empty rows render as active-looking.
     for _, icon in ipairs(pool) do
         local entry = icon._spellEntry
@@ -4008,10 +3389,10 @@ function CDMIcons:BuildIcons(viewerType, container)
         end
     end
 
-    -- Update click-to-cast secure attributes for essential/utility icons.
+    -- Update click-to-cast secure attributes for built-in cooldown icons.
     -- AcquireIcon sets attrs per-icon, but this catches any pending updates
     -- (e.g., from combat-deferred rebuilds via PLAYER_REGEN_ENABLED).
-    if viewerType == "essential" or viewerType == "utility" then
+    if IsBuiltinCooldownContainerKey(viewerType) then
         for _, icon in ipairs(pool) do
             if icon._pendingSecureUpdate then
                 UpdateIconSecureAttributes(icon, icon._spellEntry, viewerType)
@@ -4036,198 +3417,101 @@ end
 -- existing containers behave identically to pre-filter builds.
 ---------------------------------------------------------------------------
 
--- Returns true if any visibility filter wants the icon hidden.
-local function ComputeFilterHides(icon, entry, containerDB, inCombat, isOnCD)
-    if not containerDB then return false end
-
-    if CDMIcons.IsCustomBarContainer(containerDB) then
-        local visibility = CDMIcons.ComputeCustomBarVisibility(icon, entry, containerDB, GetTime())
-        return not visibility.layoutVisible
-    end
-
-    local cooldownState = CDMIcons.ResolveCooldownActivityState(icon, entry, containerDB, GetTime())
-    local effectiveOnCD = cooldownState.isOnCooldown or cooldownState.rechargeActive
-
-    if containerDB.showOnlyInCombat and not inCombat then
-        return true
-    end
-
-    if containerDB.showOnlyOnCooldown then
-        if not effectiveOnCD then return true end
-    end
-
-    if containerDB.showOnlyWhenOffCooldown and effectiveOnCD then
-        return true
-    end
-
-    if containerDB.showOnlyWhenActive and not icon._auraActive then
-        return true
-    end
-
-    if containerDB.hideNonUsable then
-        if entry.type == "item" then
-            local count = Sources and Sources.QueryItemCount and Sources.QueryItemCount(entry.id, false, false, nil)
-            if (not count or count <= 0) then return true end
-        elseif entry.type == "trinket" or entry.type == "slot" then
-            local equippedItemID = Sources and Sources.QueryInventoryItemID and Sources.QueryInventoryItemID("player", entry.id)
-            if not equippedItemID then return true end
-            -- Trinket slots (13/14): also hide passive trinkets — those without
-            -- an on-use spell — under hideNonUsable. The slot is tracked rather
-            -- than a specific item, so a stat-stick equipped in slot 13 would
-            -- otherwise sit visible forever with nothing to display.
-            if entry.id == 13 or entry.id == 14 then
-                local spellName = Sources and Sources.QueryItemSpell and Sources.QueryItemSpell(equippedItemID)
-                if not spellName then return true end
-            end
-        else
-            local sid = icon._runtimeSpellID or entry.spellID or entry.id
-            if sid then
-                -- "Non-usable" includes "player doesn't know this spell at
-                -- all" (cross-class entries on a Warrior viewing a Priest
-                -- profile's Dispell CDs bar). C_Spell.IsSpellUsable alone
-                -- isn't enough — for unknown spells it returns nil, not
-                -- false, so a strict `usable == false` check lets cross-
-                -- class entries through. Delegate to CDMSpellData:IsSpellKnown
-                -- so override-chain and CDM-viewer fallbacks recognize
-                -- talent / hero-talent / alternate-ID variants that the
-                -- base IsPlayerSpell / IsSpellKnownOrOverridesKnown checks
-                -- miss when an entry was added under a different spec.
-                local spellData = ns.CDMSpellData
-                if spellData and type(spellData.IsSpellKnown) == "function"
-                   and not spellData:IsSpellKnown(sid) then
-                    return true
-                end
-                if Sources and Sources.QuerySpellUsable then
-                    local usable = Helpers.SafeValue(Sources.QuerySpellUsable(sid), nil)
-                    if usable == false then return true end
-                end
-            end
+local visibilityPolicy = ns.CDMIconVisibilityPolicy and ns.CDMIconVisibilityPolicy.Create({
+    isCustomBarContainer = function(containerDB)
+        return IsCustomBarContainer(containerDB)
+    end,
+    computeCustomBarVisibility = function(icon, entry, containerDB)
+        return _resolverRuntimePolicy.ComputeCustomBarVisibility(icon, entry, containerDB, GetTime())
+    end,
+    resolveCooldownActivityState = function(icon, entry, containerDB)
+        return _resolverRuntimePolicy.ResolveIconCooldownActivityState(icon, entry, containerDB, GetTime())
+    end,
+    queryItemCount = function(...)
+        return Sources and Sources.QueryItemCount and Sources.QueryItemCount(...)
+    end,
+    queryInventoryItemID = function(...)
+        return Sources and Sources.QueryInventoryItemID and Sources.QueryInventoryItemID(...)
+    end,
+    queryItemSpell = function(...)
+        return Sources and Sources.QueryItemSpell and Sources.QueryItemSpell(...)
+    end,
+    querySpellUsable = function(...)
+        return Sources and Sources.QuerySpellUsable and Sources.QuerySpellUsable(...)
+    end,
+    isSpellKnown = function(spellID)
+        local spellData = ns.CDMSpellData
+        if spellData and type(spellData.IsSpellKnown) == "function" then
+            return spellData:IsSpellKnown(spellID) == true
         end
-    end
-
-    return false
-end
-
--- Exposed so LayoutContainer can drop filtered icons at layout time
--- (dynamicLayout = true/nil), letting row width / centering math
--- collapse around missing items instead of leaving a gap.
-CDMIcons.ComputeFilterHides = ComputeFilterHides
-
--- Per-container dirty set. When the runtime visibility update detects that an
--- icon's filter verdict has flipped versus the last layout pass (e.g. mana-tea
--- becoming usable mid-combat with hideNonUsable enabled), it marks the
--- container here. After the per-icon loop in UpdateAllCooldowns /
--- UpdateCooldownOnly we drain the set and call LayoutContainer for each entry
--- so the bar collapses or expands around the slot. With clickableIcons = false,
--- ShouldDeferContainerLayoutInCombat now permits the relayout to run in
--- combat instead of waiting for PLAYER_REGEN_ENABLED.
-local _layoutNeedsRefresh = {}
-local _buffIconLayoutRefreshPending = false
-
-function CDMIcons.WakeBuffIconContainer()
-    if _G.QUI_IsFrameHiddenByAnchor and _G.QUI_IsFrameHiddenByAnchor("buffIcon") then
-        return
-    end
-
-    local container = ns.CDMContainers and ns.CDMContainers.GetContainer
-        and ns.CDMContainers.GetContainer("buff")
-    if container and container.Show then
-        container:Show()
-    end
-end
-
-local function RequestBuffIconLayoutRefresh()
-    CDMIcons.WakeBuffIconContainer()
-    if _buffIconLayoutRefreshPending then return end
-    _buffIconLayoutRefreshPending = true
-    C_Timer.After(0, function()
-        _buffIconLayoutRefreshPending = false
-        CDMIcons.WakeBuffIconContainer()
+        return nil
+    end,
+    debugLayoutFilter = function(icon, filterHides, containerDB, isOnCD)
+        if _G.QUI_CDM_ICON_DEBUG and CDMIcons.DebugLayoutFilter then
+            CDMIcons.DebugLayoutFilter(icon, filterHides, containerDB, isOnCD)
+        end
+    end,
+    isHiddenByAnchor = function(anchorKey)
+        return _G.QUI_IsFrameHiddenByAnchor and _G.QUI_IsFrameHiddenByAnchor(anchorKey)
+    end,
+    getContainer = function(containerKey)
+        return ns.CDMContainers and ns.CDMContainers.GetContainer
+            and ns.CDMContainers.GetContainer(containerKey)
+    end,
+    scheduleAfter = function(delay, callback)
+        if C_Timer and C_Timer.After then
+            C_Timer.After(delay, callback)
+        end
+    end,
+    onBuffLayoutReady = function()
         if ns.CDMBuffLayout and ns.CDMBuffLayout.OnLayoutReady then
             ns.CDMBuffLayout:OnLayoutReady()
         end
-    end)
+    end,
+    forceLayoutContainer = function(trackerKey)
+        if _G.QUI_ForceLayoutContainer then
+            _G.QUI_ForceLayoutContainer(trackerKey)
+        end
+    end,
+})
+
+local function ComputeFilterHides(icon, entry, containerDB, inCombat, isOnCD)
+    return visibilityPolicy and visibilityPolicy:ComputeFilterHides(icon, entry, containerDB, inCombat, isOnCD)
+        or false
 end
-CDMIcons.RequestBuffIconLayoutRefresh = RequestBuffIconLayoutRefresh
+
+function CDMIcons.ShouldContainerLayoutPlaceIcon(icon, entry, containerDB, inCombat)
+    return not visibilityPolicy
+        or visibilityPolicy:ShouldPlaceLayoutIcon(icon, entry, containerDB, inCombat)
+end
+
+function _resolverRuntimePolicy.WakeBuffIconContainer()
+    if visibilityPolicy then
+        visibilityPolicy:WakeBuffIconContainer()
+    end
+end
+
+function _resolverRuntimePolicy.RequestBuffIconLayoutRefresh()
+    if visibilityPolicy then
+        visibilityPolicy:RequestBuffIconLayoutRefresh()
+    end
+end
 
 local function MarkLayoutDirtyOnFilterFlip(icon, entry, containerDB, filterHidesNow)
-    if not (entry and entry.viewerType) then return end
-    if not containerDB or containerDB.dynamicLayout == false then return end
-    local previously = icon._lastLayoutFilterHidden
-    -- Only react to flips on icons LayoutContainer actually filter-checked.
-    -- Hidden-override drops, missing-entry skips, and static-layout icons
-    -- leave _lastLayoutFilterHidden as nil and don't participate.
-    if previously == nil then return end
-    if filterHidesNow ~= previously then
-        _layoutNeedsRefresh[entry.viewerType] = true
+    if visibilityPolicy then
+        visibilityPolicy:MarkLayoutDirtyOnFilterFlip(icon, entry, containerDB, filterHidesNow)
     end
 end
-
--- Re-entry guard. force(trackerKey) → QUI_ForceLayoutContainer →
--- ns.CDMIcons:UpdateAllCooldowns() → DrainLayoutDirty recursively. Bailing
--- the inner call prevents infinite recursion when the per-icon visibility
--- verdict diverges from LayoutContainer's (each pass re-marks the same
--- container, never settles). _DRAIN_MAX_ROUNDS caps the bounded outer loop
--- so a runaway oscillation can't burn the watchdog budget.
-local _drainingLayoutDirty = false
-local _DRAIN_MAX_ROUNDS = 3
 
 local function DrainLayoutDirty()
-    if _drainingLayoutDirty then return end
-    if next(_layoutNeedsRefresh) == nil then return end
-    _drainingLayoutDirty = true
-    local force = _G.QUI_ForceLayoutContainer
-    if not force then
-        wipe(_layoutNeedsRefresh)
-        _drainingLayoutDirty = false
-        return
+    if visibilityPolicy then
+        visibilityPolicy:DrainLayoutDirty()
     end
-    local toProcess = {}
-    for round = 1, _DRAIN_MAX_ROUNDS do
-        if next(_layoutNeedsRefresh) == nil then break end
-        wipe(toProcess)
-        for trackerKey in pairs(_layoutNeedsRefresh) do
-            toProcess[#toProcess + 1] = trackerKey
-        end
-        wipe(_layoutNeedsRefresh)
-        for _, trackerKey in ipairs(toProcess) do
-            force(trackerKey)
-        end
-    end
-    wipe(_layoutNeedsRefresh)
-    _drainingLayoutDirty = false
 end
 
-local function GetIconRowOpacity(icon)
-    local opacity = icon and icon._rowOpacity
-    if opacity == nil then
-        return 1
-    end
-    return opacity
-end
-
-local function SetIconRowAlpha(icon, multiplier)
-    if not icon then return end
-    icon:SetAlpha(GetIconRowOpacity(icon) * (multiplier or 1))
-end
-
--- Apply visibility state respecting dynamicLayout.
--- dynamicLayout = true/nil (default): Hide/Show — bar collapses around hidden icons.
--- dynamicLayout = false:              SetAlpha(0) — slot reserved, icon invisible.
--- Note: static layout (dynamicLayout = false) should not coexist with
--- clickableIcons on the same container — SecureActionButton children
--- cannot be Show/Hide'd in combat. The composer enforces this coupling.
 local function ApplyIconVisibility(icon, shouldShow, dynamicLayout)
-    if dynamicLayout == false then
-        if not icon:IsShown() then icon:Show() end
-        icon:SetAlpha(shouldShow and GetIconRowOpacity(icon) or 0)
-    else
-        if shouldShow then
-            if not icon:IsShown() then icon:Show() end
-            SetIconRowAlpha(icon)
-        else
-            if icon:IsShown() then icon:Hide() end
-        end
+    if visibilityPolicy then
+        visibilityPolicy:ApplyIconVisibility(icon, shouldShow, dynamicLayout)
     end
 end
 
@@ -4238,7 +3522,10 @@ local function ResolveContainerDBAndType(entry, ncdm, ncdmContainers)
     local cType = containerDB and containerDB.containerType
     if not cType then
         local vt = entry.viewerType
-        cType = (vt == "buff" or vt == "trackedBar") and "aura" or "cooldown"
+        cType = Shared and Shared.GetContainerType
+            and Shared.GetContainerType(vt, containerDB)
+            or GetBuiltinContainerType(vt)
+            or "cooldown"
     end
 
     return containerDB, cType
@@ -4250,10 +3537,10 @@ local function PrepareCooldownUpdateBatch()
         or (_G.QUI_IsCDMEditModeActive and _G.QUI_IsCDMEditModeActive())
 
     local ncdm = ns.Addon and ns.Addon.db and ns.Addon.db.profile and ns.Addon.db.profile.ncdm
-    _hoistedNcdm = ncdm;  CDMIcons._hoistedNcdm = ncdm
-    _batchTime = GetTime(); CDMIcons._batchTime = _batchTime
+    _hoistedNcdm = ncdm
+    _batchTime = GetTime()
 
-    CDMIcons.RefreshSwipeBatchSettings()
+    _resolverRuntimePolicy.RefreshSwipeBatchSettings()
 
     return editMode, ncdm, ncdm and ncdm.containers, InCombatLockdown()
 end
@@ -4281,8 +3568,8 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
     end
 
     local entryIsAura = IsAuraEntry(entry)
-    if CDMIcons.IsCustomBarContainer(containerDB) then
-        local visibility = CDMIcons.ComputeCustomBarVisibility(icon, entry, containerDB, _batchTime)
+    if IsCustomBarContainer(containerDB) then
+        local visibility = _resolverRuntimePolicy.ComputeCustomBarVisibility(icon, entry, containerDB, _batchTime)
         local effectiveMode = containerDB and containerDB.iconDisplayMode or "always"
         if effectiveMode == "combat" then
             effectiveMode = (UnitAffectingCombat and UnitAffectingCombat("player")) and "always" or "active"
@@ -4311,7 +3598,7 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
                 "filterHidden=", tostring(filterHidesNow),
                 "dynamic=", tostring(containerDB and containerDB.dynamicLayout))
         end
-        CDMIcons.ApplyCustomBarActiveGlow(icon, containerDB, visibility)
+        _resolverRuntimePolicy.ApplyCustomBarActiveGlow(icon, containerDB, visibility)
         SyncCooldownBling(icon)
         return
     end
@@ -4324,12 +3611,10 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
         end
 
         if effectiveMode == "always" then
-            SetIconRowAlpha(icon)
-            if not icon:IsShown() then icon:Show() end
+            ApplyIconVisibility(icon, true, containerDB and containerDB.dynamicLayout)
         elseif effectiveMode == "active" then
             if isActive then
-                SetIconRowAlpha(icon)
-                if not icon:IsShown() then icon:Show() end
+                ApplyIconVisibility(icon, true, containerDB and containerDB.dynamicLayout)
             else
                 if icon:IsShown() then icon:Hide() end
             end
@@ -4348,7 +3633,8 @@ local function UpdateCooldownContainerVisibility(icon, entry, containerDB, editM
         return
     end
 
-    local cooldownState = CDMIcons.ResolveCooldownActivityState(icon, entry, containerDB, _batchTime)
+    local cooldownState = _resolverRuntimePolicy.ResolveIconCooldownActivityState(
+        icon, entry, containerDB, _batchTime)
     local isOnCD = cooldownState.isOnCooldown or cooldownState.rechargeActive
 
     local effectiveMode = containerDB and containerDB.iconDisplayMode or "always"
@@ -4396,10 +3682,10 @@ function CDMIcons:UpdateAllCooldowns()
     -- Also set file-scoped _hoistedNcdm so UpdateIconCooldown can read it
     -- without re-walking the chain for every icon.
     local _ncdm = ns.Addon and ns.Addon.db and ns.Addon.db.profile and ns.Addon.db.profile.ncdm
-    _hoistedNcdm = _ncdm;  CDMIcons._hoistedNcdm = _ncdm  -- consumed by UpdateIconCooldown
-    _batchTime = GetTime(); CDMIcons._batchTime = _batchTime  -- consumed by UpdateIconCooldown + visibility loop
+    _hoistedNcdm = _ncdm  -- consumed by UpdateIconCooldown
+    _batchTime = GetTime()  -- consumed by UpdateIconCooldown + visibility loop
     -- Hoist GCD swipe setting so per-icon code can check it without DB lookups.
-    CDMIcons.RefreshSwipeBatchSettings()
+    _resolverRuntimePolicy.RefreshSwipeBatchSettings()
     local _ncdmContainers = _ncdm and _ncdm.containers
     local inCombat = InCombatLockdown()
     SetStackTextWritesForBatch(true)
@@ -4409,8 +3695,8 @@ function CDMIcons:UpdateAllCooldowns()
         for _, icon in ipairs(pool) do
             local entry = icon._spellEntry
             local wasAuraActive = icon._auraActive == true
-            -- Update cooldown/aura state BEFORE visibility so _auraActive,
-            -- _lastDuration, etc. are fresh for Show/Hide decisions.
+            -- Update cooldown/aura state BEFORE visibility so resolved
+            -- runtime facts are fresh for Show/Hide decisions.
             -- pcall only needed during combat (secret values from Blizzard
             -- frames) — skip overhead during OOC for ~50% less pcall cost.
             if inCombat then
@@ -4420,7 +3706,7 @@ function CDMIcons:UpdateAllCooldowns()
             end
             if entry and entry.viewerType == "buff"
                and wasAuraActive ~= (icon._auraActive == true) then
-                RequestBuffIconLayoutRefresh()
+                _resolverRuntimePolicy.RequestBuffIconLayoutRefresh()
             end
 
             -- Per-spell hidden override: always hide regardless of display mode
@@ -4458,8 +3744,8 @@ function CDMIcons:UpdateAllCooldowns()
                         effectiveMode = inCombat and "always" or "active"
                     end
 
-                    if CDMIcons.IsCustomBarContainer(containerDB) then
-                        local visibility = CDMIcons.ComputeCustomBarVisibility(icon, entry, containerDB, _batchTime)
+                    if IsCustomBarContainer(containerDB) then
+                        local visibility = _resolverRuntimePolicy.ComputeCustomBarVisibility(icon, entry, containerDB, _batchTime)
                         local shouldShow = visibility.renderVisible
                         if effectiveMode == "active" and not isActive then
                             local keepForGlow = false
@@ -4484,7 +3770,7 @@ function CDMIcons:UpdateAllCooldowns()
                                 "auraActive=", tostring(isActive),
                                 "dynamic=", tostring(containerDB and containerDB.dynamicLayout))
                         end
-                        CDMIcons.ApplyCustomBarActiveGlow(icon, containerDB, visibility)
+                        _resolverRuntimePolicy.ApplyCustomBarActiveGlow(icon, containerDB, visibility)
 
                         -- Desaturation is owned by the resolver; aura entries
                         -- have no cooldown/usability concept so this branch
@@ -4510,7 +3796,8 @@ function CDMIcons:UpdateAllCooldowns()
                     -- Cooldown containers: visibility depends on display mode.
                     -- _hasCooldownActive is set when a DurationObject was applied
                     -- (works even when numeric start/dur are secret in combat).
-                    local cooldownState = CDMIcons.ResolveCooldownActivityState(icon, entry, containerDB, _batchTime)
+                    local cooldownState = _resolverRuntimePolicy.ResolveIconCooldownActivityState(
+                        icon, entry, containerDB, _batchTime)
                     local isOnCD = cooldownState.isOnCooldown or cooldownState.rechargeActive
 
                     local effectiveMode = displayMode
@@ -4518,8 +3805,8 @@ function CDMIcons:UpdateAllCooldowns()
                         effectiveMode = (UnitAffectingCombat and UnitAffectingCombat("player")) and "always" or "active"
                     end
 
-                    if CDMIcons.IsCustomBarContainer(containerDB) then
-                        local visibility = CDMIcons.ComputeCustomBarVisibility(icon, entry, containerDB, _batchTime)
+                    if IsCustomBarContainer(containerDB) then
+                        local visibility = _resolverRuntimePolicy.ComputeCustomBarVisibility(icon, entry, containerDB, _batchTime)
                         local shouldShow = visibility.renderVisible
                         if effectiveMode == "active" and not visibility.isOnCooldown and not visibility.rechargeActive then
                             local keepForGlow = false
@@ -4543,7 +3830,7 @@ function CDMIcons:UpdateAllCooldowns()
                                 "filterHidden=", tostring(filterHidesNow),
                                 "dynamic=", tostring(containerDB and containerDB.dynamicLayout))
                         end
-                        CDMIcons.ApplyCustomBarActiveGlow(icon, containerDB, visibility)
+                        _resolverRuntimePolicy.ApplyCustomBarActiveGlow(icon, containerDB, visibility)
 
                         -- Desaturation owned by the resolver
                         -- (ApplyResolvedCooldown). Custom-bar active state
@@ -4589,11 +3876,15 @@ function CDMIcons:UpdateAllCooldowns()
                     local shouldGreyOut = false
                     if (greyOutDebuffs or greyOutBuffs) and icon.Icon and icon.Icon.SetDesaturated then
                         -- Only apply to spells that have aura tracking (linked auras,
-                        -- global ability→aura mapping, or detected via ResolveAuraState).
+                        -- global ability-to-aura mapping, or detected via runtime aura resolution).
+                        local hasAbilityAuraMapping = false
+                        local AuraRuntime = ns.CDMAuraRuntime
+                        if AuraRuntime and AuraRuntime.HasAbilityAuraMapping then
+                            hasAbilityAuraMapping = AuraRuntime.HasAbilityAuraMapping(entry.id)
+                        end
                         local hasAuraLink = entry.linkedSpellIDs
                             or (icon._spellEntry and icon._spellEntry.linkedSpellIDs)
-                            or (ns.CDMSpellData and ns.CDMSpellData._abilityToAuraSpellID
-                                and ns.CDMSpellData._abilityToAuraSpellID[entry.id])
+                            or hasAbilityAuraMapping
                             or icon._auraActive ~= nil
                         if hasAuraLink then
                             -- Resolve spell name for aura lookups
@@ -4695,8 +3986,8 @@ end
 
 function CDMIcons:UpdateCooldownOnly()
     local editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
-    local allowStackTextWrites = CDMIcons._pendingStackTextUpdate == true
-    CDMIcons._pendingStackTextUpdate = nil
+    local allowStackTextWrites = _resolverRuntimePolicy.pendingStackTextUpdate == true
+    _resolverRuntimePolicy.pendingStackTextUpdate = nil
     SetStackTextWritesForBatch(allowStackTextWrites)
     BeginResolverQueryBatch()
 
@@ -4724,9 +4015,9 @@ function CDMIcons:UpdateCooldownsForType(viewerType)
     local pool = iconPools[viewerType]
     if pool then
         local _ncdm = ns.Addon and ns.Addon.db and ns.Addon.db.profile and ns.Addon.db.profile.ncdm
-        _hoistedNcdm = _ncdm;  CDMIcons._hoistedNcdm = _ncdm
-        _batchTime = GetTime(); CDMIcons._batchTime = _batchTime
-        CDMIcons.RefreshSwipeBatchSettings()
+        _hoistedNcdm = _ncdm
+        _batchTime = GetTime()
+        _resolverRuntimePolicy.RefreshSwipeBatchSettings()
         SetStackTextWritesForBatch(true)
         BeginResolverQueryBatch()
         for _, icon in ipairs(pool) do
@@ -4738,16 +4029,73 @@ function CDMIcons:UpdateCooldownsForType(viewerType)
     end
 end
 
----------------------------------------------------------------------------
--- CONFIGURE ICON (public wrapper)
----------------------------------------------------------------------------
-CDMIcons.ConfigureIcon = ConfigureIcon
-function CDMIcons.UpdateIconCooldown(icon)
+function CDMIcons.OnContainerIconPlaced(icon, rowConfig)
+    if not icon then return end
+    ConfigureIcon(icon, rowConfig)
     BeginResolverQueryBatch()
     UpdateIconCooldown(icon)
     EndResolverQueryBatch()
 end
-CDMIcons.UpdateIconSecureAttributes = UpdateIconSecureAttributes
+
+function CDMIcons.OnIconRowConfigApplied(icon, rowConfig)
+    ConfigureIcon(icon, rowConfig)
+end
+
+function CDMIcons.OnFactoryIconCreated(icon, entry)
+    if not icon then return end
+    UpdateIconProfessionQuality(icon)
+end
+
+function CDMIcons.OnFactoryIconAcquired(icon, entry, reused)
+    if not icon then return end
+    if reused then
+        CancelCooldownExpiryRefresh(icon)
+        _resolverRuntimePolicy.StopCustomBarActiveGlow(icon)
+        UpdateIconProfessionQuality(icon)
+    end
+    if _G.QUI_CDM_CHARGE_DEBUG then
+        ChargeDebug(entry and entry.name, "ACQUIRE",
+            reused and "reused" or "new",
+            "viewerType=", entry and entry.viewerType)
+    end
+    if entry and entry.viewerType ~= "buff" then
+        UpdateIconSecureAttributes(icon, entry, entry.viewerType)
+    end
+end
+
+function CDMIcons.OnFactoryIconReleased(icon)
+    if not icon then return end
+    local entry = icon._spellEntry
+    if _G.QUI_CDM_CHARGE_DEBUG then
+        ChargeDebug(entry and entry.name, "RELEASE",
+            "viewerType=", entry and entry.viewerType,
+            "shown=", icon.IsShown and icon:IsShown())
+    end
+    CancelCooldownExpiryRefresh(icon)
+    if ns.CDMRuntimeStore and ns.CDMRuntimeStore.ClearFrame then
+        ns.CDMRuntimeStore.ClearFrame(icon)
+    end
+    UnmirrorBlizzCooldown(icon)
+    if ns._OwnedGlows and ns._OwnedGlows.ClearPandemicState then
+        ns._OwnedGlows.ClearPandemicState(icon)
+    end
+    -- Keybind and rotation-helper overlays are parented to pooled icons.
+    -- Clear them before the factory recycles the frame into another viewer.
+    if _G.QUI_ClearKeybindIconState then
+        _G.QUI_ClearKeybindIconState(icon)
+    end
+    _resolverRuntimePolicy.StopCustomBarActiveGlow(icon)
+    ClearIconProfessionQuality(icon)
+    if icon.clickButton and not InCombatLockdown() then
+        ClearClickButtonAttributes(icon.clickButton)
+        icon.clickButton:Hide()
+    end
+end
+
+function CDMIcons.OnContainerIconInteractionRestored(icon, viewerType)
+    if not icon then return end
+    UpdateIconSecureAttributes(icon, icon._spellEntry, viewerType)
+end
 
 ---------------------------------------------------------------------------
 -- CUSTOM ENTRY MANAGEMENT (backward-compatible API surface)
@@ -4916,390 +4264,87 @@ function CustomCDM:UpdateAllCooldowns() CDMIcons:UpdateAllCooldowns() end
 -- matching action-bar behavior. Uses C_Spell.IsSpellInRange for spells.
 -- Event-driven only; no periodic range/usability OnUpdate is installed.
 ---------------------------------------------------------------------------
--- Resolve effective unit for range checks: hard target > soft enemy.
--- Blizzard's IsActionInRange handles soft targeting on the C side; we
--- replicate the same priority for C_Spell.IsSpellInRange.
-local function GetRangeUnit()
-    if UnitExists("target") then return "target" end
-    if UnitExists("softenemy") then return "softenemy" end
-    return nil
-end
-
--- Safe wrapper: C_Spell.IsSpellInRange can return secret values in Midnight.
--- Calls pcall directly (no closure allocation).
-local function SafeIsSpellInRange(spellID, unit)
-    if not spellID or not unit or not (Sources and Sources.QuerySpellInRange) then return nil end
-    local inRange = Helpers.SafeValue(Sources.QuerySpellInRange(spellID, unit), nil)
-    if inRange == false then return false end
-    if inRange == true then return true end
-    return nil
-end
-
--- Safe wrapper: C_Spell.IsSpellUsable can return secret values in Midnight.
--- Calls pcall directly (no closure allocation).
-local function SafeIsSpellUsable(spellID)
-    if not spellID or not (Sources and Sources.QuerySpellUsable) then return true, false end
-    local usable, noMana = Sources.QuerySpellUsable(spellID)
-    usable = Helpers.SafeValue(usable, nil)
-    noMana = Helpers.SafeValue(noMana, nil)
-    if usable == false then return false, noMana == true end
-    if usable == true then return true, noMana == true end
-    return true, noMana == true
-end
-
--- Per-cycle dedup caches: avoid calling the same C_Spell API for the same
--- spellID when multiple icons track the same ability.
-local _rangeCycleCache = {}     -- [spellID] = true/false/"nil" (string "nil" for actual nil results)
-local _hasRangeCycleCache = {}  -- [spellID] = true/false
-local _usableCycleCache = {}    -- [spellID] = true/false
-local _enabledRangeSpellChecks = {}
-local _desiredRangeSpellChecks = {}
-local _stackTextWritesForBatch = false
+local rangePolicy = ns.CDMIconRangePolicy and ns.CDMIconRangePolicy.Create({
+    getDB = GetDB,
+    resolveSettings = function(viewerType, cachedDB)
+        return (cachedDB and (cachedDB[viewerType] or (cachedDB.containers and cachedDB.containers[viewerType])))
+            or GetTrackerSettings(viewerType)
+    end,
+    querySpellInRange = function(...)
+        return Sources and Sources.QuerySpellInRange and Sources.QuerySpellInRange(...)
+    end,
+    querySpellUsable = function(...)
+        return Sources and Sources.QuerySpellUsable and Sources.QuerySpellUsable(...)
+    end,
+    querySpellHasRange = function(...)
+        return Sources and Sources.QuerySpellHasRange and Sources.QuerySpellHasRange(...)
+    end,
+    enableSpellRangeCheck = function(...)
+        return Sources and Sources.EnableSpellRangeCheck and Sources.EnableSpellRangeCheck(...)
+    end,
+    cooldownHasVisualPriority = function(icon, entry, settings)
+        return _resolverRuntimePolicy.CooldownHasVisualPriority(icon, entry, settings, GetTime())
+    end,
+    resolveCooldownActivityState = function(icon, entry, settings)
+        return _resolverRuntimePolicy.ResolveIconCooldownActivityState(icon, entry, settings, GetTime())
+    end,
+    isAuraEntry = function(entry)
+        return IsAuraEntry and IsAuraEntry(entry)
+    end,
+})
 
 SetStackTextWritesForBatch = function(enabled)
-    _stackTextWritesForBatch = enabled == true
-    CDMIcons._allowStackTextWritesForBatch = _stackTextWritesForBatch
+    if rangePolicy then
+        rangePolicy:SetStackTextWritesForBatch(enabled)
+    end
 end
 
 function CDMIcons.ShouldAllowStackTextWrites()
-    return _stackTextWritesForBatch == true
+    return rangePolicy and rangePolicy:ShouldAllowStackTextWrites() or false
+end
+
+function _resolverRuntimePolicy.IconNeedsUsabilityVisualRefresh(icon, cachedDB)
+    return rangePolicy and rangePolicy:IconNeedsUsabilityVisualRefresh(icon, cachedDB) or false
+end
+
+function _resolverRuntimePolicy.UpdateIconRangesForUsabilityEvent()
+    if rangePolicy then
+        rangePolicy:UpdateIconRangesForUsabilityEvent(iconPools)
+    end
+end
+
+function CDMIcons:UpdateAllIconRanges()
+    if rangePolicy then
+        rangePolicy:UpdateAllIconRanges(iconPools)
+    end
+end
+
+SyncSpellRangeChecks = function()
+    if rangePolicy then
+        rangePolicy:SyncSpellRangeChecks(iconPools)
+    end
+end
+
+DisableSpellRangeChecks = function()
+    if rangePolicy then
+        rangePolicy:DisableSpellRangeChecks()
+    end
+end
+
+local function UpdateIconsForSpellRangeEvent(spellIdentifier, isInRange, checksRange)
+    if rangePolicy then
+        rangePolicy:UpdateIconsForSpellRangeEvent(iconPools, spellIdentifier, isInRange, checksRange)
+    end
 end
 
 local function NormalizeSpellIdentifier(value)
     if value == nil then return nil end
-    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(value) then return nil end
     if issecretvalue and issecretvalue(value) then return nil end
-    if Helpers and Helpers.SafeValue then
-        value = Helpers.SafeValue(value, nil)
-    end
     local valueType = type(value)
     if valueType == "number" or valueType == "string" then
         return value
     end
     return nil
-end
-
-local function SpellIdentifiersMatch(a, b)
-    a = NormalizeSpellIdentifier(a)
-    b = NormalizeSpellIdentifier(b)
-    if a == nil or b == nil then return false end
-    return a == b or tostring(a) == tostring(b)
-end
-
-local function GetIconRangeSpellID(icon, entry)
-    entry = entry or (icon and icon._spellEntry)
-    if not entry then return nil end
-    return NormalizeSpellIdentifier(icon and icon._runtimeSpellID or entry.spellID or entry.id)
-end
-
--- Reset icon to normal visual state (clear any tinting)
-local function ResetIconVisuals(icon)
-    icon.Icon:SetVertexColor(1, 1, 1, 1)
-    icon._rangeTinted = nil
-    icon._usabilityTinted = nil
-end
-
-local function UpdateIconVisualState(icon, cachedDB, rangeEventSpellID, rangeEventInRange, rangeEventChecksRange)
-    if not icon or not icon._spellEntry then return end
-    local entry = icon._spellEntry
-    local viewerType = entry.viewerType
-    if not viewerType then return end
-
-    local settings = (cachedDB and (cachedDB[viewerType] or (cachedDB.containers and cachedDB.containers[viewerType])))
-        or GetTrackerSettings(viewerType)
-    if not settings then
-        if icon._rangeTinted or icon._usabilityTinted then
-            icon._lastVisualState = nil
-            ResetIconVisuals(icon)
-        end
-        return
-    end
-
-    local rangeEnabled = settings.rangeIndicator
-    local usabilityEnabled = settings.usabilityIndicator
-
-    -- Nothing enabled — reset and bail
-    if not rangeEnabled and not usabilityEnabled then
-        if icon._rangeTinted or icon._usabilityTinted then
-            icon._lastVisualState = nil
-            ResetIconVisuals(icon)
-        end
-        return
-    end
-
-    -- Skip buff viewer icons
-    if viewerType == "buff" then return end
-
-    -- Skip items/trinkets (self-use, no range/usability concept)
-    if entry.type == "item" or entry.type == "trinket" or entry.type == "slot" then return end
-
-    -- Reuse the override resolved during the last cooldown update cycle.
-    -- _runtimeSpellID is written by UpdateIconCooldown on every cooldown
-    -- event (cdm_icon_factory.lua), so any override change has already
-    -- propagated by the time event-driven range/usability refreshes run.
-    local spellID = GetIconRangeSpellID(icon, entry)
-    if not spellID then return end
-
-    ---------------------------------------------------------------------------
-    -- Compute desired visual state (API calls use per-cycle dedup caches)
-    ---------------------------------------------------------------------------
-    local newVisualState = "normal"
-    local cooldownVisualPriority = false
-
-    -- Priority 1: Out of range (red tint) — only when attackable unit exists
-    -- Respects soft targeting: hard target > soft enemy.
-    local rangeUnit = rangeEnabled and GetRangeUnit() or nil
-    if rangeUnit then
-        local hasRange
-        local inRange
-        if rangeEventSpellID ~= nil then
-            hasRange = rangeEventChecksRange == true
-            inRange = hasRange and (rangeEventInRange == true) or nil
-        else
-            -- Per-cycle dedup: skip redundant C_Spell API calls for shared spellIDs
-            hasRange = _hasRangeCycleCache[spellID]
-            if hasRange == nil then
-                hasRange = Sources and Sources.QuerySpellHasRange and Sources.QuerySpellHasRange(spellID)
-                hasRange = Helpers.SafeValue(hasRange, nil)
-                if hasRange == nil then hasRange = true end
-                _hasRangeCycleCache[spellID] = hasRange and true or false
-            end
-            if hasRange then
-                local cached = _rangeCycleCache[spellID]
-                if cached ~= nil then
-                    inRange = cached ~= "nil" and cached or nil
-                else
-                    inRange = SafeIsSpellInRange(spellID, rangeUnit)
-                    _rangeCycleCache[spellID] = inRange == nil and "nil" or inRange
-                end
-            end
-        end
-        if hasRange then
-            if inRange == false then
-                newVisualState = "oor"
-            end
-        end
-    end
-
-    -- Cooldown desaturation owns the neutral/gray visual before usability.
-    -- Range stays above it because red communicates target context.
-    if newVisualState == "normal" then
-        cooldownVisualPriority = CDMIcons.CooldownHasVisualPriority(icon, entry, settings, GetTime())
-        if cooldownVisualPriority and icon._usabilityTinted then
-            icon.Icon:SetVertexColor(1, 1, 1, 1)
-            icon._usabilityTinted = nil
-            icon._lastVisualState = nil
-        end
-    end
-
-    -- Last priority: unusable / resource-starved (darken).
-    if newVisualState == "normal" and usabilityEnabled and not cooldownVisualPriority then
-        -- Per-cycle dedup: reuse result for shared spellIDs
-        local isUsable = _usableCycleCache[spellID]
-        if isUsable == nil then
-            isUsable = SafeIsSpellUsable(spellID)
-            _usableCycleCache[spellID] = isUsable
-        end
-        if not isUsable then
-            local chargeState = CDMIcons.ResolveCooldownActivityState(icon, entry, settings, GetTime())
-            if chargeState.hasCharges and chargeState.isOnCooldown ~= true then
-                isUsable = true
-            end
-        end
-        if not isUsable then
-            newVisualState = "unusable"
-        end
-    end
-
-    ---------------------------------------------------------------------------
-    -- State-change gating: skip SetVertexColor if visual state unchanged.
-    -- Self-heal: if state is "unusable" but tint was stripped (e.g. by an
-    -- icon rebuild or texture update), reapply the vertex color.
-    ---------------------------------------------------------------------------
-    if icon._lastVisualState == newVisualState then
-        if newVisualState == "unusable" and not icon._usabilityTinted and not icon._cdDesaturated and not cooldownVisualPriority then
-            icon.Icon:SetVertexColor(0.4, 0.4, 0.4, 1)
-            icon._usabilityTinted = true
-        end
-        return
-    end
-    icon._lastVisualState = newVisualState
-
-    ---------------------------------------------------------------------------
-    -- Apply the computed visual state
-    ---------------------------------------------------------------------------
-    if newVisualState == "oor" then
-        -- Clear usability darkening if switching to range tint
-        if icon._usabilityTinted then
-            icon._usabilityTinted = nil
-        end
-        local c = settings.rangeColor
-        local r = c and c[1] or 0.8
-        local g = c and c[2] or 0.1
-        local b = c and c[3] or 0.1
-        local a = c and c[4] or 1
-        icon.Icon:SetVertexColor(r, g, b, a)
-        icon._rangeTinted = true
-        return
-    end
-
-    -- If was range-tinted but now in range, clear it
-    if icon._rangeTinted then
-        icon.Icon:SetVertexColor(1, 1, 1, 1)
-        icon._rangeTinted = nil
-    end
-
-    if newVisualState == "unusable" then
-        -- Don't override cooldown desaturation — it takes visual priority.
-        -- When the CD ends, desaturation clears and the next visual event
-        -- applies usability tint.
-        if icon._cdDesaturated then
-            -- Reset _lastVisualState so the state-change gate fires again
-            -- once desaturation clears and the tint can actually apply.
-            icon._lastVisualState = nil
-            return
-        end
-        icon.Icon:SetVertexColor(0.4, 0.4, 0.4, 1)
-        icon._usabilityTinted = true
-        return
-    end
-
-    -- If was usability-tinted but now usable, clear it
-    if icon._usabilityTinted then
-        icon.Icon:SetVertexColor(1, 1, 1, 1)
-        icon._usabilityTinted = nil
-    end
-end
-
-function CDMIcons.IconNeedsUsabilityVisualRefresh(icon, cachedDB)
-    local entry = icon and icon._spellEntry
-    if not entry then return false end
-    if IsAuraEntry and IsAuraEntry(entry) then return false end
-    if entry.kind == "aura" or entry.kind == "auraBar" then return false end
-    if entry.type == "item" or entry.type == "trinket" or entry.type == "slot" then return false end
-
-    if icon._rangeTinted or icon._usabilityTinted then
-        return true
-    end
-
-    local viewerType = entry.viewerType
-    if not viewerType or viewerType == "buff" then return false end
-
-    local settings = (cachedDB and (cachedDB[viewerType] or (cachedDB.containers and cachedDB.containers[viewerType])))
-        or GetTrackerSettings(viewerType)
-    return settings and settings.usabilityIndicator or false
-end
-
-function CDMIcons.UpdateIconRangesForUsabilityEvent()
-    wipe(_rangeCycleCache)
-    wipe(_hasRangeCycleCache)
-    wipe(_usableCycleCache)
-    local db = GetDB()
-    for _, pool in pairs(iconPools) do
-        for _, icon in ipairs(pool) do
-            if CDMIcons.IconNeedsUsabilityVisualRefresh(icon, db) then
-                UpdateIconVisualState(icon, db)
-            end
-        end
-    end
-end
-
-function CDMIcons:UpdateAllIconRanges()
-    -- Wipe per-cycle dedup caches so each poll starts fresh
-    wipe(_rangeCycleCache)
-    wipe(_hasRangeCycleCache)
-    wipe(_usableCycleCache)
-    -- Hoist DB lookup above the loop (avoids repeated GetDB per icon)
-    local db = GetDB()
-    for _, pool in pairs(iconPools) do
-        for _, icon in ipairs(pool) do
-            UpdateIconVisualState(icon, db)
-        end
-    end
-end
-
-SyncSpellRangeChecks = function()
-    wipe(_desiredRangeSpellChecks)
-    local db = GetDB()
-
-    for _, pool in pairs(iconPools) do
-        for _, icon in ipairs(pool) do
-            local entry = icon and icon._spellEntry
-            if entry and entry.viewerType and entry.viewerType ~= "buff"
-                and entry.type ~= "item" and entry.type ~= "trinket" and entry.type ~= "slot" then
-                local settings = db and (db[entry.viewerType] or (db.containers and db.containers[entry.viewerType]))
-                    or GetTrackerSettings(entry.viewerType)
-                if settings and settings.rangeIndicator then
-                    local spellID = GetIconRangeSpellID(icon, entry)
-                    if spellID then
-                        _desiredRangeSpellChecks[spellID] = true
-                    end
-                end
-            end
-        end
-    end
-
-    if not (Sources and Sources.EnableSpellRangeCheck) then
-        wipe(_enabledRangeSpellChecks)
-        return
-    end
-
-    for spellID in pairs(_enabledRangeSpellChecks) do
-        if not _desiredRangeSpellChecks[spellID] then
-            Sources.EnableSpellRangeCheck(spellID, false)
-            _enabledRangeSpellChecks[spellID] = nil
-        end
-    end
-
-    for spellID in pairs(_desiredRangeSpellChecks) do
-        if not _enabledRangeSpellChecks[spellID] then
-            if Sources.EnableSpellRangeCheck(spellID, true) then
-                _enabledRangeSpellChecks[spellID] = true
-            end
-        end
-    end
-end
-
-DisableSpellRangeChecks = function()
-    if Sources and Sources.EnableSpellRangeCheck then
-        for spellID in pairs(_enabledRangeSpellChecks) do
-            Sources.EnableSpellRangeCheck(spellID, false)
-        end
-    end
-    wipe(_enabledRangeSpellChecks)
-    wipe(_desiredRangeSpellChecks)
-end
-
-local function UpdateIconsForSpellRangeEvent(spellIdentifier, isInRange, checksRange)
-    local eventSpellID = NormalizeSpellIdentifier(spellIdentifier)
-    if not eventSpellID then return end
-
-    local db = GetDB()
-    for _, pool in pairs(iconPools) do
-        for _, icon in ipairs(pool) do
-            local entry = icon and icon._spellEntry
-            if entry and SpellIdentifiersMatch(eventSpellID, GetIconRangeSpellID(icon, entry)) then
-                local settings = db and (db[entry.viewerType] or (db.containers and db.containers[entry.viewerType]))
-                    or GetTrackerSettings(entry.viewerType)
-                if settings and settings.rangeIndicator and checksRange == true and isInRange == false
-                    and icon.Icon and icon.Icon.SetVertexColor then
-                    if icon._usabilityTinted then
-                        icon._usabilityTinted = nil
-                    end
-                    local c = settings.rangeColor
-                    local r = c and c[1] or 0.8
-                    local g = c and c[2] or 0.1
-                    local b = c and c[3] or 0.1
-                    local a = c and c[4] or 1
-                    icon.Icon:SetVertexColor(r, g, b, a)
-                    icon._rangeTinted = true
-                    icon._lastVisualState = "oor"
-                else
-                    UpdateIconVisualState(icon, db, eventSpellID, isInRange == true, checksRange == true)
-                end
-            end
-        end
-    end
 end
 
 ---------------------------------------------------------------------------
@@ -5371,16 +4416,16 @@ local function _CDMUpdateCallback(modeOverride, trustOverride)
     if trustOverride ~= nil then
         trustIsOnGCD = trustOverride == true
     else
-        trustIsOnGCD = CDMIcons._pendingTrustIsOnGCD == true
+        trustIsOnGCD = _resolverRuntimePolicy.pendingTrustIsOnGCD == true
     end
-    CDMIcons._pendingTrustIsOnGCD = false
+    _resolverRuntimePolicy.pendingTrustIsOnGCD = false
 
     if not CDMIcons:IsRuntimeEnabled() then
         return
     end
 
     _lastCDMUpdateTime = GetTime()
-    CDMIcons._trustIsOnGCDForBatch = trustIsOnGCD
+    ResolverRuntime.SetTrustIsOnGCDForBatch(trustIsOnGCD)
 
     if mode == CDM_UPDATE_FULL then
         CDMIcons:UpdateAllCooldowns()
@@ -5389,7 +4434,7 @@ local function _CDMUpdateCallback(modeOverride, trustOverride)
     end
     RunDirtyBarUpdate()
 
-    CDMIcons._trustIsOnGCDForBatch = false
+    ResolverRuntime.SetTrustIsOnGCDForBatch(false)
 end
 
 local function CDMUpdateOnUpdate(self, elapsed)
@@ -5426,7 +4471,7 @@ local function RegisterCDMSchedulerHandler()
         end,
         onCancel = function()
             _cdmUpdatePending = false
-            CDMIcons._pendingTrustIsOnGCD = false
+            _resolverRuntimePolicy.pendingTrustIsOnGCD = false
         end,
     })
 end
@@ -5440,7 +4485,7 @@ local function ScheduleCDMUpdate(fast, mode, trustIsOnGCD)
             ns.CDMScheduler.CancelRuntimeUpdate()
         end
         _cdmUpdatePending = false
-        CDMIcons._pendingTrustIsOnGCD = false
+        _resolverRuntimePolicy.pendingTrustIsOnGCD = false
         return
     end
 
@@ -5458,7 +4503,7 @@ local function ScheduleCDMUpdate(fast, mode, trustIsOnGCD)
             _cdmUpdateMode = CDM_UPDATE_FULL
         end
         if trustIsOnGCD then
-            CDMIcons._pendingTrustIsOnGCD = true
+            _resolverRuntimePolicy.pendingTrustIsOnGCD = true
         end
         if delay < _cdmUpdateDelay then
             _cdmUpdateDelay = delay
@@ -5470,21 +4515,11 @@ end
     _cdmUpdateElapsed = 0
     _cdmUpdateDelay = delay
     _cdmUpdateMode = mode
-    CDMIcons._pendingTrustIsOnGCD = trustIsOnGCD == true
+    _resolverRuntimePolicy.pendingTrustIsOnGCD = trustIsOnGCD == true
     cdmUpdateFrame:SetScript("OnUpdate", CDMUpdateOnUpdate)
 end
 
-function CDMIcons.CountPendingMirrorRefreshKeys(pendingByCategory)
-    local count = 0
-    for _, byCooldownID in pairs(pendingByCategory) do
-        for _ in pairs(byCooldownID) do
-            count = count + 1
-        end
-    end
-    return count
-end
-
-function CDMIcons.RefreshIndexedMirrorIcon(icon, editMode, ncdm, ncdmContainers, inCombat)
+function _resolverRuntimePolicy.RefreshIndexedMirrorIcon(icon, editMode, ncdm, ncdmContainers, inCombat)
     local entry = icon and icon._spellEntry
     if not entry then return false end
 
@@ -5492,7 +4527,7 @@ function CDMIcons.RefreshIndexedMirrorIcon(icon, editMode, ncdm, ncdmContainers,
     UpdateIconCooldown(icon)
     if entry.viewerType == "buff"
         and wasAuraActive ~= (icon._auraActive == true) then
-        RequestBuffIconLayoutRefresh()
+        _resolverRuntimePolicy.RequestBuffIconLayoutRefresh()
     end
 
     local containerDB = ncdm and (ncdm[entry.viewerType]
@@ -5501,78 +4536,11 @@ function CDMIcons.RefreshIndexedMirrorIcon(icon, editMode, ncdm, ncdmContainers,
     return true
 end
 
-function CDMIcons.DrainMirrorTextRefreshQueue()
-    CDMIcons._mirrorRefreshPending = false
-    local pendingByCategory = CDMIcons._pendingMirrorRefreshByCategory
-    CDMIcons._pendingMirrorRefreshByCategory = {}
-
-    local batchKeys = CDMIcons.CountPendingMirrorRefreshKeys(pendingByCategory)
-    if batchKeys == 0 then return end
-
-    if batchKeys > CDMIcons._mirrorRefreshStats.maxBatch then
-        CDMIcons._mirrorRefreshStats.maxBatch = batchKeys
-    end
-    CDMIcons._mirrorRefreshStats.targeted = CDMIcons._mirrorRefreshStats.targeted + batchKeys
-
-    local editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
-    local refreshed = 0
-
-    SetStackTextWritesForBatch(true)
-    BeginResolverQueryBatch()
-    for category, byCooldownID in pairs(pendingByCategory) do
-        for cooldownID in pairs(byCooldownID) do
-            local iconSet = CDMIcons.GetMirrorIconSet(category, cooldownID, false)
-            if iconSet then
-                for icon in pairs(iconSet) do
-                    if icon
-                        and icon._blizzMirrorCooldownID == cooldownID
-                        and icon._blizzMirrorCategory == category
-                        and CDMIcons.RefreshIndexedMirrorIcon(icon, editMode, ncdm, ncdmContainers, inCombat) then
-                        refreshed = refreshed + 1
-                    end
-                end
-            end
-        end
-    end
-    SetStackTextWritesForBatch(false)
-    EndResolverQueryBatch()
-
-    if refreshed > 0 then
-        DrainLayoutDirty()
-    end
-end
-
-function CDMIcons:RequestMirrorTextRefresh(cooldownID, category)
-    if not CDMIcons:IsRuntimeEnabled() then return end
-
-    if not (cooldownID and category) then
-        CDMIcons._mirrorRefreshStats.fallback = CDMIcons._mirrorRefreshStats.fallback + 1
-        ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
-        return
-    end
-
-    local byCooldownID = CDMIcons._pendingMirrorRefreshByCategory[category]
-    if not byCooldownID then
-        byCooldownID = {}
-        CDMIcons._pendingMirrorRefreshByCategory[category] = byCooldownID
-    end
-    byCooldownID[cooldownID] = true
-
-    if CDMIcons._mirrorRefreshPending then return end
-    if not (C_Timer and C_Timer.After) then
-        CDMIcons.DrainMirrorTextRefreshQueue()
-        return
-    end
-
-    CDMIcons._mirrorRefreshPending = true
-    C_Timer.After(0, CDMIcons.DrainMirrorTextRefreshQueue)
-end
-
 -- Scoping rule for event-driven broad resolves: every event that triggers
 -- a broad re-resolve walks ONLY the icons whose state can be affected by
 -- what that event reports on. Sweeping every icon on every event propagates
 -- transient API inconsistencies (e.g., C_Spell.GetSpellCooldown briefly
--- returning isActive=false isOnGCD=nil mid-GCD, surfaced via /cdmevents)
+-- returning isActive=false isOnGCD=nil mid-GCD, surfaced via /cdmdebug spell events)
 -- into icons that should not be touched, producing visible cooldown-swipe
 -- flicker on unrelated cooldown-only spells. Three scoped variants cover
 -- the three event families:
@@ -5596,7 +4564,7 @@ end
 -- currently in an aura-active state. Cooldown-only icons (Death Coil, any
 -- spell with no aura tracking) are owned by SPELL_UPDATE_COOLDOWN /
 -- SPELL_UPDATE_USABLE / cast events.
-function CDMIcons.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
+function _resolverRuntimePolicy.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
     if not (icon and entry) then return false end
 
     local wasAuraActive = icon._auraActive == true
@@ -5609,8 +4577,8 @@ function CDMIcons.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, n
 
     if entry.viewerType == "buff"
        and wasAuraActive ~= (icon._auraActive == true)
-       and CDMIcons.RequestBuffIconLayoutRefresh then
-        CDMIcons.RequestBuffIconLayoutRefresh()
+       and _resolverRuntimePolicy.RequestBuffIconLayoutRefresh then
+        _resolverRuntimePolicy.RequestBuffIconLayoutRefresh()
     end
 
     return true
@@ -5626,7 +4594,7 @@ local function ApplyResolvedCooldownForAuraScope()
                 local entryIsAura = IsAuraEntry and IsAuraEntry(entry)
                 local iconAuraActive = icon._auraActive == true
                 if entryIsAura or iconAuraActive then
-                    CDMIcons.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
+                    _resolverRuntimePolicy.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
                 end
             end
         end
@@ -5706,7 +4674,10 @@ local function InvalidateGCDOnlyBindings()
 end
 
 local function InvalidateSpellCooldownBinding(spellID)
-    spellID = Helpers.SafeValue and Helpers.SafeValue(spellID, nil) or spellID
+    local spellIDType = type(spellID)
+    if spellIDType ~= "number" and spellIDType ~= "string" then
+        spellID = nil
+    end
     if not spellID then return end
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
@@ -5715,7 +4686,11 @@ local function InvalidateSpellCooldownBinding(spellID)
             if entry and lk then
                 local base = entry.spellID or entry.id
                 local override = entry.overrideSpellID
-                local runtime = Helpers.SafeValue and Helpers.SafeValue(icon._runtimeSpellID, nil) or icon._runtimeSpellID
+                local runtime = icon._runtimeSpellID
+                local runtimeType = type(runtime)
+                if runtimeType ~= "number" and runtimeType ~= "string" then
+                    runtime = nil
+                end
                 if base == spellID or override == spellID or runtime == spellID then
                     local isCooldownKey = lk:sub(1, 9) == "cooldown:"
                         or lk:sub(1, 7) == "charge:"
@@ -5748,7 +4723,7 @@ local function ApplyResolvedCooldownForSpellID(eventSpellID, eventBaseSpellID)
                 if base and (base == eventSpellID or base == eventBaseSpellID) then
                     local _, cType = ResolveContainerDBAndType(entry, ncdm, ncdmContainers)
                     if IsAuraEntry(entry) or cType == "aura" or cType == "auraBar" then
-                        CDMIcons.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
+                        _resolverRuntimePolicy.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
                     else
                         ApplyResolvedCooldown(icon)
                     end
@@ -5762,19 +4737,19 @@ end
 local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
     if not updateInfo or updateInfo.isFullUpdate then return nil end
 
-    local ids = CDMIcons._auraDeltaInstanceIDs
+    local ids = _resolverRuntimePolicy.auraDeltaInstanceIDs
     if not ids then
         ids = {}
-        CDMIcons._auraDeltaInstanceIDs = ids
+        _resolverRuntimePolicy.auraDeltaInstanceIDs = ids
     else
         wipe(ids)
     end
     local hasIDs = false
 
-    local spellIDs = CDMIcons._auraDeltaSpellIDs
+    local spellIDs = _resolverRuntimePolicy.auraDeltaSpellIDs
     if not spellIDs then
         spellIDs = {}
-        CDMIcons._auraDeltaSpellIDs = spellIDs
+        _resolverRuntimePolicy.auraDeltaSpellIDs = spellIDs
     else
         wipe(spellIDs)
     end
@@ -5875,7 +4850,7 @@ local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
                 matches = true
             end
             if matches and entry then
-                CDMIcons.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
+                _resolverRuntimePolicy.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
                 refreshed = refreshed + 1
             end
         end
@@ -5885,7 +4860,7 @@ local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
     return refreshed
 end
 
-function CDMIcons.IconNeedsUsabilityCooldownRefresh(icon)
+function _resolverRuntimePolicy.IconNeedsUsabilityCooldownRefresh(icon)
     local entry = icon and icon._spellEntry
     if not entry then return false end
     if IsAuraEntry and IsAuraEntry(entry) then return false end
@@ -5898,24 +4873,19 @@ function CDMIcons.IconNeedsUsabilityCooldownRefresh(icon)
     return false
 end
 
-function CDMIcons.ApplyResolvedCooldownForUsabilityEvent()
-    local spellState = CDMIcons._trustedGCDSpellState or {}
-    wipe(spellState)
-    CDMIcons._trustedGCDSpellState = spellState
-    local stamp = GetTime()
-    CDMIcons._trustedGCDStamp = stamp
+function _resolverRuntimePolicy.ApplyResolvedCooldownForUsabilityEvent()
+    local spellState, stamp = ResolverRuntime.ResetTrustedGCDSnapshot(GetTime())
 
     local editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
-    local previousTrust = CDMIcons._trustIsOnGCDForBatch
-    CDMIcons._trustIsOnGCDForBatch = true
+    local previousTrust = ResolverRuntime.SetTrustIsOnGCDForBatch(true)
 
     local refreshed = 0
     BeginResolverQueryBatch()
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             local entry = icon and icon._spellEntry
-            if entry and CDMIcons.IconNeedsUsabilityCooldownRefresh(icon) then
-                CDMIcons.CaptureTrustedGCDStateForIcon(icon, spellState, stamp)
+            if entry and _resolverRuntimePolicy.IconNeedsUsabilityCooldownRefresh(icon) then
+                _resolverRuntimePolicy.CaptureTrustedGCDStateForIcon(icon, spellState, stamp)
                 ApplyResolvedCooldown(icon)
 
                 local containerDB, cType = ResolveContainerDBAndType(entry, ncdm, ncdmContainers)
@@ -5928,7 +4898,7 @@ function CDMIcons.ApplyResolvedCooldownForUsabilityEvent()
     end
     EndResolverQueryBatch()
 
-    CDMIcons._trustIsOnGCDForBatch = previousTrust
+    ResolverRuntime.SetTrustIsOnGCDForBatch(previousTrust)
     if refreshed > 0 then
         DrainLayoutDirty()
     end
@@ -5963,15 +4933,16 @@ local function RefreshCooldownVisualsForSpellID(eventSpellID, eventBaseSpellID)
 
     return refreshed
 end
-CDMIcons.RefreshCooldownVisualsForSpellID = RefreshCooldownVisualsForSpellID
 
-function CDMIcons.NoteChargeDurationObjectsUpdated()
-    CDMIcons._chargeDurationObjectSerial = (CDMIcons._chargeDurationObjectSerial or 0) + 1
+function _resolverRuntimePolicy.NoteChargeDurationObjectsUpdated()
+    if RuntimeQueries and RuntimeQueries.NoteChargeDurationObjectsUpdated then
+        RuntimeQueries.NoteChargeDurationObjectsUpdated()
+    end
 end
 
 -- EventTrace* helpers are provided by the load-on-demand debug addon.
 
-function CDMIcons.EventFrameOnEvent(self, event, arg1, arg2, arg3)
+function _resolverRuntimePolicy.HandleCDMFrameEvent(self, event, arg1, arg2, arg3)
     if not CDMIcons:IsRuntimeEnabled() then
         self:SetScript("OnUpdate", nil)
         cdmUpdateFrame:SetScript("OnUpdate", nil)
@@ -6037,8 +5008,8 @@ function CDMIcons.EventFrameOnEvent(self, event, arg1, arg2, arg3)
         -- completion. Only icons with stale active cooldown/GCD state need a
         -- resolver pass; idle icons only participate if range/usability tinting
         -- is enabled or currently applied.
-        CDMIcons.ApplyResolvedCooldownForUsabilityEvent()
-        CDMIcons.UpdateIconRangesForUsabilityEvent()
+        _resolverRuntimePolicy.ApplyResolvedCooldownForUsabilityEvent()
+        _resolverRuntimePolicy.UpdateIconRangesForUsabilityEvent()
         return
     end
     if event == "SPELLS_CHANGED" then
@@ -6077,7 +5048,7 @@ end
 cdEventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3)
     local profileStart = debugprofilestop and debugprofilestop()
     CDMIcons.EventTracePrint("frame-pre", event, arg1, arg2, arg3)
-    CDMIcons.EventFrameOnEvent(self, event, arg1, arg2, arg3)
+    _resolverRuntimePolicy.HandleRuntimeRefresh(event, arg1, arg2, arg3, self)
     CDMIcons.EventTracePrint("frame-post", event, arg1, arg2, arg3)
     if profileStart and debugprofilestop then
         CDMIcons.RecordEventProfile(event, debugprofilestop() - profileStart)
@@ -6105,48 +5076,109 @@ function CDMIcons:RequestFullUpdate()
     ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
 end
 
-function CDMIcons:GetCacheStats()
-    local n = 0
-    for _ in pairs(_textureCycleCache) do n = n + 1 end
-    local activePools = 0
-    local activeIcons = 0
-    for _, pool in pairs(iconPools) do
-        activePools = activePools + 1
-        activeIcons = activeIcons + #pool
-    end
-    local mirrorIndexKeys = 0
-    local mirrorIndexIcons = 0
-    for _, byCooldownID in pairs(CDMIcons._mirrorIconsByCategory) do
-        for _, iconSet in pairs(byCooldownID) do
-            mirrorIndexKeys = mirrorIndexKeys + 1
-            for icon in pairs(iconSet) do
-                if icon then
-                    mirrorIndexIcons = mirrorIndexIcons + 1
-                end
+do
+    local mirrorController = ns.CDMIconMirrorIndex and ns.CDMIconMirrorIndex.Create({
+        isRuntimeEnabled = function()
+            return CDMIcons:IsRuntimeEnabled()
+        end,
+        requestFullRefresh = function()
+            ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
+        end,
+        prepareBatch = PrepareCooldownUpdateBatch,
+        setStackTextWrites = SetStackTextWritesForBatch,
+        beginBatch = BeginResolverQueryBatch,
+        endBatch = EndResolverQueryBatch,
+        drainLayoutDirty = DrainLayoutDirty,
+        refreshIcon = function(icon, editMode, ncdm, ncdmContainers, inCombat)
+            return _resolverRuntimePolicy.RefreshIndexedMirrorIcon(
+                icon, editMode, ncdm, ncdmContainers, inCombat)
+        end,
+        onBound = function(icon)
+            if icon._rowConfig then
+                ConfigureIcon(icon, icon._rowConfig)
             end
+
+            local entry = icon._spellEntry
+            if not entry or IsAuraEntry(entry) or not _resolverRuntimePolicy.ResolveIconStackText then return end
+            local stackText, stackSource, mirrorBacked = _resolverRuntimePolicy.ResolveIconStackText(icon)
+            if not mirrorBacked then return end
+            if _resolverRuntimePolicy.ValueIsPresent(stackText) then
+                local settings = GetTrackerSettings
+                    and GetTrackerSettings(entry.viewerType)
+                    or nil
+                _resolverRuntimePolicy.ShowIconStackText(
+                    icon, stackText, settings, stackSource or "mirror-bind-stack")
+            else
+                ClearIconStackText(icon, "mirror-bind-empty")
+            end
+        end,
+    })
+
+    function CDMIcons.RebuildBlizzMirrorIconIndex()
+        if mirrorController then
+            mirrorController:Rebuild(iconPools)
         end
     end
-    local schedulerPending = ns.CDMScheduler
-        and ns.CDMScheduler.IsRuntimeUpdatePending
-        and ns.CDMScheduler.IsRuntimeUpdatePending()
-    local iconEventProfileTop, iconEventProfileWindow = CDMIcons.SnapshotEventProfile(5)
-    return {
-        textureCycleCache = n,
-        activeIconPools    = activePools,
-        activeIcons        = activeIcons,
-        recycleIcons       = #recyclePool,
-        barsDirty         = _barsDirty and true or false,
-        updatePending     = (schedulerPending ~= nil and schedulerPending) or (_cdmUpdatePending and true or false),
-        mirrorIndexKeys    = mirrorIndexKeys,
-        mirrorIndexIcons   = mirrorIndexIcons,
-        mirrorRefreshPending = CDMIcons._mirrorRefreshPending and true or false,
-        mirrorRefreshPendingKeys = CDMIcons.CountPendingMirrorRefreshKeys(CDMIcons._pendingMirrorRefreshByCategory),
-        mirrorRefreshTargeted = CDMIcons._mirrorRefreshStats.targeted,
-        mirrorRefreshFallback = CDMIcons._mirrorRefreshStats.fallback,
-        mirrorRefreshMaxBatch = CDMIcons._mirrorRefreshStats.maxBatch,
-        iconEventProfileTop = iconEventProfileTop,
-        iconEventProfileWindow = iconEventProfileWindow,
-    }
+
+    function CDMIcons.OnFactoryMirrorBound(icon, cooldownID, category)
+        if mirrorController then
+            mirrorController:BindIcon(icon, cooldownID, category)
+        end
+    end
+
+    function CDMIcons.OnFactoryMirrorUnbound(icon)
+        if mirrorController then
+            mirrorController:UnbindIcon(icon)
+        end
+    end
+
+    function CDMIcons:RequestMirrorTextRefresh(cooldownID, category)
+        if mirrorController then
+            mirrorController:RequestRefresh(cooldownID, category)
+        end
+    end
+
+    function CDMIcons:GetCacheStats()
+        local n = 0
+        for _ in pairs(_textureCycleCache) do n = n + 1 end
+        local activePools = 0
+        local activeIcons = 0
+        for _, pool in pairs(iconPools) do
+            activePools = activePools + 1
+            activeIcons = activeIcons + #pool
+        end
+        local mirrorIndexKeys, mirrorIndexIcons = 0, 0
+        local mirrorRefreshStats = { targeted = 0, fallback = 0, maxBatch = 0 }
+        local mirrorRefreshPending = false
+        local mirrorRefreshPendingKeys = 0
+        if mirrorController then
+            mirrorIndexKeys, mirrorIndexIcons = mirrorController:Count()
+            mirrorRefreshStats = mirrorController:GetStats()
+            mirrorRefreshPending = mirrorController:IsRefreshPending()
+            mirrorRefreshPendingKeys = mirrorController:PendingKeyCount()
+        end
+        local schedulerPending = ns.CDMScheduler
+            and ns.CDMScheduler.IsRuntimeUpdatePending
+            and ns.CDMScheduler.IsRuntimeUpdatePending()
+        local iconEventProfileTop, iconEventProfileWindow = CDMIcons.SnapshotEventProfile(5)
+        return {
+            textureCycleCache = n,
+            activeIconPools    = activePools,
+            activeIcons        = activeIcons,
+            recycleIcons       = #recyclePool,
+            barsDirty         = _barsDirty and true or false,
+            updatePending     = (schedulerPending ~= nil and schedulerPending) or (_cdmUpdatePending and true or false),
+            mirrorIndexKeys    = mirrorIndexKeys,
+            mirrorIndexIcons   = mirrorIndexIcons,
+            mirrorRefreshPending = mirrorRefreshPending,
+            mirrorRefreshPendingKeys = mirrorRefreshPendingKeys,
+            mirrorRefreshTargeted = mirrorRefreshStats.targeted,
+            mirrorRefreshFallback = mirrorRefreshStats.fallback,
+            mirrorRefreshMaxBatch = mirrorRefreshStats.maxBatch,
+            iconEventProfileTop = iconEventProfileTop,
+            iconEventProfileWindow = iconEventProfileWindow,
+        }
+    end
 end
 
 -- Bus subscribers — replace direct Blizzard events.
@@ -6157,46 +5189,42 @@ end
 -- Aura events set _barsDirty only when a matching icon/bar may have changed.
 -- Pure cooldown events deliberately do NOT set the flag — bar fill is driven
 -- by barTimerGroup independently of ScheduleCDMUpdate.
-local function HandleCDMAuraRefresh(unit, updateInfo)
-    if not CDMIcons:IsRuntimeEnabled() then return end
-    CDMIcons.EventTracePrint("aura-pre", "UNIT_AURA", unit, nil, nil,
-        CDMIcons.EventTraceAuraInfo(updateInfo))
+do
+    local runtimeRefresh = ns.CDMIconRuntimeRefresh and ns.CDMIconRuntimeRefresh.Create({
+        isRuntimeEnabled = function()
+            return CDMIcons:IsRuntimeEnabled()
+        end,
+        eventTracePrint = function(...)
+            return CDMIcons.EventTracePrint(...)
+        end,
+        eventTraceAuraInfo = function(updateInfo)
+            return CDMIcons.EventTraceAuraInfo(updateInfo)
+        end,
+        setBarsDirty = function(dirty)
+            _barsDirty = dirty == true
+        end,
+        scheduleFullUpdate = function()
+            ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
+        end,
+        applyAuraScope = ApplyResolvedCooldownForAuraScope,
+        applyAuraInstances = ApplyResolvedCooldownForAuraInstances,
+        runDirtyBarUpdate = RunDirtyBarUpdate,
+        handleFrameEvent = function(frame, event, arg1, arg2, arg3)
+            return _resolverRuntimePolicy.HandleCDMFrameEvent(
+                frame or cdEventFrame, event, arg1, arg2, arg3)
+        end,
+    })
 
-    -- UNIT_AURA scoping per the API contract (UnitAuraUpdateInfo in
-    -- tests/api-docs/blizzard/UnitConstantsDocumentation.lua):
-    --
-    --   * isFullUpdate = true  → no instance lists; consumer MUST rescan
-    --                            (here: full ScheduleCDMUpdate + aura-scope
-    --                            refresh). This is the only case that walks
-    --                            every icon.
-    --   * isFullUpdate = false → addedAuras / updatedAuraInstanceIDs /
-    --                            removedAuraInstanceIDs are authoritative
-    --                            and complete. Walk only icons keyed by
-    --                            those instance IDs. The "no match → fall
-    --                            back to full refresh" defensive sweep is
-    --                            removed: it produced a UpdateAllCooldowns
-    --                            storm during combat (most player auras —
-    --                            rune CDs, hidden state auras, talent
-    --                            procs — aren't tracked, so refreshed=0
-    --                            on nearly every player UNIT_AURA pulse).
-    if not updateInfo or updateInfo.isFullUpdate then
-        _barsDirty = true
-        ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
-        ApplyResolvedCooldownForAuraScope()
-    else
-        local refreshed = ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
-        if refreshed > 0 then
-            _barsDirty = true
-            RunDirtyBarUpdate()
+    function _resolverRuntimePolicy.HandleRuntimeRefresh(event, arg1, arg2, arg3, frame)
+        if runtimeRefresh then
+            return runtimeRefresh:Handle(event, arg1, arg2, arg3, frame)
         end
+        return _resolverRuntimePolicy.HandleCDMFrameEvent(frame or cdEventFrame, event, arg1, arg2, arg3)
     end
-
-    CDMIcons.EventTracePrint("aura-post", "UNIT_AURA", unit, nil, nil,
-        CDMIcons.EventTraceAuraInfo(updateInfo))
 end
 
-function CDMIcons.HandleUnitAuraChanged(unit, updateInfo)
-    HandleCDMAuraRefresh(unit, updateInfo)
+function CDMIcons.HandleRuntimeRefresh(event, arg1, arg2, arg3)
+    return _resolverRuntimePolicy.HandleRuntimeRefresh(event, arg1, arg2, arg3)
 end
 
 local function OnCDMCooldownChanged(_, spellID, baseSpellID, kind)
@@ -6206,14 +5234,26 @@ local function OnCDMCooldownChanged(_, spellID, baseSpellID, kind)
         -- arg1 is a non-nil non-GCD spellID; otherwise full walk. The
         -- pre-cutover code also forced full walk when CaptureTrustedGCDState
         -- reported gcdChanged; preserve that here.
-        local gcdChanged = CDMIcons.CaptureTrustedGCDState()
+        local gcdChanged = _resolverRuntimePolicy.CaptureTrustedGCDState()
+        local comparableSpellID = spellID ~= nil
+        local spellIDIsGCD = false
+        if comparableSpellID and issecretvalue and issecretvalue(spellID) then
+            comparableSpellID = false
+        elseif comparableSpellID and spellID == GCD_SPELL_ID then
+            spellIDIsGCD = true
+        end
         ScheduleCDMUpdate(nil, CDM_UPDATE_COOLDOWN, true)
-        CDMIcons._trustIsOnGCDForBatch = true
-        if spellID and spellID ~= GCD_SPELL_ID and not gcdChanged then
+        ResolverRuntime.SetTrustIsOnGCDForBatch(true)
+        if comparableSpellID and not spellIDIsGCD and not gcdChanged then
             ApplyResolvedCooldownForSpellID(spellID, baseSpellID)
             RefreshCooldownVisualsForSpellID(spellID, baseSpellID)
         else
-            InvalidateGCDOnlyBindings()
+            -- Payloadless broad refreshes can repeat during the same GCD.
+            -- Keep the existing binding unless this refresh actually observed
+            -- a GCD state transition or targeted the GCD spell itself.
+            if gcdChanged or spellIDIsGCD then
+                InvalidateGCDOnlyBindings()
+            end
             -- Broad walk: arg1 was nil ("update all"), GCD pulse, or
             -- gcdChanged. Multiple spell IDs may have changed cooldown
             -- state and there is no per-spell payload. Scope to spell-
@@ -6221,7 +5261,7 @@ local function OnCDMCooldownChanged(_, spellID, baseSpellID, kind)
             -- cooldown events.
             ApplyResolvedCooldownForSpellScope()
         end
-        CDMIcons._trustIsOnGCDForBatch = false
+        ResolverRuntime.SetTrustIsOnGCDForBatch(false)
     elseif kind == "cast_start" then
         -- Pre-cutover UNIT_SPELLCAST_START on player: ScheduleCDMUpdate only.
         ScheduleCDMUpdate(true, CDM_UPDATE_COOLDOWN)
@@ -6230,7 +5270,6 @@ local function OnCDMCooldownChanged(_, spellID, baseSpellID, kind)
         -- invalidate the GCD-only binding cache, re-resolve cooldown state
         -- across icons, and dispatch to the cooldown highlighter so its
         -- visual feedback fires for the spell the player just cast.
-        CDMIcons.RecordRecentPlayerSpellCast(spellID)
         InvalidateGCDOnlyBindings()
         InvalidateSpellCooldownBinding(spellID)
         ApplyResolvedCooldownForSpellScope()
@@ -6244,8 +5283,8 @@ end
 
 local function OnCDMChargesChanged(_, spellID)
     if not CDMIcons:IsRuntimeEnabled() then return end
-    CDMIcons.NoteChargeDurationObjectsUpdated()
-    CDMIcons._pendingStackTextUpdate = true
+    _resolverRuntimePolicy.NoteChargeDurationObjectsUpdated()
+    _resolverRuntimePolicy.pendingStackTextUpdate = true
     ScheduleCDMUpdate(nil, CDM_UPDATE_COOLDOWN, false)
     if spellID then
         ApplyResolvedCooldownForSpellID(spellID, nil)
@@ -6274,16 +5313,6 @@ function CDMIcons:DisableRuntime()
 end
 
 ---------------------------------------------------------------------------
--- LATE-BIND CROSS-FILE IMPORTS
--- cdm_resolvers.lua and cdm_icon_factory.lua load before this file (per
--- cdm.xml) and cannot capture ns.CDMIcons at their own load time. They
--- declare the upvalues uninitialized; here we hand them the populated
--- CDMIcons table after every `CDMIcons.X = X` exposure above has run.
----------------------------------------------------------------------------
-ns.CDMResolvers._FinalizeImports(CDMIcons)
-ns.CDMIconFactory._FinalizeImports(CDMIcons)
-
----------------------------------------------------------------------------
 -- DEBUG IMPORT BINDING
 -- ChargeDebug is a placeholder until the load-on-demand debug addon rebinds it
 -- via BindAll(). Hot-path callers keep their existing `ChargeDebug(...)`
@@ -6292,6 +5321,9 @@ ns.CDMIconFactory._FinalizeImports(CDMIcons)
 function CDMIcons._BindDebugImports()
     local d = ns.CDMDebug
     if d then
-        ChargeDebug = d.Charge or ChargeDebug
+        ChargeDebug           = d.Charge or ChargeDebug
+        CDMIcons._ShouldDebugBlizzEntry = d.ShouldBlizz or CDMIcons._ShouldDebugBlizzEntry
+        CDMIcons._FormatMirrorState     = d.FormatMirrorState or CDMIcons._FormatMirrorState
+        CDMIcons._DebugBlizzEntry       = d.Blizz or CDMIcons._DebugBlizzEntry
     end
 end

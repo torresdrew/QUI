@@ -1,6 +1,8 @@
 -- tests/cdm_icons_aura_delta_targeting_test.lua
 -- Run: lua tests/cdm_icons_aura_delta_targeting_test.lua
 
+local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub.lua")
+
 local function noop() end
 
 function InCombatLockdown() return false end
@@ -38,6 +40,7 @@ local function makeIcon(name, cooldownID)
         _spellEntry = {
             id = cooldownID,
             spellID = cooldownID,
+            name = name,
             viewerType = "essential",
             type = "spell",
         },
@@ -71,6 +74,7 @@ local buffAuraIcon = makeIcon("buffAura", 48707)
 buffAuraIcon._spellEntry = {
     id = 48707,
     spellID = 48707,
+    name = "buffAura",
     kind = "aura",
     viewerType = "buff",
     type = "spell",
@@ -145,32 +149,16 @@ local ns = {
         end,
     },
     CDMResolvers = {
+        BuildCooldownStateContext = BuildCooldownStateContext,
         _textureCycleCache = {},
         _FinalizeImports = noop,
         Subscribe = function(eventName, handler)
             subscriptions[eventName] = handler
         end,
-        BeginRuntimeQueryBatch = noop,
-        EndRuntimeQueryBatch = noop,
-        QueryCharges = function() return nil end,
-        QueryCooldown = function() return nil end,
-        QueryDuration = function() return nil end,
-        QueryChargeDuration = function() return nil end,
-        QueryOverrideSpell = function() return nil end,
-        QueryDisplayCount = function() return nil end,
-        QuerySpellCount = function() return nil end,
         GetSpellTexture = function() return nil end,
         ResolveMacro = function() return nil end,
         GetEntryTexture = function() return nil end,
-        HasRealCooldownState = function() return false end,
-        ResolveAuraStateForIcon = function() return nil end,
-        ResolveAuraDurationObjectForIcon = function() return nil end,
         IsAuraEntry = function(entry) return entry and entry.kind == "aura" end,
-        GetChargeMetadataDB = function() return nil end,
-        IsItemLikeEntry = function() return false end,
-        ResolveItemCooldownIdentity = function() return nil end,
-        ResolveEntryItemID = function() return nil end,
-        ClassifySpellCooldownState = function() return nil end,
         ResolveSpellActiveState = function() return nil end,
         ResolveCooldownActivityState = function()
             return {
@@ -180,15 +168,30 @@ local ns = {
                 hasCharges = false,
             }
         end,
-        ResolveIconDurationObject = function(icon)
-            resolveCounts[icon.name] = (resolveCounts[icon.name] or 0) + 1
-            if icon == buffAuraIcon then
-                icon._auraActive = true
-                icon._auraInstanceID = 621
-                icon._auraUnit = "player"
-                return nil, "aura", "aura:direct:48707"
+        ResolveCooldownState = function(context)
+            local entry = context and context.entry
+            local name = entry and entry.name
+            if name then
+                resolveCounts[name] = (resolveCounts[name] or 0) + 1
             end
-            return nil, "inactive", nil
+            if name == "buffAura" then
+                return {
+                    mode = "aura",
+                    active = true,
+                    isActive = true,
+                    sourceID = "aura:direct:48707",
+                    spellID = 48707,
+                    auraResolved = true,
+                    auraInstanceID = 621,
+                    auraUnit = "player",
+                    resolvedAuraSpellID = 48707,
+                }
+            end
+            return {
+                mode = "inactive",
+                active = false,
+                isActive = false,
+            }
         end,
     },
     CDMIconFactory = {
@@ -201,7 +204,6 @@ local ns = {
         AcquireIcon = noop,
         ReleaseIcon = noop,
         SyncCooldownBling = noop,
-        UpdateIconCooldown = noop,
     },
     CDMRuntimeStore = {
         SetIconState = noop,
@@ -232,10 +234,11 @@ local ns = {
     },
 }
 
+dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
-icons.HandleUnitAuraChanged("target", {
+icons.HandleRuntimeRefresh("UNIT_AURA", "target", {
     updatedAuraInstanceIDs = { 101 },
 })
 
@@ -243,7 +246,7 @@ assert(resolveCounts.matching == 1, "matching aura-instance icon should be re-re
 assert(resolveCounts.unrelated == nil, "unrelated mirror aura instance should not be re-resolved")
 assert(resolveCounts.nonMirror == nil, "non-mirror icons should not be reached by a target aura-instance delta")
 
-icons.HandleUnitAuraChanged("player", {
+icons.HandleRuntimeRefresh("UNIT_AURA", "player", {
     isFullUpdate = false,
     addedAuras = {
         { spellId = 48707, auraInstanceID = 621 },
@@ -260,7 +263,7 @@ buffAuraIcon._auraActive = false
 layoutRequests = 0
 resolveCounts.buffAura = 0
 
-icons.HandleUnitAuraChanged("player", nil)
+icons.HandleRuntimeRefresh("UNIT_AURA", "player", nil)
 
 assert(resolveCounts.buffAura == 1, "full aura refresh should re-resolve buff aura icons")
 assert(buffAuraIcon._shown == true, "full aura refresh should apply buff aura visibility immediately")

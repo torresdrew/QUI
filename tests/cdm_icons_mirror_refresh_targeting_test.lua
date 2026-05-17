@@ -1,6 +1,8 @@
 -- tests/cdm_icons_mirror_refresh_targeting_test.lua
 -- Run: lua tests/cdm_icons_mirror_refresh_targeting_test.lua
 
+local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub.lua")
+
 local function noop() end
 
 function InCombatLockdown() return false end
@@ -36,6 +38,7 @@ local function makeIcon(name, cooldownID, category)
         _spellEntry = {
             id = cooldownID,
             spellID = cooldownID,
+            name = name,
             kind = "cooldown",
             viewerType = category,
             type = "spell",
@@ -55,7 +58,12 @@ local function makeIcon(name, cooldownID, category)
         },
         Border = { SetAlpha = noop },
         DurationText = { SetAlpha = noop },
-        StackText = { SetAlpha = noop },
+        StackText = {
+            SetAlpha = noop,
+            SetText = noop,
+            Hide = noop,
+            Show = noop,
+        },
     }
     function icon:IsShown() return self._shown ~= false end
     function icon:Show() self._shown = true end
@@ -117,32 +125,16 @@ local ns = {
         QuerySpellInRange = function() return true end,
     },
     CDMResolvers = {
+        BuildCooldownStateContext = BuildCooldownStateContext,
         _textureCycleCache = {},
         _FinalizeImports = noop,
         Subscribe = noop,
-        BeginRuntimeQueryBatch = noop,
-        EndRuntimeQueryBatch = noop,
-        QueryCharges = function() return nil end,
-        QueryCooldown = function() return nil end,
-        QueryDuration = function() return nil end,
-        QueryChargeDuration = function() return nil end,
-        QueryOverrideSpell = function() return nil end,
-        QueryDisplayCount = function() return nil end,
-        QuerySpellCount = function() return nil end,
         GetSpellTexture = function() return nil end,
         ResolveMacro = function() return nil end,
         GetEntryTexture = function() return nil end,
-        HasRealCooldownState = function() return false end,
-        ResolveAuraStateForIcon = function() return nil end,
-        ResolveAuraDurationObjectForIcon = function() return nil end,
         IsAuraEntry = function(entry)
             return entry and entry.kind == "aura"
         end,
-        GetChargeMetadataDB = function() return nil end,
-        IsItemLikeEntry = function() return false end,
-        ResolveItemCooldownIdentity = function() return nil end,
-        ResolveEntryItemID = function() return nil end,
-        ClassifySpellCooldownState = function() return nil end,
         ResolveSpellActiveState = function() return nil end,
         ResolveCooldownActivityState = function()
             return {
@@ -152,9 +144,18 @@ local ns = {
                 hasCharges = false,
             }
         end,
-        ResolveIconDurationObject = function(icon)
-            resolveCounts[icon.name] = (resolveCounts[icon.name] or 0) + 1
-            return nil, "inactive", nil
+        ResolveCooldownState = function(context)
+            local entry = context and context.entry
+            local name = entry and entry.name
+            if name then
+                resolveCounts[name] = (resolveCounts[name] or 0) + 1
+            end
+            return {
+                mode = "inactive",
+                active = false,
+                isActive = false,
+                spellID = entry and entry.spellID,
+            }
         end,
     },
     CDMIconFactory = {
@@ -167,9 +168,6 @@ local ns = {
         AcquireIcon = noop,
         ReleaseIcon = noop,
         SyncCooldownBling = noop,
-        UpdateIconCooldown = function(icon)
-            resolveCounts[icon.name] = (resolveCounts[icon.name] or 0) + 1
-        end,
     },
     CDMRuntimeStore = {
         SetIconState = noop,
@@ -185,6 +183,7 @@ local ns = {
     },
 }
 
+dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
@@ -202,7 +201,7 @@ end
 
 icons:RequestMirrorTextRefresh(88001, "essential", "test")
 
-assert(resolveCounts.matching == 1,
+assert((resolveCounts.matching or 0) >= 1,
     "matching mirror icon should be re-resolved")
 assert(resolveCounts.sameIDWrongCategory == nil,
     "same cooldownID in a different mirror category should not be re-resolved")

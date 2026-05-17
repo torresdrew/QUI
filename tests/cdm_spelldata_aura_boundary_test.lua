@@ -64,12 +64,13 @@ local ns = {
         end,
     },
     CDMIcons = {
-        HandleUnitAuraChanged = function()
+        HandleRuntimeRefresh = function()
             auraRefreshes = auraRefreshes + 1
         end,
     },
 }
 
+dofile("tests/helpers/load_cdm_spelldata_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_spelldata.lua"))("QUI", ns)
 
 local auraFrame

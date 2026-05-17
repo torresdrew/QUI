@@ -1,6 +1,8 @@
 -- tests/cdm_spell_range_event_test.lua
 -- Run: lua tests/cdm_spell_range_event_test.lua
 
+local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub.lua")
+
 local function noop() end
 
 function InCombatLockdown() return false end
@@ -84,28 +86,14 @@ local ns = {
         QuerySpellInRange = function() return true end,
     },
     CDMResolvers = {
+        BuildCooldownStateContext = BuildCooldownStateContext,
         _textureCycleCache = {},
         _FinalizeImports = noop,
         Subscribe = noop,
-        QueryCharges = function() return nil end,
-        QueryCooldown = function() return nil end,
-        QueryDuration = function() return nil end,
-        QueryChargeDuration = function() return nil end,
-        QueryOverrideSpell = function() return nil end,
-        QueryDisplayCount = function() return nil end,
-        QuerySpellCount = function() return nil end,
         GetSpellTexture = function() return nil end,
         ResolveMacro = function() return nil end,
         GetEntryTexture = function() return nil end,
-        HasRealCooldownState = function() return false end,
-        ResolveAuraStateForIcon = function() return nil end,
-        ResolveAuraDurationObjectForIcon = function() return nil end,
         IsAuraEntry = function(entry) return entry and entry.kind == "aura" end,
-        GetChargeMetadataDB = function() return nil end,
-        IsItemLikeEntry = function() return false end,
-        ResolveItemCooldownIdentity = function() return nil end,
-        ResolveEntryItemID = function() return nil end,
-        ClassifySpellCooldownState = function() return nil end,
         ResolveSpellActiveState = function() return nil end,
         ResolveCooldownActivityState = function()
             return {
@@ -115,7 +103,13 @@ local ns = {
                 hasCharges = false,
             }
         end,
-        ResolveIconDurationObject = function() return nil, "inactive", nil end,
+        ResolveCooldownState = function()
+            return {
+                mode = "inactive",
+                active = false,
+                isActive = false,
+            }
+        end,
     },
     CDMIconFactory = {
         _iconPools = {},
@@ -123,8 +117,16 @@ local ns = {
         _FinalizeImports = noop,
         AcquireIcon = noop,
         ReleaseIcon = noop,
+        GetIconPool = function(self, viewerType)
+            return self._iconPools[viewerType] or {}
+        end,
+        EnsurePool = function(self, viewerType)
+            if not self._iconPools[viewerType] then
+                self._iconPools[viewerType] = {}
+            end
+            return self._iconPools[viewerType]
+        end,
         SyncCooldownBling = noop,
-        UpdateIconCooldown = noop,
     },
     CDMRuntimeStore = {
         SetIconState = noop,
@@ -140,30 +142,32 @@ local ns = {
     },
 }
 
+dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
-icons:EnsurePool("essential")
-local pool = icons:GetIconPool("essential")
+local factory = assert(ns.CDMIconFactory, "CDMIconFactory should be exported")
+factory:EnsurePool("essential")
+local pool = factory:GetIconPool("essential")
 local first = makeIcon(33333)
 local second = makeIcon(44444)
 pool[#pool + 1] = first
 pool[#pool + 1] = second
 
-icons.EventFrameOnEvent({}, "SPELL_RANGE_CHECK_UPDATE", 33333, false, true)
+icons.HandleRuntimeRefresh("SPELL_RANGE_CHECK_UPDATE", 33333, false, true)
 
 local firstColor = first.vertexColors[#first.vertexColors]
 assert(firstColor and firstColor[1] == 0.8 and firstColor[2] == 0.1 and firstColor[3] == 0.1,
     "range update event should tint matching out-of-range spell")
 assert(#second.vertexColors == 0, "range update event should not repaint unrelated spells")
 
-icons.EventFrameOnEvent({}, "SPELL_RANGE_CHECK_UPDATE", 33333, true, true)
+icons.HandleRuntimeRefresh("SPELL_RANGE_CHECK_UPDATE", 33333, true, true)
 
 firstColor = first.vertexColors[#first.vertexColors]
 assert(firstColor and firstColor[1] == 1 and firstColor[2] == 1 and firstColor[3] == 1,
     "range update event should clear range tint when the spell returns in range")
 
-icons.EventFrameOnEvent({}, "SPELL_RANGE_CHECK_UPDATE", 33333, false, false)
+icons.HandleRuntimeRefresh("SPELL_RANGE_CHECK_UPDATE", 33333, false, false)
 
 firstColor = first.vertexColors[#first.vertexColors]
 assert(firstColor and firstColor[1] == 1 and firstColor[2] == 1 and firstColor[3] == 1,

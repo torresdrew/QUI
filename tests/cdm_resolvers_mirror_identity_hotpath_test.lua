@@ -52,10 +52,11 @@ local ns = {
     },
 }
 
+assert(loadfile("modules/cdm/cdm_runtime_queries.lua"))("QUI", ns)
 assert(loadfile("modules/cdm/cdm_resolvers.lua"))("QUI", ns)
 
-local resolveIdentity = assert(ns.CDMResolvers.ResolveBlizzardMirrorIdentity,
-    "shared mirror identity resolver was not exported")
+local resolveIdentityState = assert(ns.CDMResolvers.ResolveBlizzardMirrorIdentityState,
+    "shared mirror identity state resolver was not exported")
 
 local entries = {
     {
@@ -81,7 +82,8 @@ local entries = {
 
 for i = 1, 100 do
     local entry = entries[(i - 1) % #entries + 1]
-    assert(resolveIdentity(entry))
+    local identity = assert(resolveIdentityState(entry))
+    assert(identity.cooldownID)
 end
 
 collectgarbage("collect")
@@ -90,7 +92,8 @@ collectgarbage("stop")
 
 for i = 1, 10000 do
     local entry = entries[(i - 1) % #entries + 1]
-    assert(resolveIdentity(entry))
+    local identity = assert(resolveIdentityState(entry))
+    assert(identity.cooldownID)
 end
 
 local after = collectgarbage("count")

@@ -33,6 +33,15 @@ local function IsCDMRuntimeEnabled()
     return not Shared or Shared.IsRuntimeEnabled()
 end
 
+local FALLBACK_BUILTIN_COOLDOWN_CONTAINER_KEYS = { "essential", "utility" }
+
+local function GetBuiltinCooldownContainerKeys()
+    if Shared and Shared.GetBuiltinContainerKeysByEntryKind then
+        return Shared.GetBuiltinContainerKeysByEntryKind("cooldown")
+    end
+    return FALLBACK_BUILTIN_COOLDOWN_CONTAINER_KEYS
+end
+
 ---------------------------------------------------------------------------
 -- ADDON_LOADED / PLAYER_ENTERING_WORLD safe window flag: during a combat
 -- /reload, InCombatLockdown() returns true but protected calls are still
@@ -1004,36 +1013,40 @@ end
 ---------------------------------------------------------------------------
 -- BUILT-IN CONTAINER KEYS (ordered)
 ---------------------------------------------------------------------------
-local BUILTIN_KEYS = { "essential", "utility", "buff", "trackedBar" }
+local BUILTIN_KEYS = Shared and Shared.BUILTIN_CONTAINER_KEYS
+    or { "essential", "utility", "buff", "trackedBar" }
 
-local BUILTIN_NAMES = {
-    essential  = "Essential",
-    utility    = "Utility",
-    buff       = "Buff Icons",
-    trackedBar = "Buff Bars",
-}
+local BUILTIN_NAMES = Shared and Shared.BUILTIN_CONTAINER_LABELS
+    or {
+        essential  = "Essential",
+        utility    = "Utility",
+        buff       = "Buff Icons",
+        trackedBar = "Buff Bars",
+    }
 
 -- Legacy 4-value taxonomy. Kept for backward-compat reads on profiles where
 -- the v33 schema bump has not yet stamped db.shape. New code should use
 -- BUILTIN_SHAPES + GetContainerShape (shape-only) and CDMSpellData.ResolveEntryKind
 -- (entry-only) instead.
-local BUILTIN_CONTAINER_TYPES = {
-    essential  = "cooldown",
-    utility    = "cooldown",
-    buff       = "aura",
-    trackedBar = "auraBar",
-}
+local BUILTIN_CONTAINER_TYPES = Shared and Shared.BUILTIN_CONTAINER_TYPES
+    or {
+        essential  = "cooldown",
+        utility    = "cooldown",
+        buff       = "aura",
+        trackedBar = "auraBar",
+    }
 
 -- Shape is a layout/render concern — does the container draw icons or
 -- StatusBars. Independent of whether entries are auras or cooldowns.
 -- Only trackedBar is a true StatusBar today (real bar mirror); essential,
 -- utility, buff, and migrated customBar containers all render as icons.
-local BUILTIN_SHAPES = {
-    essential  = "icon",
-    utility    = "icon",
-    buff       = "icon",
-    trackedBar = "bar",
-}
+local BUILTIN_SHAPES = Shared and Shared.BUILTIN_CONTAINER_SHAPES
+    or {
+        essential  = "icon",
+        utility    = "icon",
+        buff       = "icon",
+        trackedBar = "bar",
+    }
 
 ---------------------------------------------------------------------------
 -- Resolve container shape ("icon" or "bar") for a given container key.
@@ -1042,6 +1055,10 @@ local BUILTIN_SHAPES = {
 ---------------------------------------------------------------------------
 local function GetContainerShape(viewerType)
     if not viewerType then return "icon" end
+
+    if Shared and Shared.GetContainerShape then
+        return Shared.GetContainerShape(viewerType)
+    end
 
     local db = ns.Addon and ns.Addon.db and ns.Addon.db.profile
     local cDB
@@ -1057,8 +1074,11 @@ local function GetContainerShape(viewerType)
         if s == "icon" or s == "bar" then return s end
     end
 
-    if BUILTIN_SHAPES[viewerType] then
-        return BUILTIN_SHAPES[viewerType]
+    local builtinShape = Shared and Shared.GetBuiltinContainerShape
+        and Shared.GetBuiltinContainerShape(viewerType)
+        or BUILTIN_SHAPES[viewerType]
+    if builtinShape then
+        return builtinShape
     end
 
     if cDB and cDB.containerType == "auraBar" then
@@ -1083,8 +1103,8 @@ local function ShouldDeferContainerLayoutInCombat(trackerKey, settings)
         return true
     end
 
-    -- Clickable custom bars wire SecureActionButton children on each icon
-    -- (see UpdateIconSecureAttributes); reflowing in combat would taint.
+    -- Clickable custom bars wire SecureActionButton children on each icon;
+    -- reflowing them in combat would taint.
     -- Non-clickable custom cooldown bars are addon-owned with no secure
     -- attributes, so they may relayout in combat — required for filter
     -- flips (Mana Tea becoming usable, etc.) to collapse the bar without
@@ -1330,8 +1350,8 @@ function CDMContainers_API:CreateContainer(name, containerType)
     settings.pos = { ox = 0, oy = 0 }
 
     -- Register icon pool for the new container
-    if ns.CDMIcons then
-        ns.CDMIcons:EnsurePool(key)
+    if ns.CDMIconFactory then
+        ns.CDMIconFactory:EnsurePool(key)
     end
 
     -- Register layout mode element dynamically
@@ -1379,8 +1399,8 @@ function CDMContainers_API:DeleteContainer(containerKey)
     end
 
     -- Release icon pool
-    if ns.CDMIcons then
-        ns.CDMIcons:ClearPool(containerKey)
+    if ns.CDMIconFactory then
+        ns.CDMIconFactory:ClearPool(containerKey)
     end
 
     -- Unregister layout mode element
@@ -1793,8 +1813,8 @@ local function InitContainers()
                 local frame = RegisterContainerFrame(key, CreateContainer(frameName))
                 InitContainerPosition(frame, key)
                 -- Ensure icon pool exists
-                if ns.CDMIcons then
-                    ns.CDMIcons:EnsurePool(key)
+                if ns.CDMIconFactory then
+                    ns.CDMIconFactory:EnsurePool(key)
                 end
                 -- Register frame resolver so the anchoring system can find
                 -- this container (hideWithParent, anchor chains, etc.)
@@ -1920,19 +1940,19 @@ local function SyncClickButtonForVisibility(icon, viewerType, hidden)
     if button.SetMouseMotionEnabled then
         button:SetMouseMotionEnabled(true)
     end
-    if ns.CDMIcons and ns.CDMIcons.UpdateIconSecureAttributes then
-        ns.CDMIcons.UpdateIconSecureAttributes(icon, icon._spellEntry, viewerType)
+    if ns.CDMIcons and ns.CDMIcons.OnContainerIconInteractionRestored then
+        ns.CDMIcons.OnContainerIconInteractionRestored(icon, viewerType)
     end
     icon._quiClickButtonSuppressed = nil
     icon._pendingVisibilityMouseSync = nil
 end
 
 local function SyncContainerIconsForVisibility(containerKey, hidden, hoverOnly)
-    if not ns.CDMIcons or not ns.CDMIcons.GetIconPool then
+    if not ns.CDMIconFactory or not ns.CDMIconFactory.GetIconPool then
         return
     end
 
-    local pool = ns.CDMIcons:GetIconPool(containerKey) or {}
+    local pool = ns.CDMIconFactory:GetIconPool(containerKey) or {}
     for _, icon in ipairs(pool) do
         if hidden then
             if hoverOnly then
@@ -2140,7 +2160,7 @@ local function LayoutContainer(trackerKey)
         end
         local fingerprint = table.concat(parts, ",")
 
-        local currentPool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff") or {}
+        local currentPool = ns.CDMIconFactory and ns.CDMIconFactory:GetIconPool("buff") or {}
         if fingerprint == (buffFingerprint or "") and #currentPool > 0 then
             -- Same buff set -- skip destructive rebuild
             applying[trackerKey] = false
@@ -2207,7 +2227,7 @@ local function LayoutContainer(trackerKey)
     else
         dynamicLayoutEnabled = settings.dynamicLayout ~= false
     end
-    local ComputeFilterHides = ns.CDMIcons and ns.CDMIcons.ComputeFilterHides
+    local ShouldPlaceLayoutIcon = ns.CDMIcons and ns.CDMIcons.ShouldContainerLayoutPlaceIcon
     local iconsToLayout = {}
     for i = 1, math.min(#allIcons, totalCapacity) do
         local icon = allIcons[i]
@@ -2238,17 +2258,11 @@ local function LayoutContainer(trackerKey)
         -- becoming usable, etc.) trigger a re-anchor instead of waiting
         -- for PLAYER_REGEN_ENABLED.
         if not skipIcon and not editModeActive
-           and dynamicLayoutEnabled and ComputeFilterHides then
+           and dynamicLayoutEnabled and ShouldPlaceLayoutIcon then
             local entry = icon._spellEntry
             if entry then
-                local isOnCD = icon._hasCooldownActive or false
                 local inCombatNow = UnitAffectingCombat and UnitAffectingCombat("player") or false
-                local filterHides = ComputeFilterHides(icon, entry, settings, inCombatNow, isOnCD)
-                if _G.QUI_CDM_ICON_DEBUG and ns.CDMIcons and ns.CDMIcons.DebugLayoutFilter then
-                    ns.CDMIcons.DebugLayoutFilter(icon, filterHides, settings, isOnCD)
-                end
-                icon._lastLayoutFilterHidden = filterHides and true or false
-                if filterHides then
+                if not ShouldPlaceLayoutIcon(icon, entry, settings, inCombatNow) then
                     icon:Hide()
                     icon:ClearAllPoints()
                     skipIcon = true
@@ -2306,8 +2320,6 @@ local function LayoutContainer(trackerKey)
         local x = placement.x
         local y = placement.y
 
-        ns.CDMIcons.ConfigureIcon(icon, rowConfig)
-
         if icon.GetScale and icon:GetScale() ~= 1 then
             icon:SetScale(1)
         end
@@ -2320,7 +2332,7 @@ local function LayoutContainer(trackerKey)
         icon:SetPoint("CENTER", container, "CENTER", x, y)
         icon:Show()
 
-        ns.CDMIcons.UpdateIconCooldown(icon)
+        ns.CDMIcons.OnContainerIconPlaced(icon, rowConfig)
     end
 
     local metrics = layoutPlan.metrics
@@ -2730,7 +2742,7 @@ local function DisableMouseForEditMode(viewerType)
     _disabledMouseFrames[container] = "container"
 
     -- Disable mouse on all icons/bars in this pool
-    local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool(viewerType) or {}
+    local pool = ns.CDMIconFactory and ns.CDMIconFactory:GetIconPool(viewerType) or {}
     for _, icon in ipairs(pool) do
         icon:EnableMouse(false)
         _disabledMouseFrames[icon] = "icon"
@@ -2761,16 +2773,18 @@ local function RestoreMouseAfterEditMode()
     end
     wipe(_disabledMouseFrames)
 
-    -- Re-enable click-to-cast buttons for essential/utility icons
-    if not InCombatLockdown() and ns.CDMIcons then
-        for _, viewerType in ipairs({"essential", "utility"}) do
-            local pool = ns.CDMIcons:GetIconPool(viewerType) or {}
+    -- Re-enable click-to-cast buttons for built-in cooldown icons.
+    if not InCombatLockdown() and ns.CDMIconFactory then
+        for _, viewerType in ipairs(GetBuiltinCooldownContainerKeys()) do
+            local pool = ns.CDMIconFactory:GetIconPool(viewerType) or {}
             for _, icon in ipairs(pool) do
                 if icon.clickButton then
                     icon.clickButton:EnableMouse(true)
                 end
-                -- Refresh secure attributes (may have been pending)
-                ns.CDMIcons.UpdateIconSecureAttributes(icon, icon._spellEntry, viewerType)
+                -- Notify the icon runtime that container interaction is live again.
+                if ns.CDMIcons.OnContainerIconInteractionRestored then
+                    ns.CDMIcons.OnContainerIconInteractionRestored(icon, viewerType)
+                end
             end
         end
     end
@@ -2782,7 +2796,7 @@ end
 -- The 0.5s ticker also sets alpha 1 during edit mode, but this
 -- provides immediate visibility without waiting for the next tick.
 local function ForceBuffIconsVisible()
-    local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff") or {}
+    local pool = ns.CDMIconFactory and ns.CDMIconFactory:GetIconPool("buff") or {}
     for _, icon in ipairs(pool) do
         icon:SetAlpha(1)
         icon:Show()
@@ -3494,10 +3508,10 @@ function ownedEngine:GetIconState(icon)
 end
 
 function ownedEngine:ClearIconState(icon)
-    -- No external state table for owned icons; release handled by CDMIcons
+    -- No external state table for owned icons; release handled by CDMIconFactory.
     if not icon then return end
-    if ns.CDMIcons then
-        ns.CDMIcons:ReleaseIcon(icon)
+    if ns.CDMIconFactory then
+        ns.CDMIconFactory:ReleaseIcon(icon)
     end
 end
 

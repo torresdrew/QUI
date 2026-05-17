@@ -8,17 +8,30 @@ local function readAll(path)
     return text
 end
 
-local src = readAll("modules/cdm/cdm_icons.lua")
+local icons = readAll("modules/cdm/cdm_icons.lua")
+local factory = readAll("modules/cdm/cdm_icon_factory.lua")
 
-assert(not src:find("iconPools%[viewerType%]%s*=%s*{}", 1),
+assert(not icons:find("function CDMIcons:GetIconPool", 1, true),
+    "CDMIcons should not expose icon pool lookup")
+assert(not icons:find("function CDMIcons:EnsurePool", 1, true),
+    "CDMIcons should not expose icon pool creation")
+assert(not icons:find("function CDMIcons:ClearPool", 1, true),
+    "CDMIcons should not expose icon pool release")
+assert(factory:find("function CDMIconFactory:GetIconPool", 1, true),
+    "CDMIconFactory should own icon pool lookup")
+assert(factory:find("function CDMIconFactory:EnsurePool", 1, true),
+    "CDMIconFactory should own icon pool creation")
+assert(factory:find("function CDMIconFactory:ClearPool", 1, true),
+    "CDMIconFactory should own icon pool release")
+assert(factory:find("wipe(pool)", factory:find("function CDMIconFactory:ClearPool", 1, true), true),
     "ClearPool should wipe and reuse the existing viewer pool table instead of replacing it")
-assert(src:find("BuildIconListSignature", 1, true),
+assert(icons:find("BuildIconListSignature", 1, true),
     "BuildIcons should compute a stable icon list signature")
-assert(src:find("_lastBuildSignature", 1, true),
+assert(icons:find("_lastBuildSignature", 1, true),
     "BuildIcons should store the last icon list signature on the container")
-assert(src:find("_lastBuildPool", 1, true),
+assert(icons:find("_lastBuildPool", 1, true),
     "BuildIcons should keep the last unchanged pool for signature hits")
-assert(src:find("_assignedRow", src:find("local function AppendEntrySignature", 1, true), true),
+assert(icons:find("_assignedRow", icons:find("local function AppendEntrySignature", 1, true), true),
     "BuildIcons signature must include assigned rows so spec/loadout restores rebind icons when only row placement changes")
 
 print("OK: cdm_icons_pool_static_test")

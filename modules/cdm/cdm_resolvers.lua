@@ -142,11 +142,6 @@ _runtimeFrame:SetScript("OnEvent", function(_, evt, arg1, arg2, arg3)
     end
 end)
 
--- Forward reference to ns.CDMIcons. Bound by _FinalizeImports() at the
--- end of cdm_icons.lua's load. Cannot be `local CDMIcons = ns.CDMIcons`
--- here because cdm_resolvers.lua loads before cdm_icons.lua per cdm.xml.
-local CDMIcons
-
 local function IsSafeNumeric(val)
     return Shared and Shared.IsSafeNumeric(val) or type(val) == "number"
 end
@@ -170,277 +165,145 @@ end
 
 local GCD_MAX_DURATION = 1.75
 local GCD_SPELL_ID = 61304
+local WoW_IsSecretValue = issecretvalue
 
----------------------------------------------------------------------------
--- RUNTIME RESOLUTION QUERIES
--- These functions used to keep short-lived per-tick caches. They now query
--- Blizzard C APIs fresh on every call; the exported names are kept stable for
--- the existing icon/bar resolver call sites.
----------------------------------------------------------------------------
--- Persistent multi-charge spell cache (survives combat/reload via SavedVariables).
--- Populated OOC when GetSpellCharges returns readable values; consulted in combat
--- when secret values block runtime detection.
-local function GetChargeMetadataDB()
-    local db = QUI and QUI.db and QUI.db.global
-    if not db then return nil end
-    if not db.cdmChargeSpells then db.cdmChargeSpells = {} end
-    return db.cdmChargeSpells
+local function ResolverIsSecretValue(value)
+    if WoW_IsSecretValue then
+        return WoW_IsSecretValue(value)
+    end
+    return false
 end
-CDMResolvers.GetChargeMetadataDB = GetChargeMetadataDB  -- consumed by cdm_icons.lua via upvalue alias
 
-local WipeTable = wipe
-if not WipeTable then
-    WipeTable = function(tbl)
-        for key in pairs(tbl) do
-            tbl[key] = nil
+function CDMResolvers.GetCooldownInfoField(info, key)
+    -- Returns (value, isSecret). Combat-restricted fields may be secret when
+    -- the Blizzard CDM feed is active; callers may pass the raw value to safe
+    -- C-side sinks but must not compare it in Lua when isSecret is true.
+    if not info then return nil, false end
+    local value = info[key]
+    if value == nil then return nil, false end
+    if ResolverIsSecretValue(value) then
+        return value, true
+    end
+    return value, false
+end
+
+function CDMResolvers.GetCooldownInfoStartDuration(info)
+    local start, startSecret = CDMResolvers.GetCooldownInfoField(info, "startTime")
+    if start == nil and not startSecret then
+        start, startSecret = CDMResolvers.GetCooldownInfoField(info, "start")
+    end
+    local duration, durationSecret = CDMResolvers.GetCooldownInfoField(info, "duration")
+    return start, duration, startSecret or durationSecret
+end
+
+function CDMResolvers.IsCooldownInfoActive(info)
+    local active, activeSecret = CDMResolvers.GetCooldownInfoField(info, "isActive")
+    if activeSecret then return nil end
+    if type(active) == "boolean" then
+        return active
+    end
+    return nil
+end
+
+function CDMResolvers.IsCooldownInfoRealCooldown(info)
+    if not info then return false end
+
+    local active = CDMResolvers.IsCooldownInfoActive(info)
+    if active == false then
+        return false
+    end
+
+    local enabled = CDMResolvers.GetCooldownInfoField(info, "isEnabled")
+    if enabled == false then
+        return false
+    end
+
+    local start, duration, timingSecret = CDMResolvers.GetCooldownInfoStartDuration(info)
+    if not timingSecret and IsSafeNumeric(duration) then
+        if duration <= GCD_MAX_DURATION then
+            return false
+        end
+        if IsSafeNumeric(start) and start <= 0 then
+            return false
+        end
+        if active == true then
+            return true
         end
     end
-end
 
-local NIL_SENTINEL = {}
-local _runtimeQueryBatchDepth = 0
-local _runtimeCooldownCache = {}
-local _runtimeChargeCache = {}
-local _runtimeDurationCache = {}
-local _runtimeGCDDurationCache = {}
-local _runtimeChargeDurationCache = {}
-local _runtimeOverrideCache = {}
-local _runtimeDisplayCountCache = {}
-local _runtimeSpellCountCache = {}
-local _runtimeQueryStats = {
-    batches = 0,
-    cooldownSource = 0,
-    cooldownHits = 0,
-    chargeSource = 0,
-    chargeHits = 0,
-    durationSource = 0,
-    durationHits = 0,
-    chargeDurationSource = 0,
-    chargeDurationHits = 0,
-    overrideSource = 0,
-    overrideHits = 0,
-    displayCountSource = 0,
-    displayCountHits = 0,
-    spellCountSource = 0,
-    spellCountHits = 0,
-}
-
-do
-    local mp = ns._memprobes or {}; ns._memprobes = mp
-    mp[#mp + 1] = { name = "CDM_queryCacheBatches", counter = true, fn = function() return _runtimeQueryStats.batches end }
-    mp[#mp + 1] = { name = "CDM_queryCacheSource", counter = true, fn = function()
-        return _runtimeQueryStats.cooldownSource
-            + _runtimeQueryStats.chargeSource
-            + _runtimeQueryStats.durationSource
-            + _runtimeQueryStats.chargeDurationSource
-            + _runtimeQueryStats.overrideSource
-            + _runtimeQueryStats.displayCountSource
-            + _runtimeQueryStats.spellCountSource
-    end }
-    mp[#mp + 1] = { name = "CDM_queryCacheHits", counter = true, fn = function()
-        return _runtimeQueryStats.cooldownHits
-            + _runtimeQueryStats.chargeHits
-            + _runtimeQueryStats.durationHits
-            + _runtimeQueryStats.chargeDurationHits
-            + _runtimeQueryStats.overrideHits
-            + _runtimeQueryStats.displayCountHits
-            + _runtimeQueryStats.spellCountHits
-    end }
-end
-
-local function ClearRuntimeQueryCaches()
-    WipeTable(_runtimeCooldownCache)
-    WipeTable(_runtimeChargeCache)
-    WipeTable(_runtimeDurationCache)
-    WipeTable(_runtimeGCDDurationCache)
-    WipeTable(_runtimeChargeDurationCache)
-    WipeTable(_runtimeOverrideCache)
-    WipeTable(_runtimeDisplayCountCache)
-    WipeTable(_runtimeSpellCountCache)
-end
-
-function CDMResolvers.BeginRuntimeQueryBatch()
-    if _runtimeQueryBatchDepth == 0 then
-        ClearRuntimeQueryCaches()
-        _runtimeQueryStats.batches = _runtimeQueryStats.batches + 1
+    local activeCategory, categorySecret = CDMResolvers.GetCooldownInfoField(info, "activeCategory")
+    if categorySecret then
+        return nil
     end
-    _runtimeQueryBatchDepth = _runtimeQueryBatchDepth + 1
-end
-
-function CDMResolvers.EndRuntimeQueryBatch()
-    if _runtimeQueryBatchDepth <= 0 then
-        ClearRuntimeQueryCaches()
-        _runtimeQueryBatchDepth = 0
-        return
+    if activeCategory ~= nil then
+        return true
     end
 
-    _runtimeQueryBatchDepth = _runtimeQueryBatchDepth - 1
-    if _runtimeQueryBatchDepth == 0 then
-        ClearRuntimeQueryCaches()
+    local startRecovery, recoverySecret =
+        CDMResolvers.GetCooldownInfoField(info, "timeUntilEndOfStartRecovery")
+    if not recoverySecret and IsSafeNumeric(startRecovery) and startRecovery > 0 then
+        return false
+    elseif startRecovery ~= nil and not timingSecret and not recoverySecret then
+        return false
     end
-end
-
-function CDMResolvers.ResetRuntimeQueryBatch()
-    _runtimeQueryBatchDepth = 0
-    ClearRuntimeQueryCaches()
-end
-
-local function ReadRuntimeCache(cache, key, hitStat)
-    if _runtimeQueryBatchDepth <= 0 then return nil, false end
-    local cached = cache[key]
-    if cached ~= nil then
-        _runtimeQueryStats[hitStat] = _runtimeQueryStats[hitStat] + 1
-        if cached == NIL_SENTINEL then
-            return nil, true
-        end
-        return cached, true
+    if recoverySecret or timingSecret then
+        return nil
     end
-    return nil, false
+
+    return false
 end
 
-local function StoreRuntimeCache(cache, key, value, sourceStat)
-    if _runtimeQueryBatchDepth <= 0 then return value end
-    cache[key] = value == nil and NIL_SENTINEL or value
-    _runtimeQueryStats[sourceStat] = _runtimeQueryStats[sourceStat] + 1
-    return value
-end
+local GetCooldownInfoField = CDMResolvers.GetCooldownInfoField
+local IsCooldownInfoActive = CDMResolvers.IsCooldownInfoActive
+local IsCooldownInfoRealCooldown = CDMResolvers.IsCooldownInfoRealCooldown
 
--- Source-facade passthroughs. Calls remain live reads outside an explicit
--- runtime batch. CDM icon/bar refresh passes open a short batch so repeated
--- reads of C APIs that allocate result tables share one payload per spell.
-function CDMResolvers.QueryCharges(spellID)
-    if not spellID then return nil end
-    local cached, found = ReadRuntimeCache(_runtimeChargeCache, spellID, "chargeHits")
-    if found then return cached end
+local RuntimeQueries = ns.CDMRuntimeQueries
 
-    local chargeInfo = nil
-    if Sources and Sources.QuerySpellCharges then
-        chargeInfo = Sources.QuerySpellCharges(spellID)
-    end
-    -- Persist multi-charge detection OOC for combat fallback.
-    -- Also clean up stale cache entries when API returns no charges or <= 1.
-    if not InCombatLockdown() then
-        if chargeInfo then
-            local maxC = chargeInfo.maxCharges
-            if maxC and maxC > 1 then
-                local svDB = GetChargeMetadataDB()
-                if svDB then svDB[spellID] = maxC end
-            elseif maxC then
-                -- API returned readable maxCharges <= 1 — remove stale cache
-                local svDB = GetChargeMetadataDB()
-                if svDB and svDB[spellID] then svDB[spellID] = nil end
-            end
-        else
-            -- API returned nil = no charge mechanic — remove stale cache
-            local svDB = GetChargeMetadataDB()
-            if svDB and svDB[spellID] then svDB[spellID] = nil end
-        end
-    end
-    return StoreRuntimeCache(_runtimeChargeCache, spellID, chargeInfo, "chargeSource")
-end
-
-function CDMResolvers.QueryCooldown(spellID)
-    if not spellID then return nil end
-    local cached, found = ReadRuntimeCache(_runtimeCooldownCache, spellID, "cooldownHits")
-    if found then return cached end
-
-    local info
-    if Sources and Sources.QuerySpellCooldown then
-        info = Sources.QuerySpellCooldown(spellID)
-    end
-    return StoreRuntimeCache(_runtimeCooldownCache, spellID, info, "cooldownSource")
-end
-
-local function QueryCooldownDuration(spellID, ignoreGCD)
-    if not spellID then return nil end
-    local cache = ignoreGCD and _runtimeDurationCache or _runtimeGCDDurationCache
-    local cached, found = ReadRuntimeCache(cache, spellID, "durationHits")
-    if found then return cached end
-
-    local durObj
-    if Sources and Sources.QuerySpellCooldownDuration then
-        durObj = Sources.QuerySpellCooldownDuration(spellID, ignoreGCD and true or false)
-    end
-    return StoreRuntimeCache(cache, spellID, durObj, "durationSource")
-end
-
-function CDMResolvers.QueryDuration(spellID)
-    if not spellID then return nil end
-    -- ignoreGCD=true: return the spell's own cooldown DurationObject
-    -- even during the GCD, so the icon swipe tracks the spell's real
-    -- cooldown instead of the 1.5s GCD sweep that masks it.
-    return QueryCooldownDuration(spellID, true)
-end
-
-function CDMResolvers.QueryChargeDuration(spellID)
-    if not spellID then return nil end
-    local cached, found = ReadRuntimeCache(_runtimeChargeDurationCache, spellID, "chargeDurationHits")
-    if found then return cached end
-
-    local durObj
-    if Sources and Sources.QuerySpellChargeDuration then
-        durObj = Sources.QuerySpellChargeDuration(spellID)
-    end
-    return StoreRuntimeCache(_runtimeChargeDurationCache, spellID, durObj, "chargeDurationSource")
-end
-
-function CDMResolvers.QueryOverrideSpell(spellID)
-    if not spellID then return nil end
-    local cached, found = ReadRuntimeCache(_runtimeOverrideCache, spellID, "overrideHits")
-    if found then return cached end
-
-    local overrideID
-    if Sources and Sources.QueryOverrideSpell then
-        overrideID = Sources.QueryOverrideSpell(spellID)
-    end
-    return StoreRuntimeCache(_runtimeOverrideCache, spellID, overrideID, "overrideSource")
-end
-
-function CDMResolvers.QueryDisplayCount(spellID)
-    if not spellID then return nil end
-    local cached, found = ReadRuntimeCache(_runtimeDisplayCountCache, spellID, "displayCountHits")
-    if found then return cached end
-
-    local count
-    if Sources and Sources.QuerySpellDisplayCount then
-        count = Sources.QuerySpellDisplayCount(spellID)
-    end
-    return StoreRuntimeCache(_runtimeDisplayCountCache, spellID, count, "displayCountSource")
-end
-
-function CDMResolvers.QuerySpellCount(spellID)
-    if not spellID then return nil end
-    local cached, found = ReadRuntimeCache(_runtimeSpellCountCache, spellID, "spellCountHits")
-    if found then return cached end
-
-    local count
-    if Sources and Sources.QuerySpellCount then
-        count = Sources.QuerySpellCount(spellID)
-    end
-    return StoreRuntimeCache(_runtimeSpellCountCache, spellID, count, "spellCountSource")
-end
-
--- Upvalue aliases so resolver functions below can call QueryX(spellID)
--- bare instead of CDMResolvers.QueryX(spellID). Must come after the
--- function definitions above; the QueryX getters are attached to CDMResolvers
--- (not file-scoped locals) so without these aliases the bare references
--- earlier in the file resolve to nil globals.
-local QueryCharges        = CDMResolvers.QueryCharges
-local QueryCooldown       = CDMResolvers.QueryCooldown
-local QueryDuration       = CDMResolvers.QueryDuration
-local QueryChargeDuration = CDMResolvers.QueryChargeDuration
-local QueryOverrideSpell  = CDMResolvers.QueryOverrideSpell
-local QueryDisplayCount   = CDMResolvers.QueryDisplayCount
-local QuerySpellCount     = CDMResolvers.QuerySpellCount
+local QueryCharges        = RuntimeQueries.QueryCharges
+local QueryCooldown       = RuntimeQueries.QueryCooldown
+local QueryDuration       = RuntimeQueries.QueryDuration
+local QueryGCDDuration    = RuntimeQueries.QueryGCDDuration
+local QueryChargeDuration = RuntimeQueries.QueryChargeDuration
+local QueryOverrideSpell  = RuntimeQueries.QueryOverrideSpell
+local QueryDisplayCount   = RuntimeQueries.QueryDisplayCount
+local QuerySpellCount     = RuntimeQueries.QuerySpellCount
 
 
 -- IDENTITY RESOLVERS
 
-function CDMResolvers.IsItemLikeEntry(entry)
+local function IsItemLikeEntry(entry)
     return entry and (entry.type == "item" or entry.type == "trinket" or entry.type == "slot")
 end
 
-function CDMResolvers.ResolveItemCooldownIdentity(entry)
+local function QueryItemUseSpellID(itemID)
+    if not itemID then return nil end
+
+    if Sources and Sources.QueryItemSpell then
+        local _, spellID = Sources.QueryItemSpell(itemID)
+        if spellID then
+            return spellID
+        end
+    end
+
+    if Sources and Sources.QueryFirstTriggeredSpellForItem then
+        local itemQuality
+        if Sources.QueryItemQualityByID then
+            local quality = Sources.QueryItemQualityByID(itemID)
+            if quality ~= nil then
+                itemQuality = quality
+            end
+        end
+
+        local spellID = Sources.QueryFirstTriggeredSpellForItem(itemID, itemQuality)
+        if spellID then
+            return spellID
+        end
+    end
+
+    return nil
+end
+
+local function ResolveItemCooldownIdentity(entry)
     if not entry then return nil, nil, nil, nil end
 
     local itemID, slotID
@@ -461,23 +324,10 @@ function CDMResolvers.ResolveItemCooldownIdentity(entry)
 
     if not itemID then return nil, slotID, nil, nil end
 
-    local itemSpellID = CDMIcons.GetItemUseSpellID(itemID)
+    local itemSpellID = QueryItemUseSpellID(itemID)
     local keySource = slotID and (tostring(slotID) .. ":" .. tostring(itemID)) or tostring(itemID)
     return itemID, slotID, itemSpellID, keySource
 end
-
-function CDMResolvers.ResolveEntryItemID(entry)
-    if not entry then return nil end
-    if entry.type == "item" then
-        return entry.id
-    elseif entry.type == "trinket" or entry.type == "slot" then
-        if Sources and Sources.QueryInventoryItemID then
-            return Sources.QueryInventoryItemID("player", entry.id)
-        end
-    end
-    return nil
-end
-
 
 -- TEXTURE & MACRO RESOLVERS
 
@@ -589,23 +439,16 @@ end
 ---------------------------------------------------------------------------
 
 local function GetTrustedIsOnGCD(spellID)
-    if Helpers.IsSecretValue and Helpers.IsSecretValue(spellID) then
-        return nil
-    end
-    if CDMIcons and CDMIcons._trustIsOnGCDForBatch == true then
-        local trusted = CDMIcons._trustedGCDSpellState and spellID and CDMIcons._trustedGCDSpellState[spellID]
-        if type(trusted) == "boolean" then
-            return trusted
-        end
-    end
-    return nil
+    return RuntimeQueries and RuntimeQueries.GetTrustedIsOnGCD
+        and RuntimeQueries.GetTrustedIsOnGCD(spellID)
+        or nil
 end
 
 local function GetCooldownInfoBoolean(info, key)
-    if not info or not CDMIcons or not CDMIcons.GetCooldownInfoField then
+    if not info then
         return nil
     end
-    local value, isSecret = CDMIcons.GetCooldownInfoField(info, key)
+    local value, isSecret = GetCooldownInfoField(info, key)
     if isSecret then
         return nil
     end
@@ -626,10 +469,10 @@ end
 local function QueryGCDDurationObject(spellID)
     local durObj = nil
     if spellID then
-        durObj = QueryCooldownDuration(spellID, false)
+        durObj = QueryGCDDuration(spellID)
     end
     if not durObj and spellID ~= GCD_SPELL_ID then
-        durObj = QueryCooldownDuration(GCD_SPELL_ID, false)
+        durObj = QueryGCDDuration(GCD_SPELL_ID)
     end
     return durObj
 end
@@ -639,9 +482,6 @@ local function QuerySpellUsableState(spellID)
         return nil
     end
     local usable = Sources.QuerySpellUsable(spellID)
-    if Helpers and Helpers.SafeValue then
-        usable = Helpers.SafeValue(usable, nil)
-    end
     if type(usable) ~= "boolean" then
         usable = nil
     end
@@ -681,6 +521,14 @@ local function IsSupportedMirrorMode(mode)
         or mode == "inactive"
 end
 
+local function MirrorPayloadAllowsLiveChargeOverride(payload)
+    if not payload then
+        return false
+    end
+    return payload.mode == "gcd-only"
+        or payload.mode == "inactive"
+end
+
 local function IsChargeSpellNotRecharging(spellID, entry)
     local ci = QueryCharges(spellID)
     if not ci then
@@ -714,49 +562,14 @@ local function ResolveLiveChargeDurationObject(spellID, entry)
 
     local chargeDur = QueryChargeDuration(spellID)
     if chargeDur then
-        local serial = CDMIcons and CDMIcons._chargeDurationObjectSerial or 0
+        local serial = RuntimeQueries.GetChargeDurationObjectSerial()
         return chargeDur, "charge", tostring(spellID) .. ":" .. tostring(serial)
     end
 
     return nil, nil, nil
 end
 
-local function IconHasRealCooldownProof(icon)
-    if not icon then
-        return false
-    end
-    return icon._hasRealCooldownActive == true
-        or icon._showingRealCooldownSwipe == true
-        or icon._resolvedCooldownMode == "cooldown"
-        or icon._resolvedCooldownMode == "charge"
-        or icon._resolvedCooldownMode == "item-cooldown"
-end
-
-local function IsRealCooldownDurationMode(mode)
-    return mode == "cooldown"
-        or mode == "charge"
-        or mode == "item-cooldown"
-end
-
-local function GetPreservedRealDurationObject(icon)
-    if not icon or not icon._lastDurObj then
-        return nil
-    end
-
-    local key = icon._lastDurObjKey
-    if type(key) ~= "string" then
-        return nil
-    end
-
-    local mode, sourceID = key:match("^([^:]+):(.+)$")
-    if not IsRealCooldownDurationMode(mode) then
-        return nil
-    end
-
-    return icon._lastDurObj, mode, sourceID
-end
-
-local function ShouldTreatLiveDurationAsGCD(spellID, entry, icon, cdInfo, currentOnGCD, spellUsable)
+local function ShouldTreatLiveDurationAsGCD(spellID, entry, cdInfo, currentOnGCD, spellUsable)
     if currentOnGCD ~= true then
         return false
     end
@@ -766,240 +579,311 @@ local function ShouldTreatLiveDurationAsGCD(spellID, entry, icon, cdInfo, curren
     if spellUsable == true then
         return true
     end
-    if IconHasRealCooldownProof(icon) then
+    local realCooldown = IsCooldownInfoRealCooldown(cdInfo)
+    if realCooldown == true then
         return false
+    elseif realCooldown == false then
+        return true
     end
-    if CDMIcons and CDMIcons.IsCooldownInfoRealCooldown then
-        local realCooldown = CDMIcons.IsCooldownInfoRealCooldown(cdInfo)
-        if realCooldown == true then
-            return false
-        elseif realCooldown == false then
-            return true
-        end
-    end
-    -- State truly unknown from cdInfo. We have currentOnGCD == true and no
-    -- prior proof of a real CD (IconHasRealCooldownProof returned false).
-    -- Per the directive: trust isOnGCD == true → GCD swipe. The catalog
+    -- State truly unknown from cdInfo. Resolved cooldown state is factual and
+    -- does not consult renderer frame memory, so trust isOnGCD == true as a
+    -- GCD swipe. The catalog
     -- heuristic SpellHasBaseCooldownLongerThanGCD answers "could this spell
     -- ever have a real CD," not "is it on a real CD right now," and was
     -- misclassifying GCD pulses on spells that have a base CD entry.
     return true
 end
 
-function CDMResolvers.ClassifySpellCooldownState(spellID, info)
-    if not info and spellID then
-        info = QueryCooldown(spellID)
+function CDMResolvers.GetSpellCastInfo(spellID)
+    if not spellID or not UnitCastingInfo then return false end
+    local _, _, _, startMS, endMS, _, _, _, castSpellID = UnitCastingInfo("player")
+    if castSpellID and castSpellID == spellID and startMS and endMS then
+        return true, startMS / 1000, (endMS - startMS) / 1000, "cast"
     end
-
-    local active = CDMIcons.IsCooldownInfoActive(info)
-    local realActive = CDMIcons.IsCooldownInfoRealCooldown(info)
-    local onGCD = false
-    local currentOnGCD = GetCurrentIsOnGCD(spellID, info)
-    if currentOnGCD == true then
-        onGCD = true
-    end
-
-    -- When IsCooldownInfoRealCooldown couldn't decide (start/duration secret
-    -- or otherwise ambiguous), trust isOnGCD as the definitive signal per
-    -- the directive: active + isOnGCD==false is a real cooldown; active +
-    -- isOnGCD==true is a GCD swipe. The catalog heuristic
-    -- (SpellHasBaseCooldownLongerThanGCD) is banned because it answers a
-    -- category question, not a state question.
-    if realActive == nil and active == true then
-        local onGCD, onGCDSecret = CDMIcons.GetCooldownInfoField(info, "isOnGCD")
-        if onGCDSecret ~= true and type(onGCD) == "boolean" then
-            realActive = (onGCD == false)
-        end
-    end
-
-    if realActive == true and active ~= false then
-        active = true
-    end
-
-    return active, realActive, onGCD, info
+    return false
 end
 
-function CDMResolvers.HasRealCooldownState(icon, entry, duration, apiIsActive, blizzRealCooldownActive, durObj, runtimeSpellID)
-    if not icon or not entry then
-        return false
+function CDMResolvers.GetSpellChannelInfo(spellID)
+    if not spellID or not UnitChannelInfo then return false end
+    local _, _, _, startMS, endMS, _, _, channelSpellID = UnitChannelInfo("player")
+    if channelSpellID and channelSpellID == spellID and startMS and endMS then
+        return true, startMS / 1000, (endMS - startMS) / 1000, "channel"
     end
+    return false
+end
 
-    if icon._auraActive or CDMResolvers.IsAuraEntry(entry) then
-        return false
-    end
+function CDMResolvers.GetSpellBuffInfo(spellID, icon, entry)
+    if not spellID then return false end
 
-    if apiIsActive == false then
-        return false
-    end
-
-    if apiIsActive == true
-       and (icon._hasRealCooldownActive == true or icon._showingRealCooldownSwipe == true) then
-        return true
-    end
-
-    local chargeInfo = runtimeSpellID and QueryCharges(runtimeSpellID)
-    local maxCharges = chargeInfo and chargeInfo.maxCharges
-    if maxCharges and maxCharges > 1 then
-        return blizzRealCooldownActive == true
-            or durObj ~= nil
-    end
-
-    if blizzRealCooldownActive then
-        return true
-    end
-
-    if durObj and apiIsActive == true then
-        -- Trust isOnGCD as the per-event signal: apiIsActive == true with
-        -- isOnGCD == false is a real cooldown swipe; isOnGCD == true is a
-        -- GCD pulse. Catalog inference (SpellHasBaseCooldownLongerThanGCD)
-        -- is banned — it answers "could this spell ever have a CD," not
-        -- "is it on a real CD right now."
-        local resolvedSpellID = runtimeSpellID or entry.spellID or entry.overrideSpellID or entry.id
-        if resolvedSpellID then
-            local cdInfo = QueryCooldown(resolvedSpellID)
-            if cdInfo then
-                local onGCD, onGCDSecret = CDMIcons.GetCooldownInfoField(cdInfo, "isOnGCD")
-                if onGCDSecret ~= true and onGCD == false then
-                    return true
-                end
+    local scanner = QUI and QUI.SpellScanner
+    if scanner and scanner.IsSpellActive then
+        local active, expiration, duration = scanner.IsSpellActive(spellID)
+        if active then
+            if IsSafeNumeric(expiration) and IsSafeNumeric(duration) then
+                return true, expiration - duration, duration, "buff"
             end
+            return true, nil, nil, "buff"
+        end
+        if InCombatLockdown() then
+            return false
+        end
+    elseif InCombatLockdown() then
+        return false
+    end
+
+    if Sources and Sources.QueryPlayerAuraBySpellID then
+        local auraData = Sources.QueryPlayerAuraBySpellID(spellID)
+        if auraData then
+            local expiration = auraData.expirationTime
+            local duration = auraData.duration
+            if IsSafeNumeric(expiration) and IsSafeNumeric(duration) then
+                return true, expiration - duration, duration, "buff"
+            end
+            return true, nil, nil, "buff"
         end
     end
 
-    -- Real-CD authority is the resolver: line 808 (apiIsActive +
-    -- _hasRealCooldownActive stamped by ApplyResolvedCooldown), line 815-822
-    -- (charge / blizzRealCooldownActive), and line 824-840 (live cdInfo with
-    -- isOnGCD == false). Stale numeric fallbacks on icon._lastDuration /
-    -- icon._lastStart and on the `duration` parameter were removed: those
-    -- values are usually secret in 12.0+ (IsSafeNumeric returns false), and
-    -- when they are readable, claiming "real CD" from a stale duration after
-    -- the resolver has already classified the icon as gcd-only / inactive
-    -- caused the per-tick clear at cdm_icon_factory.lua line 1411 to revert
-    -- legitimate usability tints — visible flicker.
+    if icon and icon._auraActive then
+        return true, nil, nil, "buff"
+    end
+
     return false
 end
 
 function CDMResolvers.ResolveSpellActiveState(spellID, icon, entry)
     if not spellID then return false end
 
-    local active, start, duration, activeType = CDMIcons.GetSpellCastInfo(spellID)
+    local active, start, duration, activeType = CDMResolvers.GetSpellCastInfo(spellID)
     if active then return active, start, duration, activeType end
 
-    active, start, duration, activeType = CDMIcons.GetSpellChannelInfo(spellID)
+    active, start, duration, activeType = CDMResolvers.GetSpellChannelInfo(spellID)
     if active then return active, start, duration, activeType end
 
-    active, start, duration, activeType = CDMIcons.GetSpellBuffInfo(spellID, icon, entry)
+    active, start, duration, activeType = CDMResolvers.GetSpellBuffInfo(spellID, icon, entry)
     if active then return active, start, duration, activeType end
 
     local overrideID = QueryOverrideSpell(spellID)
     if overrideID and overrideID ~= spellID then
-        active, start, duration, activeType = CDMIcons.GetSpellCastInfo(overrideID)
+        active, start, duration, activeType = CDMResolvers.GetSpellCastInfo(overrideID)
         if active then return active, start, duration, activeType end
-        active, start, duration, activeType = CDMIcons.GetSpellChannelInfo(overrideID)
+        active, start, duration, activeType = CDMResolvers.GetSpellChannelInfo(overrideID)
         if active then return active, start, duration, activeType end
-        active, start, duration, activeType = CDMIcons.GetSpellBuffInfo(overrideID, icon, entry)
+        active, start, duration, activeType = CDMResolvers.GetSpellBuffInfo(overrideID, icon, entry)
         if active then return active, start, duration, activeType end
     end
 
     return false
 end
 
-function CDMResolvers.ResolveCooldownActivityState(icon, entry, containerDB, now)
-    local state = {
+local function NewCooldownActivityState(entry)
+    return {
         isOnCooldown = false,
         rechargeActive = false,
         hasChargesRemaining = false,
         -- Internal QUI metadata only; do not populate this from secret API
         -- charge predicates.
         hasCharges = entry and entry.hasCharges or false,
+        gcdOnly = false,
     }
+end
+
+local function ApplyStoredCooldownActivityState(state, storedState)
+    if not (state and storedState and storedState.mode) then
+        return false
+    end
+
+    local mode = storedState.mode
+    state.gcdOnly = storedState.gcdOnly == true or mode == "gcd-only"
+    if storedState.hasCharges ~= nil then
+        state.hasCharges = storedState.hasCharges == true
+    end
+    if mode == "charge" then
+        state.hasCharges = true
+    end
+
+    if storedState.isOnCooldown ~= nil
+       or storedState.rechargeActive ~= nil
+       or storedState.hasChargesRemaining ~= nil then
+        state.isOnCooldown = storedState.isOnCooldown == true
+        state.rechargeActive = storedState.rechargeActive == true
+        state.hasChargesRemaining = storedState.hasChargesRemaining == true
+        return true
+    end
+
+    if mode == "charge" then
+        state.rechargeActive = storedState.durObj ~= nil or storedState.active == true
+        state.isOnCooldown = storedState.active == true
+        state.hasChargesRemaining = state.rechargeActive == true
+            and state.isOnCooldown ~= true
+        return true
+    elseif mode == "cooldown" or mode == "item-cooldown" then
+        state.isOnCooldown = storedState.active == true
+        return true
+    elseif mode == "gcd-only" or mode == "aura" or mode == "inactive" then
+        return true
+    end
+
+    return false
+end
+
+local function ResolveActivityRuntimeSpellID(icon, entry)
+    if icon and icon._runtimeSpellID then
+        return icon._runtimeSpellID
+    end
+    if not entry then return nil, nil end
+
+    if entry.type == "macro" then
+        local resolvedID, resolvedType = CDMResolvers.ResolveMacro(entry)
+        if resolvedType == "spell" then
+            return resolvedID, resolvedType
+        end
+        return nil, resolvedType
+    end
+
+    return entry.spellID or entry.overrideSpellID or entry.id, nil
+end
+
+local function MarkKnownChargeSpell(state, spellID)
+    if not (state and spellID) or state.hasCharges then return end
+    local gdb = QUI and QUI.db and QUI.db.global
+    local svCharges = gdb and gdb.cdmChargeSpells
+    if svCharges and svCharges[spellID] then
+        state.hasCharges = true
+    end
+end
+
+local function ApplyResolvedCooldownActivityState(state, resolvedState)
+    if not (state and resolvedState and resolvedState.mode) then
+        return false
+    end
+
+    local mode = resolvedState.mode
+    state.gcdOnly = resolvedState.gcdOnly == true or mode == "gcd-only"
+    state.hasCharges = resolvedState.hasCharges == true
+        or state.hasCharges == true
+        or mode == "charge"
+
+    if resolvedState.isOnCooldown ~= nil
+        or resolvedState.rechargeActive ~= nil
+        or resolvedState.hasChargesRemaining ~= nil then
+        state.isOnCooldown = resolvedState.isOnCooldown == true
+        state.rechargeActive = resolvedState.rechargeActive == true
+        state.hasChargesRemaining = resolvedState.hasChargesRemaining == true
+        return true
+    elseif mode == "cooldown" or mode == "item-cooldown" then
+        state.isOnCooldown = resolvedState.active == true
+        return true
+    elseif mode == "charge" then
+        state.rechargeActive = resolvedState.durObj ~= nil
+            or resolvedState.active == true
+            or resolvedState.isActive == true
+        state.isOnCooldown = resolvedState.active == true
+        state.hasChargesRemaining = state.rechargeActive == true
+            and state.isOnCooldown ~= true
+        return true
+    elseif mode == "gcd-only" or mode == "aura" or mode == "inactive" then
+        return true
+    end
+
+    return false
+end
+
+function CDMResolvers.ResolveCooldownActivityStateFromResolvedState(entry, resolvedState)
+    local state = NewCooldownActivityState(entry)
+    if ApplyResolvedCooldownActivityState(state, resolvedState) then
+        return state
+    end
+    return nil
+end
+
+local _activityCooldownStateContextOptions = {
+    contextKey = "_activityCooldownStateContext",
+    mirrorIdentityPolicy = "frame-or-entry",
+}
+
+local function BuildActivityCooldownStateContext(icon, entry, containerDB, spellID, runtimeOptions)
+    if not (icon and entry) then return nil end
+
+    local options = _activityCooldownStateContextOptions
+    options.containerKey = (containerDB and containerDB.viewerType) or entry.viewerType
+    options.totemSlot = icon._totemSlot
+    options.useBuffSwipe = runtimeOptions and runtimeOptions.useBuffSwipe
+    options.skipAuraPhase = runtimeOptions and runtimeOptions.skipAuraPhase == true
+    options.showGCDSwipe = runtimeOptions and runtimeOptions.showGCDSwipe == true
+
+    return CDMResolvers.BuildCooldownStateContext(icon, entry, spellID, options)
+end
+
+local function ApplyChargeRuntimeFallback(state, entry, spellID, isItemLike)
+    if not (state and spellID) or isItemLike then
+        return
+    end
+
+    local ci = QueryCharges(spellID)
+    if ci then
+        local maxC = ci.maxCharges
+        if IsSafeNumeric(maxC) and maxC > 1 then
+            state.hasCharges = true
+        end
+    end
+
+    if not state.hasCharges then
+        return
+    end
+
+    local cdInfo = QueryCooldown(spellID)
+    local cooldownActive = cdInfo and IsCooldownInfoActive(cdInfo)
+    if cooldownActive == true then
+        state.rechargeActive = true
+        state.isOnCooldown = true
+        return
+    elseif cooldownActive == false then
+        -- Do not use SpellChargeInfo.currentCharges here. The charge info
+        -- payload can be restricted in combat; a readable "spell cooldown is
+        -- inactive" signal is enough to know the charged spell is not fully
+        -- locked out.
+        state.hasChargesRemaining = true
+        state.isOnCooldown = false
+    end
+
+    if ci then
+        local chargeActive = SafeBoolean(ci.isActive)
+        if chargeActive == true then
+            state.rechargeActive = true
+        end
+    end
+end
+
+function CDMResolvers.ResolveCooldownActivityState(icon, entry, containerDB, now, runtimeOptions)
+    local state = NewCooldownActivityState(entry)
     if not icon or not entry then return state end
 
     now = now or GetTime()
     local runtimeStore = ns.CDMRuntimeStore
     local storedState = runtimeStore and runtimeStore.GetFrameState
         and runtimeStore.GetFrameState(icon)
-    if storedState and storedState.mode then
-        if storedState.mode == "charge" then
-            state.hasCharges = true
-            state.rechargeActive = storedState.active == true
-            state.isOnCooldown = storedState.active == true
-            return state
-        elseif storedState.mode == "cooldown" or storedState.mode == "item-cooldown" then
-            state.isOnCooldown = storedState.active == true
-            return state
-        elseif storedState.mode == "inactive" then
-            state.isOnCooldown = false
-        end
-    end
-
-    local spellID = CDMIcons.ResolveEntryRuntimeSpellID(icon, entry)
-    local isItemLike = CDMIcons.IsItemLikeEntry(entry)
-
-    if spellID and not state.hasCharges then
-        local gdb = QUI and QUI.db and QUI.db.global
-        local svCharges = gdb and gdb.cdmChargeSpells
-        if svCharges and svCharges[spellID] then
-            state.hasCharges = true
-        end
-    end
-
-    if spellID and not isItemLike then
-        local ci = QueryCharges(spellID)
-        if ci then
-            local maxC = ci.maxCharges
-            if maxC and maxC > 1 then
-                state.hasCharges = true
-            end
-        end
-
-        if state.hasCharges then
-            local cdInfo = QueryCooldown(spellID)
-            local cooldownActive = CDMIcons.IsCooldownInfoActive(cdInfo)
-            if cooldownActive == true then
-                state.rechargeActive = true
-                state.isOnCooldown = true
-                return state
-            elseif cooldownActive == false then
-                -- Do not use SpellChargeInfo.currentCharges here. The charge
-                -- info payload can be restricted in combat; a readable
-                -- "spell cooldown is inactive" signal is enough to know the
-                -- charged spell is not fully locked out.
-                state.hasChargesRemaining = true
-                state.isOnCooldown = false
-            end
-
-            if ci then
-                local chargeActive = SafeBoolean(ci.isActive)
-                if chargeActive == true then
-                    state.rechargeActive = true
-                end
-            end
-            if not state.rechargeActive
-               and (icon._hasRealCooldownActive == true or icon._showingRealCooldownSwipe == true) then
-                state.rechargeActive = true
-                state.isOnCooldown = true
-            end
-        end
-    end
-
-    if state.hasCharges then
+    if ApplyStoredCooldownActivityState(state, storedState) then
         return state
     end
 
-    if not state.rechargeActive then
-        -- Resolver-stamped state is authoritative. _hasRealCooldownActive and
-        -- _hasCooldownActive are both written by ApplyResolvedCooldown; the
-        -- previous `_lastDuration > GCD_MAX_DURATION` fallback was a stale
-        -- numeric guess and has been removed (see HasRealCooldownState for
-        -- the full rationale).
-        if icon._hasRealCooldownActive == true then
-            state.isOnCooldown = true
-        elseif icon._hasRealCooldownActive == false then
-            state.isOnCooldown = false
-        elseif icon._hasCooldownActive then
-            state.isOnCooldown = true
+    local spellID, macroResolvedType = ResolveActivityRuntimeSpellID(icon, entry)
+    local isItemLike = IsItemLikeEntry(entry)
+        or (entry.type == "macro" and macroResolvedType == "item")
+
+    MarkKnownChargeSpell(state, spellID)
+
+    local resolver = CDMResolvers.ResolveCooldownState
+    if resolver then
+        local resolvedState = resolver(BuildActivityCooldownStateContext(icon, entry, containerDB, spellID, runtimeOptions))
+        if ApplyResolvedCooldownActivityState(state, resolvedState) then
+            return state
         end
+    end
+
+    ApplyChargeRuntimeFallback(state, entry, spellID, isItemLike)
+
+    if state.hasCharges then
+        return state
     end
 
     return state
@@ -1007,10 +891,6 @@ end
 
 
 -- DURATION OBJECT RESOLVERS
-
-local QueryDuration       = CDMResolvers.QueryDuration
-local QueryChargeDuration = CDMResolvers.QueryChargeDuration
-local QueryOverrideSpell  = CDMResolvers.QueryOverrideSpell
 
 function CDMResolvers.IsAuraEntry(entry)
     if not entry then return false end
@@ -1023,6 +903,106 @@ function CDMResolvers.IsAuraEntry(entry)
     if entry.kind == "cooldown" then return false end
     local vt = entry.viewerType
     return vt == "buff" or vt == "trackedBar"
+end
+
+function CDMResolvers.ResolveAuraActiveState(entry)
+    if not entry then return false, nil, nil end
+
+    local sid = entry.overrideSpellID or entry.spellID or entry.id
+    if not sid then
+        return false, nil, nil
+    end
+
+    -- Captured UNIT_AURA payloads are combat-safe and include aura IDs that
+    -- differ from the configured cast/ability ID.
+    local CDMSpellData = ns.CDMSpellData
+    if CDMSpellData and CDMSpellData.GetCapturedAuraForLookup then
+        local lookupIDs = {}
+        local seenLookup = {}
+        local function addLookup(id)
+            if not id or seenLookup[id] then return end
+            seenLookup[id] = true
+            lookupIDs[#lookupIDs + 1] = id
+        end
+        local function addMappedLookups(id)
+            if not (id and CDMSpellData.GetAuraIDsForSpell) then return end
+            local mappedIDs = CDMSpellData:GetAuraIDsForSpell(id)
+            if mappedIDs then
+                for _, auraID in ipairs(mappedIDs) do addLookup(auraID) end
+            end
+        end
+        addLookup(sid)
+        addLookup(entry.spellID)
+        addLookup(entry.id)
+        addMappedLookups(sid)
+        addMappedLookups(entry.spellID)
+        addMappedLookups(entry.id)
+        local captured = CDMSpellData.GetCapturedAuraForLookup(lookupIDs, entry.name)
+        if captured and captured.auraInstanceID then
+            return true, captured.unit or "player", captured.auraInstanceID
+        end
+    end
+
+    -- Direct aura query fallback. If the query returns AuraData, existence is
+    -- enough to classify the aura as active; auraInstanceID is forwarded to
+    -- downstream C-side consumers.
+    if Sources and (Sources.QueryUnitAuraBySpellID or Sources.QueryPlayerAuraBySpellID) then
+        local seen = {}
+        local function tryQuery(id)
+            if not id or seen[id] then return nil end
+            seen[id] = true
+            if Sources.QueryUnitAuraBySpellID then
+                local auraData = Sources.QueryUnitAuraBySpellID("player", id)
+                if auraData then return auraData end
+            end
+            if Sources.QueryPlayerAuraBySpellID then
+                local auraData = Sources.QueryPlayerAuraBySpellID(id)
+                if auraData then return auraData end
+            end
+            return nil
+        end
+
+        local auraData = tryQuery(sid)
+        if auraData then return true, "player", GetAuraDataInstanceID(auraData) end
+        auraData = tryQuery(entry.spellID)
+        if auraData then return true, "player", GetAuraDataInstanceID(auraData) end
+        auraData = tryQuery(entry.id)
+        if auraData then return true, "player", GetAuraDataInstanceID(auraData) end
+
+        if CDMSpellData and CDMSpellData.GetAuraIDsForSpell then
+            local function tryMappedIDs(id)
+                if not id then return false end
+                local mappedIDs = CDMSpellData:GetAuraIDsForSpell(id)
+                if mappedIDs then
+                    for _, auraID in ipairs(mappedIDs) do
+                        local mappedAuraData = tryQuery(auraID)
+                        if mappedAuraData then
+                            return true, "player", GetAuraDataInstanceID(mappedAuraData)
+                        end
+                    end
+                end
+                return false
+            end
+            local active, unit, instID = tryMappedIDs(sid)
+            if active then return active, unit, instID end
+            active, unit, instID = tryMappedIDs(entry.spellID)
+            if active then return active, unit, instID end
+            active, unit, instID = tryMappedIDs(entry.id)
+            if active then return active, unit, instID end
+        end
+    end
+
+    -- Name fallback for cast-id vs aura-id mismatches that share names and
+    -- are not in the CDM catalog.
+    if entry.name and entry.name ~= ""
+        and Sources and Sources.QueryAuraDataBySpellName then
+        local auraData = Sources.QueryAuraDataBySpellName("player", entry.name, "HELPFUL")
+        if auraData then
+            return true, "player", GetAuraDataInstanceID(auraData)
+        end
+    end
+
+    return false, nil, nil
 end
 
 local PLAYER_AURA_CAPTURE_LOOKUP_UNITS = { "player", "pet" }
@@ -1142,42 +1122,35 @@ local function QueryPlayerAuraDurationByName(name)
     return Sources.QueryAuraDuration("player", auraInstanceID)
 end
 
-local WoW_IsSecretValue = issecretvalue
-
-local function ResolverIsSecretValue(value)
-    if Helpers and Helpers.IsSecretValue then
-        return Helpers.IsSecretValue(value)
-    end
-    if WoW_IsSecretValue then
-        return WoW_IsSecretValue(value)
-    end
-    return false
-end
-
 local function IsUsableMirrorID(value)
     if ResolverIsSecretValue(value) then return false end
     return type(value) == "number" and value > 0
 end
 
 local function NormalizeMirrorCategory(category)
+    if Shared and Shared.NormalizeMirrorCategory then
+        return Shared.NormalizeMirrorCategory(category)
+    end
     if ResolverIsSecretValue(category) or type(category) ~= "string" then
         return nil
     end
-    if category == "essential"
-        or category == "utility"
-        or category == "buff"
-        or category == "trackedBar" then
-        return category
-    end
+    if category == "essential" or category == "utility"
+        or category == "buff" or category == "trackedBar" then return category end
     return nil
 end
 
 local function IsAuraMirrorCategory(category)
+    if Shared and Shared.IsAuraMirrorCategory then
+        return Shared.IsAuraMirrorCategory(category)
+    end
     category = NormalizeMirrorCategory(category)
     return category == "buff" or category == "trackedBar"
 end
 
 local function IsCooldownMirrorCategory(category)
+    if Shared and Shared.IsCooldownMirrorCategory then
+        return Shared.IsCooldownMirrorCategory(category)
+    end
     category = NormalizeMirrorCategory(category)
     return category == "essential" or category == "utility"
 end
@@ -1281,6 +1254,17 @@ local function MirrorStateMatchesEntryIdentity(state, entry)
     end
 
     return not sawStateIdentity
+end
+
+local function MirrorBindingIsStrictAura(entry, entryType, viewerCategory)
+    if not entry then return false end
+    local entryKind = SafeEntryField(entry, "kind")
+    local normalizedEntryType = entryType or SafeEntryField(entry, "type")
+    local entryIsAura = SafeEntryField(entry, "isAura")
+    return entryKind == "aura"
+        or normalizedEntryType == "aura"
+        or entryIsAura == true
+        or IsAuraMirrorCategory(viewerCategory)
 end
 
 local function GetMirrorCategoryCandidates(viewerCategory, strictAuraBinding)
@@ -1417,58 +1401,232 @@ local function ResolveMirrorEntryInCategory(mirror, entry, category, viewerCateg
     return nil, nil, nil
 end
 
-function CDMResolvers.ResolveBlizzardMirrorIdentity(entry)
-    local mirror = ns.CDMBlizzMirror
-    if not (entry and mirror) then return nil, nil, nil end
+-- Singleton identity result for the resolver hot path. Callers MUST consume
+-- this immediately; the next mirror identity resolution reuses the table.
+local _mirrorIdentityScratch = {
+    cooldownID = nil,
+    category = nil,
+    state = nil,
+    viewerCategory = nil,
+    strictAuraBinding = false,
+    source = nil,
+    entryType = nil,
+}
+
+local function WipeMirrorIdentityScratch()
+    local identity = _mirrorIdentityScratch
+    identity.cooldownID = nil
+    identity.category = nil
+    identity.state = nil
+    identity.viewerCategory = nil
+    identity.strictAuraBinding = false
+    identity.source = nil
+    identity.entryType = nil
+end
+
+local function StoreMirrorIdentity(
+    cooldownID, category, state, viewerCategory, strictAuraBinding, source, entryType)
+    local identity = _mirrorIdentityScratch
+    identity.cooldownID = cooldownID
+    identity.category = category
+    identity.state = state
+    identity.viewerCategory = viewerCategory
+    identity.strictAuraBinding = strictAuraBinding == true
+    identity.source = source
+    identity.entryType = entryType
+    return identity
+end
+
+local function ResolveExplicitMirrorIdentityState(
+    mirror, entry, cooldownID, category, viewerCategory, strictAuraBinding, source, entryType)
+    if not (IsUsableMirrorID(cooldownID) and mirror.GetStateByCooldownID) then
+        return nil
+    end
+
+    local acceptedCategory, state = ExplicitMirrorIdentityStateAccepted(
+        mirror, entry, cooldownID, category, viewerCategory, strictAuraBinding)
+    if not acceptedCategory then
+        return nil
+    end
+
+    return StoreMirrorIdentity(
+        cooldownID, acceptedCategory, state,
+        viewerCategory, strictAuraBinding, source, entryType)
+end
+
+local function ValidateMirrorIdentityEntry(entry, mirror)
+    if not (entry and mirror) then return false, nil, nil, nil end
 
     local entryType = SafeEntryField(entry, "type")
     if entryType
         and entryType ~= "spell"
         and entryType ~= "aura"
         and entryType ~= "cooldown" then
-        return nil, nil, nil
+        return false, nil, nil, nil
     end
 
     local viewerCategory = ResolveEntryMirrorCategory(entry)
-    local entryKind = SafeEntryField(entry, "kind")
-    local entryIsAura = SafeEntryField(entry, "isAura")
-    local strictAuraBinding = entryKind == "aura"
-        or entryType == "aura"
-        or entryIsAura == true
-        or IsAuraMirrorCategory(viewerCategory)
+    local strictAuraBinding = MirrorBindingIsStrictAura(entry, entryType, viewerCategory)
+    return true, entryType, viewerCategory, strictAuraBinding
+end
+
+local function ResolveBlizzardMirrorIdentityState(entry)
+    WipeMirrorIdentityScratch()
+
+    local mirror = ns.CDMBlizzMirror
+    local valid, entryType, viewerCategory, strictAuraBinding =
+        ValidateMirrorIdentityEntry(entry, mirror)
+    if not valid then
+        return nil
+    end
+
     local category1, category2 = GetMirrorCategoryCandidates(viewerCategory, strictAuraBinding)
 
     local explicitCooldownID = entry.cooldownID
-    if IsUsableMirrorID(explicitCooldownID) and mirror.GetStateByCooldownID then
-        local acceptedCategory, state = ExplicitMirrorIdentityStateAccepted(
-            mirror, entry, explicitCooldownID, category1, viewerCategory, strictAuraBinding)
-        if acceptedCategory then
-            return explicitCooldownID, acceptedCategory, state
-        end
-        if category2 then
-            acceptedCategory, state = ExplicitMirrorIdentityStateAccepted(
-                mirror, entry, explicitCooldownID, category2, viewerCategory, strictAuraBinding)
-            if acceptedCategory then
-                return explicitCooldownID, acceptedCategory, state
-            end
+    local identity = ResolveExplicitMirrorIdentityState(
+        mirror, entry, explicitCooldownID, category1,
+        viewerCategory, strictAuraBinding, "entry-cooldownID", entryType)
+    if identity then
+        return identity
+    end
+
+    if category2 then
+        identity = ResolveExplicitMirrorIdentityState(
+            mirror, entry, explicitCooldownID, category2,
+            viewerCategory, strictAuraBinding, "entry-cooldownID", entryType)
+        if identity then
+            return identity
         end
     end
 
     local cooldownID, acceptedCategory, state = ResolveMirrorEntryInCategory(
         mirror, entry, category1, viewerCategory, strictAuraBinding)
     if cooldownID then
-        return cooldownID, acceptedCategory, state
+        return StoreMirrorIdentity(
+            cooldownID, acceptedCategory, state,
+            viewerCategory, strictAuraBinding, "entry", entryType)
     end
 
     if category2 then
         cooldownID, acceptedCategory, state = ResolveMirrorEntryInCategory(
             mirror, entry, category2, viewerCategory, strictAuraBinding)
         if cooldownID then
-            return cooldownID, acceptedCategory, state
+            return StoreMirrorIdentity(
+                cooldownID, acceptedCategory, state,
+                viewerCategory, strictAuraBinding, "entry", entryType)
         end
     end
 
-    return nil, nil, nil
+    return nil
+end
+
+function CDMResolvers.ResolveBlizzardMirrorIdentityState(entry)
+    return ResolveBlizzardMirrorIdentityState(entry)
+end
+
+local function ResolveCooldownContextMirror(owner, entry, options)
+    local policy = options and options.mirrorIdentityPolicy or "frame-or-entry"
+    local cooldownID
+    local category
+
+    if policy ~= "entry" and policy ~= "entry-or-fallback" then
+        cooldownID = options and options.mirrorCooldownID
+        category = options and options.mirrorCategory
+        if cooldownID == nil and owner then
+            cooldownID = owner._blizzMirrorCooldownID
+            category = owner._blizzMirrorCategory
+        end
+    end
+
+    if policy ~= "frame-only"
+        and (cooldownID == nil or policy == "entry" or policy == "entry-or-fallback") then
+        local identity = ResolveBlizzardMirrorIdentityState(entry)
+        if identity and identity.cooldownID ~= nil then
+            return identity.cooldownID, identity.category
+        end
+    end
+
+    if cooldownID == nil and policy == "entry-or-fallback" and entry then
+        cooldownID = entry.cooldownID
+        category = ResolveEntryMirrorCategory(entry)
+    end
+
+    return cooldownID, category
+end
+
+local function ClearCooldownStateContext(context)
+    context.entry = nil
+    context.runtimeSpellID = nil
+    context.mirrorCooldownID = nil
+    context.mirrorCategory = nil
+    context.containerKey = nil
+    context.totemSlot = nil
+    context.useBuffSwipe = nil
+    context.skipAuraPhase = nil
+    context.showGCDSwipe = nil
+    context.priorCooldownActive = nil
+    context.priorRealCooldownActive = nil
+    context.priorShowingRealCooldownSwipe = nil
+    context.priorResolvedCooldownMode = nil
+    context.preservedRealDurObj = nil
+    context.preservedRealMode = nil
+    context.preservedRealSourceID = nil
+    context.lastChargeMirrorCooldownID = nil
+    context.lastChargeMirrorCategory = nil
+    context.lastChargeRuntimeSpellID = nil
+end
+
+function CDMResolvers.BuildCooldownStateContext(owner, entry, runtimeSpellID, options)
+    local context = options and options.context
+    local contextKey = options and options.contextKey or "_cooldownStateContext"
+    if not context and owner then
+        context = owner[contextKey]
+        if not context then
+            context = {}
+            owner[contextKey] = context
+        end
+    end
+    if not context then
+        context = {}
+    end
+
+    ClearCooldownStateContext(context)
+
+    local containerKey = options and options.containerKey
+    if containerKey == nil then
+        containerKey = entry and entry.viewerType
+    end
+    if containerKey == nil and options then
+        containerKey = options.fallbackContainerKey
+    end
+
+    local totemSlot = options and options.totemSlot
+    if totemSlot == nil and owner then
+        totemSlot = owner._totemSlot
+    end
+
+    local mirrorCooldownID, mirrorCategory = ResolveCooldownContextMirror(owner, entry, options)
+
+    context.entry = entry
+    context.runtimeSpellID = runtimeSpellID
+    context.mirrorCooldownID = mirrorCooldownID
+    context.mirrorCategory = mirrorCategory
+    context.containerKey = containerKey
+    context.totemSlot = totemSlot
+    context.useBuffSwipe = options and options.useBuffSwipe
+    context.skipAuraPhase = options and options.skipAuraPhase == true
+    context.showGCDSwipe = options and options.showGCDSwipe == true
+    context.priorCooldownActive = options and options.priorCooldownActive == true
+    context.priorRealCooldownActive = options and options.priorRealCooldownActive == true
+    context.priorShowingRealCooldownSwipe = options and options.priorShowingRealCooldownSwipe == true
+    context.priorResolvedCooldownMode = options and options.priorResolvedCooldownMode
+    context.preservedRealDurObj = options and options.preservedRealDurObj
+    context.preservedRealMode = options and options.preservedRealMode
+    context.preservedRealSourceID = options and options.preservedRealSourceID
+    context.lastChargeMirrorCooldownID = options and options.lastChargeMirrorCooldownID
+    context.lastChargeMirrorCategory = options and options.lastChargeMirrorCategory
+    context.lastChargeRuntimeSpellID = options and options.lastChargeRuntimeSpellID
+    return context
 end
 
 local function SafeMirrorString(value)
@@ -1479,7 +1637,7 @@ local function SafeMirrorString(value)
 end
 
 local function SafeMirrorCountNumber(value)
-    if value == nil or ResolverIsSecretValue(value) then
+    if ResolverIsSecretValue(value) or value == nil then
         return nil
     end
     local valueType = type(value)
@@ -1492,15 +1650,14 @@ local function SafeMirrorCountNumber(value)
     return nil
 end
 
--- Singleton scratch tables for mirror payload generation. Both ResolveAuraState's
--- closure-heavy churn and BuildMirrorRenderPayload's fresh-table-per-call pattern
--- dominated combat GC. ResolveAuraState was fixed in 2026-05-11; this scratch
--- pair fixes the mirror payload side.
+-- Singleton scratch tables for mirror payload generation. Both the runtime aura
+-- resolver's closure-heavy churn and BuildMirrorRenderPayload's
+-- fresh-table-per-call pattern dominated combat GC. The aura resolver was fixed
+-- in 2026-05-11; this scratch pair fixes the mirror payload side.
 --
--- Callers MUST treat these as consume-immediately. The shared retention sites
--- (cdm_icons.lua's ApplyMirrorPayloadToIcon and cdm_bars.lua's
--- BuildBarAuraResultFromMirrorPayload) copy count fields out into per-icon /
--- per-bar tables — they no longer alias the singleton.
+-- Callers MUST treat these as consume-immediately. The resolved cooldown
+-- state copies count fields into its own scratch table so renderers do not
+-- retain this singleton.
 local _mirrorPayloadScratch = {
     mirrorBacked = true,
     state = nil, active = false, mode = nil, sourceID = nil,
@@ -1540,7 +1697,7 @@ local function BuildMirrorCountPayload(m)
     end
 
     local stackText = m.stackText
-    if stackText ~= nil or ResolverIsSecretValue(stackText) then
+    if ResolverIsSecretValue(stackText) or stackText ~= nil then
         c.value = SafeMirrorCountNumber(stackText)
         c.sinkText = stackText
         c.shown = true
@@ -1665,17 +1822,10 @@ local function BuildMirrorCooldownPhasePayload(payload)
 end
 
 local function EntryMirrorBindingIsStrictAura(entry, viewerCategory)
-    if not entry then return false end
-    local entryKind = SafeEntryField(entry, "kind")
-    local entryType = SafeEntryField(entry, "type")
-    local entryIsAura = SafeEntryField(entry, "isAura")
-    return entryKind == "aura"
-        or entryType == "aura"
-        or entryIsAura == true
-        or IsAuraMirrorCategory(viewerCategory)
+    return MirrorBindingIsStrictAura(entry, nil, viewerCategory)
 end
 
-function CDMResolvers.ResolveMirrorRenderPayloadForEntry(entry, explicitCooldownID, explicitCategory, fallbackSpellID)
+local function ResolveMirrorRenderPayloadForEntry(entry, explicitCooldownID, explicitCategory, fallbackSpellID)
     local mirror = ns.CDMBlizzMirror
     if not (entry and mirror) then
         return nil
@@ -1693,18 +1843,18 @@ function CDMResolvers.ResolveMirrorRenderPayloadForEntry(entry, explicitCooldown
     local strictAuraBinding = EntryMirrorBindingIsStrictAura(entry, viewerCategory)
     local explicitCat = NormalizeMirrorCategory(explicitCategory)
 
-    if IsUsableMirrorID(explicitCooldownID) and mirror.GetStateByCooldownID then
-        local acceptedCategory, state = ExplicitMirrorIdentityStateAccepted(
-            mirror, entry, explicitCooldownID, explicitCat, viewerCategory, strictAuraBinding)
-        if acceptedCategory and state then
-            return BuildMirrorRenderPayload(
-                state, explicitCooldownID, acceptedCategory, fallbackSpellID)
-        end
+    local identity = ResolveExplicitMirrorIdentityState(
+        mirror, entry, explicitCooldownID, explicitCat,
+        viewerCategory, strictAuraBinding, "context", entryType)
+    if identity and identity.state then
+        return BuildMirrorRenderPayload(
+            identity.state, identity.cooldownID, identity.category, fallbackSpellID)
     end
 
-    local cooldownID, category, state = CDMResolvers.ResolveBlizzardMirrorIdentity(entry)
-    if cooldownID and state then
-        return BuildMirrorRenderPayload(state, cooldownID, category, fallbackSpellID)
+    identity = ResolveBlizzardMirrorIdentityState(entry)
+    if identity and identity.state then
+        return BuildMirrorRenderPayload(
+            identity.state, identity.cooldownID, identity.category, fallbackSpellID)
     end
 
     if not strictAuraBinding and Sources and Sources.QueryMirroredCooldownState and fallbackSpellID then
@@ -1721,104 +1871,16 @@ function CDMResolvers.ResolveMirrorRenderPayloadForEntry(entry, explicitCooldown
     return nil
 end
 
-function CDMResolvers.ResolveAuraStateForIcon(icon, entry, sid)
-    local CDMSpellData = ns.CDMSpellData
-    if not (icon and entry and sid and CDMSpellData and CDMSpellData.ResolveAuraState) then
-        return nil
-    end
+local QueryItemCooldown
+local QuerySlotCooldown
 
-    local auraEntry = CDMResolvers.IsAuraEntry(entry)
-    if not auraEntry and not CDMIcons.ShouldUseBuffSwipeForIcon(icon, entry) then
-        return nil
-    end
-
-    local p = icon._auraParams or {}
-    icon._auraParams = p
-    p.spellID = sid
-    p.entrySpellID = entry.spellID
-    p.entryID = entry.id
-    p.entryName = entry.name
-    p.entryKind = entry.kind
-    p.entryType = entry.type
-    p.entryIsAura = auraEntry
-    p.entryTexture = CDMResolvers.GetEntryTexture(entry)
-    p.viewerType = entry.viewerType
-    p.totemSlot = CDMIcons.IsTotemSlotEntry(entry) and entry._totemSlot or nil
-    p.disableLooseVisibilityFallback = true
-    p.blizzardMirrorCooldownID = icon._blizzMirrorCooldownID
-    p.blizzardMirrorCategory = icon._blizzMirrorCategory
-
-    return CDMSpellData:ResolveAuraState(p)
-end
-
-function CDMResolvers.ResolveAuraDurationObjectForIcon(icon, entry, sid)
-    return CDMIcons.ApplyAuraStateToIcon(icon, entry, sid, CDMResolvers.ResolveAuraStateForIcon(icon, entry, sid))
-end
-
-function CDMResolvers.ResolveItemAuraDurationObject(icon, entry, itemID, itemSpellID)
-    if not (icon and entry and itemID) then
-        return nil, false, nil
-    end
-
-    local function trySpellID(rawSpellID, sourceKey)
-        local durObj = QueryPlayerAuraDurationBySpellID(rawSpellID, entry.name)
-        if durObj then
-            local sourceID = "item-aura-spell:" .. tostring(itemID) .. ":" .. sourceKey
-            icon._auraActive = true
-            icon._auraUnit = "player"
-            icon._totemSlot = entry._totemSlot or nil
-            icon._isTotemInstance = nil
-            icon._lastAuraDurObj = durObj
-            icon._lastAuraSourceID = sourceID
-            -- Item-applied auras live on the player and are helpful by
-            -- convention (use-effect buffs from trinkets/potions).
-            icon._auraIsHarmful = false
-            return durObj, true, sourceID
-        end
-        return nil, false, nil
-    end
-
-    local rawItemSpellID = CDMIcons.GetRawItemUseSpellIDForAuraQuery(itemID)
-    local durObj, active, sourceID = trySpellID(rawItemSpellID, "raw-use")
-    if active then return durObj, active, sourceID end
-
-    durObj, active, sourceID = trySpellID(itemSpellID, "use")
-    if active then return durObj, active, sourceID end
-
-    durObj, active, sourceID = trySpellID(entry.spellID, "entry")
-    if active then return durObj, active, sourceID end
-
-    durObj, active, sourceID = trySpellID(entry.overrideSpellID, "override")
-    if active then return durObj, active, sourceID end
-
-    durObj, active, sourceID = trySpellID(entry.id, "id")
-    if active then
-        return durObj, active, sourceID
-    end
-
-    durObj = QueryPlayerAuraDurationByName(entry.name)
-    if durObj then
-        sourceID = "item-aura-name:" .. tostring(itemID)
-        icon._auraActive = true
-        icon._auraUnit = "player"
-        icon._totemSlot = entry._totemSlot or nil
-        icon._isTotemInstance = nil
-        icon._lastAuraDurObj = durObj
-        icon._lastAuraSourceID = sourceID
-        icon._auraIsHarmful = false
-        return durObj, true, sourceID
-    end
-
-    return nil, false, nil
-end
-
-function CDMResolvers.ResolveItemDurationObjectForIcon(icon, entry)
-    local itemID, slotID, itemSpellID, keySource = CDMResolvers.ResolveItemCooldownIdentity(entry)
+local function ResolveItemDurationObjectForIcon(icon, entry)
+    local itemID, slotID, itemSpellID, keySource = ResolveItemCooldownIdentity(entry)
     if not itemID then return nil, "inactive", nil, nil, nil, nil end
 
     if itemSpellID then
         local cdInfo = QueryCooldown(itemSpellID)
-        local cdInfoActive = cdInfo and CDMIcons.GetCooldownInfoField(cdInfo, "isActive")
+        local cdInfoActive = cdInfo and GetCooldownInfoField(cdInfo, "isActive")
         if cdInfoActive == true and GetCurrentIsOnGCD(itemSpellID, cdInfo) ~= true then
             local durObj = QueryDuration(itemSpellID)
             if durObj then
@@ -1831,9 +1893,9 @@ function CDMResolvers.ResolveItemDurationObjectForIcon(icon, entry)
 
     local startTime, duration
     if slotID then
-        startTime, duration = CDMIcons.GetSlotCooldown(slotID)
+        startTime, duration = QuerySlotCooldown(slotID)
     else
-        startTime, duration = CDMIcons.GetItemCooldown(itemID)
+        startTime, duration = QueryItemCooldown(itemID)
     end
 
     if IsSafeNumeric(startTime)
@@ -1849,176 +1911,823 @@ function CDMResolvers.ResolveItemDurationObjectForIcon(icon, entry)
     return nil, "inactive", nil, nil, nil, itemSpellID
 end
 
-function CDMResolvers.ResolveIconDurationObject(icon)
-    local entry = icon and icon._spellEntry
-    if not entry then return nil, "inactive", nil end
+QueryItemCooldown = function(itemID)
+    if not itemID or not (Sources and Sources.QueryItemCooldown) then
+        return nil, nil, nil
+    end
+    local startTime, duration, enabled = Sources.QueryItemCooldown(itemID)
+    if ResolverIsSecretValue(enabled) then
+        return nil, nil, nil
+    end
+    if enabled == 0 or enabled == false then
+        return nil, nil, nil
+    end
+    if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) then
+        return nil, nil, nil
+    end
+    if duration <= 0 then
+        return nil, nil, nil
+    end
+    return startTime, duration, enabled
+end
+
+QuerySlotCooldown = function(slotID)
+    if not slotID or not GetInventoryItemCooldown then
+        return nil, nil, nil
+    end
+    local startTime, duration, enabled = GetInventoryItemCooldown("player", slotID)
+    if ResolverIsSecretValue(enabled) then
+        return nil, nil, nil
+    end
+    if enabled ~= 1 then
+        return nil, nil, nil
+    end
+    if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) then
+        return nil, nil, nil
+    end
+    if duration <= GCD_MAX_DURATION then
+        return nil, nil, nil
+    end
+    return startTime, duration, enabled
+end
+
+local _cooldownStateCountScratch = {
+    value = nil,
+    sinkText = nil,
+    shown = false,
+    source = nil,
+}
+
+local _cooldownStateScratch = {
+    mode = "inactive",
+    active = false,
+    isActive = false,
+    spellID = nil,
+    sourceID = nil,
+    durObj = nil,
+    start = nil,
+    duration = nil,
+    mirrorBacked = nil,
+    mirrorCooldownID = nil,
+    mirrorCategory = nil,
+    mirrorState = nil,
+    state = nil,
+    cooldownID = nil,
+    category = nil,
+    auraInstanceID = nil,
+    auraUnit = nil,
+    auraData = nil,
+    resolvedAuraSpellID = nil,
+    hasExpirationTime = nil,
+    hideDurationText = nil,
+    durationStateUnknown = nil,
+    countValue = nil,
+    countSinkText = nil,
+    countShown = false,
+    countSource = nil,
+    countMirrorBacked = nil,
+    count = _cooldownStateCountScratch,
+    totemSlot = nil,
+    totemName = nil,
+    totemIcon = nil,
+    isTotemInstance = false,
+    numericCooldownActive = nil,
+    auraResolved = nil,
+    auraActive = nil,
+    auraIsActive = nil,
+    isOnCooldown = false,
+    rechargeActive = false,
+    hasCharges = false,
+    hasChargesRemaining = false,
+    gcdOnly = false,
+    isGCDOnly = false,
+    isAuraMode = false,
+    isRealCooldownMode = false,
+    hasDurationObject = false,
+    hasRenderableCooldown = false,
+    cooldownInfo = nil,
+    cooldownInfoActive = nil,
+    cooldownInfoOnGCD = nil,
+}
+
+local function WipeCooldownState()
+    local s = _cooldownStateScratch
+    s.mode = "inactive"
+    s.active = false
+    s.isActive = false
+    s.spellID = nil
+    s.sourceID = nil
+    s.durObj = nil
+    s.start = nil
+    s.duration = nil
+    s.mirrorBacked = nil
+    s.mirrorCooldownID = nil
+    s.mirrorCategory = nil
+    s.mirrorState = nil
+    s.state = nil
+    s.cooldownID = nil
+    s.category = nil
+    s.auraInstanceID = nil
+    s.auraUnit = nil
+    s.auraData = nil
+    s.resolvedAuraSpellID = nil
+    s.hasExpirationTime = nil
+    s.hideDurationText = nil
+    s.durationStateUnknown = nil
+    s.countValue = nil
+    s.countSinkText = nil
+    s.countShown = false
+    s.countSource = nil
+    s.countMirrorBacked = nil
+    s.totemSlot = nil
+    s.totemName = nil
+    s.totemIcon = nil
+    s.isTotemInstance = false
+    s.numericCooldownActive = nil
+    s.auraResolved = nil
+    s.auraActive = nil
+    s.auraIsActive = nil
+    s.isOnCooldown = false
+    s.rechargeActive = false
+    s.hasCharges = false
+    s.hasChargesRemaining = false
+    s.gcdOnly = false
+    s.isGCDOnly = false
+    s.isAuraMode = false
+    s.isRealCooldownMode = false
+    s.hasDurationObject = false
+    s.hasRenderableCooldown = false
+    s.cooldownInfo = nil
+    s.cooldownInfoActive = nil
+    s.cooldownInfoOnGCD = nil
+
+    local c = _cooldownStateCountScratch
+    c.value = nil
+    c.sinkText = nil
+    c.shown = false
+    c.source = nil
+    s.count = c
+    return s
+end
+
+local function SetCooldownStateActivity(state, active)
+    active = active == true
+    state.active = active
+    state.isActive = active
+end
+
+local function CopyCountFactsToState(state, count, mirrorBacked)
+    local c = _cooldownStateCountScratch
+    if count then
+        c.value = count.value
+        c.sinkText = count.sinkText
+        c.shown = count.shown == true
+        c.source = count.source
+    else
+        c.value = nil
+        c.sinkText = nil
+        c.shown = false
+        c.source = nil
+    end
+    state.count = c
+    state.countValue = c.value
+    state.countSinkText = c.sinkText
+    state.countShown = c.shown
+    state.countSource = c.source
+    state.countMirrorBacked = mirrorBacked == true and count ~= nil or nil
+end
+
+local function CopyAuraFactsToState(state, aura)
+    if not aura then return end
+    local auraActive = aura.isActive == true
+    state.auraResolved = true
+    state.auraActive = auraActive
+    state.auraIsActive = auraActive
+    state.auraInstanceID = aura.auraInstanceID
+    state.auraUnit = aura.auraUnit
+    state.auraData = aura.auraData
+    state.resolvedAuraSpellID = aura.resolvedAuraSpellID or state.spellID
+    state.hasExpirationTime = aura.hasExpirationTime
+    state.hideDurationText = aura.hideDurationText
+    state.durationStateUnknown = aura.durationStateUnknown
+    state.totemSlot = aura.totemSlot
+    state.totemName = aura.totemName
+    state.totemIcon = aura.totemIcon
+    state.isTotemInstance = aura.isTotemInstance and true or false
+    CopyCountFactsToState(state, aura.count, false)
+end
+
+local function GetAuraStateSourceID(aura, fallbackID)
+    if not aura then return fallbackID end
+    return aura.auraInstanceID or aura.totemSlot or fallbackID
+end
+
+local _cooldownStateAuraParams = {}
+
+local function ResolveAuraRuntimeStateForContext(context, entry, sid, entryIsAura)
+    local AuraRuntime = ns.CDMAuraRuntime
+    if not (context and entry and sid) then
+        return nil
+    end
+    if not entryIsAura and context.useBuffSwipe == false then
+        return nil
+    end
+
+    local p = _cooldownStateAuraParams
+    p.spellID = sid
+    p.entrySpellID = entry.spellID
+    p.entryID = entry.id
+    p.entryName = entry.name
+    p.entryKind = entry.kind
+    p.entryType = entry.type
+    p.entryIsAura = entryIsAura
+    p.entryTexture = CDMResolvers.GetEntryTexture(entry)
+    p.viewerType = context.containerKey or entry.viewerType
+    p.totemSlot = context.totemSlot
+    p.disableLooseVisibilityFallback = true
+    p.blizzardMirrorCooldownID = context.mirrorCooldownID
+    p.blizzardMirrorCategory = context.mirrorCategory
+
+    if AuraRuntime and AuraRuntime.ResolveState then
+        local aura = AuraRuntime.ResolveState(p)
+        if aura then
+            return aura
+        end
+    end
+    return nil
+end
+
+local function ApplyAuraStateToCooldownState(state, aura, fallbackSpellID)
+    CopyAuraFactsToState(state, aura)
+    if not (aura and aura.isActive) then
+        return false
+    end
+    state.mode = "aura"
+    SetCooldownStateActivity(state, true)
+    state.durObj = aura.durObj
+    state.sourceID = GetAuraStateSourceID(aura, fallbackSpellID)
+    state.spellID = aura.resolvedAuraSpellID or fallbackSpellID
+    if aura.isActive and aura.hasExpirationTime == nil and not aura.durObj then
+        state.hasExpirationTime = false
+        state.hideDurationText = true
+    end
+    return true
+end
+
+local function ResolveMirrorPayloadAuraActive(payload)
+    if not (payload and payload.active == true) then
+        return false
+    end
+    if payload.mode == "aura" then
+        return true
+    end
+    if payload.auraInstanceID or payload.totemSlot then
+        return true
+    end
+    local m = payload.state
+    if m and (m.auraDurObj or m.totemDurObj) then
+        return true
+    end
+    return false
+end
+
+local function ApplyMirrorPayloadToCooldownState(state, payload)
+    if not payload then return false end
+    local auraActive = ResolveMirrorPayloadAuraActive(payload)
+    state.mode = payload.mode or "inactive"
+    SetCooldownStateActivity(state, payload.active == true)
+    state.spellID = payload.spellID
+    state.sourceID = payload.sourceID
+    state.durObj = payload.durObj
+    state.mirrorBacked = true
+    state.mirrorCooldownID = payload.cooldownID
+    state.mirrorCategory = payload.category
+    state.mirrorState = payload.state
+    state.state = payload.state
+    state.cooldownID = payload.cooldownID
+    state.category = payload.category
+    state.auraInstanceID = payload.auraInstanceID
+    state.auraUnit = payload.auraUnit
+    state.auraData = payload.auraData
+    state.resolvedAuraSpellID = payload.spellID
+    state.hasExpirationTime = payload.hasExpirationTime
+    state.hideDurationText = payload.hideDurationText
+    state.durationStateUnknown = payload.durationStateUnknown
+    state.auraActive = auraActive
+    state.auraIsActive = auraActive
+    state.totemSlot = payload.totemSlot
+    state.totemName = payload.totemName
+    state.totemIcon = payload.totemIcon
+    state.isTotemInstance = payload.isTotemInstance and true or false
+    CopyCountFactsToState(state, payload.count, true)
+    if state.active and state.mode == "aura" and state.hasExpirationTime == nil and not state.durObj then
+        state.hasExpirationTime = false
+        state.hideDurationText = true
+    end
+    return true
+end
+
+local function ResolveItemAuraForContext(state, context, entry, itemID, itemSpellID)
+    if not (context and entry and itemID) then
+        return false
+    end
+
+    local function trySpellID(rawSpellID, sourceKey)
+        local durObj = QueryPlayerAuraDurationBySpellID(rawSpellID, entry.name)
+        if durObj then
+            state.mode = "aura"
+            SetCooldownStateActivity(state, true)
+            state.durObj = durObj
+            state.sourceID = "item-aura-spell:" .. tostring(itemID) .. ":" .. sourceKey
+            state.spellID = rawSpellID
+            state.auraUnit = "player"
+            state.resolvedAuraSpellID = rawSpellID
+            return true
+        end
+        return false
+    end
+
+    local rawItemSpellID = QueryItemUseSpellID(itemID)
+    if trySpellID(rawItemSpellID, "raw-use") then return true end
+    if trySpellID(itemSpellID, "use") then return true end
+    if trySpellID(entry.spellID, "entry") then return true end
+    if trySpellID(entry.overrideSpellID, "override") then return true end
+    if trySpellID(entry.id, "id") then return true end
+
+    local durObj = QueryPlayerAuraDurationByName(entry.name)
+    if durObj then
+        state.mode = "aura"
+        SetCooldownStateActivity(state, true)
+        state.durObj = durObj
+        state.sourceID = "item-aura-name:" .. tostring(itemID)
+        state.auraUnit = "player"
+        state.resolvedAuraSpellID = itemSpellID
+        state.spellID = itemSpellID
+        return true
+    end
+
+    return false
+end
+
+local function IsRealCooldownDurationMode(mode)
+    return mode == "cooldown"
+        or mode == "charge"
+        or mode == "item-cooldown"
+end
+
+local function HasDurationObject(value)
+    if ResolverIsSecretValue(value) then
+        return true
+    end
+    return value ~= nil
+end
+
+function CDMResolvers.NormalizeResolvedCooldownStateContract(state)
+    if not state then return state end
+
+    local mode = state.mode
+    if not IsSupportedMirrorMode(mode) then
+        mode = "inactive"
+        state.mode = mode
+    end
+
+    local active = state.active == true
+    if mode == "inactive" then
+        active = false
+    end
+    state.active = active
+    state.isActive = active
+
+    if state.auraActive ~= nil or state.auraIsActive ~= nil then
+        local auraActive = state.auraActive == true
+        state.auraActive = auraActive
+        state.auraIsActive = auraActive
+    end
+
+    state.gcdOnly = mode == "gcd-only"
+    state.isGCDOnly = state.gcdOnly
+    state.isAuraMode = mode == "aura"
+    state.isRealCooldownMode = IsRealCooldownDurationMode(mode)
+    state.hasCharges = state.hasCharges == true or mode == "charge"
+    state.isOnCooldown = state.isOnCooldown == true
+    state.rechargeActive = state.rechargeActive == true
+    state.hasChargesRemaining = state.hasChargesRemaining == true
+    state.numericCooldownActive = state.numericCooldownActive == true or nil
+
+    local hasDurationObject = mode ~= "inactive" and HasDurationObject(state.durObj)
+    state.hasDurationObject = hasDurationObject == true
+    state.hasRenderableCooldown = mode ~= "inactive"
+        and (state.hasDurationObject == true or state.numericCooldownActive == true)
+
+    local count = state.count
+    if count then
+        count.shown = count.shown == true
+        state.countValue = count.value
+        state.countSinkText = count.sinkText
+        state.countShown = count.shown
+        state.countSource = count.source
+    else
+        state.countValue = nil
+        state.countSinkText = nil
+        state.countShown = false
+        state.countSource = nil
+    end
+
+    return state
+end
+
+local function IsNumericCooldownActive(startTime, duration)
+    return IsSafeNumeric(startTime)
+        and IsSafeNumeric(duration)
+        and startTime > 0
+        and duration > GCD_MAX_DURATION
+        and (startTime + duration) > GetTime()
+end
+
+local function ClearCooldownBinding(state)
+    if not state then return end
+    state.mode = "inactive"
+    SetCooldownStateActivity(state, false)
+    state.durObj = nil
+    state.sourceID = nil
+    state.start = nil
+    state.duration = nil
+    state.numericCooldownActive = nil
+end
+
+local function ApplyPriorRealCooldownBinding(state, context, sid, entryIsAura)
+    if not (state and context and sid) or entryIsAura then
+        return
+    end
+    if state.mode ~= "gcd-only" or state.mirrorBacked == true then
+        return
+    end
+
+    local hasPriorRealCooldown = context.priorRealCooldownActive == true
+        or context.priorShowingRealCooldownSwipe == true
+        or IsRealCooldownDurationMode(context.priorResolvedCooldownMode)
+    if not hasPriorRealCooldown then
+        return
+    end
+
+    local preservePriorBinding = context.priorRealCooldownActive == true
+        or context.priorCooldownActive == true
+    if preservePriorBinding
+        and context.preservedRealDurObj
+        and IsRealCooldownDurationMode(context.preservedRealMode) then
+        state.mode = context.preservedRealMode
+        SetCooldownStateActivity(state, true)
+        state.durObj = context.preservedRealDurObj
+        state.sourceID = context.preservedRealSourceID
+        state.spellID = sid
+        return
+    end
+
+    local realDur = QueryDuration(sid)
+    local spellUsable = QuerySpellUsableState(sid)
+    if realDur and spellUsable ~= true then
+        state.mode = "cooldown"
+        SetCooldownStateActivity(state, true)
+        state.durObj = realDur
+        state.sourceID = sid
+        state.spellID = sid
+    end
+end
+
+local function MirrorPayloadHasChargeState(state)
+    if not state then return false end
+
+    local m = state.state
+    if not m then return false end
+    if SafeMirrorString(m.resolvedMode) == "charge"
+        or SafeMirrorString(m.durObjSource) == "spell-charge" then
+        return true
+    end
+    if ResolverIsSecretValue(m.resourceDurObj) or m.resourceDurObj ~= nil then
+        return true
+    end
+    if SafeBoolean(m.cooldownChargesShown) == true
+        or SafeBoolean(m.chargeCountFrameShown) == true then
+        return true
+    end
+    return SafeMirrorString(m.stackTextSource) == "ChargeCount"
+        and SafeBoolean(m.stackTextShown) ~= false
+end
+
+local function MirrorPayloadMatchesRecentChargeCycle(state, context)
+    local m = state and state.state
+    if not (context and m and SafeBoolean(m.isActive) == true
+        and context.lastChargeMirrorCooldownID) then
+        return false
+    end
+
+    local cooldownID = state.cooldownID or m.cooldownID or context.mirrorCooldownID
+    if cooldownID ~= context.lastChargeMirrorCooldownID then
+        return false
+    end
+
+    local category = state.category
+        or NormalizeMirrorCategory(m.viewerCategory)
+        or context.mirrorCategory
+    return context.lastChargeMirrorCategory == nil
+        or category == context.lastChargeMirrorCategory
+end
+
+local function GetResolvedCooldownInfo(state, sid)
+    if state and state.cooldownInfo then
+        return state.cooldownInfo
+    end
+    local cdInfo = sid and QueryCooldown(sid)
+    if state then
+        state.cooldownInfo = cdInfo
+    end
+    return cdInfo
+end
+
+local function StampCooldownInfoBooleans(state, cdInfo, sid)
+    local active = cdInfo and IsCooldownInfoActive(cdInfo)
+    if active == nil then
+        active = GetCooldownInfoBoolean(cdInfo, "isActive")
+    end
+    local onGCD = cdInfo and GetCurrentIsOnGCD(sid, cdInfo)
+    if state then
+        state.cooldownInfoActive = active
+        state.cooldownInfoOnGCD = onGCD
+    end
+    return active, onGCD
+end
+
+local function FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
+    if not state then return state end
+
+    ApplyPriorRealCooldownBinding(state, context, sid, entryIsAura)
+
+    local mode = state.mode or "inactive"
+    local hasNumericCooldown = mode == "item-cooldown"
+        and IsNumericCooldownActive(state.start, state.duration)
+    state.numericCooldownActive = hasNumericCooldown == true or nil
+    state.gcdOnly = mode == "gcd-only"
+    state.hasCharges = (entry and (entry.hasCharges == true or entry.charges == true))
+        or mode == "charge"
+
+    state.isOnCooldown = false
+    state.rechargeActive = false
+    state.hasChargesRemaining = false
+
+    if mode == "inactive" or mode == "aura" or mode == "gcd-only" then
+        if mode == "inactive" then
+            SetCooldownStateActivity(state, false)
+        end
+        return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
+    end
+
+    if mode == "item-cooldown" then
+        state.isOnCooldown = hasNumericCooldown == true
+        return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
+    end
+
+    if entryIsAura or itemBackedEntry or not sid then
+        state.isOnCooldown = state.active == true
+        return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
+    end
+
+    local mirrorBackedCooldownMode = state.mirrorBacked == true
+        and (mode == "cooldown" or mode == "charge" or mode == "item-cooldown")
+    local mirrorBackedHasRenderableCooldown = HasDurationObject(state.durObj)
+        or hasNumericCooldown == true
+    local mirrorBackedRealMode = mirrorBackedCooldownMode
+        and mirrorBackedHasRenderableCooldown
+    local mirrorChargeMode = state.mirrorBacked == true
+        and (mode == "charge"
+            or MirrorPayloadHasChargeState(state)
+            or MirrorPayloadMatchesRecentChargeCycle(state, context))
+
+    if mode == "charge" then
+        state.hasCharges = true
+        state.rechargeActive = HasDurationObject(state.durObj)
+            or state.active == true
+            or state.isActive == true
+
+        local cdInfo = GetResolvedCooldownInfo(state, sid)
+        local cdInfoActive, cdInfoOnGCD = StampCooldownInfoBooleans(state, cdInfo, sid)
+        if cdInfoOnGCD == true or cdInfoActive == false then
+            state.isOnCooldown = false
+        elseif cdInfoActive == true then
+            state.isOnCooldown = true
+        elseif state.mirrorBacked == true then
+            state.isOnCooldown = mirrorBackedRealMode == true
+        end
+        state.hasChargesRemaining = state.hasCharges == true
+            and state.rechargeActive == true
+            and state.isOnCooldown ~= true
+        return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
+    end
+
+    if mirrorBackedCooldownMode
+        and not hasNumericCooldown
+        and not mirrorChargeMode then
+        local cdInfo = GetResolvedCooldownInfo(state, sid)
+        if cdInfo then
+            local cdInfoActive, cdInfoOnGCD = StampCooldownInfoBooleans(state, cdInfo, sid)
+            if cdInfoActive == false then
+                ClearCooldownBinding(state)
+                state.gcdOnly = false
+                return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
+            elseif cdInfoOnGCD == true then
+                state.isOnCooldown = false
+                return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
+            elseif cdInfoActive == true then
+                state.isOnCooldown = true
+                return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
+            end
+        end
+        state.isOnCooldown = mirrorBackedRealMode == true
+        return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
+    end
+
+    if state.mirrorBacked == true then
+        state.isOnCooldown = mirrorBackedRealMode == true
+        return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
+    end
+
+    local cdInfo = GetResolvedCooldownInfo(state, sid)
+    if cdInfo then
+        local cdInfoActive = StampCooldownInfoBooleans(state, cdInfo, sid)
+        local spellUsable = nil
+        if mode == "cooldown" then
+            spellUsable = QuerySpellUsableState(sid)
+        end
+        state.isOnCooldown = cdInfoActive == true and spellUsable ~= true
+    else
+        state.isOnCooldown = false
+    end
+
+    return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
+end
+
+function CDMResolvers.ResolveCooldownState(context)
+    local state = WipeCooldownState()
+    local entry = context and context.entry
+    if not entry then
+        return FinalizeCooldownStateActivity(state, context, entry, nil, nil, nil)
+    end
 
     local entryIsAura = CDMResolvers.IsAuraEntry(entry)
-    local sid = icon._runtimeSpellID
+    local macroResolvedID, macroResolvedType
+    if entry.type == "macro" then
+        macroResolvedID, macroResolvedType = CDMResolvers.ResolveMacro(entry)
+    end
+    local sid = (macroResolvedType == "spell" and macroResolvedID)
+        or context.runtimeSpellID
         or entry.overrideSpellID or entry.spellID or entry.id
     if sid and not entryIsAura then
         sid = QueryOverrideSpell(sid) or sid
     end
+    state.spellID = sid
+
     local itemID, itemSpellID
-    if CDMResolvers.IsItemLikeEntry(entry) then
-        itemID, _, itemSpellID = CDMResolvers.ResolveItemCooldownIdentity(entry)
+    local itemBackedEntry = IsItemLikeEntry(entry)
+        or (entry.type == "macro" and macroResolvedType == "item")
+    if itemBackedEntry then
+        itemID, _, itemSpellID = ResolveItemCooldownIdentity(entry)
         if itemSpellID then
             sid = itemSpellID
+            state.spellID = sid
         end
     end
 
-    -- Swipe priority:
-    --   aura entries:     aura -> charge/recharge -> cd -> gcd
-    --   cooldown entries: aura -> charge/recharge -> cd -> gcd unless
-    --                     cooldown-icon aura phase is disabled.
-    -- Two paths enforce this single rule:
-    --   * Mirror-backed icons:  the mirror's SelectDurationForState
-    --     picks lanes in this order. The cooldown-icon aura phase option
-    --     can remap an aura payload to the next cooldown/recharge lane here.
-    --   * Non-mirror icons:     the explicit ResolveAuraDurationObjectForIcon
-    --     check below enforces the same rule for aura entries with no
-    --     Blizzard CDM mirror.
-    -- Future change: if you reorder one path, reorder the other in lockstep.
-    local mirrorPayload = CDMResolvers.ResolveMirrorRenderPayloadForEntry(
+    local mirrorPayload = ResolveMirrorRenderPayloadForEntry(
         entry,
-        icon._blizzMirrorCooldownID,
-        icon._blizzMirrorCategory,
+        context.mirrorCooldownID,
+        context.mirrorCategory,
         sid)
     if mirrorPayload then
-        if mirrorPayload.mode == "aura"
-           and CDMIcons
-           and CDMIcons.ShouldSkipAuraPhaseForCooldownIcon
-           and CDMIcons.ShouldSkipAuraPhaseForCooldownIcon(icon, entry) then
+        if mirrorPayload.mode == "aura" and context.skipAuraPhase == true then
             mirrorPayload = BuildMirrorCooldownPhasePayload(mirrorPayload) or mirrorPayload
         end
-        if mirrorPayload.mode ~= "aura" and mirrorPayload.mode ~= "charge" then
+        if MirrorPayloadAllowsLiveChargeOverride(mirrorPayload) then
             local chargeDur, chargeMode, chargeSourceID = ResolveLiveChargeDurationObject(sid, entry)
             if chargeDur then
-                return chargeDur, chargeMode, chargeSourceID
+                state.mode = chargeMode
+                SetCooldownStateActivity(state, true)
+                state.durObj = chargeDur
+                state.sourceID = chargeSourceID
+                state.spellID = sid
+                return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
             end
         end
-        return mirrorPayload.durObj,
-            mirrorPayload.mode,
-            mirrorPayload.sourceID,
-            nil,
-            nil,
-            mirrorPayload.spellID,
-            true,
-            mirrorPayload
+        ApplyMirrorPayloadToCooldownState(state, mirrorPayload)
+        return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
     end
 
-    -- 1. Aura-kind entries: aura up on player -> aura DurObj. Use the same
-    -- ResolveAuraState path as UpdateIconCooldown so the event-driven
-    -- CooldownFrame binding and the per-icon active-state update cannot
-    -- disagree in combat. Cooldown-kind entries can skip this through the
-    -- cooldown-icon aura phase option.
-    local auraDur, auraActive, auraSourceID = CDMResolvers.ResolveAuraDurationObjectForIcon(icon, entry, sid)
-    if auraActive then
-        return auraDur, "aura", auraSourceID
+    local aura = ResolveAuraRuntimeStateForContext(context, entry, sid, entryIsAura)
+    if ApplyAuraStateToCooldownState(state, aura, sid) then
+        return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
     end
 
-    if itemID then
-        local itemAuraDur, itemAuraActive, itemAuraSourceID =
-            CDMResolvers.ResolveItemAuraDurationObject(icon, entry, itemID, itemSpellID)
-        if itemAuraActive then
-            return itemAuraDur, "aura", itemAuraSourceID
-        end
+    if itemID and ResolveItemAuraForContext(state, context, entry, itemID, itemSpellID) then
+        return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
     end
 
-    if CDMResolvers.IsItemLikeEntry(entry) then
-        local itemDur, itemMode, itemSourceID, itemStart, itemDuration, itemSpellID =
-            CDMResolvers.ResolveItemDurationObjectForIcon(icon, entry)
+    if itemBackedEntry then
+        local itemDur, itemMode, itemSourceID, itemStart, itemDuration, resolvedItemSpellID =
+            ResolveItemDurationObjectForIcon(nil, entry)
         if itemMode == "item-cooldown" then
-            return itemDur, itemMode, itemSourceID, itemStart, itemDuration, itemSpellID
+            state.mode = itemMode
+            SetCooldownStateActivity(state, true)
+            state.durObj = itemDur
+            state.sourceID = itemSourceID
+            state.start = itemStart
+            state.duration = itemDuration
+            state.spellID = resolvedItemSpellID
+            state.numericCooldownActive = itemStart ~= nil and itemDuration ~= nil or nil
+            return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
         end
-        if entry.type ~= "macro" then
-            return nil, "inactive", nil, nil, nil, itemSpellID
+        if entry.type ~= "macro" or macroResolvedType == "item" then
+            state.mode = "inactive"
+            state.spellID = resolvedItemSpellID
+            return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
         end
     end
 
-    -- Aura-kind entries have no cooldown path.
     if entryIsAura or not sid then
-        return nil, "inactive", nil
+        state.mode = "inactive"
+        state.spellID = sid
+        return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
     end
 
-    -- Keep GCD as an explicit lowest-priority duration candidate. Some
-    -- CooldownInfo payloads report isOnGCD=true while isActive=false; using
-    -- isActive as the gate drops the GCD swipe even though usability is in
-    -- the GCD window. Aura, charge, and real cooldown lanes below still win.
     local gcdCdInfo = QueryCooldown(sid)
     local currentOnGCD = GetCurrentIsOnGCD(sid, gcdCdInfo)
     local gcdDurObj
-    if currentOnGCD == true and CDMIcons.IsGCDSwipeEnabled() then
+    if currentOnGCD == true and context.showGCDSwipe == true then
         gcdDurObj = QueryGCDDurationObject(sid)
     end
 
-    -- 2. Charge spell mid-recharge → recharge DurObj.
     do
         local chargeDur, chargeMode, chargeSourceID = ResolveLiveChargeDurationObject(sid, entry)
         if chargeDur then
-            return chargeDur, chargeMode, chargeSourceID
+            state.mode = chargeMode
+            SetCooldownStateActivity(state, true)
+            state.durObj = chargeDur
+            state.sourceID = chargeSourceID
+            state.spellID = sid
+            return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
         end
     end
 
-    -- 3. Spell cooldown active → spell DurObj. A trusted
-    -- SPELL_UPDATE_COOLDOWN snapshot, or live isOnGCD when no snapshot is
-    -- available, distinguishes real CD from GCD overlay.
-    -- Two distinct queries:
-    --   real CD branch:   GetSpellCooldownDuration(sid, true)  via QueryDuration
-    --                     — returns the spell's own CD, ignoring the GCD that
-    --                     would otherwise mask it during the first 1.5s
-    --                     after a cast.
-    --   gcd-only branch:  GetSpellCooldownDuration(sid, false) — bypass the
-    --                     ignoreGCD flag so the API returns the GCD's own
-    --                     1.5s DurationObject, which is what we render as
-    --                     the GCD swipe overlay. Querying via the cache
-    --                     (which forces ignoreGCD=true) would return nil
-    --                     for spells with no real CD currently active.
     do
         local cdInfo = gcdCdInfo or QueryCooldown(sid)
-        local cdInfoActive = cdInfo and CDMIcons.GetCooldownInfoField(cdInfo, "isActive")
+        local cdInfoActive = cdInfo and GetCooldownInfoField(cdInfo, "isActive")
         if cdInfoActive == true then
             local cdInfoOnGCD = GetCurrentIsOnGCD(sid, cdInfo)
             local durObj = QueryDuration(sid)
             local spellUsable = QuerySpellUsableState(sid)
             local durationIsGCD = ShouldTreatLiveDurationAsGCD(
-                sid, entry, icon, cdInfo, cdInfoOnGCD, spellUsable)
+                sid, entry, cdInfo, cdInfoOnGCD, spellUsable)
             if durObj and not durationIsGCD and spellUsable ~= true then
-                return durObj, "cooldown", sid
+                state.mode = "cooldown"
+                SetCooldownStateActivity(state, true)
+                state.durObj = durObj
+                state.sourceID = sid
+                state.spellID = sid
+                state.cooldownInfo = cdInfo
+                return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
             end
-            if cdInfoOnGCD == true then
-                if not durationIsGCD and spellUsable ~= true then
-                    local preservedDur, preservedMode, preservedSourceID = GetPreservedRealDurationObject(icon)
-                    if preservedDur then
-                        return preservedDur, preservedMode, preservedSourceID
-                    end
+            if cdInfoOnGCD == true and context.showGCDSwipe == true then
+                local gcdDur = QueryGCDDurationObject(sid)
+                if gcdDur then
+                    state.mode = "gcd-only"
+                    SetCooldownStateActivity(state, true)
+                    state.durObj = gcdDur
+                    state.sourceID = sid
+                    state.spellID = sid
+                    state.cooldownInfo = cdInfo
+                    return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
                 end
-                if CDMIcons.IsGCDSwipeEnabled() then
-                    local gcdDur = QueryGCDDurationObject(sid)
-                    if gcdDur then
-                        return gcdDur, "gcd-only", sid
-                    end
-                    if durObj and durationIsGCD then
-                        return durObj, "gcd-only", sid
-                    end
+                if durObj and durationIsGCD then
+                    state.mode = "gcd-only"
+                    SetCooldownStateActivity(state, true)
+                    state.durObj = durObj
+                    state.sourceID = sid
+                    state.spellID = sid
+                    state.cooldownInfo = cdInfo
+                    return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
                 end
             end
         end
     end
 
     if gcdDurObj then
-        return gcdDurObj, "gcd-only", sid
+        state.mode = "gcd-only"
+        SetCooldownStateActivity(state, true)
+        state.durObj = gcdDurObj
+        state.sourceID = sid
+        state.spellID = sid
+        state.cooldownInfo = gcdCdInfo
+        return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
     end
 
-    return nil, "inactive", nil
-end
-
----------------------------------------------------------------------------
--- DEFERRED IMPORT BINDING
--- Called from the tail of cdm_icons.lua once ns.CDMIcons is fully populated.
--- Reassigns the file-level upvalues; every function defined in this file
--- closes over those upvalues, so they all see the late-bound values.
----------------------------------------------------------------------------
-function CDMResolvers._FinalizeImports(icons)
-    CDMIcons = icons
+    state.mode = "inactive"
+    state.spellID = sid
+    return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
 end

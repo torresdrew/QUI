@@ -14,6 +14,14 @@ ns.CDMSources = CDMSources
 local C_Spell = C_Spell
 local C_Item = C_Item
 local C_UnitAuras = C_UnitAuras
+local Shared = ns.CDMShared
+
+local function IsCooldownMirrorCategory(category)
+    if Shared and Shared.IsCooldownMirrorCategory then
+        return Shared.IsCooldownMirrorCategory(category)
+    end
+    return category == "essential" or category == "utility"
+end
 
 function CDMSources.QuerySpellCharges(spellID)
     if not spellID or not (C_Spell and C_Spell.GetSpellCharges) then return nil, false end
@@ -321,7 +329,7 @@ end
 function CDMSources.QueryMirroredCooldownState(spellID, viewerType)
     local mirror = ns.CDMBlizzMirror
     if not mirror or not spellID then return nil end
-    if (viewerType == "essential" or viewerType == "utility")
+    if IsCooldownMirrorCategory(viewerType)
        and mirror.GetMirroredStateForViewer then
         return mirror.GetMirroredStateForViewer(spellID, viewerType)
     end

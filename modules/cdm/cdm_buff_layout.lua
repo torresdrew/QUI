@@ -71,6 +71,23 @@ local viewerBuffState = Helpers.CreateStateTable()  -- viewer → { anchorCache,
 local abs = math.abs
 local Clamp01 = Helpers.Clamp01
 
+local function ReadNumber(value, fallback)
+    local valueType = type(value)
+    if valueType == "number" then return value end
+    if valueType == "string" then return tonumber(value) or fallback end
+    return fallback
+end
+
+local function ReadString(value, fallback)
+    if type(value) == "string" then return value end
+    return fallback
+end
+
+local function ReadBoolean(value, fallback)
+    if type(value) == "boolean" then return value end
+    return fallback
+end
+
 local function PositionMatchesTolerance(icon, expectedX, tolerance)
     if not icon then return false end
     local point, _, _, xOfs = icon:GetPoint(1)
@@ -88,12 +105,12 @@ local function IsFrameVisiblyShown(frame)
     if not frame or not frame.IsShown or not frame:IsShown() then
         return false
     end
-    local alpha = Helpers.SafeToNumber((frame.GetAlpha and frame:GetAlpha()) or 1, 1)
+    local alpha = ReadNumber((frame.GetAlpha and frame:GetAlpha()) or 1, 1)
     if alpha <= 0.01 then
         return false
     end
-    local width = Helpers.SafeToNumber(frame.GetWidth and frame:GetWidth(), 0)
-    local height = Helpers.SafeToNumber(frame.GetHeight and frame:GetHeight(), 0)
+    local width = ReadNumber(frame.GetWidth and frame:GetWidth(), 0)
+    local height = ReadNumber(frame.GetHeight and frame:GetHeight(), 0)
     if width <= 1 or height <= 1 then
         return false
     end
@@ -102,13 +119,13 @@ end
 
 local function GetFrameTopEdge(frame)
     if not frame then return nil end
-    local top = Helpers.SafeToNumber(frame.GetTop and frame:GetTop(), nil)
+    local top = ReadNumber(frame.GetTop and frame:GetTop(), nil)
     if type(top) == "number" then
         return top
     end
     local _, rawCenterY = frame.GetCenter and frame:GetCenter()
-    local centerY = Helpers.SafeToNumber(rawCenterY, nil)
-    local height = Helpers.SafeToNumber(frame.GetHeight and frame:GetHeight(), nil)
+    local centerY = ReadNumber(rawCenterY, nil)
+    local height = ReadNumber(frame.GetHeight and frame:GetHeight(), nil)
     if type(centerY) == "number" and type(height) == "number" then
         return centerY + (height / 2)
     end
@@ -199,9 +216,9 @@ local function GetTrackedBarAnchorWidth(anchorTo, anchorFrame)
     local width
     if anchorTo == "essential" or anchorTo == "utility" then
         local afvs = _G.QUI_GetCDMViewerState and _G.QUI_GetCDMViewerState(anchorFrame)
-        width = (afvs and afvs.iconWidth) or (afvs and afvs.row1Width) or Helpers.SafeToNumber(anchorFrame:GetWidth())
+        width = (afvs and afvs.iconWidth) or (afvs and afvs.row1Width) or ReadNumber(anchorFrame:GetWidth())
     else
-        width = Helpers.SafeToNumber(anchorFrame:GetWidth())
+        width = ReadNumber(anchorFrame:GetWidth())
     end
 
     if type(width) ~= "number" or width <= 1 then
@@ -542,7 +559,7 @@ local function GetTrackedBarName(frame)
     for _, region in ipairs({ frame:GetRegions() }) do
         if region and region.GetObjectType and region:GetObjectType() == "FontString" then
             local okText, rawText = pcall(region.GetText, region)
-            local text = okText and Helpers.SafeValue(rawText, nil) or nil
+            local text = okText and ReadString(rawText, nil) or nil
             if type(text) == "string" and text ~= "" then
                 local justify = region.GetJustifyH and region:GetJustifyH()
                 if justify ~= "RIGHT" then
@@ -560,9 +577,9 @@ local function GetTrackedBarSpellData(frame)
     local resolvedSpellID, baseSpellID, overrideSpellID, name
     local cdInfo = frame.cooldownInfo
     if cdInfo then
-        overrideSpellID = Helpers.SafeToNumber(cdInfo.overrideSpellID, nil)
-        baseSpellID = Helpers.SafeToNumber(cdInfo.spellID, nil)
-        name = Helpers.SafeValue(cdInfo.name, nil)
+        overrideSpellID = ReadNumber(cdInfo.overrideSpellID, nil)
+        baseSpellID = ReadNumber(cdInfo.spellID, nil)
+        name = ReadString(cdInfo.name, nil)
         resolvedSpellID = overrideSpellID or baseSpellID
     end
 
@@ -570,9 +587,9 @@ local function GetTrackedBarSpellData(frame)
         local apiInfo = ns.CDMCatalog and ns.CDMCatalog.GetCooldownInfo
             and ns.CDMCatalog.GetCooldownInfo(frame.cooldownID)
         if apiInfo then
-            overrideSpellID = overrideSpellID or Helpers.SafeToNumber(apiInfo.overrideSpellID, nil)
-            baseSpellID = baseSpellID or Helpers.SafeToNumber(apiInfo.spellID, nil)
-            name = name or Helpers.SafeValue(apiInfo.name, nil)
+            overrideSpellID = overrideSpellID or ReadNumber(apiInfo.overrideSpellID, nil)
+            baseSpellID = baseSpellID or ReadNumber(apiInfo.spellID, nil)
+            name = name or ReadString(apiInfo.name, nil)
             resolvedSpellID = resolvedSpellID or overrideSpellID or baseSpellID
         end
     end
@@ -615,7 +632,7 @@ local function GetTrackedBarIconTexture(frame, spellData)
     local iconTexture = iconContainer and (iconContainer.Icon or iconContainer.icon or iconContainer.texture)
     if iconTexture and iconTexture.GetTexture then
         local okTex, rawTexture = pcall(iconTexture.GetTexture, iconTexture)
-        local texture = okTex and Helpers.SafeValue(rawTexture, nil) or nil
+        local texture = okTex and rawTexture or nil
         if okTex and texture and texture ~= 0 and texture ~= "" then
             return texture
         end
@@ -803,7 +820,7 @@ end
 ---------------------------------------------------------------------------
 
 local function GetBuffIconFrames()
-    local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
+    local pool = ns.CDMIconFactory and ns.CDMIconFactory:GetIconPool("buff")
     if not pool or #pool == 0 then return {} end
 
     local visible = {}
@@ -881,8 +898,8 @@ local function ApplyIconStyle(icon, settings)
         stackAnchor = settings.stackAnchor or "BOTTOM",
         opacity = settings.opacity or 1.0,
     }
-    if ns.CDMIcons and ns.CDMIcons.ConfigureIcon then
-        ns.CDMIcons.ConfigureIcon(icon, rowConfig)
+    if ns.CDMIcons and ns.CDMIcons.OnIconRowConfigApplied then
+        ns.CDMIcons.OnIconRowConfigApplied(icon, rowConfig)
     end
     local swipeMod = QUI and QUI.CooldownSwipe
     if swipeMod and swipeMod.ApplyToIcon then
@@ -1183,8 +1200,8 @@ local function ApplyBarStyle(frame, settings, overrideBarWidth)
                 statusBar:SetStatusBarColor(c[1] or 0.2, c[2] or 0.8, c[3] or 0.6, barOpacity)
             elseif useClassColor then
                 local _, class = UnitClass("player")
-                local safeClass = Helpers.SafeToString(class, nil)
-                local color = safeClass and RAID_CLASS_COLORS[safeClass]
+                local classKey = ReadString(class, nil)
+                local color = classKey and RAID_CLASS_COLORS[classKey]
                 if color then
                     statusBar:SetStatusBarColor(color.r, color.g, color.b, barOpacity)
                 else
@@ -1605,11 +1622,11 @@ local function CheckIconChanges()
     -- Count visible icons
     local visibleCount = 0
     local inCombat = InCombatLockdown()
-    local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
+    local pool = ns.CDMIconFactory and ns.CDMIconFactory:GetIconPool("buff")
     if pool then
         for _, icon in ipairs(pool) do
             if inCombat then
-                if Helpers.SafeValue(icon:IsShown(), false) and (Helpers.SafeToNumber(icon:GetAlpha()) or 1) > 0 then
+                if ReadBoolean(icon:IsShown(), false) and ReadNumber(icon:GetAlpha(), 1) > 0 then
                     visibleCount = visibleCount + 1
                 end
             else
@@ -1748,10 +1765,10 @@ local function Initialize()
             -- but icon positions don't need to move.
             if InCombatLockdown() then
                 local currentCount = 0
-                local pool = ns.CDMIcons and ns.CDMIcons:GetIconPool("buff")
+                local pool = ns.CDMIconFactory and ns.CDMIconFactory:GetIconPool("buff")
                 if pool then
                     for _, icon in ipairs(pool) do
-                        if Helpers.SafeValue(icon:IsShown(), false) and (Helpers.SafeToNumber(icon:GetAlpha()) or 1) > 0 then
+                        if ReadBoolean(icon:IsShown(), false) and ReadNumber(icon:GetAlpha(), 1) > 0 then
                             currentCount = currentCount + 1
                         end
                     end

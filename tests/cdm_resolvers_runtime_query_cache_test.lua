@@ -61,50 +61,50 @@ local ns = {
     },
 }
 
-assert(loadfile("modules/cdm/cdm_resolvers.lua"))("QUI", ns)
+assert(loadfile("modules/cdm/cdm_runtime_queries.lua"))("QUI", ns)
 
-local resolvers = assert(ns.CDMResolvers, "CDMResolvers should be exported")
-assert(type(resolvers.BeginRuntimeQueryBatch) == "function",
-    "resolver query batching should expose BeginRuntimeQueryBatch")
-assert(type(resolvers.EndRuntimeQueryBatch) == "function",
-    "resolver query batching should expose EndRuntimeQueryBatch")
+local runtime = assert(ns.CDMRuntimeQueries, "CDMRuntimeQueries should be exported")
+assert(type(runtime.BeginRuntimeQueryBatch) == "function",
+    "runtime query batching should expose BeginRuntimeQueryBatch")
+assert(type(runtime.EndRuntimeQueryBatch) == "function",
+    "runtime query batching should expose EndRuntimeQueryBatch")
 
-resolvers.QueryCooldown(101)
-resolvers.QueryCooldown(101)
+runtime.QueryCooldown(101)
+runtime.QueryCooldown(101)
 assert(cooldownCalls == 2,
     "outside a batch cooldown queries should remain live reads")
 
-resolvers.BeginRuntimeQueryBatch()
-assert(resolvers.QueryCooldown(101) == cooldownInfo,
+runtime.BeginRuntimeQueryBatch()
+assert(runtime.QueryCooldown(101) == cooldownInfo,
     "batched cooldown query should return source payload")
-assert(resolvers.QueryCooldown(101) == cooldownInfo,
+assert(runtime.QueryCooldown(101) == cooldownInfo,
     "duplicate batched cooldown query should return cached payload")
-assert(resolvers.QueryCharges(101) == chargeInfo,
+assert(runtime.QueryCharges(101) == chargeInfo,
     "batched charge query should return source payload")
-assert(resolvers.QueryCharges(101) == chargeInfo,
+assert(runtime.QueryCharges(101) == chargeInfo,
     "duplicate batched charge query should return cached payload")
-assert(resolvers.QueryDuration(101) == durationObject,
+assert(runtime.QueryDuration(101) == durationObject,
     "batched cooldown DurationObject query should return source payload")
-assert(resolvers.QueryDuration(101) == durationObject,
+assert(runtime.QueryDuration(101) == durationObject,
     "duplicate batched cooldown DurationObject query should return cached payload")
-assert(resolvers.QueryChargeDuration(101) == chargeDurationObject,
+assert(runtime.QueryChargeDuration(101) == chargeDurationObject,
     "batched charge DurationObject query should return source payload")
-assert(resolvers.QueryChargeDuration(101) == chargeDurationObject,
+assert(runtime.QueryChargeDuration(101) == chargeDurationObject,
     "duplicate batched charge DurationObject query should return cached payload")
-assert(resolvers.QueryOverrideSpell(101) == 202,
+assert(runtime.QueryOverrideSpell(101) == 202,
     "batched override query should return source payload")
-assert(resolvers.QueryOverrideSpell(101) == 202,
+assert(runtime.QueryOverrideSpell(101) == 202,
     "duplicate batched override query should return cached payload")
 
-assert(resolvers.QueryCooldown(404) == nil,
+assert(runtime.QueryCooldown(404) == nil,
     "batched nil cooldown result should pass through")
-assert(resolvers.QueryCooldown(404) == nil,
+assert(runtime.QueryCooldown(404) == nil,
     "batched nil cooldown result should be cached")
-assert(resolvers.QueryCharges(404) == nil,
+assert(runtime.QueryCharges(404) == nil,
     "batched nil charge result should pass through")
-assert(resolvers.QueryCharges(404) == nil,
+assert(runtime.QueryCharges(404) == nil,
     "batched nil charge result should be cached")
-resolvers.EndRuntimeQueryBatch()
+runtime.EndRuntimeQueryBatch()
 
 assert(cooldownCalls == 4,
     "one cached hit and one cached nil should each query cooldown source once inside the batch")
@@ -117,17 +117,17 @@ assert(chargeDurationCalls == 1,
 assert(overrideCalls == 1,
     "duplicate override queries should share one source call")
 
-resolvers.QueryCooldown(101)
+runtime.QueryCooldown(101)
 assert(cooldownCalls == 5,
     "ending a batch should restore live cooldown reads")
 
-resolvers.BeginRuntimeQueryBatch()
-resolvers.QueryCooldown(101)
-resolvers.BeginRuntimeQueryBatch()
-resolvers.QueryCooldown(101)
-resolvers.EndRuntimeQueryBatch()
-resolvers.QueryCooldown(101)
-resolvers.EndRuntimeQueryBatch()
+runtime.BeginRuntimeQueryBatch()
+runtime.QueryCooldown(101)
+runtime.BeginRuntimeQueryBatch()
+runtime.QueryCooldown(101)
+runtime.EndRuntimeQueryBatch()
+runtime.QueryCooldown(101)
+runtime.EndRuntimeQueryBatch()
 assert(cooldownCalls == 6,
     "nested batches should share the outer cache until the final EndRuntimeQueryBatch")
 

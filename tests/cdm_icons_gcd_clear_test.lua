@@ -1,6 +1,8 @@
 -- tests/cdm_icons_gcd_clear_test.lua
 -- Run: lua tests/cdm_icons_gcd_clear_test.lua
 
+local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub.lua")
+
 local function noop() end
 
 function InCombatLockdown() return false end
@@ -53,32 +55,23 @@ local ns = {
     },
     CDMSources = {},
     CDMResolvers = {
+        BuildCooldownStateContext = BuildCooldownStateContext,
         _textureCycleCache = {},
         _FinalizeImports = noop,
         Subscribe = noop,
-        QueryCharges = function() return nil end,
-        QueryCooldown = function() return nil end,
-        QueryDuration = function() return nil end,
-        QueryChargeDuration = function() return nil end,
-        QueryOverrideSpell = function() return nil end,
-        QueryDisplayCount = function() return nil end,
-        QuerySpellCount = function() return nil end,
         GetSpellTexture = function() return nil end,
         ResolveMacro = function() return nil end,
         GetEntryTexture = function() return nil end,
-        HasRealCooldownState = function() return false end,
-        ResolveAuraStateForIcon = function() return nil end,
-        ResolveAuraDurationObjectForIcon = function() return nil end,
         IsAuraEntry = function(entry) return entry and entry.kind == "aura" end,
-        GetChargeMetadataDB = function() return nil end,
-        IsItemLikeEntry = function() return false end,
-        ResolveItemCooldownIdentity = function() return nil end,
-        ResolveEntryItemID = function() return nil end,
-        ClassifySpellCooldownState = function() return nil end,
         ResolveSpellActiveState = function() return nil end,
         ResolveCooldownActivityState = function() return nil end,
-        ResolveIconDurationObject = function()
-            return nil, "inactive", nil, nil, nil, 12345
+        ResolveCooldownState = function()
+            return {
+                mode = "inactive",
+                active = false,
+                isActive = false,
+                spellID = 12345,
+            }
         end,
     },
     CDMIconFactory = {
@@ -91,6 +84,7 @@ local ns = {
     },
 }
 
+dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local clearCalls = 0

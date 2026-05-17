@@ -1,6 +1,8 @@
 -- tests/cdm_icons_charge_mirror_active_test.lua
 -- Run: lua tests/cdm_icons_charge_mirror_active_test.lua
 
+local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub.lua")
+
 local function noop() end
 
 function InCombatLockdown() return false end
@@ -60,15 +62,10 @@ local ns = {
     },
     CDMSources = {
         QuerySpellUsable = function() return true, false end,
-    },
-    CDMResolvers = {
-        _textureCycleCache = {},
-        _FinalizeImports = noop,
-        Subscribe = noop,
-        QueryCharges = function()
+        QuerySpellCharges = function()
             error("mirror-backed charge apply must not query spell charges")
         end,
-        QueryCooldown = function(spellID)
+        QuerySpellCooldown = function(spellID)
             if spellID == 444347 then
                 return {
                     startTime = 0,
@@ -79,43 +76,53 @@ local ns = {
             end
             return nil
         end,
-        QueryDuration = function() return nil end,
-        QueryChargeDuration = function() return nil end,
-        QueryOverrideSpell = function() return nil end,
-        QueryDisplayCount = function() return nil end,
-        QuerySpellCount = function() return nil end,
+    },
+    CDMResolvers = {
+        BuildCooldownStateContext = BuildCooldownStateContext,
+        _textureCycleCache = {},
+        _FinalizeImports = noop,
+        Subscribe = noop,
         GetSpellTexture = function() return nil end,
         ResolveMacro = function() return nil end,
         GetEntryTexture = function() return nil end,
-        HasRealCooldownState = function() return false end,
-        ResolveAuraStateForIcon = function() return nil end,
-        ResolveAuraDurationObjectForIcon = function() return nil end,
         IsAuraEntry = function(entry) return entry and entry.kind == "aura" end,
-        GetChargeMetadataDB = function() return nil end,
-        IsItemLikeEntry = function() return false end,
-        ResolveItemCooldownIdentity = function() return nil end,
-        ResolveEntryItemID = function() return nil end,
-        ClassifySpellCooldownState = function() return nil end,
         ResolveSpellActiveState = function() return nil end,
         ResolveCooldownActivityState = function() return nil end,
-        ResolveIconDurationObject = function()
-            return chargeDuration,
-                "charge",
-                "charge:mirror:8203:183",
-                nil,
-                nil,
-                444347,
-                true,
-                {
-                    mode = "charge",
-                    spellID = 444347,
-                    state = {
-                        cooldownID = 8203,
-                        viewerCategory = "essential",
-                        isActive = true,
-                        resolvedMode = "charge",
-                    },
-                }
+        ResolveCooldownState = function()
+            local state = {
+                cooldownID = 8203,
+                viewerCategory = "essential",
+                isActive = true,
+                resolvedMode = "charge",
+            }
+            return {
+                mode = "charge",
+                active = true,
+                isActive = true,
+                durObj = chargeDuration,
+                sourceID = "charge:mirror:8203:183",
+                spellID = 444347,
+                mirrorBacked = true,
+                isOnCooldown = false,
+                rechargeActive = true,
+                hasCharges = true,
+                hasChargesRemaining = true,
+                gcdOnly = false,
+                cooldownInfo = {
+                    startTime = 0,
+                    duration = 0,
+                    isActive = false,
+                    isOnGCD = false,
+                },
+                cooldownInfoActive = false,
+                cooldownInfoOnGCD = false,
+                mirrorCooldownID = 8203,
+                mirrorCategory = "essential",
+                cooldownID = 8203,
+                category = "essential",
+                state = state,
+                mirrorState = state,
+            }
         end,
     },
     CDMIconFactory = {
@@ -130,6 +137,7 @@ local ns = {
     },
 }
 
+dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local appliedDuration
@@ -170,9 +178,15 @@ assert(appliedDuration == chargeDuration, "active charge mirror should keep the 
 assert(cleared == false, "active charge mirror must not clear the cooldown frame")
 assert(icon._resolvedCooldownMode == "charge",
     "normal cooldown inactivity should not downgrade active charge mirror mode")
-assert(icon._hasCooldownActive == true, "active charge mirror should keep cooldown-active state")
-assert(desaturated == true, "active charge mirror should still use cooldown desaturation")
+assert(icon._hasCooldownActive == false, "charge mirror with inactive spell cooldown should not mark the spell unavailable")
+assert(icon._hasRealCooldownActive == false, "charge mirror with inactive spell cooldown should not mark a real cooldown")
+assert(desaturated == false, "charge mirror with inactive spell cooldown should keep the icon saturated")
 assert(storedState and storedState.mode == "charge", "runtime store should keep charge mode")
-assert(storedState and storedState.active == true, "runtime store should keep charge active")
+assert(storedState and storedState.active == false, "runtime store should store availability separately from recharge mode")
+assert(storedState and storedState.hasCharges == true, "runtime store should mark charge-mode activity facts")
+assert(storedState and storedState.rechargeActive == true, "runtime store should preserve active recharge separately")
+assert(storedState and storedState.isOnCooldown == false, "runtime store should preserve cooldown lock separately")
+assert(storedState and storedState.hasChargesRemaining == true,
+    "runtime store should preserve remaining-charge activity for custom bars")
 
 print("OK: cdm_icons_charge_mirror_active_test")

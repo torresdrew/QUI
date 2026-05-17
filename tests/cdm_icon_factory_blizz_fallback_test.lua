@@ -1,32 +1,90 @@
 -- tests/cdm_icon_factory_blizz_fallback_test.lua
 -- Run: lua tests/cdm_icon_factory_blizz_fallback_test.lua
 
+local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub.lua")
+
+local function noop() end
+
 function InCombatLockdown() return false end
-function CreateFrame() return {} end
+function GetTime() return 100 end
+function CreateFrame()
+    return {
+        RegisterEvent = noop,
+        RegisterUnitEvent = noop,
+        UnregisterAllEvents = noop,
+        SetScript = noop,
+    }
+end
+function wipe(tbl)
+    for key in pairs(tbl) do
+        tbl[key] = nil
+    end
+end
+
+C_Timer = {
+    After = function(_, callback) callback() end,
+    NewTimer = function()
+        return { Cancel = noop }
+    end,
+}
 
 local auraDuration = { token = "aura-duration-object" }
 local queriedAura = false
-local appliedMirrorCount
+local stackTextValue
+local stackTextShown
+local clearedStackCount = 0
 
 local ns = {
-    Helpers = {},
+    Helpers = {
+        GetGeneralFont = function() return "Fonts\\FRIZQT__.TTF" end,
+        GetGeneralFontOutline = function() return "" end,
+        CreateDBGetter = function()
+            return function()
+                return {
+                    buff = {
+                        desaturateOnCooldown = true,
+                    },
+                }
+            end
+        end,
+        IsSecretValue = function() return false end,
+        SafeValue = function(value) return value end,
+        SafeToNumber = function(value) return value end,
+        CanAccessTable = function(tbl) return type(tbl) == "table" end,
+    },
+    Addon = {
+        db = {
+            profile = { ncdm = {} },
+            char = { ncdm = {} },
+        },
+    },
+    CDMShared = {
+        IsRuntimeEnabled = function() return true end,
+        IsSafeNumeric = function(value) return type(value) == "number" end,
+    },
     CDMResolvers = {
+        BuildCooldownStateContext = BuildCooldownStateContext,
+        _textureCycleCache = {},
+        _FinalizeImports = noop,
+        Subscribe = noop,
         GetEntryTexture = function() return nil end,
         GetSpellTexture = function() return nil end,
-        QueryCharges = function() return nil end,
-        QueryCooldown = function() return nil end,
-        QueryOverrideSpell = function() return nil end,
-        QueryDisplayCount = function() return nil end,
-        ResolveAuraStateForIcon = function()
+        ResolveCooldownState = function()
             return {
+                mode = "aura",
+                active = true,
                 isActive = true,
+                auraActive = true,
                 isTotemInstance = false,
                 count = nil,
             }
         end,
-        HasRealCooldownState = function() return false end,
         ResolveMacro = function() return nil end,
         IsAuraEntry = function() return true end,
+        ResolveSpellActiveState = function() return nil end,
+        ResolveCooldownActivityState = function()
+            return { isOnCooldown = false, rechargeActive = false }
+        end,
     },
     CDMSources = {
         QueryUnitAuraBySpellID = function(unit, spellID, filter)
@@ -45,6 +103,24 @@ local ns = {
     },
     CDMBlizzMirror = {
         GetStateByCooldownID = function(cooldownID)
+            if cooldownID == 73543 then
+                return {
+                    cooldownID = 73543,
+                    isActive = false,
+                    durObj = nil,
+                    selfAura = true,
+                    viewerCategory = "buff",
+                    spellID = 137008,
+                    overrideSpellID = 137008,
+                    overrideTooltipSpellID = 1242999,
+                    linkedSpellIDs = { 1242999 },
+                    mirrorEpoch = 4,
+                    stackText = "6",
+                    stackTextSource = "FrameText",
+                    stackTextShown = true,
+                    stackTextEpoch = 10,
+                }
+            end
             assert(cooldownID == 73542, "unexpected cooldownID")
             return {
                 cooldownID = 73542,
@@ -70,21 +146,25 @@ local ns = {
 }
 
 assert(loadfile("modules/cdm/cdm_icon_factory.lua"))("QUI", ns)
+dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
+assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
-local appliedDuration
-ns.CDMIconFactory._FinalizeImports({
-    IsTotemSlotEntry = function() return false end,
-    ApplyResolvedCooldown = function(icon)
-        appliedDuration = icon._lastAuraDurObj
-        return true
-    end,
-    ReapplySwipeStyle = function() end,
-    ClearIconStackText = function() end,
-    ApplyAuraCountText = function(_, count)
-        appliedMirrorCount = count
-    end,
-    RequestBuffIconLayoutRefresh = function() end,
-})
+local function makeStackText()
+    return {
+        SetText = function(_, value)
+            stackTextValue = value
+            if value == "" then
+                clearedStackCount = clearedStackCount + 1
+            end
+        end,
+        Show = function()
+            stackTextShown = true
+        end,
+        Hide = function()
+            stackTextShown = false
+        end,
+    }
+end
 
 local icon = {
     _spellEntry = {
@@ -95,17 +175,38 @@ local icon = {
         viewerType = "buff",
     },
     _blizzMirrorCooldownID = 73542,
+    StackText = makeStackText(),
 }
 
-ns.CDMIconFactory.UpdateIconCooldown(icon)
+ns.CDMIcons.OnContainerIconPlaced(icon)
 
 assert(queriedAura == false, "icon sync must not query aura APIs; UNIT_AURA mirror path owns aura duration")
-assert(appliedDuration == nil, "active mirror with no durObj should show without inventing a duration")
-assert(appliedMirrorCount and appliedMirrorCount.sinkText == "5",
+assert(icon._lastAuraDurObj == nil, "active mirror with no durObj should show without inventing a duration")
+assert(stackTextValue == "5",
     "mirrored aura icons should render Blizzard-captured stack text when resolver count is missing")
-assert(appliedMirrorCount.source == "Applications",
-    "mirrored aura icon stack text should preserve the Blizzard source")
-assert(appliedMirrorCount.shown == true,
-    "mirrored aura icon stack text should be marked visible")
+assert(stackTextShown == true, "mirrored aura icon stack text should be marked visible")
+
+stackTextValue = nil
+stackTextShown = nil
+clearedStackCount = 0
+
+local inactiveTextIcon = {
+    _spellEntry = {
+        id = 1242999,
+        spellID = 1242999,
+        kind = "aura",
+        type = "aura",
+        viewerType = "buff",
+    },
+    _blizzMirrorCooldownID = 73543,
+    StackText = makeStackText(),
+}
+
+ns.CDMIcons.OnContainerIconPlaced(inactiveTextIcon)
+
+assert(stackTextValue == "6",
+    "source-child text should render even when mirror active state is false")
+assert(clearedStackCount == 0,
+    "inactive mirror state must not clear source-child text")
 
 print("OK: cdm_icon_factory_blizz_fallback_test")

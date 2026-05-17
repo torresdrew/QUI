@@ -108,4 +108,34 @@ assert(seededSet[12345], "learned spell missing from initial snapshot seed")
 assert(seededSet[67890], "unlearned CDM spell missing from initial snapshot seed")
 assert(not seededSet[13579], "seed/reset should not import spells the user is not tracking in Blizzard CDM")
 
+local cooldownMap = {}
+local cooldownDirectMap = {}
+catalog.MapCooldownInfoIDs(cooldownMap, cooldownDirectMap, {
+    spellID = 20001,
+    overrideSpellID = 20002,
+    overrideTooltipSpellID = 20003,
+    linkedSpellIDs = { 20004 },
+}, 9001, "essential")
+assert(cooldownMap[20002] == 9001, "cooldown category should map override/source IDs")
+assert(cooldownMap[20001] == 9001, "cooldown category should retain source spell fallback")
+assert(cooldownMap[20003] == nil, "cooldown category should not claim tooltip aura IDs")
+assert(cooldownMap[20004] == nil, "cooldown category should not claim linked aura IDs")
+assert(cooldownDirectMap[20002] == 9001, "cooldown direct map should use override/source IDs")
+assert(cooldownDirectMap[20003] == nil, "cooldown direct map should not claim tooltip aura IDs")
+
+local auraMap = { [30003] = 88, [30004] = 88 }
+local auraDirectMap = { [30002] = 88, [30003] = 88, [30004] = 88 }
+catalog.MapCooldownInfoIDs(auraMap, auraDirectMap, {
+    spellID = 30001,
+    overrideSpellID = 30002,
+    overrideTooltipSpellID = 30003,
+    linkedSpellIDs = { 30004 },
+}, 9002, "buff")
+assert(auraMap[30002] == 9002, "aura category should map source ability IDs")
+assert(auraMap[30003] == 9002, "aura category should let tooltip aura ID win in the category map")
+assert(auraMap[30004] == 88, "aura category linked aliases should not overwrite category-map owners")
+assert(auraDirectMap[30003] == 9002, "aura direct map should let tooltip aura IDs win")
+assert(auraDirectMap[30004] == 9002, "aura direct map should let linked aura IDs win")
+assert(auraDirectMap[30002] == 88, "aura direct map should not overwrite source ability owners")
+
 print("OK: cdm_catalog_test")

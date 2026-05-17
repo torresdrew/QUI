@@ -46,9 +46,10 @@ local ns = {
     },
 }
 
+dofile("tests/helpers/load_cdm_spelldata_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_spelldata.lua"))("QUI", ns)
 local spellData = ns.CDMSpellData
-spellData._abilityToAuraSpellID[55090] = 194310
+assert(spellData:GetAuraIDsForSpell(55090), "test catalog aura map should build through the public getter")
 
 local auraBySpellID = {
     [194310] = {
@@ -114,7 +115,7 @@ ns.CDMBlizzMirror.GetMirroredStateForViewer = function(spellID, viewerType)
     end
 end
 
-local state = spellData:ResolveAuraState({
+local state = ns.CDMAuraRuntime.ResolveState({
     spellID = 777001,
     entrySpellID = 777001,
     entryID = 777001,
@@ -135,7 +136,7 @@ assert(state.count.value == 7, "mirrored aura count should expose a safe numeric
 assert(state.count.shown == true, "mirrored aura count should be marked shown")
 assert(state.count.source == "Applications", "mirrored aura count should keep its source")
 
-state = spellData:ResolveAuraState({
+state = ns.CDMAuraRuntime.ResolveState({
     spellID = 55090,
     entrySpellID = 55090,
     entryID = 55090,
@@ -157,7 +158,7 @@ assert(state.count.value == 4, "display-count stack should expose a safe numeric
 assert(state.count.shown == true, "display-count stack should be marked shown")
 assert(state.count.source == "display-count", "display-count stack should keep its source")
 
-state = spellData:ResolveAuraState({
+state = ns.CDMAuraRuntime.ResolveState({
     spellID = 343294,
     entrySpellID = 343294,
     entryID = 343294,

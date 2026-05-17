@@ -1,6 +1,8 @@
 -- tests/cdm_gcd_refresh_state_test.lua
 -- Run: lua tests/cdm_gcd_refresh_state_test.lua
 
+local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub.lua")
+
 local function noop() end
 
 local frameScripts = {}
@@ -38,7 +40,11 @@ C_Timer = {
 local function makeIcon(spellID)
     local icon = { vertexColors = {} }
     icon.Cooldown = {
-        SetCooldownFromDurationObject = function() return true end,
+        SetCooldownFromDurationObject = function(_, durObj)
+            icon.cooldownBinds = (icon.cooldownBinds or 0) + 1
+            icon.lastCooldownDurObj = durObj
+            return true
+        end,
         SetReverse = noop,
         SetSwipeTexture = noop,
         SetDrawSwipe = noop,
@@ -113,34 +119,21 @@ local ns = {
             end
             return true, false
         end,
+        QuerySpellCooldown = function()
+            return { isActive = currentOnGCD, isOnGCD = currentOnGCD }
+        end,
     },
     CDMResolvers = {
+        BuildCooldownStateContext = BuildCooldownStateContext,
         _textureCycleCache = {},
         _FinalizeImports = noop,
         Subscribe = function(eventName, handler)
             subscriptions[eventName] = handler
         end,
-        QueryCharges = function() return nil end,
-        QueryCooldown = function()
-            return { isActive = currentOnGCD, isOnGCD = currentOnGCD }
-        end,
-        QueryDuration = function() return nil end,
-        QueryChargeDuration = function() return nil end,
-        QueryOverrideSpell = function() return nil end,
-        QueryDisplayCount = function() return nil end,
-        QuerySpellCount = function() return nil end,
         GetSpellTexture = function() return nil end,
         ResolveMacro = function() return nil end,
         GetEntryTexture = function() return nil end,
-        HasRealCooldownState = function() return false end,
-        ResolveAuraStateForIcon = function() return nil end,
-        ResolveAuraDurationObjectForIcon = function() return nil end,
         IsAuraEntry = function(entry) return entry and entry.kind == "aura" end,
-        GetChargeMetadataDB = function() return nil end,
-        IsItemLikeEntry = function() return false end,
-        ResolveItemCooldownIdentity = function() return nil end,
-        ResolveEntryItemID = function() return nil end,
-        ClassifySpellCooldownState = function() return nil end,
         ResolveSpellActiveState = function() return nil end,
         ResolveCooldownActivityState = function()
             return {
@@ -150,12 +143,24 @@ local ns = {
                 hasCharges = false,
             }
         end,
-        ResolveIconDurationObject = function(icon)
+        ResolveCooldownState = function(context)
             if not gcdQueryable then
-                return nil, "inactive", nil
+                return {
+                    mode = "inactive",
+                    active = false,
+                    isActive = false,
+                }
             end
-            local sid = icon and icon._spellEntry and icon._spellEntry.spellID
-            return gcdDuration, "gcd-only", sid, nil, nil, sid
+            local entry = context and context.entry
+            local sid = context and context.runtimeSpellID or entry and entry.spellID
+            return {
+                mode = "gcd-only",
+                active = true,
+                isActive = true,
+                durObj = gcdDuration,
+                sourceID = sid,
+                spellID = sid,
+            }
         end,
     },
     CDMIconFactory = {
@@ -164,8 +169,16 @@ local ns = {
         _FinalizeImports = noop,
         AcquireIcon = noop,
         ReleaseIcon = noop,
+        GetIconPool = function(self, viewerType)
+            return self._iconPools[viewerType] or {}
+        end,
+        EnsurePool = function(self, viewerType)
+            if not self._iconPools[viewerType] then
+                self._iconPools[viewerType] = {}
+            end
+            return self._iconPools[viewerType]
+        end,
         SyncCooldownBling = noop,
-        UpdateIconCooldown = noop,
     },
     CDMRuntimeStore = {
         SetIconState = noop,
@@ -181,11 +194,13 @@ local ns = {
     },
 }
 
+dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
-icons:EnsurePool("essential")
-local pool = icons:GetIconPool("essential")
+local factory = assert(ns.CDMIconFactory, "CDMIconFactory should be exported")
+factory:EnsurePool("essential")
+local pool = factory:GetIconPool("essential")
 local first = makeIcon(11111)
 local second = makeIcon(22222)
 pool[#pool + 1] = first
@@ -198,7 +213,7 @@ second._showingGCDSwipe = true
 
 currentOnGCD = false
 gcdQueryable = false
-icons.EventFrameOnEvent({}, "SPELL_UPDATE_USABLE")
+icons.HandleRuntimeRefresh("SPELL_UPDATE_USABLE")
 
 assert(first._isOnGCD == false, "SPELL_UPDATE_USABLE should clear stale trusted GCD state for first icon")
 assert(second._isOnGCD == false, "SPELL_UPDATE_USABLE should clear stale trusted GCD state for second icon")
@@ -214,5 +229,14 @@ cooldownChanged("CDM:COOLDOWN_CHANGED", 11111, nil, "refresh")
 
 assert(first._showingGCDSwipe == true, "per-spell GCD refresh should mark the cast spell")
 assert(second._showingGCDSwipe == true, "per-spell GCD refresh should broaden when GCD state changed")
+
+local firstBinds = first.cooldownBinds or 0
+local secondBinds = second.cooldownBinds or 0
+cooldownChanged("CDM:COOLDOWN_CHANGED", nil, nil, "refresh")
+
+assert((first.cooldownBinds or 0) == firstBinds,
+    "broad cooldown refresh with unchanged GCD state should not rebind an active GCD swipe")
+assert((second.cooldownBinds or 0) == secondBinds,
+    "unchanged broad cooldown refresh should preserve existing GCD DurationObject bindings")
 
 print("OK: cdm_gcd_refresh_state_test")

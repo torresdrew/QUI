@@ -89,14 +89,27 @@ local ns = {
     },
     CDMIcons = {
         IsRuntimeEnabled = function() return true end,
-        ResolveIconDurationObject = function()
+        ResolveCooldownState = function()
             if queryCount >= 2 then
                 icon._showingGCDSwipe = true
                 icon._resolvedCooldownMode = "gcd-only"
                 icon.Cooldown._quiIntendedDrawSwipe = true
-                return { token = "gcd" }, "gcd-only", 12345
+                return {
+                    mode = "gcd-only",
+                    active = true,
+                    isActive = true,
+                    durObj = { token = "gcd" },
+                    sourceID = 12345,
+                    spellID = 12345,
+                }
             end
-            return nil, "none", 12345
+            return {
+                mode = "inactive",
+                active = false,
+                isActive = false,
+                sourceID = 12345,
+                spellID = 12345,
+            }
         end,
         GetCooldownInfoField = function(info, key)
             return info and info[key]
@@ -137,10 +150,11 @@ local ns = {
 }
 
 assert(loadfile("QUI_Debug/cdm_debug.lua"))("QUI_Debug", ns)
-assert(SlashCmdList["CDMGCD"], "/cdmgcd should be registered")
+assert(SlashCmdList["QUI_CDMDEBUG"], "/cdmdebug should be registered")
+assert(SlashCmdList["CDMGCD"] == nil, "legacy /cdmgcd command should not be registered")
 
-SlashCmdList["CDMGCD"]("Debug Spell 1")
-assert(watchFrame and watchFrame.onUpdate, "/cdmgcd should start a timed watch")
+SlashCmdList["QUI_CDMDEBUG"]("spell Debug Spell watch 1")
+assert(watchFrame and watchFrame.onUpdate, "/cdmdebug spell watch should start a timed watch")
 
 now = 100.00
 watchFrame:onUpdate(0)
@@ -154,9 +168,9 @@ watchFrame:onUpdate(0.60)
 print = originalPrint
 
 local output = table.concat(lines, "\n")
-assert(output:find("watching", 1, true), "/cdmgcd should announce watch mode")
-assert(output:find("+0.", 1, true), "/cdmgcd should print timed samples")
-assert(output:find("mode=gcd%-only"), "/cdmgcd watch should preserve resolver mode return value")
-assert(output:find("ended", 1, true), "/cdmgcd should announce watch end")
+assert(output:find("watching", 1, true), "/cdmdebug spell watch should announce watch mode")
+assert(output:find("+0.", 1, true), "/cdmdebug spell watch should print timed samples")
+assert(output:find("mode=gcd%-only"), "/cdmdebug spell watch should preserve resolver mode return value")
+assert(output:find("ended", 1, true), "/cdmdebug spell watch should announce watch end")
 
 originalPrint("OK: cdm_debug_gcd_watch_test")

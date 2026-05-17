@@ -367,45 +367,6 @@ function QUI:SlashCommandOpen(input)
             print("  usage: |cFFFFFF00/qui cdm_cache|r [status|reset]")
             return
         end
-    elseif input and input:match("^cdm_taint") then
-        -- /qui cdm_taint              → toggle the taint logger on/off
-        -- /qui cdm_taint on           → enable
-        -- /qui cdm_taint off          → disable
-        -- Forces the diagnostic FontString frame to be created if not yet
-        -- visible, so you can confirm it's there even before any TaintLog
-        -- call has fired.
-        local sub = input:match("^cdm_taint%s+(%S+)") or "toggle"
-        if sub == "on" then
-            _G.QUI_CDM_TAINT_DEBUG = true
-        elseif sub == "off" then
-            _G.QUI_CDM_TAINT_DEBUG = false
-        else
-            _G.QUI_CDM_TAINT_DEBUG = not _G.QUI_CDM_TAINT_DEBUG
-        end
-        print(("|cff60A5FAQUI cdm_taint:|r %s"):format(
-            _G.QUI_CDM_TAINT_DEBUG and "ON (logs to QUI_CDMTaintDebugFrame)" or "OFF"))
-        if _G.QUI_CDM_TAINT_DEBUG and ns.CDMBlizzMirror and ns.CDMBlizzMirror.TaintLog then
-            ns.CDMBlizzMirror.TaintLog("toggle.on", "ts", GetTime())
-            print("  Frame should appear at TOPLEFT (60, -50). It's draggable.")
-        end
-        return
-    elseif input and input:match("^cdm_info") then
-        -- /qui cdm_info               → dump every walked Blizzard CDM cdID
-        -- /qui cdm_info <substr>      → filter entries whose spell name contains substring
-        -- /qui cdm_info <spellID>     → filter entries matching the numeric spell ID
-        --
-        -- Pretty-prints C_CooldownViewer.GetCooldownViewerCooldownInfo plus
-        -- the QUI mirror's per-cdID state so the live values of
-        -- selfAura/hasAura/linkedSpellIDs/etc. can be inspected.
-        local arg = input:match("^cdm_info%s*(.*)$")
-        if arg == "" then arg = nil end
-        local mirror = ns.CDMBlizzMirror
-        if not (mirror and mirror.DumpInfoForSpell) then
-            print("|cff60A5FAQUI:|r CDM mirror not loaded.")
-            return
-        end
-        mirror.DumpInfoForSpell(arg)
-        return
     elseif input and input:match("^gse") then
         -- /qui gse          → dump current override state
         -- /qui gse debug    → toggle click-event logging

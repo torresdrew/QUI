@@ -29,6 +29,19 @@ These are the commands most players actually use. Type them into the WoW chat wi
 | `/qui perf` | Toggle the performance monitor overlay. |
 | `/qui debug` | Enable debug mode. Debug output persists for one reload, then turns off automatically. |
 
+## CDM Debug Commands
+
+These are available after `/qui debug` reloads the load-on-demand debug tools.
+
+| Command | Description |
+|---------|-------------|
+| `/cdmdebug` | Show CDM debug command groups and active flags. |
+| `/cdmdebug flags [name] [on|off|filter]` | Toggle CDM debug flags for icon, bar, blizz, aura, charge, totem, or taint output. |
+| `/cdmdebug spell <spellID|name> [once|watch|events|trace|charge|flicker]` | Inspect one CDM spell/icon path. |
+| `/cdmdebug mirror [filter|child|raw|cdtest]` | Inspect Blizzard mirror state, child frames, raw viewer data, or cooldown setter behavior. |
+| `/cdmdebug cache [status|reset]` | Print or reset CDM cache state. `/qui cdm_cache` remains available without loading debug tools. |
+| `/cdmdebug profile [status|clean]` | Dump or clean CDM profile/spec tracking state. |
+
 ## Good To Know
 
 - `/qui` and `/qui layout` are the two commands you will use the most.

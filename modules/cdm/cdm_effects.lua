@@ -10,9 +10,31 @@ local _, ns = ...
 local Helpers = ns.Helpers
 local Sources = ns.CDMSources
 local Shared = ns.CDMShared
+local Resolvers = ns.CDMResolvers
 
 local function IsCDMRuntimeEnabled()
     return not Shared or Shared.IsRuntimeEnabled()
+end
+
+local function GetBuiltinCooldownContainerKeys()
+    if Shared and Shared.GetBuiltinContainerKeysByEntryKind then
+        return Shared.GetBuiltinContainerKeysByEntryKind("cooldown")
+    end
+    return {}
+end
+
+local function GetBuiltinIconContainerKeys()
+    if Shared and Shared.GetBuiltinContainerKeysByShape then
+        return Shared.GetBuiltinContainerKeysByShape("icon")
+    end
+    return {}
+end
+
+local function IsBuiltinAuraContainerKey(containerKey)
+    if Shared and Shared.IsBuiltinAuraContainerKey then
+        return Shared.IsBuiltinAuraContainerKey(containerKey)
+    end
+    return false
 end
 
 -- Pandemic step curve: lazily built, cached. The curve evaluates C-side and
@@ -174,12 +196,11 @@ local function ForEachIconSpellID(icon, callback)
     wipe(candidateSeen)
 end
 
--- Safe wrapper: spell usability can return secret values in Midnight.
-local function SafeIsSpellUsable(spellID)
+local function QueryReadableSpellUsable(spellID)
     if not spellID or not (Sources and Sources.QuerySpellUsable) then return true, false end
     local usable, noMana = Sources.QuerySpellUsable(spellID)
-    usable = Helpers.SafeValue(usable, nil)
-    noMana = Helpers.SafeValue(noMana, false)
+    usable = type(usable) == "boolean" and usable or nil
+    noMana = type(noMana) == "boolean" and noMana or false
     return usable and true or false, noMana and true or false
 end
 
@@ -192,7 +213,7 @@ local function IsSpellCastable(icon)
         or icon._spellEntry.overrideSpellID
         or icon._spellEntry.spellID
     if not spellID then return false end
-    return SafeIsSpellUsable(spellID)
+    return QueryReadableSpellUsable(spellID)
 end
 
 local function GetSpellGlowOverride(icon)
@@ -284,17 +305,17 @@ local function RebuildGlowSpellMap()
     wipe(spellIdToGlowIcons)
     wipe(procOnUsableGlowIcons)
     procOnUsableGlowMapReady = false
-    local CDMIcons = ns.CDMIcons
-    if not CDMIcons then return end
-    if CDMIcons.ForEachIcon then
-        CDMIcons:ForEachIcon(function(icon)
+    local IconFactory = ns.CDMIconFactory
+    if not IconFactory then return end
+    if IconFactory.ForEachIcon then
+        IconFactory:ForEachIcon(function(icon)
             AddIconToGlowMaps(icon)
         end)
         procOnUsableGlowMapReady = true
         return
     end
-    for _, viewerType in ipairs({"essential", "utility"}) do
-        local pool = CDMIcons:GetIconPool(viewerType)
+    for _, viewerType in ipairs(GetBuiltinCooldownContainerKeys()) do
+        local pool = IconFactory:GetIconPool(viewerType)
         for _, icon in ipairs(pool) do
             AddIconToGlowMaps(icon)
         end
@@ -732,8 +753,8 @@ HasProcOnUsableOverride = function(icon)
 end
 
 local function ScanProcOnUsableGlows()
-    local CDMIcons = ns.CDMIcons
-    if not CDMIcons then return end
+    local IconFactory = ns.CDMIconFactory
+    if not IconFactory then return end
 
     if not procOnUsableGlowMapReady then
         RebuildGlowSpellMap()
@@ -749,8 +770,8 @@ local function ScanProcOnUsableGlows()
         return
     end
 
-    for _, viewerType in ipairs({"essential", "utility"}) do
-        local pool = CDMIcons:GetIconPool(viewerType)
+    for _, viewerType in ipairs(GetBuiltinCooldownContainerKeys()) do
+        local pool = IconFactory:GetIconPool(viewerType)
         for _, icon in ipairs(pool) do
             if icon and icon:IsShown() and icon._spellEntry and HasProcOnUsableOverride(icon) then
                 SyncGlowForIcon(icon)
@@ -763,11 +784,11 @@ end
 -- SCAN ALL ICONS AND SYNC GLOW STATE
 ---------------------------------------------------------------------------
 local function ScanAllGlows()
-    local CDMIcons = ns.CDMIcons
-    if not CDMIcons then return end
+    local IconFactory = ns.CDMIconFactory
+    if not IconFactory then return end
 
-    if CDMIcons.ForEachIcon then
-        CDMIcons:ForEachIcon(function(icon)
+    if IconFactory.ForEachIcon then
+        IconFactory:ForEachIcon(function(icon)
             if not icon:IsShown() then -- skip hidden icons (glow re-applied on layout refresh)
                 -- noop: skip
             elseif icon._spellEntry then
@@ -777,8 +798,8 @@ local function ScanAllGlows()
         return
     end
 
-    for _, viewerType in ipairs({"essential", "utility"}) do
-        local pool = CDMIcons:GetIconPool(viewerType)
+    for _, viewerType in ipairs(GetBuiltinCooldownContainerKeys()) do
+        local pool = IconFactory:GetIconPool(viewerType)
         for _, icon in ipairs(pool) do
             if not icon:IsShown() then
                 -- noop: skip
@@ -1006,16 +1027,16 @@ local GLOW_KEY = "_QUIHighlighter"
 -- FIND CDM ICON BY SPELL ID
 -- Searches all owned CDM icons for a matching spellID or overrideSpellID.
 ---------------------------------------------------------------------------
-local VIEWER_TYPES = { "essential", "utility", "buff" }
+local VIEWER_TYPES = GetBuiltinIconContainerKeys()
 
 local function FindIconBySpellID(castSpellID)
     if not castSpellID then return nil end
 
-    local CDMIcons = ns.CDMIcons
-    if not CDMIcons or not CDMIcons.GetIconPool then return nil end
+    local IconFactory = ns.CDMIconFactory
+    if not IconFactory or not IconFactory.GetIconPool then return nil end
 
     for _, viewerType in ipairs(VIEWER_TYPES) do
-        local pool = CDMIcons:GetIconPool(viewerType)
+        local pool = IconFactory:GetIconPool(viewerType)
         for _, icon in ipairs(pool) do
             if icon and icon._spellEntry and icon:IsShown() then
                 local entry = icon._spellEntry
@@ -1323,8 +1344,7 @@ local function ApplySwipeToIcon(icon, settings)
         isAuraEntry = CDMSpellData.IsAuraEntry(entry, entry.viewerType)
     else
         isAuraEntry = (entry.kind == "aura")
-            or isBuffIcon
-            or entry.viewerType == "trackedBar"
+            or IsBuiltinAuraContainerKey(entry.viewerType)
     end
 
     -- Classify: aura, gcd, or cooldown. The resolver's active render mode is
@@ -1347,9 +1367,8 @@ local function ApplySwipeToIcon(icon, settings)
     elseif icon._auraActive then
         mode = "aura"
     elseif not isBuffIcon then
-        local CDMIcons = ns.CDMIcons
-        if CDMIcons and CDMIcons.IsAuraCurrentlyActive then
-            local active = CDMIcons.IsAuraCurrentlyActive(entry)
+        if Resolvers and Resolvers.ResolveAuraActiveState then
+            local active = Resolvers.ResolveAuraActiveState(entry)
             if active then mode = "aura" end
         end
         -- Buff-pool cross-reference (preserved here, not in the helper;
@@ -1357,8 +1376,9 @@ local function ApplySwipeToIcon(icon, settings)
         -- visual concern, not a per-entry property).
         if not mode then
             local sid = entry.overrideSpellID or entry.spellID
-            if sid and CDMIcons then
-                local buffPool = CDMIcons:GetIconPool("buff")
+            local IconFactory = ns.CDMIconFactory
+            if sid and IconFactory then
+                local buffPool = IconFactory:GetIconPool("buff")
                 if buffPool then
                     for _, buffIcon in ipairs(buffPool) do
                         local be = buffIcon._spellEntry
@@ -1467,9 +1487,11 @@ local function RefreshAllSwipes()
         CDMIcons:UpdateAllCooldowns()
     end
 
-    -- Addon-owned icons (essential, utility, buff)
-    for _, viewerType in ipairs({"essential", "utility", "buff"}) do
-        local pool = CDMIcons:GetIconPool(viewerType)
+    -- Addon-owned built-in icon containers.
+    local IconFactory = ns.CDMIconFactory
+    if not IconFactory then return end
+    for _, viewerType in ipairs(GetBuiltinIconContainerKeys()) do
+        local pool = IconFactory:GetIconPool(viewerType)
         for _, icon in ipairs(pool) do
             ApplySwipeToIcon(icon, settings)
         end

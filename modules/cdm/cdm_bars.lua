@@ -39,6 +39,7 @@ local ipairs = ipairs
 local string_format = string.format
 local math_floor = math.floor
 local CreateFrame = CreateFrame
+local issecretvalue = issecretvalue
 
 ---------------------------------------------------------------------------
 -- CONSTANTS
@@ -206,6 +207,7 @@ end
 -- the secret never crosses into Lua compares. The result is a normal
 -- scalar that can be sent to a C-side sink (Texture:SetAlpha /
 -- FontString:SetAlpha) without taint.
+-- See docs/blizzard/cdm-api-reference.md for the boolean decode policy.
 --
 -- Mapping for the bar overlay:
 --   IsZero=true  (permanent) → alpha 1 (overlay visible — bar full)
@@ -332,134 +334,18 @@ end
 -- The placeholder below is rebound by cdm_debug.lua's BindAll() when loaded.
 local DebugBarLabel = function() end
 
-local function IsSecretValue(value)
-    return Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(value) or false
-end
-
-local function SafeValue(value, fallback)
-    if Helpers and Helpers.SafeValue then
-        return Helpers.SafeValue(value, fallback)
-    end
-    if IsSecretValue(value) then return fallback end
-    return value
-end
-
-local function SafeBoolean(value)
-    value = SafeValue(value, nil)
+local function ReadBoolean(value)
+    if issecretvalue and issecretvalue(value) then return nil end
     if type(value) == "boolean" then return value end
     return nil
 end
 
-local function SafeToNumber(value, fallback)
-    if Helpers and Helpers.SafeToNumber then
-        return Helpers.SafeToNumber(value, fallback)
-    end
-    if IsSecretValue(value) then return nil end
+local function ReadNumber(value, fallback)
+    if issecretvalue and issecretvalue(value) then return fallback end
     local valueType = type(value)
     if valueType == "number" then return value end
     if valueType == "string" then return tonumber(value) end
     return fallback
-end
-
-local function NormalizeBarMirrorCategory(category)
-    if category == nil or IsSecretValue(category) or type(category) ~= "string" then
-        return nil
-    end
-    if category == "essential"
-        or category == "utility"
-        or category == "buff"
-        or category == "trackedBar" then
-        return category
-    end
-    return nil
-end
-
-local function ResolveBarMirrorCategory(entry)
-    if not entry then return nil end
-    return NormalizeBarMirrorCategory(entry.blizzardMirrorCategory)
-        or NormalizeBarMirrorCategory(entry.viewerCategory)
-        or NormalizeBarMirrorCategory(entry.viewerType)
-end
-
-local function ResolveBarMirrorCooldownID(entry)
-    local cooldownID = entry and entry.cooldownID
-    if cooldownID == nil or IsSecretValue(cooldownID) then return nil end
-    return cooldownID
-end
-
-local function ResolveBarMirrorIdentity(entry)
-    local resolvers = ns.CDMResolvers
-    local resolver = resolvers and resolvers.ResolveBlizzardMirrorIdentity
-    if resolver then
-        local cooldownID, category = resolver(entry)
-        if cooldownID ~= nil then
-            return cooldownID, category
-        end
-    end
-    return ResolveBarMirrorCooldownID(entry), ResolveBarMirrorCategory(entry)
-end
-
-local _mirrorBarResult = {
-    isActive = false,
-    -- count is owned by _mirrorBarResult (allocated on first use), so the
-    -- per-tick BuildMirrorCountPayload singleton in cdm_resolvers.lua never
-    -- leaks across bar update ticks.
-    count = { value = nil, sinkText = nil, shown = false, source = nil },
-}
-
-local function BuildBarAuraResultFromMirrorPayload(payload)
-    if not (payload and payload.mirrorBacked == true) then
-        return nil
-    end
-
-    local r = _mirrorBarResult
-    r.isActive = payload.active == true
-    r.auraInstanceID = payload.auraInstanceID
-    r.auraUnit = payload.auraUnit
-    r.durObj = payload.durObj
-    r.auraData = payload.auraData
-    -- payload.count is a singleton scratch (cdm_resolvers.lua's
-    -- _mirrorCountScratch), not safe to alias across calls — copy fields.
-    local rc = r.count
-    local pc = payload.count
-    if pc then
-        rc.value = pc.value
-        rc.sinkText = pc.sinkText
-        rc.shown = pc.shown
-        rc.source = pc.source
-    else
-        rc.value = nil
-        rc.sinkText = nil
-        rc.shown = false
-        rc.source = nil
-    end
-    r.resolvedAuraSpellID = payload.spellID
-    r.hasExpirationTime = payload.hasExpirationTime
-    r.hideDurationText = payload.hideDurationText
-    r.durationStateUnknown = payload.durationStateUnknown
-    r.totemSlot = payload.totemSlot
-    r.totemName = payload.totemName
-    r.totemIcon = payload.totemIcon
-    r.isTotemInstance = payload.isTotemInstance and true or false
-    r.mode = payload.mode
-    r.mirrorBacked = true
-    r.mirrorState = payload.state
-
-    if r.isActive and r.hasExpirationTime == nil and not r.durObj then
-        r.hasExpirationTime = false
-        r.hideDurationText = true
-    end
-
-    return r
-end
-
-local function ResolveBarMirrorPayload(entry, cooldownID, category, spellID)
-    local resolvers = ns.CDMResolvers
-    local resolver = resolvers and resolvers.ResolveMirrorRenderPayloadForEntry
-    if resolver then
-        return resolver(entry, cooldownID, category, spellID)
-    end
-    return nil
 end
 
 local function WrapStackSuffix(stackValue)
@@ -469,36 +355,45 @@ local function WrapStackSuffix(stackValue)
     return stackValue
 end
 
+local function IsMissingOrKnownEmptyText(value)
+    if issecretvalue and issecretvalue(value) then return false end
+    if value == nil then return true end
+    return type(value) == "string" and value == ""
+end
+
+local function ValueIsPresent(value)
+    if issecretvalue and issecretvalue(value) then return true end
+    return value ~= nil
+end
+
 local function ApplyNameTextWithCount(fontString, name, count)
     if not fontString or not fontString.SetFormattedText or name == nil then
         return false, "missing-name"
     end
 
-    if not count or count.shown ~= true then
+    if not count or ReadBoolean(count.shown) ~= true then
         fontString.SetFormattedText(fontString, "%s", name)
         return true, "name-only", nil, false
     end
 
     local countText = count.sinkText
-    if countText == nil then
+    if not ValueIsPresent(countText) then
         countText = count.value
     end
 
-    local countSecret = IsSecretValue(countText)
-    if not countSecret and (countText == nil or countText == "") then
+    if IsMissingOrKnownEmptyText(countText) then
         fontString.SetFormattedText(fontString, "%s", name)
         return true, "name-only", nil, false
     end
 
     local wrappedStack = WrapStackSuffix(countText)
-    local wrappedSecret = IsSecretValue(wrappedStack)
-    if not wrappedSecret and (wrappedStack == nil or wrappedStack == "") then
+    if IsMissingOrKnownEmptyText(wrappedStack) then
         fontString.SetFormattedText(fontString, "%s", name)
-        return true, "name-only", wrappedStack, countSecret
+        return true, "name-only", wrappedStack, false
     end
 
     fontString.SetFormattedText(fontString, "%s%s", name, wrappedStack)
-    return true, "wrapped-count", wrappedStack, countSecret or wrappedSecret
+    return true, "wrapped-count", wrappedStack, false
 end
 
 CDMBars.ApplyNameTextWithCount = ApplyNameTextWithCount
@@ -510,7 +405,7 @@ local function ShouldHideAuraDurationText(r)
     if not r.auraData then return false end
     if InCombatLockdown() then return false end
 
-    local duration = SafeToNumber(r.auraData.duration, nil)
+    local duration = ReadNumber(r.auraData.duration, nil)
     if duration == nil then
         return true
     end
@@ -891,9 +786,9 @@ end
 ---------------------------------------------------------------------------
 -- BUILD BARS FROM OWNED SPELL LIST: Create bars from owned spell data.
 -- All state (StatusBar fill, IconTexture, NameText, DurationText) is driven
--- by UpdateOwnedBarAura -> CDMSpellData:ResolveAuraState. Composer entries
--- can also provide a mirrored native child identity for exact aura/cooldown
--- state.
+-- by UpdateOwnedBarAura -> CDMResolvers.ResolveCooldownState. Composer
+-- entries can also provide a mirrored native child identity for exact
+-- aura/cooldown state.
 ---------------------------------------------------------------------------
 function CDMBars:BuildBarsFromOwned(container, spellList)
     if not container then return end
@@ -1004,11 +899,11 @@ end
 
 ---------------------------------------------------------------------------
 -- UPDATE OWNED BAR AURA: Applies mirror payloads directly when present,
--- otherwise delegates to shared CDMSpellData:ResolveAuraState().
+-- otherwise delegates to shared resolved cooldown state.
 ---------------------------------------------------------------------------
 -- Phase B.3: drive bar fill from item / trinket-slot cooldowns. Custom
 -- auraBar containers accept item entries alongside spells; duration-bar
--- rendering needs its own path since ResolveAuraState is aura-only.
+-- rendering needs its own path since aura resolution is aura-only.
 local function StoreBarRuntimeState(bar, mode, active, extra)
     if not (ns.CDMRuntimeStore and ns.CDMRuntimeStore.SetBarState) then return end
     local state = {
@@ -1083,24 +978,16 @@ local function UpdateItemBarCooldown(bar, entry)
         return
     end
 
-    -- Cooldown display
-    local startTime, duration
-    if entry.type == "slot" or entry.type == "trinket" then
-        if CDMCooldown and CDMCooldown.GetSlotCooldown then
-            startTime, duration = CDMCooldown.GetSlotCooldown(entry.id)
-        end
-    elseif itemID and Sources and Sources.QueryItemCooldown then
-        if CDMCooldown and CDMCooldown.GetItemCooldown then
-            startTime, duration = CDMCooldown.GetItemCooldown(itemID)
-        else
-            startTime, duration = Sources.QueryItemCooldown(itemID)
-        end
-    end
+    local resolver = ns.CDMResolvers and ns.CDMResolvers.ResolveCooldownState
+    local context = resolver and BuildBarCooldownStateContext(bar, entry, bar._spellID)
+    local r = context and resolver(context)
+    local startTime = r and r.start
+    local duration = r and r.duration
 
-    if startTime and duration
-       and true
-       and true
-       and duration > 0 then
+    if r and r.mode == "item-cooldown"
+       and r.isOnCooldown == true
+       and r.numericCooldownActive == true
+       and startTime and duration then
         local remaining = (startTime + duration) - GetTime()
         if remaining > 0 then
             bar._active = true
@@ -1111,9 +998,14 @@ local function UpdateItemBarCooldown(bar, entry)
             SetStatusBarValue(bar.StatusBar, remaining / duration)
             StoreBarRuntimeState(bar, "item-cooldown", true, {
                 itemID = itemID,
+                spellID = r.spellID,
                 start = startTime,
                 duration = duration,
                 remaining = remaining,
+                isOnCooldown = r.isOnCooldown == true,
+                rechargeActive = r.rechargeActive == true,
+                hasCharges = r.hasCharges == true,
+                hasChargesRemaining = r.hasChargesRemaining == true,
             })
             return
         end
@@ -1135,12 +1027,27 @@ local function UpdateItemBarCooldown(bar, entry)
     })
 end
 
-local _spellCooldownBarResult = {
-    isActive = false,
-    count = nil,
+local IsSpellCooldownEntry
+
+local _barCooldownStateContextOptions = {
+    mirrorIdentityPolicy = "entry-or-fallback",
+    fallbackContainerKey = "trackedBar",
 }
 
-local function IsSpellCooldownEntry(entry)
+local function BuildBarCooldownStateContext(bar, entry, spellID)
+    local resolvers = ns.CDMResolvers
+    local builder = resolvers and resolvers.BuildCooldownStateContext
+    if not builder then return nil end
+
+    local options = _barCooldownStateContextOptions
+    options.containerKey = entry and entry.viewerType
+    options.totemSlot = bar and bar._totemSlot
+    options.useBuffSwipe = not IsSpellCooldownEntry(entry)
+    options.skipAuraPhase = nil
+    return builder(bar, entry, spellID, options)
+end
+
+function IsSpellCooldownEntry(entry)
     if not entry then return false end
     local entryType = entry.type
     if entryType
@@ -1151,110 +1058,25 @@ local function IsSpellCooldownEntry(entry)
     return entry.kind == "cooldown" or entryType == "cooldown"
 end
 
-local function ResolveSpellCooldownID(entry, fallbackSpellID)
-    local sid = entry and (entry.overrideSpellID or entry.spellID or entry.id) or fallbackSpellID
-    sid = sid or fallbackSpellID
-    if not sid then return nil end
-
-    local resolvers = ns.CDMResolvers
-    local overrideID = resolvers and resolvers.QueryOverrideSpell
-        and resolvers.QueryOverrideSpell(sid)
-    overrideID = SafeValue(overrideID, nil)
-    return overrideID or sid
-end
-
-local function BuildSpellCooldownBarResult(entry, fallbackSpellID)
-    local r = _spellCooldownBarResult
-    r.isActive = false
-    r.auraInstanceID = nil
-    r.auraUnit = nil
-    r.durObj = nil
-    r.auraData = nil
-    r.resolvedAuraSpellID = nil
-    r.hasExpirationTime = nil
-    r.hideDurationText = nil
-    r.durationStateUnknown = nil
-    r.totemSlot = nil
-    r.totemName = nil
-    r.totemIcon = nil
-    r.isTotemInstance = false
-    r.mode = "inactive"
-    r.mirrorBacked = nil
-    r.mirrorState = nil
-
-    local sid = ResolveSpellCooldownID(entry, fallbackSpellID)
-    if not sid then return r end
-
-    local resolvers = ns.CDMResolvers
-    local cdInfo = resolvers and resolvers.QueryCooldown
-        and resolvers.QueryCooldown(sid)
-    local cooldownActive = SafeBoolean(cdInfo and cdInfo.isActive)
-
-    local chargeDurObj
-    if cooldownActive ~= false and resolvers and resolvers.QueryChargeDuration then
-        local chargeInfo = resolvers.QueryCharges and resolvers.QueryCharges(sid)
-        local maxCharges = SafeToNumber(chargeInfo and chargeInfo.maxCharges)
-        local chargeActive = SafeBoolean(chargeInfo and chargeInfo.isActive)
-        local isChargeSpell = entry.hasCharges or (maxCharges and maxCharges > 1)
-        if isChargeSpell and chargeActive ~= false then
-            chargeDurObj = resolvers.QueryChargeDuration(sid)
-        end
-    end
-
-    local durObj = chargeDurObj
-    local mode = durObj and "charge" or "cooldown"
-    if not durObj and cooldownActive ~= false and resolvers and resolvers.QueryDuration then
-        durObj = resolvers.QueryDuration(sid)
-    end
-
-    if durObj then
-        r.isActive = true
-        r.durObj = durObj
-        r.hasExpirationTime = true
-        r.mode = mode
-        r.resolvedAuraSpellID = sid
-    end
-
-    return r
-end
-
 function CDMBars:UpdateOwnedBarAura(bar)
     if not bar or not bar._spellID then return end
     local spellID = bar._spellID
     local entry = bar._spellEntry
     if not ns.CDMSpellData then return end
 
-    local mirrorCooldownID, mirrorCategory = ResolveBarMirrorIdentity(entry)
-    local mirrorPayload = ResolveBarMirrorPayload(entry, mirrorCooldownID, mirrorCategory, spellID)
-    local r = BuildBarAuraResultFromMirrorPayload(mirrorPayload)
-    if not r then
-        -- Phase B.3: item / trinket-slot entries take the item cooldown path
-        if entry and (entry.type == "item" or entry.type == "trinket" or entry.type == "slot") then
-            UpdateItemBarCooldown(bar, entry)
-            return
-        end
-
-        if IsSpellCooldownEntry(entry) then
-            r = BuildSpellCooldownBarResult(entry, spellID)
-        else
-            local p = bar._auraParams or {}
-            bar._auraParams = p
-            p.spellID = spellID
-            p.entrySpellID = entry and entry.spellID
-            p.entryID = entry and entry.id
-            p.entryName = entry and entry.name
-            p.entryKind = entry and entry.kind
-            p.entryIsAura = entry and ns.CDMSpellData.IsAuraEntry
-                and ns.CDMSpellData.IsAuraEntry(entry, entry.viewerType)
-            p.viewerType = entry and entry.viewerType
-            p.totemSlot = bar._totemSlot
-            p.disableLooseVisibilityFallback = true
-            p.blizzardMirrorCooldownID = mirrorCooldownID
-            p.blizzardMirrorCategory = mirrorCategory
-
-            r = ns.CDMSpellData:ResolveAuraState(p)
-        end
+    -- Inventory-backed bars retain their adapter path for item names,
+    -- trinket-slot texture updates, and SpellScanner item-aura detection.
+    if entry and (entry.type == "item" or entry.type == "trinket" or entry.type == "slot") then
+        UpdateItemBarCooldown(bar, entry)
+        return
     end
+
+    local resolver = ns.CDMResolvers and ns.CDMResolvers.ResolveCooldownState
+    if not resolver then return end
+    local context = BuildBarCooldownStateContext(bar, entry, spellID)
+    if not context then return end
+    local r = resolver(context)
+    if not r then return end
     local count = r.count
     StoreBarRuntimeState(bar, r.mode or (r.isActive and "aura" or "inactive"), r.isActive, {
         durObj = r.durObj,
@@ -1276,15 +1098,11 @@ function CDMBars:UpdateOwnedBarAura(bar)
         bar._hideDurationText = ShouldHideAuraDurationText(r)
 
         -- Active-aura fallback: when the resolver returns no DurationObject
-        -- AND auraData.duration is nil / secret / non-positive, treat it
-        -- like permanent. The existing _hideDurationText branch then runs
-        -- SetValue(1) and blanks the duration text. SafeToNumber collapses
-        -- secret/nil/non-numeric inputs to 0 via the C-side issecretvalue
-        -- check (which doesn't taint), so the comparison is on a plain
-        -- non-secret 0 — no Lua compare against any secret value.
+        -- and an out-of-combat auraData.duration is missing or non-positive,
+        -- treat it like permanent.
         if not bar._hideDurationText and not r.durObj and r.auraData
             and not InCombatLockdown() then
-            local readableDur = SafeToNumber(r.auraData.duration, 0)
+            local readableDur = ReadNumber(r.auraData.duration, 0)
             if readableDur <= 0 then
                 bar._hideDurationText = true
             end
@@ -1317,7 +1135,7 @@ function CDMBars:UpdateOwnedBarAura(bar)
         -- Cache readable duration/expiration from OOC auraData (for OnUpdate timer text)
         if r.auraData and not bar._hideDurationText
             and not InCombatLockdown() then
-            local rawDur = SafeToNumber(r.auraData.duration, nil)
+            local rawDur = ReadNumber(r.auraData.duration, nil)
             if rawDur and rawDur > 0 then
                 bar._totalDuration = rawDur
             end
@@ -1384,11 +1202,12 @@ function CDMBars:UpdateOwnedBarAura(bar)
             EnsureBarTimerRunning()
         end
 
-        -- Icon: totem instances use slot-bound display from ResolveAuraState's
-        -- totemIcon payload. Other bars rely on the desired texture pinned in
-        -- BuildBarsFromOwned plus auraData.icon as a runtime override (talent
-        -- swaps, debuff overlays). Falls back to the spell texture source for
-        -- aura entries whose buff icon differs from the entry's stored icon.
+        -- Icon: totem instances use slot-bound display from resolved cooldown
+        -- state's totemIcon payload. Other bars rely on the desired texture
+        -- pinned in BuildBarsFromOwned plus auraData.icon as a runtime override
+        -- (talent swaps, debuff overlays). Falls back to the spell texture
+        -- source for aura entries whose buff icon differs from the entry's
+        -- stored icon.
         if bar.IconTexture then
             if bar._isTotemInstance then
                 if r.totemIcon ~= nil then
@@ -1400,8 +1219,7 @@ function CDMBars:UpdateOwnedBarAura(bar)
             else
                 local runtimeTex
                 if r.auraData then
-                    local aIcon = SafeValue(r.auraData.icon, nil)
-                    if aIcon and aIcon ~= 0 then runtimeTex = aIcon end
+                    runtimeTex = r.auraData.icon
                 end
                 if not runtimeTex and entry and entry.isAura then
                     local sid = entry.overrideSpellID or entry.spellID or entry.id
@@ -1492,9 +1310,6 @@ function CDMBars:UpdateOwnedBarAura(bar)
         end
     end
 
-    if ns.CDMIcons and ns.CDMIcons._OnBarUpdate then
-        ns.CDMIcons._OnBarUpdate(bar)
-    end
 end
 
 ---------------------------------------------------------------------------

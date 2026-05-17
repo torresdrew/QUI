@@ -1844,9 +1844,9 @@ local function UpdateViewerRotationHelper(viewerName, nextSpellID, nextBaseSpell
     -- When the icon is reused for a different spell, the stale overlay
     -- would reappear.  Processing hidden icons ensures overlays get
     -- cleaned up on recycled frames.
-    local CDMIcons = QUI.CDMIcons
-    if CDMIcons then
-        local pool = CDMIcons:GetIconPool(viewerName)
+    local CDMIconFactory = QUI.CDMIconFactory
+    if CDMIconFactory then
+        local pool = CDMIconFactory:GetIconPool(viewerName)
         if pool then
             for _, icon in ipairs(pool) do
                 ApplyRotationHelperToIcon(icon, settings, nextSpellID, nextBaseSpellID)

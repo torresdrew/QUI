@@ -17,8 +17,8 @@
 --   1. cdm_blizz_mirror.lua's SelectDurationForState keeps aura-first mirror
 --      state and SetDurationLane(gcd) no longer wipes the cooldown lane.
 --      Verified end-to-end in cdm_blizz_mirror_duration_test.lua.
---   2. cdm_resolvers.lua's ResolveMirrorRenderPayloadForEntry passes the
---      mirror's selected mode through to the icon factory.  Verified here.
+--   2. cdm_resolvers.lua's ResolveCooldownState passes the mirror's selected
+--      mode through as the resolved cooldown state. Verified here.
 --
 -- Failure mode this test catches: when the new option is disabled, a cooldown
 -- entry still selects the aura lane ahead of recharge/cooldown, causing the
@@ -124,11 +124,10 @@ local ns = {
     },
 }
 
+assert(loadfile("modules/cdm/cdm_runtime_queries.lua"))("QUI", ns)
 assert(loadfile("modules/cdm/cdm_resolvers.lua"))("QUI", ns)
 
 local resolvers = assert(ns.CDMResolvers, "CDMResolvers not exported")
-local resolveMirror = assert(resolvers.ResolveMirrorRenderPayloadForEntry,
-    "ResolveMirrorRenderPayloadForEntry not exported")
 
 local function entry(spellID)
     return {
@@ -140,45 +139,56 @@ local function entry(spellID)
     }
 end
 
+local function resolveState(e, cooldownID, category, spellID)
+    return resolvers.ResolveCooldownState({
+        entry = e,
+        runtimeSpellID = spellID,
+        mirrorCooldownID = cooldownID,
+        mirrorCategory = category,
+        containerKey = category,
+        useBuffSwipe = true,
+    })
+end
+
 -- Scenario A: default keeps aura phase for cooldown entries
-local payload = resolveMirror(entry(50001), 50001, "essential", 50001)
-assert(payload, "scenario A: aura+cooldown state should produce a mirror payload")
-assert(payload.mode == "aura",
-    "scenario A: cooldown entry with aura up should resolve to aura mode by default (got " .. tostring(payload.mode) .. ")")
-assert(payload.durObj == auraDur,
+local state = resolveState(entry(50001), 50001, "essential", 50001)
+assert(state and state.mirrorBacked == true, "scenario A: aura+cooldown state should be mirror-backed")
+assert(state.mode == "aura",
+    "scenario A: cooldown entry with aura up should resolve to aura mode by default (got " .. tostring(state.mode) .. ")")
+assert(state.durObj == auraDur,
     "scenario A: cooldown entry with aura up should carry the aura DurationObject by default")
-assert(payload.active == true, "scenario A: payload should be active")
+assert(state.active == true, "scenario A: payload should be active")
 
 -- Scenario B: mirror payload keeps aura phase by default when recharge exists
-payload = resolveMirror(entry(50002), 50002, "essential", 50002)
-assert(payload, "scenario B: aura+charge+cooldown state should produce a mirror payload")
-assert(payload.mode == "aura",
-    "scenario B: cooldown entry with aura up + recharge should resolve to aura mode by default (got " .. tostring(payload.mode) .. ")")
-assert(payload.durObj == auraDur,
+state = resolveState(entry(50002), 50002, "essential", 50002)
+assert(state and state.mirrorBacked == true, "scenario B: aura+charge+cooldown state should be mirror-backed")
+assert(state.mode == "aura",
+    "scenario B: cooldown entry with aura up + recharge should resolve to aura mode by default (got " .. tostring(state.mode) .. ")")
+assert(state.durObj == auraDur,
     "scenario B: cooldown entry with aura up + recharge should carry the aura DurationObject by default")
 
 -- Scenario C: charge > cooldown
-payload = resolveMirror(entry(50003), 50003, "essential", 50003)
-assert(payload, "scenario C: charge+cooldown state should produce a mirror payload")
-assert(payload.mode == "charge",
-    "scenario C: cooldown entry with recharge should resolve to charge mode (got " .. tostring(payload.mode) .. ")")
-assert(payload.durObj == chargeDur,
+state = resolveState(entry(50003), 50003, "essential", 50003)
+assert(state and state.mirrorBacked == true, "scenario C: charge+cooldown state should be mirror-backed")
+assert(state.mode == "charge",
+    "scenario C: cooldown entry with recharge should resolve to charge mode (got " .. tostring(state.mode) .. ")")
+assert(state.durObj == chargeDur,
     "scenario C: cooldown entry with recharge should carry the charge DurationObject")
 
 -- Scenario D: cooldown > gcd
-payload = resolveMirror(entry(50004), 50004, "essential", 50004)
-assert(payload, "scenario D: cooldown+gcd state should produce a mirror payload")
-assert(payload.mode == "cooldown",
-    "scenario D: cooldown entry with real CD + transient GCD should resolve to cooldown mode (got " .. tostring(payload.mode) .. ")")
-assert(payload.durObj == cooldownDur,
+state = resolveState(entry(50004), 50004, "essential", 50004)
+assert(state and state.mirrorBacked == true, "scenario D: cooldown+gcd state should be mirror-backed")
+assert(state.mode == "cooldown",
+    "scenario D: cooldown entry with real CD + transient GCD should resolve to cooldown mode (got " .. tostring(state.mode) .. ")")
+assert(state.durObj == cooldownDur,
     "scenario D: cooldown entry with real CD + transient GCD should carry the cooldown DurationObject")
 
 -- Scenario E: gcd-only floor
-payload = resolveMirror(entry(50005), 50005, "essential", 50005)
-assert(payload, "scenario E: gcd-only state should produce a mirror payload")
-assert(payload.mode == "gcd-only",
-    "scenario E: cooldown entry with only GCD should resolve to gcd-only mode (got " .. tostring(payload.mode) .. ")")
-assert(payload.durObj == gcdDur,
+state = resolveState(entry(50005), 50005, "essential", 50005)
+assert(state and state.mirrorBacked == true, "scenario E: gcd-only state should be mirror-backed")
+assert(state.mode == "gcd-only",
+    "scenario E: cooldown entry with only GCD should resolve to gcd-only mode (got " .. tostring(state.mode) .. ")")
+assert(state.durObj == gcdDur,
     "scenario E: cooldown entry with only GCD should carry the GCD DurationObject")
 
 -- Scenario F: aura-viewer entry with aura lane populated
@@ -189,32 +199,27 @@ local auraEntry = {
     kind = "aura",
     viewerType = "buff",
 }
-payload = resolveMirror(auraEntry, 50006, "buff", 50006)
-assert(payload, "scenario F: aura-viewer state should produce a mirror payload")
-assert(payload.mode == "aura",
-    "scenario F: aura-viewer entry with aura lane should resolve to aura mode (got " .. tostring(payload.mode) .. ")")
-assert(payload.durObj == auraDur,
+state = resolveState(auraEntry, 50006, "buff", 50006)
+assert(state and state.mirrorBacked == true, "scenario F: aura-viewer state should be mirror-backed")
+assert(state.mode == "aura",
+    "scenario F: aura-viewer entry with aura lane should resolve to aura mode (got " .. tostring(state.mode) .. ")")
+assert(state.durObj == auraDur,
     "scenario F: aura-viewer entry should carry the aura DurationObject")
 
 local showCooldownIconAuraPhase = true
-resolvers._FinalizeImports({
-    ShouldSkipAuraPhaseForCooldownIcon = function(_, e)
-        return e and e.kind == "cooldown" and showCooldownIconAuraPhase == false
-    end,
-    ApplyAuraStateToIcon = function()
-        return nil, false, nil
-    end,
-    IsGCDSwipeEnabled = function()
-        return false
-    end,
-})
 
 local function resolveIcon(spellID)
-    return resolvers.ResolveIconDurationObject({
-        _spellEntry = entry(spellID),
-        _blizzMirrorCooldownID = spellID,
-        _blizzMirrorCategory = "essential",
+    local e = entry(spellID)
+    local state = resolvers.ResolveCooldownState({
+        entry = e,
+        runtimeSpellID = spellID,
+        mirrorCooldownID = spellID,
+        mirrorCategory = "essential",
+        containerKey = "essential",
+        useBuffSwipe = showCooldownIconAuraPhase ~= false,
+        skipAuraPhase = showCooldownIconAuraPhase == false,
     })
+    return state.durObj, state.mode
 end
 
 -- Default-on option: cooldown icons keep the buff/debuff phase.

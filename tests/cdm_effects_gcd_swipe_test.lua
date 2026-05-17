@@ -40,16 +40,34 @@ local ns = {
             if value == nil then return fallback == true end
             return value == true
         end,
+        GetBuiltinContainerKeysByEntryKind = function(entryKind)
+            if entryKind == "cooldown" then
+                return { "essential", "utility" }
+            end
+            return nil
+        end,
+        GetBuiltinContainerKeysByShape = function(shape)
+            if shape == "icon" then
+                return { "essential", "utility", "buff" }
+            end
+            return nil
+        end,
+        IsBuiltinAuraContainerKey = function(containerKey)
+            return containerKey == "buff" or containerKey == "trackedBar"
+        end,
     },
     CDMSpellData = {
         IsAuraEntry = function(entry)
             return entry and entry.kind == "aura"
         end,
     },
-    CDMIcons = {
+    CDMIconFactory = {
         GetIconPool = function() return {} end,
-        IsAuraCurrentlyActive = function() return false end,
     },
+    CDMResolvers = {
+        ResolveAuraActiveState = function() return false end,
+    },
+    CDMIcons = {},
 }
 
 assert(loadfile("modules/cdm/cdm_effects.lua"))("QUI", ns)
@@ -94,7 +112,7 @@ assert(cooldownGCD.calls.drawEdge == false, "GCD swipe should not draw recharge 
 assert(cooldownGCD.calls.color[1] == 0.1, "cooldown-kind GCD should use cooldown swipe color")
 assert(cooldownGCD.calls.color[4] == 0.4, "cooldown-kind GCD should preserve cooldown swipe alpha")
 
-local originalIsAuraCurrentlyActive = ns.CDMIcons.IsAuraCurrentlyActive
+local originalResolveAuraActiveState = ns.CDMResolvers.ResolveAuraActiveState
 local authoritativeGCDSettings = {
     showBuffSwipe = true,
     showBuffIconSwipe = true,
@@ -106,7 +124,7 @@ local authoritativeGCDSettings = {
     swipeColor = { 0.1, 0.2, 0.3, 0.4 },
 }
 
-ns.CDMIcons.IsAuraCurrentlyActive = function(entry)
+ns.CDMResolvers.ResolveAuraActiveState = function(entry)
     return entry and entry.spellID == 67890
 end
 
@@ -122,7 +140,7 @@ ns._OwnedSwipe.ApplyToIcon({
     },
 }, authoritativeGCDSettings)
 
-ns.CDMIcons.IsAuraCurrentlyActive = originalIsAuraCurrentlyActive
+ns.CDMResolvers.ResolveAuraActiveState = originalResolveAuraActiveState
 
 assert(resolvedGCDWithLiveAura.calls.drawSwipe == true, "resolved GCD should keep drawing the GCD swipe")
 assert(resolvedGCDWithLiveAura.calls.drawEdge == false, "resolved GCD should not be reclassified as aura edge")

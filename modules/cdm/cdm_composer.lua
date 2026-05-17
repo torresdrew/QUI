@@ -10,6 +10,7 @@
 
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
+local Shared = ns.CDMShared
 
 ns.CDMComposer = ns.CDMComposer or {}
 
@@ -63,19 +64,27 @@ local CONTAINER_LABELS = {
     trackedBar  = "Buff Bars",
 }
 
-local CONTAINER_ORDER = { "essential", "utility", "buff", "trackedBar" }
+local CONTAINER_ORDER = Shared and Shared.BUILTIN_CONTAINER_KEYS
+    or { "essential", "utility", "buff", "trackedBar" }
 
-local CONTAINER_TYPES = {
-    essential   = "cooldown",
-    utility     = "cooldown",
-    buff        = "aura",
-    trackedBar  = "auraBar",
-}
+local CONTAINER_TYPES = Shared and Shared.BUILTIN_CONTAINER_TYPES
+    or {
+        essential   = "cooldown",
+        utility     = "cooldown",
+        buff        = "aura",
+        trackedBar  = "auraBar",
+    }
 
 -- Phase G: Resolve container type for any key (built-in or custom).
 -- Forward-declared here so all functions below can use it.
 -- GetContainerDB is defined in the DB ACCESS section below.
 local function ResolveContainerType(containerKey)
+    if Shared and Shared.GetContainerType then
+        local containerType = Shared.GetContainerType(containerKey)
+        if containerType then
+            return containerType
+        end
+    end
     if CONTAINER_TYPES[containerKey] then
         return CONTAINER_TYPES[containerKey]
     end
@@ -98,6 +107,9 @@ end
 -- determine kind from the active add-source tab.
 local function GetContainerImpliedKind(containerKey)
     local ctype = ResolveContainerType(containerKey)
+    if Shared and Shared.GetEntryKindForContainerType then
+        return Shared.GetEntryKindForContainerType(ctype)
+    end
     if ctype == "cooldown" then return "cooldown" end
     if ctype == "aura" or ctype == "auraBar" then return "aura" end
     return nil
@@ -469,7 +481,7 @@ end
 -- Blizzard_SharedXML/Backdrop.lua SetupTextureCoordinates → GetWidth
 -- recursion (C stack overflow) that can fire when SetBackdrop runs on a
 -- frame inside a UIPanelScrollFrameTemplate child at certain
--- width/height/effectiveScale combinations. Mirrors the safe helper in
+-- width/height/effectiveScale combinations. Mirrors the backdrop helper in
 -- modules/cdm/settings/containers_page_surface.lua.
 local function SetSimpleBackdrop(frame, bgR, bgG, bgB, bgA, borderR, borderG, borderB, borderA)
     local bg = frame._bg

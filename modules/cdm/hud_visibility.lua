@@ -51,6 +51,13 @@ end
 -- SHARED HELPERS
 ---------------------------------------------------------------------------
 
+local function ReadNumber(value, fallback)
+    local valueType = type(value)
+    if valueType == "number" then return value end
+    if valueType == "string" then return tonumber(value) or fallback end
+    return fallback
+end
+
 -- Check if player is in a group (party or raid)
 local function IsPlayerInGroup()
     return IsInGroup() or IsInRaid()
@@ -228,7 +235,7 @@ end
 
 -- OnUpdate handler for CDM fade animation
 local function OnCDMFadeUpdate(self, elapsed)
-    local targetAlpha = Helpers.SafeToNumber(CDMVisibility.fadeTargetAlpha, 1)
+    local targetAlpha = ReadNumber(CDMVisibility.fadeTargetAlpha, 1)
     local vis = GetCDMVisibilitySettings()
     local duration = (vis and vis.fadeDuration) or 0.2
     if duration <= 0 then duration = 0.01 end
@@ -237,7 +244,7 @@ local function OnCDMFadeUpdate(self, elapsed)
     local elapsedTime = now - CDMVisibility.fadeStart
     local progress = math.min(elapsedTime / duration, 1)
 
-    local startAlpha = Helpers.SafeToNumber(CDMVisibility.fadeStartAlpha, targetAlpha)
+    local startAlpha = ReadNumber(CDMVisibility.fadeStartAlpha, targetAlpha)
     local alpha = startAlpha + (targetAlpha - startAlpha) * progress
 
     local frames = CDMVisibility.fadeTargets or GetCDMFrames()
@@ -266,24 +273,7 @@ local function StartCDMFade(targetAlpha)
     if #frames == 0 then return end
 
     local rawAlpha = frames[1]:GetAlpha()
-    if Helpers.IsSecretValue(rawAlpha) then
-        for _, frame in ipairs(frames) do
-            if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
-                pcall(frame.SetAlpha, frame, targetAlpha)
-            end
-        end
-        if CDMVisibility.fadeFrame then
-            CDMVisibility.fadeFrame:SetScript("OnUpdate", nil)
-        end
-        CDMVisibility.isFading = false
-        CDMVisibility.currentlyHidden = (targetAlpha < 1)
-        CDMVisibility.fadeStartAlpha = targetAlpha
-        CDMVisibility.fadeTargetAlpha = targetAlpha
-        CDMVisibility.fadeTargets = nil
-        return
-    end
-
-    local currentAlpha = Helpers.SafeToNumber(rawAlpha, targetAlpha)
+    local currentAlpha = ReadNumber(rawAlpha, targetAlpha)
 
     if math.abs(currentAlpha - targetAlpha) < 0.01 then
         CDMVisibility.currentlyHidden = (targetAlpha < 1)
@@ -529,7 +519,7 @@ local function ShouldCustomTrackersBeVisible()
 end
 
 local function OnCustomTrackersFadeUpdate(self, elapsed)
-    local targetAlpha = Helpers.SafeToNumber(CustomTrackersVisibility.fadeTargetAlpha, 1)
+    local targetAlpha = ReadNumber(CustomTrackersVisibility.fadeTargetAlpha, 1)
     local vis = GetCustomTrackersVisibilitySettings()
     local duration = (vis and vis.fadeDuration) or 0.2
     if duration <= 0 then duration = 0.01 end
@@ -537,7 +527,7 @@ local function OnCustomTrackersFadeUpdate(self, elapsed)
     local now = GetTime()
     local elapsedTime = now - CustomTrackersVisibility.fadeStart
     local progress = math.min(elapsedTime / duration, 1)
-    local startAlpha = Helpers.SafeToNumber(CustomTrackersVisibility.fadeStartAlpha, targetAlpha)
+    local startAlpha = ReadNumber(CustomTrackersVisibility.fadeStartAlpha, targetAlpha)
     local alpha = startAlpha + (targetAlpha - startAlpha) * progress
 
     local frames = CustomTrackersVisibility.fadeTargets or GetCustomTrackerFrames()
@@ -565,24 +555,7 @@ local function StartCustomTrackersFade(targetAlpha)
     if #frames == 0 then return end
 
     local rawAlpha = frames[1]:GetAlpha()
-    if Helpers.IsSecretValue(rawAlpha) then
-        for _, frame in ipairs(frames) do
-            if frame and frame.SetAlpha and (not frame.IsForbidden or not frame:IsForbidden()) then
-                pcall(frame.SetAlpha, frame, targetAlpha)
-            end
-        end
-        if CustomTrackersVisibility.fadeFrame then
-            CustomTrackersVisibility.fadeFrame:SetScript("OnUpdate", nil)
-        end
-        CustomTrackersVisibility.isFading = false
-        CustomTrackersVisibility.currentlyHidden = (targetAlpha < 1)
-        CustomTrackersVisibility.fadeStartAlpha = targetAlpha
-        CustomTrackersVisibility.fadeTargetAlpha = targetAlpha
-        CustomTrackersVisibility.fadeTargets = nil
-        return
-    end
-
-    local currentAlpha = Helpers.SafeToNumber(rawAlpha, targetAlpha)
+    local currentAlpha = ReadNumber(rawAlpha, targetAlpha)
     if math.abs(currentAlpha - targetAlpha) < 0.01 then
         CustomTrackersVisibility.currentlyHidden = (targetAlpha < 1)
         CustomTrackersVisibility.fadeStartAlpha = targetAlpha
@@ -863,7 +836,7 @@ end
 
 -- OnUpdate handler for Unitframes fade animation
 local function OnUnitframesFadeUpdate(self, elapsed)
-    local targetAlpha = Helpers.SafeToNumber(UnitframesVisibility.fadeTargetAlpha, 1)
+    local targetAlpha = ReadNumber(UnitframesVisibility.fadeTargetAlpha, 1)
     if targetAlpha < 1 and IsUnitframesCombatLocked() then
         local frames = UnitframesVisibility.fadeTargets or GetUnitframeFrames()
         for _, frame in ipairs(frames) do
@@ -885,7 +858,7 @@ local function OnUnitframesFadeUpdate(self, elapsed)
     local elapsedTime = now - UnitframesVisibility.fadeStart
     local progress = math.min(elapsedTime / duration, 1)
 
-    local startAlpha = Helpers.SafeToNumber(UnitframesVisibility.fadeStartAlpha, targetAlpha)
+    local startAlpha = ReadNumber(UnitframesVisibility.fadeStartAlpha, targetAlpha)
     local alpha = startAlpha + (targetAlpha - startAlpha) * progress
 
     local frames = UnitframesVisibility.fadeTargets or GetUnitframeFrames()
@@ -914,22 +887,7 @@ local function StartUnitframesFade(targetAlpha, framesOverride)
     end
 
     local rawAlpha = frames[1]:GetAlpha()
-    if Helpers.IsSecretValue(rawAlpha) then
-        for _, frame in ipairs(frames) do
-            ApplyUnitframeVisibilityAlpha(frame, targetAlpha)
-        end
-        if UnitframesVisibility.fadeFrame then
-            UnitframesVisibility.fadeFrame:SetScript("OnUpdate", nil)
-        end
-        UnitframesVisibility.isFading = false
-        UnitframesVisibility.currentlyHidden = (targetAlpha < 1)
-        UnitframesVisibility.fadeStartAlpha = targetAlpha
-        UnitframesVisibility.fadeTargetAlpha = targetAlpha
-        UnitframesVisibility.fadeTargets = nil
-        return
-    end
-
-    local currentAlpha = Helpers.SafeToNumber(rawAlpha, targetAlpha)
+    local currentAlpha = ReadNumber(rawAlpha, targetAlpha)
 
     if forceInstant or math.abs(currentAlpha - targetAlpha) < 0.01 then
         for _, frame in ipairs(frames) do
@@ -1161,7 +1119,7 @@ local function ShouldActionBarsBeVisible()
 end
 
 local function OnActionBarsFadeUpdate(self, elapsed)
-    local targetAlpha = Helpers.SafeToNumber(ActionBarsVisibility.fadeTargetAlpha, 1)
+    local targetAlpha = ReadNumber(ActionBarsVisibility.fadeTargetAlpha, 1)
     local vis = GetActionBarsVisibilitySettings()
     local duration = (vis and vis.fadeDuration) or 0.2
     if duration <= 0 then duration = 0.01 end
@@ -1170,7 +1128,7 @@ local function OnActionBarsFadeUpdate(self, elapsed)
     local elapsedTime = now - ActionBarsVisibility.fadeStart
     local progress = math.min(elapsedTime / duration, 1)
 
-    local startAlpha = Helpers.SafeToNumber(ActionBarsVisibility.fadeStartAlpha, targetAlpha)
+    local startAlpha = ReadNumber(ActionBarsVisibility.fadeStartAlpha, targetAlpha)
     local alpha = startAlpha + (targetAlpha - startAlpha) * progress
 
     local frames = ActionBarsVisibility.fadeTargets or GetActionBarFrames()
@@ -1196,27 +1154,7 @@ local function StartActionBarsFade(targetAlpha)
     if #frames == 0 then return end
 
     local rawAlpha = frames[1].container:GetAlpha()
-    if Helpers.IsSecretValue(rawAlpha) then
-        local setBarAlpha = ns.ActionBarsOwned and ns.ActionBarsOwned.SetBarAlpha
-        for _, entry in ipairs(frames) do
-            if setBarAlpha then
-                pcall(setBarAlpha, entry.barKey, targetAlpha)
-            elseif entry.container and entry.container.SetAlpha then
-                pcall(entry.container.SetAlpha, entry.container, targetAlpha)
-            end
-        end
-        if ActionBarsVisibility.fadeFrame then
-            ActionBarsVisibility.fadeFrame:SetScript("OnUpdate", nil)
-        end
-        ActionBarsVisibility.isFading = false
-        ActionBarsVisibility.currentlyHidden = (targetAlpha < 1)
-        ActionBarsVisibility.fadeStartAlpha = targetAlpha
-        ActionBarsVisibility.fadeTargetAlpha = targetAlpha
-        ActionBarsVisibility.fadeTargets = nil
-        return
-    end
-
-    local currentAlpha = Helpers.SafeToNumber(rawAlpha, targetAlpha)
+    local currentAlpha = ReadNumber(rawAlpha, targetAlpha)
 
     if math.abs(currentAlpha - targetAlpha) < 0.01 then
         ActionBarsVisibility.currentlyHidden = (targetAlpha < 1)
@@ -1373,7 +1311,7 @@ local function SetupActionBarsMouseoverDetector()
         local frames = GetActionBarFrames()
         for _, entry in ipairs(frames) do
             local container = entry.container
-            local alpha = container and container.GetAlpha and Helpers.SafeToNumber(container:GetAlpha(), 1) or 1
+            local alpha = container and container.GetAlpha and ReadNumber(container:GetAlpha(), 1) or 1
             if container and alpha < 0.99 and container:IsMouseOver() then
                 if ActionBarsVisibility.leaveTimer then
                     ActionBarsVisibility.leaveTimer:Cancel()
@@ -1464,7 +1402,7 @@ local function ShouldChatBeVisible()
 end
 
 local function OnChatFadeUpdate(self, elapsed)
-    local targetAlpha = Helpers.SafeToNumber(ChatVisibility.fadeTargetAlpha, 1)
+    local targetAlpha = ReadNumber(ChatVisibility.fadeTargetAlpha, 1)
     local vis = GetChatVisibilitySettings()
     local duration = (vis and vis.fadeDuration) or 0.2
     if duration <= 0 then duration = 0.01 end
@@ -1473,7 +1411,7 @@ local function OnChatFadeUpdate(self, elapsed)
     local elapsedTime = now - ChatVisibility.fadeStart
     local progress = math.min(elapsedTime / duration, 1)
 
-    local startAlpha = Helpers.SafeToNumber(ChatVisibility.fadeStartAlpha, targetAlpha)
+    local startAlpha = ReadNumber(ChatVisibility.fadeStartAlpha, targetAlpha)
     local alpha = startAlpha + (targetAlpha - startAlpha) * progress
 
     local frames = ChatVisibility.fadeTargets or GetChatFrames()
@@ -1496,24 +1434,7 @@ local function StartChatFade(targetAlpha)
     if #frames == 0 then return end
 
     local rawAlpha = frames[1]:GetAlpha()
-    if Helpers.IsSecretValue(rawAlpha) then
-        for _, frame in ipairs(frames) do
-            if frame and frame.SetAlpha then
-                pcall(frame.SetAlpha, frame, targetAlpha)
-            end
-        end
-        if ChatVisibility.fadeFrame then
-            ChatVisibility.fadeFrame:SetScript("OnUpdate", nil)
-        end
-        ChatVisibility.isFading = false
-        ChatVisibility.currentlyHidden = (targetAlpha < 1)
-        ChatVisibility.fadeStartAlpha = targetAlpha
-        ChatVisibility.fadeTargetAlpha = targetAlpha
-        ChatVisibility.fadeTargets = nil
-        return
-    end
-
-    local currentAlpha = Helpers.SafeToNumber(rawAlpha, targetAlpha)
+    local currentAlpha = ReadNumber(rawAlpha, targetAlpha)
 
     if math.abs(currentAlpha - targetAlpha) < 0.01 then
         ChatVisibility.currentlyHidden = (targetAlpha < 1)

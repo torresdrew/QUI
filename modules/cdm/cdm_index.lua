@@ -64,7 +64,9 @@ end
 ---------------------------------------------------------------------------
 
 function CDMIndex.IsUsableID(id)
-    return id ~= nil and type(id) == "number" and id > 0 and not issecretvalue(id)
+    if id == nil or type(id) ~= "number" then return false end
+    if issecretvalue(id) then return false end
+    return id > 0
 end
 
 function CDMIndex.ToBaseSpellID(id)
@@ -88,6 +90,20 @@ function CDMIndex.ForEachCooldownInfoID(info, callback)
             callback(id)
         end
     end
+end
+
+local function SelectPrimaryCooldownInfoID(info)
+    if not info then return nil end
+    if CDMIndex.IsUsableID(info.overrideTooltipSpellID) then
+        return info.overrideTooltipSpellID
+    end
+    if CDMIndex.IsUsableID(info.overrideSpellID) then
+        return info.overrideSpellID
+    end
+    if CDMIndex.IsUsableID(info.spellID) then
+        return info.spellID
+    end
+    return nil
 end
 
 ---------------------------------------------------------------------------
@@ -148,8 +164,7 @@ function CDMIndex.Rebuild()
                         seenCooldown[cdID] = true
                         local info = api.GetCooldownViewerCooldownInfo(cdID)
                         if info then
-                            local primarySid = info.overrideTooltipSpellID
-                                or info.overrideSpellID or info.spellID
+                            local primarySid = SelectPrimaryCooldownInfoID(info)
                             local primaryBase = CDMIndex.ToBaseSpellID(primarySid)
                             if primaryBase then
                                 local entry = {

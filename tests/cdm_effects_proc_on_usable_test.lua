@@ -123,6 +123,21 @@ local ns = {
             if value == nil then return fallback == true end
             return value == true
         end,
+        GetBuiltinContainerKeysByEntryKind = function(entryKind)
+            if entryKind == "cooldown" then
+                return { "essential", "utility" }
+            end
+            return nil
+        end,
+        GetBuiltinContainerKeysByShape = function(shape)
+            if shape == "icon" then
+                return { "essential", "utility", "buff" }
+            end
+            return nil
+        end,
+        IsBuiltinAuraContainerKey = function(containerKey)
+            return containerKey == "buff" or containerKey == "trackedBar"
+        end,
     },
     CDMSources = {
         QuerySpellUsable = function(spellID)
@@ -142,7 +157,7 @@ local ns = {
             end
         end,
     },
-    CDMIcons = {
+    CDMIconFactory = {
         ForEachIcon = function(_, callback)
             forEachCalls = forEachCalls + 1
             callbackVisits = callbackVisits + 1
@@ -153,8 +168,11 @@ local ns = {
             callback(auraIcon)
         end,
         GetIconPool = function() return {} end,
-        IsAuraCurrentlyActive = function() return false end,
     },
+    CDMResolvers = {
+        ResolveAuraActiveState = function() return false end,
+    },
+    CDMIcons = {},
 }
 
 assert(loadfile("modules/cdm/cdm_effects.lua"))("QUI", ns)

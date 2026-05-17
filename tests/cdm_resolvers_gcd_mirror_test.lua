@@ -25,6 +25,11 @@ local mirrorSource = "aura-child-frame"
 local gcdSpellFallbackEnabled = false
 local cooldownQueryCounts = {}
 local auraDataQueryCount = 0
+local SECRET_COOLDOWN_FIELD = { token = "secret-cooldown-field" }
+
+function issecretvalue(value)
+    return value == SECRET_COOLDOWN_FIELD
+end
 
 local ns = {
     Helpers = {},
@@ -60,6 +65,17 @@ local ns = {
                     durObjSource = "gcd-duration",
                     resolvedMode = "gcd-only",
                     mirrorEpoch = 19,
+                    spellID = spellID,
+                }
+            end
+            if spellID == 1227281 and viewerType == "essential" then
+                return {
+                    cooldownID = 8204,
+                    isActive = true,
+                    durObj = mirrorDuration,
+                    durObjSource = "spell-cooldown",
+                    resolvedMode = "cooldown",
+                    mirrorEpoch = 21,
                     spellID = spellID,
                 }
             end
@@ -146,10 +162,13 @@ local ns = {
             if spellID == 1227280 then
                 return { currentCharges = 1, maxCharges = 2, isActive = true }
             end
+            if spellID == 1227281 then
+                return { currentCharges = 1, maxCharges = 2, isActive = true }
+            end
             return nil
         end,
         QuerySpellChargeDuration = function(spellID)
-            if spellID == 1227280 then
+            if spellID == 1227280 or spellID == 1227281 then
                 return liveChargeDuration
             end
             return nil
@@ -178,31 +197,31 @@ local ns = {
                 return { isActive = true, isOnGCD = true }
             end
             if spellID == 99999 then
-                return { isActive = true, isOnGCD = true, realCooldown = true }
+                return { isActive = true, isOnGCD = true, activeCategory = "spell" }
             end
             if spellID == 121212 then
-                return { isActive = true, isOnGCD = true, realCooldownUnknown = true }
+                return { isActive = true, isOnGCD = true, activeCategory = SECRET_COOLDOWN_FIELD }
             end
             if spellID == 131313 then
-                return { isActive = true, isOnGCD = true, realCooldownUnknown = true }
+                return { isActive = true, isOnGCD = true, activeCategory = SECRET_COOLDOWN_FIELD }
             end
             if spellID == 141414 then
-                return { isActive = true, isOnGCD = false, realCooldownUnknown = true }
+                return { isActive = true, isOnGCD = false, activeCategory = SECRET_COOLDOWN_FIELD }
             end
             if spellID == 141415 then
-                return { isActive = true, isOnGCD = true, realCooldownUnknown = true }
+                return { isActive = true, isOnGCD = true, activeCategory = SECRET_COOLDOWN_FIELD }
             end
             if spellID == 151515 then
-                return { isActive = true, isOnGCD = false, realCooldownUnknown = true }
+                return { isActive = true, isOnGCD = false, activeCategory = SECRET_COOLDOWN_FIELD }
             end
             if spellID == 151516 then
-                return { isActive = true, isOnGCD = true, realCooldownUnknown = true }
+                return { isActive = true, isOnGCD = true, activeCategory = SECRET_COOLDOWN_FIELD }
             end
             if spellID == 161616 then
-                return { isActive = true, isOnGCD = true, realCooldownUnknown = true }
+                return { isActive = true, isOnGCD = true, activeCategory = SECRET_COOLDOWN_FIELD }
             end
             if spellID == 171717 then
-                return { isActive = true, isOnGCD = true, realCooldownUnknown = true }
+                return { isActive = true, isOnGCD = true, activeCategory = SECRET_COOLDOWN_FIELD }
             end
             if spellID == 44444 then
                 return { isActive = false }
@@ -211,16 +230,16 @@ local ns = {
                 return { isActive = false, isOnGCD = nil }
             end
             if spellID == 181819 then
-                return { isActive = true, isOnGCD = true, realCooldownUnknown = true }
+                return { isActive = true, isOnGCD = true, activeCategory = SECRET_COOLDOWN_FIELD }
             end
             if spellID == 181820 then
-                return { isActive = true, isOnGCD = true, realCooldownUnknown = true }
+                return { isActive = true, isOnGCD = true, activeCategory = SECRET_COOLDOWN_FIELD }
             end
             if spellID == 181821 then
                 return { isActive = false, isOnGCD = false }
             end
             if spellID == 191919 then
-                return { isActive = true, isOnGCD = true, realCooldownUnknown = true }
+                return { isActive = true, isOnGCD = true, activeCategory = SECRET_COOLDOWN_FIELD }
             end
             if spellID == 212121 then
                 return { isActive = true, isOnGCD = true }
@@ -414,48 +433,67 @@ local ns = {
     },
 }
 
+assert(loadfile("modules/cdm/cdm_runtime_queries.lua"))("QUI", ns)
 assert(loadfile("modules/cdm/cdm_resolvers.lua"))("QUI", ns)
 
-local cdmIcons = {
-    _trustIsOnGCDForBatch = true,
-    _trustedGCDSpellState = {
-        [12345] = true,
-        [22222] = true,
-        [54321] = true,
-    },
-    ApplyAuraStateToIcon = function()
-        return nil, false, nil
-    end,
-    GetCooldownInfoField = function(info, key)
-        return info and info[key]
-    end,
-    IsGCDSwipeEnabled = function()
-        return true
-    end,
-    IsItemLikeEntry = function()
-        return false
-    end,
-    QueryOverrideSpell = function()
-        return nil
-    end,
-    ShouldUseBuffSwipeForIcon = function()
-        return false
-    end,
-    IsCooldownInfoRealCooldown = function(info)
-        if info and info.realCooldownUnknown == true then
-            return nil
-        end
-        if info and info.realCooldown ~= nil then
-            return info.realCooldown
-        end
-        if info and info.isOnGCD == true then
-            return false
-        end
-        return nil
-    end,
-}
+local function setTrustedGCDState(values)
+    local spellState = ns.CDMRuntimeQueries.ResetTrustedGCDSnapshot(1)
+    for spellID, value in pairs(values or {}) do
+        spellState[spellID] = value
+    end
+    ns.CDMRuntimeQueries.SetTrustIsOnGCDForBatch(values ~= nil)
+end
 
-ns.CDMResolvers._FinalizeImports(cdmIcons)
+setTrustedGCDState({
+    [12345] = true,
+    [22222] = true,
+    [54321] = true,
+})
+
+local function getPreservedRealDurationObject(icon)
+    if not (icon and icon._lastDurObj and type(icon._lastDurObjKey) == "string") then
+        return nil, nil, nil
+    end
+    local mode, sourceID = icon._lastDurObjKey:match("^([^:]+):(.+)$")
+    if mode == "cooldown" or mode == "charge" or mode == "item-cooldown" then
+        return icon._lastDurObj, mode, sourceID
+    end
+    return nil, nil, nil
+end
+
+local function ResolveIconFields(icon)
+    local entry = icon and icon._spellEntry
+    local preservedDurObj, preservedMode, preservedSourceID =
+        getPreservedRealDurationObject(icon)
+    local context = ns.CDMResolvers.BuildCooldownStateContext(icon, entry, icon and icon._runtimeSpellID, {
+        containerKey = entry and entry.viewerType,
+        totemSlot = icon and icon._totemSlot,
+        useBuffSwipe = false,
+        skipAuraPhase = false,
+        showGCDSwipe = true,
+        priorCooldownActive = icon and icon._hasCooldownActive == true,
+        priorRealCooldownActive = icon and icon._hasRealCooldownActive == true,
+        priorShowingRealCooldownSwipe = icon and icon._showingRealCooldownSwipe == true,
+        priorResolvedCooldownMode = icon and icon._resolvedCooldownMode,
+        preservedRealDurObj = preservedDurObj,
+        preservedRealMode = preservedMode,
+        preservedRealSourceID = preservedSourceID,
+        lastChargeMirrorCooldownID = icon and icon._lastChargeMirrorCooldownID,
+        lastChargeMirrorCategory = icon and icon._lastChargeMirrorCategory,
+        lastChargeRuntimeSpellID = icon and icon._lastChargeRuntimeSpellID,
+    })
+    context.mirrorCooldownID = icon and icon._blizzMirrorCooldownID
+    context.mirrorCategory = icon and icon._blizzMirrorCategory
+    local state = ns.CDMResolvers.ResolveCooldownState(context)
+    return state.durObj,
+        state.mode,
+        state.sourceID,
+        state.start,
+        state.duration,
+        state.spellID,
+        state.mirrorBacked == true,
+        state.mirrorBacked == true and state or nil
+end
 
 local icon = {
     _spellEntry = {
@@ -466,14 +504,13 @@ local icon = {
     },
 }
 
-local durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(icon)
+local durObj, mode, sourceID = ResolveIconFields(icon)
 
 assert(durObj == gcdDuration, "trusted GCD state should resolve when no active mirror duration exists")
 assert(mode == "gcd-only", "trusted GCD state should resolve as gcd-only")
 assert(sourceID == 12345, "GCD-only source should be the runtime spellID")
 
-cdmIcons._trustIsOnGCDForBatch = false
-cdmIcons._trustedGCDSpellState = {}
+setTrustedGCDState(nil)
 
 local liveCooldownGCDIcon = {
     _spellEntry = {
@@ -484,7 +521,7 @@ local liveCooldownGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(liveCooldownGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(liveCooldownGCDIcon)
 
 assert(durObj == gcdDuration, "live isOnGCD should render GCD when trusted batch state is absent")
 assert(mode == "gcd-only", "live isOnGCD should resolve as gcd-only")
@@ -499,7 +536,7 @@ local mirroredGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(mirroredGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(mirroredGCDIcon)
 
 assert(durObj == mirrorDuration, "GCD mirror duration should be reused when spell-specific GCD duration is missing")
 assert(mode == "gcd-only", "GCD mirror duration should resolve as gcd-only")
@@ -515,7 +552,7 @@ local misleadingMirroredCooldownIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(misleadingMirroredCooldownIcon)
+durObj, mode, sourceID = ResolveIconFields(misleadingMirroredCooldownIcon)
 
 assert(durObj == mirrorDuration, "spell-cooldown mirror duration should be returned directly during live GCD")
 assert(mode == "cooldown", "spell-cooldown mirror source should remain cooldown mode, got " .. tostring(mode))
@@ -530,7 +567,7 @@ local cooldownFrameMirroredGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(cooldownFrameMirroredGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(cooldownFrameMirroredGCDIcon)
 
 assert(durObj == mirrorDuration, "cooldown-frame mirror should win over an explicit live GCD duration")
 assert(mode == "cooldown", "cooldown-frame mirror source should remain cooldown mode, got " .. tostring(mode))
@@ -545,7 +582,7 @@ local cooldownFrameMirroredGCDWithoutExplicitDurationIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(cooldownFrameMirroredGCDWithoutExplicitDurationIcon)
+durObj, mode, sourceID = ResolveIconFields(cooldownFrameMirroredGCDWithoutExplicitDurationIcon)
 
 assert(durObj == mirrorDuration, "cooldown-frame mirror should be returned directly when no explicit live GCD duration exists")
 assert(mode == "cooldown", "cooldown-frame mirror source should remain cooldown mode, got " .. tostring(mode))
@@ -561,7 +598,7 @@ local gcdSpellFallbackIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(gcdSpellFallbackIcon)
+durObj, mode, sourceID = ResolveIconFields(gcdSpellFallbackIcon)
 
 assert(durObj == gcdDuration, "GCD spell duration should be used when spell-specific duration is missing")
 assert(mode == "gcd-only", "GCD spell fallback should resolve as gcd-only")
@@ -577,7 +614,7 @@ local staleChargeMirrorGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(staleChargeMirrorGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(staleChargeMirrorGCDIcon)
 
 assert(durObj == mirrorDuration, "inactive live charge state should not override an active charge mirror duration")
 assert(mode == "charge", "active charge mirror should remain charge mode during GCD, got " .. tostring(mode))
@@ -592,7 +629,7 @@ local activeChargeMirrorIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(activeChargeMirrorIcon)
+durObj, mode, sourceID = ResolveIconFields(activeChargeMirrorIcon)
 
 assert(durObj == mirrorDuration, "active charge mirror should remain selected")
 assert(mode == "charge", "active charge mirror should remain charge mode even during GCD")
@@ -607,11 +644,27 @@ local activeLiveChargeOverGCDMirrorIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(activeLiveChargeOverGCDMirrorIcon)
+durObj, mode, sourceID = ResolveIconFields(activeLiveChargeOverGCDMirrorIcon)
 
 assert(durObj == liveChargeDuration, "active live recharge should override a mirror GCD duration")
 assert(mode == "charge", "active live recharge should resolve as charge over mirror GCD, got " .. tostring(mode))
 assert(sourceID == "1227280:0", "active live recharge source should use the charge duration key")
+
+local activeLiveChargeOverCooldownMirrorIcon = {
+    _spellEntry = {
+        id = 1227281,
+        spellID = 1227281,
+        viewerType = "essential",
+        type = "spell",
+        hasCharges = true,
+    },
+}
+
+durObj, mode, sourceID = ResolveIconFields(activeLiveChargeOverCooldownMirrorIcon)
+
+assert(durObj == mirrorDuration, "active live recharge should not override a mirror cooldown duration")
+assert(mode == "cooldown", "active mirror cooldown should stay cooldown mode over live charge, got " .. tostring(mode))
+assert(sourceID == "mirror:8204:21", "active mirror cooldown should keep its mirror source key")
 
 local misleadingLiveCooldownIcon = {
     _spellEntry = {
@@ -622,7 +675,7 @@ local misleadingLiveCooldownIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(misleadingLiveCooldownIcon)
+durObj, mode, sourceID = ResolveIconFields(misleadingLiveCooldownIcon)
 
 assert(durObj == misleadingCooldownDuration, "inactive charge live cooldown duration should be reused as GCD when no GCD duration is available")
 assert(mode == "gcd-only", "inactive charge live cooldown duration during GCD should resolve as gcd-only, got " .. tostring(mode))
@@ -637,7 +690,7 @@ local realCooldownDuringGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(realCooldownDuringGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(realCooldownDuringGCDIcon)
 
 assert(durObj == realCooldownDuration, "real cooldown duration should remain selected during GCD")
 assert(mode == "cooldown", "real cooldown duration should remain cooldown mode during GCD")
@@ -652,7 +705,7 @@ local unknownRealCooldownDuringGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(unknownRealCooldownDuringGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(unknownRealCooldownDuringGCDIcon)
 
 assert(durObj == gcdDuration, "unknown real-cooldown proof during live GCD should prefer explicit GCD duration")
 assert(mode == "gcd-only", "unknown real-cooldown proof during live GCD should resolve as gcd-only")
@@ -669,10 +722,10 @@ local knownRealCooldownDuringLaterGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(knownRealCooldownDuringLaterGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(knownRealCooldownDuringLaterGCDIcon)
 
-assert(durObj == realCooldownDuration, "known real cooldown should keep its real duration during a later GCD")
-assert(mode == "cooldown", "known real cooldown should not downgrade to gcd-only during a later GCD")
+assert(durObj == realCooldownDuration, "resolved state should preserve a prior real cooldown during GCD when context supplies prior activity")
+assert(mode == "cooldown", "prior real-cooldown activity should keep cooldown mode over a later GCD")
 assert(sourceID == 131313, "known real cooldown source should use runtime spellID")
 
 local usableResourceCooldownIcon = {
@@ -684,7 +737,7 @@ local usableResourceCooldownIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(usableResourceCooldownIcon)
+durObj, mode, sourceID = ResolveIconFields(usableResourceCooldownIcon)
 
 assert(durObj == nil, "usable resource cooldown should not bind a real cooldown duration")
 assert(mode == "inactive", "usable resource cooldown should resolve inactive outside GCD")
@@ -701,7 +754,7 @@ local usableResourceDuringGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(usableResourceDuringGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(usableResourceDuringGCDIcon)
 
 assert(durObj == gcdDuration, "usable resource spell should render GCD during a later GCD pulse")
 assert(mode == "gcd-only", "usable resource spell should not keep stale real-cooldown mode during GCD")
@@ -716,7 +769,7 @@ local resourceBlockedCooldownIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(resourceBlockedCooldownIcon)
+durObj, mode, sourceID = ResolveIconFields(resourceBlockedCooldownIcon)
 
 assert(durObj == realCooldownDuration, "resource-blocked cooldown should bind its real duration")
 assert(mode == "cooldown", "resource-blocked cooldown should stay in cooldown mode")
@@ -733,10 +786,10 @@ local resourceBlockedDuringGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(resourceBlockedDuringGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(resourceBlockedDuringGCDIcon)
 
-assert(durObj == realCooldownDuration, "resource-blocked spell should keep its real duration during a later GCD pulse")
-assert(mode == "cooldown", "resource-blocked spell should preserve real-cooldown mode during GCD")
+assert(durObj == realCooldownDuration, "resource-blocked spell should preserve its real cooldown duration during a later GCD")
+assert(mode == "cooldown", "resource-blocked spell should keep real-cooldown mode during a later GCD")
 assert(sourceID == 151516, "resource-blocked cooldown source should use runtime spellID")
 
 local resourceBlockedPriorMirrorDuringGCDIcon = {
@@ -752,11 +805,11 @@ local resourceBlockedPriorMirrorDuringGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(resourceBlockedPriorMirrorDuringGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(resourceBlockedPriorMirrorDuringGCDIcon)
 
-assert(durObj == mirrorDuration, "resource-blocked spell should preserve the last mirror duration during a later GCD pulse")
-assert(mode == "cooldown", "resource-blocked prior mirror should not downgrade to gcd-only")
-assert(sourceID == "mirror:27927:2218", "preserved mirror cooldown should keep the previous mirror source")
+assert(durObj == mirrorDuration, "resolved state should preserve a prior mirror binding during a later GCD pulse")
+assert(mode == "cooldown", "prior mirror preservation belongs to the resolved cooldown state")
+assert(sourceID == "mirror:27927:2218", "prior mirror source should remain stable while preserved")
 
 local activeChildMirrorLiveInactiveIcon = {
     _spellEntry = {
@@ -767,11 +820,11 @@ local activeChildMirrorLiveInactiveIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(activeChildMirrorLiveInactiveIcon)
+durObj, mode, sourceID = ResolveIconFields(activeChildMirrorLiveInactiveIcon)
 
-assert(durObj == mirrorDuration, "active child mirror duration should win over a transient live isActive=false")
-assert(mode == "cooldown", "active child mirror should remain cooldown mode when live isActive=false")
-assert(sourceID == "mirror:777:5", "active child mirror should keep its mirror source key")
+assert(durObj == nil, "live isActive=false should clear a stale active child mirror duration")
+assert(mode == "inactive", "live isActive=false should resolve the stale mirror as inactive")
+assert(sourceID == nil, "stale mirror source should clear when live cooldown state is inactive")
 
 local activeChildMirrorDuringLaterGCDIcon = {
     _spellEntry = {
@@ -782,7 +835,7 @@ local activeChildMirrorDuringLaterGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(activeChildMirrorDuringLaterGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(activeChildMirrorDuringLaterGCDIcon)
 
 assert(durObj == mirrorDuration, "active child mirror duration should not downgrade during a later GCD")
 assert(mode == "cooldown", "active child mirror should remain cooldown mode during a later GCD")
@@ -797,7 +850,7 @@ local activeChildUsableMirrorDuringGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(activeChildUsableMirrorDuringGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(activeChildUsableMirrorDuringGCDIcon)
 
 assert(durObj == mirrorDuration, "usable active child mirror duration should not downgrade during GCD")
 assert(mode == "cooldown", "usable active child mirror should remain cooldown mode during GCD")
@@ -812,7 +865,7 @@ local usableActiveMirrorIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(usableActiveMirrorIcon)
+durObj, mode, sourceID = ResolveIconFields(usableActiveMirrorIcon)
 
 assert(durObj == mirrorDuration, "active mirror cooldown should win over live usable/GCD fallback")
 assert(mode == "cooldown", "active mirror spell-cooldown source should remain cooldown mode")
@@ -827,7 +880,7 @@ local resolvedModeMirrorIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(resolvedModeMirrorIcon)
+durObj, mode, sourceID = ResolveIconFields(resolvedModeMirrorIcon)
 
 assert(durObj == mirrorDuration, "resolver should return active mirror duration when resolvedMode is present")
 assert(mode == "gcd-only", "resolver should trust mirror resolvedMode before source fallback")
@@ -842,7 +895,7 @@ local authoritativeGCDMirrorIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(authoritativeGCDMirrorIcon)
+durObj, mode, sourceID = ResolveIconFields(authoritativeGCDMirrorIcon)
 
 assert(durObj == mirrorDuration, "authoritative GCD mirror duration should be returned directly")
 assert(mode == "gcd-only", "authoritative GCD mirror mode should not be recomputed from live cooldown state")
@@ -857,23 +910,22 @@ local staleInactiveMirrorIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(staleInactiveMirrorIcon)
+durObj, mode, sourceID = ResolveIconFields(staleInactiveMirrorIcon)
 
-assert(durObj == mirrorDuration, "resolver should trust active mirror duration over live cooldown inactive")
-assert(mode == "cooldown", "active mirror duration should remain cooldown mode over live inactive")
-assert(sourceID == "mirror:777:5", "active mirror duration should keep its mirror source key")
+assert(durObj == nil, "resolver should clear active mirror duration when live cooldown is inactive")
+assert(mode == "inactive", "active mirror duration should resolve inactive when live cooldown is inactive")
+assert(sourceID == nil, "stale mirror source should clear when live cooldown is inactive")
 
 assert(ns.CDMResolvers.GetMirrorPolicyStats == nil,
     "resolver should not expose mirror policy counters after mirror ownership is restored")
 assert(ns.CDMResolvers.ShouldUseMirroredCooldownDuration == nil,
     "resolver should not expose mirror policy adjudication after mirror ownership is restored")
 
-cdmIcons._trustIsOnGCDForBatch = true
-cdmIcons._trustedGCDSpellState = {
+setTrustedGCDState({
     [12345] = true,
     [22222] = true,
     [54321] = true,
-}
+})
 
 local inactiveCooldownGCDIcon = {
     _spellEntry = {
@@ -884,7 +936,7 @@ local inactiveCooldownGCDIcon = {
     },
 }
 
-durObj, mode, sourceID = ns.CDMResolvers.ResolveIconDurationObject(inactiveCooldownGCDIcon)
+durObj, mode, sourceID = ResolveIconFields(inactiveCooldownGCDIcon)
 
 assert(durObj == gcdDuration, "trusted isOnGCD should render GCD even when cooldown isActive is false")
 assert(mode == "gcd-only", "inactive cooldown GCD state should resolve as gcd-only")
@@ -901,13 +953,13 @@ local auraBackedCooldownIcon = {
     },
 }
 
-durObj, mode = ns.CDMResolvers.ResolveIconDurationObject(auraBackedCooldownIcon)
+durObj, mode = ResolveIconFields(auraBackedCooldownIcon)
 
 assert(durObj == auraChildFrameDuration, "child-frame aura mirror duration should be selected")
 assert(mode == "aura", "child-frame aura mirror source should resolve as aura mode even during GCD")
 
 mirrorSource = "aura-related-child"
-durObj, mode = ns.CDMResolvers.ResolveIconDurationObject(auraBackedCooldownIcon)
+durObj, mode = ResolveIconFields(auraBackedCooldownIcon)
 
 assert(durObj == auraChildFrameDuration, "related-child aura mirror duration should be selected")
 assert(mode == "aura", "related-child aura mirror source should resolve as aura mode")
@@ -926,7 +978,7 @@ local auraMirrorIcon = {
 
 local mirrorBacked, mirrorPayload
 durObj, mode, sourceID, _, _, _, mirrorBacked, mirrorPayload =
-    ns.CDMResolvers.ResolveIconDurationObject(auraMirrorIcon)
+    ResolveIconFields(auraMirrorIcon)
 
 assert(durObj == auraMirrorDuration, "valid aura mirror should bypass aura resolver adjudication")
 assert(mode == "aura", "valid aura mirror should pass its own mode to render")
@@ -942,7 +994,7 @@ assert(auraDataQueryCount == 1,
 auraDataQueryCount = 0
 function InCombatLockdown() return true end
 durObj, mode, sourceID, _, _, _, mirrorBacked, mirrorPayload =
-    ns.CDMResolvers.ResolveIconDurationObject(auraMirrorIcon)
+    ResolveIconFields(auraMirrorIcon)
 function InCombatLockdown() return false end
 
 assert(durObj == auraMirrorDuration, "combat aura mirror should still keep the DurationObject")
@@ -964,7 +1016,7 @@ local directAuraDataMirrorIcon = {
     },
 }
 durObj, mode, sourceID, _, _, _, mirrorBacked, mirrorPayload =
-    ns.CDMResolvers.ResolveIconDurationObject(directAuraDataMirrorIcon)
+    ResolveIconFields(directAuraDataMirrorIcon)
 
 assert(durObj == auraMirrorDuration, "direct child auraData mirror should keep the mirror DurationObject")
 assert(mirrorPayload.auraData == auraMirrorData,
@@ -975,7 +1027,7 @@ assert(auraDataQueryCount == 0,
 auraDataQueryCount = 0
 function InCombatLockdown() return true end
 durObj, mode, sourceID, _, _, _, mirrorBacked, mirrorPayload =
-    ns.CDMResolvers.ResolveIconDurationObject(directAuraDataMirrorIcon)
+    ResolveIconFields(directAuraDataMirrorIcon)
 function InCombatLockdown() return false end
 
 assert(durObj == auraMirrorDuration, "combat direct child auraData mirror should keep the mirror DurationObject")
@@ -998,7 +1050,7 @@ local inactiveMirrorIcon = {
 }
 
 durObj, mode, sourceID, _, _, _, mirrorBacked, mirrorPayload =
-    ns.CDMResolvers.ResolveIconDurationObject(inactiveMirrorIcon)
+    ResolveIconFields(inactiveMirrorIcon)
 
 assert(durObj == nil, "inactive valid mirror should not be replaced by live GCD duration")
 assert(mode == "inactive", "inactive valid mirror should pass inactive state to render")
@@ -1019,13 +1071,11 @@ local trackedBarIcon = {
     _spellEntry = trackedBarEntry,
 }
 
-assert(ns.CDMResolvers.HasRealCooldownState(
-    trackedBarIcon,
-    trackedBarEntry,
-    30,
-    true,
-    true,
-    mirrorDuration,
-    67890) == false, "trackedBar entries should use aura shape, not real-cooldown shape")
+durObj, mode = ResolveIconFields(trackedBarIcon)
+
+assert(durObj == nil, "trackedBar entries should not resolve a cooldown DurationObject from cooldown APIs")
+assert(mode == "inactive", "trackedBar entries should use aura shape, not real-cooldown shape")
+assert(cooldownQueryCounts[67890] == nil,
+    "trackedBar entries should not query spell cooldown state as real-cooldown entries")
 
 print("OK: cdm_resolvers_gcd_mirror_test")

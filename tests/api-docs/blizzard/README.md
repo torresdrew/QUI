@@ -14,11 +14,11 @@ Online mirror: https://www.townlong-yak.com/framexml/live/Blizzard_APIDocumentat
 
 ## Current state
 
-Currently this directory contains `Placeholder.lua` — a hand-curated stand-in
-listing the secret-flagged functions that QUI actually calls today. Drop in
-the real Blizzard files (especially `C_Spell.lua`, `C_UnitAuras.lua`,
-`C_Cooldown.lua`, `C_Item.lua`, `C_Container.lua`) to expand coverage. After
-adding files, regenerate the derived index:
+This directory contains a vendored snapshot of Blizzard's generated API
+documentation tables. The taint analyzer reads these files through the derived
+index at `tests/api-docs/api-index.lua`, so the corpus and index must stay in
+sync. After replacing or adding Blizzard documentation files, regenerate the
+derived index:
 
 ```sh
 lua tools/test_taint.lua --update-index

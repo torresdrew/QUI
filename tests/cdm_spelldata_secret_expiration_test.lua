@@ -2,6 +2,7 @@
 -- Run: lua tests/cdm_spelldata_secret_expiration_test.lua
 
 local originalType = type
+local originalIsSecretValue = issecretvalue
 local function noop() end
 
 function InCombatLockdown() return false end
@@ -23,6 +24,7 @@ end
 
 local secretHasExpiration = {}
 local secretChecks = 0
+local secretGlobalChecks = 0
 local curveCalls = 0
 local expirationQueries = 0
 local matchingExpirationQueries = 0
@@ -35,6 +37,14 @@ _G.C_CurveUtil = {
         return valueIfFalse
     end,
 }
+
+_G.issecretvalue = function(value)
+    if value == secretHasExpiration then
+        secretGlobalChecks = secretGlobalChecks + 1
+        return true
+    end
+    return false
+end
 
 local ns = {
     Helpers = {
@@ -66,6 +76,7 @@ local ns = {
     },
 }
 
+dofile("tests/helpers/load_cdm_spelldata_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_spelldata.lua"))("QUI", ns)
 
 local auraData = {
@@ -105,7 +116,7 @@ _G.type = function(value)
 end
 
 local ok, stateOrErr = pcall(function()
-    return ns.CDMSpellData:ResolveAuraState({
+    return ns.CDMAuraRuntime.ResolveState({
         spellID = 12345,
         entrySpellID = 12345,
         entryID = 12345,
@@ -118,12 +129,14 @@ local ok, stateOrErr = pcall(function()
 end)
 
 _G.type = originalType
+_G.issecretvalue = originalIsSecretValue
 
 assert(ok, "secret hasExpiration should be ignored safely: " .. tostring(stateOrErr))
 assert(stateOrErr.isActive == true, "aura should still resolve as active")
 assert(expirationQueries > 0, "aura expiration source should be queried")
 assert(matchingExpirationQueries > 0, "aura expiration source should query the resolved player instance")
-assert(secretChecks > 0, "secret hasExpiration should be checked before Lua inspection")
+assert(secretChecks == 0, "secret hasExpiration must not go through safe-helper inspection")
+assert(secretGlobalChecks > 0, "secret hasExpiration should be filtered through the global secret check")
 assert(curveCalls > 0, "secret hasExpiration should be decoded through C_CurveUtil")
 assert(durationQueries == 0, "secret false expiration should skip duration object lookup")
 assert(stateOrErr.durObj == nil, "permanent aura should not carry a duration object")

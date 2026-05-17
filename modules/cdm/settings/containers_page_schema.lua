@@ -201,6 +201,13 @@ local function IsBuiltIn(containerKey)
 end
 
 local function ResolveContainerType(containerKey)
+    local shared = ns.CDMShared
+    if shared and shared.GetContainerType then
+        local containerType = shared.GetContainerType(containerKey)
+        if containerType then
+            return containerType
+        end
+    end
     if containerKey == "essential" or containerKey == "utility" then return "cooldown" end
     if containerKey == "buff" then return "aura" end
     if containerKey == "trackedBar" then return "auraBar" end
@@ -1481,8 +1488,8 @@ local function RenderFiltersSection(sectionHost, ctx)
     end
 
     local refresh = function()
-        if ns.CDMIcons and ns.CDMIcons.NormalizeCustomBarVisibilityFlags then
-            ns.CDMIcons.NormalizeCustomBarVisibilityFlags(tracker)
+        if ns.CDMShared and ns.CDMShared.NormalizeCustomBarVisibilityFlags then
+            ns.CDMShared.NormalizeCustomBarVisibilityFlags(tracker)
         end
         RefreshContainer(containerKey)
     end

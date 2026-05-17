@@ -54,7 +54,9 @@ function CDMCatalog.GetKindForCategory(category)
 end
 
 function CDMCatalog.IsUsableID(id)
-    return type(id) == "number" and id > 0 and not issecretvalue(id)
+    if type(id) ~= "number" then return false end
+    if issecretvalue(id) then return false end
+    return id > 0
 end
 
 function CDMCatalog.ToBaseSpellID(id)
@@ -83,6 +85,64 @@ function CDMCatalog.ForEachCooldownInfoID(info, callback)
             callback(id)
         end
     end
+end
+
+function CDMCatalog.IsAuraCategoryName(categoryName)
+    if ns.CDMShared and ns.CDMShared.IsAuraMirrorCategory then
+        return ns.CDMShared.IsAuraMirrorCategory(categoryName)
+    end
+    return categoryName == "buff" or categoryName == "trackedBar"
+end
+
+function CDMCatalog.MapCooldownInfoIDs(catMap, directMap, info, cooldownID, categoryName)
+    if not (catMap and info and cooldownID) then return end
+
+    local function selectPrimarySourceID()
+        if CDMCatalog.IsUsableID(info.overrideSpellID) then
+            return info.overrideSpellID
+        end
+        return info.spellID
+    end
+
+    local function add(map, id, overwrite)
+        if not (map and CDMCatalog.IsUsableID(id)) then return end
+        if overwrite or not map[id] then
+            map[id] = cooldownID
+        end
+    end
+
+    local isAuraCategory = CDMCatalog.IsAuraCategoryName(categoryName)
+    local primarySourceID = selectPrimarySourceID()
+
+    add(catMap, primarySourceID, true)
+    add(catMap, info.spellID, false)
+    add(catMap, info.overrideSpellID, false)
+    if isAuraCategory then
+        add(catMap, info.overrideTooltipSpellID, true)
+
+        if type(info.linkedSpellIDs) == "table" then
+            for _, linkedID in ipairs(info.linkedSpellIDs) do
+                add(catMap, linkedID, false)
+            end
+        end
+    end
+
+    if isAuraCategory then
+        add(directMap, info.overrideTooltipSpellID, true)
+        if type(info.linkedSpellIDs) == "table" then
+            for _, linkedID in ipairs(info.linkedSpellIDs) do
+                add(directMap, linkedID, true)
+            end
+        end
+        add(directMap, primarySourceID, false)
+        add(directMap, info.spellID, false)
+        add(directMap, info.overrideSpellID, false)
+        return
+    end
+
+    add(directMap, primarySourceID, true)
+    add(directMap, info.spellID, false)
+    add(directMap, info.overrideSpellID, false)
 end
 
 local function HasCooldownViewerAPI()
@@ -230,7 +290,9 @@ local function GetAuraIDsFromInfo(info)
         end
     end
     if #auraIDs == 0 then
-        local fallback = info.overrideSpellID or info.spellID
+        local fallback = CDMCatalog.IsUsableID(info.overrideSpellID)
+            and info.overrideSpellID
+            or info.spellID
         if CDMCatalog.IsUsableID(fallback) then
             auraIDs[1] = fallback
         end

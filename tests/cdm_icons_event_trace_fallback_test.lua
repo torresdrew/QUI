@@ -1,6 +1,8 @@
 -- tests/cdm_icons_event_trace_fallback_test.lua
 -- Run: lua tests/cdm_icons_event_trace_fallback_test.lua
 
+local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub.lua")
+
 local function noop() end
 
 local frameOnEvent
@@ -70,28 +72,14 @@ local ns = {
         QuerySpellInRange = function() return true end,
     },
     CDMResolvers = {
+        BuildCooldownStateContext = BuildCooldownStateContext,
         _textureCycleCache = {},
         _FinalizeImports = noop,
         Subscribe = noop,
-        QueryCharges = function() return nil end,
-        QueryCooldown = function() return nil end,
-        QueryDuration = function() return nil end,
-        QueryChargeDuration = function() return nil end,
-        QueryOverrideSpell = function() return nil end,
-        QueryDisplayCount = function() return nil end,
-        QuerySpellCount = function() return nil end,
         GetSpellTexture = function() return nil end,
         ResolveMacro = function() return nil end,
         GetEntryTexture = function() return nil end,
-        HasRealCooldownState = function() return false end,
-        ResolveAuraStateForIcon = function() return nil end,
-        ResolveAuraDurationObjectForIcon = function() return nil end,
         IsAuraEntry = function(entry) return entry and entry.kind == "aura" end,
-        GetChargeMetadataDB = function() return nil end,
-        IsItemLikeEntry = function() return false end,
-        ResolveItemCooldownIdentity = function() return nil end,
-        ResolveEntryItemID = function() return nil end,
-        ClassifySpellCooldownState = function() return nil end,
         ResolveSpellActiveState = function() return nil end,
         ResolveCooldownActivityState = function()
             return {
@@ -101,7 +89,13 @@ local ns = {
                 hasCharges = false,
             }
         end,
-        ResolveIconDurationObject = function() return nil, "inactive", nil end,
+        ResolveCooldownState = function()
+            return {
+                mode = "inactive",
+                active = false,
+                isActive = false,
+            }
+        end,
     },
     CDMIconFactory = {
         _iconPools = {},
@@ -110,7 +104,6 @@ local ns = {
         AcquireIcon = noop,
         ReleaseIcon = noop,
         SyncCooldownBling = noop,
-        UpdateIconCooldown = noop,
     },
     CDMRuntimeStore = {
         SetIconState = noop,
@@ -126,6 +119,7 @@ local ns = {
     },
 }
 
+dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
@@ -136,7 +130,7 @@ assert(frameOnEvent, "CDM icon event frame should register an OnEvent handler")
 local ok, err = pcall(frameOnEvent, {}, "UPDATE_MACROS")
 assert(ok, "UPDATE_MACROS should not require debug event trace helpers: " .. tostring(err))
 
-ok, err = pcall(icons.HandleUnitAuraChanged, "player", { isFullUpdate = true })
+ok, err = pcall(icons.HandleRuntimeRefresh, "UNIT_AURA", "player", { isFullUpdate = true })
 assert(ok, "UNIT_AURA refresh should not require debug event trace helpers: " .. tostring(err))
 
 print("OK: cdm_icons_event_trace_fallback_test")

@@ -66,12 +66,15 @@ local ns = {
 }
 
 assert(loadfile("QUI_Debug/cdm_debug.lua"))("QUI_Debug", ns)
+assert(SlashCmdList["QUI_CDMDEBUG"], "/cdmdebug should be registered")
+assert(SlashCmdList["QUI_CDMRAW"] == nil, "legacy /cdmraw command should not be registered")
+assert(SlashCmdList["CDMEVENTS"] == nil, "legacy /cdmevents command should not be registered")
 
 local Debug = ns.CDMDebug
 assert(Debug and Debug.Taint, "CDMDebug.Taint should be exported")
 
-SlashCmdList["QUI_CDMDEBUG"]("taint Sync")
-assert(_G.QUI_CDM_TAINT_DEBUG == "Sync", "/cdmdebug taint <filter> should store a filter string")
+SlashCmdList["QUI_CDMDEBUG"]("flags taint Sync")
+assert(_G.QUI_CDM_TAINT_DEBUG == "Sync", "/cdmdebug flags taint <filter> should store a filter string")
 
 Debug.Taint("hook.SetCooldown", "cdID", 1)
 assert(lastEditBox == nil, "filtered taint messages should not create or update the frame")
@@ -91,8 +94,7 @@ _G.QUI_CDM_TAINT_FILTER = nil
 Debug.Taint("hook.Clear", "cdID", 1)
 assert(lastEditBox.text:find("hook.Clear", 1, true), "global taint debug should render unfiltered labels")
 
-assert(SlashCmdList["QUI_CDMRAW"], "/cdmraw should be registered")
-SlashCmdList["QUI_CDMRAW"]("")
-assert(lastEditBox.text:find("categorySetEntries=2", 1, true), "/cdmraw should render raw lines in the debug EditBox")
+SlashCmdList["QUI_CDMDEBUG"]("raw")
+assert(lastEditBox.text:find("categorySetEntries=2", 1, true), "/cdmdebug raw should render raw lines in the debug EditBox")
 
 print("OK: cdm_debug_taint_test")

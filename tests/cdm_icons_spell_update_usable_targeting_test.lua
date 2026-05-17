@@ -1,6 +1,8 @@
 -- tests/cdm_icons_spell_update_usable_targeting_test.lua
 -- Run: lua tests/cdm_icons_spell_update_usable_targeting_test.lua
 
+local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub.lua")
+
 local function noop() end
 
 function InCombatLockdown() return false end
@@ -36,6 +38,7 @@ local function makeIcon(name, spellID, kind)
         _spellEntry = {
             id = spellID,
             spellID = spellID,
+            name = name,
             kind = kind or "cooldown",
             viewerType = "essential",
             type = "spell",
@@ -118,36 +121,21 @@ local ns = {
         end,
         QuerySpellHasRange = function() return false end,
         QuerySpellInRange = function() return true end,
+        QuerySpellCooldown = function()
+            return { isActive = false, isOnGCD = false }
+        end,
     },
     CDMResolvers = {
+        BuildCooldownStateContext = BuildCooldownStateContext,
         _textureCycleCache = {},
         _FinalizeImports = noop,
         Subscribe = noop,
-        BeginRuntimeQueryBatch = noop,
-        EndRuntimeQueryBatch = noop,
-        QueryCharges = function() return nil end,
-        QueryCooldown = function()
-            return { isActive = false, isOnGCD = false }
-        end,
-        QueryDuration = function() return nil end,
-        QueryChargeDuration = function() return nil end,
-        QueryOverrideSpell = function() return nil end,
-        QueryDisplayCount = function() return nil end,
-        QuerySpellCount = function() return nil end,
         GetSpellTexture = function() return nil end,
         ResolveMacro = function() return nil end,
         GetEntryTexture = function() return nil end,
-        HasRealCooldownState = function() return false end,
-        ResolveAuraStateForIcon = function() return nil end,
-        ResolveAuraDurationObjectForIcon = function() return nil end,
         IsAuraEntry = function(entry)
             return entry and entry.kind == "aura"
         end,
-        GetChargeMetadataDB = function() return nil end,
-        IsItemLikeEntry = function() return false end,
-        ResolveItemCooldownIdentity = function() return nil end,
-        ResolveEntryItemID = function() return nil end,
-        ClassifySpellCooldownState = function() return nil end,
         ResolveSpellActiveState = function() return nil end,
         ResolveCooldownActivityState = function()
             return {
@@ -157,9 +145,18 @@ local ns = {
                 hasCharges = false,
             }
         end,
-        ResolveIconDurationObject = function(icon)
-            resolveCounts[icon.name] = (resolveCounts[icon.name] or 0) + 1
-            return nil, "inactive", nil
+        ResolveCooldownState = function(context)
+            local entry = context and context.entry
+            local name = entry and entry.name
+            if name then
+                resolveCounts[name] = (resolveCounts[name] or 0) + 1
+            end
+            return {
+                mode = "inactive",
+                active = false,
+                isActive = false,
+                spellID = entry and entry.spellID,
+            }
         end,
     },
     CDMIconFactory = {
@@ -171,7 +168,6 @@ local ns = {
         AcquireIcon = noop,
         ReleaseIcon = noop,
         SyncCooldownBling = noop,
-        UpdateIconCooldown = noop,
     },
     CDMRuntimeStore = {
         SetIconState = noop,
@@ -187,10 +183,11 @@ local ns = {
     },
 }
 
+dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
-icons.EventFrameOnEvent({}, "SPELL_UPDATE_USABLE")
+icons.HandleRuntimeRefresh("SPELL_UPDATE_USABLE")
 
 assert(resolveCounts.stale == 1, "stale cooldown icon should be re-resolved on SPELL_UPDATE_USABLE")
 assert(resolveCounts.idle == nil, "idle icons should not be re-resolved on SPELL_UPDATE_USABLE")

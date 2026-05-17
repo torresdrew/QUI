@@ -69,61 +69,84 @@ local ns = {
     },
 }
 
+assert(loadfile("modules/cdm/cdm_runtime_queries.lua"))("QUI", ns)
 assert(loadfile("modules/cdm/cdm_resolvers.lua"))("QUI", ns)
 
 local resolvers = assert(ns.CDMResolvers, "CDMResolvers table was not exported")
-local resolveIdentity = assert(resolvers.ResolveBlizzardMirrorIdentity,
-    "shared mirror identity resolver was not exported")
+local resolveIdentityState = assert(resolvers.ResolveBlizzardMirrorIdentityState,
+    "shared mirror identity state resolver was not exported")
 
-local cdID, cat = resolveIdentity({
+local identity = resolveIdentityState({
     type = "spell",
     id = 101,
     kind = "aura",
     viewerType = "customBar",
 })
 
-assert(cdID == 9001, "custom aura entry should resolve through the buff icon category")
-assert(cat == "buff", "custom aura entry should keep the buff icon mirror category")
+assert(identity and identity.cooldownID == 9001,
+    "custom aura identity should expose a named cooldownID")
+assert(identity and identity.category == "buff",
+    "custom aura identity should expose its accepted category")
+assert(identity and identity.state == states["buff:9001"],
+    "custom aura identity should expose the accepted mirror state")
+assert(identity and identity.strictAuraBinding == true,
+    "custom aura identity should expose strict aura binding")
+assert(identity and identity.source == "entry",
+    "custom aura identity should report entry-derived binding")
+assert(identity and identity.entryType == "spell",
+    "custom aura identity should expose the normalized entry type")
 
-cdID, cat = resolveIdentity({
+identity = resolveIdentityState({
     type = "spell",
     id = 102,
     kind = "aura",
     viewerType = "customBar",
 })
 
-assert(cdID == 9002, "custom aura entry should fall back to the buff bar category")
-assert(cat == "trackedBar", "custom aura entry should keep the buff bar mirror category")
+assert(identity and identity.cooldownID == 9002,
+    "fallback aura identity should expose a named cooldownID")
+assert(identity and identity.category == "trackedBar",
+    "fallback aura identity should expose the accepted fallback category")
+assert(identity and identity.viewerCategory == nil,
+    "custom-bar aura identity should not invent a native viewer category")
 
-cdID, cat = resolveIdentity({
+identity = resolveIdentityState({
     type = "spell",
     id = 202,
     kind = "cooldown",
     viewerType = "customBar",
 })
 
-assert(cdID == 8002, "custom cooldown entry should resolve through cooldown categories")
-assert(cat == "utility", "custom cooldown entry should keep the cooldown mirror category")
+assert(identity and identity.cooldownID == 8002,
+    "custom cooldown identity should expose a named cooldownID")
+assert(identity and identity.category == "utility",
+    "custom cooldown identity should expose its accepted category")
+assert(identity and identity.strictAuraBinding == false,
+    "custom cooldown identity should not use strict aura binding")
 
-cdID, cat = resolveIdentity({
+identity = resolveIdentityState({
     type = "aura",
     id = 101,
     viewerType = "customIcon",
 })
 
-assert(cdID == 9001, "entry type aura should resolve through aura categories")
-assert(cat == "buff", "entry type aura should keep the aura mirror category")
+assert(identity and identity.cooldownID == 9001,
+    "entry type aura should resolve through aura categories")
+assert(identity and identity.category == "buff",
+    "entry type aura should keep the aura mirror category")
 
-cdID, cat = resolveIdentity({
+identity = resolveIdentityState({
     type = "cooldown",
     id = 202,
     viewerType = "customIcon",
 })
 
-assert(cdID == 8002, "entry type cooldown should resolve through cooldown categories")
-assert(cat == "utility", "entry type cooldown should keep the cooldown mirror category")
+assert(identity and identity.cooldownID == 8002,
+    "entry type cooldown should resolve through cooldown categories")
+assert(identity and identity.category == "utility",
+    "entry type cooldown should keep the cooldown mirror category")
 
-cdID, cat = resolveIdentity({
+identity = resolveIdentityState({
     type = "spell",
     id = 999,
     kind = "aura",
@@ -131,20 +154,24 @@ cdID, cat = resolveIdentity({
     cooldownID = 9002,
 })
 
-assert(cdID == 9002, "explicit custom aura cooldownID should still be honored")
-assert(cat == "trackedBar", "explicit custom aura cooldownID should resolve its aura category")
+assert(identity and identity.cooldownID == 9002,
+    "explicit custom aura identity should expose a named cooldownID")
+assert(identity and identity.category == "trackedBar",
+    "explicit custom aura identity should expose the accepted category")
+assert(identity and identity.source == "entry-cooldownID",
+    "explicit custom aura identity should report cooldownID-derived binding")
 
-cdID, cat = resolveIdentity({
+identity = resolveIdentityState({
     type = "spell",
     id = 202,
     kind = "aura",
     viewerType = "customBar",
 })
 
-assert(cdID == nil, "aura entry must not bind to cooldown-category mirror IDs")
-assert(cat == nil, "rejected aura entry should not return a mirror category")
+assert(identity == nil,
+    "rejected aura entry should not expose a mirror identity state")
 
-cdID, cat = resolveIdentity({
+identity = resolveIdentityState({
     type = "spell",
     id = 77575,
     spellID = 77575,
@@ -154,21 +181,38 @@ cdID, cat = resolveIdentity({
     linkedSpellIDs = { 48707 },
 })
 
-assert(cdID == 70759, "mismatched explicit cooldownID should not bind Outbreak to AMS")
-assert(cat == "essential", "mismatched explicit cooldownID should fall back to the entry's own category")
+assert(identity and identity.cooldownID == 70759,
+    "mismatched explicit cooldownID should not bind Outbreak to AMS")
+assert(identity and identity.category == "essential",
+    "mismatched explicit cooldownID should fall back to the entry's own category")
 
-local payload = resolvers.ResolveMirrorRenderPayloadForEntry({
-    type = "spell",
-    id = 77575,
-    spellID = 77575,
-    kind = "cooldown",
-    viewerType = "essential",
-    linkedSpellIDs = { 48707 },
-}, 28527, "utility", 77575)
+identity = resolveIdentityState({
+    type = "item",
+    id = 101,
+})
 
-assert(payload and payload.cooldownID == 70759,
-    "stale icon mirror binding should be rejected during render payload resolution")
-assert(payload and payload.category == "essential",
+assert(identity == nil,
+    "unsupported entry types should not expose a mirror identity state")
+
+local state = resolvers.ResolveCooldownState({
+    entry = {
+        type = "spell",
+        id = 77575,
+        spellID = 77575,
+        kind = "cooldown",
+        viewerType = "essential",
+        linkedSpellIDs = { 48707 },
+    },
+    runtimeSpellID = 77575,
+    mirrorCooldownID = 28527,
+    mirrorCategory = "utility",
+    containerKey = "essential",
+    useBuffSwipe = true,
+})
+
+assert(state and state.mirrorCooldownID == 70759,
+    "stale icon mirror binding should be rejected during resolved state resolution")
+assert(state and state.mirrorCategory == "essential",
     "stale icon mirror binding should fall back to the entry's own render category")
 
 print("OK: cdm_resolvers_mirror_identity_test")

@@ -74,9 +74,10 @@ local ns = {
     },
 }
 
+dofile("tests/helpers/load_cdm_spelldata_runtime.lua")(ns)
 assert(loadfile("modules/cdm/cdm_spelldata.lua"))("QUI", ns)
 
-local state = ns.CDMSpellData:ResolveAuraState({
+local state = ns.CDMAuraRuntime.ResolveState({
     spellID = 100,
     entrySpellID = 100,
     entryID = 100,
@@ -141,7 +142,7 @@ ns.CDMSources.QueryAuraDataBySpellName = function(unit, name, filter)
     end
 end
 
-state = ns.CDMSpellData:ResolveAuraState({
+state = ns.CDMAuraRuntime.ResolveState({
     spellID = 300,
     entrySpellID = 300,
     entryID = 300,

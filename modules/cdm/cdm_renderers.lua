@@ -6,6 +6,9 @@ local ADDON_NAME, ns = ...
 -- Small frame-write facade for owned cooldown visuals. Resolvers and
 -- source adapters must not call these; renderers are the only boundary that
 -- writes to cooldown frames.
+--
+-- Secret-safe Blizzard API policy lives in docs/blizzard/cdm-api-reference.md
+-- and tests/api-docs/cdm_blizzard_reference.lua.
 ---------------------------------------------------------------------------
 
 local CDMRenderers = {}

@@ -1,6 +1,8 @@
 -- tests/cdm_icon_factory_bling_test.lua
 -- Run: lua tests/cdm_icon_factory_bling_test.lua
 
+local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub.lua")
+
 local function noop() end
 
 function InCombatLockdown() return false end
@@ -82,32 +84,41 @@ local ns = {
     },
     CDMSources = {},
     CDMResolvers = {
+        BuildCooldownStateContext = BuildCooldownStateContext,
         GetEntryTexture = function() return 134400 end,
         GetSpellTexture = function() return 134400 end,
-        QueryCharges = function() return nil end,
-        QueryCooldown = function() return nil end,
-        QueryOverrideSpell = function() return nil end,
-        QueryDisplayCount = function() return nil end,
-        ResolveAuraStateForIcon = function() return nil end,
-        HasRealCooldownState = function() return false end,
+        ResolveCooldownState = function() return nil end,
         ResolveMacro = function() return nil end,
         IsAuraEntry = function() return false end,
-        ResolveBlizzardMirrorIdentity = function()
-            return 9001, "essential"
+        ResolveBlizzardMirrorIdentityState = function()
+            return {
+                cooldownID = 9001,
+                category = "essential",
+            }
         end,
     },
 }
 
 assert(loadfile("modules/cdm/cdm_icon_factory.lua"))("QUI", ns)
 
-local iconAPI = {
-    CancelCooldownExpiryRefresh = noop,
-    StopCustomBarActiveGlow = noop,
-    UpdateIconProfessionQuality = noop,
-    UpdateIconSecureAttributes = noop,
-}
+local createdIcon, createdEntry
+local acquiredIcon, acquiredEntry, acquiredReused
+local releasedIcon
 
-ns.CDMIconFactory._FinalizeImports(iconAPI)
+ns.CDMIcons = {
+    OnFactoryIconCreated = function(icon, entry)
+        createdIcon = icon
+        createdEntry = entry
+    end,
+    OnFactoryIconAcquired = function(icon, entry, reused)
+        acquiredIcon = icon
+        acquiredEntry = entry
+        acquiredReused = reused
+    end,
+    OnFactoryIconReleased = function(icon)
+        releasedIcon = icon
+    end,
+}
 
 local parent = CreateFrame("Frame", "Parent", UIParent)
 local entry = {
@@ -121,6 +132,10 @@ local entry = {
 local icon = ns.CDMIconFactory:AcquireIcon(parent, entry)
 local cooldown = assert(icon and icon.Cooldown, "AcquireIcon should create a cooldown frame")
 
+assert(createdIcon == icon and createdEntry == entry,
+    "new icon creation should notify CDMIcons through the factory-created lifecycle hook")
+assert(acquiredIcon == icon and acquiredEntry == entry and acquiredReused == false,
+    "new icon acquisition should notify CDMIcons through the factory-acquired lifecycle hook")
 assert(cooldown.drawBling == false,
     "owned CDM cooldowns should suppress Blizzard ready-flash bling at creation and mirror bind")
 
@@ -130,6 +145,23 @@ ns.CDMIconFactory.SyncCooldownBling(icon)
 
 assert(cooldown.drawBling == false,
     "visibility sync should keep Blizzard ready-flash bling suppressed")
+
+createdIcon = nil
+acquiredIcon = nil
+acquiredEntry = nil
+acquiredReused = nil
+releasedIcon = nil
+
+ns.CDMIconFactory:ReleaseIcon(icon)
+assert(releasedIcon == icon,
+    "icon release should notify CDMIcons through the factory-released lifecycle hook")
+
+local recycledIcon = ns.CDMIconFactory:AcquireIcon(parent, entry)
+assert(recycledIcon == icon, "released icon should be reused from the recycle pool")
+assert(createdIcon == nil,
+    "recycled icon acquisition should not send another factory-created lifecycle hook")
+assert(acquiredIcon == icon and acquiredEntry == entry and acquiredReused == true,
+    "recycled icon acquisition should notify CDMIcons through the factory-acquired lifecycle hook")
 
 assert(#cooldownFrames == 1, "test should create exactly one cooldown frame")
 

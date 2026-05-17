@@ -110,14 +110,46 @@ local _inZoneTransition = false
 ---------------------------------------------------------------------------
 -- CONSTANTS
 ---------------------------------------------------------------------------
--- Built-in container key set. Used for membership tests when routing
--- requests across builtin vs custom containers.
-local BUILTIN_CONTAINER_KEYS = {
-    essential  = true,
-    utility    = true,
-    buff       = true,
-    trackedBar = true,
-}
+local function IsBuiltinContainerKey(containerKey)
+    if Shared and Shared.IsBuiltinContainerKey then
+        return Shared.IsBuiltinContainerKey(containerKey)
+    end
+    return Shared and Shared.GetBuiltinContainerEntryKind
+        and Shared.GetBuiltinContainerEntryKind(containerKey) ~= nil
+        or false
+end
+
+local function GetBuiltinContainerKeys()
+    if Shared and Shared.BUILTIN_CONTAINER_KEYS then
+        return Shared.BUILTIN_CONTAINER_KEYS
+    end
+    return {}
+end
+
+local function GetBuiltinContainerEntryKind(containerKey)
+    if Shared and Shared.GetBuiltinContainerEntryKind then
+        return Shared.GetBuiltinContainerEntryKind(containerKey)
+    end
+    return nil
+end
+
+local function IsBuiltinAuraContainerKey(containerKey)
+    return GetBuiltinContainerEntryKind(containerKey) == "aura"
+end
+
+local function IsAuraMirrorCategory(category)
+    if Shared and Shared.IsAuraMirrorCategory then
+        return Shared.IsAuraMirrorCategory(category)
+    end
+    return GetBuiltinContainerEntryKind(category) == "aura"
+end
+
+local function IsCooldownMirrorCategory(category)
+    if Shared and Shared.IsCooldownMirrorCategory then
+        return Shared.IsCooldownMirrorCategory(category)
+    end
+    return GetBuiltinContainerEntryKind(category) == "cooldown"
+end
 
 ---------------------------------------------------------------------------
 -- STATE
@@ -272,9 +304,6 @@ end
 local function GetDisplayableAuraApplications(auraData)
     local apps = GetCleanAuraApplications(auraData)
     if apps == nil then return nil end
-    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(apps) then
-        return nil
-    end
     local appType = type(apps)
     if appType == "number" then
         return apps > 1 and apps or nil
@@ -612,8 +641,8 @@ local function NotifyAuraConsumers(unit, updateInfo)
         mirror.HandleUnitAuraChanged(unit, updateInfo)
     end
     local icons = ns.CDMIcons
-    if icons and icons.HandleUnitAuraChanged then
-        icons.HandleUnitAuraChanged(unit, updateInfo)
+    if icons and icons.HandleRuntimeRefresh then
+        icons.HandleRuntimeRefresh("UNIT_AURA", unit, updateInfo)
     end
     local glows = ns._OwnedGlows
     if glows and glows.HandleUnitAuraChanged then
@@ -784,17 +813,27 @@ local function QueryAuraDuration(unit, instanceID)
 end
 
 local function DecodePotentialSecretBoolean(value)
-    if Helpers.IsSecretValue and Helpers.IsSecretValue(value) then
-        if C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
-            local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(value, 1, 0)
-            if not (Helpers.IsSecretValue and Helpers.IsSecretValue(scalar))
-               and type(scalar) == "number" then
+    if value == nil then return nil end
+    local valueIsSecret = issecretvalue and issecretvalue(value)
+    if valueIsSecret and C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
+        local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(value, 1, 0)
+        if issecretvalue and issecretvalue(scalar) then
+            return nil
+        end
+        local ok, decoded = pcall(function()
+            if type(scalar) == "number" then
                 return scalar >= 0.5
             end
+            return nil
+        end)
+        if ok then
+            return decoded
         end
-        return nil
     end
 
+    if valueIsSecret then
+        return nil
+    end
     if type(value) == "boolean" then
         return value
     end
@@ -810,7 +849,7 @@ end
 local function GetReadableAuraDurationState(auraData)
     if not auraData then return nil end
     local duration = auraData.duration
-    if Helpers.IsSecretValue and Helpers.IsSecretValue(duration) then
+    if issecretvalue and issecretvalue(duration) then
         return nil
     end
     if duration == nil then
@@ -1206,9 +1245,6 @@ local _auraCountResult = {
 _auraResult.count = _auraCountResult
 
 local function IsSecretCountValue(value)
-    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(value) then
-        return true
-    end
     return issecretvalue and issecretvalue(value) or false
 end
 
@@ -1285,13 +1321,13 @@ local FormatAuraMirrorState = function() return "nil" end
 local FormatIDList         = function() return "nil" end
 
 ---------------------------------------------------------------------------
--- ResolveAuraState scratch state.
+-- Runtime aura resolver scratch state.
 --
--- ResolveAuraState used to declare ~20 nested closures per call. In raid
+-- The runtime aura resolver used to declare ~20 nested closures per call. In raid
 -- combat that produced multi-MB/s of transient closure garbage and dominated
 -- GC churn. The scratch struct + pooled tables below let all the per-call
 -- helpers run as file-scope functions, reading and writing shared state by
--- field instead of by upvalue capture. ResolveAuraState is not re-entrant
+-- field instead of by upvalue capture. Aura resolution is not re-entrant
 -- within a single tick (icons are processed sequentially), so a singleton
 -- scratch is safe.
 --
@@ -1644,6 +1680,10 @@ local function ResolveAuraTrySiblingMirror()
 end
 
 -- Category C: Phase 3 candidate building.
+local _abilityToAuraSpellID
+local _auraIDsForSpell
+local ResolveAuraDisplaySpellID
+
 local function ResolveAuraAppendID(id)
     if not IsUsableTableKey(id) or _scratchCandidateSeen[id] then return end
     _scratchCandidateSeen[id] = true
@@ -1665,8 +1705,8 @@ local function ResolveAuraAppendMappedAuraIDs(id)
     local auraIDs
     if CDMSpellData.GetAuraIDsForSpell then
         auraIDs = CDMSpellData:GetAuraIDsForSpell(id)
-    else
-        auraIDs = CDMSpellData._auraIDsForSpell and CDMSpellData._auraIDsForSpell[id]
+    elseif _auraIDsForSpell then
+        auraIDs = _auraIDsForSpell[id]
     end
     if not auraIDs then return end
     for _, aid in ipairs(auraIDs) do
@@ -1750,7 +1790,7 @@ local function ResolveAuraTryCaptured(preferredUnits, allowGlobalFallback, phase
     return false
 end
 
-function CDMSpellData:ResolveAuraState(params)
+local function ResolveAuraRuntimeStateImpl(params)
     WipeAuraResult()
     WipeResolveAuraScratch()
     local r = _auraResult
@@ -1769,7 +1809,7 @@ function CDMSpellData:ResolveAuraState(params)
     local blizzardMirrorCooldownID = params.blizzardMirrorCooldownID
     local blizzardMirrorCategory = params.blizzardMirrorCategory
     local debugAura = ShouldDebugAuraState(entryName, spellID, entryID)
-    local isBuiltinAuraViewer = viewerType == "buff" or viewerType == "trackedBar"
+    local isBuiltinAuraViewer = IsBuiltinAuraContainerKey(viewerType)
 
     -- Publish call inputs to the scratch struct so file-scope helpers can
     -- read them without upvalue capture. See the scratch declaration above
@@ -1825,7 +1865,7 @@ function CDMSpellData:ResolveAuraState(params)
     -- the mirror, since their entry.id is an itemID / slotID and would
     -- only ever produce spurious matches against unrelated spellIDs.
     -- Macro entries get their resolved spellID/itemID from upstream
-    -- before ResolveAuraState runs, so they skip Phase 0 too — the macro
+    -- before the runtime aura resolver runs, so they skip Phase 0 too — the macro
     -- target's Phase 0 lookup happens via its concrete entry shape.
     -----------------------------------------------------------------------
     local entryType = params.entryType
@@ -1836,8 +1876,8 @@ function CDMSpellData:ResolveAuraState(params)
         local mirror = mirrorEligibleType and ns.CDMBlizzMirror or nil
         if mirror then
             local viewerCat = viewerType
-            local isBuiltinAuraCat     = viewerCat == "buff"      or viewerCat == "trackedBar"
-            local isBuiltinCooldownCat = viewerCat == "essential" or viewerCat == "utility"
+            local isBuiltinAuraCat     = IsAuraMirrorCategory(viewerCat)
+            local isBuiltinCooldownCat = IsCooldownMirrorCategory(viewerCat)
 
             -- Publish derived Phase-0 state for the file-scope helpers
             -- (ResolveAuraTryAuraEntry, ResolveAuraTryParentLinkedAura, etc.).
@@ -1856,7 +1896,7 @@ function CDMSpellData:ResolveAuraState(params)
                         blizzardMirrorCooldownID,
                         blizzardMirrorCategory)
                     local backedCat = backedState and backedState.viewerCategory
-                    if backedCat == "buff" or backedCat == "trackedBar" then
+                    if IsAuraMirrorCategory(backedCat) then
                         local backedID = backedState.overrideTooltipSpellID
                         local linkedIDs = backedState.linkedSpellIDs
                         if not IsUsableTableKey(backedID) and type(linkedIDs) == "table" then
@@ -1924,7 +1964,7 @@ function CDMSpellData:ResolveAuraState(params)
                         blizzardMirrorCooldownID,
                         blizzardMirrorCategory)
                     local backedCat = backedState and backedState.viewerCategory
-                    if backedCat == "essential" or backedCat == "utility" then
+                    if IsCooldownMirrorCategory(backedCat) then
                         ResolveAuraRememberCooldownInfoLinkedAuraIDs(backedState)
                         ResolveAuraRememberCooldownLinkedAuraMode(backedState)
                         if debugAura then
@@ -1951,9 +1991,11 @@ function CDMSpellData:ResolveAuraState(params)
     -- Phase 1: Resolve aura spell ID
     -----------------------------------------------------------------------
     local auraSpellID = spellID
-    local auraMap = self._abilityToAuraSpellID
-    if auraMap and IsUsableTableKey(auraSpellID) and auraMap[auraSpellID] then
-        auraSpellID = auraMap[auraSpellID]
+    if ResolveAuraDisplaySpellID then
+        local mappedAuraID, remapped = ResolveAuraDisplaySpellID(auraSpellID)
+        if remapped == true then
+            auraSpellID = mappedAuraID
+        end
     end
 
     -----------------------------------------------------------------------
@@ -2500,6 +2542,10 @@ function CDMSpellData:ResolveAuraState(params)
     return r
 end
 
+if ns.CDMAuraRuntime and ns.CDMAuraRuntime.SetResolver then
+    ns.CDMAuraRuntime.SetResolver(ResolveAuraRuntimeStateImpl)
+end
+
 ---------------------------------------------------------------------------
 -- FORCE LOAD CDM: Ensure Blizzard_CooldownManager addon is loaded
 -- TAINT SAFETY: Previous approach called the Blizzard CDM settings frame's
@@ -2660,12 +2706,12 @@ local _spellInCDMAuras = {}
 -- Maps ability spell ID → aura spell ID for buff categories (2, 3).
 -- Built from the composer-provided catalog maps so runtime combat lookup
 -- does not depend on direct player aura probes.
-local _abilityToAuraSpellID = {}
+_abilityToAuraSpellID = {}
 -- Multi-aura mapping: spellID → array of aura spellIDs from the CDM
 -- catalog. Built from BuffIcon/BuffBar categories so aura state is sourced
 -- from Blizzard's aura viewers, not from cooldown-viewer aliases.
--- Consumed by IsAuraCurrentlyActive and ResolveAuraState Phase 3.
-local _auraIDsForSpell = {}
+-- Consumed by CDMResolvers.ResolveAuraActiveState and runtime aura Phase 3.
+_auraIDsForSpell = {}
 
 ---------------------------------------------------------------------------
 -- ENTRY KIND CLASSIFIER
@@ -2702,11 +2748,9 @@ local function ResolveEntryKind(entry, viewerType)
         return "cooldown"
     end
 
-    if viewerType == "buff" or viewerType == "trackedBar" then
-        return "aura"
-    end
-    if viewerType == "essential" or viewerType == "utility" then
-        return "cooldown"
+    local impliedKind = GetBuiltinContainerEntryKind(viewerType)
+    if impliedKind then
+        return impliedKind
     end
 
     -- Custom-bar / unknown viewerType: consult Blizzard CDM mirror.
@@ -2738,7 +2782,47 @@ end
 -- Forward declaration for the spell→cooldownID rebuilder defined below.
 local RebuildSpellToCooldownID
 
+ResolveAuraDisplaySpellID = function(entryID)
+    if RebuildSpellToCooldownID and not next(_spellToCooldownID) then
+        RebuildSpellToCooldownID()
+    end
+
+    local AuraCatalog = ns.CDMAuraCatalog
+    if AuraCatalog and AuraCatalog.ResolveEntryAuraDisplay then
+        return AuraCatalog.ResolveEntryAuraDisplay(
+            entryID, _abilityToAuraSpellID, ns.CDMBlizzMirror)
+    end
+
+    local mappedID = _abilityToAuraSpellID[entryID]
+    if mappedID then
+        local hasDirectBlizzardAuraChild = false
+        local mirror = ns.CDMBlizzMirror
+        if mirror and mirror.GetDirectCooldownIDForViewer then
+            hasDirectBlizzardAuraChild =
+                mirror.GetDirectCooldownIDForViewer(entryID, "buff")
+                or mirror.GetDirectCooldownIDForViewer(entryID, "trackedBar")
+        end
+        if not hasDirectBlizzardAuraChild then
+            return mappedID, true
+        end
+    end
+
+    return entryID, false
+end
+
+if ns.CDMAuraRuntime and ns.CDMAuraRuntime.SetAbilityAuraSpellIDResolver then
+    ns.CDMAuraRuntime.SetAbilityAuraSpellIDResolver(ResolveAuraDisplaySpellID)
+end
+
 local function AttachCatalogAuraIDs(resolved, ...)
+    local AuraCatalog = ns.CDMAuraCatalog
+    if AuraCatalog and AuraCatalog.AttachLinkedAuraIDs then
+        AuraCatalog.AttachLinkedAuraIDs(resolved, _auraIDsForSpell, function(spellID)
+            return CDMSpellData:GetAuraIDsForSpell(spellID)
+        end, ...)
+        return
+    end
+
     if not resolved then return end
     local out, seen
     local function appendForSpellID(spellID)
@@ -2802,18 +2886,9 @@ local function ResolveOwnedEntry(entry, containerKey, index)
         local displayID = entry.id
 
         if isAuraEntry then
-            -- Map ability spellID → aura spellID using the composer-built
-            -- buff-category index. Only entries that came in as the base
-            -- ability (not an already-resolved aura ID) get remapped.
-            local hasDirectBlizzardAuraChild = false
-            local mirror = ns.CDMBlizzMirror
-            if mirror and mirror.GetDirectCooldownIDForViewer then
-                hasDirectBlizzardAuraChild =
-                    mirror.GetDirectCooldownIDForViewer(entry.id, "buff")
-                    or mirror.GetDirectCooldownIDForViewer(entry.id, "trackedBar")
-            end
-            if _abilityToAuraSpellID[entry.id] and not hasDirectBlizzardAuraChild then
-                displayID = _abilityToAuraSpellID[entry.id]
+            local auraDisplayID, remapped = ResolveAuraDisplaySpellID(entry.id)
+            if remapped then
+                displayID = auraDisplayID
                 resolved.spellID = displayID
             end
             resolved.isAura = true
@@ -2992,7 +3067,7 @@ function CDMSpellData:SnapshotBlizzardCDM(containerKey)
     if InCombatLockdown() and not ns._inInitSafeWindow then
         return false
     end
-    if not BUILTIN_CONTAINER_KEYS[containerKey] then return false end
+    if not IsBuiltinContainerKey(containerKey) then return false end
 
     local db = GetContainerDB(containerKey)
     if not db then return false end
@@ -3019,7 +3094,7 @@ function CDMSpellData:BuildSpellListFromOwned(containerKey)
     local db = GetContainerDB(containerKey)
     if not db or type(db.ownedSpells) ~= "table" then return {} end
 
-    -- Ensure ability→aura + family-membership maps are populated for
+    -- Ensure ability-to-aura and family-membership maps are populated for
     -- accurate aura spellID resolution.
     if not next(_spellToCooldownID) then
         RebuildSpellToCooldownID()
@@ -3148,7 +3223,7 @@ function CDMSpellData:CheckDormantSpells(containerKey, restoreOnly)
     -- legacy aura entries stuck in dormantSpells back to ownedSpells.
     -- Idempotent — after the first run dormantSpells is empty for these
     -- containers, so subsequent calls are no-ops.
-    if (containerKey == "buff" or containerKey == "trackedBar")
+    if IsBuiltinAuraContainerKey(containerKey)
         and next(db.dormantSpells) then
         for sid, savedData in pairs(db.dormantSpells) do
             local restoredRow
@@ -3172,7 +3247,7 @@ function CDMSpellData:CheckDormantSpells(containerKey, restoreOnly)
     -- Aura-kind entries are also skipped: buff/aura spell IDs are rarely
     -- in the spellbook (the buff ID and the cast ability ID usually
     -- differ), so IsSpellKnownByPlayer reliably returns false for them.
-    -- The runtime ResolveAuraState path simply finds no active aura when
+    -- The runtime aura resolver simply finds no active aura when
     -- the buff isn't applied — that is the correct "not currently shown"
     -- signal, not a dormant signal.
     if not restoreOnly then
@@ -3290,7 +3365,7 @@ end
 -- restoreOnly: when true, only Phase 2 (restore) runs — no new dormanting
 -- or permanent deletion. Used by recovery handlers.
 function CDMSpellData:CheckAllDormantSpells(restoreOnly)
-    local containerKeys = { "essential", "utility", "buff", "trackedBar" }
+    local containerKeys = GetBuiltinContainerKeys()
     if ns.CDMContainers and ns.CDMContainers.GetAllContainerKeys then
         containerKeys = ns.CDMContainers.GetAllContainerKeys()
     end
@@ -3405,7 +3480,7 @@ function CDMSpellData:ReconcileAllContainers()
     -- Rebuild spellID maps before reconciliation
     RebuildSpellToCooldownID()
 
-    local containerKeys = { "essential", "utility", "buff", "trackedBar" }
+    local containerKeys = GetBuiltinContainerKeys()
     if ns.CDMContainers and ns.CDMContainers.GetAllContainerKeys then
         containerKeys = ns.CDMContainers:GetAllContainerKeys()
     end
@@ -4326,7 +4401,7 @@ function CDMSpellData:GetSpellList(viewerType)
     end
     -- Fallback: existing scan-based approach (backward compat)
     -- Custom containers with no ownedSpells yet return empty
-    if not BUILTIN_CONTAINER_KEYS[viewerType] then
+    if not IsBuiltinContainerKey(viewerType) then
         return {}
     end
     local list = spellLists[viewerType] or {}
@@ -4585,9 +4660,6 @@ end
 ---------------------------------------------------------------------------
 -- NAMESPACE EXPORT
 ---------------------------------------------------------------------------
-CDMSpellData._abilityToAuraSpellID = _abilityToAuraSpellID
-CDMSpellData._auraIDsForSpell = _auraIDsForSpell
-
 -- Returns the catalog aura spellIDs associated with `spellID`.
 -- Aura-instance correlation is runtime-only; stale learned SavedVariable
 -- data is cleared during map rebuild and must not contribute links.
@@ -4603,7 +4675,14 @@ CDMSpellData.IsAuraEntry = IsAuraEntry
 CDMSpellData.GetContainerDB = GetContainerDB
 CDMSpellData.GetEntryListField = GetEntryListField
 CDMSpellData.GetCapturedAuraForLookup = GetCapturedAuraForLookup
-CDMSpellData.GetAuraApplications = GetAuraApplications
+if ns.CDMAuraRuntime then
+    if ns.CDMAuraRuntime.SetApplicationsGetter then
+        ns.CDMAuraRuntime.SetApplicationsGetter(GetAuraApplications)
+    end
+    if ns.CDMAuraRuntime.SetCapturedAuraGetter then
+        ns.CDMAuraRuntime.SetCapturedAuraGetter(GetCapturedAuraForLookup)
+    end
+end
 
 --- Resolve the live spell ID from a Blizzard viewer child, falling back to
 --- entry IDs. Used by both icons (tooltips) and bars (name text). Live aura

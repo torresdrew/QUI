@@ -74,8 +74,15 @@ local icon = {
 local ns = {
     CDMIcons = {
         IsRuntimeEnabled = function() return true end,
-        ResolveIconDurationObject = function()
-            return { token = "gcd" }, "gcd-only", 12345
+        ResolveCooldownState = function()
+            return {
+                mode = "gcd-only",
+                active = true,
+                isActive = true,
+                durObj = { token = "gcd" },
+                sourceID = 12345,
+                spellID = 12345,
+            }
         end,
         GetCooldownInfoField = function(info, key)
             return info and info[key]
@@ -112,18 +119,19 @@ local ns = {
 }
 
 assert(loadfile("QUI_Debug/cdm_debug.lua"))("QUI_Debug", ns)
-assert(SlashCmdList["CDMGCD"], "/cdmgcd should be registered")
+assert(SlashCmdList["QUI_CDMDEBUG"], "/cdmdebug should be registered")
+assert(SlashCmdList["CDMGCD"] == nil, "legacy /cdmgcd command should not be registered")
 
-SlashCmdList["CDMGCD"]("Debug Spell")
+SlashCmdList["QUI_CDMDEBUG"]("spell Debug Spell")
 
 print = originalPrint
 
 local output = table.concat(lines, "\n")
-assert(output:find("settings", 1, true), "/cdmgcd should print swipe settings")
-assert(output:find("api", 1, true), "/cdmgcd should print cooldown API state")
-assert(output:find("resolver", 1, true), "/cdmgcd should print resolver output")
-assert(output:find("resolver mode=gcd%-only"), "/cdmgcd should preserve resolver mode return value")
-assert(output:find("icon", 1, true), "/cdmgcd should print icon flags")
-assert(output:find("cooldown", 1, true), "/cdmgcd should print cooldown frame draw state")
+assert(output:find("settings", 1, true), "/cdmdebug spell should print swipe settings")
+assert(output:find("api", 1, true), "/cdmdebug spell should print cooldown API state")
+assert(output:find("resolver", 1, true), "/cdmdebug spell should print resolver output")
+assert(output:find("resolver mode=gcd%-only"), "/cdmdebug spell should preserve resolver mode return value")
+assert(output:find("icon", 1, true), "/cdmdebug spell should print icon flags")
+assert(output:find("cooldown", 1, true), "/cdmdebug spell should print cooldown frame draw state")
 
 originalPrint("OK: cdm_debug_gcd_probe_test")
