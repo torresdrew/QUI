@@ -10,6 +10,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha50 - 2026-05-18
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha49 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **Action bar cooldown and charge refreshes now reuse short-lived runtime state instead of requerying every button on each event.** Active cooldown DurationObjects and inactive buttons are cached with tight combat-safe TTLs, while secret boolean fields are decoded through the C-side curve path before driving visibility decisions.
+- **CDM spell, item, aura, usability, and mirror refreshes now target only the affected icons when possible.** Event handlers defer combat refresh work through scoped queues, avoid broad full walks for item/equipment/usability changes, and keep layout draining tied to actual icon updates.
+- **Target aura mirror cooldowns now reject non-owned target aura data before binding aura DurationObjects.** This prevents mirrored target aura entries from borrowing another unit's aura timing while preserving owned target aura refreshes.
+
+### Changed
+- **CDM runtime query caches now retain stable override lookups and transient cooldown/charge reads during combat batches.** Duration binding keys are cached separately from secret-sensitive source comparisons, reducing churn without comparing secret values.
+
+### Internal
+- Added regression coverage for action bar cooldown/charge caching, CDM runtime query caches, scoped cooldown refresh targeting, GCD deduping, mirror refresh targeting, and stack resolution.
+
+
+
 ## v3.6.0-alpha49 - 2026-05-18
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha48 profiles carry over unchanged.
