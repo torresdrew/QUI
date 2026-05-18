@@ -263,6 +263,29 @@ assert(visibilityUpdated.item == 1, "item-scope refresh should update item visib
 reset(applied)
 reset(runtimeUpdated)
 reset(visibilityUpdated)
+barsDirty = false
+local dirtyRunsBeforeBagUpdate = dirtyBarRuns
+controller:Handle("BAG_UPDATE_DELAYED")
+assert(runtimeUpdated.item == 1, "bag inventory updates should refresh item runtime/texture state")
+assert(runtimeUpdated.spell == nil, "bag inventory updates should stay scoped to item-backed icons")
+assert(applied.item == nil, "bag inventory updates should use the full item runtime path")
+assert(barsDirty == true, "bag inventory updates should mark item-backed bars dirty")
+assert(dirtyBarRuns == dirtyRunsBeforeBagUpdate + 1, "bag inventory updates should refresh dirty item-backed bars")
+
+reset(applied)
+reset(runtimeUpdated)
+reset(visibilityUpdated)
+barsDirty = false
+local dirtyRunsBeforeItemCount = dirtyBarRuns
+controller:Handle("ITEM_COUNT_CHANGED", 404)
+assert(runtimeUpdated.item == 1, "item count changes should refresh item runtime/texture state")
+assert(runtimeUpdated.spell == nil, "item count changes should stay scoped to item-backed icons")
+assert(barsDirty == true, "item count changes should mark item-backed bars dirty")
+assert(dirtyBarRuns == dirtyRunsBeforeItemCount + 1, "item count changes should refresh dirty item-backed bars")
+
+reset(applied)
+reset(runtimeUpdated)
+reset(visibilityUpdated)
 controller:Handle("PLAYER_EQUIPMENT_CHANGED", 13)
 assert(runtimeUpdated.item == 1, "equipment change should refresh item runtime/texture state")
 assert(runtimeUpdated.spell == nil, "equipment change should stay scoped to item-backed icons")

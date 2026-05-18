@@ -847,6 +847,12 @@ function CDMIconRuntimeRefresh.Create(callbacks)
             controller:QueueItemScopeRefresh()
             return
         end
+        if event == "BAG_UPDATE_DELAYED" or event == "ITEM_COUNT_CHANGED" then
+            controller:QueueItemScopeRefresh({ refreshRuntime = true })
+            if callbacks.setBarsDirty then callbacks.setBarsDirty(true) end
+            if callbacks.runDirtyBarUpdate then callbacks.runDirtyBarUpdate() end
+            return
+        end
     end
 
     function controller:Handle(event, arg1, arg2, arg3, frame)

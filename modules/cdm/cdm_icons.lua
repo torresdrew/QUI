@@ -411,6 +411,9 @@ local function ClearIconProfessionQuality(icon)
     end
 end
 
+local PROFESSION_QUALITY_DRAW_LAYER = "ARTWORK"
+local PROFESSION_QUALITY_DRAW_SUBLEVEL = 1
+
 local function UpdateIconProfessionQuality(icon)
     if not icon or not icon._spellEntry then
         ClearIconProfessionQuality(icon)
@@ -452,9 +455,12 @@ local function UpdateIconProfessionQuality(icon)
 
     local overlay = icon._professionQualityOverlay
     if not overlay then
-        overlay = icon:CreateTexture(nil, "ARTWORK", nil, 7)
+        overlay = icon:CreateTexture(nil, PROFESSION_QUALITY_DRAW_LAYER, nil, PROFESSION_QUALITY_DRAW_SUBLEVEL)
         overlay:SetPoint("TOPLEFT", icon, "TOPLEFT", -3, 2)
         icon._professionQualityOverlay = overlay
+    end
+    if overlay.SetDrawLayer then
+        overlay:SetDrawLayer(PROFESSION_QUALITY_DRAW_LAYER, PROFESSION_QUALITY_DRAW_SUBLEVEL)
     end
     overlay:SetAtlas(atlas, (TextureKitConstants and TextureKitConstants.UseAtlasSize) or true)
     overlay:Show()
@@ -2032,6 +2038,38 @@ local function UpdateIconSecureAttributes(icon, entry, viewerType)
     icon._pendingSecureUpdate = nil
 end
 
+local function RefreshItemIconVisuals(icon, entry, itemID)
+    if not (icon and entry and itemID) then return false end
+
+    local changed = false
+    if icon._lastItemVisualItemID ~= itemID then
+        icon._lastItemVisualItemID = itemID
+        changed = true
+    end
+
+    if icon.Icon then
+        local tex = Sources and Sources.QueryItemIconByID
+            and Sources.QueryItemIconByID(itemID)
+        if not tex and Sources and Sources.QueryItemInfoInstant then
+            local _, _, _, _, instantTex = Sources.QueryItemInfoInstant(itemID)
+            tex = instantTex
+        end
+        if tex and tex ~= icon._lastTexture then
+            icon.Icon:SetTexture(tex)
+            icon._lastTexture = tex
+            changed = true
+        end
+    end
+
+    if changed then
+        entry.itemID = itemID
+        UpdateIconProfessionQuality(icon)
+        UpdateIconSecureAttributes(icon, entry, entry.viewerType)
+    end
+
+    return changed
+end
+
 ---------------------------------------------------------------------------
 -- ICON CONFIGURATION
 -- Applies size, border, zoom, texcoord, text styling to an icon.
@@ -3024,10 +3062,11 @@ UpdateIconCooldown = function(icon)
             _resolverRuntimePolicy.HideIconStackText(icon, "slot-clear")
         end
     elseif entry.type == "item" then
+        local itemID = ResolveBestOwnedItemVariant(entry.id)
+        RefreshItemIconVisuals(icon, entry, itemID)
         if stackTextWritesAllowed and Sources and Sources.QueryItemCount then
             local containerDB = GetTrackerSettings(entry.viewerType)
             local includeUses = containerDB and containerDB.showItemCharges == true
-            local itemID = ResolveBestOwnedItemVariant(entry.id)
             local count = Sources.QueryItemCount(itemID, false, includeUses, true)
             if count then
                 local stackColor = icon._rowConfig and icon._rowConfig.stackTextColor or {1, 1, 1, 1}
@@ -4655,6 +4694,8 @@ end
 ---------------------------------------------------------------------------
 local cdEventFrame = CreateFrame("Frame")
 cdEventFrame:RegisterEvent("BAG_UPDATE_COOLDOWN")
+cdEventFrame:RegisterEvent("BAG_UPDATE_DELAYED")
+cdEventFrame:RegisterEvent("ITEM_COUNT_CHANGED")
 cdEventFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 cdEventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 cdEventFrame:RegisterEvent("PLAYER_SOFT_ENEMY_CHANGED")
@@ -4768,7 +4809,8 @@ end
 -- flicker on unrelated cooldown-only spells. Three scoped variants cover
 -- the three event families:
 --   * Aura  — UNIT_AURA pipeline
---   * Item  — BAG_UPDATE_COOLDOWN, PLAYER_EQUIPMENT_CHANGED (trinket slots)
+--   * Item  — BAG_UPDATE_COOLDOWN, BAG_UPDATE_DELAYED, ITEM_COUNT_CHANGED,
+--             PLAYER_EQUIPMENT_CHANGED (trinket slots)
 --   * Spell — CDM:COOLDOWN_CHANGED broad fallback, UNIT_SPELLCAST_SUCCEEDED,
 --             CDM:CHARGES_CHANGED
 --

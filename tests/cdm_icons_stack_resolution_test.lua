@@ -472,4 +472,122 @@ assert(aliasWrites[1] and aliasWrites[1].op == "set" and aliasWrites[1].value ==
 assert(aliasWrites[2] and aliasWrites[2].op == "show",
     "linked aura stack probes should show stack text through the icon runtime")
 
+local itemCounts = {
+    [1001] = 1,
+    [1002] = 0,
+}
+local itemTextures = {
+    [1001] = "rank-1-texture",
+    [1002] = "rank-2-texture",
+}
+C_TradeSkillUI = {
+    GetItemReagentQualityInfo = function(itemID)
+        if itemID == 1001 then return { iconInventory = "rank-1-atlas" } end
+        if itemID == 1002 then return { iconInventory = "rank-2-atlas" } end
+        return nil
+    end,
+    GetItemCraftedQualityInfo = function()
+        return nil
+    end,
+}
+ns.CDMSources.QueryBestOwnedItemVariant = function(itemID)
+    if itemID == 1001 or itemID == 1002 then
+        return itemCounts[1002] > 0 and 1002 or 1001
+    end
+    return itemID
+end
+ns.CDMSources.QueryItemInfoInstant = function(itemID)
+    return itemID, nil, nil, nil, itemTextures[itemID]
+end
+ns.CDMSources.QueryItemIconByID = function(itemID)
+    return itemTextures[itemID]
+end
+ns.CDMSources.QueryItemCount = function(itemID)
+    return itemCounts[itemID] or 0
+end
+ns.CDMSources.QueryItemNameByID = function(itemID)
+    return "Rank " .. tostring(itemID)
+end
+
+local textureWrites = {}
+local overlayState = {}
+local itemIcon = {
+    _spellEntry = {
+        type = "item",
+        id = 1001,
+        itemID = 1001,
+        kind = "cooldown",
+        viewerType = "variantItem",
+    },
+    Icon = {
+        SetTexture = function(_, texture)
+            textureWrites[#textureWrites + 1] = texture
+        end,
+        SetDesaturated = noop,
+        SetVertexColor = noop,
+    },
+    Cooldown = {
+        Clear = noop,
+        SetDrawSwipe = noop,
+        SetDrawBling = noop,
+        SetHideCountdownNumbers = noop,
+        SetReverse = noop,
+        SetSwipeColor = noop,
+        Show = noop,
+    },
+    StackText = {
+        SetText = noop,
+        SetTextColor = noop,
+        Hide = noop,
+        Show = noop,
+    },
+    CreateTexture = function(_, name, layer, template, sublevel)
+        overlayState.createName = name
+        overlayState.createLayer = layer
+        overlayState.createTemplate = template
+        overlayState.createSublevel = sublevel
+        return {
+            SetPoint = noop,
+            SetDrawLayer = function(_, layerName, layerSublevel)
+                overlayState.drawLayer = layerName
+                overlayState.drawSublevel = layerSublevel
+            end,
+            SetAtlas = function(_, atlas)
+                overlayState.atlas = atlas
+            end,
+            Show = function()
+                overlayState.shown = true
+            end,
+            Hide = function()
+                overlayState.shown = false
+            end,
+        }
+    end,
+    IsShown = function()
+        return true
+    end,
+    Show = noop,
+    Hide = noop,
+    SetAlpha = noop,
+}
+
+ns.CDMIconFactory._iconPools.variantItem = { itemIcon }
+itemIcon._lastTexture = "rank-1-texture"
+icons.OnFactoryIconCreated(itemIcon, itemIcon._spellEntry)
+assert(overlayState.atlas == "rank-1-atlas",
+    "initial item icon should show the currently-owned lower-rank quality atlas")
+assert(overlayState.createLayer == "ARTWORK" and overlayState.createSublevel == 1,
+    "profession quality overlay should sit just above the base icon texture")
+assert(overlayState.drawLayer == "ARTWORK" and overlayState.drawSublevel == 1,
+    "profession quality overlay should stay below keybind/text overlay layers")
+
+itemCounts[1001] = 0
+itemCounts[1002] = 3
+icons.HandleRuntimeRefresh("BAG_UPDATE_DELAYED")
+
+assert(textureWrites[#textureWrites] == "rank-2-texture",
+    "bag update should refresh a placed item icon to the newly best-owned variant texture")
+assert(overlayState.atlas == "rank-2-atlas",
+    "bag update should refresh a placed item icon to the newly best-owned variant quality atlas")
+
 print("OK: cdm_icons_stack_resolution_test")
