@@ -3,7 +3,8 @@
 
 local function noop() end
 
-function InCombatLockdown() return false end
+local inCombat = false
+function InCombatLockdown() return inCombat end
 function geterrorhandler() return function(err) error(err) end end
 function CreateFrame()
     return {
@@ -17,11 +18,22 @@ local auraDur = { token = "aura-dur" }
 local cooldownDur = { token = "cooldown-dur" }
 local chargeDur = { token = "charge-dur" }
 local gcdDur = { token = "gcd-dur" }
+local itemAuraDur = { token = "item-aura-dur" }
+local secretItemStart = { token = "secret-item-start" }
+local secretItemDuration = { token = "secret-item-duration" }
 local secretChargeZero = { token = "secret-current-charges", value = 0 }
 local secretChargeOne = { token = "secret-current-charges", value = 1 }
+local now = 120
+local createdDurationObjects = {}
+local durationObjectSetCalls = {}
+
+function GetTime() return now end
 
 function issecretvalue(value)
-    return value == secretChargeZero or value == secretChargeOne
+    return value == secretChargeZero
+        or value == secretChargeOne
+        or value == secretItemStart
+        or value == secretItemDuration
 end
 
 Enum = { LuaCurveType = { Step = "Step" } }
@@ -39,7 +51,39 @@ C_CurveUtil = {
     end,
 }
 
+C_DurationUtil = {
+    CreateDuration = function()
+        local durObj = { token = "created-duration-" .. tostring(#createdDurationObjects + 1) }
+        function durObj:SetTimeFromStart(startTime, duration)
+            table.insert(durationObjectSetCalls, {
+                object = self,
+                start = startTime,
+                duration = duration,
+            })
+        end
+        table.insert(createdDurationObjects, durObj)
+        return durObj
+    end,
+}
+
 local states = {}
+local itemAuraActive = true
+local itemCooldownActive = false
+local itemAuraDurationObjectAvailable = true
+local itemRuntimeAuraInstanceActive = false
+local itemRuntimeAuraDataAvailable = false
+local itemRuntimeAuraDataExpiration = 165
+local itemRuntimeAuraDataDuration = 45
+local itemAuraScannedDuration = 30
+local itemAuraScannedExpiration = 140
+local directAuraQueriesAvailable = true
+local capturedCooldownAuraActive = false
+local itemSlotCooldownActive = false
+local slotCooldownEnabled = true
+local slotCooldownStart = 11418.804
+local slotCooldownDuration = 90
+local itemUseSpellCooldownActive = false
+local itemUseSpellCooldownDur = { token = "item-use-spell-cooldown-dur" }
 
 local function putState(cooldownID, category, state)
     state.cooldownID = cooldownID
@@ -120,11 +164,17 @@ local ns = {
             if spellID == 70001 then
                 return { isActive = true, isOnGCD = true }
             end
+            if spellID == 91004 and itemUseSpellCooldownActive then
+                return { isActive = true, isOnGCD = false }
+            end
             return nil
         end,
         QuerySpellCooldownDuration = function(spellID, ignoreGCD)
             if spellID == 70001 and ignoreGCD == false then
                 return gcdDur
+            end
+            if spellID == 91004 and itemUseSpellCooldownActive then
+                return itemUseSpellCooldownDur
             end
             return nil
         end,
@@ -140,6 +190,128 @@ local ns = {
             end
             return nil
         end,
+        QueryItemSpell = function(itemID)
+            if itemID == 90001 then
+                return "Use Item Aura", 91001
+            end
+            if itemID == 90002 then
+                return "Secret Item Use", 91002
+            end
+            if itemID == 90003 then
+                return "Clean Item Use", 91003
+            end
+            if itemID == 90004 then
+                return "Slot Item Use", 91004
+            end
+            return nil, nil
+        end,
+        QueryInventoryItemID = function(unit, slotID)
+            if unit == "player" and slotID == 13 then
+                return 90004
+            end
+            return nil
+        end,
+        QueryScannedItemAuraInfo = function(itemID, itemSpellID)
+            if itemID == 90001 and itemSpellID == 91001 then
+                if itemRuntimeAuraInstanceActive then
+                    return {
+                        active = true,
+                        useSpellID = 91001,
+                        auraInstanceID = 94001,
+                        auraUnit = "player",
+                    }
+                end
+                return {
+                    active = itemAuraActive,
+                    useSpellID = 91001,
+                    buffSpellID = 92001,
+                    duration = itemAuraScannedDuration,
+                    expiration = itemAuraScannedExpiration,
+                    name = "Related Item Aura",
+                }
+            end
+            return nil
+        end,
+        QueryCooldownAuraBySpellID = function(spellID)
+            if spellID == 91001 then
+                return 92001
+            end
+            return nil
+        end,
+        QueryUnitAuraBySpellID = function(unit, spellID)
+            if directAuraQueriesAvailable
+               and unit == "player" and spellID == 92001 and itemAuraActive then
+                return { auraInstanceID = 93001, spellId = 92001 }
+            end
+            return nil
+        end,
+        QueryPlayerAuraBySpellID = function(spellID)
+            if directAuraQueriesAvailable and spellID == 92001 and itemAuraActive then
+                return { auraInstanceID = 93001, spellId = 92001 }
+            end
+            return nil
+        end,
+        QueryAuraDataBySpellID = function(unit, spellID, filter)
+            if directAuraQueriesAvailable
+               and unit == "player" and spellID == 92001 and itemAuraActive then
+                return { auraInstanceID = 93001, spellId = 92001 }
+            end
+            return nil
+        end,
+        QueryAuraDuration = function(unit, auraInstanceID)
+            if unit == "player"
+               and auraInstanceID == 93001
+               and itemAuraActive
+               and itemAuraDurationObjectAvailable then
+                return itemAuraDur
+            end
+            if unit == "player"
+               and auraInstanceID == 94001
+               and itemRuntimeAuraInstanceActive
+               and itemAuraDurationObjectAvailable then
+                return itemAuraDur
+            end
+            return nil
+        end,
+        QueryAuraDataByAuraInstanceID = function(unit, auraInstanceID)
+            if unit == "player"
+               and auraInstanceID == 94001
+               and itemRuntimeAuraInstanceActive
+               and itemRuntimeAuraDataAvailable then
+                return {
+                    auraInstanceID = auraInstanceID,
+                    expirationTime = itemRuntimeAuraDataExpiration,
+                    duration = itemRuntimeAuraDataDuration,
+                }
+            end
+            return nil
+        end,
+        QueryItemCooldown = function(itemID)
+            if itemID == 90001 and itemCooldownActive then
+                return 100, 60, 1
+            end
+            if itemID == 90002 then
+                return secretItemStart, secretItemDuration, true
+            end
+            if itemID == 90003 then
+                return 200, 90, 1
+            end
+            if itemID == 90004 and itemSlotCooldownActive then
+                return 11418.804, 90, true
+            end
+            return nil, nil, nil
+        end,
+    },
+    CDMSpellData = {
+        GetCapturedAuraForLookup = function(spellIDs)
+            if not capturedCooldownAuraActive then return nil end
+            for _, spellID in ipairs(spellIDs or {}) do
+                if spellID == 92001 then
+                    return { auraInstanceID = 93001, unit = "player", spellID = 92001 }
+                end
+            end
+            return nil
+        end,
     },
     CDMBlizzMirror = {
         GetStateByCooldownID = function(cooldownID, category)
@@ -152,6 +324,13 @@ local ns = {
         GetCooldownIDForViewer = function() return nil end,
     },
 }
+
+function GetInventoryItemCooldown(unit, slotID)
+    if unit == "player" and slotID == 13 then
+        return slotCooldownStart, slotCooldownDuration, slotCooldownEnabled
+    end
+    return nil, nil, nil
+end
 
 assert(loadfile("modules/cdm/cdm_runtime_queries.lua"))("QUI", ns)
 assert(loadfile("modules/cdm/cdm_resolvers.lua"))("QUI", ns)
@@ -339,6 +518,359 @@ assert(state.sourceID == 70001, "GCD-only source should identify the spell")
 assert(state.gcdOnly == true, "GCD-only state should publish gcdOnly")
 assert(state.isGCDOnly == true, "GCD-only state should publish isGCDOnly")
 assert(state.isRealCooldownMode == false, "GCD-only state should not publish real cooldown mode")
+
+itemAuraActive = true
+itemCooldownActive = false
+state = resolve({
+    entry = {
+        type = "item",
+        kind = "cooldown",
+        id = 90001,
+        itemID = 90001,
+        name = "Item With Related Aura",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91001,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "aura", "item entry should use scanned related aura while the buff is active")
+assert(state.active == true, "item related aura should mark the cooldown state active")
+assert(state.auraResolved == true, "item related aura should publish auraResolved for icon state stamping")
+assert(state.auraActive == true, "item related aura should publish auraActive for icon state stamping")
+assert(state.durObj == itemAuraDur, "item related aura should carry the aura DurationObject")
+assert(state.resolvedAuraSpellID == 92001, "item related aura should publish the buff spell ID")
+assert(state.isOnCooldown == false, "item related aura should not be treated as a real cooldown")
+
+inCombat = true
+directAuraQueriesAvailable = false
+capturedCooldownAuraActive = true
+state = resolve({
+    entry = {
+        type = "item",
+        kind = "cooldown",
+        id = 90001,
+        itemID = 90001,
+        name = "Item With Captured Mapped Aura",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91001,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "aura",
+    "item entry should use captured player aura mapped from item use spell in combat")
+assert(state.durObj == itemAuraDur,
+    "captured cooldown-aura mapping should carry the aura DurationObject")
+assert(state.auraResolved == true,
+    "captured cooldown-aura mapping should publish auraResolved for icon state stamping")
+assert(state.auraActive == true,
+    "captured cooldown-aura mapping should publish auraActive for icon state stamping")
+assert(state.auraUnit == "player", "captured cooldown-aura mapping should keep the player unit")
+
+inCombat = false
+directAuraQueriesAvailable = true
+capturedCooldownAuraActive = false
+
+itemAuraActive = false
+itemRuntimeAuraInstanceActive = true
+itemCooldownActive = false
+state = resolve({
+    entry = {
+        type = "item",
+        kind = "cooldown",
+        id = 90001,
+        itemID = 90001,
+        name = "Item With Runtime Aura Instance",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91001,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "aura", "item entry should use runtime aura instance captured from UNIT_AURA")
+assert(state.durObj == itemAuraDur, "runtime aura instance should carry the aura DurationObject")
+assert(state.auraResolved == true, "runtime aura instance should publish auraResolved for icon state stamping")
+assert(state.auraActive == true, "runtime aura instance should publish auraActive for icon state stamping")
+assert(state.auraInstanceID == 94001, "runtime aura instance should publish auraInstanceID")
+
+itemAuraActive = false
+itemRuntimeAuraInstanceActive = true
+itemRuntimeAuraDataAvailable = true
+itemAuraDurationObjectAvailable = false
+itemCooldownActive = true
+state = resolve({
+    entry = {
+        type = "item",
+        kind = "cooldown",
+        id = 90001,
+        itemID = 90001,
+        name = "Item With Runtime Aura Instance",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91001,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "aura", "runtime aura instance should fall back to clean AuraData timing")
+assert(state.durObj == nil, "clean AuraData fallback should not invent a DurationObject")
+assert(state.auraResolved == true, "clean AuraData fallback should publish auraResolved for icon state stamping")
+assert(state.auraActive == true, "clean AuraData fallback should publish auraActive for icon state stamping")
+assert(state.numericCooldownActive == true, "clean AuraData fallback should publish numeric timing")
+assert(state.start == 120 and state.duration == 45,
+    "clean AuraData fallback should carry start and duration")
+assert(state.isOnCooldown == false,
+    "clean AuraData fallback should suppress the underlying item cooldown")
+
+itemAuraActive = true
+itemRuntimeAuraInstanceActive = false
+itemRuntimeAuraDataAvailable = false
+itemAuraDurationObjectAvailable = false
+itemCooldownActive = false
+state = resolve({
+    entry = {
+        type = "item",
+        kind = "cooldown",
+        id = 90001,
+        itemID = 90001,
+        name = "Item With Related Aura",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91001,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "aura", "item entry should keep aura mode from scanner timing without a DurationObject")
+assert(state.durObj == nil, "scanner numeric aura fallback should not invent a DurationObject")
+assert(state.auraResolved == true, "scanner numeric aura fallback should publish auraResolved for icon state stamping")
+assert(state.auraActive == true, "scanner numeric aura fallback should publish auraActive for icon state stamping")
+assert(state.numericCooldownActive == true, "scanner numeric aura fallback should publish clean timing")
+assert(state.start == 110 and state.duration == 30, "scanner numeric aura fallback should carry start and duration")
+
+itemAuraActive = true
+itemRuntimeAuraInstanceActive = false
+itemAuraDurationObjectAvailable = false
+itemAuraScannedDuration = nil
+itemAuraScannedExpiration = nil
+itemCooldownActive = true
+createdDurationObjects = {}
+durationObjectSetCalls = {}
+state = resolve({
+    entry = {
+        type = "item",
+        kind = "cooldown",
+        id = 90001,
+        itemID = 90001,
+        name = "Item With Durationless Related Aura",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91001,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "aura",
+    "active durationless item aura should suppress item cooldown fallback")
+assert(state.durObj == nil, "durationless item aura should not publish a DurationObject")
+assert(state.auraResolved == true, "durationless item aura should publish auraResolved for icon state stamping")
+assert(state.auraActive == true, "durationless item aura should publish auraActive for icon state stamping")
+assert(state.numericCooldownActive == nil,
+    "durationless item aura should not publish numeric cooldown timing")
+assert(state.hasRenderableCooldown == false,
+    "durationless item aura should not render the underlying item cooldown")
+assert(state.isOnCooldown == false,
+    "durationless item aura should not be treated as a real cooldown")
+assert(state.hideDurationText == true,
+    "durationless item aura should hide duration text")
+assert(#createdDurationObjects == 0,
+    "durationless item aura should not create an item cooldown DurationObject")
+
+itemAuraActive = false
+itemAuraDurationObjectAvailable = true
+itemAuraScannedDuration = 30
+itemAuraScannedExpiration = 140
+itemCooldownActive = true
+createdDurationObjects = {}
+durationObjectSetCalls = {}
+state = resolve({
+    entry = {
+        type = "item",
+        kind = "cooldown",
+        id = 90001,
+        itemID = 90001,
+        name = "Item With Related Aura",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91001,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "item-cooldown", "item entry should fall back to its item cooldown after the aura ends")
+assert(state.isOnCooldown == true, "item cooldown fallback should publish cooldown activity")
+assert(state.durObj == createdDurationObjects[1],
+    "item cooldown fallback should use a DurationObject for cooldown frames")
+assert(state.numericCooldownActive == true, "clean DurationObject item cooldown should retain numeric timing")
+assert(state.start == 100 and state.duration == 60,
+    "clean DurationObject item cooldown should carry timing for bar fills")
+assert(durationObjectSetCalls[1].start == 100 and durationObjectSetCalls[1].duration == 60,
+    "clean item cooldown should seed the DurationObject from raw item timing")
+
+createdDurationObjects = {}
+durationObjectSetCalls = {}
+itemAuraActive = false
+itemRuntimeAuraInstanceActive = false
+itemCooldownActive = false
+state = resolve({
+    entry = {
+        type = "item",
+        kind = "cooldown",
+        id = 90002,
+        itemID = 90002,
+        name = "Secret Item Cooldown",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91002,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "item-cooldown", "secret item timing should still resolve as an item cooldown")
+assert(state.isOnCooldown == true, "secret item DurationObject should publish cooldown activity")
+assert(state.durObj == createdDurationObjects[1],
+    "secret item timing should be passed through a DurationObject")
+assert(state.numericCooldownActive == nil, "secret item timing must not publish numeric cooldown timing")
+assert(state.start == nil and state.duration == nil, "secret item timing must not be exposed as SetCooldown timing")
+assert(durationObjectSetCalls[1].start == secretItemStart
+    and durationObjectSetCalls[1].duration == secretItemDuration,
+    "secret item cooldown values should pass directly into DurationObject setup")
+
+createdDurationObjects = {}
+durationObjectSetCalls = {}
+state = resolve({
+    entry = {
+        type = "item",
+        kind = "cooldown",
+        id = 90003,
+        itemID = 90003,
+        name = "Clean Item Cooldown",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91003,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "item-cooldown", "clean item timing should resolve as an item cooldown")
+assert(state.isOnCooldown == true, "clean item DurationObject should publish cooldown activity")
+assert(state.durObj == createdDurationObjects[1], "clean item timing should prefer the DurationObject path")
+assert(state.numericCooldownActive == true, "clean item timing should remain available to non-frame consumers")
+assert(state.start == 200 and state.duration == 90, "clean item timing should be published on the state")
+assert(durationObjectSetCalls[1].start == 200 and durationObjectSetCalls[1].duration == 90,
+    "clean item cooldown should use raw start and duration for the DurationObject")
+
+createdDurationObjects = {}
+durationObjectSetCalls = {}
+itemUseSpellCooldownActive = true
+itemSlotCooldownActive = false
+slotCooldownStart = 11418.804
+slotCooldownDuration = 90
+slotCooldownEnabled = true
+state = resolve({
+    entry = {
+        type = "slot",
+        kind = "cooldown",
+        id = 13,
+        name = "Slot Cooldown",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91004,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "item-cooldown", "slot item cooldown with enabled=true should resolve as an item cooldown")
+assert(state.isOnCooldown == true, "slot item cooldown with enabled=true should publish cooldown activity")
+assert(state.durObj == createdDurationObjects[1], "slot item cooldown should use a DurationObject")
+assert(state.durObj ~= itemUseSpellCooldownDur,
+    "slot item cooldown should prefer real slot timing over the item-use spell cooldown")
+assert(state.sourceID == "item-duration:13:90004",
+    "slot item cooldown should identify the real item duration source")
+assert(state.numericCooldownActive == true, "slot item cooldown should publish clean numeric timing")
+assert(state.start == 11418.804 and state.duration == 90,
+    "slot item cooldown should carry timing for custom bars")
+assert(durationObjectSetCalls[1].start == 11418.804 and durationObjectSetCalls[1].duration == 90,
+    "slot item cooldown should seed the DurationObject from slot timing")
+
+createdDurationObjects = {}
+durationObjectSetCalls = {}
+itemSlotCooldownActive = true
+slotCooldownStart = 0
+slotCooldownDuration = 0
+slotCooldownEnabled = true
+state = resolve({
+    entry = {
+        type = "slot",
+        kind = "cooldown",
+        id = 13,
+        name = "Slot Item Cooldown Fallback",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91004,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "item-cooldown",
+    "slot item cooldown should fall back to item timing when slot timing is inactive")
+assert(state.isOnCooldown == true, "slot item cooldown fallback should publish cooldown activity")
+assert(state.durObj == createdDurationObjects[1], "slot item cooldown fallback should use a DurationObject")
+assert(state.durObj ~= itemUseSpellCooldownDur,
+    "slot item cooldown fallback should prefer real item timing over the item-use spell cooldown")
+assert(state.sourceID == "item-duration:13:90004",
+    "slot item cooldown fallback should identify the real item duration source")
+assert(state.numericCooldownActive == true, "slot item cooldown fallback should publish clean numeric timing")
+assert(state.start == 11418.804 and state.duration == 90,
+    "slot item cooldown fallback should carry item timing for custom bars")
+
+createdDurationObjects = {}
+durationObjectSetCalls = {}
+itemSlotCooldownActive = false
+slotCooldownStart = 11418.804
+slotCooldownDuration = 90
+slotCooldownEnabled = false
+itemUseSpellCooldownActive = false
+state = resolve({
+    entry = {
+        type = "slot",
+        kind = "cooldown",
+        id = 13,
+        name = "Disabled Slot Cooldown",
+        viewerType = "custom",
+    },
+    runtimeSpellID = 91004,
+    containerKey = "custom",
+    useBuffSwipe = true,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "inactive", "slot item cooldown with enabled=false should resolve inactive")
 
 state = resolve({
     entry = cooldownEntry(80001),

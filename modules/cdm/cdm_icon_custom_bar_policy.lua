@@ -108,9 +108,18 @@ function CDMIconCustomBarPolicy.Create(callbacks)
         return entry and (entry.type == "item" or entry.type == "trinket" or entry.type == "slot")
     end
 
+    local function IsReadableNumber(value)
+        if issecretvalue and issecretvalue(value) then return false end
+        return type(value) == "number"
+    end
+
     local function ResolveEntryItemID(entry)
         if not entry then return nil end
         if entry.type == "item" then
+            local sources = Sources()
+            if sources and sources.QueryBestOwnedItemVariant then
+                return sources.QueryBestOwnedItemVariant(entry.id) or entry.id
+            end
             return entry.id
         elseif entry.type == "trinket" or entry.type == "slot" then
             local sources = Sources()
@@ -123,8 +132,23 @@ function CDMIconCustomBarPolicy.Create(callbacks)
 
     function controller:ResolveItemActiveState(itemID, icon, entry)
         local sources = Sources()
-        if not itemID or not (sources and sources.QueryItemSpell) then return false end
-        local _, itemSpellID = sources.QueryItemSpell(itemID)
+        if not itemID then return false end
+        local itemSpellID
+        if sources and sources.QueryItemSpell then
+            local _, spellID = sources.QueryItemSpell(itemID)
+            itemSpellID = spellID
+        end
+        if sources and sources.QueryScannedItemAuraInfo then
+            local scanned = sources.QueryScannedItemAuraInfo(itemID, itemSpellID)
+            if scanned and scanned.active == true then
+                local expiration = scanned.expiration
+                local duration = scanned.duration
+                if IsReadableNumber(expiration) and IsReadableNumber(duration) then
+                    return true, expiration - duration, duration, "buff"
+                end
+                return true, nil, nil, "buff"
+            end
+        end
         if itemSpellID then
             return ResolveSpellActiveState(itemSpellID, icon, entry)
         end
@@ -191,18 +215,19 @@ function CDMIconCustomBarPolicy.Create(callbacks)
 
         local sources = Sources()
         if entry.type == "item" then
+            local itemID = ResolveEntryItemID(entry)
             if sources and sources.QueryItemInfoInstant and Enum and Enum.ItemClass then
                 local instantItemID, instantItemType, instantItemSubType, instantEquipLoc, instantIcon, classID =
-                    sources.QueryItemInfoInstant(entry.id)
+                    sources.QueryItemInfoInstant(itemID)
                 if instantItemID and (classID == Enum.ItemClass.Armor or classID == Enum.ItemClass.Weapon) then
-                    local equipped = sources.QueryIsEquippedItem and sources.QueryIsEquippedItem(entry.id)
+                    local equipped = sources.QueryIsEquippedItem and sources.QueryIsEquippedItem(itemID)
                     if equipped ~= nil then
                         return equipped == true
                     end
                 end
             end
             if sources and sources.QueryItemCount then
-                local count = sources.QueryItemCount(entry.id, false, containerDB and containerDB.showItemCharges == true, true)
+                local count = sources.QueryItemCount(itemID, false, containerDB and containerDB.showItemCharges == true, true)
                 if issecretvalue and issecretvalue(count) then
                     return true
                 end

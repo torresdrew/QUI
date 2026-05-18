@@ -2185,7 +2185,9 @@ local function UpdateDefensiveIndicator(frame)
                     unit,
                     aura.auraInstanceID,
                     aura.expirationTime,
-                    aura.duration
+                    aura.duration,
+                    nil,
+                    aura.timeMod
                 )
             elseif cd then
                 cd:Clear()

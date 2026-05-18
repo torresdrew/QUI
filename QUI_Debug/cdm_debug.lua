@@ -1029,11 +1029,32 @@ local function CDMGCDIconMatches(icon, needle, targetID)
     local entry = icon and icon._spellEntry
     if not entry then return false end
     if targetID then
-        return CDMGCDIDMatches(icon._runtimeSpellID, targetID)
+        if CDMGCDIDMatches(icon._runtimeSpellID, targetID)
             or CDMGCDIDMatches(entry.overrideSpellID, targetID)
             or CDMGCDIDMatches(entry.spellID, targetID)
             or CDMGCDIDMatches(entry.id, targetID)
-            or CDMGCDIDMatches(entry.itemID, targetID)
+            or CDMGCDIDMatches(entry.itemID, targetID) then
+            return true
+        end
+
+        if EventTraceIsItemLikeEntry(entry) then
+            local itemID = EventTraceResolveItemCooldownIdentity(entry)
+            if CDMGCDIDMatches(itemID, targetID) then
+                return true
+            end
+            if Sources and Sources.QueryBestOwnedItemVariant then
+                local targetVariant = Sources.QueryBestOwnedItemVariant(targetID)
+                if CDMGCDIDMatches(itemID, targetVariant) then
+                    return true
+                end
+                local entryVariant = Sources.QueryBestOwnedItemVariant(itemID)
+                if CDMGCDIDMatches(entryVariant, targetID) then
+                    return true
+                end
+            end
+        end
+
+        return false
     end
     local name = entry.name
     if CDMGCDIsSecret(name) then return false end
@@ -1455,6 +1476,193 @@ local function RunCDMDebugFlicker(msg)
     end
 
     frame:SetScript("OnUpdate", snapshot)
+end
+
+local function CDMItemAuraStopWatch(silent)
+    local frame = CDMIcons._itemAuraWatchFrame
+    if frame and frame.SetScript then
+        frame:SetScript("OnUpdate", nil)
+    end
+    CDMIcons._itemAuraWatchFrame = nil
+    if not silent then
+        print("|cffffaa00[cdmaura]|r watch stopped.")
+    end
+end
+
+local function CDMItemAuraHasOpaqueValue(value)
+    if CDMGCDIsSecret(value) then return true end
+    return value ~= nil
+end
+
+local function CDMItemAuraField(owner, key)
+    if not owner or CDMGCDIsSecret(owner) then return nil end
+    local ok, value = pcall(function() return owner[key] end)
+    if ok then return value end
+    return nil
+end
+
+local function CDMItemAuraResolveItem(entry)
+    if not entry then return nil, nil, nil end
+    local itemID, slotID, itemSpellID = EventTraceResolveItemCooldownIdentity(entry)
+    return itemID, slotID, itemSpellID
+end
+
+local function CDMItemAuraSnapshot(icon, elapsed)
+    local entry = icon and icon._spellEntry
+    if not entry then return nil end
+
+    local itemID, slotID, itemSpellID = CDMItemAuraResolveItem(entry)
+    local itemStart, itemDuration, itemEnabled
+    if itemID and Sources and Sources.QueryItemCooldown then
+        itemStart, itemDuration, itemEnabled = Sources.QueryItemCooldown(itemID)
+    end
+
+    local scanner = QUI and QUI.SpellScanner
+    local scannerItemActive, scannerExpiration, scannerDuration, scannerAuraInstanceID, scannerAuraUnit
+    if scanner and scanner.IsItemActive and itemID then
+        local ok, active, expiration, duration, auraInstanceID, auraUnit =
+            pcall(scanner.IsItemActive, itemID)
+        if ok then
+            scannerItemActive = active
+            scannerExpiration = expiration
+            scannerDuration = duration
+            scannerAuraInstanceID = auraInstanceID
+            scannerAuraUnit = auraUnit
+        end
+    end
+
+    local scanned
+    if Sources and Sources.QueryScannedItemAuraInfo and itemID then
+        scanned = Sources.QueryScannedItemAuraInfo(itemID, itemSpellID)
+    end
+
+    local auraUnit = (scanned and scanned.auraUnit) or scannerAuraUnit or "player"
+    local auraInstanceID = scanned and scanned.auraInstanceID or scannerAuraInstanceID
+    local auraDurObj, auraData
+    if CDMItemAuraHasOpaqueValue(auraInstanceID) and Sources then
+        if Sources.QueryAuraDuration then
+            auraDurObj = Sources.QueryAuraDuration(auraUnit, auraInstanceID)
+        end
+        if Sources.QueryAuraDataByAuraInstanceID then
+            auraData = Sources.QueryAuraDataByAuraInstanceID(auraUnit, auraInstanceID)
+        end
+    end
+
+    local resolvedState = CDMGCDResolveCooldownState(icon)
+    local cd = icon.Cooldown
+
+    local fields = {
+        "name=" .. CDMGCDValue(entry.name),
+        "item=" .. CDMGCDValue(itemID),
+        "slot=" .. CDMGCDValue(slotID),
+        "use=" .. CDMGCDValue(itemSpellID),
+        "itemCd=" .. CDMGCDValue(itemStart) .. "/" .. CDMGCDValue(itemDuration) .. "/" .. CDMGCDValue(itemEnabled),
+        "scan=" .. CDMGCDValue(scannerItemActive) .. " " .. CDMGCDValue(scannerExpiration) .. "/" .. CDMGCDValue(scannerDuration),
+        "scanInst=" .. tostring(CDMItemAuraHasOpaqueValue(scannerAuraInstanceID)),
+        "scanned=" .. CDMGCDValue(scanned and scanned.active)
+            .. " src=" .. CDMGCDValue(scanned and scanned.source)
+            .. " buff=" .. CDMGCDValue(scanned and scanned.buffSpellID)
+            .. " use=" .. CDMGCDValue(scanned and scanned.useSpellID)
+            .. " exp=" .. CDMGCDValue(scanned and scanned.expiration)
+            .. " dur=" .. CDMGCDValue(scanned and scanned.duration)
+            .. " inst=" .. tostring(CDMItemAuraHasOpaqueValue(scanned and scanned.auraInstanceID)),
+        "auraObj=" .. CDMGCDValue(auraDurObj),
+        "auraData=" .. CDMGCDValue(auraData)
+            .. " exp=" .. CDMGCDValue(CDMItemAuraField(auraData, "expirationTime"))
+            .. " dur=" .. CDMGCDValue(CDMItemAuraField(auraData, "duration")),
+        "resolver=" .. CDMGCDValue(resolvedState and resolvedState.mode)
+            .. " src=" .. CDMGCDValue(resolvedState and resolvedState.sourceID)
+            .. " active=" .. CDMGCDValue(resolvedState and resolvedState.active)
+            .. " durObj=" .. CDMGCDValue(resolvedState and resolvedState.durObj)
+            .. " num=" .. CDMGCDValue(resolvedState and resolvedState.start)
+            .. "/" .. CDMGCDValue(resolvedState and resolvedState.duration)
+            .. " aura=" .. CDMGCDValue(resolvedState and resolvedState.auraActive)
+            .. " hasInst=" .. CDMGCDValue(resolvedState and resolvedState.hasAuraInstanceID)
+            .. " auraSpell=" .. CDMGCDValue(resolvedState and resolvedState.resolvedAuraSpellID)
+            .. " onCd=" .. CDMGCDValue(resolvedState and resolvedState.isOnCooldown)
+            .. " render=" .. CDMGCDValue(resolvedState and resolvedState.hasRenderableCooldown),
+        "iconMode=" .. CDMGCDValue(icon._resolvedCooldownMode)
+            .. " key=" .. CDMGCDValue(icon._lastDurObjKey)
+            .. " aura=" .. CDMGCDValue(icon._auraActive)
+            .. " hasCd=" .. CDMGCDValue(icon._hasCooldownActive)
+            .. " real=" .. CDMGCDValue(icon._hasRealCooldownActive)
+            .. " draw=" .. CDMGCDCall(cd, "GetDrawSwipe")
+            .. " shown=" .. CDMGCDCall(icon, "IsShown"),
+    }
+
+    local sig = table.concat(fields, " ")
+    return string.format("+%.2f %s", elapsed or 0, sig), sig
+end
+
+local function RunCDMDebugItemAura(msg, seconds)
+    local targetText = TrimText(msg)
+    if targetText == "" then
+        print("|cffffaa00[cdmaura]|r Usage: /cdmdebug spell <itemID|name> aura [seconds]")
+        return
+    end
+    if not CDMIcons:IsRuntimeEnabled() then
+        print("|cffffaa00[cdmaura]|r Owned engine not enabled.")
+        return
+    end
+
+    local targetID = tonumber(targetText:match("^(%d+)$"))
+    local needle = targetID and nil or targetText:lower()
+    local matched = {}
+    for _, pool in pairs(iconPools) do
+        for _, icon in ipairs(pool) do
+            if icon and icon._spellEntry and CDMGCDIconMatches(icon, needle, targetID) then
+                matched[#matched + 1] = icon
+            end
+        end
+    end
+    if #matched == 0 then
+        print("|cffffaa00[cdmaura]|r no icon found for '" .. targetText .. "'")
+        return
+    end
+
+    local duration = tonumber(seconds) or 10
+    if duration < 1 then duration = 1 end
+    if duration > 30 then duration = 30 end
+    CDMItemAuraStopWatch(true)
+
+    print(string.format(
+        "|cff34d399[cdmaura]|r watching '%s' for %.1fs; logs only state changes. Use /cdmdebug spell off to stop.",
+        targetText,
+        duration))
+
+    local frame = CreateFrame("Frame")
+    local startTime = GetTime()
+    local lastSigByIcon = {}
+    local transitionCount = 0
+    local nextSample = 0
+    local interval = 0.05
+    CDMIcons._itemAuraWatchFrame = frame
+
+    frame:SetScript("OnUpdate", function(self)
+        local elapsed = GetTime() - startTime
+        if elapsed < nextSample and elapsed < duration then return end
+        nextSample = nextSample + interval
+
+        for i, icon in ipairs(matched) do
+            local line, sig = CDMItemAuraSnapshot(icon, elapsed)
+            if line and sig ~= lastSigByIcon[i] then
+                transitionCount = transitionCount + 1
+                lastSigByIcon[i] = sig
+                print("|cff34d399[cdmaura]|r #" .. tostring(i) .. " " .. line)
+            end
+        end
+
+        if elapsed >= duration then
+            self:SetScript("OnUpdate", nil)
+            if CDMIcons._itemAuraWatchFrame == self then
+                CDMIcons._itemAuraWatchFrame = nil
+            end
+            print(string.format(
+                "|cff34d399[cdmaura]|r ended icons=%d transitions=%d",
+                #matched,
+                transitionCount))
+        end
+    end)
 end
 
 -- Resolver parity probe. Walks every visible CDM icon and
@@ -2784,6 +2992,8 @@ local SPELL_MODES = {
     trace = true,
     desat = true,
     charge = true,
+    aura = true,
+    itemaura = true,
     flicker = true,
 }
 
@@ -2829,6 +3039,7 @@ local function RunCDMDebugSpell(msg)
         print("  /cdmdebug spell <spellID|name>              -> one-shot resolver/API/icon report")
         print("  /cdmdebug spell <spellID|name> watch [sec]  -> timed GCD/swipe watch")
         print("  /cdmdebug spell <spellID|name> events       -> event + write trace")
+        print("  /cdmdebug spell <itemID|name> aura [sec]    -> compact item-aura scanner/resolver watch")
         print("  /cdmdebug spell <spell name> trace          -> desaturation transition trace")
         print("  /cdmdebug spell <spell name> charge         -> charge-path report")
         print("  /cdmdebug spell <spell name> flicker        -> 5-second transition sampler")
@@ -2840,6 +3051,7 @@ local function RunCDMDebugSpell(msg)
         RunCDMDebugEvents("off")
         RunCDMDebugTrace("")
         CDMGCDStopWatch(false)
+        CDMItemAuraStopWatch(false)
         return
     end
 
@@ -2859,6 +3071,8 @@ local function RunCDMDebugSpell(msg)
         RunCDMDebugTrace(FindDebugTargetName(target) or target)
     elseif mode == "charge" then
         RunCDMDebugCharge(target)
+    elseif mode == "aura" or mode == "itemaura" then
+        RunCDMDebugItemAura(target, seconds)
     elseif mode == "flicker" then
         RunCDMDebugFlicker(target)
     elseif mode == "watch" then

@@ -1364,7 +1364,7 @@ local function UpdateAuraIcon(icon, auraData, unit)
         local dur = displayData.duration
         local expTime = displayData.expirationTime
 
-        ApplyCooldownFromAura(icon.cooldown, unit, auraID, expTime, dur, true)
+        ApplyCooldownFromAura(icon.cooldown, unit, auraID, expTime, dur, true, displayData.timeMod)
     end
 
     -- Duration text + timer registration

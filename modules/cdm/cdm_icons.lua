@@ -51,6 +51,14 @@ local GetChargeMetadataDB = RuntimeQueries.GetChargeMetadataDB
 local BeginRuntimeQueryBatch = RuntimeQueries.BeginRuntimeQueryBatch
 local EndRuntimeQueryBatch = RuntimeQueries.EndRuntimeQueryBatch
 
+local function ResolveBestOwnedItemVariant(itemID)
+    if not itemID then return nil end
+    if Sources and Sources.QueryBestOwnedItemVariant then
+        return Sources.QueryBestOwnedItemVariant(itemID) or itemID
+    end
+    return itemID
+end
+
 local function BeginResolverQueryBatch()
     if BeginRuntimeQueryBatch then
         BeginRuntimeQueryBatch()
@@ -379,7 +387,7 @@ local function UpdateIconProfessionQuality(icon)
 
     local lookupID
     if etype == "item" then
-        lookupID = entry.id
+        lookupID = ResolveBestOwnedItemVariant(entry.id)
     else
         if Sources and Sources.QueryInventoryItemLink then
             lookupID = Sources.QueryInventoryItemLink("player", entry.id)
@@ -411,27 +419,14 @@ end
 
 local function GetItemCooldown(itemID)
     if not itemID or not (Sources and Sources.QueryItemCooldown) then return nil, nil, nil end
-    local startTime, duration, enabled = Sources.QueryItemCooldown(itemID)
-    if type(startTime) ~= "number" or type(duration) ~= "number" or duration <= 0 then
-        return nil, nil, nil
-    end
-    if enabled == 0 or enabled == false then
-        return nil, nil, nil
-    end
-    return startTime, duration, nil
+    return Sources.QueryItemCooldown(itemID)
 end
 
 local function GetSlotCooldown(slotID)
     if not slotID or not GetInventoryItemCooldown then return nil, nil, nil end
-local ok = true; local startTime, duration, enabled = GetInventoryItemCooldown("player", slotID)
+    local ok, startTime, duration, enabled = pcall(GetInventoryItemCooldown, "player", slotID)
     if not ok then return nil, nil, nil end
-    if type(startTime) ~= "number" or type(duration) ~= "number" then
-        return nil, nil, nil
-    end
-    if enabled ~= 1 or duration <= 1.5 then
-        return nil, nil, nil
-    end
-    return startTime, duration, nil
+    return startTime, duration, enabled
 end
 
 function _resolverRuntimePolicy.MarkGCDSwipe(icon)
@@ -758,6 +753,8 @@ function _resolverRuntimePolicy.CaptureTrustedGCDState()
         or false
 end
 
+local GetRecentCastAliasForEntry
+local RecordRecentPlayerSpellCast
 local ApplyResolvedCooldown
 
 local function CancelCooldownExpiryRefresh(icon)
@@ -1000,6 +997,24 @@ ApplyResolvedCooldown = function(icon)
     if not stateContext then return false end
 
     local resolvedState = Resolvers.ResolveCooldownState(stateContext)
+    local entryIsAura = entry and IsAuraEntry(entry)
+    local itemEntryForCooldown = entry
+        and (entry.type == "item" or entry.type == "trinket" or entry.type == "slot")
+    if resolvedState
+       and resolvedState.hasRenderableCooldown ~= true
+       and not entryIsAura
+       and not itemEntryForCooldown then
+        local aliasID = GetRecentCastAliasForEntry(entry)
+        if aliasID and aliasID ~= stateContext.runtimeSpellID then
+            local aliasContext = BuildIconCooldownStateContext(
+                icon, entry, aliasID, useBuffSwipe, skipAuraPhase)
+            local aliasState = aliasContext and Resolvers.ResolveCooldownState(aliasContext)
+            if aliasState and aliasState.hasRenderableCooldown == true then
+                resolvedState = aliasState
+                icon._runtimeSpellID = aliasID
+            end
+        end
+    end
     local durObj = resolvedState.durObj
     local mode = resolvedState.mode
     local sourceID = resolvedState.sourceID
@@ -1010,9 +1025,6 @@ ApplyResolvedCooldown = function(icon)
     local mirrorPayload = mirrorBackedDuration and resolvedState or nil
     icon._resolvedCooldownMode = mode
 
-    local entryIsAura = entry and IsAuraEntry(entry)
-    local itemEntryForCooldown = entry
-        and (entry.type == "item" or entry.type == "trinket" or entry.type == "slot")
     local sid = resolvedSpellID
     if not sid and entry and not itemEntryForCooldown then
         sid = icon._runtimeSpellID
@@ -1165,9 +1177,10 @@ ApplyResolvedCooldown = function(icon)
     -- C_UnitAuras.GetAuraDuration returns a new userdata wrapper, which is
     -- our refresh signal. Same C-userdata identity check the bar path uses
     -- in cdm_bars.lua — safe in combat, no secret values.
-    local shouldScheduleExpiry = cdActive == true
-        and (resolvedCdInfo ~= nil or hasNumericCooldown)
-        and (mode == "cooldown" or mode == "charge" or mode == "item-cooldown")
+    local shouldScheduleExpiry = (mode == "aura" and hasNumericCooldown == true)
+        or (cdActive == true
+            and (resolvedCdInfo ~= nil or hasNumericCooldown)
+            and (mode == "cooldown" or mode == "charge" or mode == "item-cooldown"))
     local sameDurationBinding = icon._lastDurObjKey == key
         and (mode ~= "aura" or durObj == icon._lastDurObj)
     if sameDurationBinding
@@ -1216,7 +1229,7 @@ ApplyResolvedCooldown = function(icon)
         applied = _resolverRuntimePolicy.ApplyDurationObjectCooldown(addonCD, durObj, true, mode == "aura")
     elseif hasNumericCooldown then
         if ns.CDMRenderers and ns.CDMRenderers.ApplyNumericCooldown then
-            applied = ns.CDMRenderers.ApplyNumericCooldown(addonCD, resolvedStart, resolvedDuration, false)
+            applied = ns.CDMRenderers.ApplyNumericCooldown(addonCD, resolvedStart, resolvedDuration, mode == "aura")
         end
     end
     if not applied then
@@ -1328,6 +1341,59 @@ local function GetCachedSpellName(spellID)
     if name == nil then return nil end
     _spellNameCache[spellID] = name
     return name
+end
+
+local _recentCastSpellByName = {}
+local RECENT_CAST_ALIAS_TTL = 600
+
+local function NormalizeSpellAliasName(name)
+    if issecretvalue and issecretvalue(name) then return nil end
+    if type(name) ~= "string" or name == "" then return nil end
+    return string.lower(name)
+end
+
+local function GetSpellNameForAlias(spellID)
+    if not spellID then return nil end
+    local cached = GetCachedSpellName(spellID)
+    if cached then return cached end
+    if Sources and Sources.QuerySpellName then
+        local name = Sources.QuerySpellName(spellID)
+        if name and not (issecretvalue and issecretvalue(name)) then
+            return name
+        end
+    end
+    if not (Sources and Sources.QuerySpellInfo) then return nil end
+    local info = Sources.QuerySpellInfo(spellID)
+    local name = info and info.name
+    if name and not (issecretvalue and issecretvalue(name)) then
+        return name
+    end
+    return nil
+end
+
+RecordRecentPlayerSpellCast = function(spellID)
+    if not spellID then return end
+    local key = NormalizeSpellAliasName(GetSpellNameForAlias(spellID))
+    if not key then return end
+    _recentCastSpellByName[key] = {
+        spellID = spellID,
+        time = GetTime(),
+    }
+end
+
+GetRecentCastAliasForEntry = function(entry)
+    if not entry then return nil end
+    local key = NormalizeSpellAliasName(entry.name)
+    if not key then
+        key = NormalizeSpellAliasName(GetSpellNameForAlias(entry.spellID or entry.overrideSpellID or entry.id))
+    end
+    local rec = key and _recentCastSpellByName[key]
+    if not rec then return nil end
+    if (GetTime() - (rec.time or 0)) > RECENT_CAST_ALIAS_TTL then
+        _recentCastSpellByName[key] = nil
+        return nil
+    end
+    return rec.spellID
 end
 
 -- Shared with cdm_spelldata.lua's ResolveOwnedEntry so harvested spell
@@ -1745,7 +1811,8 @@ local function UpdateIconSecureAttributes(icon, entry, viewerType)
             btn:Hide()
         end
     elseif entry.type == "item" then
-        local itemName = Sources and Sources.QueryItemNameByID and Sources.QueryItemNameByID(entry.id)
+        local itemID = ResolveBestOwnedItemVariant(entry.id)
+        local itemName = Sources and Sources.QueryItemNameByID and Sources.QueryItemNameByID(itemID)
         if itemName then
             btn:SetAttribute("type", "item")
             btn:SetAttribute("item", itemName)
@@ -2779,7 +2846,8 @@ UpdateIconCooldown = function(icon)
         if stackTextWritesAllowed and Sources and Sources.QueryItemCount then
             local containerDB = GetTrackerSettings(entry.viewerType)
             local includeUses = containerDB and containerDB.showItemCharges == true
-            local count = Sources.QueryItemCount(entry.id, false, includeUses, true)
+            local itemID = ResolveBestOwnedItemVariant(entry.id)
+            local count = Sources.QueryItemCount(itemID, false, includeUses, true)
             if count then
                 local stackColor = icon._rowConfig and icon._rowConfig.stackTextColor or {1, 1, 1, 1}
                 local numericCount = count or 0
@@ -3130,6 +3198,7 @@ local function BuildSpellEntryFromCustom(entry, idx, viewerType)
         end
     end
     local isAuraEntry = (kind == "aura")
+    local itemID = (entry.type == "item") and ResolveBestOwnedItemVariant(entry.id) or nil
     local spellEntry = {
         spellID = isSpellType and entry.id or nil,
         overrideSpellID = isSpellType and entry.id or nil,
@@ -3139,7 +3208,8 @@ local function BuildSpellEntryFromCustom(entry, idx, viewerType)
         layoutIndex = 99000 + (idx or 0),
         viewerType = viewerType,
         type = entry.type,
-        id = entry.id,
+        id = itemID or entry.id,
+        itemID = itemID,
         _isCustomEntry = true,
         _sourceSpecID = entry._sourceSpecID,
     }
@@ -3158,7 +3228,7 @@ local function BuildSpellEntryFromCustom(entry, idx, viewerType)
             spellEntry.name = itemName or ""
         end
     elseif entry.type == "item" then
-        local itemName = Sources and Sources.QueryItemNameByID and Sources.QueryItemNameByID(entry.id)
+        local itemName = Sources and Sources.QueryItemNameByID and Sources.QueryItemNameByID(spellEntry.id)
         spellEntry.name = itemName or ""
     else
         local storedName = entry.name
@@ -4817,6 +4887,36 @@ local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
         return false
     end
 
+    local function getItemIDForEntry(entry)
+        if not entry then return nil end
+        local entryType = entry.type
+        if entryType == "item" then
+            return ResolveBestOwnedItemVariant(entry.id)
+        end
+        if (entryType == "trinket" or entryType == "slot")
+            and Sources and Sources.QueryInventoryItemID then
+            return Sources.QueryInventoryItemID("player", entry.id)
+        end
+        return nil
+    end
+
+    local function iconMatchesItemAuraSpellIDs(entry)
+        if not hasSpellIDs or not (entry and Sources and Sources.QueryItemSpell) then return false end
+        local itemID = getItemIDForEntry(entry)
+        if NormalizeSpellIdentifier(itemID) == nil then return false end
+
+        local _, itemSpellID = Sources.QueryItemSpell(itemID)
+        itemSpellID = NormalizeSpellIdentifier(itemSpellID)
+        if not itemSpellID then return false end
+        if spellSetHas(itemSpellID) then return true end
+
+        if Sources.QueryCooldownAuraBySpellID then
+            local auraSpellID = Sources.QueryCooldownAuraBySpellID(itemSpellID)
+            if spellSetHas(auraSpellID) then return true end
+        end
+        return false
+    end
+
     if updateInfo.addedAuras then
         for _, auraData in ipairs(updateInfo.addedAuras) do
             local auraInstanceID = auraData and auraData.auraInstanceID
@@ -4869,6 +4969,9 @@ local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
                     and (not unit or state.auraUnit == unit or icon._auraUnit == unit)
             end
             if not matches and iconMatchesAuraSpellIDs(icon, entry) then
+                matches = true
+            end
+            if not matches and iconMatchesItemAuraSpellIDs(entry) then
                 matches = true
             end
             if matches and entry then
@@ -5251,7 +5354,14 @@ end
 
 local function OnCDMCooldownChanged(_, spellID, baseSpellID, kind)
     if not CDMIcons:IsRuntimeEnabled() then return end
-    if kind == "refresh" then
+    if kind == "scanner_item" then
+        ApplyResolvedCooldownForItemScope()
+        _barsDirty = true
+        ScheduleCDMUpdate(true, CDM_UPDATE_COOLDOWN)
+    elseif kind == "scanner_spell" then
+        ApplyResolvedCooldownForSpellScope()
+        ScheduleCDMUpdate(true, CDM_UPDATE_COOLDOWN)
+    elseif kind == "refresh" then
         -- Pre-cutover SPELL_UPDATE_COOLDOWN path. Per-spell fast-path when
         -- arg1 is a non-nil non-GCD spellID; otherwise full walk. The
         -- pre-cutover code also forced full walk when CaptureTrustedGCDState
@@ -5292,6 +5402,9 @@ local function OnCDMCooldownChanged(_, spellID, baseSpellID, kind)
         -- invalidate the GCD-only binding cache, re-resolve cooldown state
         -- across icons, and dispatch to the cooldown highlighter so its
         -- visual feedback fires for the spell the player just cast.
+        if RecordRecentPlayerSpellCast then
+            RecordRecentPlayerSpellCast(spellID)
+        end
         InvalidateGCDOnlyBindings()
         InvalidateSpellCooldownBinding(spellID)
         ApplyResolvedCooldownForSpellScope()

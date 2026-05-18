@@ -764,7 +764,7 @@ local function UpdateIconData(icon, unit, auraData)
         local dur = auraData.duration
         local expTime = auraData.expirationTime
         if dur and expTime then
-            ApplyCooldownFromAura(icon.cooldown, unit, auraData.auraInstanceID, expTime, dur)
+            ApplyCooldownFromAura(icon.cooldown, unit, auraData.auraInstanceID, expTime, dur, nil, auraData.timeMod)
         else
             icon.cooldown:Clear()
         end

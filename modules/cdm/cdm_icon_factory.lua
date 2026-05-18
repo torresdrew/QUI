@@ -27,6 +27,14 @@ local InCombatLockdown = InCombatLockdown
 local CreateFrame      = CreateFrame
 local type             = type
 
+local function ResolveBestOwnedItemVariant(itemID)
+    if not itemID then return nil end
+    if Sources and Sources.QueryBestOwnedItemVariant then
+        return Sources.QueryBestOwnedItemVariant(itemID) or itemID
+    end
+    return itemID
+end
+
 ---------------------------------------------------------------------------
 -- CONSTANTS (mirrors cdm_icons.lua; both refer to the same design values)
 ---------------------------------------------------------------------------
@@ -254,7 +262,7 @@ local function CreateIcon(parent, spellEntry)
                     GameTooltip.SetItemByID(GameTooltip, itemID)
                 end
             elseif entry.type == "item" then
-                GameTooltip.SetItemByID(GameTooltip, entry.id)
+                GameTooltip.SetItemByID(GameTooltip, ResolveBestOwnedItemVariant(entry.id))
             else
                 GameTooltip.SetSpellByID(GameTooltip, sid)
             end

@@ -154,20 +154,35 @@ local function abbrevForChannel(name)
     return short:sub(1, 1):upper() .. short:sub(2):lower()
 end
 
--- Letter preset: rewrite "[N. ChannelName]" -> "[Abbrev]" using the name
--- table (or the 3-char fallback for unknown / custom channels). count=1 so
--- only the channel header at the start of the rendered line is replaced.
-local function transformLetterChannel(message)
-    if type(message) ~= "string" then return message end
-    return (message:gsub("%[(%d+)%. ([^%]]+)%]", function(_, channelStr)
-        return "[" .. abbrevForChannel(channelStr) .. "]"
-    end, 1))
+local CHANNEL_LINK_PATTERN = "^(.-)|Hchannel:channel:(%d+)|h%[(%d+)%. ([^%]]+)%]|h(%s*)()"
+
+local function getChannelPrefix(message)
+    if type(message) ~= "string" then return nil end
+
+    local prefix, _, channelNumber, channelName, spacing, restIndex = message:match(CHANNEL_LINK_PATTERN)
+    if not prefix then return nil end
+    if prefix:find("|H", 1, true) then return nil end
+
+    return prefix, channelNumber, channelName, spacing, restIndex
 end
 
--- Number preset: rewrite "[N. ChannelName]" -> "[N]" (channel name dropped).
-local function transformNumberedChannel(message)
-    if type(message) ~= "string" then return message end
-    return (message:gsub("(%[%d+)%. [^%]]+(%])", "%1%2", 1))
+local function hasChannelPrefix(message)
+    return getChannelPrefix(message) ~= nil
+end
+
+-- Numbered channel lines start with a channel hyperlink. Replace that whole
+-- leading hyperlink with plain text so later player/item hyperlinks keep
+-- their original marker boundaries.
+local function transformChannelPrefix(message, preset)
+    local prefix, channelNumber, channelName, spacing, restIndex = getChannelPrefix(message)
+    if not prefix then return message end
+
+    local label = channelNumber
+    if preset == "letter" then
+        label = abbrevForChannel(channelName)
+    end
+
+    return prefix .. "[" .. label .. "]" .. spacing .. message:sub(restIndex)
 end
 
 local function shouldTransformMessage(message, r, g, b, infoID, accessID, typeID, event)
@@ -186,7 +201,7 @@ local function shouldTransformMessage(message, r, g, b, infoID, accessID, typeID
 
     if event == "CHAT_MSG_CHANNEL"
        and (CURRENT_PRESET == "letter" or CURRENT_PRESET == "number") then
-        if message:find("%[%d+%. ") then
+        if hasChannelPrefix(message) then
             return true
         end
     end
@@ -211,10 +226,8 @@ local function transformMessage(message, r, g, b, infoID, accessID, typeID, even
     if event == "CHAT_MSG_CHANNEL"
        and type(message) == "string"
        and not IsSecret(message) then
-        if CURRENT_PRESET == "letter" then
-            message = transformLetterChannel(message)
-        elseif CURRENT_PRESET == "number" then
-            message = transformNumberedChannel(message)
+        if CURRENT_PRESET == "letter" or CURRENT_PRESET == "number" then
+            message = transformChannelPrefix(message, CURRENT_PRESET)
         end
     end
 

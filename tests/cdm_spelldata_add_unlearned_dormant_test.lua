@@ -83,4 +83,16 @@ assert(#customDB.ownedSpells == 1, "known cooldown entry should land in the acti
 assert(customDB.ownedSpells[1].id == 12345, "active entry should preserve its spell ID")
 assert(customDB.ownedSpells[1].row == 3, "active entry should preserve the intended cooldown row")
 
+ns.CDMSources.QueryBestOwnedItemVariant = function(itemID)
+    if itemID == 1001 or itemID == 1002 then
+        return 1002
+    end
+    return itemID
+end
+
+local itemAdded = ns.CDMSpellData:AddItem("custom_bar", 1001)
+assert(itemAdded == true, "first item quality variant should be added")
+local duplicateItem = ns.CDMSpellData:AddItem("custom_bar", 1002)
+assert(duplicateItem == false, "alternate quality variants should be treated as the same configured item")
+
 print("OK: cdm_spelldata_add_unlearned_dormant_test")

@@ -33,6 +33,9 @@ local resolveCounts = {}
 local layoutRequests = 0
 local subscriptions = {}
 local buffContainerShows = 0
+local itemAuraDur = { token = "item-aura-duration" }
+local itemAuraAppliedDuration
+local itemAuraReverse
 
 local function makeIcon(name, cooldownID)
     local icon = {
@@ -81,6 +84,23 @@ buffAuraIcon._spellEntry = {
 }
 buffAuraIcon._blizzMirrorCooldownID = nil
 buffAuraIcon._shown = false
+local itemAuraIcon = makeIcon("itemAura", 241288)
+itemAuraIcon._spellEntry = {
+    id = 241288,
+    itemID = 241288,
+    name = "itemAura",
+    kind = "cooldown",
+    viewerType = "essential",
+    type = "item",
+}
+itemAuraIcon._runtimeSpellID = 241288
+itemAuraIcon._blizzMirrorCooldownID = nil
+itemAuraIcon.Cooldown.SetCooldownFromDurationObject = function(_, durObj)
+    itemAuraAppliedDuration = durObj
+end
+itemAuraIcon.Cooldown.SetReverse = function(_, reverse)
+    itemAuraReverse = reverse
+end
 
 local mirrorStates = {
     [88001] = {
@@ -142,6 +162,18 @@ local ns = {
         QuerySpellUsable = function() return true, false end,
         QuerySpellHasRange = function() return false end,
         QuerySpellInRange = function() return true end,
+        QueryItemSpell = function(itemID)
+            if itemID == 241288 then
+                return "Potion Use", 1236994
+            end
+            return nil, nil
+        end,
+        QueryCooldownAuraBySpellID = function(spellID)
+            if spellID == 1236994 then
+                return 555001
+            end
+            return nil
+        end,
     },
     CDMBlizzMirror = {
         GetStateByCooldownID = function(cooldownID)
@@ -187,6 +219,25 @@ local ns = {
                     resolvedAuraSpellID = 48707,
                 }
             end
+            if name == "itemAura" then
+                return {
+                    mode = "aura",
+                    active = true,
+                    isActive = true,
+                    durObj = itemAuraDur,
+                    sourceID = "item-aura-instance:241288",
+                    spellID = 1236994,
+                    auraResolved = true,
+                    auraActive = true,
+                    auraIsActive = true,
+                    auraInstanceID = 622,
+                    auraUnit = "player",
+                    resolvedAuraSpellID = 555001,
+                    isOnCooldown = false,
+                    hasDurationObject = true,
+                    hasRenderableCooldown = true,
+                }
+            end
             return {
                 mode = "inactive",
                 active = false,
@@ -196,7 +247,7 @@ local ns = {
     },
     CDMIconFactory = {
         _iconPools = {
-            essential = { matchingIcon, unrelatedIcon, nonMirrorIcon },
+            essential = { matchingIcon, unrelatedIcon, nonMirrorIcon, itemAuraIcon },
             buff = { buffAuraIcon },
         },
         _recyclePool = {},
@@ -258,6 +309,22 @@ assert(buffAuraIcon._shown == true, "active buff aura icon should be shown by th
 assert(layoutRequests > 0, "buff aura visibility flips should request buff icon layout")
 assert(buffContainerShows > 0, "buff aura visibility flips should wake the owning buff container")
 
+icons.HandleRuntimeRefresh("UNIT_AURA", "player", {
+    isFullUpdate = false,
+    addedAuras = {
+        { spellId = 555001, auraInstanceID = 622 },
+    },
+})
+
+assert(resolveCounts.itemAura == 1,
+    "added player aura should re-resolve matching item icon through item use aura mapping")
+assert(itemAuraIcon._auraActive == true,
+    "added player item aura should stamp active aura metadata on the item icon")
+assert(itemAuraAppliedDuration == itemAuraDur,
+    "added player item aura should bind the aura DurationObject to the item icon")
+assert(itemAuraReverse == true,
+    "added player item aura should use aura/reverse cooldown mode")
+
 buffAuraIcon._shown = false
 buffAuraIcon._auraActive = false
 layoutRequests = 0
@@ -286,5 +353,23 @@ assert(layoutRequests > 0,
     "per-spell cooldown refresh should request buff layout when aura state flips active")
 assert(buffContainerShows > 0,
     "per-spell cooldown refresh should wake hidden active-only buff containers")
+
+resolveCounts.itemAura = 0
+itemAuraIcon._auraActive = false
+itemAuraIcon._lastDurObjKey = nil
+itemAuraIcon._lastDurObj = nil
+itemAuraIcon._lastAuraDurObj = nil
+itemAuraAppliedDuration = nil
+itemAuraReverse = nil
+
+cooldownChanged("CDM:COOLDOWN_CHANGED", 1236994, nil, "scanner_item")
+
+assert(resolveCounts.itemAura == 1, "scanner item refresh should re-resolve item-backed icons")
+assert(itemAuraIcon._auraActive == true,
+    "scanner item refresh should stamp active aura metadata on the item icon")
+assert(itemAuraAppliedDuration == itemAuraDur,
+    "scanner item refresh should bind the aura DurationObject to the item icon")
+assert(itemAuraReverse == true,
+    "scanner item refresh should use aura/reverse cooldown mode")
 
 print("OK: cdm_icons_aura_delta_targeting_test")

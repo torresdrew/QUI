@@ -2744,6 +2744,13 @@ RefreshAddList = function()
             if type(entry) == "table" and entry.id then
                 ownedSet[(entry.type or "spell") .. ":" .. entry.id] = true
                 ownedSet[entry.id] = true
+                if entry.type == "item" and Sources and Sources.QueryBestOwnedItemVariant then
+                    local bestItemID = Sources.QueryBestOwnedItemVariant(entry.id)
+                    if bestItemID then
+                        ownedSet["item:" .. bestItemID] = true
+                        ownedSet[bestItemID] = true
+                    end
+                end
             elseif type(entry) == "number" then
                 ownedSet["spell:" .. entry] = true
                 ownedSet[entry] = true

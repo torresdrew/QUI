@@ -217,6 +217,50 @@ local WEAPON_DEFS = {
     },
 }
 
+local CONSUMABLE_DEF_TABLES = {
+    FLASK_DEFS,
+    POTION_DEFS,
+    HEALTH_DEFS,
+    HEALTHSTONE_DEFS,
+    AUGMENT_DEFS,
+    VANTUS_DEFS,
+    WEAPON_DEFS,
+}
+
+local itemVariantOrders
+
+local function BuildItemVariantOrders()
+    local byItem = {}
+    for _, defs in ipairs(CONSUMABLE_DEF_TABLES) do
+        for _, def in pairs(defs) do
+            local variants = def.variants
+            if type(variants) == "table" and #variants > 1 then
+                local orderedIDs = {}
+                for _, variant in ipairs(variants) do
+                    if type(variant.itemID) == "number" then
+                        orderedIDs[#orderedIDs + 1] = variant.itemID
+                    end
+                end
+                if #orderedIDs > 1 then
+                    for _, itemID in ipairs(orderedIDs) do
+                        byItem[itemID] = orderedIDs
+                    end
+                end
+            end
+        end
+    end
+    return byItem
+end
+
+function ConsumableMacros.GetVariantOrderForItem(itemID)
+    itemID = tonumber(itemID)
+    if not itemID then return nil end
+    if not itemVariantOrders then
+        itemVariantOrders = BuildItemVariantOrders()
+    end
+    return itemVariantOrders[itemID]
+end
+
 ---------------------------------------------------------------------------
 -- Dropdown option arrays (exported for the options panel)
 ---------------------------------------------------------------------------

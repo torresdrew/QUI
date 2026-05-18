@@ -3,9 +3,10 @@
 
 local function noop() end
 local inCombat = false
+local now = 1
 
 function InCombatLockdown() return inCombat end
-function GetTime() return 1 end
+function GetTime() return now end
 function wipe(tbl)
     for key in pairs(tbl) do
         tbl[key] = nil
@@ -106,6 +107,22 @@ for _, event in ipairs(boundaryEvents) do
 end
 
 assert(auraRefreshes == 0, "PLAYER_REGEN_DISABLED should not notify aura consumers by itself")
+
+auraFrame.script(auraFrame, "UNIT_SPELLCAST_SUCCEEDED", "player", "cast-guid", 7001)
+auraFrame.script(auraFrame, "UNIT_AURA", "player", {
+    addedAuras = {
+        {
+            auraInstanceID = 9001,
+            spellId = 8001,
+            name = "Applied Aura Name",
+            isHelpful = true,
+        },
+    },
+})
+
+local captured = ns.CDMSpellData.GetCapturedAuraForLookup({ 7001 }, nil, { "player" }, false)
+assert(captured and captured.auraInstanceID == 9001,
+    "clean added aura payloads should also be keyed by recent cast spellID")
 
 inCombat = true
 local ok, err = pcall(function()

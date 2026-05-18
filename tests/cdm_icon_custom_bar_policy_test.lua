@@ -241,6 +241,7 @@ assert(policy:ResolveUsability({ type = "item", id = 201 }, trackerSettings.cust
 
 sources.QueryItemSpell = function(itemID)
     if itemID == 301 then return "Item Spell", 777 end
+    if itemID == 302 then return "Item Spell", 778 end
     return nil
 end
 activeSpells[777] = { true, 10, 20, "item-spell" }
@@ -252,6 +253,28 @@ local active, startTime, duration, activeType = policy:ResolveActiveState({
 }, icon, 123)
 assert(active == true and startTime == 10 and duration == 20 and activeType == "item-spell",
     "macro item active-state resolution should preserve spell active-state tuple")
+
+sources.QueryScannedItemAuraInfo = function(itemID, itemSpellID)
+    if itemID == 302 and itemSpellID == 778 then
+        return {
+            active = true,
+            expiration = 150,
+            duration = 30,
+            useSpellID = 778,
+            buffSpellID = 779,
+        }
+    end
+    return nil
+end
+activeSpells[778] = nil
+active, startTime, duration, activeType = policy:ResolveActiveState({
+    type = "item",
+    id = 302,
+    viewerType = "custom",
+}, icon, 123)
+assert(active == true and startTime == 120 and duration == 30 and activeType == "buff",
+    "item active-state resolution should prefer scanned related aura timing")
+sources.QueryScannedItemAuraInfo = nil
 
 local cooldownIcon, swipeWrites = makeIcon({ type = "spell", id = 101, spellID = 101, viewerType = "custom" })
 policy:ApplySwipeStyle(cooldownIcon, trackerSettings.custom, {

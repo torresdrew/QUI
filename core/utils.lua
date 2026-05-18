@@ -1591,18 +1591,58 @@ function Helpers.ApplyCooldownFromSpell(cooldownFrame, spellID, reverse, ignoreG
     return Helpers.ApplyCooldownFromStart(cooldownFrame, durationObj, start, duration, modRate, reverse)
 end
 
---- Apply a cooldown using a DurationObject when possible, falling back to
---- numeric APIs only when the numeric values are confirmed non-secret.
---- This keeps combat-time aura cooldown rendering on the C-side path and
---- avoids doing Lua math on secret values.
+local function ApplyCooldownFromExpiration(cooldownFrame, expirationTime, duration, modRate)
+    if Helpers.IsSecretValue(expirationTime) or Helpers.IsSecretValue(duration) or Helpers.IsSecretValue(modRate) then
+        return false
+    end
+    if expirationTime == nil or duration == nil then
+        return false
+    end
+    if type(expirationTime) ~= "number" or type(duration) ~= "number" then
+        return false
+    end
+    if duration <= 0 then
+        return false
+    end
+    if modRate ~= nil and type(modRate) ~= "number" then
+        return false
+    end
+
+    if cooldownFrame.SetCooldownFromExpirationTime then
+        local ok
+        if modRate ~= nil then
+            ok = pcall(cooldownFrame.SetCooldownFromExpirationTime, cooldownFrame, expirationTime, duration, modRate)
+        else
+            ok = pcall(cooldownFrame.SetCooldownFromExpirationTime, cooldownFrame, expirationTime, duration)
+        end
+        if ok then
+            return true
+        end
+    end
+
+    if not cooldownFrame.SetCooldown then
+        return false
+    end
+
+    local startTime = expirationTime - duration
+    if modRate ~= nil then
+        return pcall(cooldownFrame.SetCooldown, cooldownFrame, startTime, duration, modRate)
+    end
+    return pcall(cooldownFrame.SetCooldown, cooldownFrame, startTime, duration)
+end
+
+--- Apply an aura cooldown. Prefer DurationObject timing so secret-capable
+--- aura timing stays C-side. Clean numeric AuraData timing is only a fallback
+--- for cases where a DurationObject cannot be obtained.
 --- @param cooldownFrame table
 --- @param unit string|nil
 --- @param auraInstanceID any
 --- @param expirationTime any
 --- @param duration any
---- @param reverse boolean|nil
+--- @param reverse boolean|nil Passed through as clearIfZero for DurationObject
+--- @param modRate any
 --- @return boolean applied True when a cooldown was applied
-function Helpers.ApplyCooldownFromAura(cooldownFrame, unit, auraInstanceID, expirationTime, duration, reverse)
+function Helpers.ApplyCooldownFromAura(cooldownFrame, unit, auraInstanceID, expirationTime, duration, reverse, modRate)
     if not cooldownFrame then
         return false
     end
@@ -1619,19 +1659,8 @@ function Helpers.ApplyCooldownFromAura(cooldownFrame, unit, auraInstanceID, expi
         end
     end
 
-    if expirationTime ~= nil and duration ~= nil then
-        if Helpers.IsSecretValue(expirationTime) or Helpers.IsSecretValue(duration) then
-            if cooldownFrame.Clear then
-                cooldownFrame:Clear()
-            end
-            return false
-        end
-
-        if cooldownFrame.SetCooldownFromExpirationTime then
-            return pcall(cooldownFrame.SetCooldownFromExpirationTime, cooldownFrame, expirationTime, duration)
-        end
-
-        return pcall(cooldownFrame.SetCooldown, cooldownFrame, expirationTime - duration, duration)
+    if ApplyCooldownFromExpiration(cooldownFrame, expirationTime, duration, modRate) then
+        return true
     end
 
     if cooldownFrame.Clear then

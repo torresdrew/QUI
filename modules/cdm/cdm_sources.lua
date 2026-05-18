@@ -15,6 +15,14 @@ local C_Spell = C_Spell
 local C_Item = C_Item
 local C_UnitAuras = C_UnitAuras
 local Shared = ns.CDMShared
+local WoW_IsSecretValue = issecretvalue
+
+local function HasOpaqueValue(value)
+    if WoW_IsSecretValue and WoW_IsSecretValue(value) then
+        return true
+    end
+    return value ~= nil
+end
 
 local function IsCooldownMirrorCategory(category)
     if Shared and Shared.IsCooldownMirrorCategory then
@@ -195,6 +203,20 @@ function CDMSources.QueryItemQualityByID(itemID)
     return nil
 end
 
+function CDMSources.QueryItemProfessionQualityInfo(itemInfo)
+    if not itemInfo or not C_TradeSkillUI then return nil end
+    if issecretvalue and issecretvalue(itemInfo) then return nil end
+    if C_TradeSkillUI.GetItemReagentQualityInfo then
+        local ok, info = pcall(C_TradeSkillUI.GetItemReagentQualityInfo, itemInfo)
+        if ok and info then return info end
+    end
+    if C_TradeSkillUI.GetItemCraftedQualityInfo then
+        local ok, info = pcall(C_TradeSkillUI.GetItemCraftedQualityInfo, itemInfo)
+        if ok then return info end
+    end
+    return nil
+end
+
 function CDMSources.QueryFirstTriggeredSpellForItem(itemID, itemQuality)
     if not itemID or not (C_Item and C_Item.GetFirstTriggeredSpellForItem) then return nil end
     local ok, spellID
@@ -242,6 +264,32 @@ function CDMSources.QueryItemCount(itemID, includeBank, includeUses, forceUpdate
     return nil
 end
 
+function CDMSources.QueryBestOwnedItemVariant(itemID)
+    if not itemID then return nil end
+    if issecretvalue and issecretvalue(itemID) then return nil end
+
+    local consumables = ns.ConsumableMacros
+    local getVariantOrder = consumables and consumables.GetVariantOrderForItem
+    local variants = getVariantOrder and getVariantOrder(itemID)
+    if type(variants) ~= "table" or #variants == 0 then
+        return itemID
+    end
+
+    for _, variantID in ipairs(variants) do
+        if type(variantID) == "number" then
+            local count = CDMSources.QueryItemCount(variantID, false, false)
+            if issecretvalue and issecretvalue(count) then
+                return itemID
+            end
+            if type(count) == "number" and count > 0 then
+                return variantID
+            end
+        end
+    end
+
+    return itemID
+end
+
 function CDMSources.QueryItemCooldown(itemID)
     if not itemID or not (C_Item and C_Item.GetItemCooldown) then return nil end
     local ok, startTime, duration, enabled = pcall(C_Item.GetItemCooldown, itemID)
@@ -249,36 +297,149 @@ function CDMSources.QueryItemCooldown(itemID)
     return nil
 end
 
+local function QueryScannerActive(scanner, spellID, itemID)
+    local active, expiration, duration, auraInstanceID, auraUnit
+    if itemID and scanner.IsItemActive then
+        local ok, a, e, d, instID, unit = pcall(scanner.IsItemActive, itemID)
+        if ok then
+            active, expiration, duration, auraInstanceID, auraUnit = a, e, d, instID, unit
+        end
+    end
+    if active ~= true and spellID and scanner.IsSpellActive then
+        local ok, a, e, d, instID, unit = pcall(scanner.IsSpellActive, spellID)
+        if ok then
+            active, expiration, duration, auraInstanceID, auraUnit = a, e, d, instID, unit
+        end
+    end
+    return active == true, expiration, duration, auraInstanceID, auraUnit
+end
+
+local function CopyScannerAuraInfo(data, active, expiration, duration, source, sourceItemID, sourceSpellID,
+                                   auraInstanceID, auraUnit)
+    if not data and not active then return nil end
+    return {
+        active = active == true,
+        expiration = expiration,
+        duration = duration or (data and data.duration),
+        auraInstanceID = auraInstanceID,
+        auraUnit = auraUnit,
+        useSpellID = data and data.useSpellID or sourceSpellID,
+        buffSpellID = data and data.buffSpellID or nil,
+        icon = data and data.icon or nil,
+        name = data and data.name or nil,
+        source = source,
+        sourceItemID = sourceItemID,
+        sourceSpellID = sourceSpellID,
+    }
+end
+
+local function QueryScannedItemInfo(scanner, itemID)
+    if not itemID or not scanner.GetScannedItemInfo then return nil end
+    local ok, data = pcall(scanner.GetScannedItemInfo, itemID)
+    if ok and type(data) == "table" then
+        return data
+    end
+    return nil
+end
+
+local function QueryScannedSpellInfo(scanner, spellID)
+    if not spellID or not scanner.GetScannedSpellInfo then return nil end
+    local ok, data = pcall(scanner.GetScannedSpellInfo, spellID)
+    if ok and type(data) == "table" then
+        return data
+    end
+    return nil
+end
+
+local function RegisterScannerItemUseSpell(scanner, itemID, spellID)
+    if not itemID or not spellID or not scanner.RegisterItemUseSpell then return end
+    pcall(scanner.RegisterItemUseSpell, itemID, spellID)
+end
+
+function CDMSources.QueryScannedItemAuraInfo(itemID, itemSpellID)
+    if not itemID and not itemSpellID then return nil end
+
+    local root = _G and _G.QUI or QUI
+    local scanner = root and root.SpellScanner
+    if not scanner then return nil end
+
+    local resolvedItemSpellID = itemSpellID
+    if not resolvedItemSpellID and itemID and CDMSources.QueryItemSpell then
+        local _, spellID = CDMSources.QueryItemSpell(itemID)
+        resolvedItemSpellID = spellID
+    end
+    RegisterScannerItemUseSpell(scanner, itemID, resolvedItemSpellID)
+
+    local data = QueryScannedItemInfo(scanner, itemID)
+    local sourceItemID = itemID
+    if not data and itemID then
+        local consumables = ns.ConsumableMacros
+        local getVariantOrder = consumables and consumables.GetVariantOrderForItem
+        local variants = getVariantOrder and getVariantOrder(itemID)
+        if type(variants) == "table" then
+            for _, variantID in ipairs(variants) do
+                if type(variantID) == "number" then
+                    data = QueryScannedItemInfo(scanner, variantID)
+                    if data then
+                        sourceItemID = variantID
+                        break
+                    end
+                end
+            end
+        end
+    end
+    if data then
+        local useSpellID = data.useSpellID or resolvedItemSpellID
+        local active, expiration, duration, auraInstanceID, auraUnit =
+            QueryScannerActive(scanner, useSpellID, sourceItemID)
+        return CopyScannerAuraInfo(data, active, expiration, duration, "item",
+            sourceItemID, useSpellID, auraInstanceID, auraUnit)
+    end
+
+    data = QueryScannedSpellInfo(scanner, resolvedItemSpellID)
+    if data then
+        local active, expiration, duration, auraInstanceID, auraUnit =
+            QueryScannerActive(scanner, resolvedItemSpellID, nil)
+        return CopyScannerAuraInfo(data, active, expiration, duration, "spell",
+            itemID, resolvedItemSpellID, auraInstanceID, auraUnit)
+    end
+
+    local active, expiration, duration, auraInstanceID, auraUnit =
+        QueryScannerActive(scanner, resolvedItemSpellID, itemID)
+    return CopyScannerAuraInfo(nil, active, expiration, duration, "active",
+        itemID, resolvedItemSpellID, auraInstanceID, auraUnit)
+end
+
 function CDMSources.QueryAuraDuration(unit, auraInstanceID)
-    if not unit or not auraInstanceID or not (C_UnitAuras and C_UnitAuras.GetAuraDuration) then return nil end
+    if not unit or not HasOpaqueValue(auraInstanceID) or not (C_UnitAuras and C_UnitAuras.GetAuraDuration) then return nil end
     local ok, result = pcall(C_UnitAuras.GetAuraDuration, unit, auraInstanceID)
     if ok then return result end
     return nil
 end
 
 function CDMSources.QueryAuraDataByAuraInstanceID(unit, auraInstanceID)
-    if not unit or not auraInstanceID or not (C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID) then return nil end
+    if not unit or not HasOpaqueValue(auraInstanceID) or not (C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID) then return nil end
     local ok, result = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit, auraInstanceID)
     if ok then return result end
     return nil
 end
 
 function CDMSources.QueryAuraHasExpirationTime(unit, auraInstanceID)
-    if not unit or not auraInstanceID or not (C_UnitAuras and C_UnitAuras.DoesAuraHaveExpirationTime) then return nil end
+    if not unit or not HasOpaqueValue(auraInstanceID) or not (C_UnitAuras and C_UnitAuras.DoesAuraHaveExpirationTime) then return nil end
     local ok, result = pcall(C_UnitAuras.DoesAuraHaveExpirationTime, unit, auraInstanceID)
     if ok then return result end
     return nil
 end
 
 function CDMSources.QueryAuraFilteredOutByInstanceID(unit, auraInstanceID, filter)
-    if not unit or not auraInstanceID or not (C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID) then return nil end
+    if not unit or not HasOpaqueValue(auraInstanceID) or not (C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID) then return nil end
     local ok, result = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, auraInstanceID, filter)
     if ok then return result end
     return nil
 end
 
 function CDMSources.QueryAuraApplicationDisplayCount(unit, auraInstanceID, minValue, maxValue)
-    if not unit or not auraInstanceID or not (C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount) then return nil end
+    if not unit or not HasOpaqueValue(auraInstanceID) or not (C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount) then return nil end
     local ok, result = pcall(C_UnitAuras.GetAuraApplicationDisplayCount, unit, auraInstanceID, minValue, maxValue)
     if ok then return result end
     return nil

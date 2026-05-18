@@ -422,6 +422,131 @@ assert(spellCooldownBar._durObj == spellCooldownDurObj,
 assert(spellCooldownTimerDuration == spellCooldownDurObj,
     "non-mirror spell cooldown bar should drive status-bar fill from the cooldown DurationObject")
 
+local itemCooldownDurObj = {
+    token = "item-cooldown-duration",
+    GetRemainingDuration = function()
+        return NewSecretValue("item-remaining")
+    end,
+}
+local itemCooldownContext
+local itemCooldownTimerDuration
+local itemCooldownTimerInterpolation
+local itemCooldownTimerDirection
+local itemCooldownNumericWrites = 0
+local itemCooldownTextArg
+ns.CDMResolvers = {
+    BuildCooldownStateContext = BuildTestCooldownStateContext,
+    ResolveBlizzardMirrorIdentityState = function()
+        return nil
+    end,
+    ResolveCooldownState = function(context)
+        itemCooldownContext = context
+        return {
+            mode = "item-cooldown",
+            active = true,
+            isActive = true,
+            isOnCooldown = true,
+            durObj = itemCooldownDurObj,
+            numericCooldownActive = nil,
+            spellID = context and context.runtimeSpellID,
+        }
+    end,
+}
+
+local itemCooldownBar = {
+    _spellID = 91004,
+    _spellEntry = {
+        id = 90004,
+        itemID = 90004,
+        name = "Light Company Guidon",
+        kind = "cooldown",
+        type = "item",
+        viewerType = "customBar",
+    },
+    StatusBar = {
+        SetMinMaxValues = function()
+            itemCooldownNumericWrites = itemCooldownNumericWrites + 1
+        end,
+        SetValue = function()
+            itemCooldownNumericWrites = itemCooldownNumericWrites + 1
+        end,
+        SetTimerDuration = function(_, durObj, interpolation, direction)
+            itemCooldownTimerDuration = durObj
+            itemCooldownTimerInterpolation = interpolation
+            itemCooldownTimerDirection = direction
+        end,
+    },
+    DurationText = {
+        SetText = function() end,
+        SetFormattedText = function(_, _, remaining)
+            itemCooldownTextArg = remaining
+        end,
+    },
+    IconTexture = {
+        SetTexture = function() end,
+    },
+    NameText = {
+        SetText = function() end,
+        SetFormattedText = function() end,
+    },
+}
+
+bars:UpdateOwnedBarAura(itemCooldownBar)
+
+assert(itemCooldownContext and itemCooldownContext.entry == itemCooldownBar._spellEntry,
+    "item cooldown bar should use the shared resolved state context")
+assert(itemCooldownBar._active == true,
+    "DurationObject-only item cooldown should render active")
+assert(itemCooldownBar._durObj == itemCooldownDurObj,
+    "DurationObject-only item cooldown should retain the DurationObject")
+assert(itemCooldownTimerDuration == itemCooldownDurObj,
+    "DurationObject-only item cooldown should bind StatusBar:SetTimerDuration")
+assert(itemCooldownTimerInterpolation == 0,
+    "item cooldown bar DurationObject fill should use Immediate interpolation")
+assert(itemCooldownTimerDirection == 1,
+    "item cooldown bar DurationObject fill should use RemainingTime direction")
+assert(itemCooldownNumericWrites == 0,
+    "DurationObject-only item cooldown should not require numeric StatusBar writes")
+assert(itemCooldownBar._totalDuration == nil and itemCooldownBar._expirationTime == nil,
+    "DurationObject-only item cooldown should not invent numeric timing")
+assert(getmetatable(itemCooldownTextArg) == secretValueMT,
+    "item cooldown bar should forward DurationObject remaining time to SetFormattedText")
+
+local cleanItemDurObj = {
+    token = "clean-item-cooldown-duration",
+    GetRemainingDuration = function()
+        return 80
+    end,
+}
+local cleanItemTimerDuration
+ns.CDMResolvers.ResolveCooldownState = function(context)
+    return {
+        mode = "item-cooldown",
+        active = true,
+        isActive = true,
+        isOnCooldown = true,
+        durObj = cleanItemDurObj,
+        numericCooldownActive = true,
+        start = 100,
+        duration = 90,
+        spellID = context and context.runtimeSpellID,
+    }
+end
+itemCooldownBar.StatusBar.SetTimerDuration = function(_, durObj)
+    cleanItemTimerDuration = durObj
+end
+itemCooldownNumericWrites = 0
+itemCooldownTextArg = nil
+
+bars:UpdateOwnedBarAura(itemCooldownBar)
+
+assert(cleanItemTimerDuration == cleanItemDurObj,
+    "clean item cooldown should still prefer StatusBar:SetTimerDuration")
+assert(itemCooldownNumericWrites == 0,
+    "clean item cooldown with a DurationObject should not fall back to numeric fill")
+assert(itemCooldownBar._totalDuration == 90 and itemCooldownBar._expirationTime == 190,
+    "clean item cooldown should retain numeric timing for bar state")
+
 local combatAuraDataDurObj = { token = "combat-auraData-duration" }
 local combatAuraDataTimerDuration
 local combatAuraData = {

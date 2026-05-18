@@ -365,7 +365,8 @@ local function UpdateAuras(frame)
             auraData.auraInstanceID,
             auraData.expirationTime,
             auraData.duration,
-            true
+            true,
+            auraData.timeMod
         )
     end
 

@@ -2,10 +2,10 @@
 -- Spell Scanner System for Combat-Safe Buff Detection
 --
 -- Scans spell/item → buff mappings out of combat
--- Detects active states via UNIT_SPELLCAST_SUCCEEDED (works everywhere)
--- Enables accurate tracking of trinkets, potions, and class abilities during combat
+-- Detects active states via UNIT_SPELLCAST_SUCCEEDED and item cooldown starts.
+-- Enables accurate tracking of trinkets, potions, and class abilities during combat.
 
-local ADDON_NAME, _ = ...
+local ADDON_NAME, ns = ...
 local QUI = QUI
 
 -- Performance: cache frequently-called globals as locals
@@ -18,6 +18,26 @@ local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
 local C_Timer = C_Timer
 local string_format = string.format
+local WoW_IsSecretValue = issecretvalue
+
+local function ScannerIsSecretValue(value)
+    if WoW_IsSecretValue then
+        return WoW_IsSecretValue(value)
+    end
+    return false
+end
+
+local function IsCleanNumber(value)
+    return not ScannerIsSecretValue(value) and type(value) == "number"
+end
+
+local function IsCleanPositiveDuration(duration)
+    return IsCleanNumber(duration) and duration > 0
+end
+
+local function IsFutureExpiration(expirationTime, now)
+    return IsCleanNumber(expirationTime) and expirationTime > now
+end
 
 ---------------------------------------------------------------------------
 -- MODULE STATE
@@ -26,12 +46,30 @@ local SpellScanner = {}
 QUI.SpellScanner = SpellScanner
 
 -- Runtime state: currently active buffs
--- Structure: { [spellID] = { startTime, duration, expirationTime, source, sourceId } }
+-- Structure: { [spellID] = { startTime, duration, expirationTime, auraInstanceID, hasAuraInstanceID, auraUnit, source, sourceId } }
 SpellScanner.activeBuffs = {}
 
 -- Pending scanning: spells cast in combat that we'll try to scan after
 -- Structure: { [spellID] = { timestamp, itemID (optional) } }
 SpellScanner.pendingScanning = {}
+
+-- Item use spells registered by CDM entries.
+-- Structure: { [useSpellID] = itemID }
+SpellScanner.registeredItemUseSpells = {}
+
+-- Recent item use casts waiting for the matching UNIT_AURA addedAuras payload.
+-- Structure: list of { spellID, itemID, time }
+SpellScanner.pendingItemAuraCasts = {}
+
+-- Recent player helpful aura additions. Used when item cooldown events arrive
+-- after UNIT_AURA for trinkets/items that do not produce a useful cast event.
+-- Structure: list of { auraInstanceID, hasAuraInstanceID, auraUnit, time }
+SpellScanner.recentPlayerAuras = {}
+
+-- Last observed item cooldown state. The item/aura fallback only correlates
+-- player auras to item cooldowns that just started, not stale active cooldowns.
+-- Structure: { [itemID] = { active, startTime, duration } }
+SpellScanner.itemCooldownStates = {}
 
 -- Scan mode toggle (explicit /quiscan)
 SpellScanner.scanMode = false
@@ -45,6 +83,245 @@ SpellScanner.onScanCallback = nil
 
 -- Forward declarations
 local EnsureCleanupTicker
+local ITEM_AURA_CORRELATION_WINDOW = 0.1
+local ITEM_COOLDOWN_AURA_WINDOW = 0.1
+
+local function NotifyScannerChanged(spellID, itemID)
+    local scheduler = ns and ns.CDMScheduler
+    if scheduler and scheduler.Publish then
+        scheduler.Publish("CDM:COOLDOWN_CHANGED", spellID, nil, itemID and "scanner_item" or "scanner_spell")
+    end
+end
+
+local function PrunePendingItemAuraCasts(now)
+    local cutoff = now - ITEM_AURA_CORRELATION_WINDOW
+    while SpellScanner.pendingItemAuraCasts[1]
+       and SpellScanner.pendingItemAuraCasts[1].time < cutoff do
+        table.remove(SpellScanner.pendingItemAuraCasts, 1)
+    end
+end
+
+local function PruneRecentPlayerAuras(now)
+    local cutoff = now - ITEM_COOLDOWN_AURA_WINDOW
+    while SpellScanner.recentPlayerAuras[1]
+       and SpellScanner.recentPlayerAuras[1].time < cutoff do
+        table.remove(SpellScanner.recentPlayerAuras, 1)
+    end
+end
+
+local function RecordRecentPlayerAura(unit, auraInstanceID, hasAuraInstanceID)
+    if hasAuraInstanceID ~= true then return end
+    local now = GetTime()
+    PruneRecentPlayerAuras(now)
+    SpellScanner.recentPlayerAuras[#SpellScanner.recentPlayerAuras + 1] = {
+        auraInstanceID = auraInstanceID,
+        hasAuraInstanceID = true,
+        auraUnit = unit or "player",
+        time = now,
+    }
+end
+
+local function RecordPendingItemAuraCast(spellID, itemID)
+    if not spellID or not itemID then return end
+    local now = GetTime()
+    PrunePendingItemAuraCasts(now)
+    SpellScanner.pendingItemAuraCasts[#SpellScanner.pendingItemAuraCasts + 1] = {
+        spellID = spellID,
+        itemID = itemID,
+        time = now,
+    }
+end
+
+local function GetRawAuraInstanceID(auraData)
+    if not auraData then return nil, false end
+    local ok, instID = pcall(function() return auraData.auraInstanceID end)
+    if not ok then return nil, false end
+    if ScannerIsSecretValue(instID) then return instID, true end
+    if instID ~= nil then return instID, true end
+    return nil, false
+end
+
+local function AuraInstanceAllowsHelpful(unit, auraInstanceID)
+    if not (C_UnitAuras and C_UnitAuras.IsAuraFilteredOutByInstanceID) then
+        return true
+    end
+    local ok, filtered = pcall(
+        C_UnitAuras.IsAuraFilteredOutByInstanceID,
+        unit, auraInstanceID, "HELPFUL")
+    if ok and ScannerIsSecretValue(filtered) then
+        return true
+    end
+    if ok and type(filtered) == "boolean" then
+        return filtered == false
+    end
+    return true
+end
+
+local function AuraInstanceIsStillPresent(unit, auraInstanceID, hasAuraInstanceID)
+    if hasAuraInstanceID ~= true then return false end
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDataByAuraInstanceID) then
+        return true
+    end
+    local ok, aura = pcall(C_UnitAuras.GetAuraDataByAuraInstanceID, unit or "player", auraInstanceID)
+    if not ok then return false end
+    if ScannerIsSecretValue(aura) then return true end
+    return aura ~= nil
+end
+
+local function ActivateItemAuraInstance(spellID, itemID, unit, auraInstanceID, hasAuraInstanceID)
+    if not spellID or not itemID or hasAuraInstanceID ~= true then return false end
+    SpellScanner.activeBuffs[spellID] = {
+        auraInstanceID = auraInstanceID,
+        hasAuraInstanceID = true,
+        auraUnit = unit or "player",
+        source = "item",
+        sourceId = itemID,
+    }
+    NotifyScannerChanged(spellID, itemID)
+    return true
+end
+
+local function ActivateMostRecentPlayerAuraForItem(spellID, itemID)
+    local now = GetTime()
+    PruneRecentPlayerAuras(now)
+    for i = #SpellScanner.recentPlayerAuras, 1, -1 do
+        local recent = SpellScanner.recentPlayerAuras[i]
+        if recent and recent.hasAuraInstanceID == true then
+            if ActivateItemAuraInstance(
+                spellID, itemID, recent.auraUnit or "player", recent.auraInstanceID, true) then
+                table.remove(SpellScanner.recentPlayerAuras, i)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function ItemCooldownLooksActive(itemID)
+    if not itemID or not (C_Item and C_Item.GetItemCooldown) then
+        return true
+    end
+
+    local ok, startTime, duration, enabled = pcall(C_Item.GetItemCooldown, itemID)
+    if not ok then
+        return true
+    end
+    if ScannerIsSecretValue(startTime)
+        or ScannerIsSecretValue(duration)
+        or ScannerIsSecretValue(enabled) then
+        return true
+    end
+    if enabled == 0 or enabled == false then
+        return false
+    end
+    if not IsCleanNumber(startTime) or not IsCleanPositiveDuration(duration) then
+        return false
+    end
+    return startTime > 0 and (startTime + duration) > GetTime()
+end
+
+local function QueryCleanItemCooldownState(itemID)
+    if not itemID or not (C_Item and C_Item.GetItemCooldown) then
+        return nil, nil, nil, nil, false
+    end
+
+    local ok, startTime, duration, enabled = pcall(C_Item.GetItemCooldown, itemID)
+    if not ok then
+        return nil, nil, nil, nil, false
+    end
+    if ScannerIsSecretValue(startTime)
+        or ScannerIsSecretValue(duration)
+        or ScannerIsSecretValue(enabled) then
+        return nil, nil, nil, nil, false
+    end
+
+    local active = false
+    if enabled == 0 or enabled == false then
+        active = false
+    elseif IsCleanNumber(startTime) and IsCleanPositiveDuration(duration) then
+        active = startTime > 0 and (startTime + duration) > GetTime()
+    end
+
+    return active, startTime, duration, enabled, true
+end
+
+local function StoreItemCooldownState(itemID, active, startTime, duration)
+    if not itemID then return end
+    SpellScanner.itemCooldownStates[itemID] = {
+        active = active == true,
+        startTime = startTime,
+        duration = duration,
+    }
+end
+
+local function ItemCooldownRecentlyStarted(itemID)
+    local active, startTime, duration, _, known = QueryCleanItemCooldownState(itemID)
+    if not known then
+        return ItemCooldownLooksActive(itemID)
+    end
+
+    local prior = SpellScanner.itemCooldownStates[itemID]
+    StoreItemCooldownState(itemID, active, startTime, duration)
+
+    if active ~= true then
+        return false
+    end
+
+    if not prior then
+        if not IsCleanNumber(startTime) then return false end
+        local age = GetTime() - startTime
+        return age >= 0 and age <= ITEM_COOLDOWN_AURA_WINDOW
+    end
+
+    if prior.active ~= true then
+        return true
+    end
+
+    if IsCleanNumber(startTime)
+       and IsCleanNumber(prior.startTime)
+       and startTime ~= prior.startTime then
+        return true
+    end
+
+    return false
+end
+
+local function HandleUnitAura(unit, updateInfo)
+    if unit ~= "player" or not updateInfo or updateInfo.isFullUpdate then return end
+    local added = updateInfo.addedAuras
+    if type(added) ~= "table" or #added == 0 then return end
+
+    local now = GetTime()
+    PrunePendingItemAuraCasts(now)
+    PruneRecentPlayerAuras(now)
+    local pending = SpellScanner.pendingItemAuraCasts[#SpellScanner.pendingItemAuraCasts]
+
+    for _, auraData in ipairs(added) do
+        local auraInstanceID, hasAuraInstanceID = GetRawAuraInstanceID(auraData)
+        if hasAuraInstanceID == true and AuraInstanceAllowsHelpful(unit, auraInstanceID) then
+            if pending and ActivateItemAuraInstance(pending.spellID, pending.itemID, unit, auraInstanceID, true) then
+                table.remove(SpellScanner.pendingItemAuraCasts)
+                return
+            end
+            RecordRecentPlayerAura(unit, auraInstanceID, true)
+        end
+    end
+end
+
+local function HandleBagUpdateCooldown()
+    if not next(SpellScanner.registeredItemUseSpells) then return end
+    local hasRecentAura = SpellScanner.recentPlayerAuras[1] ~= nil
+
+    for useSpellID, itemID in pairs(SpellScanner.registeredItemUseSpells) do
+        if ItemCooldownRecentlyStarted(itemID) then
+            RecordPendingItemAuraCast(useSpellID, itemID)
+            if hasRecentAura and ActivateMostRecentPlayerAuraForItem(useSpellID, itemID) then
+                table.remove(SpellScanner.pendingItemAuraCasts)
+                return
+            end
+        end
+    end
+end
 
 ---------------------------------------------------------------------------
 -- DATABASE ACCESS
@@ -83,6 +360,34 @@ local function GetScannedItem(itemID)
         return db.items[itemID]
     end
     return nil
+end
+
+local function FindScannedItemByUseSpellID(useSpellID)
+    if not useSpellID then return nil end
+    local db = GetDB()
+    local items = db and db.items
+    if not items then return nil end
+
+    local lookupSpellID = tonumber(useSpellID) or useSpellID
+    for itemID, data in pairs(items) do
+        local itemUseSpellID = data and data.useSpellID
+        if itemUseSpellID and (tonumber(itemUseSpellID) or itemUseSpellID) == lookupSpellID then
+            return tonumber(itemID) or itemID
+        end
+    end
+    return nil
+end
+
+local function CopyScannedInfo(data)
+    if not data then return nil end
+    return {
+        useSpellID = data.useSpellID,
+        buffSpellID = data.buffSpellID,
+        duration = data.duration,
+        icon = data.icon,
+        name = data.name,
+        scannedAt = data.scannedAt,
+    }
 end
 
 local function SaveScannedSpell(castSpellID, data)
@@ -129,7 +434,17 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
     end
 
     -- Already scanned?
-    if GetScannedSpell(castSpellID) then
+    local scannedSpell = GetScannedSpell(castSpellID)
+    if scannedSpell then
+        if itemID and not GetScannedItem(itemID) then
+            SaveScannedItem(itemID, {
+                useSpellID = castSpellID,
+                buffSpellID = scannedSpell.buffSpellID,
+                duration = scannedSpell.duration,
+                icon = scannedSpell.icon,
+                name = scannedSpell.name,
+            })
+        end
         return true
     end
 
@@ -148,20 +463,12 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
         local icon = aura.icon
         local name = aura.name
 
-        -- Calculate how recently this buff was applied - wrap arithmetic in pcall
-        local buffAge = 999
-        pcall(function()
-            if expirationTime and duration and duration > 0 then
-                buffAge = duration - (expirationTime - now)
-            end
-        end)
+        local buffAge
+        if IsCleanNumber(expirationTime) and IsCleanPositiveDuration(duration) then
+            buffAge = duration - (expirationTime - now)
+        end
 
-        -- Look for buffs applied in last 2 seconds with meaningful duration (>= 3s)
-        -- Wrap comparison in pcall
-        local isRecentBuff = false
-        pcall(function()
-            isRecentBuff = buffAge < 2 and duration and duration >= 3
-        end)
+        local isRecentBuff = buffAge ~= nil and buffAge < 2 and duration >= 3
 
         if isRecentBuff then
             if not bestMatch or buffAge < bestMatch.age then
@@ -178,26 +485,29 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
     end
 
     if bestMatch then
-        -- Save the mapping
-        local success = SaveScannedSpell(castSpellID, {
-            buffSpellID = bestMatch.spellId,
-            duration = bestMatch.duration,
-            icon = bestMatch.icon,
-            name = bestMatch.name,
-        })
+        -- Save spell and item mappings in their own namespaces. Item use
+        -- spell IDs are implementation details of the item, so avoid writing
+        -- them into the generic spell map where they could affect unrelated
+        -- spell lookups.
+        local success
+        if itemID then
+            success = SaveScannedItem(itemID, {
+                useSpellID = castSpellID,
+                buffSpellID = bestMatch.spellId,
+                duration = bestMatch.duration,
+                icon = bestMatch.icon,
+                name = bestMatch.name,
+            })
+        else
+            success = SaveScannedSpell(castSpellID, {
+                buffSpellID = bestMatch.spellId,
+                duration = bestMatch.duration,
+                icon = bestMatch.icon,
+                name = bestMatch.name,
+            })
+        end
 
         if success then
-            -- Also save item mapping if this was an item use
-            if itemID then
-                SaveScannedItem(itemID, {
-                    useSpellID = castSpellID,
-                    buffSpellID = bestMatch.spellId,
-                    duration = bestMatch.duration,
-                    icon = bestMatch.icon,
-                    name = bestMatch.name,
-                })
-            end
-
             -- Immediately activate the buff
             SpellScanner.activeBuffs[castSpellID] = {
                 startTime = bestMatch.expirationTime - bestMatch.duration,
@@ -218,6 +528,7 @@ local function ScanSpellFromBuffs(castSpellID, itemID)
             if SpellScanner.onScanCallback then
                 SpellScanner.onScanCallback()
             end
+            NotifyScannerChanged(castSpellID, itemID)
 
             return true
         end
@@ -245,24 +556,57 @@ local function OnSpellCastSucceeded(unit, castGUID, spellID)
     if unit ~= "player" then return end
     if not spellID or spellID <= 0 then return end
 
-    -- Check if this spell is already scanned
-    local data = GetScannedSpell(spellID)
+    local registeredItemID = SpellScanner.registeredItemUseSpells[spellID]
+        or FindScannedItemByUseSpellID(spellID)
+    if registeredItemID then
+        SpellScanner.registeredItemUseSpells[spellID] = registeredItemID
+        RecordPendingItemAuraCast(spellID, registeredItemID)
+    end
+
+    -- Check if this cast is already scanned. Item mappings live under the
+    -- item ID; fall back to the generic spell map only for legacy data.
+    local itemData = registeredItemID and GetScannedItem(registeredItemID) or nil
+    local data = itemData or GetScannedSpell(spellID)
 
     if data then
+        if registeredItemID and not itemData then
+            SaveScannedItem(registeredItemID, {
+                useSpellID = spellID,
+                buffSpellID = data.buffSpellID,
+                duration = data.duration,
+                icon = data.icon,
+                name = data.name,
+            })
+        end
         -- Known spell: activate buff tracking (if we have valid duration data)
         local duration = data.duration
-        if duration and type(duration) == "number" and duration > 0 then
+        if IsCleanPositiveDuration(duration) then
             local now = GetTime()
             SpellScanner.activeBuffs[spellID] = {
                 startTime = now,
                 duration = duration,
                 expirationTime = now + duration,
-                source = "spell",
-                sourceId = spellID,
+                source = registeredItemID and "item" or "spell",
+                sourceId = registeredItemID or spellID,
             }
             EnsureCleanupTicker()
         end
+        NotifyScannerChanged(spellID, registeredItemID)
         -- Even without duration data, we treat this as "known" and skip further scanning
+        return
+    end
+
+    if registeredItemID then
+        if InCombatLockdown() then
+            SpellScanner.pendingScanning[spellID] = {
+                timestamp = GetTime(),
+                itemID = registeredItemID,
+            }
+        else
+            C_Timer.After(0.3, function()
+                ScanSpellFromBuffs(spellID, registeredItemID)
+            end)
+        end
         return
     end
 
@@ -291,7 +635,8 @@ local function CleanupExpiredBuffs()
     local now = GetTime()
     local hasAny = false
     for spellID, data in pairs(SpellScanner.activeBuffs) do
-        if data.expirationTime and data.expirationTime < now then
+        local expirationTime = data.expirationTime
+        if IsCleanNumber(expirationTime) and expirationTime < now then
             SpellScanner.activeBuffs[spellID] = nil
         else
             hasAny = true
@@ -320,8 +665,15 @@ function SpellScanner.IsSpellActive(spellID)
     if not spellID then return false end
 
     local buff = SpellScanner.activeBuffs[spellID]
-    if buff and buff.expirationTime > GetTime() then
-        return true, buff.expirationTime, buff.duration
+    if buff then
+        if buff.hasAuraInstanceID == true then
+            if AuraInstanceIsStillPresent(buff.auraUnit or "player", buff.auraInstanceID, true) then
+                return true, buff.expirationTime, buff.duration, buff.auraInstanceID, buff.auraUnit or "player"
+            end
+            SpellScanner.activeBuffs[spellID] = nil
+        elseif IsFutureExpiration(buff.expirationTime, GetTime()) then
+            return true, buff.expirationTime, buff.duration, nil, nil
+        end
     end
 
     -- Also check if this is a known spell with buff still applied
@@ -329,8 +681,8 @@ function SpellScanner.IsSpellActive(spellID)
     local data = GetScannedSpell(spellID)
     if data and data.buffSpellID and not InCombatLockdown() then
         local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, data.buffSpellID)
-        if ok and aura and aura.expirationTime then
-            return true, aura.expirationTime, aura.duration
+        if ok and aura and IsFutureExpiration(aura.expirationTime, GetTime()) then
+            return true, aura.expirationTime, aura.duration, GetRawAuraInstanceID(aura), "player"
         end
     end
 
@@ -347,7 +699,38 @@ function SpellScanner.IsItemActive(itemID)
         return SpellScanner.IsSpellActive(data.useSpellID)
     end
 
+    for useSpellID, registeredItemID in pairs(SpellScanner.registeredItemUseSpells) do
+        if registeredItemID == itemID then
+            return SpellScanner.IsSpellActive(useSpellID)
+        end
+    end
+
     return false
+end
+
+function SpellScanner.GetScannedSpellInfo(spellID)
+    return CopyScannedInfo(GetScannedSpell(spellID))
+end
+
+function SpellScanner.GetScannedItemInfo(itemID)
+    return CopyScannedInfo(GetScannedItem(itemID))
+end
+
+function SpellScanner.RegisterItemUseSpell(itemID, useSpellID)
+    if not itemID or not useSpellID then return false end
+    SpellScanner.registeredItemUseSpells[useSpellID] = itemID
+
+    local data = GetScannedSpell(useSpellID)
+    if data and not GetScannedItem(itemID) then
+        SaveScannedItem(itemID, {
+            useSpellID = useSpellID,
+            buffSpellID = data.buffSpellID,
+            duration = data.duration,
+            icon = data.icon,
+            name = data.name,
+        })
+    end
+    return true
 end
 
 -- Check if a spellID has been scanned
@@ -399,6 +782,8 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+eventFrame:RegisterEvent("BAG_UPDATE_COOLDOWN")
+eventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
 eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3)
     if event == "ADDON_LOADED" then
@@ -413,6 +798,12 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3)
 
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         OnSpellCastSucceeded(arg1, arg2, arg3)
+
+    elseif event == "BAG_UPDATE_COOLDOWN" then
+        HandleBagUpdateCooldown()
+
+    elseif event == "UNIT_AURA" then
+        HandleUnitAura(arg1, arg2)
     end
 end)
 

@@ -404,12 +404,11 @@ end
 -- CAST → AURA CORRELATION
 --
 -- Bridges the active-aura index for auras whose addedAuras payload arrives
--- with secret spellId AND secret name (the residual case where neither
--- direct identity nor name lookup can match). UNIT_SPELLCAST_SUCCEEDED
--- on the player carries a clean spell ID; if an owned identity-redacted
--- payload lands within CAST_CORRELATION_WINDOW seconds, synthesize a
--- runtime-only active-aura entry keyed by the cast spellID so configured
--- cast-ID trackers can still resolve the current auraInstanceID.
+-- after a player cast. UNIT_SPELLCAST_SUCCEEDED carries a clean cast spellID;
+-- if a player HELPFUL aura lands within CAST_CORRELATION_WINDOW seconds,
+-- synthesize a runtime-only active-aura entry keyed by that cast spellID so
+-- configured cast-ID trackers can resolve the current auraInstanceID even
+-- when the applied aura's spellID/name differs from the cast/cooldown ID.
 ---------------------------------------------------------------------------
 local CAST_CORRELATION_WINDOW = 0.1
 
@@ -489,15 +488,15 @@ local okName = true; local cleanName, cleanNameKey = (function()
     local auraFilter = ResolveCapturedAuraFilter(unit, ad, instID, explicitFilter)
 
     -- Cast→aura correlation. UNIT_SPELLCAST_SUCCEEDED only fires on us.
-    -- Use it only as a rescue key when the payload has no usable spell/name
-    -- identity; filing every clean aura under the most recent cast can make
-    -- unrelated auras satisfy a CDM lookup until the aura falls off.
+    -- Store a secondary runtime key under the recent cast spellID. The
+    -- authoritative keys remain the aura's own spellID/name when present;
+    -- this cast key exists only to cover cast-ID vs aura-ID mismatches on
+    -- non-mirrored custom entries in combat.
     local castSID
     if allowCastCorrelation == nil then
         allowCastCorrelation = unit == "player" and auraFilter == "HELPFUL"
     end
-    local needsCastCorrelation = not sid and not name
-    if allowCastCorrelation and needsCastCorrelation then
+    if allowCastCorrelation then
         castSID = FindCorrelatedCast(GetTime())
     end
 
@@ -519,9 +518,9 @@ local okName = true; local cleanName, cleanNameKey = (function()
     if nameKey then
         StoreCapturedNameKey(unit, nameKey, entry)
     end
-    -- Synthesize a capture entry under the cast spellID only for identity-
-    -- redacted payloads. Clean payloads already have their real spell/name
-    -- keys and should not be aliased to an unrelated cast.
+    -- Synthesize a capture entry under the cast spellID when the cast ID
+    -- differs from the aura ID. Keep an existing cast-key entry stable until
+    -- it is evicted by the corresponding removedAuraInstanceIDs payload.
     if castSID and castSID ~= sid and not _capturedAuraBySpellID[castSID] then
         StoreCapturedSpellKey(unit, castSID, entry)
     end
@@ -2854,6 +2853,14 @@ local function AttachCatalogAuraIDs(resolved, ...)
     end
 end
 
+local function ResolveBestOwnedItemVariant(itemID)
+    if not itemID then return nil end
+    if Sources and Sources.QueryBestOwnedItemVariant then
+        return Sources.QueryBestOwnedItemVariant(itemID) or itemID
+    end
+    return itemID
+end
+
 -- Resolve a single owned entry to a spell data table compatible with
 -- the existing icon/bar building pipeline.
 local function ResolveOwnedEntry(entry, containerKey, index)
@@ -2996,8 +3003,10 @@ local function ResolveOwnedEntry(entry, containerKey, index)
     elseif entry.type == "item" then
         -- Item IDs must NOT be stored as spellID — they are different ID spaces.
         -- spellID/overrideSpellID stay nil; item-specific code paths use entry.id.
-        resolved.id = entry.id
-        local itemName = Sources and Sources.QueryItemNameByID and Sources.QueryItemNameByID(entry.id)
+        local itemID = ResolveBestOwnedItemVariant(entry.id)
+        resolved.id = itemID
+        resolved.itemID = itemID
+        local itemName = Sources and Sources.QueryItemNameByID and Sources.QueryItemNameByID(itemID)
         if itemName then
             resolved.name = itemName
         end
@@ -3823,7 +3832,13 @@ function CDMSpellData:AddEntry(containerKey, entry)
     -- older {id=N} shape which NormalizeOwnedEntry handles.
     for _, existing in ipairs(list) do
         local norm = NormalizeOwnedEntry(existing)
-        if norm and norm.type == entry.type and norm.id == entry.id then
+        local existingID = norm and norm.id
+        local entryID = entry.id
+        if norm and norm.type == "item" and entry.type == "item" then
+            existingID = ResolveBestOwnedItemVariant(existingID)
+            entryID = ResolveBestOwnedItemVariant(entryID)
+        end
+        if norm and norm.type == entry.type and existingID == entryID then
             return false  -- already exists
         end
     end
@@ -4317,6 +4332,32 @@ local okItem = true; local itemInfo = C_SpellBook.GetSpellBookItemInfo(slotIndex
     return result
 end
 
+local function GetItemProfessionQualityRank(itemInfo)
+    if not itemInfo or not (Sources and Sources.QueryItemProfessionQualityInfo) then
+        return 0
+    end
+
+    local info = Sources.QueryItemProfessionQualityInfo(itemInfo)
+    if issecretvalue and issecretvalue(info) then return 0 end
+    if type(info) ~= "table" then return 0 end
+    local quality = info.quality
+    if issecretvalue and issecretvalue(quality) then return 0 end
+    if type(quality) == "number" then return quality end
+    return 0
+end
+
+local function SortBagItemsByProfessionQuality(items)
+    if type(items) ~= "table" or #items <= 1 then return end
+    table.sort(items, function(a, b)
+        local aq = (type(a) == "table" and a._professionQualityRank) or 0
+        local bq = (type(b) == "table" and b._professionQualityRank) or 0
+        if aq ~= bq then return aq > bq end
+        local ao = (type(a) == "table" and a._bagOrder) or 0
+        local bo = (type(b) == "table" and b._bagOrder) or 0
+        return ao < bo
+    end)
+end
+
 function CDMSpellData:GetUsableItems()
     local result = {}
 
@@ -4352,6 +4393,7 @@ function CDMSpellData:GetUsableItems()
     end
 
     -- Scan bags for items with on-use spells
+    local bagItems = {}
     if C_Container and C_Container.GetContainerNumSlots then
         for bag = 0, 4 do
 local okN = true; local numSlots = C_Container.GetContainerNumSlots(bag)
@@ -4366,13 +4408,20 @@ local okC = true; local containerInfo = C_Container.GetContainerItemInfo(bag, sl
                             if spellName then
                                 local name = containerInfo.itemName or ""
                                 local icon = containerInfo.iconFileID or 0
-                                result[#result + 1] = {
+                                local qualityLookup = itemID
+                                local hyperlink = containerInfo.hyperlink
+                                if hyperlink and not (issecretvalue and issecretvalue(hyperlink)) then
+                                    qualityLookup = hyperlink
+                                end
+                                bagItems[#bagItems + 1] = {
                                     type = "item",
                                     id = itemID,
                                     itemID = itemID,
                                     name = name,
                                     icon = icon,
                                     slotID = nil,
+                                    _bagOrder = #bagItems + 1,
+                                    _professionQualityRank = GetItemProfessionQualityRank(qualityLookup),
                                 }
                             end
                         end
@@ -4380,6 +4429,12 @@ local okC = true; local containerInfo = C_Container.GetContainerItemInfo(bag, sl
                 end
             end
         end
+    end
+    SortBagItemsByProfessionQuality(bagItems)
+    for _, item in ipairs(bagItems) do
+        item._bagOrder = nil
+        item._professionQualityRank = nil
+        result[#result + 1] = item
     end
 
     return result

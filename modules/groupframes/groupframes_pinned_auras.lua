@@ -372,7 +372,7 @@ local function UpdateIndicatorData(ind, unit, slot, auraData, showSwipe)
             local dur = auraData.duration
             local expTime = auraData.expirationTime
             if dur and expTime then
-                ApplyCooldownFromAura(ind.cooldown, unit, auraData.auraInstanceID, expTime, dur)
+                ApplyCooldownFromAura(ind.cooldown, unit, auraData.auraInstanceID, expTime, dur, nil, auraData.timeMod)
             else
                 ind.cooldown:Clear()
             end

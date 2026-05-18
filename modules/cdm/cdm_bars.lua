@@ -41,6 +41,14 @@ local math_floor = math.floor
 local CreateFrame = CreateFrame
 local issecretvalue = issecretvalue
 
+local function ResolveBestOwnedItemVariant(itemID)
+    if not itemID then return nil end
+    if Sources and Sources.QueryBestOwnedItemVariant then
+        return Sources.QueryBestOwnedItemVariant(itemID) or itemID
+    end
+    return itemID
+end
+
 ---------------------------------------------------------------------------
 -- CONSTANTS
 ---------------------------------------------------------------------------
@@ -904,6 +912,8 @@ end
 -- Phase B.3: drive bar fill from item / trinket-slot cooldowns. Custom
 -- auraBar containers accept item entries alongside spells; duration-bar
 -- rendering needs its own path since aura resolution is aura-only.
+local BuildBarCooldownStateContext
+
 local function StoreBarRuntimeState(bar, mode, active, extra)
     if not (ns.CDMRuntimeStore and ns.CDMRuntimeStore.SetBarState) then return end
     local state = {
@@ -919,13 +929,65 @@ local function StoreBarRuntimeState(bar, mode, active, extra)
     ns.CDMRuntimeStore.SetBarState(bar, state)
 end
 
+local function ApplyResolvedItemBarDurationObject(bar, itemID, r)
+    local durObj = r and r.durObj
+    if not durObj or type(durObj) == "number" then
+        return false
+    end
+    if not (bar and bar.StatusBar and bar.StatusBar.SetTimerDuration) then
+        return false
+    end
+
+    local ok = SetStatusBarTimerDuration(bar.StatusBar, durObj)
+    if not ok then
+        return false
+    end
+
+    bar._active = true
+    bar._hideDurationText = nil
+    bar._hasAuraExpirationTime = r.hasExpirationTime
+    bar._durObj = durObj
+    bar._cSideFill = true
+    bar._preferDurObjFill = true
+
+    local startTime
+    local duration
+    if r.numericCooldownActive == true
+       and type(r.start) == "number"
+       and type(r.duration) == "number" then
+        startTime = r.start
+        duration = r.duration
+        bar._totalDuration = duration
+        bar._expirationTime = startTime + duration
+    else
+        bar._totalDuration = nil
+        bar._expirationTime = nil
+    end
+
+    WriteDurationTextFromDurationObject(bar, durObj)
+    EnsureBarTimerRunning()
+    StoreBarRuntimeState(bar, r.mode or "item-cooldown", true, {
+        itemID = itemID,
+        spellID = r.spellID,
+        durObj = durObj,
+        start = startTime,
+        duration = duration,
+        isOnCooldown = r.isOnCooldown == true,
+        rechargeActive = r.rechargeActive == true,
+        hasCharges = r.hasCharges == true,
+        hasChargesRemaining = r.hasChargesRemaining == true,
+        hasExpirationTime = r.hasExpirationTime,
+    })
+    return true
+end
+
 local function UpdateItemBarCooldown(bar, entry)
     local itemID
     if entry.type == "slot" or entry.type == "trinket" then
         itemID = Sources and Sources.QueryInventoryItemID
             and Sources.QueryInventoryItemID("player", entry.id)
     else
-        itemID = entry.id
+        itemID = ResolveBestOwnedItemVariant(entry.id)
     end
 
     -- Texture refresh (trinket swap case)
@@ -945,12 +1007,26 @@ local function UpdateItemBarCooldown(bar, entry)
         if n then bar.NameText.SetText(bar.NameText, n) end
     end
 
-    -- Active-state detection: SpellScanner maps item → buff spellID; if
-    -- the buff is up on the player, treat the item as active (filled bar
-    -- from aura duration). Falls back to cooldown display otherwise.
+    -- Active-state detection: scanned item/spell mappings can point from an
+    -- item use spell to a different aura spellID. Treat that aura as the
+    -- active phase before falling back to cooldown display.
     local scanner = _G.QUI and _G.QUI.SpellScanner
     local isActive, auraDur, auraRemaining
-    if scanner and scanner.IsItemActive and itemID then
+    if Sources and Sources.QueryScannedItemAuraInfo and itemID then
+        local scanned = Sources.QueryScannedItemAuraInfo(itemID)
+        if scanned and scanned.active == true then
+            local readableDuration = ReadNumber(scanned.duration, nil)
+            local readableExpiration = ReadNumber(scanned.expiration, nil)
+            if readableDuration and readableDuration > 0 then
+                isActive = true
+                auraDur = readableDuration
+                if readableExpiration then
+                    auraRemaining = readableExpiration - GetTime()
+                end
+            end
+        end
+    end
+    if not isActive and scanner and scanner.IsItemActive and itemID then
         local active, expiration, duration = scanner.IsItemActive(itemID)
         local readableDuration = duration
         local readableExpiration = expiration
@@ -967,6 +1043,9 @@ local function UpdateItemBarCooldown(bar, entry)
         bar._active = true
         bar._hideDurationText = nil
         bar._hasAuraExpirationTime = nil
+        bar._durObj = nil
+        bar._cSideFill = nil
+        bar._preferDurObjFill = nil
         bar._totalDuration = auraDur
         bar._expirationTime = GetTime() + auraRemaining
         SetStatusBarValue(bar.StatusBar, auraRemaining / auraDur)
@@ -984,15 +1063,24 @@ local function UpdateItemBarCooldown(bar, entry)
     local startTime = r and r.start
     local duration = r and r.duration
 
+    if r and (r.isActive == true or r.isOnCooldown == true)
+       and ApplyResolvedItemBarDurationObject(bar, itemID, r) then
+        return
+    end
+
     if r and r.mode == "item-cooldown"
        and r.isOnCooldown == true
        and r.numericCooldownActive == true
-       and startTime and duration then
+       and type(startTime) == "number"
+       and type(duration) == "number" then
         local remaining = (startTime + duration) - GetTime()
         if remaining > 0 then
             bar._active = true
             bar._hideDurationText = nil
             bar._hasAuraExpirationTime = nil
+            bar._durObj = nil
+            bar._cSideFill = nil
+            bar._preferDurObjFill = nil
             bar._totalDuration = duration
             bar._expirationTime = startTime + duration
             SetStatusBarValue(bar.StatusBar, remaining / duration)
@@ -1015,6 +1103,8 @@ local function UpdateItemBarCooldown(bar, entry)
     bar._active = false
     bar._hideDurationText = nil
     bar._hasAuraExpirationTime = nil
+    bar._durObj = nil
+    bar._cSideFill = nil
     bar._totalDuration = nil
     bar._expirationTime = nil
     bar._preferDurObjFill = nil
@@ -1034,7 +1124,7 @@ local _barCooldownStateContextOptions = {
     fallbackContainerKey = "trackedBar",
 }
 
-local function BuildBarCooldownStateContext(bar, entry, spellID)
+function BuildBarCooldownStateContext(bar, entry, spellID)
     local resolvers = ns.CDMResolvers
     local builder = resolvers and resolvers.BuildCooldownStateContext
     if not builder then return nil end

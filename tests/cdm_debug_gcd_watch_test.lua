@@ -82,6 +82,21 @@ local icon = {
     IsShown = function() return true end,
 }
 
+local slotIcon = {
+    _runtimeSpellID = nil,
+    _spellEntry = {
+        name = "Equipped Trinket",
+        id = 13,
+        viewerType = "essential",
+        kind = "cooldown",
+        type = "slot",
+    },
+    Cooldown = {
+        GetDrawSwipe = function() return false end,
+    },
+    IsShown = function() return true end,
+}
+
 local queryCount = 0
 local ns = {
     Helpers = {
@@ -118,7 +133,7 @@ local ns = {
     },
     CDMIconFactory = {
         _iconPools = {
-            essential = { icon },
+            essential = { icon, slotIcon },
         },
     },
     CDMSources = {
@@ -137,6 +152,21 @@ local ns = {
         end,
         QuerySpellCharges = function()
             return nil
+        end,
+        QueryInventoryItemID = function(unit, slotID)
+            if unit == "player" and slotID == 13 then
+                return 249344
+            end
+            return nil
+        end,
+        QueryItemSpell = function(itemID)
+            if itemID == 249344 then
+                return "Trinket Use", 1236994
+            end
+            return nil, nil
+        end,
+        QueryBestOwnedItemVariant = function(itemID)
+            return itemID
         end,
     },
     _OwnedSwipe = {
@@ -165,10 +195,16 @@ watchFrame:onUpdate(0.25)
 now = 101.10
 watchFrame:onUpdate(0.60)
 
+SlashCmdList["QUI_CDMDEBUG"]("spell 249344 aura 1")
+assert(watchFrame and watchFrame.onUpdate,
+    "/cdmdebug spell aura should match equipped trinket item IDs for slot entries")
+
 print = originalPrint
 
 local output = table.concat(lines, "\n")
 assert(output:find("watching", 1, true), "/cdmdebug spell watch should announce watch mode")
+assert(output:find("watching '249344'", 1, true),
+    "/cdmdebug spell aura should announce a watch for the equipped trinket item ID")
 assert(output:find("+0.", 1, true), "/cdmdebug spell watch should print timed samples")
 assert(output:find("mode=gcd%-only"), "/cdmdebug spell watch should preserve resolver mode return value")
 assert(output:find("ended", 1, true), "/cdmdebug spell watch should announce watch end")

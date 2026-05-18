@@ -502,11 +502,11 @@ local function StyleHeaderChildren(header, settings, isBuff)
             end)
         end
 
-        -- Cooldown swipe + text: both go fully C-side.
-        --   • Swipe via DurationObject (ApplyCooldownFromAura prefers
-        --     C_UnitAuras.GetAuraDuration → SetCooldownFromDurationObject —
-        --     never touches expirationTime/duration in Lua when an
-        --     auraInstanceID is available).
+        -- Cooldown swipe + text:
+        --   • DurationObject drives normal display and keeps secret-capable
+        --     aura timing on the C-side.
+        --   • Clean AuraData expiration/duration is only a fallback when the
+        --     DurationObject path cannot be used.
         --   • Text via Blizzard's built-in countdown (ConfigureAuraCooldownFrame
         --     calls SetHideCountdownNumbers(false)). Blizzard's C-side renderer
         --     handles secret remaining time natively.
@@ -518,7 +518,8 @@ local function StyleHeaderChildren(header, settings, isBuff)
                 data.auraInstanceID,
                 data.expirationTime,
                 data.duration,
-                true
+                true,
+                data.timeMod
             )
             -- Swipe settings
             local showSwipe = not settings.hideSwipe

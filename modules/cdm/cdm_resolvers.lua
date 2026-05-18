@@ -175,6 +175,20 @@ local function ResolverIsSecretValue(value)
     return false
 end
 
+local function HasOpaqueValue(value)
+    if ResolverIsSecretValue(value) then
+        return true
+    end
+    return value ~= nil
+end
+
+local function CleanOpaqueValue(value)
+    if ResolverIsSecretValue(value) then
+        return nil
+    end
+    return value
+end
+
 function CDMResolvers.GetCooldownInfoField(info, key)
     -- Returns (value, isSecret). Combat-restricted fields may be secret when
     -- the Blizzard CDM feed is active; callers may pass the raw value to safe
@@ -214,7 +228,10 @@ function CDMResolvers.IsCooldownInfoRealCooldown(info)
         return false
     end
 
-    local enabled = CDMResolvers.GetCooldownInfoField(info, "isEnabled")
+    local enabled, enabledSecret = CDMResolvers.GetCooldownInfoField(info, "isEnabled")
+    if enabledSecret then
+        return nil
+    end
     if enabled == false then
         return false
     end
@@ -276,6 +293,14 @@ local function IsItemLikeEntry(entry)
     return entry and (entry.type == "item" or entry.type == "trinket" or entry.type == "slot")
 end
 
+local function ResolveBestOwnedItemVariant(itemID)
+    if not itemID then return nil end
+    if Sources and Sources.QueryBestOwnedItemVariant then
+        return Sources.QueryBestOwnedItemVariant(itemID) or itemID
+    end
+    return itemID
+end
+
 local function QueryItemUseSpellID(itemID)
     if not itemID then return nil end
 
@@ -309,7 +334,7 @@ local function ResolveItemCooldownIdentity(entry)
 
     local itemID, slotID
     if entry.type == "item" then
-        itemID = entry.id
+        itemID = ResolveBestOwnedItemVariant(entry.id)
     elseif entry.type == "trinket" or entry.type == "slot" then
         slotID = entry.id
         if Sources and Sources.QueryInventoryItemID then
@@ -425,7 +450,7 @@ function CDMResolvers.GetEntryTexture(entry)
     if entry.type == "item" then
         local _, _, _, _, icon
         if Sources and Sources.QueryItemInfoInstant then
-            _, _, _, _, icon = Sources.QueryItemInfoInstant(entry.id)
+            _, _, _, _, icon = Sources.QueryItemInfoInstant(ResolveBestOwnedItemVariant(entry.id))
         end
         return icon
     end
@@ -987,8 +1012,9 @@ function CDMResolvers.ResolveAuraActiveState(entry)
         addMappedLookups(entry.spellID)
         addMappedLookups(entry.id)
         local captured = CDMSpellData.GetCapturedAuraForLookup(lookupIDs, entry.name)
-        if captured and captured.auraInstanceID then
-            return true, captured.unit or "player", captured.auraInstanceID
+        local auraInstanceID = captured and captured.auraInstanceID
+        if captured and HasOpaqueValue(auraInstanceID) then
+            return true, captured.unit or "player", auraInstanceID
         end
     end
 
@@ -1070,10 +1096,18 @@ local function QueryCapturedPlayerAuraDuration(spellID, name)
     local lookupIDs = {}
     local seen = {}
     local function addLookup(id)
-        if not id then return end
+        if ResolverIsSecretValue(id) then return end
+        if id == nil then return end
+        local idType = type(id)
+        if idType ~= "number" and idType ~= "string" then return end
         if seen[id] then return end
         seen[id] = true
         lookupIDs[#lookupIDs + 1] = id
+    end
+    local function addCooldownAuraLookup(id)
+        if ResolverIsSecretValue(id) or id == nil then return end
+        if not (Sources and Sources.QueryCooldownAuraBySpellID) then return end
+        addLookup(Sources.QueryCooldownAuraBySpellID(id))
     end
 
     if CDMSpellData.GetAuraIDsForSpell and spellID then
@@ -1084,16 +1118,18 @@ local function QueryCapturedPlayerAuraDuration(spellID, name)
             end
         end
     end
+    addCooldownAuraLookup(spellID)
     addLookup(spellID)
 
     local captured = CDMSpellData.GetCapturedAuraForLookup(
         lookupIDs, name, PLAYER_AURA_CAPTURE_LOOKUP_UNITS, false)
     local auraInstanceID = captured and captured.auraInstanceID
-    if not auraInstanceID then
+    if not HasOpaqueValue(auraInstanceID) then
         return nil
     end
 
-    return Sources.QueryAuraDuration(captured.unit or "player", auraInstanceID)
+    return Sources.QueryAuraDuration(captured.unit or "player", auraInstanceID),
+        captured.spellID
 end
 
 local function QueryPlayerAuraDurationBySpellID(rawSpellID, name)
@@ -1101,13 +1137,13 @@ local function QueryPlayerAuraDurationBySpellID(rawSpellID, name)
         return nil
     end
 
-    local capturedDurObj = QueryCapturedPlayerAuraDuration(rawSpellID, name)
+    local capturedDurObj, capturedAuraSpellID = QueryCapturedPlayerAuraDuration(rawSpellID, name)
     if capturedDurObj then
-        return capturedDurObj
+        return capturedDurObj, capturedAuraSpellID
     end
 
     local function queryAuraData(auraSpellID)
-        if not auraSpellID then return nil end
+        if ResolverIsSecretValue(auraSpellID) or auraSpellID == nil then return nil end
         if Sources.QueryUnitAuraBySpellID then
             local auraData = Sources.QueryUnitAuraBySpellID("player", auraSpellID)
             if auraData then return auraData end
@@ -1126,17 +1162,17 @@ local function QueryPlayerAuraDurationBySpellID(rawSpellID, name)
     local function queryDuration(auraSpellID)
         local auraData = queryAuraData(auraSpellID)
         local auraInstanceID = GetAuraDataInstanceID(auraData)
-        if not auraInstanceID then return nil end
+        if not HasOpaqueValue(auraInstanceID) then return nil end
 
-        return Sources.QueryAuraDuration("player", auraInstanceID)
+        return Sources.QueryAuraDuration("player", auraInstanceID), auraSpellID
     end
 
     if Sources.QueryCooldownAuraBySpellID then
         local auraSpellID = Sources.QueryCooldownAuraBySpellID(rawSpellID)
-        if auraSpellID then
+        if not ResolverIsSecretValue(auraSpellID) and auraSpellID ~= nil then
             local durObj = queryDuration(auraSpellID)
             if durObj then
-                return durObj
+                return durObj, auraSpellID
             end
         end
     end
@@ -1166,7 +1202,7 @@ local function QueryPlayerAuraDurationByName(name)
     end
 
     local auraInstanceID = GetAuraDataInstanceID(auraData)
-    if not auraInstanceID then return nil end
+    if not HasOpaqueValue(auraInstanceID) then return nil end
 
     return Sources.QueryAuraDuration("player", auraInstanceID)
 end
@@ -1777,7 +1813,7 @@ local function ResolveMirrorAuraData(m, auraUnit, active, mode)
     if m and type(m.auraData) == "table" then
         return m.auraData
     end
-    if not (m and m.auraInstanceID and auraUnit
+    if not (m and HasOpaqueValue(m.auraInstanceID) and auraUnit
         and Sources and Sources.QueryAuraDataByAuraInstanceID) then
         return nil
     end
@@ -1923,13 +1959,127 @@ end
 local QueryItemCooldown
 local QuerySlotCooldown
 
+local function BuildDurationObjectFromStart(startTime, duration)
+    local startSecret = ResolverIsSecretValue(startTime)
+    local durationSecret = ResolverIsSecretValue(duration)
+    if not startSecret and startTime == nil then return nil end
+    if not durationSecret and duration == nil then return nil end
+    if not (C_DurationUtil and C_DurationUtil.CreateDuration) then return nil end
+
+    local okCreate, durObj = pcall(C_DurationUtil.CreateDuration)
+    if not okCreate or not durObj or not durObj.SetTimeFromStart then
+        return nil
+    end
+
+    local okSet = pcall(durObj.SetTimeFromStart, durObj, startTime, duration)
+    if okSet then return durObj end
+    return nil
+end
+
+local function CleanItemCooldownIsDisabled(enabled, requireEnabledOne)
+    if ResolverIsSecretValue(enabled) then
+        return false
+    end
+    if enabled == 0 or enabled == false then
+        return true
+    end
+    if requireEnabledOne
+        and enabled ~= nil
+        and enabled ~= 1
+        and enabled ~= true then
+        return true
+    end
+    return false
+end
+
+local function CleanItemCooldownIsInactive(startTime, duration, enabled, requireEnabledOne)
+    if CleanItemCooldownIsDisabled(enabled, requireEnabledOne) then
+        return true
+    end
+    if ResolverIsSecretValue(startTime) or ResolverIsSecretValue(duration) then
+        return false
+    end
+    if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) then
+        return true
+    end
+    if startTime <= 0 then
+        return true
+    end
+    if duration <= GCD_MAX_DURATION then
+        return true
+    end
+    if (startTime + duration) <= GetTime() then
+        return true
+    end
+    return false
+end
+
+local function CleanItemCooldownIsActive(startTime, duration, enabled, requireEnabledOne)
+    if CleanItemCooldownIsDisabled(enabled, requireEnabledOne) then
+        return false
+    end
+    if ResolverIsSecretValue(startTime) or ResolverIsSecretValue(duration) then
+        return false
+    end
+    return IsSafeNumeric(startTime)
+        and IsSafeNumeric(duration)
+        and startTime > 0
+        and duration > GCD_MAX_DURATION
+        and (startTime + duration) > GetTime()
+end
+
+local function HasItemCooldownTiming(startTime, duration, enabled)
+    return startTime ~= nil or duration ~= nil or enabled ~= nil
+end
+
 local function ResolveItemDurationObjectForIcon(icon, entry)
     local itemID, slotID, itemSpellID, keySource = ResolveItemCooldownIdentity(entry)
     if not itemID then return nil, "inactive", nil, nil, nil, nil end
 
+    local startTime, duration, enabled
+    local requireEnabledOne = slotID ~= nil
+    local itemCooldownKnown = false
+    if slotID then
+        startTime, duration, enabled = QuerySlotCooldown(slotID)
+        itemCooldownKnown = HasItemCooldownTiming(startTime, duration, enabled)
+        if CleanItemCooldownIsInactive(startTime, duration, enabled, true) then
+            local itemStart, itemDuration, itemEnabled = QueryItemCooldown(itemID)
+            itemCooldownKnown = itemCooldownKnown or HasItemCooldownTiming(itemStart, itemDuration, itemEnabled)
+            if not CleanItemCooldownIsInactive(itemStart, itemDuration, itemEnabled, false) then
+                startTime = itemStart
+                duration = itemDuration
+                enabled = itemEnabled
+                requireEnabledOne = false
+            end
+        end
+    else
+        startTime, duration, enabled = QueryItemCooldown(itemID)
+        itemCooldownKnown = HasItemCooldownTiming(startTime, duration, enabled)
+    end
+
+    if not CleanItemCooldownIsInactive(startTime, duration, enabled, requireEnabledOne) then
+        local cleanNumericActive = CleanItemCooldownIsActive(startTime, duration, enabled, requireEnabledOne)
+        local itemDurObj = BuildDurationObjectFromStart(startTime, duration)
+        if itemDurObj then
+            return itemDurObj, "item-cooldown",
+                "item-duration:" .. tostring(keySource),
+                cleanNumericActive and startTime or nil,
+                cleanNumericActive and duration or nil,
+                itemSpellID
+        end
+
+        if cleanNumericActive then
+            return nil, "item-cooldown",
+                "item:" .. tostring(keySource) .. ":" .. tostring(startTime) .. ":" .. tostring(duration),
+                startTime, duration, itemSpellID
+        end
+    elseif itemCooldownKnown then
+        return nil, "inactive", nil, nil, nil, itemSpellID
+    end
+
     if itemSpellID then
         local cdInfo = QueryCooldown(itemSpellID)
-        local cdInfoActive = cdInfo and GetCooldownInfoField(cdInfo, "isActive")
+        local cdInfoActive = cdInfo and IsCooldownInfoActive(cdInfo)
         if cdInfoActive == true and GetCurrentIsOnGCD(itemSpellID, cdInfo) ~= true then
             local durObj = QueryDuration(itemSpellID)
             if durObj then
@@ -1940,23 +2090,6 @@ local function ResolveItemDurationObjectForIcon(icon, entry)
         end
     end
 
-    local startTime, duration
-    if slotID then
-        startTime, duration = QuerySlotCooldown(slotID)
-    else
-        startTime, duration = QueryItemCooldown(itemID)
-    end
-
-    if IsSafeNumeric(startTime)
-       and IsSafeNumeric(duration)
-       and startTime > 0
-       and duration > GCD_MAX_DURATION
-       and (startTime + duration) > GetTime() then
-        return nil, "item-cooldown",
-            "item:" .. tostring(keySource) .. ":" .. tostring(startTime) .. ":" .. tostring(duration),
-            startTime, duration, itemSpellID
-    end
-
     return nil, "inactive", nil, nil, nil, itemSpellID
 end
 
@@ -1965,18 +2098,6 @@ QueryItemCooldown = function(itemID)
         return nil, nil, nil
     end
     local startTime, duration, enabled = Sources.QueryItemCooldown(itemID)
-    if ResolverIsSecretValue(enabled) then
-        return nil, nil, nil
-    end
-    if enabled == 0 or enabled == false then
-        return nil, nil, nil
-    end
-    if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) then
-        return nil, nil, nil
-    end
-    if duration <= 0 then
-        return nil, nil, nil
-    end
     return startTime, duration, enabled
 end
 
@@ -1984,20 +2105,11 @@ QuerySlotCooldown = function(slotID)
     if not slotID or not GetInventoryItemCooldown then
         return nil, nil, nil
     end
-    local startTime, duration, enabled = GetInventoryItemCooldown("player", slotID)
-    if ResolverIsSecretValue(enabled) then
-        return nil, nil, nil
+    local ok, startTime, duration, enabled = pcall(GetInventoryItemCooldown, "player", slotID)
+    if ok then
+        return startTime, duration, enabled
     end
-    if enabled ~= 1 then
-        return nil, nil, nil
-    end
-    if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) then
-        return nil, nil, nil
-    end
-    if duration <= GCD_MAX_DURATION then
-        return nil, nil, nil
-    end
-    return startTime, duration, enabled
+    return nil, nil, nil
 end
 
 local _cooldownStateCountScratch = {
@@ -2276,21 +2388,52 @@ local function ApplyMirrorPayloadToCooldownState(state, payload)
     return true
 end
 
+local function ApplyCleanItemAuraTiming(state, itemID, spellID, resolvedAuraSpellID, auraUnit, auraInstanceID,
+                                        expiration, duration, sourceSuffix)
+    if ResolverIsSecretValue(expiration) or ResolverIsSecretValue(duration) then
+        return false
+    end
+    if not (IsSafeNumeric(expiration) and IsSafeNumeric(duration)) then
+        return false
+    end
+    if duration <= 0 or expiration <= GetTime() then
+        return false
+    end
+
+    state.mode = "aura"
+    SetCooldownStateActivity(state, true)
+    state.start = expiration - duration
+    state.duration = duration
+    state.sourceID = "item-aura-" .. tostring(sourceSuffix or "scanner") .. ":" .. tostring(itemID)
+    state.spellID = spellID
+    state.auraResolved = true
+    state.auraActive = true
+    state.auraIsActive = true
+    state.auraUnit = auraUnit or "player"
+    state.auraInstanceID = CleanOpaqueValue(auraInstanceID)
+    state.hasAuraInstanceID = HasOpaqueValue(auraInstanceID)
+    state.resolvedAuraSpellID = resolvedAuraSpellID or spellID
+    return true
+end
+
 local function ResolveItemAuraForContext(state, context, entry, itemID, itemSpellID)
     if not (context and entry and itemID) then
         return false
     end
 
     local function trySpellID(rawSpellID, sourceKey)
-        local durObj = QueryPlayerAuraDurationBySpellID(rawSpellID, entry.name)
+        local durObj, resolvedAuraSpellID = QueryPlayerAuraDurationBySpellID(rawSpellID, entry.name)
         if durObj then
             state.mode = "aura"
             SetCooldownStateActivity(state, true)
             state.durObj = durObj
             state.sourceID = "item-aura-spell:" .. tostring(itemID) .. ":" .. sourceKey
             state.spellID = rawSpellID
+            state.auraResolved = true
+            state.auraActive = true
+            state.auraIsActive = true
             state.auraUnit = "player"
-            state.resolvedAuraSpellID = rawSpellID
+            state.resolvedAuraSpellID = resolvedAuraSpellID or rawSpellID
             return true
         end
         return false
@@ -2299,6 +2442,90 @@ local function ResolveItemAuraForContext(state, context, entry, itemID, itemSpel
     local rawItemSpellID = QueryItemUseSpellID(itemID)
     if trySpellID(rawItemSpellID, "raw-use") then return true end
     if trySpellID(itemSpellID, "use") then return true end
+
+    if Sources and Sources.QueryScannedItemAuraInfo then
+        local scanned = Sources.QueryScannedItemAuraInfo(itemID, itemSpellID or rawItemSpellID)
+        if scanned then
+            local auraInstanceID = scanned.auraInstanceID
+            if HasOpaqueValue(auraInstanceID) and Sources.QueryAuraDuration then
+                local auraUnit = scanned.auraUnit or "player"
+                local durObj = Sources.QueryAuraDuration(auraUnit, auraInstanceID)
+                if durObj then
+                    local cleanAuraInstanceID = CleanOpaqueValue(auraInstanceID)
+                    state.mode = "aura"
+                    SetCooldownStateActivity(state, true)
+                    state.durObj = durObj
+                    state.sourceID = cleanAuraInstanceID
+                        and ("item-aura-instance:" .. tostring(itemID) .. ":" .. tostring(cleanAuraInstanceID))
+                        or ("item-aura-instance:" .. tostring(itemID))
+                    state.spellID = scanned.buffSpellID or scanned.useSpellID or itemSpellID or rawItemSpellID
+                    state.auraResolved = true
+                    state.auraActive = true
+                    state.auraIsActive = true
+                    state.auraUnit = auraUnit
+                    state.auraInstanceID = cleanAuraInstanceID
+                    state.hasAuraInstanceID = true
+                    state.resolvedAuraSpellID = scanned.buffSpellID or scanned.useSpellID or state.spellID
+                    return true
+                end
+                if Sources.QueryAuraDataByAuraInstanceID then
+                    local auraData = Sources.QueryAuraDataByAuraInstanceID(auraUnit, auraInstanceID)
+                    if auraData and ApplyCleanItemAuraTiming(
+                        state,
+                        itemID,
+                        scanned.buffSpellID or scanned.useSpellID or itemSpellID or rawItemSpellID,
+                        scanned.buffSpellID or scanned.useSpellID,
+                        auraUnit,
+                        auraInstanceID,
+                        auraData.expirationTime,
+                        auraData.duration,
+                        "aura-data") then
+                        return true
+                    end
+                end
+            end
+            if trySpellID(scanned.buffSpellID, "scanner-buff") then return true end
+            if trySpellID(scanned.useSpellID, "scanner-use") then return true end
+            if trySpellID(scanned.sourceSpellID, "scanner-source") then return true end
+            local scannedActive = scanned.active
+            if ResolverIsSecretValue(scannedActive) then
+                scannedActive = nil
+            end
+            if scannedActive == true then
+                local expiration = scanned.expiration
+                local duration = scanned.duration
+                local scannedSpellID = scanned.buffSpellID or scanned.useSpellID or itemSpellID or rawItemSpellID
+                if ApplyCleanItemAuraTiming(
+                    state,
+                    itemID,
+                    scannedSpellID,
+                    scanned.buffSpellID or scanned.useSpellID or scannedSpellID,
+                    scanned.auraUnit or "player",
+                    scanned.auraInstanceID,
+                    expiration,
+                    duration,
+                    "scanner") then
+                    return true
+                end
+
+                state.mode = "aura"
+                SetCooldownStateActivity(state, true)
+                state.sourceID = "item-aura-scanner:" .. tostring(itemID)
+                state.spellID = scanned.buffSpellID or scanned.useSpellID or itemSpellID or rawItemSpellID
+                state.auraResolved = true
+                state.auraActive = true
+                state.auraIsActive = true
+                state.auraUnit = scanned.auraUnit or "player"
+                state.auraInstanceID = CleanOpaqueValue(scanned.auraInstanceID)
+                state.hasAuraInstanceID = HasOpaqueValue(scanned.auraInstanceID)
+                state.resolvedAuraSpellID = scanned.buffSpellID or scanned.useSpellID or state.spellID
+                state.hasExpirationTime = false
+                state.hideDurationText = true
+                return true
+            end
+        end
+    end
+
     if trySpellID(entry.spellID, "entry") then return true end
     if trySpellID(entry.overrideSpellID, "override") then return true end
     if trySpellID(entry.id, "id") then return true end
@@ -2309,6 +2536,9 @@ local function ResolveItemAuraForContext(state, context, entry, itemID, itemSpel
         SetCooldownStateActivity(state, true)
         state.durObj = durObj
         state.sourceID = "item-aura-name:" .. tostring(itemID)
+        state.auraResolved = true
+        state.auraActive = true
+        state.auraIsActive = true
         state.auraUnit = "player"
         state.resolvedAuraSpellID = itemSpellID
         state.spellID = itemSpellID
@@ -2512,7 +2742,7 @@ local function FinalizeCooldownStateActivity(state, context, entry, sid, entryIs
     ApplyPriorRealCooldownBinding(state, context, sid, entryIsAura)
 
     local mode = state.mode or "inactive"
-    local hasNumericCooldown = mode == "item-cooldown"
+    local hasNumericCooldown = (mode == "item-cooldown" or mode == "aura")
         and IsNumericCooldownActive(state.start, state.duration)
     state.numericCooldownActive = hasNumericCooldown == true or nil
     state.gcdOnly = mode == "gcd-only"
@@ -2531,7 +2761,7 @@ local function FinalizeCooldownStateActivity(state, context, entry, sid, entryIs
     end
 
     if mode == "item-cooldown" then
-        state.isOnCooldown = hasNumericCooldown == true
+        state.isOnCooldown = HasDurationObject(state.durObj) or hasNumericCooldown == true
         return CDMResolvers.NormalizeResolvedCooldownStateContract(state)
     end
 
@@ -2742,7 +2972,7 @@ function CDMResolvers.ResolveCooldownState(context)
 
     do
         local cdInfo = gcdCdInfo or QueryCooldown(sid)
-        local cdInfoActive = cdInfo and GetCooldownInfoField(cdInfo, "isActive")
+        local cdInfoActive = cdInfo and IsCooldownInfoActive(cdInfo)
         if cdInfoActive == true then
             local cdInfoOnGCD = GetCurrentIsOnGCD(sid, cdInfo)
             local durObj = QueryDuration(sid)

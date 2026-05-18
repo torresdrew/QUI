@@ -32,6 +32,14 @@ local function IsChatFilterLockedDown()
         or (I.IsChatMessagingLockedDown and I.IsChatMessagingLockedDown())
 end
 
+local function IsManagedFilterFrame(frame)
+    if not frame then return false end
+    if frame.IsForbidden and frame:IsForbidden() then return false end
+    if I.IsTemporaryChatFrame and I.IsTemporaryChatFrame(frame) then return false end
+    if frame.isTemporary or frame.privateMessageList then return false end
+    return true
+end
+
 -- ---------------------------------------------------------------------------
 -- Reconciliation
 -- ---------------------------------------------------------------------------
@@ -106,6 +114,7 @@ local function captureOriginalFilters(frame)
 end
 
 local function restoreFrame(frame)
+    if not IsManagedFilterFrame(frame) then return end
     if not frame or IsChatFilterLockedDown() then return end
     local original = originalFilters[frame]
     if not original then return end
@@ -123,8 +132,7 @@ end
 -- desired sets and call Add/Remove APIs to bring them in sync. No-op when
 -- the frame has no stored entry, or `customized = false`.
 local function reconcileFrame(frame, frameID)
-    if not frame then return end
-    if frame.IsForbidden and frame:IsForbidden() then return end
+    if not IsManagedFilterFrame(frame) then return end
     if IsChatFilterLockedDown() then return end
 
     local settings = I.GetSettings and I.GetSettings()
@@ -249,9 +257,10 @@ local function updateTabIndicators()
     local n = _G.NUM_CHAT_WINDOWS or 10
     for i = 1, n do
         local tab = _G["ChatFrame" .. i .. "Tab"]
+        local frame = _G["ChatFrame" .. i]
         if tab then
             local entry = tabsConfig and tabsConfig[i]
-            if entry and entry.customized then
+            if entry and entry.customized and IsManagedFilterFrame(frame) then
                 local ind = getOrCreateIndicator(tab)
                 layoutIndicator(tab, ind)
                 applyIndicatorColor(ind)

@@ -31,6 +31,7 @@ C_Timer = {
 
 local gcdDuration = { token = "gcd-duration" }
 local realDuration = { token = "real-duration" }
+local itemAuraDuration = { token = "item-aura-duration" }
 local chargedOverrideDuration = { token = "charged-override-duration" }
 local chargedOverrideMirrorDuration = { token = "charged-override-mirror-duration" }
 local rechargeWithChargeDuration = { token = "recharge-with-charge-duration" }
@@ -43,6 +44,9 @@ local usableDesaturated
 local resourceDesaturated
 local priorMirrorDesaturated
 local priorMirrorAppliedDuration
+local itemAuraAppliedDuration
+local itemAuraReverse
+local itemAuraClearWhenZero
 local rechargeWithChargeDesaturated
 local depletedChargeDesaturated
 local fullChargeMirrorDesaturated
@@ -233,6 +237,26 @@ local ns = {
             local id = entry and entry.id
             if id == 24680 then
                 return resolvedState(realDuration, "cooldown", 24680, nil, nil, 24680)
+            end
+            if id == 241288 then
+                local state = resolvedState(itemAuraDuration,
+                    "aura",
+                    "item-aura-instance:241288",
+                    nil,
+                    nil,
+                    1236994,
+                    nil,
+                    nil,
+                    {
+                        isOnCooldown = false,
+                    })
+                state.auraResolved = true
+                state.auraActive = true
+                state.auraIsActive = true
+                state.auraUnit = "player"
+                state.auraInstanceID = 94001
+                state.resolvedAuraSpellID = 440289
+                return state
             end
             if id == 13579 then
                 return resolvedState(realDuration, "cooldown", 13579, nil, nil, 13579, nil, nil, {
@@ -426,6 +450,39 @@ assert(applied == true, "GCD-only duration should be applied")
 assert(icon._showingGCDSwipe == true, "GCD-only duration should mark the icon as showing GCD")
 assert(styleCalls == 1, "GCD-only duration should reapply swipe styling immediately")
 assert(styleSawGCD == true, "swipe styling should run after the GCD flag is set")
+
+local itemAuraIcon = {
+    Cooldown = {
+        SetCooldownFromDurationObject = function(_, durObj, clearWhenZero)
+            itemAuraAppliedDuration = durObj
+            itemAuraClearWhenZero = clearWhenZero
+        end,
+        SetReverse = function(_, reverse)
+            itemAuraReverse = reverse
+        end,
+        SetSwipeTexture = noop,
+        Clear = noop,
+    },
+    _spellEntry = {
+        id = 241288,
+        itemID = 241288,
+        kind = "cooldown",
+        type = "item",
+        viewerType = "essential",
+    },
+}
+
+applied = ns.CDMIcons.ApplyResolvedCooldown(itemAuraIcon)
+
+assert(applied == true, "item aura DurationObject should be applied")
+assert(itemAuraIcon._resolvedCooldownMode == "aura", "item aura should stamp resolved icon mode")
+assert(itemAuraIcon._auraActive == true, "item aura should stamp active aura metadata on the icon")
+assert(itemAuraIcon._lastAuraDurObj == itemAuraDuration, "item aura should cache its aura DurationObject")
+assert(itemAuraIcon._activeAuraSpellID == 440289, "item aura should stamp the resolved buff spell")
+assert(itemAuraAppliedDuration == itemAuraDuration, "item aura should bind the DurationObject to the cooldown frame")
+assert(itemAuraClearWhenZero == true, "item aura DurationObject should use clear-when-zero")
+assert(itemAuraReverse == true, "item aura cooldown frame should run in aura/reverse mode")
+assert(itemAuraIcon._hasCooldownActive == false, "item aura should not mark the item as a real cooldown")
 
 local gcdVisualIcon = {
     Cooldown = {

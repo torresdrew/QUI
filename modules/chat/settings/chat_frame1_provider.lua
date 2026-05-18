@@ -79,11 +79,18 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     -- canonical "is this slot active?" signal — FCF_Close clears it to "".
     local function buildFrameOptions()
         local opts = {}
+        local I = ns.QUI and ns.QUI.Chat and ns.QUI.Chat._internals
         local n = _G.NUM_CHAT_WINDOWS or 10
         for i = 1, n do
             local f = _G["ChatFrame" .. i]
             local name = GetChatWindowInfo(i)
-            if f and not f.isCombatLog and type(name) == "string" and name ~= "" then
+            local isTemporary = f and (
+                f.isTemporary
+                or f.privateMessageList
+                or (I and I.IsTemporaryChatFrame and I.IsTemporaryChatFrame(f))
+            )
+            if f and not f.isCombatLog and not isTemporary and not f.privateMessageList
+                and type(name) == "string" and name ~= "" then
                 opts[#opts + 1] = { value = i, text = "ChatFrame" .. i .. " (" .. name .. ")" }
             end
         end

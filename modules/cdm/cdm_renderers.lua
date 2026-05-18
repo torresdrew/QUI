@@ -13,6 +13,7 @@ local ADDON_NAME, ns = ...
 
 local CDMRenderers = {}
 ns.CDMRenderers = CDMRenderers
+local issecretvalue = issecretvalue
 
 function CDMRenderers.ApplyDurationObjectCooldown(cd, durObj, clearWhenZero, reverse)
     if not cd or not durObj or not cd.SetCooldownFromDurationObject then
@@ -31,6 +32,9 @@ function CDMRenderers.ApplyDurationObjectCooldown(cd, durObj, clearWhenZero, rev
 end
 
 function CDMRenderers.ApplyNumericCooldown(cd, startTime, duration, reverse)
+    if issecretvalue and (issecretvalue(startTime) or issecretvalue(duration)) then
+        return false
+    end
     if not cd or not cd.SetCooldown or not startTime or not duration then
         return false
     end
