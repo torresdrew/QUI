@@ -110,6 +110,7 @@ local runtimeQueries = readAll("modules/cdm/cdm_runtime_queries.lua")
 local icons = readAll("modules/cdm/cdm_icons.lua")
 local iconMirrorIndex = readAll("modules/cdm/cdm_icon_mirror_index.lua")
 local iconRuntimeRefresh = readAll("modules/cdm/cdm_icon_runtime_refresh.lua")
+local iconUpdateScheduler = readAll("modules/cdm/cdm_icon_update_scheduler.lua")
 local iconVisibilityPolicy = readAll("modules/cdm/cdm_icon_visibility_policy.lua")
 local iconRangePolicy = readAll("modules/cdm/cdm_icon_range_policy.lua")
 local iconCooldownPolicy = readAll("modules/cdm/cdm_icon_cooldown_policy.lua")
@@ -183,19 +184,19 @@ assertContains(
 )
 
 assertContains(
-    icons,
-    "local CDM_FAST_UPDATE_INTERVAL = 0",
-    "icons should define next-frame fast cooldown interval"
+    iconUpdateScheduler,
+    "local FAST_UPDATE_INTERVAL = 0",
+    "icon update scheduler should define next-frame fast cooldown interval"
 )
 assertContains(
-    icons,
-    "local CDM_FAST_FULL_UPDATE_INTERVAL = CDM_MIN_UPDATE_INTERVAL_IDLE",
-    "icons should cap fast full updates to the idle interval"
+    iconUpdateScheduler,
+    "local FAST_FULL_UPDATE_INTERVAL = MIN_UPDATE_INTERVAL_IDLE",
+    "icon update scheduler should cap fast full updates to the idle interval"
 )
 assertContains(
-    icons,
-    "local function GetCDMUpdateDelay(fast, mode)",
-    "icons delay function should be mode-aware"
+    iconUpdateScheduler,
+    "function controller:GetDelay(fast, mode)",
+    "icon update scheduler delay function should be mode-aware"
 )
 assertContains(
     iconRuntimeRefresh,
@@ -204,34 +205,39 @@ assertContains(
 )
 
 local delayBlock = extractBlock(
-    icons,
-    "local function GetCDMUpdateDelay(fast, mode)",
-    "local function RegisterCDMSchedulerHandler()",
-    "icons delay block"
+    iconUpdateScheduler,
+    "function controller:GetDelay(fast, mode)",
+    "function controller:GetCombatQueueDelay()",
+    "icon update scheduler delay block"
 )
 assertContainsOrdered(
     delayBlock,
     {
         "if fast then",
-        "if mode == CDM_UPDATE_COOLDOWN then",
-        "return CDM_FAST_UPDATE_INTERVAL",
-        "return CDM_FAST_FULL_UPDATE_INTERVAL",
-        "return CDM_MIN_UPDATE_INTERVAL_RAID_COMBAT",
-        "return CDM_MIN_UPDATE_INTERVAL_COMBAT",
+        "if mode == UPDATE_COOLDOWN then",
+        "return FAST_UPDATE_INTERVAL",
+        "return FAST_FULL_UPDATE_INTERVAL",
+        "return MIN_UPDATE_INTERVAL_RAID_COMBAT",
+        "return MIN_UPDATE_INTERVAL_COMBAT",
     },
-    "icons delay block should route fast and combat delays in order"
+    "icon update scheduler delay block should route fast and combat delays in order"
 )
 
 local scheduleBlock = extractBlock(
-    icons,
-    "local function ScheduleCDMUpdate(fast, mode, trustIsOnGCD)",
-    "-- Scoping rule for event-driven broad resolves:",
-    "scheduler block"
+    iconUpdateScheduler,
+    "function controller:Schedule(fast, mode, trustIsOnGCD)",
+    "function controller:ScheduleFull(fast, trustIsOnGCD)",
+    "icon update scheduler schedule block"
 )
 assertContains(
     scheduleBlock,
-    "local delay = GetCDMUpdateDelay(fast, mode)",
-    "scheduler should pass mode into GetCDMUpdateDelay"
+    "local delay = controller:GetDelay(fast, mode)",
+    "icon update scheduler should pass mode into its delay policy"
+)
+assertContains(
+    icons,
+    "updateScheduler = CreateIconUpdateScheduler()",
+    "CDMIcons should wire runtime update scheduling through the private controller"
 )
 
 assertNotContains(
@@ -455,6 +461,36 @@ assertNotContains(
     icons,
     "CDMIcons._pendingTrustIsOnGCD",
     "scheduler trust flags should stay private behind runtime update scheduling"
+)
+assertNotContains(
+    icons,
+    "_cdmUpdatePending",
+    "runtime update pending state should live in the private icon update scheduler"
+)
+assertNotContains(
+    icons,
+    "_cdmUpdateElapsed",
+    "runtime update elapsed state should live in the private icon update scheduler"
+)
+assertNotContains(
+    icons,
+    "_cdmUpdateDelay",
+    "runtime update delay state should live in the private icon update scheduler"
+)
+assertNotContains(
+    icons,
+    "_cdmUpdateMode",
+    "runtime update mode state should live in the private icon update scheduler"
+)
+assertNotContains(
+    icons,
+    "_barsDirty",
+    "bar-dirty state should live in the private icon update scheduler"
+)
+assertNotContains(
+    icons,
+    "pendingTrustIsOnGCD",
+    "merged GCD trust state should live in the private icon update scheduler"
 )
 assertNotContains(
     icons,

@@ -2534,8 +2534,6 @@ local _showGCDSwipe = false
 local _showBuffSwipe = true
 local _showCooldownIconAuraPhase = true
 
-_resolverRuntimePolicy.pendingTrustIsOnGCD = false
-
 function _resolverRuntimePolicy.RefreshSwipeBatchSettings()
     local swipeMod = ns._OwnedSwipe
     local swipeSettings = swipeMod and swipeMod.GetSettings and swipeMod.GetSettings()
@@ -4648,148 +4646,68 @@ cdEventFrame:RegisterEvent("COOLDOWN_VIEWER_TABLE_HOTFIXED")
 -- cdm_spelldata.lua so the full batched aura payload is processed before
 -- icons/bars refresh.
 
--- Frame-based coalescing for cooldown/aura events. Pure cooldown events use a
--- lighter icon pass; aura and structural events upgrade the pending batch to a
--- full refresh. Avoid C_Timer here: raid combat can schedule this path
--- continuously, and timer objects become pure churn.
-local CDM_MIN_UPDATE_INTERVAL_IDLE = 0.05
-local CDM_MIN_UPDATE_INTERVAL_COMBAT = 0.20
-local CDM_MIN_UPDATE_INTERVAL_RAID_COMBAT = 0.30
-local CDM_FAST_UPDATE_INTERVAL = 0
-local CDM_FAST_FULL_UPDATE_INTERVAL = CDM_MIN_UPDATE_INTERVAL_IDLE
-local _lastCDMUpdateTime = 0
 local CDM_UPDATE_COOLDOWN = "cooldown"
 local CDM_UPDATE_FULL = "full"
+local updateScheduler
 
-local cdmUpdateFrame = CreateFrame("Frame")
-local _cdmUpdatePending = false
-local _cdmUpdateElapsed = 0
-local _cdmUpdateDelay = CDM_MIN_UPDATE_INTERVAL_IDLE
-local _cdmUpdateMode = CDM_UPDATE_COOLDOWN
-
--- Bars are aura-state driven (active/inactive transitions). Gate UpdateOwnedBars
--- behind a dirty flag so pure cooldown-event flurries (SPELL_UPDATE_COOLDOWN
--- fires constantly in raid) don't walk the bar pool on every coalesce tick.
--- Flag is raised only by aura/full-refresh paths; cleared when UpdateOwnedBars
--- runs.
-local _barsDirty = false
-
-local function RunDirtyBarUpdate()
-    if _barsDirty and ns.CDMBars and ns.CDMBars.UpdateOwnedBars then
-        _barsDirty = false
-        ns.CDMBars:UpdateOwnedBars()
-    end
-end
-
-local function _CDMUpdateCallback(modeOverride, trustOverride)
-    _cdmUpdatePending = false
-    local mode = modeOverride or _cdmUpdateMode or CDM_UPDATE_COOLDOWN
-    _cdmUpdateMode = CDM_UPDATE_COOLDOWN
-    local trustIsOnGCD
-    if trustOverride ~= nil then
-        trustIsOnGCD = trustOverride == true
-    else
-        trustIsOnGCD = _resolverRuntimePolicy.pendingTrustIsOnGCD == true
-    end
-    _resolverRuntimePolicy.pendingTrustIsOnGCD = false
-
-    if not CDMIcons:IsRuntimeEnabled() then
-        return
-    end
-
-    _lastCDMUpdateTime = GetTime()
-    ResolverRuntime.SetTrustIsOnGCDForBatch(trustIsOnGCD)
-
-    if mode == CDM_UPDATE_FULL then
-        CDMIcons:UpdateAllCooldowns()
-    else
-        CDMIcons:UpdateCooldownOnly()
-    end
-    RunDirtyBarUpdate()
-
-    ResolverRuntime.SetTrustIsOnGCDForBatch(false)
-end
-
-local function CDMUpdateOnUpdate(self, elapsed)
-    _cdmUpdateElapsed = _cdmUpdateElapsed + elapsed
-    if _cdmUpdateElapsed < _cdmUpdateDelay then return end
-    self:SetScript("OnUpdate", nil)
-    _CDMUpdateCallback()
-end
-
-local function GetCDMUpdateDelay(fast, mode)
-    if fast then
-        if mode == CDM_UPDATE_COOLDOWN then
-            return CDM_FAST_UPDATE_INTERVAL
-        end
-        return CDM_FAST_FULL_UPDATE_INTERVAL
-    end
-    if not InCombatLockdown() then
-        return CDM_MIN_UPDATE_INTERVAL_IDLE
-    end
-    if IsInRaid and IsInRaid() then
-        return CDM_MIN_UPDATE_INTERVAL_RAID_COMBAT
-    end
-    return CDM_MIN_UPDATE_INTERVAL_COMBAT
-end
-
-local function RegisterCDMSchedulerHandler()
-    local scheduler = ns.CDMScheduler
-    if not (scheduler and scheduler.SetRuntimeUpdateHandler) then return end
-    scheduler.SetRuntimeUpdateHandler({
-        run = _CDMUpdateCallback,
-        getDelay = GetCDMUpdateDelay,
-        isEnabled = function()
+-- Frame-based coalescing for cooldown/aura events lives in the private icon
+-- update scheduler. CDMIcons keeps only a narrow scheduling adapter here.
+local function CreateIconUpdateScheduler()
+    local module = ns.CDMIconUpdateScheduler
+    if not (module and module.Create) then return nil end
+    return module.Create({
+        isRuntimeEnabled = function()
             return CDMIcons:IsRuntimeEnabled()
         end,
-        onCancel = function()
-            _cdmUpdatePending = false
-            _resolverRuntimePolicy.pendingTrustIsOnGCD = false
+        getTime = function()
+            return GetTime()
+        end,
+        isInCombat = function()
+            return InCombatLockdown()
+        end,
+        isInRaid = function()
+            return IsInRaid and IsInRaid()
+        end,
+        getScheduler = function()
+            return ns.CDMScheduler
+        end,
+        setTrustIsOnGCDForBatch = function(value)
+            return ResolverRuntime.SetTrustIsOnGCDForBatch(value)
+        end,
+        updateAllCooldowns = function()
+            CDMIcons:UpdateAllCooldowns()
+        end,
+        updateCooldownOnly = function()
+            CDMIcons:UpdateCooldownOnly()
+        end,
+        getBars = function()
+            return ns.CDMBars
         end,
     })
 end
 
-RegisterCDMSchedulerHandler()
+updateScheduler = CreateIconUpdateScheduler()
 
 local function ScheduleCDMUpdate(fast, mode, trustIsOnGCD)
-    if not CDMIcons:IsRuntimeEnabled() then
-        cdmUpdateFrame:SetScript("OnUpdate", nil)
-        if ns.CDMScheduler and ns.CDMScheduler.CancelRuntimeUpdate then
-            ns.CDMScheduler.CancelRuntimeUpdate()
-        end
-        _cdmUpdatePending = false
-        _resolverRuntimePolicy.pendingTrustIsOnGCD = false
-        return
+    if updateScheduler then
+        updateScheduler:Schedule(fast, mode, trustIsOnGCD)
     end
-
-    mode = (mode == CDM_UPDATE_FULL) and CDM_UPDATE_FULL or CDM_UPDATE_COOLDOWN
-
-    if ns.CDMScheduler and ns.CDMScheduler.ScheduleRuntimeUpdate then
-        ns.CDMScheduler.ScheduleRuntimeUpdate(fast, mode, trustIsOnGCD)
-        return
-    end
-
-    local delay = GetCDMUpdateDelay(fast, mode)
-
-    if _cdmUpdatePending then
-        if mode == CDM_UPDATE_FULL then
-            _cdmUpdateMode = CDM_UPDATE_FULL
-        end
-        if trustIsOnGCD then
-            _resolverRuntimePolicy.pendingTrustIsOnGCD = true
-        end
-        if delay < _cdmUpdateDelay then
-            _cdmUpdateDelay = delay
-        end
-        return
 end
 
-    _cdmUpdatePending = true
-    _cdmUpdateElapsed = 0
-    _cdmUpdateDelay = delay
-    _cdmUpdateMode = mode
-    _resolverRuntimePolicy.pendingTrustIsOnGCD = trustIsOnGCD == true
-    cdmUpdateFrame:SetScript("OnUpdate", CDMUpdateOnUpdate)
+local function GetCDMUpdateDelay(fast, mode)
+    if updateScheduler then
+        return updateScheduler:GetDelay(fast, mode)
+    end
+    if fast then
+        return 0
+    end
+    return 0.05
+end
+
+local function RunDirtyBarUpdate()
+    if updateScheduler then
+        updateScheduler:RunDirtyBarUpdate()
+    end
 end
 
 function _resolverRuntimePolicy.RefreshIndexedMirrorIcon(icon, editMode, ncdm, ncdmContainers, inCombat)
@@ -4888,7 +4806,9 @@ end
 
 function CDMIcons:RequestFullUpdate()
     if not CDMIcons:IsRuntimeEnabled() then return end
-    _barsDirty = true
+    if updateScheduler then
+        updateScheduler:SetBarsDirty(true)
+    end
     ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
 end
 
@@ -4978,17 +4898,15 @@ do
             mirrorRefreshPending = mirrorController:IsRefreshPending()
             mirrorRefreshPendingKeys = mirrorController:PendingKeyCount()
         end
-        local schedulerPending = ns.CDMScheduler
-            and ns.CDMScheduler.IsRuntimeUpdatePending
-            and ns.CDMScheduler.IsRuntimeUpdatePending()
+        local updateStats = updateScheduler and updateScheduler:GetStats() or {}
         local iconEventProfileTop, iconEventProfileWindow = CDMIcons.SnapshotEventProfile(5)
         return {
             textureCycleCache = n,
             activeIconPools    = activePools,
             activeIcons        = activeIcons,
             recycleIcons       = #recyclePool,
-            barsDirty         = _barsDirty and true or false,
-            updatePending     = (schedulerPending ~= nil and schedulerPending) or (_cdmUpdatePending and true or false),
+            barsDirty         = updateStats.barsDirty == true,
+            updatePending     = updateStats.updatePending == true,
             mirrorIndexKeys    = mirrorIndexKeys,
             mirrorIndexIcons   = mirrorIndexIcons,
             mirrorRefreshPending = mirrorRefreshPending,
@@ -5007,7 +4925,7 @@ end
 -- when state changes. We subscribe and call the same render functions the
 -- old direct path called.
 --
--- Aura events set _barsDirty only when a matching icon/bar may have changed.
+-- Aura events set the scheduler's bar-dirty flag only when a matching icon/bar may have changed.
 -- Pure cooldown events deliberately do NOT set the flag — bar fill is driven
 -- by barTimerGroup independently of ScheduleCDMUpdate.
 local runtimeRefresh
@@ -5030,7 +4948,9 @@ do
             return CDMIcons.EventTraceAuraInfo(updateInfo)
         end,
         setBarsDirty = function(dirty)
-            _barsDirty = dirty == true
+            if updateScheduler then
+                updateScheduler:SetBarsDirty(dirty == true)
+            end
         end,
         scheduleFullUpdate = function()
             ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
@@ -5116,13 +5036,10 @@ do
             if frame and frame.SetScript then
                 frame:SetScript("OnUpdate", nil)
             end
-            cdmUpdateFrame:SetScript("OnUpdate", nil)
-            if ns.CDMScheduler and ns.CDMScheduler.CancelRuntimeUpdate then
-                ns.CDMScheduler.CancelRuntimeUpdate()
+            if updateScheduler then
+                updateScheduler:Cancel()
             end
             DisableSpellRangeChecks()
-            _cdmUpdatePending = false
-            _resolverRuntimePolicy.pendingTrustIsOnGCD = false
         end,
         updateAllIconRanges = function()
             CDMIcons:UpdateAllIconRanges()
@@ -5149,7 +5066,7 @@ do
             return InCombatLockdown and InCombatLockdown() or false
         end,
         getCombatQueueDelay = function()
-            return CDM_MIN_UPDATE_INTERVAL_RAID_COMBAT
+            return updateScheduler and updateScheduler:GetCombatQueueDelay() or 0.3
         end,
     })
 
@@ -5186,13 +5103,11 @@ function CDMIcons:DisableRuntime()
     cdEventFrame:UnregisterAllEvents()
     cdEventFrame:SetScript("OnEvent", nil)
     cdEventFrame:SetScript("OnUpdate", nil)
-    cdmUpdateFrame:SetScript("OnUpdate", nil)
-    if ns.CDMScheduler and ns.CDMScheduler.CancelRuntimeUpdate then
-        ns.CDMScheduler.CancelRuntimeUpdate()
+    if updateScheduler then
+        updateScheduler:Cancel()
+        updateScheduler:SetBarsDirty(false)
     end
     DisableSpellRangeChecks()
-    _cdmUpdatePending = false
-    _barsDirty = false
 end
 
 ---------------------------------------------------------------------------
