@@ -355,6 +355,16 @@ local function AuraInstancePassesFilter(unit, auraInstanceID, filter)
     return nil
 end
 
+local function TargetAuraMatchesPlayerFilter(auraData, filter)
+    if not auraData then return false end
+    local instID = GetCleanAuraInstanceID(auraData)
+    if instID then
+        local passes = AuraInstancePassesFilter("target", instID, filter or "HARMFUL|PLAYER")
+        if passes ~= nil then return passes end
+    end
+    return IsStrictOwnedAuraSource(auraData)
+end
+
 local function NormalizeCapturedAuraFilter(filter)
     if filter == "HELPFUL" or filter == "HARMFUL" then
         return filter
@@ -959,6 +969,9 @@ local okR = true; local harmful = auraData.isHarmful
 local okR = true; local harmful = auraData.isHarmful
         if harmful == true then
             if FilterWantsToken(filter, "PLAYER") then
+                if unit == "target" then
+                    return TargetAuraMatchesPlayerFilter(auraData, filter)
+                end
                 return IsStrictOwnedAuraSource(auraData)
             end
             return true
@@ -1069,20 +1082,16 @@ local function GetAuraApplications(unit, auraInstanceID)
 end
 
 local function GetOwnedTargetFilter(filter)
-    -- Use plain "HARMFUL" without the "|PLAYER" qualifier. The combined
-    -- "HARMFUL|PLAYER" filter passed to C_UnitAuras.GetAuraDataBySpellID
-    -- on a target unit returns nil in combat — Blizzard's source-GUID
-    -- comparison required by the PLAYER token becomes inaccessible under
-    -- combat scope. Plain "HARMFUL" works in combat. Player ownership is
-    -- verified post-fetch via IsAuraOwnedByPlayerOrPet (UnitIsUnit C-side
-    -- check on auraData.sourceUnit, which is non-secret for player-cast
-    -- auras).
-    return filter or "HARMFUL"
+    local base = filter or "HARMFUL"
+    if FilterWantsToken(base, "PLAYER") then
+        return base
+    end
+    return base .. "|PLAYER"
 end
 
 local function IsUsableTargetAuraData(auraData, filter)
     if not auraData then return false end
-    return IsStrictOwnedAuraSource(auraData)
+    return TargetAuraMatchesPlayerFilter(auraData, filter or "HARMFUL|PLAYER")
 end
 
 local function ScanOwnedTargetAuraBySpellID(spellID, filter)
@@ -1181,16 +1190,9 @@ local function FindOwnedTargetAuraBySpellID(spellID, filter)
     -- (cdm_blizz_mirror.lua) and consumed in resolver Phase 3.0. This
     -- function is the OOC fallback for spells the mirror doesn't have,
     -- and for slot-walk last resort.
-    local ad = QueryUnitAuraBySpellID("target", spellID, "HARMFUL")
-    if ad then
-        local instID = GetCleanAuraInstanceID(ad)
-        if instID then
-local okOwn = true; local owned = ad.isFromPlayerOrPlayerPet
-            if owned == true then
-                return ad
-            end
-        end
-    end
+    local directFilter = GetOwnedTargetFilter(filter)
+    local ad = QueryUnitAuraBySpellID("target", spellID, directFilter)
+    if ad then return ad end
 
     return ScanOwnedTargetAuraBySpellID(spellID, filter)
 end

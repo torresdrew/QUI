@@ -118,15 +118,47 @@ function Helpers.SafeToString(value, fallback)
     return fallback
 end
 
---- Is an aura sourced from the player / pet / vehicle?
---- Trusts auraData.isFromPlayerOrPlayerPet — Blizzard's authoritative,
---- non-secret ownership answer (computed C-side, readable in combat).
---- sourceUnit / sourceGUID are secret in combat (the dump confirms this:
---- sourceUnit=<no value> while isFromPlayerOrPlayerPet=true), so they
---- can't be the primary check. The strictSource parameter is retained
---- for call-site compat but treated as a no-op: there's no scenario
---- where isFromPlayerOrPlayerPet=true should be overridden by a
---- secret-stripped sourceUnit comparison.
+--- Decode a potentially-secret boolean through Blizzard's C-side boolean path.
+--- @param value any
+--- @return boolean|nil
+local function DecodePotentialSecretBoolean(value)
+    local valueIsSecret = issecretvalue and issecretvalue(value)
+    if valueIsSecret and C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
+        local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(value, 1, 0)
+        if issecretvalue and issecretvalue(scalar) then
+            return nil
+        end
+        if type(scalar) == "number" then
+            return scalar >= 0.5
+        end
+        return nil
+    end
+    if valueIsSecret then return nil end
+    if value == nil then return nil end
+    if type(value) == "boolean" then return value end
+    return nil
+end
+
+local function UnitTokenMatches(unitToken, targetUnit)
+    if not UnitIsUnit then return false end
+    local ok, matched = pcall(UnitIsUnit, unitToken, targetUnit)
+    if not ok then return false end
+    return DecodePotentialSecretBoolean(matched) == true
+end
+
+local function GUIDMatchesUnit(sourceGUID, unit)
+    if issecretvalue and issecretvalue(sourceGUID) then return false end
+    if type(sourceGUID) ~= "string" then return false end
+    if not UnitGUID then return false end
+    local unitGUID = UnitGUID(unit)
+    return type(unitGUID) == "string" and sourceGUID == unitGUID
+end
+
+--- Is an aura sourced from the local player / pet / vehicle?
+--- `isFromPlayerOrPlayerPet` means the caster is player-controlled, not
+--- necessarily the local player, so it is only useful as a negative hint.
+--- Local ownership must be proven by sourceUnit / sourceGUID or by a caller
+--- that can use C_UnitAuras' PLAYER filter against the auraInstanceID.
 --- @param auraData table AuraData struct from C_UnitAuras.*
 --- @param strictSource boolean? Retained for call-site compat; no-op.
 --- @return boolean
@@ -134,31 +166,22 @@ function Helpers.IsAuraOwnedByPlayerOrPet(auraData, strictSource)
     if not auraData then return false end
 
     local okFlag, ownedFlag = pcall(function() return auraData.isFromPlayerOrPlayerPet end)
-    if okFlag and ownedFlag == true then
-        return true
-    end
-    if okFlag and ownedFlag == false then
+    if okFlag and DecodePotentialSecretBoolean(ownedFlag) == false then
         return false
     end
 
-    -- ownedFlag was nil/secret. Fall back to sourceUnit via UnitIsUnit
-    -- (C-side, secret-tolerant) and sourceGUID compare. Both fields are
-    -- secret in combat; these branches matter mainly OOC.
     local okUnit, sourceUnit = pcall(function() return auraData.sourceUnit end)
-    if okUnit and sourceUnit and UnitIsUnit then
-        if UnitExists("player") and UnitIsUnit(sourceUnit, "player") then return true end
-        if UnitExists("pet") and UnitIsUnit(sourceUnit, "pet") then return true end
-        if UnitExists("vehicle") and UnitIsUnit(sourceUnit, "vehicle") then return true end
+    if okUnit then
+        if UnitTokenMatches(sourceUnit, "player") then return true end
+        if UnitTokenMatches(sourceUnit, "pet") then return true end
+        if UnitTokenMatches(sourceUnit, "vehicle") then return true end
     end
 
     local okGUID, sourceGUID = pcall(function() return auraData.sourceGUID end)
-    if okGUID and sourceGUID then
-        local playerGUID = UnitGUID and UnitGUID("player") or nil
-        if playerGUID and sourceGUID == playerGUID then return true end
-        local petGUID = UnitGUID and UnitGUID("pet") or nil
-        if petGUID and sourceGUID == petGUID then return true end
-        local vehicleGUID = UnitGUID and UnitGUID("vehicle") or nil
-        if vehicleGUID and sourceGUID == vehicleGUID then return true end
+    if okGUID then
+        if GUIDMatchesUnit(sourceGUID, "player") then return true end
+        if GUIDMatchesUnit(sourceGUID, "pet") then return true end
+        if GUIDMatchesUnit(sourceGUID, "vehicle") then return true end
     end
 
     return false

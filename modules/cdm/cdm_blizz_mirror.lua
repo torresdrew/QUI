@@ -611,7 +611,10 @@ local function CaptureAurasFromUnit(unit)
             for sid, cdID in pairs(directMap) do
                 if CooldownInfoMatchesAuraUnit(cdID, unit, cat) then
                     local ad = QueryAuraForMirrorUnit(unit, sid)
-                    if ad and (not needsSourceFilter or Helpers.IsAuraOwnedByPlayerOrPet(ad)) then
+                    if ad and (not needsSourceFilter
+                        or (ad.auraInstanceID and AuraInstanceMatchesExpectedOwner(unit, ad.auraInstanceID))
+                        or (Helpers and Helpers.IsAuraOwnedByPlayerOrPet
+                            and Helpers.IsAuraOwnedByPlayerOrPet(ad, true) == true)) then
                         StampAuraInstanceForCooldown(unit, cdID, ad, cat)
                     end
                 end
@@ -637,7 +640,10 @@ local function StampAuraPayloadForUnit(unit, ad)
     if not sid then return false end
 
     local needsSourceFilter = unit == "target"
-    if needsSourceFilter and not Helpers.IsAuraOwnedByPlayerOrPet(ad) then
+    if needsSourceFilter
+        and not ((ad.auraInstanceID and AuraInstanceMatchesExpectedOwner(unit, ad.auraInstanceID))
+            or (Helpers and Helpers.IsAuraOwnedByPlayerOrPet
+                and Helpers.IsAuraOwnedByPlayerOrPet(ad, true) == true)) then
         return false
     end
 
@@ -1673,6 +1679,15 @@ end
 
 AuraInstanceMatchesExpectedOwner = function(unit, auraInstanceID)
     if unit ~= "target" then return true end
+
+    if Sources and Sources.QueryAuraFilteredOutByInstanceID then
+        local filteredOut = CleanBool(Sources.QueryAuraFilteredOutByInstanceID(
+            unit, auraInstanceID, "HARMFUL|PLAYER"))
+        if filteredOut ~= nil then
+            return filteredOut == false
+        end
+    end
+
     if not (Sources and Sources.QueryAuraDataByAuraInstanceID
         and Helpers and Helpers.IsAuraOwnedByPlayerOrPet) then
         return false
@@ -1981,7 +1996,10 @@ local function CaptureAuraForCooldownID(unit, cdID, viewerCategory)
     local needsSourceFilter = unit == "target"
     for _, spellID in ipairs(candidates) do
         local ad = QueryAuraForMirrorUnit(unit, spellID)
-        if ad and (not needsSourceFilter or Helpers.IsAuraOwnedByPlayerOrPet(ad)) then
+        if ad and (not needsSourceFilter
+            or (ad.auraInstanceID and AuraInstanceMatchesExpectedOwner(unit, ad.auraInstanceID))
+            or (Helpers and Helpers.IsAuraOwnedByPlayerOrPet
+                and Helpers.IsAuraOwnedByPlayerOrPet(ad, true) == true)) then
             StampAuraInstanceForCooldown(unit, cdID, ad, cat)
             return true
         end

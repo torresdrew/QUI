@@ -53,6 +53,16 @@ local spellData = ns.CDMSpellData
 assert(spellData:GetAuraIDsForSpell(55090), "test catalog aura map should build through the public getter")
 
 local auraBySpellID = {
+    [191587] = {
+        spellId = 191587,
+        auraInstanceID = 9003,
+        isHarmful = true,
+        isHelpful = false,
+        sourceUnit = "party1",
+        isFromPlayerOrPlayerPet = true,
+        duration = 20,
+        applications = 1,
+    },
     [194310] = {
         spellId = 194310,
         auraInstanceID = 9001,
@@ -83,6 +93,9 @@ end
 
 ns.CDMSources.QueryAuraDuration = function(unit, auraInstanceID)
     if unit == "target" and (auraInstanceID == 9001 or auraInstanceID == 9002) then
+        return auraDuration
+    end
+    if unit == "target" and auraInstanceID == 9003 then
         return auraDuration
     end
 end
@@ -163,6 +176,20 @@ assert(state.count.sinkText == "7", "mirrored aura count should carry sink text"
 assert(state.count.value == 7, "mirrored aura count should expose a safe numeric value when readable")
 assert(state.count.shown == true, "mirrored aura count should be marked shown")
 assert(state.count.source == "Applications", "mirrored aura count should keep its source")
+
+state = ns.CDMAuraRuntime.ResolveState({
+    spellID = 191587,
+    entrySpellID = 191587,
+    entryID = 191587,
+    entryName = "Virulent Plague",
+    entryKind = "aura",
+    entryIsAura = true,
+    entryType = "spell",
+    viewerType = "trackedBar",
+})
+
+assert(state.isActive ~= true, "foreign player target debuffs must not resolve as owned target auras")
+assert(state.durObj == nil, "foreign player target debuffs must not expose a DurationObject")
 
 state = ns.CDMAuraRuntime.ResolveState({
     spellID = 55090,
