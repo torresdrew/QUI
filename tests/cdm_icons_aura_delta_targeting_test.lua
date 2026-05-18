@@ -36,6 +36,7 @@ local buffContainerShows = 0
 local itemAuraDur = { token = "item-aura-duration" }
 local itemAuraAppliedDuration
 local itemAuraReverse
+local runtimeBatches = 0
 
 local function makeIcon(name, cooldownID)
     local icon = {
@@ -286,9 +287,23 @@ local ns = {
 }
 
 dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
+do
+    local runtime = assert(ns.CDMRuntimeQueries, "runtime query module should be loaded")
+    local originalBegin = runtime.BeginRuntimeQueryBatch
+    runtime.BeginRuntimeQueryBatch = function(...)
+        runtimeBatches = runtimeBatches + 1
+        return originalBegin(...)
+    end
+end
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
+runtimeBatches = 0
+icons.HandleRuntimeRefresh("UNIT_AURA", "target", {
+    updatedAuraInstanceIDs = { 999 },
+})
+assert(runtimeBatches == 0, "unmatched aura deltas should not open a runtime query batch")
+
 icons.HandleRuntimeRefresh("UNIT_AURA", "target", {
     updatedAuraInstanceIDs = { 101 },
 })
@@ -344,6 +359,11 @@ buffContainerShows = 0
 
 local cooldownChanged = assert(subscriptions["CDM:COOLDOWN_CHANGED"],
     "cooldown subscriber should be registered")
+local batchesBeforeUnmatchedSpell = runtimeBatches
+cooldownChanged("CDM:COOLDOWN_CHANGED", 999999, nil, "refresh")
+assert(runtimeBatches == batchesBeforeUnmatchedSpell,
+    "unmatched per-spell cooldown refreshes should not open a runtime query batch")
+
 cooldownChanged("CDM:COOLDOWN_CHANGED", 48707, nil, "refresh")
 
 assert(resolveCounts.buffAura == 1, "per-spell cooldown refresh should re-resolve matching aura icons")

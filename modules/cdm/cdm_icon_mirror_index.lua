@@ -42,6 +42,9 @@ function CDMIconMirrorIndex.Create(callbacks)
             fallback = 0,
             maxBatch = 0,
         },
+        refreshFrame = nil,
+        refreshElapsed = 0,
+        refreshDelay = 0,
     }
 
     local function getIconSet(category, cooldownID, create)
@@ -150,48 +153,71 @@ function CDMIconMirrorIndex.Create(callbacks)
         if batchKeys > stats.maxBatch then
             stats.maxBatch = batchKeys
         end
-        stats.targeted = stats.targeted + batchKeys
-
-        local editMode, ncdm, ncdmContainers, inCombat
-        if callbacks.prepareBatch then
-            editMode, ncdm, ncdmContainers, inCombat = callbacks.prepareBatch()
-        end
 
         local refreshed = 0
-        if callbacks.setStackTextWrites then
-            callbacks.setStackTextWrites(true)
-        end
-        if callbacks.beginBatch then
-            callbacks.beginBatch()
-        end
+        local effectiveKeys = 0
+        local editMode, ncdm, ncdmContainers, inCombat
+        local batchStarted = false
 
         for category, byCooldownID in pairs(pendingByCategory) do
             for cooldownID in pairs(byCooldownID) do
                 local iconSet = getIconSet(category, cooldownID, false)
                 if iconSet then
+                    local keyHadIcon = false
                     for icon in pairs(iconSet) do
                         if icon
                             and icon._blizzMirrorCooldownID == cooldownID
                             and icon._blizzMirrorCategory == category
-                            and callbacks.refreshIcon
-                            and callbacks.refreshIcon(icon, editMode, ncdm, ncdmContainers, inCombat) then
-                            refreshed = refreshed + 1
+                            and callbacks.refreshIcon then
+                            if not keyHadIcon then
+                                effectiveKeys = effectiveKeys + 1
+                                keyHadIcon = true
+                            end
+                            if not batchStarted then
+                                if callbacks.prepareBatch then
+                                    editMode, ncdm, ncdmContainers, inCombat = callbacks.prepareBatch()
+                                end
+                                if callbacks.setStackTextWrites then
+                                    callbacks.setStackTextWrites(true)
+                                end
+                                if callbacks.beginBatch then
+                                    callbacks.beginBatch()
+                                end
+                                batchStarted = true
+                            end
+                            if callbacks.refreshIcon(icon, editMode, ncdm, ncdmContainers, inCombat) then
+                                refreshed = refreshed + 1
+                            end
                         end
                     end
                 end
             end
         end
 
-        if callbacks.setStackTextWrites then
-            callbacks.setStackTextWrites(false)
-        end
-        if callbacks.endBatch then
-            callbacks.endBatch()
+        stats.targeted = stats.targeted + effectiveKeys
+
+        if batchStarted then
+            if callbacks.setStackTextWrites then
+                callbacks.setStackTextWrites(false)
+            end
+            if callbacks.endBatch then
+                callbacks.endBatch()
+            end
         end
 
         if refreshed > 0 and callbacks.drainLayoutDirty then
             callbacks.drainLayoutDirty()
         end
+    end
+
+    local function drainRefreshFrame(_, elapsed)
+        controller.refreshElapsed = controller.refreshElapsed + (elapsed or 0)
+        if controller.refreshElapsed < controller.refreshDelay then return end
+        if controller.refreshFrame then
+            controller.refreshFrame:SetScript("OnUpdate", nil)
+            controller.refreshFrame:Hide()
+        end
+        drainRefreshQueue()
     end
 
     function controller:RequestRefresh(cooldownID, category)
@@ -213,12 +239,24 @@ function CDMIconMirrorIndex.Create(callbacks)
         byCooldownID[cooldownID] = true
 
         if controller.refreshPending then return end
+        controller.refreshPending = true
+        if InCombatLockdown and InCombatLockdown() then
+            controller.refreshElapsed = 0
+            controller.refreshDelay = callbacks.getCombatDelay and callbacks.getCombatDelay() or 0.2
+            if not controller.refreshFrame then
+                controller.refreshFrame = CreateFrame("Frame")
+                controller.refreshFrame:Hide()
+            end
+            controller.refreshFrame:SetScript("OnUpdate", drainRefreshFrame)
+            controller.refreshFrame:Show()
+            return
+        end
+
         if not (C_Timer and C_Timer.After) then
             drainRefreshQueue()
             return
         end
 
-        controller.refreshPending = true
         C_Timer.After(0, drainRefreshQueue)
     end
 

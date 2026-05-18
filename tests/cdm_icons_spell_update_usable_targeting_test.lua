@@ -5,7 +5,10 @@ local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub
 
 local function noop() end
 
-function InCombatLockdown() return false end
+local inCombat = false
+local createdFrames = {}
+
+function InCombatLockdown() return inCombat end
 function GetTime() return 100 end
 function wipe(tbl)
     for key in pairs(tbl) do
@@ -14,12 +17,24 @@ function wipe(tbl)
 end
 
 function CreateFrame()
-    return {
+    local frame = {
+        scripts = {},
+        shown = false,
         RegisterEvent = noop,
         RegisterUnitEvent = noop,
         UnregisterAllEvents = noop,
-        SetScript = noop,
+        SetScript = function(self, scriptName, handler)
+            self.scripts[scriptName] = handler
+        end,
+        Show = function(self)
+            self.shown = true
+        end,
+        Hide = function(self)
+            self.shown = false
+        end,
     }
+    createdFrames[#createdFrames + 1] = frame
+    return frame
 end
 
 C_Timer = {
@@ -31,6 +46,7 @@ C_Timer = {
 
 local resolveCounts = {}
 local usableQueries = {}
+local runtimeBatches = 0
 
 local function makeIcon(name, spellID, kind)
     local icon = {
@@ -184,6 +200,14 @@ local ns = {
 }
 
 dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
+do
+    local runtime = assert(ns.CDMRuntimeQueries, "runtime query module should be loaded")
+    local originalBegin = runtime.BeginRuntimeQueryBatch
+    runtime.BeginRuntimeQueryBatch = function(...)
+        runtimeBatches = runtimeBatches + 1
+        return originalBegin(...)
+    end
+end
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
@@ -193,5 +217,49 @@ assert(resolveCounts.stale == 1, "stale cooldown icon should be re-resolved on S
 assert(resolveCounts.idle == nil, "idle icons should not be re-resolved on SPELL_UPDATE_USABLE")
 assert(resolveCounts.aura == nil, "aura icons should not be re-resolved on SPELL_UPDATE_USABLE")
 assert(usableQueries[88104] == nil, "aura icons should not run usability checks on SPELL_UPDATE_USABLE")
+
+staleIcon._hasCooldownActive = nil
+staleIcon._hasRealCooldownActive = nil
+staleIcon._lastDurObjKey = nil
+staleIcon._showingRealCooldownSwipe = nil
+staleIcon._showingGCDSwipe = nil
+staleIcon._cooldownExpiryTimerKey = nil
+staleIcon._isOnGCD = nil
+staleIcon._cdDesaturated = nil
+local batchesBeforeIdleUsable = runtimeBatches
+icons.HandleRuntimeRefresh("SPELL_UPDATE_USABLE")
+assert(runtimeBatches == batchesBeforeIdleUsable,
+    "SPELL_UPDATE_USABLE with no stale cooldown icons should not open a runtime query batch")
+
+staleIcon._hasCooldownActive = true
+staleIcon._hasRealCooldownActive = true
+staleIcon._lastDurObjKey = "cooldown:88101"
+resolveCounts.stale = nil
+inCombat = true
+local batchesBeforeCombatUsable = runtimeBatches
+icons.HandleRuntimeRefresh("SPELL_UPDATE_USABLE")
+icons.HandleRuntimeRefresh("SPELL_UPDATE_USABLE")
+assert(resolveCounts.stale == nil,
+    "combat SPELL_UPDATE_USABLE should defer stale cooldown resolution until the coalesced tick")
+assert(runtimeBatches == batchesBeforeCombatUsable,
+    "queued combat SPELL_UPDATE_USABLE should not open a runtime query batch immediately")
+
+local usabilityFrame
+for _, frame in ipairs(createdFrames) do
+    if frame.scripts.OnUpdate then
+        usabilityFrame = frame
+    end
+end
+assert(usabilityFrame and usabilityFrame.shown == true,
+    "combat SPELL_UPDATE_USABLE should arm a reusable coalescing frame")
+usabilityFrame.scripts.OnUpdate(usabilityFrame, 0.29)
+assert(resolveCounts.stale == nil,
+    "combat SPELL_UPDATE_USABLE should wait for its coalescing interval")
+usabilityFrame.scripts.OnUpdate(usabilityFrame, 0.02)
+assert(resolveCounts.stale == 1,
+    "coalesced combat SPELL_UPDATE_USABLE should re-resolve stale cooldown icons once")
+assert(usabilityFrame.shown == false,
+    "coalesced combat SPELL_UPDATE_USABLE should hide the reusable frame after draining")
+inCombat = false
 
 print("OK: cdm_icons_spell_update_usable_targeting_test")

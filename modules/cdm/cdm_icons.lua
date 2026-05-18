@@ -51,6 +51,40 @@ local GetChargeMetadataDB = RuntimeQueries.GetChargeMetadataDB
 local BeginRuntimeQueryBatch = RuntimeQueries.BeginRuntimeQueryBatch
 local EndRuntimeQueryBatch = RuntimeQueries.EndRuntimeQueryBatch
 
+local resolverQueryBatchStats = {
+    updateAll = 0,
+    cooldownOnly = 0,
+    type = 0,
+    placed = 0,
+    auraScope = 0,
+    itemScope = 0,
+    spellScope = 0,
+    spellID = 0,
+    auraDelta = 0,
+    usability = 0,
+    mirror = 0,
+    other = 0,
+}
+local durationBindingStats = { keyBuilds = 0, keyCacheHits = 0 }
+
+do
+    local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "CDM_iconBatch_updateAll", counter = true, fn = function() return resolverQueryBatchStats.updateAll end }
+    mp[#mp + 1] = { name = "CDM_iconBatch_cooldownOnly", counter = true, fn = function() return resolverQueryBatchStats.cooldownOnly end }
+    mp[#mp + 1] = { name = "CDM_iconBatch_type", counter = true, fn = function() return resolverQueryBatchStats.type end }
+    mp[#mp + 1] = { name = "CDM_iconBatch_placed", counter = true, fn = function() return resolverQueryBatchStats.placed end }
+    mp[#mp + 1] = { name = "CDM_iconBatch_auraScope", counter = true, fn = function() return resolverQueryBatchStats.auraScope end }
+    mp[#mp + 1] = { name = "CDM_iconBatch_itemScope", counter = true, fn = function() return resolverQueryBatchStats.itemScope end }
+    mp[#mp + 1] = { name = "CDM_iconBatch_spellScope", counter = true, fn = function() return resolverQueryBatchStats.spellScope end }
+    mp[#mp + 1] = { name = "CDM_iconBatch_spellID", counter = true, fn = function() return resolverQueryBatchStats.spellID end }
+    mp[#mp + 1] = { name = "CDM_iconBatch_auraDelta", counter = true, fn = function() return resolverQueryBatchStats.auraDelta end }
+    mp[#mp + 1] = { name = "CDM_iconBatch_usability", counter = true, fn = function() return resolverQueryBatchStats.usability end }
+    mp[#mp + 1] = { name = "CDM_iconBatch_mirror", counter = true, fn = function() return resolverQueryBatchStats.mirror end }
+    mp[#mp + 1] = { name = "CDM_iconBatch_other", counter = true, fn = function() return resolverQueryBatchStats.other end }
+    mp[#mp + 1] = { name = "CDM_durationBindingKeys", counter = true, fn = function() return durationBindingStats.keyBuilds end }
+    mp[#mp + 1] = { name = "CDM_durationBindingKeyCacheHits", counter = true, fn = function() return durationBindingStats.keyCacheHits end }
+end
+
 local function ResolveBestOwnedItemVariant(itemID)
     if not itemID then return nil end
     if Sources and Sources.QueryBestOwnedItemVariant then
@@ -59,7 +93,12 @@ local function ResolveBestOwnedItemVariant(itemID)
     return itemID
 end
 
-local function BeginResolverQueryBatch()
+local function BeginResolverQueryBatch(reason)
+    if reason and resolverQueryBatchStats[reason] ~= nil then
+        resolverQueryBatchStats[reason] = resolverQueryBatchStats[reason] + 1
+    else
+        resolverQueryBatchStats.other = resolverQueryBatchStats.other + 1
+    end
     if BeginRuntimeQueryBatch then
         BeginRuntimeQueryBatch()
     end
@@ -897,9 +936,139 @@ function _resolverRuntimePolicy.IsRealCooldownDurationMode(mode)
         or mode == "item-cooldown"
 end
 
+local function BuildDurationBindingKey(mode, sourceID)
+    local sourceType = type(sourceID)
+    if (sourceType == "number" or sourceType == "string")
+        and type(mode) == "string"
+        and not (issecretvalue and issecretvalue(sourceID))
+        and (mode == "gcd-only" or _resolverRuntimePolicy.IsRealCooldownDurationMode(mode)) then
+        local cache = _resolverRuntimePolicy.durationBindingKeyCache
+        if not cache then
+            cache = {}
+            _resolverRuntimePolicy.durationBindingKeyCache = cache
+        end
+        local modeCache = cache[mode]
+        if not modeCache then
+            modeCache = {}
+            cache[mode] = modeCache
+        end
+        local typeCache = modeCache[sourceType]
+        if not typeCache then
+            typeCache = {}
+            modeCache[sourceType] = typeCache
+        end
+        local key = typeCache[sourceID]
+        if key then
+            durationBindingStats.keyCacheHits = durationBindingStats.keyCacheHits + 1
+            return key
+        end
+        key = mode .. ":" .. tostring(sourceID)
+        typeCache[sourceID] = key
+        durationBindingStats.keyBuilds = durationBindingStats.keyBuilds + 1
+        return key
+    end
+
+    durationBindingStats.keyBuilds = durationBindingStats.keyBuilds + 1
+    return mode .. ":" .. tostring(sourceID)
+end
+
+function _resolverRuntimePolicy.ClearDurationBindingKeyCache()
+    _resolverRuntimePolicy.durationBindingKeyCache = nil
+end
+
+local function DurationBindingSourceCanCompare(sourceID)
+    return not (issecretvalue and issecretvalue(sourceID))
+end
+
+function _resolverRuntimePolicy.DurationBindingSourcesMatch(left, right)
+    if not DurationBindingSourceCanCompare(left)
+        or not DurationBindingSourceCanCompare(right) then
+        return false
+    end
+
+    local leftType = type(left)
+    local rightType = type(right)
+    if leftType == rightType then
+        return left == right
+    end
+    if leftType == "number" and rightType == "string" then
+        return tonumber(right) == left
+    end
+    if leftType == "string" and rightType == "number" then
+        return tonumber(left) == right
+    end
+    return false
+end
+
+function _resolverRuntimePolicy.DurationBindingFieldMatches(icon, mode, sourceID)
+    return icon
+        and icon._lastResolvedMode == mode
+        and _resolverRuntimePolicy.DurationBindingSourcesMatch(icon._lastResolvedSourceID, sourceID)
+end
+
+function _resolverRuntimePolicy.DurationBindingLegacyKeyMatches(icon, mode, sourceID)
+    local key = icon and icon._lastDurObjKey
+    if type(key) ~= "string" or type(mode) ~= "string" then return false end
+    if not DurationBindingSourceCanCompare(sourceID) then return false end
+
+    local modeLength = #mode
+    local sourceStart = modeLength + 2
+    if key:byte(modeLength + 1) ~= 58 then return false end
+    if key:find(mode, 1, true) ~= 1 then return false end
+
+    local sourceType = type(sourceID)
+    if sourceType == "string" then
+        if key:find(sourceID, sourceStart, true) ~= sourceStart then return false end
+        if sourceStart + #sourceID - 1 ~= #key then return false end
+    elseif sourceType == "number" then
+        local numericSource = tonumber(key:sub(sourceStart))
+        if numericSource ~= sourceID then return false end
+    else
+        return false
+    end
+
+    icon._lastResolvedMode = mode
+    icon._lastResolvedSourceID = sourceID
+    return true
+end
+
+local function DurationBindingMatches(icon, mode, sourceID, durObj, mirrorBackedDuration)
+    if not icon then return false end
+
+    local sameBinding = _resolverRuntimePolicy.DurationBindingFieldMatches(icon, mode, sourceID)
+        or _resolverRuntimePolicy.DurationBindingLegacyKeyMatches(icon, mode, sourceID)
+
+    if not sameBinding then return false end
+    if mode == "aura" then
+        return durObj == icon._lastDurObj
+    end
+    if mode == "gcd-only" and mirrorBackedDuration == true then
+        if issecretvalue and (issecretvalue(durObj) or issecretvalue(icon._lastDurObj)) then
+            return false
+        end
+        return durObj == icon._lastDurObj
+    end
+    return true
+end
+
+local function GetDurationBindingKey(icon, mode, sourceID)
+    local key = icon and icon._lastDurObjKey
+    if type(key) == "string"
+        and (_resolverRuntimePolicy.DurationBindingFieldMatches(icon, mode, sourceID)
+            or _resolverRuntimePolicy.DurationBindingLegacyKeyMatches(icon, mode, sourceID)) then
+        return key
+    end
+    return BuildDurationBindingKey(mode, sourceID)
+end
+
 function _resolverRuntimePolicy.GetPreservedRealDurationObject(icon)
     if not (icon and icon._lastDurObj) then
         return nil
+    end
+
+    local lastMode = icon._lastResolvedMode
+    if _resolverRuntimePolicy.IsRealCooldownDurationMode(lastMode) then
+        return icon._lastDurObj, lastMode, icon._lastResolvedSourceID
     end
 
     local key = icon._lastDurObjKey
@@ -976,6 +1145,40 @@ function _resolverRuntimePolicy.ResolveAuraFactsForIcon(icon, entry, runtimeSpel
         return state
     end
     return nil
+end
+
+function _resolverRuntimePolicy.StoreIconRuntimeState(icon, mode, sourceID, spellID, durObj,
+                                                       resolvedStart, resolvedDuration, cdActive,
+                                                       hasNumericCooldown, rechargeActive,
+                                                       hasCharges, hasChargesRemaining,
+                                                       mirrorBackedDuration, mirrorPayload)
+    local store = ns.CDMRuntimeStore
+    if not (store and store.SetIconState) then return end
+
+    local state = _resolverRuntimePolicy.iconRuntimeStateScratch
+    if not state then
+        state = {}
+        _resolverRuntimePolicy.iconRuntimeStateScratch = state
+    end
+
+    state.mode = mode
+    state.sourceID = sourceID
+    state.spellID = spellID
+    state.durObj = durObj
+    state.start = resolvedStart
+    state.duration = resolvedDuration
+    state.active = cdActive
+    state.numericCooldownActive = hasNumericCooldown
+    state.isOnCooldown = cdActive
+    state.rechargeActive = rechargeActive == true
+    state.hasCharges = hasCharges == true
+    state.hasChargesRemaining = hasChargesRemaining == true
+    state.gcdOnly = mode == "gcd-only"
+    state.key = nil
+    state.mirrorBacked = mirrorBackedDuration == true
+    state.mirrorState = mirrorPayload and mirrorPayload.state or nil
+
+    store.SetIconState(icon, state)
 end
 
 -- Single-writer cooldown apply: ask the resolver, bind icon.Cooldown to the
@@ -1091,7 +1294,6 @@ ApplyResolvedCooldown = function(icon)
 
     local hasNumericCooldown = resolvedState.numericCooldownActive == true
     local keySource = sourceID
-    local key = mode .. ":" .. tostring(keySource)
     local hasCharges = resolvedState.hasCharges == true
     local rechargeActive = resolvedState.rechargeActive == true
     local hasChargesRemaining = resolvedState.hasChargesRemaining == true
@@ -1099,33 +1301,18 @@ ApplyResolvedCooldown = function(icon)
     if hasRenderableCooldown == nil then
         hasRenderableCooldown = durObj ~= nil or hasNumericCooldown == true
     end
-    if ns.CDMRuntimeStore and ns.CDMRuntimeStore.SetIconState then
-        ns.CDMRuntimeStore.SetIconState(icon, {
-            mode = mode,
-            sourceID = sourceID,
-            spellID = sid or resolvedSpellID,
-            durObj = durObj,
-            start = resolvedStart,
-            duration = resolvedDuration,
-            active = cdActive,
-            numericCooldownActive = hasNumericCooldown,
-            isOnCooldown = cdActive,
-            rechargeActive = rechargeActive == true,
-            hasCharges = hasCharges == true,
-            hasChargesRemaining = hasChargesRemaining == true,
-            gcdOnly = mode == "gcd-only",
-            key = key,
-            mirrorBacked = mirrorBackedDuration == true,
-            mirrorState = mirrorPayload and mirrorPayload.state or nil,
-        })
-    end
+    _resolverRuntimePolicy.StoreIconRuntimeState(
+        icon, mode, sourceID, sid or resolvedSpellID, durObj,
+        resolvedStart, resolvedDuration, cdActive, hasNumericCooldown,
+        rechargeActive, hasCharges, hasChargesRemaining,
+        mirrorBackedDuration, mirrorPayload)
 
     if hasRenderableCooldown ~= true or mode == "inactive" then
         CancelCooldownExpiryRefresh(icon)
         if mode == "aura"
            and InCombatLockdown()
            and icon._lastAuraDurObj
-           and icon._lastDurObjKey == key
+           and DurationBindingMatches(icon, mode, keySource, durObj, mirrorBackedDuration)
         then
             icon._showingRealCooldownSwipe = true
             _resolverRuntimePolicy.ClearGCDSwipe(icon)
@@ -1181,23 +1368,10 @@ ApplyResolvedCooldown = function(icon)
         or (cdActive == true
             and (resolvedCdInfo ~= nil or hasNumericCooldown)
             and (mode == "cooldown" or mode == "charge" or mode == "item-cooldown"))
-    local sameDurationBinding = icon._lastDurObjKey == key
-        and (mode ~= "aura" or durObj == icon._lastDurObj)
-    if sameDurationBinding
-       and mode == "gcd-only"
-       and mirrorBackedDuration == true then
-        local durationChanged = false
-        if issecretvalue and (issecretvalue(durObj) or issecretvalue(icon._lastDurObj)) then
-            durationChanged = true
-        else
-            durationChanged = durObj ~= icon._lastDurObj
-        end
-        if durationChanged then
-            sameDurationBinding = false
-        end
-    end
+    local sameDurationBinding = DurationBindingMatches(icon, mode, keySource, durObj, mirrorBackedDuration)
     if sameDurationBinding then
         if shouldScheduleExpiry then
+            local key = GetDurationBindingKey(icon, mode, keySource)
             if resolvedCdInfo then
                 ScheduleCooldownExpiryRefresh(icon, key, resolvedCdInfo)
             else
@@ -1218,6 +1392,7 @@ ApplyResolvedCooldown = function(icon)
         ReapplySwipeStyle(addonCD, icon)
         return true
     end
+    local key = BuildDurationBindingKey(mode, keySource)
     icon._lastDurObjKey = key
     icon._lastDurObj = durObj
     icon._lastResolvedMode = mode
@@ -3009,7 +3184,7 @@ UpdateIconCooldown = function(icon)
     end
 
     local _cachedChargeInfo = nil
-    do
+    if stackTextWritesAllowed and entry.type == "spell" then
         local spellID = _runtimeSid
         if spellID then
             _cachedChargeInfo = QueryCharges(spellID)
@@ -3035,9 +3210,12 @@ UpdateIconCooldown = function(icon)
     end
 
     local _chargeCountForwarded = false
-    if not _stackMirrorBacked then
+    if stackTextWritesAllowed and entry.type == "spell" and not _stackMirrorBacked then
         local baseSid = entry.spellID or entry.id
-        local ci = baseSid and QueryCharges(baseSid)
+        local ci = baseSid and _cachedChargeInfo
+        if _runtimeSid ~= baseSid then
+            ci = baseSid and QueryCharges(baseSid)
+        end
         local ciMax = ci and ci.maxCharges
         if (not ciMax or ciMax <= 1)
             and entry.overrideSpellID and entry.overrideSpellID ~= baseSid then
@@ -3781,7 +3959,7 @@ function CDMIcons:UpdateAllCooldowns()
     local _ncdmContainers = _ncdm and _ncdm.containers
     local inCombat = InCombatLockdown()
     SetStackTextWritesForBatch(true)
-    BeginResolverQueryBatch()
+    BeginResolverQueryBatch("updateAll")
 
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
@@ -4081,7 +4259,7 @@ function CDMIcons:UpdateCooldownOnly()
     local allowStackTextWrites = _resolverRuntimePolicy.pendingStackTextUpdate == true
     _resolverRuntimePolicy.pendingStackTextUpdate = nil
     SetStackTextWritesForBatch(allowStackTextWrites)
-    BeginResolverQueryBatch()
+    BeginResolverQueryBatch("cooldownOnly")
 
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
@@ -4111,7 +4289,7 @@ function CDMIcons:UpdateCooldownsForType(viewerType)
         _batchTime = GetTime()
         _resolverRuntimePolicy.RefreshSwipeBatchSettings()
         SetStackTextWritesForBatch(true)
-        BeginResolverQueryBatch()
+        BeginResolverQueryBatch("type")
         for _, icon in ipairs(pool) do
             UpdateIconCooldown(icon)
         end
@@ -4124,7 +4302,7 @@ end
 function CDMIcons.OnContainerIconPlaced(icon, rowConfig)
     if not icon then return end
     ConfigureIcon(icon, rowConfig)
-    BeginResolverQueryBatch()
+    BeginResolverQueryBatch("placed")
     UpdateIconCooldown(icon)
     EndResolverQueryBatch()
 end
@@ -4439,6 +4617,80 @@ local function NormalizeSpellIdentifier(value)
     return nil
 end
 
+function _resolverRuntimePolicy.AddSpellIdentifierToSet(set, rawID)
+    if not set then return false end
+    local normalized = NormalizeSpellIdentifier(rawID)
+    if normalized == nil then return false end
+
+    local normalizedType = type(normalized)
+    set[normalized] = true
+    if normalizedType == "string" then
+        local numeric = tonumber(normalized)
+        if numeric then set[numeric] = true end
+    end
+    return true
+end
+
+function _resolverRuntimePolicy.SpellIdentifierSetHas(set, rawID)
+    if not set then return false end
+    local normalized = NormalizeSpellIdentifier(rawID)
+    if normalized == nil then return false end
+    if set[normalized] == true then return true end
+
+    if type(normalized) == "string" then
+        local numeric = tonumber(normalized)
+        return numeric and set[numeric] == true or false
+    end
+    return false
+end
+
+function _resolverRuntimePolicy.EntryMatchesSpellIdentifierSet(icon, entry, spellIDs, hasSpellIDs)
+    if not hasSpellIDs or not entry then return false end
+    if _resolverRuntimePolicy.SpellIdentifierSetHas(spellIDs, icon and icon._runtimeSpellID) then return true end
+    if _resolverRuntimePolicy.SpellIdentifierSetHas(spellIDs, entry.overrideSpellID) then return true end
+    if _resolverRuntimePolicy.SpellIdentifierSetHas(spellIDs, entry.spellID) then return true end
+    if _resolverRuntimePolicy.SpellIdentifierSetHas(spellIDs, entry.id) then return true end
+
+    local linked = entry.linkedSpellIDs
+    if type(linked) == "table" then
+        for _, linkedID in ipairs(linked) do
+            if _resolverRuntimePolicy.SpellIdentifierSetHas(spellIDs, linkedID) then return true end
+        end
+    end
+    return false
+end
+
+function _resolverRuntimePolicy.GetItemIDForEntry(entry)
+    if not entry then return nil end
+    local entryType = entry.type
+    if entryType == "item" then
+        return ResolveBestOwnedItemVariant(entry.id)
+    end
+    if (entryType == "trinket" or entryType == "slot")
+        and Sources and Sources.QueryInventoryItemID then
+        return Sources.QueryInventoryItemID("player", entry.id)
+    end
+    return nil
+end
+
+function _resolverRuntimePolicy.ItemEntryMatchesAuraSpellIdentifierSet(entry, spellIDs, hasSpellIDs)
+    if not hasSpellIDs or not (entry and Sources and Sources.QueryItemSpell) then return false end
+    local itemID = _resolverRuntimePolicy.GetItemIDForEntry(entry)
+    if NormalizeSpellIdentifier(itemID) == nil then return false end
+
+    local _, itemSpellID = Sources.QueryItemSpell(itemID)
+    itemSpellID = NormalizeSpellIdentifier(itemSpellID)
+    if not itemSpellID then return false end
+    if not _resolverRuntimePolicy.SpellIdentifierSetHas(spellIDs, itemSpellID) then
+        if Sources.QueryCooldownAuraBySpellID then
+            local auraSpellID = Sources.QueryCooldownAuraBySpellID(itemSpellID)
+            return _resolverRuntimePolicy.SpellIdentifierSetHas(spellIDs, auraSpellID)
+        end
+        return false
+    end
+    return true
+end
+
 ---------------------------------------------------------------------------
 -- EVENT HANDLING: Update cooldowns on relevant events
 ---------------------------------------------------------------------------
@@ -4678,7 +4930,7 @@ end
 
 local function ApplyResolvedCooldownForAuraScope()
     local editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
-    BeginResolverQueryBatch()
+    BeginResolverQueryBatch("auraScope")
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             local entry = icon and icon._spellEntry
@@ -4700,7 +4952,9 @@ end
 -- equipment-changed branch is already gated to trinket slots 13/14, which
 -- are also item-backed. Spell-only entries are not affected by either event.
 local function ApplyResolvedCooldownForItemScope()
-    BeginResolverQueryBatch()
+    local batchStarted = false
+    local refreshed = false
+    local editMode, ncdm, ncdmContainers, inCombat
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             local entry = icon and icon._spellEntry
@@ -4710,12 +4964,28 @@ local function ApplyResolvedCooldownForItemScope()
                     or entryType == "trinket"
                     or entryType == "slot"
                 if entryIsItem then
+                    if not batchStarted then
+                        editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
+                        BeginResolverQueryBatch("itemScope")
+                        batchStarted = true
+                    end
                     ApplyResolvedCooldown(icon)
+                    local containerDB = ncdm and (ncdm[entry.viewerType]
+                        or (ncdmContainers and ncdmContainers[entry.viewerType]))
+                    UpdateCooldownContainerVisibility(icon, entry, containerDB, editMode, inCombat)
+                    SyncCooldownBling(icon)
+                    refreshed = true
                 end
             end
         end
     end
-    EndResolverQueryBatch()
+    if batchStarted then
+        EndResolverQueryBatch()
+    end
+    if refreshed then
+        DrainLayoutDirty()
+    end
+    return refreshed
 end
 
 -- Spell-cooldown scope: CDM:COOLDOWN_CHANGED broad fallback (GCD pulse /
@@ -4727,7 +4997,9 @@ end
 -- sweeps were the original source of cooldown-swipe flicker on cooldown-
 -- only spells when an aura churned anywhere on the player.
 local function ApplyResolvedCooldownForSpellScope()
-    BeginResolverQueryBatch()
+    local batchStarted = false
+    local refreshed = false
+    local editMode, ncdm, ncdmContainers, inCombat
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             local entry = icon and icon._spellEntry
@@ -4738,12 +5010,29 @@ local function ApplyResolvedCooldownForSpellScope()
                     or entryType == "trinket"
                     or entryType == "slot"
                 if not entryIsAura and not entryIsItem then
+                    if not batchStarted then
+                        editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
+                        BeginResolverQueryBatch("spellScope")
+                        batchStarted = true
+                    end
                     ApplyResolvedCooldown(icon)
+                    local containerDB, cType = ResolveContainerDBAndType(entry, ncdm, ncdmContainers)
+                    if cType ~= "aura" and cType ~= "auraBar" then
+                        UpdateCooldownContainerVisibility(icon, entry, containerDB, editMode, inCombat)
+                    end
+                    SyncCooldownBling(icon)
+                    refreshed = true
                 end
             end
         end
     end
-    EndResolverQueryBatch()
+    if batchStarted then
+        EndResolverQueryBatch()
+    end
+    if refreshed then
+        DrainLayoutDirty()
+    end
+    return refreshed
 end
 
 -- Cast events start a new GCD pulse for every visible icon. The dedupe
@@ -4757,9 +5046,13 @@ local function InvalidateGCDOnlyBindings()
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             local lk = icon._lastDurObjKey
-            if lk and lk:sub(1, 9) == "gcd-only:" then
+            if icon._lastResolvedMode == "gcd-only"
+                or (lk and lk:sub(1, 9) == "gcd-only:") then
                 icon._lastDurObjKey = nil
                 icon._lastDurObj = nil
+                icon._lastResolvedMode = nil
+                icon._lastResolvedSourceID = nil
+                icon._lastResolvedSpellID = nil
             end
         end
     end
@@ -4784,13 +5077,23 @@ local function InvalidateSpellCooldownBinding(spellID)
                     runtime = nil
                 end
                 if base == spellID or override == spellID or runtime == spellID then
-                    local isCooldownKey = lk:sub(1, 9) == "cooldown:"
-                        or lk:sub(1, 7) == "charge:"
-                        or lk:sub(1, 9) == "gcd-only:"
-                        or lk:sub(1, 14) == "item-cooldown:"
+                    local mode = icon._lastResolvedMode
+                    local isCooldownKey = mode == "cooldown"
+                        or mode == "charge"
+                        or mode == "gcd-only"
+                        or mode == "item-cooldown"
+                    if not isCooldownKey then
+                        isCooldownKey = lk:sub(1, 9) == "cooldown:"
+                            or lk:sub(1, 7) == "charge:"
+                            or lk:sub(1, 9) == "gcd-only:"
+                            or lk:sub(1, 14) == "item-cooldown:"
+                    end
                     if isCooldownKey then
                         icon._lastDurObjKey = nil
                         icon._lastDurObj = nil
+                        icon._lastResolvedMode = nil
+                        icon._lastResolvedSourceID = nil
+                        icon._lastResolvedSpellID = nil
                     end
                 end
             end
@@ -4805,14 +5108,19 @@ end
 -- override-keyed icons without reading override state in Lua.
 local function ApplyResolvedCooldownForSpellID(eventSpellID, eventBaseSpellID)
     if not eventSpellID and not eventBaseSpellID then return end
-    local editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
-    BeginResolverQueryBatch()
+    local editMode, ncdm, ncdmContainers, inCombat
+    local batchStarted = false
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             local entry = icon and icon._spellEntry
             if entry then
                 local base = entry.spellID or entry.id
                 if base and (base == eventSpellID or base == eventBaseSpellID) then
+                    if not batchStarted then
+                        editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
+                        BeginResolverQueryBatch("spellID")
+                        batchStarted = true
+                    end
                     local _, cType = ResolveContainerDBAndType(entry, ncdm, ncdmContainers)
                     if IsAuraEntry(entry) or cType == "aura" or cType == "auraBar" then
                         _resolverRuntimePolicy.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
@@ -4823,7 +5131,9 @@ local function ApplyResolvedCooldownForSpellID(eventSpellID, eventBaseSpellID)
             end
         end
     end
-    EndResolverQueryBatch()
+    if batchStarted then
+        EndResolverQueryBatch()
+    end
 end
 
 local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
@@ -4847,76 +5157,6 @@ local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
     end
     local hasSpellIDs = false
 
-    local function addAuraSpellID(rawID)
-        local normalized = NormalizeSpellIdentifier(rawID)
-        if normalized == nil then return end
-        spellIDs[normalized] = true
-        spellIDs[tostring(normalized)] = true
-        if type(normalized) == "string" then
-            local numeric = tonumber(normalized)
-            if numeric then spellIDs[numeric] = true end
-        end
-        hasSpellIDs = true
-    end
-
-    local function spellSetHas(rawID)
-        local normalized = NormalizeSpellIdentifier(rawID)
-        if normalized == nil then return false end
-        if spellIDs[normalized] == true or spellIDs[tostring(normalized)] == true then
-            return true
-        end
-        if type(normalized) == "string" then
-            local numeric = tonumber(normalized)
-            return numeric and spellIDs[numeric] == true or false
-        end
-        return false
-    end
-
-    local function iconMatchesAuraSpellIDs(icon, entry)
-        if not hasSpellIDs or not entry then return false end
-        if spellSetHas(icon and icon._runtimeSpellID) then return true end
-        if spellSetHas(entry.overrideSpellID) then return true end
-        if spellSetHas(entry.spellID) then return true end
-        if spellSetHas(entry.id) then return true end
-        local linked = entry.linkedSpellIDs
-        if type(linked) == "table" then
-            for _, linkedID in ipairs(linked) do
-                if spellSetHas(linkedID) then return true end
-            end
-        end
-        return false
-    end
-
-    local function getItemIDForEntry(entry)
-        if not entry then return nil end
-        local entryType = entry.type
-        if entryType == "item" then
-            return ResolveBestOwnedItemVariant(entry.id)
-        end
-        if (entryType == "trinket" or entryType == "slot")
-            and Sources and Sources.QueryInventoryItemID then
-            return Sources.QueryInventoryItemID("player", entry.id)
-        end
-        return nil
-    end
-
-    local function iconMatchesItemAuraSpellIDs(entry)
-        if not hasSpellIDs or not (entry and Sources and Sources.QueryItemSpell) then return false end
-        local itemID = getItemIDForEntry(entry)
-        if NormalizeSpellIdentifier(itemID) == nil then return false end
-
-        local _, itemSpellID = Sources.QueryItemSpell(itemID)
-        itemSpellID = NormalizeSpellIdentifier(itemSpellID)
-        if not itemSpellID then return false end
-        if spellSetHas(itemSpellID) then return true end
-
-        if Sources.QueryCooldownAuraBySpellID then
-            local auraSpellID = Sources.QueryCooldownAuraBySpellID(itemSpellID)
-            if spellSetHas(auraSpellID) then return true end
-        end
-        return false
-    end
-
     if updateInfo.addedAuras then
         for _, auraData in ipairs(updateInfo.addedAuras) do
             local auraInstanceID = auraData and auraData.auraInstanceID
@@ -4925,8 +5165,10 @@ local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
                 hasIDs = true
             end
             if auraData then
-                addAuraSpellID(auraData.spellId)
-                addAuraSpellID(auraData.spellID)
+                hasSpellIDs = _resolverRuntimePolicy.AddSpellIdentifierToSet(spellIDs, auraData.spellId)
+                    or hasSpellIDs
+                hasSpellIDs = _resolverRuntimePolicy.AddSpellIdentifierToSet(spellIDs, auraData.spellID)
+                    or hasSpellIDs
             end
         end
     end
@@ -4949,9 +5191,9 @@ local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
 
     if not hasIDs and not hasSpellIDs then return 0 end
 
-    local editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
     local refreshed = 0
-    BeginResolverQueryBatch()
+    local editMode, ncdm, ncdmContainers, inCombat
+    local batchStarted = false
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             local entry = icon and icon._spellEntry
@@ -4968,19 +5210,28 @@ local function ApplyResolvedCooldownForAuraInstances(unit, updateInfo)
                     and ids[mirrorAuraInstanceID]
                     and (not unit or state.auraUnit == unit or icon._auraUnit == unit)
             end
-            if not matches and iconMatchesAuraSpellIDs(icon, entry) then
+            if not matches
+                and _resolverRuntimePolicy.EntryMatchesSpellIdentifierSet(icon, entry, spellIDs, hasSpellIDs) then
                 matches = true
             end
-            if not matches and iconMatchesItemAuraSpellIDs(entry) then
+            if not matches
+                and _resolverRuntimePolicy.ItemEntryMatchesAuraSpellIdentifierSet(entry, spellIDs, hasSpellIDs) then
                 matches = true
             end
             if matches and entry then
+                if not batchStarted then
+                    editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
+                    BeginResolverQueryBatch("auraDelta")
+                    batchStarted = true
+                end
                 _resolverRuntimePolicy.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
                 refreshed = refreshed + 1
             end
         end
     end
-    EndResolverQueryBatch()
+    if batchStarted then
+        EndResolverQueryBatch()
+    end
 
     return refreshed
 end
@@ -4999,17 +5250,22 @@ function _resolverRuntimePolicy.IconNeedsUsabilityCooldownRefresh(icon)
 end
 
 function _resolverRuntimePolicy.ApplyResolvedCooldownForUsabilityEvent()
-    local spellState, stamp = ResolverRuntime.ResetTrustedGCDSnapshot(GetTime())
-
-    local editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
-    local previousTrust = ResolverRuntime.SetTrustIsOnGCDForBatch(true)
-
     local refreshed = 0
-    BeginResolverQueryBatch()
+    local spellState, stamp
+    local editMode, ncdm, ncdmContainers, inCombat
+    local previousTrust
+    local batchStarted = false
     for _, pool in pairs(iconPools) do
         for _, icon in ipairs(pool) do
             local entry = icon and icon._spellEntry
             if entry and _resolverRuntimePolicy.IconNeedsUsabilityCooldownRefresh(icon) then
+                if not batchStarted then
+                    spellState, stamp = ResolverRuntime.ResetTrustedGCDSnapshot(GetTime())
+                    editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
+                    previousTrust = ResolverRuntime.SetTrustIsOnGCDForBatch(true)
+                    BeginResolverQueryBatch("usability")
+                    batchStarted = true
+                end
                 _resolverRuntimePolicy.CaptureTrustedGCDStateForIcon(icon, spellState, stamp)
                 ApplyResolvedCooldown(icon)
 
@@ -5021,13 +5277,20 @@ function _resolverRuntimePolicy.ApplyResolvedCooldownForUsabilityEvent()
             end
         end
     end
-    EndResolverQueryBatch()
 
-    ResolverRuntime.SetTrustIsOnGCDForBatch(previousTrust)
+    if batchStarted then
+        EndResolverQueryBatch()
+        ResolverRuntime.SetTrustIsOnGCDForBatch(previousTrust)
+    end
     if refreshed > 0 then
         DrainLayoutDirty()
     end
     return refreshed
+end
+
+function _resolverRuntimePolicy.RunUsabilityRefresh()
+    _resolverRuntimePolicy.ApplyResolvedCooldownForUsabilityEvent()
+    _resolverRuntimePolicy.UpdateIconRangesForUsabilityEvent()
 end
 
 local function RefreshCooldownVisualsForSpellID(eventSpellID, eventBaseSpellID)
@@ -5057,6 +5320,179 @@ local function RefreshCooldownVisualsForSpellID(eventSpellID, eventBaseSpellID)
     end
 
     return refreshed
+end
+
+do
+    local state = {
+        ids = {},
+        frame = nil,
+        elapsed = 0,
+        scheduled = false,
+        delay = CDM_MIN_UPDATE_INTERVAL_COMBAT,
+    }
+
+    local function addID(rawID)
+        return _resolverRuntimePolicy.AddSpellIdentifierToSet(state.ids, rawID)
+    end
+
+    local function hasID(rawID)
+        return _resolverRuntimePolicy.SpellIdentifierSetHas(state.ids, rawID)
+    end
+
+    local function drain()
+        state.scheduled = false
+        state.elapsed = 0
+        if state.frame then
+            state.frame:SetScript("OnUpdate", nil)
+            state.frame:Hide()
+        end
+        if next(state.ids) == nil then return end
+
+        local editMode, ncdm, ncdmContainers, inCombat
+        local refreshed = false
+        local batchStarted = false
+        for _, pool in pairs(iconPools) do
+            for _, icon in ipairs(pool) do
+                local entry = icon and icon._spellEntry
+                local base = entry and (entry.spellID or entry.id)
+                if base and hasID(base) then
+                    if not batchStarted then
+                        editMode, ncdm, ncdmContainers, inCombat = PrepareCooldownUpdateBatch()
+                        BeginResolverQueryBatch("spellID")
+                        batchStarted = true
+                    end
+                    local containerDB, cType = ResolveContainerDBAndType(entry, ncdm, ncdmContainers)
+                    if IsAuraEntry(entry) or cType == "aura" or cType == "auraBar" then
+                        _resolverRuntimePolicy.ApplyAuraScopedResolvedCooldown(icon, entry, editMode, ncdm, ncdmContainers, inCombat)
+                    else
+                        ApplyResolvedCooldown(icon)
+                        UpdateCooldownContainerVisibility(icon, entry, containerDB, editMode, inCombat)
+                    end
+                    refreshed = true
+                end
+            end
+        end
+        if batchStarted then
+            EndResolverQueryBatch()
+        end
+        wipe(state.ids)
+
+        if refreshed then
+            DrainLayoutDirty()
+        end
+    end
+
+    local function onUpdate(_, elapsed)
+        state.elapsed = state.elapsed + (elapsed or 0)
+        if state.elapsed < state.delay then return end
+        drain()
+    end
+
+    function _resolverRuntimePolicy.QueueResolvedCooldownForSpellID(eventSpellID, eventBaseSpellID)
+        if not (InCombatLockdown and InCombatLockdown()) then
+            ApplyResolvedCooldownForSpellID(eventSpellID, eventBaseSpellID)
+            RefreshCooldownVisualsForSpellID(eventSpellID, eventBaseSpellID)
+            return
+        end
+
+        local added = addID(eventSpellID)
+        added = addID(eventBaseSpellID) or added
+        if not added then return end
+
+        if state.scheduled then return end
+        state.scheduled = true
+        state.elapsed = 0
+        if not state.frame then
+            state.frame = CreateFrame("Frame")
+            state.frame:Hide()
+        end
+        state.frame:SetScript("OnUpdate", onUpdate)
+        state.frame:Show()
+    end
+end
+
+do
+    local state = {
+        frame = nil,
+        elapsed = 0,
+        scheduled = false,
+        delay = CDM_MIN_UPDATE_INTERVAL_RAID_COMBAT,
+    }
+
+    local function drain()
+        state.scheduled = false
+        state.elapsed = 0
+        if state.frame then
+            state.frame:SetScript("OnUpdate", nil)
+            state.frame:Hide()
+        end
+        _resolverRuntimePolicy.RunUsabilityRefresh()
+    end
+
+    local function onUpdate(_, elapsed)
+        state.elapsed = state.elapsed + (elapsed or 0)
+        if state.elapsed < state.delay then return end
+        drain()
+    end
+
+    function _resolverRuntimePolicy.QueueUsabilityRefresh()
+        if not (InCombatLockdown and InCombatLockdown()) then
+            _resolverRuntimePolicy.RunUsabilityRefresh()
+            return
+        end
+
+        if state.scheduled then return end
+        state.scheduled = true
+        state.elapsed = 0
+        if not state.frame then
+            state.frame = CreateFrame("Frame")
+            state.frame:Hide()
+        end
+        state.frame:SetScript("OnUpdate", onUpdate)
+        state.frame:Show()
+    end
+end
+
+do
+    local state = {
+        frame = nil,
+        elapsed = 0,
+        scheduled = false,
+        delay = CDM_MIN_UPDATE_INTERVAL_RAID_COMBAT,
+    }
+
+    local function drain()
+        state.scheduled = false
+        state.elapsed = 0
+        if state.frame then
+            state.frame:SetScript("OnUpdate", nil)
+            state.frame:Hide()
+        end
+        ApplyResolvedCooldownForItemScope()
+    end
+
+    local function onUpdate(_, elapsed)
+        state.elapsed = state.elapsed + (elapsed or 0)
+        if state.elapsed < state.delay then return end
+        drain()
+    end
+
+    function _resolverRuntimePolicy.QueueItemScopeRefresh()
+        if not (InCombatLockdown and InCombatLockdown()) then
+            ApplyResolvedCooldownForItemScope()
+            return
+        end
+
+        if state.scheduled then return end
+        state.scheduled = true
+        state.elapsed = 0
+        if not state.frame then
+            state.frame = CreateFrame("Frame")
+            state.frame:Hide()
+        end
+        state.frame:SetScript("OnUpdate", onUpdate)
+        state.frame:Show()
+    end
 end
 
 function _resolverRuntimePolicy.NoteChargeDurationObjectsUpdated()
@@ -5109,7 +5545,7 @@ function _resolverRuntimePolicy.HandleCDMFrameEvent(self, event, arg1, arg2, arg
         -- Only item-backed entries can be affected by an equipment swap;
         -- spell-only entries stay out of this pipeline.
         if arg1 == 13 or arg1 == 14 then
-            ApplyResolvedCooldownForItemScope()
+            _resolverRuntimePolicy.QueueItemScopeRefresh()
             CDMIcons:UpdateAllCooldowns()
         end
         return
@@ -5133,13 +5569,16 @@ function _resolverRuntimePolicy.HandleCDMFrameEvent(self, event, arg1, arg2, arg
         -- completion. Only icons with stale active cooldown/GCD state need a
         -- resolver pass; idle icons only participate if range/usability tinting
         -- is enabled or currently applied.
-        _resolverRuntimePolicy.ApplyResolvedCooldownForUsabilityEvent()
-        _resolverRuntimePolicy.UpdateIconRangesForUsabilityEvent()
+        _resolverRuntimePolicy.QueueUsabilityRefresh()
         return
     end
     if event == "SPELLS_CHANGED" then
         -- Talent/spec change: spell icons may have changed.
         wipe(_textureCycleCache)
+        _resolverRuntimePolicy.ClearDurationBindingKeyCache()
+        if RuntimeQueries and RuntimeQueries.ClearStableCaches then
+            RuntimeQueries.ClearStableCaches()
+        end
         ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
         return
     end
@@ -5154,7 +5593,7 @@ function _resolverRuntimePolicy.HandleCDMFrameEvent(self, event, arg1, arg2, arg
         -- so re-resolve only matching icons instead of triggering a full batch.
         -- cdm_effects.lua's dedicated handler owns the visual glow side.
         if arg1 then
-            ApplyResolvedCooldownForSpellID(arg1, nil)
+            _resolverRuntimePolicy.QueueResolvedCooldownForSpellID(arg1, nil)
         end
         return
     end
@@ -5164,8 +5603,7 @@ function _resolverRuntimePolicy.HandleCDMFrameEvent(self, event, arg1, arg2, arg
         -- on-equip item CDs. Spell-only entries are not affected; staying
         -- out of this pipeline keeps API-flicker on spell cdInfo from
         -- driving spurious mode transitions on cooldown-only icons.
-        ScheduleCDMUpdate(nil, CDM_UPDATE_COOLDOWN, false)
-        ApplyResolvedCooldownForItemScope()
+        _resolverRuntimePolicy.QueueItemScopeRefresh()
         return
     end
 end
@@ -5206,12 +5644,17 @@ do
         isRuntimeEnabled = function()
             return CDMIcons:IsRuntimeEnabled()
         end,
+        getCombatDelay = function()
+            return GetCDMUpdateDelay(nil, CDM_UPDATE_COOLDOWN)
+        end,
         requestFullRefresh = function()
             ScheduleCDMUpdate(true, CDM_UPDATE_FULL)
         end,
         prepareBatch = PrepareCooldownUpdateBatch,
         setStackTextWrites = SetStackTextWritesForBatch,
-        beginBatch = BeginResolverQueryBatch,
+        beginBatch = function()
+            BeginResolverQueryBatch("mirror")
+        end,
         endBatch = EndResolverQueryBatch,
         drainLayoutDirty = DrainLayoutDirty,
         refreshIcon = function(icon, editMode, ncdm, ncdmContainers, inCombat)
@@ -5357,10 +5800,9 @@ local function OnCDMCooldownChanged(_, spellID, baseSpellID, kind)
     if kind == "scanner_item" then
         ApplyResolvedCooldownForItemScope()
         _barsDirty = true
-        ScheduleCDMUpdate(true, CDM_UPDATE_COOLDOWN)
+        RunDirtyBarUpdate()
     elseif kind == "scanner_spell" then
         ApplyResolvedCooldownForSpellScope()
-        ScheduleCDMUpdate(true, CDM_UPDATE_COOLDOWN)
     elseif kind == "refresh" then
         -- Pre-cutover SPELL_UPDATE_COOLDOWN path. Per-spell fast-path when
         -- arg1 is a non-nil non-GCD spellID; otherwise full walk. The
@@ -5374,11 +5816,9 @@ local function OnCDMCooldownChanged(_, spellID, baseSpellID, kind)
         elseif comparableSpellID and spellID == GCD_SPELL_ID then
             spellIDIsGCD = true
         end
-        ScheduleCDMUpdate(nil, CDM_UPDATE_COOLDOWN, true)
         ResolverRuntime.SetTrustIsOnGCDForBatch(true)
         if comparableSpellID and not spellIDIsGCD and not gcdChanged then
-            ApplyResolvedCooldownForSpellID(spellID, baseSpellID)
-            RefreshCooldownVisualsForSpellID(spellID, baseSpellID)
+            _resolverRuntimePolicy.QueueResolvedCooldownForSpellID(spellID, baseSpellID)
         else
             -- Payloadless broad refreshes can repeat during the same GCD.
             -- Keep the existing binding unless this refresh actually observed
@@ -5408,7 +5848,6 @@ local function OnCDMCooldownChanged(_, spellID, baseSpellID, kind)
         InvalidateGCDOnlyBindings()
         InvalidateSpellCooldownBinding(spellID)
         ApplyResolvedCooldownForSpellScope()
-        ScheduleCDMUpdate(true, CDM_UPDATE_COOLDOWN)
         local Highlighter = ns._OwnedHighlighter
         if Highlighter and Highlighter.OnPlayerCastSucceeded then
             Highlighter.OnPlayerCastSucceeded(spellID)
@@ -5422,7 +5861,7 @@ local function OnCDMChargesChanged(_, spellID)
     _resolverRuntimePolicy.pendingStackTextUpdate = true
     ScheduleCDMUpdate(nil, CDM_UPDATE_COOLDOWN, false)
     if spellID then
-        ApplyResolvedCooldownForSpellID(spellID, nil)
+        _resolverRuntimePolicy.QueueResolvedCooldownForSpellID(spellID, nil)
     else
         ApplyResolvedCooldownForSpellScope()
     end

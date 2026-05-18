@@ -21,6 +21,8 @@ local realCooldownDuration = { token = "real-cooldown-duration" }
 local auraChildFrameDuration = { token = "aura-child-frame-duration" }
 local auraMirrorDuration = { token = "aura-mirror-duration" }
 local auraMirrorData = { token = "aura-mirror-data", icon = 98765 }
+local ownedTargetAuraData = { token = "owned-target-aura-data", isFromPlayerOrPlayerPet = true }
+local foreignTargetAuraData = { token = "foreign-target-aura-data", isFromPlayerOrPlayerPet = false }
 local mirrorSource = "aura-child-frame"
 local gcdSpellFallbackEnabled = false
 local cooldownQueryCounts = {}
@@ -32,7 +34,11 @@ function issecretvalue(value)
 end
 
 local ns = {
-    Helpers = {},
+    Helpers = {
+        IsAuraOwnedByPlayerOrPet = function(auraData)
+            return auraData and auraData.isFromPlayerOrPlayerPet == true
+        end,
+    },
     CDMSources = {
         QueryMirroredCooldownState = function(spellID, viewerType)
             if spellID == 44444 and viewerType == "essential" then
@@ -371,6 +377,12 @@ local ns = {
             if unit == "player" and auraInstanceID == 808 then
                 return auraMirrorData
             end
+            if unit == "target" and auraInstanceID == 810 then
+                return ownedTargetAuraData
+            end
+            if unit == "target" and auraInstanceID == 811 then
+                return foreignTargetAuraData
+            end
             return nil
         end,
     },
@@ -427,6 +439,49 @@ local ns = {
                     auraInstanceID = 809,
                     auraUnit = "player",
                     auraData = auraMirrorData,
+                }
+            end
+            if cooldownID == 892 and viewerCategory == "buff" then
+                return {
+                    cooldownID = cooldownID,
+                    isActive = true,
+                    durObj = auraMirrorDuration,
+                    durObjSource = "aura-duration",
+                    resolvedMode = "aura",
+                    mirrorEpoch = 16,
+                    spellID = 70767,
+                    viewerCategory = "buff",
+                    selfAura = false,
+                }
+            end
+            if cooldownID == 893 and viewerCategory == "buff" then
+                return {
+                    cooldownID = cooldownID,
+                    isActive = true,
+                    durObj = auraMirrorDuration,
+                    durObjSource = "aura-duration",
+                    resolvedMode = "aura",
+                    mirrorEpoch = 17,
+                    spellID = 70768,
+                    viewerCategory = "buff",
+                    selfAura = false,
+                    auraInstanceID = 811,
+                    auraUnit = "target",
+                }
+            end
+            if cooldownID == 894 and viewerCategory == "buff" then
+                return {
+                    cooldownID = cooldownID,
+                    isActive = true,
+                    durObj = auraMirrorDuration,
+                    durObjSource = "aura-duration",
+                    resolvedMode = "aura",
+                    mirrorEpoch = 18,
+                    spellID = 70769,
+                    viewerCategory = "buff",
+                    selfAura = false,
+                    auraInstanceID = 810,
+                    auraUnit = "target",
                 }
             end
         end,
@@ -1035,6 +1090,64 @@ assert(mirrorPayload.auraData == auraMirrorData,
     "combat direct child auraData mirror should pass through child-sourced auraData")
 assert(auraDataQueryCount == 0,
     "combat direct child auraData mirror should not query auraData by auraInstanceID")
+
+local unverifiedTargetAuraMirrorIcon = {
+    _blizzMirrorCooldownID = 892,
+    _blizzMirrorCategory = "buff",
+    _spellEntry = {
+        id = 70767,
+        spellID = 70767,
+        viewerType = "buff",
+        kind = "aura",
+        type = "spell",
+    },
+}
+durObj, mode, sourceID, _, _, _, mirrorBacked, mirrorPayload =
+    ResolveIconFields(unverifiedTargetAuraMirrorIcon)
+
+assert(durObj == nil, "target aura mirrors without ownership proof must not expose a DurationObject")
+assert(mode == "inactive", "target aura mirrors without ownership proof should resolve inactive")
+assert(mirrorBacked == true, "unverified target aura mirrors should remain mirror-backed for clearing")
+assert(mirrorPayload and mirrorPayload.active == false,
+    "unverified target aura mirror payloads should be inactive")
+
+local foreignTargetAuraMirrorIcon = {
+    _blizzMirrorCooldownID = 893,
+    _blizzMirrorCategory = "buff",
+    _spellEntry = {
+        id = 70768,
+        spellID = 70768,
+        viewerType = "buff",
+        kind = "aura",
+        type = "spell",
+    },
+}
+durObj, mode, sourceID, _, _, _, mirrorBacked, mirrorPayload =
+    ResolveIconFields(foreignTargetAuraMirrorIcon)
+
+assert(durObj == nil, "foreign-owned target aura mirrors must not expose a DurationObject")
+assert(mode == "inactive", "foreign-owned target aura mirrors should resolve inactive")
+assert(mirrorPayload and mirrorPayload.active == false,
+    "foreign-owned target aura mirror payloads should be inactive")
+
+local ownedTargetAuraMirrorIcon = {
+    _blizzMirrorCooldownID = 894,
+    _blizzMirrorCategory = "buff",
+    _spellEntry = {
+        id = 70769,
+        spellID = 70769,
+        viewerType = "buff",
+        kind = "aura",
+        type = "spell",
+    },
+}
+durObj, mode, sourceID, _, _, _, mirrorBacked, mirrorPayload =
+    ResolveIconFields(ownedTargetAuraMirrorIcon)
+
+assert(durObj == auraMirrorDuration, "owned target aura mirrors should keep the mirror DurationObject")
+assert(mode == "aura", "owned target aura mirrors should resolve as aura mode")
+assert(mirrorPayload and mirrorPayload.auraData == ownedTargetAuraData,
+    "owned target aura mirrors should retain the ownership-proving auraData")
 
 cooldownQueryCounts[232323] = nil
 local inactiveMirrorIcon = {

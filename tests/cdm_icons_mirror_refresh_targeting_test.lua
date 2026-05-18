@@ -5,7 +5,11 @@ local BuildCooldownStateContext = dofile("tests/helpers/cdm_context_builder_stub
 
 local function noop() end
 
-function InCombatLockdown() return false end
+local inCombat = false
+local createdFrames = {}
+local timerAfterCalls = 0
+
+function InCombatLockdown() return inCombat end
 function UnitAffectingCombat() return false end
 function GetTime() return 100 end
 function wipe(tbl)
@@ -15,22 +19,38 @@ function wipe(tbl)
 end
 
 function CreateFrame()
-    return {
+    local frame = {
+        scripts = {},
+        shown = false,
         RegisterEvent = noop,
         RegisterUnitEvent = noop,
         UnregisterAllEvents = noop,
-        SetScript = noop,
+        SetScript = function(self, scriptName, handler)
+            self.scripts[scriptName] = handler
+        end,
+        Show = function(self)
+            self.shown = true
+        end,
+        Hide = function(self)
+            self.shown = false
+        end,
     }
+    createdFrames[#createdFrames + 1] = frame
+    return frame
 end
 
 C_Timer = {
-    After = function(_, callback) callback() end,
+    After = function(_, callback)
+        timerAfterCalls = timerAfterCalls + 1
+        callback()
+    end,
     NewTimer = function()
         return { Cancel = noop }
     end,
 }
 
 local resolveCounts = {}
+local runtimeBatches = 0
 
 local function makeIcon(name, cooldownID, category)
     local icon = {
@@ -184,6 +204,14 @@ local ns = {
 }
 
 dofile("tests/helpers/load_cdm_icon_runtime.lua")(ns)
+do
+    local runtime = assert(ns.CDMRuntimeQueries, "runtime query module should be loaded")
+    local originalBegin = runtime.BeginRuntimeQueryBatch
+    runtime.BeginRuntimeQueryBatch = function(...)
+        runtimeBatches = runtimeBatches + 1
+        return originalBegin(...)
+    end
+end
 assert(loadfile("modules/cdm/cdm_icons.lua"))("QUI", ns)
 
 local icons = assert(ns.CDMIcons, "CDMIcons should be exported")
@@ -198,6 +226,10 @@ local fullUpdates = 0
 icons.UpdateAllCooldowns = function()
     fullUpdates = fullUpdates + 1
 end
+
+icons:RequestMirrorTextRefresh(99001, "essential", "unmatched-test")
+assert(runtimeBatches == 0,
+    "unmatched mirror refreshes should not open a runtime query batch")
 
 icons:RequestMirrorTextRefresh(88001, "essential", "test")
 
@@ -216,7 +248,7 @@ assert(fullUpdates == 0,
 
 local stats = icons:GetCacheStats()
 assert(stats.mirrorRefreshTargeted == 1,
-    "mirror refresh stats should count targeted refreshes")
+    "mirror refresh stats should count targeted refreshes that reached indexed icons")
 assert(stats.mirrorRefreshFallback == 1,
     "mirror refresh stats should count scheduler-backed fallbacks")
 
@@ -235,5 +267,34 @@ assert(stats.iconEventProfileTop[1].calls == 2,
     "event profile should report per-window call counts")
 assert(stats.iconEventProfileTop[1].ms == 10,
     "event profile should report per-window elapsed time")
+
+resolveCounts.matching = nil
+inCombat = true
+local timersBeforeCombatMirror = timerAfterCalls
+local batchesBeforeCombatMirror = runtimeBatches
+icons:RequestMirrorTextRefresh(88001, "essential", "combat-test")
+assert(resolveCounts.matching == nil,
+    "combat mirror refresh should defer until the coalesced frame tick")
+assert(timerAfterCalls == timersBeforeCombatMirror,
+    "combat mirror refresh should use the reusable frame instead of C_Timer.After")
+
+local mirrorFrame
+for _, frame in ipairs(createdFrames) do
+    if frame.scripts.OnUpdate and frame.shown then
+        mirrorFrame = frame
+    end
+end
+assert(mirrorFrame, "combat mirror refresh should arm a reusable frame")
+mirrorFrame.scripts.OnUpdate(mirrorFrame, 0.19)
+assert(resolveCounts.matching == nil,
+    "combat mirror refresh should wait for its coalescing interval")
+mirrorFrame.scripts.OnUpdate(mirrorFrame, 0.02)
+assert((resolveCounts.matching or 0) >= 1,
+    "coalesced combat mirror refresh should re-resolve the matching icon")
+assert(runtimeBatches == batchesBeforeCombatMirror + 1,
+    "coalesced combat mirror refresh should open one runtime query batch")
+assert(mirrorFrame.shown == false,
+    "coalesced combat mirror refresh should hide the reusable frame after draining")
+inCombat = false
 
 print("OK: cdm_icons_mirror_refresh_targeting_test")

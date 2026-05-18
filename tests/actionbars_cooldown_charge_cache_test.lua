@@ -122,7 +122,8 @@ function CreateFrame(_, _, parent)
     return frame
 end
 
-function InCombatLockdown() return false end
+local inCombat = false
+function InCombatLockdown() return inCombat end
 local currentTime = 1
 function GetTime() return currentTime end
 function HasAction(action) return action and action > 0 end
@@ -154,6 +155,7 @@ C_ActionBar = {
 
 local chargeCalls = 0
 local chargeDurationCalls = 0
+local actionCooldownCalls = 0
 local actionCooldownDurationCalls = 0
 local actionCooldownIgnoreGCDCalls = 0
 local chargeInfoByAction = {}
@@ -176,6 +178,7 @@ local secretCurrentCharges = setmetatable({}, {
 })
 
 function C_ActionBar.GetActionCooldown(action)
+    actionCooldownCalls = actionCooldownCalls + 1
     return cooldownInfoByAction[action] or { isActive = false }
 end
 
@@ -367,6 +370,7 @@ chargeInfoByAction[20] = {
 chargeDurationByAction[20] = sharedChargeDuration
 local chargeCallsBeforeBatch = chargeCalls
 local chargeDurationCallsBeforeBatch = chargeDurationCalls
+local actionCooldownCallsBeforeBatch = actionCooldownCalls
 wipe(actionBars._activeButtons)
 actionBars._activeButtons[chargeBatchButtonA] = true
 actionBars._activeButtons[chargeBatchButtonB] = true
@@ -374,6 +378,8 @@ currentTime = currentTime + 1
 
 actionBars.UpdateAllCooldowns()
 
+assert(actionCooldownCalls - actionCooldownCallsBeforeBatch == 1,
+    "duplicate action slots in one cooldown batch should share cooldown info queries")
 assert(chargeCalls - chargeCallsBeforeBatch == 1,
     "duplicate action slots in one cooldown batch should share charge activity queries")
 assert(chargeDurationCalls - chargeDurationCallsBeforeBatch == 1,
@@ -382,6 +388,132 @@ assert(chargeBatchButtonA.chargeCooldown.lastDurationObject == sharedChargeDurat
     "first charge button should receive the shared charge DurationObject")
 assert(chargeBatchButtonB.chargeCooldown.lastDurationObject == sharedChargeDuration,
     "second charge button should receive the shared charge DurationObject")
+
+local sharedCooldownDuration = { token = "shared-cooldown-duration" }
+local cooldownBatchButtonA = {
+    action = 30,
+    GetFrameLevel = function() return 1 end,
+    cooldown = NewFrame(),
+}
+local cooldownBatchButtonB = {
+    action = 30,
+    GetFrameLevel = function() return 1 end,
+    cooldown = NewFrame(),
+}
+cooldownInfoByAction[30] = { isActive = true }
+cooldownDurationByAction[30] = sharedCooldownDuration
+local cooldownCallsBeforeDuplicateBatch = actionCooldownCalls
+local durationCallsBeforeDuplicateBatch = actionCooldownDurationCalls
+wipe(actionBars._activeButtons)
+actionBars._activeButtons[cooldownBatchButtonA] = true
+actionBars._activeButtons[cooldownBatchButtonB] = true
+currentTime = currentTime + 1
+
+actionBars.UpdateAllCooldowns()
+
+assert(actionCooldownCalls - cooldownCallsBeforeDuplicateBatch == 1,
+    "duplicate action slots in one cooldown batch should share active cooldown info queries")
+assert(actionCooldownDurationCalls - durationCallsBeforeDuplicateBatch == 1,
+    "duplicate action slots in one cooldown batch should share cooldown DurationObjects")
+assert(cooldownBatchButtonA.cooldown.lastDurationObject == sharedCooldownDuration,
+    "first cooldown button should receive the shared cooldown DurationObject")
+assert(cooldownBatchButtonB.cooldown.lastDurationObject == sharedCooldownDuration,
+    "second cooldown button should receive the shared cooldown DurationObject")
+
+local activeCacheDuration = { token = "active-cache-duration" }
+local activeCacheButton = {
+    action = 40,
+    GetFrameLevel = function() return 1 end,
+    cooldown = NewFrame(),
+}
+currentTime = 50
+cooldownInfoByAction[40] = { isActive = true, startTime = currentTime, duration = 1.5 }
+cooldownDurationByAction[40] = activeCacheDuration
+local cooldownCallsBeforeActiveCache = actionCooldownCalls
+local durationCallsBeforeActiveCache = actionCooldownDurationCalls
+wipe(actionBars._activeButtons)
+actionBars._activeButtons[activeCacheButton] = true
+
+actionBars.UpdateAllCooldowns()
+currentTime = 50.2
+actionBars.UpdateAllCooldowns()
+
+assert(actionCooldownCalls - cooldownCallsBeforeActiveCache == 1,
+    "active cooldown buttons should reuse bound DurationObjects until near expiry")
+assert(actionCooldownDurationCalls - durationCallsBeforeActiveCache == 1,
+    "active cooldown buttons should not refetch DurationObjects before expiry")
+assert(activeCacheButton.cooldown.lastDurationObject == activeCacheDuration,
+    "active cooldown cache should preserve the bound DurationObject")
+
+currentTime = 51.5
+actionBars.UpdateAllCooldowns()
+assert(actionCooldownCalls - cooldownCallsBeforeActiveCache == 2,
+    "active cooldown cache should refresh near expiry")
+
+local activeFallbackDuration = { token = "active-fallback-duration" }
+local activeFallbackButton = {
+    action = 43,
+    GetFrameLevel = function() return 1 end,
+    cooldown = NewFrame(),
+}
+currentTime = 55
+cooldownInfoByAction[43] = { isActive = true }
+cooldownDurationByAction[43] = activeFallbackDuration
+local cooldownCallsBeforeFallbackCache = actionCooldownCalls
+local durationCallsBeforeFallbackCache = actionCooldownDurationCalls
+wipe(actionBars._activeButtons)
+actionBars._activeButtons[activeFallbackButton] = true
+
+actionBars.UpdateAllCooldowns()
+currentTime = 55.1
+actionBars.UpdateAllCooldowns()
+currentTime = 55.25
+actionBars.UpdateAllCooldowns()
+
+assert(actionCooldownCalls - cooldownCallsBeforeFallbackCache == 2,
+    "active cooldowns without safe timing should use a short fallback cache")
+assert(actionCooldownDurationCalls - durationCallsBeforeFallbackCache == 2,
+    "active cooldown fallback cache should refresh after its short TTL")
+
+local longCooldownDuration = { token = "long-cooldown-duration" }
+local longCooldownButton = {
+    action = 41,
+    GetFrameLevel = function() return 1 end,
+    cooldown = NewFrame(),
+}
+currentTime = 60
+cooldownInfoByAction[41] = { isActive = true, startTime = currentTime, duration = 30 }
+cooldownDurationByAction[41] = longCooldownDuration
+local cooldownCallsBeforeLongCooldown = actionCooldownCalls
+wipe(actionBars._activeButtons)
+actionBars._activeButtons[longCooldownButton] = true
+
+actionBars.UpdateAllCooldowns()
+currentTime = 60.2
+actionBars.UpdateAllCooldowns()
+
+assert(actionCooldownCalls - cooldownCallsBeforeLongCooldown == 2,
+    "long real cooldowns should not be hidden behind the short active cache")
+
+local inactiveCooldownButton = {
+    action = 42,
+    GetFrameLevel = function() return 1 end,
+    cooldown = NewFrame(),
+}
+currentTime = 70
+cooldownInfoByAction[42] = { isActive = false }
+local cooldownCallsBeforeInactiveCache = actionCooldownCalls
+wipe(actionBars._activeButtons)
+actionBars._activeButtons[inactiveCooldownButton] = true
+
+actionBars.UpdateAllCooldowns()
+currentTime = 70.1
+actionBars.UpdateAllCooldowns()
+currentTime = 70.31
+actionBars.UpdateAllCooldowns()
+
+assert(actionCooldownCalls - cooldownCallsBeforeInactiveCache == 2,
+    "recently inactive cooldown buttons should skip source probes until the inactive TTL expires")
 
 assert(type(actionBars._sharedHandlers) == "table",
     "shared action button handlers should be exported for all button instances")
@@ -516,6 +648,38 @@ assert(type(usabilityOnUpdate) == "function",
 usabilityOnUpdate(actionBars._usabilityUpdateFrame, 0.05)
 assert(not actionBars._usabilityUpdateFrame:IsShown(),
     "usability scheduler frame should hide after flushing")
+
+inCombat = true
+currentTime = 10
+actionBars.UpdateAllButtonUsability()
+currentTime = 10.1
+actionBars.ScheduleUsabilityUpdate()
+usabilityOnUpdate(actionBars._usabilityUpdateFrame, 0.05)
+assert(actionBars._usabilityUpdateFrame:IsShown(),
+    "combat usability scheduling should respect the combat scan interval")
+currentTime = 10.4
+actionBars.UpdateAllButtonUsability()
+currentTime = 10.6
+usabilityOnUpdate(actionBars._usabilityUpdateFrame, 0.45)
+assert(actionBars._usabilityUpdateFrame:IsShown(),
+    "combat usability scheduling should re-check the combat scan interval at flush time")
+currentTime = 10.9
+usabilityOnUpdate(actionBars._usabilityUpdateFrame, 0.31)
+assert(not actionBars._usabilityUpdateFrame:IsShown(),
+    "combat usability scheduling should flush after the combat scan interval")
+inCombat = false
+actionBarsDB.global.rangeIndicator = true
+actionBars.UpdateUsabilityPolling()
+if actionBars._usabilityUpdateFrame and actionBars._usabilityUpdateFrame:IsShown() then
+    usabilityOnUpdate(actionBars._usabilityUpdateFrame, 0.05)
+end
+inCombat = true
+actionBars.ScheduleUsabilityUpdate()
+assert(not actionBars._usabilityUpdateFrame or not actionBars._usabilityUpdateFrame:IsShown(),
+    "combat usability events should not wake a second scan while range polling is active")
+inCombat = false
+actionBarsDB.global.rangeIndicator = false
+actionBars.UpdateUsabilityPolling()
 
 assert(type(actionBars.MarkSpellIdMapDirty) == "function",
     "spell reverse map should support dirty marking")

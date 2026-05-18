@@ -25,6 +25,10 @@ local trustedGCDSpellState = {}
 local trustedGCDStamp
 local trustIsOnGCDForBatch = false
 local chargeDurationObjectSerial = 0
+local transientCooldownCache
+local transientCooldownStamps
+local transientChargeCache
+local transientChargeStamps
 
 function CDMRuntimeQueries.ResetTrustedGCDSnapshot(stamp)
     wipe(trustedGCDSpellState)
@@ -62,6 +66,8 @@ end
 
 function CDMRuntimeQueries.NoteChargeDurationObjectsUpdated()
     chargeDurationObjectSerial = chargeDurationObjectSerial + 1
+    wipe(transientChargeCache)
+    wipe(transientChargeStamps)
 end
 
 function CDMRuntimeQueries.GetChargeDurationObjectSerial()
@@ -77,6 +83,7 @@ end
 CDMRuntimeQueries.GetChargeMetadataDB = GetChargeMetadataDB
 
 local NIL_SENTINEL = {}
+local TRANSIENT_QUERY_TTL = 0.12
 local runtimeQueryBatchDepth = 0
 local runtimeCooldownCache = {}
 local runtimeChargeCache = {}
@@ -86,6 +93,12 @@ local runtimeChargeDurationCache = {}
 local runtimeOverrideCache = {}
 local runtimeDisplayCountCache = {}
 local runtimeSpellCountCache = {}
+local stableOverrideCache = {}
+transientCooldownCache = {}
+transientCooldownStamps = {}
+transientChargeCache = {}
+transientChargeStamps = {}
+local nextTransientPrune = 0
 local runtimeQueryStats = {
     batches = 0,
     cooldownSource = 0,
@@ -125,6 +138,13 @@ do
             + runtimeQueryStats.displayCountHits
             + runtimeQueryStats.spellCountHits
     end }
+    mp[#mp + 1] = { name = "CDM_queryCacheCooldownSource", counter = true, fn = function() return runtimeQueryStats.cooldownSource end }
+    mp[#mp + 1] = { name = "CDM_queryCacheChargeSource", counter = true, fn = function() return runtimeQueryStats.chargeSource end }
+    mp[#mp + 1] = { name = "CDM_queryCacheDurationSource", counter = true, fn = function() return runtimeQueryStats.durationSource end }
+    mp[#mp + 1] = { name = "CDM_queryCacheChargeDurationSource", counter = true, fn = function() return runtimeQueryStats.chargeDurationSource end }
+    mp[#mp + 1] = { name = "CDM_queryCacheOverrideSource", counter = true, fn = function() return runtimeQueryStats.overrideSource end }
+    mp[#mp + 1] = { name = "CDM_queryCacheDisplayCountSource", counter = true, fn = function() return runtimeQueryStats.displayCountSource end }
+    mp[#mp + 1] = { name = "CDM_queryCacheSpellCountSource", counter = true, fn = function() return runtimeQueryStats.spellCountSource end }
 end
 
 local function ClearRuntimeQueryCaches()
@@ -138,10 +158,43 @@ local function ClearRuntimeQueryCaches()
     wipe(runtimeSpellCountCache)
 end
 
+function CDMRuntimeQueries.ClearStableCaches()
+    wipe(stableOverrideCache)
+    wipe(runtimeOverrideCache)
+    wipe(transientCooldownCache)
+    wipe(transientCooldownStamps)
+    wipe(transientChargeCache)
+    wipe(transientChargeStamps)
+end
+
+local function GetTransientCacheTime()
+    if runtimeQueryBatchDepth <= 0 then return nil end
+    if not (InCombatLockdown and InCombatLockdown()) then return nil end
+    if not GetTime then return nil end
+    return GetTime()
+end
+
+local function PruneTransientCache(cache, stamps, now)
+    for key, stamp in pairs(stamps) do
+        if not stamp or (now - stamp) > TRANSIENT_QUERY_TTL then
+            stamps[key] = nil
+            cache[key] = nil
+        end
+    end
+end
+
+local function PruneTransientCaches(now)
+    if not now or now < nextTransientPrune then return end
+    nextTransientPrune = now + 1
+    PruneTransientCache(transientCooldownCache, transientCooldownStamps, now)
+    PruneTransientCache(transientChargeCache, transientChargeStamps, now)
+end
+
 function CDMRuntimeQueries.BeginRuntimeQueryBatch()
     if runtimeQueryBatchDepth == 0 then
         ClearRuntimeQueryCaches()
         runtimeQueryStats.batches = runtimeQueryStats.batches + 1
+        PruneTransientCaches(GetTransientCacheTime())
     end
     runtimeQueryBatchDepth = runtimeQueryBatchDepth + 1
 end
@@ -162,6 +215,10 @@ end
 function CDMRuntimeQueries.ResetRuntimeQueryBatch()
     runtimeQueryBatchDepth = 0
     ClearRuntimeQueryCaches()
+    wipe(transientCooldownCache)
+    wipe(transientCooldownStamps)
+    wipe(transientChargeCache)
+    wipe(transientChargeStamps)
 end
 
 local function ReadRuntimeCache(cache, key, hitStat)
@@ -184,9 +241,36 @@ local function StoreRuntimeCache(cache, key, value, sourceStat)
     return value
 end
 
+local function ReadTransientRuntimeCache(cache, stamps, key, hitStat)
+    local now = GetTransientCacheTime()
+    if not now then return nil, false end
+    local cached = cache[key]
+    if cached == nil then return nil, false end
+    local stamp = stamps[key]
+    if not stamp or (now - stamp) > TRANSIENT_QUERY_TTL then
+        cache[key] = nil
+        stamps[key] = nil
+        return nil, false
+    end
+    runtimeQueryStats[hitStat] = runtimeQueryStats[hitStat] + 1
+    if cached == NIL_SENTINEL then
+        return nil, true
+    end
+    return cached, true
+end
+
+local function StoreTransientRuntimeCache(cache, stamps, key, value)
+    local now = GetTransientCacheTime()
+    if not now then return end
+    cache[key] = value == nil and NIL_SENTINEL or value
+    stamps[key] = now
+end
+
 function CDMRuntimeQueries.QueryCharges(spellID)
     if not spellID then return nil end
     local cached, found = ReadRuntimeCache(runtimeChargeCache, spellID, "chargeHits")
+    if found then return cached end
+    cached, found = ReadTransientRuntimeCache(transientChargeCache, transientChargeStamps, spellID, "chargeHits")
     if found then return cached end
 
     local chargeInfo
@@ -208,6 +292,7 @@ function CDMRuntimeQueries.QueryCharges(spellID)
             if svDB and svDB[spellID] then svDB[spellID] = nil end
         end
     end
+    StoreTransientRuntimeCache(transientChargeCache, transientChargeStamps, spellID, chargeInfo)
     return StoreRuntimeCache(runtimeChargeCache, spellID, chargeInfo, "chargeSource")
 end
 
@@ -215,11 +300,14 @@ function CDMRuntimeQueries.QueryCooldown(spellID)
     if not spellID then return nil end
     local cached, found = ReadRuntimeCache(runtimeCooldownCache, spellID, "cooldownHits")
     if found then return cached end
+    cached, found = ReadTransientRuntimeCache(transientCooldownCache, transientCooldownStamps, spellID, "cooldownHits")
+    if found then return cached end
 
     local info
     if Sources and Sources.QuerySpellCooldown then
         info = Sources.QuerySpellCooldown(spellID)
     end
+    StoreTransientRuntimeCache(transientCooldownCache, transientCooldownStamps, spellID, info)
     return StoreRuntimeCache(runtimeCooldownCache, spellID, info, "cooldownSource")
 end
 
@@ -260,6 +348,15 @@ end
 
 function CDMRuntimeQueries.QueryOverrideSpell(spellID)
     if not spellID then return nil end
+    local stable = stableOverrideCache[spellID]
+    if stable ~= nil then
+        runtimeQueryStats.overrideHits = runtimeQueryStats.overrideHits + 1
+        if stable == NIL_SENTINEL then
+            return nil
+        end
+        return stable
+    end
+
     local cached, found = ReadRuntimeCache(runtimeOverrideCache, spellID, "overrideHits")
     if found then return cached end
 
@@ -267,6 +364,7 @@ function CDMRuntimeQueries.QueryOverrideSpell(spellID)
     if Sources and Sources.QueryOverrideSpell then
         overrideID = Sources.QueryOverrideSpell(spellID)
     end
+    stableOverrideCache[spellID] = overrideID == nil and NIL_SENTINEL or overrideID
     return StoreRuntimeCache(runtimeOverrideCache, spellID, overrideID, "overrideSource")
 end
 

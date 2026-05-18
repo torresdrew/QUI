@@ -3784,11 +3784,34 @@ local ApplyPageArrowVisibility
 -- 200 file-scope local variable limit.  Public functions are stored as
 -- ActionBarsOwned fields.
 
-local _abCooldownStats = { events = 0, batches = 0, buttons = 0, chargeInfoQueries = 0, chargeInfoSkips = 0, chargeInfoActive = 0, chargeDurationQueries = 0, chargeDurationActive = 0 }
+local _abCooldownStats = {
+    events = 0,
+    batches = 0,
+    buttons = 0,
+    actionCooldownQueries = 0,
+    actionCooldownHits = 0,
+    actionCooldownActiveHits = 0,
+    actionCooldownInactiveSkips = 0,
+    actionDurationQueries = 0,
+    actionDurationHits = 0,
+    actionDurationActiveHits = 0,
+    chargeInfoQueries = 0,
+    chargeInfoSkips = 0,
+    chargeInfoActive = 0,
+    chargeDurationQueries = 0,
+    chargeDurationActive = 0,
+}
 do local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "AB_cooldownEvents",  counter = true, fn = function() return _abCooldownStats.events  end }
     mp[#mp + 1] = { name = "AB_cooldownBatches", counter = true, fn = function() return _abCooldownStats.batches end }
     mp[#mp + 1] = { name = "AB_cooldownButtons", counter = true, fn = function() return _abCooldownStats.buttons end }
+    mp[#mp + 1] = { name = "AB_actionCooldownQueries", counter = true, fn = function() return _abCooldownStats.actionCooldownQueries end }
+    mp[#mp + 1] = { name = "AB_actionCooldownHits", counter = true, fn = function() return _abCooldownStats.actionCooldownHits end }
+    mp[#mp + 1] = { name = "AB_actionCooldownActiveHits", counter = true, fn = function() return _abCooldownStats.actionCooldownActiveHits end }
+    mp[#mp + 1] = { name = "AB_actionCooldownInactiveSkips", counter = true, fn = function() return _abCooldownStats.actionCooldownInactiveSkips end }
+    mp[#mp + 1] = { name = "AB_actionDurationQueries", counter = true, fn = function() return _abCooldownStats.actionDurationQueries end }
+    mp[#mp + 1] = { name = "AB_actionDurationHits", counter = true, fn = function() return _abCooldownStats.actionDurationHits end }
+    mp[#mp + 1] = { name = "AB_actionDurationActiveHits", counter = true, fn = function() return _abCooldownStats.actionDurationActiveHits end }
     mp[#mp + 1] = { name = "AB_chargeInfoQueries", counter = true, fn = function() return _abCooldownStats.chargeInfoQueries end }
     mp[#mp + 1] = { name = "AB_chargeInfoSkips", counter = true, fn = function() return _abCooldownStats.chargeInfoSkips end }
     mp[#mp + 1] = { name = "AB_chargeInfoActive", counter = true, fn = function() return _abCooldownStats.chargeInfoActive end }
@@ -3806,6 +3829,9 @@ do
 
     local DEFAULT_CD_INFO  = { startTime = 0, duration = 0, isEnabled = false, isActive = false, modRate = 0 }
     local DEFAULT_LOC_INFO = { startTime = 0, duration = 0, modRate = 0, isActive = false, shouldReplaceNormalCooldown = false }
+    local ACTIVE_COOLDOWN_CACHE_MAX_DURATION = 2.5
+    local ACTIVE_COOLDOWN_CACHE_FALLBACK_TTL = 0.20
+    local INACTIVE_COOLDOWN_CACHE_TTL = 0.25
 
     local function GetOrCreateChargeCooldown(button)
         if button.chargeCooldown then return button.chargeCooldown end
@@ -3840,6 +3866,25 @@ do
         cooldown:SetCooldownFromDurationObject(durationObject)
     end
 
+    local function DecodePotentialSecretBoolean(value)
+        if Helpers.IsSecretValue(value) then
+            if C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
+                local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(value, 1, 0)
+                if not Helpers.IsSecretValue(scalar) then
+                    if scalar == 1 then return true end
+                    if scalar == 0 then return false end
+                    scalar = tonumber(scalar)
+                    if scalar == 1 then return true end
+                    if scalar == 0 then return false end
+                end
+            end
+            return nil
+        end
+        if value == true then return true end
+        if value == false then return false end
+        return nil
+    end
+
     -- Per-button "was on cooldown last scan" cache. Skips redundant Clear()
     -- calls on idle buttons (the common case — ~90 of 96 buttons are usually
     -- off cooldown at any given moment). In raid combat, SPELL_UPDATE_COOLDOWN
@@ -3847,10 +3892,19 @@ do
     -- cache we hit Clear() 270 times per tick (cooldown + charge + LoC frames)
     -- for buttons that are already cleared.
     local _buttonWasActive = setmetatable({}, { __mode = "k" })
+    local _buttonCooldownAction = setmetatable({}, { __mode = "k" })
+    local _buttonCooldownInfo = setmetatable({}, { __mode = "k" })
+    local _buttonCooldownDurationObject = setmetatable({}, { __mode = "k" })
+    local _buttonCooldownExpiresAt = setmetatable({}, { __mode = "k" })
+    local _buttonCooldownInactiveAt = setmetatable({}, { __mode = "k" })
     local _buttonChargeAction = setmetatable({}, { __mode = "k" })
     local _buttonMayHaveCharges = setmetatable({}, { __mode = "k" })
     local _cooldownBatchToken = 0
     local _cooldownBatchActive = false
+    local _batchCooldownInfoSeen = {}
+    local _batchCooldownInfo = {}
+    local _batchCooldownDurationSeen = {}
+    local _batchCooldownDurationObject = {}
     local _batchChargeInfoSeen = {}
     local _batchChargeActive = {}
     local _batchChargeMayHaveCharges = {}
@@ -3867,14 +3921,32 @@ do
         }
     end
 
+    local function ResetButtonCooldownRuntimeCache(button)
+        _buttonCooldownAction[button] = nil
+        _buttonCooldownInfo[button] = nil
+        _buttonCooldownDurationObject[button] = nil
+        _buttonCooldownExpiresAt[button] = nil
+        _buttonCooldownInactiveAt[button] = nil
+    end
+
     ResetButtonChargeCapabilityCache = function(button)
+        ResetButtonCooldownRuntimeCache(button)
         _buttonChargeAction[button] = nil
         _buttonMayHaveCharges[button] = nil
     end
 
     ResetAllChargeCapabilityCaches = function()
+        wipe(_buttonCooldownAction)
+        wipe(_buttonCooldownInfo)
+        wipe(_buttonCooldownDurationObject)
+        wipe(_buttonCooldownExpiresAt)
+        wipe(_buttonCooldownInactiveAt)
         wipe(_buttonChargeAction)
         wipe(_buttonMayHaveCharges)
+        wipe(_batchCooldownInfoSeen)
+        wipe(_batchCooldownInfo)
+        wipe(_batchCooldownDurationSeen)
+        wipe(_batchCooldownDurationObject)
         wipe(_batchChargeInfoSeen)
         wipe(_batchChargeActive)
         wipe(_batchChargeMayHaveCharges)
@@ -3886,6 +3958,10 @@ do
         _cooldownBatchToken = _cooldownBatchToken + 1
         if _cooldownBatchToken > 1000000000 then
             _cooldownBatchToken = 1
+            wipe(_batchCooldownInfoSeen)
+            wipe(_batchCooldownInfo)
+            wipe(_batchCooldownDurationSeen)
+            wipe(_batchCooldownDurationObject)
             wipe(_batchChargeInfoSeen)
             wipe(_batchChargeActive)
             wipe(_batchChargeMayHaveCharges)
@@ -3897,6 +3973,121 @@ do
 
     local function EndCooldownBatch()
         _cooldownBatchActive = false
+    end
+
+    local function GetSafeCooldownTiming(cdInfo)
+        if not cdInfo then return nil, nil end
+        local start = cdInfo.startTime
+        if start == nil then
+            start = cdInfo.start
+        end
+        local duration = cdInfo.duration
+        if Helpers.IsSecretValue(start) or Helpers.IsSecretValue(duration) then
+            return nil, nil
+        end
+        if type(start) ~= "number" or type(duration) ~= "number" then
+            return nil, nil
+        end
+        if start <= 0 or duration <= 0 then
+            return nil, nil
+        end
+        return start + duration, duration
+    end
+
+    local function GetActionCooldownInfo(action)
+        if not C_ActionBar.GetActionCooldown then return DEFAULT_CD_INFO end
+        local actionCanBeCached = not Helpers.IsSecretValue(action)
+        if actionCanBeCached
+            and _cooldownBatchActive
+            and _batchCooldownInfoSeen[action] == _cooldownBatchToken then
+            _abCooldownStats.actionCooldownHits = _abCooldownStats.actionCooldownHits + 1
+            return _batchCooldownInfo[action] or DEFAULT_CD_INFO
+        end
+
+        _abCooldownStats.actionCooldownQueries = _abCooldownStats.actionCooldownQueries + 1
+        local cdInfo = C_ActionBar.GetActionCooldown(action) or DEFAULT_CD_INFO
+        if actionCanBeCached and _cooldownBatchActive then
+            _batchCooldownInfoSeen[action] = _cooldownBatchToken
+            _batchCooldownInfo[action] = cdInfo
+        end
+        return cdInfo
+    end
+
+    local function GetActionCooldownDurationObject(action)
+        if not C_ActionBar.GetActionCooldownDuration then return nil end
+        local actionCanBeCached = not Helpers.IsSecretValue(action)
+        if actionCanBeCached
+            and _cooldownBatchActive
+            and _batchCooldownDurationSeen[action] == _cooldownBatchToken then
+            _abCooldownStats.actionDurationHits = _abCooldownStats.actionDurationHits + 1
+            return _batchCooldownDurationObject[action]
+        end
+
+        _abCooldownStats.actionDurationQueries = _abCooldownStats.actionDurationQueries + 1
+        local durationObject = C_ActionBar.GetActionCooldownDuration(action)
+        if actionCanBeCached and _cooldownBatchActive then
+            _batchCooldownDurationSeen[action] = _cooldownBatchToken
+            _batchCooldownDurationObject[action] = durationObject
+        end
+        return durationObject
+    end
+
+    local function GetActionCooldownState(button, action)
+        local actionCanBeCached = not Helpers.IsSecretValue(action)
+        if actionCanBeCached and _buttonCooldownAction[button] == action then
+            local expiresAt = _buttonCooldownExpiresAt[button]
+            if type(expiresAt) == "number" and GetTime() < expiresAt - 0.05 then
+                local durationObject = _buttonCooldownDurationObject[button]
+                if durationObject then
+                    _abCooldownStats.actionCooldownHits = _abCooldownStats.actionCooldownHits + 1
+                    _abCooldownStats.actionCooldownActiveHits = _abCooldownStats.actionCooldownActiveHits + 1
+                    _abCooldownStats.actionDurationHits = _abCooldownStats.actionDurationHits + 1
+                    _abCooldownStats.actionDurationActiveHits = _abCooldownStats.actionDurationActiveHits + 1
+                    return _buttonCooldownInfo[button] or DEFAULT_CD_INFO, durationObject, true
+                end
+            end
+
+            local inactiveAt = _buttonCooldownInactiveAt[button]
+            if type(inactiveAt) == "number"
+                and GetTime() - inactiveAt < INACTIVE_COOLDOWN_CACHE_TTL then
+                _abCooldownStats.actionCooldownHits = _abCooldownStats.actionCooldownHits + 1
+                _abCooldownStats.actionCooldownInactiveSkips = _abCooldownStats.actionCooldownInactiveSkips + 1
+                return DEFAULT_CD_INFO, nil, false
+            end
+        end
+
+        local cdInfo = GetActionCooldownInfo(action)
+        local cdActive = DecodePotentialSecretBoolean(cdInfo.isActive)
+        local durationObject = cdActive and GetActionCooldownDurationObject(action) or nil
+        if actionCanBeCached then
+            if cdActive == true and durationObject then
+                local expiresAt, duration = GetSafeCooldownTiming(cdInfo)
+                if expiresAt and duration <= ACTIVE_COOLDOWN_CACHE_MAX_DURATION then
+                    _buttonCooldownAction[button] = action
+                    _buttonCooldownInfo[button] = cdInfo
+                    _buttonCooldownDurationObject[button] = durationObject
+                    _buttonCooldownExpiresAt[button] = expiresAt
+                    _buttonCooldownInactiveAt[button] = nil
+                elseif not expiresAt then
+                    _buttonCooldownAction[button] = action
+                    _buttonCooldownInfo[button] = cdInfo
+                    _buttonCooldownDurationObject[button] = durationObject
+                    _buttonCooldownExpiresAt[button] = GetTime() + ACTIVE_COOLDOWN_CACHE_FALLBACK_TTL
+                    _buttonCooldownInactiveAt[button] = nil
+                else
+                    ResetButtonCooldownRuntimeCache(button)
+                end
+            elseif cdActive == false then
+                _buttonCooldownAction[button] = action
+                _buttonCooldownInfo[button] = nil
+                _buttonCooldownDurationObject[button] = nil
+                _buttonCooldownExpiresAt[button] = nil
+                _buttonCooldownInactiveAt[button] = GetTime()
+            else
+                ResetButtonCooldownRuntimeCache(button)
+            end
+        end
+        return cdInfo, durationObject, cdActive
     end
 
     local function ChargeInfoMayHaveCharges(chargeInfo)
@@ -3939,7 +4130,8 @@ do
                 _batchChargeMayHaveCharges[action] = mayHaveCharges
             end
         end
-        if mayHaveCharges and chargeInfo and chargeInfo.isActive then
+        local chargeActive = chargeInfo and DecodePotentialSecretBoolean(chargeInfo.isActive)
+        if mayHaveCharges and chargeActive == true then
             _abCooldownStats.chargeInfoActive = _abCooldownStats.chargeInfoActive + 1
             if actionCanBeCached and _cooldownBatchActive then
                 _batchChargeActive[action] = true
@@ -3990,12 +4182,10 @@ do
             -- non-secret charge capability/active fields. Never read
             -- currentCharges in combat; fetch the DurationObject only when
             -- isActive says a charge is recharging.
-            local cdInfo  = C_ActionBar.GetActionCooldown(action) or DEFAULT_CD_INFO
-            local cdActive = cdInfo.isActive
-            local cdDurationObject = cdActive and C_ActionBar.GetActionCooldownDuration(action) or nil
+            local cdInfo, cdDurationObject, cdActive = GetActionCooldownState(button, action)
             local chActive = GetActionChargeActive(button, action)
-            local chargeDurObj = chActive and GetActionChargeDurationObject(action) or nil
-            if not cdActive and not chActive then
+            local chargeDurObj = chActive == true and GetActionChargeDurationObject(action) or nil
+            if cdActive ~= true and chActive ~= true then
                 -- Idle button: only clear the frames on the active→inactive
                 -- transition. Subsequent idle scans skip the Clear() churn.
                 if _buttonWasActive[button] then
@@ -4012,9 +4202,11 @@ do
             -- remaining query.
             local locInfo = C_ActionBar.GetActionLossOfControlCooldownInfo(action) or DEFAULT_LOC_INFO
 
-            local showLoC    = locInfo.isActive
-            local showCharge = not locInfo.shouldReplaceNormalCooldown and chActive
-            local showNormal = not locInfo.shouldReplaceNormalCooldown and cdActive
+            local locActive = DecodePotentialSecretBoolean(locInfo.isActive)
+            local locReplacesNormal = DecodePotentialSecretBoolean(locInfo.shouldReplaceNormalCooldown)
+            local showLoC    = locActive == true
+            local showCharge = locReplacesNormal ~= true and chActive == true
+            local showNormal = locReplacesNormal ~= true and cdActive == true
 
             -- Normal cooldown (only fetch DurationObject when needed)
             if showNormal then
@@ -6903,8 +7095,11 @@ local usabilityState = {
     checkFrame = nil,
     INTERVAL_COMBAT = 0.5,   -- 500ms in combat
     INTERVAL_IDLE = 2.0,     -- 2s OOC (range matters less)
+    EVENT_DEBOUNCE = 0.05,   -- same-frame/event-burst coalescing floor
     inCombat = false,
+    rangePollingActive = false,
     updatePending = false,
+    lastScanTime = 0,
 }
 
 do
@@ -7029,6 +7224,7 @@ local function UpdateAllButtonUsability()
     local globalSettings = GetGlobalSettings()
     if not globalSettings then return end
     if not globalSettings.rangeIndicator and not globalSettings.usabilityIndicator then return end
+    usabilityState.lastScanTime = GetTime()
 
     local activeStandardButtons = ActionBarsOwned._activeStandardButtons
     if activeStandardButtons and next(activeStandardButtons) ~= nil then
@@ -7068,11 +7264,32 @@ end
 ActionBarsOwned.UpdateAllButtonUsability = UpdateAllButtonUsability
 
 local usabilityUpdateFrame
+local function GetUsabilityScheduleDelay()
+    local delay = usabilityState.EVENT_DEBOUNCE
+    if InCombatLockdown and InCombatLockdown() then
+        local lastScanTime = usabilityState.lastScanTime or 0
+        if lastScanTime > 0 then
+            local remaining = usabilityState.INTERVAL_COMBAT - (GetTime() - lastScanTime)
+            if remaining > delay then
+                delay = remaining
+            end
+        end
+    end
+    return delay
+end
+
 local function UsabilityUpdateFrameOnUpdate(self, elapsed)
     self.elapsed = (self.elapsed or 0) + (elapsed or 0)
-    if self.elapsed < 0.05 then return end
+    if self.elapsed < (self.delay or usabilityState.EVENT_DEBOUNCE) then return end
+    local nextDelay = GetUsabilityScheduleDelay()
+    if nextDelay > usabilityState.EVENT_DEBOUNCE then
+        self.elapsed = 0
+        self.delay = nextDelay
+        return
+    end
 
     self.elapsed = 0
+    self.delay = usabilityState.EVENT_DEBOUNCE
     usabilityState.updatePending = false
     self:Hide()
     UpdateAllButtonUsability()
@@ -7112,10 +7329,14 @@ end
 
 -- Debounced event handler (prevents rapid-fire updates)
 ScheduleUsabilityUpdate = function()
+    if usabilityState.rangePollingActive and InCombatLockdown and InCombatLockdown() then
+        return
+    end
     if usabilityState.updatePending then return end
     usabilityState.updatePending = true
     local frame = EnsureUsabilityUpdateFrame()
     frame.elapsed = 0
+    frame.delay = GetUsabilityScheduleDelay()
     frame:Show()
 end
 ActionBarsOwned.ScheduleUsabilityUpdate = ScheduleUsabilityUpdate
@@ -7176,9 +7397,11 @@ local function UpdateUsabilityPolling()
     -- UpdateButtonUsability skips overlay work when tint is unchanged,
     -- so less frequent polling has no visible impact.
     if rangeEnabled then
+        usabilityState.rangePollingActive = true
         checkFrame:SetScript("OnUpdate", UsabilityCheckFrameOnUpdate)
         checkFrame:Show()
     else
+        usabilityState.rangePollingActive = false
         checkFrame:SetScript("OnUpdate", nil)
         checkFrame.elapsed = 0
         -- Don't hide - events still need to work if usability is enabled

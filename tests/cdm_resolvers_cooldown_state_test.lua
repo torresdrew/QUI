@@ -84,6 +84,7 @@ local slotCooldownStart = 11418.804
 local slotCooldownDuration = 90
 local itemUseSpellCooldownActive = false
 local itemUseSpellCooldownDur = { token = "item-use-spell-cooldown-dur" }
+local chargeQueryCounts = {}
 
 local function putState(cooldownID, category, state)
     state.cooldownID = cooldownID
@@ -126,6 +127,7 @@ local ns = {
     Helpers = {},
     CDMSources = {
         QuerySpellCharges = function(spellID)
+            chargeQueryCounts[spellID] = (chargeQueryCounts[spellID] or 0) + 1
             if spellID == 60001 then
                 return { maxCharges = 2, isActive = true }
             end
@@ -885,6 +887,18 @@ assert(state.durObj == nil, "inactive state should not carry a DurationObject")
 assert(state.mirrorBacked == nil, "inactive state should not be mirror-backed")
 assert(state.hasDurationObject == false, "inactive state should not report a DurationObject")
 assert(state.hasRenderableCooldown == false, "inactive state should not report renderable swipe state")
+
+inCombat = true
+local unknownChargeQueries = chargeQueryCounts[80001] or 0
+state = resolve({
+    entry = cooldownEntry(80001),
+    runtimeSpellID = 80001,
+    containerKey = "essential",
+    useBuffSwipe = false,
+})
+assert((chargeQueryCounts[80001] or 0) == unknownChargeQueries,
+    "combat cooldown resolution should not probe charge state for unknown non-charge spells")
+inCombat = false
 
 state = resolvers.NormalizeResolvedCooldownStateContract({
     mode = "unknown",

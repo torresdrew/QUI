@@ -122,6 +122,23 @@ assert(cooldownCalls == 5,
     "ending a batch should restore live cooldown reads")
 
 runtime.BeginRuntimeQueryBatch()
+assert(runtime.QueryOverrideSpell(101) == 202,
+    "override queries should reuse the stable cache across batches")
+runtime.EndRuntimeQueryBatch()
+assert(overrideCalls == 1,
+    "stable override cache should avoid repeat source reads across batches")
+
+assert(type(runtime.ClearStableCaches) == "function",
+    "runtime query cache should expose stable-cache invalidation")
+runtime.ClearStableCaches()
+runtime.BeginRuntimeQueryBatch()
+assert(runtime.QueryOverrideSpell(101) == 202,
+    "stable override cache should repopulate after invalidation")
+runtime.EndRuntimeQueryBatch()
+assert(overrideCalls == 2,
+    "stable override invalidation should allow the next batch to refresh source data")
+
+runtime.BeginRuntimeQueryBatch()
 runtime.QueryCooldown(101)
 runtime.BeginRuntimeQueryBatch()
 runtime.QueryCooldown(101)
@@ -130,5 +147,40 @@ runtime.QueryCooldown(101)
 runtime.EndRuntimeQueryBatch()
 assert(cooldownCalls == 6,
     "nested batches should share the outer cache until the final EndRuntimeQueryBatch")
+
+local now = 200
+function GetTime() return now end
+runtime.ResetRuntimeQueryBatch()
+local cooldownCallsBeforeTransient = cooldownCalls
+local chargeCallsBeforeTransient = chargeCalls
+
+runtime.BeginRuntimeQueryBatch()
+runtime.QueryCooldown(101)
+runtime.QueryCharges(101)
+runtime.EndRuntimeQueryBatch()
+assert(cooldownCalls == cooldownCallsBeforeTransient + 1,
+    "first transient-window cooldown read should query source")
+assert(chargeCalls == chargeCallsBeforeTransient + 1,
+    "first transient-window charge read should query source")
+
+now = now + 0.08
+runtime.BeginRuntimeQueryBatch()
+runtime.QueryCooldown(101)
+runtime.QueryCharges(101)
+runtime.EndRuntimeQueryBatch()
+assert(cooldownCalls == cooldownCallsBeforeTransient + 1,
+    "combat transient cooldown cache should be reused across near-adjacent batches")
+assert(chargeCalls == chargeCallsBeforeTransient + 1,
+    "combat transient charge cache should be reused across near-adjacent batches")
+
+now = now + 0.13
+runtime.BeginRuntimeQueryBatch()
+runtime.QueryCooldown(101)
+runtime.QueryCharges(101)
+runtime.EndRuntimeQueryBatch()
+assert(cooldownCalls == cooldownCallsBeforeTransient + 2,
+    "expired transient cooldown cache should refresh source data")
+assert(chargeCalls == chargeCallsBeforeTransient + 2,
+    "expired transient charge cache should refresh source data")
 
 print("OK: cdm_resolvers_runtime_query_cache_test")

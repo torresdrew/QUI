@@ -811,6 +811,41 @@ local function QueryAuraDuration(unit, instanceID)
     return Sources.QueryAuraDuration(unit, instanceID)
 end
 
+local function IsOwnedAuraData(auraData)
+    return auraData
+        and Helpers
+        and Helpers.IsAuraOwnedByPlayerOrPet
+        and Helpers.IsAuraOwnedByPlayerOrPet(auraData, true) == true
+end
+
+local function ResolveMirrorAuraUnit(m)
+    local auraUnit = m and m.auraUnit
+    if type(auraUnit) == "string" and auraUnit ~= "" then
+        return auraUnit
+    end
+    if m and m.selfAura == false then
+        return "target"
+    end
+    return "player"
+end
+
+local function ResolveOwnedTargetMirrorAuraData(m, auraUnit)
+    local auraData = m and type(m.auraData) == "table" and m.auraData or nil
+    if IsOwnedAuraData(auraData) then
+        return auraData
+    end
+    local auraInstanceID = m and m.auraInstanceID
+    if not (auraUnit == "target" and auraInstanceID and Sources and Sources.QueryAuraDataByAuraInstanceID) then
+        return nil
+    end
+
+    local queried = QueryAuraData(auraUnit, auraInstanceID)
+    if IsOwnedAuraData(queried) then
+        return queried
+    end
+    return nil
+end
+
 local function DecodePotentialSecretBoolean(value)
     if value == nil then return nil end
     local valueIsSecret = issecretvalue and issecretvalue(value)
@@ -1513,6 +1548,18 @@ local function ResolveAuraApplyMirrorState(m, hostCat, tryID, phaseName)
     if not (m and m.isActive) then return false end
     local s = _resolveAuraScratch
     local r = _auraResult
+    local auraUnit = ResolveMirrorAuraUnit(m)
+    local targetAuraData
+    if auraUnit == "target" then
+        targetAuraData = ResolveOwnedTargetMirrorAuraData(m, auraUnit)
+        if not targetAuraData then
+            AuraStateDebug(s.debugAura, (phaseName or "phase0-aura") .. "-owner-reject",
+                "spellID=", tryID, "hostCat=", hostCat,
+                "selfAura=", tostring(m.selfAura),
+                "cdID=", m.cooldownID, "epoch=", m.mirrorEpoch)
+            return false
+        end
+    end
     AuraStateDebug(s.debugAura, phaseName or "phase0-aura",
         "spellID=", tryID, "hostCat=", hostCat,
         "selfAura=", tostring(m.selfAura),
@@ -1524,7 +1571,9 @@ local function ResolveAuraApplyMirrorState(m, hostCat, tryID, phaseName)
     -- the host viewer cat. Empirically buff cat carries selfAura=false
     -- target-side entries (Virulent Plague, Dread Plague), so cat-derived
     -- unit assignment misroutes those to "player".
-    r.auraUnit = (m.selfAura == false) and "target" or "player"
+    r.auraUnit = auraUnit
+    r.auraInstanceID = m.auraInstanceID
+    r.auraData = targetAuraData or (type(m.auraData) == "table" and m.auraData or nil)
     if m.stackTextShown == false then
         SetAuraCount(r, nil, m.stackTextSource or "mirror-text", false)
     else

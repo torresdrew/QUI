@@ -22,6 +22,7 @@ end
 
 local auraDuration = { token = "aura-duration" }
 local mirroredAuraDuration = { token = "mirrored-aura-duration" }
+local unverifiedMirroredAuraDuration = { token = "unverified-mirrored-aura-duration" }
 
 local ns = {
     Helpers = {
@@ -102,12 +103,25 @@ ns.CDMSources.QueryAuraDataByAuraInstanceID = function(unit, auraInstanceID)
 end
 
 ns.CDMBlizzMirror.GetMirroredStateForViewer = function(spellID, viewerType)
+    if spellID == 777002 and viewerType == "trackedBar" then
+        return {
+            isActive = true,
+            durObj = unverifiedMirroredAuraDuration,
+            selfAura = false,
+            cooldownID = 777002,
+            stackText = "9",
+            stackTextSource = "Applications",
+            stackTextShown = true,
+        }
+    end
     if spellID == 777001 and viewerType == "trackedBar" then
         return {
             isActive = true,
             durObj = mirroredAuraDuration,
             selfAura = false,
             cooldownID = 777001,
+            auraInstanceID = 9001,
+            auraUnit = "target",
             stackText = "7",
             stackTextSource = "Applications",
             stackTextShown = true,
@@ -116,6 +130,20 @@ ns.CDMBlizzMirror.GetMirroredStateForViewer = function(spellID, viewerType)
 end
 
 local state = ns.CDMAuraRuntime.ResolveState({
+    spellID = 777002,
+    entrySpellID = 777002,
+    entryID = 777002,
+    entryName = "Unverified Mirrored Applications",
+    entryKind = "aura",
+    entryIsAura = true,
+    entryType = "spell",
+    viewerType = "trackedBar",
+})
+
+assert(state.isActive ~= true, "target-side mirrored auras without ownership proof should not resolve active")
+assert(state.durObj == nil, "target-side mirrored auras without ownership proof should not expose a DurationObject")
+
+state = ns.CDMAuraRuntime.ResolveState({
     spellID = 777001,
     entrySpellID = 777001,
     entryID = 777001,

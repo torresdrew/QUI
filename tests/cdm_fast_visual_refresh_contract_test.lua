@@ -471,10 +471,18 @@ local spellUpdateUsableBlock = extractBlock(
 assertContainsOrdered(
     spellUpdateUsableBlock,
     {
+        "_resolverRuntimePolicy.QueueUsabilityRefresh()",
+    },
+    "SPELL_UPDATE_USABLE should route through the combat coalescer"
+)
+assertContainsOrdered(
+    icons,
+    {
+        "function _resolverRuntimePolicy.RunUsabilityRefresh()",
         "_resolverRuntimePolicy.ApplyResolvedCooldownForUsabilityEvent()",
         "_resolverRuntimePolicy.UpdateIconRangesForUsabilityEvent()",
     },
-    "SPELL_UPDATE_USABLE should reconcile stale cooldown candidates and usability visuals without broad scheduling"
+    "coalesced usability refresh should still reconcile stale cooldown candidates and usability visuals together"
 )
 assertContains(
     icons,
@@ -556,7 +564,7 @@ assertContainsOrdered(
         "if _stackMirrorBacked and _resolverRuntimePolicy.ValueIsMissing(_stackVal) then",
         '_resolverRuntimePolicy.HideIconStackText(icon, "mirror-stack-empty")',
         "local _chargeCountForwarded = false",
-        "if not _stackMirrorBacked then",
+        'if stackTextWritesAllowed and entry.type == "spell" and not _stackMirrorBacked then',
     },
     "icon runtime should resolve mirror stack text before any API charge writer"
 )
@@ -1596,10 +1604,9 @@ local targetedRefreshBlock = extractBlock(
 assertContainsOrdered(
     targetedRefreshBlock,
     {
-        "ApplyResolvedCooldownForSpellID(spellID, baseSpellID)",
-        "RefreshCooldownVisualsForSpellID(spellID, baseSpellID)",
+        "_resolverRuntimePolicy.QueueResolvedCooldownForSpellID(spellID, baseSpellID)",
     },
-    "targeted cooldown refresh should reconcile per-spell visuals immediately"
+    "targeted cooldown refresh should route through the per-spell coalescer"
 )
 
 local broadRefreshBlock = extractBlock(

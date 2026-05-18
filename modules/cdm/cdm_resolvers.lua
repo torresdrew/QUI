@@ -514,6 +514,18 @@ local function QuerySpellUsableState(spellID)
     return usable
 end
 
+local function SpellMayHaveCharges(entry, spellID)
+    if entry and (entry.hasCharges == true or entry.charges == true) then
+        return true
+    end
+    if not spellID then
+        return false
+    end
+    local gdb = QUI and QUI.db and QUI.db.global
+    local svCharges = gdb and gdb.cdmChargeSpells
+    return svCharges and svCharges[spellID] ~= nil or false
+end
+
 local function ClassifyMirrorDurationMode(durObjSource)
     if durObjSource == "aura-duration"
         or durObjSource == "aura-child"
@@ -556,6 +568,11 @@ local function MirrorPayloadAllowsLiveChargeOverride(payload)
 end
 
 local function IsChargeSpellNotRecharging(spellID, entry)
+    if InCombatLockdown and InCombatLockdown()
+        and not SpellMayHaveCharges(entry, spellID) then
+        return false
+    end
+
     local ci = QueryCharges(spellID)
     if not ci then
         return false
@@ -570,6 +587,10 @@ end
 
 local function ResolveLiveChargeDurationObject(spellID, entry)
     if not spellID then
+        return nil, nil, nil
+    end
+    if InCombatLockdown and InCombatLockdown()
+        and not SpellMayHaveCharges(entry, spellID) then
         return nil, nil, nil
     end
 
@@ -890,6 +911,10 @@ end
 
 local function ApplyChargeRuntimeFallback(state, entry, spellID, isItemLike)
     if not (state and spellID) or isItemLike then
+        return
+    end
+    if InCombatLockdown and InCombatLockdown()
+        and not SpellMayHaveCharges(entry, spellID) then
         return
     end
 
@@ -1820,6 +1845,30 @@ local function ResolveMirrorAuraData(m, auraUnit, active, mode)
     return Sources.QueryAuraDataByAuraInstanceID(auraUnit, m.auraInstanceID)
 end
 
+local function IsOwnedMirrorAuraData(auraData)
+    return auraData
+        and Helpers
+        and Helpers.IsAuraOwnedByPlayerOrPet
+        and Helpers.IsAuraOwnedByPlayerOrPet(auraData, true) == true
+end
+
+local function ResolveOwnedTargetMirrorAuraData(m, auraUnit, auraData)
+    if IsOwnedMirrorAuraData(auraData) then
+        return auraData
+    end
+    if not (m and HasOpaqueValue(m.auraInstanceID)
+        and auraUnit == "target"
+        and Sources and Sources.QueryAuraDataByAuraInstanceID) then
+        return nil
+    end
+
+    local queried = Sources.QueryAuraDataByAuraInstanceID(auraUnit, m.auraInstanceID)
+    if IsOwnedMirrorAuraData(queried) then
+        return queried
+    end
+    return nil
+end
+
 local function BuildMirrorRenderPayload(
     m, fallbackCooldownID, fallbackCategory, fallbackSpellID,
     overrideDurObj, overrideSource, overrideMode, overrideUnknown)
@@ -1835,12 +1884,25 @@ local function BuildMirrorRenderPayload(
     local sourceCooldownID = m.cooldownID or fallbackCooldownID or fallbackSpellID
     local sourceSpellID = m.overrideSpellID or m.spellID or fallbackSpellID
     local mode = overrideMode or ResolveMirrorPayloadMode(m, active)
-    local sourceKey = BuildMirrorDurationSourceKey(
-        mode, sourceCooldownID, sourceSpellID, m.mirrorEpoch)
     local selfAura = SafeBoolean(m.selfAura)
     local auraUnit = SafeMirrorString(m.auraUnit)
         or ((selfAura == false) and "target" or "player")
+    local auraInstanceID = m.auraInstanceID
     local auraData = ResolveMirrorAuraData(m, auraUnit, active, mode)
+
+    if active and mode == "aura" and auraUnit == "target" then
+        auraData = ResolveOwnedTargetMirrorAuraData(m, auraUnit, auraData)
+        if not auraData then
+            payloadDurObj = nil
+            active = false
+            mode = "inactive"
+            auraInstanceID = nil
+            auraUnit = nil
+        end
+    end
+
+    local sourceKey = BuildMirrorDurationSourceKey(
+        mode, sourceCooldownID, sourceSpellID, m.mirrorEpoch)
 
     WipeMirrorPayloadScratch()
     local payload = _mirrorPayloadScratch
@@ -1852,7 +1914,7 @@ local function BuildMirrorRenderPayload(
     payload.cooldownID = sourceCooldownID
     payload.category = NormalizeMirrorCategory(m.viewerCategory) or fallbackCategory
     payload.spellID = sourceSpellID
-    payload.auraInstanceID = m.auraInstanceID
+    payload.auraInstanceID = auraInstanceID
     payload.durObj = payloadDurObj
     payload.durationStateUnknown = overrideUnknown
     if payload.durationStateUnknown == nil then
