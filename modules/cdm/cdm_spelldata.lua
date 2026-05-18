@@ -3208,23 +3208,6 @@ function CDMSpellData:BuildSpellListFromOwned(containerKey)
         end
     end
 
-    -- Sort by assigned row: entries with row assignment come first (grouped by row),
-    -- then unassigned entries in original order. Within a row, original order is preserved.
-    local hasAnyRow = false
-    for _, r in ipairs(result) do
-        if r._assignedRow then hasAnyRow = true; break end
-    end
-    if hasAnyRow then
-        -- Stable sort: preserve relative order within same row
-        for idx, r in ipairs(result) do r._sortIdx = idx end
-        table.sort(result, function(a, b)
-            local ar = a._assignedRow or 0
-            local br = b._assignedRow or 0
-            if ar ~= br then return ar < br end
-            return a._sortIdx < b._sortIdx
-        end)
-    end
-
     if _G.QUI_CDM_TOTEM_DEBUG then
         print("|cffFF8800[Totem]|r", "BuildSpellListFromOwned container=", containerKey, "result=", #result)
     end

@@ -146,43 +146,63 @@ function CDMLayout.SortIconsByAssignedRow(icons, rows)
     if not icons or not rows or #rows <= 1 then return icons end
 
     local buckets = {}
-    local noRow = {}
+    local rowCounts = {}
+    for _, rowConfig in ipairs(rows) do
+        local rn = rowConfig.rowNum
+        buckets[rn] = {}
+        rowCounts[rn] = 0
+    end
+
+    local function findRowWithRoom(preferredRow)
+        local startIndex = 1
+        if preferredRow and buckets[preferredRow] then
+            for i, rowConfig in ipairs(rows) do
+                if rowConfig.rowNum == preferredRow then
+                    local rn = rowConfig.rowNum
+                    if rowCounts[rn] < rowConfig.count then
+                        return rn
+                    end
+                    startIndex = i + 1
+                    break
+                end
+            end
+        end
+
+        for i = startIndex, #rows do
+            local rowConfig = rows[i]
+            local rn = rowConfig.rowNum
+            if rowCounts[rn] < rowConfig.count then
+                return rn
+            end
+        end
+        return nil
+    end
+
+    local overflow = {}
     for _, icon in ipairs(icons) do
         local ar = icon._spellEntry and icon._spellEntry._assignedRow
-        if ar then
-            if not buckets[ar] then buckets[ar] = {} end
-            buckets[ar][#buckets[ar] + 1] = icon
+        local rn = findRowWithRoom(ar)
+        if rn then
+            buckets[rn][#buckets[rn] + 1] = icon
+            rowCounts[rn] = rowCounts[rn] + 1
         else
-            noRow[#noRow + 1] = icon
+            overflow[#overflow + 1] = icon
         end
     end
 
     local sorted = {}
-    local noRowIdx = 1
     for _, rowConfig in ipairs(rows) do
         local rn = rowConfig.rowNum
         local rowStart = #sorted + 1
-        if buckets[rn] then
-            for _, icon in ipairs(buckets[rn]) do
-                sorted[#sorted + 1] = icon
-            end
-        end
-
-        local assigned = buckets[rn] and #buckets[rn] or 0
-        local remaining = rowConfig.count - assigned
-        for _ = 1, remaining do
-            if noRowIdx <= #noRow then
-                sorted[#sorted + 1] = noRow[noRowIdx]
-                noRowIdx = noRowIdx + 1
-            end
+        for _, icon in ipairs(buckets[rn]) do
+            sorted[#sorted + 1] = icon
         end
 
         rowConfig._actualCount = #sorted - rowStart + 1
     end
 
-    while noRowIdx <= #noRow do
-        sorted[#sorted + 1] = noRow[noRowIdx]
-        noRowIdx = noRowIdx + 1
+    for _, icon in ipairs(overflow) do
+        sorted[#sorted + 1] = icon
     end
 
     return sorted
