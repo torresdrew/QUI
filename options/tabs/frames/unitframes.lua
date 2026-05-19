@@ -258,11 +258,45 @@ local function CreateUnitFramesPage(parent)
         if unitDB.hidePowerPercentSymbol == nil then
             unitDB.hidePowerPercentSymbol = false
         end
+        if unitKey == "boss" then
+            local legacySpacing = unitDB.spacing or 35
+            local validGrowDirection = {
+                UP = true,
+                DOWN = true,
+                LEFT = true,
+                RIGHT = true,
+            }
+            if not validGrowDirection[unitDB.growDirection] then
+                unitDB.growDirection = "DOWN"
+            end
+            if rawget(unitDB, "xSpacing") == nil then
+                unitDB.xSpacing = legacySpacing
+            end
+            if rawget(unitDB, "ySpacing") == nil then
+                unitDB.ySpacing = legacySpacing
+            end
+        end
 
         -- Refresh function for this specific unit
         local function RefreshUnit()
             RefreshNewUF()
             -- Preview state is now in database, CreateCastbar will handle it
+        end
+
+        local function RefreshBossLayout()
+            RefreshUnit()
+            local QUI_UF = ns.QUI_UnitFrames
+            if QUI_UF and QUI_UF.UpdateBossFrameLayout then
+                QUI_UF:UpdateBossFrameLayout()
+            end
+            if _G.QUI_IsLayoutModeActive and _G.QUI_IsLayoutModeActive() then
+                local layoutMode = ns.QUI_LayoutMode
+                if layoutMode and layoutMode.SyncElement then
+                    layoutMode:SyncElement("bossFrames")
+                end
+            elseif _G.QUI_ForceReapplyFrameAnchor then
+                _G.QUI_ForceReapplyFrameAnchor("bossFrames")
+            end
         end
 
         -- Refresh function specifically for aura settings
@@ -387,7 +421,7 @@ local function CreateUnitFramesPage(parent)
             y = y - 32
         end
 
-        local sizeHeader = GUI:CreateSectionHeader(tabContent, "Frame Size & Position")
+        local sizeHeader = GUI:CreateSectionHeader(tabContent, "Size & Appearance")
         sizeHeader:SetPoint("TOPLEFT", PAD, y)
         y = y - sizeHeader.gap
 
@@ -417,21 +451,64 @@ local function CreateUnitFramesPage(parent)
         borderSizeSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
 
-        -- Boss frames get spacing slider
-        if unitKey == "boss" then
-            local spacingSlider = GUI:CreateFormSlider(tabContent, "Spacing", 0, 100, 1, "spacing", unitDB, RefreshUnit)
-            spacingSlider:SetPoint("TOPLEFT", PAD, y)
-            spacingSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
-            y = y - FORM_ROW
-        end
-
-        -- Unit frame positioning moved to Edit Mode settings panels.
-
         -- Texture dropdown
         local textureDropdown = GUI:CreateFormDropdown(tabContent, "Bar Texture", GetTextureList(), "texture", unitDB, RefreshUnit)
         textureDropdown:SetPoint("TOPLEFT", PAD, y)
         textureDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
         y = y - FORM_ROW
+
+        if unitKey == "boss" then
+            local layoutHeader = GUI:CreateSectionHeader(tabContent, "Layout")
+            layoutHeader:SetPoint("TOPLEFT", PAD, y)
+            y = y - layoutHeader.gap
+
+            local bossGrowOptions = {
+                {value = "UP", text = "Up"},
+                {value = "DOWN", text = "Down"},
+                {value = "LEFT", text = "Left"},
+                {value = "RIGHT", text = "Right"},
+            }
+
+            local xSpacingSlider
+            local ySpacingSlider
+            local function SetSpacingControlEnabled(control, enabled)
+                if not control then return end
+                if control.SetEnabled then
+                    control:SetEnabled(enabled)
+                else
+                    control:SetAlpha(enabled and 1 or 0.4)
+                    if control.EnableMouse then
+                        control:EnableMouse(enabled)
+                    end
+                end
+            end
+            local function UpdateSpacingControlStates()
+                local usesXSpacing = unitDB.growDirection == "LEFT" or unitDB.growDirection == "RIGHT"
+                SetSpacingControlEnabled(xSpacingSlider, usesXSpacing)
+                SetSpacingControlEnabled(ySpacingSlider, not usesXSpacing)
+            end
+
+            local growDropdown = GUI:CreateFormDropdown(tabContent, "Grow Direction", bossGrowOptions, "growDirection", unitDB, function()
+                RefreshBossLayout()
+                UpdateSpacingControlStates()
+            end)
+            growDropdown:SetPoint("TOPLEFT", PAD, y)
+            growDropdown:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            xSpacingSlider = GUI:CreateFormSlider(tabContent, "X Spacing", 0, 100, 1, "xSpacing", unitDB, RefreshBossLayout)
+            xSpacingSlider:SetPoint("TOPLEFT", PAD, y)
+            xSpacingSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+
+            ySpacingSlider = GUI:CreateFormSlider(tabContent, "Y Spacing", 0, 100, 1, "ySpacing", unitDB, RefreshBossLayout)
+            ySpacingSlider:SetPoint("TOPLEFT", PAD, y)
+            ySpacingSlider:SetPoint("RIGHT", tabContent, "RIGHT", -PAD, 0)
+            y = y - FORM_ROW
+            UpdateSpacingControlStates()
+        end
+
+        -- Unit frame positioning moved to Edit Mode settings panels.
 
         if unitKey == "target" then
             local invertHealthDirectionCheck = GUI:CreateFormCheckbox(tabContent, "Invert Healthbar Direction (LTR)", "invertHealthDirection", unitDB, RefreshUnit)

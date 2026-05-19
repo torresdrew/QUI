@@ -21,7 +21,7 @@ To reposition frames, use `/qui editmode` to enter the drag-and-drop edit mode.
 
 ## Key Features
 
-- **Per-unit customization** -- Player, Target, Target of Target, Pet, Focus, and Boss frames each have independent width, height, texture, and border settings.
+- **Per-unit customization** -- Player, Target, Target of Target, Pet, Focus, and Boss frames each have independent width, height, texture, and border settings. Boss frame groups also support configurable growth direction and spacing.
 - **Health bar** -- Display styles include percent, absolute value, or both. Supports class colors, custom colors, and dark mode with separate background opacity.
 - **Power bar** -- Optional power bar beneath health with configurable height and power-type-specific colors (mana, rage, energy, etc.).
 - **Power text** -- Formats include percent, current value, or both. Anchor position is adjustable.
