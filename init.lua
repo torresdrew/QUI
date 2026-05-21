@@ -589,9 +589,12 @@ function QUI:SlashCommandOpen(input)
         return
     elseif input and input:match("^memaudit") then
         if _G.QUI_MemAudit then
-            local subcmd, arg = input:match("^memaudit%s+(%S+)%s+(%S+)")
+            -- Greedy capture for trailing args so `memaudit exp <name> on/off`
+            -- reaches the handler intact. Existing one-arg subcommands (auto N,
+            -- gc, diff) still work because the handler treats `arg` as opaque.
+            local subcmd, arg = input:match("^memaudit%s+(%S+)%s+(.+)$")
             if not subcmd then
-                subcmd = input:match("^memaudit%s+(%S+)")
+                subcmd = input:match("^memaudit%s+(%S+)$")
             end
             _G.QUI_MemAudit(subcmd, arg)
         else

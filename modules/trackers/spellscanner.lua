@@ -807,6 +807,9 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2, arg3)
     end
 end)
 
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "SpellScanner_Events", frame = eventFrame }
+
 -- Cleanup ticker starts on-demand when buffs are tracked (see EnsureCleanupTicker)
 
 ---------------------------------------------------------------------------

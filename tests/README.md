@@ -1,3 +1,14 @@
+# Tests
+
+Standalone Lua tests live in `tests/unit/` and are run individually from the
+repo root, for example:
+
+```sh
+lua tests/unit/cdm_bus_test.lua
+```
+
+Taint analyzer project config lives in `tests/.taintrc.lua`.
+
 # Profile Regression Tests
 
 Headless test harness for the QUI profile lifecycle (load, migrate, export,

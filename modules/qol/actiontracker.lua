@@ -57,6 +57,10 @@ local state = {
     preview = false,
     inCombat = false,
     suppressUntil = 0,
+    -- Cached settings.enabled flag. Refreshed in RefreshActionTracker so the
+    -- hot-path OnEvent gate can skip allocation without calling GetSettings()
+    -- (which itself allocates via EnsureDefaults/CopyColor) per event.
+    enabled = false,
 
     -- Cast lifecycle tracking
     castByGUID = {},
@@ -1051,6 +1055,7 @@ RefreshActionTracker = function()
     CreateTrackerFrame()
 
     if not settings then
+        state.enabled = false
         StopInactivityTicker()
         if state.frame then
             StopAnimationLoop()
@@ -1058,6 +1063,8 @@ RefreshActionTracker = function()
         end
         return
     end
+
+    state.enabled = settings.enabled == true
 
     if not settings.enabled then
         state.preview = false
@@ -1120,6 +1127,44 @@ eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player")
 eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "player")
 
+---------------------------------------------------------------------------
+-- DEBUG: runtime A/B experiment hook. Memaudit's `/qui memaudit exp`
+-- tears down this entire event frame to isolate ActionTracker's heap
+-- contribution. While off, the tracker won't process casts at all; the
+-- permanent state.enabled gate above already handles the "module disabled"
+-- case, so this experiment specifically measures the registration cost
+-- and any Blizzard-side payload allocation for these events.
+---------------------------------------------------------------------------
+local function ReregisterTrackerEvents()
+    eventFrame:RegisterEvent("ADDON_LOADED")
+    eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+    eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+    eventFrame:RegisterEvent("UPDATE_MACROS")
+    eventFrame:RegisterEvent("SPELLS_CHANGED")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_START", "player")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_START", "player")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
+    eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_CHANNEL_STOP", "player")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_FAILED", "player")
+    eventFrame:RegisterUnitEvent("UNIT_SPELLCAST_INTERRUPTED", "player")
+end
+
+ns.QUI_PerfExperiments = ns.QUI_PerfExperiments or {}
+ns.QUI_PerfExperiments[#ns.QUI_PerfExperiments + 1] = {
+    name = "actionTrackerEvents",
+    description = "ActionTracker event frame (player cast lifecycle + cache refresh)",
+    isEnabled = function()
+        -- Use a representative event as the canary; all are flipped together.
+        return eventFrame:IsEventRegistered("UNIT_SPELLCAST_SUCCEEDED")
+    end,
+    setEnabled = function(on)
+        if on then ReregisterTrackerEvents()
+        else eventFrame:UnregisterAllEvents() end
+    end,
+}
+
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
         local addonName = ...
@@ -1161,6 +1206,13 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 
     if GetTime() < state.suppressUntil then
+        return
+    end
+
+    -- Skip per-cast allocation work when tracker is disabled. The events stay
+    -- registered (cheap) so we don't have to wire register/unregister into the
+    -- settings toggle path; only the allocating dispatch below is gated.
+    if not state.enabled then
         return
     end
 

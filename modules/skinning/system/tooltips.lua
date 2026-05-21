@@ -1308,10 +1308,14 @@ local _diagWorstRight, _diagWorstRightLine, _diagWorstRightText
 local function MeasureBottom_Fallback(fs, lowest)
     if not fs then return lowest end
     local okShown, shown = pcall(fs.IsShown, fs)
-    if not okShown or not shown then return lowest end
+    if okShown and Helpers.IsSecretValue and Helpers.IsSecretValue(shown) then
+        shown = true
+    end
+    if not okShown or shown ~= true then return lowest end
     local okB, b = pcall(fs.GetBottom, fs)
-    if not (okB and b) then return lowest end
+    if not okB then return lowest end
     if Helpers.IsSecretValue and Helpers.IsSecretValue(b) then return lowest end
+    if b == nil then return lowest end
     if b < lowest then lowest = b end
     return lowest
 end
@@ -1327,15 +1331,21 @@ end
 local function MeasureRightOfDoubleLine(rightFS, rightmost, lineIndex)
     if not rightFS then return rightmost end
     local okShown, shown = pcall(rightFS.IsShown, rightFS)
-    if not okShown or not shown then return rightmost end
+    if okShown and Helpers.IsSecretValue and Helpers.IsSecretValue(shown) then
+        shown = true
+    end
+    if not okShown or shown ~= true then return rightmost end
     local okT, text = pcall(rightFS.GetText, rightFS)
     if not okT then return rightmost end
-    if Helpers.IsSecretValue and Helpers.IsSecretValue(text) then return rightmost end
-    if not text or text == "" then return rightmost end
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(text) then
+        return rightmost
+    end
+    if text == nil then return rightmost end
+    if text == "" then return rightmost end
     local okR, rx = pcall(rightFS.GetRight, rightFS)
     if not okR then return rightmost end
     if Helpers.IsSecretValue and Helpers.IsSecretValue(rx) then return rightmost end
-    if not rx then return rightmost end
+    if rx == nil then return rightmost end
     if rx > rightmost then
         rightmost = rx
         if lineIndex then
@@ -1345,6 +1355,37 @@ local function MeasureRightOfDoubleLine(rightFS, rightmost, lineIndex)
         end
     end
     return rightmost
+end
+
+-- In restricted M+ tooltips FontString visibility/text can be secret while
+-- still rendering. Treat secret line state as usable for vertical anchoring;
+-- SetPoint can consume the FontString without Lua reading its coordinates.
+local function IsTooltipLineUsableForVerticalAnchor(fs)
+    if not fs then return false end
+
+    if fs.IsShown then
+        local okShown, shown = pcall(fs.IsShown, fs)
+        if okShown then
+            if Helpers.IsSecretValue and Helpers.IsSecretValue(shown) then
+                return true
+            end
+            if shown == true then
+                return true
+            end
+        end
+    end
+
+    if fs.GetText then
+        local okText, text = pcall(fs.GetText, fs)
+        if okText then
+            if Helpers.IsSecretValue and Helpers.IsSecretValue(text) then
+                return true
+            end
+            return text ~= nil and text ~= ""
+        end
+    end
+
+    return false
 end
 
 -- Walk the tooltip's lines once. Returns:
@@ -1380,18 +1421,17 @@ local function CollectAnchorTargets(tooltip)
         elseif name then
             left = _G[name .. "TextLeft" .. i]
         end
-        if left then
-            local okShown, shown = pcall(left.IsShown, left)
-            if okShown and shown then
-                lastLeftFS = left
-                lastLeftIndex = i
-                local okT, t = pcall(left.GetText, left)
-                if okT and t and not (Helpers.IsSecretValue and Helpers.IsSecretValue(t)) then
+        if IsTooltipLineUsableForVerticalAnchor(left) then
+            lastLeftFS = left
+            lastLeftIndex = i
+            local okT, t = pcall(left.GetText, left)
+            if okT then
+                if not (Helpers.IsSecretValue and Helpers.IsSecretValue(t)) and t ~= nil then
                     _diagBottomText = t
                 end
-                _diagBottomLine = i
-                break
             end
+            _diagBottomLine = i
+            break
         end
     end
 
@@ -1399,7 +1439,7 @@ local function CollectAnchorTargets(tooltip)
     if not okRight then ttRight = nil end
     local rightmost = ttRight
     _diagWorstRight, _diagWorstRightLine, _diagWorstRightText = nil, nil, nil
-    if ttRight and not (Helpers.IsSecretValue and Helpers.IsSecretValue(ttRight)) then
+    if not (Helpers.IsSecretValue and Helpers.IsSecretValue(ttRight)) and ttRight ~= nil then
         for i = 1, count do
             local right
             if hasGetters then
@@ -1476,8 +1516,10 @@ local function RefitChromeToContent(tooltip)
         local okFS, fs = pcall(tooltip.GetLeftLine, tooltip, 1)
         if okFS and fs then
             local okT, t = pcall(fs.GetText, fs)
-            if okT and t and not (Helpers.IsSecretValue and Helpers.IsSecretValue(t)) then
-                line1Text = t
+            if okT then
+                if not (Helpers.IsSecretValue and Helpers.IsSecretValue(t)) and t ~= nil then
+                    line1Text = t
+                end
             end
         end
     end
@@ -1627,6 +1669,61 @@ local function RefitChromeToContent(tooltip)
     pcall(frame.SetPoint, frame, "BOTTOMRIGHT", tooltip, "BOTTOMRIGHT", 0, -extendY)
 end
 
+local pendingTooltipChromeRefits = Helpers.CreateStateTable()
+local tooltipChromeRefitFrame
+local tooltipChromeRefitActive = false
+
+local function TooltipIsShownOrSecret(tooltip)
+    if not tooltip or not tooltip.IsShown then return false end
+    local okShown, shown = pcall(tooltip.IsShown, tooltip)
+    if not okShown then return false end
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(shown) then return true end
+    return shown == true
+end
+
+local function FlushTooltipChromeRefits(self)
+    local keepActive = false
+    for tooltip, passes in pairs(pendingTooltipChromeRefits) do
+        local remaining = tonumber(passes) or 1
+        if TooltipIsShownOrSecret(tooltip) then
+            pcall(RefitChromeToContent, tooltip)
+            remaining = remaining - 1
+            if remaining > 0 then
+                pendingTooltipChromeRefits[tooltip] = remaining
+                keepActive = true
+            else
+                pendingTooltipChromeRefits[tooltip] = nil
+            end
+        else
+            pendingTooltipChromeRefits[tooltip] = nil
+        end
+    end
+
+    if keepActive then return end
+    tooltipChromeRefitActive = false
+    self:SetScript("OnUpdate", nil)
+end
+
+local function RequestTooltipChromeRefit(tooltip, passes)
+    if not tooltip or not IsEnabled() then return end
+    if tooltip.IsForbidden and tooltip:IsForbidden() then return end
+
+    passes = tonumber(passes) or 2
+    if passes < 1 then passes = 1 end
+    local current = tonumber(pendingTooltipChromeRefits[tooltip]) or 0
+    if passes > current then
+        pendingTooltipChromeRefits[tooltip] = passes
+    end
+
+    if not tooltipChromeRefitFrame then
+        tooltipChromeRefitFrame = CreateFrame("Frame")
+    end
+    if not tooltipChromeRefitActive then
+        tooltipChromeRefitActive = true
+        tooltipChromeRefitFrame:SetScript("OnUpdate", FlushTooltipChromeRefits)
+    end
+end
+
 ---------------------------------------------------------------------------
 -- Public API
 ---------------------------------------------------------------------------
@@ -1634,4 +1731,4 @@ end
 ns.QUI_RefreshTooltipSkinColors = RefreshAllColors
 ns.QUI_RefreshTooltipFontSize = RefreshAllFonts
 ns.QUI_RefitTooltipChromeToContent = RefitChromeToContent
-
+ns.QUI_RequestTooltipChromeRefit = RequestTooltipChromeRefit

@@ -17,6 +17,7 @@ assert_true(cfg.coverage.secretWhenCooldownsRestricted, "coverage default")
 local synthetic = [[
 return {
     strict_paths = { "modules/cdm/" },
+    strict_unwrap_paths = { "modules/cdm/" },
     ignore_paths = { "libs/", "tests/" },
     coverage = { secretWhenCooldownsRestricted = true },
     extra_safe_sinks = { "MyMod.Helper" },
@@ -25,18 +26,24 @@ return {
 ]]
 local cfg2 = Config.loadFromString(synthetic)
 assert_eq(cfg2.strict_paths[1], "modules/cdm/", "strict path loaded")
+assert_eq(cfg2.strict_unwrap_paths[1], "modules/cdm/", "strict unwrap path loaded")
 assert_eq(#cfg2.extra_safe_sinks, 1, "extra safe sinks")
 assert_eq(cfg2.extra_unwraps[1], "MyMod.SafeRead", "extra unwrap")
 
 -- isStrictPath helper
-assert_true(Config.isStrictPath(cfg2, "modules/cdm/cdm_icons.lua"),
+assert_true(Config.isStrictPath(cfg2, "modules/cdm/cdm_icon_renderer.lua"),
     "file under strict path")
 assert_eq(Config.isStrictPath(cfg2, "modules/foo/bar.lua"), false,
     "file outside strict path")
 
+assert_true(Config.isStrictUnwrapPath(cfg2, "modules/cdm/cdm_icon_renderer.lua"),
+    "file under strict unwrap path")
+assert_eq(Config.isStrictUnwrapPath(cfg2, "modules/foo/bar.lua"), false,
+    "file outside strict unwrap path")
+
 -- isIgnoredPath helper
 assert_true(Config.isIgnoredPath(cfg2, "libs/AceAddon-3.0.lua"), "ignored libs")
-assert_eq(Config.isIgnoredPath(cfg2, "modules/cdm/cdm_icons.lua"),
+assert_eq(Config.isIgnoredPath(cfg2, "modules/cdm/cdm_icon_renderer.lua"),
     false, "not ignored")
 
 -- Malformed config: returns defaults + error

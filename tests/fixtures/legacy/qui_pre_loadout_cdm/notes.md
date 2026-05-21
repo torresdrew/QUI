@@ -17,7 +17,7 @@
 
 The harness does NOT call `GetSpecLoadoutProfileStore`. That helper lives in `modules/cdm/cdm_containers.lua` and runs only at game-time, when CDM code accesses the store. Its in-place migration probe lifts pre-loadout data into `store[specID][0]` on first read.
 
-Therefore: the migration LOGIC (existence of the helper, the legacy-keys probe, the lift sequence) is asserted by the **grep-style regression test** at `tests/cdm_spec_tracking_persistence_test.lua` — not by this fixture's invariants.
+Therefore: the migration LOGIC (existence of the helper, the legacy-keys probe, the lift sequence) is asserted by the **grep-style regression test** at `tests/unit/cdm_spec_tracking_persistence_test.lua` — not by this fixture's invariants.
 
 This fixture asserts the SavedVariables shape that the migration must recognize is round-tripped losslessly by the harness.
 
@@ -41,10 +41,10 @@ Spec ID `65` = Affliction Warlock. Picked arbitrarily; any positive integer work
 - **Live API integration:** `GetLastSelectedSavedConfigID` / `C_ClassTalents` calls are not exercised. The fixture is pure data.
 - **Event dispatch:** `TRAIT_CONFIG_UPDATED` / `ACTIVE_COMBAT_CONFIG_CHANGED` / `TRAIT_CONFIG_LIST_UPDATED` flows are not exercised. The fixture is pure data.
 
-All three uncovered surfaces are asserted by the grep tests in `tests/cdm_spec_tracking_persistence_test.lua`.
+All three uncovered surfaces are asserted by the grep tests in `tests/unit/cdm_spec_tracking_persistence_test.lua`.
 
 ## Related
 
 - **SPEC:** `.planning/phases/01-storage-events-and-infra-tests/01-SPEC.md` — LDTS-02 requirement
 - **Migration code:** `modules/cdm/cdm_containers.lua` — `GetSpecLoadoutProfileStore` (read-time migration probe)
-- **Grep test:** `tests/cdm_spec_tracking_persistence_test.lua` — assertions for migration logic existence
+- **Grep test:** `tests/unit/cdm_spec_tracking_persistence_test.lua` — assertions for migration logic existence

@@ -20,7 +20,13 @@
 local M = {}
 
 local function ScriptDir()
-    local p = (arg and arg[0]) or ""
+    local info = debug and debug.getinfo and debug.getinfo(1, "S")
+    local p = info and info.source or ""
+    if p:sub(1, 1) == "@" then
+        p = p:sub(2)
+    else
+        p = (arg and arg[0]) or ""
+    end
     p = p:gsub("\\", "/")
     local dir = p:match("(.*/)")
     if dir == nil or dir == "" then return "./" end

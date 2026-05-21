@@ -473,6 +473,15 @@ end
 local function RefreshGameMenuFontSize()
     if not GameMenuFrame then return end
 
+    local core = GetCore()
+    local settings = core and core.db and core.db.profile and core.db.profile.general
+    if not settings or not settings.skinGameMenu then
+        if core and core.ApplyGlobalFontToGameMenu then
+            core:ApplyGlobalFontToGameMenu()
+        end
+        return
+    end
+
     local fontSize = GetGameMenuFontSize()
     local fontPath = Helpers.GetGeneralFont()
 
@@ -777,6 +786,7 @@ if GameMenuFrame then
                 end
                 lastButtonCount = count
             end
+            RefreshGameMenuFontSize()
             UpdateVisibleButtonHovers()
         elseif isShown then
             -- Already showing — check if buttons changed (InitButtons was called)
@@ -803,6 +813,7 @@ if GameMenuFrame then
                         StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
                     end
                 end
+                RefreshGameMenuFontSize()
             end
             UpdateVisibleButtonHovers()
         elseif wasShown then

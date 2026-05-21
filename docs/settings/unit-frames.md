@@ -171,6 +171,11 @@ Settings at `quiUnitFrames.player`. The Player frame is the most feature-rich un
 |---------|------|---------|-------------|
 | `player.auras.showBuffs` | boolean | `false` | Show buffs on the frame |
 | `player.auras.showDebuffs` | boolean | `false` | Show debuffs on the frame |
+| `player.auras.buffFilterMode` | string | `"off"` | Buff type filter mode: `"off"` or `"classification"` |
+| `player.auras.debuffFilterMode` | string | `"off"` | Debuff type filter mode: `"off"` or `"classification"` |
+| `player.auras.buffFilterOnlyMine` | boolean | `true` | Only show player/vehicle-cast buffs |
+| `player.auras.buffClassifications` | table | all `false` | Buff classification toggles: `helpful`, `cancelable`, `notCancelable`, `important`, `bigDefensive`, `externalDefensive`. `helpful` matches Blizzard `HELPFUL|RAID` or `HELPFUL|RAID_IN_COMBAT`. |
+| `player.auras.debuffClassifications` | table | all `false` | Debuff classification toggles: `harmful`, `dispellable`, `crowdControl`, `important`. `harmful` matches Blizzard `HARMFUL|RAID` or `HARMFUL|RAID_IN_COMBAT`; `dispellable` matches `HARMFUL|RAID_PLAYER_DISPELLABLE`. |
 | `player.auras.iconSize` | number | `22` | Debuff icon size |
 | `player.auras.debuffAnchor` | string | `"TOPLEFT"` | Debuff row anchor point |
 | `player.auras.debuffGrow` | string | `"RIGHT"` | Debuff growth direction |
@@ -274,7 +279,7 @@ The Target frame can display the target's target name inline after the unit name
 |---------|------|---------|-------------|
 | `target.absorbs.enabled` | boolean | `true` | Show absorb shields (enabled by default on Target) |
 
-All other Target settings (portrait, power text/bar, auras, target marker, leader icon) follow the same structure as the Player frame with appropriate default differences.
+All other Target settings (portrait, power text/bar, auras, target marker, leader icon) follow the same structure as the Player frame with appropriate default differences. Target auras also support `target.auras.buffFilterMode`, `target.auras.debuffFilterMode`, `target.auras.buffFilterOnlyMine`, `target.auras.buffClassifications`, and `target.auras.debuffClassifications`.
 
 ---
 

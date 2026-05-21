@@ -674,11 +674,12 @@ local function RefreshTooltipLayout(tooltip)
     if type(tooltip.UpdateTooltipSize) == "function" then
         pcall(tooltip.UpdateTooltipSize, tooltip)
     end
-    -- Only call Show() on hidden tooltips. Show() triggers Blizzard's internal
-    -- NineSlice restyle which the skinning watcher can only catch one frame
-    -- later, causing a visible flicker.
     local alreadyShown = tooltip.IsShown and tooltip:IsShown()
-    if not alreadyShown then
+    -- AddLine/AddDoubleLine on an already visible GameTooltip can render the
+    -- new FontStrings without updating the Lua-facing line/layout state. Show()
+    -- is the only reliable nudge on Midnight; the skinning watcher re-hides
+    -- NineSlice and the deferred refit below catches the final extents.
+    if tooltip == GameTooltip or not alreadyShown then
         pcall(tooltip.Show, tooltip)
     end
 
@@ -688,6 +689,11 @@ local function RefreshTooltipLayout(tooltip)
     -- exposing Blizzard's backdrop on the appended lines (Target / M+ Rating).
     -- The skinning module owns the chrome and re-anchors its bottom past
     -- the tooltip's reported bottom by the actual FontString overflow.
+    local requestRefit = ns.QUI_RequestTooltipChromeRefit
+    if requestRefit then
+        pcall(requestRefit, tooltip, 3)
+        return
+    end
     local refit = ns.QUI_RefitTooltipChromeToContent
     if refit then
         pcall(refit, tooltip)

@@ -3800,6 +3800,8 @@ local _abCooldownStats = {
     chargeInfoActive = 0,
     chargeDurationQueries = 0,
     chargeDurationActive = 0,
+    lossOfControlInfoQueries = 0,
+    lossOfControlDurationQueries = 0,
 }
 do local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "AB_cooldownEvents",  counter = true, fn = function() return _abCooldownStats.events  end }
@@ -3817,6 +3819,8 @@ do local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "AB_chargeInfoActive", counter = true, fn = function() return _abCooldownStats.chargeInfoActive end }
     mp[#mp + 1] = { name = "AB_chargeDurationQueries", counter = true, fn = function() return _abCooldownStats.chargeDurationQueries end }
     mp[#mp + 1] = { name = "AB_chargeDurationActive", counter = true, fn = function() return _abCooldownStats.chargeDurationActive end }
+    mp[#mp + 1] = { name = "AB_lossOfControlInfoQueries", counter = true, fn = function() return _abCooldownStats.lossOfControlInfoQueries end }
+    mp[#mp + 1] = { name = "AB_lossOfControlDurationQueries", counter = true, fn = function() return _abCooldownStats.lossOfControlDurationQueries end }
 end
 
 do
@@ -3830,6 +3834,7 @@ do
     local DEFAULT_CD_INFO  = { startTime = 0, duration = 0, isEnabled = false, isActive = false, modRate = 0 }
     local DEFAULT_LOC_INFO = { startTime = 0, duration = 0, modRate = 0, isActive = false, shouldReplaceNormalCooldown = false }
     local ACTIVE_COOLDOWN_CACHE_MAX_DURATION = 2.5
+    local ACTIVE_COOLDOWN_CACHE_LONG_REFRESH_TTL = 1.0
     local ACTIVE_COOLDOWN_CACHE_FALLBACK_TTL = 0.20
     local INACTIVE_COOLDOWN_CACHE_TTL = 0.25
 
@@ -3868,16 +3873,6 @@ do
 
     local function DecodePotentialSecretBoolean(value)
         if Helpers.IsSecretValue(value) then
-            if C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
-                local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(value, 1, 0)
-                if not Helpers.IsSecretValue(scalar) then
-                    if scalar == 1 then return true end
-                    if scalar == 0 then return false end
-                    scalar = tonumber(scalar)
-                    if scalar == 1 then return true end
-                    if scalar == 0 then return false end
-                end
-            end
             return nil
         end
         if value == true then return true end
@@ -4068,14 +4063,18 @@ do
                     _buttonCooldownDurationObject[button] = durationObject
                     _buttonCooldownExpiresAt[button] = expiresAt
                     _buttonCooldownInactiveAt[button] = nil
+                elseif expiresAt then
+                    _buttonCooldownAction[button] = action
+                    _buttonCooldownInfo[button] = cdInfo
+                    _buttonCooldownDurationObject[button] = durationObject
+                    _buttonCooldownExpiresAt[button] = math.min(expiresAt, GetTime() + ACTIVE_COOLDOWN_CACHE_LONG_REFRESH_TTL)
+                    _buttonCooldownInactiveAt[button] = nil
                 elseif not expiresAt then
                     _buttonCooldownAction[button] = action
                     _buttonCooldownInfo[button] = cdInfo
                     _buttonCooldownDurationObject[button] = durationObject
                     _buttonCooldownExpiresAt[button] = GetTime() + ACTIVE_COOLDOWN_CACHE_FALLBACK_TTL
                     _buttonCooldownInactiveAt[button] = nil
-                else
-                    ResetButtonCooldownRuntimeCache(button)
                 end
             elseif cdActive == false then
                 _buttonCooldownAction[button] = action
@@ -4200,6 +4199,7 @@ do
 
             -- Button is on cooldown and/or recharging a charge — LoC is the
             -- remaining query.
+            _abCooldownStats.lossOfControlInfoQueries = _abCooldownStats.lossOfControlInfoQueries + 1
             local locInfo = C_ActionBar.GetActionLossOfControlCooldownInfo(action) or DEFAULT_LOC_INFO
 
             local locActive = DecodePotentialSecretBoolean(locInfo.isActive)
@@ -4224,6 +4224,7 @@ do
 
             -- Loss of control cooldown (lazy-create frame)
             if showLoC then
+                _abCooldownStats.lossOfControlDurationQueries = _abCooldownStats.lossOfControlDurationQueries + 1
                 SetOrClearCooldown(GetOrCreateLoCCooldown(button), true, C_ActionBar.GetActionLossOfControlCooldownDuration(action))
             elseif button.lossOfControlCooldown then
                 button.lossOfControlCooldown:Clear()
@@ -9469,11 +9470,9 @@ function ActionBarsOwned:Initialize()
             -- overrides the arrow texture with the recommended spell.
             -- Immediate flush: spell changes are low-frequency.
             ScheduleABVisualUpdate(false, true)
-            -- Notify other modules that consume the rotation recommendation.
-            -- Centralized here so they react to the same event instead of
-            -- polling GetNextCastSpell on independent timers.
-            local rai = ns.RotationAssistIcon
-            if rai and rai.Update then pcall(rai.Update) end
+            -- Keybind overlays share this signal — they don't need their own
+            -- callback since they react to the same recommendation change.
+            -- (RotationAssistIcon self-registers in rotationassist.lua.)
             local kb = ns.Keybinds
             if kb and kb.UpdateAllRotationHelpers then pcall(kb.UpdateAllRotationHelpers) end
         end, "QUI_ActionBars_AssistedCombat")
@@ -9494,11 +9493,11 @@ function ActionBarsOwned:Initialize()
         end, "QUI_ActionBars_AssistedHighlight")
     end
 
-    -- Direct hook on AssistedCombatManager — works even when no assisted
-    -- combat button is on any action bar.  The EventRegistry events above
-    -- don't reliably fire, and SafeUpdate notifications only work when
-    -- a button IS on a bar.  This hook catches all spell changes at the
-    -- source and notifies the rotation assist icon + CDM viewer overlay.
+    -- Direct hook on AssistedCombatManager — catches the spell-change at
+    -- the source even when no bar button hosts the assist slot (the
+    -- EventRegistry event above doesn't reliably fire in that case).
+    -- Drives the SafeUpdate texture-race refresh and keybind overlays.
+    -- (RotationAssistIcon self-registers its own hook in rotationassist.lua.)
     if AssistedCombatManager and AssistedCombatManager.UpdateAllAssistedHighlightFramesForSpell then
         hooksecurefunc(AssistedCombatManager, "UpdateAllAssistedHighlightFramesForSpell", function(_, spellID)
             if not spellID then return end
@@ -9524,10 +9523,6 @@ function ActionBarsOwned:Initialize()
             -- AFTER the C-side completes, so schedule an immediate visual
             -- refresh to re-read the now-correct texture.
             ScheduleABVisualUpdate(false, true)
-            -- Rotation assist icon handles secret values natively via C-side
-            -- functions — pass the raw spellID so it works during combat.
-            local rai = ns.RotationAssistIcon
-            if rai and rai.Update then pcall(rai.Update, spellID) end
             -- Pass both the resolved override and the original base so the
             -- matcher can check either direction.  Secret values pass through
             -- safely — tonumber() returns nil for secrets, so no match = no

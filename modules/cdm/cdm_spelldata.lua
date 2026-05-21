@@ -1,3 +1,165 @@
+-- cdm_spelldata.lua
+-- Consolidated CDM module. Former file chunks remain scoped to preserve Lua 5.1 local limits.
+
+do
+-- Inlined from cdm_aura_catalog.lua
+local ADDON_NAME, ns = ...
+
+---------------------------------------------------------------------------
+-- CDM Aura Catalog
+--
+-- Pure helpers for catalog-provided aura links. CDMSpellData owns entry
+-- assembly; this module owns ability->aura display remaps and linked aura
+-- ID attachment rules derived from the Blizzard catalog maps.
+---------------------------------------------------------------------------
+
+local CDMAuraCatalog = {}
+ns.CDMAuraCatalog = CDMAuraCatalog
+
+local ipairs = ipairs
+local select = select
+local type = type
+
+local issecretvalue = issecretvalue or function() return false end
+
+local function IsUsableID(id)
+    if type(id) ~= "number" then return false end
+    if issecretvalue(id) then return false end
+    return id > 0
+end
+
+function CDMAuraCatalog.HasDirectAuraChild(mirror, spellID)
+    if not (mirror and mirror.GetDirectCooldownIDForViewer and IsUsableID(spellID)) then
+        return false
+    end
+    return mirror.GetDirectCooldownIDForViewer(spellID, "buff")
+        or mirror.GetDirectCooldownIDForViewer(spellID, "trackedBar")
+end
+
+function CDMAuraCatalog.ResolveEntryAuraDisplay(entryID, abilityToAuraSpellID, mirror)
+    if not IsUsableID(entryID) then
+        return entryID, false
+    end
+
+    local mappedID = abilityToAuraSpellID and abilityToAuraSpellID[entryID]
+    if IsUsableID(mappedID)
+        and not CDMAuraCatalog.HasDirectAuraChild(mirror, entryID) then
+        return mappedID, true
+    end
+
+    return entryID, false
+end
+
+function CDMAuraCatalog.AttachLinkedAuraIDs(resolved, auraIDsForSpell, getAuraIDsForSpell, ...)
+    if not resolved then return end
+
+    local out, seen
+    local function appendForSpellID(spellID)
+        if not IsUsableID(spellID) then return end
+
+        local ids
+        if type(getAuraIDsForSpell) == "function" then
+            ids = getAuraIDsForSpell(spellID)
+        elseif auraIDsForSpell then
+            ids = auraIDsForSpell[spellID]
+        end
+        if type(ids) ~= "table" then return end
+
+        if not out then
+            out = {}
+            seen = {}
+        end
+        for _, auraID in ipairs(ids) do
+            if IsUsableID(auraID) and not seen[auraID] then
+                seen[auraID] = true
+                out[#out + 1] = auraID
+            end
+        end
+    end
+
+    for i = 1, select("#", ...) do
+        appendForSpellID(select(i, ...))
+    end
+
+    if out and #out > 0 then
+        resolved.linkedSpellIDs = out
+    end
+end
+end
+
+do
+-- Inlined from cdm_aura_runtime.lua
+local ADDON_NAME, ns = ...
+
+---------------------------------------------------------------------------
+-- CDM Aura Runtime
+--
+-- Runtime aura-state interface. CDMSpellData currently provides the adapter
+-- implementation because it owns the UNIT_AURA capture indexes and scratch
+-- helpers; callers consume this module instead of treating SpellData as a
+-- parallel runtime truth source.
+---------------------------------------------------------------------------
+
+local CDMAuraRuntime = {}
+ns.CDMAuraRuntime = CDMAuraRuntime
+
+local resolveState
+local getApplications
+local getCapturedAura
+local resolveAbilityAuraSpellID
+
+function CDMAuraRuntime.SetResolver(callback)
+    resolveState = callback
+end
+
+function CDMAuraRuntime.ResolveState(params)
+    if resolveState then
+        return resolveState(params)
+    end
+    return nil
+end
+
+function CDMAuraRuntime.SetApplicationsGetter(callback)
+    getApplications = callback
+end
+
+function CDMAuraRuntime.GetApplications(unit, auraInstanceID)
+    if getApplications then
+        return getApplications(unit, auraInstanceID)
+    end
+    return nil
+end
+
+function CDMAuraRuntime.SetCapturedAuraGetter(callback)
+    getCapturedAura = callback
+end
+
+function CDMAuraRuntime.GetCapturedAuraForLookup(...)
+    if getCapturedAura then
+        return getCapturedAura(...)
+    end
+    return nil
+end
+
+function CDMAuraRuntime.SetAbilityAuraSpellIDResolver(callback)
+    resolveAbilityAuraSpellID = callback
+end
+
+function CDMAuraRuntime.ResolveAbilityAuraSpellID(spellID)
+    if resolveAbilityAuraSpellID then
+        return resolveAbilityAuraSpellID(spellID)
+    end
+    return spellID, false
+end
+
+function CDMAuraRuntime.HasAbilityAuraMapping(spellID)
+    local _, remapped = CDMAuraRuntime.ResolveAbilityAuraSpellID(spellID)
+    return remapped == true
+end
+end
+
+do
+-- Inlined from cdm_spelldata.lua
 --[[
     QUI CDM Spell Data
 
@@ -857,27 +1019,8 @@ local function ResolveOwnedTargetMirrorAuraData(m, auraUnit)
 end
 
 local function DecodePotentialSecretBoolean(value)
+    if issecretvalue and issecretvalue(value) then return nil end
     if value == nil then return nil end
-    local valueIsSecret = issecretvalue and issecretvalue(value)
-    if valueIsSecret and C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
-        local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(value, 1, 0)
-        if issecretvalue and issecretvalue(scalar) then
-            return nil
-        end
-        local ok, decoded = pcall(function()
-            if type(scalar) == "number" then
-                return scalar >= 0.5
-            end
-            return nil
-        end)
-        if ok then
-            return decoded
-        end
-    end
-
-    if valueIsSecret then
-        return nil
-    end
     if type(value) == "boolean" then
         return value
     end
@@ -1250,8 +1393,8 @@ end
 
 ---------------------------------------------------------------------------
 -- UNIFIED AURA DETECTION
--- Single detection path shared by both icons (cdm_icons.lua) and bars
--- (cdm_bars.lua).  Returns all data both consumers need for display.
+-- Single detection path shared by both icons (cdm_icon_renderer.lua) and bars
+-- (cdm_bar_renderer.lua).  Returns all data both consumers need for display.
 -- Result table is module-level, wiped each call (safe because icons and
 -- bars process frames sequentially within a single UpdateAll cycle).
 ---------------------------------------------------------------------------
@@ -1576,7 +1719,7 @@ local function ResolveAuraApplyMirrorState(m, hostCat, tryID, phaseName)
     r.auraUnit = auraUnit
     r.auraInstanceID = m.auraInstanceID
     r.auraData = targetAuraData or (type(m.auraData) == "table" and m.auraData or nil)
-    if m.stackTextShown == false then
+    if not IsSecretCountValue(m.stackTextShown) and m.stackTextShown == false then
         SetAuraCount(r, nil, m.stackTextSource or "mirror-text", false)
     else
         local stackText = m.stackText
@@ -1705,7 +1848,17 @@ local function ResolveAuraTrySiblingMirror()
     for _, tryID in ipairs(_scratchProbeIDs) do
         for _, cat in ipairs(_AURA_VIEWER_CAT_BUFF_FIRST) do
             local lm = getAuraState(tryID, cat)
-            if lm and lm.isActive and lm.durObj then
+            -- Phase 1 removed the flat isActive / durObj fields from mirror
+            -- state. Aura activity is now signalled by the presence of
+            -- auraInstanceID + auraDurObj on the packed state; if both are
+            -- present, an event-driven capture (UNIT_AURA / SCFDO aura
+            -- branch / aura-related-child) stamped them and the aura is on
+            -- the unit. Without this update the cooldown-side sibling
+            -- lookup is orphaned for every CD+aura entry (DK Anti-Magic
+            -- Shell, etc.) — the cooldown icon never receives the aura
+            -- overlay because lm.isActive / lm.durObj are perpetually nil
+            -- on the new state shape.
+            if lm and lm.auraInstanceID and lm.auraDurObj then
                 local resolvedID = lm.overrideTooltipSpellID
                     or lm.overrideSpellID
                     or tryID
@@ -1718,7 +1871,7 @@ local function ResolveAuraTrySiblingMirror()
                     "epoch=", lm.mirrorEpoch,
                     "resolvedID=", resolvedID)
                 r.isActive = true
-                r.durObj = lm.durObj
+                r.durObj = lm.auraDurObj
                 r.auraUnit = lm.auraUnit
                     or ((lm.selfAura == false) and "target" or "player")
                 SetResolvedAuraSpellID(r, nil, resolvedID)
@@ -2633,15 +2786,23 @@ end
 
 -- DB access for owned spell data
 local function GetNcdmDB()
+    if Shared and Shared.GetNcdmDB then
+        local ncdm = Shared.GetNcdmDB()
+        if ncdm then return ncdm end
+    end
+
     local QUICore = ns.Addon
     return QUICore and QUICore.db and QUICore.db.profile and QUICore.db.profile.ncdm
 end
 
 local function GetContainerDB(containerKey)
+    if Shared and Shared.GetContainerDB then
+        local containerDB = Shared.GetContainerDB(containerKey)
+        if containerDB then return containerDB end
+    end
+
     local ncdm = GetNcdmDB()
     if not ncdm then return nil end
-    -- Built-in containers live at ncdm[key] (user's saved data).
-    -- Custom containers only exist in ncdm.containers[key].
     if ncdm[containerKey] then
         return ncdm[containerKey]
     end
@@ -2904,14 +3065,6 @@ local function AttachCatalogAuraIDs(resolved, ...)
     end
 end
 
-local function ResolveBestOwnedItemVariant(itemID)
-    if not itemID then return nil end
-    if Sources and Sources.QueryBestOwnedItemVariant then
-        return Sources.QueryBestOwnedItemVariant(itemID) or itemID
-    end
-    return itemID
-end
-
 -- Resolve a single owned entry to a spell data table compatible with
 -- the existing icon/bar building pipeline.
 local function ResolveOwnedEntry(entry, containerKey, index)
@@ -2980,7 +3133,7 @@ local function ResolveOwnedEntry(entry, containerKey, index)
         -- debuffs that use internal rank IDs not exposed via C_Spell, or CD-only
         -- entries like Call Dreadstalkers where the aura ID lookup yields nothing).
         --
-        -- Route through ns._GetCachedSpellName (cdm_icons.lua) so the in-combat
+        -- Route through ns._GetCachedSpellName (cdm_icon_renderer.lua) so the in-combat
         -- relayout path (e.g. hideNonUsable filter flipping mid-fight) reads
         -- a cleanly-cached non-secret name instead of calling GetSpellInfo
         -- directly — info.name can be a secret value during combat, and a
@@ -3054,7 +3207,8 @@ local function ResolveOwnedEntry(entry, containerKey, index)
     elseif entry.type == "item" then
         -- Item IDs must NOT be stored as spellID — they are different ID spaces.
         -- spellID/overrideSpellID stay nil; item-specific code paths use entry.id.
-        local itemID = ResolveBestOwnedItemVariant(entry.id)
+        local itemID = (Sources and Sources.QueryBestOwnedItemVariant
+            and Sources.QueryBestOwnedItemVariant(entry.id)) or entry.id
         resolved.id = itemID
         resolved.itemID = itemID
         local itemName = Sources and Sources.QueryItemNameByID and Sources.QueryItemNameByID(itemID)
@@ -3869,8 +4023,10 @@ function CDMSpellData:AddEntry(containerKey, entry)
         local existingID = norm and norm.id
         local entryID = entry.id
         if norm and norm.type == "item" and entry.type == "item" then
-            existingID = ResolveBestOwnedItemVariant(existingID)
-            entryID = ResolveBestOwnedItemVariant(entryID)
+            existingID = (Sources and Sources.QueryBestOwnedItemVariant
+                and Sources.QueryBestOwnedItemVariant(existingID)) or existingID
+            entryID = (Sources and Sources.QueryBestOwnedItemVariant
+                and Sources.QueryBestOwnedItemVariant(entryID)) or entryID
         end
         if norm and norm.type == entry.type and existingID == entryID then
             return false  -- already exists
@@ -4814,3 +4970,5 @@ function CDMSpellData._BindDebugImports()
         FormatIDList          = d.FormatIDList          or FormatIDList
     end
 end
+end
+

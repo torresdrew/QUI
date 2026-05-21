@@ -1724,7 +1724,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         -- custom channel; the swatch + reset row act on the current selection.
         CreateChatSection("channelColors", "Channel Colors", 4 * FORM_ROW + 8, function(body)
             local sy = -4
-            local CC = ns.QUI.Chat.ChannelColors
+            local CC = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.ChannelColors
 
             -- Session-only selection state (not persisted to SV).
             local selected = {

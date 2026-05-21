@@ -55,7 +55,7 @@ local BUILTIN_UNWRAPS = {
 -- set the read is treated as non-secret. Lets project memories like
 -- "SpellCooldownInfo.isOnGCD is always a clean boolean per Blizzard contract"
 -- be expressed as analyzer rules instead of per-line annotations.
--- No defaults — populated entirely from .taintrc.lua's clean_fields.
+-- No defaults — populated entirely from the taint config's clean_fields.
 local BUILTIN_CLEAN_FIELDS = {}
 
 local Registry = {}

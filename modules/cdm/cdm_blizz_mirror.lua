@@ -1,4 +1,4 @@
-local ADDON_NAME, ns = ...
+local ns = select(2, ...)
 
 ---------------------------------------------------------------------------
 -- CDM Blizzard Mirror
@@ -52,8 +52,8 @@ local _categoryByFrame     = {}    -- [child frame] = catNum (lazy-init category
 local _childByCooldownFrame = setmetatable({}, { __mode = "k" }) -- [child.Cooldown] = child frame
 local _forceShowingChild    = setmetatable({}, { __mode = "k" }) -- [child] = true for mirror-internal Show()
 local _textOwnerHooked      = setmetatable({}, { __mode = "k" }) -- [Applications/ChargeCount owner] = true
+CDMBlizzMirror._knownShownByFrame = setmetatable({}, { __mode = "k" }) -- [frame/text owner] = last clean Show/Hide/SetShown state
 local SetHostPandemicState
-local GCD_MAX_DURATION = 1.75
 -- CooldownViewerCooldown info captured from C_CooldownViewer.GetCooldownViewerCooldownInfo:
 --   cooldownID, spellID, overrideSpellID, overrideTooltipSpellID,
 --   linkedSpellIDs (numberArray), selfAura (bool), hasAura (bool),
@@ -85,10 +85,10 @@ local _directCDIDByCatSpell = {
 -- Totem-backed CDM children (e.g. Anti-Magic Zone) get their swipe / active
 -- state from PLAYER_TOTEM_UPDATE, NOT from any Cooldown:Set* on the child.
 -- Blizzard's mixin watches totem events and drives the visual through a path
--- that bypasses our 5 Cooldown setter hooks. We mirror that by listening for
--- PLAYER_TOTEM_UPDATE here and authoritatively flipping s.isActive / s.durObj
--- for cdIDs whose CooldownInfo identity set matches an active totem's name or
--- spellID. The index is rebuilt on every Walk and incrementally extended on
+-- that bypasses our 5 Cooldown setter hooks. We listen for PLAYER_TOTEM_UPDATE
+-- and stamp the totem duration lane + _totemActiveCDID ownership for cdIDs
+-- whose CooldownInfo identity set matches an active totem's name or spellID.
+-- The index is rebuilt on every Walk and incrementally extended on
 -- BindNewChildren.
 local _spellNameToCDID = {}        -- [spellName lowercase] = { [cdID] = true }
 local _totemSpellIDToCDID = {}     -- [spellID] = { [cdID] = true }
@@ -218,6 +218,35 @@ local function RegisterCooldownInstance(cdID, catName, child, info)
         _childByCooldownID[cdID] = _childByCooldownID[cdID] or child
     end
     if info then
+        -- Preserve known-true registration-cache facts across in-combat
+        -- re-registration. After Fix 1 (broker subscription's override
+        -- branch runs through the InCombatLockdown gate, cdm_blizz_mirror.lua
+        -- :4451), SPELL_OVERRIDE_UPDATED fires _RefreshSpellOverridePair
+        -- during combat. SanitizeCooldownInfo → CleanBool(info.charges)
+        -- returns nil whenever info.charges is a secret boolean (which it
+        -- is post-12.0.5 under tainted execution), so a fresh sanitize
+        -- mid-proc would otherwise downgrade m.charges from true to nil.
+        -- The resolver's charge gate (SafeBoolean(m.charges) == true) then
+        -- stops firing, and on Mind Blast's 8092 -> 450983 proc the live
+        -- C_Spell.GetSpellCooldown query on the old base spellID briefly
+        -- reports isActive=false (cooldown moved to the override), making
+        -- the resolver classify the spell as inactive mid-cooldown for the
+        -- ~4-5 s window from override-fire to next clean re-eval.
+        --
+        -- Only nil downgrades are suspect (taint masking). An explicit
+        -- false from a clean sanitize (e.g. talent change that genuinely
+        -- removes charges) is honored as-is. Same shape applied to
+        -- isKnown — both are stable registration facts that should not
+        -- silently flip on taint-induced sanitize.
+        local prev = _cooldownInfoByKey[key]
+        if prev then
+            if prev.charges == true and info.charges == nil then
+                info.charges = true
+            end
+            if prev.isKnown == true and info.isKnown == nil then
+                info.isKnown = true
+            end
+        end
         _cooldownInfoByKey[key] = info
         _cooldownInfoByID[cdID] = _cooldownInfoByID[cdID] or info
     end
@@ -267,162 +296,47 @@ local function ResolveChildCatalogCategories(cdID, viewerCatName)
     return categories
 end
 
-local function DurationModeForSource(source, viewerCategory)
-    if source == "aura-duration"
-        or source == "aura-child"
-        or source == "aura-child-frame"
-        or source == "aura-related-child" then
-        return "aura"
-    end
-    -- Totem lane surfaced through an aura viewer (buff / trackedBar) is the
-    -- duration of the buff itself — guardian-summoning self-buffs land here
-    -- (e.g. Raise Abomination), where hasAura=false on the parent cdID and
-    -- the only duration source is the totem timer slot.
-    if source == "totem-duration" and IsAuraViewerCategoryName(viewerCategory) then
-        return "aura"
-    end
-    if source == "spell-charge" or source == "resource-duration" then
-        return "charge"
-    end
-    if source == "gcd-duration" then
-        return "gcd-only"
-    end
-    if source then
-        return "cooldown"
-    end
-    return nil
-end
-
-local function SelectDurationForState(cdID, s)
-    if not s then return nil, nil, nil end
-
-    local cat = s.viewerCategory or GetInstanceCategoryName(cdID)
-    if IsAuraViewerCategoryName(cat) then
-        if s.totemDurObj and _totemActiveCDID[cdID] then
-            return s.totemDurObj, s.totemDurObjSource or "totem-duration", nil
-        end
-        if s.auraDurObj then
-            return s.auraDurObj, s.auraDurObjSource or "aura-duration", nil
-        end
-        -- Guardian-summoning self-buffs (Raise Abomination, Army of the
-        -- Dead, etc.) carry hasAura=false on the parent cdID; their only
-        -- duration source is the totem timer slot captured via
-        -- PLAYER_TOTEM_UPDATE. Surface that lane so the buff viewer can
-        -- render a swipe instead of dead-ending at durObj=nil.
-        if s.totemDurObj then
-            return s.totemDurObj, s.totemDurObjSource or "totem-duration", nil
-        end
-        return nil, nil, s.auraDurationStateUnknown
-    end
-
-    if s.auraDurObj then
-        return s.auraDurObj, s.auraDurObjSource or "aura-duration", nil
-    end
-    if s.totemDurObj then
-        return s.totemDurObj, s.totemDurObjSource or "totem-duration", nil
-    end
-    if s.resourceDurObj then
-        return s.resourceDurObj, s.resourceDurObjSource or "resource-duration", nil
-    end
-    if s.cooldownDurObj then
-        return s.cooldownDurObj, s.cooldownDurObjSource or "cooldown-frame", nil
-    end
-    if s.gcdDurObj then
-        return s.gcdDurObj, s.gcdDurObjSource or "gcd-duration", nil
-    end
-
-    return nil, nil,
-        s.auraDurationStateUnknown
-        or s.cooldownDurationStateUnknown
-        or s.resourceDurationStateUnknown
-        or s.gcdDurationStateUnknown
-end
-
-local function RefreshSelectedDurationState(cdID, s)
-    local durObj, source, unknown = SelectDurationForState(cdID, s)
-    s.durObj = durObj
-    s.durObjSource = source
-    local cat = s and (s.viewerCategory or GetInstanceCategoryName(cdID))
-    s.resolvedMode = DurationModeForSource(source, cat)
-    s.durationStateUnknown = unknown or nil
-    return durObj, source, unknown
-end
-
-local function ClearAuraDurationLane(cdID, s)
+-- Event-driven lanes only. Cooldown/gcd/charge classification has moved to
+-- the resolver; it derives mode and durObj at evaluation time from live
+-- C_Spell.GetSpellCooldown (NeverSecret isActive/isOnGCD) and the cached
+-- CDMRuntimeQueries.QueryDuration / QueryGCDDuration / QueryChargeDuration.
+-- The mirror keeps only what is genuinely event-bound: aura attribution
+-- (UNIT_AURA) and totem ownership (PLAYER_TOTEM_UPDATE).
+local function ClearAuraDurationLane(_, s)
     if not s then return end
     s.auraDurObj = nil
     s.auraDurObjSource = nil
     s.auraDurationStateUnknown = nil
-    RefreshSelectedDurationState(cdID, s)
 end
 
-local function ClearAllDurationLanes(cdID, s)
+local function ClearEventDrivenLanes(_, s)
     if not s then return end
     s.auraDurObj = nil
     s.auraDurObjSource = nil
     s.auraDurationStateUnknown = nil
-    s.cooldownDurObj = nil
-    s.cooldownDurObjSource = nil
-    s.cooldownDurationStateUnknown = nil
-    s.resourceDurObj = nil
-    s.resourceDurObjSource = nil
-    s.resourceDurationStateUnknown = nil
-    s.gcdDurObj = nil
-    s.gcdDurObjSource = nil
-    s.gcdDurationStateUnknown = nil
     s.totemDurObj = nil
     s.totemDurObjSource = nil
-    RefreshSelectedDurationState(cdID, s)
+    s.cooldownDurObj = nil
+    s.cooldownDurObjSource = nil
 end
 
--- Lane writes are ASYMMETRIC by design: cooldown writes wipe the gcd lane,
--- but gcd writes do NOT wipe the cooldown lane. Rationale: a real cooldown
--- supersedes a transient GCD write (which is a side-effect of the GCD pulse
--- on a spell that already had a real CD scheduled), but a GCD pulse must not
--- erase the real CD that was scheduled earlier. SelectDurationForState picks
--- cooldown ahead of gcd so co-existing lanes resolve correctly.
-local function SetDurationLane(cdID, s, lane, durObj, source)
+local function SetDurationLane(_, s, lane, durObj, source)
     if not s then return end
     if lane == "aura" then
         s.auraDurObj = durObj
         s.auraDurObjSource = source or "aura-duration"
         s.auraDurationStateUnknown = nil
-    elseif lane == "cooldown" then
-        s.gcdDurObj = nil
-        s.gcdDurObjSource = nil
-        s.gcdDurationStateUnknown = nil
-        s.cooldownDurObj = durObj
-        s.cooldownDurObjSource = source or "cooldown-frame"
-        s.cooldownDurationStateUnknown = nil
-    elseif lane == "resource" then
-        s.resourceDurObj = durObj
-        s.resourceDurObjSource = source or "resource-duration"
-        s.resourceDurationStateUnknown = nil
-    elseif lane == "gcd" then
-        s.gcdDurObj = durObj
-        s.gcdDurObjSource = source or "gcd-duration"
-        s.gcdDurationStateUnknown = nil
     elseif lane == "totem" then
         s.totemDurObj = durObj
         s.totemDurObjSource = source or "totem-duration"
     end
-    RefreshSelectedDurationState(cdID, s)
 end
 
-local function MarkDurationLaneUnknown(cdID, s, lane)
+local function MarkDurationLaneUnknown(_, s, lane)
     if not s then return end
     if lane == "aura" then
         s.auraDurationStateUnknown = true
-    elseif lane == "cooldown" then
-        s.cooldownDurationStateUnknown = true
-    elseif lane == "resource" then
-        s.resourceDurationStateUnknown = true
-    elseif lane == "gcd" then
-        s.gcdDurationStateUnknown = true
-    else
-        s.cooldownDurationStateUnknown = true
     end
-    RefreshSelectedDurationState(cdID, s)
 end
 
 local function StoreCooldownSetterArgs(s, methodName, a, b, c)
@@ -452,16 +366,16 @@ end
 ---------------------------------------------------------------------------
 -- Aura-event freshness tracking.
 --
--- The SetCooldownFromDurationObject hook (line ~538) only sets s.isActive
--- to true; it never clears it. Blizzard's mixin force-shows the parent
--- child for inactive auras, so child:IsShown() is not an active-aura signal.
--- The exact child field `isActive` is the event-driven visibility signal
--- for aura-viewer cIDs, including hasAura=false entries like Lesser Ghoul.
+-- Strategy: on UNIT_AURA, refresh every aura-viewer child by capturing
+-- auraInstanceID values when Blizzard exposes a normal aura path. Removed-
+-- aura events verify stamped instances immediately. The resolver derives
+-- "is this aura active right now?" at evaluation time via
+-- C_UnitAuras.GetAuraDataByAuraInstanceID against the captured instance ID;
+-- the mirror does not cache an active flag.
 --
--- Strategy: on UNIT_AURA, refresh every aura-viewer child from its decoded
--- `isActive` field and separately stamp auraInstanceID values when Blizzard
--- exposes a normal aura path. Removed-aura events verify stamped instances
--- immediately; PackState stays read-only and does not poll.
+-- For hasAura=false aura-viewer cIDs (e.g. Lesser Ghoul), the child's
+-- `isActive` frame field (NeverSecret) is the active signal — the resolver
+-- reads it via SafeFrameBooleanField at eval time.
 --
 -- auraInstanceID is NeverSecret. It is stable inside an active encounter/
 -- combat context, but re-randomized on encounter/M+/PvP start.
@@ -489,13 +403,10 @@ local function StampAuraInstanceForCooldown(unit, cdID, ad, viewerCategory)
         if durObj then
             if not childOwnsAuraDuration then
                 SetDurationLane(cdID, s, "aura", durObj, "aura-duration")
-            else
-                RefreshSelectedDurationState(cdID, s)
             end
         elseif s.auraDurObj and not childOwnsAuraDuration then
             ClearAuraDurationLane(cdID, s)
             s.auraDurationStateUnknown = true
-            RefreshSelectedDurationState(cdID, s)
         elseif not childOwnsAuraDuration then
             MarkDurationLaneUnknown(cdID, s, "aura")
         end
@@ -535,13 +446,6 @@ local function ClearMirrorAuraState(cdID, s, reason)
     s.auraData = nil
     s.pandemicActive = false
     s.pandemicStateKnown = nil
-    -- Only flip the overall isActive flag if no other lane is still
-    -- holding state. Preserves real cooldowns that outlive their aura
-    -- (e.g., target debuff faded mid-CD; spell is still on cooldown so
-    -- the swipe must keep rendering).
-    if not (s.cooldownDurObj or s.gcdDurObj or s.totemDurObj or s.resourceDurObj) then
-        s.isActive = false
-    end
     s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
     s.lastTouch = GetTime()
     if SetHostPandemicState then
@@ -684,20 +588,13 @@ local function CaptureAurasFromUnitAuraPayload(unit, updateInfo)
 end
 
 local function VerifyStateFreshness(cdID, s, clearOnMissing)
-    -- Bidirectional verification of the stamped auraInstanceID:
-    --   * GetAuraDuration returns nil → aura is no longer on the unit,
-    --     clear stale isActive/durObj.
-    --   * GetAuraDuration returns a DurationObject → aura IS on the unit,
-    --     promote isActive=true even if SetCooldownFromDurationObject
-    --     never fired. Durationless auras (stances, forms, perma buffs/
-    --     debuffs) never push a durObj through that hook, so the
-    --     promote-on-verify path is the only way isActive can become
-    --     true for them. The hook still owns s.durObj for duration-
-    --     bearing auras; we only fill it in here when the hook hasn't.
-    -- Use truthy checks for duration objects here; auraInstanceID is
-    -- NeverSecret, but DurationObjects may still be restricted in combat.
-    -- Without this defensive shape the resolver can die inside the icon
-    -- visibility loop's pcall, leaving `icon._auraActive` stale.
+    -- Verify the stamped auraInstanceID:
+    --   * GetAuraDuration returns nil → aura may be gone (verify with
+    --     GetAuraDataByAuraInstanceID; if both nil and combat allows, clear).
+    --   * GetAuraDuration returns a DurationObject → aura is on the unit;
+    --     populate the aura lane if the hook hasn't already.
+    -- Use truthy checks; auraInstanceID is NeverSecret but DurationObjects
+    -- may be restricted in combat.
     if not s then return end
     if not s.auraInstanceID then return end
     if not (Sources and Sources.QueryAuraDuration) then return end
@@ -713,8 +610,6 @@ local function VerifyStateFreshness(cdID, s, clearOnMissing)
             "auraUnit", s.auraUnit,
             "instID", s.auraInstanceID,
             "durObj", durObj,
-            "priorIsActive", s.isActive,
-            "priorDurObj", s.durObj,
             "priorAuraDurObj", s.auraDurObj)
     end
     if not durObj then
@@ -723,22 +618,12 @@ local function VerifyStateFreshness(cdID, s, clearOnMissing)
         --   (b) aura is on the unit but durationless (permanent buffs
         --       like Lesser Ghoul's pet-presence indicator, stances,
         --       forms — no expiration time)
-        -- Disambiguate via GetAuraDataByAuraInstanceID, which returns
-        -- AuraData when the aura still exists on the unit (regardless
-        -- of duration) and nil when it's gone. Without this check we
-        -- invalidate permanent auras every tick and the icon oscillates
-        -- false/true, never visually settling into "shown."
+        -- Disambiguate via GetAuraDataByAuraInstanceID; the resolver
+        -- re-queries this at evaluation time to decide aura-active.
         local ad = Sources.QueryAuraDataByAuraInstanceID
             and Sources.QueryAuraDataByAuraInstanceID(s.auraUnit or "player", s.auraInstanceID)
         local auraStillOnUnit = ad and true or false
         if auraStillOnUnit then
-            -- Permanent aura: keep isActive=true, drop the (nil) durObj
-            -- so consumers don't try to render a swipe. Icon factory
-            -- treats active+durObj=nil as "show without countdown."
-            if s.isActive ~= true then
-                s.isActive = true
-                s.lastTouch = GetTime()
-            end
             if s.auraDurObj then
                 ClearAuraDurationLane(cdID, s)
                 s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
@@ -752,11 +637,6 @@ local function VerifyStateFreshness(cdID, s, clearOnMissing)
             ClearMirrorAuraState(cdID, s, clearOnMissing and "unit-aura-removed" or "freshness")
         end
     else
-        if s.isActive ~= true then
-            s.isActive = true
-            s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
-            s.lastTouch = GetTime()
-        end
         if not s.auraDurObj then
             SetDurationLane(cdID, s, "aura", durObj, "aura-duration")
             s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
@@ -784,48 +664,91 @@ end
 -- Pack the live mirror state + captured info struct into the read-only
 -- shape consumers see. Always keyed by cooldownID, since cooldownID is
 -- the unambiguous primary key per the CooldownViewer documentation.
+CDMBlizzMirror._GetPackedChargeCountFields = function(child)
+    local charges = child and child.ChargeCount
+    local currentShown, currentShownSecret = CDMBlizzMirror._SafeFrameShownOrSecretField(charges and charges.Current)
+    local displayShown, displayShownSecret = CDMBlizzMirror._SafeFrameShownOrSecretField(charges and charges.DisplayText)
+    local ownerShown
+    if currentShownSecret then
+        ownerShown = currentShown
+    elseif displayShownSecret then
+        ownerShown = displayShown
+    elseif currentShown == true or displayShown == true then
+        ownerShown = true
+    elseif currentShown == false or displayShown == false then
+        ownerShown = false
+    end
+
+    local raw = RawFrameField(child, "cooldownChargesCount")
+    if issecretvalue and issecretvalue(raw) then
+        return raw, ownerShown
+    end
+    if raw ~= nil then
+        return raw, ownerShown
+    end
+
+    local current = charges and charges.Current and charges.Current.GetText and charges.Current:GetText()
+    if issecretvalue and issecretvalue(current) then
+        return current, ownerShown
+    end
+    if type(current) == "string" and current ~= "" then
+        return current, ownerShown
+    end
+    if current ~= nil and type(current) ~= "string" then
+        return current, ownerShown
+    end
+
+    local display = charges and charges.DisplayText and charges.DisplayText.GetText and charges.DisplayText:GetText()
+    if issecretvalue and issecretvalue(display) then
+        return display, ownerShown
+    end
+    if type(display) == "string" and display ~= "" then
+        return display, ownerShown
+    end
+    if display ~= nil and type(display) ~= "string" then
+        return display, ownerShown
+    end
+
+    return nil, ownerShown
+end
+
 local function PackState(cooldownID, viewerCategory)
     if not cooldownID then return nil end
     local key = ResolveInstanceKey(cooldownID, viewerCategory)
     local s = key and _mirrorState[key]
     if not s then return nil end
-    RefreshSelectedDurationState(cooldownID, s)
     local catName = s.viewerCategory or GetInstanceCategoryName(cooldownID, viewerCategory)
     local info = GetInstanceInfo(cooldownID, catName)
     local child = GetInstanceChild(cooldownID, catName)
-    -- selfAura / hasAura must NOT be coerced to false on nil. CleanBool
-    -- returns nil when the source bool was secret AND the curve-decode
-    -- fallback failed — i.e. "we don't know". `or false` would force
-    -- those into target-side classification (selfAura=false), which is
-    -- the wrong default for buff icons (most are player-side). Pass nil
-    -- through and let consumers default safely with `m.selfAura == false`
-    -- / `== true` checks (nil compares equal to neither, so consumers
-    -- that branch on the explicit value default to the safer side).
+    -- selfAura / hasAura must NOT be coerced to false on nil. Secret bools
+    -- are opaque in Lua; forcing nil to false would classify unknown buff
+    -- icons as target-side by default. Pass nil through and let consumers
+    -- branch only on explicit clean true/false.
     local packed = _packedStateByInstanceKey[key]
     if not packed then
         packed = {}
         _packedStateByInstanceKey[key] = packed
     end
 
-    packed.durObj                 = s.durObj
-    packed.durObjSource           = s.durObjSource
-    packed.resolvedMode           = s.resolvedMode
-    packed.durationStateUnknown   = s.durationStateUnknown
     packed.auraDurObj             = s.auraDurObj
     packed.auraDurObjSource       = s.auraDurObjSource
     packed.auraDurationStateUnknown = s.auraDurationStateUnknown
     packed.cooldownDurObj         = s.cooldownDurObj
     packed.cooldownDurObjSource   = s.cooldownDurObjSource
-    packed.cooldownDurationStateUnknown = s.cooldownDurationStateUnknown
-    packed.resourceDurObj         = s.resourceDurObj
-    packed.resourceDurObjSource   = s.resourceDurObjSource
-    packed.resourceDurationStateUnknown = s.resourceDurationStateUnknown
-    packed.gcdDurObj              = s.gcdDurObj
-    packed.gcdDurObjSource        = s.gcdDurObjSource
-    packed.gcdDurationStateUnknown = s.gcdDurationStateUnknown
+    packed.cooldownLaneActiveByHook = s.cooldownLaneActiveByHook
+    -- Raw args captured by _activateMirror from Blizzard's Cooldown:SetCooldown
+    -- (and SetCooldownDuration / SetCooldownFromExpirationTime / SetCooldownUNIX)
+    -- hook callbacks. These are the values Blizzard's mixin passes when it's
+    -- driving the cooldown swipe directly without a DurationObject (no SCFDO
+    -- fire — common path for charge-registered spells like Mind Blast on
+    -- Shadow Priest). Expose them so the resolver can fall back to the
+    -- numeric ApplyNumericCooldown path when m.cooldownDurObj is nil.
+    -- Args may be secret in tainted execution post-12.0.5; callers must
+    -- check with issecretvalue before consuming.
+    packed.lastSetCooldownStart    = s.lastSetCooldownStart
+    packed.lastSetCooldownDuration = s.lastSetCooldownDuration
     packed.totemDurObj            = s.totemDurObj
     packed.totemDurObjSource      = s.totemDurObjSource
-    packed.isActive               = s.isActive
     packed.mirrorEpoch            = s.mirrorEpoch
     packed.auraInstanceID         = s.auraInstanceID
     packed.hasAuraInstanceID      = s.auraInstanceID and true or false
@@ -836,6 +759,7 @@ local function PackState(cooldownID, viewerCategory)
     packed.overrideSpellID        = info and info.overrideSpellID or nil
     packed.hasAura                = info and info.hasAura
     packed.selfAura               = info and info.selfAura
+    packed.charges                = info and info.charges
     packed.linkedSpellIDs         = info and info.linkedSpellIDs or nil
     packed.overrideTooltipSpellID = info and info.overrideTooltipSpellID or nil
     packed.pandemicActive         = s.pandemicActive
@@ -844,9 +768,27 @@ local function PackState(cooldownID, viewerCategory)
     packed.stackTextSource        = s.stackTextSource
     packed.stackTextShown         = s.stackTextShown
     packed.stackTextEpoch         = s.stackTextEpoch
-    packed.cooldownChargesCount   = RawFrameField(child, "cooldownChargesCount")
-    packed.cooldownChargesShown   = SafeFrameBooleanField(child, "cooldownChargesShown")
-    packed.chargeCountFrameShown  = SafeFrameShownField(child and child.ChargeCount)
+    local packedChargeCount, chargeTextOwnerShown = CDMBlizzMirror._GetPackedChargeCountFields(child)
+    local chargeTextOwnerShownSecret = issecretvalue and issecretvalue(chargeTextOwnerShown)
+    local chargeCountFrameShown, chargeCountFrameShownSecret = CDMBlizzMirror._SafeFrameShownOrSecretField(child and child.ChargeCount)
+    local cooldownChargesShown, cooldownChargesShownSecret = CDMBlizzMirror._SafeFrameBooleanOrSecretField(child, "cooldownChargesShown")
+    if chargeCountFrameShownSecret or chargeCountFrameShown ~= nil then
+        s.chargeCountFrameShown = chargeCountFrameShown
+    end
+    if chargeTextOwnerShownSecret or chargeTextOwnerShown ~= nil then
+        s.chargeTextOwnerShown = chargeTextOwnerShown
+    end
+    if not cooldownChargesShownSecret and cooldownChargesShown == nil then
+        cooldownChargesShown = chargeCountFrameShown
+        cooldownChargesShownSecret = chargeCountFrameShownSecret
+    end
+    if cooldownChargesShownSecret or cooldownChargesShown ~= nil then
+        s.cooldownChargesShown = cooldownChargesShown
+    end
+    packed.cooldownChargesCount   = packedChargeCount
+    packed.cooldownChargesShown   = cooldownChargesShown
+    packed.chargeCountFrameShown  = chargeCountFrameShown
+    packed.chargeTextOwnerShown   = chargeTextOwnerShown
     packed.totemSlot              = s.totemSlot
     packed.totemName              = s.totemName
     packed.totemIcon              = s.totemIcon
@@ -1270,14 +1212,8 @@ function CDMBlizzMirror.DumpInfoForSpell(filter)
             end
 
             if s then
-                RefreshSelectedDurationState(cdID, s)
-                print(("  mirror: isActive=%s  durObj=%s  source=%s  auraDur=%s  cdDur=%s  resourceDur=%s  totemDur=%s  auraInstanceID=%s  auraUnit=%s  epoch=%s"):format(
-                    tostring(s.isActive),
-                    tostring(s.durObj),
-                    tostring(s.durObjSource),
+                print(("  mirror: auraDur=%s  totemDur=%s  auraInstanceID=%s  auraUnit=%s  epoch=%s"):format(
                     tostring(s.auraDurObj),
-                    tostring(s.cooldownDurObj),
-                    tostring(s.resourceDurObj),
                     tostring(s.totemDurObj),
                     tostring(s.auraInstanceID),
                     tostring(s.auraUnit),
@@ -1364,31 +1300,30 @@ local function ReadChildAuraData(child)
 end
 
 local function DecodePotentialSecretBoolean(value)
+    if issecretvalue and issecretvalue(value) then return nil end
     if value == nil then return nil end
-    local valueIsSecret = issecretvalue and issecretvalue(value)
-    if valueIsSecret and C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
-        local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(value, 1, 0)
-        if issecretvalue and issecretvalue(scalar) then
-            return nil
-        end
-        local ok, decoded = pcall(function()
-            if type(scalar) == "number" then
-                return scalar >= 0.5
-            end
-            return nil
-        end)
-        if ok then
-            return decoded
-        end
-    end
-
-    if valueIsSecret then
-        return nil
-    end
     if type(value) == "boolean" then
         return value
     end
     return nil
+end
+
+CDMBlizzMirror._DecodeOrPreserveSecretBoolean = function(value)
+    if issecretvalue and issecretvalue(value) then return value, true end
+    if value == nil then return nil, false end
+    if type(value) == "boolean" then
+        return value, false
+    end
+    return nil, false
+end
+
+CDMBlizzMirror._RememberKnownShown = function(frame, shown)
+    if not frame then return nil end
+    local decoded = DecodePotentialSecretBoolean(shown)
+    if decoded ~= nil then
+        CDMBlizzMirror._knownShownByFrame[frame] = decoded
+    end
+    return decoded
 end
 
 SafeFrameBooleanField = function(frame, key)
@@ -1397,9 +1332,36 @@ SafeFrameBooleanField = function(frame, key)
     return DecodePotentialSecretBoolean(value)
 end
 
+CDMBlizzMirror._SafeFrameBooleanOrSecretField = function(frame, key)
+    if not frame then return nil, false end
+    return CDMBlizzMirror._DecodeOrPreserveSecretBoolean(frame[key])
+end
+
 SafeFrameShownField = function(frame)
     if not (frame and frame.IsShown) then return nil end
-    return DecodePotentialSecretBoolean(frame:IsShown())
+    local decoded = DecodePotentialSecretBoolean(frame:IsShown())
+    if decoded ~= nil then
+        CDMBlizzMirror._knownShownByFrame[frame] = decoded
+        return decoded
+    end
+    return CDMBlizzMirror._knownShownByFrame[frame]
+end
+
+CDMBlizzMirror._SafeFrameShownOrSecretField = function(frame)
+    if not (frame and frame.IsShown) then return nil, false end
+    local shown, shownSecret = CDMBlizzMirror._DecodeOrPreserveSecretBoolean(frame:IsShown())
+    if shownSecret then
+        local known = CDMBlizzMirror._knownShownByFrame[frame]
+        if known ~= nil then
+            return known, false
+        end
+        return shown, true
+    end
+    if shown ~= nil then
+        CDMBlizzMirror._knownShownByFrame[frame] = shown
+        return shown, false
+    end
+    return CDMBlizzMirror._knownShownByFrame[frame], false
 end
 
 local function IsAuraViewerCategory(cdID, stateOrCategory)
@@ -1483,60 +1445,6 @@ local function BuildSpellDurationCandidates(info)
     return candidates
 end
 
-local function CooldownInfoRealState(info, spellID)
-    if not info then return nil end
-
-    local active = CleanBool(info.isActive)
-    if active == false then
-        return false
-    end
-
-    local enabled = CleanBool(info.isEnabled)
-    if enabled == false then
-        return false
-    end
-
-    local duration = CleanScalar(info.duration)
-    local start = CleanScalar(info.startTime)
-    if not start then
-        start = CleanScalar(info.start)
-    end
-    if type(duration) == "number" then
-        if duration <= GCD_MAX_DURATION then
-            return false
-        end
-        if type(start) == "number" and start <= 0 then
-            return false
-        end
-        if active == true then
-            return true
-        end
-    end
-
-    local activeCategory = CleanScalar(info.activeCategory)
-    if activeCategory ~= nil then
-        return true
-    end
-
-    local startRecovery = CleanScalar(info.timeUntilEndOfStartRecovery)
-    if type(startRecovery) == "number" and startRecovery > 0 then
-        return false
-    end
-
-    return nil
-end
-
-local function ShouldUseSpellGCDDuration(spellID)
-    if not (spellID and Sources and Sources.QuerySpellCooldown) then
-        return false
-    end
-    local info = Sources.QuerySpellCooldown(spellID)
-    if CleanBool(info and info.isOnGCD) ~= true then
-        return false
-    end
-    return CooldownInfoRealState(info, spellID) ~= true
-end
-
 function CDMBlizzMirror.ResolveChargeDurationObjectForCooldownID(cdID, child, state)
     if IsAuraViewerCategory(cdID, state or GetFrameCategoryName(child)) then
         return nil, nil
@@ -1573,16 +1481,18 @@ function CDMBlizzMirror.ShouldSuppressChargeDurationForCooldownID(cdID, child, s
         return false
     end
 
-    local chargesShown = SafeFrameBooleanField(child, "cooldownChargesShown")
-    if chargesShown == true then
+    local chargesShown, chargesShownSecret =
+        CDMBlizzMirror._SafeFrameBooleanOrSecretField(child, "cooldownChargesShown")
+    if chargesShownSecret or chargesShown == true then
         return false
     end
     if chargesShown == false then
         return true
     end
 
-    local chargeFrameShown = SafeFrameShownField(child and child.ChargeCount)
-    if chargeFrameShown == true then
+    local chargeFrameShown, chargeFrameShownSecret =
+        CDMBlizzMirror._SafeFrameShownOrSecretField(child and child.ChargeCount)
+    if chargeFrameShownSecret or chargeFrameShown == true then
         return false
     end
     if chargeFrameShown == false then
@@ -1595,60 +1505,6 @@ function CDMBlizzMirror.ShouldSuppressChargeDurationForCooldownID(cdID, child, s
     end
 
     return true
-end
-
-local function ShouldUseGCDDurationForCooldownID(cdID, child, state)
-    local info = cdID and GetInstanceInfo(cdID, state and state.viewerCategory or GetFrameCategoryName(child))
-    local candidates = BuildSpellDurationCandidates(info)
-    for _, spellID in ipairs(candidates) do
-        if ShouldUseSpellGCDDuration(spellID) then
-            return true
-        end
-    end
-    return false
-end
-
-local function ResolveSpellDurationObjectForCooldownID(cdID, child, state)
-    -- Aura viewer entries must get swipe duration from aura-instance APIs
-    -- only. Numeric Cooldown:SetCooldown hooks on those children can reflect
-    -- Blizzard's internal refresh path, but deriving spell cooldown
-    -- DurationObjects here would make aura icons render cooldown durations.
-    if IsAuraViewerCategory(cdID, state or GetFrameCategoryName(child)) then
-        return nil, "aura-viewer"
-    end
-
-    if not (Sources and Sources.QuerySpellCooldownDuration) then
-        return nil, nil
-    end
-
-    local info = cdID and GetInstanceInfo(cdID, state and state.viewerCategory or GetFrameCategoryName(child))
-    local candidates = BuildSpellDurationCandidates(info)
-
-    local chargeDurObj, chargeSource = CDMBlizzMirror.ResolveChargeDurationObjectForCooldownID(cdID, child, state)
-    if chargeDurObj then
-        return chargeDurObj, chargeSource
-    end
-
-    for _, spellID in ipairs(candidates) do
-        local useGCDDuration = ShouldUseSpellGCDDuration(spellID)
-        if useGCDDuration and Sources.QuerySpellCooldownDuration then
-            local durObj = Sources.QuerySpellCooldownDuration(spellID, false)
-            if durObj then
-                return durObj, "gcd-duration"
-            end
-        end
-        if Sources.QuerySpellCooldownDuration then
-            local durObj = Sources.QuerySpellCooldownDuration(spellID, true)
-            if durObj then
-                if useGCDDuration then
-                    return durObj, "gcd-duration"
-                end
-                return durObj, "spell-cooldown"
-            end
-        end
-    end
-
-    return nil, nil
 end
 
 local function CleanAuraUnitValue(unit)
@@ -2472,7 +2328,9 @@ end
 ClearMirrorStackState = function(s)
     if not s then return false end
     local stackTextPresent = (issecretvalue and issecretvalue(s.stackText)) or s.stackText ~= nil
-    if not (stackTextPresent or s.stackTextSource or s.stackTextShown == true) then
+    local stackShownTrue = not (issecretvalue and issecretvalue(s.stackTextShown))
+        and s.stackTextShown == true
+    if not (stackTextPresent or s.stackTextSource or stackShownTrue) then
         return false
     end
     s.stackText = nil
@@ -2492,7 +2350,11 @@ local function StackTextSourcePriority(source)
     return STACK_TEXT_SOURCE_PRIORITY[source] or 0
 end
 
-local function CanReplaceStackTextSource(currentSource, source)
+local function CanReplaceStackTextSource(currentSource, source, currentShown)
+    if issecretvalue and issecretvalue(currentShown) then
+        currentShown = nil
+    end
+    if currentShown == false then return true end
     if not currentSource then return true end
     return StackTextSourcePriority(source) >= StackTextSourcePriority(currentSource)
 end
@@ -2507,51 +2369,86 @@ local function MirrorStackTextHasDisplay(_source, text)
     return text ~= nil
 end
 
-local function ChildHasAuthoritativeCountText(child)
-    local cdID = child and child.cooldownID
-    if not cdID then return false end
+CDMBlizzMirror._HideMirrorStackState = function(s, source, text)
+    if not s then return false end
 
-    local chargesShown = SafeFrameBooleanField(child, "cooldownChargesShown")
-    if chargesShown == true then
-        return true
-    end
-    if chargesShown == false then
-        return false
-    end
-
-    local chargeFrameShown = SafeFrameShownField(child.ChargeCount)
-    if chargeFrameShown == true then
-        return true
-    end
-    if chargeFrameShown == false then
-        return false
+    local textPresent = MirrorStackTextHasDisplay(source, text)
+    if textPresent then
+        s.stackText = text
+        s.stackTextSource = source
+    elseif source and not s.stackTextSource then
+        s.stackTextSource = source
     end
 
-    return false
+    s.stackTextShown = false
+    s.stackTextEpoch = (s.stackTextEpoch or 0) + 1
+    return true
 end
 
-local function CaptureChildStackText(child, source, text, fromTextWrite)
+CDMBlizzMirror._GetCooldownChargesShown = function(child, s)
+    local chargesShown, chargesShownSecret = CDMBlizzMirror._SafeFrameBooleanOrSecretField(child, "cooldownChargesShown")
+    if chargesShownSecret or chargesShown ~= nil then
+        if s then
+            s.cooldownChargesShown = chargesShown
+        end
+        return chargesShown, chargesShownSecret
+    end
+    chargesShown, chargesShownSecret = CDMBlizzMirror._SafeFrameShownOrSecretField(child and child.ChargeCount)
+    if chargesShownSecret or chargesShown ~= nil then
+        if s then
+            s.chargeCountFrameShown = chargesShown
+            s.cooldownChargesShown = chargesShown
+        end
+        return chargesShown, chargesShownSecret
+    end
+    return nil, false
+end
+
+local function RefreshChargeCountShownFields(child, textOwner, s)
+    if s then
+        local ownerShown, ownerShownSecret = CDMBlizzMirror._SafeFrameShownOrSecretField(textOwner)
+        if ownerShownSecret or ownerShown ~= nil then
+            s.chargeTextOwnerShown = ownerShown
+        end
+        local frameShown, frameShownSecret = CDMBlizzMirror._SafeFrameShownOrSecretField(child and child.ChargeCount)
+        if frameShownSecret or frameShown ~= nil then
+            s.chargeCountFrameShown = frameShown
+        end
+    end
+
+    return CDMBlizzMirror._GetCooldownChargesShown(child, s)
+end
+
+local function CaptureChildStackText(child, source, text, fromTextWrite, textOwner)
     local cdID = child and child.cooldownID
     if not (cdID and source) then return end
     local s = EnsureState(cdID, child)
     if not s then return end
 
-    local textIsSecret = issecretvalue and issecretvalue(text)
-    if source == "ChargeCount" and not textIsSecret and not ChildHasAuthoritativeCountText(child) then
-        if (not s.stackTextSource or s.stackTextSource == source) and ClearMirrorStackState(s) then
-            s.lastTouch = GetTime()
-            RequestMirrorTextRefreshForChild(child, cdID, s, "stack-clear")
+    local chargeCountShown, chargeCountShownSecret
+    if source == "ChargeCount" then
+        chargeCountShown, chargeCountShownSecret = RefreshChargeCountShownFields(child, textOwner, s)
+        if not chargeCountShownSecret and chargeCountShown ~= true then
+            if (not s.stackTextSource or s.stackTextSource == source)
+                and CDMBlizzMirror._HideMirrorStackState(s, source, text) then
+                s.lastTouch = GetTime()
+                RequestMirrorTextRefreshForChild(child, cdID, s, "stack-hidden")
+            end
+            return
         end
-        return
     end
 
     if MirrorStackTextHasDisplay(source, text) then
-        if not CanReplaceStackTextSource(s.stackTextSource, source) then
+        if not CanReplaceStackTextSource(s.stackTextSource, source, s.stackTextShown) then
             return
         end
         s.stackText = text
         s.stackTextSource = source
-        s.stackTextShown = true
+        if chargeCountShownSecret then
+            s.stackTextShown = chargeCountShown
+        else
+            s.stackTextShown = true
+        end
         s.stackTextEpoch = (s.stackTextEpoch or 0) + 1
         s.lastTouch = GetTime()
         RequestMirrorTextRefreshForChild(child, cdID, s, "stack-text")
@@ -2564,31 +2461,87 @@ local function CaptureChildStackText(child, source, text, fromTextWrite)
     end
 end
 
+local function SyncChildChargeCountFields(child, cdID, s, reason)
+    if not child then return false end
+    cdID = cdID or child.cooldownID
+    if not cdID then return false end
+    s = s or EnsureState(cdID, child)
+    if not s then return false end
+
+    local charges = child.ChargeCount
+    local countOwner = FindMirrorTextOwner(charges, "Current", "DisplayText") or charges
+    local chargesShown, chargesShownSecret = CDMBlizzMirror._GetCooldownChargesShown(child, s)
+    if not chargesShownSecret and chargesShown ~= true then
+        local ownerShown, ownerShownSecret = CDMBlizzMirror._SafeFrameShownOrSecretField(countOwner)
+        if ownerShownSecret or ownerShown ~= nil then
+            s.chargeTextOwnerShown = ownerShown
+        end
+        local frameShown, frameShownSecret = CDMBlizzMirror._SafeFrameShownOrSecretField(child and child.ChargeCount)
+        if frameShownSecret or frameShown ~= nil then
+            s.chargeCountFrameShown = frameShown
+        end
+        if (not s.stackTextSource or s.stackTextSource == "ChargeCount")
+            and CDMBlizzMirror._HideMirrorStackState(s, "ChargeCount") then
+            s.lastTouch = GetTime()
+            RequestMirrorTextRefreshForChild(child, cdID, s, reason or "charge-field-hide")
+            return true
+        end
+        return false
+    end
+
+    local count
+    count = RawFrameField(child, "cooldownChargesCount")
+    if not MirrorStackTextHasDisplay("ChargeCount", count) then
+        if countOwner and countOwner.GetText then
+            count = countOwner:GetText()
+        end
+    end
+    if not MirrorStackTextHasDisplay("ChargeCount", count) then
+        return false
+    end
+
+    if not CanReplaceStackTextSource(s.stackTextSource, "ChargeCount", s.stackTextShown) then
+        return false
+    end
+
+    s.stackText = count
+    s.stackTextSource = "ChargeCount"
+    if chargesShownSecret then
+        s.stackTextShown = chargesShown
+    else
+        s.stackTextShown = true
+    end
+    s.stackTextEpoch = (s.stackTextEpoch or 0) + 1
+    s.lastTouch = GetTime()
+    RequestMirrorTextRefreshForChild(child, cdID, s, reason or "charge-field")
+    return true
+end
+
 local function CaptureTextFromOwner(child, source, owner, fromTextWrite)
     if not (owner and owner.GetText) then return end
-    CaptureChildStackText(child, source, owner:GetText(), fromTextWrite)
+    CaptureChildStackText(child, source, owner:GetText(), fromTextWrite, owner)
 end
 
 local function CaptureTextFromPreferredOwner(child, source, owner, readOwner, fallbackText, fromTextWrite)
     if fromTextWrite and MirrorStackTextHasDisplay(source, fallbackText) then
-        CaptureChildStackText(child, source, fallbackText, fromTextWrite)
+        CaptureChildStackText(child, source, fallbackText, fromTextWrite, owner)
         return
     end
     if readOwner and readOwner ~= owner and readOwner.GetText then
         local text = readOwner:GetText()
         if MirrorStackTextHasDisplay(source, text) then
-            CaptureChildStackText(child, source, text, fromTextWrite)
+            CaptureChildStackText(child, source, text, fromTextWrite, readOwner)
             return
         end
         if MirrorStackTextHasDisplay(source, fallbackText) then
-            CaptureChildStackText(child, source, fallbackText, fromTextWrite)
+            CaptureChildStackText(child, source, fallbackText, fromTextWrite, owner)
             return
         end
-        CaptureChildStackText(child, source, text, fromTextWrite)
+        CaptureChildStackText(child, source, text, fromTextWrite, readOwner)
         return
     end
     if MirrorStackTextHasDisplay(source, fallbackText) then
-        CaptureChildStackText(child, source, fallbackText, fromTextWrite)
+        CaptureChildStackText(child, source, fallbackText, fromTextWrite, owner)
         return
     end
     CaptureTextFromOwner(child, source, owner, fromTextWrite)
@@ -2604,9 +2557,15 @@ local function HookTextOwner(child, source, owner, readOwner)
         local s = EnsureState(cdID, child)
         if not s then return end
         if s.stackTextSource and s.stackTextSource ~= source then return end
-        if ClearMirrorStackState(s) then
+        local changed
+        if source == "ChargeCount" then
+            changed = CDMBlizzMirror._HideMirrorStackState(s, source)
+        else
+            changed = ClearMirrorStackState(s)
+        end
+        if changed then
             s.lastTouch = GetTime()
-            RequestMirrorTextRefreshForChild(child, cdID, s, "stack-clear")
+            RequestMirrorTextRefreshForChild(child, cdID, s, source == "ChargeCount" and "stack-hidden" or "stack-clear")
         end
     end
 
@@ -2622,11 +2581,13 @@ local function HookTextOwner(child, source, owner, readOwner)
     end
     if owner.Show then
         hooksecurefunc(owner, "Show", function()
+            CDMBlizzMirror._knownShownByFrame[owner] = true
             CaptureTextFromPreferredOwner(child, source, owner, readOwner)
         end)
     end
     if owner.Hide then
         hooksecurefunc(owner, "Hide", function()
+            CDMBlizzMirror._knownShownByFrame[owner] = false
             if source == "ChargeCount" then
                 ClearChildStackText()
             else
@@ -2636,7 +2597,9 @@ local function HookTextOwner(child, source, owner, readOwner)
     end
     if owner.SetShown then
         hooksecurefunc(owner, "SetShown", function(_, shown)
-            if source == "ChargeCount" and DecodePotentialSecretBoolean(shown) == false then
+            local decodedShown = CDMBlizzMirror._RememberKnownShown(owner, shown)
+            if source == "ChargeCount" and decodedShown == false then
+                CDMBlizzMirror._knownShownByFrame[owner] = false
                 ClearChildStackText()
             else
                 CaptureTextFromPreferredOwner(child, source, owner, readOwner)
@@ -2681,9 +2644,8 @@ local function ReadChildSemanticActive(child, cdID)
         -- Aura viewer children stay shown even when inactive, so frame
         -- visibility is not meaningful. The per-cooldownID child field is
         -- Blizzard's exact active-state signal for entries that do not expose
-        -- a normal aura instance path (hasAura=false). Decode via the same
-        -- CurveUtil helper Blizzard uses for secret booleans; if decoding is
-        -- unavailable, return nil so callers preserve the prior state.
+        -- a normal aura instance path (hasAura=false). Secret booleans remain
+        -- unknown in Lua so callers preserve the prior state.
         local active = SafeFrameBooleanField(child, "isActive")
         if active ~= nil then return active end
         return SafeFrameBooleanField(child, "cooldownIsActive")
@@ -2695,22 +2657,33 @@ local function ReadChildSemanticActive(child, cdID)
     return nil
 end
 
+-- Refresh event-bound state when a child fires Show/Hide or UNIT_AURA touches
+-- this cdID. Aura attribution (auraInstanceID, auraUnit, auraData) is captured
+-- on active transitions and cleared on inactive ones. The resolver derives
+-- "is this cooldown active?" at eval time from live API state and child frame
+-- fields — this function no longer caches an isActive flag.
 local function RefreshChildSemanticState(child, cdID, fallbackActive)
     local s = EnsureState(cdID, child)
-    if not s then return nil end
+    if not s then return end
 
-    -- Totem-driven mirror states are owned by HandlePlayerTotemUpdate.
-    -- Show/Hide cycles on the Blizzard child don't reflect totem expiry, so
-    -- letting them clobber s.isActive here would race the totem handler and
-    -- leave the icon stuck inactive between PLAYER_TOTEM_UPDATE events.
-    if _totemActiveCDID[cdID] then return s.isActive end
+    if _totemActiveCDID[cdID] then return end
 
     local active = ReadChildSemanticActive(child, cdID)
     if active == nil then
-        if IsAuraViewerCategory(cdID) then
-            active = s.isActive == true
+        if fallbackActive == true then
+            active = true
         else
-            active = fallbackActive == true
+            -- ReadChildSemanticActive returned nil because both child.isActive
+            -- and child.cooldownIsActive were secret values (combat-restricted).
+            -- Per its contract (line 2606-2607), nil means "preserve prior
+            -- state" — falling through to the clear branch here would wipe a
+            -- live aura mid-lifetime when UNIT_AURA ticks during combat (e.g.
+            -- Soul Reaper target debuff on DK Unholy: pet UNIT_AURA fires,
+            -- RefreshAuraViewerChildActiveStates walks every aura-viewer child,
+            -- the buff icon's isActive is secret, and the state gets nuked
+            -- despite the aura still being on the target). The next event with
+            -- a non-secret value will reach the correct branch.
+            return
         end
     end
 
@@ -2725,18 +2698,9 @@ local function RefreshChildSemanticState(child, cdID, fallbackActive)
         end
     end
 
-    local priorActive = s.isActive == true
-    local changed = priorActive ~= active
-    if active ~= true and (s.durObj or s.auraDurObj or s.cooldownDurObj
-        or s.resourceDurObj or s.gcdDurObj or s.totemDurObj
-        or s.pandemicActive or s.pandemicStateKnown) then
-        changed = true
-    end
-    if changed then
-        s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
-        RequestMirrorTextRefreshForChild(child, cdID, s, "active-state")
-    end
-    s.isActive = active
+    s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
+    RequestMirrorTextRefreshForChild(child, cdID, s, "active-state")
+
     if active == true then
         local info = GetInstanceInfo(cdID, s.viewerCategory)
         if not s.auraUnit then
@@ -2752,7 +2716,7 @@ local function RefreshChildSemanticState(child, cdID, fallbackActive)
             CaptureAuraInstanceFromRelatedAuraChildren(cdID, s.viewerCategory)
         end
     else
-        ClearAllDurationLanes(cdID, s)
+        ClearEventDrivenLanes(cdID, s)
         s.auraInstanceID = nil
         s.auraInstanceIDSource = nil
         s.auraUnit = nil
@@ -2763,23 +2727,8 @@ local function RefreshChildSemanticState(child, cdID, fallbackActive)
             SetHostPandemicState(cdID, nil, false)
         end
     end
+    SyncChildChargeCountFields(child, cdID, s, "charge-field-active")
     s.lastTouch = GetTime()
-    return active
-end
-
-local function ShouldPreserveTransientNonAuraCooldownClear(cdID, child, s)
-    if not s or IsAuraViewerCategory(cdID, s) then return false end
-    if not (s.cooldownDurObj or s.resourceDurObj or s.gcdDurObj) then
-        return false
-    end
-    if SafeFrameBooleanField(child, "cooldownIsActive") == false then
-        return false
-    end
-    if SafeFrameBooleanField(child, "isActive") ~= true then
-        return false
-    end
-    return SafeFrameBooleanField(child, "wasSetFromCooldown") == true
-        or SafeFrameBooleanField(child, "wasSetFromCharges") == true
 end
 
 local function RefreshAuraViewerChildActiveStates()
@@ -2798,7 +2747,7 @@ local function RefreshCooldownViewerRelatedAuraStates()
         local cat = child and GetFrameCategoryName(child)
         if cdID and cat and not IsAuraViewerCategoryName(cat) then
             local s = EnsureState(cdID, child, cat)
-            if s and s.isActive == true then
+            if s then
                 local hadRelatedAura = s.auraDurObjSource == "aura-related-child"
                     or s.auraInstanceIDSource == "aura-related-child"
                 if CaptureAuraInstanceFromRelatedAuraChildren(cdID, cat) then
@@ -2882,33 +2831,11 @@ CleanScalar = function(v)
     return v
 end
 
--- Decoding a secret boolean: C_CurveUtil.EvaluateColorValueFromBoolean
--- is annotated AllowedWhenTainted (it's how Blizzard's own UI extracts
--- self.isActive into a numeric to drive SetAlpha, etc.). Calling it on a
--- secret boolean with the args (1, 0) yields 1 if the bool was true, 0
--- if false. The scalar is sometimes also secret, so we re-check; when
--- it's clean we get a real true/false back. When the decode fails
--- entirely we return nil to signal "couldn't determine" rather than
--- forcing a default that destroys real data.
+-- Secret booleans stay opaque to Lua. CurveUtil-selected values may be
+-- forwarded to C-side sinks, but mirror state cannot branch on them.
+-- Return nil for unknown instead of forcing a default that destroys data.
 CleanBool = function(v)
-    if issecretvalue and issecretvalue(v) then
-        if C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
-            local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(v, 1, 0)
-            if issecretvalue and issecretvalue(scalar) then
-                return nil
-            end
-            local ok, decoded = pcall(function()
-                if type(scalar) == "number" then
-                    return scalar >= 0.5
-                end
-                return nil
-            end)
-            if ok then
-                return decoded
-            end
-        end
-        return nil
-    end
+    if issecretvalue and issecretvalue(v) then return nil end
     if v == nil then return nil end
     if type(v) == "boolean" then return v end
     return nil
@@ -3136,6 +3063,7 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
     end
 
     BindChildTextHooks(child)
+    SyncChildChargeCountFields(child, cooldownID, EnsureState(cooldownID, child, catName), "charge-field-bind")
 
     if child._quiMirrorBound then
         return
@@ -3150,12 +3078,12 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
     --   * EssentialItemMixin / UtilityItemMixin → SetCooldownFromDurationObject
     --   * BuffIconItemMixin / BuffBarItemMixin  → CooldownFrame_Set →
     --     Cooldown:SetCooldown(start, duration, ...)
-    -- Hooking only the DurationObject path means buff items never flip
-    -- s.isActive=true via the hook path. We hook SetCooldown too — args
-    -- can be secret (start/duration are secret in combat post-12.0.5),
-    -- but we DON'T read them; the call's existence is the signal.
+    -- We hook every Cooldown setter so the mirror epoch bumps on any path.
+    -- Args can be secret (start/duration are secret in combat post-12.0.5)
+    -- but we don't read them; the call's existence is the signal.
     --
-    -- Cooldown:Clear is the de-active edge for both mixins; capture it.
+    -- Cooldown:Clear bumps the epoch too; the resolver re-queries live
+    -- cdInfo.isActive on the next eval and routes through inactive.
     --
     -- Reads the original owner child's cooldownID dynamically. The explicit
     -- cooldown-frame map avoids depending on current parentage.
@@ -3198,9 +3126,7 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
                             MarkDurationLaneUnknown(cdID, s, "aura")
                         end
                     end
-                    s.isActive = true
                 else
-                    s.isActive = false
                     ClearAuraDurationLane(cdID, s)
                 end
                 s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
@@ -3209,57 +3135,44 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
                     CDMBlizzMirror.TaintLog("hook.SCFDO.aura-cat",
                         "cdID", cdID,
                         "trusted", trusted,
-                        "durObjSource", s.durObjSource,
-                        "hasDurObj", s.durObj and true or false)
+                        "hasAuraDurObj", s.auraDurObj and true or false)
                 end
                 return
             end
 
-            local fromAura = SafeFrameBooleanField(owner, "wasSetFromAura") == true
-            local fromCharges = SafeFrameBooleanField(owner, "wasSetFromCharges") == true
-            local chargeDurObj, chargeSource
-            if not fromAura then
-                chargeDurObj, chargeSource = CDMBlizzMirror.ResolveChargeDurationObjectForCooldownID(cdID, owner, s)
-            end
-            local suppressChargeDuration = not chargeDurObj
-                and fromCharges
-                and CDMBlizzMirror.ShouldSuppressChargeDurationForCooldownID(cdID, owner, s)
-            local lane = fromAura and "aura"
-                or (chargeDurObj and "resource")
-                or (fromCharges and not suppressChargeDuration and "resource" or "cooldown")
-            local source = fromAura and "aura-duration"
-                or chargeSource
-                or (fromCharges and not suppressChargeDuration and "spell-charge" or "cooldown-frame")
-            durObj = chargeDurObj or durObj
-            if suppressChargeDuration then
-                s.resourceDurObj = nil
-                s.resourceDurObjSource = nil
-                s.resourceDurationStateUnknown = nil
-            end
-            if not fromAura and not fromCharges
-                and ShouldUseGCDDurationForCooldownID(cdID, owner, s) then
-                lane = "gcd"
-                source = "gcd-duration"
-            end
-            -- Capture for side effect: writes the aura lane via the related-
-            -- aura-child path. SetDurationLane below runs RefreshSelectedDurationState
-            -- on tail, which picks the freshly-captured aura ahead of this lane.
+            -- Non-aura-category branch: the resolver classifies (cooldown /
+            -- gcd-only / charge / inactive) at eval time from live API state.
+            -- This hook bumps the epoch so the icon refresh sees a transition,
+            -- captures any aura-via-related-child side effects, and stores
+            -- the inbound durObj so the resolver can bind hook-synchronously
+            -- instead of polling C_Spell.GetSpellCooldownDuration (which
+            -- lags by frames during GCD overlay on resource-driven specs).
             CaptureAuraInstanceFromRelatedAuraChildren(cdID, s.viewerCategory)
-            SetDurationLane(cdID, s, lane, durObj, source)
-            s.isActive    = true
+            if durObj then
+                s.cooldownDurObj = durObj
+                s.cooldownDurObjSource = "live-cooldown"
+                s.cooldownLaneActiveByHook = true
+            elseif clearIfZero then
+                s.cooldownDurObj = nil
+                s.cooldownDurObjSource = nil
+                s.cooldownLaneActiveByHook = nil
+            end
             s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
             s.lastTouch   = GetTime()
+            SyncChildChargeCountFields(owner, cdID, s, "charge-field-cooldown")
             if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
-                CDMBlizzMirror.TaintLog("hook.SCFDO", "cdID", cdID,
-                    "durObjSource", s.durObjSource)
+                CDMBlizzMirror.TaintLog("hook.SCFDO",
+                    "cdID", cdID,
+                    "hasDurObj", durObj and true or false,
+                    "clearIfZero", clearIfZero and true or false)
             end
         end)
     end
 
     -- Active-edge: hook EVERY Cooldown setter Blizzard might use. Different
-    -- mixins / different code paths use different methods; missing any of
-    -- them leaves m.isActive stuck at false. We don't read the args (some
-    -- are secret in combat post-12.0.5); the call's existence is the signal.
+    -- mixins / different code paths use different methods. We don't read the
+    -- args (some are secret in combat post-12.0.5); the call's existence is
+    -- the signal that mirror epoch should advance so the resolver re-queries.
     local function _activateMirror(self, methodName, a, b, c)
         local cdID, owner = _ownerCooldownID(self)
         if not cdID then return end
@@ -3286,46 +3199,46 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
                 if not s.auraInstanceID and not s.auraDurObj then
                     MarkDurationLaneUnknown(cdID, s, "aura")
                 end
-                s.isActive = true
             else
-                s.isActive = false
                 ClearAuraDurationLane(cdID, s)
             end
             s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
             s.lastTouch   = GetTime()
             if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
                 CDMBlizzMirror.TaintLog("hook." .. methodName, "cdID", cdID,
-                    "durObjSource", s.durObjSource,
-                    "hasDurObj", s.durObj and true or false,
-                    "durationStateUnknown", s.durationStateUnknown)
+                    "hasAuraDurObj", s.auraDurObj and true or false)
             end
             return
         end
-        s.isActive    = true
+        CaptureAuraInstanceFromRelatedAuraChildren(cdID, s.viewerCategory)
+        -- Cooldown-lane hook activation. Blizzard's CooldownViewer mixins
+        -- pick from several setters depending on category and code path:
+        -- EssentialItemMixin uses SetCooldownFromDurationObject (which fills
+        -- s.cooldownDurObj via the SCFDO hook above), but other mixins —
+        -- and even Essential in some sub-paths — call SetCooldown,
+        -- SetCooldownFromExpirationTime, SetCooldownDuration, or
+        -- SetCooldownUNIX directly with raw start/duration scalars instead
+        -- of a DurationObject. In those cases no durObj is ever pushed
+        -- through SCFDO, so s.cooldownDurObj stays nil for the full
+        -- cooldown window and the resolver's mirror-trust gate goes blind
+        -- until Blizzard's child wasSetFromCooldown bit flips visibly —
+        -- which for Mind Blast on Shadow Priest doesn't happen until
+        -- ~1.2 s after cast, causing a visible "no swipe" lag.
+        --
+        -- Stamping s.cooldownLaneActiveByHook on every Cooldown:Set*
+        -- closes the gap: the resolver picks it up the same frame and
+        -- returns charge/live-cooldown immediately. The flag is cleared
+        -- only by Cooldown:Clear (and by SCFDO(nil, true) for symmetry
+        -- with s.cooldownDurObj), but staleness during a missed clear
+        -- is bounded by the resolver's apiSaysInactive guard, which
+        -- skips the mirror-trust gate entirely when
+        -- C_Spell.GetSpellCooldown(sid).isActive is an explicit false.
+        s.cooldownLaneActiveByHook = true
         s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
         s.lastTouch   = GetTime()
-        local durObj, source = ResolveSpellDurationObjectForCooldownID(cdID, owner, s)
-        -- Capture for side effect: writes the aura lane via the related-aura-
-        -- child path. SetDurationLane below refreshes the selection on tail,
-        -- which picks the freshly-captured aura ahead of this lane.
-        CaptureAuraInstanceFromRelatedAuraChildren(cdID, s.viewerCategory)
-        if durObj then
-            local lane = source == "spell-charge" and "resource"
-                or (source == "gcd-duration" and "gcd" or "cooldown")
-            SetDurationLane(cdID, s, lane, durObj, source)
-        elseif not s.auraInstanceID then
-            local fromAura = SafeFrameBooleanField(owner, "wasSetFromAura") == true
-            if fromAura then
-                MarkDurationLaneUnknown(cdID, s, "aura")
-            else
-                MarkDurationLaneUnknown(cdID, s, "cooldown")
-            end
-        end
+        SyncChildChargeCountFields(owner, cdID, s, "charge-field-cooldown")
         if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
-            CDMBlizzMirror.TaintLog("hook." .. methodName, "cdID", cdID,
-                "durObjSource", s.durObjSource,
-                "hasDurObj", s.durObj and true or false,
-                "durationStateUnknown", s.durationStateUnknown)
+            CDMBlizzMirror.TaintLog("hook." .. methodName, "cdID", cdID)
         end
     end
     if cooldownFrame and cooldownFrame.SetCooldown then
@@ -3383,24 +3296,20 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
             end
 
             -- Non-aura cdID (essential / utility / cooldown-only):
-            -- Clear is the de-active edge.
-            if ShouldPreserveTransientNonAuraCooldownClear(cdID, owner, s) then
-                s.isActive = true
-                s.lastTouch = GetTime()
-                if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
-                    CDMBlizzMirror.TaintLog("hook.Clear.preserve-active", "cdID", cdID)
-                end
-                return
-            end
-
-            s.isActive = false
-            ClearAllDurationLanes(cdID, s)
+            -- Clear bumps the epoch so the resolver re-queries; the resolver
+            -- will see cdInfo.isActive == false on the next eval and route
+            -- through inactive. Event-driven aura/totem lanes are cleared
+            -- here so they don't survive a Clear with stale data.
+            ClearEventDrivenLanes(cdID, s)
+            s.cooldownLaneActiveByHook = nil
             s.pandemicActive = false
             s.pandemicStateKnown = nil
             if SetHostPandemicState then
                 SetHostPandemicState(cdID, nil, false)
             end
+            s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
             s.lastTouch = GetTime()
+            SyncChildChargeCountFields(owner, cdID, s, "charge-field-clear")
             if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
                 CDMBlizzMirror.TaintLog("hook.Clear", "cdID", cdID)
             end
@@ -3420,6 +3329,7 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
 
     -- Visibility hooks — drive isActive without polling.
     hooksecurefunc(child, "Show", function(self)
+        CDMBlizzMirror._knownShownByFrame[self] = true
         local cdID = self.cooldownID
         if not cdID then return end
         local forced = _forceShowingChild[self] == true
@@ -3431,6 +3341,7 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
     end)
 
     hooksecurefunc(child, "Hide", function(self)
+        CDMBlizzMirror._knownShownByFrame[self] = false
         local cdID = self.cooldownID
         if not cdID then return end
         RefreshChildSemanticState(self, cdID, false)
@@ -3443,7 +3354,7 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
         hooksecurefunc(child, "SetShown", function(self, shown)
             local cdID = self.cooldownID
             if not cdID then return end
-            local fallbackActive = DecodePotentialSecretBoolean(shown) == true
+            local fallbackActive = CDMBlizzMirror._RememberKnownShown(self, shown) == true
             RefreshChildSemanticState(self, cdID, fallbackActive)
             if IsAuraViewerCategory(cdID, GetFrameCategoryName(self)) then
                 RefreshCooldownViewerRelatedAuraStates()
@@ -3706,6 +3617,15 @@ local function AlphaEnforcerOnUpdate(self, dt)
         end
     end
 end
+
+-- Memaudit instrumentation: dynamic OnUpdate, same pattern as CDM_RuntimeTick.
+local _AlphaEnforcerOnUpdateImpl = AlphaEnforcerOnUpdate
+AlphaEnforcerOnUpdate = function(...)
+    local measure = ns.MemAuditProfilerMeasure
+    if measure then return measure("CDM_AlphaEnforcer", _AlphaEnforcerOnUpdateImpl, ...) end
+    return _AlphaEnforcerOnUpdateImpl(...)
+end
+
 _alphaEnforcer:SetScript("OnUpdate", nil)
 
 local function SuppressViewers()
@@ -3849,6 +3769,15 @@ end
 local function SafeShown(owner)
     if not owner then return "nil" end
     local shown = SafeCall(owner, "IsShown")
+    local decoded = DecodePotentialSecretBoolean(shown)
+    if decoded ~= nil then
+        CDMBlizzMirror._knownShownByFrame[owner] = decoded
+        return tostring(decoded)
+    end
+    decoded = CDMBlizzMirror._knownShownByFrame[owner]
+    if decoded ~= nil then
+        return tostring(decoded)
+    end
     if issecretvalue and issecretvalue(shown) then
         return "<SECRET:" .. type(shown) .. ">"
     end
@@ -3923,6 +3852,7 @@ function CDMBlizzMirror.GetChildDebugLines(cooldownID, viewerCategory)
             "owner=", SafeName(owner),
             "type=", SafeDebugScalar(SafeCall(owner, "GetObjectType")),
             "shown=", SafeShown(owner),
+            "decodedShown=", SafeFrameShownField(owner),
             "text=", SafeFieldText(owner))
     end
 
@@ -3963,6 +3893,14 @@ function CDMBlizzMirror.GetChildDebugLines(cooldownID, viewerCategory)
         "cooldownStart=", SafeFrameField(child, "cooldownStartTime"),
         "cooldownDuration=", SafeFrameField(child, "cooldownDuration"),
         "cooldownShowSwipe=", SafeFrameBooleanField(child, "cooldownShowSwipe"))
+    AddDebugLine(lines,
+        "child charge cooldownChargesShown=", SafeFrameBooleanField(child, "cooldownChargesShown"),
+        "chargeCountFrameShown=", SafeFrameShownField(child.ChargeCount),
+        "cooldownChargesCount=", RawFrameField(child, "cooldownChargesCount"),
+        "stackText=", state and state.stackText,
+        "stackSource=", state and state.stackTextSource,
+        "stackShown=", state and state.stackTextShown,
+        "stackEpoch=", state and state.stackTextEpoch)
 
     local childAuraData = ReadChildAuraData(child)
     AddDebugLine(lines,
@@ -4013,6 +3951,7 @@ function CDMBlizzMirror.GetChildDebugLines(cooldownID, viewerCategory)
     AddTextOwnerDebugLine("ChargeCount.FirstFontString", FindFirstFontString(charges))
     AddDebugLine(lines,
         "ChargeCount shown=", SafeShown(charges),
+        "decodedShown=", SafeFrameShownField(charges),
         "text=", SafeFieldText(charges and (charges.Current or FindFirstFontString(charges))),
         "parent=", SafeName(SafeCall(charges, "GetParent")))
 
@@ -4060,11 +3999,13 @@ function CDMBlizzMirror.GetCooldownMethodTestPayload(cooldownID, viewerCategory)
         childCooldownDurationMS = childDurationMS,
         childCooldownDurationValue = SafeCall(cd, "GetCooldownDuration"),
 
-        durObj = s.durObj,
-        durObjSource = s.durObjSource,
+        auraDurObj = s.auraDurObj,
+        auraDurObjSource = s.auraDurObjSource,
+        totemDurObj = s.totemDurObj,
+        totemDurObjSource = s.totemDurObjSource,
         lastCooldownSetter = s.lastCooldownSetter,
 
-        setDurationObjectArg = s.lastDurationObjectArg or s.durObj,
+        setDurationObjectArg = s.lastDurationObjectArg,
         setDurationObjectClearIfZero = s.lastDurationObjectClearIfZero,
 
         setCooldownStart = s.lastSetCooldownStart or child.cooldownStartTime,
@@ -4201,7 +4142,6 @@ local function _ActivateTotemCooldownID(cdID, slot, durObj, totemName, totemIcon
     _totemActiveCDID[cdID] = cleanSlot or true
     local s = EnsureState(cdID, _childByCooldownID[cdID])
     if not s then return false end
-    s.isActive     = true
     s.mirrorEpoch  = (s.mirrorEpoch or 0) + 1
     s.lastTouch    = GetTime()
     s.totemSlot    = cleanSlot
@@ -4358,8 +4298,7 @@ function HandlePlayerTotemUpdate(updatedSlot)
             local key = ResolveInstanceKey(cdID)
             local s = key and _mirrorState[key]
             if s then
-                s.isActive    = false
-                ClearAllDurationLanes(cdID, s)
+                ClearEventDrivenLanes(cdID, s)
                 s.totemSlot   = nil
                 s.totemName   = nil
                 s.totemIcon   = nil
@@ -4458,6 +4397,8 @@ _eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 -- isActive for those durationless aura-viewer entries.
 _eventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
 _eventFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
+-- CooldownViewer charge/count visibility is refreshed from SPELL_UPDATE_USES.
+_eventFrame:RegisterEvent("SPELL_UPDATE_USES")
 -- Target swap — stored target instIDs reference the previous target and
 -- become stale immediately. Re-capture so the new target's existing
 -- debuffs get fresh instIDs without waiting for a UNIT_AURA tick.
@@ -4471,7 +4412,7 @@ _eventFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
 -- info struct, and rewires the per-category bucket accordingly. Falls back
 -- to full Walk if no existing cdID is found (the override may have introduced
 -- a new spell that wasn't yet known to any viewer).
-local function RefreshSpellOverridePair(baseSpellID, overrideSpellID)
+CDMBlizzMirror._RefreshSpellOverridePair = function(baseSpellID, overrideSpellID)
     if not (C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo) then
         Walk()
         return
@@ -4499,6 +4440,14 @@ local function RefreshSpellOverridePair(baseSpellID, overrideSpellID)
 end
 
 _eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
+    if event == "SPELL_UPDATE_USES" then
+        BindNewChildren()
+        if not RequestMirrorTextRefreshForMappedSpells("uses", arg1, arg2) then
+            RequestMirrorTextRefresh(nil, nil, "uses")
+        end
+        return
+    end
+
     if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW"
         or event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" then
         BindNewChildren()
@@ -4548,6 +4497,9 @@ _eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     CDMBlizzMirror.SyncSuppressionToMaster()
 end)
 
+ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "CDM_BlizzMirrorEvents", frame = _eventFrame }
+
 ---------------------------------------------------------------------------
 -- DEBUG IMPORT BINDING (rebound by cdm_debug.lua's BindAll())
 ---------------------------------------------------------------------------
@@ -4564,20 +4516,29 @@ end
 ---------------------------------------------------------------------------
 if ns.CDMIndex and ns.CDMIndex.Subscribe then
     ns.CDMIndex.Subscribe("blizz_mirror", function(reason, baseSpellID, overrideSpellID)
+        if reason == "override" then
+            -- Targeted: only the (baseSpellID, overrideSpellID) pair changed.
+            -- Run in combat too. _RefreshSpellOverridePair only calls
+            -- C_CooldownViewer.GetCooldownViewerCooldownInfo (AllowedWhenUntainted
+            -- per CooldownViewerDocumentation) plus Lua table writes — no
+            -- protected frame surface. Procs that flip info.overrideSpellID
+            -- (Mind Blast 8092 -> 450983 on Shadow Priest is the reference
+            -- case) fire COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED inside
+            -- combat; stranding the mirror at the pre-proc baseSpellID until
+            -- PLAYER_REGEN_ENABLED makes every duration query land on the
+            -- wrong spellID, and the icon's swipe never surfaces.
+            CDMBlizzMirror._RefreshSpellOverridePair(baseSpellID, overrideSpellID)
+            return
+        end
         if InCombatLockdown() and not (ns and ns._inInitSafeWindow) then
             _walkPendingOnRegen = true
             return
         end
-        if reason == "override" then
-            -- Targeted: only the (baseSpellID, overrideSpellID) pair changed.
-            RefreshSpellOverridePair(baseSpellID, overrideSpellID)
-        else
-            -- data_loaded / hotfix / refresh_layout: full catalog rebuild
-            -- and bootstrap of totem state, matching the previous
-            -- COOLDOWN_VIEWER_DATA_LOADED / TABLE_HOTFIXED handler exactly.
-            Walk()
-            HandlePlayerTotemUpdate()
-            CDMBlizzMirror.SyncSuppressionToMaster()
-        end
+        -- data_loaded / hotfix / refresh_layout: full catalog rebuild
+        -- and bootstrap of totem state, matching the previous
+        -- COOLDOWN_VIEWER_DATA_LOADED / TABLE_HOTFIXED handler exactly.
+        Walk()
+        HandlePlayerTotemUpdate()
+        CDMBlizzMirror.SyncSuppressionToMaster()
     end, 10)
 end

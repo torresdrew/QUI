@@ -85,6 +85,18 @@ local findings5 = Analyzer.analyze(source5, "modules/foo.lua", r3, cfg)
 assert_eq(#findings5, 1, "one finding for comparison on tainted")
 assert_eq(findings5[1].sink, "<comparison>", "sink labeled comparison")
 
+-- Test: tainted local used as branch truthiness
+local source5b = [[
+local info = C_Spell.GetSpellCharges(1)
+if info then
+    return 1
+end
+return 0
+]]
+local findings5b = Analyzer.analyze(source5b, "modules/foo.lua", r3, cfg)
+assert_eq(#findings5b, 1, "one finding for truthiness on tainted")
+assert_eq(findings5b[1].sink, "<truthiness>", "sink labeled truthiness")
+
 print("unsafe sink test passed")
 
 -- Test: source nested in binop propagates taint
@@ -340,6 +352,17 @@ local fL1 = Analyzer.analyze(sourceL1, "modules/foo.lua", r12, cfg)
 assert_eq(#fL1, 1, "while-condition comparison emits")
 assert_eq(fL1[1].sink, "<comparison>", "comparison sink")
 
+-- Test: while condition rejects bare tainted truthiness
+local sourceL1b = [[
+local x = S()
+while x do
+    break
+end
+]]
+local fL1b = Analyzer.analyze(sourceL1b, "modules/foo.lua", r12, cfg)
+assert_eq(#fL1b, 1, "while-condition truthiness emits")
+assert_eq(fL1b[1].sink, "<truthiness>", "truthiness sink")
+
 -- Test: numeric-for End bound walked
 -- The End expression is a bare VarExpr `x`. There is no registered sink shape
 -- for a bare variable used as a loop bound (no comparison/arith/builtin call),
@@ -382,7 +405,7 @@ local info = C_Spell.GetSpellCharges(1)
 local n = info + 1
 ]]
 local findings20 = Analyzer.analyze(
-    source20, "modules/cdm/cdm_icons.lua", r13, strictCfg)
+    source20, "modules/cdm/cdm_icon_renderer.lua", r13, strictCfg)
 assert_eq(#findings20, 1, "one finding")
 assert_eq(findings20[1].severity, "strict", "promoted to strict by path")
 
@@ -397,8 +420,25 @@ local info = C_Spell.GetSpellCharges(1)
 local n = Helpers.SafeValue(info, 0)
 ]]
 local findings22 = Analyzer.analyze(
-    source22, "modules/cdm/cdm_icons.lua", r13, strictCfg)
+    source22, "modules/cdm/cdm_icon_renderer.lua", r13, strictCfg)
 assert_eq(findings22[1].severity, "review", "unwrap stays review")
+
+local strictUnwrapCfg = Config.loadFromString([[
+return {
+    strict_paths = { "modules/cdm/" },
+    strict_unwrap_paths = { "modules/cdm/" },
+}
+]])
+
+local findings23 = Analyzer.analyze(
+    source22, "modules/cdm/cdm_icon_renderer.lua", r13, strictUnwrapCfg)
+assert_eq(findings23[1].severity, "strict",
+    "unwrap is strict under configured CDM unwrap path")
+
+local findings24 = Analyzer.analyze(
+    source22, "modules/foo.lua", r13, strictUnwrapCfg)
+assert_eq(findings24[1].severity, "review",
+    "unwrap remains review outside configured CDM unwrap path")
 
 print("severity test passed")
 
@@ -475,5 +515,27 @@ return n
 ]]
 local fFB4 = Analyzer.analyze(sourceFB4, "modules/foo.lua", r15, cfg)
 assert_eq(#fFB4, 1, "deep field chain on tainted base flows")
+
+-- Closure capture: sort/callback predicates must still see tainted upvalues.
+local sourceFB5 = [[
+local info = C_Spell.GetSpellCharges(1)
+table.sort(rows, function(a, b)
+    return info.currentCharges < 2
+end)
+]]
+local fFB5 = Analyzer.analyze(sourceFB5, "modules/foo.lua", r15, cfg)
+assert_eq(#fFB5, 1, "closure comparison on tainted upvalue emits")
+assert_eq(fFB5[1].sink, "<comparison>", "comparison sink in closure")
+
+-- Function parameters shadow tainted outer locals.
+local sourceFB6 = [[
+local info = C_Spell.GetSpellCharges(1)
+local function f(info)
+    return info + 1
+end
+return f(1)
+]]
+local fFB6 = Analyzer.analyze(sourceFB6, "modules/foo.lua", r15, cfg)
+assert_eq(#fFB6, 0, "function parameter shadows tainted upvalue")
 
 print("tainted-base field read test passed")

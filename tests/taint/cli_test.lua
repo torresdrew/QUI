@@ -71,6 +71,20 @@ assert(exit2 == 1,
     "Test 2: strict findings should exit 1, got: " .. tostring(exit2))
 
 -- ---------------------------------------------------------------------------
+-- Test 2b: CDM unwrap review is promoted to strict by strict_unwrap_paths
+-- ---------------------------------------------------------------------------
+
+local cmd2b = 'lua tools/test_taint.lua --no-color --strict-only --only "unwrap.lua" tests/taint/cli-fixture'
+local out2b, exit2b = runCmd(cmd2b)
+
+assert(out2b:find("unwrap.lua"),
+    "Test 2b: expected unwrap.lua in output.\nGot: " .. out2b)
+assert(out2b:find("%[strict%]") and out2b:find("<unwrap>", 1, true),
+    "Test 2b: expected strict unwrap finding.\nGot: " .. out2b)
+assert(exit2b == 1,
+    "Test 2b: strict unwrap should exit 1, got: " .. tostring(exit2b))
+
+-- ---------------------------------------------------------------------------
 -- Test 3: --strict-only suppresses advisory findings
 -- ---------------------------------------------------------------------------
 

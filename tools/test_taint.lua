@@ -219,7 +219,17 @@ local Analyzer = dofileFrom("tests/taint/analyzer.lua")
 -- Load config
 -- ---------------------------------------------------------------------------
 
-local cfgPath = rootDir .. "/.taintrc.lua"
+local function fileExists(path)
+    local f = io.open(path, "rb")
+    if not f then return false end
+    f:close()
+    return true
+end
+
+local cfgPath = rootDir .. "/tests/.taintrc.lua"
+if not fileExists(cfgPath) then
+    cfgPath = rootDir .. "/.taintrc.lua"
+end
 local cfg = Config.loadFromFile(cfgPath)
 
 -- ---------------------------------------------------------------------------

@@ -1121,7 +1121,7 @@ local function ApplyKeybindToIcon(icon, viewerName)
     local itemID
     local itemName
 
-    -- New CDM icons (cdm_icons.lua) store data in _spellEntry.
+    -- New CDM icons (cdm_icon_renderer.lua) store data in _spellEntry.
     -- Two paths populate item-typed entries:
     --   _isCustomEntry: legacy essential/utility custom merge (cdm_icons BuildIcons)
     --   _isOwnedEntry:  Composer/owned containers (cdm_spelldata ResolveOwnedEntry)

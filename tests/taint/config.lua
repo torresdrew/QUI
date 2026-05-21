@@ -1,6 +1,6 @@
 -- tests/taint/config.lua
--- Loader for .taintrc.lua. Returns a config table with sane defaults if the
--- file is missing.
+-- Loader for taint analyzer config files. Returns a config table with sane
+-- defaults if the file is missing.
 
 local M = {}
 
@@ -21,6 +21,7 @@ local DEFAULT_COVERAGE = {
 local function defaults()
     return {
         strict_paths = {},
+        strict_unwrap_paths = {},
         ignore_paths = { _unpack(DEFAULT_IGNORE_PATHS) },
         coverage = {
             secretWhenCooldownsRestricted = DEFAULT_COVERAGE.secretWhenCooldownsRestricted,
@@ -62,7 +63,7 @@ function M.loadFromString(source)
     return merged
 end
 
---- Load .taintrc.lua from a file path. Returns defaults if file missing.
+--- Load taint analyzer config from a file path. Returns defaults if missing.
 function M.loadFromFile(path)
     local f = io.open(path, "rb")
     if not f then return defaults() end
@@ -76,6 +77,16 @@ function M.isStrictPath(cfg, filePath)
     -- Normalize backslashes to forward slashes for comparison
     local p = filePath:gsub("\\", "/")
     for _, prefix in ipairs(cfg.strict_paths) do
+        if p:sub(1, #prefix) == prefix then return true end
+    end
+    return false
+end
+
+--- Is the given file path under a strict_unwrap_paths prefix?
+function M.isStrictUnwrapPath(cfg, filePath)
+    -- Normalize backslashes to forward slashes for comparison
+    local p = filePath:gsub("\\", "/")
+    for _, prefix in ipairs(cfg.strict_unwrap_paths or {}) do
         if p:sub(1, #prefix) == prefix then return true end
     end
     return false

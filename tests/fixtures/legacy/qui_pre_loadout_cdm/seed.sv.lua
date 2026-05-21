@@ -16,7 +16,7 @@
 -- expected.sv.lua therefore mirrors this seed for the char section.
 --
 -- The migration LOGIC is asserted to exist in code by the LDTS-01 grep
--- assertions in tests/cdm_spec_tracking_persistence_test.lua.
+-- assertions in tests/unit/cdm_spec_tracking_persistence_test.lua.
 --
 -- Spec 65 = Affliction Warlock (chosen arbitrarily; any positive specID works).
 QUI_DB = {

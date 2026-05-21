@@ -25,21 +25,18 @@ return function(owner, entry, runtimeSpellID, options)
         context = {}
     end
 
+    context.owner = nil
     context.entry = nil
     context.runtimeSpellID = nil
     context.mirrorCooldownID = nil
     context.mirrorCategory = nil
+    context.cachedMirrorState = nil
+    context.cachedMirrorSourceID = nil
     context.containerKey = nil
     context.totemSlot = nil
     context.useBuffSwipe = nil
     context.skipAuraPhase = nil
-    context.priorCooldownActive = nil
-    context.priorRealCooldownActive = nil
-    context.priorShowingRealCooldownSwipe = nil
-    context.priorResolvedCooldownMode = nil
-    context.preservedRealDurObj = nil
-    context.preservedRealMode = nil
-    context.preservedRealSourceID = nil
+    context.showGCDSwipe = nil
     context.lastChargeMirrorCooldownID = nil
     context.lastChargeMirrorCategory = nil
     context.lastChargeRuntimeSpellID = nil
@@ -72,22 +69,19 @@ return function(owner, entry, runtimeSpellID, options)
         containerKey = options.fallbackContainerKey
     end
 
+    context.owner = owner
     context.entry = entry
     context.runtimeSpellID = runtimeSpellID
     context.mirrorCooldownID = cooldownID
     context.mirrorCategory = category
+    context.cachedMirrorState = options and options.cachedMirrorState
+    context.cachedMirrorSourceID = options and options.cachedMirrorSourceID
     context.containerKey = containerKey
     context.totemSlot = (options and options.totemSlot)
         or (owner and owner._totemSlot)
     context.useBuffSwipe = options and options.useBuffSwipe
     context.skipAuraPhase = options and options.skipAuraPhase == true
-    context.priorCooldownActive = options and options.priorCooldownActive == true
-    context.priorRealCooldownActive = options and options.priorRealCooldownActive == true
-    context.priorShowingRealCooldownSwipe = options and options.priorShowingRealCooldownSwipe == true
-    context.priorResolvedCooldownMode = options and options.priorResolvedCooldownMode
-    context.preservedRealDurObj = options and options.preservedRealDurObj
-    context.preservedRealMode = options and options.preservedRealMode
-    context.preservedRealSourceID = options and options.preservedRealSourceID
+    context.showGCDSwipe = options and options.showGCDSwipe == true
     context.lastChargeMirrorCooldownID = options and options.lastChargeMirrorCooldownID
     context.lastChargeMirrorCategory = options and options.lastChargeMirrorCategory
     context.lastChargeRuntimeSpellID = options and options.lastChargeRuntimeSpellID

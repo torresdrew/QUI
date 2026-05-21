@@ -250,10 +250,14 @@ UpdateIconDisplay = function(spellID)
         return
     end
 
-    -- spellID may be secret during combat.  Secret userdata is truthy
-    -- and non-zero, so it passes the nil/0 gate.  All downstream calls
-    -- use C-side functions that accept secrets natively.
-    if not spellID or spellID == 0 then
+    -- spellID may be secret during combat.  All downstream calls use
+    -- C-side functions that accept secrets natively.  The `== 0` check
+    -- is gated on IsSecretValue first — comparing a secret userdata to
+    -- a number taints the comparison even when the branch result is
+    -- correct.  Secret userdata is never 0 by definition.
+    local isEmpty = (spellID == nil) or
+        (not IsSecretValue(spellID) and spellID == 0)
+    if isEmpty then
         -- No recommendation right now.  If the frame is already visible
         -- (mid-combat), keep showing the last spell rather than hiding
         -- and re-showing every time the API has a brief gap.
@@ -347,11 +351,30 @@ end
 -- Visibility Management
 --------------------------------------------------------------------------------
 
+-- Cache IsAvailable() result — spec/talent changes are the only triggers,
+-- and we re-evaluate on PLAYER_SPECIALIZATION_CHANGED / TRAIT_CONFIG_UPDATED.
+local _isAvailable = nil
+
+local function RefreshAvailability()
+    if not (C_AssistedCombat and C_AssistedCombat.IsAvailable) then
+        _isAvailable = true  -- Pre-API client: assume available, let other gates decide.
+        return
+    end
+    local ok, available = pcall(C_AssistedCombat.IsAvailable)
+    _isAvailable = ok and (available == true)
+end
+
 UpdateVisibility = function()
     if not iconFrame then return end
 
     local db = GetDB()
     if not db or not db.enabled then
+        iconFrame:Hide()
+        return
+    end
+
+    if _isAvailable == nil then RefreshAvailability() end
+    if not _isAvailable then
         iconFrame:Hide()
         return
     end
@@ -511,8 +534,9 @@ RefreshIconFrame = function()
         iconFrame.cooldown:Hide()
     end
 
-    -- Lock/unlock state
-    iconFrame:EnableMouse(not db.isLocked or true) -- Always enable for visibility, but drag only when unlocked
+    -- Mouse stays enabled so tooltips/hover work; drag gating is enforced
+    -- in OnDragStart, which inspects db.isLocked at drag-start time.
+    iconFrame:EnableMouse(true)
 
     -- Keybind text styling
     if db.showKeybind then
@@ -555,8 +579,37 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+eventFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
 eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 eventFrame:RegisterEvent("ACTIONBAR_UPDATE_COOLDOWN")
+
+-- Assisted Combat dispatch (self-owned).
+-- Two complementary signals catch the recommendation change:
+--   1. EventRegistry "AssistedCombatManager.OnSetActionSpell" — fires when
+--      a bar button hosts the assist slot.  Under soft targeting this
+--      fires every OnUpdate frame; DoUpdate's lastSpellID + IsSecretValue
+--      gate collapses no-op invocations.
+--   2. hooksecurefunc on AssistedCombatManager.UpdateAllAssistedHighlight-
+--      FramesForSpell — catches spell changes when NO bar button hosts
+--      the assist slot (the EventRegistry event doesn't reliably fire in
+--      that case).  Passes the raw spellID through — secret values are
+--      handled natively by DoUpdate's C-side downstream.
+if EventRegistry and EventRegistry.RegisterCallback then
+    EventRegistry:RegisterCallback("AssistedCombatManager.OnSetActionSpell", function()
+        if not (C_AssistedCombat and C_AssistedCombat.GetNextCastSpell) then return end
+        local okSpell, newSpell = pcall(C_AssistedCombat.GetNextCastSpell, false)
+        if not okSpell then newSpell = nil end
+        DoUpdate(newSpell)
+    end, "QUI_RotationAssistIcon_OnSetActionSpell")
+end
+
+if AssistedCombatManager and AssistedCombatManager.UpdateAllAssistedHighlightFramesForSpell then
+    hooksecurefunc(AssistedCombatManager, "UpdateAllAssistedHighlightFramesForSpell", function(_, spellID)
+        if not spellID then return end
+        DoUpdate(spellID)
+    end)
+end
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
@@ -565,12 +618,20 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 CreateIconFrame()
                 isInitialized = true
             end
+            RefreshAvailability()
             local db = GetDB()
             if db and db.enabled then
                 RefreshIconFrame()
                 DoUpdate()
             end
         end)
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "TRAIT_CONFIG_UPDATED" then
+        RefreshAvailability()
+        local db = GetDB()
+        if db and db.enabled then
+            UpdateVisibility()
+            DoUpdate()
+        end
     elseif event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
         local db = GetDB()

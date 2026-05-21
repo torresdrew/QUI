@@ -40,8 +40,10 @@ QUI's Unit Frames replace the default combat frames with cleaner, more readable 
 - Health and power display styles
 - Name formatting and class coloring
 - Castbars with interrupt and channel support
-- Aura placement and icon count
+- Aura placement, icon count, growth direction, duration text, stack text, and Blizzard-style Helpful/Harmful classification filters
 - Heal prediction, absorb shields, indicators, and class resources
+- Inline target-of-target text, classification icons, reverse target health fill, and show-below-100% health behavior
+- Resource bar breakpoints, charged combo points, secondary resource swaps, and class utility bars
 - Optional standalone player castbar mode
 
 ## Important Settings

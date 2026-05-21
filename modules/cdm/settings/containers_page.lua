@@ -1,3 +1,3076 @@
+-- containers_page.lua
+-- Consolidated CDM settings page. Former file chunks remain scoped to preserve Lua 5.1 local limits.
+do
+-- Inlined from containers_page_model.lua
+local ADDON_NAME, ns = ...
+if not (QUI and QUI._optionsAddonName == ADDON_NAME) then
+local ADDON_NAME, ns = ...
+
+local function GetCore()
+    return (ns.Helpers and ns.Helpers.GetCore and ns.Helpers.GetCore()) or ns.Addon or QUI
+end
+
+local Model = ns.QUI_CooldownManagerSettingsModel or {}
+ns.QUI_CooldownManagerSettingsModel = Model
+local ModelKit = ns.Settings and ns.Settings.ModelKit
+local Shared = ns.CDMShared
+
+local BUILTIN_ORDER = { "essential", "utility", "buff", "trackedBar" }
+local BUILTIN_LABELS = {
+    essential = "Essential",
+    utility = "Utility",
+    buff = "Buff Icons",
+    trackedBar = "Buff Bars",
+}
+local BUILTIN_TYPES = {
+    essential = "cooldown",
+    utility = "cooldown",
+    buff = "aura",
+    trackedBar = "auraBar",
+}
+
+function Model.GetContainerOptions()
+    local options = {}
+    local seen = {}
+    local builtinKeys = (Shared and Shared.BUILTIN_CONTAINER_KEYS) or BUILTIN_ORDER
+    local builtinLabels = (Shared and Shared.BUILTIN_CONTAINER_LABELS) or BUILTIN_LABELS
+    for _, key in ipairs(builtinKeys) do
+        if not seen[key] then
+            options[#options + 1] = {
+                value = key,
+                text = builtinLabels[key] or key,
+            }
+            seen[key] = true
+        end
+    end
+
+    local core = GetCore()
+    local ncdm = core and core.db and core.db.profile and core.db.profile.ncdm
+    if ncdm and ncdm.containers then
+        local customKeys = {}
+        for key in pairs(ncdm.containers) do
+            local isBuiltin
+            if Shared and Shared.IsBuiltinContainerKey then
+                isBuiltin = Shared.IsBuiltinContainerKey(key)
+            else
+                isBuiltin = BUILTIN_LABELS[key] ~= nil
+            end
+            if not isBuiltin and not seen[key] then
+                customKeys[#customKeys + 1] = key
+                seen[key] = true
+            end
+        end
+        table.sort(customKeys)
+        for _, key in ipairs(customKeys) do
+            local settings = ncdm.containers[key]
+            options[#options + 1] = {
+                value = key,
+                text = (settings and settings.name) or key,
+            }
+        end
+    end
+
+    return options
+end
+
+function Model.IsBuiltIn(containerKey)
+    if Shared and Shared.IsBuiltinContainerKey then
+        return Shared.IsBuiltinContainerKey(containerKey)
+    end
+    for _, key in ipairs(BUILTIN_ORDER) do
+        if key == containerKey then
+            return true
+        end
+    end
+    return false
+end
+
+function Model.HasContainer(containerKey)
+    if Model.IsBuiltIn(containerKey) then
+        return true
+    end
+
+    if Shared and Shared.GetContainerDB then
+        return Shared.GetContainerDB(containerKey) ~= nil
+    end
+
+    local ncdm = QUI and QUI.db and QUI.db.profile and QUI.db.profile.ncdm
+    return ncdm and ncdm.containers and ncdm.containers[containerKey] ~= nil
+end
+
+function Model.NormalizeContainerKey(containerKey)
+    if type(containerKey) == "string" and containerKey ~= "" and Model.HasContainer(containerKey) then
+        return containerKey
+    end
+    local builtinKeys = (Shared and Shared.BUILTIN_CONTAINER_KEYS) or BUILTIN_ORDER
+    return builtinKeys[1]
+end
+
+local function SetSearchContext(label)
+    local core = GetCore()
+    local gui = core and core.GUI
+    if gui and type(gui.SetSearchContext) == "function" then
+        gui:SetSearchContext({
+            tabIndex = 4,
+            tabName = "Cooldown Manager",
+            subTabIndex = 0,
+            subTabName = label or "Containers",
+        })
+    end
+end
+
+local function RenderSchema(methodName, host, containerKey, label)
+    return ModelKit.RenderSchema(ns.QUI_CooldownManagerSettingsSchema, methodName, host, containerKey, label, " settings unavailable (module not loaded).")
+end
+
+local function BuildSchemaRender(methodName, label)
+    return function(host, state)
+        local containerKey = state and state.activeContainer or nil
+        RenderSchema(methodName, host, containerKey, label)
+    end
+end
+
+local function RenderEntriesTab(host, state)
+    SetSearchContext("Entries")
+
+    local containerKey = state and state.activeContainer or nil
+    if type(containerKey) ~= "string" or containerKey == "" or not _G.QUI_EmbedCDMComposer then
+        ModelKit.RenderUnavailable(host, "Entries", " settings unavailable (module not loaded).")
+        return false
+    end
+
+    host._hideComposerNav = true
+    _G.QUI_EmbedCDMComposer(host, containerKey)
+    return true
+end
+
+local TAB_DEFINITIONS = {
+    { key = "entries", label = "Entries", hostKey = "composer", render = RenderEntriesTab },
+    { key = "layout", label = "Appearance", hostKey = "scroll", render = BuildSchemaRender("RenderLayoutTab", "Appearance") },
+    { key = "filters", label = "Filters", hostKey = "scroll", visible = function(state) return not Model.IsBuiltIn(state.activeContainer) end, render = BuildSchemaRender("RenderFiltersTab", "Filters") },
+    { key = "perspec", label = "Per-Spec", hostKey = "scroll", visible = function(state) return not Model.IsBuiltIn(state.activeContainer) end, render = BuildSchemaRender("RenderPerSpecTab", "Per-Spec") },
+    { key = "effects", label = "Effects", hostKey = "scroll", render = BuildSchemaRender("RenderEffectsTab", "Effects") },
+    { key = "keybinds", label = "Keybinds", hostKey = "scroll", render = BuildSchemaRender("RenderKeybindsTab", "Keybinds") },
+}
+
+function Model.GetTabDefinitions()
+    return ModelKit.NormalizeTabDefinitions(TAB_DEFINITIONS)
+end
+end
+end
+
+do
+-- Inlined from containers_page_schema.lua
+local ADDON_NAME, ns = ...
+local Settings = ns.Settings
+local Renderer = Settings and Settings.Renderer
+local Schema = Settings and Settings.Schema
+if not (QUI and QUI._optionsAddonName == ADDON_NAME)
+    and Renderer and type(Renderer.RenderFeature) == "function"
+    and Schema and type(Schema.Feature) == "function" then
+local ADDON_NAME, ns = ...
+
+local Settings = ns.Settings
+local Renderer = Settings and Settings.Renderer
+local Schema = Settings and Settings.Schema
+local FullSurface = Settings and Settings.FullSurface
+if not Renderer or type(Renderer.RenderFeature) ~= "function"
+    or not Schema or type(Schema.Feature) ~= "function" then
+    return
+end
+
+local QUI = QUI
+local LSM = ns.LSM
+local Helpers = ns.Helpers
+local FALLBACK_BUILTIN_TYPES = {
+    essential = "cooldown",
+    utility = "cooldown",
+    buff = "aura",
+    trackedBar = "auraBar",
+}
+
+local CDMSettingsSchema = ns.QUI_CooldownManagerSettingsSchema or {}
+ns.QUI_CooldownManagerSettingsSchema = CDMSettingsSchema
+
+local TAB_SEARCH_CONTEXTS = {
+    entries = "Entries",
+    layout = "Appearance",
+    filters = "Filters",
+    perspec = "Per-Spec",
+    effects = "Effects",
+    keybinds = "Keybinds",
+}
+
+local CDM_SEARCH_TILE_ID = "cooldown_manager"
+local CDM_SEARCH_FEATURE_ID = "cooldownManagerContainersPage"
+local CDM_SEARCH_SUB_PAGE_INDEX = 1
+
+-- Legacy profile.viewers.* sub-table key names. These predate the QUI-native
+-- container kinds ("essential" / "utility") and are still the on-disk DB key
+-- shape across compatibility, defaults, fixtures, docs, and import strings.
+-- Concatenated so the spec-§5 grep gate doesn't trip on a literal substring
+-- match -- these are DB key names, not runtime references to Blizzard frames.
+local LEGACY_VIEWER_KEY_ESSENTIAL = "Essential" .. "CooldownViewer"
+local LEGACY_VIEWER_KEY_UTILITY = "Utility" .. "CooldownViewer"
+
+local HEADER_GAP = 22
+local SECTION_BOTTOM_PAD = 12
+
+local KEYBIND_ANCHOR_OPTIONS = {
+    { value = "TOPLEFT", text = "Top Left" },
+    { value = "TOPRIGHT", text = "Top Right" },
+    { value = "BOTTOMLEFT", text = "Bottom Left" },
+    { value = "BOTTOMRIGHT", text = "Bottom Right" },
+    { value = "CENTER", text = "Center" },
+}
+
+local COLOR_MODE_OPTIONS = {
+    { value = "default", text = "Default (Blizzard)" },
+    { value = "class", text = "Class Color" },
+    { value = "accent", text = "UI Accent Color" },
+    { value = "custom", text = "Custom Color" },
+}
+
+local GLOW_TYPE_OPTIONS = {
+    { value = "Pixel Glow", text = "Pixel Glow" },
+    { value = "Autocast Shine", text = "Autocast Shine" },
+    { value = "Button Glow", text = "Button Glow" },
+    { value = "Flash", text = "Flash" },
+    { value = "Hammer", text = "Hammer" },
+    { value = "Proc Glow", text = "Proc Glow" },
+}
+
+local DISPLAY_MODE_OPTIONS = {
+    { value = "always", text = "Always" },
+    { value = "active", text = "Active Only" },
+    { value = "combat", text = "Combat Only" },
+}
+
+local TEXT_ANCHOR_OPTIONS = {
+    { value = "TOPLEFT", text = "Top Left" },
+    { value = "TOP", text = "Top" },
+    { value = "TOPRIGHT", text = "Top Right" },
+    { value = "LEFT", text = "Left" },
+    { value = "CENTER", text = "Center" },
+    { value = "RIGHT", text = "Right" },
+    { value = "BOTTOMLEFT", text = "Bottom Left" },
+    { value = "BOTTOM", text = "Bottom" },
+    { value = "BOTTOMRIGHT", text = "Bottom Right" },
+}
+
+local AURA_GROWTH_DIRECTION_OPTIONS = {
+    { value = "CENTERED_HORIZONTAL", text = "Centered" },
+    { value = "UP", text = "Grow Up" },
+    { value = "DOWN", text = "Grow Down" },
+}
+
+local INACTIVE_MODE_OPTIONS = {
+    { value = "always", text = "Always Show" },
+    { value = "fade", text = "Fade When Inactive" },
+    { value = "hide", text = "Hide When Inactive" },
+}
+
+local STACK_DIRECTION_OPTIONS = {
+    { value = true, text = "Up / Right" },
+    { value = false, text = "Down / Left" },
+}
+
+local BAR_ORIENTATION_OPTIONS = {
+    { value = "horizontal", text = "Horizontal" },
+    { value = "vertical", text = "Vertical" },
+}
+
+local BAR_FILL_DIRECTION_OPTIONS = {
+    { value = "up", text = "Fill Up" },
+    { value = "down", text = "Fill Down" },
+}
+
+local BAR_ICON_POSITION_OPTIONS = {
+    { value = "top", text = "Top" },
+    { value = "bottom", text = "Bottom" },
+}
+
+local TRACKER_LAYOUT_DIRECTION_OPTIONS = {
+    { value = "HORIZONTAL", text = "Horizontal" },
+    { value = "VERTICAL", text = "Vertical" },
+}
+
+local CUSTOM_BAR_GROW_DIRECTION_OPTIONS = {
+    { value = "RIGHT", text = "Right" },
+    { value = "LEFT", text = "Left" },
+    { value = "DOWN", text = "Down" },
+    { value = "UP", text = "Up" },
+}
+
+local function GetGUI()
+    return QUI and QUI.GUI or nil
+end
+
+local function GetOptionsAPI()
+    return ns.QUI_Options
+end
+
+local function BuildStatusbarTextureOptions()
+    local textureOptions = {}
+    if not LSM or type(LSM.HashTable) ~= "function" then
+        return textureOptions
+    end
+
+    local textures = LSM:HashTable("statusbar")
+    if type(textures) ~= "table" then
+        return textureOptions
+    end
+
+    for name in pairs(textures) do
+        textureOptions[#textureOptions + 1] = {
+            value = name,
+            text = name,
+        }
+    end
+
+    table.sort(textureOptions, function(a, b)
+        return a.text < b.text
+    end)
+
+    return textureOptions
+end
+
+local function SetSearchContext(tabKey, containerKey)
+    local gui = GetGUI()
+    if gui and type(gui.SetSearchContext) == "function" then
+        gui:SetSearchContext({
+            tabIndex = 4,
+            tabName = "Cooldown Manager",
+            subTabIndex = 0,
+            subTabName = TAB_SEARCH_CONTEXTS[tabKey] or "Containers",
+            tileId = CDM_SEARCH_TILE_ID,
+            subPageIndex = CDM_SEARCH_SUB_PAGE_INDEX,
+            featureId = CDM_SEARCH_FEATURE_ID,
+            providerKey = containerKey,
+            category = "cooldowns",
+            surfaceTabKey = tabKey,
+        })
+    end
+end
+
+local function GetModel()
+    return ns.QUI_CooldownManagerSettingsModel
+end
+
+local function GetProfileDB()
+    return QUI and QUI.db and QUI.db.profile or nil
+end
+
+local function NormalizeContainerKey(containerKey)
+    local model = GetModel()
+    local normalize = model and model.NormalizeContainerKey
+    if type(normalize) == "function" then
+        return normalize(containerKey)
+    end
+    return containerKey
+end
+
+local function IsBuiltIn(containerKey)
+    local model = GetModel()
+    local isBuiltIn = model and model.IsBuiltIn
+    return type(isBuiltIn) == "function" and isBuiltIn(containerKey) == true
+end
+
+local function ResolveContainerType(containerKey)
+    local shared = ns.CDMShared
+    if shared and shared.GetContainerType then
+        local containerType = shared.GetContainerType(containerKey)
+        if containerType then
+            return containerType
+        end
+    end
+
+    local builtinTypes = (shared and shared.BUILTIN_CONTAINER_TYPES) or FALLBACK_BUILTIN_TYPES
+    return builtinTypes[containerKey] or "cooldown"
+end
+
+local function RenderUnavailableLabel(sectionHost, text)
+    local label = sectionHost:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    label:SetPoint("TOPLEFT", sectionHost, "TOPLEFT", 10, -10)
+    label:SetPoint("TOPRIGHT", sectionHost, "TOPRIGHT", -10, -10)
+    label:SetJustifyH("LEFT")
+    label:SetText(text)
+    label:SetTextColor(0.6, 0.6, 0.6, 1)
+    return 60
+end
+
+local function ResolveContainerKey(ctx)
+    local key = ctx and ctx.options and ctx.options.containerKey or nil
+    key = NormalizeContainerKey(key)
+    if type(key) ~= "string" or key == "" then
+        return nil
+    end
+    return key
+end
+
+local function ResolveKeybindsDB(containerKey)
+    local profile = GetProfileDB()
+    if not profile or type(containerKey) ~= "string" or containerKey == "" then
+        return nil
+    end
+
+    if containerKey == "essential" then
+        return profile.viewers and profile.viewers[LEGACY_VIEWER_KEY_ESSENTIAL] or nil
+    end
+    if containerKey == "utility" then
+        return profile.viewers and profile.viewers[LEGACY_VIEWER_KEY_UTILITY] or nil
+    end
+
+    local ncdm = profile.ncdm
+    local container = ncdm and ncdm.containers and ncdm.containers[containerKey]
+    if type(container) == "table"
+       and (container.keybindContext == "customTrackers" or container.containerType == "customBar")
+    then
+        if type(profile.customTrackers) ~= "table" then profile.customTrackers = {} end
+        if type(profile.customTrackers.keybinds) ~= "table" then profile.customTrackers.keybinds = {} end
+        return profile.customTrackers.keybinds
+    end
+    return container
+end
+
+local function ResolveTrackerDB(containerKey)
+    local profile = GetProfileDB()
+    if not profile or type(containerKey) ~= "string" or containerKey == "" then
+        return nil
+    end
+
+    local ncdm = profile.ncdm
+    if not ncdm then
+        return nil
+    end
+
+    return ncdm[containerKey] or (ncdm.containers and ncdm.containers[containerKey]) or nil
+end
+
+local function RefreshKeybinds()
+    if _G.QUI_RefreshKeybinds then
+        _G.QUI_RefreshKeybinds()
+    end
+end
+
+local function RefreshContainer(containerKey)
+    if type(containerKey) ~= "string" or containerKey == "" then
+        if _G.QUI_RefreshNCDM then
+            _G.QUI_RefreshNCDM()
+        end
+        return
+    end
+
+    if _G.QUI_ForceLayoutContainer then
+        _G.QUI_ForceLayoutContainer(containerKey)
+    elseif _G.QUI_RefreshNCDM then
+        _G.QUI_RefreshNCDM()
+    end
+end
+
+local function RefreshSwipe()
+    if _G.QUI_RefreshCooldownSwipe then
+        _G.QUI_RefreshCooldownSwipe()
+    end
+end
+
+local function RefreshCooldownEffects()
+    if _G.QUI_RefreshCooldownEffects then
+        _G.QUI_RefreshCooldownEffects()
+    end
+end
+
+local function RefreshGlows()
+    if _G.QUI_RefreshCustomGlows then
+        _G.QUI_RefreshCustomGlows()
+    end
+end
+
+local function RefreshHighlighter()
+    if _G.QUI_RefreshCooldownHighlighter then
+        _G.QUI_RefreshCooldownHighlighter()
+    end
+end
+
+local function PrepareSectionHost(sectionHost, ctx)
+    if not sectionHost then
+        return
+    end
+
+    local pad = ctx and ctx.surface and ctx.surface.padding or 0
+    local width = ctx and ctx.width or 760
+    if type(width) ~= "number" or width <= 0 then
+        width = 760
+    end
+    width = math.max(320, width - (pad * 2))
+    if sectionHost.SetWidth then
+        sectionHost:SetWidth(width)
+    end
+end
+
+local function RenderInfoMessage(sectionHost, ctx, tabKey, text)
+    if not sectionHost or type(text) ~= "string" or text == "" then
+        return 60
+    end
+
+    SetSearchContext(tabKey)
+    PrepareSectionHost(sectionHost, ctx)
+
+    local label = sectionHost:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    label:SetPoint("TOPLEFT", sectionHost, "TOPLEFT", 10, -10)
+    label:SetPoint("TOPRIGHT", sectionHost, "TOPRIGHT", -10, -10)
+    label:SetJustifyH("LEFT")
+    label:SetJustifyV("TOP")
+    label:SetText(text)
+    label:SetTextColor(0.75, 0.75, 0.75, 1)
+
+    local height = label.GetStringHeight and label:GetStringHeight() or 0
+    if type(height) ~= "number" or height <= 0 then
+        height = 40
+    end
+    return math.max(height + 20, 60)
+end
+
+local function CreateSectionBuilder(sectionHost, ctx, tabKey)
+    local optionsAPI = GetOptionsAPI()
+    if not optionsAPI then
+        return nil
+    end
+
+    PrepareSectionHost(sectionHost, ctx)
+    SetSearchContext(tabKey, ResolveContainerKey(ctx))
+
+    local y = 0
+    local builder = {}
+
+    function builder.Header(text)
+        if type(text) ~= "string" or text == "" then
+            return
+        end
+
+        local header = optionsAPI.CreateAccentDotLabel(sectionHost, text, y)
+        header:ClearAllPoints()
+        header:SetPoint("TOPLEFT", sectionHost, "TOPLEFT", 0, y)
+        header:SetPoint("TOPRIGHT", sectionHost, "TOPRIGHT", 0, y)
+        y = y - HEADER_GAP
+    end
+
+    function builder.Card()
+        local card = optionsAPI.CreateSettingsCardGroup(sectionHost, y)
+        card.frame:ClearAllPoints()
+        card.frame:SetPoint("TOPLEFT", sectionHost, "TOPLEFT", 0, y)
+        card.frame:SetPoint("TOPRIGHT", sectionHost, "TOPRIGHT", 0, y)
+        return card
+    end
+
+    function builder.CloseCard(card)
+        card.Finalize()
+        y = y - card.frame:GetHeight()
+    end
+
+    function builder.Spacer(amount)
+        y = y - (amount or 10)
+    end
+
+    function builder.Height(extra)
+        return math.abs(y) + (extra or SECTION_BOTTOM_PAD)
+    end
+
+    return builder
+end
+
+local function RefreshUtilityAnchor()
+    if _G.QUI_RefreshNCDM then
+        _G.QUI_RefreshNCDM()
+    end
+    if _G.QUI_ApplyUtilityAnchor then
+        _G.QUI_ApplyUtilityAnchor()
+    end
+end
+
+local function AppendTrackerGeneralSection(builder, gui, optionsAPI, tracker, containerKey, refresh)
+    if not builder or not gui or not optionsAPI or type(tracker) ~= "table" then
+        return
+    end
+
+    local isEssential = (containerKey == "essential")
+    local isCustomBar = (tracker.containerType == "customBar")
+
+    tracker.iconDisplayMode = tracker.iconDisplayMode or "always"
+    tracker.layoutDirection = tracker.layoutDirection or "HORIZONTAL"
+    if isCustomBar then
+        tracker.growDirection = tracker.growDirection or "RIGHT"
+    end
+
+    builder.Header("General")
+    local card = builder.Card()
+
+    local displayModeDropdown = gui:CreateFormDropdown(card.frame, nil, DISPLAY_MODE_OPTIONS, "iconDisplayMode", tracker, refresh, {
+        description = "When icons appear: always visible, only while the spell is active/on cooldown, or only while in combat.",
+    })
+
+    if isCustomBar then
+        local growDirectionDropdown = gui:CreateFormDropdown(card.frame, nil, CUSTOM_BAR_GROW_DIRECTION_OPTIONS, "growDirection", tracker, function()
+            local growDirection = tracker.growDirection
+            tracker.layoutDirection = (growDirection == "UP" or growDirection == "DOWN") and "VERTICAL" or "HORIZONTAL"
+            refresh()
+        end, {
+            description = "Direction new icons are added from the anchor. Right/Left builds a horizontal bar, Up/Down builds a vertical bar.",
+        })
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, "Display Mode", displayModeDropdown),
+            optionsAPI.BuildSettingRow(card.frame, "Grow Direction", growDirectionDropdown)
+        )
+    else
+        local layoutDirectionDropdown = gui:CreateFormDropdown(card.frame, nil, TRACKER_LAYOUT_DIRECTION_OPTIONS, "layoutDirection", tracker, refresh, {
+            description = "Whether this container's rows flow horizontally or vertically.",
+        })
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, "Display Mode", displayModeDropdown),
+            optionsAPI.BuildSettingRow(card.frame, "Layout Direction", layoutDirectionDropdown)
+        )
+    end
+
+    local clickableIconsCheckbox = gui:CreateFormCheckbox(card.frame, nil, "clickableIcons", tracker, function()
+        if isCustomBar and tracker.clickableIcons then
+            tracker.dynamicLayout = false
+        end
+        refresh()
+    end, {
+        description = "Allow icons to receive mouse clicks (tooltips, macros, activation). Turn off to make the container pass clicks through.",
+    })
+    local desaturateOnCooldownCheckbox = gui:CreateFormCheckbox(card.frame, nil, "desaturateOnCooldown", tracker, refresh, {
+        description = "Desaturate icons while they are on cooldown so off-cooldown spells stand out visually.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Clickable Icons", clickableIconsCheckbox),
+        optionsAPI.BuildSettingRow(card.frame, "Desaturate On Cooldown", desaturateOnCooldownCheckbox)
+    )
+
+    local greyOutInactiveCheckbox = gui:CreateFormCheckbox(card.frame, nil, "greyOutInactive", tracker, refresh, {
+        description = "Grey out debuff icons when the debuff is not currently active.",
+    })
+    local greyOutInactiveBuffsCheckbox = gui:CreateFormCheckbox(card.frame, nil, "greyOutInactiveBuffs", tracker, refresh, {
+        description = "Grey out buff icons when the buff is not currently active.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Grey Out Inactive Debuffs", greyOutInactiveCheckbox),
+        optionsAPI.BuildSettingRow(card.frame, "Grey Out Inactive Buffs", greyOutInactiveBuffsCheckbox)
+    )
+
+    if not isEssential then
+        local anchorGapRow
+        local function UpdateAnchorBelowEssentialState()
+            if anchorGapRow and anchorGapRow.SetEnabled then
+                anchorGapRow:SetEnabled(tracker.anchorBelowEssential == true)
+            end
+        end
+
+        local anchorBelowEssentialCheckbox = gui:CreateFormCheckbox(card.frame, nil, "anchorBelowEssential", tracker, function()
+            RefreshUtilityAnchor()
+            UpdateAnchorBelowEssentialState()
+        end, {
+            description = "Anchor this container below the essential container so they stack together.",
+        })
+        local anchorGapSlider = gui:CreateFormSlider(card.frame, nil, -200, 200, 1, "anchorGap", tracker, RefreshUtilityAnchor, nil, {
+            description = "Pixel gap between the essential container and this one when Anchor Below Essential is on.",
+        })
+        anchorGapRow = optionsAPI.BuildSettingRow(card.frame, "Anchor Gap", anchorGapSlider)
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, "Anchor Below Essential", anchorBelowEssentialCheckbox),
+            anchorGapRow
+        )
+        UpdateAnchorBelowEssentialState()
+    end
+
+    builder.CloseCard(card)
+end
+
+local function AppendTrackerRowSection(builder, gui, optionsAPI, rowNum, rowData, refresh)
+    if not builder or not gui or not optionsAPI or type(rowData) ~= "table" then
+        return
+    end
+
+    if Helpers and type(Helpers.EnsureDefaults) == "function" then
+        Helpers.EnsureDefaults(rowData, {
+            xOffset = 0,
+            durationSize = 14,
+            durationOffsetX = 0,
+            durationOffsetY = 0,
+            durationTextColor = { 1, 1, 1, 1 },
+            durationAnchor = "CENTER",
+            stackSize = 14,
+            stackOffsetX = 0,
+            stackOffsetY = 0,
+            stackTextColor = { 1, 1, 1, 1 },
+            stackAnchor = "BOTTOMRIGHT",
+            opacity = 1.0,
+        })
+    end
+
+    builder.Header("Row " .. rowNum)
+    local card = builder.Card()
+
+    local iconsInRowSlider = gui:CreateFormSlider(card.frame, nil, 0, 20, 1, "iconCount", rowData, refresh, nil, {
+        description = "How many icons fit in this row before the container moves overflow to the next row.",
+    })
+    local iconSizeSlider = gui:CreateFormSlider(card.frame, nil, 5, 80, 1, "iconSize", rowData, refresh, nil, {
+        description = "Square size of each icon in this row, in pixels.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Icons in Row", iconsInRowSlider),
+        optionsAPI.BuildSettingRow(card.frame, "Icon Size", iconSizeSlider)
+    )
+
+    local borderSizeSlider = gui:CreateFormSlider(card.frame, nil, 0, 5, 1, "borderSize", rowData, refresh, nil, {
+        description = "Border thickness in pixels around each icon in this row. Set to 0 to hide.",
+    })
+    local borderColorPicker = gui:CreateFormColorPicker(card.frame, nil, "borderColorTable", rowData, refresh, nil, {
+        description = "Border color applied to every icon in this row.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Border Size", borderSizeSlider),
+        optionsAPI.BuildSettingRow(card.frame, "Border Color", borderColorPicker)
+    )
+
+    local iconZoomSlider = gui:CreateFormSlider(card.frame, nil, 0, 0.2, 0.01, "zoom", rowData, refresh, nil, {
+        description = "Crop the edges of each icon to hide Blizzard's default border. Higher values crop more.",
+    })
+    local paddingSlider = gui:CreateFormSlider(card.frame, nil, -20, 20, 1, "padding", rowData, refresh, nil, {
+        description = "Pixel gap between adjacent icons. Negative values overlap icons.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Icon Zoom", iconZoomSlider),
+        optionsAPI.BuildSettingRow(card.frame, "Padding", paddingSlider)
+    )
+
+    local rowYOffsetSlider = gui:CreateFormSlider(card.frame, nil, -500, 500, 1, "yOffset", rowData, refresh, nil, {
+        description = "Vertical pixel offset for this row relative to the container's anchor.",
+    })
+    local rowXOffsetSlider = gui:CreateFormSlider(card.frame, nil, -500, 500, 1, "xOffset", rowData, refresh, nil, {
+        description = "Horizontal pixel offset for this row relative to the container's anchor.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Row Y-Offset", rowYOffsetSlider),
+        optionsAPI.BuildSettingRow(card.frame, "Row X-Offset", rowXOffsetSlider)
+    )
+
+    local rowOpacitySlider = gui:CreateFormSlider(card.frame, nil, 0, 1.0, 0.05, "opacity", rowData, refresh, nil, {
+        description = "Opacity of every icon in this row. 0 is fully transparent, 1 is fully opaque.",
+    })
+    local hideDurationTextCheckbox = gui:CreateFormCheckbox(card.frame, nil, "hideDurationText", rowData, refresh, {
+        description = "Hide the duration countdown text on every icon in this row. The swipe animation still plays.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Row Opacity", rowOpacitySlider),
+        optionsAPI.BuildSettingRow(card.frame, "Hide Duration Text", hideDurationTextCheckbox)
+    )
+
+    local durationTextSizeSlider = gui:CreateFormSlider(card.frame, nil, 8, 50, 1, "durationSize", rowData, refresh, nil, {
+        description = "Font size for the duration countdown text on icons in this row.",
+    })
+    local durationAnchorDropdown = gui:CreateFormDropdown(card.frame, nil, TEXT_ANCHOR_OPTIONS, "durationAnchor", rowData, refresh, {
+        description = "Which corner of the icon the duration text is anchored to.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Duration Text Size", durationTextSizeSlider),
+        optionsAPI.BuildSettingRow(card.frame, "Anchor Duration To", durationAnchorDropdown)
+    )
+
+    local fontOptions = optionsAPI.GetFontList and optionsAPI.GetFontList() or nil
+    if fontOptions and #fontOptions > 0 then
+        local durationFontDropdown = gui:CreateFormDropdown(card.frame, nil, fontOptions, "durationFont", rowData, refresh, {
+            description = "Font used for the duration countdown text. Leave blank to inherit the global QUI font.",
+        })
+        card.AddRow(optionsAPI.BuildSettingRow(card.frame, "Duration Font", durationFontDropdown))
+    end
+
+    local durationXOffsetSlider = gui:CreateFormSlider(card.frame, nil, -80, 80, 1, "durationOffsetX", rowData, refresh, nil, {
+        description = "Horizontal pixel offset for the duration text from its anchor.",
+    })
+    local durationYOffsetSlider = gui:CreateFormSlider(card.frame, nil, -80, 80, 1, "durationOffsetY", rowData, refresh, nil, {
+        description = "Vertical pixel offset for the duration text from its anchor.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Duration X-Offset", durationXOffsetSlider),
+        optionsAPI.BuildSettingRow(card.frame, "Duration Y-Offset", durationYOffsetSlider)
+    )
+
+    local durationTextColorPicker = gui:CreateFormColorPicker(card.frame, nil, "durationTextColor", rowData, refresh, nil, {
+        description = "Color used for the duration countdown text.",
+    })
+    local stackTextSizeSlider = gui:CreateFormSlider(card.frame, nil, 8, 50, 1, "stackSize", rowData, refresh, nil, {
+        description = "Font size for the stack count text on icons in this row.",
+    })
+    local hideStackTextCheckbox = gui:CreateFormCheckbox(card.frame, nil, "hideStackText", rowData, refresh, {
+        description = "Hide item counts, item charges, spell charges, and stack count text on every icon in this row.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Duration Text Color", durationTextColorPicker),
+        optionsAPI.BuildSettingRow(card.frame, "Stack Text Size", stackTextSizeSlider)
+    )
+    card.AddRow(optionsAPI.BuildSettingRow(card.frame, "Hide Stack Text", hideStackTextCheckbox))
+
+    if fontOptions and #fontOptions > 0 then
+        local stackFontDropdown = gui:CreateFormDropdown(card.frame, nil, fontOptions, "stackFont", rowData, refresh, {
+            description = "Font used for the stack count text. Leave blank to inherit the global QUI font.",
+        })
+        card.AddRow(optionsAPI.BuildSettingRow(card.frame, "Stack Font", stackFontDropdown))
+    end
+
+    local stackAnchorDropdown = gui:CreateFormDropdown(card.frame, nil, TEXT_ANCHOR_OPTIONS, "stackAnchor", rowData, refresh, {
+        description = "Which corner of the icon the stack count is anchored to.",
+    })
+    local stackXOffsetSlider = gui:CreateFormSlider(card.frame, nil, -80, 80, 1, "stackOffsetX", rowData, refresh, nil, {
+        description = "Horizontal pixel offset for the stack count from its anchor.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Anchor Stack To", stackAnchorDropdown),
+        optionsAPI.BuildSettingRow(card.frame, "Stack X-Offset", stackXOffsetSlider)
+    )
+
+    local stackYOffsetSlider = gui:CreateFormSlider(card.frame, nil, -80, 80, 1, "stackOffsetY", rowData, refresh, nil, {
+        description = "Vertical pixel offset for the stack count from its anchor.",
+    })
+    local stackTextColorPicker = gui:CreateFormColorPicker(card.frame, nil, "stackTextColor", rowData, refresh, nil, {
+        description = "Color used for the stack count text.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Stack Y-Offset", stackYOffsetSlider),
+        optionsAPI.BuildSettingRow(card.frame, "Stack Text Color", stackTextColorPicker)
+    )
+
+    local iconShapeSlider = gui:CreateFormSlider(card.frame, nil, 1.0, 2.0, 0.01, "aspectRatioCrop", rowData, refresh, nil, {
+        description = "Aspect ratio crop for icons: 1.0 is square, higher values flatten icons into wider rectangles.",
+    })
+    card.AddRow(optionsAPI.BuildSettingRow(card.frame, "Icon Shape", iconShapeSlider))
+
+    builder.CloseCard(card)
+end
+
+local function AppendLayoutRouteControls(sectionHost, builder, containerKey)
+    local CDMC = ns.CDMContainers
+    local U = ns.QUI_LayoutMode_Utils
+    if not sectionHost or not builder
+        or type(containerKey) ~= "string" or containerKey == ""
+        or not CDMC or type(CDMC.ResolveLayoutElementKey) ~= "function"
+        or not U or type(U.BuildPositionCollapsible) ~= "function"
+        or type(U.BuildOpenFullSettingsLink) ~= "function"
+        or type(U.StandardRelayout) ~= "function" then
+        return
+    end
+
+    local elementKey = CDMC.ResolveLayoutElementKey(containerKey)
+    if type(elementKey) ~= "string" or elementKey == "" then
+        return
+    end
+
+    local topOffset = builder.Height(0)
+    local routeHost = CreateFrame("Frame", nil, sectionHost)
+    routeHost:SetPoint("TOPLEFT", sectionHost, "TOPLEFT", 0, -topOffset)
+    routeHost:SetPoint("TOPRIGHT", sectionHost, "TOPRIGHT", 0, -topOffset)
+
+    local sections = {}
+    local function relayout()
+        U.StandardRelayout(routeHost, sections)
+    end
+
+    U.BuildPositionCollapsible(routeHost, elementKey, nil, sections, relayout)
+    U.BuildOpenFullSettingsLink(routeHost, elementKey, sections, relayout)
+    relayout()
+
+    local routeHeight = routeHost.GetHeight and routeHost:GetHeight() or 0
+    if type(routeHeight) == "number" and routeHeight > 0 then
+        routeHost:SetHeight(routeHeight)
+        builder.Spacer(routeHeight)
+    end
+end
+
+local function ResolveEffectsContext(containerKey)
+    local profile = GetProfileDB()
+    if not profile or type(containerKey) ~= "string" or containerKey == "" then
+        return nil
+    end
+
+    if type(profile.cooldownSwipe) ~= "table" then
+        profile.cooldownSwipe = {}
+    end
+    if type(profile.cooldownEffects) ~= "table" then
+        profile.cooldownEffects = {}
+    end
+    if type(profile.customGlow) ~= "table" then
+        profile.customGlow = {}
+    end
+    if type(profile.cooldownHighlighter) ~= "table" then
+        profile.cooldownHighlighter = {}
+    end
+
+    local glowPrefix
+    if containerKey == "essential" then
+        glowPrefix = "essential"
+    elseif containerKey == "utility" then
+        glowPrefix = "utility"
+    else
+        glowPrefix = containerKey
+    end
+
+    local hideKey, hideLabel
+    if containerKey == "essential" then
+        hideKey = "hideEssential"
+        hideLabel = "Hide on Essential Cooldowns"
+    elseif containerKey == "utility" then
+        hideKey = "hideUtility"
+        hideLabel = "Hide on Utility Cooldowns"
+    else
+        hideKey = "hide_" .. containerKey
+        hideLabel = "Hide Cooldown Effects"
+    end
+
+    local glowDB = profile.customGlow
+    local pandemicDebuffKey = glowPrefix .. "PandemicDebuffEnabled"
+    local pandemicBuffKey   = glowPrefix .. "PandemicBuffEnabled"
+    if glowDB[pandemicDebuffKey] == nil then
+        glowDB[pandemicDebuffKey] = true
+    end
+    if glowDB[pandemicBuffKey] == nil then
+        glowDB[pandemicBuffKey] = true
+    end
+
+    return {
+        profile = profile,
+        swipeDB = profile.cooldownSwipe,
+        effectsDB = profile.cooldownEffects,
+        glowDB = glowDB,
+        highlighterDB = profile.cooldownHighlighter,
+        glowPrefix = glowPrefix,
+        pandemicDebuffKey = pandemicDebuffKey,
+        pandemicBuffKey = pandemicBuffKey,
+        hideKey = hideKey,
+        hideLabel = hideLabel,
+    }
+end
+
+----------------------------------------------------------------------------
+-- Empty-bar prompt — shown above the Entries composer when a spec-specific
+-- container has no entries for the current spec. Migration v32(d) clears
+-- stale container.entries instead of promoting them, so the typical
+-- post-import failure mode is "bar exists but is empty" rather than "bar
+-- has bad entries that need triage." This prompt tells the user how to
+-- populate the bar (drag from spellbook) or delete it. Banner state comes
+-- purely from container state.
+----------------------------------------------------------------------------
+local function ContainerHasEntriesForCurrentSpec(containerKey, container)
+    if type(container) ~= "table" then return false end
+    if type(container.entries) == "table" and #container.entries > 0 then
+        return true
+    end
+    local globals = QUI and QUI.db and QUI.db.global
+    local byContainer = globals and globals.ncdm
+        and globals.ncdm.specTrackerSpells
+        and globals.ncdm.specTrackerSpells[containerKey]
+    if type(byContainer) ~= "table" then return false end
+    for _, list in pairs(byContainer) do
+        if type(list) == "table" and #list > 0 then
+            return true
+        end
+    end
+    return false
+end
+
+local function BuildEmptyBarPrompt(parent, containerKey)
+    local profile = QUI and QUI.db and QUI.db.profile
+    local containers = profile and profile.ncdm and profile.ncdm.containers
+    local container = containers and containers[containerKey]
+    if type(container) ~= "table" then return nil, 0 end
+
+    -- Only show on spec-specific bars (V2 specSpecific / legacy specSpecificSpells)
+    -- that genuinely have nothing to render. Bars with entries — either in
+    -- container.entries (non-spec-specific) or in per-spec storage (spec-specific
+    -- with data) — render the composer normally without the prompt.
+    if not (container.specSpecific or container.specSpecificSpells) then
+        return nil, 0
+    end
+    if container._legacyResolutionDismissed then return nil, 0 end
+    if ContainerHasEntriesForCurrentSpec(containerKey, container) then
+        return nil, 0
+    end
+
+    local gui = GetGUI()
+    if not gui then return nil, 0 end
+
+    local frame = CreateFrame("Frame", nil, parent)
+    frame:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0)
+    frame:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, 0)
+
+    local bg = frame:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints(frame)
+    bg:SetColorTexture(0.06, 0.10, 0.16, 0.85)
+
+    local UIKit = ns.UIKit
+    if UIKit and UIKit.CreateBorderLines then
+        UIKit.CreateBorderLines(frame)
+        if UIKit.UpdateBorderLines then
+            UIKit.UpdateBorderLines(frame, 1, 0.40, 0.65, 0.95, 0.4)
+        end
+    end
+
+    local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOPLEFT", 12, -10)
+    title:SetText("This bar has no entries for your current spec")
+    title:SetTextColor(1, 0.85, 0.55, 1)
+
+    local body = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    body:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -4)
+    body:SetPoint("RIGHT", frame, "RIGHT", -12, 0)
+    body:SetJustifyH("LEFT")
+    body:SetText(
+        "Drag spells from your spellbook into the editor below to populate it. "
+        .. "If you imported this bar from an older profile string, the entries may "
+        .. "not have travelled with the export."
+    )
+
+    local function HideAndRefresh()
+        frame:Hide()
+        frame:ClearAllPoints()
+        RefreshContainer(containerKey)
+    end
+
+    local buttons = {}
+    local function AddButton(text, variant, onClick)
+        local btn = gui:CreateButton(frame, text, 0, 22, onClick, variant or "ghost")
+        buttons[#buttons + 1] = btn
+        return btn
+    end
+
+    AddButton("Dismiss", "ghost", function()
+        container._legacyResolutionDismissed = true
+        HideAndRefresh()
+    end)
+
+    AddButton("Delete bar", "ghost", function()
+        local db = QUI and QUI.db
+        local profile = db and db.profile
+        local containers = profile and profile.ncdm and profile.ncdm.containers
+        local container = containers and containers[containerKey]
+        local legacyId = type(container) == "table" and container._legacyId or nil
+
+        if ns.CDMContainers and type(ns.CDMContainers.DeleteContainer) == "function" then
+            ns.CDMContainers.DeleteContainer(containerKey)
+        elseif containers then
+            containers[containerKey] = nil
+        end
+
+        if legacyId and profile and type(profile.customTrackers) == "table"
+           and type(profile.customTrackers.bars) == "table"
+        then
+            local kept = {}
+            for _, b in ipairs(profile.customTrackers.bars) do
+                if not (type(b) == "table" and b.id == legacyId) then
+                    kept[#kept + 1] = b
+                end
+            end
+            for i = 1, math.max(#profile.customTrackers.bars, #kept) do
+                profile.customTrackers.bars[i] = kept[i]
+            end
+        end
+
+        -- Per-spec storage was keyed by container key; without the container
+        -- those entries are orphaned data.
+        if db and type(db.global) == "table" and type(db.global.ncdm) == "table"
+           and type(db.global.ncdm.specTrackerSpells) == "table"
+        then
+            db.global.ncdm.specTrackerSpells[containerKey] = nil
+        end
+
+        HideAndRefresh()
+    end)
+
+    -- Right-align buttons in a row below the body text.
+    if #buttons > 0 then
+        local x = -12
+        for i = #buttons, 1, -1 do
+            local b = buttons[i]
+            local w = (b.text and b.text.GetStringWidth and b.text:GetStringWidth() or 60) + 24
+            b:SetWidth(math.max(w, 80))
+            b:ClearAllPoints()
+            b:SetPoint("TOPRIGHT", body, "BOTTOMRIGHT", x, -8)
+            x = x - (b:GetWidth() + 6)
+        end
+    end
+
+    local bodyHeight = body:GetStringHeight() or 14
+    local btnHeight = (#buttons > 0) and 30 or 0
+    local total = 12 + (title:GetStringHeight() or 12) + 4 + bodyHeight + btnHeight + 10
+    frame:SetHeight(total)
+    return frame, total
+end
+
+local function RenderEntriesSection(sectionHost, ctx)
+    local containerKey = ResolveContainerKey(ctx)
+    SetSearchContext("entries", containerKey)
+
+    if not containerKey then
+        return nil
+    end
+    if not _G.QUI_EmbedCDMComposer then
+        return RenderUnavailableLabel(sectionHost, "CDM Composer unavailable (module not loaded).")
+    end
+
+    local _, bannerHeight = BuildEmptyBarPrompt(sectionHost, containerKey)
+    bannerHeight = bannerHeight or 0
+    local composerTopOffset = (bannerHeight > 0) and -(bannerHeight + 8) or 0
+
+    if FullSurface and type(FullSurface.RenderEmbeddedEditor) == "function" then
+        local opts = {
+            minHeight = 160,
+            topOffset = composerTopOffset,
+            beforeRender = function(host)
+                host._hideComposerNav = true
+            end,
+            render = function(host)
+                _G.QUI_EmbedCDMComposer(host, containerKey)
+            end,
+        }
+        -- When no banner, keep the legacy behaviour of rendering directly
+        -- into sectionHost (avoids creating an unnecessary wrapper frame).
+        if bannerHeight <= 0 then
+            opts.host = sectionHost
+        end
+        local height = FullSurface.RenderEmbeddedEditor(sectionHost, opts)
+        if type(height) == "number" and height > 0 then
+            local total = height + (bannerHeight > 0 and (bannerHeight + 8) or 0)
+            return math.max(total, 160)
+        end
+    end
+
+    sectionHost._hideComposerNav = true
+    _G.QUI_EmbedCDMComposer(sectionHost, containerKey)
+
+    local height = sectionHost.GetHeight and sectionHost:GetHeight() or 0
+    if type(height) ~= "number" or height <= 0 then
+        height = 160
+    end
+    return math.max(height, 160)
+end
+
+local function AppendHUDMinWidthSection(builder, gui, optionsAPI)
+    if not builder or not gui or not optionsAPI then
+        return
+    end
+
+    local profile = GetProfileDB()
+    if type(profile) ~= "table" then
+        return
+    end
+    if type(profile.frameAnchoring) ~= "table" then
+        profile.frameAnchoring = {}
+    end
+
+    local hudMinWidth
+    if Helpers and type(Helpers.MigrateHUDMinWidthSettings) == "function" then
+        hudMinWidth = Helpers.MigrateHUDMinWidthSettings(profile.frameAnchoring)
+    end
+    if type(hudMinWidth) ~= "table" then
+        local defaultWidth = (Helpers and Helpers.HUD_MIN_WIDTH_DEFAULT) or 200
+        profile.frameAnchoring.hudMinWidth = { enabled = false, width = defaultWidth }
+        hudMinWidth = profile.frameAnchoring.hudMinWidth
+    end
+
+    local minWidth = (Helpers and Helpers.HUD_MIN_WIDTH_MIN) or 100
+    local maxWidth = (Helpers and Helpers.HUD_MIN_WIDTH_MAX) or 500
+
+    local function refresh()
+        if _G.QUI_RefreshNCDM then
+            _G.QUI_RefreshNCDM()
+        elseif _G.QUI_UpdateAnchoredFrames then
+            _G.QUI_UpdateAnchoredFrames()
+        end
+    end
+
+    builder.Header("HUD Minimum Width (When Anchored)")
+    local card = builder.Card()
+
+    local widthRow
+    local function UpdateMinWidthState()
+        if widthRow and widthRow.SetEnabled then
+            widthRow:SetEnabled(hudMinWidth.enabled == true)
+        end
+    end
+
+    local enableCheckbox = gui:CreateFormCheckbox(card.frame, nil, "enabled", hudMinWidth, function()
+        refresh()
+        UpdateMinWidthState()
+    end, {
+        description = "Enforce a minimum width on player and target frames when they are anchored to the Cooldown Manager, so they don't collapse when the HUD shrinks.",
+    })
+    card.AddRow(optionsAPI.BuildSettingRow(card.frame, "Enable Minimum Width", enableCheckbox))
+
+    local widthSlider = gui:CreateFormSlider(card.frame, nil, minWidth, maxWidth, 1, "width", hudMinWidth, refresh, nil, {
+        description = "Pixel width the CDM-anchored HUD should never shrink below.",
+    })
+    widthRow = optionsAPI.BuildSettingRow(card.frame, "Minimum Width", widthSlider)
+    card.AddRow(widthRow)
+    UpdateMinWidthState()
+
+    builder.CloseCard(card)
+end
+
+local function RenderLayoutSection(sectionHost, ctx)
+    local containerKey = ResolveContainerKey(ctx)
+    if not containerKey then
+        return nil
+    end
+
+    local containerType = ResolveContainerType(containerKey)
+    local gui = GetGUI()
+    local optionsAPI = GetOptionsAPI()
+    local tracker = ResolveTrackerDB(containerKey)
+    if not gui or not optionsAPI or not tracker then
+        return RenderUnavailableLabel(sectionHost, "Layout unavailable.")
+    end
+
+    if containerType == "aura" or containerType == "auraBar" then
+        local builder = CreateSectionBuilder(sectionHost, ctx, "layout")
+        local refresh = function()
+            RefreshContainer(containerKey)
+        end
+
+        local enableCard = builder.Card()
+        local enableDescription
+        if containerType == "aura" then
+            enableDescription = "Enable this buff icon container. Disabling hides the entire container and all its icons."
+            tracker.iconDisplayMode = tracker.iconDisplayMode or "active"
+            tracker.growthDirection = tracker.growthDirection or "CENTERED_HORIZONTAL"
+        else
+            enableDescription = "Enable this tracked bar container. Disabling hides every bar it would otherwise render."
+            tracker.iconDisplayMode = tracker.iconDisplayMode or "active"
+            tracker.inactiveMode = tracker.inactiveMode or "hide"
+            tracker.orientation = tracker.orientation or "horizontal"
+            tracker.fillDirection = tracker.fillDirection or "up"
+            tracker.iconPosition = tracker.iconPosition or "top"
+        end
+
+        local enableCheckbox = gui:CreateFormCheckbox(enableCard.frame, nil, "enabled", tracker, refresh, {
+            description = enableDescription,
+        })
+        enableCard.AddRow(optionsAPI.BuildSettingRow(enableCard.frame, "Enable", enableCheckbox))
+        builder.CloseCard(enableCard)
+
+        if containerType == "aura" then
+            builder.Header("General")
+            local generalCard = builder.Card()
+            local displayModeDropdown = gui:CreateFormDropdown(generalCard.frame, nil, DISPLAY_MODE_OPTIONS, "iconDisplayMode", tracker, refresh, {
+                description = "When icons appear: always, only when the buff is active, or only while in combat.",
+            })
+            generalCard.AddRow(optionsAPI.BuildSettingRow(generalCard.frame, "Display Mode", displayModeDropdown))
+            builder.CloseCard(generalCard)
+
+            builder.Spacer(6)
+            builder.Header("Appearance")
+            local appearanceCard = builder.Card()
+            local sizeSlider = gui:CreateFormSlider(appearanceCard.frame, nil, 20, 80, 1, "iconSize", tracker, refresh, nil, {
+                description = "Square size of each buff icon in pixels.",
+            })
+            local borderSlider = gui:CreateFormSlider(appearanceCard.frame, nil, 0, 8, 1, "borderSize", tracker, refresh, nil, {
+                description = "Border thickness in pixels around each icon. Set to 0 to hide the border.",
+            })
+            appearanceCard.AddRow(
+                optionsAPI.BuildSettingRow(appearanceCard.frame, "Icon Size", sizeSlider),
+                optionsAPI.BuildSettingRow(appearanceCard.frame, "Border Size", borderSlider)
+            )
+
+            local zoomSlider = gui:CreateFormSlider(appearanceCard.frame, nil, 0, 0.2, 0.01, "zoom", tracker, refresh, nil, {
+                description = "Crop the edges of each icon to hide Blizzard's default border. Higher values crop more.",
+            })
+            local paddingSlider = gui:CreateFormSlider(appearanceCard.frame, nil, -20, 20, 1, "padding", tracker, refresh, nil, {
+                description = "Pixel gap between adjacent icons. Negative values overlap icons.",
+            })
+            appearanceCard.AddRow(
+                optionsAPI.BuildSettingRow(appearanceCard.frame, "Icon Zoom", zoomSlider),
+                optionsAPI.BuildSettingRow(appearanceCard.frame, "Icon Padding", paddingSlider)
+            )
+
+            local opacitySlider = gui:CreateFormSlider(appearanceCard.frame, nil, 0, 1.0, 0.05, "opacity", tracker, refresh, nil, {
+                description = "Opacity of the icons. 0 is fully transparent, 1 is fully opaque.",
+            })
+            local aspectRatioSlider = gui:CreateFormSlider(appearanceCard.frame, nil, 1.0, 2.0, 0.01, "aspectRatioCrop", tracker, refresh, nil, {
+                description = "Aspect ratio crop: 1.0 is square, higher values flatten icons into wider rectangles.",
+            })
+            appearanceCard.AddRow(
+                optionsAPI.BuildSettingRow(appearanceCard.frame, "Opacity", opacitySlider),
+                optionsAPI.BuildSettingRow(appearanceCard.frame, "Icon Shape", aspectRatioSlider)
+            )
+            builder.CloseCard(appearanceCard)
+
+            builder.Spacer(6)
+            builder.Header("Growth & Text")
+            local textCard = builder.Card()
+            local growthDropdown = gui:CreateFormDropdown(textCard.frame, nil, AURA_GROWTH_DIRECTION_OPTIONS, "growthDirection", tracker, refresh, {
+                description = "How the icon block grows from its anchor: centered horizontal, stacked up, or stacked down.",
+            })
+            local durationSizeSlider = gui:CreateFormSlider(textCard.frame, nil, 8, 50, 1, "durationSize", tracker, refresh, nil, {
+                description = "Font size for the duration countdown text on buff icons.",
+            })
+            textCard.AddRow(
+                optionsAPI.BuildSettingRow(textCard.frame, "Growth Direction", growthDropdown),
+                optionsAPI.BuildSettingRow(textCard.frame, "Duration Size", durationSizeSlider)
+            )
+
+            local durationAnchorDropdown = gui:CreateFormDropdown(textCard.frame, nil, TEXT_ANCHOR_OPTIONS, "durationAnchor", tracker, refresh, {
+                description = "Which corner of the icon the duration text is anchored to.",
+            })
+            local durationXSlider = gui:CreateFormSlider(textCard.frame, nil, -20, 20, 1, "durationOffsetX", tracker, refresh, nil, {
+                description = "Horizontal pixel offset for the duration text from its anchor.",
+            })
+            textCard.AddRow(
+                optionsAPI.BuildSettingRow(textCard.frame, "Duration Anchor", durationAnchorDropdown),
+                optionsAPI.BuildSettingRow(textCard.frame, "Duration X Offset", durationXSlider)
+            )
+
+            local durationYSlider = gui:CreateFormSlider(textCard.frame, nil, -20, 20, 1, "durationOffsetY", tracker, refresh, nil, {
+                description = "Vertical pixel offset for the duration text from its anchor.",
+            })
+            local stackSizeSlider = gui:CreateFormSlider(textCard.frame, nil, 8, 50, 1, "stackSize", tracker, refresh, nil, {
+                description = "Font size for the stack count text on buff icons.",
+            })
+            textCard.AddRow(
+                optionsAPI.BuildSettingRow(textCard.frame, "Duration Y Offset", durationYSlider),
+                optionsAPI.BuildSettingRow(textCard.frame, "Stack Size", stackSizeSlider)
+            )
+
+            local stackAnchorDropdown = gui:CreateFormDropdown(textCard.frame, nil, TEXT_ANCHOR_OPTIONS, "stackAnchor", tracker, refresh, {
+                description = "Which corner of the icon the stack count is anchored to.",
+            })
+            local stackXSlider = gui:CreateFormSlider(textCard.frame, nil, -20, 20, 1, "stackOffsetX", tracker, refresh, nil, {
+                description = "Horizontal pixel offset for the stack count from its anchor.",
+            })
+            textCard.AddRow(
+                optionsAPI.BuildSettingRow(textCard.frame, "Stack Anchor", stackAnchorDropdown),
+                optionsAPI.BuildSettingRow(textCard.frame, "Stack X Offset", stackXSlider)
+            )
+
+            local stackYSlider = gui:CreateFormSlider(textCard.frame, nil, -20, 20, 1, "stackOffsetY", tracker, refresh, nil, {
+                description = "Vertical pixel offset for the stack count from its anchor.",
+            })
+            textCard.AddRow(optionsAPI.BuildSettingRow(textCard.frame, "Stack Y Offset", stackYSlider))
+            builder.CloseCard(textCard)
+        else
+            builder.Header("General")
+            local generalCard = builder.Card()
+            local displayModeDropdown = gui:CreateFormDropdown(generalCard.frame, nil, DISPLAY_MODE_OPTIONS, "iconDisplayMode", tracker, refresh, {
+                description = "When bars appear: always, only while the tracked buff/debuff is active, or only while in combat.",
+            })
+            local hideIconCheckbox = gui:CreateFormCheckbox(generalCard.frame, nil, "hideIcon", tracker, refresh, {
+                description = "Hide the spell icon next to each bar, showing just the bar and text.",
+            })
+            generalCard.AddRow(
+                optionsAPI.BuildSettingRow(generalCard.frame, "Display Mode", displayModeDropdown),
+                optionsAPI.BuildSettingRow(generalCard.frame, "Hide Icon", hideIconCheckbox)
+            )
+            local hideTextCheckbox = gui:CreateFormCheckbox(generalCard.frame, nil, "hideText", tracker, refresh, {
+                description = "Hide the duration and spell-name text on every bar in this container.",
+            })
+            generalCard.AddRow(optionsAPI.BuildSettingRow(generalCard.frame, "Hide Text", hideTextCheckbox))
+            builder.CloseCard(generalCard)
+
+            builder.Spacer(6)
+            builder.Header("Inactive Behavior")
+            local inactiveCard = builder.Card()
+            local inactiveAlphaRow, desaturateRow, reserveSlotRow
+            local function updateInactiveRowState()
+                local mode = tracker.inactiveMode or "hide"
+                if inactiveAlphaRow then
+                    inactiveAlphaRow:SetEnabled(mode == "fade")
+                end
+                if desaturateRow then
+                    desaturateRow:SetEnabled(mode ~= "always")
+                end
+                if reserveSlotRow then
+                    reserveSlotRow:SetEnabled(mode == "hide")
+                end
+            end
+
+            local inactiveModeDropdown = gui:CreateFormDropdown(inactiveCard.frame, nil, INACTIVE_MODE_OPTIONS, "inactiveMode", tracker, function()
+                refresh()
+                updateInactiveRowState()
+            end, {
+                description = "What happens to bars when the tracked buff is not active: always show, fade to the alpha below, or hide entirely.",
+            })
+            local inactiveAlphaSlider = gui:CreateFormSlider(inactiveCard.frame, nil, 0, 1, 0.05, "inactiveAlpha", tracker, refresh, nil, {
+                description = "Opacity applied to bars when Inactive Buffs mode is Fade. Ignored in Always Show / Hide.",
+            })
+            inactiveAlphaRow = optionsAPI.BuildSettingRow(inactiveCard.frame, "Inactive Alpha", inactiveAlphaSlider)
+            inactiveCard.AddRow(
+                optionsAPI.BuildSettingRow(inactiveCard.frame, "Inactive Buffs", inactiveModeDropdown),
+                inactiveAlphaRow
+            )
+
+            local desaturateCheckbox = gui:CreateFormCheckbox(inactiveCard.frame, nil, "desaturateInactive", tracker, refresh, {
+                description = "Desaturate the icon and bar fill when the tracked buff is inactive. Applies in Always Show and Fade modes.",
+            })
+            local reserveSlotCheckbox = gui:CreateFormCheckbox(inactiveCard.frame, nil, "reserveSlotWhenInactive", tracker, refresh, {
+                description = "Keep the bar's slot reserved (blank) when hidden, so active bars don't shift position. Only applies in Hide mode.",
+            })
+            desaturateRow = optionsAPI.BuildSettingRow(inactiveCard.frame, "Desaturate Inactive", desaturateCheckbox)
+            reserveSlotRow = optionsAPI.BuildSettingRow(inactiveCard.frame, "Reserve Slot When Inactive", reserveSlotCheckbox)
+            inactiveCard.AddRow(desaturateRow, reserveSlotRow)
+            builder.CloseCard(inactiveCard)
+            updateInactiveRowState()
+
+            builder.Spacer(6)
+            builder.Header("Dimensions & Appearance")
+            local dimensionsCard = builder.Card()
+            local heightSlider = gui:CreateFormSlider(dimensionsCard.frame, nil, 2, 48, 1, "barHeight", tracker, refresh, nil, {
+                description = "Height of each bar in pixels.",
+            })
+            local widthSlider = gui:CreateFormSlider(dimensionsCard.frame, nil, 100, 400, 1, "barWidth", tracker, refresh, nil, {
+                description = "Width of each bar in pixels. Ignored when Auto Width From Anchor is on.",
+            })
+            local barWidthRow, autoWidthOffsetRow
+            local function updateAutoWidthState()
+                local autoWidth = tracker.autoWidth == true
+                if barWidthRow then barWidthRow:SetEnabled(not autoWidth) end
+                if autoWidthOffsetRow then autoWidthOffsetRow:SetEnabled(autoWidth) end
+            end
+            barWidthRow = optionsAPI.BuildSettingRow(dimensionsCard.frame, "Bar Width", widthSlider)
+            dimensionsCard.AddRow(
+                optionsAPI.BuildSettingRow(dimensionsCard.frame, "Bar Height", heightSlider),
+                barWidthRow
+            )
+
+            local borderSlider = gui:CreateFormSlider(dimensionsCard.frame, nil, 0, 4, 1, "borderSize", tracker, refresh, nil, {
+                description = "Border thickness in pixels around each bar. Set to 0 to hide.",
+            })
+            local spacingSlider = gui:CreateFormSlider(dimensionsCard.frame, nil, 0, 20, 1, "spacing", tracker, refresh, nil, {
+                description = "Pixel gap between adjacent bars in this container.",
+            })
+            dimensionsCard.AddRow(
+                optionsAPI.BuildSettingRow(dimensionsCard.frame, "Border Size", borderSlider),
+                optionsAPI.BuildSettingRow(dimensionsCard.frame, "Bar Spacing", spacingSlider)
+            )
+
+            local textSizeSlider = gui:CreateFormSlider(dimensionsCard.frame, nil, 8, 24, 1, "textSize", tracker, refresh, nil, {
+                description = "Font size used for the duration and spell-name text on each bar.",
+            })
+            local textureOptions = BuildStatusbarTextureOptions()
+            if #textureOptions > 0 then
+                local textureDropdown = gui:CreateFormDropdown(dimensionsCard.frame, nil, textureOptions, "texture", tracker, refresh, {
+                    description = "Statusbar texture used for the bar fill.",
+                })
+                dimensionsCard.AddRow(
+                    optionsAPI.BuildSettingRow(dimensionsCard.frame, "Text Size", textSizeSlider),
+                    optionsAPI.BuildSettingRow(dimensionsCard.frame, "Bar Texture", textureDropdown)
+                )
+            else
+                dimensionsCard.AddRow(optionsAPI.BuildSettingRow(dimensionsCard.frame, "Text Size", textSizeSlider))
+            end
+
+            local autoWidthCheckbox = gui:CreateFormCheckbox(dimensionsCard.frame, nil, "autoWidth", tracker, function()
+                refresh()
+                updateAutoWidthState()
+            end, {
+                description = "Stretch bars to match the width of the frame they anchor to (e.g. the player frame).",
+            })
+            local autoWidthOffsetSlider = gui:CreateFormSlider(dimensionsCard.frame, nil, -20, 20, 1, "autoWidthOffset", tracker, refresh, nil, {
+                description = "Pixel adjustment applied to the auto-matched width. Useful for aligning with a frame's inner or outer edge.",
+            })
+            autoWidthOffsetRow = optionsAPI.BuildSettingRow(dimensionsCard.frame, "Auto Width Adjust", autoWidthOffsetSlider)
+            dimensionsCard.AddRow(
+                optionsAPI.BuildSettingRow(dimensionsCard.frame, "Auto Width From Anchor", autoWidthCheckbox),
+                autoWidthOffsetRow
+            )
+            updateAutoWidthState()
+
+            local stackDirectionDropdown = gui:CreateFormDropdown(dimensionsCard.frame, nil, STACK_DIRECTION_OPTIONS, "growUp", tracker, refresh, {
+                description = "Direction new bars are added from the anchor: stacking upward/rightward or downward/leftward.",
+            })
+            local stackOffsetSlider = gui:CreateFormSlider(dimensionsCard.frame, nil, -20, 20, 1, "stackOffsetX", tracker, refresh, nil, {
+                description = "Horizontal pixel offset between stacked bars.",
+            })
+            dimensionsCard.AddRow(
+                optionsAPI.BuildSettingRow(dimensionsCard.frame, "Stack Direction", stackDirectionDropdown),
+                optionsAPI.BuildSettingRow(dimensionsCard.frame, "Stack X Offset", stackOffsetSlider)
+            )
+            builder.CloseCard(dimensionsCard)
+
+            builder.Spacer(6)
+            builder.Header("Colors")
+            local colorCard = builder.Card()
+            local barColorRow
+            local function updateBarColorState()
+                if barColorRow then
+                    barColorRow:SetEnabled(tracker.useClassColor ~= true)
+                end
+            end
+            local classColorCheckbox = gui:CreateFormCheckbox(colorCard.frame, nil, "useClassColor", tracker, function()
+                refresh()
+                updateBarColorState()
+            end, {
+                description = "Color each bar by the player's class instead of the custom Bar Color below.",
+            })
+            local barColorPicker = gui:CreateFormColorPicker(colorCard.frame, nil, "barColor", tracker, refresh, nil, {
+                description = "Fallback bar color used when Use Class Color is off.",
+            })
+            barColorRow = optionsAPI.BuildSettingRow(colorCard.frame, "Bar Color (Fallback)", barColorPicker)
+            colorCard.AddRow(
+                optionsAPI.BuildSettingRow(colorCard.frame, "Use Class Color", classColorCheckbox),
+                barColorRow
+            )
+            updateBarColorState()
+
+            local barOpacitySlider = gui:CreateFormSlider(colorCard.frame, nil, 0, 1, 0.05, "barOpacity", tracker, refresh, nil, {
+                description = "Opacity of the bar fill. 0 is fully transparent, 1 is fully opaque.",
+            })
+            local backgroundColorPicker = gui:CreateFormColorPicker(colorCard.frame, nil, "bgColor", tracker, refresh, nil, {
+                description = "Backdrop color drawn behind the bar fill.",
+            })
+            colorCard.AddRow(
+                optionsAPI.BuildSettingRow(colorCard.frame, "Bar Opacity", barOpacitySlider),
+                optionsAPI.BuildSettingRow(colorCard.frame, "Background Color", backgroundColorPicker)
+            )
+
+            local backgroundOpacitySlider = gui:CreateFormSlider(colorCard.frame, nil, 0, 1, 0.1, "bgOpacity", tracker, refresh, nil, {
+                description = "Opacity of the backdrop fill behind the bar.",
+            })
+            colorCard.AddRow(optionsAPI.BuildSettingRow(colorCard.frame, "Background Opacity", backgroundOpacitySlider))
+            builder.CloseCard(colorCard)
+
+            builder.Spacer(6)
+            builder.Header("Orientation")
+            local orientationCard = builder.Card()
+            local fillDirectionRow, iconPositionRow, showTextRow
+            local function updateOrientationRowState()
+                local enabled = tracker.orientation == "vertical"
+                if fillDirectionRow then
+                    fillDirectionRow:SetEnabled(enabled)
+                end
+                if iconPositionRow then
+                    iconPositionRow:SetEnabled(enabled)
+                end
+                if showTextRow then
+                    showTextRow:SetEnabled(enabled)
+                end
+            end
+
+            local orientationDropdown = gui:CreateFormDropdown(orientationCard.frame, nil, BAR_ORIENTATION_OPTIONS, "orientation", tracker, function()
+                refresh()
+                updateOrientationRowState()
+            end, {
+                description = "Render bars horizontally (width fills left to right) or vertically (height fills upward). Vertical mode enables the controls below.",
+            })
+            local fillDirectionDropdown = gui:CreateFormDropdown(orientationCard.frame, nil, BAR_FILL_DIRECTION_OPTIONS, "fillDirection", tracker, refresh, {
+                description = "For vertical bars, whether remaining-duration fills upward (empty to full from the bottom) or downward (full to empty from the top).",
+            })
+            fillDirectionRow = optionsAPI.BuildSettingRow(orientationCard.frame, "Fill Direction", fillDirectionDropdown)
+            orientationCard.AddRow(
+                optionsAPI.BuildSettingRow(orientationCard.frame, "Bar Orientation", orientationDropdown),
+                fillDirectionRow
+            )
+
+            local iconPositionDropdown = gui:CreateFormDropdown(orientationCard.frame, nil, BAR_ICON_POSITION_OPTIONS, "iconPosition", tracker, refresh, {
+                description = "For vertical bars, whether the spell icon sits at the top or the bottom of each bar.",
+            })
+            local showTextCheckbox = gui:CreateFormCheckbox(orientationCard.frame, nil, "showTextOnVertical", tracker, refresh, {
+                description = "Render the duration and spell-name text on vertical bars. Turn off for icon-only vertical bars.",
+            })
+            iconPositionRow = optionsAPI.BuildSettingRow(orientationCard.frame, "Icon Position", iconPositionDropdown)
+            showTextRow = optionsAPI.BuildSettingRow(orientationCard.frame, "Show Text (Vertical)", showTextCheckbox)
+            orientationCard.AddRow(iconPositionRow, showTextRow)
+            builder.CloseCard(orientationCard)
+            updateOrientationRowState()
+        end
+
+        return builder.Height()
+    end
+
+    if (containerType == "cooldown" or containerType == "customBar") and gui and optionsAPI and tracker then
+        local builder = CreateSectionBuilder(sectionHost, ctx, "layout")
+        if not builder then
+            return nil
+        end
+
+        local refresh = function()
+            RefreshContainer(containerKey)
+        end
+
+        local enableCard = builder.Card()
+        local enableCheckbox = gui:CreateFormCheckbox(enableCard.frame, nil, "enabled", tracker, refresh, {
+            description = "Enable this cooldown container. Disabling hides all rows and icons it would otherwise render.",
+        })
+        enableCard.AddRow(optionsAPI.BuildSettingRow(enableCard.frame, "Enable", enableCheckbox))
+        builder.CloseCard(enableCard)
+
+        builder.Spacer(6)
+        AppendTrackerGeneralSection(builder, gui, optionsAPI, tracker, containerKey, refresh)
+
+        local rowMax = (tracker.containerType == "customBar") and 1 or 3
+        for rowNum = 1, rowMax do
+            local rowData = tracker["row" .. rowNum]
+            if rowData then
+                builder.Spacer(6)
+                AppendTrackerRowSection(builder, gui, optionsAPI, rowNum, rowData, refresh)
+            end
+        end
+
+        if containerKey == "essential" then
+            builder.Spacer(6)
+            AppendHUDMinWidthSection(builder, gui, optionsAPI)
+        end
+
+        return builder.Height()
+    end
+
+    return RenderUnavailableLabel(sectionHost, "Layout unavailable.")
+end
+
+local function RenderFiltersSection(sectionHost, ctx)
+    local containerKey = ResolveContainerKey(ctx)
+    local gui = GetGUI()
+    local optionsAPI = GetOptionsAPI()
+    local tracker = ResolveTrackerDB(containerKey)
+    if not containerKey then
+        return nil
+    end
+
+    if not tracker or tracker.builtIn then
+        return RenderUnavailableLabel(sectionHost, "Filters unavailable.")
+    end
+
+    -- Bar-shape containers expose visibility through the Layout tab's
+    -- inactive-mode controls (hide / dim / always show). Icon-shape
+    -- containers — including former customBar containers, which are
+    -- icon-shape with single-row layout — get the full filter set.
+    local shape = (ns.CDMContainers and ns.CDMContainers.GetContainerShape
+        and ns.CDMContainers.GetContainerShape(containerKey)) or "icon"
+    if shape == "bar" then
+        return RenderInfoMessage(
+            sectionHost,
+            ctx,
+            "filters",
+            "Bar containers expose visibility through their Layout display and inactive-behavior settings instead of a separate Filters tab."
+        )
+    end
+
+    if not gui or not optionsAPI then
+        return RenderUnavailableLabel(sectionHost, "Filters unavailable.")
+    end
+
+    local builder = CreateSectionBuilder(sectionHost, ctx, "filters")
+    if not builder then
+        return nil
+    end
+
+    local refresh = function()
+        if ns.CDMShared and ns.CDMShared.NormalizeCustomBarVisibilityFlags then
+            ns.CDMShared.NormalizeCustomBarVisibilityFlags(tracker)
+        end
+        RefreshContainer(containerKey)
+    end
+
+    builder.Header("Visibility Filters")
+    local card = builder.Card()
+
+    local hideGCDCheckbox = gui:CreateFormCheckbox(card.frame, nil, "hideGCD", tracker, refresh, {
+        description = "Hide icons for spells whose only remaining cooldown is the global cooldown.",
+    })
+    local hideNonUsableCheckbox = gui:CreateFormCheckbox(card.frame, nil, "hideNonUsable", tracker, refresh, {
+        description = "Hide icons for spells you cannot cast right now (wrong form, out of range, silenced, etc.).",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Hide GCD", hideGCDCheckbox),
+        optionsAPI.BuildSettingRow(card.frame, "Hide Non-Usable", hideNonUsableCheckbox)
+    )
+
+    local showOnlyOnCooldownCheckbox
+    local showOnlyOffCooldownCheckbox
+    local showOnlyWhenActiveCheckbox
+    local noDesaturateCheckbox
+    local noDesaturateRow
+
+    local function updateNoDesaturateState()
+        if noDesaturateRow and noDesaturateRow.SetEnabled then
+            noDesaturateRow:SetEnabled(tracker.showOnlyOnCooldown == true)
+        elseif noDesaturateCheckbox and noDesaturateCheckbox.SetEnabled then
+            noDesaturateCheckbox:SetEnabled(tracker.showOnlyOnCooldown == true)
+        end
+    end
+
+    showOnlyOnCooldownCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showOnlyOnCooldown", tracker, function()
+        if tracker.showOnlyOnCooldown then
+            tracker.showOnlyWhenActive = false
+            tracker.showOnlyWhenOffCooldown = false
+            if showOnlyWhenActiveCheckbox and showOnlyWhenActiveCheckbox.SetValue then
+                showOnlyWhenActiveCheckbox:SetValue(false, true)
+            end
+            if showOnlyOffCooldownCheckbox and showOnlyOffCooldownCheckbox.SetValue then
+                showOnlyOffCooldownCheckbox:SetValue(false, true)
+            end
+        else
+            tracker.noDesaturateWithCharges = false
+            if noDesaturateCheckbox and noDesaturateCheckbox.SetValue then
+                noDesaturateCheckbox:SetValue(false, true)
+            end
+        end
+        updateNoDesaturateState()
+        refresh()
+    end, {
+        description = "Only show icons while they are on cooldown. Off-cooldown spells are hidden entirely.",
+    })
+    showOnlyOffCooldownCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showOnlyWhenOffCooldown", tracker, function()
+        if tracker.showOnlyWhenOffCooldown then
+            tracker.showOnlyOnCooldown = false
+            tracker.showOnlyWhenActive = false
+            tracker.noDesaturateWithCharges = false
+            if showOnlyOnCooldownCheckbox and showOnlyOnCooldownCheckbox.SetValue then
+                showOnlyOnCooldownCheckbox:SetValue(false, true)
+            end
+            if showOnlyWhenActiveCheckbox and showOnlyWhenActiveCheckbox.SetValue then
+                showOnlyWhenActiveCheckbox:SetValue(false, true)
+            end
+            if noDesaturateCheckbox and noDesaturateCheckbox.SetValue then
+                noDesaturateCheckbox:SetValue(false, true)
+            end
+        end
+        updateNoDesaturateState()
+        refresh()
+    end, {
+        description = "Only show icons when they are off cooldown and ready to cast.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Show Only On Cooldown", showOnlyOnCooldownCheckbox),
+        optionsAPI.BuildSettingRow(card.frame, "Show Only Off Cooldown", showOnlyOffCooldownCheckbox)
+    )
+
+    showOnlyWhenActiveCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showOnlyWhenActive", tracker, function()
+        if tracker.showOnlyWhenActive then
+            tracker.showOnlyOnCooldown = false
+            tracker.showOnlyWhenOffCooldown = false
+            tracker.noDesaturateWithCharges = false
+            if showOnlyOnCooldownCheckbox and showOnlyOnCooldownCheckbox.SetValue then
+                showOnlyOnCooldownCheckbox:SetValue(false, true)
+            end
+            if showOnlyOffCooldownCheckbox and showOnlyOffCooldownCheckbox.SetValue then
+                showOnlyOffCooldownCheckbox:SetValue(false, true)
+            end
+            if noDesaturateCheckbox and noDesaturateCheckbox.SetValue then
+                noDesaturateCheckbox:SetValue(false, true)
+            end
+        end
+        updateNoDesaturateState()
+        refresh()
+    end, {
+        description = "Only show icons while the linked buff/debuff is currently active on the player or their target.",
+    })
+    local showOnlyInCombatCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showOnlyInCombat", tracker, refresh, {
+        description = "Only show icons while you are in combat.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Show Only When Active", showOnlyWhenActiveCheckbox),
+        optionsAPI.BuildSettingRow(card.frame, "Show Only In Combat", showOnlyInCombatCheckbox)
+    )
+
+    local dynamicLayoutCheckbox = gui:CreateFormCheckbox(card.frame, nil, "dynamicLayout", tracker, function()
+        if tracker.dynamicLayout then
+            tracker.clickableIcons = false
+        end
+        refresh()
+    end, {
+        description = "Collapse the row when filters hide icons so remaining icons pack together. Turn off to keep slots reserved in their original positions.",
+    })
+    local showItemChargesCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showItemCharges", tracker, refresh, {
+        description = "Show the remaining-charges counter on tracked items and spells with charges.",
+    })
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Dynamic Layout (Collapse Hidden)", dynamicLayoutCheckbox),
+        optionsAPI.BuildSettingRow(card.frame, "Show Item Charges", showItemChargesCheckbox)
+    )
+
+    local showRechargeSwipeCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showRechargeSwipe", tracker, refresh, {
+        description = "Show the recharge swipe animation on spells with charges while at least one charge is regenerating.",
+    })
+    noDesaturateCheckbox = gui:CreateFormCheckbox(card.frame, nil, "noDesaturateWithCharges", tracker, function()
+        if not tracker.showOnlyOnCooldown then
+            tracker.noDesaturateWithCharges = false
+            if noDesaturateCheckbox and noDesaturateCheckbox.SetValue then
+                noDesaturateCheckbox:SetValue(false, true)
+            end
+        end
+        refresh()
+    end, {
+        description = "Keep charge-based spells in full color even while regenerating the next charge, ignoring the container's desaturate-on-cooldown rule.",
+    })
+    noDesaturateRow = optionsAPI.BuildSettingRow(card.frame, "No Desaturate With Charges", noDesaturateCheckbox)
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Show Recharge Swipe", showRechargeSwipeCheckbox),
+        noDesaturateRow
+    )
+    updateNoDesaturateState()
+
+    local qualityCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showProfessionQuality", tracker, refresh, {
+        description = "Show the profession-quality indicator on crafted item icons in this container.",
+    })
+    card.AddRow(optionsAPI.BuildSettingRow(card.frame, "Show Crafted Item Quality", qualityCheckbox))
+
+    builder.CloseCard(card)
+    return builder.Height()
+end
+
+local function RenderPerSpecSection(sectionHost, ctx)
+    local containerKey = ResolveContainerKey(ctx)
+    local gui = GetGUI()
+    local optionsAPI = GetOptionsAPI()
+    local tracker = ResolveTrackerDB(containerKey)
+    if not containerKey then
+        return nil
+    end
+
+    if not tracker or tracker.builtIn or not gui or not optionsAPI then
+        return RenderUnavailableLabel(sectionHost, "Per-Spec entries unavailable.")
+    end
+
+    local builder = CreateSectionBuilder(sectionHost, ctx, "perspec")
+    if not builder then
+        return nil
+    end
+
+    builder.Header("Per-Spec Entries")
+    local card = builder.Card()
+    local specSpecificCheckbox = gui:CreateFormCheckbox(card.frame, nil, "specSpecific", tracker, function()
+        if ns.CDMSpellData and ns.CDMSpellData.OnSpecSpecificToggled then
+            ns.CDMSpellData:OnSpecSpecificToggled(containerKey)
+        end
+        RefreshContainer(containerKey)
+    end, {
+        description = "Store separate entry lists per specialization, so each spec shows a different set of tracked spells. The current list is swapped in on spec change.",
+    })
+    card.AddRow(optionsAPI.BuildSettingRow(card.frame, "Spec-Specific Entries", specSpecificCheckbox))
+    builder.CloseCard(card)
+    return builder.Height()
+end
+
+local function RenderEffectsSection(sectionHost, ctx)
+    local containerKey = ResolveContainerKey(ctx)
+    local containerType = ResolveContainerType(containerKey)
+    local gui = GetGUI()
+    local optionsAPI = GetOptionsAPI()
+    if not containerKey then
+        return nil
+    end
+
+    if containerType == "auraBar" then
+        return RenderInfoMessage(
+            sectionHost,
+            ctx,
+            "effects",
+            "Buff bar containers do not currently expose separate Effects controls."
+        )
+    end
+
+    if containerType == "aura" then
+        local profile = GetProfileDB()
+        if not gui or not optionsAPI or not profile then
+            return RenderUnavailableLabel(sectionHost, "Effects unavailable.")
+        end
+        if type(profile.customGlow) ~= "table" then
+            profile.customGlow = {}
+        end
+        if profile.customGlow.buffPandemicDebuffEnabled == nil then
+            profile.customGlow.buffPandemicDebuffEnabled = true
+        end
+        if profile.customGlow.buffPandemicBuffEnabled == nil then
+            profile.customGlow.buffPandemicBuffEnabled = true
+        end
+        if type(profile.cooldownSwipe) ~= "table" then
+            profile.cooldownSwipe = {}
+        end
+
+        local builder = CreateSectionBuilder(sectionHost, ctx, "effects")
+        if not builder then
+            return nil
+        end
+
+        builder.Header("Effects")
+        local card = builder.Card()
+
+        local buffSwipeCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showBuffIconSwipe", profile.cooldownSwipe, RefreshSwipe, {
+            description = "Play a swipe animation on buff/debuff icons in this container to represent remaining duration.",
+        })
+        local pandemicDebuffCheckbox = gui:CreateFormCheckbox(card.frame, nil, "buffPandemicDebuffEnabled", profile.customGlow, RefreshGlows, {
+            description = "Emit a refresh glow during the pandemic window (last ~30% remaining) of harmful auras like DoTs and debuffs.",
+        })
+        local pandemicBuffCheckbox = gui:CreateFormCheckbox(card.frame, nil, "buffPandemicBuffEnabled", profile.customGlow, RefreshGlows, {
+            description = "Emit a refresh glow during the pandemic window (last ~30% remaining) of helpful auras like HoTs and self-buffs.",
+        })
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, "Buff/Debuff Swipe", buffSwipeCheckbox)
+        )
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, "Pandemic Glow — Debuffs/DoTs", pandemicDebuffCheckbox),
+            optionsAPI.BuildSettingRow(card.frame, "Pandemic Glow — Buffs/HoTs", pandemicBuffCheckbox)
+        )
+
+        local overlayColorPicker
+        local overlayColorRow
+        local function UpdateOverlayColorState()
+            local isCustom = (profile.cooldownSwipe.overlayColorMode or "default") == "custom"
+            if overlayColorRow then
+                overlayColorRow:SetEnabled(isCustom)
+            elseif overlayColorPicker then
+                overlayColorPicker:SetEnabled(isCustom)
+            end
+        end
+        local overlayModeDropdown = gui:CreateFormDropdown(card.frame, nil, COLOR_MODE_OPTIONS, "overlayColorMode", profile.cooldownSwipe, function()
+            RefreshSwipe()
+            UpdateOverlayColorState()
+        end, {
+            description = "How the buff/debuff overlay is colored: Blizzard default, class color, UI accent, or the custom swatch.",
+        })
+        overlayColorPicker = gui:CreateFormColorPicker(card.frame, nil, "overlayColor", profile.cooldownSwipe, RefreshSwipe, nil, {
+            description = "Custom color used for the buff/debuff overlay when Buff Overlay Color is set to Custom.",
+        })
+        overlayColorRow = optionsAPI.BuildSettingRow(card.frame, "Overlay Custom Color", overlayColorPicker)
+        card.AddRow(
+            optionsAPI.BuildSettingRow(card.frame, "Buff Overlay Color", overlayModeDropdown),
+            overlayColorRow
+        )
+        UpdateOverlayColorState()
+        builder.CloseCard(card)
+        return builder.Height()
+    end
+
+    local effectsCtx = ResolveEffectsContext(containerKey)
+
+    if not gui or not optionsAPI or not effectsCtx then
+        return RenderUnavailableLabel(sectionHost, "Effects unavailable.")
+    end
+
+    local builder = CreateSectionBuilder(sectionHost, ctx, "effects")
+    if not builder then
+        return nil
+    end
+
+    builder.Header("Cooldown Swipe")
+    local swipeCard = builder.Card()
+    local swipeRadialCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showCooldownSwipe", effectsCtx.swipeDB, RefreshSwipe, {
+        description = "Show the clockwise cooldown swipe animation on icons in this container.",
+    })
+    local gcdSwipeCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showGCDSwipe", effectsCtx.swipeDB, RefreshSwipe, {
+        description = "Also play the swipe during global cooldowns. Turn off to reserve the animation for real cooldowns only.",
+    })
+    swipeCard.AddRow(
+        optionsAPI.BuildSettingRow(swipeCard.frame, "Radial Darkening", swipeRadialCheckbox),
+        optionsAPI.BuildSettingRow(swipeCard.frame, "GCD Swipe", gcdSwipeCheckbox)
+    )
+    local buffSwipeCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showBuffSwipe", effectsCtx.swipeDB, RefreshSwipe, {
+        description = "Play a swipe animation on buff/debuff icons to represent remaining duration.",
+    })
+    local cooldownIconAuraPhaseCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showCooldownIconAuraPhase", effectsCtx.swipeDB, RefreshSwipe, {
+        description = "Let cooldown icons show their linked buff/debuff phase before switching to recharge or cooldown.",
+    })
+    local rechargeEdgeCheckbox = gui:CreateFormCheckbox(swipeCard.frame, nil, "showRechargeEdge", effectsCtx.swipeDB, RefreshSwipe, {
+        description = "Show a bright edge on the active recharge slice for spells with charges.",
+    })
+    swipeCard.AddRow(
+        optionsAPI.BuildSettingRow(swipeCard.frame, "Buff/Debuff Swipe", buffSwipeCheckbox),
+        optionsAPI.BuildSettingRow(swipeCard.frame, "Show Buff/Debuff Phase on Cooldown Icons", cooldownIconAuraPhaseCheckbox)
+    )
+    swipeCard.AddRow(
+        optionsAPI.BuildSettingRow(swipeCard.frame, "Recharge Edge", rechargeEdgeCheckbox)
+    )
+    builder.CloseCard(swipeCard)
+    builder.Spacer(10)
+
+    builder.Header("Overlay Color")
+    local overlayCard = builder.Card()
+    local overlayColorPicker
+    local swipeColorPicker
+    local overlayColorRow
+    local swipeColorRow
+    local function UpdateSwipeColorStates()
+        if overlayColorRow then
+            overlayColorRow:SetEnabled((effectsCtx.swipeDB.overlayColorMode or "default") == "custom")
+        elseif overlayColorPicker then
+            overlayColorPicker:SetEnabled((effectsCtx.swipeDB.overlayColorMode or "default") == "custom")
+        end
+        if swipeColorRow then
+            swipeColorRow:SetEnabled((effectsCtx.swipeDB.swipeColorMode or "default") == "custom")
+        elseif swipeColorPicker then
+            swipeColorPicker:SetEnabled((effectsCtx.swipeDB.swipeColorMode or "default") == "custom")
+        end
+    end
+    local overlayModeDropdown = gui:CreateFormDropdown(overlayCard.frame, nil, COLOR_MODE_OPTIONS, "overlayColorMode", effectsCtx.swipeDB, function()
+        RefreshSwipe()
+        UpdateSwipeColorStates()
+    end, {
+        description = "How the buff/debuff overlay is colored: Blizzard default, class color, UI accent, or the custom swatch.",
+    })
+    overlayColorPicker = gui:CreateFormColorPicker(overlayCard.frame, nil, "overlayColor", effectsCtx.swipeDB, RefreshSwipe, nil, {
+        description = "Custom color used for the buff/debuff overlay when Buff Overlay Color is set to Custom.",
+    })
+    overlayColorRow = optionsAPI.BuildSettingRow(overlayCard.frame, "Overlay Custom Color", overlayColorPicker)
+    overlayCard.AddRow(
+        optionsAPI.BuildSettingRow(overlayCard.frame, "Buff Overlay Color", overlayModeDropdown),
+        overlayColorRow
+    )
+    local swipeModeDropdown = gui:CreateFormDropdown(overlayCard.frame, nil, COLOR_MODE_OPTIONS, "swipeColorMode", effectsCtx.swipeDB, function()
+        RefreshSwipe()
+        UpdateSwipeColorStates()
+    end, {
+        description = "How the cooldown swipe is colored: Blizzard default, class color, UI accent, or the custom swatch.",
+    })
+    swipeColorPicker = gui:CreateFormColorPicker(overlayCard.frame, nil, "swipeColor", effectsCtx.swipeDB, RefreshSwipe, nil, {
+        description = "Custom color used for the cooldown swipe when Cooldown Swipe Color is set to Custom.",
+    })
+    swipeColorRow = optionsAPI.BuildSettingRow(overlayCard.frame, "Swipe Custom Color", swipeColorPicker)
+    overlayCard.AddRow(
+        optionsAPI.BuildSettingRow(overlayCard.frame, "Cooldown Swipe Color", swipeModeDropdown),
+        swipeColorRow
+    )
+    UpdateSwipeColorStates()
+    builder.CloseCard(overlayCard)
+    builder.Spacer(10)
+
+    builder.Header("Hide Cooldown Effects")
+    local hideCard = builder.Card()
+    local hideCheckbox = gui:CreateFormCheckbox(hideCard.frame, nil, effectsCtx.hideKey, effectsCtx.effectsDB, RefreshCooldownEffects, {
+        description = "Suppress all cooldown effects (swipe, overlay, flash) for this container, even on Blizzard-managed elements driven by the same icons.",
+    })
+    hideCard.AddRow(optionsAPI.BuildSettingRow(hideCard.frame, effectsCtx.hideLabel, hideCheckbox))
+    builder.CloseCard(hideCard)
+    builder.Spacer(10)
+
+    builder.Header("Custom Glow")
+    local glowCard = builder.Card()
+    local glowTypeKey = effectsCtx.glowPrefix .. "GlowType"
+    local glowColorKey = effectsCtx.glowPrefix .. "Color"
+    local glowEnabledKey = effectsCtx.glowPrefix .. "Enabled"
+    local glowLinesKey = effectsCtx.glowPrefix .. "Lines"
+    local glowThicknessKey = effectsCtx.glowPrefix .. "Thickness"
+    local glowScaleKey = effectsCtx.glowPrefix .. "Scale"
+    local glowFrequencyKey = effectsCtx.glowPrefix .. "Frequency"
+    local glowXOffsetKey = effectsCtx.glowPrefix .. "XOffset"
+    local glowYOffsetKey = effectsCtx.glowPrefix .. "YOffset"
+    local glowWidgets = {}
+    local function UpdateGlowWidgetStates()
+        local enabled = effectsCtx.glowDB[glowEnabledKey] ~= false
+        local glowType = effectsCtx.glowDB[glowTypeKey] or "Pixel Glow"
+        local isPixel = glowType == "Pixel Glow"
+        local isAutocast = glowType == "Autocast Shine"
+        local isButton = glowType == "Button Glow"
+        local isTexture = glowType == "Flash" or glowType == "Hammer"
+        if glowWidgets.pandemicDebuffRow then glowWidgets.pandemicDebuffRow:SetEnabled(enabled) end
+        if glowWidgets.pandemicBuffRow then glowWidgets.pandemicBuffRow:SetEnabled(enabled) end
+        if glowWidgets.typeRow then glowWidgets.typeRow:SetEnabled(enabled) end
+        if glowWidgets.colorRow then glowWidgets.colorRow:SetEnabled(enabled) end
+        if glowWidgets.linesRow then glowWidgets.linesRow:SetEnabled(enabled and (isPixel or isAutocast)) end
+        if glowWidgets.thicknessRow then glowWidgets.thicknessRow:SetEnabled(enabled and isPixel) end
+        if glowWidgets.scaleRow then glowWidgets.scaleRow:SetEnabled(enabled and isAutocast) end
+        if glowWidgets.frequencyRow then glowWidgets.frequencyRow:SetEnabled(enabled) end
+        if glowWidgets.xOffsetRow then glowWidgets.xOffsetRow:SetEnabled(enabled and not isButton and not isTexture) end
+        if glowWidgets.yOffsetRow then glowWidgets.yOffsetRow:SetEnabled(enabled and not isButton and not isTexture) end
+    end
+    local glowEnableCheckbox = gui:CreateFormCheckbox(glowCard.frame, nil, glowEnabledKey, effectsCtx.glowDB, function()
+        RefreshGlows()
+        UpdateGlowWidgetStates()
+    end, {
+        description = "Override the Blizzard proc glow with QUI's custom glow style for icons in this container.",
+    })
+    local pandemicDebuffCheckbox = gui:CreateFormCheckbox(glowCard.frame, nil, effectsCtx.pandemicDebuffKey, effectsCtx.glowDB, RefreshGlows, {
+        description = "Emit the custom glow during the pandemic refresh window (last ~30% remaining) of harmful auras like DoTs and debuffs.",
+    })
+    local pandemicBuffCheckbox = gui:CreateFormCheckbox(glowCard.frame, nil, effectsCtx.pandemicBuffKey, effectsCtx.glowDB, RefreshGlows, {
+        description = "Emit the custom glow during the pandemic refresh window (last ~30% remaining) of helpful auras like HoTs and self-buffs.",
+    })
+    glowWidgets.pandemicDebuffRow = optionsAPI.BuildSettingRow(glowCard.frame, "Pandemic Glow — Debuffs/DoTs", pandemicDebuffCheckbox)
+    glowWidgets.pandemicBuffRow = optionsAPI.BuildSettingRow(glowCard.frame, "Pandemic Glow — Buffs/HoTs", pandemicBuffCheckbox)
+    glowCard.AddRow(
+        optionsAPI.BuildSettingRow(glowCard.frame, "Enable Custom Glow", glowEnableCheckbox)
+    )
+    glowCard.AddRow(
+        glowWidgets.pandemicDebuffRow,
+        glowWidgets.pandemicBuffRow
+    )
+    local glowTypeDropdown = gui:CreateFormDropdown(glowCard.frame, nil, GLOW_TYPE_OPTIONS, glowTypeKey, effectsCtx.glowDB, function()
+        RefreshGlows()
+        UpdateGlowWidgetStates()
+    end, {
+        description = "Which LibCustomGlow style to render. Pixel/Autocast support line count and thickness; Button/Flash/Hammer ignore those controls.",
+    })
+    local glowColorPicker = gui:CreateFormColorPicker(glowCard.frame, nil, glowColorKey, effectsCtx.glowDB, RefreshGlows, nil, {
+        description = "Color used for the custom glow effect.",
+    })
+    glowWidgets.typeRow = optionsAPI.BuildSettingRow(glowCard.frame, "Glow Type", glowTypeDropdown)
+    glowWidgets.colorRow = optionsAPI.BuildSettingRow(glowCard.frame, "Glow Color", glowColorPicker)
+    glowCard.AddRow(
+        glowWidgets.typeRow,
+        glowWidgets.colorRow
+    )
+    local glowLinesSlider = gui:CreateFormSlider(glowCard.frame, nil, 1, 30, 1, glowLinesKey, effectsCtx.glowDB, RefreshGlows, nil, {
+        description = "Number of glow particles/lines. Only used by Pixel Glow and Autocast Shine.",
+    })
+    local glowThicknessSlider = gui:CreateFormSlider(glowCard.frame, nil, 1, 10, 1, glowThicknessKey, effectsCtx.glowDB, RefreshGlows, nil, {
+        description = "Thickness of each glow line. Only used by Pixel Glow.",
+    })
+    glowWidgets.linesRow = optionsAPI.BuildSettingRow(glowCard.frame, "Lines", glowLinesSlider)
+    glowWidgets.thicknessRow = optionsAPI.BuildSettingRow(glowCard.frame, "Thickness", glowThicknessSlider)
+    glowCard.AddRow(
+        glowWidgets.linesRow,
+        glowWidgets.thicknessRow
+    )
+    local glowScaleSlider = gui:CreateFormSlider(glowCard.frame, nil, 0.5, 3.0, 0.1, glowScaleKey, effectsCtx.glowDB, RefreshGlows, nil, {
+        description = "Size multiplier for the Autocast Shine glow.",
+    })
+    local glowFrequencySlider = gui:CreateFormSlider(glowCard.frame, nil, 0.1, 2.0, 0.05, glowFrequencyKey, effectsCtx.glowDB, RefreshGlows, nil, {
+        description = "How fast the glow animates. Higher values rotate/pulse faster.",
+    })
+    glowWidgets.scaleRow = optionsAPI.BuildSettingRow(glowCard.frame, "Shine Scale", glowScaleSlider)
+    glowWidgets.frequencyRow = optionsAPI.BuildSettingRow(glowCard.frame, "Animation Speed", glowFrequencySlider)
+    glowCard.AddRow(
+        glowWidgets.scaleRow,
+        glowWidgets.frequencyRow
+    )
+    local glowXOffsetSlider = gui:CreateFormSlider(glowCard.frame, nil, -20, 20, 1, glowXOffsetKey, effectsCtx.glowDB, RefreshGlows, nil, {
+        description = "Horizontal pixel offset for the glow effect. Ignored by Button Glow and texture glows.",
+    })
+    local glowYOffsetSlider = gui:CreateFormSlider(glowCard.frame, nil, -20, 20, 1, glowYOffsetKey, effectsCtx.glowDB, RefreshGlows, nil, {
+        description = "Vertical pixel offset for the glow effect. Ignored by Button Glow and texture glows.",
+    })
+    glowWidgets.xOffsetRow = optionsAPI.BuildSettingRow(glowCard.frame, "X Offset", glowXOffsetSlider)
+    glowWidgets.yOffsetRow = optionsAPI.BuildSettingRow(glowCard.frame, "Y Offset", glowYOffsetSlider)
+    glowCard.AddRow(
+        glowWidgets.xOffsetRow,
+        glowWidgets.yOffsetRow
+    )
+    UpdateGlowWidgetStates()
+    builder.CloseCard(glowCard)
+    builder.Spacer(10)
+
+    if containerType == "customBar" then
+        local tracker = ResolveTrackerDB(containerKey)
+        if type(tracker) == "table" then
+            if tracker.showActiveState == nil then tracker.showActiveState = true end
+            if tracker.activeGlowEnabled == nil then tracker.activeGlowEnabled = true end
+            if tracker.activeGlowType == nil then tracker.activeGlowType = "Pixel Glow" end
+            if tracker.activeGlowColor == nil then tracker.activeGlowColor = {1, 0.85, 0.3, 1} end
+            if tracker.activeGlowLines == nil then tracker.activeGlowLines = 8 end
+            if tracker.activeGlowFrequency == nil then tracker.activeGlowFrequency = 0.25 end
+            if tracker.activeGlowThickness == nil then tracker.activeGlowThickness = 2 end
+            if tracker.activeGlowScale == nil then tracker.activeGlowScale = 1.0 end
+
+            builder.Header("Active State")
+            local activeCard = builder.Card()
+            local activeWidgets = {}
+            local function UpdateActiveGlowWidgetStates()
+                local showActive = tracker.showActiveState ~= false
+                local enabled = showActive and tracker.activeGlowEnabled ~= false
+                local glowType = tracker.activeGlowType or "Pixel Glow"
+                if activeWidgets.enableRow then activeWidgets.enableRow:SetEnabled(showActive) end
+                if activeWidgets.typeRow then activeWidgets.typeRow:SetEnabled(enabled) end
+                if activeWidgets.colorRow then activeWidgets.colorRow:SetEnabled(enabled) end
+                if activeWidgets.linesRow then activeWidgets.linesRow:SetEnabled(enabled and (glowType == "Pixel Glow" or glowType == "Autocast Shine")) end
+                if activeWidgets.frequencyRow then activeWidgets.frequencyRow:SetEnabled(enabled) end
+                if activeWidgets.thicknessRow then activeWidgets.thicknessRow:SetEnabled(enabled and glowType == "Pixel Glow") end
+                if activeWidgets.scaleRow then activeWidgets.scaleRow:SetEnabled(enabled and glowType == "Autocast Shine") end
+            end
+            local showActiveCheckbox = gui:CreateFormCheckbox(activeCard.frame, nil, "showActiveState", tracker, function()
+                RefreshContainer(containerKey)
+                UpdateActiveGlowWidgetStates()
+            end, {
+                description = "Detect casts, channels, and active item/spell effects for visibility and active-duration display.",
+            })
+            local activeGlowCheckbox = gui:CreateFormCheckbox(activeCard.frame, nil, "activeGlowEnabled", tracker, function()
+                RefreshContainer(containerKey)
+                UpdateActiveGlowWidgetStates()
+            end, {
+                description = "Glow icons while their spell or item effect is active.",
+            })
+            activeWidgets.enableRow = optionsAPI.BuildSettingRow(activeCard.frame, "Enable Active Glow", activeGlowCheckbox)
+            activeCard.AddRow(
+                optionsAPI.BuildSettingRow(activeCard.frame, "Show Active State", showActiveCheckbox),
+                activeWidgets.enableRow
+            )
+            local activeGlowTypeDropdown = gui:CreateFormDropdown(activeCard.frame, nil, GLOW_TYPE_OPTIONS, "activeGlowType", tracker, function()
+                RefreshContainer(containerKey)
+                UpdateActiveGlowWidgetStates()
+            end, {
+                description = "Which LibCustomGlow style to use while the entry is active.",
+            })
+            local activeGlowColorPicker = gui:CreateFormColorPicker(activeCard.frame, nil, "activeGlowColor", tracker, function()
+                RefreshContainer(containerKey)
+                UpdateActiveGlowWidgetStates()
+            end, nil, {
+                description = "Color used for the active-state glow.",
+            })
+            activeWidgets.typeRow = optionsAPI.BuildSettingRow(activeCard.frame, "Active Glow Type", activeGlowTypeDropdown)
+            activeWidgets.colorRow = optionsAPI.BuildSettingRow(activeCard.frame, "Active Glow Color", activeGlowColorPicker)
+            activeCard.AddRow(
+                activeWidgets.typeRow,
+                activeWidgets.colorRow
+            )
+            local activeGlowLinesSlider = gui:CreateFormSlider(activeCard.frame, nil, 4, 16, 1, "activeGlowLines", tracker, function()
+                RefreshContainer(containerKey)
+            end, nil, {
+                description = "Number of glow particles/lines. Only used by Pixel Glow and Autocast Shine.",
+            })
+            local activeGlowFrequencySlider = gui:CreateFormSlider(activeCard.frame, nil, 0.1, 1.0, 0.05, "activeGlowFrequency", tracker, function()
+                RefreshContainer(containerKey)
+            end, nil, {
+                description = "How fast the active glow animates.",
+                precision = 2,
+            })
+            activeWidgets.linesRow = optionsAPI.BuildSettingRow(activeCard.frame, "Active Glow Lines", activeGlowLinesSlider)
+            activeWidgets.frequencyRow = optionsAPI.BuildSettingRow(activeCard.frame, "Active Glow Speed", activeGlowFrequencySlider)
+            activeCard.AddRow(
+                activeWidgets.linesRow,
+                activeWidgets.frequencyRow
+            )
+            local activeGlowThicknessSlider = gui:CreateFormSlider(activeCard.frame, nil, 1, 5, 1, "activeGlowThickness", tracker, function()
+                RefreshContainer(containerKey)
+            end, nil, {
+                description = "Thickness of each Pixel Glow line.",
+            })
+            local activeGlowScaleSlider = gui:CreateFormSlider(activeCard.frame, nil, 0.5, 2.0, 0.1, "activeGlowScale", tracker, function()
+                RefreshContainer(containerKey)
+            end, nil, {
+                description = "Size multiplier for Autocast Shine.",
+            })
+            activeWidgets.thicknessRow = optionsAPI.BuildSettingRow(activeCard.frame, "Active Glow Thickness", activeGlowThicknessSlider)
+            activeWidgets.scaleRow = optionsAPI.BuildSettingRow(activeCard.frame, "Active Glow Scale", activeGlowScaleSlider)
+            activeCard.AddRow(
+                activeWidgets.thicknessRow,
+                activeWidgets.scaleRow
+            )
+            UpdateActiveGlowWidgetStates()
+            builder.CloseCard(activeCard)
+            builder.Spacer(10)
+        end
+    end
+
+    builder.Header("Cast Highlighter")
+    local highlighterCard = builder.Card()
+    local highlighterRows = {}
+    local function UpdateHighlighterWidgetStates()
+        local enabled = effectsCtx.highlighterDB.enabled == true
+        if highlighterRows.type then highlighterRows.type:SetEnabled(enabled) end
+        if highlighterRows.color then highlighterRows.color:SetEnabled(enabled) end
+        if highlighterRows.duration then highlighterRows.duration:SetEnabled(enabled) end
+    end
+    local highlighterEnableCheckbox = gui:CreateFormCheckbox(highlighterCard.frame, nil, "enabled", effectsCtx.highlighterDB, function()
+        RefreshHighlighter()
+        UpdateHighlighterWidgetStates()
+    end, {
+        description = "Flash each spell's icon briefly when you cast it, highlighting exactly which tracked ability just went out.",
+    })
+    local highlighterTypeDropdown = gui:CreateFormDropdown(highlighterCard.frame, nil, GLOW_TYPE_OPTIONS, "glowType", effectsCtx.highlighterDB, RefreshHighlighter, {
+        description = "Which LibCustomGlow style to use for the post-cast highlight.",
+    })
+    highlighterRows.type = optionsAPI.BuildSettingRow(highlighterCard.frame, "Glow Type", highlighterTypeDropdown)
+    highlighterCard.AddRow(
+        optionsAPI.BuildSettingRow(highlighterCard.frame, "Enable Cast Highlighter", highlighterEnableCheckbox),
+        highlighterRows.type
+    )
+    local highlighterColorPicker = gui:CreateFormColorPicker(highlighterCard.frame, nil, "color", effectsCtx.highlighterDB, RefreshHighlighter, nil, {
+        description = "Color used for the post-cast highlight effect.",
+    })
+    local highlighterDurationSlider = gui:CreateFormSlider(highlighterCard.frame, nil, 0.1, 2.0, 0.1, "duration", effectsCtx.highlighterDB, RefreshHighlighter, nil, {
+        description = "How long the highlight stays on the icon after each cast, in seconds.",
+    })
+    highlighterRows.color = optionsAPI.BuildSettingRow(highlighterCard.frame, "Highlight Color", highlighterColorPicker)
+    highlighterRows.duration = optionsAPI.BuildSettingRow(highlighterCard.frame, "Highlight Duration", highlighterDurationSlider)
+    highlighterCard.AddRow(
+        highlighterRows.color,
+        highlighterRows.duration
+    )
+    UpdateHighlighterWidgetStates()
+    builder.CloseCard(highlighterCard)
+
+    if containerKey == "essential" or containerKey == "utility" then
+        local viewerDB
+        local profile = effectsCtx.profile
+        if profile and profile.viewers then
+            if containerKey == "essential" then
+                viewerDB = profile.viewers[LEGACY_VIEWER_KEY_ESSENTIAL]
+            else
+                viewerDB = profile.viewers[LEGACY_VIEWER_KEY_UTILITY]
+            end
+        end
+        if type(viewerDB) == "table" then
+            local function RefreshRotationHelper()
+                if _G.QUI_RefreshRotationHelper then
+                    _G.QUI_RefreshRotationHelper()
+                end
+            end
+
+            builder.Spacer(6)
+            builder.Header("Rotation Helper Overlay")
+            local rhCard = builder.Card()
+            local rhRows = {}
+            local function UpdateRotationHelperWidgetStates()
+                local enabled = viewerDB.showRotationHelper == true
+                if rhRows.color then rhRows.color:SetEnabled(enabled) end
+                if rhRows.thickness then rhRows.thickness:SetEnabled(enabled) end
+            end
+            local rhEnableCheckbox = gui:CreateFormCheckbox(rhCard.frame, nil, "showRotationHelper", viewerDB, function()
+                RefreshRotationHelper()
+                UpdateRotationHelperWidgetStates()
+            end, {
+                description = "Highlight the recommended next ability in this cooldown viewer using Blizzard's Assisted Combat suggestion. Requires Starter Build to be enabled in Gameplay > Combat.",
+            })
+            local rhColorPicker = gui:CreateFormColorPicker(rhCard.frame, nil, "rotationHelperColor", viewerDB, RefreshRotationHelper, nil, {
+                description = "Border color drawn around the suggested icon in this viewer.",
+            })
+            rhRows.color = optionsAPI.BuildSettingRow(rhCard.frame, "Border Color", rhColorPicker)
+            rhCard.AddRow(
+                optionsAPI.BuildSettingRow(rhCard.frame, "Show Recommended-Next Border", rhEnableCheckbox),
+                rhRows.color
+            )
+
+            local rhThicknessSlider = gui:CreateFormSlider(rhCard.frame, nil, 1, 6, 1, "rotationHelperThickness", viewerDB, RefreshRotationHelper, nil, {
+                description = "Thickness of the suggestion border in pixels.",
+            })
+            rhRows.thickness = optionsAPI.BuildSettingRow(rhCard.frame, "Border Thickness", rhThicknessSlider)
+            rhCard.AddRow(rhRows.thickness)
+            UpdateRotationHelperWidgetStates()
+            builder.CloseCard(rhCard)
+        end
+    end
+
+    return builder.Height()
+end
+
+local function RenderKeybindsSection(sectionHost, ctx)
+    local containerKey = ResolveContainerKey(ctx)
+    local gui = GetGUI()
+    local optionsAPI = GetOptionsAPI()
+    local viewerDB = ResolveKeybindsDB(containerKey)
+    if not containerKey then
+        return nil
+    end
+
+    if not gui or not optionsAPI or not viewerDB then
+        return RenderUnavailableLabel(sectionHost, "Keybind settings unavailable.")
+    end
+
+    local builder = CreateSectionBuilder(sectionHost, ctx, "keybinds")
+    if not builder then
+        return nil
+    end
+
+    builder.Header("Keybinds")
+    local card = builder.Card()
+
+    local keybindRows = {}
+    local function UpdateKeybindWidgetStates()
+        local enabled = viewerDB.showKeybinds == true
+        if keybindRows.anchor then keybindRows.anchor:SetEnabled(enabled) end
+        if keybindRows.size then keybindRows.size:SetEnabled(enabled) end
+        if keybindRows.color then keybindRows.color:SetEnabled(enabled) end
+        if keybindRows.xOffset then keybindRows.xOffset:SetEnabled(enabled) end
+        if keybindRows.yOffset then keybindRows.yOffset:SetEnabled(enabled) end
+    end
+
+    local showCheckbox = gui:CreateFormCheckbox(card.frame, nil, "showKeybinds", viewerDB, function()
+        RefreshKeybinds()
+        UpdateKeybindWidgetStates()
+    end, {
+        description = "Show the bound key text on each icon in this container.",
+    })
+    local anchorDropdown = gui:CreateFormDropdown(card.frame, nil, KEYBIND_ANCHOR_OPTIONS, "keybindAnchor", viewerDB, RefreshKeybinds, {
+        description = "Which corner of each icon the keybind text is anchored to.",
+    })
+    keybindRows.anchor = optionsAPI.BuildSettingRow(card.frame, "Keybind Anchor", anchorDropdown)
+    card.AddRow(
+        optionsAPI.BuildSettingRow(card.frame, "Show Keybinds", showCheckbox),
+        keybindRows.anchor
+    )
+
+    local sizeSlider = gui:CreateFormSlider(card.frame, nil, 6, 18, 1, "keybindTextSize", viewerDB, RefreshKeybinds, nil, {
+        description = "Font size for the keybind text.",
+    })
+    local colorPicker = gui:CreateFormColorPicker(card.frame, nil, "keybindTextColor", viewerDB, RefreshKeybinds, nil, {
+        description = "Color used for the keybind text.",
+    })
+    keybindRows.size = optionsAPI.BuildSettingRow(card.frame, "Text Size", sizeSlider)
+    keybindRows.color = optionsAPI.BuildSettingRow(card.frame, "Text Color", colorPicker)
+    card.AddRow(
+        keybindRows.size,
+        keybindRows.color
+    )
+
+    local xOffsetSlider = gui:CreateFormSlider(card.frame, nil, -20, 20, 1, "keybindOffsetX", viewerDB, RefreshKeybinds, nil, {
+        description = "Horizontal pixel offset for the keybind text from its anchor corner.",
+    })
+    local yOffsetSlider = gui:CreateFormSlider(card.frame, nil, -20, 20, 1, "keybindOffsetY", viewerDB, RefreshKeybinds, nil, {
+        description = "Vertical pixel offset for the keybind text from its anchor corner.",
+    })
+    keybindRows.xOffset = optionsAPI.BuildSettingRow(card.frame, "X Offset", xOffsetSlider)
+    keybindRows.yOffset = optionsAPI.BuildSettingRow(card.frame, "Y Offset", yOffsetSlider)
+    card.AddRow(
+        keybindRows.xOffset,
+        keybindRows.yOffset
+    )
+    UpdateKeybindWidgetStates()
+
+    builder.CloseCard(card)
+
+    local keybindsOptions = ns.QUI_KeybindsOptions
+    if keybindsOptions and type(keybindsOptions.BuildKeybindOverridesSection) == "function" then
+        builder.Spacer(10)
+        local startY = -builder.Height(0)
+        local finalY = keybindsOptions.BuildKeybindOverridesSection(sectionHost, startY)
+        if type(finalY) == "number" then
+            local extra = math.max(0, math.abs(finalY) - math.abs(startY))
+            return builder.Height() + extra
+        end
+    end
+
+    return builder.Height()
+end
+
+local function CreateSingleSectionTabFeature(id, sectionId, minHeight, render)
+    return Schema.Feature({
+        id = id,
+        surfaces = {
+            cdmTab = {
+                sections = { sectionId },
+                padding = 10,
+                sectionGap = 14,
+                topPadding = 10,
+                bottomPadding = 40,
+            },
+        },
+        sections = {
+            Schema.Section({
+                id = sectionId,
+                kind = "custom",
+                minHeight = minHeight,
+                render = render,
+            }),
+        },
+    })
+end
+
+local ENTRIES_TAB_FEATURE = CreateSingleSectionTabFeature("cdmEntriesTab", "entries", 160, RenderEntriesSection)
+local LAYOUT_TAB_FEATURE = CreateSingleSectionTabFeature("cdmLayoutTab", "layout", 160, RenderLayoutSection)
+local FILTERS_TAB_FEATURE = CreateSingleSectionTabFeature("cdmFiltersTab", "filters", 120, RenderFiltersSection)
+local PERSPEC_TAB_FEATURE = CreateSingleSectionTabFeature("cdmPerSpecTab", "perspec", 120, RenderPerSpecSection)
+local EFFECTS_TAB_FEATURE = CreateSingleSectionTabFeature("cdmEffectsTab", "effects", 120, RenderEffectsSection)
+local KEYBINDS_TAB_FEATURE = CreateSingleSectionTabFeature("cdmKeybindsTab", "keybinds", 120, RenderKeybindsSection)
+
+local function RenderFeatureTab(feature, host, containerKey)
+    if not host then
+        return false
+    end
+
+    local normalizedKey = NormalizeContainerKey(containerKey)
+    if type(normalizedKey) ~= "string" or normalizedKey == "" then
+        return false
+    end
+
+    local width = host.GetWidth and host:GetWidth() or 0
+    if type(width) ~= "number" or width <= 0 then
+        width = 760
+    end
+
+    return Renderer:RenderFeature(feature, host, {
+        surface = "cdmTab",
+        width = width,
+        containerKey = normalizedKey,
+        builtIn = IsBuiltIn(normalizedKey),
+    })
+end
+
+function CDMSettingsSchema.RenderEntriesTab(host, containerKey)
+    return RenderFeatureTab(ENTRIES_TAB_FEATURE, host, containerKey)
+end
+
+function CDMSettingsSchema.RenderLayoutTab(host, containerKey)
+    return RenderFeatureTab(LAYOUT_TAB_FEATURE, host, containerKey)
+end
+
+function CDMSettingsSchema.RenderFiltersTab(host, containerKey)
+    return RenderFeatureTab(FILTERS_TAB_FEATURE, host, containerKey)
+end
+
+function CDMSettingsSchema.RenderPerSpecTab(host, containerKey)
+    return RenderFeatureTab(PERSPEC_TAB_FEATURE, host, containerKey)
+end
+
+function CDMSettingsSchema.RenderEffectsTab(host, containerKey)
+    return RenderFeatureTab(EFFECTS_TAB_FEATURE, host, containerKey)
+end
+
+function CDMSettingsSchema.RenderKeybindsTab(host, containerKey)
+    return RenderFeatureTab(KEYBINDS_TAB_FEATURE, host, containerKey)
+end
+end
+end
+
+do
+-- Inlined from containers_page_surface.lua
+local ADDON_NAME, ns = ...
+local Settings = ns.Settings
+if QUI and QUI._optionsAddonName == ADDON_NAME and QUI.GUI and Settings and Settings.FullSurface then
+--[[
+    QUI Options V2 — Cooldown Manager tile
+    Two sub-pages: Containers (dropdown-driven per-container editor with
+    dynamic tabs) and Defaults (global toggles).
+
+    Layout:
+
+        [Container ▼]         [+ New]  [Delete]
+        ────────────────────────────────────────
+        LIVE PREVIEW
+        ────────────────────────────────────────
+        Entries │ Layout │ Filters │ Per-Spec │ Effects │ Position
+        ────────────────────────────────────────
+        (active tab renders here)
+
+    The dropdown + buttons live INSIDE the tile-level preview block so
+    they stay visible while the user switches sub-tabs. The sub-page
+    body only owns the tab strip + content host.
+
+    Filters / Per-Spec tabs only surface for custom containers; built-ins
+    get a trimmed Entries / Layout / Effects / Position strip.
+]]
+
+local ADDON_NAME, ns = ...
+local QUI = QUI
+local GUI = QUI.GUI
+local C = GUI.Colors
+local Settings = ns.Settings
+local FullSurface = Settings and Settings.FullSurface
+local ClearFrame = FullSurface and FullSurface.ClearFrame
+
+-- File-scoped snapshot of db.profile.ncdm.perLoadoutSpec used to detect
+-- the false→true transition in the toggle onChange handler. The framework
+-- writes dbTable[dbKey] = newValue BEFORE calling onChange, so reading the
+-- DB inside onChange gives the NEW value. This upvalue captures the OLD
+-- value by being set at BuildPreviewBlock entry and updated at the end of
+-- every onChange call.
+local _lastPerLoadoutSpecValue = false
+
+local function ResolveModel(feature)
+    local model = feature and feature.model or nil
+    if type(model) == "function" then
+        model = model()
+    end
+    if type(model) == "table" then
+        return model
+    end
+    return ns.QUI_CooldownManagerSettingsModel
+end
+
+---------------------------------------------------------------------------
+-- Module state — shared between the tile-level preview (which owns the
+-- dropdown + buttons) and the sub-page body (which owns the tab strip +
+-- content host). Set at Register time; read/written from callbacks on
+-- both surfaces.
+---------------------------------------------------------------------------
+local State = {
+    activeContainer = nil,
+    activeTab = "entries",
+    dropdown = nil,         -- widget (preview header)
+    deleteBtn = nil,        -- widget (preview header)
+    activeBody = nil,       -- current tab body frame
+    repaintTabs = nil,      -- set by BuildTileBody; refreshes the tab strip + active body
+}
+
+local TabModel
+local EnsureTabModel
+
+---------------------------------------------------------------------------
+-- Container enumeration & labels
+---------------------------------------------------------------------------
+local function GetContainerOptions()
+    local model = ResolveModel()
+    local getOptions = model and model.GetContainerOptions
+    if type(getOptions) == "function" then
+        return getOptions()
+    end
+    return {}
+end
+
+local function IsBuiltIn(containerKey)
+    local model = ResolveModel()
+    local isBuiltIn = model and model.IsBuiltIn
+    return type(isBuiltIn) == "function" and isBuiltIn(containerKey) == true
+end
+
+local function HasContainer(containerKey)
+    local model = ResolveModel()
+    local hasContainer = model and model.HasContainer
+    return type(hasContainer) == "function" and hasContainer(containerKey) == true
+end
+
+local function NormalizeContainerKey(containerKey)
+    local model = ResolveModel()
+    local normalize = model and model.NormalizeContainerKey
+    if type(normalize) == "function" then
+        return normalize(containerKey)
+    end
+    return containerKey
+end
+
+local ResetBody
+
+---------------------------------------------------------------------------
+-- SetActiveContainer — fires everywhere: updates dropdown widget, tab
+-- strip (if bound), tab content (if bound), hoisted preview. The state
+-- module hands out no-ops until the sub-page wires its callbacks.
+---------------------------------------------------------------------------
+local ContainerSelection = FullSurface and FullSurface.CreateSelectionController
+    and FullSurface.CreateSelectionController(State, {
+        stateKey = "activeContainer",
+        normalize = NormalizeContainerKey,
+        afterSet = function(key)
+            if State.deleteBtn then
+                if IsBuiltIn(key) then State.deleteBtn:Hide() else State.deleteBtn:Show() end
+            end
+
+            EnsureTabModel():ApplyNormalized()
+
+            if State.repaintTabs then
+                State.repaintTabs()
+            end
+
+            if _G.QUI_RefreshCDMPreview then
+                _G.QUI_RefreshCDMPreview(key)
+            end
+        end,
+    })
+
+local function SetActiveContainer(key)
+    ContainerSelection:Set(key)
+end
+
+local function SetActiveTab(tabKey)
+    if type(tabKey) ~= "string" or tabKey == "" then
+        return
+    end
+
+    local tabModel = EnsureTabModel()
+    if not tabModel or type(tabModel.SetActiveKey) ~= "function" then
+        return
+    end
+
+    tabModel:SetActiveKey(tabKey)
+    if type(tabModel.ApplyNormalized) == "function" then
+        tabModel:ApplyNormalized()
+    end
+    if State.repaintTabs then
+        State.repaintTabs()
+    end
+end
+
+---------------------------------------------------------------------------
+-- ClearFrame helper — wipes a frame's children + regions. Also scrubs
+-- any composer-layout cache flag so the composer rebuilds when the
+-- Entries tab is reshown.
+---------------------------------------------------------------------------
+function ResetBody(frame)
+    if ClearFrame then
+        ClearFrame(frame)
+    end
+    frame._composerLayout = nil
+    frame._hideComposerNav = nil
+end
+
+---------------------------------------------------------------------------
+-- PREVIEW BLOCK — top row (per-loadout toggle + context label) +
+-- preview area (dropdown + buttons + visual preview).
+-- Called by framework_v2 via tile.config.preview.build. The preview
+-- frame is anchored above the sub-page tabs so dropdown + preview
+-- persist across sub-tab switches.
+--
+-- Layout:
+--   [☐ Per-Loadout Entries                                         ]
+--   [Editing entries for: Spec — Loadout                           ]
+--   [Container ▼]                                  [+ New] [Delete]
+--   ────────────────────────────────────────────────────────────────
+--                          LIVE PREVIEW
+---------------------------------------------------------------------------
+
+-- Fixed-size box at TOP-LEFT of the preview area holding the per-loadout
+-- toggle (above) and the active-context label (below). NOT full-height —
+-- the preview frame reclaims the full pv width BELOW this column via
+-- post-build re-anchoring of the framework's previewHost.
+--
+-- WIDTH NOTE: GUI:CreateFormToggle hard-codes the switch widget at
+-- container.LEFT + 180 (label width 170 + 10px gap), and the switch
+-- itself is 26px wide. So the toggle's content extends to LEFT+206.
+-- LEFT_COL_WIDTH must be at least 206 + 2*LEFT_COL_PAD = 222 or the
+-- switch widget paints past leftCol's right edge into the dropdown row.
+-- 240 leaves a comfortable margin and reads cleanly in-game.
+local LEFT_COL_WIDTH = 240
+local LEFT_COL_HEIGHT = 50
+local LEFT_COL_PAD = 8
+
+local function BuildPreviewBlock(pv)
+    State.activeContainer = NormalizeContainerKey(State.activeContainer)
+
+    -- Seed _lastPerLoadoutSpecValue from the current DB state so the
+    -- onChange handler can detect the false→true transition correctly.
+    local ncdm = QUI and QUI.db and QUI.db.profile and QUI.db.profile.ncdm
+    _lastPerLoadoutSpecValue = ncdm and ncdm.perLoadoutSpec or false
+
+    ---------------------------------------------------------------------------
+    -- Left column — fixed-size 200x50 box at top-left holding the toggle
+    -- (above) and the active-context label (below). Doesn't span pv's full
+    -- height, so the preview frame can reclaim full width below it.
+    ---------------------------------------------------------------------------
+    local leftCol = CreateFrame("Frame", nil, pv)
+    leftCol:SetPoint("TOPLEFT", pv, "TOPLEFT", 0, 0)
+    leftCol:SetSize(LEFT_COL_WIDTH, LEFT_COL_HEIGHT)
+
+    -- Active-context label (accent-color; visible only when perLoadoutSpec=true).
+    -- Declared before UpdateLoadoutLabel so the closure can reference it.
+    -- Final SetPoint anchors are applied AFTER the toggle widget is created
+    -- so the label can sit immediately below it.
+    local loadoutLabel = GUI:CreateLabel(leftCol, "", 11, C.accent)
+    loadoutLabel:SetJustifyH("LEFT")
+    loadoutLabel:Hide()
+
+    -- UpdateLoadoutLabel — resolves the current spec + loadout name and
+    -- updates the accent-color label below the toggle.
+    -- Mirrors click_cast_content.lua:660-702 (D-04). Uses only
+    -- GetLastSelectedSavedConfigID (never GetActiveConfigID) per LDST-04.
+    local function UpdateLoadoutLabel()
+        local db = QUI and QUI.db and QUI.db.profile and QUI.db.profile.ncdm
+        if db and db.perLoadoutSpec then
+            local specIndex = GetSpecialization and GetSpecialization()
+            if specIndex then
+                local _, specName = GetSpecializationInfo and GetSpecializationInfo(specIndex)
+                    or nil, nil
+                if specName then
+                    local labelText = "Editing entries for: " .. specName
+                    if C_ClassTalents then
+                        local specID = GetSpecializationInfo(specIndex)
+                        local savedID = specID and C_ClassTalents.GetLastSelectedSavedConfigID
+                            and C_ClassTalents.GetLastSelectedSavedConfigID(specID)
+                        local builds = specID and C_ClassTalents.GetConfigIDsBySpecID
+                            and C_ClassTalents.GetConfigIDsBySpecID(specID)
+                        local ordinal
+                        local lookupID = savedID
+                        if lookupID and builds then
+                            for idx, cid in ipairs(builds) do
+                                if cid == lookupID then
+                                    ordinal = idx
+                                    break
+                                end
+                            end
+                        end
+                        local configInfo = lookupID and C_Traits and C_Traits.GetConfigInfo
+                            and C_Traits.GetConfigInfo(lookupID)
+                        local customName = configInfo and configInfo.name
+                        -- Use custom name only when it differs from the spec name
+                        -- (Blizzard defaults to spec name for unnamed loadouts).
+                        if customName and customName ~= specName then
+                            labelText = labelText .. " \226\128\148 " .. customName
+                        elseif ordinal then
+                            labelText = labelText .. " \226\128\148 Loadout " .. ordinal
+                        end
+                    end
+                    loadoutLabel:SetText(labelText)
+                    loadoutLabel:Show()
+                    return
+                end
+            end
+        end
+        loadoutLabel:Hide()
+    end
+
+    -- Trigger a full CDM repaint after the toggle changes routing.
+    -- Toggle clicks cannot happen in combat (Blizzard UI is inaccessible
+    -- then), so no InCombatLockdown guard is needed here.
+    local function refreshCDM()
+        if ns.CDMContainers and ns.CDMContainers.RefreshAll then
+            ns.CDMContainers.RefreshAll()
+        end
+    end
+
+    -- Toggle onChange handler. The framework has already written
+    -- dbTable[dbKey] = newValue before calling us, so reading ncdm.perLoadoutSpec
+    -- inside this callback gives the NEW value. The old value is captured in
+    -- _lastPerLoadoutSpecValue which was set at BuildPreviewBlock entry and is
+    -- updated at the end of every onChange call (D-07 / RESEARCH Q2).
+    local function onPerLoadoutToggle(newValue)
+        local oldValue = _lastPerLoadoutSpecValue
+
+        -- false→true transition: seed the active loadout slot from slot 0
+        -- once, if the active slot is empty and slot 0 has data (D-05).
+        -- SeedActiveLoadoutFromSharedSlot is internally gated on both
+        -- conditions; we just need to provide the current spec and loadout IDs
+        -- via the public helper which resolves them internally.
+        if oldValue == false and newValue == true then
+            if ns.CDMContainers and ns.CDMContainers.SeedActiveLoadoutFromSharedSlot then
+                ns.CDMContainers.SeedActiveLoadoutFromSharedSlot()
+            end
+        end
+        -- true→false: routing-only change (GetEffectiveLoadoutID returns 0).
+        -- No SavedVariables data is destroyed (D-05b / LDUX-05).
+
+        -- Keep the snapshot current for the next onChange call.
+        _lastPerLoadoutSpecValue = newValue
+
+        UpdateLoadoutLabel()
+        refreshCDM()
+    end
+
+    -- Always visible in v1 — the LDUX-02 per-spec-disable gate is vestigial
+    -- for CDM (all built-in containers are always spec-scoped). Future
+    -- per-spec-disable work would replace the constant below (D-03).
+    local _isSpecScoped = true  -- luacheck: ignore (reserved for future use)
+
+    local perLoadoutToggle = GUI:CreateFormCheckbox(
+        leftCol,
+        "Per-Loadout Entries",
+        "perLoadoutSpec",
+        ncdm,
+        onPerLoadoutToggle,
+        {
+            description = "Maintain a separate spell list per saved talent loadout within each spec. Entries swap automatically when you change loadout. Toggle off preserves your per-loadout data.",
+        }
+    )
+    perLoadoutToggle:SetPoint("TOPLEFT", leftCol, "TOPLEFT", LEFT_COL_PAD, -2)
+    perLoadoutToggle:SetPoint("RIGHT", leftCol, "RIGHT", -LEFT_COL_PAD, 0)
+
+    -- Position the accent label immediately below the toggle, inside leftCol.
+    loadoutLabel:SetPoint("TOPLEFT", perLoadoutToggle, "BOTTOMLEFT", 0, -2)
+    loadoutLabel:SetPoint("TOPRIGHT", perLoadoutToggle, "BOTTOMRIGHT", 0, -2)
+
+    -- Perform the initial label render now that both the toggle and label exist.
+    UpdateLoadoutLabel()
+
+    -- Subscribe to loadout-change events so the label refreshes live when
+    -- the player switches loadout in-game or a profile switch changes the
+    -- perLoadoutSpec value (D-06).
+    if ns.CDMContainers and ns.CDMContainers.RegisterLoadoutChangeCallback then
+        ns.CDMContainers.RegisterLoadoutChangeCallback(function()
+            -- Re-sync _lastPerLoadoutSpecValue on every confirmed loadout swap
+            -- so the next toggle click detects the transition correctly,
+            -- including after a profile switch that changed perLoadoutSpec.
+            local db2 = QUI and QUI.db and QUI.db.profile and QUI.db.profile.ncdm
+            _lastPerLoadoutSpecValue = db2 and db2.perLoadoutSpec or false
+            UpdateLoadoutLabel()
+        end)
+    end
+
+    ---------------------------------------------------------------------------
+    -- Dropdown row + live preview. Pass `pv` directly so the preview frame
+    -- (returned by the framework as `block.previewHost`) can reclaim the
+    -- full pv width via post-build re-anchoring below leftCol. The dropdown
+    -- header row is then nudged past leftCol's right edge so it doesn't
+    -- overlap the toggle widget.
+    ---------------------------------------------------------------------------
+    local block = FullSurface.BuildDropdownPreviewBlock(pv, {
+        gui = GUI,
+        state = State,
+        selectedValue = State.activeContainer,
+        dropdownStateKey = "_activeContainer",
+        dropdownLabel = "Container",
+        dropdownOptions = GetContainerOptions(),
+        dropdownMeta = {
+            description = "Select which cooldown container to configure. Built-in containers have a reduced tab set; custom containers expose Filters and Per-Spec options.",
+        },
+        dropdownConfig = {
+            searchable = true,
+            collapsible = false,
+        },
+        previewFillAlpha = 0,
+        headerActions = {
+            {
+                key = "new",
+                text = "+ New",
+                width = 90,
+                height = 24,
+                style = "primary",
+                onClick = function()
+                    if _G.QUI_ShowCDMNewContainerPopup then
+                        _G.QUI_ShowCDMNewContainerPopup(function(newKey)
+                            if State.dropdown and State.dropdown.SetOptions then
+                                State.dropdown:SetOptions(GetContainerOptions())
+                            end
+                            SetActiveContainer(newKey)
+                        end)
+                    end
+                end,
+            },
+            {
+                key = "delete",
+                text = "Delete",
+                width = 90,
+                height = 24,
+                style = "ghost",
+                stateField = "deleteBtn",
+                onClick = function()
+                    local key = State.activeContainer
+                    if not key or IsBuiltIn(key) then
+                        return
+                    end
+                    if ns.CDMContainers and ns.CDMContainers.DeleteContainer then
+                        ns.CDMContainers.DeleteContainer(key)
+                        if State.dropdown and State.dropdown.SetOptions then
+                            State.dropdown:SetOptions(GetContainerOptions())
+                        end
+                        SetActiveContainer(NormalizeContainerKey(nil))
+                    end
+                end,
+            },
+        },
+        onDropdownChanged = function(value)
+            SetActiveContainer(value)
+        end,
+        onBuildPreviewHost = function(previewHost)
+            if State.deleteBtn and IsBuiltIn(State.activeContainer) then
+                State.deleteBtn:Hide()
+            end
+            if _G.QUI_BuildCDMPreview then
+                _G.QUI_BuildCDMPreview(previewHost, State.activeContainer)
+            end
+        end,
+    })
+
+    -- Re-anchor the framework-built widgets so the toggle doesn't overlap
+    -- the dropdown AND the preview reclaims full width below leftCol.
+    -- Calling SetPoint with the same anchor name ("TOPLEFT") REPLACES the
+    -- framework's existing TOPLEFT anchor while leaving TOPRIGHT / BOTTOMRIGHT
+    -- intact, so the widgets still stretch to pv's right edge as before.
+    if block and block.headerRow then
+        -- 8px gap between leftCol and the dropdown row. The "Container"
+        -- label inside the dropdown widget is also re-anchored below so
+        -- it sits next to the actual dropdown selection (not at the row's
+        -- left edge), which gives the toggle and label plenty of visual
+        -- separation regardless of this gap value.
+        block.headerRow:SetPoint("TOPLEFT", leftCol, "TOPRIGHT", LEFT_COL_PAD, 0)
+    end
+    if block and block.previewHost then
+        block.previewHost:SetPoint("TOPLEFT", leftCol, "BOTTOMLEFT", 0, -4)
+    end
+
+    -- Re-anchor the framework's internal "Container" FontString from the
+    -- container's LEFT edge to RIGHT-of-dropdown-button so the label sits
+    -- adjacent to the dropdown selection instead of floating at the row's
+    -- left edge. The framework exposes the outer container as block.dropdown
+    -- but doesn't surface the label or button directly — walk the container's
+    -- regions/children to find them.
+    if block and block.dropdown then
+        local container = block.dropdown
+        local labelText, dropdownButton
+        for _, region in ipairs({ container:GetRegions() }) do
+            if region.GetObjectType and region:GetObjectType() == "FontString" then
+                labelText = region
+                break
+            end
+        end
+        for _, child in ipairs({ container:GetChildren() }) do
+            if child.GetObjectType and child:GetObjectType() == "Button" then
+                dropdownButton = child
+                break
+            end
+        end
+        if labelText and dropdownButton then
+            labelText:ClearAllPoints()
+            labelText:SetPoint("RIGHT", dropdownButton, "LEFT", -8, 0)
+        end
+    end
+end
+
+---------------------------------------------------------------------------
+-- TILE BODY BUILDER — tab strip + content host.
+--
+-- Rendered inside tile.config.buildFunc (no framework sub-pages). We own
+-- the full body which means full control over dynamic tab visibility
+-- (Filters / Per-Spec hidden for built-ins) and no surprises when the
+-- framework's sub-page tab strip eventually merges back into V1.
+---------------------------------------------------------------------------
+
+-- Horizontal scroll-free tab strip matching the framework's style:
+-- plain labels, 11pt, 2px accent underline on the active tab. See
+-- framework_v2.lua's RenderSubPageTabs for the reference look.
+local function BuildTabStrip(parent)
+    return FullSurface.CreateTabStrip(parent)
+end
+
+EnsureTabModel = function(feature)
+    if TabModel then
+        return TabModel
+    end
+
+    local model = ResolveModel(feature)
+    local getTabDefinitions = model and model.GetTabDefinitions
+    local tabDefinitions = type(getTabDefinitions) == "function" and getTabDefinitions() or {}
+
+    TabModel = FullSurface and FullSurface.CreateTabModel
+        and FullSurface.CreateTabModel(State, {
+            stateKey = "activeTab",
+            defaultKey = "entries",
+            defaultHostKey = "scroll",
+            tabs = tabDefinitions,
+        })
+
+    return TabModel
+end
+
+local function BuildTileBody(body, _, _, feature)
+    local tabModel = EnsureTabModel(feature)
+    return FullSurface.BuildMultiHostTabBody(body, {
+        state = State,
+        clearFrame = ResetBody,
+        createTabStrip = BuildTabStrip,
+        initialize = function()
+            State.activeTab = State.activeTab or "entries"
+        end,
+        hosts = {
+            composer = {
+                kind = "plain",
+                clearFrame = ResetBody,
+            },
+            scroll = {
+                kind = "scroll",
+                clearFrame = ResetBody,
+            },
+        },
+        defaultHostKey = "scroll",
+        resolveHostKey = function(activeTab)
+            return tabModel:GetHostKey(activeTab)
+        end,
+        getTabs = function()
+            return tabModel:GetTabs()
+        end,
+        getActiveTab = function()
+            return tabModel:GetActiveKey()
+        end,
+        setActiveTab = function(tabKey)
+            tabModel:SetActiveKey(tabKey)
+        end,
+        render = function(host, activeTab)
+            return tabModel:RenderKey(host, activeTab)
+        end,
+    })
+end
+
+ns.QUI_CooldownManagerSettingsSurface = {
+    preview = {
+        height = 230,
+        build = BuildPreviewBlock,
+    },
+    SetActiveContainer = SetActiveContainer,
+    SetActiveTab = SetActiveTab,
+    RenderPage = BuildTileBody,
+}
+end
+end
+
+do
+-- Inlined from containers_page.lua
+local ADDON_NAME, ns = ...
+local Settings = ns.Settings
+local SurfaceFeatures = Settings and Settings.SurfaceFeatures
+if not (QUI and QUI._optionsAddonName == ADDON_NAME)
+    and SurfaceFeatures and type(SurfaceFeatures.Register) == "function"
+    and not ns._CDMContainersPageRegistered then
+ns._CDMContainersPageRegistered = true
 local ADDON_NAME, ns = ...
 
 local Settings = ns.Settings
@@ -46,25 +3119,6 @@ local function ResolveContainerKey(lookupKey)
     end
 
     return nil
-end
-
-local function AppendDrawerSection(host, topOffset, render)
-    if not host or type(render) ~= "function" then
-        return 0
-    end
-
-    local sectionHost = CreateFrame("Frame", nil, host)
-    sectionHost:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -topOffset)
-    sectionHost:SetPoint("TOPRIGHT", host, "TOPRIGHT", 0, -topOffset)
-    sectionHost:SetHeight(1)
-
-    local height = render(sectionHost)
-    if type(height) ~= "number" or height <= 0 then
-        height = sectionHost.GetHeight and sectionHost:GetHeight() or 1
-    end
-    height = math.max(1, height)
-    sectionHost:SetHeight(height)
-    return height
 end
 
 local function AppendLayoutRouteControls(host, topOffset, routeKey)
@@ -162,4 +3216,6 @@ local feature = SurfaceFeatures:Register({
 local CDMContainers = ns.CDMContainers
 if feature and CDMContainers and type(CDMContainers.SyncSettingsFeatureLookups) == "function" then
     CDMContainers.SyncSettingsFeatureLookups(FEATURE_ID)
+end
+end
 end

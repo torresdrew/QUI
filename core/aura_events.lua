@@ -263,3 +263,21 @@ end)
 ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
 ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "AuraDispatch", frame = coalesceFrame, scriptType = "OnUpdate" }
 ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "AuraRouter", frame = eventFrame }
+
+---------------------------------------------------------------------------
+-- DEBUG: runtime A/B experiment hook for heap-allocation isolation.
+-- Memaudit's `/qui memaudit exp` toggles the global UNIT_AURA registration
+-- to measure Blizzard-side updateInfo payload allocation cost. While the
+-- experiment is off, target debuffs and tooltip aura updates degrade until
+-- restored — production behavior is `on`.
+---------------------------------------------------------------------------
+ns.QUI_PerfExperiments = ns.QUI_PerfExperiments or {}
+ns.QUI_PerfExperiments[#ns.QUI_PerfExperiments + 1] = {
+    name = "globalUnitAura",
+    description = "Global UNIT_AURA frame (nameplate/target/focus/boss/arena traffic)",
+    isEnabled = function() return eventFrame:IsEventRegistered("UNIT_AURA") end,
+    setEnabled = function(on)
+        if on then eventFrame:RegisterEvent("UNIT_AURA")
+        else eventFrame:UnregisterEvent("UNIT_AURA") end
+    end,
+}

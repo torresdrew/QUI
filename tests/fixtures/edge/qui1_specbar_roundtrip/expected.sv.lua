@@ -2363,6 +2363,7 @@ return {
               [4] = 1
             },
             skinCharacterFrame = true,
+            skinContextMenus = true,
             skinCraftingOrders = true,
             skinDamageMeter = true,
             skinGameMenu = true,
@@ -2373,6 +2374,8 @@ return {
             skinOverrideActionBar = true,
             skinPowerBarAlt = true,
             skinProfessions = true,
+            skinReadyCheck = true,
+            skinStaticPopups = true,
             skinStatusTrackingBars = true,
             skinUseClassColor = true,
             statusTrackingBarsBarColor = {
@@ -4934,6 +4937,14 @@ return {
               anchorYOffset = 0,
               auras = {
                 buffAnchor = "BOTTOMLEFT",
+                buffClassifications = {
+                  bigDefensive = false,
+                  cancelable = false,
+                  externalDefensive = false,
+                  helpful = false,
+                  important = false,
+                  notCancelable = false
+                },
                 buffDuration = {
                   anchor = "CENTER",
                   color = {
@@ -4947,6 +4958,8 @@ return {
                   offsetY = 0,
                   show = true
                 },
+                buffFilterMode = "off",
+                buffFilterOnlyMine = true,
                 buffGrow = "RIGHT",
                 buffIconSize = 22,
                 buffMaxIcons = 4,
@@ -4979,6 +4992,12 @@ return {
                 buffStackOffsetY = 1,
                 buffStackSize = 10,
                 debuffAnchor = "TOPLEFT",
+                debuffClassifications = {
+                  crowdControl = false,
+                  dispellable = false,
+                  harmful = false,
+                  important = false
+                },
                 debuffDuration = {
                   anchor = "CENTER",
                   color = {
@@ -4992,6 +5011,7 @@ return {
                   offsetY = 0,
                   show = false
                 },
+                debuffFilterMode = "off",
                 debuffGrow = "RIGHT",
                 debuffMaxIcons = 4,
                 debuffMaxPerRow = 0,
@@ -5256,6 +5276,14 @@ return {
               anchorYOffset = 0,
               auras = {
                 buffAnchor = "BOTTOMLEFT",
+                buffClassifications = {
+                  bigDefensive = false,
+                  cancelable = false,
+                  externalDefensive = false,
+                  helpful = false,
+                  important = false,
+                  notCancelable = false
+                },
                 buffDuration = {
                   anchor = "CENTER",
                   color = {
@@ -5269,6 +5297,8 @@ return {
                   offsetY = 0,
                   show = true
                 },
+                buffFilterMode = "off",
+                buffFilterOnlyMine = true,
                 buffGrow = "RIGHT",
                 buffIconSize = 18,
                 buffMaxIcons = 4,
@@ -5300,6 +5330,12 @@ return {
                 buffStackOffsetY = 1,
                 buffStackSize = 10,
                 debuffAnchor = "TOPLEFT",
+                debuffClassifications = {
+                  crowdControl = false,
+                  dispellable = false,
+                  harmful = false,
+                  important = false
+                },
                 debuffDuration = {
                   anchor = "CENTER",
                   color = {
@@ -5313,6 +5349,7 @@ return {
                   offsetY = 0,
                   show = false
                 },
+                debuffFilterMode = "off",
                 debuffGrow = "RIGHT",
                 debuffMaxIcons = 4,
                 debuffOffsetX = 0,

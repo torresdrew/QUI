@@ -2125,14 +2125,60 @@ end
 
 local dungeonEyeOriginalParent = nil
 local dungeonEyeOriginalPoint = nil
+local dungeonEyeOriginalSize = nil
+local dungeonEyeBaseSize = nil
 local dungeonEyeHooksInstalled = false
 -- Recursion guard: true while we mutate the button ourselves so our own
 -- hooks don't reschedule a reapply against our own writes.
 local dungeonEyeApplyingOurState = false
 -- Coalesce multiple Blizzard mutations in the same frame into one reapply.
 local dungeonEyeReapplyPending = false
+local DUNGEON_EYE_DEFAULT_SIZE = 32
+local DUNGEON_EYE_MIN_BASE_SIZE = 16
+local DUNGEON_EYE_MAX_BASE_SIZE = 64
 
 local UpdateDungeonEyePosition  -- forward declared; assigned below
+
+local function GetSaneDungeonEyeDimension(value)
+    value = tonumber(value)
+    if value and value >= DUNGEON_EYE_MIN_BASE_SIZE and value <= DUNGEON_EYE_MAX_BASE_SIZE then
+        return value
+    end
+    return DUNGEON_EYE_DEFAULT_SIZE
+end
+
+local function CaptureDungeonEyeState(btn)
+    if not btn then return end
+
+    if not dungeonEyeOriginalParent then
+        dungeonEyeOriginalParent = btn:GetParent()
+        local point, relativeTo, relativePoint, x, y = btn:GetPoint()
+        if point then
+            dungeonEyeOriginalPoint = {point, relativeTo, relativePoint, x, y}
+        end
+    end
+
+    if not dungeonEyeOriginalSize or not dungeonEyeBaseSize then
+        local width = GetSaneDungeonEyeDimension(btn:GetWidth())
+        local height = GetSaneDungeonEyeDimension(btn:GetHeight())
+        if not dungeonEyeOriginalSize then
+            dungeonEyeOriginalSize = {width, height}
+        end
+        if not dungeonEyeBaseSize then
+            dungeonEyeBaseSize = {width, height}
+        end
+    end
+end
+
+local function ApplyDungeonEyeVisuals(btn, eyeSettings)
+    if not btn then return end
+
+    local width = (dungeonEyeBaseSize and dungeonEyeBaseSize[1]) or DUNGEON_EYE_DEFAULT_SIZE
+    local height = (dungeonEyeBaseSize and dungeonEyeBaseSize[2]) or DUNGEON_EYE_DEFAULT_SIZE
+    btn:SetSize(width, height)
+    btn:SetScale(tonumber(eyeSettings and eyeSettings.scale) or 1.0)
+    btn:SetFrameStrata("MEDIUM")
+end
 
 local function ScheduleDungeonEyeReapply()
     if dungeonEyeApplyingOurState then return end
@@ -2187,18 +2233,15 @@ local function RestoreDungeonEye()
     end
 
     btn:SetScale(1.0)
+    if dungeonEyeOriginalSize then
+        btn:SetSize(dungeonEyeOriginalSize[1], dungeonEyeOriginalSize[2])
+    end
     btn:SetFrameStrata("MEDIUM")
 
     dungeonEyeApplyingOurState = false
 end
 
 UpdateDungeonEyePosition = function()
-    if InCombatLockdown() then
-        -- Blizzard can relayout the queue eye during combat; retry on the next
-        -- deferred minimap refresh once combat ends.
-        pendingMinimapRefresh = true
-        return
-    end
     local settings = GetSettings()
     if not settings or not settings.enabled then return end
 
@@ -2208,23 +2251,32 @@ UpdateDungeonEyePosition = function()
     local btn = QueueStatusButton
     if not btn then return end
 
-    -- Store original state on first run (before we modify it)
-    if not dungeonEyeOriginalParent then
-        dungeonEyeOriginalParent = btn:GetParent()
-        local point, relativeTo, relativePoint, x, y = btn:GetPoint()
-        if point then
-            dungeonEyeOriginalPoint = {point, relativeTo, relativePoint, x, y}
-        end
-    end
+    -- Store original state on first run (before we modify it), and lock the
+    -- base button dimensions so Blizzard's temporary queue relayout sizes do
+    -- not multiply through our configured scale.
+    CaptureDungeonEyeState(btn)
 
     if eyeSettings.enabled then
         InstallDungeonEyeHooks(btn)
+
+        if InCombatLockdown() then
+            -- Full reparent/reanchor work remains deferred, but QueueStatusButton
+            -- is normally unprotected, so keep the visual size stable immediately.
+            pendingMinimapRefresh = true
+            if not (btn.IsProtected and btn:IsProtected()) then
+                dungeonEyeApplyingOurState = true
+                ApplyDungeonEyeVisuals(btn, eyeSettings)
+                dungeonEyeApplyingOurState = false
+            end
+            return
+        end
 
         dungeonEyeApplyingOurState = true
 
         -- Reparent to Minimap - Blizzard controls visibility based on queue status
         btn:SetParent(Minimap)
         btn:ClearAllPoints()
+        ApplyDungeonEyeVisuals(btn, eyeSettings)
 
         -- Calculate corner position with offsets
         local corner = eyeSettings.corner or "BOTTOMRIGHT"
@@ -2242,14 +2294,14 @@ UpdateDungeonEyePosition = function()
         local pos = cornerOffsets[corner] or cornerOffsets.BOTTOMRIGHT
         btn:SetPoint(pos.anchor, Minimap, pos.anchor, pos.x, pos.y)
 
-        -- Apply scale
-        local scale = eyeSettings.scale or 1.0
-        btn:SetScale(scale)
-        btn:SetFrameStrata("MEDIUM")
         -- Do NOT call btn:Show() - let Blizzard control visibility based on queue status
 
         dungeonEyeApplyingOurState = false
     else
+        if InCombatLockdown() then
+            pendingMinimapRefresh = true
+            return
+        end
         RestoreDungeonEye()
     end
 end
@@ -4230,4 +4282,3 @@ do
         end
     end)
 end
-

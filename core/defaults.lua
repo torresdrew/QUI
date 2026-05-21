@@ -38,6 +38,9 @@ local defaults = {
             autoInsertKey = true,  -- Auto-insert keystone in M+ UI
             skinKeystoneFrame = true,  -- Skin keystone insertion window
             skinGameMenu = true,  -- Skin ESC menu (opt-in)
+            skinContextMenus = true,  -- Skin context/dropdown menus
+            skinReadyCheck = true,  -- Skin ready check popup
+            skinStaticPopups = true,  -- Skin StaticPopup dialogs
             allowReloadInCombat = false,  -- Allow /reload during combat (bypass SafeReload)
             showOptionTooltips = true,  -- Show on-hover explanations over each option in the settings panel
             addQUIButton = true,  -- Add QUI button to ESC menu (opt-in)
@@ -1926,6 +1929,11 @@ local defaults = {
                     debuffStackOffsetX = -1,
                     debuffStackOffsetY = 1,
                     debuffStackColor = {1, 1, 1, 1},
+                    buffFilterMode = "off",
+                    debuffFilterMode = "off",
+                    buffFilterOnlyMine = true,
+                    buffClassifications = { helpful = false, cancelable = false, notCancelable = false, important = false, bigDefensive = false, externalDefensive = false },
+                    debuffClassifications = { harmful = false, dispellable = false, crowdControl = false, important = false },
                 },
                 -- Status indicators (player only)
                 indicators = {
@@ -2149,6 +2157,11 @@ local defaults = {
                     debuffStackOffsetX = -1,
                     debuffStackOffsetY = 1,
                     debuffStackColor = {1, 1, 1, 1},
+                    buffFilterMode = "off",
+                    debuffFilterMode = "off",
+                    buffFilterOnlyMine = true,
+                    buffClassifications = { helpful = false, cancelable = false, notCancelable = false, important = false, bigDefensive = false, externalDefensive = false },
+                    debuffClassifications = { harmful = false, dispellable = false, crowdControl = false, important = false },
                 },
                 -- Target marker (raid icons like skull, cross, etc.)
                 targetMarker = {

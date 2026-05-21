@@ -71,10 +71,31 @@ return {
             facade = "CDMRenderers.ApplyNumericCooldown",
             method = "SetCooldown",
             allowedCallSites = {
-                ["modules/cdm/cdm_renderers.lua"] = true,
+                ["modules/cdm/cdm_frame_writes.lua"] = true,
             },
             policy = "clean item timing only; never secret-derived cooldown timing",
         },
+        -- Why no secret-passthrough facade exists. We tried a second
+        -- blessed facade (ApplyHookPassthroughCooldown) that forwarded
+        -- Blizzard's Cooldown:Set* args from a hooksecurefunc callback
+        -- directly to addon-owned Cooldown widgets. The hypothesis was
+        -- that being inside a hooksecurefunc frame from Blizzard's
+        -- CooldownViewer call would preserve enough taint context for
+        -- the C side to accept the secret args. Empirical test on Mind
+        -- Blast 8092 -> 450983 (Shadow Priest) returned:
+        --   "bad argument #2 to 'SetCooldown' ... Secret values are
+        --    only allowed during untainted execution for this argument."
+        -- The taint check on SetCooldown is per-receiving-widget: only
+        -- Blizzard-owned widgets accept secret args, regardless of the
+        -- caller's frame. Addon-owned Cooldown subframes are insecure
+        -- and reject. There is no Lua-visible workaround. Spells whose
+        -- CooldownViewer mixin uses SetCooldown(start, duration)
+        -- instead of SetCooldownFromDurationObject simply can't have
+        -- their swipe mirrored to the addon icon in combat. The icon's
+        -- desaturation still works (the resolver classifies mode=cooldown
+        -- from cdInfo.isActive=true, and the icon-side chargesRemaining
+        -- query keeps charge spells with remaining charges saturated),
+        -- but the animated swipe is unreachable.
     },
 
     secretBooleanDecode = {

@@ -1,7 +1,7 @@
 -- buffborders.lua
 -- Addon-owned buff/debuff icon display via SecureAuraHeaderTemplate
 -- The header handles aura scanning, child creation, and positioning in
--- Blizzard's secure context — no C_UnitAuras calls from addon code, no taint.
+-- Blizzard's secure context; addon code mirrors non-protected visual state.
 
 local _, ns = ...
 local Helpers = ns.Helpers
@@ -25,6 +25,9 @@ local tremove = table.remove
 local CreateFrame = CreateFrame
 local GetTime = GetTime
 local InCombatLockdown = InCombatLockdown
+local format = string.format
+local floor = math.floor
+local ceil = math.ceil
 
 -- Private aura API (WoW 10.1.0+)
 local AddPrivateAuraAnchor = C_UnitAuras and C_UnitAuras.AddPrivateAuraAnchor
@@ -230,6 +233,173 @@ local function ConfigureAuraCooldownFrame(cooldown)
     end
 end
 
+---------------------------------------------------------------------------
+-- DURATION TEXT (round-to-nearest, replaces Blizzard's floor-rounded text)
+---------------------------------------------------------------------------
+-- Round to nearest hour above 1h, nearest minute above 1m, ceil seconds
+-- below 1m. 2h45m -> "3h", 2h20m -> "2h", 59m -> "59m", 30s -> "30s".
+local function FormatDuration(remaining)
+    if remaining <= 0 then return "" end
+    if remaining < 60 then return format("%ds", ceil(remaining)) end
+    if remaining < 3600 then return format("%dm", floor(remaining / 60 + 0.5)) end
+    return format("%dh", floor(remaining / 3600 + 0.5))
+end
+
+local function GetAuraDurationObject(unit, auraInstanceID)
+    if not unit then return nil end
+    if not C_UnitAuras or not C_UnitAuras.GetAuraDuration then return nil end
+    if not IsSecretValue(auraInstanceID) and auraInstanceID == nil then return nil end
+
+    local ok, durationObj = pcall(C_UnitAuras.GetAuraDuration, unit, auraInstanceID)
+    if ok and durationObj then
+        return durationObj
+    end
+    return nil
+end
+
+local function GetDurationObjectRemaining(durationObj)
+    if not durationObj or type(durationObj) == "number" then return nil end
+    if not durationObj.GetRemainingDuration then return nil end
+
+    local ok, remaining = pcall(durationObj.GetRemainingDuration, durationObj)
+    if ok and not IsSecretValue(remaining) and remaining ~= nil then
+        return tonumber(remaining)
+    end
+    return nil
+end
+
+local trackedDurationChildren = {}
+local buffBorderStats = {
+    unitAuraScans = 0,
+    fastAuraUpdates = 0,
+    buffUpdates = 0,
+    debuffUpdates = 0,
+    headerAuraEvents = 0,
+    busAuraEvents = 0,
+    auraChildMapWrites = 0,
+    auraChildMapClears = 0,
+}
+do local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "BB_durationTrack", tbl = trackedDurationChildren }
+    mp[#mp + 1] = { name = "BB_unitAuraScans", counter = true, fn = function() return buffBorderStats.unitAuraScans end }
+    mp[#mp + 1] = { name = "BB_fastAuraUpdates", counter = true, fn = function() return buffBorderStats.fastAuraUpdates end }
+    mp[#mp + 1] = { name = "BB_buffUpdates", counter = true, fn = function() return buffBorderStats.buffUpdates end }
+    mp[#mp + 1] = { name = "BB_debuffUpdates", counter = true, fn = function() return buffBorderStats.debuffUpdates end }
+    mp[#mp + 1] = { name = "BB_headerAuraEvents", counter = true, fn = function() return buffBorderStats.headerAuraEvents end }
+    mp[#mp + 1] = { name = "BB_busAuraEvents", counter = true, fn = function() return buffBorderStats.busAuraEvents end }
+    mp[#mp + 1] = { name = "BB_auraChildMapWrites", counter = true, fn = function() return buffBorderStats.auraChildMapWrites end }
+    mp[#mp + 1] = { name = "BB_auraChildMapClears", counter = true, fn = function() return buffBorderStats.auraChildMapClears end }
+end
+
+local buffAuraChildrenByID = {}
+local debuffAuraChildrenByID = {}
+do local mp = ns._memprobes or {}; ns._memprobes = mp
+    mp[#mp + 1] = { name = "BB_buffAuraChildrenByID", tbl = buffAuraChildrenByID }
+    mp[#mp + 1] = { name = "BB_debuffAuraChildrenByID", tbl = debuffAuraChildrenByID }
+end
+
+local function ClearAuraChildMapEntry(child)
+    if not child then return end
+
+    local map = child._quiAuraChildMap
+    local key = child._quiAuraChildMapKey
+    if map and key ~= nil then
+        map[key] = nil
+        buffBorderStats.auraChildMapClears = buffBorderStats.auraChildMapClears + 1
+    end
+
+    child._quiAuraChildMap = nil
+    child._quiAuraChildMapKey = nil
+end
+
+local function SetAuraChildMapEntry(child, auraChildMap, auraInstanceID)
+    if not child or not auraChildMap then return end
+    if IsSecretValue(auraInstanceID) or auraInstanceID == nil then
+        ClearAuraChildMapEntry(child)
+        return
+    end
+
+    local oldMap = child._quiAuraChildMap
+    local oldKey = child._quiAuraChildMapKey
+    if oldMap == auraChildMap and oldKey == auraInstanceID then
+        return
+    end
+
+    if oldMap and oldKey ~= nil then
+        oldMap[oldKey] = nil
+        buffBorderStats.auraChildMapClears = buffBorderStats.auraChildMapClears + 1
+    end
+
+    auraChildMap[auraInstanceID] = child
+    child._quiAuraChildMap = auraChildMap
+    child._quiAuraChildMapKey = auraInstanceID
+    buffBorderStats.auraChildMapWrites = buffBorderStats.auraChildMapWrites + 1
+end
+
+local function ClearStaleHeaderAuraChildMapEntries(header, firstIndex)
+    if not header or not firstIndex then return end
+    for i = firstIndex, 40 do
+        local child = header:GetAttribute("child" .. i)
+        if not child then break end
+        ClearAuraChildMapEntry(child)
+    end
+end
+
+local function EnsureDurationText(child)
+    if child._quiDuration then return child._quiDuration end
+    local fs = child:CreateFontString(nil, "OVERLAY")
+    fs:SetFont(GetGeneralFont(), 12, GetGeneralFontOutline() or "OUTLINE")
+    fs:SetPoint("CENTER", child, "CENTER", 0, 0)
+    fs:SetJustifyH("CENTER")
+    fs:SetTextColor(1, 1, 1, 1)
+    fs:SetShadowColor(0, 0, 0, 1)
+    fs:SetShadowOffset(1, -1)
+    fs:SetText("")
+    child._quiDuration = fs
+    trackedDurationChildren[child] = true
+    return fs
+end
+
+local sharedDurationTimer = CreateFrame("Frame")
+local durationTimerElapsed = 0
+local DURATION_TIMER_INTERVAL = 0.2
+
+sharedDurationTimer:SetScript("OnUpdate", function(_, elapsed)
+    durationTimerElapsed = durationTimerElapsed + elapsed
+    if durationTimerElapsed < DURATION_TIMER_INTERVAL then return end
+    durationTimerElapsed = 0
+    local now = GetTime()
+    for child in pairs(trackedDurationChildren) do
+        local fs = child._quiDuration
+        if fs then
+            if not child:IsShown() then
+                fs:SetText("")
+            elseif child._quiUseNativeDuration then
+                fs:SetText("")
+            else
+                local exp = child._quiExpiration
+                local dur = child._quiDuration_secs
+                -- Restricted instances can redact numeric aura fields. Prefer
+                -- the aura DurationObject when available so refreshed buffs
+                -- update immediately instead of ticking from old expiration
+                -- fields.
+                local durationObjRemaining = GetDurationObjectRemaining(child._quiDurationObject)
+                if durationObjRemaining ~= nil then
+                    fs:SetText(FormatDuration(durationObjRemaining))
+                elseif not (IsSecretValue(exp) or IsSecretValue(dur)) then
+                    local expN = tonumber(exp) or 0
+                    local durN = tonumber(dur) or 0
+                    if expN > 0 and durN > 0 then
+                        fs:SetText(FormatDuration(expN - now))
+                    else
+                        fs:SetText("")
+                    end
+                end
+            end
+        end
+    end
+end)
+
 local function StyleIcon(icon, settings, isBuff, debuffType)
     if not icon or not settings then return end
 
@@ -315,6 +485,13 @@ local function StyleIcon(icon, settings, isBuff, debuffType)
             pcall(cdText.ClearAllPoints, cdText)
             pcall(cdText.SetPoint, cdText, cdAnchor, icon.Cooldown, cdAnchor, cdOffX, cdOffY)
         end
+    end
+
+    if icon._quiDuration then
+        local fs = icon._quiDuration
+        if fs.SetFont then fs:SetFont(font, fontSize, outline) end
+        pcall(fs.ClearAllPoints, fs)
+        pcall(fs.SetPoint, fs, cdAnchor, icon, cdAnchor, cdOffX, cdOffY)
     end
 end
 
@@ -418,6 +595,8 @@ local function StyleHeaderChildren(header, settings, isBuff)
     if iconSize <= 0 then iconSize = DEFAULT_ICON_SIZE end
     local prefix = isBuff and "buff" or "debuff"
     local visibleCount = 0
+    local auraChildMap = isBuff and buffAuraChildrenByID or debuffAuraChildrenByID
+    local firstStaleChildIndex = nil
 
     -- Filter string and sort rule MUST match what SyncHeaderAttributes wrote
     -- to the secure header — child[i] in the header pairs to auras[i] only
@@ -425,11 +604,15 @@ local function StyleHeaderChildren(header, settings, isBuff)
     -- BuildAuraFilter / GetSortConfig, both keyed off `settings`.
     local filter = BuildAuraFilter(settings, isBuff)
     local enumRule, _, _, enumDir = GetSortConfig(settings, isBuff)
+    buffBorderStats.unitAuraScans = buffBorderStats.unitAuraScans + 1
     local auras = C_UnitAuras.GetUnitAuras("player", filter, 40, enumRule, enumDir)
 
     for i = 1, 40 do
         local child = header:GetAttribute("child" .. i)
-        if not child or not child:IsShown() then break end
+        if not child or not child:IsShown() then
+            firstStaleChildIndex = i
+            break
+        end
         visibleCount = visibleCount + 1
 
         -- Pair child[i] to auras[i] — both are in slot order. AuraData fields
@@ -439,7 +622,11 @@ local function StyleHeaderChildren(header, settings, isBuff)
         -- field we use as a Lua handle — and only as an arg to C_UnitAuras.*
         -- calls that accept it.
         local data = auras and auras[i]
-        if not data then break end
+        if not data then
+            ClearAuraChildMapEntry(child)
+            firstStaleChildIndex = i + 1
+            break
+        end
 
         -- Resize child (out of combat only — protected on secure children)
         if not InCombatLockdown() or ns._inInitSafeWindow then
@@ -450,9 +637,12 @@ local function StyleHeaderChildren(header, settings, isBuff)
         pcall(child.Icon.SetTexture, child.Icon, data.icon)
 
         -- Store metadata for tooltips (storing secret values, not branching)
-        child._auraInstanceID = data.auraInstanceID
+        local auraInstanceID = data.auraInstanceID
+        child._auraInstanceID = auraInstanceID
         child._spellId = data.spellId
         child._filter = filter
+        child._quiHeaderSlot = i
+        SetAuraChildMapEntry(child, auraChildMap, auraInstanceID)
 
         -- Buff cancellation is declared on the secure XML template so right
         -- clicks flow through SECURE_ACTIONS.cancelaura in combat.
@@ -521,6 +711,23 @@ local function StyleHeaderChildren(header, settings, isBuff)
                 true,
                 data.timeMod
             )
+            -- Custom duration text (Blizzard's countdown floors; we round to nearest)
+            local durationText = EnsureDurationText(child)
+            child._quiExpiration = data.expirationTime
+            child._quiDuration_secs = data.duration
+            child._quiDurationObject = GetAuraDurationObject("player", data.auraInstanceID)
+            local hasReadableNumericDuration =
+                not (IsSecretValue(data.expirationTime) or IsSecretValue(data.duration))
+                and tonumber(data.expirationTime) ~= nil
+                and tonumber(data.duration) ~= nil
+            local hasReadableObjectDuration = GetDurationObjectRemaining(child._quiDurationObject) ~= nil
+            child._quiUseNativeDuration = not (hasReadableNumericDuration or hasReadableObjectDuration)
+            if child._quiUseNativeDuration then
+                durationText:SetText("")
+            end
+            if child.Cooldown.SetHideCountdownNumbers then
+                pcall(child.Cooldown.SetHideCountdownNumbers, child.Cooldown, not child._quiUseNativeDuration)
+            end
             -- Swipe settings
             local showSwipe = not settings.hideSwipe
             child.Cooldown:SetDrawSwipe(showSwipe)
@@ -548,6 +755,8 @@ local function StyleHeaderChildren(header, settings, isBuff)
         -- Borders (via StyleIcon — reuse existing function)
         StyleIcon(child, settings, isBuff, data.dispelName)
     end
+
+    ClearStaleHeaderAuraChildMapEntries(header, firstStaleChildIndex)
 
     -- Style weapon enchant children (buff header only)
     if isBuff then
@@ -669,6 +878,102 @@ local function StyleHeaderChildren(header, settings, isBuff)
         header:SetAlpha(1)
     end
 
+    header._quiAuraChildMapReady = true
+end
+
+local function RefreshUpdatedAuraChild(child)
+    local auraInstanceID = child and child._auraInstanceID
+    if IsSecretValue(auraInstanceID) then return false end
+    if auraInstanceID == nil then return false end
+
+    if child.Cooldown then
+        ConfigureAuraCooldownFrame(child.Cooldown)
+        local durationObj = GetAuraDurationObject("player", auraInstanceID)
+        if durationObj then
+            child._quiDurationObject = durationObj
+            child._quiUseNativeDuration = GetDurationObjectRemaining(durationObj) == nil
+            if child.Cooldown.SetHideCountdownNumbers then
+                pcall(child.Cooldown.SetHideCountdownNumbers, child.Cooldown, not child._quiUseNativeDuration)
+            end
+            pcall(child.Cooldown.SetCooldownFromDurationObject, child.Cooldown, durationObj, true)
+        end
+    end
+
+    if child.Stacks and C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount then
+        local ok, countText = pcall(C_UnitAuras.GetAuraApplicationDisplayCount, "player", auraInstanceID, 2, 99)
+        if ok then
+            pcall(child.Stacks.SetText, child.Stacks, countText or "")
+            pcall(child.Stacks.Show, child.Stacks)
+        end
+    end
+
+    return true
+end
+
+local function RefreshUpdatedAuraChildren(auraChildMap, updated)
+    if not auraChildMap or not updated then return 0, false end
+    local refreshed = 0
+
+    for i = 1, #updated do
+        local auraInstanceID = updated[i]
+        if IsSecretValue(auraInstanceID) then
+            return refreshed, true
+        end
+
+        if auraInstanceID ~= nil then
+            local child = auraChildMap[auraInstanceID]
+            if child and child:IsShown() then
+                if RefreshUpdatedAuraChild(child) then
+                    refreshed = refreshed + 1
+                end
+            end
+        end
+    end
+
+    return refreshed, false
+end
+
+local function IsPureAuraUpdate(updateInfo)
+    return type(updateInfo) == "table"
+        and updateInfo.isFullUpdate ~= true
+        and not updateInfo.addedAuras
+        and not updateInfo.removedAuraInstanceIDs
+        and type(updateInfo.updatedAuraInstanceIDs) == "table"
+        and #updateInfo.updatedAuraInstanceIDs > 0
+end
+
+local function RefreshPureAuraUpdate(updateInfo)
+    if not IsPureAuraUpdate(updateInfo) then return false end
+
+    local settings = GetSettings()
+    if not settings then return false end
+
+    local refreshBuffs = buffContainer and settings.enableBuffs and not settings.hideBuffFrame
+    local refreshDebuffs = debuffContainer and settings.enableDebuffs and not settings.hideDebuffFrame
+    if refreshBuffs and not buffContainer._quiAuraChildMapReady then return false end
+    if refreshDebuffs and not debuffContainer._quiAuraChildMapReady then return false end
+
+    local updated = updateInfo.updatedAuraInstanceIDs
+    local refreshed = 0
+    local unresolved = false
+
+    if refreshBuffs then
+        local n, hasUnresolved = RefreshUpdatedAuraChildren(buffAuraChildrenByID, updated)
+        refreshed = refreshed + n
+        unresolved = unresolved or hasUnresolved
+    end
+
+    if refreshDebuffs then
+        local n, hasUnresolved = RefreshUpdatedAuraChildren(debuffAuraChildrenByID, updated)
+        refreshed = refreshed + n
+        unresolved = unresolved or hasUnresolved
+    end
+
+    if unresolved then return false end
+    if refreshed > 0 then
+        buffBorderStats.fastAuraUpdates = buffBorderStats.fastAuraUpdates + 1
+    end
+    return true
 end
 
 ---------------------------------------------------------------------------
@@ -1302,6 +1607,7 @@ UpdateBuffIcons = function()
         return
     end
     buffContainer:SetAlpha(1)
+    buffBorderStats.buffUpdates = buffBorderStats.buffUpdates + 1
     StyleHeaderChildren(buffContainer, settings, true)
 end
 
@@ -1330,6 +1636,7 @@ UpdateDebuffIcons = function()
         return
     end
     debuffContainer:SetAlpha(1)
+    buffBorderStats.debuffUpdates = buffBorderStats.debuffUpdates + 1
     StyleHeaderChildren(debuffContainer, settings, false)
     RefreshPrivateAuraAnchors()
     LayoutPrivateAuraSlots()
@@ -1580,12 +1887,14 @@ Init = function()
     buffContainer:SetAlpha((settings and settings.enableBuffs and not settings.hideBuffFrame) and 1 or 0)
     debuffContainer:SetAlpha((settings and settings.enableDebuffs and not settings.hideDebuffFrame) and 1 or 0)
 
-    -- Hook the header's OnEvent to style children when auras change.
+    -- Hook the header's OnEvent to coalesce child styling when auras change.
     buffContainer:HookScript("OnEvent", function()
         if previewActive then return end
         local s = GetSettings()
         if not s or not s.enableBuffs or s.hideBuffFrame then return end
-        StyleHeaderChildren(buffContainer, s, true)
+        buffBorderStats.headerAuraEvents = buffBorderStats.headerAuraEvents + 1
+        if ns.AuraEvents then return end
+        ScheduleBuffUpdate()
     end)
     buffContainer:RegisterUnitEvent("UNIT_AURA", "player")
 
@@ -1593,8 +1902,9 @@ Init = function()
         if previewActive then return end
         local s = GetSettings()
         if not s or not s.enableDebuffs or s.hideDebuffFrame then return end
-        StyleHeaderChildren(debuffContainer, s, false)
-        LayoutPrivateAuraSlots()
+        buffBorderStats.headerAuraEvents = buffBorderStats.headerAuraEvents + 1
+        if ns.AuraEvents then return end
+        ScheduleDebuffUpdate()
     end)
     debuffContainer:RegisterUnitEvent("UNIT_AURA", "player")
 
@@ -1614,6 +1924,8 @@ end
 ---------------------------------------------------------------------------
 if ns.AuraEvents then
     ns.AuraEvents:Subscribe("player", function(unit, updateInfo)
+        buffBorderStats.busAuraEvents = buffBorderStats.busAuraEvents + 1
+        if RefreshPureAuraUpdate(updateInfo) then return end
         ScheduleBuffUpdate()
         ScheduleDebuffUpdate()
     end)
@@ -1639,7 +1951,11 @@ paRegenFrame:SetScript("OnEvent", function()
 end)
 
 ns.QUI_PerfRegistry = ns.QUI_PerfRegistry or {}
-ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "BuffBorders_CombatEnd", frame = paRegenFrame }
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "BuffBorders_CombatEnd",     frame = paRegenFrame }
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "BuffBorders_DurationTick",  frame = sharedDurationTimer, scriptType = "OnUpdate" }
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "BuffBorders_BuffCoalesce",  frame = buffCoalesceFrame,   scriptType = "OnUpdate" }
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "BuffBorders_DebuffCoalesce",frame = debuffCoalesceFrame, scriptType = "OnUpdate" }
+ns.QUI_PerfRegistry[#ns.QUI_PerfRegistry + 1] = { name = "BuffBorders_EnchantEvent",  frame = enchantEventFrame }
 
 -- Primary initialization is called from core/main.lua during the ADDON_LOADED
 -- safe window. Keep this retry for unusual load orders and for combat-end

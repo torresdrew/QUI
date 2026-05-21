@@ -14,6 +14,9 @@ local CreateFrame = CreateFrame
 local GetTime = GetTime
 local C_Timer = C_Timer
 local math_floor = math.floor
+local pairs = pairs
+local rawget = rawget
+local type = type
 
 -- QUI_UF is created in unitframes.lua and exported to ns.QUI_UnitFrames.
 -- This file loads after unitframes.lua, so the reference is available.
@@ -45,6 +48,23 @@ local PREVIEW_AURAS = {
         {icon = "Interface\\Icons\\spell_nature_slow", stacks = 2, duration = 10},
         {icon = "Interface\\Icons\\spell_shadow_shadesofdarkness", stacks = 5, duration = 10},
     }
+}
+
+-- Maps DB toggle keys to Blizzard classification filter strings.
+local BUFF_CLASSIFICATION_MAP = {
+    helpful           = { "HELPFUL|RAID", "HELPFUL|RAID_IN_COMBAT" },
+    cancelable        = "HELPFUL|CANCELABLE",
+    notCancelable     = "HELPFUL|NOT_CANCELABLE",
+    important         = "HELPFUL|IMPORTANT",
+    bigDefensive      = "HELPFUL|BIG_DEFENSIVE",
+    externalDefensive = "HELPFUL|EXTERNAL_DEFENSIVE",
+}
+
+local DEBUFF_CLASSIFICATION_MAP = {
+    harmful     = { "HARMFUL|RAID", "HARMFUL|RAID_IN_COMBAT" },
+    dispellable = "HARMFUL|RAID_PLAYER_DISPELLABLE",
+    crowdControl = "HARMFUL|CROWD_CONTROL",
+    important    = "HARMFUL|IMPORTANT",
 }
 
 ---------------------------------------------------------------------------
@@ -244,6 +264,86 @@ local function GetAuraIcon(container, index, parent, size, auraSettings, isDebuf
     return icon
 end
 
+local function IsClassificationEnabled(classifications, key)
+    if key == "helpful" then
+        local value = rawget(classifications, "helpful")
+        if value ~= nil then return value end
+        -- Legacy migration: previous Player/Target buff filters stored the
+        -- two raid-frame filters as separate raid/raidInCombat toggles.
+        return classifications.raid or classifications.raidInCombat
+    end
+
+    if key == "harmful" then
+        local value = rawget(classifications, "harmful")
+        if value ~= nil then return value end
+        -- Legacy migration: previous Player/Target debuff filters stored the
+        -- two raid-frame filters as separate raid/raidInCombat toggles.
+        return classifications.raid or classifications.raidInCombat
+    end
+
+    return classifications[key]
+end
+
+local function BuildClassificationFilters(classifications, classificationMap)
+    if not classifications or not classificationMap then return nil end
+
+    local filters
+    for key, filterSpec in pairs(classificationMap) do
+        if IsClassificationEnabled(classifications, key) then
+            filters = filters or {}
+            if type(filterSpec) == "table" then
+                for _, filterString in ipairs(filterSpec) do
+                    filters[#filters + 1] = filterString
+                end
+            else
+                filters[#filters + 1] = filterSpec
+            end
+        end
+    end
+
+    return filters
+end
+
+local function IsAuraFilteredOutByInstanceID(unit, auraInstanceID, filterString)
+    if not C_UnitAuras or not C_UnitAuras.IsAuraFilteredOutByInstanceID then
+        return nil
+    end
+    if not unit or not filterString then
+        return nil
+    end
+    if Helpers.IsSecretValue(auraInstanceID) then
+        return nil
+    end
+    if auraInstanceID == nil then
+        return nil
+    end
+
+    local ok, filteredOut = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, auraInstanceID, filterString)
+    if not ok or Helpers.IsSecretValue(filteredOut) then
+        return nil
+    end
+
+    return filteredOut
+end
+
+local function AuraPassesAnyFilter(unit, auraInstanceID, filters)
+    if not filters or #filters == 0 then
+        return true
+    end
+
+    for _, filterString in ipairs(filters) do
+        local filteredOut = IsAuraFilteredOutByInstanceID(unit, auraInstanceID, filterString)
+        if filteredOut == nil then
+            return true
+        end
+        if filteredOut == false then
+            return true
+        end
+    end
+
+    return false
+end
+
 ---------------------------------------------------------------------------
 -- AURA UPDATE
 ---------------------------------------------------------------------------
@@ -336,6 +436,16 @@ local function UpdateAuras(frame)
     local buffOffsetY = auraSettings.buffOffsetY or -2
     local buffSpacing = auraSettings.buffSpacing or auraSettings.iconSpacing or 2
 
+    local usePlayerTargetAuraFilters = unitKey == "player" or unitKey == "target"
+    local debuffClassificationFilters
+    if usePlayerTargetAuraFilters and auraSettings.debuffFilterMode == "classification" then
+        debuffClassificationFilters = BuildClassificationFilters(auraSettings.debuffClassifications, DEBUFF_CLASSIFICATION_MAP)
+    end
+    local buffClassificationFilters
+    if usePlayerTargetAuraFilters and auraSettings.buffFilterMode == "classification" then
+        buffClassificationFilters = BuildClassificationFilters(auraSettings.buffClassifications, BUFF_CLASSIFICATION_MAP)
+    end
+
     -- Initialize containers
     frame.buffIcons = frame.buffIcons or {}
     frame.debuffIcons = frame.debuffIcons or {}
@@ -373,7 +483,11 @@ local function UpdateAuras(frame)
     -- Helper to safely display stack count using combat-safe API
     -- Passes directly to SetText without comparing (return value may be secret-derived)
     local function DisplayStackCount(countText, unit, auraInstanceID)
-        if not auraInstanceID or not C_UnitAuras.GetAuraApplicationDisplayCount then
+        if not C_UnitAuras.GetAuraApplicationDisplayCount then
+            countText:SetText("")
+            return
+        end
+        if not Helpers.IsSecretValue(auraInstanceID) and auraInstanceID == nil then
             countText:SetText("")
             return
         end
@@ -387,8 +501,9 @@ local function UpdateAuras(frame)
         end
     end
 
-    -- Populate debuffs (skip if preview is active). Filter is applied
-    -- C-side via the filter string; no Lua-side post-filter.
+    -- Populate debuffs (skip if preview is active). The structured filter is
+    -- applied C-side; the legacy classification filter is kept as a narrow
+    -- compatibility path for older profiles.
     local debuffCount = 0
     local debuffIndex = 1
     if showDebuffs and not debuffPreviewActive then
@@ -396,6 +511,10 @@ local function UpdateAuras(frame)
             local auraData = C_UnitAuras.GetAuraDataByIndex(unit, debuffIndex, debuffFilterString)
             if not auraData then break end
             debuffIndex = debuffIndex + 1
+
+            if debuffClassificationFilters and not AuraPassesAnyFilter(unit, auraData.auraInstanceID, debuffClassificationFilters) then
+                -- skip: debuff does not match selected Blizzard classifications
+            else
 
             debuffCount = debuffCount + 1
 
@@ -472,13 +591,15 @@ local function UpdateAuras(frame)
             icon:ClearAllPoints()
             icon:SetPoint(iconPoint, frame, framePoint, xPos + (borderOffsetX or 0), yPos)
             icon:Show()
+            end
         end
     end
 
     -- Populate buffs (skip if preview is active). Every buff on every unit
-    -- renders regardless of source — NPC self-buffs (enrages, mechanic
+    -- renders regardless of source -- NPC self-buffs (enrages, mechanic
     -- stacks) on target/focus and party/raid-cast buffs on the player frame
-    -- are all surfaced.
+    -- are all surfaced. Legacy classification filtering still applies if an
+    -- older profile has it enabled.
     local buffCount = 0
     local buffIndex = 1
     if showBuffs and not buffPreviewActive then
@@ -486,6 +607,10 @@ local function UpdateAuras(frame)
             local auraData = C_UnitAuras.GetAuraDataByIndex(unit, buffIndex, buffFilterString)
             if not auraData then break end
             buffIndex = buffIndex + 1
+
+            if buffClassificationFilters and not AuraPassesAnyFilter(unit, auraData.auraInstanceID, buffClassificationFilters) then
+                -- skip: buff does not match selected Blizzard classifications
+            else
 
             buffCount = buffCount + 1
 
@@ -562,6 +687,7 @@ local function UpdateAuras(frame)
             icon:ClearAllPoints()
             icon:SetPoint(iconPoint, frame, framePoint, xPos + (borderOffsetX or 0), yPos)
             icon:Show()
+            end
         end
     end
 end

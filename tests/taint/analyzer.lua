@@ -115,8 +115,57 @@ local function emit(findings, filePath, line, col, sink, sourceFunc, message)
     }
 end
 
--- Forward declaration so walkExpr and walkStatements can call each other.
+-- Forward declarations so expression and statement walkers can call each other.
+local walkExpr
 local walkStatements
+
+local function stripParens(expr)
+    while type(expr) == "table" and expr.AstType == "Parentheses" do
+        expr = expr.Inner
+    end
+    return expr
+end
+
+local function copySet(set)
+    local copy = {}
+    for k, v in pairs(set or {}) do
+        if v then copy[k] = true end
+    end
+    return copy
+end
+
+local function clearParamTaint(taintSet, fieldTaintSet, funcNode)
+    for _, arg in ipairs(funcNode.Arguments or {}) do
+        local name = arg.Name
+        if name then
+            taintSet[name] = nil
+            local prefix = name .. "."
+            for key in pairs(fieldTaintSet) do
+                if key:sub(1, #prefix) == prefix then
+                    fieldTaintSet[key] = nil
+                end
+            end
+        end
+    end
+end
+
+local function walkFunctionBody(funcNode, taintSet, fieldTaintSet, findings, registry, filePath, debug)
+    if not (funcNode.Body and funcNode.Body.Body) then return end
+    local closureTaint = copySet(taintSet)
+    local closureFieldTaint = copySet(fieldTaintSet)
+    clearParamTaint(closureTaint, closureFieldTaint, funcNode)
+    walkStatements(funcNode.Body.Body, closureTaint, closureFieldTaint, findings, registry, filePath, debug)
+end
+
+local function walkConditionExpr(expr, taintSet, fieldTaintSet, findings, registry, filePath)
+    local inner = stripParens(expr)
+    if isTaintedRef(inner, taintSet, fieldTaintSet, registry) then
+        emit(findings, filePath, nodeLine(inner), 1, "<truthiness>",
+            "<tainted-local>",
+            "tainted value used as a branch condition without guard or C-side decode")
+    end
+    return walkExpr(expr, taintSet, fieldTaintSet, findings, registry, filePath)
+end
 
 -- Inspect a condition expression. If it matches a guard pattern, return a
 -- table { kind = "untaint-then" | "untaint-else", locals = { name1, ... } }.
@@ -159,7 +208,7 @@ end
 --- Returns true if the expression itself is (or contains) a source call —
 --- the caller uses this to decide whether the assigned-to variable is tainted.
 --- fieldTaintSet tracks tainted table fields keyed by "<tableLocal>.<field>".
-local function walkExpr(expr, taintSet, fieldTaintSet, findings, registry, filePath)
+walkExpr = function(expr, taintSet, fieldTaintSet, findings, registry, filePath)
     if type(expr) ~= "table" then return false end
     local t = expr.AstType
     if not t then return false end
@@ -169,14 +218,10 @@ local function walkExpr(expr, taintSet, fieldTaintSet, findings, registry, fileP
     end
 
     if t == "Function" then
-        -- Closure body. Recurse with a fresh taint scope — per spec, no
-        -- inter-procedural analysis. Outer-scope taint does not leak in
-        -- via upvalues; parameters start untainted. Pass nil for debug —
-        -- walkExpr doesn't carry the analyze-level debug table, and the
-        -- per-line taintedAt bookkeeping doesn't matter for closure bodies.
-        if expr.Body and expr.Body.Body then
-            walkStatements(expr.Body.Body, {}, {}, findings, registry, filePath, nil)
-        end
+        -- Closure body. This is still intra-file and non-interprocedural, but
+        -- tainted locals can be captured as upvalues by callbacks and sort
+        -- predicates, so inherit the current scope and clear function params.
+        walkFunctionBody(expr, taintSet, fieldTaintSet, findings, registry, filePath, nil)
         return false
     end
 
@@ -310,11 +355,9 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry, fi
         if not t then
             -- skip Eof and other non-statement nodes
         elseif t == "Function" then
-            -- function name() ... end OR local function name() ... end at top
-            -- level. Recurse with a fresh taint scope.
-            if stmt.Body and stmt.Body.Body then
-                walkStatements(stmt.Body.Body, {}, {}, findings, registry, filePath, debug)
-            end
+            -- function name() ... end OR local function name() ... end. Inherit
+            -- tainted upvalues, but function parameters shadow outer locals.
+            walkFunctionBody(stmt, taintSet, fieldTaintSet, findings, registry, filePath, debug)
         elseif t == "LocalStatement" then
             -- local a, b, c = expr1, expr2, expr3
             -- Each LHS variable is tainted if its corresponding RHS contains a
@@ -457,7 +500,7 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry, fi
                         end
                     else
                         -- Not a guard pattern — walk condition normally for sinks
-                        walkExpr(clause.Condition, branchTaint, branchFieldTaint, findings, registry, filePath)
+                        walkConditionExpr(clause.Condition, branchTaint, branchFieldTaint, findings, registry, filePath)
                         pendingUntaintForElse = nil
                     end
                 else
@@ -521,7 +564,7 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry, fi
 
             -- Walk header expressions for sinks (these run in the outer scope before/per loop).
             if t == "WhileStatement" and stmt.Condition then
-                walkExpr(stmt.Condition, taintSet, fieldTaintSet, findings, registry, filePath)
+                walkConditionExpr(stmt.Condition, taintSet, fieldTaintSet, findings, registry, filePath)
             elseif t == "NumericForStatement" then
                 if stmt.Start then walkExpr(stmt.Start, taintSet, fieldTaintSet, findings, registry, filePath) end
                 if stmt.End   then walkExpr(stmt.End,   taintSet, fieldTaintSet, findings, registry, filePath) end
@@ -548,7 +591,7 @@ walkStatements = function(stmts, taintSet, fieldTaintSet, findings, registry, fi
                 -- For RepeatStatement, the until-clause condition runs after the body.
                 -- Walk it for sinks against the post-body taint state.
                 if t == "RepeatStatement" and stmt.Condition then
-                    walkExpr(stmt.Condition, taintSet, fieldTaintSet, findings, registry, filePath)
+                    walkConditionExpr(stmt.Condition, taintSet, fieldTaintSet, findings, registry, filePath)
                 end
             end
         end
@@ -584,6 +627,14 @@ function M.analyze(source, filePath, registry, config, opts)
     if Config.isStrictPath(config, filePath) then
         for _, f in ipairs(findings) do
             if f.severity == "advisory" then
+                f.severity = "strict"
+            end
+        end
+    end
+
+    if Config.isStrictUnwrapPath(config, filePath) then
+        for _, f in ipairs(findings) do
+            if f.severity == "review" and f.sink == "<unwrap>" then
                 f.severity = "strict"
             end
         end

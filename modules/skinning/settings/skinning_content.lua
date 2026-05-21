@@ -460,6 +460,9 @@ local function BuildSkinningTab(tabContent)
     ---------------------------------------------------------------------------
     if general.skinPowerBarAlt == nil then general.skinPowerBarAlt = true end
     if general.skinAlerts == nil then general.skinAlerts = true end
+    if general.skinContextMenus == nil then general.skinContextMenus = true end
+    if general.skinReadyCheck == nil then general.skinReadyCheck = true end
+    if general.skinStaticPopups == nil then general.skinStaticPopups = true end
     if not db.lootResults then db.lootResults = {} end
     if db.lootResults.enabled == nil then db.lootResults.enabled = true end
     if general.skinCharacterFrame == nil then general.skinCharacterFrame = true end
@@ -471,12 +474,14 @@ local function BuildSkinningTab(tabContent)
     if general.skinProfessions == nil then general.skinProfessions = false end
     if general.skinStatusTrackingBars == nil then general.skinStatusTrackingBars = true end
     if general.skinDamageMeter == nil then general.skinDamageMeter = true end
-    CreateCollapsible("Skin Blizzard Frames", 13 * FORM_ROW + 8, function(body)
+    CreateCollapsible("Skin Blizzard Frames", 16 * FORM_ROW + 8, function(body)
         local sy = -4
         sy = P(GUI:CreateFormCheckbox(body, "Alert Frames (Req. Reload)", "skinAlerts", general, ReloadConfirm,
             { description = "Skin the achievement, loot, and level-up alert popups. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Auction House (Req. Reload)", "skinAuctionHouse", general, ReloadConfirm,
             { description = "Skin the Auction House window and its tabs. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Context Menus (Req. Reload)", "skinContextMenus", general, ReloadConfirm,
+            { description = "Skin right-click context menus and dropdown menu panels. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Crafting Orders (Req. Reload)", "skinCraftingOrders", general, ReloadConfirm,
             { description = "Skin the Crafting Orders interface used by professions. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Encounter Power Bar (Req. Reload)", "skinPowerBarAlt", general, ReloadConfirm,
@@ -493,8 +498,12 @@ local function BuildSkinningTab(tabContent)
             { description = "Skin the temporary override bar shown during vehicles and special encounters. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Professions (Req. Reload)", "skinProfessions", general, ReloadConfirm,
             { description = "Skin the profession crafting and recipe window. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Ready Check Dialog (Req. Reload)", "skinReadyCheck", general, ReloadConfirm,
+            { description = "Skin the ready check popup. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Reputation/Currency (Req. Reload)", "skinCharacterFrame", general, ReloadConfirm,
             { description = "Skin the reputation and currency tabs of the character pane. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Static Dialogs (Req. Reload)", "skinStaticPopups", general, ReloadConfirm,
+            { description = "Skin StaticPopup confirmation dialogs. Requires a reload." }), body, sy)
         P(GUI:CreateFormCheckbox(body, "Status Tracking Bars (Req. Reload)", "skinStatusTrackingBars", general, ReloadConfirm,
             { description = "Skin the experience, reputation, and honor bars above the action bar. Requires a reload." }), body, sy)
     end)

@@ -10,3 +10,6 @@ tests/fixtures/test/everything.txt
 tests/fixtures/test/QUI3.lua
 tools/view_sv.html
 /.scratch
+/.claude
+/.planning
+/docs/superpowers

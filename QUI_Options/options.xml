@@ -38,7 +38,7 @@
     <Script file="..\QUI\modules\groupframes\settings\group_frames_surface.lua"/>
     <Script file="tiles\group_frames.lua"/>
     <Script file="tiles\action_bars.lua"/>
-    <Script file="..\QUI\modules\cdm\settings\containers_page_surface.lua"/>
+    <Script file="..\QUI\modules\cdm\settings\containers_page.lua"/>
     <Script file="tiles\cooldown_manager.lua"/>
     <Script file="tiles\resource_bars.lua"/>
     <Script file="tiles\appearance.lua"/>

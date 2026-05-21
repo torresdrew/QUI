@@ -968,6 +968,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+
+
+## v3.5.10 - 2026-05-19
+
+### Added
+- added skinning for context menus and some popup dialogs
+
+### Changed
+- you can now (re-)apply consumables in the consumable checker before they ran out
+
+### Fixed
+- fixed CurseForge upload script to reflect latest game version compatibility
+- fixed tooltip added information row rendering and tooltip chrome rendering for player characters
+## v3.5.9 - 2026-05-10
+
+### Added
+- added aura classification filters to unit frames buffs/debuffs (player and target)
+
+### Fixed
+- refresh aura cooldown caches on update in M+/raids
+- stabilized dungeon eye sizing during combat
+- fixed Blizzard font state across global font toggles
 ## v3.5.8 - 2026-05-05
 
 ### Changed

@@ -70,7 +70,7 @@ The original boolean must not be compared, truthiness-tested, sorted, or otherwi
 
 ## Enforced Checks
 
-`tests/cdm_blizzard_reference_test.lua` checks that:
+`tests/unit/cdm_blizzard_reference_test.lua` checks that:
 
 - The local policy table points at existing vendored Blizzard docs.
 - The generated API index still has the CDM-relevant `AllowedWhenUntainted` contracts.
