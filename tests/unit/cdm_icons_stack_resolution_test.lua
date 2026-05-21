@@ -863,12 +863,14 @@ local itemIcon = {
         Show = noop,
     },
     TextOverlay = textOverlay,
-    StackText = {
-        SetText = noop,
-        SetTextColor = noop,
-        Hide = noop,
-        Show = noop,
-    },
+    StackText = (function()
+        local s = { _shown = false, _text = nil }
+        s.SetText = function(_, text) s._text = text end
+        s.SetTextColor = noop
+        s.Hide = function() s._shown = false end
+        s.Show = function() s._shown = true end
+        return s
+    end)(),
     CreateTexture = function(_, name, layer, template, sublevel)
         overlayState.createParent = "Icon"
         overlayState.createName = name
@@ -905,5 +907,16 @@ assert(textureWrites[#textureWrites] == "rank-2-texture",
     "bag update should refresh a placed item icon to the newly best-owned variant texture")
 assert(overlayState.atlas == "rank-2-atlas",
     "bag update should refresh a placed item icon to the newly best-owned variant quality atlas")
+
+-- Item entries' bag-count badge must survive the entry.type=="spell"
+-- harvested-stack-nil fallback below the item branch. Regression guard:
+-- before the fix, that fallback clobbered the count immediately after the
+-- item branch set it, leaving the badge hidden for every item icon.
+itemCounts[1002] = 7
+icons.HandleRuntimeRefresh("BAG_UPDATE_DELAYED")
+assert(itemIcon.StackText._shown == true,
+    "item icon stack text should remain shown after the full UpdateIconCooldown pass")
+assert(itemIcon.StackText._text == "7",
+    "item icon stack text should reflect the bag count, not be hidden by the spell-only stack fallback")
 
 print("OK: cdm_icons_stack_resolution_test")

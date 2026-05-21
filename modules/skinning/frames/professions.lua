@@ -92,11 +92,6 @@ local function StyleFilterDropdown(dropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.SetFrameData(dropdown, "filterHoverHooked", true)
 end
 
--- Style close button
-local function StyleCloseButton(closeButton)
-    if not closeButton then return end
-    if closeButton.Border then closeButton.Border:SetAlpha(0) end
-end
 
 -- Check if skinning is enabled
 local function IsEnabled()
@@ -165,25 +160,11 @@ local function StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.MarkStyled(row)
 end
 
--- Hook a ScrollBox to style rows as they're recycled
+-- Hook a ScrollBox to style rows as they're acquired from the pool.
 local function HookScrollBox(scrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not scrollBox or SkinBase.GetFrameData(scrollBox, "hooked") then return end
-
-    hooksecurefunc(scrollBox, "Update", function(self)
-        C_Timer.After(0, function()
-            SafeForEachFrame(self, function(row)
-                StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            end)
-        end)
+    SkinBase.HookScrollBoxAcquired(scrollBox, function(row)
+        StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end)
-
-    C_Timer.After(0, function()
-        SafeForEachFrame(scrollBox, function(row)
-            StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        end)
-    end)
-
-    SkinBase.SetFrameData(scrollBox, "hooked", true)
 end
 
 -- Skin a list container (NineSlice + Background + ScrollBox + ScrollBar)
@@ -290,16 +271,7 @@ end
 
 local function HideDecorations(frame)
     if not frame then return end
-
-    -- PortraitFrameTemplate elements
-    if frame.NineSlice then frame.NineSlice:Hide() end
-    if frame.Bg then frame.Bg:Hide() end
-    if frame.Background then frame.Background:Hide() end
-    if frame.PortraitContainer then frame.PortraitContainer:Hide() end
-    if frame.TitleContainer then
-        if frame.TitleContainer.TitleBg then frame.TitleContainer.TitleBg:Hide() end
-    end
-
+    SkinBase.HidePortraitFrameChrome(frame)
     SkinBase.StripTextures(frame)
 end
 
@@ -487,8 +459,10 @@ end
 -- SKIN SPEC PAGE (specialization talent tree)
 ---------------------------------------------------------------------------
 
--- Style a spec pool tab (ProfessionSpecTabTemplate)
-local function StyleSpecPoolTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+-- Style a spec pool tab (ProfessionSpecTabTemplate).
+-- `owner` is the spec page that owns the tab and drives selection state —
+-- HookTabHover/RestoreTabVisual need it to compute IsTabSelected.
+local function StyleSpecPoolTab(tab, owner, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not tab or SkinBase.IsStyled(tab) then return end
 
     SkinBase.StripTextures(tab)
@@ -505,8 +479,8 @@ local function StyleSpecPoolTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
     SkinBase.SetFrameData(tab, "skinColor", { sr, sg, sb, sa })
     SkinBase.SetFrameData(tab, "bgColor", { bgr, bgg, bgb })
-    HookTabHover(tab, specPage, sr, sg, sb, sa)
-    RestoreTabVisual(tab, specPage)
+    HookTabHover(tab, owner, sr, sg, sb, sa)
+    RestoreTabVisual(tab, owner)
 
     SkinBase.MarkStyled(tab)
 end
@@ -517,7 +491,7 @@ local function SkinSpecPoolTabs(specPage, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not pool then return end
 
     for tab in pool:EnumerateActive() do
-        StyleSpecPoolTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        StyleSpecPoolTab(tab, specPage, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end
 
     -- Hook pool Acquire to catch future tabs
@@ -525,7 +499,7 @@ local function SkinSpecPoolTabs(specPage, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         hooksecurefunc(pool, "Acquire", function(self)
             C_Timer.After(0, function()
                 for t in self:EnumerateActive() do
-                    StyleSpecPoolTab(t, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+                    StyleSpecPoolTab(t, specPage, sr, sg, sb, sa, bgr, bgg, bgb, bga)
                 end
             end)
         end)
@@ -605,7 +579,7 @@ local function SkinProfessions()
     HideDecorations(frame)
     SkinBase.CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
-    StyleCloseButton(frame.CloseButton or _G.ProfessionsFrameCloseButton)
+    SkinBase.SkinCloseButton(frame.CloseButton or _G.ProfessionsFrameCloseButton)
 
     SkinTabs(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinCraftingPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)

@@ -152,12 +152,6 @@ local function StyleEditBox(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.MarkStyled(editBox)
 end
 
--- Style close button
-local function StyleCloseButton(closeButton)
-    if not closeButton then return end
-    if closeButton.Border then closeButton.Border:SetAlpha(0) end
-end
-
 -- Check if skinning is enabled
 local function IsEnabled()
     local core = GetCore()
@@ -170,33 +164,17 @@ local function HideAuctionHouseDecorations()
     local AuctionHouseFrame = _G.AuctionHouseFrame
     if not AuctionHouseFrame then return end
 
-    -- PortraitFrameTemplate elements
-    if AuctionHouseFrame.NineSlice then AuctionHouseFrame.NineSlice:Hide() end
-    if AuctionHouseFrame.Bg then AuctionHouseFrame.Bg:Hide() end
-    if AuctionHouseFrame.Background then AuctionHouseFrame.Background:Hide() end
+    SkinBase.HidePortraitFrameChrome(AuctionHouseFrame)
 
-    -- Portrait container
-    if AuctionHouseFrame.PortraitContainer then AuctionHouseFrame.PortraitContainer:Hide() end
-
-    -- Title bar background
-    if AuctionHouseFrame.TitleContainer then
-        if AuctionHouseFrame.TitleContainer.TitleBg then AuctionHouseFrame.TitleContainer.TitleBg:Hide() end
-    end
-
-    -- MoneyFrame inset
+    -- MoneyFrame inset (AH-specific — not part of PortraitFrameTemplate)
     if AuctionHouseFrame.MoneyFrameInset then
         AuctionHouseFrame.MoneyFrameInset:Hide()
         if AuctionHouseFrame.MoneyFrameInset.NineSlice then AuctionHouseFrame.MoneyFrameInset.NineSlice:Hide() end
     end
-
-    -- MoneyFrameBorder
     if AuctionHouseFrame.MoneyFrameBorder then AuctionHouseFrame.MoneyFrameBorder:Hide() end
 
-    -- Tab panel insets (top area)
-    if AuctionHouseFrame.Inset then
-        AuctionHouseFrame.Inset:Hide()
-        if AuctionHouseFrame.Inset.NineSlice then AuctionHouseFrame.Inset.NineSlice:Hide() end
-    end
+    -- Hide the full Inset frame (helper already covered its NineSlice/Bg)
+    if AuctionHouseFrame.Inset then AuctionHouseFrame.Inset:Hide() end
 
     -- Strip remaining textures
     SkinBase.StripTextures(AuctionHouseFrame)
@@ -308,27 +286,11 @@ local function SafeForEachFrame(scrollBox, callback)
     end
 end
 
--- Hook a ScrollBox to style rows as they're recycled
+-- Hook a ScrollBox to style rows as they're acquired from the pool.
 local function HookScrollBox(scrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not scrollBox or SkinBase.GetFrameData(scrollBox, "hooked") then return end
-
-    -- TAINT SAFETY: Defer to break taint chain from Update context.
-    hooksecurefunc(scrollBox, "Update", function(self)
-        C_Timer.After(0, function()
-            SafeForEachFrame(self, function(row)
-                StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            end)
-        end)
+    SkinBase.HookScrollBoxAcquired(scrollBox, function(row)
+        StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end)
-
-    -- Style existing rows (deferred — ScrollBox may not be fully initialized yet)
-    C_Timer.After(0, function()
-        SafeForEachFrame(scrollBox, function(row)
-            StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        end)
-    end)
-
-    SkinBase.SetFrameData(scrollBox, "hooked", true)
 end
 
 -- Skin browse panel (item list / commodities list)
@@ -607,32 +569,18 @@ local function SkinCategoriesList(sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.StripTextures(categoriesList)
     if categoriesList.NineSlice then categoriesList.NineSlice:Hide() end
 
-    -- Helper to style + update selected state on all visible category buttons
+    -- Per-button styler (used both on acquisition and by OnFilterClicked refresh).
+    local function StyleCategoryRow(button)
+        StyleCategoryButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SuppressCategoryTextures(button)
+        UpdateCategorySelected(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    end
     local function RefreshCategoryButtons(self)
-        SafeForEachFrame(self, function(button)
-            StyleCategoryButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            SuppressCategoryTextures(button)
-            UpdateCategorySelected(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        end)
+        SafeForEachFrame(self, StyleCategoryRow)
     end
 
-    -- Hook the ScrollBox to style category buttons as they're recycled
     local scrollBox = categoriesList.ScrollBox
-    if scrollBox and not SkinBase.GetFrameData(scrollBox, "hooked") then
-        -- TAINT SAFETY: Defer to break taint chain from Update context.
-        hooksecurefunc(scrollBox, "Update", function(self)
-            C_Timer.After(0, function()
-                RefreshCategoryButtons(self)
-            end)
-        end)
-
-        -- Style existing buttons (deferred — ScrollBox may not be fully initialized yet)
-        C_Timer.After(0, function()
-            RefreshCategoryButtons(scrollBox)
-        end)
-
-        SkinBase.SetFrameData(scrollBox, "hooked", true)
-    end
+    SkinBase.HookScrollBoxAcquired(scrollBox, StyleCategoryRow)
 
     -- Hook category click to refresh selected states across all visible buttons
     if categoriesList.OnFilterClicked and not SkinBase.GetFrameData(categoriesList, "clickHooked") then
@@ -668,8 +616,7 @@ local function SkinAuctionHouse()
     SkinBase.CreateBackdrop(AuctionHouseFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
     -- Style close button
-    local closeButton = AuctionHouseFrame.CloseButton or _G.AuctionHouseFrameCloseButton
-    StyleCloseButton(closeButton)
+    SkinBase.SkinCloseButton(AuctionHouseFrame.CloseButton or _G.AuctionHouseFrameCloseButton)
 
     -- Style tabs
     SkinAuctionHouseTabs(sr, sg, sb, sa, bgr, bgg, bgb, bga)

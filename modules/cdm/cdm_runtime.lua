@@ -424,11 +424,8 @@ end
 local _C_GetFirstTriggeredSpellForItem = C_Item and C_Item.GetFirstTriggeredSpellForItem
 
 function CDMSources.QueryFirstTriggeredSpellForItem(itemID, itemQuality)
-    if not itemID or not _C_GetFirstTriggeredSpellForItem then return nil end
-    if itemQuality ~= nil then
-        return _C_GetFirstTriggeredSpellForItem(itemID, itemQuality)
-    end
-    return _C_GetFirstTriggeredSpellForItem(itemID)
+    if not itemID or itemQuality == nil or not _C_GetFirstTriggeredSpellForItem then return nil end
+    return _C_GetFirstTriggeredSpellForItem(itemID, itemQuality)
 end
 
 local _C_IsEquippedItem = C_Item and C_Item.IsEquippedItem
@@ -1536,6 +1533,7 @@ local QueryCharges        = RuntimeQueries.QueryCharges
 local QueryCooldown       = RuntimeQueries.QueryCooldown
 local QueryDuration       = RuntimeQueries.QueryDuration
 local QueryGCDDuration    = RuntimeQueries.QueryGCDDuration
+local QueryChargeDuration = RuntimeQueries.QueryChargeDuration
 local QueryOverrideSpell  = RuntimeQueries.QueryOverrideSpell
 local QueryDisplayCount   = RuntimeQueries.QueryDisplayCount
 local QuerySpellCount     = RuntimeQueries.QuerySpellCount
@@ -1766,27 +1764,30 @@ local function SpellMayHaveCharges(entry, spellID)
     return svCharges and svCharges[spellID] ~= nil or false
 end
 
-local function BuildMirrorDurationSourceKey(mode, sourceCooldownID, sourceSpellID, mirrorEpoch)
+local function BuildMirrorDurationSourceKey(mode, sourceCooldownID, sourceSpellID, mirrorEpoch, cooldownLaneEpoch)
     if mode == "gcd-only" then
         return sourceSpellID
     end
-    -- For real-cooldown modes (cooldown / item-cooldown), embed
-    -- the cooldown lane + the spell being tracked, NOT the per-event
-    -- mirror epoch. mirrorEpoch advances on every mirror update tick
-    -- (~200-500ms during combat), and including it in the key forces
-    -- DurationBindingMatches to miss on every tick — which triggers a
-    -- fresh ApplyDurationObjectCooldown / SCFDO call from
-    -- ApplyResolvedCooldown's line 6775 path. Each SCFDO call restarts
-    -- the C-side sweep animation before any visible progress
-    -- accumulates, so the swipe never gets past t=0 visually.
+    -- For real-cooldown modes (cooldown / item-cooldown), embed the
+    -- cooldown lane + spell + cooldownLaneEpoch. We avoid mirrorEpoch
+    -- because that bumps on every aura update and routine mirror tick
+    -- (~200-500ms during combat), which forces SCFDO rebinds and
+    -- restarts the C-side sweep animation before any visible progress
+    -- accumulates.
     --
-    -- The (cooldownID, spellID) pair is stable across routine event
-    -- ticks within a single cooldown instance, so the swipe binds once
-    -- at cooldown-start and runs to completion. A genuine identity
-    -- change (different cooldown lane, different spell) still shifts
-    -- the key and forces a re-bind. Mode transitions through "inactive"
-    -- clear _lastDurObjKey via ApplyResolvedCooldown's early-return
-    -- path, so a subsequent cast triggers a fresh bind.
+    -- cooldownLaneEpoch is bumped ONLY by cooldown-setter hooks
+    -- (SetCooldown family + SCFDO + Clear) — i.e. when Blizzard's CV
+    -- pushes a NEW cooldown timer to the frame. Within a single recharge
+    -- cycle the value is stable so the swipe animation plays
+    -- uninterrupted; on a cycle boundary (charge spell 0/2 → 1/2 → 2/2
+    -- where the recharge IS the cooldown, DK Death Charge is the
+    -- reference case) it advances and forces a SCFDO rebind so the
+    -- icon's cooldown frame picks up the new cycle's start/duration
+    -- instead of holding stale data from the previous cycle.
+    --
+    -- Falls back to (cooldownID, spellID) when cooldownLaneEpoch is
+    -- absent (e.g. mock mirror states in tests) — same key as before
+    -- the cycle-aware change.
     --
     -- Aura mode keeps the mepoch-suffixed key. Its DurationBindingMatches
     -- branch (cdm_icon_renderer.lua:6193-6194) compares userdata
@@ -1795,6 +1796,10 @@ local function BuildMirrorDurationSourceKey(mode, sourceCooldownID, sourceSpellI
     -- UNIT_AURA refreshes that share an auraInstanceID — so aura's
     -- dedup is already robust against the churn this change addresses.
     if mode == "cooldown" or mode == "item-cooldown" then
+        if cooldownLaneEpoch ~= nil then
+            return "mirror:" .. tostring(sourceCooldownID) .. ":" .. tostring(sourceSpellID)
+                .. ":" .. tostring(cooldownLaneEpoch)
+        end
         return "mirror:" .. tostring(sourceCooldownID) .. ":" .. tostring(sourceSpellID)
     end
     return "mirror:" .. tostring(sourceCooldownID) .. ":" .. tostring(mirrorEpoch)
@@ -2947,6 +2952,33 @@ end
 --
 -- Returns (mode, queriedAuraData) so the payload builder can reuse the
 -- aura data without re-querying.
+-- True when C_Spell.GetSpellCharges reports an active recharge cycle for a
+-- multi-charge spell. Some charge spells (DK Death Charge is the reference
+-- case) leave C_Spell.GetSpellCooldown.isActive=false while one charge is
+-- regenerating, because the spell is castable from another charge and the
+-- recharge timing lives only on the charges API. Matches Blizzard's
+-- CooldownViewer CheckCacheCooldownValuesFromCharges precedence.
+--
+-- mayHaveCharges is a hint from the caller (entry.hasCharges / m.charges).
+-- In combat we only probe the charges API when this hint is true or the
+-- saved chargeSpells metadata already records the spell, to avoid
+-- tainted API calls on bare cooldowns.
+local function HasActiveChargeRecharge(spellID, mayHaveCharges)
+    if not spellID then return false end
+    if InCombatLockdown and InCombatLockdown() and not mayHaveCharges then
+        local gdb = QUI and QUI.db and QUI.db.global
+        local svCharges = gdb and gdb.cdmChargeSpells
+        if not (svCharges and svCharges[spellID]) then
+            return false
+        end
+    end
+    local chargeInfo = QueryCharges(spellID)
+    if not chargeInfo then return false end
+    local maxCharges = chargeInfo.maxCharges
+    if not (IsSafeNumeric(maxCharges) and maxCharges > 1) then return false end
+    return DecodePotentialSecretBoolean(chargeInfo.isActive) == true
+end
+
 local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     if not m then return "inactive", nil end
 
@@ -2976,10 +3008,15 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     if not sid then return "inactive", nil end
 
     local cdInfo = Sources and Sources.QuerySpellCooldown and Sources.QuerySpellCooldown(sid)
-    if not cdInfo then return "inactive", nil end
-    if cdInfo.isActive ~= true then return "inactive", nil end
-    if cdInfo.isOnGCD == true then return "gcd-only", nil end
-    return "cooldown", nil
+    if cdInfo and cdInfo.isActive == true then
+        if cdInfo.isOnGCD == true then return "gcd-only", nil end
+        return "cooldown", nil
+    end
+    -- Cooldown lane inactive but a multi-charge recharge may still be rolling.
+    if HasActiveChargeRecharge(sid, SafeBoolean(m.charges) == true) then
+        return "cooldown", nil
+    end
+    return "inactive", nil
 end
 
 local function ResolveMirrorAuraData(m, auraUnit, active, mode)
@@ -3064,13 +3101,31 @@ local function BuildMirrorRenderPayload(
             end
         elseif mode == "cooldown" and sourceSpellID then
             -- Prefer the hook-captured cooldownDurObj (cdm_blizz_mirror.lua
-            -- stamps this from the live-cooldown event) over a fresh
-            -- QueryDuration call. The hook-cache papers over a brief
-            -- API lag between cooldown-start and
-            -- C_Spell.GetSpellCooldownDuration returning the new value;
-            -- without it, Scenario H of the aura-priority integration
-            -- test fails on a real cooldown that has just begun.
-            payloadDurObj = m.cooldownDurObj or QueryDuration(sourceSpellID)
+            -- stamps this from the live-cooldown event) above everything
+            -- else. The hook-cache papers over a brief API lag between
+            -- cooldown-start and C_Spell.GetSpellCooldownDuration
+            -- returning the new value; without it, Scenario H of the
+            -- aura-priority integration test fails on a real cooldown
+            -- that has just begun.
+            --
+            -- For multi-charge spells, probe C_Spell.GetSpellChargeDuration
+            -- before falling back to C_Spell.GetSpellCooldownDuration.
+            -- This mirrors Blizzard CooldownViewerCooldownItemMixin's
+            -- CheckCacheCooldownValuesFromCharges (FrameXML
+            -- CooldownViewer.lua:840) — charges take precedence over
+            -- the spell cooldown until all charges are spent. For
+            -- spells whose recharge IS the cooldown (Death Charge /
+            -- Death's Advance is the reference case)
+            -- GetSpellCooldownDuration returns a non-nil ZERO
+            -- DurationObject which would otherwise win the `or` chain
+            -- and bind an empty swipe.
+            payloadDurObj = m.cooldownDurObj
+            if not payloadDurObj and SafeBoolean(m.charges) == true then
+                payloadDurObj = QueryChargeDuration(sourceSpellID)
+            end
+            if not payloadDurObj then
+                payloadDurObj = QueryDuration(sourceSpellID)
+            end
             if not payloadDurObj then
                 durationStateUnknown = true
             end
@@ -3111,10 +3166,10 @@ local function BuildMirrorRenderPayload(
         -- identity check downstream that handles aura refreshes
         -- correctly.
         sourceKey = BuildMirrorDurationSourceKey(
-            mode, sourceCooldownID, sourceSpellID, m.mirrorEpoch)
+            mode, sourceCooldownID, sourceSpellID, m.mirrorEpoch, m.cooldownLaneEpoch)
     elseif not sourceKey then
         sourceKey = BuildMirrorDurationSourceKey(
-            mode, sourceCooldownID, sourceSpellID, m.mirrorEpoch)
+            mode, sourceCooldownID, sourceSpellID, m.mirrorEpoch, m.cooldownLaneEpoch)
     end
 
     WipeMirrorPayloadScratch()
@@ -4229,6 +4284,27 @@ local function ResolveCooldownStateCore(context)
         state.cooldownInfo = gcdCdInfo
         MemAuditProfilerMark("CDM_rsReturnGCDCached")
         return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
+    end
+
+    -- Charge recharge on a multi-charge spell that the cooldown API reports
+    -- as castable (cdInfo.isActive=false because a charge is still
+    -- available). Blizzard's CooldownViewer surfaces the recharge timing
+    -- from C_Spell.GetSpellCharges in this state — see
+    -- CheckCacheCooldownValuesFromCharges. Mirror it here so the recharge
+    -- swipe binds instead of falling through to inactive.
+    local entryMayHaveCharges = entry
+        and (entry.hasCharges == true or entry.charges == true)
+    if HasActiveChargeRecharge(sid, entryMayHaveCharges) then
+        local chargeDur = QueryChargeDuration(sid)
+        if chargeDur then
+            state.mode = "cooldown"
+            SetCooldownStateActivity(state, true)
+            state.durObj = chargeDur
+            state.sourceID = sid
+            state.spellID = sid
+            MemAuditProfilerMark("CDM_rsReturnChargeRecharge")
+            return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
+        end
     end
 
     state.mode = "inactive"

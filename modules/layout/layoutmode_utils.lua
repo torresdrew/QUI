@@ -80,6 +80,52 @@ function Utils.GetSoundList()
 end
 
 ---------------------------------------------------------------------------
+-- ALTERNATING ROW BACKGROUNDS
+-- Lays a subtle white-tint strip behind every other direct child of `body`,
+-- ordered top-down by current GetTop(). Matches the row-striping rhythm
+-- used by QUI_Options.CreateSettingsCardGroup in the main settings window.
+---------------------------------------------------------------------------
+function Utils.ApplyAlternatingRowBackgrounds(body)
+    if not body or not body.GetNumChildren then return end
+
+    -- Tear down any previous strips so re-measures don't stack textures.
+    if body._quiAltRowStrips then
+        for i = 1, #body._quiAltRowStrips do
+            local t = body._quiAltRowStrips[i]
+            if t and t.Hide then t:Hide() end
+            if t and t.SetParent then t:SetParent(nil) end
+        end
+    end
+    body._quiAltRowStrips = {}
+
+    local children = {}
+    local childCount = body:GetNumChildren() or 0
+    for i = 1, childCount do
+        local child = select(i, body:GetChildren())
+        if child and (not child.IsShown or child:IsShown()) and child.GetTop and child:GetTop() then
+            children[#children + 1] = child
+        end
+    end
+    if #children < 2 then return end
+
+    table.sort(children, function(a, b)
+        return (a:GetTop() or 0) > (b:GetTop() or 0)
+    end)
+
+    for i, child in ipairs(children) do
+        if (i % 2) == 0 then
+            local rowBg = body:CreateTexture(nil, "BACKGROUND", nil, -1)
+            rowBg:SetPoint("LEFT", body, "LEFT", -2, 0)
+            rowBg:SetPoint("RIGHT", body, "RIGHT", 2, 0)
+            rowBg:SetPoint("TOP", child, "TOP", 0, 2)
+            rowBg:SetPoint("BOTTOM", child, "BOTTOM", 0, -2)
+            rowBg:SetColorTexture(1, 1, 1, 0.02)
+            body._quiAltRowStrips[#body._quiAltRowStrips + 1] = rowBg
+        end
+    end
+end
+
+---------------------------------------------------------------------------
 -- STANDARD RELAYOUT
 ---------------------------------------------------------------------------
 
@@ -269,6 +315,7 @@ function Utils.CreateCollapsible(parent, title, contentHeight, buildFunc, sectio
     C_Timer.After(0, function()
         if not section or not body then return end
         RefreshContentHeight()
+        Utils.ApplyAlternatingRowBackgrounds(body)
         if relayout then relayout() end
     end)
 

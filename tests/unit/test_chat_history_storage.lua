@@ -255,5 +255,62 @@ do
           other.entries == nil or #other.entries == 0)
 end
 
+-- ClearAllCharacters stamps a global token so sibling SVPC files clear on
+-- their next login. Simulate a second character logging in afterwards.
+do
+    reset()
+    Storage.AppendLive(entry(1, 1, "char-A msg"))
+
+    local _, _, token = Storage.ClearAllCharacters()
+    check("ClearAll returns token", type(token) == "number" and token > 0,
+          tostring(token))
+    check("ClearAll stamped global token",
+          _G.QUIDB and _G.QUIDB.global
+              and _G.QUIDB.global.chatHistoryClearAllToken == token,
+          tostring(_G.QUIDB and _G.QUIDB.global
+              and _G.QUIDB.global.chatHistoryClearAllToken))
+    check("ClearAll stamped self token",
+          _G.QUI_ChatHistory._clearAllToken == token,
+          tostring(_G.QUI_ChatHistory._clearAllToken))
+
+    -- Switch to a different character: keep account-wide QUIDB, but swap the
+    -- SVPC table for a fresh one with unrelated history and no token.
+    local globalToken = _G.QUIDB.global.chatHistoryClearAllToken
+    _G.QUI_ChatHistory = {
+        schemaVersion = 2,
+        chunks = {},
+        current = { entry(50, 1, "char-B msg") },
+        count = 1,
+        totalCount = 1,
+    }
+    _G.QUI = nil
+
+    Storage.Init()
+
+    check("sibling char wiped on next login",
+          #Storage.Snapshot() == 0 and _G.QUI_ChatHistory.count == 0,
+          tostring(_G.QUI_ChatHistory.count))
+    check("sibling char now stamped with token",
+          _G.QUI_ChatHistory._clearAllToken == globalToken,
+          tostring(_G.QUI_ChatHistory._clearAllToken))
+
+    -- A second Init on the same character must be a no-op for live data.
+    Storage.AppendLive(entry(60, 1, "char-B post-wipe"))
+    Storage.Init()
+    check("post-wipe appends survive subsequent Init",
+          #Storage.Snapshot() == 1 and Storage.Snapshot()[1].m == "char-B post-wipe",
+          tostring(#Storage.Snapshot()))
+end
+
+-- A new ClearAllCharacters call after the previous token was honored must
+-- produce a strictly larger token (so siblings wipe again on next login).
+do
+    local prev = _G.QUIDB.global.chatHistoryClearAllToken
+    local _, _, next = Storage.ClearAllCharacters()
+    check("repeated ClearAll produces monotonic token",
+          type(next) == "number" and next > prev,
+          ("prev=%s next=%s"):format(tostring(prev), tostring(next)))
+end
+
 print(("\n%d failure(s)"):format(failures))
 os.exit(failures == 0 and 0 or 1)

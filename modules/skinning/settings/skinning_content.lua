@@ -474,18 +474,45 @@ local function BuildSkinningTab(tabContent)
     if general.skinProfessions == nil then general.skinProfessions = false end
     if general.skinStatusTrackingBars == nil then general.skinStatusTrackingBars = true end
     if general.skinDamageMeter == nil then general.skinDamageMeter = true end
-    CreateCollapsible("Skin Blizzard Frames", 16 * FORM_ROW + 8, function(body)
+    -- Phase-3 frame skinning (off by default per user choice — opt-in)
+    if general.skinBank == nil then general.skinBank = false end
+    if general.skinMerchant == nil then general.skinMerchant = false end
+    if general.skinMail == nil then general.skinMail = false end
+    if general.skinGuildBank == nil then general.skinGuildBank = false end
+    if general.skinFriends == nil then general.skinFriends = false end
+    if general.skinCommunities == nil then general.skinCommunities = false end
+    if general.skinSpellBook == nil then general.skinSpellBook = false end
+    if general.skinEncounterJournal == nil then general.skinEncounterJournal = false end
+    if general.skinCollections == nil then general.skinCollections = false end
+    if general.skinAchievement == nil then general.skinAchievement = false end
+    if general.skinWorldMap == nil then general.skinWorldMap = false end
+    if general.skinWeeklyRewards == nil then general.skinWeeklyRewards = false end
+    CreateCollapsible("Skin Blizzard Frames", 28 * FORM_ROW + 8, function(body)
         local sy = -4
         sy = P(GUI:CreateFormCheckbox(body, "Alert Frames (Req. Reload)", "skinAlerts", general, ReloadConfirm,
             { description = "Skin the achievement, loot, and level-up alert popups. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Achievement Frame (Req. Reload)", "skinAchievement", general, ReloadConfirm,
+            { description = "Skin the Achievements window. Bespoke achievement-themed artwork is stripped — categories list parchment and watermark dragon are hidden. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Auction House (Req. Reload)", "skinAuctionHouse", general, ReloadConfirm,
             { description = "Skin the Auction House window and its tabs. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Bank (Req. Reload)", "skinBank", general, ReloadConfirm,
+            { description = "Skin the player Bank window. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Collections Journal (Req. Reload)", "skinCollections", general, ReloadConfirm,
+            { description = "Skin the Mounts / Pets / Toys / Wardrobe / Heirlooms window. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Communities (Req. Reload)", "skinCommunities", general, ReloadConfirm,
+            { description = "Skin the Guilds and Communities window. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Context Menus (Req. Reload)", "skinContextMenus", general, ReloadConfirm,
             { description = "Skin right-click context menus and dropdown menu panels. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Crafting Orders (Req. Reload)", "skinCraftingOrders", general, ReloadConfirm,
             { description = "Skin the Crafting Orders interface used by professions. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Encounter Journal (Req. Reload)", "skinEncounterJournal", general, ReloadConfirm,
+            { description = "Skin the Adventure Guide / Encounter Journal window. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Encounter Power Bar (Req. Reload)", "skinPowerBarAlt", general, ReloadConfirm,
             { description = "Skin the alternate power bar some encounters use (e.g., boss add health bars). Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Friends List (Req. Reload)", "skinFriends", general, ReloadConfirm,
+            { description = "Skin the Friends / Ignore / Who window. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Guild Bank (Req. Reload)", "skinGuildBank", general, ReloadConfirm,
+            { description = "Skin the Guild Bank window. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Inspect Frame (Req. Reload)", "skinInspectFrame", general, ReloadConfirm,
             { description = "Skin the Inspect window that opens when you /inspect another player. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Instance Frames (Req. Reload)", "skinInstanceFrames", general, ReloadConfirm,
@@ -494,6 +521,10 @@ local function BuildSkinningTab(tabContent)
             { description = "Skin the Mythic+ Keystone insertion and selection window. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Loot History (Req. Reload)", "enabled", db.lootResults, ReloadConfirm,
             { description = "Skin the group loot history popup that summarizes recent drops. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Mail (Req. Reload)", "skinMail", general, ReloadConfirm,
+            { description = "Skin the in-game mail window. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Merchant (Req. Reload)", "skinMerchant", general, ReloadConfirm,
+            { description = "Skin the vendor/merchant window. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Override Action Bar (Req. Reload)", "skinOverrideActionBar", general, ReloadConfirm,
             { description = "Skin the temporary override bar shown during vehicles and special encounters. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Professions (Req. Reload)", "skinProfessions", general, ReloadConfirm,
@@ -502,10 +533,16 @@ local function BuildSkinningTab(tabContent)
             { description = "Skin the ready check popup. Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Reputation/Currency (Req. Reload)", "skinCharacterFrame", general, ReloadConfirm,
             { description = "Skin the reputation and currency tabs of the character pane. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Spellbook / Talents (Req. Reload)", "skinSpellBook", general, ReloadConfirm,
+            { description = "Skin the combined Spellbook and Talents window (PlayerSpellsFrame). Requires a reload." }), body, sy)
         sy = P(GUI:CreateFormCheckbox(body, "Static Dialogs (Req. Reload)", "skinStaticPopups", general, ReloadConfirm,
             { description = "Skin StaticPopup confirmation dialogs. Requires a reload." }), body, sy)
-        P(GUI:CreateFormCheckbox(body, "Status Tracking Bars (Req. Reload)", "skinStatusTrackingBars", general, ReloadConfirm,
+        sy = P(GUI:CreateFormCheckbox(body, "Status Tracking Bars (Req. Reload)", "skinStatusTrackingBars", general, ReloadConfirm,
             { description = "Skin the experience, reputation, and honor bars above the action bar. Requires a reload." }), body, sy)
+        sy = P(GUI:CreateFormCheckbox(body, "Weekly Rewards / Great Vault (Req. Reload)", "skinWeeklyRewards", general, ReloadConfirm,
+            { description = "Skin the Great Vault window. Bespoke evergreen artwork is stripped. Requires a reload." }), body, sy)
+        P(GUI:CreateFormCheckbox(body, "World Map (Req. Reload)", "skinWorldMap", general, ReloadConfirm,
+            { description = "Skin the World Map's PortraitFrame border (the map canvas itself is unchanged). Requires a reload." }), body, sy)
     end)
 
     ---------------------------------------------------------------------------

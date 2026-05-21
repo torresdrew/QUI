@@ -2271,8 +2271,10 @@ function CDMIconRuntimeRefresh.Create(callbacks)
 
     function controller:ApplyItemScope(options)
         options = options or {}
+        local refreshRuntime = options.refreshRuntime == true
         local batchStarted = false
         local refreshed = false
+        local stackTextWritesEnabled = false
         local editMode, ncdm, ncdmContainers, inCombatState
         for _, pool in pairs(getIconPools(callbacks)) do
             for _, icon in ipairs(pool) do
@@ -2282,7 +2284,17 @@ function CDMIconRuntimeRefresh.Create(callbacks)
                         editMode, ncdm, ncdmContainers, inCombatState = beginBatch(callbacks, "itemScope")
                         batchStarted = true
                     end
-                    if options.refreshRuntime and callbacks.updateIconCooldown then
+                    if refreshRuntime and callbacks.updateIconCooldown then
+                        -- updateIconCooldown's entry.type=="item" branch gates
+                        -- the QueryItemCount → ShowIconStackText write on
+                        -- stackTextWritesAllowed; without flipping it here the
+                        -- bag-count badge silently never refreshes after
+                        -- BAG_UPDATE_DELAYED / ITEM_COUNT_CHANGED. Mirrors the
+                        -- same gating in ApplySpellScope.
+                        if not stackTextWritesEnabled then
+                            setStackTextWrites(callbacks, true)
+                            stackTextWritesEnabled = true
+                        end
                         callbacks.updateIconCooldown(icon)
                     elseif callbacks.applyResolvedCooldown then
                         callbacks.applyResolvedCooldown(icon)
@@ -2297,6 +2309,9 @@ function CDMIconRuntimeRefresh.Create(callbacks)
                     refreshed = true
                 end
             end
+        end
+        if stackTextWritesEnabled then
+            setStackTextWrites(callbacks, false)
         end
         if batchStarted then
             endBatch(callbacks)
@@ -5892,69 +5907,25 @@ local function IsCustomBarSettingsNow(settings)
     return IsCustomBarContainer(settings)
 end
 
--- Icon-side "this charge spell still has at least one charge available" query.
--- The resolver no longer emits mode=="charge" nor populates state.hasChargesRemaining /
--- state.rechargeActive for charge spells, so the saturation contract has to be
--- re-derived here from C_Spell.GetSpellCharges. Returns:
---   true  - charge spell with at least one charge available (stay saturated)
---   false - charge spell with zero charges (desaturate normally)
---   nil   - not a charge spell, or charges info unreadable / secret-tainted
--- Callers should treat nil as "no opinion" and fall back to default behavior.
--- The conservative choice when uncertain is to leave the icon saturated, which
--- matches the user's directive for charge spells.
-local function IconChargeSpellHasChargesRemaining(icon, entry)
-    if not entry then return nil end
-    local isCharge = entry.hasCharges == true or entry.charges == true
-    if not isCharge then return nil end
-
+-- For a multi-charge spell where the recharge IS the cooldown (DK Death
+-- Charge is the reference case), the resolver classifies mode=cooldown
+-- both at 1+ charges (recharge rolling, spell castable) and at 0 charges
+-- (real cooldown, spell uncastable). cdInfo.isActive on
+-- C_Spell.GetSpellCooldown distinguishes them:
+--   false → 1+ charges available → saturated
+--   true  → all charges spent     → desaturated
+-- cdInfo.isActive is NeverSecret (see cdm_blizz_mirror.lua:300), so a
+-- direct Lua comparison is safe; no curve indirection needed. Returns
+-- true when this gate decided the spell should stay saturated.
+local function ChargeSpellShouldStaySaturated(icon, entry)
     local sid = icon and icon._runtimeSpellID
-    if not sid then
+    if not sid and entry then
         sid = entry.spellID or entry.overrideSpellID or entry.id
     end
-    if not sid then return nil end
-
-    local ci = QueryCharges(sid)
-    if not ci then
-        -- Try base / override fallbacks, mirroring the stack-text forwarder pattern.
-        local baseSid = entry.spellID or entry.id
-        if baseSid and baseSid ~= sid then
-            ci = QueryCharges(baseSid)
-        end
-        if not ci and entry.overrideSpellID and entry.overrideSpellID ~= sid then
-            ci = QueryCharges(entry.overrideSpellID)
-        end
-    end
-    if not ci then return nil end
-
-    local maxCharges = ci.maxCharges
-    if not (IsSafeNumeric(maxCharges) and maxCharges > 1) then
-        -- Either single-charge spell or unknown maxCharges. Not enough info to
-        -- claim "charges remaining" with confidence.
-        return nil
-    end
-
-    local current = ci.currentCharges
-    local currentIsSecret = issecretvalue and issecretvalue(current)
-    if currentIsSecret then
-        -- currentCharges is secret-tainted (combat lockdown / CDM data feed).
-        -- We cannot compare it safely in Lua. Fall back to cooldown info: if
-        -- the spell's cooldown is inactive, the spell is castable and must
-        -- look saturated. Otherwise return nil (no opinion).
-        local cdInfo = QueryCooldown(sid)
-        if cdInfo then
-            local cdActive = Resolvers and Resolvers.IsCooldownInfoActive
-                and Resolvers.IsCooldownInfoActive(cdInfo)
-            if cdActive == false then
-                return true
-            end
-        end
-        return nil
-    end
-
-    if type(current) == "number" then
-        return current > 0
-    end
-    return nil
+    if not sid then return false end
+    local cdInfo = QueryCooldown(sid)
+    if not cdInfo then return false end
+    return cdInfo.isActive == false
 end
 
 local function ApplyCooldownDesaturation(icon, entry, settings, resolvedMode)
@@ -5978,38 +5949,6 @@ local function ApplyCooldownDesaturation(icon, entry, settings, resolvedMode)
         shouldDesaturate = false
     end
 
-    local cooldownState
-    if customBar
-       and settings.noDesaturateWithCharges
-       and shouldDesaturate then
-        cooldownState = _resolverRuntimePolicy.ResolveIconCooldownActivityState(
-            icon, entry, settings, GetTime())
-        -- Legacy path: when the resolver still surfaces rechargeActive +
-        -- hasChargesRemaining (e.g. via the runtime fallback, not the
-        -- collapsed mode==cooldown charge path), honor it directly.
-        if cooldownState
-           and (entry.hasCharges or cooldownState.hasCharges)
-           and cooldownState.rechargeActive
-           and cooldownState.hasChargesRemaining then
-            shouldDesaturate = false
-        end
-        -- Icon-side fallback for charge spells under the new resolver
-        -- contract. The resolver collapses charge spells into mode=="cooldown"
-        -- with state.isOnCooldown==true while recharge is rolling, and no
-        -- longer sets state.hasChargesRemaining / state.rechargeActive. Query
-        -- C_Spell.GetSpellCharges here so charge spells with at least one
-        -- charge available stay saturated.
-        if shouldDesaturate
-           and (entry.hasCharges == true
-                or entry.charges == true
-                or (cooldownState and cooldownState.hasCharges == true)) then
-            local hasChargesRemaining = IconChargeSpellHasChargesRemaining(icon, entry)
-            if hasChargesRemaining == true then
-                shouldDesaturate = false
-            end
-        end
-    end
-
     resolvedMode = resolvedMode or icon._resolvedCooldownMode
     local hasRealCD = icon._hasCooldownActive == true
         and resolvedMode ~= "aura"
@@ -6017,21 +5956,27 @@ local function ApplyCooldownDesaturation(icon, entry, settings, resolvedMode)
         and resolvedMode ~= "inactive"
 
     if _G.QUI_CDM_CHARGE_DEBUG then
-        local debugHasCharges = entry.hasCharges == true
-            or (cooldownState and cooldownState.hasCharges == true)
         ChargeDebug(entry.name, "DESAT result: hasRealCD=", hasRealCD,
             "_hasCooldownActive=", icon._hasCooldownActive,
             "mode=", tostring(resolvedMode),
-            "hasCharges=", debugHasCharges,
             "entryHasCharges=", entry.hasCharges,
             "viewerType=", entry.viewerType)
     end
 
-    -- Desaturation is a pure function of cooldown state: hasRealCD plus the
-    -- shouldDesaturate / viewerType / auraBlocks gates. Range and usability
-    -- tints are independent visual layers that overlay on top via vertex
-    -- color; they must not factor into the desat decision (range red on top
-    -- of a desaturated icon is the intended composite).
+    -- Charge spells: stay saturated while at least one charge is
+    -- available. Matches Blizzard CooldownViewer
+    -- CheckCacheCooldownValuesFromCharges (sets cooldownDesaturated=false
+    -- when displayChargeCooldown). cdInfo.isActive is NeverSecret so we
+    -- can compare directly.
+    if shouldDesaturate
+       and (entry.hasCharges == true or entry.charges == true)
+       and ChargeSpellShouldStaySaturated(icon, entry) then
+        shouldDesaturate = false
+    end
+
+    -- Desaturation gate: range and usability tints are independent visual
+    -- layers and must not factor in here (range red on top of a
+    -- desaturated icon is the intended composite).
     if entry.viewerType ~= "buff"
        and not auraBlocks
        and shouldDesaturate
@@ -8886,7 +8831,17 @@ local function UpdateIconCooldownOwned(icon)
             elseif not InCombatLockdown() and not runtimeHasCharges then
                 _resolverRuntimePolicy.HideIconStackText(icon, "api-stack-nil")
             end
-        else
+        elseif entry.type ~= "item" then
+            -- Item entries set their bag-count badge above (item-count /
+            -- item-count-zero / item-count-fallback writes). Falling
+            -- through to the harvested-aura fallback would call
+            -- HideIconStackText("harvested-stack-nil") for items — their
+            -- itemID-as-spellID never resolves an aura — silently
+            -- clobbering the count immediately after it was shown.
+            -- Trinket/slot/macro/spell still need this branch: trinket
+            -- and slot already cleared their text so a re-clear is a
+            -- no-op; macro entries in aura-family containers rely on
+            -- this path to clear; spell entries are the primary use.
             local stackVal = GetAuraApplicationsForSpell(_runtimeSid, entry, icon)
             if _resolverRuntimePolicy.ValueIsPresent(stackVal) then
                 local displayText

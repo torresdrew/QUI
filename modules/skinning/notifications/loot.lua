@@ -949,16 +949,9 @@ local function SkinGroupLootHistoryFrame()
         end
     end
 
-    -- Hook ScrollBox updates to skin dynamically created elements
-    -- TAINT SAFETY: Defer to break taint chain from secure context.
+    -- Skin loot history elements as they're acquired from the pool.
     if HistoryFrame.ScrollBox then
-        hooksecurefunc(HistoryFrame.ScrollBox, "Update", function(scrollBox)
-            C_Timer.After(0, function()
-                HandleLootHistoryScrollUpdate(scrollBox)
-            end)
-        end)
-        -- Skin existing elements
-        HandleLootHistoryScrollUpdate(HistoryFrame.ScrollBox)
+        SkinBase.HookScrollBoxAcquired(HistoryFrame.ScrollBox, SkinLootHistoryElement)
     end
 
     -- Hook Show to re-apply theme each time frame is shown

@@ -25,8 +25,8 @@ assertContains(
     "local function StyleFilterDropdown",
     "Professions must use a dedicated filter dropdown styler so clear-filter child controls are preserved")
 
-local filterHelperBody = professions:match("local function StyleFilterDropdown%b()%s*(.-)%s*%-%- Style close button")
-assert(filterHelperBody, "StyleFilterDropdown body should be present before close-button styling")
+local filterHelperBody = professions:match("local function StyleFilterDropdown%b()%s*(.-)\nlocal function IsEnabled")
+assert(filterHelperBody, "StyleFilterDropdown body should be present before IsEnabled")
 
 assertAbsent(
     filterHelperBody,
@@ -60,12 +60,12 @@ assertContains(
 
 assertContains(
     professions,
-    "HookTabHover(tab, specPage, sr, sg, sb, sa)",
+    "HookTabHover(tab, owner, sr, sg, sb, sa)",
     "Professions specialization tabs must get consistent hover restoration")
 
 assertContains(
     professions,
-    "RestoreTabVisual(tab, specPage)",
+    "RestoreTabVisual(tab, owner)",
     "Professions specialization tabs must apply selected/inactive visuals after styling and refresh")
 
 local updateDropdownBody = professions:match("local function UpdateDropdownColors%b()%s*(.-)%s*end%s*local function UpdatePanelColors")

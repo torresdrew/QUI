@@ -83,12 +83,6 @@ local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end)
 end
 
--- Style the close button
-local function StyleCloseButton(button)
-    if not button then return end
-    if button.Border then button.Border:SetAlpha(0) end
-end
-
 -- Style the keystone slot
 local function StyleKeystoneSlot(slot, sr, sg, sb, sa)
     if not slot then return end
@@ -160,7 +154,7 @@ local function SkinKeystoneFrame()
 
     -- Style buttons
     StyleButton(keystoneFrame.StartButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    StyleCloseButton(keystoneFrame.CloseButton)
+    SkinBase.SkinCloseButton(keystoneFrame.CloseButton)
 
     -- Style keystone slot
     StyleKeystoneSlot(keystoneFrame.KeystoneSlot, sr, sg, sb, sa)
@@ -168,21 +162,22 @@ local function SkinKeystoneFrame()
     -- Store skin color for affix hook
     SkinBase.SetFrameData(keystoneFrame, "skinColor", { sr, sg, sb, sa })
 
-    -- Style affix icons when keystone is slotted
+    -- Style affix icons when keystone is slotted.
+    -- Affixes are declared via parentArray="Affixes" on ChallengesKeystoneFrameAffixTemplate
+    -- (Blizzard_ChallengesUI.xml:183), so they live at frame.Affixes[i] — NOT
+    -- frame.Affix1..Affix4 as a previous iteration assumed.
     hooksecurefunc(keystoneFrame, "OnKeystoneSlotted", function(f)
+        if not f.Affixes then return end
         local sc = SkinBase.GetFrameData(f, "skinColor") or { 0.376, 0.647, 0.980, 1 }
         local r, g, b, a = unpack(sc)
-        for i = 1, 4 do
-            local affix = f["Affix" .. i]
-            if affix and affix.Portrait then
-                if not SkinBase.GetFrameData(affix, "border") then
-                    local affixBorder = affix:CreateTexture(nil, "OVERLAY")
-                    affixBorder:SetPoint("TOPLEFT", affix.Portrait, -1, 1)
-                    affixBorder:SetPoint("BOTTOMRIGHT", affix.Portrait, 1, -1)
-                    affixBorder:SetColorTexture(r, g, b, a)
-                    affixBorder:SetDrawLayer("OVERLAY", -1)
-                    SkinBase.SetFrameData(affix, "border", affixBorder)
-                end
+        for _, affix in ipairs(f.Affixes) do
+            if affix.Portrait and not SkinBase.GetFrameData(affix, "border") then
+                local affixBorder = affix:CreateTexture(nil, "OVERLAY")
+                affixBorder:SetPoint("TOPLEFT", affix.Portrait, -1, 1)
+                affixBorder:SetPoint("BOTTOMRIGHT", affix.Portrait, 1, -1)
+                affixBorder:SetColorTexture(r, g, b, a)
+                affixBorder:SetDrawLayer("OVERLAY", -1)
+                SkinBase.SetFrameData(affix, "border", affixBorder)
             end
         end
     end)
@@ -223,12 +218,13 @@ local function RefreshKeystoneColors()
         slotBorder:SetBackdropBorderColor(sr, sg, sb, sa)
     end
 
-    -- Update affix borders
-    for i = 1, 4 do
-        local affix = keystoneFrame["Affix" .. i]
-        local affixBorder = affix and SkinBase.GetFrameData(affix, "border")
-        if affixBorder then
-            affixBorder:SetColorTexture(sr, sg, sb, sa)
+    -- Update affix borders (see note on parentArray="Affixes" above).
+    if keystoneFrame.Affixes then
+        for _, affix in ipairs(keystoneFrame.Affixes) do
+            local affixBorder = SkinBase.GetFrameData(affix, "border")
+            if affixBorder then
+                affixBorder:SetColorTexture(sr, sg, sb, sa)
+            end
         end
     end
 

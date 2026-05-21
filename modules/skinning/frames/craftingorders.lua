@@ -123,12 +123,6 @@ local function StyleEditBox(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.MarkStyled(editBox)
 end
 
--- Style close button
-local function StyleCloseButton(closeButton)
-    if not closeButton then return end
-    if closeButton.Border then closeButton.Border:SetAlpha(0) end
-end
-
 -- Check if skinning is enabled
 local function IsEnabled()
     local core = GetCore()
@@ -175,27 +169,11 @@ local function StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.MarkStyled(row)
 end
 
--- Hook a ScrollBox to style rows as they're recycled
+-- Hook a ScrollBox to style rows as they're acquired from the pool.
 local function HookScrollBox(scrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not scrollBox or SkinBase.GetFrameData(scrollBox, "hooked") then return end
-
-    -- TAINT SAFETY: Defer to break taint chain from Update context.
-    hooksecurefunc(scrollBox, "Update", function(self)
-        C_Timer.After(0, function()
-            SafeForEachFrame(self, function(row)
-                StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            end)
-        end)
+    SkinBase.HookScrollBoxAcquired(scrollBox, function(row)
+        StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end)
-
-    -- Style existing rows (deferred)
-    C_Timer.After(0, function()
-        SafeForEachFrame(scrollBox, function(row)
-            StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        end)
-    end)
-
-    SkinBase.SetFrameData(scrollBox, "hooked", true)
 end
 
 -- Skin a list container (NineSlice + Background + ScrollBox + ScrollBar)
@@ -295,17 +273,9 @@ end
 
 local function HideDecorations(frame)
     if not frame then return end
+    SkinBase.HidePortraitFrameChrome(frame)
 
-    -- PortraitFrameTemplate elements
-    if frame.NineSlice then frame.NineSlice:Hide() end
-    if frame.Bg then frame.Bg:Hide() end
-    if frame.Background then frame.Background:Hide() end
-    if frame.PortraitContainer then frame.PortraitContainer:Hide() end
-    if frame.TitleContainer then
-        if frame.TitleContainer.TitleBg then frame.TitleContainer.TitleBg:Hide() end
-    end
-
-    -- Money frame
+    -- CraftingOrders-specific money frame (not part of PortraitFrameTemplate)
     if frame.MoneyFrameInset then
         frame.MoneyFrameInset:Hide()
         if frame.MoneyFrameInset.NineSlice then frame.MoneyFrameInset.NineSlice:Hide() end
@@ -391,27 +361,12 @@ local function SkinBrowseOrders(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         if categoryList.NineSlice then categoryList.NineSlice:Hide() end
         if categoryList.Background then categoryList.Background:SetAlpha(0) end
 
-        local function RefreshCategoryButtons(scrollBox)
-            SafeForEachFrame(scrollBox, function(button)
-                StyleCategoryButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-                UpdateCategorySelected(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            end)
+        local function StyleCategoryRow(button)
+            StyleCategoryButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            UpdateCategorySelected(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
 
-        local scrollBox = categoryList.ScrollBox
-        if scrollBox and not SkinBase.GetFrameData(scrollBox, "hooked") then
-            hooksecurefunc(scrollBox, "Update", function(self)
-                C_Timer.After(0, function()
-                    RefreshCategoryButtons(self)
-                end)
-            end)
-
-            C_Timer.After(0, function()
-                RefreshCategoryButtons(scrollBox)
-            end)
-
-            SkinBase.SetFrameData(scrollBox, "hooked", true)
-        end
+        SkinBase.HookScrollBoxAcquired(categoryList.ScrollBox, StyleCategoryRow)
 
         if categoryList.ScrollBar and categoryList.ScrollBar.Background then
             categoryList.ScrollBar.Background:Hide()
@@ -537,7 +492,7 @@ local function SkinCraftingOrders()
     HideDecorations(frame)
     SkinBase.CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
-    StyleCloseButton(frame.CloseButton or _G.ProfessionsCustomerOrdersFrameCloseButton)
+    SkinBase.SkinCloseButton(frame.CloseButton or _G.ProfessionsCustomerOrdersFrameCloseButton)
 
     SkinTabs(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBrowseOrders(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)

@@ -1432,6 +1432,22 @@ function Alerts:HookAlertSystems()
     DeferredHook(NewCosmeticAlertFrameSystem, SkinMiscAlert)
     DeferredHook(NewWarbandSceneAlertSystem, SkinMiscAlert)
 
+    -- Garrison / Order Hall (still live in current FrameXML —
+    -- AlertFrameSystems.lua:10-16)
+    DeferredHook(GarrisonBuildingAlertSystem, SkinMiscAlert)
+    DeferredHook(GarrisonMissionAlertSystem, SkinMiscAlert)
+    DeferredHook(GarrisonShipMissionAlertSystem, SkinMiscAlert)
+    DeferredHook(GarrisonRandomMissionAlertSystem, SkinMiscAlert)
+    DeferredHook(GarrisonFollowerAlertSystem, SkinMiscAlert)
+    DeferredHook(GarrisonShipFollowerAlertSystem, SkinMiscAlert)
+    DeferredHook(GarrisonTalentAlertSystem, SkinMiscAlert)
+
+    -- Runeforge / Skill specs / Guild rename
+    -- (AlertFrameSystems.lua:23, :1056, :1436)
+    DeferredHook(NewRuneforgePowerAlertSystem, SkinMiscAlert)
+    DeferredHook(SkillLineSpecsUnlockedAlertSystem, SkinMiscAlert)
+    DeferredHook(GuildRenameAlertSystem, SkinMiscAlert)
+
     -- Skin bonus roll frames
     SkinBonusRollFrames()
 end

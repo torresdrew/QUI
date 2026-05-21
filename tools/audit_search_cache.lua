@@ -4,6 +4,7 @@ local CACHE_PATH = "QUI_Options/search_cache.lua"
 local KNOWN_ZERO_SETTING_FEATURES = {
     autohidePage = true,
     barHidingPage = true,
+    bonusRollFrame = true,
     clickCastPage = true,
     frameLevelsPage = true,
     skinningPage = true,

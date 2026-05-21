@@ -282,6 +282,37 @@ local function selfKey()
     return q.db.keys.char
 end
 
+-- Deferred-clear token. SVPC files for other characters cannot be touched from
+-- the running addon; instead, ClearAllCharacters stamps a token in account-wide
+-- QUIDB.global, and each character honors it once on its next login by wiping
+-- its own SVPC and recording the token it honored.
+local CLEAR_TOKEN_KEY = "chatHistoryClearAllToken"
+
+local function getGlobalClearToken()
+    local quiDB = _G.QUIDB
+    if type(quiDB) ~= "table" then return nil end
+    if type(quiDB.global) ~= "table" then return nil end
+    return tonumber(quiDB.global[CLEAR_TOKEN_KEY])
+end
+
+local function setGlobalClearToken(token)
+    _G.QUIDB = _G.QUIDB or {}
+    if type(_G.QUIDB.global) ~= "table" then _G.QUIDB.global = {} end
+    _G.QUIDB.global[CLEAR_TOKEN_KEY] = token
+end
+
+local function newClearToken()
+    local prev = tonumber(getGlobalClearToken()) or 0
+    local seconds = 0
+    if type(time) == "function" then
+        seconds = tonumber(time()) or 0
+    elseif type(os) == "table" and type(os.time) == "function" then
+        seconds = tonumber(os.time()) or 0
+    end
+    if seconds > prev then return seconds end
+    return prev + 1
+end
+
 -- ---------------------------------------------------------------------------
 -- Public API
 -- ---------------------------------------------------------------------------
@@ -289,6 +320,19 @@ end
 function Storage.Init()
     getSV()
     Storage.MigrateFromAceDB()
+    Storage.HonorPendingClearAll()
+end
+
+-- Honors any pending ClearAllCharacters token stamped by a sibling character.
+-- Returns true if this character's history was wiped as a result.
+function Storage.HonorPendingClearAll()
+    local token = getGlobalClearToken()
+    if not token then return false end
+    local sv = getSV()
+    if tonumber(sv._clearAllToken) == token then return false end
+    resetV2(sv)
+    sv._clearAllToken = token
+    return true
 end
 
 function Storage.AppendLive(entry)
@@ -571,6 +615,10 @@ function Storage.RemoveFrame(frameID)
     refreshCount(sv)
 end
 
+-- Clears the current character's SVPC history now and stamps an account-wide
+-- token so other characters wipe their own SVPC the next time they log in.
+-- Also wipes any leftover legacy AceDB-per-character history in QUIDB.char.
+-- Returns (clearedCharactersNow, clearedEntriesNow, deferredToken).
 function Storage.ClearAllCharacters()
     local clearedCharacters = 0
     local clearedEntries = 0
@@ -579,6 +627,10 @@ function Storage.ClearAllCharacters()
     clearedEntries = clearedEntries + refreshCount(sv)
     resetV2(sv)
     clearedCharacters = clearedCharacters + 1
+
+    local token = newClearToken()
+    setGlobalClearToken(token)
+    sv._clearAllToken = token
 
     local quiDB = _G.QUIDB
     if type(quiDB) == "table" and type(quiDB.char) == "table" then
@@ -595,7 +647,7 @@ function Storage.ClearAllCharacters()
         end
     end
 
-    return clearedCharacters, clearedEntries
+    return clearedCharacters, clearedEntries, token
 end
 
 function Storage.GetCount()

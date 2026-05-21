@@ -289,14 +289,18 @@ spellIcon._hasCooldownActive = true
 reset(applied)
 reset(runtimeUpdated)
 reset(visibilityUpdated)
+wipe(stackWriteStates)
 controller:Handle("BAG_UPDATE_COOLDOWN")
 assert(applied.item == 1, "bag cooldown event should re-resolve item-backed icons")
 assert(applied.spell == nil, "bag cooldown event should not touch spell-only icons")
 assert(visibilityUpdated.item == 1, "item-scope refresh should update item visibility")
+assert(#stackWriteStates == 0,
+    "bag cooldown event takes the applyResolvedCooldown path and must not toggle stack-text writes")
 
 reset(applied)
 reset(runtimeUpdated)
 reset(visibilityUpdated)
+wipe(stackWriteStates)
 barsDirty = false
 local dirtyRunsBeforeBagUpdate = dirtyBarRuns
 controller:Handle("BAG_UPDATE_DELAYED")
@@ -305,10 +309,13 @@ assert(runtimeUpdated.spell == nil, "bag inventory updates should stay scoped to
 assert(applied.item == nil, "bag inventory updates should use the full item runtime path")
 assert(barsDirty == true, "bag inventory updates should mark item-backed bars dirty")
 assert(dirtyBarRuns == dirtyRunsBeforeBagUpdate + 1, "bag inventory updates should refresh dirty item-backed bars")
+assert(#stackWriteStates == 2 and stackWriteStates[1] == true and stackWriteStates[2] == false,
+    "bag inventory updates must enable then disable stack-text writes so the item-count badge refreshes")
 
 reset(applied)
 reset(runtimeUpdated)
 reset(visibilityUpdated)
+wipe(stackWriteStates)
 barsDirty = false
 local dirtyRunsBeforeItemCount = dirtyBarRuns
 controller:Handle("ITEM_COUNT_CHANGED", 404)
@@ -316,14 +323,19 @@ assert(runtimeUpdated.item == 1, "item count changes should refresh item runtime
 assert(runtimeUpdated.spell == nil, "item count changes should stay scoped to item-backed icons")
 assert(barsDirty == true, "item count changes should mark item-backed bars dirty")
 assert(dirtyBarRuns == dirtyRunsBeforeItemCount + 1, "item count changes should refresh dirty item-backed bars")
+assert(#stackWriteStates == 2 and stackWriteStates[1] == true and stackWriteStates[2] == false,
+    "item count changes must enable then disable stack-text writes so the item-count badge refreshes")
 
 reset(applied)
 reset(runtimeUpdated)
 reset(visibilityUpdated)
+wipe(stackWriteStates)
 controller:Handle("PLAYER_EQUIPMENT_CHANGED", 13)
 assert(runtimeUpdated.item == 1, "equipment change should refresh item runtime/texture state")
 assert(runtimeUpdated.spell == nil, "equipment change should stay scoped to item-backed icons")
 assert(#schedules == 0, "equipment change should not schedule a broad full cooldown walk")
+assert(#stackWriteStates == 2 and stackWriteStates[1] == true and stackWriteStates[2] == false,
+    "trinket equip changes must enable then disable stack-text writes for the item-count badge")
 
 reset(applied)
 reset(visibilityUpdated)

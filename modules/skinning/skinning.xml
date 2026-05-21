@@ -19,5 +19,11 @@
     <Script file="frames/auctionhouse.lua"/>
     <Script file="frames/craftingorders.lua"/>
     <Script file="frames/professions.lua"/>
+    <Script file="frames/interaction.lua"/>
+    <Script file="frames/social.lua"/>
+    <Script file="frames/journals.lua"/>
+    <Script file="frames/achievement.lua"/>
+    <Script file="frames/worldmap.lua"/>
+    <Script file="frames/weeklyrewards.lua"/>
     <Script file="system/tooltips.lua"/>
 </Ui>

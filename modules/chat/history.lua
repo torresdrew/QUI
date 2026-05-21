@@ -276,7 +276,7 @@ end
 
 function History.ClearAllCharacters()
     local Storage = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.HistoryStorage
-    if not Storage or not Storage.ClearAllCharacters then return 0, 0 end
+    if not Storage or not Storage.ClearAllCharacters then return 0, 0, nil end
     return Storage.ClearAllCharacters()
 end
 

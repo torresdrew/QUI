@@ -357,14 +357,19 @@ assert(durObj == cooldownDur,
     "disabled cooldown-icon aura phase should carry the cooldown DurationObject")
 
 durObj, mode = resolveIcon(50002)
--- After mode-collapse: aura+charge+cooldown with aura phase skipped now
--- resolves to the cooldown lane (mode=="cooldown") and carries the
--- cooldown-duration DurationObject. Charge-specific saturation handling
--- moved to the icon renderer.
+-- aura+charge+cooldown with aura phase skipped resolves to the cooldown
+-- lane (mode=="cooldown"). For multi-charge spells the resolver now binds
+-- the charge-duration DurationObject in preference to the regular
+-- cooldown duration, mirroring Blizzard CooldownViewer's
+-- CheckCacheCooldownValuesFromCharges precedence. For spells whose
+-- recharge IS the cooldown (Death Charge is the reference case) the
+-- regular cooldown duration is a zero DurationObject and the charge
+-- branch is the only thing that can bind a usable swipe.
 assert(mode == "cooldown",
     "disabled cooldown-icon aura phase should resolve aura+charge+cooldown to cooldown mode (got " .. tostring(mode) .. ")")
-assert(durObj == cooldownDur,
-    "disabled cooldown-icon aura phase should carry the cooldown DurationObject")
+assert(durObj == chargeDur,
+    "disabled cooldown-icon aura phase should carry the charge-duration DurationObject "
+    .. "(charges take precedence over the spell cooldown per Blizzard CV)")
 
 -- Scenario H: hook-cached cooldown durObj is preferred over the API.
 state = resolveState(entry(50008), 50008, "essential", 50008)

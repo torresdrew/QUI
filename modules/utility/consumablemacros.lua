@@ -369,6 +369,10 @@ local function BuildMacroBody(typeKey, defs)
         if count and count > 0 then
             if not bestID then bestID = v.itemID end
             lines[#lines + 1] = "/use item:" .. v.itemID
+            -- Weapon enchants put the item on the cursor; a second /use item
+            -- would clobber it and break the trailing /use <slot>. Emit only
+            -- the highest-priority owned variant for cursor-targeted items.
+            if def.applyToSlot then break end
         end
     end
 

@@ -1521,8 +1521,8 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             local clearAllBtn = GUI:CreateButton(clearAllRow, "Clear all characters", 180, 24, function()
                 GUI:ShowConfirmation({
                     title = "Clear All Chat History?",
-                    message = "Clear persisted chat history for all characters in this SavedVariables database?",
-                    warningText = "This cannot be undone.",
+                    message = "Clear this character's persisted chat history now, and clear every other character on their next login?",
+                    warningText = "This cannot be undone. Other characters' saved files are only loaded by WoW when that character logs in, so they will be wiped at their next login.",
                     acceptText = "Clear All",
                     cancelText = "Cancel",
                     isDestructive = true,
@@ -1531,7 +1531,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
                             local characters, entries = ns.QUI.Chat.History.ClearAllCharacters()
                             if DEFAULT_CHAT_FRAME then
                                 DEFAULT_CHAT_FRAME:AddMessage(string.format(
-                                    "|cff34D399[QUI]|r Chat history cleared for %d character%s (%d entr%s).",
+                                    "|cff34D399[QUI]|r Cleared this character now (%d character%s, %d entr%s). Other characters will clear on their next login.",
                                     characters or 0,
                                     characters == 1 and "" or "s",
                                     entries or 0,
@@ -1544,7 +1544,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             end)
             clearAllBtn:SetPoint("TOPLEFT", 0, 0)
 
-            local clearAllHelp = GUI:CreateLabel(clearAllRow, "Erases persisted message entries for every character. Does not change settings.", 10, {0.5, 0.5, 0.5, 1})
+            local clearAllHelp = GUI:CreateLabel(clearAllRow, "Clears this character now; every other character clears on its next login. Does not change settings.", 10, {0.5, 0.5, 0.5, 1})
             clearAllHelp:SetPoint("LEFT", clearAllBtn, "RIGHT", 12, 0)
             clearAllHelp:SetPoint("RIGHT", clearAllRow, "RIGHT", 0, 0)
             clearAllHelp:SetJustifyH("LEFT")

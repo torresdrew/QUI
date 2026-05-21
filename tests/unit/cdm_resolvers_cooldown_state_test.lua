@@ -198,6 +198,17 @@ putState(50013, "essential", {
     charges = true,
 })
 
+-- 50014: DK Death Charge reference case. cdInfo.isActive=false (the spell
+-- is castable from a remaining charge) but chargeInfo.isActive=true with a
+-- rolling recharge — the recharge timing lives only on
+-- C_Spell.GetSpellChargeDuration.
+putState(50014, "essential", {
+    mirrorEpoch = 14,
+    spellID = 50014,
+    overrideSpellID = 50014,
+    charges = true,
+})
+
 local ns = {
     Helpers = {},
     CDMShared = {
@@ -250,6 +261,14 @@ local ns = {
             if spellID == 60006 then
                 return { currentCharges = secretChargeUnknown, maxCharges = 2, isActive = true }
             end
+            -- 50014 / 60010: cdInfo.isActive=false but chargeInfo.isActive=true.
+            -- The recharge timing lives on QuerySpellChargeDuration here; the
+            -- regular QuerySpellCooldownDuration intentionally returns nil so
+            -- the fix's charge-lane probe is the only thing that can bind a
+            -- DurationObject.
+            if spellID == 50014 or spellID == 60010 then
+                return { currentCharges = secretChargeOne, maxCharges = 2, isActive = true }
+            end
             return nil
         end,
         QuerySpellCooldown = function(spellID)
@@ -300,6 +319,11 @@ local ns = {
             if spellID == 60006 then
                 return { isActive = true, isOnGCD = false }
             end
+            -- 50014 / 60010: the Death Charge case — cooldown lane reports
+            -- inactive while a charge recharge is rolling on the charges API.
+            if spellID == 50014 or spellID == 60010 then
+                return { isActive = false, isOnGCD = false }
+            end
             if spellID == 70001 then
                 return { isActive = true, isOnGCD = true }
             end
@@ -348,6 +372,12 @@ local ns = {
             end
             if spellID == 60001 or spellID == 60002 or spellID == 60003
                or spellID == 60004 or spellID == 60005 or spellID == 60006 then
+                return chargeDur
+            end
+            -- 50014 / 60010: the only path that returns a DurationObject for
+            -- these spells. QuerySpellCooldownDuration intentionally returns
+            -- nil for them so the resolver must consult the charge lane.
+            if spellID == 50014 or spellID == 60010 then
                 return chargeDur
             end
             return nil
@@ -963,6 +993,62 @@ assert(state.mode == "cooldown", "opaque-count live recharge should resolve as c
 assert(state.durObj == chargeDur, "opaque-count live recharge should carry the recharge DurationObject")
 assert(state.isOnCooldown == true,
     "live cdInfo.isActive=true classifies as on-cooldown; icon-side decodes charge availability")
+
+-- DK Death Charge reference case: a multi-charge spell whose cooldown lane
+-- reports isActive=false (the spell is castable from a remaining charge)
+-- while a recharge is rolling on the charges API. The resolver must still
+-- classify as mode=cooldown and bind the charge-duration DurationObject so
+-- the recharge swipe is drawn. The previous 4-mode contract dropped this
+-- and produced mode=inactive — visibly leaving Death Charge's icon with
+-- no swipe between the in-use aura ending and the next charge fully
+-- regenerating.
+state = resolve({
+    entry = {
+        type = "spell",
+        kind = "cooldown",
+        id = 50014,
+        spellID = 50014,
+        viewerType = "essential",
+        hasCharges = true,
+    },
+    runtimeSpellID = 50014,
+    mirrorCooldownID = 50014,
+    mirrorCategory = "essential",
+    containerKey = "essential",
+    useBuffSwipe = false,
+})
+
+assert(state.mode == "cooldown",
+    "mirror charge with cdInfo.isActive=false but chargeInfo.isActive=true should resolve as cooldown")
+assert(state.mirrorBacked == true,
+    "Death-Charge-shaped mirror should preserve mirror backing")
+assert(state.durObj == chargeDur,
+    "Death-Charge-shaped mirror should bind the charge recharge DurationObject")
+assert(state.isOnCooldown == true,
+    "active charge recharge with cd.isActive=false should still mark the spell on cooldown")
+
+state = resolve({
+    entry = {
+        type = "spell",
+        kind = "cooldown",
+        id = 60010,
+        spellID = 60010,
+        viewerType = "essential",
+        hasCharges = true,
+    },
+    runtimeSpellID = 60010,
+    containerKey = "essential",
+    useBuffSwipe = false,
+})
+
+assert(state.mode == "cooldown",
+    "live charge with cdInfo.isActive=false but chargeInfo.isActive=true should resolve as cooldown")
+assert(state.durObj == chargeDur,
+    "non-mirror Death-Charge-shaped recharge should bind the charge-duration DurationObject")
+assert(state.isOnCooldown == true,
+    "non-mirror active charge recharge should mark the spell on cooldown")
+assert(state.mirrorBacked == nil,
+    "live charge recharge without a mirror should not be mirror-backed")
 
 setTrustedGCDState({
     [70001] = true,

@@ -19,6 +19,25 @@ function QUI_LayoutMode_Settings:RefreshAccentColor()
         ACCENT_G = GUI.Colors.accent[2]
         ACCENT_B = GUI.Colors.accent[3]
     end
+    -- Repaint accent gradient overlay if panel exists
+    local panel = self._panel
+    local glow = panel and panel._accentGlow
+    if glow then
+        local accentGlow = (GUI and GUI.Colors and GUI.Colors.accentGlow)
+            or {ACCENT_R, ACCENT_G, ACCENT_B, 0.06}
+        if glow.SetGradient then
+            local ok = pcall(function()
+                glow:SetGradient("HORIZONTAL",
+                    CreateColor(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06),
+                    CreateColor(accentGlow[1], accentGlow[2], accentGlow[3], 0))
+            end)
+            if not ok then
+                glow:SetColorTexture(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06)
+            end
+        else
+            glow:SetColorTexture(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06)
+        end
+    end
 end
 
 -- Panel constants
@@ -148,10 +167,16 @@ local function CreatePanel()
     panel:EnableMouse(true)
     panel:Hide()
 
-    -- Background
+    local GUI = _G.QUI and _G.QUI.GUI
+    local C = GUI and GUI.Colors or {}
+    local bgColor = C.bg or {0.051, 0.067, 0.09, 0.97}
+    local bgContent = C.bgContent or {1, 1, 1, 0.02}
+    local accentGlow = C.accentGlow or {ACCENT_R, ACCENT_G, ACCENT_B, 0.06}
+
+    -- Background (matches main settings window deep dark)
     local bg = panel:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
-    bg:SetColorTexture(0.067, 0.094, 0.153, 0.97)
+    bg:SetColorTexture(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 0.97)
 
     -- Border
     CreateBorderLine(panel, "TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", true)
@@ -165,6 +190,32 @@ local function CreatePanel()
     titleBg:SetPoint("TOPRIGHT", -BORDER_SIZE, -BORDER_SIZE)
     titleBg:SetHeight(TITLE_HEIGHT)
     titleBg:SetColorTexture(0.04, 0.06, 0.1, 1)
+
+    -- Content-area white-tint surface (matches main settings bgContent)
+    local contentSurface = panel:CreateTexture(nil, "BACKGROUND", nil, 1)
+    contentSurface:SetPoint("TOPLEFT", titleBg, "BOTTOMLEFT", 0, 0)
+    contentSurface:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -BORDER_SIZE, BORDER_SIZE)
+    contentSurface:SetColorTexture(bgContent[1], bgContent[2], bgContent[3], bgContent[4] or 0.02)
+    panel._contentSurface = contentSurface
+
+    -- Horizontal accent gradient overlay (matches main settings glow)
+    local glow = panel:CreateTexture(nil, "BACKGROUND", nil, 2)
+    glow:SetPoint("TOPLEFT", titleBg, "BOTTOMLEFT", 0, 0)
+    glow:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -BORDER_SIZE, BORDER_SIZE)
+    glow:SetTexture("Interface\\BUTTONS\\WHITE8x8")
+    if glow.SetGradient then
+        local ok = pcall(function()
+            glow:SetGradient("HORIZONTAL",
+                CreateColor(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06),
+                CreateColor(accentGlow[1], accentGlow[2], accentGlow[3], 0))
+        end)
+        if not ok then
+            glow:SetColorTexture(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06)
+        end
+    else
+        glow:SetColorTexture(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06)
+    end
+    panel._accentGlow = glow
 
     -- Title bar bottom line
     local titleLine = panel:CreateTexture(nil, "ARTWORK", nil, 1)

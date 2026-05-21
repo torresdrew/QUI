@@ -854,9 +854,12 @@ local function PositionInspectModelScene()
     InspectModelFrame:SetPoint("BOTTOMRIGHT", InspectFrame, "BOTTOMRIGHT", -55, 65)
     InspectModelFrame:SetFrameLevel(2)
 
-    -- Hide control frame like character pane does
-    if InspectModelFrame.ControlFrame then
-        InspectModelFrame.ControlFrame:Hide()
+    -- Hide control frame like character pane does.
+    -- NOTE: InspectModelFrame inherits ModelWithControlsTemplate (PlayerModel) which
+    -- exposes the child as `controlFrame` (lowercase), unlike CharacterModelScene
+    -- which inherits PanningModelSceneMixinTemplate and exposes `.ControlFrame`.
+    if InspectModelFrame.controlFrame then
+        InspectModelFrame.controlFrame:Hide()
     end
 
     -- Reset model to zoomed out state (uses ModelFrameMixin)
@@ -1465,13 +1468,53 @@ local function CreateInspectSettingsButton()
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = settingsPx,
     })
-    inspectSettingsPanel:SetBackdropColor(C.bg[1], C.bg[2], C.bg[3], 0.98)
+    -- Match the main QUI options panel background (#0d1117 @ 0.97 alpha)
+    -- rather than the lighter inspect-panel bg, so settings popouts feel
+    -- like the same surface as the rest of QUI's settings UI.
+    inspectSettingsPanel:SetBackdropColor(0.051, 0.067, 0.09, 0.97)
     inspectSettingsPanel:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
     inspectSettingsPanel:SetFrameStrata("DIALOG")
     inspectSettingsPanel:SetFrameLevel(200)
     inspectSettingsPanel:EnableMouse(true)
     inspectSettingsPanel:Hide()
     GetState(InspectFrame).settingsPanel = inspectSettingsPanel
+
+    -- Subtle content-area wash (white 2%) layered on top of the dark backdrop
+    -- — matches QUI_Options C.bgContent so the surface reads as the same
+    -- "card" the main settings panel uses.
+    local panelContentBg = inspectSettingsPanel:CreateTexture(nil, "BACKGROUND", nil, 1)
+    panelContentBg:SetPoint("TOPLEFT", inspectSettingsPanel, "TOPLEFT", 1, -1)
+    panelContentBg:SetPoint("BOTTOMRIGHT", inspectSettingsPanel, "BOTTOMRIGHT", -1, 1)
+    panelContentBg:SetColorTexture(1, 1, 1, 0.02)
+
+    -- Horizontal accent gradient wash to match the main QUI options panel.
+    local panelGlow = inspectSettingsPanel:CreateTexture(nil, "BACKGROUND", nil, 2)
+    panelGlow:SetPoint("TOPLEFT", inspectSettingsPanel, "TOPLEFT", 1, -1)
+    panelGlow:SetPoint("BOTTOMRIGHT", inspectSettingsPanel, "BOTTOMRIGHT", -1, 1)
+    panelGlow:SetTexture("Interface\\BUTTONS\\WHITE8x8")
+    local function ApplyPanelGlow()
+        local gr, gg, gb = C.accent[1], C.accent[2], C.accent[3]
+        local globalQUI = _G.QUI
+        if globalQUI and globalQUI.GetSkinColor then
+            local r, g, b = globalQUI:GetSkinColor()
+            if r and g and b then gr, gg, gb = r, g, b end
+        end
+        if panelGlow.SetGradient and CreateColor then
+            local ok = pcall(function()
+                panelGlow:SetGradient("HORIZONTAL",
+                    CreateColor(gr, gg, gb, 0.06),
+                    CreateColor(gr, gg, gb, 0))
+            end)
+            if not ok then
+                panelGlow:SetColorTexture(gr, gg, gb, 0.04)
+            end
+        else
+            panelGlow:SetColorTexture(gr, gg, gb, 0.04)
+        end
+    end
+    ApplyPanelGlow()
+    inspectSettingsPanel._accentGlow = panelGlow
+    inspectSettingsPanel:HookScript("OnShow", ApplyPanelGlow)
 
     -- Title
     local title = inspectSettingsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -1505,6 +1548,25 @@ local function CreateInspectSettingsButton()
     local PAD = 8
     local FORM_ROW = 28
     local y = -5
+
+    -- Alternating-row tint helpers (mirror the main QUI options panel
+    -- rhythm: odd rows plain, even rows with a 2% white wash). Resets at
+    -- every section header.
+    local _rowIdx = 0
+    local function ResetRows() _rowIdx = 0 end
+    local function PlaceRow(widget, currentY)
+        widget:SetPoint("TOPLEFT", PAD, currentY)
+        widget:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
+        _rowIdx = _rowIdx + 1
+        if (_rowIdx % 2) == 0 then
+            local rowBg = scrollChild:CreateTexture(nil, "BACKGROUND")
+            rowBg:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", PAD, currentY)
+            rowBg:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
+            rowBg:SetHeight(FORM_ROW)
+            rowBg:SetColorTexture(1, 1, 1, 0.02)
+        end
+        return currentY - FORM_ROW
+    end
 
     -- Refresh callback
     local function RefreshInspect()
@@ -1561,6 +1623,7 @@ local function CreateInspectSettingsButton()
     local appearHeader = GUI:CreateSectionHeader(scrollChild, "Appearance")
     appearHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - appearHeader.gap
+    ResetRows()
 
     -- Scale slider (multiplier on base 1.30 scale, range 0.75-1.5)
     local scaleSlider = GUI:CreateFormSlider(scrollChild, "Panel Scale", 0.75, 1.5, 0.05, "inspectPanelScale", charDB, function()
@@ -1568,9 +1631,7 @@ local function CreateInspectSettingsButton()
         SetInspectScaleDeferred(INSPECT_CONFIG.BASE_SCALE * multiplier)
     end, { deferOnDrag = true },
         { description = "Zoom factor applied to the inspect panel on top of the base scale. 1.0 leaves the panel at the default QUI size." })
-    scaleSlider:SetPoint("TOPLEFT", PAD, y)
-    scaleSlider:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
+    y = PlaceRow(scaleSlider, y)
 
     -- Background color (uses shared skinning background color)
     local generalDB = core and core.db and core.db.profile and core.db.profile.general
@@ -1586,9 +1647,7 @@ local function CreateInspectSettingsButton()
             end
         end, nil,
             { description = "Background color applied to the inspect panel. Shared with the global skinning background so character and inspect panels match." })
-        bgColorPicker:SetPoint("TOPLEFT", PAD, y)
-        bgColorPicker:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
-        y = y - FORM_ROW
+        y = PlaceRow(bgColorPicker, y)
 
         -- Refresh color picker when panel shows
         inspectSettingsPanel:HookScript("OnShow", function()
@@ -1607,30 +1666,23 @@ local function CreateInspectSettingsButton()
     local overlayHeader = GUI:CreateSectionHeader(scrollChild, "Slot Overlays")
     overlayHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - overlayHeader.gap
+    ResetRows()
 
     local showItemName = GUI:CreateFormCheckbox(scrollChild, "Show Equipment Name", "showInspectItemName", charDB, RefreshInspect,
         { description = "Show the equipped item's name on each inspect slot overlay." })
-    showItemName:SetPoint("TOPLEFT", PAD, y)
-    showItemName:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
+    y = PlaceRow(showItemName, y)
 
     local showIlvl = GUI:CreateFormCheckbox(scrollChild, "Show Item Level", "showInspectItemLevel", charDB, RefreshInspect,
         { description = "Show the item level on each inspect slot overlay." })
-    showIlvl:SetPoint("TOPLEFT", PAD, y)
-    showIlvl:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
+    y = PlaceRow(showIlvl, y)
 
     local showEnchants = GUI:CreateFormCheckbox(scrollChild, "Show Enchant Status", "showInspectEnchants", charDB, RefreshInspect,
         { description = "Show the enchant name on each inspect slot, or a missing-enchant marker if the slot has no enchant." })
-    showEnchants:SetPoint("TOPLEFT", PAD, y)
-    showEnchants:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
+    y = PlaceRow(showEnchants, y)
 
     local showGems = GUI:CreateFormCheckbox(scrollChild, "Show Gem Indicators", "showInspectGems", charDB, RefreshInspect,
         { description = "Show colored gem dots indicating how many gem slots the item has and whether each is filled." })
-    showGems:SetPoint("TOPLEFT", PAD, y)
-    showGems:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
+    y = PlaceRow(showGems, y)
 
     y = y - 10
 
@@ -1640,12 +1692,11 @@ local function CreateInspectSettingsButton()
     local textSizeHeader = GUI:CreateSectionHeader(scrollChild, "Text Sizes")
     textSizeHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - textSizeHeader.gap
+    ResetRows()
 
     local slotTextSize = GUI:CreateFormSlider(scrollChild, "Slot Text Size", 6, 40, 1, "inspectSlotTextSize", charDB, RefreshInspectFonts, nil,
         { description = "Font size used for the text labels on each inspect slot overlay (item name, item level, enchant status)." })
-    slotTextSize:SetPoint("TOPLEFT", PAD, y)
-    slotTextSize:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
+    y = PlaceRow(slotTextSize, y)
 
     y = y - 10
 
@@ -1655,6 +1706,7 @@ local function CreateInspectSettingsButton()
     local textColorHeader = GUI:CreateSectionHeader(scrollChild, "Text Colors")
     textColorHeader:SetPoint("TOPLEFT", PAD, y)
     y = y - textColorHeader.gap
+    ResetRows()
 
     -- Widget references for conditional disable
     local widgetRefs = {}
@@ -1667,29 +1719,21 @@ local function CreateInspectSettingsButton()
             widgetRefs.enchantColor:SetAlpha(alpha)
         end
     end, { description = "Color the enchant text using the inspected character's class color instead of the Enchant Text Color below." })
-    enchantClassColor:SetPoint("TOPLEFT", PAD, y)
-    enchantClassColor:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
+    y = PlaceRow(enchantClassColor, y)
 
     local enchantColor = GUI:CreateFormColorPicker(scrollChild, "Enchant Text Color", "inspectEnchantTextColor", charDB, RefreshInspect, nil,
         { description = "Fallback color for the enchant text when Enchant Class Color is off." })
-    enchantColor:SetPoint("TOPLEFT", PAD, y)
-    enchantColor:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
     widgetRefs.enchantColor = enchantColor
     enchantColor:SetAlpha(charDB.inspectEnchantClassColor and 0.4 or 1.0)
-    y = y - FORM_ROW
+    y = PlaceRow(enchantColor, y)
 
     local noEnchantColor = GUI:CreateFormColorPicker(scrollChild, "No Enchant Color", "inspectNoEnchantTextColor", charDB, RefreshInspect, nil,
         { description = "Color used for the missing-enchant marker on slots that are not enchanted." })
-    noEnchantColor:SetPoint("TOPLEFT", PAD, y)
-    noEnchantColor:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
+    y = PlaceRow(noEnchantColor, y)
 
     local upgradeTrackColor = GUI:CreateFormColorPicker(scrollChild, "Upgrade Track Color", "inspectUpgradeTrackColor", charDB, RefreshInspect, nil,
         { description = "Color used for the upgrade-track label (e.g. Explorer 2/8) next to item level." })
-    upgradeTrackColor:SetPoint("TOPLEFT", PAD, y)
-    upgradeTrackColor:SetPoint("RIGHT", scrollChild, "RIGHT", -PAD, 0)
-    y = y - FORM_ROW
+    y = PlaceRow(upgradeTrackColor, y)
 
     y = y - 10
 

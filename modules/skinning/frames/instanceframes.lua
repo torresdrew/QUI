@@ -157,27 +157,12 @@ local function HidePVEDecorations()
     if _G.PVEFrameTopFiligree then _G.PVEFrameTopFiligree:Hide() end
     if _G.PVEFrameBottomFiligree then _G.PVEFrameBottomFiligree:Hide() end
 
-    -- Left inset (contains the left panel)
+    SkinBase.HidePortraitFrameChrome(PVEFrame)
+
+    -- PVE-specific full-inset hide and legacy globals not on the template.
     if _G.PVEFrameLeftInset then _G.PVEFrameLeftInset:Hide() end
-    if PVEFrame.Inset then
-        PVEFrame.Inset:Hide()
-        if PVEFrame.Inset.NineSlice then PVEFrame.Inset.NineSlice:Hide() end
-        if PVEFrame.Inset.Bg then PVEFrame.Inset.Bg:Hide() end
-    end
-
-    -- PortraitFrameTemplate elements
-    if PVEFrame.NineSlice then PVEFrame.NineSlice:Hide() end
-    if PVEFrame.Bg then PVEFrame.Bg:Hide() end
-    if PVEFrame.Background then PVEFrame.Background:Hide() end
-
-    -- Portrait container (hide portrait but keep frame functional)
-    if PVEFrame.PortraitContainer then PVEFrame.PortraitContainer:Hide() end
+    if PVEFrame.Inset then PVEFrame.Inset:Hide() end
     if _G.PVEFramePortrait then _G.PVEFramePortrait:Hide() end
-
-    -- Title bar background (the yellow bar)
-    if PVEFrame.TitleContainer then
-        if PVEFrame.TitleContainer.TitleBg then PVEFrame.TitleContainer.TitleBg:Hide() end
-    end
     if _G.PVEFrameTitleBg then _G.PVEFrameTitleBg:Hide() end
 
     -- PortraitFrame border textures
@@ -275,12 +260,6 @@ local function StyleGroupFinderButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
     SkinBase.MarkStyled(button)
 end
 
--- Style close button (QUI pattern - minimal, just hide border)
-local function StyleCloseButton(closeButton)
-    if not closeButton then return end
-    if closeButton.Border then closeButton.Border:SetAlpha(0) end
-end
-
 -- Skin PVEFrame (main container)
 local function SkinPVEFrame()
     local PVEFrame = _G.PVEFrame
@@ -294,11 +273,8 @@ local function SkinPVEFrame()
     -- Create main backdrop
     SkinBase.CreateBackdrop(PVEFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
-    -- Style close button (minimal - just hide border per QUI pattern)
-    local closeButton = PVEFrame.CloseButton or _G.PVEFrameCloseButton
-    if closeButton then
-        StyleCloseButton(closeButton)
-    end
+    -- Style close button
+    SkinBase.SkinCloseButton(PVEFrame.CloseButton or _G.PVEFrameCloseButton)
 
     -- Style tabs
     for i = 1, 4 do
@@ -1165,22 +1141,11 @@ local function SkinPVPFrame()
             StyleConquestBar(HonorFrame.ConquestBar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
 
-        -- Specific battleground scroll list (shown when "Specific Battlegrounds" is selected)
-        if HonorFrame.SpecificScrollBox and not SkinBase.GetFrameData(HonorFrame.SpecificScrollBox, "hooked") then
-            -- Hook to style buttons as they're created/recycled
-            -- TAINT SAFETY: Defer to break taint chain from secure Update context.
-            hooksecurefunc(HonorFrame.SpecificScrollBox, "Update", function(scrollBox)
-                C_Timer.After(0, function()
-                    scrollBox:ForEachFrame(function(button)
-                        StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-                    end)
-                end)
-            end)
-            -- Style existing buttons
-            HonorFrame.SpecificScrollBox:ForEachFrame(function(button)
+        -- Specific battleground scroll list — style buttons on acquisition.
+        if HonorFrame.SpecificScrollBox then
+            SkinBase.HookScrollBoxAcquired(HonorFrame.SpecificScrollBox, function(button)
                 StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             end)
-            SkinBase.SetFrameData(HonorFrame.SpecificScrollBox, "hooked", true)
         end
 
         -- Style scroll bar if present
@@ -1261,23 +1226,12 @@ local function SkinPVPFrame()
             StyleConquestBar(TrainingGroundsFrame.ConquestBar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
 
-        -- Specific Training Ground scroll list (12.x)
+        -- Specific Training Ground scroll list (12.x) — style on acquisition.
         local specificList = TrainingGroundsFrame.SpecificTrainingGroundList
-        if specificList and specificList.ScrollBox and not SkinBase.GetFrameData(specificList.ScrollBox, "hooked") then
-            -- Hook to style buttons as they're created/recycled
-            -- TAINT SAFETY: Defer to break taint chain from secure Update context.
-            hooksecurefunc(specificList.ScrollBox, "Update", function(scrollBox)
-                C_Timer.After(0, function()
-                    scrollBox:ForEachFrame(function(button)
-                        StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-                    end)
-                end)
-            end)
-            -- Style existing buttons
-            specificList.ScrollBox:ForEachFrame(function(button)
+        if specificList and specificList.ScrollBox then
+            SkinBase.HookScrollBoxAcquired(specificList.ScrollBox, function(button)
                 StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             end)
-            SkinBase.SetFrameData(specificList.ScrollBox, "hooked", true)
 
             -- Style scroll bar
             if specificList.ScrollBar and specificList.ScrollBar.Background then

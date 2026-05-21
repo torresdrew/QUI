@@ -30,7 +30,6 @@ local customBg = nil
 -- properties to Blizzard frames, which taints them in Midnight (12.0)
 local iconBorders = Helpers.CreateStateTable()       -- CurrencyIcon/entry.icon → border frame
 local skinnedEntries = Helpers.CreateStateTable()    -- entry → true
-local hookedScrollBoxes = Helpers.CreateStateTable() -- ScrollBox → true (hooked for Update)
 local titleHighlights = Helpers.CreateStateTable()   -- button → highlight texture
 local characterTabsHooked = false
 
@@ -145,8 +144,12 @@ local function HideNineSlice(ns)
 end
 
 local function HideBlizzardDecorations()
+    -- Cover all standard ButtonFrameTemplate chrome — picks up TopTileStreaks
+    -- and TitleContainer.TitleBg that prior code missed.
+    SkinBase.HidePortraitFrameChrome(CharacterFrame)
+    -- Then upgrade the NineSlice hides with the re-show hook (defends against
+    -- Blizzard re-showing the NineSlice after a layout pass).
     if CharacterFramePortrait then CharacterFramePortrait:Hide() end
-    if CharacterFrame.Background then CharacterFrame.Background:Hide() end
     HideNineSlice(CharacterFrame.NineSlice)
     HideNineSlice(CharacterFrameInset and CharacterFrameInset.NineSlice)
     HideNineSlice(CharacterFrameInsetRight and CharacterFrameInsetRight.NineSlice)
@@ -464,35 +467,16 @@ local function SetupCharacterFrameSkinning()
     HideBlizzardDecorations()
     SkinCharacterFrameTabs()
 
-    -- Hook ScrollBox updates for reputation (debounced to avoid timer spam during rapid scrolling)
-    local _repUpdatePending = false
+    -- ScrollBox row skinning — fires once per frame acquisition vs. once per
+    -- Update tick, so debouncing is no longer needed.
     if ReputationFrame and ReputationFrame.ScrollBox then
-        -- TAINT SAFETY: Defer to break taint chain from secure Update context.
-        hooksecurefunc(ReputationFrame.ScrollBox, "Update", function(frame)
-            if _repUpdatePending then return end
-            _repUpdatePending = true
-            C_Timer.After(0, function()
-                _repUpdatePending = false
-                if IsSkinningEnabled() then
-                    frame:ForEachFrame(SkinReputationEntry)
-                end
-            end)
+        SkinBase.HookScrollBoxAcquired(ReputationFrame.ScrollBox, function(row)
+            if IsSkinningEnabled() then SkinReputationEntry(row) end
         end)
     end
-
-    -- Hook ScrollBox updates for currency (debounced to avoid timer spam during rapid scrolling)
-    local _tokenUpdatePending = false
     if TokenFrame and TokenFrame.ScrollBox then
-        -- TAINT SAFETY: Defer to break taint chain from secure Update context.
-        hooksecurefunc(TokenFrame.ScrollBox, "Update", function(frame)
-            if _tokenUpdatePending then return end
-            _tokenUpdatePending = true
-            C_Timer.After(0, function()
-                _tokenUpdatePending = false
-                if IsSkinningEnabled() then
-                    frame:ForEachFrame(SkinCurrencyEntry)
-                end
-            end)
+        SkinBase.HookScrollBoxAcquired(TokenFrame.ScrollBox, function(row)
+            if IsSkinningEnabled() then SkinCurrencyEntry(row) end
         end)
     end
 
@@ -747,23 +731,12 @@ local function SkinEquipmentManager()
         popup.title:SetTextColor(sr, sg, sb, 1)
     end
 
-    -- Skin equipment set entries
+    -- Skin equipment set entries — fires once per acquisition.
     local pane = PaperDollFrame and PaperDollFrame.EquipmentManagerPane
     if pane and pane.ScrollBox then
-        -- Hook ScrollBox to skin entries as they're created/recycled
-        if not hookedScrollBoxes[pane.ScrollBox] then
-            -- TAINT SAFETY: Defer to break taint chain from secure Update context.
-            hooksecurefunc(pane.ScrollBox, "Update", function(scrollBox)
-                C_Timer.After(0, function()
-                    if IsSkinningEnabled() then
-                        scrollBox:ForEachFrame(SkinEquipmentSetEntry)
-                    end
-                end)
-            end)
-            hookedScrollBoxes[pane.ScrollBox] = true
-        end
-        -- Initial skin
-        pane.ScrollBox:ForEachFrame(SkinEquipmentSetEntry)
+        SkinBase.HookScrollBoxAcquired(pane.ScrollBox, function(row)
+            if IsSkinningEnabled() then SkinEquipmentSetEntry(row) end
+        end)
     end
 
     if pane then
@@ -906,22 +879,9 @@ local function SkinTitleManagerPane()
     -- Hide pane background (uses popup's custom bg)
     if pane.Bg then pane.Bg:Hide() end
 
-    -- Style ScrollBox entries
+    -- Style ScrollBox entries — fires once per acquisition.
     if pane.ScrollBox then
-        -- Hook to skin entries as they're created
-        -- TAINT SAFETY: Defer to break taint chain from secure Update context.
-        hooksecurefunc(pane.ScrollBox, "Update", function(scrollBox)
-            C_Timer.After(0, function()
-                scrollBox:ForEachFrame(function(button)
-                    SkinTitleEntry(button)
-                end)
-            end)
-        end)
-
-        -- Skin any existing entries
-        pane.ScrollBox:ForEachFrame(function(button)
-            SkinTitleEntry(button)
-        end)
+        SkinBase.HookScrollBoxAcquired(pane.ScrollBox, SkinTitleEntry)
     end
 
     -- Style scrollbar

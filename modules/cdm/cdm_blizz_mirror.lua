@@ -743,6 +743,14 @@ local function PackState(cooldownID, viewerCategory)
     -- check with issecretvalue before consuming.
     packed.lastSetCooldownStart    = s.lastSetCooldownStart
     packed.lastSetCooldownDuration = s.lastSetCooldownDuration
+    -- Counter bumped ONLY by cooldown-setter hooks (SetCooldown family +
+    -- SCFDO + Clear), unlike mirrorEpoch which advances on every aura
+    -- update and routine tick during combat. The resolver uses this in
+    -- the cooldown-mode duration binding key so a new recharge cycle
+    -- (charge spell 0/2 → 1/2 → 2/2) forces a SCFDO rebind on the
+    -- transition but stays stable mid-cycle to let the C-side sweep
+    -- animation play uninterrupted.
+    packed.cooldownLaneEpoch       = s.cooldownLaneEpoch
     packed.totemDurObj            = s.totemDurObj
     packed.totemDurObjSource      = s.totemDurObjSource
     packed.mirrorEpoch            = s.mirrorEpoch
@@ -3143,6 +3151,7 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
                 s.cooldownLaneActiveByHook = nil
             end
             s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
+            s.cooldownLaneEpoch = (s.cooldownLaneEpoch or 0) + 1
             s.lastTouch   = GetTime()
             SyncChildChargeCountFields(owner, cdID, s, "charge-field-cooldown")
             if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
@@ -3219,6 +3228,7 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
         -- C_Spell.GetSpellCooldown(sid).isActive is an explicit false.
         s.cooldownLaneActiveByHook = true
         s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
+        s.cooldownLaneEpoch = (s.cooldownLaneEpoch or 0) + 1
         s.lastTouch   = GetTime()
         SyncChildChargeCountFields(owner, cdID, s, "charge-field-cooldown")
         if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then
@@ -3289,6 +3299,7 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
             s.pandemicActive = false
             s.pandemicStateKnown = nil
             s.mirrorEpoch = (s.mirrorEpoch or 0) + 1
+            s.cooldownLaneEpoch = (s.cooldownLaneEpoch or 0) + 1
             s.lastTouch = GetTime()
             SyncChildChargeCountFields(owner, cdID, s, "charge-field-clear")
             if _G.QUI_CDM_TAINT_DEBUG and CDMBlizzMirror.TaintLog then

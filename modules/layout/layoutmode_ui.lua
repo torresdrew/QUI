@@ -24,6 +24,24 @@ function QUI_LayoutMode_UI:RefreshAccentColor()
         ACCENT_G = GUI.Colors.accent[2]
         ACCENT_B = GUI.Colors.accent[3]
     end
+    -- Repaint the drawer's accent gradient overlay if the drawer exists.
+    local glow = self._drawer and self._drawer._accentGlow
+    if glow then
+        local accentGlow = (GUI and GUI.Colors and GUI.Colors.accentGlow)
+            or {ACCENT_R, ACCENT_G, ACCENT_B, 0.06}
+        if glow.SetGradient then
+            local ok = pcall(function()
+                glow:SetGradient("HORIZONTAL",
+                    CreateColor(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06),
+                    CreateColor(accentGlow[1], accentGlow[2], accentGlow[3], 0))
+            end)
+            if not ok then
+                glow:SetColorTexture(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06)
+            end
+        else
+            glow:SetColorTexture(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06)
+        end
+    end
 end
 
 -- Grid constants
@@ -1550,10 +1568,40 @@ CreateFramesDrawer = function(ui)
         if ui._startCollapseTimer then ui._startCollapseTimer() end
     end)
 
-    -- Background
+    -- Background (matches main settings window deep dark + gradient overlay)
+    local GUI_THEME = _G.QUI and _G.QUI.GUI
+    local C_THEME = GUI_THEME and GUI_THEME.Colors or {}
+    local bgColor = C_THEME.bg or {0.051, 0.067, 0.09, 0.97}
+    local bgContent = C_THEME.bgContent or {1, 1, 1, 0.02}
+    local accentGlow = C_THEME.accentGlow or {ACCENT_R, ACCENT_G, ACCENT_B, 0.06}
+
     local bg = drawer:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
-    bg:SetColorTexture(0.067, 0.094, 0.153, 0.97)
+    bg:SetColorTexture(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 0.97)
+
+    -- White-tint content surface (matches main settings bgContent)
+    local contentSurface = drawer:CreateTexture(nil, "BACKGROUND", nil, 1)
+    contentSurface:SetAllPoints()
+    contentSurface:SetColorTexture(bgContent[1], bgContent[2], bgContent[3], bgContent[4] or 0.02)
+    drawer._contentSurface = contentSurface
+
+    -- Horizontal accent gradient overlay (matches main settings glow)
+    local glow = drawer:CreateTexture(nil, "BACKGROUND", nil, 2)
+    glow:SetAllPoints()
+    glow:SetTexture("Interface\\BUTTONS\\WHITE8x8")
+    if glow.SetGradient then
+        local ok = pcall(function()
+            glow:SetGradient("HORIZONTAL",
+                CreateColor(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06),
+                CreateColor(accentGlow[1], accentGlow[2], accentGlow[3], 0))
+        end)
+        if not ok then
+            glow:SetColorTexture(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06)
+        end
+    else
+        glow:SetColorTexture(accentGlow[1], accentGlow[2], accentGlow[3], accentGlow[4] or 0.06)
+    end
+    drawer._accentGlow = glow
 
     -- Border
     local function MakeDrawerLine(p1, r1, p2, r2, isH)

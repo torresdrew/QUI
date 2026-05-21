@@ -101,33 +101,12 @@ end
 local function HideBlizzardDecorations()
     if not InspectFrame then return end
 
-    -- Hide portrait and portrait container (ButtonFrameTemplate)
+    SkinBase.HidePortraitFrameChrome(InspectFrame)
+
+    -- Legacy globals that the InspectFrame xml also exposes alongside the
+    -- templated chrome.
     if InspectFramePortrait then InspectFramePortrait:Hide() end
-    if InspectFrame.PortraitContainer then InspectFrame.PortraitContainer:Hide() end
-    if InspectFrame.portrait then InspectFrame.portrait:Hide() end
-
-    -- Hide NineSlice border (ButtonFrameTemplate)
-    if InspectFrame.NineSlice then InspectFrame.NineSlice:Hide() end
-
-    -- Hide background elements
-    if InspectFrame.Bg then InspectFrame.Bg:Hide() end
-    if InspectFrame.Background then InspectFrame.Background:Hide() end
     if InspectFrameBg then InspectFrameBg:Hide() end
-
-    -- Hide title bar decorations (ButtonFrameTemplate)
-    if InspectFrame.TitleContainer then
-        -- Keep title text, hide decorations
-        if InspectFrame.TitleContainer.TitleBg then
-            InspectFrame.TitleContainer.TitleBg:Hide()
-        end
-    end
-    if InspectFrame.TopTileStreaks then InspectFrame.TopTileStreaks:Hide() end
-
-    -- Hide inset background
-    if InspectFrame.Inset then
-        if InspectFrame.Inset.Bg then InspectFrame.Inset.Bg:Hide() end
-        if InspectFrame.Inset.NineSlice then InspectFrame.Inset.NineSlice:Hide() end
-    end
 
     -- Hide model frame borders
     if InspectModelFrameBorderTopLeft then InspectModelFrameBorderTopLeft:Hide() end
