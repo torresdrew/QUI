@@ -10,6 +10,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha52 - 2026-05-21
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha51 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **Cooldown range-color alpha now applies.** A duplicate `rangeColor` key in the cooldown container default factory was silently dropping the alpha channel.
+- **Glow text overlay stays anchored above the cooldown swipe.** The highlighter path had a thinner duplicate of EnsureGlowAboveCooldown that skipped the text-overlay re-anchor step; both paths now share one implementation.
+- **Tracked cooldown bars prefer the QUI-owned viewer** over the Blizzard `BuffBarCooldownViewer` fallback when both are available.
+- **Corrupted-profile `inactiveMode` falls back to `hide`** instead of `always`, matching the missing-setting branch.
+- **Plugged several global leaks** in the CDM render path (`ids` in `cdm_domain.GetOrderedSpellMap`, bare `_` in the runtime resolver) that were writing to `_G` every tick.
+
+### Performance
+- **CDM glow scans no longer allocate per icon per frame.** `EvaluateGlowForIcon`, `ScanAllGlows`, and `ScanGlowsForSpell` now gather candidate spells into a reused scratch table instead of constructing fresh closures via `ForEachSpellCandidate` / `ForEachIconSpellID` on every pass.
+
+### Internal
+- Added a reentry guard (`_rebuildGlowSpellMapInFlight`) around `RebuildGlowSpellMap` so the wipe → repopulate invariant survives any future recursion through `AddIconToGlowMaps`.
+- Drove `modules/cdm/` luacheck warnings from ~520 down to ~140 with no behavior changes: expanded `.luacheckrc` for WoW client globals exposed by the consolidation, removed dead `ok = true` scaffold left over from prior `pcall` removal, dropped 34 `ADDON_NAME` residues, deleted unused locals/tables/helpers, and collapsed redundant empty-if chains.
+- Removed the dead `SetHostPandemicState` no-op stub and its four caller sites; pandemic glow flows through `cdm_frame_writes.GetPandemicCurve`.
+- Trimmed `ResolveMirrorStackText` from a 6-tuple to a 5-tuple (the unused `mirrorIsCharge` return is gone) and dropped the `previousInitSafeWindow` shadow inside the PEW handler.
+
+
+
 ## v3.6.0-alpha51 - 2026-05-20
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha50 profiles carry over unchanged.
