@@ -10,6 +10,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha51 - 2026-05-20
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha50 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **Cooldown icons that combine a cooldown with an aura overlay now refresh in the correct phase.** The cooldown DurationObject is captured at hook time so the swipe and aura overlay stay in sync.
+
+### Changed
+- **CDM cooldown/charge classification was rewritten around a single 4-mode contract.** Icon rendering, mirror payload building, and finalization now share one mode resolution path instead of scattered cascade branches — fewer surprises when cooldowns, charges, and auras overlap on the same spell.
+
+### Internal
+- Consolidated the CDM module surface: legacy icon factory, runtime, scheduler, and policy files were folded into `cdm_icon_renderer`, `cdm_runtime`, `cdm_domain`, and `cdm_frame_writes`.
+- Removed orphaned charge-resolver helpers after the cascade collapse; moved tests under `tests/unit/` and lifted fixtures into `tests/fixtures/{current,edge,legacy}/`.
+- Added regression coverage for blizz-mirror cooldown capture, debug cdtest details, runtime events, runtime query cache, aura priority integration, and the memaudit addon profiler.
+
+
+
 ## v3.6.0-alpha50 - 2026-05-18
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha49 profiles carry over unchanged.
