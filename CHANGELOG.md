@@ -10,6 +10,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha54 - 2026-05-21
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha53 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **CDM: mid-cast swipe blip on long casts** (e.g. Mind Blast). The runtime now holds gcd-only mode through casts whose cast time exceeds the GCD; previously `UNIT_SPELLCAST_SUCCEEDED` fired after the GCD ended, leaving an ~80ms gap where the swipe vanished mid-cast.
+- **CDM: 1/1-charge spells now show their cooldown swipe.** Charge-duration probe is now gated on an active recharge with `maxCharges>1`, not just charge capability — 1/1-max spells carry a charge capability but their real cooldown lives on the spell cooldown.
+- **CDM: custom-bar icons get click-to-cast secure attributes.** `UpdateIconSecureAttributes` now reads settings under `ncdm.containers[viewerType]`, and the post-rebuild pass no longer gates custom bars out.
+- **Totems bar: hidden bar no longer eats world clicks.** Left-click on ground / right-click camera control return when the bar is alpha-hidden. `EnableMouse` now tracks alpha via centralized `ShowContainer` / `HideContainer` helpers with `pcall`-guarded toggles for combat.
+- **CDM cold-login: catalog no longer freezes with stale viewer data.** At PEW the cooldown viewer could be empty/stale, leaving cross-category mirror binds (e.g. Death's Advance) permanently unbound until `/reload` or spec swap. Adds an availability gate, a 2s `PLAYER_LOGIN` grace window, a coordinated cold-load reconcile, and a debounced post-`OVERRIDE_UPDATED` reconcile.
+- **CDM composer: "not in /cdm" warning reflects what's actually enabled.** Derives the red-tint signal from Blizzard's `CooldownViewerSettings` data provider rather than the API category set. Adds a red "!" badge, tighter red tint, mirrored signal in the Add list, and `OnDataChanged` cache invalidation.
+- **CDM composer: bag items no longer duplicate.** `GetUsableItems` de-dupes by `itemID`, keeping the highest profession quality rank so multiple stacks of the same consumable produce one Items-tab entry.
+
+### Changed
+- **CDM per-spell duration text override** renamed `showDurationText` → `hideDurationText` so a composer override can force-hide independent of row default (and force-show to override a row-level hide). Bar renderer honors the override on item/aura paths; containers plumb `hideDurationText` / `hideStackText` / font from row config.
+
+### Internal
+- CDM composer entry-cell tooltips now show spell/item ID.
+- Test stub: `GetSpellOverride` added to the `CDMSpellData` mock for `cdm_bars_label_test`.
+
+
+
 ## v3.6.0-alpha53 - 2026-05-21
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha52 profiles carry over unchanged.
