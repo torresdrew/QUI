@@ -3377,6 +3377,30 @@ local function Walk()
         return
     end
 
+    -- Cold-login availability gate.
+    --
+    -- Per Blizzard CooldownViewerDocumentation, the cooldown viewer is not
+    -- ready until C_CooldownViewer.IsCooldownViewerAvailable() returns true
+    -- (driven by the COOLDOWN_VIEWER_DATA_LOADED event). Before that point
+    -- GetCooldownViewerCategorySet returns an empty table and
+    -- GetCooldownViewerCooldownInfo returns nil — so any Walk run during
+    -- PLAYER_ENTERING_WORLD on cold-login would wipe the catalog with
+    -- ClearCatalogMaps() and then fail to repopulate, leaving the
+    -- spell->cdID map empty. Cross-category mirror binding
+    -- (ResolveBlizzardMirrorIdentityState falling back from utility to
+    -- essential for Death's Advance, etc.) then permanently fails until
+    -- /reload or spec swap forces a reconcile against a hot table.
+    --
+    -- Bail early when unavailable. The COOLDOWN_VIEWER_DATA_LOADED handler
+    -- (registered on cdm_domain.lua's _eventFrame and routed through the
+    -- CDMIndex broker subscription at the bottom of this file) already
+    -- calls Walk(); when the event fires, Walk() re-enters here and the
+    -- availability check passes.
+    if C_CooldownViewer.IsCooldownViewerAvailable
+       and not C_CooldownViewer.IsCooldownViewerAvailable() then
+        return
+    end
+
     ClearCatalogMaps()
 
     -- First trust Blizzard's category-set API as the category authority.
@@ -4476,6 +4500,46 @@ _eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     -- CDM-table events (DATA_LOADED / SPELL_OVERRIDE_UPDATED /
     -- TABLE_HOTFIXED) are handled via the ns.CDMIndex broker subscription
     -- at the bottom of this file.
+    --
+    -- Cold-login single-trigger grace window. Per Vigil's reference
+    -- (CDMBridge.lua:1612-1617), CDM's data provider briefly reports a
+    -- pre-customization default at PLAYER_LOGIN before the user's saved
+    -- layout applies on top. Walking immediately reads stale defaults,
+    -- producing visible UI flicker as later Walks correct the catalog.
+    --
+    -- Defer everything for the initial cold-load by 2s. Set
+    -- ns._cdmColdLoadActive = true at PLAYER_LOGIN so the broker
+    -- subscription and other handlers also skip during this window.
+    -- Cleared in the deferred callback below, after the single Walk and
+    -- reconcile pass that produces the final settled state.
+    if event == "PLAYER_LOGIN" then
+        ns._cdmColdLoadActive = true
+        C_Timer.After(2.0, function()
+            if InCombatLockdown() and not (ns and ns._inInitSafeWindow) then
+                _walkPendingOnRegen = true
+                ns._cdmColdLoadActive = false
+                return
+            end
+            Walk()
+            HandlePlayerTotemUpdate()
+            CDMBlizzMirror.SyncSuppressionToMaster()
+            -- Drive the spelldata reconcile from the same trigger so the
+            -- whole cold-load is one coordinated update, not multiple.
+            local sd = ns.CDMSpellData
+            if sd and sd.RunColdLoadReconcile then
+                sd:RunColdLoadReconcile()
+            end
+            ns._cdmColdLoadActive = false
+        end)
+        return
+    end
+
+    -- Suppress non-LOGIN catalog reshapes during the cold-load grace
+    -- so they don't fire intermediate state changes the user can see.
+    if ns._cdmColdLoadActive then
+        return
+    end
+
     if InCombatLockdown() and not (ns and ns._inInitSafeWindow) then
         _walkPendingOnRegen = true
         return
@@ -4508,6 +4572,12 @@ end
 ---------------------------------------------------------------------------
 if ns.CDMIndex and ns.CDMIndex.Subscribe then
     ns.CDMIndex.Subscribe("blizz_mirror", function(reason, baseSpellID, overrideSpellID)
+        -- Cold-load grace: events that fire before the deferred PLAYER_LOGIN
+        -- walk run are skipped to avoid intermediate flicker. The single
+        -- delayed callback in the main _eventFrame handler does the Walk.
+        if ns._cdmColdLoadActive then
+            return
+        end
         if reason == "override" then
             -- Targeted: only the (baseSpellID, overrideSpellID) pair changed.
             -- Run in combat too. _RefreshSpellOverridePair only calls

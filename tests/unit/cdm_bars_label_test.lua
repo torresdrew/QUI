@@ -202,6 +202,7 @@ ns.CDMSpellData = {
     IsAuraEntry = function(entry, viewerType)
         return entry and entry.kind == "aura" and viewerType == "trackedBar"
     end,
+    GetSpellOverride = function() return nil end,
 }
 ns.CDMResolvers = {
     BuildCooldownStateContext = BuildTestCooldownStateContext,

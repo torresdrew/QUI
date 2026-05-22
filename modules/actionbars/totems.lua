@@ -27,16 +27,21 @@ local BASE_CROP = 0.08
 ---------------------------------------------------------------------------
 -- COMBAT-SAFE SHOW / HIDE
 -- Use SetAlpha as a visual stand-in, then reconcile on combat end.
+-- EnableMouse must follow alpha so an invisible bar/button doesn't eat
+-- world clicks (left-click ground / right-click camera). pcall guards
+-- secure buttons during combat transitions.
 ---------------------------------------------------------------------------
 local pendingReconcile = false
 
 local function SafeShowButton(btn)
     btn:SetAlpha(1)
+    pcall(btn.EnableMouse, btn, true)
     btn.active = true
 end
 
 local function SafeHideButton(btn)
     btn:SetAlpha(0)
+    pcall(btn.EnableMouse, btn, false)
     btn.active = false
 end
 
@@ -148,11 +153,25 @@ local container = CreateFrame("Frame", "QUI_TotemBar", UIParent)
 container:SetFrameStrata("MEDIUM")
 container:SetSize(1, 1)
 container:SetMovable(true)
-container:EnableMouse(true)
+-- Mouse is enabled only while the bar is visible (see ShowContainer/HideContainer).
+-- Otherwise the empty MAX_SLOTS-wide invisible rect would block world clicks.
+container:EnableMouse(false)
 container:RegisterForDrag("LeftButton")
 container:SetClampedToScreen(true)
 container:SetAlpha(0)
 container.visible = false
+
+local function ShowContainer()
+    container:SetAlpha(1)
+    container:EnableMouse(true)
+    container.visible = true
+end
+
+local function HideContainer()
+    container:SetAlpha(0)
+    container:EnableMouse(false)
+    container.visible = false
+end
 
 TotemBar.container = container
 TotemBar.buttons = {}
@@ -164,6 +183,7 @@ for i = 1, MAX_SLOTS do
     local btn = CreateFrame("Button", "QUI_TotemBarButton" .. i, container, "SecureActionButtonTemplate")
     btn:SetSize(36, 36)
     btn:SetAlpha(0)
+    btn:EnableMouse(false)
     btn.active = false
     btn:RegisterForClicks("RightButtonUp")
     SetTotemDismissSlot(btn, i)
@@ -405,16 +425,15 @@ local function UpdateTotems()
 
     LayoutButtons()
 
-    -- Show/hide container via alpha (Show/Hide is protected — secure children)
+    -- Show/hide container via alpha (Show/Hide is protected — secure children).
+    -- Mouse follows visibility so a hidden bar doesn't intercept world clicks.
     if hasActive then
         if not container.visible then
-            container:SetAlpha(1)
-            container.visible = true
+            ShowContainer()
         end
     else
         if container.visible then
-            container:SetAlpha(0)
-            container.visible = false
+            HideContainer()
         end
     end
 
@@ -556,8 +575,7 @@ local function Disable()
     TotemBar.enabled = false
 
     container:UnregisterEvent("PLAYER_TOTEM_UPDATE")
-    container:SetAlpha(0)
-    container.visible = false
+    HideContainer()
 
     if TotemBar.ticker then
         TotemBar.ticker:Cancel()
@@ -668,8 +686,7 @@ function TotemBar:ShowPreview()
     -- Ensure container is visible and positioned even if disabled
     PositionContainer()
     if not container:IsShown() then container:Show() end
-    container:SetAlpha(1)
-    container.visible = true
+    ShowContainer()
     ShowMockTotems()
 end
 
@@ -681,8 +698,7 @@ function TotemBar:HidePreview()
     if self.enabled then
         UpdateTotems()
     else
-        container:SetAlpha(0)
-        container.visible = false
+        HideContainer()
     end
 end
 

@@ -327,6 +327,20 @@ local function GetBarSpellData(bar)
     }
 end
 
+-- Per-spell "Hide Duration Text" override lookup. Returns true when the
+-- composer override forces hide for this bar's spell/container; nil otherwise.
+local function GetBarSpellHideDurationOverride(bar)
+    local entry = bar and bar._spellEntry
+    if not entry then return nil end
+    local CDMSpellData = ns.CDMSpellData
+    if not CDMSpellData or not entry.viewerType then return nil end
+    local spellID = entry.spellID or entry.id
+    if not spellID then return nil end
+    local ov = CDMSpellData:GetSpellOverride(entry.viewerType, spellID)
+    if ov and ov.hideDurationText == true then return true end
+    return nil
+end
+
 -- DebugBarLabel implementation lives in the load-on-demand debug addon.
 -- The placeholder below is rebound by cdm_debug.lua's BindAll() when loaded.
 local DebugBarLabel = function() end
@@ -1031,7 +1045,7 @@ local function UpdateItemBarCooldown(bar, entry)
 
     if isActive and auraRemaining and auraRemaining > 0 then
         bar._active = true
-        bar._hideDurationText = nil
+        bar._hideDurationText = GetBarSpellHideDurationOverride(bar)
         bar._hasAuraExpirationTime = nil
         bar._durObj = nil
         bar._cSideFill = nil
@@ -1066,7 +1080,7 @@ local function UpdateItemBarCooldown(bar, entry)
         local remaining = (startTime + duration) - GetTime()
         if remaining > 0 then
             bar._active = true
-            bar._hideDurationText = nil
+            bar._hideDurationText = GetBarSpellHideDurationOverride(bar)
             bar._hasAuraExpirationTime = nil
             bar._durObj = nil
             bar._cSideFill = nil
@@ -1188,6 +1202,7 @@ function CDMBars:UpdateOwnedBarAura(bar)
         bar._auraDataUnit = r.auraUnit
         bar._hasAuraExpirationTime = r.hasExpirationTime
         bar._hideDurationText = ShouldHideAuraDurationText(r)
+            or GetBarSpellHideDurationOverride(bar)
 
         -- Active-aura fallback: when the resolver returns no DurationObject
         -- and an out-of-combat auraData.duration is missing or non-positive,

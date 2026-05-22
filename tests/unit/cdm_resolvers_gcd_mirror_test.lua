@@ -80,6 +80,13 @@ local ns = {
                     isActive = true,
                     durObj = mirrorDuration,
                     durObjSource = "spell-cooldown",
+                    -- cdm_blizz_mirror.lua:732 packs cooldownDurObj as the
+                    -- production field name; the legacy `durObj` field above
+                    -- isn't read by the resolver. Set both so the assertion
+                    -- "active live recharge should not override a mirror
+                    -- cooldown duration" exercises the m.cooldownDurObj
+                    -- short-circuit instead of the QueryDuration fallback.
+                    cooldownDurObj = mirrorDuration,
                     resolvedMode = "cooldown",
                     mirrorEpoch = 21,
                     spellID = spellID,

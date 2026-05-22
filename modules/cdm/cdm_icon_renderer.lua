@@ -7400,8 +7400,9 @@ UpdateIconSecureAttributes = function(icon, entry, viewerType)
         return
     end
 
-    local db = GetDB()
-    local viewerDB = db and db[viewerType]
+    -- Built-in containers live at ncdm[viewerType]; custom bars live at
+    -- ncdm.containers[viewerType]. GetTrackerSettings handles both.
+    local viewerDB = GetTrackerSettings and GetTrackerSettings(viewerType)
 
     -- Feature disabled or no config
     if not viewerDB or not viewerDB.clickableIcons then
@@ -7779,8 +7780,11 @@ local function ConfigureIcon(icon, rowConfig)
             end
         end
 
-        -- showDurationText: per-spell duration text visibility override
-        if spellOvr.showDurationText == false then
+        -- hideDurationText: per-spell duration text visibility override.
+        -- true  → force-hide on this spell only
+        -- false → force-show (overrides a row-level Hide Duration Text)
+        -- nil   → inherit row default
+        if spellOvr.hideDurationText == true then
             local function hideDurationForCooldown(cd)
                 if not cd then return end
                 if cd.SetHideCountdownNumbers then
@@ -7795,7 +7799,7 @@ local function ConfigureIcon(icon, rowConfig)
             end
             hideDurationForCooldown(icon.Cooldown)
             icon.DurationText:Hide()
-        elseif spellOvr.showDurationText == true then
+        elseif spellOvr.hideDurationText == false then
             if icon.Cooldown and icon.Cooldown.SetHideCountdownNumbers then
                 icon.Cooldown.SetHideCountdownNumbers(icon.Cooldown, false)
             end
@@ -9193,13 +9197,15 @@ function CDMIcons:BuildIcons(viewerType, container)
         end
     end
 
-    -- Update click-to-cast secure attributes for built-in cooldown icons.
+    -- Update click-to-cast secure attributes for cooldown icons.
     -- AcquireIcon sets attrs per-icon, but this catches any pending updates
     -- (e.g., from combat-deferred rebuilds via PLAYER_REGEN_ENABLED).
-    if IsBuiltinCooldownContainerKey(viewerType) then
-        for _, icon in ipairs(pool) do
-            if icon._pendingSecureUpdate then
-                UpdateIconSecureAttributes(icon, icon._spellEntry, viewerType)
+    -- Applies to both built-in cooldown containers and custom bars.
+    for _, icon in ipairs(pool) do
+        if icon._pendingSecureUpdate then
+            local entry = icon._spellEntry
+            if entry and entry.viewerType ~= "buff" then
+                UpdateIconSecureAttributes(icon, entry, entry.viewerType or viewerType)
             end
         end
     end

@@ -134,11 +134,15 @@ function CDMLayout.BuildRows(settings)
                 durationOffsetY = row.durationOffsetY or 0,
                 durationTextColor = row.durationTextColor or {1, 1, 1, 1},
                 durationAnchor = row.durationAnchor or "CENTER",
+                durationFont = row.durationFont,
+                hideDurationText = row.hideDurationText,
                 stackSize = row.stackSize or 14,
                 stackOffsetX = row.stackOffsetX or 0,
                 stackOffsetY = row.stackOffsetY or 0,
                 stackTextColor = row.stackTextColor or {1, 1, 1, 1},
                 stackAnchor = row.stackAnchor or "BOTTOMRIGHT",
+                stackFont = row.stackFont,
+                hideStackText = row.hideStackText,
                 opacity = row.opacity or 1.0,
             }
         end

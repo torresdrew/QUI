@@ -3621,6 +3621,29 @@ function CDMSpellData:ReconcileOwnedSpells(containerKey, globalTracked)
     return false
 end
 
+-- Cold-load single-trigger entry point. Called from cdm_blizz_mirror.lua's
+-- deferred PLAYER_LOGIN callback (after the mirror's Walk has settled
+-- against post-customization data). Runs the same reconcile work the
+-- SPELLS_CHANGED debounce does, but synchronously so the single trigger
+-- can sequence Walk -> catalog rebuild -> entry reconcile -> change
+-- callback in one pass without intermediate UI flicker.
+function CDMSpellData:RunColdLoadReconcile()
+    if not IsCDMRuntimeEnabled() then return end
+    if InCombatLockdown() then
+        -- Bail; cold-load-into-combat is rare. Once combat ends, post-grace
+        -- SPELLS_CHANGED / data_loaded events fire normal reconcile.
+        return
+    end
+    if RebuildSpellToCooldownID then
+        RebuildSpellToCooldownID()
+    end
+    self:CheckAllDormantSpells()
+    self:ReconcileAllContainers()
+    if FireChangeCallback then
+        FireChangeCallback()
+    end
+end
+
 function CDMSpellData:ReconcileAllContainers()
     if InCombatLockdown() then
         return
@@ -4534,8 +4557,14 @@ function CDMSpellData:GetUsableItems()
         end
     end
 
-    -- Scan bags for items with on-use spells
+    -- Scan bags for items with on-use spells.
+    -- De-dupe by itemID — multiple stacks of the same consumable would
+    -- otherwise produce one Items-tab entry per stack. When the same
+    -- itemID appears multiple times, keep the variant with the highest
+    -- profession quality rank (relevant for crafted items where
+    -- different stacks can have different quality tiers).
     local bagItems = {}
+    local seenItemIDs = {}
     if C_Container and C_Container.GetContainerNumSlots then
         for bag = 0, 4 do
 local okN = true; local numSlots = C_Container.GetContainerNumSlots(bag)
@@ -4555,16 +4584,30 @@ local okC = true; local containerInfo = C_Container.GetContainerItemInfo(bag, sl
                                 if hyperlink and not (issecretvalue and issecretvalue(hyperlink)) then
                                     qualityLookup = hyperlink
                                 end
-                                bagItems[#bagItems + 1] = {
-                                    type = "item",
-                                    id = itemID,
-                                    itemID = itemID,
-                                    name = name,
-                                    icon = icon,
-                                    slotID = nil,
-                                    _bagOrder = #bagItems + 1,
-                                    _professionQualityRank = GetItemProfessionQualityRank(qualityLookup),
-                                }
+                                local qualityRank = GetItemProfessionQualityRank(qualityLookup)
+                                local existingIdx = seenItemIDs[itemID]
+                                if existingIdx then
+                                    local existing = bagItems[existingIdx]
+                                    local existingRank = existing and existing._professionQualityRank
+                                    if qualityRank ~= nil
+                                        and (existingRank == nil or qualityRank > existingRank) then
+                                        existing.name = name
+                                        existing.icon = icon
+                                        existing._professionQualityRank = qualityRank
+                                    end
+                                else
+                                    bagItems[#bagItems + 1] = {
+                                        type = "item",
+                                        id = itemID,
+                                        itemID = itemID,
+                                        name = name,
+                                        icon = icon,
+                                        slotID = nil,
+                                        _bagOrder = #bagItems + 1,
+                                        _professionQualityRank = qualityRank,
+                                    }
+                                    seenItemIDs[itemID] = #bagItems
+                                end
                             end
                         end
                     end
@@ -4746,6 +4789,7 @@ function CDMSpellData:Initialize()
     end)
     -- Register runtime events
     local _spellsChangedToken = 0
+    local _cdmViewerReconcileToken = 0
     local _cooldownViewerRebuildPending = false
     local eventFrame = CreateFrame("Frame")
     runtimeEventFrame = eventFrame
@@ -4791,6 +4835,12 @@ function CDMSpellData:Initialize()
             if _inZoneTransition then
                 return
             end
+            -- Cold-load grace: PLAYER_LOGIN's deferred callback runs the
+            -- reconcile once after CDM settles; intermediate SPELLS_CHANGED
+            -- bursts during the grace window are absorbed.
+            if ns._cdmColdLoadActive then
+                return
+            end
             -- Debounce dormant/reconcile — SPELLS_CHANGED fires multiple times
             -- during talent swaps; collapse into a single deferred rebuild.
             _spellsChangedToken = _spellsChangedToken + 1
@@ -4820,8 +4870,45 @@ function CDMSpellData:Initialize()
                 _cooldownViewerRebuildPending = true
                 return
             end
+            -- Cold-load grace: PLAYER_LOGIN's deferred callback owns the
+            -- initial reconcile. data_loaded bursts during the grace window
+            -- (the cooldown viewer's own settle-in events) get absorbed.
+            if ns._cdmColdLoadActive then
+                return
+            end
             RebuildSpellToCooldownID()
             FireChangeCallback()
+            -- Cold-login catalog-staleness fix.
+            --
+            -- On cold-login, catalog entries are first built at PEW from
+            -- whatever C_CooldownViewer.GetCooldownViewerCooldownInfo()
+            -- returns at that moment — which is nil before
+            -- IsCooldownViewerAvailable() returns true. Without a
+            -- subsequent rebuild against the now-loaded table, the
+            -- _cdIDByCatSpell[category] maps in cdm_blizz_mirror stay
+            -- missing entries (e.g. Death's Advance 444347 -> essential
+            -- cdID 27920), so the cross-category resolver in
+            -- ResolveBlizzardMirrorIdentityState returns nil and the
+            -- affected icon stays unbound from its Blizzard mirror,
+            -- falling into the (unreliable) FWD path.
+            --
+            -- Mirror the SPELLS_CHANGED debounce shape so a burst of
+            -- OVERRIDE_UPDATED events during proc storms collapses into
+            -- a single reconcile. PLAYER_SPECIALIZATION_CHANGED was
+            -- previously the only path that triggered this reconcile,
+            -- which is why spec swap was the only way to fix the bug
+            -- short of /reload.
+            _cdmViewerReconcileToken = _cdmViewerReconcileToken + 1
+            local token = _cdmViewerReconcileToken
+            C_Timer.After(0.5, function()
+                if not IsCDMRuntimeEnabled() then return end
+                if token ~= _cdmViewerReconcileToken then return end
+                if not InCombatLockdown() then
+                    CDMSpellData:CheckAllDormantSpells()
+                    CDMSpellData:ReconcileAllContainers()
+                    FireChangeCallback()
+                end
+            end)
         elseif event == "PLAYER_REGEN_ENABLED" then
             if _cooldownViewerRebuildPending then
                 _cooldownViewerRebuildPending = false

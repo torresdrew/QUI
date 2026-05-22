@@ -2979,6 +2979,36 @@ local function HasActiveChargeRecharge(spellID, mayHaveCharges)
     return DecodePotentialSecretBoolean(chargeInfo.isActive) == true
 end
 
+local function PlayerIsCastingMirrorSpell(m, sid)
+    if not sid then return false end
+    if not (UnitCastingInfo or UnitChannelInfo) then return false end
+
+    local castSpellID, channelSpellID
+    if UnitCastingInfo then
+        local _, _, _, _, _, _, _, _, csid = UnitCastingInfo("player")
+        castSpellID = csid
+    end
+    if UnitChannelInfo then
+        local _, _, _, _, _, _, _, chsid = UnitChannelInfo("player")
+        channelSpellID = chsid
+    end
+    if castSpellID == nil and channelSpellID == nil then return false end
+
+    if castSpellID == sid or channelSpellID == sid then return true end
+    if m and m.overrideSpellID and m.overrideSpellID ~= sid then
+        if castSpellID == m.overrideSpellID or channelSpellID == m.overrideSpellID then
+            return true
+        end
+    end
+    if Sources and Sources.QueryBaseSpell then
+        local baseSid = Sources.QueryBaseSpell(sid)
+        if baseSid and baseSid ~= sid then
+            if castSpellID == baseSid or channelSpellID == baseSid then return true end
+        end
+    end
+    return false
+end
+
 local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     if not m then return "inactive", nil end
 
@@ -3015,6 +3045,15 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     -- Cooldown lane inactive but a multi-charge recharge may still be rolling.
     if HasActiveChargeRecharge(sid, SafeBoolean(m.charges) == true) then
         return "cooldown", nil
+    end
+    -- Hold gcd-only through the cast when cast time exceeds the GCD (Shadow
+    -- Priest Mind Blast is the reference case). GCD ends before
+    -- UNIT_SPELLCAST_SUCCEEDED fires, leaving an ~80ms window where
+    -- C_Spell.GetSpellCooldown(sid).isActive=false. Returning "inactive"
+    -- here clears the swipe until the post-SUCCEEDED SPELL_UPDATE_COOLDOWN
+    -- re-binds it — visible as a swipe vanish blip mid-cast.
+    if PlayerIsCastingMirrorSpell(m, sid) then
+        return "gcd-only", nil
     end
     return "inactive", nil
 end
@@ -3108,19 +3147,29 @@ local function BuildMirrorRenderPayload(
             -- aura-priority integration test fails on a real cooldown
             -- that has just begun.
             --
-            -- For multi-charge spells, probe C_Spell.GetSpellChargeDuration
-            -- before falling back to C_Spell.GetSpellCooldownDuration.
-            -- This mirrors Blizzard CooldownViewerCooldownItemMixin's
+            -- During an active multi-charge recharge, probe
+            -- C_Spell.GetSpellChargeDuration before falling back to
+            -- C_Spell.GetSpellCooldownDuration. This mirrors Blizzard
+            -- CooldownViewerCooldownItemMixin's
             -- CheckCacheCooldownValuesFromCharges (FrameXML
-            -- CooldownViewer.lua:840) — charges take precedence over
-            -- the spell cooldown until all charges are spent. For
-            -- spells whose recharge IS the cooldown (Death Charge /
-            -- Death's Advance is the reference case)
-            -- GetSpellCooldownDuration returns a non-nil ZERO
-            -- DurationObject which would otherwise win the `or` chain
-            -- and bind an empty swipe.
+            -- CooldownViewer.lua:840) — charges take precedence over the
+            -- spell cooldown only until all charges are spent. For spells
+            -- whose recharge IS the cooldown (Death Charge / Death's
+            -- Advance is the reference case) GetSpellCooldownDuration
+            -- returns a non-nil ZERO DurationObject which would otherwise
+            -- win the `or` chain and bind an empty swipe.
+            --
+            -- Gate on HasActiveChargeRecharge (maxCharges > 1 AND
+            -- chargeInfo.isActive) rather than m.charges (capability).
+            -- Shadow Priest Mind Blast is the reference case for the
+            -- inverse pathology: it carries a charge capability but at
+            -- 1/1 max its real cooldown duration lives on the spell
+            -- cooldown, not the (degenerate) charge duration. The
+            -- capability-only gate bound an empty charge DurObj and
+            -- produced no visible swipe.
             payloadDurObj = m.cooldownDurObj
-            if not payloadDurObj and SafeBoolean(m.charges) == true then
+            if not payloadDurObj
+               and HasActiveChargeRecharge(sourceSpellID, SafeBoolean(m.charges) == true) then
                 payloadDurObj = QueryChargeDuration(sourceSpellID)
             end
             if not payloadDurObj then

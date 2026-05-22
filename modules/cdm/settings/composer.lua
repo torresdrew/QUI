@@ -934,7 +934,7 @@ RefreshPreview = function()
                 if IsEntryRegisteredInBlizzCDM(entry) then
                     bar._icon:SetVertexColor(1, 1, 1)
                 else
-                    bar._icon:SetVertexColor(1, 0.4, 0.4)
+                    bar._icon:SetVertexColor(1, 0.25, 0.25)
                 end
                 bar._icon:Show()
             end
@@ -1151,7 +1151,7 @@ RefreshPreview = function()
             if IsEntryRegisteredInBlizzCDM(entry) then
                 obj.tex:SetVertexColor(1, 1, 1)
             else
-                obj.tex:SetVertexColor(1, 0.4, 0.4)
+                obj.tex:SetVertexColor(1, 0.25, 0.25)
             end
             obj.tex:Show()
         end
@@ -1529,6 +1529,67 @@ local function BuildEntryListSection(parent)
     return container
 end
 
+-- Tracked-spell sets: which spellIDs the user has currently enabled in
+-- Blizzard's /cdm customization UI, grouped by container family. Built
+-- lazily from CDMCatalog.GetTrackedCategorySet (the Blizzard settings
+-- data provider, not the raw API category set) and invalidated whenever
+-- ScheduleComposerCDMRefresh runs — that fires on
+-- CooldownViewerSettings.OnDataChanged, which is the event Blizzard
+-- emits when the user toggles a spell in the /cdm config panel.
+local _trackedSpellSets = {}
+local function InvalidateTrackedSpellSets()
+    _trackedSpellSets = {}
+end
+
+local function GetTrackedSpellSet(family)
+    if family ~= "cooldown" and family ~= "aura" and family ~= "auraBar" then
+        return nil
+    end
+    -- aura and auraBar share the same categories (2 + 3), so cache under
+    -- a single "aura" key to avoid rebuilding twice.
+    local cacheKey = (family == "auraBar") and "aura" or family
+    local cached = _trackedSpellSets[cacheKey]
+    if cached then return cached end
+
+    local catalog = ns.CDMCatalog
+    if not (catalog and catalog.GetTrackedCategorySet and catalog.GetCooldownInfo) then
+        return nil
+    end
+
+    local categories
+    if cacheKey == "cooldown" then
+        categories = { 0, 1 }
+    else
+        categories = { 2, 3 }
+    end
+
+    local set = {}
+    local hasData = false
+    for _, cat in ipairs(categories) do
+        local ids = catalog.GetTrackedCategorySet(cat, true)
+        if type(ids) == "table" then
+            for _, cdID in ipairs(ids) do
+                local info = catalog.GetCooldownInfo(cdID)
+                if info then
+                    hasData = true
+                    if info.spellID then set[info.spellID] = true end
+                    if info.overrideSpellID then set[info.overrideSpellID] = true end
+                    if info.overrideTooltipSpellID then set[info.overrideTooltipSpellID] = true end
+                    if type(info.linkedSpellIDs) == "table" then
+                        for _, lid in ipairs(info.linkedSpellIDs) do
+                            if lid then set[lid] = true end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if not hasData then return nil end
+    _trackedSpellSets[cacheKey] = set
+    return set
+end
+
 -- True if the entry is currently in the user's Blizzard /cdm for the
 -- container family the composer is editing. Family-grouped: cooldown
 -- family covers essential+utility, aura family covers buff-icon+buff-bar.
@@ -1546,20 +1607,20 @@ IsEntryRegisteredInBlizzCDM = function(entry)
     local spellData = GetCDMSpellData()
     if not spellData then return true end
     local family = activeContainer and ResolveContainerType(activeContainer) or nil
+    if family ~= "cooldown" and family ~= "aura" and family ~= "auraBar" then
+        return true
+    end
+    -- Skip flagging for spells that aren't in the category's API set at
+    -- all (QUI's non-CDM picker tabs — All Cooldowns, Spell ID, etc.).
     if type(spellData.IsSpellInCDMCategory) == "function"
        and not spellData:IsSpellInCDMCategory(id, family) then
         return true
     end
-    if family == "cooldown" then
-        local fn = spellData.FindCooldownChildForSpell
-        if not fn then return true end
-        return fn(id) ~= nil
-    elseif family == "aura" or family == "auraBar" then
-        local fn = spellData.FindAuraChildForSpell
-        if not fn then return true end
-        return fn(id) ~= nil
-    end
-    return true
+    -- For spells that ARE in the category, the user is expected to have
+    -- them enabled in /cdm — flag the entry red if they don't.
+    local trackedSet = GetTrackedSpellSet(family)
+    if not trackedSet then return true end
+    return trackedSet[id] == true
 end
 
 local function GetOrCreateEntryCell(index)
@@ -1579,21 +1640,47 @@ local function GetOrCreateEntryCell(index)
     cell._icon:SetPoint("CENTER")
     cell._icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
+    -- "Not added to /cdm" warning badge: a small red circle with "!"
+    -- in the top-right corner. Anchored above the icon so it stays
+    -- visible regardless of icon tinting.
+    cell._warnBadge = cell:CreateTexture(nil, "OVERLAY")
+    cell._warnBadge:SetSize(12, 12)
+    cell._warnBadge:SetPoint("TOPRIGHT", cell, "TOPRIGHT", -1, -1)
+    cell._warnBadge:SetColorTexture(0.95, 0.15, 0.15, 1)
+    cell._warnBadge:Hide()
+    cell._warnBadgeText = cell:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    cell._warnBadgeText:SetPoint("CENTER", cell._warnBadge, "CENTER", 0, 0)
+    cell._warnBadgeText:SetText("!")
+    cell._warnBadgeText:SetTextColor(1, 1, 1, 1)
+    cell._warnBadgeText:Hide()
+
     -- Highlight overlay
     cell._highlight = cell:CreateTexture(nil, "HIGHLIGHT")
     cell._highlight:SetAllPoints()
     cell._highlight:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.15)
 
-    -- Tooltip + border highlight on hover (suppressed during drag)
+    -- Tooltip + border highlight on hover (suppressed during drag).
+    -- Missing-from-/cdm cells stay red on hover instead of accent so
+    -- the warning state remains obvious while inspecting the tooltip.
     cell:SetScript("OnEnter", function(self)
         if not self._entry then return end
         if dragState.active then return end
-        self:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 0.8)
+        if self._isMissingFromCDM then
+            self:SetBackdropBorderColor(1, 0.35, 0.35, 1)
+        else
+            self:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 0.8)
+        end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetFrameStrata("TOOLTIP")
         GameTooltip:SetFrameLevel(250)
         local name = GetEntryName(self._entry)
         GameTooltip:AddLine(name, 1, 1, 1)
+        local entryID = type(self._entry) == "table"
+            and (tonumber(self._entry.id) or tonumber(self._entry.spellID))
+            or nil
+        if entryID then
+            GameTooltip:AddLine("ID: " .. tostring(entryID), 0.5, 0.5, 0.5)
+        end
         if self._isDormant then
             GameTooltip:AddLine("Not Learned (Dormant)", 0.9, 0.6, 0.2)
             GameTooltip:AddLine("Right-click for options", 0.5, 0.5, 0.5)
@@ -1630,7 +1717,11 @@ local function GetOrCreateEntryCell(index)
     end)
     cell:SetScript("OnLeave", function(self)
         if dragState.active then return end
-        self:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
+        if self._isMissingFromCDM then
+            self:SetBackdropBorderColor(1, 0.2, 0.2, 1)
+        else
+            self:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
+        end
         GameTooltip:Hide()
     end)
 
@@ -2378,9 +2469,15 @@ RefreshEntryList = function()
         cell._icon:SetTexture(GetEntryIcon(entry))
         cell._icon:SetDesaturated(cell._isUnknownToPlayer)
         if cell._isMissingFromCDM then
-            cell._icon:SetVertexColor(1, 0.4, 0.4)
+            cell._icon:SetVertexColor(1, 0.25, 0.25)
+            cell:SetBackdropBorderColor(1, 0.2, 0.2, 1)
+            if cell._warnBadge then cell._warnBadge:Show() end
+            if cell._warnBadgeText then cell._warnBadgeText:Show() end
         else
             cell._icon:SetVertexColor(1, 1, 1)
+            cell:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
+            if cell._warnBadge then cell._warnBadge:Hide() end
+            if cell._warnBadgeText then cell._warnBadgeText:Hide() end
         end
         cell._icon:Show()
         cell:SetAlpha(cell._isUnknownToPlayer and 0.6 or 1)
@@ -2436,6 +2533,9 @@ RefreshEntryList = function()
         cell._icon:Show()
         cell:SetAlpha(0.6)
         cell._isMissingFromCDM = false
+        cell:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
+        if cell._warnBadge then cell._warnBadge:Hide() end
+        if cell._warnBadgeText then cell._warnBadgeText:Hide() end
 
         -- No drag for dormant
         cell:SetScript("OnDragStart", nil)
@@ -2584,10 +2684,22 @@ local function ScheduleComposerCDMRefresh(delay)
     composerCDMRefreshPending = true
     C_Timer.After(delay, function()
         composerCDMRefreshPending = false
+        -- Tracked-spell sets are derived from the Blizzard CDM settings
+        -- data provider, which is exactly what changes when the user
+        -- toggles entries in /cdm. Drop the cache so the next refresh
+        -- recomputes the "Not added to /cdm" red-tint signal.
+        InvalidateTrackedSpellSets()
         local composerVisible = composerFrame and composerFrame:IsShown()
         local previewVisible = previewFrame and previewFrame:IsShown()
         if composerVisible then
             RefreshEntryList()
+            -- Add list mirrors the same tracked-spell warning state and
+            -- (for the Cooldowns / Auras tabs) its source list itself
+            -- derives from the Blizzard CDM data provider, so it has to
+            -- re-render whenever the user toggles entries in /cdm.
+            if RefreshAddList then
+                RefreshAddList()
+            end
         end
         if (composerVisible or previewVisible) and RefreshPreview then
             RefreshPreview()
@@ -2689,13 +2801,36 @@ local function GetOrCreateAddCell(index)
     cell._icon:SetPoint("CENTER")
     cell._icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
+    -- "Not added to /cdm" warning badge (mirrors entry-list cells).
+    cell._warnBadge = cell:CreateTexture(nil, "OVERLAY")
+    cell._warnBadge:SetSize(12, 12)
+    cell._warnBadge:SetPoint("TOPRIGHT", cell, "TOPRIGHT", -1, -1)
+    cell._warnBadge:SetColorTexture(0.95, 0.15, 0.15, 1)
+    cell._warnBadge:Hide()
+    cell._warnBadgeText = cell:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    cell._warnBadgeText:SetPoint("CENTER", cell._warnBadge, "CENTER", 0, 0)
+    cell._warnBadgeText:SetText("!")
+    cell._warnBadgeText:SetTextColor(1, 1, 1, 1)
+    cell._warnBadgeText:Hide()
+
     cell._highlight = cell:CreateTexture(nil, "HIGHLIGHT")
     cell._highlight:SetAllPoints()
     cell._highlight:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.15)
 
     cell:SetScript("OnEnter", function(self)
         if not self._sourceEntry then return end
-        self:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 0.8)
+        -- Red border on hover only when the cell is showing the full
+        -- red treatment (i.e. not already dimmed by owned/unlearned);
+        -- otherwise the dominant signal stays dim+grey and accent hover
+        -- shouldn't be replaced.
+        local primaryRed = self._isMissingFromCDM
+            and not self._isOwned
+            and not self._isUnlearned
+        if primaryRed then
+            self:SetBackdropBorderColor(1, 0.35, 0.35, 1)
+        else
+            self:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 0.8)
+        end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetFrameStrata("TOOLTIP")
         GameTooltip:SetFrameLevel(250)
@@ -2708,6 +2843,9 @@ local function GetOrCreateAddCell(index)
         if self._isUnlearned then
             GameTooltip:AddLine("Not Learned", 0.9, 0.6, 0.2)
         end
+        if self._isMissingFromCDM then
+            GameTooltip:AddLine("Not added to /cdm", 0.95, 0.6, 0.2)
+        end
         if self._isOwned then
             GameTooltip:AddLine("Already added", 0.6, 0.6, 0.6)
         else
@@ -2716,7 +2854,14 @@ local function GetOrCreateAddCell(index)
         GameTooltip:Show()
     end)
     cell:SetScript("OnLeave", function(self)
-        self:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
+        local primaryRed = self._isMissingFromCDM
+            and not self._isOwned
+            and not self._isUnlearned
+        if primaryRed then
+            self:SetBackdropBorderColor(1, 0.2, 0.2, 1)
+        else
+            self:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
+        end
         GameTooltip:Hide()
     end)
 
@@ -3026,9 +3171,40 @@ RefreshAddList = function()
             cell._isOwned = isOwned
             cell._isUnlearned = entry.isKnown == false
 
+            -- Flag spells the user hasn't enabled in Blizzard's /cdm so the
+            -- add list shows the same warning as the entry list above.
+            -- IsEntryRegisteredInBlizzCDM needs an entry-shaped table with
+            -- explicit type+id; source entries use spellID/_entryType.
+            local effType = entry._entryType or "spell"
+            local effID = tonumber(entry._entryID) or tonumber(entry.spellID)
+            cell._isMissingFromCDM = (effType == "spell")
+                and (not cell._isUnlearned)
+                and effID
+                and not IsEntryRegisteredInBlizzCDM({ type = "spell", id = effID })
+                or false
+
             cell._icon:SetTexture(entry.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
             cell:SetAlpha(isOwned and 0.4 or (cell._isUnlearned and 0.6 or 1))
             cell._icon:SetDesaturated(isOwned or cell._isUnlearned)
+            -- Always show the badge when missing-from-/cdm so the warning
+            -- is visible even on already-owned/desaturated entries. Apply
+            -- the red tint + border only when the cell isn't already
+            -- dimmed by the owned/unlearned states (those use the dim
+            -- visual as their primary signal).
+            if cell._isMissingFromCDM then
+                if cell._warnBadge then cell._warnBadge:Show() end
+                if cell._warnBadgeText then cell._warnBadgeText:Show() end
+            else
+                if cell._warnBadge then cell._warnBadge:Hide() end
+                if cell._warnBadgeText then cell._warnBadgeText:Hide() end
+            end
+            if cell._isMissingFromCDM and not isOwned and not cell._isUnlearned then
+                cell._icon:SetVertexColor(1, 0.25, 0.25)
+                cell:SetBackdropBorderColor(1, 0.2, 0.2, 1)
+            else
+                cell._icon:SetVertexColor(1, 1, 1)
+                cell:SetBackdropBorderColor(0.2, 0.2, 0.2, 0.5)
+            end
 
             -- Right-click to add directly
             if isOwned then
