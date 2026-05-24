@@ -3015,15 +3015,19 @@ local function PlayerIsCastingMirrorSpell(m, sid)
     return false
 end
 
+-- Returns (mode, auraData, cooldownSpellID). cooldownSpellID is the spellID
+-- where an active cooldown was detected (used by BuildMirrorRenderPayload to
+-- acquire the matching DurationObject). It is nil for "aura" and "inactive"
+-- modes and for totem-derived modes where no per-spell probe was performed.
 local function DeriveMirrorPayloadMode(m, sid, suppressAura)
-    if not m then return "inactive", nil end
+    if not m then return "inactive", nil, nil end
 
     local category = NormalizeMirrorCategory(m.viewerCategory)
     local isAuraCategory = category == "buff" or category == "trackedBar"
 
     if not suppressAura then
         if HasOpaqueValue(m.totemSlot) or HasOpaqueValue(m.totemDurObj) then
-            return isAuraCategory and "aura" or "cooldown", nil
+            return isAuraCategory and "aura" or "cooldown", nil, nil
         end
 
         if HasOpaqueValue(m.auraInstanceID) and Sources and Sources.QueryAuraDataByAuraInstanceID then
@@ -3032,25 +3036,45 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
             if not aura then
                 aura = Sources.QueryAuraDataByAuraInstanceID(auraUnit, m.auraInstanceID)
             end
-            if aura then return "aura", aura end
+            if aura then return "aura", aura, nil end
         end
 
         if isAuraCategory and SafeBoolean(m.childIsActive) == true then
-            return "aura", nil
+            return "aura", nil, nil
         end
     end
 
-    if isAuraCategory then return "inactive", nil end
-    if not sid then return "inactive", nil end
+    if isAuraCategory then return "inactive", nil, nil end
+    if not sid then return "inactive", nil, nil end
 
     local cdInfo = Sources and Sources.QuerySpellCooldown and Sources.QuerySpellCooldown(sid)
     if cdInfo and cdInfo.isActive == true then
-        if cdInfo.isOnGCD == true then return "gcd-only", nil end
-        return "cooldown", nil
+        if cdInfo.isOnGCD == true then return "gcd-only", nil, sid end
+        return "cooldown", nil, sid
+    end
+    -- Talent-override cooldowns sit on the override spellID, not the registered
+    -- base. C_Spell.GetSpellCooldown reports isActive=true only on the spellID
+    -- the cooldown was directly initiated on, so probing only m.spellID after
+    -- the aura phase ends drops the icon to mode=inactive for the rest of the
+    -- cd. Guardian Druid Berserk -> Incarnation: Guardian of Ursoc is the
+    -- reference case: m.spellID=50334 reports isActive=false while
+    -- m.overrideSpellID=102558 reports isActive=true. The override's DurObj
+    -- is also where the live timing lives — base's C_Spell.GetSpellCooldownDuration
+    -- returns a DurObj whose visible timing reflects "no active cd", which
+    -- binds via SCFDO but renders no swipe. Return the override sid so
+    -- BuildMirrorRenderPayload's cooldown branch queries the matching duration.
+    local overrideSid = m.overrideSpellID
+    if overrideSid and overrideSid ~= sid
+        and Sources and Sources.QuerySpellCooldown then
+        local overrideCdInfo = Sources.QuerySpellCooldown(overrideSid)
+        if overrideCdInfo and overrideCdInfo.isActive == true then
+            if overrideCdInfo.isOnGCD == true then return "gcd-only", nil, overrideSid end
+            return "cooldown", nil, overrideSid
+        end
     end
     -- Cooldown lane inactive but a multi-charge recharge may still be rolling.
     if HasActiveChargeRecharge(sid, SafeBoolean(m.charges) == true) then
-        return "cooldown", nil
+        return "cooldown", nil, sid
     end
     -- Hold gcd-only through the cast when cast time exceeds the GCD (Shadow
     -- Priest Mind Blast is the reference case). GCD ends before
@@ -3059,9 +3083,9 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     -- here clears the swipe until the post-SUCCEEDED SPELL_UPDATE_COOLDOWN
     -- re-binds it — visible as a swipe vanish blip mid-cast.
     if PlayerIsCastingMirrorSpell(m, sid) then
-        return "gcd-only", nil
+        return "gcd-only", nil, sid
     end
-    return "inactive", nil
+    return "inactive", nil, nil
 end
 
 local function ResolveMirrorAuraData(m, auraUnit, active, mode)
@@ -3112,13 +3136,20 @@ local function BuildMirrorRenderPayload(
 
     local sourceCooldownID = m.cooldownID or fallbackCooldownID or fallbackSpellID
     local sourceSpellID = m.spellID or m.overrideSpellID or fallbackSpellID
-    local mode, derivedAuraData
+    local mode, derivedAuraData, cooldownSpellID
     if overrideMode then
         mode = overrideMode
     else
-        mode, derivedAuraData = DeriveMirrorPayloadMode(m, sourceSpellID, suppressAura)
+        mode, derivedAuraData, cooldownSpellID = DeriveMirrorPayloadMode(m, sourceSpellID, suppressAura)
     end
     local active = mode ~= "inactive"
+    -- DeriveMirrorPayloadMode returns the spellID where the active cooldown
+    -- was detected. For talent-overridden cooldowns (e.g., Berserk ->
+    -- Incarnation: Guardian of Ursoc) this is m.overrideSpellID, whose
+    -- C_Spell.GetSpellCooldownDuration carries the live timing — the base's
+    -- DurObj binds an empty cooldown. Default to sourceSpellID when the
+    -- mode classifier didn't report one (overrideMode caller, etc.).
+    local cdQuerySpellID = cooldownSpellID or sourceSpellID
 
     local selfAura = SafeBoolean(m.selfAura)
     local auraUnit = SafeMirrorString(m.auraUnit)
@@ -3179,7 +3210,7 @@ local function BuildMirrorRenderPayload(
                 payloadDurObj = QueryChargeDuration(sourceSpellID)
             end
             if not payloadDurObj then
-                payloadDurObj = QueryDuration(sourceSpellID)
+                payloadDurObj = QueryDuration(cdQuerySpellID)
             end
             if not payloadDurObj then
                 durationStateUnknown = true

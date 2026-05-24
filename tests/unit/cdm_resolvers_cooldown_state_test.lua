@@ -16,6 +16,7 @@ end
 
 local auraDur = { token = "aura-dur" }
 local cooldownDur = { token = "cooldown-dur" }
+local overrideCooldownDur = { token = "override-cooldown-dur" }
 local chargeDur = { token = "charge-dur" }
 local gcdDur = { token = "gcd-dur" }
 local itemAuraDur = { token = "item-aura-dur" }
@@ -209,6 +210,20 @@ putState(50014, "essential", {
     charges = true,
 })
 
+-- 2700: Talent-override reference case (Guardian Druid Berserk slot replaced by
+-- Incarnation: Guardian of Ursoc). The Blizzard EssentialCooldownViewer
+-- registers the slot under the base spellID (50334 Berserk) but the live
+-- cooldown lives on the override spellID (102558 Incarnation). After the buff
+-- expires the aura phase ends, m.auraInstanceID clears, and DeriveMirrorPayloadMode
+-- must probe the override to surface mode="cooldown" — probing only the base
+-- returns isActive=false and the icon falls through to "inactive".
+putState(2700, "essential", {
+    mirrorEpoch = 99,
+    spellID = 50334,
+    overrideSpellID = 102558,
+    linkedSpellIDs = { 50334, 102558 },
+})
+
 local ns = {
     Helpers = {},
     CDMShared = {
@@ -324,6 +339,15 @@ local ns = {
             if spellID == 50014 or spellID == 60010 then
                 return { isActive = false, isOnGCD = false }
             end
+            -- 50334 / 102558: talent-override case. C_Spell.GetSpellCooldown
+            -- reports isActive=true only on the spellID the cooldown was
+            -- directly initiated on (the override), not the registered base.
+            if spellID == 50334 then
+                return { isActive = false, isOnGCD = nil }
+            end
+            if spellID == 102558 then
+                return { isActive = true, isOnGCD = false }
+            end
             if spellID == 70001 then
                 return { isActive = true, isOnGCD = true }
             end
@@ -356,6 +380,21 @@ local ns = {
                 if spellID == 60001 or spellID == 60002 or spellID == 60003
                     or spellID == 60004 or spellID == 60005 or spellID == 60006 then
                     return chargeDur
+                end
+                -- Talent-override case: both spellIDs return a DurationObject
+                -- but they carry different timing. C_Spell.GetSpellCooldownDuration
+                -- on the registered base (50334) returns a DurObj whose
+                -- visible timing reflects the spell's view of "no active cd"
+                -- (because isActive=false on the base for talent-overridden
+                -- cooldowns). The override (102558) carries the live timing.
+                -- The fix must bind the override's DurObj when the cooldown
+                -- was detected on the override; binding the base produces a
+                -- desaturated icon with no visible swipe.
+                if spellID == 50334 then
+                    return cooldownDur
+                end
+                if spellID == 102558 then
+                    return overrideCooldownDur
                 end
             else
                 if spellID == 50003 then
@@ -1523,5 +1562,27 @@ assert(state.mode == "inactive", "contract normalization should reject unknown m
 assert(state.active == false and state.isActive == false,
     "contract normalization should clear active aliases for inactive states")
 assert(state.isOnCooldown == false, "contract normalization should coerce cooldown flags")
+
+-- Talent-override post-aura case: the Blizzard EssentialCooldownViewer slot
+-- carries m.spellID=base (Berserk 50334) and m.overrideSpellID=override
+-- (Incarnation: Guardian of Ursoc 102558). C_Spell.GetSpellCooldown only
+-- reports isActive=true for the override. Once the aura phase ends and the
+-- resolver falls through to the cooldown branch, DeriveMirrorPayloadMode must
+-- probe the override or the icon stays "inactive" for the rest of the 3 min cd.
+state = resolve({
+    entry = cooldownEntry(102558),
+    runtimeSpellID = 102558,
+    mirrorCooldownID = 2700,
+    mirrorCategory = "essential",
+    containerKey = "essential",
+    useBuffSwipe = false,
+})
+
+assert(state.mode == "cooldown",
+    "talent-override slot should surface mode=cooldown once aura phase ends (Guardian Druid Incarnation reference case)")
+assert(state.isOnCooldown == true,
+    "talent-override cooldown should be marked active after aura phase ends")
+assert(state.durObj == overrideCooldownDur,
+    "talent-override cooldown must bind the override's DurationObject (the base's DurObj reflects an inactive cooldown lane and produces no visible swipe)")
 
 print("OK: cdm_resolvers_cooldown_state_test")
