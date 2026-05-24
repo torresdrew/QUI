@@ -6,7 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
-## Unreleased
+## v3.6.0-alpha55 - 2026-05-23
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** **Schema migration to v37** — defunct damage-meter-skinner keys (`db.profile.damageMeter.appearance.global.*` from before the native rewrite) are nilled on first load. User-facing damage-meter appearance values are preserved.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
 
 ### Added
 - **Damage meter (native): per-window Hide toggle.** Each row in the Windows section now has a Hide checkbox alongside Delete. Hides the window frame; state (type, session, position, overrides) is preserved across reload so you can stash a window without losing its config.
@@ -29,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Damage meter (native): Refresh Rate (Idle) slider** plus icon style (Spec / Class / None) and pinned-self / hover-tooltip toggles in the Behavior collapsible.
 
 ### Fixed
+- **CDM composer: Buff Bars preview was invisible after adding spells.** `RefreshBars` in the new preview driver styled bars via `CDMBars.ConfigureBar`, which reads `bar._active`; with the trackedBar default `inactiveMode="hide"` the bar was set to alpha 0 on every refresh. The driver now forces `_active = true` and paints the entry's icon (via `GetEntryTexture`) and spell name (via the newly-exposed `_G.QUI_GetCDMEntryName`) — `ConfigureBar` is settings-only and never bound the icon/name in the preview path. Regression locked in by `cdm_composer_preview_driver_test` T10.
 - **Damage meter (native): meter-type integer mapping bug.** Phase 2 hardcoded `{[0]="Damage Done", [1]="Healing Done", [2]="Damage Taken", ...}` but Blizzard's `Enum.DamageMeterType` integers don't match that order (verified: `HealingDone=2`, `Dps=1`, `Deaths=9`). Picking "Healing Done" in the gear menu was actually fetching Dps data; "Interrupts" was fetching AvoidableDamageTaken; etc. Now the label table is keyed by enum name and resolved to integers at module load via `Enum.DamageMeterType[name]`, so we're robust to Blizzard reordering the enum.
 - **Damage meter (native): `MarkCurrentDirty` missed types beyond 7.** The Phase 1 implementation hardcoded a `for t = 0, 7 do` loop that marked types 0–7 dirty on `DAMAGE_METER_CURRENT_SESSION_UPDATED`. Since the real enum spans 0–10, Dispels / Deaths / Absorbs windows weren't getting their dirty flag set and were stale until the next per-type event fired. Now iterates `pairs(Enum.DamageMeterType)` to pick up whatever Blizzard exposes.
 
