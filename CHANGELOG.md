@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha56 - 2026-05-24
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** **Schema migration to v38** — the legacy `maxVisibleRows` key on saved damage-meter windows is dropped on first load (rows are now scrollable; the window's height alone decides what's visible without scrolling). No user-facing settings move.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Added
+- **Damage meter (native): scrollable rows.** Each meter window now embeds a ScrollFrame with mouse-wheel scrolling and a thin accent-colored thumb at the right edge that auto-hides when content fits. The previous hard `maxVisibleRows` cap is gone — window height alone decides what renders without scrolling, and everything below the fold is reachable via the wheel. Two-row scroll step per tick.
+- **Damage meter (native): sticky self-row.** The pinned-self feature now anchors a real-rank row to the bottom of the window (with a 1px separator above it) whenever the local player scrolls out of the visible viewport, instead of overwriting the bottom visible row. Sticky shares all visuals + click-to-breakdown + hover tooltip with pooled rows via a new `_AttachRowVisuals` helper, and its colors / fonts live-update through `_ApplyColors` and `_ApplyFonts`.
+
+### Changed
+- **Damage meter (native): disabling the toggle is instant.** Flipping the Damage Meter feature toggle OFF now despawns every live window immediately (via `WindowManager:DespawnAll`) instead of leaving them on screen until the next `/reload`. The reload prompt still shows, because Blizzard's stock meter can only re-appear at addon-load time — the `damageMeterEnabled` CVar is restored on disable so the stock meter loads next reload.
+
+### Fixed
+- **Damage meter (native): clicking a row mid-combat no longer opens an empty popup.** Blizzard secret-tags per-source `combatSpells` while in combat lockdown, so `C_DamageMeter.GetCombatSessionSourceFromType` returns no iterable spell rows and the breakdown popup would render as an empty header. The row click is now blocked during combat, and a hint line ("Spell breakdown is hidden during combat") appears in the hover tooltip. The Data layer's `PLAYER_REGEN_ENABLED` handler re-dirties views 0.5s after combat ends, so the next click populates normally.
+
+
+
 ## v3.6.0-alpha55 - 2026-05-23
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** **Schema migration to v37** — defunct damage-meter-skinner keys (`db.profile.damageMeter.appearance.global.*` from before the native rewrite) are nilled on first load. User-facing damage-meter appearance values are preserved.
