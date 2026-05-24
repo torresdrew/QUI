@@ -311,6 +311,17 @@ local ns = {
             if spellID == 458128 then
                 return { isActive = true, isOnGCD = false, startTime = 10, duration = 18, activeCategory = "spell" }
             end
+            if spellID == 357210 then
+                -- Breath of Eons base (Deep Breath): no cooldown of its own,
+                -- so an incidental GCD from casting any other spell reads
+                -- isActive=true, isOnGCD=true on the base.
+                return { isActive = true, isOnGCD = true }
+            end
+            if spellID == 403631 then
+                -- Breath of Eons override (Augmentation): carries the real
+                -- ~2-min cooldown and is never on the GCD.
+                return { isActive = true, isOnGCD = false }
+            end
             if spellID == 1227281 then
                 return { isActive = true, isOnGCD = false }
             end
@@ -436,6 +447,12 @@ local ns = {
                 end
                 return nil
             end
+            if spellID == 403631 then
+                if ignoreGCD == true then
+                    return realCooldownDuration
+                end
+                return nil
+            end
             if spellID == 55555 then
                 -- mirror→resolver refactor: durObj comes from live API.
                 if ignoreGCD == false then return mirrorDuration end
@@ -545,6 +562,15 @@ local ns = {
                     mirrorEpoch = 21,
                     spellID = 85948,
                     overrideSpellID = 458128,
+                    viewerCategory = "essential",
+                }
+            end
+            if cooldownID == 1769 and viewerCategory == "essential" then
+                return {
+                    cooldownID = cooldownID,
+                    mirrorEpoch = 22,
+                    spellID = 357210,
+                    overrideSpellID = 403631,
                     viewerCategory = "essential",
                 }
             end
@@ -854,16 +880,25 @@ local iconFactContext = ns.CDMResolvers.BuildCooldownStateContext(
     })
 iconFactContext.mirrorCooldownID = iconFactIsLiveSourceIcon._blizzMirrorCooldownID
 iconFactContext.mirrorCategory = iconFactIsLiveSourceIcon._blizzMirrorCategory
+-- This mirror's real cooldown lives on the override spellID 458128
+-- (isActive=true, isOnGCD=false) while the base 85948 is on the GCD. A real
+-- (non-GCD) cooldown on the override outranks the base's GCD — even a trusted
+-- icon-owned base GCD fact (_isOnGCD=true below) must not erase it. This is the
+-- talent-override case (Augmentation Breath of Eons); demoting to gcd-only here
+-- erased the real-cooldown swipe on every incidental GCD during the cooldown.
+-- The icon-owned GCD fact still drives gcd-only for base-only spells with no
+-- competing override cooldown — see cachedBaseGCDMirrorCooldownIcon above
+-- (cooldownID 895, no overrideSpellID).
 iconFactIsLiveSourceIcon._isOnGCD = true
 
 local iconFactState = ns.CDMResolvers.ResolveCooldownState(iconFactContext)
 
-assert(iconFactState.durObj == gcdDuration,
-    "resolver should read current icon GCD fact instead of copied context state")
-assert(iconFactState.mode == "gcd-only",
-    "icon-owned GCD fact should override stale mirror cooldown after context construction")
-assert(iconFactState.sourceID == 85948,
-    "mirror base spellID should drive GCD activity checks before transient override spellID")
+assert(iconFactState.durObj == realCooldownDuration,
+    "override real cooldown should bind even while the base spell is on the GCD")
+assert(iconFactState.mode == "cooldown",
+    "override real cooldown outranks the base-spell GCD (talent-override case)")
+assert(iconFactState.sourceID == "mirror:896:85948",
+    "override-backed cooldown should key on the mirror cooldownID + base spellID")
 
 local untrustedUsableStaleMirrorIcon = {
     _spellEntry = {
@@ -1482,5 +1517,34 @@ assert(durObj == nil, "trackedBar entries should not resolve a cooldown Duration
 assert(mode == "inactive", "trackedBar entries should use aura shape, not real-cooldown shape")
 assert(cooldownQueryCounts[67890] == nil,
     "trackedBar entries should not query spell cooldown state as real-cooldown entries")
+
+-- Talent-override cooldown (Augmentation Breath of Eons: base Deep Breath
+-- 357210 -> override Breath of Eons 403631 carries the real ~2-min cooldown).
+-- The base spell has no cooldown of its own, so casting ANY other spell during
+-- the real cooldown reports isActive=true, isOnGCD=true on the base. The mirror
+-- resolver must not let that incidental GCD erase the override's real-cooldown
+-- swipe — it must prefer the override's real (non-GCD) cooldown.
+setTrustedGCDState(nil)
+
+local talentOverrideRealCooldownDuringIncidentalGCDIcon = {
+    _blizzMirrorCooldownID = 1769,
+    _blizzMirrorCategory = "essential",
+    _spellEntry = {
+        id = 357210,
+        spellID = 357210,
+        viewerType = "essential",
+        kind = "cooldown",
+        type = "spell",
+    },
+}
+
+durObj, mode, sourceID = ResolveIconFields(talentOverrideRealCooldownDuringIncidentalGCDIcon)
+
+assert(mode == "cooldown",
+    "talent-override real cooldown must survive an incidental base-spell GCD, got " .. tostring(mode))
+assert(durObj == realCooldownDuration,
+    "talent-override icon should bind the override's real cooldown duration during an incidental GCD, got " .. tostring(durObj))
+assert(sourceID == "mirror:1769:357210",
+    "talent-override cooldown should key on the mirror cooldownID + base spellID, got " .. tostring(sourceID))
 
 print("OK: cdm_resolvers_gcd_mirror_test")

@@ -1176,9 +1176,37 @@ local function install_search_capture_overrides()
             return nil
         end
 
-        local label = build_capture_navigation_label(navType, info)
+        -- moduleToggle entries are emitted only by the generator (the runtime
+        -- RegisterNavigationItem handles tab/subtab/section only). They carry an
+        -- author-supplied label and keywords (the feature's display name, caption,
+        -- and group) that are NOT derivable from route info — their tileId/
+        -- subPageIndex alone yield a useless "global > Page 3" with no feature
+        -- name, which makes the feature toggle impossible to find via search.
+        -- Honor the caller's label/keywords for these; derive them for the
+        -- breadcrumb-based tab/subtab/section entries as before.
+        local isModuleToggle = navType == "moduleToggle"
+
+        local label
+        if isModuleToggle and type(info.label) == "string" and info.label ~= "" then
+            label = info.label
+        else
+            label = build_capture_navigation_label(navType, info)
+        end
         if type(label) ~= "string" or label == "" then
             return nil
+        end
+
+        local keywords
+        if isModuleToggle and type(info.keywords) == "table" then
+            keywords = {}
+            for _, keyword in ipairs(info.keywords) do
+                if type(keyword) == "string" and keyword ~= "" then
+                    keywords[#keywords + 1] = keyword
+                end
+            end
+        end
+        if not keywords or #keywords == 0 then
+            keywords = build_capture_navigation_keywords(info)
         end
 
         return self:RegisterStaticNavigationEntry({
@@ -1196,7 +1224,7 @@ local function install_search_capture_overrides()
             category = info.category,
             surfaceTabKey = info.surfaceTabKey,
             surfaceUnitKey = info.surfaceUnitKey,
-            keywords = build_capture_navigation_keywords(info),
+            keywords = keywords,
         })
     end
 

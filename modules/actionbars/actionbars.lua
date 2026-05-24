@@ -2728,25 +2728,6 @@ local function SetupStandardOwnedButtonRuntime(container, btn)
             GameTooltip:Hide()
         end)
 
-        btn:HookScript("PreClick", function(self)
-            if InCombatLockdown() then return end
-            local useOnKeyDown = self:GetAttribute("useOnKeyDown")
-            if useOnKeyDown
-                and self:GetAttribute("buttonlock")
-                and IsModifiedClick("PICKUPACTION")
-                and not GetCursorInfo() then
-                self:SetAttribute("useOnKeyDown", false)
-                self._quiPreClickKeyDownBackup = useOnKeyDown
-            end
-        end)
-        btn:HookScript("PostClick", function(self)
-            if self._quiPreClickKeyDownBackup ~= nil then
-                if not InCombatLockdown() then
-                    self:SetAttribute("useOnKeyDown", self._quiPreClickKeyDownBackup)
-                end
-                self._quiPreClickKeyDownBackup = nil
-            end
-        end)
         if container then
             SecureHandlerWrapScript(btn, "OnClick", container, [[
                 local flyoutHandler = owner:GetFrameRef("qui-flyout-handler")
@@ -2766,12 +2747,33 @@ local function SetupStandardOwnedButtonRuntime(container, btn)
                         flyoutHandler:SetAttribute("flyoutID", nil)
                         flyoutHandler:Hide()
                     end
+                    -- Pickup: a modified click on a locked bar should pick the
+                    -- action up, not cast it, so temporarily clear on-down
+                    -- casting (restored in the post-body). Done here in the
+                    -- secure snippet rather than an insecure PreClick — an
+                    -- insecure SetAttribute on useOnKeyDown taints the dispatch
+                    -- and breaks AllowedWhenUntainted calls such as a /tm
+                    -- macro's SetRaidTarget.
+                    if button ~= "Keybind"
+                        and self:GetAttribute("buttonlock")
+                        and IsModifiedClick("PICKUPACTION")
+                        and not self:GetAttribute("LABdisableDragNDrop")
+                        and self:GetAttribute("useOnKeyDown") then
+                        self:SetAttribute("qui-keydown-restore", true)
+                        self:SetAttribute("useOnKeyDown", false)
+                    end
                 elseif flyoutHandler and (not down or self:GetParent() ~= flyoutHandler) then
                     flyoutHandler:SetAttribute("flyoutID", nil)
                     flyoutHandler:Hide()
                 end
                 if button == "Keybind" then
                     return "LeftButton"
+                end
+            ]], [[
+                -- Restore on-down casting after a pickup click (see pre-body).
+                if self:GetAttribute("qui-keydown-restore") then
+                    self:SetAttribute("qui-keydown-restore", nil)
+                    self:SetAttribute("useOnKeyDown", true)
                 end
             ]])
         end

@@ -22,12 +22,39 @@ local EBH = ns.QUI.Chat.EditBoxHistory
 local InitializeForFrame
 
 -- ---------------------------------------------------------------------------
--- Secure-command allowlist (const; not user-editable)
+-- Protected ("secure") slash commands — TAINT SAFETY, unconditional
+-- ---------------------------------------------------------------------------
+-- Commands such as /tm, /rt, /cast, /target invoke protected functions
+-- (SetRaidTarget, CastSpellByName, ...). They must never round-trip through
+-- history: recall writes the saved line back to the edit box via an insecure
+-- SetText, and the game then reads that tainted text in ParseText and runs the
+-- secure-command handler — faulting with ADDON_ACTION_FORBIDDEN on the send.
+-- Blizzard's IsSecureCmd identifies the full set, so this gate is mandatory and
+-- intentionally independent of any user preference.
+local function isProtectedCommand(text)
+    if not text or text == "" then return false end
+    local cmd = text:match("^(/[^%s]+)")
+    if not cmd then return false end
+    return (type(IsSecureCmd) == "function" and IsSecureCmd(cmd)) or false
+end
+
+-- Policy switch (pending in-game confirmation): allow secure (IsSecureCmd)
+-- commands like /tm into recall history. The reference addon excludes them, but
+-- that exclusion predates fixing the real taint root cause (the SlashCmdList
+-- global reassignment) and QUI recalls via SetText only — never SetAttribute,
+-- the actual taint vector. If recalling a secure command via SetText and
+-- re-sending is ever found to fault (ADDON_ACTION_FORBIDDEN), set this to false
+-- to restore the reference exclude-secure behavior in one place. See
+-- [[project_slashcmdlist_global_taint]].
+local allowSecureCommands = true
+
+-- ---------------------------------------------------------------------------
+-- Sensitive-command list (privacy; gated by the filterSensitive setting)
 -- ---------------------------------------------------------------------------
 -- These prefixes match commands that frequently embed passwords, secrets, or
--- raw Lua. Filtering them out of history is a security posture, not a user
--- preference, so the table is intentionally not exposed to settings.
-local SECURE_PATTERNS = {
+-- raw Lua. Keeping them out of saved history is a privacy posture surfaced to
+-- users via the filterSensitive toggle (distinct from the taint gate above).
+local SENSITIVE_PATTERNS = {
     "^/password",
     "^/logout",
     "^/quit",
@@ -40,11 +67,11 @@ local SECURE_PATTERNS = {
     "^/console",
 }
 
-local function isSecureCommand(text)
+local function isSensitiveCommand(text)
     if not text or text == "" then return false end
     local lowered = text:lower()
-    for i = 1, #SECURE_PATTERNS do
-        if lowered:find(SECURE_PATTERNS[i]) then
+    for i = 1, #SENSITIVE_PATTERNS do
+        if lowered:find(SENSITIVE_PATTERNS[i]) then
             return true
         end
     end
@@ -76,14 +103,9 @@ end
 -- 1 = most recent. nil = not navigating (fresh input).
 local cursors = setmetatable({}, { __mode = "k" })
 
--- Original chat-type per edit-box, captured when navigation starts so that
--- walking past newest can restore it.
-local originalTypes = setmetatable({}, { __mode = "k" })
-
-local function IsChatAttributeLockedDown()
-    return (type(InCombatLockdown) == "function" and InCombatLockdown())
-        or (I.IsChatMessagingLockedDown and I.IsChatMessagingLockedDown())
-end
+-- Original input text per edit-box, captured when navigation starts so that
+-- walking back past the newest entry restores exactly what the user was typing.
+local originalInput = setmetatable({}, { __mode = "k" })
 
 -- ---------------------------------------------------------------------------
 -- Capture: use Blizzard's explicit pre-send notification
@@ -108,10 +130,20 @@ local function captureSent(editBox)
     if Helpers.IsSecretValue and Helpers.IsSecretValue(text) then return end
     if not text or text == "" then return end
 
-    -- Filter sensitive commands.
-    if s.filterSensitive and isSecureCommand(text) then
+    -- Reference-mode safety: when secure commands are excluded, never store one
+    -- (recalling it could taint the send path). captureSent only ever sees chat
+    -- messages in practice (slash commands are captured via AddHistoryLine), but
+    -- this keeps the policy consistent across both capture paths.
+    if not allowSecureCommands and isProtectedCommand(text) then
         cursors[editBox] = nil
-        originalTypes[editBox] = nil
+        originalInput[editBox] = nil
+        return
+    end
+
+    -- Privacy filter (user preference): keep passwords/secrets out of history.
+    if s.filterSensitive and isSensitiveCommand(text) then
+        cursors[editBox] = nil
+        originalInput[editBox] = nil
         return
     end
 
@@ -146,7 +178,79 @@ local function captureSent(editBox)
     -- Reset cursor on this edit box (a fresh send invalidates the
     -- in-progress navigation, if any).
     cursors[editBox] = nil
-    originalTypes[editBox] = nil
+    originalInput[editBox] = nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Capture: slash commands (/qui, /tm, ...) via AddHistoryLine
+-- ---------------------------------------------------------------------------
+-- captureSent (above) only ever sees actual chat messages. For a slash command,
+-- ParseText dispatches it, calls editBox:AddHistoryLine(fullText), then
+-- ClearChat() — all BEFORE ChatFrame.OnEditBoxPreSendText fires, so the edit box
+-- is already empty by capture time and the command is dropped. Hooking
+-- AddHistoryLine is the one place the full command text is still visible.
+--
+-- Chat messages also reach AddHistoryLine (via AddHistory, prefixed with their
+-- channel slash, e.g. "/g hi"). We skip those here so they are not double-stored
+-- — captureSent already records them with proper chat-type/target restore. The
+-- discriminator: real slash commands live in hash_SlashCmdList; chat-type
+-- prefixes live in hash_ChatTypeInfoList.
+local function captureSlashCommand(editBox, text)
+    if not editBox then return end
+    local chatFrame = editBox.chatFrame
+    if I.IsTemporaryChatFrame and I.IsTemporaryChatFrame(chatFrame) then return end
+
+    local settings = I.GetSettings and I.GetSettings()
+    if not (I.IsChatEnabled and I.IsChatEnabled(settings)) then return end
+    local s = settings and settings.editboxHistory
+    if not s or not s.enabled then return end
+
+    if not text or text == "" then return end
+    if Helpers.IsSecretValue and Helpers.IsSecretValue(text) then return end
+
+    local command = text:match("^(/[^%s]+)")
+    if not command then return end
+    local key = command:upper()
+
+    -- Only real slash commands belong here. hash_SlashCmdList holds command
+    -- handlers (/qui, /tm, /reload, ...); chat-type prefixes (/g, /s, /w, ...)
+    -- are NOT in it (they live only in hash_ChatTypeInfoList), so they fall
+    -- through to captureSent with proper channel/target restore and are not
+    -- double-stored. (hash_ChatTypeInfoList is unusable as a discriminator: per
+    -- ChatFrameUtil ImportListToHash it also receives every slash command.)
+    local slashList = _G.hash_SlashCmdList
+    if not (slashList and slashList[key]) then return end
+
+    -- Reference-mode safety: optionally exclude secure commands (see the
+    -- allowSecureCommands policy switch).
+    if not allowSecureCommands and isProtectedCommand(text) then return end
+
+    -- Privacy filter (user preference): keep /run, /script, passwords, etc. out.
+    if s.filterSensitive and isSensitiveCommand(text) then return end
+
+    local store = getStore()
+    if not store then return end
+
+    -- Skip a consecutive duplicate of the same command (matches the reference's
+    -- history behavior; avoids spamming the store when a command is repeated).
+    local last = store.entries[#store.entries]
+    if last and last.m == text and last.ct == nil and last.tg == nil then
+        cursors[editBox] = nil
+        originalInput[editBox] = nil
+        return
+    end
+
+    -- Slash commands carry no chat type/target; store the literal line so recall
+    -- re-sends it verbatim (ComposeRecallText returns it unchanged).
+    store.entries[#store.entries + 1] = { m = text }
+
+    local maxEntries = s.maxEntries or 200
+    while #store.entries > maxEntries do
+        table.remove(store.entries, 1)
+    end
+
+    cursors[editBox] = nil
+    originalInput[editBox] = nil
 end
 
 local function RegisterPreSendCallback()
@@ -163,27 +267,60 @@ end
 -- Recall: Up/Down arrow navigation
 -- ---------------------------------------------------------------------------
 
-local function applyEntryToEditBox(editBox, entry, settings)
-    if not entry then return end
-
-    editBox:SetText(entry.m or "")
-
-    if settings and settings.restoreChatType and entry.ct and not IsChatAttributeLockedDown() then
-        editBox:SetAttribute("chatType", entry.ct)
-        if entry.tg then
-            if entry.ct == "WHISPER" or entry.ct == "BN_WHISPER" then
-                editBox:SetAttribute("tellTarget", entry.tg)
-            elseif entry.ct == "CHANNEL" then
-                editBox:SetAttribute("channelTarget", entry.tg)
-            end
-        end
-        -- Re-trigger header update so the chat-type prefix re-renders.
-        if ChatEdit_UpdateHeader then
-            ChatEdit_UpdateHeader(editBox)
-        end
+-- Compose the recalled edit-box text, encoding the saved chat type as a leading
+-- slash command (e.g. "/w Target msg", "/g msg") so the game's own ParseText
+-- re-derives the channel when the line is sent.
+--
+-- This deliberately avoids editBox:SetAttribute(...) to restore chat type.
+-- SetAttribute from addon (insecure) code taints the edit box; a tainted edit
+-- box then makes protected slash commands (raid/target markers, etc.) fail with
+-- ADDON_ACTION_FORBIDDEN on EVERY subsequent send, even freshly typed ones.
+-- Encoding the channel as ordinary text keeps the send path untainted.
+local function ComposeRecallText(entry, settings)
+    local msg = entry.m or ""
+    if not (settings and settings.restoreChatType) then
+        return msg
     end
 
-    editBox:SetCursorPosition(#(entry.m or ""))
+    local ct = entry.ct
+    if not ct or ct == "SAY" then
+        return msg  -- SAY is the default channel; no prefix needed.
+    end
+
+    if ct == "WHISPER" or ct == "BN_WHISPER" then
+        if entry.tg then
+            return (_G["SLASH_WHISPER1"] or "/w") .. " " .. entry.tg .. " " .. msg
+        end
+        return msg
+    elseif ct == "CHANNEL" then
+        if entry.tg then
+            return "/" .. entry.tg .. " " .. msg
+        end
+        return msg
+    end
+
+    -- SAY/PARTY/GUILD/RAID/YELL/OFFICER/INSTANCE_CHAT/etc.: canonical slash.
+    local slash = _G["SLASH_" .. ct .. "1"]
+    if slash then
+        return slash .. " " .. msg
+    end
+    return msg
+end
+
+-- Mutating the edit box while chat messaging is in secure lockdown taints the
+-- send path; every other chat module guards mutations the same way.
+local function IsChatMessagingLockedDown()
+    return (I.IsChatMessagingLockedDown and I.IsChatMessagingLockedDown()) or false
+end
+
+local function applyEntryToEditBox(editBox, entry, settings)
+    if not entry then return end
+    local text = ComposeRecallText(entry, settings)
+    -- Reference-mode safety: when secure commands are excluded, never write one
+    -- back to the edit box (also defends any entries saved while allowed).
+    if not allowSecureCommands and isProtectedCommand(text) then return end
+    editBox:SetText(text)
+    editBox:SetCursorPosition(#text)
 end
 
 local function navigateUp(editBox)
@@ -191,16 +328,17 @@ local function navigateUp(editBox)
     if not (I.IsChatEnabled and I.IsChatEnabled(settings)) then return end
     local s = settings and settings.editboxHistory
     if not s or not s.enabled then return end
+    if IsChatMessagingLockedDown() then return end
 
     local store = getStore()
     if not store or #store.entries == 0 then return end
 
-    -- Capture original chat type if starting fresh.
+    -- Capture the user's current input if starting fresh, so walking back past
+    -- the newest entry can restore exactly what they were typing.
     if cursors[editBox] == nil then
-        originalTypes[editBox] = {
-            ct = editBox:GetAttribute("chatType"),
-            tg = editBox:GetAttribute("tellTarget") or editBox:GetAttribute("channelTarget"),
-        }
+        local current = editBox:GetText() or ""
+        if Helpers.IsSecretValue and Helpers.IsSecretValue(current) then current = "" end
+        originalInput[editBox] = { text = current }
     end
 
     local cursor = cursors[editBox] or 0
@@ -218,6 +356,7 @@ local function navigateDown(editBox)
     if not (I.IsChatEnabled and I.IsChatEnabled(settings)) then return end
     local s = settings and settings.editboxHistory
     if not s or not s.enabled then return end
+    if IsChatMessagingLockedDown() then return end
 
     local store = getStore()
     if not store then return end
@@ -227,15 +366,15 @@ local function navigateDown(editBox)
 
     cursor = cursor - 1
     if cursor < 1 then
-        -- Walked past newest. Restore original.
+        -- Walked back past the newest entry: restore the user's original input.
+        -- No SetAttribute here — navigation never changed the edit box's chat
+        -- type, so only the typed text needs restoring.
         cursors[editBox] = nil
-        local orig = originalTypes[editBox]
-        editBox:SetText("")
-        if orig and s.restoreChatType and orig.ct and not IsChatAttributeLockedDown() then
-            editBox:SetAttribute("chatType", orig.ct)
-            if ChatEdit_UpdateHeader then ChatEdit_UpdateHeader(editBox) end
-        end
-        originalTypes[editBox] = nil
+        local orig = originalInput[editBox]
+        local text = (orig and orig.text) or ""
+        editBox:SetText(text)
+        editBox:SetCursorPosition(#text)
+        originalInput[editBox] = nil
         return
     end
 
@@ -296,6 +435,15 @@ function InitializeForFrame(chatFrame)
             navigateDown(self)
         end
     end)
+
+    -- Capture slash commands, which ParseText clears before OnEditBoxPreSendText
+    -- fires. AddHistoryLine receives the full command text just before the clear.
+    -- hooksecurefunc is taint-safe (post-hook, never replaces the secure method).
+    if hooksecurefunc and editBox.AddHistoryLine then
+        hooksecurefunc(editBox, "AddHistoryLine", function(self, text)
+            pcall(captureSlashCommand, self, text)
+        end)
+    end
 end
 
 local function InitializeForAllFrames()
@@ -314,6 +462,13 @@ end
 
 EBH.InitializeForFrame    = InitializeForFrame
 EBH.InitializeForAllFrames = InitializeForAllFrames
+
+-- Test seams (headless unit coverage; not part of the runtime contract).
+EBH._IsProtectedCommand   = isProtectedCommand
+EBH._captureSent          = captureSent
+EBH._captureSlashCommand  = captureSlashCommand
+EBH._applyEntryToEditBox  = applyEntryToEditBox
+EBH._SetAllowSecureCommands = function(v) allowSecureCommands = v end
 
 -- ---------------------------------------------------------------------------
 -- ApplyEnabled: settings change hook

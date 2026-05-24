@@ -103,7 +103,7 @@ read_globals = {
     -- WoW Lua extensions (Lua 5.1 base + Blizzard additions)
     "wipe", "strsplit", "strjoin", "strtrim", "strconcat", "format",
     "tContains", "tInvert", "tDeleteItem", "Mixin", "CreateFromMixins",
-    "hooksecurefunc", "issecure", "issecurevariable",
+    "hooksecurefunc", "issecure", "issecurevariable", "IsSecureCmd",
     "tostringall", "issecretvalue", "Clamp",
     "CopyTable", "debugprofilestop", "geterrorhandler", "time", "tinsert",
 

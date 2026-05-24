@@ -7975,10 +7975,15 @@ function GUI:SeedStaticSearchRoutesFromTiles(frame)
             entry.subTabName = subPageName
         end
 
-        -- Alias entries carry their author-supplied label and keywords
-        -- verbatim; the breadcrumb derivation below is for tab/subtab/section
-        -- entries whose label is mechanically derived from route info.
-        if entry.navType and entry.navType ~= "alias" then
+        -- Alias and moduleToggle entries carry their author-supplied label
+        -- and keywords verbatim (a feature's display name, caption, and group);
+        -- the breadcrumb derivation below is for tab/subtab/section entries
+        -- whose label is mechanically derived from route info. Rebuilding a
+        -- moduleToggle's label here would clobber "Damage Meter" into the
+        -- route breadcrumb "General > Feature Toggles", making the feature
+        -- toggle unfindable by its own name (mirrors the generator's
+        -- moduleToggle special-case in RegisterSearchNavigation).
+        if entry.navType and entry.navType ~= "alias" and entry.navType ~= "moduleToggle" then
             local label = BuildSearchNavigationLabel(entry.navType, entry)
             if type(label) == "string" and label ~= "" then
                 entry.label = label

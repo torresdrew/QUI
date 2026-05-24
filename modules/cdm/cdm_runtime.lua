@@ -3048,29 +3048,50 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
     if not sid then return "inactive", nil, nil end
 
     local cdInfo = Sources and Sources.QuerySpellCooldown and Sources.QuerySpellCooldown(sid)
-    if cdInfo and cdInfo.isActive == true then
-        if cdInfo.isOnGCD == true then return "gcd-only", nil, sid end
+    local cdActive = cdInfo and cdInfo.isActive == true
+    -- A real (non-GCD) cooldown on the base always wins.
+    if cdActive and cdInfo.isOnGCD ~= true then
         return "cooldown", nil, sid
     end
     -- Talent-override cooldowns sit on the override spellID, not the registered
     -- base. C_Spell.GetSpellCooldown reports isActive=true only on the spellID
-    -- the cooldown was directly initiated on, so probing only m.spellID after
-    -- the aura phase ends drops the icon to mode=inactive for the rest of the
-    -- cd. Guardian Druid Berserk -> Incarnation: Guardian of Ursoc is the
-    -- reference case: m.spellID=50334 reports isActive=false while
-    -- m.overrideSpellID=102558 reports isActive=true. The override's DurObj
-    -- is also where the live timing lives — base's C_Spell.GetSpellCooldownDuration
-    -- returns a DurObj whose visible timing reflects "no active cd", which
-    -- binds via SCFDO but renders no swipe. Return the override sid so
-    -- BuildMirrorRenderPayload's cooldown branch queries the matching duration.
+    -- the cooldown was directly initiated on. Two shapes reach here:
+    --   1. The base reports isActive=false (its cooldown lane is idle). Guardian
+    --      Druid Berserk -> Incarnation: Guardian of Ursoc is the reference
+    --      case: m.spellID=50334 reports isActive=false while
+    --      m.overrideSpellID=102558 reports isActive=true. Probing only
+    --      m.spellID would drop the icon to mode=inactive for the rest of the cd.
+    --   2. The base reports isActive=true, isOnGCD=true. The base has no
+    --      cooldown of its own, so an incidental GCD from casting ANY other
+    --      spell shows up on it every global cooldown. Augmentation Breath of
+    --      Eons (base Deep Breath 357210 -> override 403631) is the reference
+    --      case. Returning gcd-only on the base here demotes the icon every
+    --      incidental GCD during the ~2-min cooldown and erases the real swipe.
+    -- In both shapes the override's real (non-GCD) cooldown is authoritative: a
+    -- real cooldown outranks the GCD, mirroring Blizzard's CooldownViewer (which
+    -- shows max(realCD, GCD)). The override's DurObj is also where the live
+    -- timing lives — base's C_Spell.GetSpellCooldownDuration returns a DurObj
+    -- whose visible timing reflects "no active cd", which binds via SCFDO but
+    -- renders no swipe. Return the override sid so BuildMirrorRenderPayload's
+    -- cooldown branch queries the matching duration.
     local overrideSid = m.overrideSpellID
+    local overrideCdInfo
     if overrideSid and overrideSid ~= sid
         and Sources and Sources.QuerySpellCooldown then
-        local overrideCdInfo = Sources.QuerySpellCooldown(overrideSid)
-        if overrideCdInfo and overrideCdInfo.isActive == true then
-            if overrideCdInfo.isOnGCD == true then return "gcd-only", nil, overrideSid end
+        overrideCdInfo = Sources.QuerySpellCooldown(overrideSid)
+        if overrideCdInfo and overrideCdInfo.isActive == true
+            and overrideCdInfo.isOnGCD ~= true then
             return "cooldown", nil, overrideSid
         end
+    end
+    -- No real cooldown on the base or override. Fall back to a GCD swipe (base
+    -- first, then override) so a freshly cast spell still surfaces its GCD.
+    if cdActive and cdInfo.isOnGCD == true then
+        return "gcd-only", nil, sid
+    end
+    if overrideCdInfo and overrideCdInfo.isActive == true
+        and overrideCdInfo.isOnGCD == true then
+        return "gcd-only", nil, overrideSid
     end
     -- Cooldown lane inactive but a multi-charge recharge may still be rolling.
     if HasActiveChargeRecharge(sid, SafeBoolean(m.charges) == true) then

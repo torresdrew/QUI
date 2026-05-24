@@ -574,6 +574,11 @@ end
 function QUICore:OnEnable()
     -- Override Blizzard's /reload command to use SafeReload
     -- (Must happen in OnEnable, after Blizzard's slash commands are registered)
+    -- NOTE: This writes a *key* into SlashCmdList, which is the normal addon
+    -- pattern and is safe — FrameXML's ImportListToHash isolates per-command
+    -- taint via secureexecuterange. Never assign the SlashCmdList *global*
+    -- itself (e.g. `SlashCmdList = ...`) from addon code: that taints the
+    -- table binding and breaks AllowedWhenUntainted slash commands like /tm.
     SlashCmdList["RELOAD"] = function()
         QUI:SafeReload()
     end

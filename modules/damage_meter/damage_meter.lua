@@ -261,6 +261,29 @@ local function CacheView(sessionType, damageMeterType, view)
     bySess[damageMeterType] = view
 end
 
+-- DerivePerSecond: recompute a row's per-second rate as totalAmount / duration
+-- rather than trust the API's amountPerSecond. Per DamageMeterDocumentation a
+-- combat source/spell's amountPerSecond is SecretWhenInCombat and is derived
+-- from the live session duration; after combat it declassifies to a garbage
+-- value (the report: a DPS row read "4" and an HPS row "7.04e-15" instead of
+-- ~405K). GetSessionDurationSeconds is AllowedWhenUntainted and — unlike
+-- GetCombatSessionFromType — NOT SecretWhenInCombat, so it hands us a usable,
+-- non-secret duration for the session in and out of combat.
+--
+-- We can only divide once totalAmount is non-secret (post-combat / idle /
+-- historical). Mid-combat totalAmount stays secret, so we return nil and the
+-- caller keeps the API amountPerSecond (rendered secret-safe downstream — the
+-- C side can read it). The secret check runs BEFORE any comparison: comparing
+-- or dividing a secret in Lua faults under combat restrictions. Pure helper —
+-- isSecret is injected so it unit-tests under plain Lua.
+local function DerivePerSecond(totalAmount, duration, isSecret)
+    if totalAmount == nil then return nil end
+    if isSecret and (isSecret(totalAmount) or isSecret(duration)) then return nil end
+    if type(duration) ~= "number" or duration <= 0 then return nil end
+    return totalAmount / duration
+end
+QUI_DamageMeter.DerivePerSecond = DerivePerSecond
+
 local function FetchView(sessionType, damageMeterType)
     if not (C_DamageMeter and C_DamageMeter.GetCombatSessionFromType) then
         return NewView({}, 0, 0, 0)
@@ -285,6 +308,19 @@ local function FetchView(sessionType, damageMeterType)
         duration = session.durationSeconds  -- historical: API value is safe
     else
         duration = GetCombatElapsed()
+    end
+
+    -- Replace the API's per-source amountPerSecond (SecretWhenInCombat, derived
+    -- from the live duration and garbage once it declassifies) with a rate we
+    -- compute from the session's own non-secret duration. See DerivePerSecond:
+    -- it returns nil while totalAmount is still secret (mid-combat), leaving the
+    -- API value in place for the secret-safe render path.
+    local IsSecret = Helpers and Helpers.IsSecretValue
+    local rateDuration = C_DamageMeter.GetSessionDurationSeconds
+        and C_DamageMeter.GetSessionDurationSeconds(sessionType)
+    for _, s in ipairs(sources) do
+        local rate = DerivePerSecond(s.totalAmount, rateDuration, IsSecret)
+        if rate ~= nil then s.amountPerSecond = rate end
     end
 
     return NewView(sources, duration, session.maxAmount, session.totalAmount)
@@ -755,6 +791,37 @@ local function IsPerSecondType(meterType)
     return PER_SECOND_TYPES[meterType] == true
 end
 
+-- Deaths has no magnitude to scale a bar against (it's a list of who died),
+-- so its rows render as a full bar, matching the stock meter. Resolved from
+-- the enum at load; nil if the enum isn't populated (then ComputeBarFill just
+-- skips the Deaths branch and treats it like any other type).
+local DEATHS_TYPE = Enum and Enum.DamageMeterType and Enum.DamageMeterType.Deaths
+
+-- Decide the StatusBar (min, max, value) for a row's fill. Returns RAW values
+-- for the widget to consume and deliberately does NOT gate on secret-ness.
+-- The StatusBar computes the fill ratio on the C side, where reading secret
+-- combat values is permitted; doing the division in Lua faults on secret
+-- values, which is why the fill previously stalled at zero width (bars looked
+-- colorless) until combat ended and values declassified. `isSecret` is
+-- injected so this stays a pure, unit-testable function.
+--
+-- Bars are total-based for every meter type — per-second views show the rate
+-- in their value text, but the bar length tracks totalAmount, because the
+-- per-second metric has no secret-safe maximum to divide against mid-combat.
+local function ComputeBarFill(meterType, source, fillMax, deathsType, isSecret)
+    if deathsType ~= nil and meterType == deathsType then
+        return 0, 1, 1
+    end
+    -- Check secret BEFORE any nil/<= comparison: comparing a secret value
+    -- against nil or a number faults under combat restrictions.
+    local maxSecret = isSecret and isSecret(fillMax)
+    if not maxSecret and (fillMax == nil or fillMax <= 0) then
+        return 0, 1, 0
+    end
+    return 0, (fillMax or 1), (source.totalAmount or 0)
+end
+QUI_DamageMeter.ComputeBarFill = ComputeBarFill
+
 local BAR_POOL_SIZE = 40
 local BAR_TEXTURE   = "Interface\\Buttons\\WHITE8X8"
 
@@ -945,16 +1012,16 @@ function Window:_AttachRowVisuals(row)
             GameTooltip:AddDoubleLine((rateLabel or "Per Second") .. ":", FormatNumber(ps, "compact"), 1, 1, 1, 1, 1, 1)
         end
 
-        -- % of top: divide by the same metric that ranks the view, otherwise
-        -- Dps/Hps views compare totalAmount against max amountPerSecond and
-        -- the percentage explodes. _maxAmount is the primary-metric max from
-        -- PrepareSourcesForRender; pair it with the primary value here.
-        local perSec = IsPerSecondType(rowSelf._damageMeterType or 0)
-        local primary = perSec and src.amountPerSecond or src.totalAmount
-        local primarySecret = primary and IsSecret and IsSecret(primary)
-        local maxSec = rowSelf._maxAmount and IsSecret and IsSecret(rowSelf._maxAmount)
-        if not (maxSec or primarySecret) and rowSelf._maxAmount and rowSelf._maxAmount > 0 and primary then
-            local pct = (primary / rowSelf._maxAmount) * 100
+        -- % of top: the bar is total-based for every meter type, so the
+        -- percentage matches it (totalAmount over the rank-1 total stashed in
+        -- _maxAmount). Check secret-ness before any comparison — dividing or
+        -- comparing a secret value faults under combat restrictions.
+        local total = src.totalAmount
+        local maxSec   = IsSecret and IsSecret(rowSelf._maxAmount)
+        local totalSec = IsSecret and IsSecret(total)
+        if not (maxSec or totalSec) and total ~= nil
+            and rowSelf._maxAmount and rowSelf._maxAmount > 0 then
+            local pct = (total / rowSelf._maxAmount) * 100
             GameTooltip:AddDoubleLine("% of Top:", string.format("%.1f%%", pct), 1, 1, 1, 1, 1, 1)
         end
 
@@ -1080,51 +1147,59 @@ function Window:_SetRowSource(row, source, maxAmount)
     local IsSecret = Helpers and Helpers.IsSecretValue
     row.Value:SetText(BuildValueText(primaryVal, secondaryVal, numberFormat, IsSecret, FormatNumber))
 
-    -- Bar fill: ratio uses primaryVal / maxAmount where maxAmount is matched
-    -- to the metric (see PrepareSourcesForRender — for per-second types,
-    -- caller passes max amountPerSecond; otherwise max totalAmount from API).
-    -- Keep the secret-value guard because both fields can be ConditionalSecret.
-    -- IsSecret was bound above for the value-text taint guard; reuse it here.
-    local maxSecret = maxAmount ~= nil and IsSecret and IsSecret(maxAmount)
-    local amtSecret = primaryVal ~= nil and IsSecret and IsSecret(primaryVal)
-    if not (maxSecret or amtSecret) and maxAmount and maxAmount > 0 then
-        local ratio = (primaryVal or 0) / maxAmount
-        if ratio < 0 then ratio = 0 end
-        if ratio > 1 then ratio = 1 end
-        -- Phase 7: optional bar-fill animation. Off by default. animateBars
-        -- toggles per-window-overridable; animateDuration caps lerp time.
-        if ResolveAppearance(windowID, "animateBars") then
-            local duration = ResolveAppearance(windowID, "animateDuration") or 0.2
-            row._lerpFrom  = row._lerpCurrent or row.Bar:GetValue() or 0
-            row._lerpTo    = ratio
-            row._lerpStart = GetTime and GetTime() or 0
-            row._lerpDur   = duration
-            row._lerpCurrent = row._lerpFrom
-            -- Drive the lerp via OnUpdate; lazy-attach handler the first time
-            -- this row sees animation.
-            if not row._lerpDriven then
-                row._lerpDriven = true
-                row:SetScript("OnUpdate", function(rowSelf)
-                    if not rowSelf._lerpTo then return end
-                    local now = GetTime and GetTime() or 0
-                    local t = math.min(1, (now - (rowSelf._lerpStart or 0)) / (rowSelf._lerpDur or 0.2))
-                    local v = (rowSelf._lerpFrom or 0) + ((rowSelf._lerpTo or 0) - (rowSelf._lerpFrom or 0)) * t
-                    rowSelf._lerpCurrent = v
-                    rowSelf.Bar:SetValue(v)
-                    if t >= 1 then
-                        rowSelf._lerpFrom    = rowSelf._lerpTo
-                        rowSelf._lerpTo      = nil
-                        rowSelf:SetScript("OnUpdate", nil)
-                        rowSelf._lerpDriven  = false
-                    end
-                end)
-            end
-        else
-            row.Bar:SetValue(ratio)
-            row._lerpCurrent = ratio
+    -- Bar fill: hand the StatusBar widget the raw totalAmount against the
+    -- rank-1 total (maxAmount) as its range, and let it compute the fill on
+    -- the C side. Both values can be secret-tagged during combat; computing
+    -- the ratio in Lua (the old behavior) faulted on secret values, so the
+    -- fill stalled at zero width and the bars looked colorless until combat
+    -- ended. The widget reads secret values directly, so bars fill live now.
+    -- primaryVal above still drives the value TEXT; the bar length is always
+    -- total-based (see ComputeBarFill).
+    local fillMin, fillMaxValue, fillValue =
+        ComputeBarFill(self.damageMeterType, source, maxAmount, DEATHS_TYPE, IsSecret)
+    row.Bar:SetMinMaxValues(fillMin, fillMaxValue)
+
+    -- Phase 7: optional bar-fill animation, off by default. Lua can't lerp a
+    -- secret, so animate only non-secret values (idle / post-combat /
+    -- historical sessions); during combat we snap by pushing the raw value
+    -- straight to the widget.
+    local valueSecret = IsSecret and IsSecret(fillValue)
+    if not valueSecret and ResolveAppearance(windowID, "animateBars") then
+        row._lerpFrom    = row._lerpCurrent or row.Bar:GetValue() or 0
+        row._lerpTo      = fillValue
+        row._lerpStart   = GetTime and GetTime() or 0
+        row._lerpDur     = ResolveAppearance(windowID, "animateDuration") or 0.2
+        row._lerpCurrent = row._lerpFrom
+        -- Drive the lerp via OnUpdate; lazy-attach handler the first time
+        -- this row sees animation.
+        if not row._lerpDriven then
+            row._lerpDriven = true
+            row:SetScript("OnUpdate", function(rowSelf)
+                if rowSelf._lerpTo == nil then return end
+                local now = GetTime and GetTime() or 0
+                local t = math.min(1, (now - (rowSelf._lerpStart or 0)) / (rowSelf._lerpDur or 0.2))
+                local v = (rowSelf._lerpFrom or 0) + ((rowSelf._lerpTo or 0) - (rowSelf._lerpFrom or 0)) * t
+                rowSelf._lerpCurrent = v
+                rowSelf.Bar:SetValue(v)
+                if t >= 1 then
+                    rowSelf._lerpFrom    = rowSelf._lerpTo
+                    rowSelf._lerpTo      = nil
+                    rowSelf:SetScript("OnUpdate", nil)
+                    rowSelf._lerpDriven  = false
+                end
+            end)
         end
+    else
+        -- Snap. Stop any in-flight lerp so a now-secret value isn't blended,
+        -- then push the raw value (the widget accepts secret values here).
+        if row._lerpDriven then
+            row:SetScript("OnUpdate", nil)
+            row._lerpDriven = false
+        end
+        row._lerpTo = nil
+        row.Bar:SetValue(fillValue or 0)
+        row._lerpCurrent = nil
     end
-    -- If secret: leave bar at last-known fill width.
 
     -- Bar color: priority is useClassColor → barColorAccent → custom barColor.
     local alpha = ResolveAppearance(windowID, "barFillAlpha") or 1
@@ -1262,39 +1337,46 @@ end
 -- array (so we don't mutate the cached view) and walk it for max
 -- amountPerSecond. Secret-tagged values are skipped during sort/max.
 local function PrepareSourcesForRender(view, meterType)
+    local sources
     if not IsPerSecondType(meterType) then
-        return view.sources, view.maxAmount
-    end
-    local IsSecret = Helpers and Helpers.IsSecretValue
-    local out = {}
-    for i, s in ipairs(view.sources) do
-        out[i] = {
-            name             = s.name,
-            classFilename    = s.classFilename,
-            specIconID       = s.specIconID,
-            totalAmount      = s.totalAmount,
-            amountPerSecond  = s.amountPerSecond,
-            isLocalPlayer    = s.isLocalPlayer,
-            sourceGUID       = s.sourceGUID,
-            sourceCreatureID = s.sourceCreatureID,
-            deathRecapID     = s.deathRecapID,
-            rank             = i,
-        }
-    end
-    table.sort(out, function(a, b)
-        local av, bv = a.amountPerSecond, b.amountPerSecond
-        if IsSecret and (IsSecret(av) or IsSecret(bv)) then return false end
-        return (av or 0) > (bv or 0)
-    end)
-    local maxValue = 0
-    for i, s in ipairs(out) do
-        s.rank = i
-        local v = s.amountPerSecond
-        if v and not (IsSecret and IsSecret(v)) and v > maxValue then
-            maxValue = v
+        sources = view.sources
+    else
+        -- Per-second views rank by amountPerSecond (a late-joining DPS ranks
+        -- low by total but high by rate). Shallow-copy so we don't mutate the
+        -- cached view, then sort. The comparator bails on secret values, so
+        -- during combat the API's order stands and the re-sort only refines
+        -- the ranking post-combat once values declassify.
+        local IsSecret = Helpers and Helpers.IsSecretValue
+        local out = {}
+        for i, s in ipairs(view.sources) do
+            out[i] = {
+                name             = s.name,
+                classFilename    = s.classFilename,
+                specIconID       = s.specIconID,
+                totalAmount      = s.totalAmount,
+                amountPerSecond  = s.amountPerSecond,
+                isLocalPlayer    = s.isLocalPlayer,
+                sourceGUID       = s.sourceGUID,
+                sourceCreatureID = s.sourceCreatureID,
+                deathRecapID     = s.deathRecapID,
+                rank             = i,
+            }
         end
+        table.sort(out, function(a, b)
+            local av, bv = a.amountPerSecond, b.amountPerSecond
+            if IsSecret and (IsSecret(av) or IsSecret(bv)) then return false end
+            return (av or 0) > (bv or 0)
+        end)
+        for i, s in ipairs(out) do s.rank = i end
+        sources = out
     end
-    return out, maxValue
+    -- Bar-fill max: the rank-1 source's totalAmount, returned RAW (it may be
+    -- secret during combat). _SetRowSource hands it to the StatusBar widget,
+    -- which divides on the C side. Bars are total-based even for per-second
+    -- views — the rate has no secret-safe Lua maximum to divide against while
+    -- combat values are still secret.
+    local fillMax = sources[1] and sources[1].totalAmount or 0
+    return sources, fillMax
 end
 
 function Window:_OpenConfigMenu()
@@ -1488,11 +1570,11 @@ function Window:Refresh()
     end
 
     self:_EnsureRowPool()
-    local sources, maxValue = PrepareSourcesForRender(view, self.damageMeterType)
+    local sources, fillMax = PrepareSourcesForRender(view, self.damageMeterType)
     local renderCount = math.min(#sources, BAR_POOL_SIZE)
 
     for i = 1, renderCount do
-        self:_SetRowSource(self.rows[i], sources[i], maxValue)
+        self:_SetRowSource(self.rows[i], sources[i], fillMax)
         self.rows[i]:Show()
     end
     for i = renderCount + 1, #self.rows do
@@ -1515,11 +1597,11 @@ function Window:Refresh()
     -- visible scroll range. _UpdateStickyVisibility computes the predicate
     -- against the current viewport + scroll offset and toggles sticky/sep,
     -- re-anchoring scrollFrame's bottom to shrink/grow the viewport.
-    -- pinnedSelf, sources, and maxValue are read directly by the method via
+    -- pinnedSelf, sources, and fillMax are read directly by the method via
     -- self._stickySources / self._stickyMaxValue so the OnMouseWheel handler
     -- (Task 5) can re-evaluate without re-running the full Refresh.
     self._stickySources = sources
-    self._stickyMaxValue = maxValue
+    self._stickyMaxValue = fillMax
     self:_UpdateStickyVisibility()
 
     -- Phase 4: refresh an open breakdown popup on every parent-window tick.
@@ -1530,6 +1612,12 @@ end
 local function LayoutKey(windowID) return "damageMeter_window_" .. windowID end
 
 local WINDOW_LAYOUT_FEATURE_ID = "damageMeterWindowLayout"
+
+-- Shared min/max bounds for a damage meter window. The corner-drag grips
+-- (frame:SetResizeBounds) and the Layout Mode Frame Size sliders both clamp to
+-- these, so the two resize paths stay consistent.
+local WINDOW_SIZE_MIN_W, WINDOW_SIZE_MAX_W = 120, 1200
+local WINDOW_SIZE_MIN_H, WINDOW_SIZE_MAX_H = 60, 1000
 
 local RESIZE_CORNERS = { "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" }
 
@@ -1709,19 +1797,84 @@ do
         Registry:RegisterFeature(Schema.Feature({
             id     = WINDOW_LAYOUT_FEATURE_ID,
             render = {
+                -- Layout Mode settings panel for a damage meter window. Builds a
+                -- Position collapsible plus a Frame Size collapsible (Width /
+                -- Height sliders), mirroring the chat-frame provider. The size
+                -- sliders write to the same windows[id].size store as the
+                -- corner-drag grips, so the two resize paths stay in sync.
                 layout = function(host, options)
                     local providerKey = options and options.providerKey
                     if type(providerKey) ~= "string" or providerKey == "" then
                         return 80
                     end
-                    return RenderAdapters.RenderPositionOnly(host, providerKey)
+
+                    local U = ns.QUI_LayoutMode_Utils
+                    local windowID = tonumber(providerKey:match("^damageMeter_window_(%d+)$"))
+                    local window = windowID
+                        and QUI_DamageMeter.WindowManager
+                        and QUI_DamageMeter.WindowManager:Get(windowID)
+
+                    -- Without a live window/frame or the size helper, fall back
+                    -- to position-only controls (the pre-size behavior).
+                    if not window or not window.frame or not U
+                        or type(U.BuildPositionCollapsible) ~= "function"
+                        or type(U.BuildSizeCollapsible) ~= "function"
+                        or type(U.StandardRelayout) ~= "function" then
+                        return RenderAdapters.RenderPositionOnly(host, providerKey)
+                    end
+
+                    local function getSize()
+                        local f = window.frame
+                        return f:GetWidth(), f:GetHeight()
+                    end
+
+                    local function setSize(w, h)
+                        -- Match the corner-drag grips: no resizing in combat.
+                        if InCombatLockdown and InCombatLockdown() then return end
+                        local f = window.frame
+                        if not f then return end
+                        w = math.max(WINDOW_SIZE_MIN_W, math.min(WINDOW_SIZE_MAX_W, math.floor(w + 0.5)))
+                        h = math.max(WINDOW_SIZE_MIN_H, math.min(WINDOW_SIZE_MAX_H, math.floor(h + 0.5)))
+                        f:SetSize(w, h)
+                        local s = GetSettings()
+                        local ws = s and s.windows and s.windows[windowID]
+                        if ws then
+                            ws.size = ws.size or {}
+                            ws.size.w = w
+                            ws.size.h = h
+                        end
+                        if window.Refresh then pcall(window.Refresh, window) end
+                    end
+
+                    local prevPosOnly = U._layoutModePositionOnly
+                    U._layoutModePositionOnly = false
+                    local sections = {}
+                    local function relayout() U.StandardRelayout(host, sections) end
+                    local ok, err = xpcall(function()
+                        U.BuildPositionCollapsible(host, providerKey, nil, sections, relayout)
+                        U.BuildSizeCollapsible(host, {
+                            getSize = getSize,
+                            setSize = setSize,
+                            minW = WINDOW_SIZE_MIN_W, maxW = WINDOW_SIZE_MAX_W,
+                            minH = WINDOW_SIZE_MIN_H, maxH = WINDOW_SIZE_MAX_H,
+                            widthDescription  = "Damage meter window width in pixels.",
+                            heightDescription = "Damage meter window height in pixels.",
+                        }, sections, relayout)
+                        relayout()
+                    end, function(msg) return msg end)
+                    U._layoutModePositionOnly = prevPosOnly
+                    if not ok and geterrorhandler then geterrorhandler()(err) end
+                    return host:GetHeight()
                 end,
             },
         }))
     end
 end
 
-function Window:New(windowID)
+-- Static factory (dot, not colon): builds and returns a new instance. Declared
+-- with a dot so Lua doesn't inject an unused `self` (the class table) that the
+-- `local self` instance below would shadow.
+function Window.New(windowID)
     local s = GetSettings()
     local windowState = s and s.windows and s.windows[windowID]
     if not windowState then
@@ -1754,7 +1907,7 @@ function Window:New(windowID)
     frame:SetMovable(true)
     frame:SetResizable(true)
     if frame.SetResizeBounds then
-        frame:SetResizeBounds(120, 60, 1200, 1000)
+        frame:SetResizeBounds(WINDOW_SIZE_MIN_W, WINDOW_SIZE_MIN_H, WINDOW_SIZE_MAX_W, WINDOW_SIZE_MAX_H)
     end
     self.frame = frame
 
@@ -1916,7 +2069,7 @@ end
 -- the Breakdown frame on first call; subsequent calls reuse the same instance.
 function Window:OpenBreakdown(source, anchorRow)
     if not self._breakdown then
-        self._breakdown = Breakdown:New(self)
+        self._breakdown = Breakdown.New(self)
     end
     self._breakdown:Open(source, anchorRow)
 end
@@ -2003,7 +2156,8 @@ function Breakdown:_BuildRow(index)
     return row
 end
 
-function Breakdown:New(parentWindow)
+-- Static factory (dot, not colon) — see Window.New for why.
+function Breakdown.New(parentWindow)
     local self = setmetatable({
         parentWindow    = parentWindow,
         parentWindowID  = parentWindow.windowID,
@@ -2076,16 +2230,16 @@ function Breakdown:_SetSpellRow(row, spell, maxAmount)
     local numberFormat = ResolveAppearance(self.parentWindowID, "numberFormat") or "compact"
     row.Value:SetText(FormatNumber(spell.totalAmount, numberFormat))
 
-    -- Bar fill (with secret-value guard)
+    -- Bar fill: feed raw values to the StatusBar widget, same secret-safe path
+    -- as the main rows (see ComputeBarFill) — never divide in Lua. The
+    -- breakdown is gated during combat today, but routing through the widget
+    -- keeps it correct if a spell amount is ever secret-tagged and stays
+    -- consistent with the main meter. nil meter/deaths types skip those
+    -- branches; spells have no per-second or Deaths handling.
     local IsSecret = Helpers and Helpers.IsSecretValue
-    local maxSec = maxAmount and IsSecret and IsSecret(maxAmount)
-    local amtSec = spell.totalAmount and IsSecret and IsSecret(spell.totalAmount)
-    if not (maxSec or amtSec) and maxAmount and maxAmount > 0 and spell.totalAmount then
-        local ratio = spell.totalAmount / maxAmount
-        if ratio < 0 then ratio = 0 end
-        if ratio > 1 then ratio = 1 end
-        row.Bar:SetValue(ratio)
-    end
+    local fillMin, fillMaxValue, fillValue = ComputeBarFill(nil, spell, maxAmount, nil, IsSecret)
+    row.Bar:SetMinMaxValues(fillMin, fillMaxValue)
+    row.Bar:SetValue(fillValue or 0)
 
     -- Bar color: inherit parent window's accent or custom color (class color
     -- doesn't apply to spells).
@@ -2187,7 +2341,7 @@ function WindowManager:Spawn(windowID)
     -- Window:New is wired in T9. Until then, Spawn is harmless to call
     -- (returns nil) and tests just assert the surface exists.
     if not Window.New then return nil end
-    local instance = Window:New(windowID)
+    local instance = Window.New(windowID)
     self.windows[windowID] = instance
     if windowID >= self.nextID then self.nextID = windowID + 1 end
     return instance
@@ -2414,8 +2568,12 @@ resetBindBtn:SetAttribute("macrotext",
 QUI_DamageMeter._ResetBindButton = resetBindBtn
 
 -- Also expose a slash command for users who prefer macro-based binds.
+-- NOTE: Only ever write *keys* into SlashCmdList (the normal addon pattern).
+-- Do NOT reassign the SlashCmdList global itself (e.g. `_G.SlashCmdList = ...`)
+-- — that taints the global binding, and FrameXML re-reads it on every chat
+-- parse (ImportAllListsToHash), propagating QUI taint into slash dispatch and
+-- breaking zero-taint commands like /tm ("QUI tried to call SetRaidTarget()").
 _G.SLASH_QUI_DM_RESET1 = "/quidmreset"
-_G.SlashCmdList = _G.SlashCmdList or {}
 _G.SlashCmdList["QUI_DM_RESET"] = function()
     if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then
         C_DamageMeter.ResetAllCombatSessions()

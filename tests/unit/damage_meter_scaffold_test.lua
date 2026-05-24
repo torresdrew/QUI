@@ -125,10 +125,11 @@ for _, fn in ipairs({"Spawn", "Despawn", "Enumerate", "Get"}) do
         "WindowManager:" .. fn .. " must be defined")
 end
 
--- T9: Window:New + frame composition
-assert(coreSrc:find("function Window:New", 1, true)
+-- T9: Window.New + frame composition (static factory — dot, not colon)
+assert(coreSrc:find("function Window.New", 1, true)
+    or coreSrc:find("function Window:New", 1, true)
     or coreSrc:find("Window.New = function", 1, true),
-    "Window:New must be defined")
+    "Window.New must be defined")
 for _, name in ipairs({"frame", "backdrop", "header", "TypeLabel", "SessionTimer",
                        "ConfigButton", "CloseButton"}) do
     assert(coreSrc:find(name, 1, true),
