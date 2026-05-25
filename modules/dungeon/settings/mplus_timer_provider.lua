@@ -90,11 +90,13 @@ do
         end
 
         local function BuildMPlusTimerSettings(content, key, _width)
-            -- Headless cache-gen loads this file before ns.QUI_Options exists,
-            -- so the upvalues captured at the top of RegisterMPlusTimerProvider
-            -- can be nil. Refresh on each build invocation; live runtime is
-            -- unaffected (RegisterAfterLoad guarantees QUI_Options is ready).
-            Opts = Opts or ns.QUI_Options
+            -- core/gui_shell.lua installs a minimal ns.QUI_Options stub, then
+            -- the on-demand QUI_Options addon (shared.lua) REPLACES the table
+            -- with the real one carrying the V3 body helpers. The Opts upvalue
+            -- captured at registration can thus be nil (headless) or the stale
+            -- stub (which lacks CreateAccentDotLabel). Re-resolve live-first each
+            -- build: a truthy stale stub must not win over the replacement.
+            Opts = ns.QUI_Options or Opts
             PAD = (Opts and Opts.PADDING) or PAD
 
             local mpDB = GetMPlusDB()

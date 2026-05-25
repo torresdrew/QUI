@@ -12,6 +12,7 @@ do
         if not GUI then return end
 
         local Helpers = ns.Helpers
+        local LSM = ns.LSM
         local U = ns.QUI_LayoutMode_Utils
         local Opts = ns.QUI_Options
         local PAD = (Opts and Opts.PADDING) or 15
@@ -75,6 +76,15 @@ do
         end
 
         local function BuildMPlusProgressSettings(content, key, _width)
+            -- core/gui_shell.lua installs a minimal ns.QUI_Options stub, then
+            -- the on-demand QUI_Options addon (shared.lua) REPLACES the table
+            -- with the real one carrying the V3 body helpers. The Opts upvalue
+            -- captured at registration can thus be nil (headless) or the stale
+            -- stub (which lacks CreateAccentDotLabel). Re-resolve live-first each
+            -- build: a truthy stale stub must not win over the replacement.
+            Opts = ns.QUI_Options or Opts
+            PAD = (Opts and Opts.PADDING) or PAD
+
             local db = GetProgressDB()
             if not db then return 80 end
 
@@ -85,6 +95,8 @@ do
                 tooltipShowNoProgress = false,
                 nameplateEnabled = true,
                 nameplateTextFormat = "+$percent$%",
+                nameplateFont = "",
+                nameplateFontSize = 12,
                 nameplateTextColor = { 1, 1, 1, 1 },
                 nameplateTextScale = 1.0,
                 nameplateOffsetX = 0,
@@ -126,13 +138,37 @@ do
             -- Nameplates
             L.headerAt("Nameplates")
             local sNP = L.sectionAt()
-            local npFmtW = GUI:CreateFormEditBox(sNP.frame, nil, "nameplateTextFormat", db, Refresh,
-                { maxLetters = 32, description = "Nameplate text format. Use $percent$ for the enemy's forces contribution." })
+            local formatOpts = {
+                { text = "+2.5%",        value = "+$percent$%" },
+                { text = "2.5%",         value = "$percent$%" },
+                { text = "2.5",          value = "$percent$" },
+                { text = "Forces: 2.5%", value = "Forces: $percent$%" },
+            }
+            local npFmtW = GUI:CreateFormDropdown(sNP.frame, nil, formatOpts, "nameplateTextFormat", db, Refresh,
+                { description = "How each enemy's forces contribution is shown next to its nameplate." })
             local npScaleW = GUI:CreateFormSlider(sNP.frame, nil, 0.5, 2.0, 0.05, "nameplateTextScale", db, Refresh,
                 { deferOnDrag = true, precision = 2, description = "Scale of the M+ progress text attached to nameplates." })
             sNP.AddRow(
                 row(sNP.frame, "Text Format", npFmtW),
                 row(sNP.frame, "Text Scale", npScaleW)
+            )
+
+            local fontList = { { value = "", text = "(Global Font)" } }
+            if LSM then
+                local names = {}
+                for name in pairs(LSM:HashTable("font")) do names[#names + 1] = name end
+                table.sort(names)
+                for _, name in ipairs(names) do
+                    fontList[#fontList + 1] = { value = name, text = name }
+                end
+            end
+            local npFontW = GUI:CreateFormDropdown(sNP.frame, nil, fontList, "nameplateFont", db, Refresh,
+                { description = "Font for the nameplate progress text. Pick (Global Font) to inherit the UI font." })
+            local npSizeW = GUI:CreateFormSlider(sNP.frame, nil, 8, 18, 1, "nameplateFontSize", db, Refresh,
+                { description = "Font size for the nameplate progress text." })
+            sNP.AddRow(
+                row(sNP.frame, "Font", npFontW),
+                row(sNP.frame, "Font Size", npSizeW)
             )
 
             local npXW = GUI:CreateFormSlider(sNP.frame, nil, -100, 100, 1, "nameplateOffsetX", db, Refresh,

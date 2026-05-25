@@ -19,6 +19,8 @@ local DEFAULTS = {
     tooltipShowNoProgress = false,
     nameplateEnabled = true,
     nameplateTextFormat = "+$percent$%",
+    nameplateFont = "", -- empty = global QUI font
+    nameplateFontSize = 12,
     nameplateTextColor = { 1, 1, 1, 1 },
     nameplateTextScale = 1.0,
     nameplateOffsetX = 0,
@@ -132,6 +134,21 @@ local function BuildNameplateText(percentString)
     return rendered, true
 end
 
+-- Resolve the nameplate font: an explicit nameplateFont name overrides the
+-- global QUI font, otherwise inherit it. Mirrors focuscastalert.lua's idiom.
+-- Size comes from nameplateFontSize; outline tracks the global setting.
+local function GetNameplateFont()
+    local settings = Settings()
+    local name = settings.nameplateFont
+    local fontPath
+    if name and name ~= "" and ns.UIKit and ns.UIKit.ResolveFontPath then
+        fontPath = ns.UIKit.ResolveFontPath(name)
+    end
+    fontPath = fontPath or Helpers.GetGeneralFont()
+    local size = tonumber(settings.nameplateFontSize) or DEFAULTS.nameplateFontSize
+    return fontPath, size, Helpers.GetGeneralFontOutline()
+end
+
 local function ApplyNameplateStyle(frame)
     if not frame or not frame.text then return end
 
@@ -141,7 +158,7 @@ local function ApplyNameplateStyle(frame)
     local scale = settings.nameplateTextScale or 1
 
     frame:SetScale(scale)
-    frame.text:SetFont(Helpers.GetGeneralFont(), 12, Helpers.GetGeneralFontOutline())
+    frame.text:SetFont(GetNameplateFont())
     frame.text:SetTextColor(r, g, b, a)
 end
 
@@ -161,7 +178,7 @@ local function AcquireNameplateFrame()
     text:SetJustifyH("LEFT")
     text:SetJustifyV("MIDDLE")
     text:SetWordWrap(false)
-    text:SetFont(Helpers.GetGeneralFont(), 12, Helpers.GetGeneralFontOutline())
+    text:SetFont(GetNameplateFont())
     frame.text = text
 
     return frame

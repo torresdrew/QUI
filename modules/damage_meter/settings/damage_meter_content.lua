@@ -285,14 +285,15 @@ end
 -- ===========================================================================
 BuildNativeDamageMeterTab = function(tabContent)
     tabContentRef = tabContent
-    -- Resolve the options namespace at call time, not load time. This file can
-    -- be loaded before QUI_Options/shared.lua defines ns.QUI_Options (the search
-    -- cache generator's load order does exactly this), which would leave the
-    -- Shared/Opts upvalues nil and make the builder early-return with no widgets.
-    -- Refreshing the shared upvalues here also updates MakeLayout/row, which
-    -- close over the same Opts upvalue.
-    Shared = Shared or ns.QUI_Options
-    Opts   = Opts or ns.QUI_Options
+    -- Resolve the options namespace at call time, not load time. This file is
+    -- loaded before the on-demand QUI_Options addon (shared.lua) REPLACES
+    -- ns.QUI_Options, so the upvalues captured at load can be nil (headless) or
+    -- the stale gui_shell stub (which lacks GetDB/CreateAccentDotLabel, making
+    -- the builder early-return with no widgets). Re-resolve live-first: a truthy
+    -- stale stub must not win over the replacement. This also updates
+    -- MakeLayout/row, which close over the same Shared/Opts upvalues.
+    Shared = ns.QUI_Options or Shared
+    Opts   = ns.QUI_Options or Opts
     local db = Shared and Shared.GetDB and Shared.GetDB()
     if not db then return end
 

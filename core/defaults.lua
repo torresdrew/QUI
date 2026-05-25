@@ -362,6 +362,8 @@ local defaults = {
             tooltipShowNoProgress = false,
             nameplateEnabled = true,
             nameplateTextFormat = "+$percent$%",
+            nameplateFont = "", -- empty = global QUI font
+            nameplateFontSize = 12,
             nameplateTextColor = { 1, 1, 1, 1 },
             nameplateTextScale = 1.0,
             nameplateOffsetX = 0,

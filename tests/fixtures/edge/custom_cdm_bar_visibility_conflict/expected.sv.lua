@@ -2644,6 +2644,8 @@ return {
           mplusProgress = {
             enabled = true,
             nameplateEnabled = true,
+            nameplateFont = "",
+            nameplateFontSize = 12,
             nameplateOffsetX = 0,
             nameplateOffsetY = 0,
             nameplateTextColor = {
