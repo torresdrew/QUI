@@ -2242,6 +2242,19 @@ local function GetSpecStateDB(create)
     return GetCharNcdmDB(create) or GetDB()
 end
 
+-- A single AceDB profile shared across characters means the live CDM
+-- container (profile.ncdm) is shared too. _lastSpecCharKey records which
+-- character last reconciled it. When that owner is a different character the
+-- live container holds the other character's (possibly other class's) spells
+-- and must be reloaded for the current character before it is shown.
+local function LiveContainerOwnedByOtherCharacter()
+    local profileDB = GetDB()
+    local owner = profileDB and profileDB._lastSpecCharKey
+    if not owner then return false end
+    local currentCharKey = GetCurrentCharacterKey()
+    return currentCharKey ~= nil and owner ~= currentCharKey
+end
+
 local function GetSpecProfileStore(create)
     local charNcdm = GetCharNcdmDB(create)
     if not charNcdm then
@@ -5211,9 +5224,31 @@ function ownedEngine:Initialize()
                 -- so cross-class/spec spells are removed before the first
                 -- meaningful RefreshAll fires from the deferred timer.
                 C_Timer.After(0.5, function()
+                    -- Self-heal: a peaceful login fires no PLAYER_REGEN_ENABLED,
+                    -- so if spec tracking deferred during the load window (spec
+                    -- APIs not ready at init) or its 1s retry was cancelled by an
+                    -- early profile/loadout event, re-run it now. Without this a
+                    -- shared-profile live container can keep rendering a previous
+                    -- character's spells until the first combat ends.
                     if not specTrackingReady then
-                        specTrackingPendingRefresh = true
-                        return
+                        specTrackingReady = InitSpecTracking()
+                        if not specTrackingReady then
+                            specTrackingPendingRefresh = true
+                            return
+                        end
+                    end
+                    -- Deterministic cross-character guard: with a profile shared
+                    -- across alts, force a reconcile when the live container is
+                    -- still owned by another character so we never render their
+                    -- spells. RunCrossSessionDetection only keys "changed" off the
+                    -- per-character spec id (which never differs for the same
+                    -- toon), so this char-key mismatch is the authoritative signal.
+                    if not InCombatLockdown() and LiveContainerOwnedByOtherCharacter() then
+                        local specID = GetCurrentSpecID()
+                        if specID and specID ~= 0 then
+                            specTrackingRetryToken = specTrackingRetryToken + 1
+                            LoadOrSnapshotSpecProfile(specID, 1, specTrackingRetryToken)
+                        end
                     end
                     if not InCombatLockdown() and ns.CDMSpellData then
                         ns.CDMSpellData:CheckAllDormantSpells()
