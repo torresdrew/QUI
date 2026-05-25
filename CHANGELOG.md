@@ -6,7 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
-## v3.6.0-alpha60 - 2026-05-25
+## v3.6.0-alpha61 - 2026-05-25
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha60 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Added
+- **Mythic+ Mob Progress: nameplate font controls.** The mob-progress nameplate now has a "Text Format" preset dropdown (`+2.5%` / `2.5%` / `2.5` / `Forces: 2.5%`) plus its own Font and Font Size controls, which override the global QUI font when set (leave Font empty to follow the global font).
+- **Damage meter: "Reset Data" button.** The window config menu gains a Reset Data action that clears all combat sessions and refreshes the open windows.
+
+### Changed
+- **Damage meter: dropped the bar-fill animation.** The optional row bar-fill animation has been removed; it could only ever run on non-secret values, so it never animated in combat anyway, and the instant snap path is now the only path.
+
+### Fixed
+- **Damage meter: per-second rate no longer goes to garbage after combat.** The rate now picks the correct duration divisor per session — the live Current session prefers QUI's own combat timer (matching the `[m:ss]` header), Expired sessions use their recorded duration, and Overall uses the API span — instead of leaving the API's per-second value in place where it declassified to a meaningless number once combat ended.
+- **CDM: a previous character's spells no longer linger after login.** With a single profile shared across characters the live cooldown container is shared too; on a peaceful login (no combat) the reconcile that re-stamps it for the current character could be skipped, leaving another character's — even another class's — spells rendering until first combat. Login now re-runs spec tracking to self-heal and forces a reconcile when the live container is still owned by a different character.
+- **CDM: foreign-class auras cleaned from shared aura containers.** A shared profile could carry a previous character's class auras into the aura containers; these are now stripped on load.
+- **Settings: stale options-stub no longer breaks newer setting widgets.** Several settings providers (ready check, M+ timer, M+ mob progress, damage meter) captured an early minimal options stub that the full options module later replaces, so newer label widgets were missing; they now resolve the live options table.
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha59 profiles carry over unchanged.
 >
