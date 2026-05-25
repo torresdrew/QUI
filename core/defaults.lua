@@ -239,6 +239,12 @@ local defaults = {
                 -- to see pure C_DamageMeter HealingDone (matching Blizzard's
                 -- stock meter's view of healing).
                 combineAbsorbsIntoHealing = true,
+                -- When true (default), unit names are shown without their
+                -- "-Realm" suffix (e.g. "Anya" instead of "Anya-Stormrage").
+                -- Applies to rows, the hover tooltip header, and the breakdown
+                -- popup title. Realm-less names (NPCs, same-realm players) are
+                -- unaffected.
+                shortenNames = true,
                 appearance = {
                     global = {
                         barHeight        = 18,

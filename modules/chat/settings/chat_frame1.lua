@@ -58,82 +58,58 @@ local function SaveLegacyChatDimensions(frame)
     end
 end
 
-local function SaveEditModeLayouts(manager)
-    if not manager then return false end
-
-    if type(manager.SaveLayouts) == "function" then
-        local ok = pcall(manager.SaveLayouts, manager)
-        return ok == true
-    end
-
-    if _G.C_EditMode and type(_G.C_EditMode.SaveLayouts) == "function" and manager.layoutInfo then
-        local ok = pcall(_G.C_EditMode.SaveLayouts, manager.layoutInfo)
-        return ok == true
-    end
-
-    return false
+-- QUI-owned chat size store. Edit Mode preset layouts (Modern/Classic) are
+-- regenerated from code on load, so a size written into a preset's active
+-- layout can't be saved and reverts on /reload. QUI therefore owns chat-frame
+-- size outright: we mirror it into the QUI profile and re-apply on login (see
+-- ApplyStoredSize). We deliberately do NOT write Blizzard's Edit Mode layout.
+local function GetChatProfileDB()
+    local core = Helpers and Helpers.GetCore and Helpers.GetCore()
+    return core and core.db and core.db.profile and core.db.profile.chat
 end
 
-local function IsEditModeManagerReady(manager)
-    if not manager then return false end
-
-    if type(manager.IsInitialized) == "function" then
-        local ok, initialized = pcall(manager.IsInitialized, manager)
-        if ok then
-            return initialized == true
-        end
-        return false
-    end
-
-    return manager.layoutInfo ~= nil
-end
-
-local function SyncEditModeChatSize(frame, width, height)
-    if not frame then return false end
-    if IsChatLayoutLockedDown() then return false end
-
+local function StoreChatFrameSize(width, height)
     width = ReadSafeNumber(width)
     height = ReadSafeNumber(height)
-    if not width or not height then return false end
-
-    width = math.floor(width)
-    height = math.floor(height)
-
-    local manager = _G.EditModeManagerFrame
-    if not IsEditModeManagerReady(manager) or type(manager.OnSystemSettingChange) ~= "function" then
-        return false
-    end
-
-    local enum = _G.Enum
-    local display = enum and enum.EditModeChatFrameDisplayOnlySetting
-    if display and display.Width and display.Height then
-        local okWidth = pcall(manager.OnSystemSettingChange, manager, frame, display.Width, width)
-        local okHeight = pcall(manager.OnSystemSettingChange, manager, frame, display.Height, height)
-        if okWidth and okHeight then
-            SaveEditModeLayouts(manager)
-            return true
-        end
-    end
-
-    local settings = enum and enum.EditModeChatFrameSetting
-    if not settings then return false end
-
-    local okWidthHundreds = pcall(manager.OnSystemSettingChange, manager, frame, settings.WidthHundreds, math.floor(width / 100))
-    local okWidthTens = pcall(manager.OnSystemSettingChange, manager, frame, settings.WidthTensAndOnes, math.floor(width % 100))
-    local okHeightHundreds = pcall(manager.OnSystemSettingChange, manager, frame, settings.HeightHundreds, math.floor(height / 100))
-    local okHeightTens = pcall(manager.OnSystemSettingChange, manager, frame, settings.HeightTensAndOnes, math.floor(height % 100))
-    if okWidthHundreds and okWidthTens and okHeightHundreds and okHeightTens then
-        SaveEditModeLayouts(manager)
-        return true
-    end
-
-    return false
+    if not width or not height then return end
+    local chatDB = GetChatProfileDB()
+    if not chatDB then return end
+    chatDB.frameSize = chatDB.frameSize or {}
+    chatDB.frameSize.w = math.floor(width + 0.5)
+    chatDB.frameSize.h = math.floor(height + 0.5)
 end
 
 function ChatFrame1Sizing.PersistSize(frame, width, height)
     frame = frame or _G.ChatFrame1
+    -- Profile store is the source of truth; SaveLegacyChatDimensions keeps the
+    -- legacy floating-chat config (position + dimensions) coherent. No Edit
+    -- Mode layout write — see the store comment above.
+    StoreChatFrameSize(width, height)
     SaveLegacyChatDimensions(frame)
-    return SyncEditModeChatSize(frame, width, height)
+    return true
+end
+
+-- Re-apply the QUI-stored chat size to the live frame. Called deferred on
+-- login after Edit Mode restores its (possibly preset) layout size, so QUI's
+-- size wins. Only resizes the live frame — it does not re-persist. No-op when
+-- nothing is stored or the size already matches.
+function ChatFrame1Sizing.ApplyStoredSize()
+    local chatDB = GetChatProfileDB()
+    local stored = chatDB and chatDB.frameSize
+    if type(stored) ~= "table" then return false end
+    local width = ReadSafeNumber(stored.w)
+    local height = ReadSafeNumber(stored.h)
+    if not width or not height then return false end
+    local frame = _G.ChatFrame1
+    if not frame then return false end
+    if IsChatLayoutLockedDown() then return false end
+    if IsSameFrameSize(frame, width, height) then return false end
+    if _G.FCF_SetWindowSize then
+        _G.FCF_SetWindowSize(frame, width, height)
+    else
+        frame:SetSize(width, height)
+    end
+    return true
 end
 
 function ChatFrame1Sizing.PersistCurrentSize(frame)

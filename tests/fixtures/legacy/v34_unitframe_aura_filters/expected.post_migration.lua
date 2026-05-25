@@ -1,6 +1,60 @@
 return {
   _defaultsVersion = 3,
-  _schemaVersion = 34,
+  _migrationBackup = {
+    slots = {
+      [1] = {
+        fromVersion = 33,
+        savedAt = 0,
+        snapshot = {
+          _defaultsVersion = 3,
+          _schemaVersion = 33,
+          cdm = {
+            engine = "owned"
+          },
+          quiUnitFrames = {
+            focus = {
+              auras = {
+                onlyMyDebuffs = true,
+                showDebuffs = true
+              },
+              enabled = true
+            },
+            pet = {
+              auras = {
+                onlyMyDebuffs = false,
+                showBuffs = true
+              },
+              enabled = true
+            },
+            player = {
+              auras = {
+                showBuffs = true,
+                showDebuffs = true
+              },
+              enabled = true
+            },
+            target = {
+              auras = {
+                onlyMyDebuffs = true,
+                showBuffs = true,
+                showDebuffs = true
+              },
+              enabled = true
+            },
+            targettarget = {
+              auras = {
+                showBuffs = true,
+                showDebuffs = true
+              },
+              enabled = true
+            }
+          }
+        },
+        toVersion = 38
+      }
+    }
+  },
+  _schemaVersion = 38,
   _shippedDefaults = {
     abilityTimeline = {
       bigIcon = {
@@ -508,6 +562,11 @@ return {
       buffDurationTextAnchor = "CENTER",
       buffDurationTextOffsetX = 0,
       buffDurationTextOffsetY = 0,
+      buffFilterBigDefensive = false,
+      buffFilterCancelable = false,
+      buffFilterNotCancelable = false,
+      buffFilterPlayer = false,
+      buffFilterRaid = false,
       buffGrowLeft = true,
       buffGrowUp = false,
       buffIconSize = 35,
@@ -515,12 +574,20 @@ return {
       buffIconsPerRow = 10,
       buffInvertSwipeDarkening = false,
       buffRowSpacing = 0,
+      buffSortReverse = false,
+      buffSortRule = "INDEX",
       buffStackTextAnchor = "BOTTOMRIGHT",
       buffStackTextOffsetX = -1,
       buffStackTextOffsetY = 1,
       debuffDurationTextAnchor = "CENTER",
       debuffDurationTextOffsetX = 0,
       debuffDurationTextOffsetY = 0,
+      debuffFilterCrowdControl = false,
+      debuffFilterImportant = false,
+      debuffFilterIncludeNameplateOnly = false,
+      debuffFilterPlayer = false,
+      debuffFilterRaid = false,
+      debuffFilterRaidPlayerDispellable = false,
       debuffGrowLeft = true,
       debuffGrowUp = false,
       debuffIconSize = 35,
@@ -528,6 +595,8 @@ return {
       debuffIconsPerRow = 10,
       debuffInvertSwipeDarkening = false,
       debuffRowSpacing = 0,
+      debuffSortReverse = false,
+      debuffSortRule = "INDEX",
       debuffStackTextAnchor = "BOTTOMRIGHT",
       debuffStackTextOffsetX = -1,
       debuffStackTextOffsetY = 1,
@@ -619,7 +688,10 @@ return {
       }
     },
     chat = {
+      buttonBars = {},
+      channelColors = {},
       copyButtonMode = "always",
+      copyHistorySource = "live",
       defaultTab = 1,
       defaultTabBySpec = {},
       defaultTabPerSpec = false,
@@ -633,6 +705,12 @@ return {
         enabled = true,
         height = 20,
         positionTop = false
+      },
+      editboxHistory = {
+        enabled = true,
+        filterSensitive = true,
+        maxEntries = 200,
+        restoreChatType = true
       },
       enabled = true,
       fade = {
@@ -653,9 +731,59 @@ return {
         enabled = true
       },
       hideButtons = true,
+      history = {
+        enabled = true,
+        excludedChannels = {},
+        maxEntries = 5000,
+        perChannelRetention = {},
+        retentionDays = 7,
+        showSeparators = true,
+        storeWhispers = false
+      },
+      hyperlinks = {
+        coordinates = true,
+        friendlyURLs = false,
+        interactiveNames = true
+      },
       messageHistory = {
         enabled = true,
         maxHistory = 50
+      },
+      modifiers = {
+        channelShorten = {
+          enabled = true,
+          preset = "letter"
+        },
+        classColors = {
+          enabled = true,
+          recolorBodyText = false
+        },
+        keywordAlert = {
+          enabled = false,
+          flashTab = false,
+          highlightColor = {
+            [1] = 0.20399999999999999,
+            [2] = 0.83099999999999996,
+            [3] = 0.59999999999999998,
+            [4] = 1
+          },
+          includeFirstName = false,
+          includeGuildName = false,
+          includeOwnName = true,
+          keywords = {},
+          skipSelf = true,
+          soundFile = "Sound\\Interface\\RaidWarning.ogg"
+        },
+        redundantText = {
+          enabled = false,
+          patterns = {
+            currency = true,
+            honor = true,
+            loot = true,
+            reputation = true,
+            xp = true
+          }
+        }
       },
       newMessageSound = {
         enabled = false,
@@ -666,7 +794,9 @@ return {
           }
         }
       },
+      scrollbackLines = 0,
       showIntroMessage = true,
+      tabs = {},
       timestamps = {
         color = {
           [1] = 0.59999999999999998,
@@ -784,6 +914,7 @@ return {
       showActionSwipe = true,
       showBuffIconSwipe = true,
       showBuffSwipe = false,
+      showCooldownIconAuraPhase = true,
       showCooldownSwipe = true,
       showCustomTrackerSwipe = true,
       showGCDSwipe = false,
@@ -838,7 +969,8 @@ return {
       thickness = 3
     },
     customGlow = {
-      buffPandemicEnabled = true,
+      buffPandemicBuffEnabled = true,
+      buffPandemicDebuffEnabled = true,
       essentialColor = {
         [1] = 0.94999999999999996,
         [2] = 0.94999999999999996,
@@ -849,7 +981,8 @@ return {
       essentialFrequency = 0.25,
       essentialGlowType = "Pixel Glow",
       essentialLines = 14,
-      essentialPandemicEnabled = true,
+      essentialPandemicBuffEnabled = true,
+      essentialPandemicDebuffEnabled = true,
       essentialScale = 1,
       essentialThickness = 2,
       essentialXOffset = 0,
@@ -864,7 +997,8 @@ return {
       utilityFrequency = 0.25,
       utilityGlowType = "Pixel Glow",
       utilityLines = 14,
-      utilityPandemicEnabled = true,
+      utilityPandemicBuffEnabled = true,
+      utilityPandemicDebuffEnabled = true,
       utilityScale = 1,
       utilityThickness = 2,
       utilityXOffset = 0,
@@ -970,6 +1104,89 @@ return {
       showInInstance = false,
       showOnMouseover = false,
       showWhenTargetExists = false
+    },
+    damageMeter = {
+      native = {
+        appearance = {
+          global = {
+            animateBars = false,
+            animateDuration = 0.20000000000000001,
+            barColor = {
+              [1] = 0.34999999999999998,
+              [2] = 0.55000000000000004,
+              [3] = 0.80000000000000004,
+              [4] = 1
+            },
+            barColorAccent = true,
+            barFillAlpha = 1,
+            barHeight = 18,
+            barSpacing = 2,
+            colors = {
+              bg = {
+                [1] = 0,
+                [2] = 0,
+                [3] = 0,
+                [4] = 0.84999999999999998
+              },
+              rowName = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              },
+              rowValue = {
+                [1] = 1,
+                [2] = 1,
+                [3] = 1,
+                [4] = 1
+              }
+            },
+            fonts = {
+              header = {
+                outline = "",
+                size = 12
+              },
+              rowName = {
+                outline = "",
+                size = 0
+              },
+              rowValue = {
+                outline = "",
+                size = 0
+              }
+            },
+            headerHeight = 22,
+            headerShowIcons = true,
+            iconStyle = "spec",
+            numberFormat = "compact",
+            textures = {},
+            useClassColor = true
+          },
+          perWindow = {}
+        },
+        breakdownAnchor = "row",
+        combineAbsorbsIntoHealing = true,
+        enabled = true,
+        refreshRateCombat = 0.5,
+        refreshRateIdle = 2,
+        shortenNames = true,
+        showHoverTooltip = true,
+        showPinnedSelf = true,
+        visibility = "always",
+        windowCount = 1,
+        windows = {
+          [1] = {
+            damageMeterType = 0,
+            hidden = false,
+            name = "",
+            sessionType = 1,
+            size = {
+              h = 180,
+              w = 240
+            }
+          }
+        }
+      }
     },
     dandersFrames = {
       party = {
@@ -2189,7 +2406,9 @@ return {
         [4] = 1
       },
       skinCharacterFrame = true,
+      skinContextMenus = true,
       skinCraftingOrders = true,
+      skinDamageMeter = true,
       skinGameMenu = true,
       skinInspectFrame = true,
       skinInstanceFrames = false,
@@ -2198,6 +2417,8 @@ return {
       skinOverrideActionBar = true,
       skinPowerBarAlt = true,
       skinProfessions = true,
+      skinReadyCheck = true,
+      skinStaticPopups = true,
       skinStatusTrackingBars = true,
       skinUseClassColor = true,
       statusTrackingBarsBarColor = {
@@ -2999,6 +3220,7 @@ return {
         spellOverrides = {},
         usabilityIndicator = true
       },
+      perLoadoutSpec = false,
       trackedBar = {
         anchorOffsetX = 0,
         anchorOffsetY = 0,
@@ -4758,6 +4980,14 @@ return {
         anchorYOffset = 0,
         auras = {
           buffAnchor = "BOTTOMLEFT",
+          buffClassifications = {
+            bigDefensive = false,
+            cancelable = false,
+            externalDefensive = false,
+            helpful = false,
+            important = false,
+            notCancelable = false
+          },
           buffDuration = {
             anchor = "CENTER",
             color = {
@@ -4771,6 +5001,8 @@ return {
             offsetY = 0,
             show = true
           },
+          buffFilterMode = "off",
+          buffFilterOnlyMine = true,
           buffGrow = "RIGHT",
           buffIconSize = 22,
           buffMaxIcons = 4,
@@ -4803,6 +5035,12 @@ return {
           buffStackOffsetY = 1,
           buffStackSize = 10,
           debuffAnchor = "TOPLEFT",
+          debuffClassifications = {
+            crowdControl = false,
+            dispellable = false,
+            harmful = false,
+            important = false
+          },
           debuffDuration = {
             anchor = "CENTER",
             color = {
@@ -4816,6 +5054,7 @@ return {
             offsetY = 0,
             show = false
           },
+          debuffFilterMode = "off",
           debuffGrow = "RIGHT",
           debuffMaxIcons = 4,
           debuffMaxPerRow = 0,
@@ -5080,6 +5319,14 @@ return {
         anchorYOffset = 0,
         auras = {
           buffAnchor = "BOTTOMLEFT",
+          buffClassifications = {
+            bigDefensive = false,
+            cancelable = false,
+            externalDefensive = false,
+            helpful = false,
+            important = false,
+            notCancelable = false
+          },
           buffDuration = {
             anchor = "CENTER",
             color = {
@@ -5093,6 +5340,8 @@ return {
             offsetY = 0,
             show = true
           },
+          buffFilterMode = "off",
+          buffFilterOnlyMine = true,
           buffGrow = "RIGHT",
           buffIconSize = 18,
           buffMaxIcons = 4,
@@ -5124,6 +5373,12 @@ return {
           buffStackOffsetY = 1,
           buffStackSize = 10,
           debuffAnchor = "TOPLEFT",
+          debuffClassifications = {
+            crowdControl = false,
+            dispellable = false,
+            harmful = false,
+            important = false
+          },
           debuffDuration = {
             anchor = "CENTER",
             color = {
@@ -5137,6 +5392,7 @@ return {
             offsetY = 0,
             show = false
           },
+          debuffFilterMode = "off",
           debuffGrow = "RIGHT",
           debuffMaxIcons = 4,
           debuffOffsetX = 0,
@@ -6556,6 +6812,11 @@ return {
     buffDurationTextAnchor = "CENTER",
     buffDurationTextOffsetX = 0,
     buffDurationTextOffsetY = 0,
+    buffFilterBigDefensive = false,
+    buffFilterCancelable = false,
+    buffFilterNotCancelable = false,
+    buffFilterPlayer = false,
+    buffFilterRaid = false,
     buffGrowLeft = true,
     buffGrowUp = false,
     buffIconSize = 35,
@@ -6563,12 +6824,20 @@ return {
     buffIconsPerRow = 10,
     buffInvertSwipeDarkening = false,
     buffRowSpacing = 0,
+    buffSortReverse = false,
+    buffSortRule = "INDEX",
     buffStackTextAnchor = "BOTTOMRIGHT",
     buffStackTextOffsetX = -1,
     buffStackTextOffsetY = 1,
     debuffDurationTextAnchor = "CENTER",
     debuffDurationTextOffsetX = 0,
     debuffDurationTextOffsetY = 0,
+    debuffFilterCrowdControl = false,
+    debuffFilterImportant = false,
+    debuffFilterIncludeNameplateOnly = false,
+    debuffFilterPlayer = false,
+    debuffFilterRaid = false,
+    debuffFilterRaidPlayerDispellable = false,
     debuffGrowLeft = true,
     debuffGrowUp = false,
     debuffIconSize = 35,
@@ -6576,6 +6845,8 @@ return {
     debuffIconsPerRow = 10,
     debuffInvertSwipeDarkening = false,
     debuffRowSpacing = 0,
+    debuffSortReverse = false,
+    debuffSortRule = "INDEX",
     debuffStackTextAnchor = "BOTTOMRIGHT",
     debuffStackTextOffsetX = -1,
     debuffStackTextOffsetY = 1,
@@ -6670,7 +6941,10 @@ return {
     }
   },
   chat = {
+    buttonBars = {},
+    channelColors = {},
     copyButtonMode = "always",
+    copyHistorySource = "live",
     defaultTab = 1,
     defaultTabBySpec = {},
     defaultTabPerSpec = false,
@@ -6684,6 +6958,12 @@ return {
       enabled = true,
       height = 20,
       positionTop = false
+    },
+    editboxHistory = {
+      enabled = true,
+      filterSensitive = true,
+      maxEntries = 200,
+      restoreChatType = true
     },
     enabled = true,
     fade = {
@@ -6704,9 +6984,59 @@ return {
       enabled = true
     },
     hideButtons = true,
+    history = {
+      enabled = true,
+      excludedChannels = {},
+      maxEntries = 5000,
+      perChannelRetention = {},
+      retentionDays = 7,
+      showSeparators = true,
+      storeWhispers = false
+    },
+    hyperlinks = {
+      coordinates = true,
+      friendlyURLs = false,
+      interactiveNames = true
+    },
     messageHistory = {
       enabled = true,
       maxHistory = 50
+    },
+    modifiers = {
+      channelShorten = {
+        enabled = true,
+        preset = "letter"
+      },
+      classColors = {
+        enabled = true,
+        recolorBodyText = false
+      },
+      keywordAlert = {
+        enabled = false,
+        flashTab = false,
+        highlightColor = {
+          [1] = 0.20399999999999999,
+          [2] = 0.83099999999999996,
+          [3] = 0.59999999999999998,
+          [4] = 1
+        },
+        includeFirstName = false,
+        includeGuildName = false,
+        includeOwnName = true,
+        keywords = {},
+        skipSelf = true,
+        soundFile = "Sound\\Interface\\RaidWarning.ogg"
+      },
+      redundantText = {
+        enabled = false,
+        patterns = {
+          currency = true,
+          honor = true,
+          loot = true,
+          reputation = true,
+          xp = true
+        }
+      }
     },
     newMessageSound = {
       enabled = false,
@@ -6717,7 +7047,9 @@ return {
         }
       }
     },
+    scrollbackLines = 0,
     showIntroMessage = true,
+    tabs = {},
     timestamps = {
       color = {
         [1] = 0.59999999999999998,
@@ -6835,6 +7167,7 @@ return {
     showActionSwipe = true,
     showBuffIconSwipe = true,
     showBuffSwipe = false,
+    showCooldownIconAuraPhase = true,
     showCooldownSwipe = true,
     showCustomTrackerSwipe = true,
     showGCDSwipe = false,
@@ -6889,7 +7222,8 @@ return {
     thickness = 3
   },
   customGlow = {
-    buffPandemicEnabled = true,
+    buffPandemicBuffEnabled = true,
+    buffPandemicDebuffEnabled = true,
     essentialColor = {
       [1] = 0.94999999999999996,
       [2] = 0.94999999999999996,
@@ -6900,7 +7234,8 @@ return {
     essentialFrequency = 0.25,
     essentialGlowType = "Pixel Glow",
     essentialLines = 14,
-    essentialPandemicEnabled = true,
+    essentialPandemicBuffEnabled = true,
+    essentialPandemicDebuffEnabled = true,
     essentialScale = 1,
     essentialThickness = 2,
     essentialXOffset = 0,
@@ -6915,7 +7250,8 @@ return {
     utilityFrequency = 0.25,
     utilityGlowType = "Pixel Glow",
     utilityLines = 14,
-    utilityPandemicEnabled = true,
+    utilityPandemicBuffEnabled = true,
+    utilityPandemicDebuffEnabled = true,
     utilityScale = 1,
     utilityThickness = 2,
     utilityXOffset = 0,
@@ -7021,6 +7357,89 @@ return {
     showInInstance = false,
     showOnMouseover = false,
     showWhenTargetExists = false
+  },
+  damageMeter = {
+    native = {
+      appearance = {
+        global = {
+          animateBars = false,
+          animateDuration = 0.20000000000000001,
+          barColor = {
+            [1] = 0.34999999999999998,
+            [2] = 0.55000000000000004,
+            [3] = 0.80000000000000004,
+            [4] = 1
+          },
+          barColorAccent = true,
+          barFillAlpha = 1,
+          barHeight = 18,
+          barSpacing = 2,
+          colors = {
+            bg = {
+              [1] = 0,
+              [2] = 0,
+              [3] = 0,
+              [4] = 0.84999999999999998
+            },
+            rowName = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            },
+            rowValue = {
+              [1] = 1,
+              [2] = 1,
+              [3] = 1,
+              [4] = 1
+            }
+          },
+          fonts = {
+            header = {
+              outline = "",
+              size = 12
+            },
+            rowName = {
+              outline = "",
+              size = 0
+            },
+            rowValue = {
+              outline = "",
+              size = 0
+            }
+          },
+          headerHeight = 22,
+          headerShowIcons = true,
+          iconStyle = "spec",
+          numberFormat = "compact",
+          textures = {},
+          useClassColor = true
+        },
+        perWindow = {}
+      },
+      breakdownAnchor = "row",
+      combineAbsorbsIntoHealing = true,
+      enabled = true,
+      refreshRateCombat = 0.5,
+      refreshRateIdle = 2,
+      shortenNames = true,
+      showHoverTooltip = true,
+      showPinnedSelf = true,
+      visibility = "always",
+      windowCount = 1,
+      windows = {
+        [1] = {
+          damageMeterType = 0,
+          hidden = false,
+          name = "",
+          sessionType = 1,
+          size = {
+            h = 180,
+            w = 240
+          }
+        }
+      }
+    }
   },
   dandersFrames = {
     party = {
@@ -8240,7 +8659,9 @@ return {
       [4] = 1
     },
     skinCharacterFrame = true,
+    skinContextMenus = true,
     skinCraftingOrders = true,
+    skinDamageMeter = true,
     skinGameMenu = true,
     skinInspectFrame = true,
     skinInstanceFrames = false,
@@ -8249,6 +8670,8 @@ return {
     skinOverrideActionBar = true,
     skinPowerBarAlt = true,
     skinProfessions = true,
+    skinReadyCheck = true,
+    skinStaticPopups = true,
     skinStatusTrackingBars = true,
     skinUseClassColor = true,
     statusTrackingBarsBarColor = {
@@ -9050,6 +9473,7 @@ return {
       spellOverrides = {},
       usabilityIndicator = true
     },
+    perLoadoutSpec = false,
     trackedBar = {
       anchorOffsetX = 0,
       anchorOffsetY = 0,
@@ -10814,6 +11238,14 @@ return {
       anchorYOffset = 0,
       auras = {
         buffAnchor = "BOTTOMLEFT",
+        buffClassifications = {
+          bigDefensive = false,
+          cancelable = false,
+          externalDefensive = false,
+          helpful = false,
+          important = false,
+          notCancelable = false
+        },
         buffDuration = {
           anchor = "CENTER",
           color = {
@@ -10827,6 +11259,8 @@ return {
           offsetY = 0,
           show = true
         },
+        buffFilterMode = "off",
+        buffFilterOnlyMine = true,
         buffGrow = "RIGHT",
         buffIconSize = 22,
         buffMaxIcons = 4,
@@ -10859,6 +11293,12 @@ return {
         buffStackOffsetY = 1,
         buffStackSize = 10,
         debuffAnchor = "TOPLEFT",
+        debuffClassifications = {
+          crowdControl = false,
+          dispellable = false,
+          harmful = false,
+          important = false
+        },
         debuffDuration = {
           anchor = "CENTER",
           color = {
@@ -10872,6 +11312,7 @@ return {
           offsetY = 0,
           show = false
         },
+        debuffFilterMode = "off",
         debuffGrow = "RIGHT",
         debuffMaxIcons = 4,
         debuffMaxPerRow = 0,
@@ -11136,6 +11577,14 @@ return {
       anchorYOffset = 0,
       auras = {
         buffAnchor = "BOTTOMLEFT",
+        buffClassifications = {
+          bigDefensive = false,
+          cancelable = false,
+          externalDefensive = false,
+          helpful = false,
+          important = false,
+          notCancelable = false
+        },
         buffDuration = {
           anchor = "CENTER",
           color = {
@@ -11149,6 +11598,8 @@ return {
           offsetY = 0,
           show = true
         },
+        buffFilterMode = "off",
+        buffFilterOnlyMine = true,
         buffGrow = "RIGHT",
         buffIconSize = 18,
         buffMaxIcons = 4,
@@ -11180,6 +11631,12 @@ return {
         buffStackOffsetY = 1,
         buffStackSize = 10,
         debuffAnchor = "TOPLEFT",
+        debuffClassifications = {
+          crowdControl = false,
+          dispellable = false,
+          harmful = false,
+          important = false
+        },
         debuffDuration = {
           anchor = "CENTER",
           color = {
@@ -11198,6 +11655,7 @@ return {
             PLAYER = true
           }
         },
+        debuffFilterMode = "off",
         debuffGrow = "RIGHT",
         debuffMaxIcons = 4,
         debuffOffsetX = 0,
@@ -12111,4 +12569,3 @@ return {
     width = 300
   }
 }
-

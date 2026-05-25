@@ -121,8 +121,6 @@ local stackWriteStates = {}
 local chargeDurationNotes = 0
 local recentCasts = {}
 local highlighterCasts = {}
-local trustedGCD = false
-local trustCalls = {}
 local textureClears = 0
 local durationKeyClears = 0
 local stableClears = 0
@@ -205,24 +203,10 @@ local controller = module.Create({
     updateIconRangesForUsabilityEvent = function()
         rangeRefreshes = rangeRefreshes + 1
     end,
-    resetTrustedGCDSnapshot = function()
-        return {}, 1
-    end,
-    captureTrustedGCDStateForIcon = function(icon)
-        icon._capturedGCD = true
-    end,
-    captureTrustedGCDState = function()
-        return trustedGCD
-    end,
-    setTrustIsOnGCDForBatch = function(value)
-        trustCalls[#trustCalls + 1] = value
-        return false
-    end,
-    scheduleUpdate = function(fast, mode, trustIsOnGCD, reason)
+    scheduleUpdate = function(fast, mode, reason)
         schedules[#schedules + 1] = {
             fast = fast,
             mode = mode,
-            trustIsOnGCD = trustIsOnGCD,
             reason = reason,
         }
     end,
@@ -271,7 +255,6 @@ assert(applied.spell == 1, "usability refresh should re-resolve stale cooldown i
 assert(applied.idle == nil, "usability refresh should skip idle cooldown icons")
 assert(applied.aura == nil, "usability refresh should skip aura icons")
 assert(rangeRefreshes == 1, "usability refresh should reconcile range/usability visuals")
-assert(spellIcon._capturedGCD == nil, "usability refresh should not capture trusted GCD state outside cooldown events")
 
 reset(applied)
 reset(visibilityUpdated)
@@ -338,12 +321,13 @@ assert(#stackWriteStates == 2 and stackWriteStates[1] == true and stackWriteStat
     "trinket equip changes must enable then disable stack-text writes for the item-count badge")
 
 reset(applied)
+reset(runtimeUpdated)
 reset(visibilityUpdated)
 reset(batches)
 endedBatches = 0
-trustedGCD = false
 controller:HandleCooldownChanged("CDM:COOLDOWN_CHANGED", 999999, nil, "refresh")
 assert(next(applied) == nil, "unmatched per-spell cooldown refresh should not re-resolve icons")
+assert(next(runtimeUpdated) == nil, "unmatched per-spell cooldown refresh should not run icon updates")
 assert(#batches == 0, "unmatched per-spell cooldown refresh should not open a runtime batch")
 
 controller:HandleCooldownChanged("CDM:COOLDOWN_CHANGED", 101, nil, "refresh")
@@ -354,18 +338,29 @@ assert(visibilityUpdated.spell == 1, "matched per-spell cooldown refresh should 
 assert(stackWriteStates[1] == true and stackWriteStates[2] == false,
     "matched per-spell cooldown refresh should enable stack text writes around the full update")
 
+-- isOnGCD is read directly off cdInfo (NeverSecret), so a refresh with a nil
+-- spellID no longer captures a trusted-GCD snapshot or runs a broad GCD-edge
+-- spell-scope re-resolve. It is the documented no-op fallback: GCD-only swipe
+-- refresh is driven by the cast_succeeded InvalidateGCDOnlyBindings path
+-- instead. A refresh must leave existing bindings untouched when no comparable
+-- spellID is carried.
 reset(applied)
 reset(runtimeUpdated)
+reset(visibilityUpdated)
 reset(stackWriteStates)
+reset(batches)
 spellIcon._lastResolvedMode = "gcd-only"
 spellIcon._lastDurObjKey = "gcd-only:101"
 spellIcon._lastDurObj = {}
-trustedGCD = true
 controller:HandleCooldownChanged("CDM:COOLDOWN_CHANGED", nil, nil, "refresh")
-assert(spellIcon._lastDurObjKey == nil, "broad GCD edge should invalidate GCD-only duration binding")
-assert(applied.spell == 1, "broad GCD edge should refresh spell-shaped icons")
-assert(applied.item == nil, "broad GCD edge should not refresh item-backed icons")
-assert(applied.aura == nil, "broad GCD edge should not refresh aura icons")
+assert(spellIcon._lastDurObjKey == "gcd-only:101",
+    "nil-spellID refresh should not invalidate any duration binding (no broad GCD-edge walk)")
+assert(next(applied) == nil, "nil-spellID refresh should not re-resolve any icon")
+assert(next(runtimeUpdated) == nil, "nil-spellID refresh should not run any icon update")
+assert(#batches == 0, "nil-spellID refresh should not open a runtime batch")
+spellIcon._lastResolvedMode = nil
+spellIcon._lastDurObjKey = nil
+spellIcon._lastDurObj = nil
 
 reset(auraApplied)
 reset(clearedBindings)
@@ -584,7 +579,6 @@ assert(queuedFrame.shown == false, "coalesced combat usability refresh should hi
 reset(applied)
 reset(runtimeUpdated)
 reset(stackWriteStates)
-trustedGCD = false
 controller:HandleCooldownChanged("CDM:COOLDOWN_CHANGED", 101, nil, "refresh")
 -- SPELL_UPDATE_COOLDOWN is the canonical signal that the cooldown lane
 -- changed for a specific spell, so HandleCooldownChanged now applies

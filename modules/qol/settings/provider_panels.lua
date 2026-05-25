@@ -1039,6 +1039,16 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         local hideTitleW = GUI:CreateFormCheckbox(s2.frame, nil, "hidePlayerTitle", tooltip, RefreshTooltips,
             { description = "Hide character titles on player tooltips." })
         s2.AddRow(row(s2.frame, "Hide Server Name", hideServerW), row(s2.frame, "Hide Player Titles", hideTitleW))
+
+        local showTargetW = GUI:CreateFormCheckbox(s2.frame, nil, "showTooltipTarget", tooltip, RefreshTooltips,
+            { description = "Show the unit's current target on its tooltip. Updates live as the target changes." })
+        local showMountW = GUI:CreateFormCheckbox(s2.frame, nil, "showPlayerMount", tooltip, RefreshTooltips,
+            { description = "Show the active mount's name on mounted player tooltips." })
+        s2.AddRow(row(s2.frame, "Show Target", showTargetW), row(s2.frame, "Show Player Mount", showMountW))
+
+        local showMythicW = GUI:CreateFormCheckbox(s2.frame, nil, "showPlayerMythicRating", tooltip, RefreshTooltips,
+            { description = "Show the player's Mythic+ rating on player tooltips." })
+        s2.AddRow(row(s2.frame, "Show M+ Rating", showMythicW))
         L.closeSection(s2)
 
         -- PLAYER ITEM LEVEL

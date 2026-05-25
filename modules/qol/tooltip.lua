@@ -2304,6 +2304,12 @@ local function OnUnitTargetChanged(changedUnit)
 end
 
 local function OnUnitAuraChanged(changedUnit)
+    -- Mount status can't change in combat, and combat is exactly when UNIT_AURA
+    -- traffic peaks: every roster buff/debuff tick reaches "all" subscribers, and
+    -- a tooltip is frequently up (nameplates/raid frames). Bailing here before
+    -- ResolveTooltipUnit's pcall keeps this hot aura path zero-allocation during
+    -- combat — the mount line has nothing new to resolve anyway.
+    if InCombatLockdown() then return end
     if not GameTooltip:IsShown() then return end
     local unit = ResolveTooltipUnit(GameTooltip)
     if not unit or unit ~= changedUnit then return end
@@ -2378,11 +2384,13 @@ function TooltipEngine:Initialize()
         end
     end)
 
-    -- Subscribe to centralized aura dispatcher (all units — tooltip needs any unit)
+    -- Subscribe to centralized aura dispatcher (all units — tooltip needs any
+    -- unit). Pass OnUnitAuraChanged directly: it reads only the unit arg and
+    -- ignores updateInfo, so the old wrapper closure was pure overhead. The
+    -- handler self-gates on combat + tooltip visibility, so this stays a no-op
+    -- until a tooltip is actually up out of combat.
     if ns.AuraEvents then
-        ns.AuraEvents:Subscribe("all", function(unit, updateInfo)
-            OnUnitAuraChanged(unit)
-        end)
+        ns.AuraEvents:Subscribe("all", OnUnitAuraChanged)
     end
 end
 

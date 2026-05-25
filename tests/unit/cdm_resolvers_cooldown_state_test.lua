@@ -284,6 +284,11 @@ local ns = {
             if spellID == 50014 or spellID == 60010 then
                 return { currentCharges = secretChargeOne, maxCharges = 2, isActive = true }
             end
+            -- 60011: a multi-charge spell with a charge available and a recharge
+            -- rolling, while an incidental GCD sits on the cooldown lane.
+            if spellID == 60011 then
+                return { currentCharges = secretChargeOne, maxCharges = 2, isActive = true }
+            end
             return nil
         end,
         QuerySpellCooldown = function(spellID)
@@ -334,6 +339,11 @@ local ns = {
             if spellID == 60006 then
                 return { isActive = true, isOnGCD = false }
             end
+            -- 60011: charge recharge rolling while an incidental GCD sits on the
+            -- cooldown lane (isActive=true, isOnGCD=true). The recharge must win.
+            if spellID == 60011 then
+                return { isActive = true, isOnGCD = true }
+            end
             -- 50014 / 60010: the Death Charge case — cooldown lane reports
             -- inactive while a charge recharge is rolling on the charges API.
             if spellID == 50014 or spellID == 60010 then
@@ -358,6 +368,11 @@ local ns = {
         end,
         QuerySpellCooldownDuration = function(spellID, ignoreGCD)
             if spellID == 70001 and ignoreGCD == false then
+                return gcdDur
+            end
+            -- 60011: a GCD duration is available (a GCD swipe would otherwise be
+            -- drawn) so the test proves the active recharge wins over it.
+            if spellID == 60011 and ignoreGCD == false then
                 return gcdDur
             end
             if spellID == 91004 and itemUseSpellCooldownActive then
@@ -410,7 +425,8 @@ local ns = {
                 return chargeDur
             end
             if spellID == 60001 or spellID == 60002 or spellID == 60003
-               or spellID == 60004 or spellID == 60005 or spellID == 60006 then
+               or spellID == 60004 or spellID == 60005 or spellID == 60006
+               or spellID == 60011 then
                 return chargeDur
             end
             -- 50014 / 60010: the only path that returns a DurationObject for
@@ -604,13 +620,11 @@ local function storeResolvedRuntimeState(icon, resolvedState)
     }
 end
 
-local function setTrustedGCDState(values)
-    local spellState = ns.CDMRuntimeQueries.ResetTrustedGCDSnapshot(1)
-    for spellID, value in pairs(values or {}) do
-        spellState[spellID] = value
-    end
-    ns.CDMRuntimeQueries.SetTrustIsOnGCDForBatch(values ~= nil)
-end
+-- isOnGCD is now read directly off cdInfo (NeverSecret) by the resolver, so a
+-- spell's GCD state comes from the cdInfo QuerySpellCooldown returns rather than
+-- a primed trusted-GCD snapshot. The mocked source for the GCD spell below
+-- already reports isOnGCD=true, so this is a no-op kept only to document intent.
+local function setGCDState() end
 
 local function cooldownEntry(spellID)
     return {
@@ -1033,6 +1047,35 @@ assert(state.durObj == chargeDur, "opaque-count live recharge should carry the r
 assert(state.isOnCooldown == true,
     "live cdInfo.isActive=true classifies as on-cooldown; icon-side decodes charge availability")
 
+-- 60011: live (non-mirror) multi-charge spell with a charge available and a
+-- recharge rolling, while an incidental GCD sits on the cooldown lane
+-- (cdInfo.isActive=true, isOnGCD=true). The active recharge outranks the GCD
+-- swipe — same precedence Blizzard's CooldownViewer gives the recharge — so the
+-- resolver must classify cooldown and bind the charge duration instead of
+-- flickering to gcd-only every global cooldown (Unholy DK Putrefy on the live
+-- path; the mirror path is covered in cdm_resolvers_gcd_mirror_test).
+state = resolve({
+    entry = {
+        type = "spell",
+        kind = "cooldown",
+        id = 60011,
+        spellID = 60011,
+        viewerType = "essential",
+        hasCharges = true,
+    },
+    runtimeSpellID = 60011,
+    containerKey = "essential",
+    useBuffSwipe = false,
+    showGCDSwipe = true,
+})
+
+assert(state.mode == "cooldown",
+    "live recharge during a GCD should resolve as cooldown, not gcd-only, got " .. tostring(state.mode))
+assert(state.durObj == chargeDur,
+    "live recharge during a GCD should bind the charge recharge DurationObject, got " .. tostring(state.durObj))
+assert(state.sourceID == 60011,
+    "live recharge during a GCD should source the runtime spellID, got " .. tostring(state.sourceID))
+
 -- DK Death Charge reference case: a multi-charge spell whose cooldown lane
 -- reports isActive=false (the spell is castable from a remaining charge)
 -- while a recharge is rolling on the charges API. The resolver must still
@@ -1089,9 +1132,11 @@ assert(state.isOnCooldown == true,
 assert(state.mirrorBacked == nil,
     "live charge recharge without a mirror should not be mirror-backed")
 
-setTrustedGCDState({
-    [70001] = true,
-})
+-- isOnGCD is read directly off cdInfo (NeverSecret). 70001 reports
+-- isActive=true / isOnGCD=true and has no real cooldown, so it must classify
+-- gcd-only and bind the GCD DurationObject straight from the live read — no
+-- trusted-GCD snapshot priming, no enable/disable toggle.
+setGCDState()
 state = resolve({
     entry = cooldownEntry(70001),
     runtimeSpellID = 70001,
@@ -1107,7 +1152,6 @@ assert(state.sourceID == 70001, "GCD-only source should identify the spell")
 assert(state.gcdOnly == true, "GCD-only state should publish gcdOnly")
 assert(state.isGCDOnly == true, "GCD-only state should publish isGCDOnly")
 assert(state.isRealCooldownMode == false, "GCD-only state should not publish real cooldown mode")
-setTrustedGCDState(nil)
 
 itemAuraActive = true
 itemCooldownActive = false

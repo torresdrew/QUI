@@ -12,7 +12,7 @@
     Phase 1 plan: docs/superpowers/plans/2026-05-22-damage-meter-phase-1.md
 ]]
 
--- luacheck: globals CreateFrame C_DamageMeter UIParent RAID_CLASS_COLORS CLASS_ICON_TCOORDS _G SetCVar InCombatLockdown C_StringUtil GetTime Enum MenuUtil GameTooltip SlashCmdList GetTimePreciseSec C_Spell C_Timer AbbreviateNumbers BreakUpLargeNumbers CreateAbbreviateConfig
+-- luacheck: globals CreateFrame C_DamageMeter UIParent RAID_CLASS_COLORS CLASS_ICON_TCOORDS _G SetCVar InCombatLockdown C_StringUtil GetTime Enum MenuUtil GameTooltip SlashCmdList GetTimePreciseSec C_Spell C_Timer AbbreviateNumbers BreakUpLargeNumbers CreateAbbreviateConfig Ambiguate
 local _, ns = ...
 
 -- ns.Helpers is provided by core/utils.lua (loaded before this module via core.xml).
@@ -86,6 +86,46 @@ local function GetSettings()
     end
     return QUI.db.profile.damageMeter.native
 end
+
+-- Strip the "-Realm" suffix from a unit name when the shortenNames setting is
+-- on (e.g. "Anya-Stormrage" -> "Anya"). Ambiguate is a C function that's safe
+-- to call on a secret-tagged name (the API marks source.name ConditionalSecret)
+-- — it passes through anything it can't read, and the value still goes straight
+-- to a FontString. We never compare or concatenate the result against a secret
+-- here, so the only Lua-side touch is the C call. Returns nil for nil input so
+-- callers keep their own "?" / "Unknown" fallback.
+local function ShortenName(name)
+    if name == nil then return nil end
+    local s = GetSettings()
+    if s and s.shortenNames and Ambiguate then
+        return Ambiguate(name, "short") or name
+    end
+    return name
+end
+QUI_DamageMeter.ShortenName = ShortenName
+
+-- Sort `list` in place, descending by the key returned from `keyFn` — but ONLY
+-- when every key is comparable. table.sort must never be handed a comparator
+-- that can return false for *every* pair: under such a degenerate comparator
+-- Lua's quicksort reorders the array instead of leaving it untouched, which
+-- scrambles an already-sorted list (high values land mid-list or at the
+-- bottom). During combat the C_DamageMeter amounts are secret-tagged, so the
+-- old "return false when secret" comparators degenerated exactly that way and
+-- the meter rendered out of order. The API already returns combatSources sorted
+-- by amount on the C side (where secrets are readable), so when any key is
+-- secret we skip the Lua sort and keep that order. `isSecret` is injected so
+-- this stays unit-testable under plain Lua.
+local function SortByDescSafe(list, keyFn, isSecret)
+    if isSecret then
+        for i = 1, #list do
+            if isSecret(keyFn(list[i])) then return end
+        end
+    end
+    table.sort(list, function(a, b)
+        return (keyFn(a) or 0) > (keyFn(b) or 0)
+    end)
+end
+QUI_DamageMeter.SortByDescSafe = SortByDescSafe
 
 -- ==== Data ====
 local Data = {}
@@ -423,6 +463,131 @@ function Data:GetBreakdownView(sessionType, damageMeterType, sourceGUID, sourceC
     }
 end
 
+-- ===== Target breakdown (who damaged whom) =====
+-- The breakdown popup also shows damage-to-targets, reconstructed from the
+-- EnemyDamageTaken meter where the roles invert: each enemy source's
+-- combatSpells carry a combatSpellDetails whose unitName is the *attacking
+-- player*. Player names stay readable even when enemy names are secret (M+), so
+-- this is the secret-safe way to get per-target totals. Two directions:
+--   * enemy source  -> AggregateSpellsByUnit lists the players who hit it.
+--   * player source -> pivot every enemy's player-totals to get the enemies a
+--     given player hit (PivotPlayerTargets).
+-- combatSpellDetails fields used: unitName, unitClassFilename, specIconID.
+
+-- Pure: aggregate a combatSpells array by combatSpellDetails.unitName into a
+-- sorted (desc) list of { name, classFilename, specIconID, totalAmount }.
+-- Entries whose unit name OR amount is secret are skipped — a secret can't be a
+-- table key or a summand. The accumulated totals are plain Lua numbers, so the
+-- final sort comparator is never degenerate (see SortByDescSafe note). isSecret
+-- is injected for unit testing.
+local function AggregateSpellsByUnit(combatSpells, isSecret)
+    local byName, list = {}, {}
+    for _, spell in ipairs(combatSpells or {}) do
+        local det  = spell.combatSpellDetails
+        local name = det and det.unitName
+        local amt  = spell.totalAmount
+        local nameOk = name ~= nil and not (isSecret and isSecret(name))
+        local amtOk  = amt  ~= nil and not (isSecret and isSecret(amt))
+        if nameOk and amtOk then
+            local e = byName[name]
+            if not e then
+                e = { name = name, classFilename = det.unitClassFilename,
+                      specIconID = det.specIconID, totalAmount = 0 }
+                byName[name] = e
+                list[#list + 1] = e
+            end
+            e.totalAmount = e.totalAmount + amt
+        end
+    end
+    table.sort(list, function(a, b) return a.totalAmount > b.totalAmount end)
+    return list
+end
+Data._AggregateSpellsByUnit = AggregateSpellsByUnit
+
+-- Pure: pivot per-enemy player breakdowns into a per-player target map.
+-- `perEnemy` is a list of { enemyName = <cstring, may be secret>, players =
+-- <AggregateSpellsByUnit result> }. Returns map[playerName] = sorted (desc)
+-- list of { name = enemyName, totalAmount }. Player names key the map (never
+-- secret); enemy names are stored as values only (a secret enemy name renders
+-- fine in a FontString, it just can't be a key).
+local function PivotPlayerTargets(perEnemy)
+    local map = {}
+    for _, e in ipairs(perEnemy or {}) do
+        for _, p in ipairs(e.players or {}) do
+            local bucket = map[p.name]
+            if not bucket then bucket = {}; map[p.name] = bucket end
+            bucket[#bucket + 1] = { name = e.enemyName, totalAmount = p.totalAmount }
+        end
+    end
+    for _, list in pairs(map) do
+        table.sort(list, function(a, b) return a.totalAmount > b.totalAmount end)
+    end
+    return map
+end
+Data._PivotPlayerTargets = PivotPlayerTargets
+
+-- Raw combatSpells for a source — no C_Spell name/icon resolution (target
+-- aggregation only needs combatSpellDetails + totalAmount). pcall-guarded like
+-- GetBreakdownView.
+local function FetchSourceSpells(sessionType, meterType, sourceGUID, sourceCreatureID)
+    if not (C_DamageMeter and C_DamageMeter.GetCombatSessionSourceFromType) then return {} end
+    local ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
+        sessionType, meterType, sourceGUID, sourceCreatureID)
+    if not ok or type(src) ~= "table" then return {} end
+    return src.combatSpells or {}
+end
+
+local function EnemyDamageTakenType()
+    local T = Enum and Enum.DamageMeterType
+    return T and T.EnemyDamageTaken
+end
+
+-- Players who damaged a single enemy source (window meter type =
+-- EnemyDamageTaken, user clicks an enemy row).
+function Data:GetEnemyAttackers(sessionType, sourceGUID, sourceCreatureID)
+    local eType = EnemyDamageTakenType()
+    if not eType then return {} end
+    local IsSecret = Helpers and Helpers.IsSecretValue
+    return AggregateSpellsByUnit(
+        FetchSourceSpells(sessionType, eType, sourceGUID, sourceCreatureID), IsSecret)
+end
+
+-- playerName -> sorted enemy-target list, built by cross-referencing every
+-- enemy source in EnemyDamageTaken. Cached per (sessionType, enemy-view
+-- generation): the key changes whenever the EnemyDamageTaken view is re-fetched
+-- (the dirty/ticker path bumps its generation), so it stays fresh without its
+-- own event hooks.
+function Data:GetPlayerTargetsMap(sessionType)
+    local eType = EnemyDamageTakenType()
+    if not eType then return {} end
+    local enemyView = self:GetView(sessionType, eType)
+    local genKey = tostring(sessionType) .. ":" .. tostring(enemyView.generation or 0)
+    if self._targetsCacheKey == genKey and self._targetsCache then
+        return self._targetsCache
+    end
+    local IsSecret = Helpers and Helpers.IsSecretValue
+    local perEnemy = {}
+    for _, enemy in ipairs(enemyView.sources or {}) do
+        perEnemy[#perEnemy + 1] = {
+            enemyName = enemy.name,
+            players   = AggregateSpellsByUnit(
+                FetchSourceSpells(sessionType, eType, enemy.sourceGUID, enemy.sourceCreatureID),
+                IsSecret),
+        }
+    end
+    local map = PivotPlayerTargets(perEnemy)
+    self._targetsCacheKey = genKey
+    self._targetsCache    = map
+    return map
+end
+
+function Data:GetPlayerTargets(sessionType, playerName)
+    if playerName == nil then return {} end
+    local IsSecret = Helpers and Helpers.IsSecretValue
+    if IsSecret and IsSecret(playerName) then return {} end
+    return self:GetPlayerTargetsMap(sessionType)[playerName] or {}
+end
+
 -- ==== Combined healing (Healing Done + Absorbs) ====
 -- Blizzard's C_DamageMeter exposes HealingDone and Absorbs as separate meter
 -- types, but most healers think of their contribution as heals+shields
@@ -479,12 +644,7 @@ function Data:GetCombinedHealingView(sessionType)
             if isIndexableKey(a.sourceGUID) then byGuid[a.sourceGUID] = copy end
         end
     end
-    table.sort(merged, function(x, y)
-        local xv = x.totalAmount or 0
-        local yv = y.totalAmount or 0
-        if IsSecret and (IsSecret(xv) or IsSecret(yv)) then return false end
-        return xv > yv
-    end)
+    SortByDescSafe(merged, function(s) return s.totalAmount end, IsSecret)
     local maxAmount = 0
     for i, s in ipairs(merged) do
         s.rank = i
@@ -543,12 +703,7 @@ function Data:GetCombinedHealingBreakdown(sessionType, sourceGUID, sourceCreatur
             if sp.spellID then bySpell[sp.spellID] = copy end
         end
     end
-    table.sort(merged, function(x, y)
-        local xv = x.totalAmount or 0
-        local yv = y.totalAmount or 0
-        if IsSecret and (IsSecret(xv) or IsSecret(yv)) then return false end
-        return xv > yv
-    end)
+    SortByDescSafe(merged, function(s) return s.totalAmount end, IsSecret)
     local maxAmount = 0
     for i, sp in ipairs(merged) do
         sp.rank = i
@@ -988,7 +1143,7 @@ function Window:_AttachRowVisuals(row)
             local cc = RAID_CLASS_COLORS[src.classFilename]
             cr, cg, cb = cc.r, cc.g, cc.b
         end
-        GameTooltip:AddLine(src.name or "?", cr, cg, cb)
+        GameTooltip:AddLine(ShortenName(src.name) or "?", cr, cg, cb)
 
         if src.classFilename then
             GameTooltip:AddLine(src.classFilename, 0.7, 0.7, 0.7)
@@ -1133,7 +1288,7 @@ function Window:_SetRowSource(row, source, maxAmount)
         end
     end
 
-    row.Name:SetText((source.rank or 0) .. ". " .. (source.name or "?"))
+    row.Name:SetText((source.rank or 0) .. ". " .. (ShortenName(source.name) or "?"))
 
     -- Value: primary metric per the meter type, with the OTHER metric in
     -- parens as secondary. For Dps/Hps types, primary = amountPerSecond and
@@ -1235,6 +1390,16 @@ function Window:_ApplyHeader()
         .. " | " .. LabelForSession(self.sessionType))
 end
 
+-- Window border color resolves like headerText: an explicit colors.border
+-- override wins; nil falls back to the QUI accent. Returns r, g, b, a.
+function Window:_ResolveBorderColor()
+    local border = ResolveAppearance(self.windowID, "colors", "border")
+    if border then
+        return border[1] or 1, border[2] or 1, border[3] or 1, border[4] or 1
+    end
+    return GetAccentColor()
+end
+
 function Window:_ApplyColors()
     local windowID = self.windowID
 
@@ -1242,6 +1407,13 @@ function Window:_ApplyColors()
     if self.backdropTex then
         local bg = ResolveAppearance(windowID, "colors", "bg") or { 0, 0, 0, 0.85 }
         self.backdropTex:SetColorTexture(bg[1] or 0, bg[2] or 0, bg[3] or 0, bg[4] or 0.85)
+    end
+
+    -- Window border (nil = accent). The 1px border frame is built in Window:New;
+    -- recolor it live here so the Appearance -> Colors -> Border picker applies
+    -- without a /reload (RefreshAll -> Refresh -> _ApplyColors).
+    if self.border and self.border.SetBackdropBorderColor then
+        self.border:SetBackdropBorderColor(self:_ResolveBorderColor())
     end
 
     -- Header text color (TypeLabel + SessionTimer). nil = accent.
@@ -1330,46 +1502,16 @@ do
     end
 end
 
--- Re-sort + recompute max for per-second meter types. Returns the source
--- array to render against + the matching max value for bar fill ratios.
--- For non-per-second types this is a passthrough (trust Blizzard's order +
--- the API's maxAmount field). For Dps/Hps we make a shallow-copied + sorted
--- array (so we don't mutate the cached view) and walk it for max
--- amountPerSecond. Secret-tagged values are skipped during sort/max.
-local function PrepareSourcesForRender(view, meterType)
-    local sources
-    if not IsPerSecondType(meterType) then
-        sources = view.sources
-    else
-        -- Per-second views rank by amountPerSecond (a late-joining DPS ranks
-        -- low by total but high by rate). Shallow-copy so we don't mutate the
-        -- cached view, then sort. The comparator bails on secret values, so
-        -- during combat the API's order stands and the re-sort only refines
-        -- the ranking post-combat once values declassify.
-        local IsSecret = Helpers and Helpers.IsSecretValue
-        local out = {}
-        for i, s in ipairs(view.sources) do
-            out[i] = {
-                name             = s.name,
-                classFilename    = s.classFilename,
-                specIconID       = s.specIconID,
-                totalAmount      = s.totalAmount,
-                amountPerSecond  = s.amountPerSecond,
-                isLocalPlayer    = s.isLocalPlayer,
-                sourceGUID       = s.sourceGUID,
-                sourceCreatureID = s.sourceCreatureID,
-                deathRecapID     = s.deathRecapID,
-                rank             = i,
-            }
-        end
-        table.sort(out, function(a, b)
-            local av, bv = a.amountPerSecond, b.amountPerSecond
-            if IsSecret and (IsSecret(av) or IsSecret(bv)) then return false end
-            return (av or 0) > (bv or 0)
-        end)
-        for i, s in ipairs(out) do s.rank = i end
-        sources = out
-    end
+-- Returns the source array to render against + the matching max value for bar
+-- fill ratios. One path for every meter type: trust the API's order. C_DamageMeter
+-- returns combatSources sorted by amount on the C side (where secret combat
+-- values are readable) — and that is also the correct order for the per-second
+-- views, because QUI derives amountPerSecond as totalAmount/duration (a constant
+-- divisor across all sources), so rate-order == total-order == API order. There
+-- is nothing to re-sort: doing so in Lua could only scramble that order, since
+-- table.sort degenerates on the secret-tagged amounts during combat.
+local function PrepareSourcesForRender(view)
+    local sources = view.sources
     -- Bar-fill max: the rank-1 source's totalAmount, returned RAW (it may be
     -- secret during combat). _SetRowSource hands it to the StatusBar widget,
     -- which divides on the C side. Bars are total-based even for per-second
@@ -1570,7 +1712,7 @@ function Window:Refresh()
     end
 
     self:_EnsureRowPool()
-    local sources, fillMax = PrepareSourcesForRender(view, self.damageMeterType)
+    local sources, fillMax = PrepareSourcesForRender(view)
     local renderCount = math.min(#sources, BAR_POOL_SIZE)
 
     for i = 1, renderCount do
@@ -1705,6 +1847,13 @@ local function AttachWindowResizeOverlay(overlay, frame, window, windowID)
 
             if window.Refresh then
                 pcall(window.Refresh, window)
+            end
+
+            -- Re-sync the Layout Mode Frame Size sliders to the dragged size
+            -- (they read the live size only at build time otherwise).
+            local U = ns.QUI_LayoutMode_Utils
+            if U and U.RefreshActiveSizeSliders then
+                U.RefreshActiveSizeSliders()
             end
         end)
 
@@ -1911,9 +2060,8 @@ function Window.New(windowID)
     end
     self.frame = frame
 
-    -- Backdrop child: dark fill behind the window. Border treatment is the
-    -- per-row 1px accent (T10) rather than a window-level border; this keeps
-    -- the visual lighter and matches the Faithful style in the spec.
+    -- Backdrop child: dark fill behind the window. The window border is a
+    -- separate 1px ring (added below); rows also carry a per-row accent (T10).
     local backdrop = CreateFrame("Frame", nil, frame)
     backdrop:SetAllPoints(frame)
     backdrop:SetFrameLevel(frame:GetFrameLevel())
@@ -1925,6 +2073,14 @@ function Window.New(windowID)
     bgTex:SetColorTexture(appBg[1], appBg[2], appBg[3], appBg[4])
     self.backdrop = backdrop
     self.backdropTex = bgTex
+
+    -- Window border: a 1px ring just outside the frame edges, colored from
+    -- colors.border (nil = QUI accent). Built once here; _ApplyColors repaints
+    -- it when the Appearance -> Colors -> Border picker changes. Guarded so a
+    -- missing UIKit (early load) degrades gracefully to no border.
+    if ns.UIKit and ns.UIKit.CreateBackdropBorder then
+        self.border = ns.UIKit.CreateBackdropBorder(frame, 1, self:_ResolveBorderColor())
+    end
 
     -- Header bar (Button so RegisterForClicks/OnClick work for the right-click
     -- config menu below; anchored TOP-LEFT/TOP-RIGHT, height from settings).
@@ -2090,6 +2246,8 @@ Breakdown = {}
 Breakdown.__index = Breakdown
 QUI_DamageMeter.Breakdown = Breakdown
 local BREAKDOWN_POOL_SIZE = 25
+local TARGET_POOL_SIZE    = 10   -- max target rows shown beneath the spell list
+local TARGETS_LABEL_H     = 16   -- height of the "Targets" section label
 
 -- Position helper. If anchor=="row" we anchor TOPLEFT of popup to TOPRIGHT of
 -- the row. We mirror to TOPRIGHT→TOPLEFT when the popup would overflow the
@@ -2111,21 +2269,9 @@ local function AnchorBreakdownTo(popup, row, anchorMode)
     end
 end
 
-function Breakdown:_BuildRow(index)
-    local barH = ResolveAppearance(self.parentWindowID, "barHeight") or 18
-    local barGap = ResolveAppearance(self.parentWindowID, "barSpacing") or 2
-    local headerH = ResolveAppearance(self.parentWindowID, "headerHeight") or 22
-
-    local row = CreateFrame("Frame", nil, self.frame)
-    row:SetHeight(barH)
-    row:SetPoint("LEFT",  self.frame, "LEFT",  0, 0)
-    row:SetPoint("RIGHT", self.frame, "RIGHT", 0, 0)
-    if index == 1 then
-        row:SetPoint("TOP", self.frame, "TOP", 0, -headerH)
-    else
-        row:SetPoint("TOP", self.rows[index - 1], "BOTTOM", 0, -barGap)
-    end
-
+-- Shared icon / bar / name / value visuals for a breakdown row (spell rows and
+-- target rows are visually identical; only their anchoring differs).
+function Breakdown:_AttachBreakdownRowVisuals(row, barH)
     row.Icon = row:CreateTexture(nil, "ARTWORK")
     row.Icon:SetSize(barH, barH)
     row.Icon:SetPoint("LEFT", row, "LEFT", 0, 0)
@@ -2151,7 +2297,46 @@ function Breakdown:_BuildRow(index)
     row.Value = row.Bar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     row.Value:SetPoint("RIGHT", row.Bar, "RIGHT", -4, 0)
     row.Value:SetJustifyH("RIGHT")
+end
 
+function Breakdown:_BuildRow(index)
+    local barH = ResolveAppearance(self.parentWindowID, "barHeight") or 18
+    local barGap = ResolveAppearance(self.parentWindowID, "barSpacing") or 2
+    local headerH = ResolveAppearance(self.parentWindowID, "headerHeight") or 22
+
+    local row = CreateFrame("Frame", nil, self.frame)
+    row:SetHeight(barH)
+    row:SetPoint("LEFT",  self.frame, "LEFT",  0, 0)
+    row:SetPoint("RIGHT", self.frame, "RIGHT", 0, 0)
+    if index == 1 then
+        row:SetPoint("TOP", self.frame, "TOP", 0, -headerH)
+    else
+        row:SetPoint("TOP", self.rows[index - 1], "BOTTOM", 0, -barGap)
+    end
+
+    self:_AttachBreakdownRowVisuals(row, barH)
+    row:Hide()
+    return row
+end
+
+-- Target rows live below the "Targets" label. Row 1 anchors to the label
+-- (whose own TOP anchor is repositioned each Refresh below the last spell row);
+-- subsequent rows chain off the previous target row.
+function Breakdown:_BuildTargetRow(index)
+    local barH = ResolveAppearance(self.parentWindowID, "barHeight") or 18
+    local barGap = ResolveAppearance(self.parentWindowID, "barSpacing") or 2
+
+    local row = CreateFrame("Frame", nil, self.frame)
+    row:SetHeight(barH)
+    row:SetPoint("LEFT",  self.frame, "LEFT",  0, 0)
+    row:SetPoint("RIGHT", self.frame, "RIGHT", 0, 0)
+    if index == 1 then
+        row:SetPoint("TOP", self.TargetsLabel, "BOTTOM", 0, -barGap)
+    else
+        row:SetPoint("TOP", self.targetRows[index - 1], "BOTTOM", 0, -barGap)
+    end
+
+    self:_AttachBreakdownRowVisuals(row, barH)
     row:Hide()
     return row
 end
@@ -2201,9 +2386,22 @@ function Breakdown.New(parentWindow)
     closeBtn:SetScript("OnClick", function() self:Close() end)
     self.CloseButton = closeBtn
 
-    -- Row pool
+    -- Spell row pool
     for i = 1, BREAKDOWN_POOL_SIZE do
         self.rows[i] = self:_BuildRow(i)
+    end
+
+    -- Targets section: a label ("Targets" / "Attacked By") + its own row pool.
+    -- The label's TOP anchor is repositioned each Refresh (below the last spell
+    -- row), so it's created here only to be the stable anchor for target row 1.
+    self.TargetsLabel = self.frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    self.TargetsLabel:SetJustifyH("LEFT")
+    self.TargetsLabel:SetHeight(TARGETS_LABEL_H)   -- deterministic height for row-1 anchoring
+    self.TargetsLabel:SetText("")
+    self.TargetsLabel:Hide()
+    self.targetRows = {}
+    for i = 1, TARGET_POOL_SIZE do
+        self.targetRows[i] = self:_BuildTargetRow(i)
     end
 
     -- Outside-click dismissal (via GLOBAL_MOUSE_DOWN). Only registered while open.
@@ -2253,6 +2451,67 @@ function Breakdown:_SetSpellRow(row, spell, maxAmount)
     end
 end
 
+-- A target row: an enemy this player hit, or a player who hit this enemy.
+-- target = { name, totalAmount, classFilename?, specIconID? }. Class data is
+-- present only for player targets (enemy->players direction); enemy targets
+-- render with a blank icon slot (matching iconStyle "none").
+function Breakdown:_SetTargetRow(row, target, maxAmount)
+    if target.specIconID and target.specIconID ~= 0 then
+        row.Icon:SetTexture(target.specIconID)
+        row.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    elseif target.classFilename and CLASS_ICON_TCOORDS then
+        row.Icon:SetTexture("Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes")
+        local coords = CLASS_ICON_TCOORDS[target.classFilename]
+        if coords then
+            row.Icon:SetTexCoord(coords[1], coords[2], coords[3], coords[4])
+        else
+            row.Icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        end
+    else
+        row.Icon:SetTexture(nil)
+    end
+
+    row.Name:SetText(ShortenName(target.name) or "?")
+    local numberFormat = ResolveAppearance(self.parentWindowID, "numberFormat") or "compact"
+    row.Value:SetText(FormatNumber(target.totalAmount, numberFormat))
+
+    -- Aggregated target totals are plain Lua numbers (secret amounts were
+    -- skipped during aggregation), but route through the widget anyway for
+    -- consistency with the rest of the meter.
+    local IsSecret = Helpers and Helpers.IsSecretValue
+    local fillMin, fillMaxValue, fillValue = ComputeBarFill(nil, target, maxAmount, nil, IsSecret)
+    row.Bar:SetMinMaxValues(fillMin, fillMaxValue)
+    row.Bar:SetValue(fillValue or 0)
+
+    -- Bar color: class color for known players, else parent accent / custom.
+    local alpha = ResolveAppearance(self.parentWindowID, "barFillAlpha") or 1
+    if target.classFilename and RAID_CLASS_COLORS and RAID_CLASS_COLORS[target.classFilename] then
+        local c = RAID_CLASS_COLORS[target.classFilename]
+        row.Bar:SetStatusBarColor(c.r, c.g, c.b, alpha)
+    elseif ResolveAppearance(self.parentWindowID, "barColorAccent") then
+        local ar, ag, ab = GetAccentColor()
+        row.Bar:SetStatusBarColor(ar, ag, ab, alpha)
+    else
+        local bc = ResolveAppearance(self.parentWindowID, "barColor") or { 0.35, 0.55, 0.8, 1 }
+        row.Bar:SetStatusBarColor(bc[1] or 0.35, bc[2] or 0.55, bc[3] or 0.8, alpha)
+    end
+end
+
+-- Decide which target list (and section label) to show for the current meter
+-- type. DamageDone/Dps source = a player → the enemies they hit. EnemyDamageTaken
+-- source = an enemy → the players who hit it. Other types have no target view.
+function Breakdown:_ResolveTargets(meterType)
+    local T = Enum and Enum.DamageMeterType
+    if not (T and self.source) then return nil, nil end
+    local st = self.parentWindow.sessionType
+    if meterType == T.EnemyDamageTaken then
+        return Data:GetEnemyAttackers(st, self.source.sourceGUID, self.source.sourceCreatureID), "Attacked By"
+    elseif meterType == T.DamageDone or meterType == T.Dps then
+        return Data:GetPlayerTargets(st, self.source.name), "Targets"
+    end
+    return nil, nil
+end
+
 function Breakdown:Refresh()
     if not self.source or not self.frame:IsShown() then return end
     local _t0 = Perf.enabled and PerfNow() or 0
@@ -2272,7 +2531,7 @@ function Breakdown:Refresh()
 
     -- Title: "Damage Done by <Name>"
     local label = LabelForType(damageMeterType)
-    self.TitleLabel:SetText(label .. " by " .. (self.source.name or "?"))
+    self.TitleLabel:SetText(label .. " by " .. (ShortenName(self.source.name) or "?"))
 
     local visibleCount = math.min(#view.spells, BREAKDOWN_POOL_SIZE)
     for i = 1, visibleCount do
@@ -2283,15 +2542,49 @@ function Breakdown:Refresh()
         self.rows[i]:Hide()
     end
 
-    -- Resize frame to fit visible rows. Row layout: header, then row 1 flush
-    -- to header, then (barH + barGap) per additional row, plus a trailing
-    -- barGap for visual padding.
     local barH    = ResolveAppearance(self.parentWindowID, "barHeight") or 18
     local barGap  = ResolveAppearance(self.parentWindowID, "barSpacing") or 2
     local headerH = ResolveAppearance(self.parentWindowID, "headerHeight") or 22
-    local totalH  = headerH
-    if visibleCount > 0 then
-        totalH = headerH + visibleCount * barH + (visibleCount - 1) * barGap + barGap
+
+    -- Targets section beneath the spell list. The label re-anchors below the
+    -- last visible spell row (or the header when there are no spells).
+    local targets, targetsLabel = self:_ResolveTargets(damageMeterType)
+    local targetCount = 0
+    if targets and #targets > 0 and targetsLabel then
+        targetCount = math.min(#targets, TARGET_POOL_SIZE)
+    end
+    if targetCount > 0 then
+        self.TargetsLabel:ClearAllPoints()
+        if visibleCount > 0 then
+            self.TargetsLabel:SetPoint("TOPLEFT", self.rows[visibleCount], "BOTTOMLEFT", 6, -barGap)
+        else
+            self.TargetsLabel:SetPoint("TOPLEFT", self.frame, "TOPLEFT", 6, -headerH)
+        end
+        self.TargetsLabel:SetText(targetsLabel)
+        self.TargetsLabel:Show()
+        local tMax = targets[1].totalAmount
+        for i = 1, targetCount do
+            self:_SetTargetRow(self.targetRows[i], targets[i], tMax)
+            self.targetRows[i]:Show()
+        end
+        for i = targetCount + 1, #self.targetRows do self.targetRows[i]:Hide() end
+    else
+        self.TargetsLabel:Hide()
+        for i = 1, #self.targetRows do self.targetRows[i]:Hide() end
+    end
+
+    -- Resize frame to fit header + spell rows [+ targets label + target rows],
+    -- with a trailing barGap of padding. Matches the anchor chain above.
+    local spellBlock  = visibleCount > 0 and (visibleCount * barH + (visibleCount - 1) * barGap) or 0
+    local targetBlock = targetCount > 0
+        and (TARGETS_LABEL_H + barGap + targetCount * barH + (targetCount - 1) * barGap) or 0
+    local totalH = headerH
+    if visibleCount > 0 and targetCount > 0 then
+        totalH = headerH + spellBlock + barGap + targetBlock + barGap
+    elseif visibleCount > 0 then
+        totalH = headerH + spellBlock + barGap
+    elseif targetCount > 0 then
+        totalH = headerH + targetBlock + barGap
     end
     self.frame:SetHeight(totalH)
 

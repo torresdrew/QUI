@@ -28,6 +28,10 @@ local gcdSpellFallbackEnabled = false
 local cooldownQueryCounts = {}
 local auraDataQueryCount = 0
 local SECRET_COOLDOWN_FIELD = { token = "secret-cooldown-field" }
+-- Per-spell isOnGCD overrides applied to the cdInfo QuerySpellCooldown returns.
+-- The resolver reads isOnGCD directly off cdInfo (NeverSecret), so injecting it
+-- here is how a test primes a spell's GCD state. Managed via setGCDState below.
+local gcdOverrides = {}
 
 function issecretvalue(value)
     return value == SECRET_COOLDOWN_FIELD
@@ -192,6 +196,20 @@ local ns = {
                     spellID = spellID,
                 }
             end
+            if spellID == 1247378 and viewerType == "essential" then
+                -- Putrefy (Unholy DK) reference case: a known multi-charge
+                -- essential mirror. charges=true keeps HasActiveChargeRecharge's
+                -- combat gate satisfied so the recharge is detected in lockdown.
+                return {
+                    cooldownID = 27991,
+                    isActive = true,
+                    durObj = mirrorDuration,
+                    durObjSource = "spell-charge",
+                    mirrorEpoch = 27,
+                    spellID = spellID,
+                    charges = true,
+                }
+            end
         end,
         QuerySpellCharges = function(spellID)
             if spellID == 66666 then
@@ -209,16 +227,20 @@ local ns = {
             if spellID == 1227281 then
                 return { currentCharges = 1, maxCharges = 2, isActive = true }
             end
+            if spellID == 1247378 then
+                return { currentCharges = 1, maxCharges = 3, isActive = true }
+            end
             return nil
         end,
         QuerySpellChargeDuration = function(spellID)
-            if spellID == 1227280 or spellID == 1227281 then
+            if spellID == 1227280 or spellID == 1227281 or spellID == 1247378 then
                 return liveChargeDuration
             end
             return nil
         end,
         QuerySpellCooldown = function(spellID)
             cooldownQueryCounts[spellID] = (cooldownQueryCounts[spellID] or 0) + 1
+            local info = (function()
             if spellID == 12345 then
                 return { isActive = true }
             end
@@ -325,12 +347,23 @@ local ns = {
             if spellID == 1227281 then
                 return { isActive = true, isOnGCD = false }
             end
+            if spellID == 1247378 then
+                -- Recharging a charge while an incidental GCD (from casting
+                -- another spell) sits on the cooldown lane: isActive=true,
+                -- isOnGCD=true. The charge recharge must still win.
+                return { isActive = true, isOnGCD = true }
+            end
             if spellID == 262626 then
                 return { isActive = true, isOnGCD = false }
             end
             if spellID == 22222 or spellID == 54321 then
                 return { isActive = false }
             end
+            end)()
+            if info and gcdOverrides[spellID] ~= nil then
+                info.isOnGCD = gcdOverrides[spellID]
+            end
+            return info
         end,
         QuerySpellCooldownDuration = function(spellID, ignoreGCD)
             if spellID == 61304 and gcdSpellFallbackEnabled then
@@ -637,12 +670,18 @@ local loadChunk = dofile("tests/helpers/load_cdm_consolidated_chunk.lua")
 loadChunk("modules/cdm/cdm_runtime.lua", "cdm_runtime_queries.lua")("QUI", ns)
 loadChunk("modules/cdm/cdm_runtime.lua", "cdm_resolvers.lua")("QUI", ns)
 
-local function setTrustedGCDState(values)
-    local spellState = ns.CDMRuntimeQueries.ResetTrustedGCDSnapshot(1)
-    for spellID, value in pairs(values or {}) do
-        spellState[spellID] = value
+-- isOnGCD is now read directly off cdInfo (NeverSecret) by the resolver, so
+-- the per-spell GCD state is injected onto the mocked cooldown-info table the
+-- source returns (see gcdOverrides handling in QuerySpellCooldown above)
+-- instead of priming a trusted-GCD snapshot. setGCDState(nil) clears the
+-- overrides, leaving each spell's own hardcoded isOnGCD authoritative.
+local function setGCDState(values)
+    for k in pairs(gcdOverrides) do
+        gcdOverrides[k] = nil
     end
-    ns.CDMRuntimeQueries.SetTrustIsOnGCDForBatch(values ~= nil)
+    for spellID, value in pairs(values or {}) do
+        gcdOverrides[spellID] = value
+    end
 end
 
 local function ReadMemCounter(name)
@@ -654,7 +693,7 @@ local function ReadMemCounter(name)
     return 0
 end
 
-setTrustedGCDState({
+setGCDState({
     [12345] = true,
     [22222] = true,
     [54321] = true,
@@ -700,7 +739,7 @@ assert(durObj == gcdDuration, "trusted GCD state should resolve when no active m
 assert(mode == "gcd-only", "trusted GCD state should resolve as gcd-only")
 assert(sourceID == 12345, "GCD-only source should be the runtime spellID")
 
-setTrustedGCDState(nil)
+setGCDState(nil)
 
 local liveCooldownGCDIcon = {
     _spellEntry = {
@@ -713,9 +752,12 @@ local liveCooldownGCDIcon = {
 
 durObj, mode, sourceID = ResolveIconFields(liveCooldownGCDIcon)
 
-assert(durObj == nil, "untrusted live isOnGCD should not render a GCD when trusted batch state is absent")
-assert(mode == "inactive", "untrusted live isOnGCD should not resolve as gcd-only")
-assert(sourceID == nil, "untrusted live isOnGCD should not bind a GCD source")
+-- isOnGCD is read directly off cdInfo (NeverSecret). Spell 33333's cdInfo is
+-- { isActive=true, isOnGCD=true } with no real cooldown, so the resolver binds
+-- the GCD DurationObject and classifies gcd-only purely from the live read.
+assert(durObj == gcdDuration, "live isOnGCD should render the GCD DurationObject via the direct read")
+assert(mode == "gcd-only", "live isOnGCD=true should resolve as gcd-only")
+assert(sourceID == 33333, "GCD-only source should be the runtime spellID")
 
 local mirroredGCDIcon = {
     _spellEntry = {
@@ -780,7 +822,7 @@ durObj, mode, sourceID = ResolveIconFields(cooldownFrameMirroredGCDWithoutExplic
 assert(durObj == realCooldownDuration, "cooldown mode should resolve durObj from live API, got " .. tostring(durObj))
 assert(mode == "cooldown", "cooldown-frame mirror should resolve as cooldown when isOnGCD=false")
 
-setTrustedGCDState({
+setGCDState({
     [242424] = true,
     [252525] = false,
     [85948] = true,
@@ -835,7 +877,7 @@ assert(durObj == gcdDuration, "mirror cooldown activity should query the mirror 
 assert(mode == "gcd-only", "usable base spell during GCD should not inherit stale mirror cooldown desaturation")
 assert(sourceID == 85948, "runtime override mismatch should resolve GCD against the mirror/base spellID")
 
-setTrustedGCDState(nil)
+setGCDState(nil)
 
 local cachedBaseGCDMirrorCooldownIcon = {
     _runtimeSpellID = 458128,
@@ -916,9 +958,9 @@ durObj, mode, sourceID = ResolveIconFields(untrustedUsableStaleMirrorIcon)
 assert(mode == "cooldown", "live cdInfo says cooldown, got " .. tostring(mode))
 assert(durObj == realCooldownDuration, "cooldown durObj should be the live API value, got " .. tostring(durObj))
 
-setTrustedGCDState(nil)
+setGCDState(nil)
 
-setTrustedGCDState({
+setGCDState({
     [77777] = true,
 })
 gcdSpellFallbackEnabled = true
@@ -937,7 +979,7 @@ assert(durObj == gcdDuration, "GCD spell duration should be used when spell-spec
 assert(mode == "gcd-only", "GCD spell fallback should resolve as gcd-only")
 assert(sourceID == 77777, "GCD spell fallback source should remain the runtime spellID")
 gcdSpellFallbackEnabled = false
-setTrustedGCDState(nil)
+setGCDState(nil)
 
 local staleChargeMirrorGCDIcon = {
     _spellEntry = {
@@ -966,10 +1008,50 @@ local activeChargeMirrorIcon = {
 
 durObj, mode, sourceID = ResolveIconFields(activeChargeMirrorIcon)
 
--- Active charge cycle: cdInfo isOnGCD=true → mode gcd-only by default.
--- Live charge override (chargeInfo.isActive=true) doesn't apply because
--- the entry doesn't declare hasCharges. Mirror state lacks charges=true.
-assert(mode == "gcd-only", "charge mirror without charges flag falls through to gcd-only, got " .. tostring(mode))
+-- Active charge cycle (chargeInfo.isActive=true) during an incidental GCD
+-- (cdInfo.isActive=true, isOnGCD=true). The recharge swipe outranks the GCD:
+-- HasActiveChargeRecharge reads the live charge state directly out of combat
+-- even though this fixture omits the charges capability flag, so the resolver
+-- classifies it as cooldown instead of flickering to gcd-only. (In combat the
+-- missing flag would gate HasActiveChargeRecharge off and fall back to the GCD;
+-- the Putrefy fixture below carries charges=true to cover the combat path.)
+assert(mode == "cooldown", "active charge recharge during a GCD should resolve as cooldown, got " .. tostring(mode))
+
+-- Putrefy reference case (Unholy DK, spellID 1247378, essential mirror
+-- cooldownID 27991): a known multi-charge spell recharging a charge while the
+-- player is on the GCD from casting other spells (cdInfo.isActive=true,
+-- isOnGCD=true). The active charge recharge is the authoritative swipe —
+-- Blizzard's CooldownViewer surfaces the recharge, not the incidental GCD — so
+-- the mirror resolver must classify this as "cooldown", not flicker to
+-- "gcd-only" every global cooldown.
+local rechargingChargeDuringGCDIcon = {
+    _spellEntry = {
+        id = 1247378,
+        spellID = 1247378,
+        viewerType = "essential",
+        type = "spell",
+        hasCharges = true,
+    },
+}
+
+durObj, mode, sourceID = ResolveIconFields(rechargingChargeDuringGCDIcon)
+
+assert(mode == "cooldown",
+    "recharging multi-charge spell on the GCD should show the recharge swipe, not gcd-only, got " .. tostring(mode))
+assert(durObj == liveChargeDuration,
+    "recharging multi-charge spell should bind the charge recharge duration, got " .. tostring(durObj))
+assert(sourceID == "mirror:27991:1247378",
+    "recharging charge cooldown should key on the mirror cooldownID + base spellID, got " .. tostring(sourceID))
+
+-- Same scenario inside combat lockdown: charges=true keeps
+-- HasActiveChargeRecharge's combat gate satisfied so the recharge swipe
+-- survives instead of falling back to the GCD.
+function InCombatLockdown() return true end
+durObj, mode, sourceID = ResolveIconFields(rechargingChargeDuringGCDIcon)
+function InCombatLockdown() return false end
+
+assert(mode == "cooldown",
+    "recharging multi-charge spell on the GCD should show the recharge swipe in combat, got " .. tostring(mode))
 
 -- Scenario removed by the mode-collapse refactor (Task 4): the live-charge
 -- override that used to make an active charge recharge win over a
@@ -1019,7 +1101,7 @@ assert(sourceID == "mirror:784:262626", "mirror cooldown with explicit hasAura=f
 assert(ReadMemCounter("CDM_resolverMirrorAuraSkips") == mirrorAuraSkipsBefore + 1,
     "mirror cooldown with explicit hasAura=false should skip aura runtime resolution")
 
-setTrustedGCDState({
+setGCDState({
     [88888] = true,
     [99999] = false,
     [121212] = true,
@@ -1293,7 +1375,7 @@ assert(ns.CDMResolvers.GetMirrorPolicyStats == nil,
 assert(ns.CDMResolvers.ShouldUseMirroredCooldownDuration == nil,
     "resolver should not expose mirror policy adjudication after mirror ownership is restored")
 
-setTrustedGCDState({
+setGCDState({
     [12345] = true,
     [22222] = true,
     [54321] = true,
@@ -1524,7 +1606,7 @@ assert(cooldownQueryCounts[67890] == nil,
 -- the real cooldown reports isActive=true, isOnGCD=true on the base. The mirror
 -- resolver must not let that incidental GCD erase the override's real-cooldown
 -- swipe — it must prefer the override's real (non-GCD) cooldown.
-setTrustedGCDState(nil)
+setGCDState(nil)
 
 local talentOverrideRealCooldownDuringIncidentalGCDIcon = {
     _blizzMirrorCooldownID = 1769,

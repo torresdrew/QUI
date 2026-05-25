@@ -1011,7 +1011,14 @@ local function UpdateMythicPlusAutoLogging(allowImmediateStop)
     local settings = GetSettings()
     local hasActiveSignal = HasMythicPlusActiveSignal()
     local inMythicPlusInstance = IsInMythicPlusInstance()
-    local inMythicPlus = hasActiveSignal or (inMythicPlusInstance and (wasInMythicPlus or mplusAutoLoggingActive or LoggingCombat()))
+    local inInstance = IsInInstance()
+    -- A real M+ can only be active while physically inside an instance.
+    -- C_MythicPlus.IsMythicPlusActive() can linger "true" out in the open world
+    -- after a run (observed: surface zone, IsInInstance()=false, GetActiveChallengeMapID=nil,
+    -- yet IsMythicPlusActive()=true), which would keep auto-logging on forever.
+    -- Gate the active signal on actually being instanced.
+    local inMythicPlus = (inInstance and hasActiveSignal)
+        or (inMythicPlusInstance and (wasInMythicPlus or mplusAutoLoggingActive or LoggingCombat()))
 
     if not settings or not settings.autoCombatLog then
         CancelPendingMythicPlusStop()

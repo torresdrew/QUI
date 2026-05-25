@@ -400,7 +400,9 @@ BuildNativeDamageMeterTab = function(tabContent)
 
     local absorbW = GUI:CreateFormCheckbox(sBeh.frame, nil, "combineAbsorbsIntoHealing", native, ApplyNative,
         { description = "When ON (default), Healing Done / HPS sum each source's healing AND absorb shields. Turn off for pure HealingDone (matching Blizzard's stock meter)." })
-    sBeh.AddRow(row(sBeh.frame, "Include Absorbs in Healing", absorbW))
+    local shortNameW = GUI:CreateFormCheckbox(sBeh.frame, nil, "shortenNames", native, ApplyNative,
+        { description = "When ON (default), hide realm names: show \"Name\" instead of \"Name-Realm\" for cross-realm players on rows, tooltips, and the breakdown popup." })
+    sBeh.AddRow(row(sBeh.frame, "Include Absorbs in Healing", absorbW), row(sBeh.frame, "Hide Realm Names", shortNameW))
 
     -- Override-aware fields: Number Format, Icon Style
     local numberFormatOptions = {

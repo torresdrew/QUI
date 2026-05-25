@@ -13,6 +13,9 @@ local TARGET_ADDON_NAME = "QUI"
 --         /qui memaudit exp <name>   → flip experiment (toggle current state)
 --         /qui memaudit exp <name> on|off → force experiment state
 --         /qui memaudit exp reset    → restore all experiments to production
+--         /qui memaudit rows <n|all> → set how many allocation scopes the auto
+--                                      summary prints (default 16). Use `all`
+--                                      to see the full non-truncated breakdown.
 --
 -- Modules register probes BEFORE this file loads by pushing entries onto
 -- ns._memprobes = { { name = "...", tbl = tbl }, ... }
@@ -384,6 +387,12 @@ local function InstallProfilerWrappers()
     return true
 end
 
+-- How many allocation scopes the auto summary prints per window. The full
+-- breakdown is always collected; this only caps the printed rows so a normal
+-- window stays readable. nil = print every row (set via `/qui memaudit rows
+-- all` when hunting the diffuse churn that the top-16 truncation hides).
+local profilerRowLimit = 16
+
 local function DrainProfilerRows()
     local rows = {}
     for i = 1, #profilerScopeOrder do
@@ -415,7 +424,7 @@ end
 local function PrintProfilerRows(prefix, rows)
     if #rows == 0 then return end
     local parts = {}
-    local limit = math.min(16, #rows)
+    local limit = profilerRowLimit and math.min(profilerRowLimit, #rows) or #rows
     for i = 1, limit do
         local row = rows[i]
         parts[#parts + 1] = string.format(
@@ -570,11 +579,23 @@ local function PrintProfilerSummary(prefix, rows, heapDeltaKB)
         calls)
 
     if heapDeltaKB ~= nil then
+        -- `gap vs gross` is the discriminator for the [unattributed] bucket.
+        -- heap Δ (GetAddOnMemoryUsage) tracks GROSS resident growth — Lua does
+        -- not free abandoned tables until GC — so comparing it to NET
+        -- (gross − dealloc) manufactures a phantom gap from deallocations the
+        -- collector hasn't run yet. Comparing to GROSS instead is the honest
+        -- test: ≈0/negative every window ⇒ measured scopes account for all
+        -- growth and [unattributed] is that timing artifact; consistently
+        -- positive ⇒ that many KB are allocated outside every wrapped scope
+        -- (a genuinely uninstrumented path), and this is its size. Gross only
+        -- over-counts under nesting, so a positive gross gap is a hard floor.
+        local grossAllocKB = allocatedBytes / 1024
         line = string.format(
-            "%s; heap Δ %s; gap vs row-net %s",
+            "%s; heap Δ %s; gap vs row-net %s; gap vs gross %s",
             line,
             FormatSignedKB(heapDeltaKB),
-            FormatSignedKB(heapDeltaKB - measuredNetKB))
+            FormatSignedKB(heapDeltaKB - measuredNetKB),
+            FormatSignedKB(heapDeltaKB - grossAllocKB))
     end
 
     print(line)
@@ -1005,6 +1026,22 @@ _G.QUI_MemAudit = function(subcmd, arg)
 
     if subcmd == "exp" then
         HandleExperiment(arg)
+        return
+    end
+
+    if subcmd == "rows" then
+        if arg == "all" or arg == "0" then
+            profilerRowLimit = nil
+            print("|cff60A5FAQUI memaudit:|r allocation scopes = |cff44FF44all|r (full breakdown)")
+        else
+            local n = tonumber(arg)
+            if n and n >= 1 then
+                profilerRowLimit = math.floor(n)
+                print(string.format("|cff60A5FAQUI memaudit:|r allocation scopes = %d", profilerRowLimit))
+            else
+                print("|cff60A5FAQUI memaudit:|r usage: /qui memaudit rows <n|all>")
+            end
+        end
         return
     end
 

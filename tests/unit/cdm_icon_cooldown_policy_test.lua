@@ -7,21 +7,9 @@ loadChunk("modules/cdm/cdm_icon_renderer.lua", "cdm_icon_cooldown_policy.lua")("
 
 local policyModule = assert(ns.CDMIconCooldownPolicy, "CDMIconCooldownPolicy should be exported")
 
-local cooldowns = {}
-local queryCount = 0
 local mirrorStates = {}
 
 local policy = policyModule.Create({
-    queryOverrideSpell = function(spellID)
-        if spellID == 100 then
-            return 200
-        end
-        return nil
-    end,
-    queryCooldown = function(spellID)
-        queryCount = queryCount + 1
-        return cooldowns[spellID]
-    end,
     getMirror = function()
         return {
             GetStateByCooldownID = function(cooldownID, category)
@@ -33,47 +21,7 @@ local policy = policyModule.Create({
 
 local icon = {
     _spellEntry = { spellID = 100 },
-    _isOnGCD = false,
 }
-local secondIcon = {
-    _spellEntry = { spellID = 100 },
-}
-local spellState = {}
-cooldowns[200] = { isOnGCD = true }
-
-assert(policy:CaptureTrustedGCDStateForIcon(icon, spellState, 10) == true,
-    "first trusted GCD capture should report changed state")
-assert(icon._isOnGCD == true, "trusted GCD capture should stamp the icon")
-assert(icon._isOnGCDTrustedAt == 10, "trusted GCD capture should stamp the snapshot time")
-assert(policy:CaptureTrustedGCDStateForIcon(secondIcon, spellState, 10) == true,
-    "second icon should consume the shared trusted spell state")
-assert(queryCount == 2, "trusted GCD capture should query base and override spell IDs once per snapshot")
-
-local baseGCDOverrideCooldownIcon = {
-    _spellEntry = { spellID = 100 },
-}
-spellState = {}
-cooldowns[100] = { isOnGCD = true }
-cooldowns[200] = { isOnGCD = false }
-queryCount = 0
-
-assert(policy:CaptureTrustedGCDStateForIcon(baseGCDOverrideCooldownIcon, spellState, 12) == true,
-    "base spell GCD state should win when the override reports a separate cooldown")
-assert(baseGCDOverrideCooldownIcon._isOnGCD == true,
-    "trusted GCD capture should stamp true when any base/override candidate is on GCD")
-assert(spellState[100] == true, "base spell GCD fact should be cached for resolver lookup")
-assert(spellState[200] == false, "override non-GCD fact should also be cached")
-
-local staleIcon = {
-    _spellEntry = { spellID = 300 },
-    _isOnGCD = true,
-    _isOnGCDTrustedAt = 5,
-}
-cooldowns[300] = { isOnGCD = nil }
-assert(policy:CaptureTrustedGCDStateForIcon(staleIcon, spellState, 11) == true,
-    "unknown GCD state should clear stale trusted state")
-assert(staleIcon._isOnGCD == nil, "unknown GCD state should clear icon flag")
-assert(staleIcon._isOnGCDTrustedAt == nil, "unknown GCD state should clear trusted timestamp")
 
 policy:MarkGCDSwipe(icon)
 assert(icon._showingGCDSwipe == true, "MarkGCDSwipe should stamp GCD swipe state")

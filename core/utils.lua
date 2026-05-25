@@ -118,22 +118,14 @@ function Helpers.SafeToString(value, fallback)
     return fallback
 end
 
---- Decode a potentially-secret boolean through Blizzard's C-side boolean path.
+--- Decode a potentially-secret boolean to a Lua boolean.
+--- A secret boolean cannot be observed in Lua (no API launders it back to a
+--- comparable value), so it resolves to nil ("unknown"); callers must treat
+--- nil as "can't tell" and fall back accordingly.
 --- @param value any
 --- @return boolean|nil
 local function DecodePotentialSecretBoolean(value)
-    local valueIsSecret = issecretvalue and issecretvalue(value)
-    if valueIsSecret and C_CurveUtil and C_CurveUtil.EvaluateColorValueFromBoolean then
-        local scalar = C_CurveUtil.EvaluateColorValueFromBoolean(value, 1, 0)
-        if issecretvalue and issecretvalue(scalar) then
-            return nil
-        end
-        if type(scalar) == "number" then
-            return scalar >= 0.5
-        end
-        return nil
-    end
-    if valueIsSecret then return nil end
+    if issecretvalue and issecretvalue(value) then return nil end
     if value == nil then return nil end
     if type(value) == "boolean" then return value end
     return nil

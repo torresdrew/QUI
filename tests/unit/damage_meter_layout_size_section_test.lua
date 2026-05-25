@@ -51,4 +51,10 @@ assert(guardCount >= 2,
     "slider setSize must guard combat with the same idiom as the resize grips "
     .. "(expected >= 2 occurrences, found " .. guardCount .. ")")
 
+-- After a corner-drag the Layout Mode Frame Size sliders must be re-synced to
+-- the dragged dimensions (they read the live size only at build time), so the
+-- grip release calls the shared layout-utils refresher.
+assert(src:find("RefreshActiveSizeSliders", 1, true),
+    "resize grip release must refresh the Layout Mode size sliders")
+
 print("OK: damage_meter_layout_size_section_test")

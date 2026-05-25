@@ -203,8 +203,8 @@ assertPublicSurface(collectCDMIconsPublicSurface(icons), cdmIconsPublicSurface)
 
 assertContains(
     scheduler,
-    "_getDelay(fast, mode, trustIsOnGCD == true)",
-    "scheduler should pass mode and trust flag to delay provider"
+    "_getDelay(fast, mode)",
+    "scheduler should pass fast and mode to the delay provider"
 )
 
 assertContains(
@@ -249,8 +249,8 @@ assertContainsOrdered(
 
 local scheduleBlock = extractBlock(
     iconUpdateScheduler,
-    "function controller:Schedule(fast, mode, trustIsOnGCD)",
-    "function controller:ScheduleFull(fast, trustIsOnGCD)",
+    "function controller:Schedule(fast, mode)",
+    "function controller:ScheduleFull(fast)",
     "icon update scheduler schedule block"
 )
 assertContains(
@@ -521,7 +521,7 @@ assertContainsOrdered(
         "if normalizeSpellIdentifier(callbacks, spellID) ~= nil then",
         "controller:QueueResolvedCooldownForSpellID(spellID, nil)",
         "else",
-        "callbacks.scheduleUpdate(nil, UPDATE_COOLDOWN, false)",
+        "callbacks.scheduleUpdate(nil, UPDATE_COOLDOWN)",
         "controller:ApplySpellScope()",
     },
     "charge events with a usable spell ID should stay targeted and reserve broad cooldown refresh for unknown spell IDs"
@@ -540,7 +540,7 @@ assertContainsOrdered(
         "if normalizeSpellIdentifier(callbacks, arg3) ~= nil then",
         "controller:QueueResolvedCooldownForSpellID(arg3, nil)",
         "else",
-        'callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, nil, "unit_spellcast")',
+        'callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, "unit_spellcast")',
     },
     "player spellcast events with a usable spell ID should target matching icons and reserve broad cooldown refresh for unknown spell IDs"
 )
@@ -556,7 +556,7 @@ assertContainsOrdered(
         "if normalizeSpellIdentifier(callbacks, spellID) ~= nil then",
         "controller:QueueResolvedCooldownForSpellID(spellID, baseSpellID)",
         "else",
-        'callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, nil, "cast_start")',
+        'callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, "cast_start")',
     },
     "cast start with a usable spell ID should target matching icons and reserve broad cooldown refresh for unknown spell IDs"
 )
@@ -726,7 +726,7 @@ assertContainsOrdered(
     {
         "if inCombat() then",
         "controller:DeferFullRefresh()",
-        'callbacks.scheduleUpdate(true, UPDATE_FULL, nil, "hotfix")',
+        'callbacks.scheduleUpdate(true, UPDATE_FULL, "hotfix")',
     },
     "cooldown table hotfix should defer full refresh during combat and only schedule it immediately outside combat"
 )
@@ -1491,16 +1491,6 @@ assertNotContains(
 )
 assertContains(
     icons,
-    "function _resolverRuntimePolicy.CaptureTrustedGCDState",
-    "GCD trusted-state capture adapter should remain private to CDMIcons renderer runtime"
-)
-assertContains(
-    iconCooldownPolicy,
-    "function controller:CaptureTrustedGCDState(iconPools, spellState, stamp)",
-    "GCD trusted-state capture implementation should live in CDMIconCooldownPolicy"
-)
-assertContains(
-    icons,
     "function _resolverRuntimePolicy.UpdateIconChargeMirrorCycle",
     "mirror charge-cycle adapter should remain private to CDMIcons renderer runtime"
 )
@@ -1948,33 +1938,44 @@ assertNotContains(
     "mirror must assign secret cooldownChargesShown without boolean-testing it"
 )
 
-local targetedRefreshBlock = extractBlock(
+-- isOnGCD is read directly off cdInfo (NeverSecret) by the resolver, so the
+-- refresh branch no longer captures a trusted-GCD snapshot or runs a broad
+-- GCD-edge spell-scope walk. A SPELL_UPDATE_COOLDOWN carrying a comparable
+-- spellID does a targeted ApplySpellID; a nil spellID is a no-op.
+local refreshBranchBlock = extractBlock(
     iconRuntimeRefresh,
-    "if comparableSpellID and not spellIDIsGCDSpell and not gcdChanged then",
-    "else",
-    "targeted cooldown branch"
+    'elseif kind == "refresh" then',
+    'elseif kind == "cast_start" then',
+    "refresh branch"
 )
 assertContainsOrdered(
-    targetedRefreshBlock,
+    refreshBranchBlock,
     {
+        "local comparableSpellID = normalizeSpellIdentifier(callbacks, spellID) ~= nil",
+        "if comparableSpellID then",
         "controller:ApplySpellID(spellID, baseSpellID)",
     },
-    "targeted cooldown refresh should apply immediately (not via the 0.3s combat coalescer) so SUC-driven rebinds match Blizzard within one frame"
+    "refresh with a comparable spellID should apply immediately (not via the 0.3s combat coalescer) so SUC-driven rebinds match Blizzard within one frame"
 )
-
-local broadRefreshBlock = extractBlock(
-    iconRuntimeRefresh,
-    "if gcdChanged or spellIDIsGCDSpell then",
-    "controller:ApplySpellScope()",
-    "broad cooldown refresh branch"
+assertNotContains(
+    refreshBranchBlock,
+    "gcdChanged",
+    "refresh branch should not capture a trusted-GCD snapshot (isOnGCD is read directly)"
 )
-assertContainsOrdered(
-    broadRefreshBlock,
-    {
-        "if gcdChanged or spellIDIsGCDSpell then",
-        "controller:InvalidateGCDOnlyBindings()",
-    },
-    "broad cooldown refresh should only invalidate GCD bindings on real GCD edges"
+assertNotContains(
+    refreshBranchBlock,
+    "spellIDIsGCDSpell",
+    "refresh branch should not run a GCD-edge broad spell-scope walk"
+)
+assertNotContains(
+    refreshBranchBlock,
+    "ApplySpellScope",
+    "refresh branch should not run a broad spell-scope re-resolve"
+)
+assertNotContains(
+    refreshBranchBlock,
+    "setTrustIsOnGCDForBatch",
+    "refresh branch should not toggle a trust-isOnGCD batch flag"
 )
 
 print("OK: cdm_fast_visual_refresh_contract_test")

@@ -114,9 +114,30 @@ local AuraInstanceMatchesExpectedOwner
 local CleanScalar
 local CleanBool
 
+-- Mirror hooksecurefunc instrumentation. These callbacks fire inline when
+-- Blizzard's CooldownViewer pushes cooldown / text / visibility changes; they
+-- run on QUI's stack (so GetAddOnMemoryUsage attributes their churn to QUI) but
+-- are not frame scripts in QUI_PerfRegistry, so the allocation profiler never
+-- saw them — they were the [unattributed] combat-churn gap. Count fires per
+-- hook family and, when the debug profiler is active, attribute their
+-- allocation to named CDM_mirrorHook_* scopes. Behavior-neutral and zero-cost
+-- when memaudit is not loaded.
+local mirrorHookStats = { scfdo = 0, setter = 0, clear = 0, text = 0, show = 0 }
+local function _runMirrorHook(statKey, scopeName, fn, ...)
+    mirrorHookStats[statKey] = mirrorHookStats[statKey] + 1
+    local measure = ns.MemAuditProfilerMeasure
+    if measure then return measure(scopeName, fn, ...) end
+    return fn(...)
+end
+
 do
     local mp = ns._memprobes or {}; ns._memprobes = mp
     mp[#mp + 1] = { name = "CDM_blizzMirror_state",         tbl = _mirrorState }
+    mp[#mp + 1] = { name = "CDM_mirrorHookSCFDO",  counter = true, fn = function() return mirrorHookStats.scfdo end }
+    mp[#mp + 1] = { name = "CDM_mirrorHookSetter", counter = true, fn = function() return mirrorHookStats.setter end }
+    mp[#mp + 1] = { name = "CDM_mirrorHookClear",  counter = true, fn = function() return mirrorHookStats.clear end }
+    mp[#mp + 1] = { name = "CDM_mirrorHookText",   counter = true, fn = function() return mirrorHookStats.text end }
+    mp[#mp + 1] = { name = "CDM_mirrorHookShow",   counter = true, fn = function() return mirrorHookStats.show end }
     mp[#mp + 1] = { name = "CDM_blizzMirror_packedState",   tbl = _packedStateByInstanceKey }
     mp[#mp + 1] = { name = "CDM_blizzMirror_essentialMap",  tbl = _cdIDByCatSpell.essential }
     mp[#mp + 1] = { name = "CDM_blizzMirror_utilityMap",    tbl = _cdIDByCatSpell.utility }
@@ -2575,22 +2596,24 @@ local function HookTextOwner(child, source, owner, readOwner)
 
     if owner.SetText then
         hooksecurefunc(owner, "SetText", function(_, text)
-            CaptureTextFromPreferredOwner(child, source, owner, readOwner, text, true)
+            _runMirrorHook("text", "CDM_mirrorHookText", CaptureTextFromPreferredOwner, child, source, owner, readOwner, text, true)
         end)
     end
     if owner.SetFormattedText then
         hooksecurefunc(owner, "SetFormattedText", function(self)
-            CaptureTextFromPreferredOwner(child, source, self, readOwner, nil, true)
+            _runMirrorHook("text", "CDM_mirrorHookText", CaptureTextFromPreferredOwner, child, source, self, readOwner, nil, true)
         end)
     end
     if owner.Show then
         hooksecurefunc(owner, "Show", function()
+            mirrorHookStats.show = mirrorHookStats.show + 1
             CDMBlizzMirror._knownShownByFrame[owner] = true
             CaptureTextFromPreferredOwner(child, source, owner, readOwner)
         end)
     end
     if owner.Hide then
         hooksecurefunc(owner, "Hide", function()
+            mirrorHookStats.show = mirrorHookStats.show + 1
             CDMBlizzMirror._knownShownByFrame[owner] = false
             if source == "ChargeCount" then
                 ClearChildStackText()
@@ -2601,6 +2624,7 @@ local function HookTextOwner(child, source, owner, readOwner)
     end
     if owner.SetShown then
         hooksecurefunc(owner, "SetShown", function(_, shown)
+            mirrorHookStats.show = mirrorHookStats.show + 1
             local decodedShown = CDMBlizzMirror._RememberKnownShown(owner, shown)
             if source == "ChargeCount" and decodedShown == false then
                 CDMBlizzMirror._knownShownByFrame[owner] = false
@@ -3090,7 +3114,7 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
     end
 
     if cooldownFrame and cooldownFrame.SetCooldownFromDurationObject then
-        hooksecurefunc(cooldownFrame, "SetCooldownFromDurationObject", function(self, durObj, clearIfZero)
+        local function _scfdoHookBody(self, durObj, clearIfZero)
             local cdID, owner = _ownerCooldownID(self)
             if not cdID then return end
             local s = EnsureState(cdID, owner)
@@ -3160,6 +3184,9 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
                     "hasDurObj", durObj and true or false,
                     "clearIfZero", clearIfZero and true or false)
             end
+        end
+        hooksecurefunc(cooldownFrame, "SetCooldownFromDurationObject", function(self, durObj, clearIfZero)
+            _runMirrorHook("scfdo", "CDM_mirrorHookSCFDO", _scfdoHookBody, self, durObj, clearIfZero)
         end)
     end
 
@@ -3237,27 +3264,28 @@ function BindChildHooks(child, cooldownID, viewerCategoryNum)
     end
     if cooldownFrame and cooldownFrame.SetCooldown then
         hooksecurefunc(cooldownFrame, "SetCooldown", function(self, startTime, duration, modRate)
-            _activateMirror(self, "SetCooldown", startTime, duration, modRate)
+            _runMirrorHook("setter", "CDM_mirrorHookSetter", _activateMirror, self, "SetCooldown", startTime, duration, modRate)
         end)
     end
     if cooldownFrame and cooldownFrame.SetCooldownFromExpirationTime then
         hooksecurefunc(cooldownFrame, "SetCooldownFromExpirationTime", function(self, expirationTime, duration, modRate)
-            _activateMirror(self, "SetCooldownFromExpirationTime", expirationTime, duration, modRate)
+            _runMirrorHook("setter", "CDM_mirrorHookSetter", _activateMirror, self, "SetCooldownFromExpirationTime", expirationTime, duration, modRate)
         end)
     end
     if cooldownFrame and cooldownFrame.SetCooldownDuration then
         hooksecurefunc(cooldownFrame, "SetCooldownDuration", function(self, duration, modRate)
-            _activateMirror(self, "SetCooldownDuration", duration, modRate)
+            _runMirrorHook("setter", "CDM_mirrorHookSetter", _activateMirror, self, "SetCooldownDuration", duration, modRate)
         end)
     end
     if cooldownFrame and cooldownFrame.SetCooldownUNIX then
         hooksecurefunc(cooldownFrame, "SetCooldownUNIX", function(self, startTime, duration, modRate)
-            _activateMirror(self, "SetCooldownUNIX", startTime, duration, modRate)
+            _runMirrorHook("setter", "CDM_mirrorHookSetter", _activateMirror, self, "SetCooldownUNIX", startTime, duration, modRate)
         end)
     end
 
     if cooldownFrame and cooldownFrame.Clear then
         hooksecurefunc(cooldownFrame, "Clear", function(self)
+            mirrorHookStats.clear = mirrorHookStats.clear + 1
             local cdID, owner = _ownerCooldownID(self)
             if not cdID then return end
             local s = EnsureState(cdID, owner)

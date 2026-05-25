@@ -34,6 +34,9 @@ Tooltip and Chat settings are accessible from the **Chat & Tooltips** tile in-ga
 | `tooltip.borderUseClassColor` | boolean | `false` | Class color border |
 | `tooltip.borderUseAccentColor` | boolean | `false` | Accent color border |
 | `tooltip.showSpellIDs` | boolean | `false` | Show spell/icon IDs and item IDs |
+| `tooltip.showTooltipTarget` | boolean | `true` | Show the unit's current target |
+| `tooltip.showPlayerMount` | boolean | `true` | Show active mount on mounted players |
+| `tooltip.showPlayerMythicRating` | boolean | `true` | Show Mythic+ rating on players |
 | `tooltip.hideHealthBar` | boolean | `true` | Hide health bar |
 | `tooltip.combatKey` | string | `"SHIFT"` | Combat modifier key |
 

@@ -323,8 +323,6 @@ function CDMIconFactory:AcquireIcon(parent, spellEntry)
         icon._isQUICDMIcon = true
         icon._lastStart = nil
         icon._lastDuration = nil
-        icon._isOnGCD = nil
-        icon._isOnGCDTrustedAt = nil
         icon._showingGCDSwipe = nil
         icon._showingRealCooldownSwipe = nil
         icon._wasShowingGCDSwipe = nil
@@ -425,8 +423,6 @@ function CDMIconFactory:ReleaseIcon(icon)
     icon._desaturateIgnoreAura = nil
     icon._lastStart = nil
     icon._lastDuration = nil
-    icon._isOnGCD = nil
-    icon._isOnGCDTrustedAt = nil
     icon._showingGCDSwipe = nil
     icon._showingRealCooldownSwipe = nil
     icon._wasShowingGCDSwipe = nil
@@ -2083,17 +2079,6 @@ local function spellIdentifierSetHas(callbacks, set, rawID)
     return false
 end
 
-local function spellIDIsGCD(callbacks, spellID)
-    local normalized = normalizeSpellIdentifier(callbacks, spellID)
-    if normalized == nil then return false end
-    local gcdSpellID = callbacks.gcdSpellID or 61304
-    if normalized == gcdSpellID then return true end
-    if type(normalized) == "string" then
-        return tonumber(normalized) == gcdSpellID
-    end
-    return false
-end
-
 local function getIconPools(callbacks)
     return (callbacks.getIconPools and callbacks.getIconPools()) or {}
 end
@@ -2642,7 +2627,7 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         if icon._hasCooldownActive == true or icon._hasRealCooldownActive == true then return true end
         if icon._showingRealCooldownSwipe or icon._showingGCDSwipe then return true end
         if icon._lastDurObjKey ~= nil or icon._cooldownExpiryTimerKey ~= nil then return true end
-        if icon._isOnGCD ~= nil or icon._cdDesaturated then return true end
+        if icon._cdDesaturated then return true end
         return false
     end
 
@@ -2940,7 +2925,7 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         controller.deferredFullRefresh = false
         runtimeRefreshStats.deferredFullDrains = runtimeRefreshStats.deferredFullDrains + 1
         if callbacks.scheduleUpdate then
-            callbacks.scheduleUpdate(true, UPDATE_FULL, nil, "deferred")
+            callbacks.scheduleUpdate(true, UPDATE_FULL, "deferred")
         end
         return true
     end
@@ -3014,7 +2999,7 @@ function CDMIconRuntimeRefresh.Create(callbacks)
                     controller:QueueResolvedCooldownForSpellID(arg3, nil)
                 elseif callbacks.scheduleUpdate then
                     runtimeRefreshStats.unitSpellcastCooldownFallbacks = runtimeRefreshStats.unitSpellcastCooldownFallbacks + 1
-                    callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, nil, "unit_spellcast")
+                    callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, "unit_spellcast")
                 end
             end
             return
@@ -3077,7 +3062,7 @@ function CDMIconRuntimeRefresh.Create(callbacks)
                 return
             end
             if callbacks.scheduleUpdate then
-                callbacks.scheduleUpdate(true, UPDATE_FULL, nil, "hotfix")
+                callbacks.scheduleUpdate(true, UPDATE_FULL, "hotfix")
             end
             return
         end
@@ -3116,56 +3101,36 @@ function CDMIconRuntimeRefresh.Create(callbacks)
         elseif kind == "scanner_spell" then
             controller:ApplySpellScope()
         elseif kind == "refresh" then
-            local gcdChanged = callbacks.captureTrustedGCDState and callbacks.captureTrustedGCDState() or false
             local comparableSpellID = normalizeSpellIdentifier(callbacks, spellID) ~= nil
-            local spellIDIsGCDSpell = comparableSpellID and spellIDIsGCD(callbacks, spellID) or false
-            if callbacks.setTrustIsOnGCDForBatch then
-                callbacks.setTrustIsOnGCDForBatch(true)
-            end
-            if comparableSpellID and not spellIDIsGCDSpell and not gcdChanged then
+            if comparableSpellID then
                 -- SPELL_UPDATE_COOLDOWN with a payload is Blizzard's
                 -- canonical "this spell's cooldown lane just changed"
                 -- signal. Apply directly instead of going through
                 -- QueueResolvedCooldownForSpellID — that path's combat
-                -- queue stalls the rebind by up to 0.3s (queue delay
-                -- in CDMIconRuntimeRefresh.Create at line 2152), and
-                -- in-game traces showed proc-window rebinds lagging
-                -- 2+ seconds behind the SUC fire because the queue
-                -- drain kept getting pre-empted by the next SUC tick.
-                -- Skipping the queue collapses the lag to one frame;
-                -- ApplySpellID at line 2414 already iterates only
-                -- matching icons, so the extra work is bounded.
+                -- queue stalls the rebind by up to 0.3s, and in-game
+                -- traces showed proc-window rebinds lagging 2+ seconds
+                -- behind the SUC fire because the queue drain kept
+                -- getting pre-empted by the next SUC tick. Skipping the
+                -- queue collapses the lag to one frame; ApplySpellID
+                -- already iterates only matching icons, so the extra
+                -- work is bounded. isOnGCD is read directly from cdInfo
+                -- by the resolver (NeverSecret), so GCD-only swipes
+                -- refresh via the cast_succeeded InvalidateGCDOnlyBindings
+                -- path without a broad GCD-edge walk here.
                 controller:ApplySpellID(spellID, baseSpellID)
-            elseif gcdChanged or spellIDIsGCDSpell then
-                -- Real GCD edge: GCD-only icons must re-resolve to show the
-                -- new GCD swipe. The broad walk is the catch-all for now;
-                -- a follow-up should replace it with a GCD-only icon index.
-                controller:InvalidateGCDOnlyBindings()
-                controller:ApplySpellScope()
-                -- A specific spellID can arrive alongside a GCD edge —
-                -- e.g., a cast that puts the spell on a real cooldown
-                -- AND starts the GCD. ApplySpellScope handles the GCD
-                -- icons; the targeted bind for the named spell would
-                -- otherwise have to wait for the next aura tick.
-                if comparableSpellID and not spellIDIsGCDSpell then
-                    controller:ApplySpellID(spellID, baseSpellID)
-                end
             end
-            -- Else: nil spellID with no GCD edge — Blizzard's "something
-            -- changed somewhere" fallback. Real changes that need handling
-            -- already fire specific events (UNIT_SPELLCAST_* with spellID,
-            -- SPELL_UPDATE_CHARGES/USES, BAG_UPDATE_COOLDOWN). Walking every
-            -- icon defensively here is pure churn.
-            if callbacks.setTrustIsOnGCDForBatch then
-                callbacks.setTrustIsOnGCDForBatch(false)
-            end
+            -- Else: nil spellID — Blizzard's "something changed somewhere"
+            -- fallback. Real changes that need handling already fire specific
+            -- events (UNIT_SPELLCAST_* with spellID, SPELL_UPDATE_CHARGES/USES,
+            -- BAG_UPDATE_COOLDOWN). Walking every icon defensively here is pure
+            -- churn.
         elseif kind == "cast_start" then
             if normalizeSpellIdentifier(callbacks, spellID) ~= nil then
                 runtimeRefreshStats.castStartCooldownSkips = runtimeRefreshStats.castStartCooldownSkips + 1
                 controller:QueueResolvedCooldownForSpellID(spellID, baseSpellID)
             elseif callbacks.scheduleUpdate then
                 runtimeRefreshStats.castStartCooldownFallbacks = runtimeRefreshStats.castStartCooldownFallbacks + 1
-                callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, nil, "cast_start")
+                callbacks.scheduleUpdate(true, UPDATE_COOLDOWN, "cast_start")
             end
         elseif kind == "cast_succeeded" then
             if callbacks.recordRecentPlayerSpellCast then
@@ -3200,7 +3165,7 @@ function CDMIconRuntimeRefresh.Create(callbacks)
             controller:QueueResolvedCooldownForSpellID(spellID, nil)
         else
             if callbacks.scheduleUpdate then
-                callbacks.scheduleUpdate(nil, UPDATE_COOLDOWN, false)
+                callbacks.scheduleUpdate(nil, UPDATE_COOLDOWN)
             end
             controller:ApplySpellScope()
         end
@@ -3242,7 +3207,6 @@ function CDMIconUpdateScheduler.Create(callbacks)
         elapsed = 0,
         delay = MIN_UPDATE_INTERVAL_IDLE,
         mode = UPDATE_COOLDOWN,
-        pendingTrustIsOnGCD = false,
         barsDirty = false,
         lastUpdateTime = 0,
     }
@@ -3312,33 +3276,22 @@ function CDMIconUpdateScheduler.Create(callbacks)
         controller.pending = false
         controller.elapsed = 0
         controller.mode = UPDATE_COOLDOWN
-        controller.pendingTrustIsOnGCD = false
         local scheduler = callbacks.getScheduler and callbacks.getScheduler()
         if scheduler and scheduler.CancelRuntimeUpdate then
             scheduler.CancelRuntimeUpdate()
         end
     end
 
-    function controller:Run(modeOverride, trustOverride)
+    function controller:Run(modeOverride)
         controller.pending = false
         local mode = modeOverride or controller.mode or UPDATE_COOLDOWN
         controller.mode = UPDATE_COOLDOWN
-        local trustIsOnGCD
-        if trustOverride ~= nil then
-            trustIsOnGCD = trustOverride == true
-        else
-            trustIsOnGCD = controller.pendingTrustIsOnGCD == true
-        end
-        controller.pendingTrustIsOnGCD = false
 
         if not isRuntimeEnabled() then
             return
         end
 
         controller.lastUpdateTime = getTime()
-        if callbacks.setTrustIsOnGCDForBatch then
-            callbacks.setTrustIsOnGCDForBatch(trustIsOnGCD)
-        end
 
         if mode == UPDATE_FULL then
             if callbacks.updateAllCooldowns then
@@ -3349,10 +3302,6 @@ function CDMIconUpdateScheduler.Create(callbacks)
         end
 
         controller:RunDirtyBarUpdate()
-
-        if callbacks.setTrustIsOnGCDForBatch then
-            callbacks.setTrustIsOnGCDForBatch(false)
-        end
     end
 
     local function onUpdate(self, elapsed)
@@ -3362,7 +3311,7 @@ function CDMIconUpdateScheduler.Create(callbacks)
         controller:Run()
     end
 
-    function controller:Schedule(fast, mode, trustIsOnGCD)
+    function controller:Schedule(fast, mode)
         if not isRuntimeEnabled() then
             controller:Cancel()
             return
@@ -3372,7 +3321,7 @@ function CDMIconUpdateScheduler.Create(callbacks)
 
         local scheduler = callbacks.getScheduler and callbacks.getScheduler()
         if scheduler and scheduler.ScheduleRuntimeUpdate then
-            scheduler.ScheduleRuntimeUpdate(fast, mode, trustIsOnGCD)
+            scheduler.ScheduleRuntimeUpdate(fast, mode)
             return
         end
 
@@ -3381,9 +3330,6 @@ function CDMIconUpdateScheduler.Create(callbacks)
         if controller.pending then
             if mode == UPDATE_FULL then
                 controller.mode = UPDATE_FULL
-            end
-            if trustIsOnGCD then
-                controller.pendingTrustIsOnGCD = true
             end
             if delay < controller.delay then
                 controller.delay = delay
@@ -3395,24 +3341,23 @@ function CDMIconUpdateScheduler.Create(callbacks)
         controller.elapsed = 0
         controller.delay = delay
         controller.mode = mode
-        controller.pendingTrustIsOnGCD = trustIsOnGCD == true
         controller.frame:SetScript("OnUpdate", onUpdate)
     end
 
-    function controller:ScheduleFull(fast, trustIsOnGCD)
-        controller:Schedule(fast, UPDATE_FULL, trustIsOnGCD)
+    function controller:ScheduleFull(fast)
+        controller:Schedule(fast, UPDATE_FULL)
     end
 
-    function controller:ScheduleCooldown(fast, trustIsOnGCD)
-        controller:Schedule(fast, UPDATE_COOLDOWN, trustIsOnGCD)
+    function controller:ScheduleCooldown(fast)
+        controller:Schedule(fast, UPDATE_COOLDOWN)
     end
 
     function controller:RegisterSchedulerHandler()
         local scheduler = callbacks.getScheduler and callbacks.getScheduler()
         if not (scheduler and scheduler.SetRuntimeUpdateHandler) then return end
         scheduler.SetRuntimeUpdateHandler({
-            run = function(mode, trustIsOnGCD)
-                return controller:Run(mode, trustIsOnGCD)
+            run = function(mode)
+                return controller:Run(mode)
             end,
             getDelay = function(fast, mode)
                 return controller:GetDelay(fast, mode)
@@ -3420,7 +3365,6 @@ function CDMIconUpdateScheduler.Create(callbacks)
             isEnabled = isRuntimeEnabled,
             onCancel = function()
                 controller.pending = false
-                controller.pendingTrustIsOnGCD = false
             end,
         })
     end
@@ -3435,7 +3379,6 @@ function CDMIconUpdateScheduler.Create(callbacks)
             updatePending = (schedulerPending ~= nil and schedulerPending)
                 or (controller.pending == true),
             updateMode = controller.mode,
-            trustIsOnGCD = controller.pendingTrustIsOnGCD == true,
             lastUpdateTime = controller.lastUpdateTime,
         }
     end
@@ -4509,14 +4452,12 @@ local _, ns = ...
 -- CDM Icon Cooldown Policy
 --
 -- Private controller used by CDMIcons. It owns icon-local GCD swipe flags,
--- trusted GCD capture, mirror state lookup, and mirror charge-cycle memory.
+-- mirror state lookup, and mirror charge-cycle memory.
 ---------------------------------------------------------------------------
 
 local CDMIconCooldownPolicy = {}
 ns.CDMIconCooldownPolicy = CDMIconCooldownPolicy
 
-local ipairs = ipairs
-local pairs = pairs
 local type = type
 local issecretvalue = issecretvalue
 
@@ -4524,15 +4465,6 @@ function CDMIconCooldownPolicy.Create(callbacks)
     callbacks = callbacks or {}
 
     local controller = {}
-    local hasQueryCooldown = type(callbacks.queryCooldown) == "function"
-
-    local function QueryOverrideSpell(spellID)
-        return callbacks.queryOverrideSpell and callbacks.queryOverrideSpell(spellID) or nil
-    end
-
-    local function QueryCooldown(spellID, owner)
-        return callbacks.queryCooldown and callbacks.queryCooldown(spellID, owner) or nil
-    end
 
     local function SafeBoolean(value)
         if issecretvalue and issecretvalue(value) then return nil end
@@ -4545,59 +4477,6 @@ function CDMIconCooldownPolicy.Create(callbacks)
         if issecretvalue and issecretvalue(value) then return nil end
         if type(value) == "string" then return value end
         return nil
-    end
-
-    local function ValueIsPresent(value)
-        if issecretvalue and issecretvalue(value) then return true end
-        return value ~= nil
-    end
-
-    local UNKNOWN_GCD_STATE = {}
-
-    local function AddIconCooldownIdentifier(candidates, seen, spellID)
-        if spellID == nil or (issecretvalue and issecretvalue(spellID)) then
-            return
-        end
-        local sidType = type(spellID)
-        if sidType ~= "number" and sidType ~= "string" then
-            return
-        end
-        if seen[spellID] then
-            return
-        end
-        seen[spellID] = true
-        candidates[#candidates + 1] = spellID
-    end
-
-    local function GetIconCooldownIdentifiers(icon)
-        local entry = icon and icon._spellEntry
-        if not entry then return nil end
-
-        local candidates = {}
-        local seen = {}
-        local base = entry.spellID or entry.id
-        AddIconCooldownIdentifier(candidates, seen, base)
-        AddIconCooldownIdentifier(candidates, seen, entry.overrideSpellID)
-        if base then
-            local overrideID = QueryOverrideSpell(base)
-            AddIconCooldownIdentifier(candidates, seen, overrideID)
-        end
-        if #candidates == 0 then
-            return nil
-        end
-        return candidates
-    end
-
-    local function ReadCachedTrustedGCD(spellState, spellID)
-        if not spellState then return nil, false end
-        local cached = spellState[spellID]
-        if type(cached) == "boolean" then
-            return cached, true
-        end
-        if cached == UNKNOWN_GCD_STATE then
-            return nil, true
-        end
-        return nil, false
     end
 
     function controller:MarkGCDSwipe(icon)
@@ -4696,76 +4575,6 @@ function CDMIconCooldownPolicy.Create(callbacks)
             return false
         end
         return icon._lastChargeMirrorCategory == nil or category == icon._lastChargeMirrorCategory
-    end
-
-    function controller:CaptureTrustedGCDStateForIcon(icon, spellState, stamp)
-        if not icon or not icon._spellEntry then return false end
-
-        local candidates = GetIconCooldownIdentifiers(icon)
-        local prev = icon._isOnGCD
-
-        if not candidates or not hasQueryCooldown then
-            if prev ~= nil then
-                icon._isOnGCD = nil
-                icon._isOnGCDTrustedAt = nil
-                return true
-            end
-            icon._isOnGCD = nil
-            icon._isOnGCDTrustedAt = nil
-            return false
-        end
-
-        local trusted
-        local sawTrusted = false
-        for _, sid in ipairs(candidates) do
-            local candidateTrusted, cached = ReadCachedTrustedGCD(spellState, sid)
-            if not cached then
-                local cdInfo = QueryCooldown(sid, icon)
-                local onGCD = cdInfo and cdInfo.isOnGCD
-                if type(onGCD) == "boolean" then
-                    candidateTrusted = onGCD
-                    if spellState then
-                        spellState[sid] = onGCD
-                    end
-                elseif spellState then
-                    spellState[sid] = UNKNOWN_GCD_STATE
-                end
-            end
-            if type(candidateTrusted) == "boolean" then
-                sawTrusted = true
-                if candidateTrusted == true then
-                    trusted = true
-                elseif trusted ~= true then
-                    trusted = false
-                end
-            end
-        end
-
-        if sawTrusted then
-            icon._isOnGCD = trusted
-            icon._isOnGCDTrustedAt = stamp
-            return prev ~= trusted
-        end
-
-        icon._isOnGCD = nil
-        icon._isOnGCDTrustedAt = nil
-        return prev ~= nil
-    end
-
-    function controller:CaptureTrustedGCDState(iconPools, spellState, stamp)
-        if not hasQueryCooldown then
-            return false
-        end
-
-        local anyChanged = false
-        for _, pool in pairs(iconPools or {}) do
-            for _, icon in ipairs(pool) do
-                if controller:CaptureTrustedGCDStateForIcon(icon, spellState, stamp) then
-                    anyChanged = true
-                end
-            end
-        end
-        return anyChanged
     end
 
     return controller
@@ -5435,7 +5244,6 @@ local BASE_CROP = 0.08
 local ICON_FRAME_LEVEL_OFFSET = 1
 local COOLDOWN_FRAME_LEVEL_OFFSET = 1
 local TEXT_OVERLAY_FRAME_LEVEL_OFFSET = 6
-local GCD_SPELL_ID = 61304
 local COOLDOWN_EXPIRY_REFRESH_FUDGE = 0.2
 local COOLDOWN_EXPIRY_RESCHEDULE_EPSILON = 0.1
 
@@ -6017,15 +5825,29 @@ local function ApplyCooldownDesaturation(icon, entry, settings, resolvedMode)
             "viewerType=", entry.viewerType)
     end
 
-    -- Charge spells: stay saturated while at least one charge is
-    -- available. Matches Blizzard CooldownViewer
-    -- CheckCacheCooldownValuesFromCharges (sets cooldownDesaturated=false
-    -- when displayChargeCooldown). cdInfo.isActive is NeverSecret so we
-    -- can compare directly.
-    if shouldDesaturate
-       and (entry.hasCharges == true or entry.charges == true)
-       and ChargeSpellShouldStaySaturated(icon, entry) then
-        shouldDesaturate = false
+    -- Charge spells: stay saturated while at least one charge is available.
+    -- Matches Blizzard CooldownViewer CheckCacheCooldownValuesFromCharges,
+    -- which sets cooldownDesaturated=false AND claims the visual data source
+    -- (wasSetFromCharges) exactly when the charge cooldown is rolling and
+    -- currentCharges > 0 — so its spell-cooldown desaturation branch never
+    -- runs. wasSetFromCharges is a NeverSecret mirror flag, the authoritative
+    -- secret-safe "≥1 charge banked" signal (currentCharges itself is secret
+    -- in combat and cannot be compared in Lua). It is the only correct signal
+    -- for spells like Putrefy whose recharge reports
+    -- GetSpellCooldown().isActive == true throughout, even with charges
+    -- available. The cdInfo.isActive == false fallback in
+    -- ChargeSpellShouldStaySaturated still covers non-mirrored charge spells
+    -- and the brez pool / DK Death Charge case (isActive == false while a
+    -- charge remains).
+    if shouldDesaturate then
+        local mirrorState = _resolverRuntimePolicy.GetIconMirrorState
+            and _resolverRuntimePolicy.GetIconMirrorState(icon)
+        if mirrorState and SafeBoolean(mirrorState.wasSetFromCharges) == true then
+            shouldDesaturate = false
+        elseif (entry.hasCharges == true or entry.charges == true)
+            and ChargeSpellShouldStaySaturated(icon, entry) then
+            shouldDesaturate = false
+        end
     end
 
     -- Desaturation gate: range and usability tints are independent visual
@@ -6041,21 +5863,6 @@ local function ApplyCooldownDesaturation(icon, entry, settings, resolvedMode)
         icon.Icon:SetDesaturated(false)
         icon._cdDesaturated = nil
     end
-end
-
-local ResolverRuntime = RuntimeQueries
-
-function _resolverRuntimePolicy.CaptureTrustedGCDStateForIcon(icon, spellState, stamp)
-    return cooldownPolicy
-        and cooldownPolicy:CaptureTrustedGCDStateForIcon(icon, spellState, stamp)
-        or false
-end
-
-function _resolverRuntimePolicy.CaptureTrustedGCDState()
-    local spellState, stamp = ResolverRuntime.ResetTrustedGCDSnapshot(GetTime())
-    return cooldownPolicy
-        and cooldownPolicy:CaptureTrustedGCDState(iconPools, spellState, stamp)
-        or false
 end
 
 local GetRecentCastAliasForEntry
@@ -8720,7 +8527,6 @@ local function UpdateIconCooldownOwned(icon)
             "duration=", tostring(duration),
             "durObj=", durObj and "yes" or "no",
             "active=", tostring(resolvedActive),
-            "isOnGCD=", tostring(icon._isOnGCD),
             "hasCharges=", tostring(runtimeHasCharges),
             "entryHasCharges=", tostring(entry.hasCharges),
             "kind=", tostring(entry.kind),
@@ -8747,15 +8553,10 @@ local function UpdateIconCooldownOwned(icon)
     if icon.Cooldown then
         local realCooldownActive = icon._hasCooldownActive == true
             and _resolverRuntimePolicy.IsRealCooldownDurationMode(resolvedMode)
-        local trustIsOnGCD = ResolverRuntime.IsTrustingGCDForBatch()
-        local gcdStateTrusted = trustIsOnGCD
-            and icon._isOnGCDTrustedAt == ResolverRuntime.GetTrustedGCDStamp()
         if _G.QUI_CDM_ICON_DEBUG and CDMIcons.DebugIconEvent then
             CDMIcons.DebugIconEvent(icon, "classify",
                 "real=", tostring(realCooldownActive),
                 "gcdOnly=", tostring(resolvedMode == "gcd-only"),
-                "gcdTrusted=", tostring(trustIsOnGCD),
-                "gcdSnapshot=", tostring(gcdStateTrusted),
                 "resolvedActive=", tostring(resolvedActive),
                 "durObj=", durObj and "yes" or "no")
         end
@@ -10497,9 +10298,6 @@ local function CreateIconUpdateScheduler()
         getScheduler = function()
             return ns.CDMScheduler
         end,
-        setTrustIsOnGCDForBatch = function(value)
-            return ResolverRuntime.SetTrustIsOnGCDForBatch(value)
-        end,
         updateAllCooldowns = function()
             CDMIcons:UpdateAllCooldowns()
         end,
@@ -10531,12 +10329,12 @@ local function NoteFullUpdateSchedule(reason)
     end
 end
 
-local function ScheduleCDMUpdate(fast, mode, trustIsOnGCD, reason)
+local function ScheduleCDMUpdate(fast, mode, reason)
     if mode == CDM_UPDATE_FULL then
         NoteFullUpdateSchedule(reason)
     end
     if updateScheduler then
-        updateScheduler:Schedule(fast, mode, trustIsOnGCD)
+        updateScheduler:Schedule(fast, mode)
     end
 end
 
@@ -10666,7 +10464,7 @@ function CDMIcons:RequestFullUpdate()
     if updateScheduler then
         updateScheduler:SetBarsDirty(true)
     end
-    ScheduleCDMUpdate(true, CDM_UPDATE_FULL, nil, "request")
+    ScheduleCDMUpdate(true, CDM_UPDATE_FULL, "request")
 end
 
 do
@@ -10678,7 +10476,7 @@ do
             return GetCDMUpdateDelay(nil, CDM_UPDATE_COOLDOWN)
         end,
         requestFullRefresh = function()
-            ScheduleCDMUpdate(true, CDM_UPDATE_FULL, nil, "mirrorFallback")
+            ScheduleCDMUpdate(true, CDM_UPDATE_FULL, "mirrorFallback")
         end,
         getMirrorStateByCooldownID = function(cooldownID, category)
             local mirror = ns.CDMBlizzMirror
@@ -10805,7 +10603,6 @@ do
         isSecretValue = function(value)
             return issecretvalue and issecretvalue(value) or false
         end,
-        gcdSpellID = GCD_SPELL_ID,
         eventTracePrint = function(...)
             return CDMIcons.EventTracePrint(...)
         end,
@@ -10818,10 +10615,10 @@ do
             end
         end,
         scheduleFullUpdate = function()
-            ScheduleCDMUpdate(true, CDM_UPDATE_FULL, nil, "runtime")
+            ScheduleCDMUpdate(true, CDM_UPDATE_FULL, "runtime")
         end,
-        scheduleUpdate = function(fast, mode, trustIsOnGCD, reason)
-            ScheduleCDMUpdate(fast, mode, trustIsOnGCD, reason or "runtime")
+        scheduleUpdate = function(fast, mode, reason)
+            ScheduleCDMUpdate(fast, mode, reason or "runtime")
         end,
         prepareBatch = PrepareCooldownUpdateBatch,
         beginBatch = function(reason)
@@ -10867,18 +10664,6 @@ do
         end,
         updateIconRangesForUsabilityEvent = function()
             _resolverRuntimePolicy.UpdateIconRangesForUsabilityEvent()
-        end,
-        resetTrustedGCDSnapshot = function()
-            return ResolverRuntime.ResetTrustedGCDSnapshot(GetTime())
-        end,
-        captureTrustedGCDStateForIcon = function(icon, spellState, stamp)
-            return _resolverRuntimePolicy.CaptureTrustedGCDStateForIcon(icon, spellState, stamp)
-        end,
-        captureTrustedGCDState = function()
-            return _resolverRuntimePolicy.CaptureTrustedGCDState()
-        end,
-        setTrustIsOnGCDForBatch = function(value)
-            return ResolverRuntime.SetTrustIsOnGCDForBatch(value)
         end,
         requestStackTextUpdate = function()
             RequestStackTextUpdate()

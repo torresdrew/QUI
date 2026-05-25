@@ -206,8 +206,10 @@ local second = makeIcon(22222)
 pool[#pool + 1] = first
 pool[#pool + 1] = second
 
-first._isOnGCD = true
-second._isOnGCD = true
+-- _showingGCDSwipe is the icon-local GCD render lock. (The former _isOnGCD
+-- icon field is gone: isOnGCD is now read directly off cdInfo by the resolver,
+-- never stamped on the icon, so the render lock is represented by the swipe
+-- flag the renderer already owns.)
 first._showingGCDSwipe = true
 second._showingGCDSwipe = true
 first._lastDurObj = gcdDuration
@@ -223,10 +225,10 @@ currentOnGCD = false
 gcdQueryable = false
 icons.HandleRuntimeRefresh("SPELL_UPDATE_USABLE")
 
-assert(first._isOnGCD == true, "SPELL_UPDATE_USABLE should not clear an active GCD render lock for first icon")
-assert(second._isOnGCD == true, "SPELL_UPDATE_USABLE should not clear an active GCD render lock for second icon")
-assert(first._showingGCDSwipe == true, "SPELL_UPDATE_USABLE should preserve the first icon's GCD swipe")
-assert(second._showingGCDSwipe == true, "SPELL_UPDATE_USABLE should preserve the second icon's GCD swipe")
+assert(first._showingGCDSwipe == true,
+    "SPELL_UPDATE_USABLE should not clear the first icon's active GCD render lock (its swipe)")
+assert(second._showingGCDSwipe == true,
+    "SPELL_UPDATE_USABLE should not clear the second icon's active GCD render lock (its swipe)")
 assert(first._usabilityTinted == true, "SPELL_UPDATE_USABLE should immediately apply unusable tint after cooldown suppression")
 local firstColor = first.vertexColors[#first.vertexColors]
 assert(firstColor and firstColor[1] == 0.4 and firstColor[2] == 0.4 and firstColor[3] == 0.4 and firstColor[4] == 1,
@@ -235,18 +237,24 @@ assert(firstColor and firstColor[1] == 0.4 and firstColor[2] == 0.4 and firstCol
 currentOnGCD = true
 gcdQueryable = true
 local cooldownChanged = assert(subscriptions["CDM:COOLDOWN_CHANGED"], "cooldown subscriber should be registered")
+-- A refresh carrying a comparable spellID does a TARGETED ApplySpellID for that
+-- spell only — there is no broad GCD-edge walk anymore (isOnGCD is read directly
+-- off cdInfo, and GCD-only swipe refresh rides the cast_succeeded
+-- InvalidateGCDOnlyBindings path). The cast spell keeps its GCD swipe and the
+-- unrelated icon's existing swipe is left untouched (not broadened).
 cooldownChanged("CDM:COOLDOWN_CHANGED", 11111, nil, "refresh")
 
-assert(first._showingGCDSwipe == true, "per-spell GCD refresh should mark the cast spell")
-assert(second._showingGCDSwipe == true, "per-spell GCD refresh should broaden when GCD state changed")
+assert(first._showingGCDSwipe == true, "targeted per-spell GCD refresh should keep the cast spell's GCD swipe")
+assert(second._showingGCDSwipe == true,
+    "targeted per-spell GCD refresh should preserve an unrelated icon's existing GCD swipe")
 
 local firstBinds = first.cooldownBinds or 0
 local secondBinds = second.cooldownBinds or 0
 cooldownChanged("CDM:COOLDOWN_CHANGED", nil, nil, "refresh")
 
 assert((first.cooldownBinds or 0) == firstBinds,
-    "broad cooldown refresh with unchanged GCD state should not rebind an active GCD swipe")
+    "nil-spellID refresh should not rebind an active GCD swipe (no broad walk)")
 assert((second.cooldownBinds or 0) == secondBinds,
-    "unchanged broad cooldown refresh should preserve existing GCD DurationObject bindings")
+    "nil-spellID refresh should preserve existing GCD DurationObject bindings")
 
 print("OK: cdm_gcd_refresh_state_test")

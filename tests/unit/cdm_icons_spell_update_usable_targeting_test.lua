@@ -225,7 +225,6 @@ staleIcon._lastDurObjKey = nil
 staleIcon._showingRealCooldownSwipe = nil
 staleIcon._showingGCDSwipe = nil
 staleIcon._cooldownExpiryTimerKey = nil
-staleIcon._isOnGCD = nil
 staleIcon._cdDesaturated = nil
 local batchesBeforeIdleUsable = runtimeBatches
 icons.HandleRuntimeRefresh("SPELL_UPDATE_USABLE")

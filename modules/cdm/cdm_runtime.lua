@@ -106,14 +106,12 @@ local _pending = false
 local _elapsed = 0
 local _delay = 0.05
 local _mode = UPDATE_COOLDOWN
-local _trustIsOnGCD = false
 
 local function CancelRuntimeUpdate()
     _updateFrame:SetScript("OnUpdate", nil)
     _pending = false
     _elapsed = 0
     _mode = UPDATE_COOLDOWN
-    _trustIsOnGCD = false
     if _onCancel then
         _onCancel()
     end
@@ -125,16 +123,14 @@ local function RuntimeUpdateOnUpdate(self, elapsed)
 
     local handler = _handler
     local mode = _mode
-    local trustIsOnGCD = _trustIsOnGCD
 
     self:SetScript("OnUpdate", nil)
     _pending = false
     _elapsed = 0
     _mode = UPDATE_COOLDOWN
-    _trustIsOnGCD = false
 
     if handler then
-        handler(mode, trustIsOnGCD)
+        handler(mode)
     end
 end
 
@@ -165,21 +161,18 @@ function CDMScheduler.SetRuntimeUpdateHandler(config)
     _onCancel = config.onCancel
 end
 
-function CDMScheduler.ScheduleRuntimeUpdate(fast, mode, trustIsOnGCD)
+function CDMScheduler.ScheduleRuntimeUpdate(fast, mode)
     if _isEnabled and not _isEnabled() then
         CancelRuntimeUpdate()
         return
     end
 
     mode = (mode == UPDATE_FULL) and UPDATE_FULL or UPDATE_COOLDOWN
-    local delay = (_getDelay and _getDelay(fast, mode, trustIsOnGCD == true)) or 0.05
+    local delay = (_getDelay and _getDelay(fast, mode)) or 0.05
 
     if _pending then
         if mode == UPDATE_FULL then
             _mode = UPDATE_FULL
-        end
-        if trustIsOnGCD then
-            _trustIsOnGCD = true
         end
         if delay < _delay then
             _delay = delay
@@ -191,7 +184,6 @@ function CDMScheduler.ScheduleRuntimeUpdate(fast, mode, trustIsOnGCD)
     _elapsed = 0
     _delay = delay
     _mode = mode
-    _trustIsOnGCD = trustIsOnGCD == true
     _updateFrame:SetScript("OnUpdate", RuntimeUpdateOnUpdate)
 end
 
@@ -207,7 +199,6 @@ function CDMScheduler.GetStats()
     return {
         updatePending = _pending,
         updateMode = _mode,
-        trustIsOnGCD = _trustIsOnGCD,
     }
 end
 end
@@ -879,44 +870,7 @@ local function IsSecretValue(value)
     return false
 end
 
-local trustedGCDSpellState = {}
-local trustedGCDStamp
-local trustIsOnGCDForBatch = false
 local chargeDurationObjectSerial = 0
-
-function CDMRuntimeQueries.ResetTrustedGCDSnapshot(stamp)
-    wipe(trustedGCDSpellState)
-    trustedGCDStamp = stamp or GetTime()
-    return trustedGCDSpellState, trustedGCDStamp
-end
-
-function CDMRuntimeQueries.GetTrustedGCDSnapshot()
-    return trustedGCDSpellState, trustedGCDStamp
-end
-
-function CDMRuntimeQueries.GetTrustedGCDStamp()
-    return trustedGCDStamp
-end
-
-function CDMRuntimeQueries.SetTrustIsOnGCDForBatch(enabled)
-    local previous = trustIsOnGCDForBatch
-    trustIsOnGCDForBatch = enabled == true
-    return previous
-end
-
-function CDMRuntimeQueries.IsTrustingGCDForBatch()
-    return trustIsOnGCDForBatch == true
-end
-
-function CDMRuntimeQueries.GetTrustedIsOnGCD(spellID)
-    if trustIsOnGCDForBatch == true then
-        local trusted = spellID and trustedGCDSpellState[spellID]
-        if type(trusted) == "boolean" then
-            return trusted
-        end
-    end
-    return nil
-end
 
 function CDMRuntimeQueries.NoteChargeDurationObjectsUpdated()
     chargeDurationObjectSerial = chargeDurationObjectSerial + 1
@@ -1711,13 +1665,6 @@ end
 --  functions earlier in the file can also use them.)
 ---------------------------------------------------------------------------
 
-local function GetTrustedIsOnGCD(spellID)
-    if RuntimeQueries and RuntimeQueries.GetTrustedIsOnGCD then
-        return RuntimeQueries.GetTrustedIsOnGCD(spellID)
-    end
-    return nil
-end
-
 local function GetCooldownInfoBoolean(info, key)
     if not info then
         return nil
@@ -1726,18 +1673,9 @@ local function GetCooldownInfoBoolean(info, key)
     return DecodePotentialSecretBoolean(value)
 end
 
-local function GetCurrentIsOnGCD(spellID, info, context)
-    local trusted = GetTrustedIsOnGCD(spellID)
-    if trusted ~= nil then
-        return trusted
-    end
-    local owner = context and context.owner
-    if owner and type(owner._isOnGCD) == "boolean" then
-        return owner._isOnGCD
-    end
-    if RuntimeQueries and RuntimeQueries.GetTrustedIsOnGCD then
-        return nil
-    end
+local function GetCurrentIsOnGCD(info)
+    -- isOnGCD is NeverSecret (per SpellCooldownInfo docs + .taintrc), so read it
+    -- straight off the cdInfo the resolver already fetched.
     return GetCooldownInfoBoolean(info, "isOnGCD")
 end
 
@@ -3084,18 +3022,27 @@ local function DeriveMirrorPayloadMode(m, sid, suppressAura)
             return "cooldown", nil, overrideSid
         end
     end
-    -- No real cooldown on the base or override. Fall back to a GCD swipe (base
-    -- first, then override) so a freshly cast spell still surfaces its GCD.
+    -- An active multi-charge recharge outranks the GCD. While a charge is
+    -- rolling, Blizzard's CooldownViewer shows the recharge swipe, not the
+    -- incidental GCD from casting other spells — the same precedence a real
+    -- (non-GCD) cooldown already gets above. Check it before the gcd-only
+    -- fallback so a recharging charge spell (Unholy DK Putrefy is the reference
+    -- case) keeps its recharge swipe instead of flickering to a GCD swipe every
+    -- global cooldown. HasActiveChargeRecharge self-gates on a known-charge
+    -- capability in combat, so a non-charge spell still falls through to the
+    -- GCD branch below.
+    if HasActiveChargeRecharge(sid, SafeBoolean(m.charges) == true) then
+        return "cooldown", nil, sid
+    end
+    -- No real cooldown on the base or override and no rolling recharge. Fall
+    -- back to a GCD swipe (base first, then override) so a freshly cast spell
+    -- still surfaces its GCD.
     if cdActive and cdInfo.isOnGCD == true then
         return "gcd-only", nil, sid
     end
     if overrideCdInfo and overrideCdInfo.isActive == true
         and overrideCdInfo.isOnGCD == true then
         return "gcd-only", nil, overrideSid
-    end
-    -- Cooldown lane inactive but a multi-charge recharge may still be rolling.
-    if HasActiveChargeRecharge(sid, SafeBoolean(m.charges) == true) then
-        return "cooldown", nil, sid
     end
     -- Hold gcd-only through the cast when cast time exceeds the GCD (Shadow
     -- Priest Mind Blast is the reference case). GCD ends before
@@ -3577,7 +3524,7 @@ local function ResolveItemDurationObjectForIcon(icon, entry)
     if itemSpellID then
         local cdInfo = QueryCooldown(itemSpellID)
         local cdInfoActive = cdInfo and IsCooldownInfoActive(cdInfo)
-        if cdInfoActive == true and GetCurrentIsOnGCD(itemSpellID, cdInfo) ~= true then
+        if cdInfoActive == true and GetCurrentIsOnGCD(cdInfo) ~= true then
             local durObj = QueryDuration(itemSpellID)
             if durObj then
                 return durObj, "item-cooldown",
@@ -4327,18 +4274,41 @@ local function ResolveCooldownStateCore(context)
     end
 
     local gcdCdInfo = QueryCooldown(sid)
-    local currentOnGCD = GetCurrentIsOnGCD(sid, gcdCdInfo, context)
+    local currentOnGCD = GetCurrentIsOnGCD(gcdCdInfo)
     local gcdDurObj
     if currentOnGCD == true and context.showGCDSwipe == true then
         gcdDurObj = QueryGCDDurationObject(sid)
     end
     MemAuditProfilerMark("CDM_rsGCDProbe")
 
+    local entryMayHaveCharges = entry
+        and (entry.hasCharges == true or entry.charges == true)
+    -- An active multi-charge recharge outranks the GCD swipe, mirroring
+    -- Blizzard's CooldownViewer (the recharge shows, not the incidental GCD
+    -- from casting other spells). Gated on currentOnGCD so it intercepts only
+    -- the on-GCD window: ShouldRenderLiveGCD(currentOnGCD) already gates the
+    -- real-cooldown branch below off whenever currentOnGCD is true, so a real
+    -- non-GCD cooldown still wins there, and an off-GCD recharge is handled by
+    -- the charge block at the end. Unholy DK Putrefy is the reference case
+    -- (flickered to a GCD swipe every global cooldown while a charge recharged).
+    if currentOnGCD == true and HasActiveChargeRecharge(sid, entryMayHaveCharges) then
+        local chargeDur = QueryChargeDuration(sid)
+        if chargeDur then
+            state.mode = "cooldown"
+            SetCooldownStateActivity(state, true)
+            state.durObj = chargeDur
+            state.sourceID = sid
+            state.spellID = sid
+            MemAuditProfilerMark("CDM_rsReturnChargeRechargeGCD")
+            return FinalizeCooldownStateActivity(state, context, entry, sid, entryIsAura, itemBackedEntry)
+        end
+    end
+
     do
         local cdInfo = gcdCdInfo or QueryCooldown(sid)
         local cdInfoActive = cdInfo and IsCooldownInfoActive(cdInfo)
         if cdInfoActive == true then
-            local cdInfoOnGCD = GetCurrentIsOnGCD(sid, cdInfo, context)
+            local cdInfoOnGCD = GetCurrentIsOnGCD(cdInfo)
             local durObj = QueryDuration(sid)
             local renderLiveGCD = ShouldRenderLiveGCD(cdInfoOnGCD)
             -- Real CD classification needs only: isActive=true (already checked)
@@ -4398,9 +4368,8 @@ local function ResolveCooldownStateCore(context)
     -- available). Blizzard's CooldownViewer surfaces the recharge timing
     -- from C_Spell.GetSpellCharges in this state — see
     -- CheckCacheCooldownValuesFromCharges. Mirror it here so the recharge
-    -- swipe binds instead of falling through to inactive.
-    local entryMayHaveCharges = entry
-        and (entry.hasCharges == true or entry.charges == true)
+    -- swipe binds instead of falling through to inactive. (entryMayHaveCharges
+    -- is computed once above for the on-GCD recharge interception.)
     if HasActiveChargeRecharge(sid, entryMayHaveCharges) then
         local chargeDur = QueryChargeDuration(sid)
         if chargeDur then

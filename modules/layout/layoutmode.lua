@@ -2911,6 +2911,14 @@ do
                             if _G.QUI_RefreshChatSizeSliders then
                                 _G.QUI_RefreshChatSizeSliders()
                             end
+                            -- QUI_RefreshChatSizeSliders only updates the full
+                            -- /qui settings page sliders; the Layout Mode drawer
+                            -- uses its own BuildSizeCollapsible sliders, so sync
+                            -- those to the dragged size too.
+                            local U = ns.QUI_LayoutMode_Utils
+                            if U and U.RefreshActiveSizeSliders then
+                                U.RefreshActiveSizeSliders()
+                            end
                         end)
 
                         overlay._chatResizeGrips[corner] = grip

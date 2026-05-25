@@ -955,7 +955,6 @@ local function DumpDebugIcon(icon)
         "customActive=", tostring(icon._customBarActive),
         "hasCooldownActive=", tostring(icon._hasCooldownActive),
         "hasRealCooldown=", tostring(icon._hasRealCooldownActive),
-        "isOnGCD=", tostring(icon._isOnGCD),
         "lastStart=", tostring(icon._lastStart),
         "lastDuration=", tostring(icon._lastDuration),
         "isTotemInstance=", tostring(icon._isTotemInstance),

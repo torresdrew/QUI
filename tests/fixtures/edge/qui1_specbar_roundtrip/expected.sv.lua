@@ -1177,6 +1177,7 @@ return {
               enabled = true,
               refreshRateCombat = 0.5,
               refreshRateIdle = 2,
+              shortenNames = true,
               showHoverTooltip = true,
               showPinnedSelf = true,
               visibility = "always",

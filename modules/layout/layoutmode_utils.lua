@@ -538,13 +538,35 @@ function Utils.BuildSizeCollapsible(content, opts, sections, relayout)
     })
 
     local PLACEHOLDER = 2 * Utils.FORM_ROW + 8
+    local widthSlider, heightSlider
     Utils.CreateCollapsible(content, "Frame Size", PLACEHOLDER, function(body)
         local sy = -4
-        local widthSlider  = GUI:CreateFormSlider(body, "Width",  minW, maxW, 1, "width",  proxy, nil, nil, { description = widthDescription })
+        widthSlider  = GUI:CreateFormSlider(body, "Width",  minW, maxW, 1, "width",  proxy, nil, nil, { description = widthDescription })
         sy = Utils.PlaceRow(widthSlider, body, sy)
-        local heightSlider = GUI:CreateFormSlider(body, "Height", minH, maxH, 1, "height", proxy, nil, nil, { description = heightDescription })
+        heightSlider = GUI:CreateFormSlider(body, "Height", minH, maxH, 1, "height", proxy, nil, nil, { description = heightDescription })
         Utils.PlaceRow(heightSlider, body, sy)
     end, sections, relayout)
+
+    -- Corner-drag resize grips change the live frame size directly, but these
+    -- sliders read the live size only at build time — so without a re-sync the
+    -- panel keeps showing the pre-drag value. Register a refresher the grips
+    -- call on mouse-up. Only one mover drawer is open at a time, so a single
+    -- module-level slot is sufficient; the most recently built size section
+    -- wins, which is exactly the element whose grips can fire.
+    Utils._activeSizeSliderRefresh = function()
+        if widthSlider and widthSlider.SetValue then widthSlider:SetValue(proxy.width) end
+        if heightSlider and heightSlider.SetValue then heightSlider:SetValue(proxy.height) end
+    end
+end
+
+-- Called by resize grips (ChatFrame1, damage meter windows) after a corner
+-- drag so the Layout Mode Frame Size sliders re-read the live dimensions.
+-- Safe no-op when no size section is currently built.
+function Utils.RefreshActiveSizeSliders()
+    local fn = Utils._activeSizeSliderRefresh
+    if type(fn) ~= "function" then return end
+    local ok, err = pcall(fn)
+    if not ok and geterrorhandler then geterrorhandler()(err) end
 end
 
 ---------------------------------------------------------------------------

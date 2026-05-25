@@ -994,6 +994,10 @@ local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("CVAR_UPDATE")
+-- One-shot: re-apply the QUI-stored ChatFrame1 size after Edit Mode restores
+-- its layout size on login (Edit Mode preset layouts can't persist a custom
+-- chat size). Unregistered after the first fire.
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 -- Lockdown-end events. PLAYER_REGEN_ENABLED covers plain combat; the
 -- remainder cover chat messaging lockdown sources (M+ keys, encounters,
 -- PvP matches) that persist past combat exit.
@@ -1039,6 +1043,15 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         end
     elseif event == "PLAYER_LOGIN" or event == "CVAR_UPDATE" then
         ApplyTimestampMode()
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        -- Run after this frame's Edit Mode layout restore lands so QUI's saved
+        -- chat size wins over the active (possibly preset) Edit Mode layout.
+        self:UnregisterEvent("PLAYER_ENTERING_WORLD")
+        C_Timer.After(0, function()
+            if ns.QUI and ns.QUI.ChatFrame1Sizing and ns.QUI.ChatFrame1Sizing.ApplyStoredSize then
+                ns.QUI.ChatFrame1Sizing.ApplyStoredSize()
+            end
+        end)
     elseif event == "PLAYER_REGEN_ENABLED"
         or event == "CHALLENGE_MODE_COMPLETED"
         or event == "CHALLENGE_MODE_RESET"
