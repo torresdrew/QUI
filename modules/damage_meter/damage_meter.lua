@@ -1464,8 +1464,9 @@ end
 
 function Window:_ApplyHeader()
     if not self.frame or not self.TypeLabel then return end
+    local sessionLabel = self.sessionID ~= nil and "Previous" or LabelForSession(self.sessionType)
     self.TypeLabel:SetText(LabelForType(self.damageMeterType)
-        .. " | " .. LabelForSession(self.sessionType))
+        .. " | " .. sessionLabel)
 end
 
 -- Window border color resolves like headerText: an explicit colors.border
@@ -1606,6 +1607,19 @@ function Window:_OpenConfigMenu()
     if not windowState then return end
 
     local owner = self.header or self.frame
+    local function SelectSession(sessionType, sessionID)
+        self.sessionType = sessionID ~= nil and nil or sessionType
+        self.sessionID = sessionID
+        if sessionID == nil and sessionType ~= nil then
+            windowState.sessionType = sessionType
+        end
+        self._lastGeneration = -1
+        if self._breakdown and self._breakdown.Close then
+            self._breakdown:Close()
+        end
+        QUI_DamageMeter.WindowManager:RefreshAll()
+    end
+
     MenuUtil.CreateContextMenu(owner, function(_, root)
         root:CreateTitle("Meter Type")
         for _, t in ipairs(METER_TYPES) do
@@ -1620,23 +1634,37 @@ function Window:_OpenConfigMenu()
         end
         root:CreateDivider()
         root:CreateTitle("Session")
-        -- Enum.DamageMeterSessionType: 0 = Overall, 1 = Current, 2 = Expired (history only).
-        -- Phase 2 exposes Current + Overall. Expired sessions surface only via the
-        -- Phase 4 breakdown popup, not the live window.
-        local sessions = {
-            { value = 1, label = "Current" },
-            { value = 0, label = "Overall" },
-        }
-        for _, entry in ipairs(sessions) do
-            local sessionVal = entry.value
-            root:CreateRadio(entry.label,
-                function() return self.sessionID == nil and self.sessionType == sessionVal end,
-                function()
-                    self.sessionType = sessionVal
-                    self.sessionID = nil
-                    windowState.sessionType = sessionVal
-                    QUI_DamageMeter.WindowManager:RefreshAll()
-                end)
+        local S = Enum and Enum.DamageMeterSessionType
+        local currentSession = (S and S.Current) or 1
+        local overallSession = (S and S.Overall) or 0
+
+        root:CreateRadio("Current",
+            function() return self.sessionID == nil and self.sessionType == currentSession end,
+            function() SelectSession(currentSession, nil) end)
+
+        root:CreateRadio("Overall",
+            function() return self.sessionID == nil and self.sessionType == overallSession end,
+            function() SelectSession(overallSession, nil) end)
+
+        local previousMenu = root:CreateButton("Previous")
+        local sessions
+        if C_DamageMeter and C_DamageMeter.GetAvailableCombatSessions then
+            local ok, availableSessions = pcall(C_DamageMeter.GetAvailableCombatSessions)
+            if ok and type(availableSessions) == "table" then
+                sessions = availableSessions
+            end
+        end
+
+        if not sessions or #sessions == 0 then
+            local none = previousMenu:CreateButton("No previous sessions", function() end)
+            none:SetEnabled(false)
+        else
+            for _, availableSession in ipairs(sessions) do
+                local sessionID = availableSession.sessionID
+                previousMenu:CreateRadio(availableSession.name,
+                    function() return self.sessionID == sessionID end,
+                    function() SelectSession(nil, sessionID) end)
+            end
         end
         root:CreateDivider()
         root:CreateTitle("Data")
@@ -2128,10 +2156,10 @@ function Window.New(windowID)
         windowID        = windowID,
         damageMeterType = windowState.damageMeterType,
         sessionType     = windowState.sessionType,
-        sessionID       = nil,
         rows            = {},      -- pool, filled in T10
         _lastGeneration = 0,
     }, Window)
+    self.sessionID = nil
 
     -- Top-level frame; parented to UIParent so each window is independently
     -- positionable and Layout Mode-discoverable. Position is set here as a
