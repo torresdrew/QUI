@@ -533,12 +533,24 @@ Data._NormalizeSpells = NormalizeSpells
 
 -- Returns a one-tick view of a source's spell breakdown. Caller is responsible
 -- for re-calling on the next tick to get live updates while the popup is open.
-function Data:GetBreakdownView(sessionType, damageMeterType, sourceGUID, sourceCreatureID)
-    if not (C_DamageMeter and C_DamageMeter.GetCombatSessionSourceFromType) then
+function Data:GetBreakdownView(sessionType, damageMeterType, sourceGUID, sourceCreatureID, sessionID)
+    if not C_DamageMeter then
         return { spells = {}, maxAmount = 0, totalAmount = 0 }
     end
-    local ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
-        sessionType, damageMeterType, sourceGUID, sourceCreatureID)
+    local ok, src
+    if sessionID ~= nil then
+        if not C_DamageMeter.GetCombatSessionSourceFromID then
+            return { spells = {}, maxAmount = 0, totalAmount = 0 }
+        end
+        ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromID,
+            sessionID, damageMeterType, sourceGUID, sourceCreatureID)
+    else
+        if not C_DamageMeter.GetCombatSessionSourceFromType then
+            return { spells = {}, maxAmount = 0, totalAmount = 0 }
+        end
+        ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
+            sessionType, damageMeterType, sourceGUID, sourceCreatureID)
+    end
     if not ok or type(src) ~= "table" then
         return { spells = {}, maxAmount = 0, totalAmount = 0 }
     end
@@ -615,10 +627,18 @@ Data._PivotPlayerTargets = PivotPlayerTargets
 -- Raw combatSpells for a source — no C_Spell name/icon resolution (target
 -- aggregation only needs combatSpellDetails + totalAmount). pcall-guarded like
 -- GetBreakdownView.
-local function FetchSourceSpells(sessionType, meterType, sourceGUID, sourceCreatureID)
-    if not (C_DamageMeter and C_DamageMeter.GetCombatSessionSourceFromType) then return {} end
-    local ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
-        sessionType, meterType, sourceGUID, sourceCreatureID)
+local function FetchSourceSpells(sessionType, meterType, sourceGUID, sourceCreatureID, sessionID)
+    if not C_DamageMeter then return {} end
+    local ok, src
+    if sessionID ~= nil then
+        if not C_DamageMeter.GetCombatSessionSourceFromID then return {} end
+        ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromID,
+            sessionID, meterType, sourceGUID, sourceCreatureID)
+    else
+        if not C_DamageMeter.GetCombatSessionSourceFromType then return {} end
+        ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
+            sessionType, meterType, sourceGUID, sourceCreatureID)
+    end
     if not ok or type(src) ~= "table" then return {} end
     return src.combatSpells or {}
 end
@@ -630,12 +650,12 @@ end
 
 -- Players who damaged a single enemy source (window meter type =
 -- EnemyDamageTaken, user clicks an enemy row).
-function Data:GetEnemyAttackers(sessionType, sourceGUID, sourceCreatureID)
+function Data:GetEnemyAttackers(sessionType, sessionID, sourceGUID, sourceCreatureID)
     local eType = EnemyDamageTakenType()
     if not eType then return {} end
     local IsSecret = Helpers and Helpers.IsSecretValue
     return AggregateSpellsByUnit(
-        FetchSourceSpells(sessionType, eType, sourceGUID, sourceCreatureID), IsSecret)
+        FetchSourceSpells(sessionType, eType, sourceGUID, sourceCreatureID, sessionID), IsSecret)
 end
 
 -- playerName -> sorted enemy-target list, built by cross-referencing every
@@ -643,11 +663,11 @@ end
 -- generation): the key changes whenever the EnemyDamageTaken view is re-fetched
 -- (the dirty/ticker path bumps its generation), so it stays fresh without its
 -- own event hooks.
-function Data:GetPlayerTargetsMap(sessionType)
+function Data:GetPlayerTargetsMap(sessionType, sessionID)
     local eType = EnemyDamageTakenType()
     if not eType then return {} end
-    local enemyView = self:GetView(sessionType, eType)
-    local genKey = tostring(sessionType) .. ":" .. tostring(enemyView.generation or 0)
+    local enemyView = self:GetView(sessionType, eType, sessionID)
+    local genKey = SessionKey(sessionType, sessionID) .. ":" .. tostring(enemyView.generation or 0)
     if self._targetsCacheKey == genKey and self._targetsCache then
         return self._targetsCache
     end
@@ -657,7 +677,7 @@ function Data:GetPlayerTargetsMap(sessionType)
         perEnemy[#perEnemy + 1] = {
             enemyName = enemy.name,
             players   = AggregateSpellsByUnit(
-                FetchSourceSpells(sessionType, eType, enemy.sourceGUID, enemy.sourceCreatureID),
+                FetchSourceSpells(sessionType, eType, enemy.sourceGUID, enemy.sourceCreatureID, sessionID),
                 IsSecret),
         }
     end
@@ -667,11 +687,11 @@ function Data:GetPlayerTargetsMap(sessionType)
     return map
 end
 
-function Data:GetPlayerTargets(sessionType, playerName)
+function Data:GetPlayerTargets(sessionType, sessionID, playerName)
     if playerName == nil then return {} end
     local IsSecret = Helpers and Helpers.IsSecretValue
     if IsSecret and IsSecret(playerName) then return {} end
-    return self:GetPlayerTargetsMap(sessionType)[playerName] or {}
+    return self:GetPlayerTargetsMap(sessionType, sessionID)[playerName] or {}
 end
 
 -- ==== Combined healing (Healing Done + Absorbs) ====
@@ -681,15 +701,15 @@ end
 -- HealingDone / HPS views and their breakdown popups use the merged data
 -- below. Toggle off for pure C_DamageMeter HealingDone.
 
-function Data:GetCombinedHealingView(sessionType)
+function Data:GetCombinedHealingView(sessionType, sessionID)
     local T = Enum and Enum.DamageMeterType
     local hType = T and T.HealingDone
     local aType = T and T.Absorbs
     if not (hType and aType) then
-        return self:GetView(sessionType, hType or 2)
+        return self:GetView(sessionType, hType or 2, sessionID)
     end
-    local hView = self:GetView(sessionType, hType)
-    local aView = self:GetView(sessionType, aType)
+    local hView = self:GetView(sessionType, hType, sessionID)
+    local aView = self:GetView(sessionType, aType, sessionID)
     if not (aView and aView.sources and #aView.sources > 0) then
         return hView
     end
@@ -755,15 +775,15 @@ function Data:GetCombinedHealingView(sessionType)
     }
 end
 
-function Data:GetCombinedHealingBreakdown(sessionType, sourceGUID, sourceCreatureID)
+function Data:GetCombinedHealingBreakdown(sessionType, sessionID, sourceGUID, sourceCreatureID)
     local T = Enum and Enum.DamageMeterType
     local hType = T and T.HealingDone
     local aType = T and T.Absorbs
     if not (hType and aType) then
-        return self:GetBreakdownView(sessionType, hType or 2, sourceGUID, sourceCreatureID)
+        return self:GetBreakdownView(sessionType, hType or 2, sourceGUID, sourceCreatureID, sessionID)
     end
-    local hView = self:GetBreakdownView(sessionType, hType, sourceGUID, sourceCreatureID)
-    local aView = self:GetBreakdownView(sessionType, aType, sourceGUID, sourceCreatureID)
+    local hView = self:GetBreakdownView(sessionType, hType, sourceGUID, sourceCreatureID, sessionID)
+    local aView = self:GetBreakdownView(sessionType, aType, sourceGUID, sourceCreatureID, sessionID)
     if not (aView and aView.spells and #aView.spells > 0) then
         return hView
     end
@@ -1761,9 +1781,9 @@ function Window:Refresh()
     local s_combo = GetSettings()
     if IsHealingType(self.damageMeterType)
         and s_combo and s_combo.combineAbsorbsIntoHealing then
-        view = Data:GetCombinedHealingView(self.sessionType)
+        view = Data:GetCombinedHealingView(self.sessionType, self.sessionID)
     else
-        view = Data:GetView(self.sessionType, self.damageMeterType)
+        view = Data:GetView(self.sessionType, self.damageMeterType, self.sessionID)
     end
     if view.generation == self._lastGeneration then return end
     self._lastGeneration = view.generation
@@ -2576,10 +2596,11 @@ function Breakdown:_ResolveTargets(meterType)
     local T = Enum and Enum.DamageMeterType
     if not (T and self.source) then return nil, nil end
     local st = self.parentWindow.sessionType
+    local sid = self.parentWindow.sessionID
     if meterType == T.EnemyDamageTaken then
-        return Data:GetEnemyAttackers(st, self.source.sourceGUID, self.source.sourceCreatureID), "Attacked By"
+        return Data:GetEnemyAttackers(st, sid, self.source.sourceGUID, self.source.sourceCreatureID), "Attacked By"
     elseif meterType == T.DamageDone or meterType == T.Dps then
-        return Data:GetPlayerTargets(st, self.source.name), "Targets"
+        return Data:GetPlayerTargets(st, sid, self.source.name), "Targets"
     end
     return nil, nil
 end
@@ -2588,17 +2609,18 @@ function Breakdown:Refresh()
     if not self.source or not self.frame:IsShown() then return end
     local _t0 = Perf.enabled and PerfNow() or 0
     local sessionType   = self.parentWindow.sessionType
+    local sessionID = self.parentWindow.sessionID
     local damageMeterType = self.parentWindow.damageMeterType
     -- Healing breakdown optionally merges absorbs (settings.combineAbsorbsIntoHealing).
     local view
     local s_combo = GetSettings()
     if IsHealingType(damageMeterType)
         and s_combo and s_combo.combineAbsorbsIntoHealing then
-        view = Data:GetCombinedHealingBreakdown(sessionType,
+        view = Data:GetCombinedHealingBreakdown(sessionType, sessionID,
             self.source.sourceGUID, self.source.sourceCreatureID)
     else
         view = Data:GetBreakdownView(sessionType, damageMeterType,
-            self.source.sourceGUID, self.source.sourceCreatureID)
+            self.source.sourceGUID, self.source.sourceCreatureID, sessionID)
     end
 
     -- Title: "Damage Done by <Name>"
