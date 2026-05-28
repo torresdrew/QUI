@@ -51,6 +51,11 @@ local function GetGUI()
     return QUI and QUI.GUI or nil
 end
 
+local function GetPixelSize(frame)
+    local core = ns.Addon
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
 local function ApplyPixelBackdrop(frame, borderPixels, withBackground)
     if not frame then
         return
@@ -441,7 +446,7 @@ function AuraIndicatorsEditor.RenderTrackedAuras(host, auraIndicatorsDB, onChang
     inputBox:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(inputBox),
     })
     inputBox:SetBackdropColor(0.06, 0.06, 0.08, 1)
     inputBox:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
@@ -464,7 +469,7 @@ function AuraIndicatorsEditor.RenderTrackedAuras(host, auraIndicatorsDB, onChang
     addManualButton:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(addManualButton),
     })
     addManualButton:SetBackdropColor(0.15, 0.15, 0.15, 1)
     addManualButton:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)

@@ -28,13 +28,7 @@ local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         SkinBase.SetFrameData(button, "backdrop", btnBd)
     end
 
-    local btnPx = SkinBase.GetPixelSize(btnBd, 1)
-    btnBd:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = btnPx,
-        insets = { left = btnPx, right = btnPx, top = btnPx, bottom = btnPx }
-    })
+    SkinBase.ApplyPixelBackdrop(btnBd, 1, true, true)
     -- Button bg slightly lighter than main bg
     local btnBgR = math.min(bgr + 0.07, 1)
     local btnBgG = math.min(bgg + 0.07, 1)
@@ -89,18 +83,10 @@ local function StyleKeystoneSlot(slot, sr, sg, sb, sa)
 
     if not SkinBase.GetFrameData(slot, "border") then
         local slotBorder = CreateFrame("Frame", nil, slot, "BackdropTemplate")
-        slotBorder:SetPoint("TOPLEFT", -4, 4)
-        slotBorder:SetPoint("BOTTOMRIGHT", 4, -4)
+        SkinBase.SetExpandedPixelPoints(slotBorder, slot, 4)
         slotBorder:SetFrameLevel(slot:GetFrameLevel() - 1)
         slotBorder:EnableMouse(false)
-        local slotPx = SkinBase.GetPixelSize(slotBorder, 1)
-        local slotEdge2 = 2 * slotPx
-        slotBorder:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = slotEdge2,
-            insets = { left = slotEdge2, right = slotEdge2, top = slotEdge2, bottom = slotEdge2 }
-        })
+        SkinBase.ApplyPixelBackdrop(slotBorder, 2, true, true)
         slotBorder:SetBackdropColor(0, 0, 0, 0.5)
         slotBorder:SetBackdropBorderColor(sr, sg, sb, sa)
         SkinBase.SetFrameData(slot, "border", slotBorder)
@@ -173,8 +159,7 @@ local function SkinKeystoneFrame()
         for _, affix in ipairs(f.Affixes) do
             if affix.Portrait and not SkinBase.GetFrameData(affix, "border") then
                 local affixBorder = affix:CreateTexture(nil, "OVERLAY")
-                affixBorder:SetPoint("TOPLEFT", affix.Portrait, -1, 1)
-                affixBorder:SetPoint("BOTTOMRIGHT", affix.Portrait, 1, -1)
+                SkinBase.SetExpandedPixelPoints(affixBorder, affix.Portrait, 1)
                 affixBorder:SetColorTexture(r, g, b, a)
                 affixBorder:SetDrawLayer("OVERLAY", -1)
                 SkinBase.SetFrameData(affix, "border", affixBorder)

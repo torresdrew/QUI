@@ -8877,7 +8877,7 @@ function GUI:AddToolsStripButton(frame, config)
     QUICore.SafeSetBackdrop(btn, {
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = QUICore:GetPixelSize(btn),
     })
     btn:SetBackdropColor(1, 1, 1, 0.06)
     btn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], C.border[4])

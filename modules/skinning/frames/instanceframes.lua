@@ -125,9 +125,7 @@ local function StyleTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     -- Create backdrop
     SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
     local tabBackdrop = SkinBase.GetBackdrop(tab)
-    tabBackdrop:ClearAllPoints()
-    tabBackdrop:SetPoint("TOPLEFT", 3, -3)
-    tabBackdrop:SetPoint("BOTTOMRIGHT", -3, 0)
+    SkinBase.SetPixelInsetPoints(tabBackdrop, tab, 3, 3, 3, 0)
 
     SkinBase.MarkStyled(tab)
 end
@@ -223,16 +221,10 @@ local function StyleGroupFinderButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
         local iconBackdrop = SkinBase.GetFrameData(button.icon, "backdrop")
         if not iconBackdrop then
             iconBackdrop = CreateFrame("Frame", nil, button, "BackdropTemplate")
-            iconBackdrop:SetPoint("TOPLEFT", button.icon, -1, 1)
-            iconBackdrop:SetPoint("BOTTOMRIGHT", button.icon, 1, -1)
+            SkinBase.SetExpandedPixelPoints(iconBackdrop, button.icon, 1)
             iconBackdrop:SetFrameLevel(button:GetFrameLevel())
             iconBackdrop:EnableMouse(false)
-            local ibPx = SkinBase.GetPixelSize(iconBackdrop)
-            iconBackdrop:SetBackdrop({
-                bgFile = nil,
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = ibPx,
-            })
+            SkinBase.ApplyPixelBackdrop(iconBackdrop, 1, false, false)
             iconBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
             SkinBase.SetFrameData(button.icon, "backdrop", iconBackdrop)
         end
@@ -679,16 +671,10 @@ local function StyleDungeonIcon(icon, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         local iconBackdrop = SkinBase.GetFrameData(icon.Icon, "backdrop")
         if not iconBackdrop then
             iconBackdrop = CreateFrame("Frame", nil, icon, "BackdropTemplate")
-            iconBackdrop:SetPoint("TOPLEFT", icon.Icon, -1, 1)
-            iconBackdrop:SetPoint("BOTTOMRIGHT", icon.Icon, 1, -1)
+            SkinBase.SetExpandedPixelPoints(iconBackdrop, icon.Icon, 1)
             iconBackdrop:SetFrameLevel(icon:GetFrameLevel())
             iconBackdrop:EnableMouse(false)
-            local iiPx = SkinBase.GetPixelSize(iconBackdrop)
-            iconBackdrop:SetBackdrop({
-                bgFile = nil,
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = iiPx,
-            })
+            SkinBase.ApplyPixelBackdrop(iconBackdrop, 1, false, false)
             iconBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
             SkinBase.SetFrameData(icon.Icon, "backdrop", iconBackdrop)
         end
@@ -714,16 +700,10 @@ local function StyleAffixIcon(affix, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         local portraitBackdrop = SkinBase.GetFrameData(affix.Portrait, "backdrop")
         if not portraitBackdrop then
             portraitBackdrop = CreateFrame("Frame", nil, affix, "BackdropTemplate")
-            portraitBackdrop:SetPoint("TOPLEFT", affix.Portrait, -1, 1)
-            portraitBackdrop:SetPoint("BOTTOMRIGHT", affix.Portrait, 1, -1)
+            SkinBase.SetExpandedPixelPoints(portraitBackdrop, affix.Portrait, 1)
             portraitBackdrop:SetFrameLevel(affix:GetFrameLevel())
             portraitBackdrop:EnableMouse(false)
-            local apPx = SkinBase.GetPixelSize(portraitBackdrop)
-            portraitBackdrop:SetBackdrop({
-                bgFile = nil,
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = apPx,
-            })
+            SkinBase.ApplyPixelBackdrop(portraitBackdrop, 1, false, false)
             portraitBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
             SkinBase.SetFrameData(affix.Portrait, "backdrop", portraitBackdrop)
         end
@@ -872,13 +852,7 @@ local function StylePVPActivityButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
         SkinBase.SetFrameData(button, "backdrop", backdrop)
     end
 
-    local cdPx = SkinBase.GetPixelSize(backdrop)
-    backdrop:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = cdPx,
-        insets = { left = cdPx, right = cdPx, top = cdPx, bottom = cdPx }
-    })
+    SkinBase.ApplyPixelBackdrop(backdrop, 1, true, true)
 
     local btnBgR = math.min(bgr + 0.07, 1)
     local btnBgG = math.min(bgg + 0.07, 1)
@@ -901,16 +875,10 @@ local function StylePVPActivityButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga
             local rewardIconBackdrop = SkinBase.GetFrameData(reward.Icon, "backdrop")
             if not rewardIconBackdrop then
                 rewardIconBackdrop = CreateFrame("Frame", nil, reward, "BackdropTemplate")
-                rewardIconBackdrop:SetPoint("TOPLEFT", reward.Icon, -1, 1)
-                rewardIconBackdrop:SetPoint("BOTTOMRIGHT", reward.Icon, 1, -1)
+                SkinBase.SetExpandedPixelPoints(rewardIconBackdrop, reward.Icon, 1)
                 rewardIconBackdrop:SetFrameLevel(reward:GetFrameLevel())
                 rewardIconBackdrop:EnableMouse(false)
-                local riPx = SkinBase.GetPixelSize(rewardIconBackdrop)
-                rewardIconBackdrop:SetBackdrop({
-                    bgFile = nil,
-                    edgeFile = "Interface\\Buttons\\WHITE8x8",
-                    edgeSize = riPx,
-                })
+                SkinBase.ApplyPixelBackdrop(rewardIconBackdrop, 1, false, false)
                 rewardIconBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
                 SkinBase.SetFrameData(reward.Icon, "backdrop", rewardIconBackdrop)
             end
@@ -971,13 +939,7 @@ local function StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         SkinBase.SetFrameData(button, "backdrop", backdrop)
     end
 
-    local dvPx = SkinBase.GetPixelSize(backdrop)
-    backdrop:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = dvPx,
-        insets = { left = dvPx, right = dvPx, top = dvPx, bottom = dvPx }
-    })
+    SkinBase.ApplyPixelBackdrop(backdrop, 1, true, true)
 
     local btnBgR = math.min(bgr + 0.05, 1)
     local btnBgG = math.min(bgg + 0.05, 1)
@@ -997,16 +959,10 @@ local function StyleSpecificBGButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         local iconBackdrop = SkinBase.GetFrameData(button.Icon, "backdrop")
         if not iconBackdrop then
             iconBackdrop = CreateFrame("Frame", nil, button, "BackdropTemplate")
-            iconBackdrop:SetPoint("TOPLEFT", button.Icon, -1, 1)
-            iconBackdrop:SetPoint("BOTTOMRIGHT", button.Icon, 1, -1)
+            SkinBase.SetExpandedPixelPoints(iconBackdrop, button.Icon, 1)
             iconBackdrop:SetFrameLevel(button:GetFrameLevel())
             iconBackdrop:EnableMouse(false)
-            local biPx = SkinBase.GetPixelSize(iconBackdrop)
-            iconBackdrop:SetBackdrop({
-                bgFile = nil,
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = biPx,
-            })
+            SkinBase.ApplyPixelBackdrop(iconBackdrop, 1, false, false)
             iconBackdrop:SetBackdropBorderColor(sr, sg, sb, sa)
             SkinBase.SetFrameData(button.Icon, "backdrop", iconBackdrop)
         end
@@ -1046,13 +1002,7 @@ local function StyleConquestBar(bar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         SkinBase.SetFrameData(bar, "backdrop", backdrop)
     end
 
-    local wcPx = SkinBase.GetPixelSize(backdrop)
-    backdrop:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = wcPx,
-        insets = { left = wcPx, right = wcPx, top = wcPx, bottom = wcPx }
-    })
+    SkinBase.ApplyPixelBackdrop(backdrop, 1, true, true)
     backdrop:SetBackdropColor(bgr, bgg, bgb, 0.8)
     backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
 

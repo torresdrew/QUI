@@ -69,6 +69,21 @@ local function ClearStatusBar(statusBar)
     return SetStatusBarValue(statusBar, 0)
 end
 
+local function GetBorderSizePx(frame, settings)
+    local borderSize = settings and settings.borderSize
+    if type(borderSize) ~= "number" then
+        borderSize = 2
+    end
+    if borderSize <= 0 then return 0 end
+    if QUICore and QUICore.Pixels then
+        return QUICore:Pixels(borderSize, frame)
+    end
+    if QUICore and QUICore.GetPixelSize then
+        return borderSize * QUICore:GetPixelSize(frame)
+    end
+    return borderSize
+end
+
 local function SetStatusBarTimerDuration(statusBar, durObj)
     if Renderers and Renderers.SetStatusBarTimerDuration then
         return Renderers.SetStatusBarTimerDuration(statusBar, durObj, STATUS_BAR_TIMER_REMAINING)
@@ -522,7 +537,7 @@ function CDMBars.ConfigureBar(bar, settings, overrideWidth)
     local useClassColor = settings.useClassColor
     local barColor = settings.barColor or {0.376, 0.647, 0.980, 1}
     local barOpacity = settings.barOpacity or 1.0
-    local borderSize = settings.borderSize or 2
+    local borderSizePx = GetBorderSizePx(bar, settings)
     local bgColor = settings.bgColor or {0, 0, 0, 1}
     local bgOpacity = settings.bgOpacity or 0.5
     local textSize = settings.textSize or 14
@@ -687,30 +702,30 @@ function CDMBars.ConfigureBar(bar, settings, overrideWidth)
     -- Border (4-edge technique)
     local borderFrame = bar.BorderContainer
     if borderFrame then
-        if borderSize > 0 then
+        if borderSizePx > 0 then
             borderFrame:ClearAllPoints()
-            borderFrame:SetPoint("TOPLEFT", bar, "TOPLEFT", -borderSize, borderSize)
-            borderFrame:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", borderSize, -borderSize)
+            borderFrame:SetPoint("TOPLEFT", bar, "TOPLEFT", -borderSizePx, borderSizePx)
+            borderFrame:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", borderSizePx, -borderSizePx)
 
             borderFrame._top:ClearAllPoints()
             borderFrame._top:SetPoint("TOPLEFT", borderFrame, "TOPLEFT", 0, 0)
             borderFrame._top:SetPoint("TOPRIGHT", borderFrame, "TOPRIGHT", 0, 0)
-            borderFrame._top:SetHeight(borderSize)
+            borderFrame._top:SetHeight(borderSizePx)
 
             borderFrame._bottom:ClearAllPoints()
             borderFrame._bottom:SetPoint("BOTTOMLEFT", borderFrame, "BOTTOMLEFT", 0, 0)
             borderFrame._bottom:SetPoint("BOTTOMRIGHT", borderFrame, "BOTTOMRIGHT", 0, 0)
-            borderFrame._bottom:SetHeight(borderSize)
+            borderFrame._bottom:SetHeight(borderSizePx)
 
             borderFrame._left:ClearAllPoints()
             borderFrame._left:SetPoint("TOPLEFT", borderFrame, "TOPLEFT", 0, 0)
             borderFrame._left:SetPoint("BOTTOMLEFT", borderFrame, "BOTTOMLEFT", 0, 0)
-            borderFrame._left:SetWidth(borderSize)
+            borderFrame._left:SetWidth(borderSizePx)
 
             borderFrame._right:ClearAllPoints()
             borderFrame._right:SetPoint("TOPRIGHT", borderFrame, "TOPRIGHT", 0, 0)
             borderFrame._right:SetPoint("BOTTOMRIGHT", borderFrame, "BOTTOMRIGHT", 0, 0)
-            borderFrame._right:SetWidth(borderSize)
+            borderFrame._right:SetWidth(borderSizePx)
 
             borderFrame:Show()
         else

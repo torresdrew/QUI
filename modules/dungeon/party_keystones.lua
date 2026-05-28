@@ -154,15 +154,23 @@ end
 local KeyTrackerFrame = CreateFrame("Frame", "QUIKeyTrackerFrame", UIParent, "BackdropTemplate")
 KeyTrackerFrame:SetFrameStrata("HIGH")
 KeyTrackerFrame:SetSize(GetFrameWidth(), HEADER_HEIGHT)
+
+local function GetKeyTrackerPixelSize()
+    if UIKit and UIKit.GetPixelSize then
+        return UIKit.GetPixelSize(KeyTrackerFrame)
+    end
+    local core = GetCore()
+    return (core and core.GetPixelSize and core:GetPixelSize(KeyTrackerFrame)) or 1
+end
+
 local keyTrackerBackdrop = {
     bgFile = "Interface\\Buttons\\WHITE8X8",
     edgeFile = "Interface\\Buttons\\WHITE8X8",
-    edgeSize = 1,
+    edgeSize = GetKeyTrackerPixelSize(),
 }
 KeyTrackerFrame:SetBackdrop(keyTrackerBackdrop)
 local function UpdateKeyTrackerPixelSize()
-    local core = GetCore()
-    local px = (core and core.GetPixelSize and core:GetPixelSize(KeyTrackerFrame)) or 1
+    local px = GetKeyTrackerPixelSize()
     if keyTrackerBackdrop.edgeSize ~= px then
         keyTrackerBackdrop.edgeSize = px
         KeyTrackerFrame:SetBackdrop(keyTrackerBackdrop)

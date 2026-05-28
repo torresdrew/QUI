@@ -2,6 +2,7 @@ local addonName, ns = ...
 local QUICore = ns.Addon
 local Helpers = ns.Helpers
 local SkinBase = ns.SkinBase
+local UIKit = ns.UIKit
 
 local GetCore = ns.Helpers.GetCore
 
@@ -31,6 +32,7 @@ local customBg = nil
 local iconBorders = Helpers.CreateStateTable()       -- CurrencyIcon/entry.icon → border frame
 local skinnedEntries = Helpers.CreateStateTable()    -- entry → true
 local titleHighlights = Helpers.CreateStateTable()   -- button → highlight texture
+local pixelBackdropState = Helpers.CreateStateTable()
 local characterTabsHooked = false
 
 ---------------------------------------------------------------------------
@@ -39,6 +41,58 @@ local characterTabsHooked = false
 local GetSkinColors = Helpers.CreateSkinColorGetter("characterFrame")
 
 local GetFontPath = Helpers.GetGeneralFont
+
+local function RefreshPixelBackdrop(frame)
+    local state = pixelBackdropState[frame]
+    if not state then return end
+    if not frame or not frame.SetBackdrop then return end
+    local edgeSize = (state.borderPixels or 1) * QUICore:GetPixelSize(frame)
+    local backdrop = {
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = edgeSize,
+    }
+    if state.withBackground then
+        backdrop.bgFile = "Interface\\Buttons\\WHITE8x8"
+        if state.withInsets then
+            backdrop.insets = { left = edgeSize, right = edgeSize, top = edgeSize, bottom = edgeSize }
+        end
+    end
+    frame:SetBackdrop(backdrop)
+    if state.bgColor then
+        local c = state.bgColor
+        frame:SetBackdropColor(c[1], c[2], c[3], c[4])
+    end
+    if state.borderColor then
+        local c = state.borderColor
+        frame:SetBackdropBorderColor(c[1], c[2], c[3], c[4])
+    end
+end
+
+local function ApplyPixelBackdrop(frame, borderPixels, withBackground, withInsets, borderColor, bgColor)
+    if not frame or not frame.SetBackdrop then return end
+    local state = pixelBackdropState[frame]
+    if not state then
+        state = {}
+        pixelBackdropState[frame] = state
+    end
+    state.borderPixels = borderPixels or 1
+    state.withBackground = withBackground and true or false
+    state.withInsets = withInsets and true or false
+    state.borderColor = borderColor
+    state.bgColor = bgColor
+    RefreshPixelBackdrop(frame)
+    if UIKit and UIKit.RegisterScaleRefresh and not state.registered then
+        UIKit.RegisterScaleRefresh(frame, "characterFramePixelBackdrop", RefreshPixelBackdrop)
+        state.registered = true
+    end
+end
+
+local function SetExpandedPixelPoints(frame, relativeTo, pixels)
+    local offset = (pixels or 1) * QUICore:GetPixelSize(frame)
+    frame:ClearAllPoints()
+    frame:SetPoint("TOPLEFT", relativeTo, "TOPLEFT", -offset, offset)
+    frame:SetPoint("BOTTOMRIGHT", relativeTo, "BOTTOMRIGHT", offset, -offset)
+end
 
 ---------------------------------------------------------------------------
 -- Helper: Style a thin QUI scrollbar
@@ -109,18 +163,12 @@ local function CreateOrUpdateBackground()
 
     if not customBg then
         customBg = CreateFrame("Frame", "QUI_CharacterFrameBg_Skin", CharacterFrame, "BackdropTemplate")
-        local px = QUICore:GetPixelSize(customBg)
-        customBg:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = px,
-            insets = { left = px, right = px, top = px, bottom = px }
-        })
         customBg:SetFrameStrata("BACKGROUND")
         customBg:SetFrameLevel(0)
         customBg:EnableMouse(false)  -- Don't steal clicks
     end
 
+    ApplyPixelBackdrop(customBg, 1, true, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
     Helpers.SetFrameBackdropColor(customBg, bgr, bgg, bgb, bga)
     Helpers.SetFrameBackdropBorderColor(customBg, sr, sg, sb, sa)
 
@@ -215,9 +263,7 @@ local function StyleCharacterFrameTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
         local tabBackdrop = SkinBase.GetBackdrop(tab)
         if tabBackdrop then
-            tabBackdrop:ClearAllPoints()
-            tabBackdrop:SetPoint("TOPLEFT", 3, -3)
-            tabBackdrop:SetPoint("BOTTOMRIGHT", -3, 0)
+            SkinBase.SetPixelInsetPoints(tabBackdrop, tab, 3, 3, 3, 0)
         end
 
         SkinBase.MarkStyled(tab)
@@ -327,15 +373,8 @@ local function SkinReputationEntry(child)
         if not SkinBase.GetFrameData(ReputationBar, "backdrop") then
             local backdrop = CreateFrame("Frame", nil, ReputationBar:GetParent(), "BackdropTemplate")
             backdrop:SetFrameLevel(ReputationBar:GetFrameLevel())
-            backdrop:SetPoint("TOPLEFT", ReputationBar, "TOPLEFT", -2, 2)
-            backdrop:SetPoint("BOTTOMRIGHT", ReputationBar, "BOTTOMRIGHT", 2, -2)
-            local repPx = QUICore:GetPixelSize(backdrop)
-            local repEdge2 = 2 * repPx
-            backdrop:SetBackdrop({
-                bgFile = "Interface\\Buttons\\WHITE8x8",
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = repEdge2,
-            })
+            SetExpandedPixelPoints(backdrop, ReputationBar, 2)
+            ApplyPixelBackdrop(backdrop, 2, true, false, { sr, sg, sb, 1 }, { 0, 0, 0, 0.9 })
             backdrop:SetBackdropColor(0, 0, 0, 0.9)
             backdrop:SetBackdropBorderColor(sr, sg, sb, 1)
             backdrop:Show()
@@ -410,13 +449,8 @@ local function SkinCurrencyEntry(child)
             local border = CreateFrame("Frame", nil, CurrencyIcon:GetParent(), "BackdropTemplate")
             local drawLayer = CurrencyIcon.GetDrawLayer and CurrencyIcon:GetDrawLayer()
             border:SetFrameLevel((drawLayer == "OVERLAY") and child:GetFrameLevel() + 2 or child:GetFrameLevel() + 1)
-            border:SetPoint("TOPLEFT", CurrencyIcon, "TOPLEFT", -1, 1)
-            border:SetPoint("BOTTOMRIGHT", CurrencyIcon, "BOTTOMRIGHT", 1, -1)
-            local curPx = QUICore:GetPixelSize(border)
-            border:SetBackdrop({
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = curPx,
-            })
+            SetExpandedPixelPoints(border, CurrencyIcon, 1)
+            ApplyPixelBackdrop(border, 1, false, false, { sr, sg, sb, 1 })
             border:SetBackdropBorderColor(sr, sg, sb, 1)
             iconBorders[CurrencyIcon] = border
         end
@@ -564,6 +598,7 @@ local function RefreshCharacterFrameColors()
 
     -- Update main background
     if customBg then
+        ApplyPixelBackdrop(customBg, 1, true, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
         customBg:SetBackdropColor(bgr, bgg, bgb, bga)
         customBg:SetBackdropBorderColor(sr, sg, sb, sa)
     end
@@ -627,13 +662,8 @@ local function SkinEquipmentSetEntry(entry)
     if entry.icon and not iconBorders[entry.icon] then
         entry.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         local border = CreateFrame("Frame", nil, entry, "BackdropTemplate")
-        border:SetPoint("TOPLEFT", entry.icon, "TOPLEFT", -1, 1)
-        border:SetPoint("BOTTOMRIGHT", entry.icon, "BOTTOMRIGHT", 1, -1)
-        local eqPx = QUICore:GetPixelSize(border)
-        border:SetBackdrop({
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = eqPx,
-        })
+        SetExpandedPixelPoints(border, entry.icon, 1)
+        ApplyPixelBackdrop(border, 1, false, false, { sr, sg, sb, 1 })
         border:SetBackdropBorderColor(sr, sg, sb, 1)
         iconBorders[entry.icon] = border
     end
@@ -670,12 +700,7 @@ local function StyleEquipMgrButton(btn)
     if not btn.SetBackdrop then
         return
     end
-    local btnPx = QUICore:GetPixelSize(btn)
-    btn:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = btnPx,
-    })
+    ApplyPixelBackdrop(btn, 1, true, false, { sr, sg, sb, 0.5 }, { 0.15, 0.15, 0.15, 1 })
     btn:SetBackdropColor(0.15, 0.15, 0.15, 1)
     btn:SetBackdropBorderColor(sr, sg, sb, 0.5)
 
@@ -714,12 +739,7 @@ local function SkinEquipmentManager()
 
     -- Skin popup backdrop
     if not skinnedEntries[popup] then
-        local popPx = QUICore:GetPixelSize(popup)
-        popup:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = popPx,
-        })
+        ApplyPixelBackdrop(popup, 1, true, false, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
         skinnedEntries[popup] = true
     end
     popup:SetBackdropColor(bgr, bgg, bgb, bga)
@@ -854,13 +874,7 @@ local function SkinTitleManagerPane()
 
     -- Skin popup backdrop (if popup exists)
     if popup and not skinnedEntries[popup] then
-        local pop2Px = QUICore:GetPixelSize(popup)
-        popup:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = pop2Px,
-            insets = { left = pop2Px, right = pop2Px, top = pop2Px, bottom = pop2Px }
-        })
+        ApplyPixelBackdrop(popup, 1, true, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
         popup:SetBackdropColor(bgr, bgg, bgb, bga)
         popup:SetBackdropBorderColor(sr, sg, sb, sa)
 

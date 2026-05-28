@@ -614,13 +614,9 @@ local function ApplyQUIBackdrop(trackerFrame, sr, sg, sb, sa, bgr, bgg, bgb, bga
     local settings = GetSettings()
     local hideBorder = settings and settings.hideObjectiveTrackerBorder
 
-    local otPx = SkinBase.GetPixelSize(backdrop, 1)
-    backdrop:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = hideBorder and 0 or otPx,
-        insets = { left = otPx, right = otPx, top = otPx, bottom = otPx }
-    })
+    local borderColor = hideBorder and { 0, 0, 0, 0 } or { sr, sg, sb, sa }
+    local bgColor = { bgr, bgg, bgb, opacity }
+    SkinBase.ApplyPixelBackdrop(backdrop, hideBorder and 0 or 1, true, true, borderColor, bgColor, nil, nil, 1)
     Helpers.SetFrameBackdropColor(backdrop, bgr, bgg, bgb, opacity)
     if hideBorder then
         Helpers.SetFrameBackdropBorderColor(backdrop, 0, 0, 0, 0)
@@ -902,14 +898,10 @@ local function RefreshObjectiveTracker()
             opacity = bga or 0.95
         end
 
-        -- Apply backdrop (edgeSize 0 hides border, px shows it)
-        local updPx = SkinBase.GetPixelSize(refreshBackdrop, 1)
-        refreshBackdrop:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = hideBorder and 0 or updPx,
-            insets = { left = updPx, right = updPx, top = updPx, bottom = updPx }
-        })
+        -- Apply backdrop while preserving the one-pixel background inset when the border is hidden.
+        local borderColor = hideBorder and { 0, 0, 0, 0 } or { sr, sg, sb, sa }
+        local bgColor = { bgr, bgg, bgb, opacity }
+        SkinBase.ApplyPixelBackdrop(refreshBackdrop, hideBorder and 0 or 1, true, true, borderColor, bgColor, nil, nil, 1)
         Helpers.SetFrameBackdropColor(refreshBackdrop, bgr, bgg, bgb, opacity)
         if hideBorder then
             Helpers.SetFrameBackdropBorderColor(refreshBackdrop, 0, 0, 0, 0)

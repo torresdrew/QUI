@@ -25,6 +25,15 @@ local function SafeFrameNumber(value, fallback)
     return tonumber(value) or fallback or 0
 end
 
+local function GetPixelSize(frame)
+    local uikit = ns.UIKit
+    if uikit and uikit.GetPixelSize then
+        return uikit.GetPixelSize(frame)
+    end
+    local core = ns.Addon
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
 ProviderPanels:RegisterAfterLoad(function(ctx)
     local GUI = ctx.GUI
     local U = ctx.U
@@ -1808,7 +1817,7 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
             swatch:SetBackdrop({
                 bgFile = "Interface\\Buttons\\WHITE8x8",
                 edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = 1,
+                edgeSize = GetPixelSize(swatch),
             })
             swatch:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
             swatch:SetScript("OnEnter", function(self)

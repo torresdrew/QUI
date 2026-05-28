@@ -43,4 +43,37 @@ for _, needle in ipairs(requiredInfoLines) do
         "expected left-aligned wrapped info line call missing: " .. needle)
 end
 
+local forbiddenProviderName = string.char(82, 97, 105, 100, 101, 114, 73, 79)
+assert(not source:find(forbiddenProviderName, 1, true),
+    "tooltip source must not hardcode third-party addon names")
+
+local ratingStart = assert(source:find("local function GetPlayerMythicRating", 1, true),
+    "rating resolver should exist")
+local ratingEnd = assert(source:find("local function AddUnitTooltipInfoToTooltip", ratingStart, true),
+    "rating resolver should remain bounded before unit info handling")
+local ratingBody = source:sub(ratingStart, ratingEnd)
+local providerLookup = ratingBody:find("rawget(_G, string.char(82, 97, 105, 100, 101, 114, 73, 79))", 1, true)
+local nativeLookup = ratingBody:find("C_PlayerInfo.GetPlayerMythicPlusRatingSummary", 1, true)
+assert(providerLookup,
+    "rating resolver should restore external score provider compatibility")
+assert(nativeLookup,
+    "rating resolver should keep the native client rating fallback")
+assert(providerLookup < nativeLookup,
+    "external score provider should be preferred before native client rating fallback")
+
+local extrasStart = assert(source:find("local function HandleUnitExtrasPost", 1, true),
+    "unit extras post handler should exist")
+local extrasEnd = assert(source:find("local function HandleUnitHealthPost", extrasStart, true),
+    "unit extras post handler should remain bounded before health handling")
+local extrasBody = source:sub(extrasStart, extrasEnd)
+
+local immediateExtras = extrasBody:find("AddUnitTooltipInfoToTooltip(tooltip, unit, settings)", 1, true)
+local deferredExtras = extrasBody:find("ScheduleDeferredUnitInfo(tooltip, unit)", 1, true)
+assert(immediateExtras,
+    "unit tooltip extras should try cheap data enrichment during TooltipDataProcessor before deferring")
+assert(deferredExtras,
+    "unit tooltip extras should keep deferred enrichment for async/late data")
+assert(immediateExtras < deferredExtras,
+    "immediate unit enrichment should run before deferred enrichment is scheduled")
+
 print("tooltip_qol_added_lines_layout_test.lua: ok")

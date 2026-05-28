@@ -44,6 +44,11 @@ local livePanel = setmetatable({}, { __mode = "v" })
 
 local KIND_DEFAULT = "captured"
 
+local function GetPixelSize(frame)
+    local core = ns.Addon
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
 local function appendInternal(line, kind)
     kind = kind or KIND_DEFAULT
     buffer[#buffer + 1] = { text = tostring(line or ""), kind = kind }
@@ -124,7 +129,7 @@ local function showCopyPopup(text)
         popup:SetBackdrop({
             bgFile   = "Interface\\Buttons\\WHITE8X8",
             edgeFile = "Interface\\Buttons\\WHITE8X8",
-            edgeSize = 1,
+            edgeSize = GetPixelSize(popup),
         })
         popup:SetBackdropColor(0, 0, 0, 0.92)
         popup:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
@@ -214,7 +219,7 @@ function Console.CreateOutputPanel(parent)
     body:SetBackdrop({
         bgFile   = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(body),
     })
     body:SetBackdropColor(0, 0, 0, 0.5)
     body:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)

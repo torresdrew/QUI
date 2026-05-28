@@ -5,6 +5,7 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
+local UIKit = ns.UIKit
 
 local QUI_LayoutMode_Settings = {}
 ns.QUI_LayoutMode_Settings = QUI_LayoutMode_Settings
@@ -52,6 +53,18 @@ local BORDER_SIZE = 1
 -- Scroll speed
 local SCROLL_STEP = 60
 
+local function GetPixelSize(frame)
+    if UIKit and UIKit.GetPixelSize then
+        return UIKit.GetPixelSize(frame)
+    end
+    local core = ns.Addon
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
+local function GetPixelLineSize(frame, pixels)
+    return (pixels or 1) * GetPixelSize(frame)
+end
+
 -- State
 QUI_LayoutMode_Settings._currentKey = nil
 QUI_LayoutMode_Settings._panel = nil
@@ -85,15 +98,54 @@ end
 local function CreateBorderLine(parent, p1, r1, p2, r2, isHoriz, r, g, b, a)
     local line = parent:CreateTexture(nil, "BORDER")
     line:SetColorTexture(r or ACCENT_R, g or ACCENT_G, b or ACCENT_B, a or 0.6)
+    line._layoutModeSettingsIsHoriz = isHoriz and true or false
     line:ClearAllPoints()
     line:SetPoint(p1, parent, r1, 0, 0)
     line:SetPoint(p2, parent, r2, 0, 0)
     if isHoriz then
-        line:SetHeight(BORDER_SIZE)
+        line:SetHeight(GetPixelLineSize(parent, BORDER_SIZE))
     else
-        line:SetWidth(BORDER_SIZE)
+        line:SetWidth(GetPixelLineSize(parent, BORDER_SIZE))
     end
     return line
+end
+
+local function RefreshPanelPixelLayout(panel)
+    if not panel then return end
+    local borderSize = GetPixelLineSize(panel, BORDER_SIZE)
+    for _, line in ipairs(panel._pixelBorderLines or {}) do
+        if line._layoutModeSettingsIsHoriz then
+            line:SetHeight(borderSize)
+        else
+            line:SetWidth(borderSize)
+        end
+    end
+
+    local titleBg = panel._titleBg
+    if titleBg then
+        titleBg:ClearAllPoints()
+        titleBg:SetPoint("TOPLEFT", borderSize, -borderSize)
+        titleBg:SetPoint("TOPRIGHT", -borderSize, -borderSize)
+    end
+
+    local contentSurface = panel._contentSurface
+    if contentSurface and titleBg then
+        contentSurface:ClearAllPoints()
+        contentSurface:SetPoint("TOPLEFT", titleBg, "BOTTOMLEFT", 0, 0)
+        contentSurface:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -borderSize, borderSize)
+    end
+
+    local glow = panel._accentGlow
+    if glow and titleBg then
+        glow:ClearAllPoints()
+        glow:SetPoint("TOPLEFT", titleBg, "BOTTOMLEFT", 0, 0)
+        glow:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -borderSize, borderSize)
+    end
+
+    local titleLine = panel._titleLine
+    if titleLine then
+        titleLine:SetHeight(borderSize)
+    end
 end
 
 local function SafeGetVerticalScrollRange(scrollFrame)
@@ -122,7 +174,7 @@ local function CreateQUIStyleCloseButton(parent, relativeTo, relativePoint, xOff
     close:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(close),
     })
     close:SetBackdropColor(0.08, 0.08, 0.08, 0.6)
     close:SetBackdropBorderColor(border[1], border[2], border[3], border[4] or 1)
@@ -179,29 +231,33 @@ local function CreatePanel()
     bg:SetColorTexture(bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 0.97)
 
     -- Border
-    CreateBorderLine(panel, "TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", true)
-    CreateBorderLine(panel, "BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT", true)
-    CreateBorderLine(panel, "TOPLEFT", "TOPLEFT", "BOTTOMLEFT", "BOTTOMLEFT", false)
-    CreateBorderLine(panel, "TOPRIGHT", "TOPRIGHT", "BOTTOMRIGHT", "BOTTOMRIGHT", false)
+    panel._pixelBorderLines = {
+        CreateBorderLine(panel, "TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", true),
+        CreateBorderLine(panel, "BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT", true),
+        CreateBorderLine(panel, "TOPLEFT", "TOPLEFT", "BOTTOMLEFT", "BOTTOMLEFT", false),
+        CreateBorderLine(panel, "TOPRIGHT", "TOPRIGHT", "BOTTOMRIGHT", "BOTTOMRIGHT", false),
+    }
 
     -- Title bar background
+    local borderSize = GetPixelLineSize(panel, BORDER_SIZE)
     local titleBg = panel:CreateTexture(nil, "ARTWORK")
-    titleBg:SetPoint("TOPLEFT", BORDER_SIZE, -BORDER_SIZE)
-    titleBg:SetPoint("TOPRIGHT", -BORDER_SIZE, -BORDER_SIZE)
+    titleBg:SetPoint("TOPLEFT", borderSize, -borderSize)
+    titleBg:SetPoint("TOPRIGHT", -borderSize, -borderSize)
     titleBg:SetHeight(TITLE_HEIGHT)
     titleBg:SetColorTexture(0.04, 0.06, 0.1, 1)
+    panel._titleBg = titleBg
 
     -- Content-area white-tint surface (matches main settings bgContent)
     local contentSurface = panel:CreateTexture(nil, "BACKGROUND", nil, 1)
     contentSurface:SetPoint("TOPLEFT", titleBg, "BOTTOMLEFT", 0, 0)
-    contentSurface:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -BORDER_SIZE, BORDER_SIZE)
+    contentSurface:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -borderSize, borderSize)
     contentSurface:SetColorTexture(bgContent[1], bgContent[2], bgContent[3], bgContent[4] or 0.02)
     panel._contentSurface = contentSurface
 
     -- Horizontal accent gradient overlay (matches main settings glow)
     local glow = panel:CreateTexture(nil, "BACKGROUND", nil, 2)
     glow:SetPoint("TOPLEFT", titleBg, "BOTTOMLEFT", 0, 0)
-    glow:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -BORDER_SIZE, BORDER_SIZE)
+    glow:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -borderSize, borderSize)
     glow:SetTexture("Interface\\BUTTONS\\WHITE8x8")
     if glow.SetGradient then
         local ok = pcall(function()
@@ -221,8 +277,13 @@ local function CreatePanel()
     local titleLine = panel:CreateTexture(nil, "ARTWORK", nil, 1)
     titleLine:SetPoint("TOPLEFT", titleBg, "BOTTOMLEFT")
     titleLine:SetPoint("TOPRIGHT", titleBg, "BOTTOMRIGHT")
-    titleLine:SetHeight(BORDER_SIZE)
+    titleLine:SetHeight(borderSize)
     titleLine:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.4)
+    panel._titleLine = titleLine
+
+    if UIKit and UIKit.RegisterScaleRefresh then
+        UIKit.RegisterScaleRefresh(panel, "layoutModeSettingsPixelLayout", RefreshPanelPixelLayout)
+    end
 
     -- Title text
     local titleText = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")

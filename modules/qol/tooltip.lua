@@ -253,11 +253,10 @@ if not TooltipDebug then
         AppendCounter(parts, "skin.refit", "refit")
         AppendCounter(parts, "skin.refitApplied", "refitApply")
         AppendCounter(parts, "skin.refitCacheSkip", "refitCache")
-        AppendCounter(parts, "skin.refitNoOverflow", "refitOK")
-        AppendCounter(parts, "skin.refitTinyOverflow", "refitTiny")
-        AppendCounter(parts, "skin.refitVisibleExtend", "refitBIG")
+        AppendCounter(parts, "skin.refitNoRequest", "refitNoReq")
+        AppendCounter(parts, "skin.refitStaleRequest", "refitStale")
+        AppendCounter(parts, "skin.refitShowReset", "refitReset")
         AppendCounter(parts, "skin.refitNoExtents", "refitNoExt")
-        AppendCounter(parts, "skin.refitOwnerReset", "refitReset")
         AppendCounter(parts, "skin.refitMonotonicY", "monoY")
         AppendCounter(parts, "skin.refitMonotonicX", "monoX")
 
@@ -1446,13 +1445,13 @@ end
 local function GetPlayerMythicRating(unit)
     if not unit then return nil end
 
-    -- Try RaiderIO addon first
-    if _G.RaiderIO and _G.RaiderIO.GetProfile then
-        local ok, profile = pcall(_G.RaiderIO.GetProfile, unit)
+    local provider = rawget(_G, string.char(82, 97, 105, 100, 101, 114, 73, 79))
+    if type(provider) == "table" and type(provider.GetProfile) == "function" then
+        local ok, profile = pcall(provider.GetProfile, unit)
         if ok and profile and profile.mythicKeystoneProfile and profile.mythicKeystoneProfile.currentScore then
             local score = Helpers.SafeToNumber(profile.mythicKeystoneProfile.currentScore, 0)
             if score and score > 0 then
-                local color = _G.RaiderIO.GetScoreColor and _G.RaiderIO.GetScoreColor(score)
+                local color = provider.GetScoreColor and provider.GetScoreColor(score)
                 if type(color) == "table" and color.r then
                     return math.floor(score), color.r, color.g, color.b
                 end
@@ -1461,7 +1460,6 @@ local function GetPlayerMythicRating(unit)
         end
     end
 
-    -- Fall back to native C_PlayerInfo
     if C_PlayerInfo and C_PlayerInfo.GetPlayerMythicPlusRatingSummary then
         local ok, ratingInfo = pcall(C_PlayerInfo.GetPlayerMythicPlusRatingSummary, unit)
         if ok and ratingInfo and ratingInfo.currentSeasonScore then
@@ -1480,26 +1478,21 @@ local function GetPlayerMythicRating(unit)
 end
 
 local function AddUnitTooltipInfoToTooltip(tooltip, unit, settings)
-    if not tooltip or not unit or not settings then return end
-    if InCombatLockdown() then return end
+    if not tooltip or not unit or not settings then return false end
+    if InCombatLockdown() then return false end
 
     local guid = UnitGUID(unit)
-    if not guid or Helpers.IsSecretValue(guid) then return end
+    if not guid or Helpers.IsSecretValue(guid) then return false end
 
     local state = EnsureTooltipUnitInfoState(tooltip, guid)
-    if not state then return end
+    if not state then return false end
 
-    -- Add target info
+    local changed = false
+
     if IsSettingEnabled(settings, "showTooltipTarget", true) then
-        AddTooltipTargetInfo(tooltip, unit, state)
+        changed = AddTooltipTargetInfo(tooltip, unit, state) or changed
     end
 
-    -- Add mount info
-    if IsSettingEnabled(settings, "showPlayerMount", true) then
-        AddTooltipMountInfo(tooltip, unit, state)
-    end
-
-    -- Add M+ rating
     if IsSettingEnabled(settings, "showPlayerMythicRating", true) and not state.ratingResolved then
         local rating, r, g, b = GetPlayerMythicRating(unit)
         state.ratingResolved = true
@@ -1508,8 +1501,11 @@ local function AddUnitTooltipInfoToTooltip(tooltip, unit, settings)
             AddTooltipInfoLine(tooltip, "M+ Rating", string.format("%.1f", rating), 0.7, 0.82, 1, r or 1, g or 1, b or 1)
             state.ratingAdded = true
             TooltipDebugCount("qol.ratingAdded")
+            changed = true
         end
     end
+
+    return changed
 end
 
 local deferredUnitFrame = CreateFrame("Frame")
@@ -1590,9 +1586,7 @@ local function DeferredUnitInfoOnUpdate(self, elapsed)
     local changed = false
     local pending = false
 
-    if IsSettingEnabled(settings, "showTooltipTarget", true) then
-        changed = AddTooltipTargetInfo(tooltip, unit, state) or changed
-    end
+    changed = AddUnitTooltipInfoToTooltip(tooltip, unit, settings) or changed
 
     if IsSettingEnabled(settings, "showPlayerMount", true) and not state.mountResolved then
         local added = AddTooltipMountInfo(tooltip, unit, state)
@@ -1600,18 +1594,6 @@ local function DeferredUnitInfoOnUpdate(self, elapsed)
             pending = true
         else
             changed = added or changed
-        end
-    end
-
-    if IsSettingEnabled(settings, "showPlayerMythicRating", true) and not state.ratingResolved then
-        local rating, r, g, b = GetPlayerMythicRating(unit)
-        state.ratingResolved = true
-        if rating then
-            EnsureTooltipInfoSpacer(tooltip, state)
-            AddTooltipInfoLine(tooltip, "M+ Rating", string.format("%.1f", rating), 0.7, 0.82, 1, r or 1, g or 1, b or 1)
-            state.ratingAdded = true
-            TooltipDebugCount("qol.ratingAdded")
-            changed = true
         end
     end
 
@@ -1857,6 +1839,13 @@ local function SetupTooltipHook()
     local function HandleUnitExtrasPost(tooltip, settings, unit)
         TooltipDebugCount("qol.unitExtrasPost")
         tooltipPlayerItemLevelGUID[tooltip] = nil
+        local changed = AddUnitTooltipInfoToTooltip(tooltip, unit, settings)
+        if changed then
+            local requestRefit = ns.QUI_RequestTooltipChromeRefit
+            if requestRefit then
+                pcall(requestRefit, tooltip, 2)
+            end
+        end
         ScheduleDeferredUnitInfo(tooltip, unit)
     end
 

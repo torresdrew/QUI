@@ -46,6 +46,11 @@ local function RefreshAccentColor()
     end
 end
 
+local function GetPixelSize(frame)
+    local core = ns.Addon
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
 local FRAME_WIDTH = 640
 local FRAME_HEIGHT = 700
 local NAV_WIDTH = 120
@@ -2307,7 +2312,7 @@ local function ShowEntryContextMenu(anchorCell, entry, entryIndex, isDormant)
     menu:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(menu),
     })
     menu:SetBackdropColor(0.08, 0.08, 0.1, 0.98)
     menu:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
@@ -3675,7 +3680,7 @@ local function ShowNewContainerPopup(onCreated)
     popup:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(popup),
     })
     popup:SetBackdropColor(0.08, 0.08, 0.1, 0.98)
     popup:SetBackdropBorderColor(ACCENT_R, ACCENT_G, ACCENT_B, 0.8)
@@ -3703,7 +3708,7 @@ local function ShowNewContainerPopup(onCreated)
     nameBox:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(nameBox),
     })
     nameBox:SetBackdropColor(0.06, 0.06, 0.08, 1)
     nameBox:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
@@ -3753,7 +3758,7 @@ local function ShowNewContainerPopup(onCreated)
         btn:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = GetPixelSize(btn),
         })
         btn:SetBackdropColor(0.1, 0.1, 0.12, 1)
         local label = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -3850,7 +3855,7 @@ local function ShowContainerContextMenu(containerKey, anchorFrame)
     menu:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(menu),
     })
     menu:SetBackdropColor(0.08, 0.08, 0.1, 0.98)
     menu:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
@@ -4202,7 +4207,7 @@ local function BuildComposerLayout(host)
     end
 
     -- Composer layout host. We use explicit bg + 4 border textures rather
-    -- than SetBackdrop({edgeSize=1, ...}) because the scroll-child resize
+    -- than a backdrop border with a raw one-unit edge because the scroll-child resize
     -- (FitToHost) hits a Blizzard SetupTextureCoordinates recursion in
     -- Blizzard_SharedXML/Backdrop.lua at this frame's typical
     -- width/height/effectiveScale (≈640×670 @ 0.64), causing a C stack

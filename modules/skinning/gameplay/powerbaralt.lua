@@ -166,20 +166,13 @@ local function CreateQUIAltPowerBar()
 
     -- Create backdrop
     bar.backdrop = CreateFrame("Frame", nil, bar, "BackdropTemplate")
-    bar.backdrop:SetPoint("TOPLEFT", -2, 2)
-    bar.backdrop:SetPoint("BOTTOMRIGHT", 2, -2)
+    SkinBase.SetExpandedPixelPoints(bar.backdrop, bar, 2)
     local safeLevel = bar:GetFrameLevel() - 1
     if safeLevel < 0 then
         safeLevel = 0
     end
     bar.backdrop:SetFrameLevel(safeLevel)
-    local px = SkinBase.GetPixelSize(bar.backdrop, 1)
-    bar.backdrop:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-        insets = { left = px, right = px, top = px, bottom = px }
-    })
+    SkinBase.ApplyPixelBackdrop(bar.backdrop, 1, true, true)
     bar.backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
     bar.backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
 

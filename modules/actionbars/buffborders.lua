@@ -11,7 +11,6 @@ local GetGeneralFont = Helpers.GetGeneralFont
 local GetGeneralFontOutline = Helpers.GetGeneralFontOutline
 local IsSecretValue = Helpers.IsSecretValue
 local SafeValue = Helpers.SafeValue
-local SafeToNumber = Helpers.SafeToNumber
 local ApplyCooldownFromAura = Helpers.ApplyCooldownFromAura
 
 -- Upvalue caching
@@ -87,6 +86,23 @@ local DEFAULTS = {
 
 local function GetSettings()
     return Helpers.GetModuleSettings("buffBorders", DEFAULTS)
+end
+
+local function GetBorderSizePx(frame, settings)
+    local borderSize = settings and settings.borderSize
+    if type(borderSize) ~= "number" then
+        borderSize = DEFAULTS.borderSize
+    end
+    if borderSize <= 0 then return 0 end
+
+    local core = GetCore and GetCore()
+    if core and core.Pixels then
+        return core:Pixels(borderSize, frame)
+    end
+    if core and core.GetPixelSize then
+        return borderSize * core:GetPixelSize(frame)
+    end
+    return borderSize
 end
 
 ---------------------------------------------------------------------------
@@ -403,7 +419,7 @@ end)
 local function StyleIcon(icon, settings, isBuff, debuffType)
     if not icon or not settings then return end
 
-    local borderSize = settings.borderSize or 2
+    local borderSizePx = GetBorderSizePx(icon, settings)
 
     -- Border color
     local r, g, b
@@ -420,10 +436,10 @@ local function StyleIcon(icon, settings, isBuff, debuffType)
     icon.BorderLeft:SetColorTexture(r, g, b, 1)
     icon.BorderRight:SetColorTexture(r, g, b, 1)
 
-    icon.BorderTop:SetHeight(borderSize)
-    icon.BorderBottom:SetHeight(borderSize)
-    icon.BorderLeft:SetWidth(borderSize)
-    icon.BorderRight:SetWidth(borderSize)
+    icon.BorderTop:SetHeight(borderSizePx)
+    icon.BorderBottom:SetHeight(borderSizePx)
+    icon.BorderLeft:SetWidth(borderSizePx)
+    icon.BorderRight:SetWidth(borderSizePx)
 
     local showBorders
     if isBuff then
@@ -1137,7 +1153,7 @@ end
 
 local function StyleSlotBorders(slot, settings)
     if not slot.BorderTop then return end
-    local borderSize = settings and settings.borderSize or 2
+    local borderSizePx = GetBorderSizePx(slot, settings)
     local r, g, b = BORDER_COLOR_DEBUFF_DEFAULT[1], BORDER_COLOR_DEBUFF_DEFAULT[2], BORDER_COLOR_DEBUFF_DEFAULT[3]
 
     slot.BorderTop:SetColorTexture(r, g, b, 1)
@@ -1145,10 +1161,10 @@ local function StyleSlotBorders(slot, settings)
     slot.BorderLeft:SetColorTexture(r, g, b, 1)
     slot.BorderRight:SetColorTexture(r, g, b, 1)
 
-    slot.BorderTop:SetHeight(borderSize)
-    slot.BorderBottom:SetHeight(borderSize)
-    slot.BorderLeft:SetWidth(borderSize)
-    slot.BorderRight:SetWidth(borderSize)
+    slot.BorderTop:SetHeight(borderSizePx)
+    slot.BorderBottom:SetHeight(borderSizePx)
+    slot.BorderLeft:SetWidth(borderSizePx)
+    slot.BorderRight:SetWidth(borderSizePx)
 
     -- Only show borders when the client has rendered a visible aura child
     -- and the user has borders enabled for debuffs.
@@ -1261,7 +1277,7 @@ local function SetupPrivateAuras()
         if s > 0 then iconSize = s end
     end
 
-    local borderSize = settings and settings.borderSize or 2
+    local borderSizePx = GetBorderSizePx(debuffContainer, settings)
 
     for i = 1, PA_MAX_SLOTS do
         local slot = paSlots[i]
@@ -1285,8 +1301,8 @@ local function SetupPrivateAuras()
             showCountdownFrame = true,
             showCountdownNumbers = true,
             iconInfo = {
-                iconWidth = iconSize - borderSize * 2,
-                iconHeight = iconSize - borderSize * 2,
+                iconWidth = iconSize - borderSizePx * 2,
+                iconHeight = iconSize - borderSizePx * 2,
                 borderScale = -1000,
                 iconAnchor = {
                     point = "CENTER",

@@ -409,8 +409,13 @@ function QUICore:ApplyUIScale()
     self.uiscale = UIParent:GetScale()
     self.screenWidth, self.screenHeight = GetScreenWidth(), GetScreenHeight()
     self:RefreshAllFonts()  -- Re-snap all registered fonts to new pixel grid
-    if ns.UIKit and ns.UIKit.RefreshScaleBoundWidgets then
-        ns.UIKit.RefreshScaleBoundWidgets()
+    local UIKit = ns.UIKit
+    if UIKit then
+        if UIKit.QueueScaleRefresh then
+            UIKit.QueueScaleRefresh(2)
+        elseif UIKit.RefreshScaleBoundWidgets then
+            UIKit.RefreshScaleBoundWidgets()
+        end
     end
 end
 
@@ -419,7 +424,7 @@ end
 --------------------------------------------------------------------------------
 
 function QUICore:PixelScaleChanged(event)
-    if event == 'UI_SCALE_CHANGED' then
+    if event == 'UI_SCALE_CHANGED' or event == 'DISPLAY_SIZE_CHANGED' then
         self.physicalWidth, self.physicalHeight = GetPhysicalScreenSize()
         self.resolution = format('%dx%d', self.physicalWidth, self.physicalHeight)
         -- Update the module-level cache
@@ -433,6 +438,7 @@ function QUICore:InitializePixelPerfect()
     self.resolution = format('%dx%d', self.physicalWidth, self.physicalHeight)
     cachedPhysicalHeight = self.physicalHeight
     self:RegisterEvent('UI_SCALE_CHANGED', 'PixelScaleChanged')
+    self:RegisterEvent('DISPLAY_SIZE_CHANGED', 'PixelScaleChanged')
 end
 
 --------------------------------------------------------------------------------
@@ -450,4 +456,3 @@ local panelFrame = nil
 function QUICore:SetPanelFrame(frame)
     panelFrame = frame
 end
-

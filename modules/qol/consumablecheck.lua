@@ -20,6 +20,14 @@ local RUNE_ICON_FALLBACK = "Interface\\Icons\\inv_10_enchanting_crystal_color2"
 local PICKER_ROW_HEIGHT = 24
 local PICKER_MIN_WIDTH = 200
 
+local function GetPixelSize(frame)
+    if UIKit and UIKit.GetPixelSize then
+        return UIKit.GetPixelSize(frame)
+    end
+    local core = ns.Addon
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
 ---------------------------------------------------------------------------
 -- BUFF / ITEM DATA
 ---------------------------------------------------------------------------
@@ -971,7 +979,7 @@ local function EnsurePickerFrame()
     pickerFrame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(pickerFrame),
     })
     pickerFrame:SetBackdropColor(0.05, 0.05, 0.05, 0.95)
     pickerFrame:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)

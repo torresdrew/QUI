@@ -10,6 +10,7 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
+local UIKit = ns.UIKit
 
 local QUI_LayoutMode = {}
 ns.QUI_LayoutMode = QUI_LayoutMode
@@ -45,6 +46,18 @@ local HANDLE_BORDER_SIZE = 1
 local HANDLE_BORDER_SIZE_ANCHORED = 2
 local HANDLE_MIN_SIZE    = 20
 local TINY_THRESHOLD     = 3   -- frames above this use real size, not the 20px floor
+
+local function GetPixelSize(frame)
+    if UIKit and UIKit.GetPixelSize then
+        return UIKit.GetPixelSize(frame)
+    end
+    local core = Helpers.GetCore and Helpers.GetCore()
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
+local function GetPixelLineSize(frame, pixels)
+    return (pixels or 1) * GetPixelSize(frame)
+end
 
 -- Anchor indicator (custom TGA texture — WoW fonts can't render Unicode ⚓)
 
@@ -1564,9 +1577,9 @@ AddHandleVisuals = function(handle, def)
         line:SetPoint(point1, handle, rel1, 0, 0)
         line:SetPoint(point2, handle, rel2, 0, 0)
         if isHoriz then
-            line:SetHeight(HANDLE_BORDER_SIZE)
+            line:SetHeight(GetPixelLineSize(handle, HANDLE_BORDER_SIZE))
         else
-            line:SetWidth(HANDLE_BORDER_SIZE)
+            line:SetWidth(GetPixelLineSize(handle, HANDLE_BORDER_SIZE))
         end
         return line
     end
@@ -1584,12 +1597,23 @@ AddHandleVisuals = function(handle, def)
         end
     end
     border.SetLineSize = function(_, size)
-        border.top:SetHeight(size)
-        border.bottom:SetHeight(size)
-        border.left:SetWidth(size)
-        border.right:SetWidth(size)
+        border._lineSizePixels = size or HANDLE_BORDER_SIZE
+        local lineSize = GetPixelLineSize(handle, border._lineSizePixels)
+        border.top:SetHeight(lineSize)
+        border.bottom:SetHeight(lineSize)
+        border.left:SetWidth(lineSize)
+        border.right:SetWidth(lineSize)
     end
     handle._border = border
+    border:SetLineSize(HANDLE_BORDER_SIZE)
+
+    if UIKit and UIKit.RegisterScaleRefresh then
+        UIKit.RegisterScaleRefresh(handle, "layoutModeHandleBorder", function(owner)
+            if owner and owner._border and owner._border.SetLineSize then
+                owner._border:SetLineSize(owner._border._lineSizePixels or HANDLE_BORDER_SIZE)
+            end
+        end)
+    end
 
     -- Label text
     local label = handle:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")

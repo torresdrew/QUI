@@ -121,13 +121,8 @@ local function UpdateBackdropLayout(backdrop)
     if not backdrop then return end
     local g = GetGeneralSettings()
     local thick = g and g.statusTrackingBarsBorderThickness
-    local px = (thick and thick > 0) and thick or SkinBase.GetPixelSize(backdrop, 1)
-    backdrop:SetBackdrop({
-        bgFile = FALLBACK_TEXTURE,
-        edgeFile = FALLBACK_TEXTURE,
-        edgeSize = px,
-        insets = { left = px, right = px, top = px, bottom = px },
-    })
+    local borderPixels = (thick and thick > 0) and thick or 1
+    SkinBase.ApplyPixelBackdrop(backdrop, borderPixels, true, true, nil, nil, FALLBACK_TEXTURE, FALLBACK_TEXTURE)
 end
 
 --- Font, size, outline, color, anchors (does not change visibility).
@@ -317,8 +312,7 @@ local function EnsureBarSkinned(bar)
         local backdrop = CreateFrame("Frame", nil, bar, "BackdropTemplate")
         local barLevel = statusBar:GetFrameLevel()
         backdrop:SetFrameLevel(barLevel > 0 and (barLevel - 1) or 0)
-        backdrop:SetPoint("TOPLEFT", statusBar, "TOPLEFT", -2, 2)
-        backdrop:SetPoint("BOTTOMRIGHT", statusBar, "BOTTOMRIGHT", 2, -2)
+        SkinBase.SetExpandedPixelPoints(backdrop, statusBar, 2)
         UpdateBackdropLayout(backdrop)
         backdrop:EnableMouse(false)
         SkinBase.SetFrameData(bar, "quiStbBackdrop", backdrop)

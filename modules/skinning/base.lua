@@ -5,6 +5,7 @@
 ---------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
+local UIKit = ns.UIKit
 
 local SkinBase = {}
 ns.SkinBase = SkinBase
@@ -13,6 +14,11 @@ ns.SkinBase = SkinBase
 -- All code that previously used frame.quiBackdrop should use SkinBase.GetBackdrop(frame) instead
 local frameBackdrops = Helpers.CreateStateTable()
 local manualBackdropData = Helpers.CreateStateTable()
+local expandedPointData = Helpers.CreateStateTable()
+local insetPointData = Helpers.CreateStateTable()
+local customInsetPointData = Helpers.CreateStateTable()
+local pixelPointData = Helpers.CreateStateTable()
+local pixelBackdropData = Helpers.CreateStateTable()
 local DEFAULT_BACKDROP_TEXTURE = "Interface\\Buttons\\WHITE8x8"
 
 ---------------------------------------------------------------------------
@@ -30,6 +36,117 @@ function SkinBase.GetPixelSize(frame, default)
     return default or 1
 end
 
+local function RefreshExpandedPixelPoints(region)
+    local data = expandedPointData[region]
+    if not data or not data.relativeTo then return end
+    local offset = (data.pixels or 1) * SkinBase.GetPixelSize(region, 1)
+    region:ClearAllPoints()
+    region:SetPoint("TOPLEFT", data.relativeTo, "TOPLEFT", -offset, offset)
+    region:SetPoint("BOTTOMRIGHT", data.relativeTo, "BOTTOMRIGHT", offset, -offset)
+end
+
+function SkinBase.SetExpandedPixelPoints(region, relativeTo, pixels)
+    if not region or not relativeTo then return end
+    local data = expandedPointData[region]
+    if not data then
+        data = {}
+        expandedPointData[region] = data
+    end
+    data.relativeTo = relativeTo
+    data.pixels = pixels or 1
+    RefreshExpandedPixelPoints(region)
+    if UIKit and UIKit.RegisterScaleRefresh and not data.registered then
+        UIKit.RegisterScaleRefresh(region, "skinningExpandedPixelPoints", RefreshExpandedPixelPoints)
+        data.registered = true
+    end
+end
+
+local function RefreshInsetPixelPoints(region)
+    local data = insetPointData[region]
+    if not data or not data.relativeTo then return end
+    local inset = (data.pixels or 1) * SkinBase.GetPixelSize(region, 1)
+    region:ClearAllPoints()
+    region:SetPoint("TOPLEFT", data.relativeTo, "TOPLEFT", inset, -inset)
+    region:SetPoint("BOTTOMRIGHT", data.relativeTo, "BOTTOMRIGHT", -inset, inset)
+end
+
+function SkinBase.SetInsetPixelPoints(region, relativeTo, pixels)
+    if not region or not relativeTo then return end
+    local data = insetPointData[region]
+    if not data then
+        data = {}
+        insetPointData[region] = data
+    end
+    data.relativeTo = relativeTo
+    data.pixels = pixels or 1
+    RefreshInsetPixelPoints(region)
+    if UIKit and UIKit.RegisterScaleRefresh and not data.registered then
+        UIKit.RegisterScaleRefresh(region, "skinningInsetPixelPoints", RefreshInsetPixelPoints)
+        data.registered = true
+    end
+end
+
+local function RefreshCustomInsetPixelPoints(region)
+    local data = customInsetPointData[region]
+    if not data or not data.relativeTo then return end
+    local px = SkinBase.GetPixelSize(region, 1)
+    region:ClearAllPoints()
+    region:SetPoint("TOPLEFT", data.relativeTo, "TOPLEFT", (data.left or 0) * px, -(data.top or 0) * px)
+    region:SetPoint("BOTTOMRIGHT", data.relativeTo, "BOTTOMRIGHT", -(data.right or 0) * px, (data.bottom or 0) * px)
+end
+
+function SkinBase.SetPixelInsetPoints(region, relativeTo, left, top, right, bottom)
+    if not region or not relativeTo then return end
+    local data = customInsetPointData[region]
+    if not data then
+        data = {}
+        customInsetPointData[region] = data
+    end
+    data.relativeTo = relativeTo
+    data.left = left or 0
+    data.top = top or 0
+    data.right = right or 0
+    data.bottom = bottom or 0
+    RefreshCustomInsetPixelPoints(region)
+    if UIKit and UIKit.RegisterScaleRefresh and not data.registered then
+        UIKit.RegisterScaleRefresh(region, "skinningPixelInsetPoints", RefreshCustomInsetPixelPoints)
+        data.registered = true
+    end
+end
+
+local function RefreshPixelPoint(region)
+    local data = pixelPointData[region]
+    if not data then return end
+    local px = SkinBase.GetPixelSize(region, 1)
+    region:ClearAllPoints()
+    region:SetPoint(
+        data.point,
+        data.relativeTo,
+        data.relativePoint,
+        (data.xPixels or 0) * px,
+        (data.yPixels or 0) * px
+    )
+end
+
+function SkinBase.SetPixelPoint(region, point, relativeTo, relativePoint, xPixels, yPixels)
+    if not region or not point then return end
+    local data = pixelPointData[region]
+    if not data then
+        data = {}
+        pixelPointData[region] = data
+    end
+    data.point = point
+    data.relativeTo = relativeTo
+    data.relativePoint = relativePoint
+    data.xPixels = xPixels or 0
+    data.yPixels = yPixels or 0
+    RefreshPixelPoint(region)
+    if UIKit and UIKit.RegisterScaleRefresh and not data.registered then
+        UIKit.RegisterScaleRefresh(region, "skinningPixelPoint", RefreshPixelPoint)
+        data.registered = true
+    end
+end
+
 ---------------------------------------------------------------------------
 -- GetSkinColors()
 -- Returns accent + background colors: sr, sg, sb, sa, bgr, bgg, bgb, bga
@@ -44,9 +161,22 @@ function SkinBase.GetSkinBarColor(moduleSettings, prefix)
     return Helpers.GetSkinBarColor(moduleSettings, prefix)
 end
 
-local function SetTextureColor(texture, r, g, b, a)
+local function SetTextureSource(texture, file)
+    if not texture then return end
+    if file == DEFAULT_BACKDROP_TEXTURE and texture.SetColorTexture then
+        return
+    end
+    texture:SetTexture(file)
+end
+
+local function SetTextureColor(texture, file, r, g, b, a)
     if texture then
-        texture:SetVertexColor(r or 1, g or 1, b or 1, a == nil and 1 or a)
+        local colorA = a == nil and 1 or a
+        if file == DEFAULT_BACKDROP_TEXTURE and texture.SetColorTexture then
+            texture:SetColorTexture(r or 1, g or 1, b or 1, colorA)
+        else
+            texture:SetVertexColor(r or 1, g or 1, b or 1, colorA)
+        end
     end
 end
 
@@ -54,7 +184,7 @@ local function ManualSetBackdropColor(self, r, g, b, a)
     self._quiBgR, self._quiBgG, self._quiBgB, self._quiBgA = r, g, b, a
     local data = manualBackdropData[self]
     if data then
-        SetTextureColor(data.bg, r, g, b, a)
+        SetTextureColor(data.bg, data.bgFile, r, g, b, a)
     end
 end
 
@@ -62,10 +192,10 @@ local function ManualSetBackdropBorderColor(self, r, g, b, a)
     self._quiBorderR, self._quiBorderG, self._quiBorderB, self._quiBorderA = r, g, b, a
     local data = manualBackdropData[self]
     if data then
-        SetTextureColor(data.top, r, g, b, a)
-        SetTextureColor(data.bottom, r, g, b, a)
-        SetTextureColor(data.left, r, g, b, a)
-        SetTextureColor(data.right, r, g, b, a)
+        SetTextureColor(data.top, data.edgeFile, r, g, b, a)
+        SetTextureColor(data.bottom, data.edgeFile, r, g, b, a)
+        SetTextureColor(data.left, data.edgeFile, r, g, b, a)
+        SetTextureColor(data.right, data.edgeFile, r, g, b, a)
     end
 end
 
@@ -91,28 +221,36 @@ end
 local function ResetBorderTexture(texture, edgeFile, showBorder)
     texture:ClearAllPoints()
     if showBorder then
-        texture:SetTexture(edgeFile)
+        SetTextureSource(texture, edgeFile)
         texture:Show()
     else
         texture:Hide()
     end
 end
 
-function SkinBase.ApplyTextureBackdrop(frame, bgFile, edgeFile, edgeSize, borderColor, bgColor)
+function SkinBase.ApplyTextureBackdrop(frame, bgFile, edgeFile, edgeSize, borderColor, bgColor, bgInset)
     if not frame then return false end
 
     local data = EnsureManualBackdrop(frame)
     local px = Helpers.SafeToNumber(edgeSize, 1)
     if px < 0 then px = 0 end
+    local inset = bgInset
+    if inset == nil then inset = px end
 
-    bgFile = bgFile or DEFAULT_BACKDROP_TEXTURE
-    edgeFile = edgeFile or DEFAULT_BACKDROP_TEXTURE
+    if bgFile ~= false then
+        bgFile = bgFile or DEFAULT_BACKDROP_TEXTURE
+    end
+    if edgeFile ~= false then
+        edgeFile = edgeFile or DEFAULT_BACKDROP_TEXTURE
+    end
+    data.bgFile = bgFile
+    data.edgeFile = edgeFile
 
     data.bg:ClearAllPoints()
     if bgFile then
-        data.bg:SetTexture(bgFile)
-        data.bg:SetPoint("TOPLEFT", frame, "TOPLEFT", px, -px)
-        data.bg:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -px, px)
+        SetTextureSource(data.bg, bgFile)
+        data.bg:SetPoint("TOPLEFT", frame, "TOPLEFT", inset, -inset)
+        data.bg:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -inset, inset)
         data.bg:Show()
     else
         data.bg:Hide()
@@ -183,6 +321,73 @@ function SkinBase.SafeSetBackdrop(frame, backdropInfo, borderColor, bgColor)
     return ApplySafeBackdrop(frame, backdropInfo, borderColor, bgColor)
 end
 
+local function RefreshPixelBackdrop(frame)
+    local data = pixelBackdropData[frame]
+    if not data then return end
+
+    local edgeSize = (data.borderPixels or 1) * SkinBase.GetPixelSize(frame, 1)
+    local bgInset = 0
+    if data.withInsets then
+        local insetPixels = data.insetPixels
+        if insetPixels == nil then
+            insetPixels = data.borderPixels or 1
+        end
+        bgInset = insetPixels * SkinBase.GetPixelSize(frame, 1)
+    end
+    local backdropInfo = {
+        edgeFile = data.edgeFile or DEFAULT_BACKDROP_TEXTURE,
+        edgeSize = edgeSize,
+    }
+
+    if data.withBackground then
+        backdropInfo.bgFile = data.bgFile or DEFAULT_BACKDROP_TEXTURE
+        if data.withInsets then
+            backdropInfo.insets = { left = bgInset, right = bgInset, top = bgInset, bottom = bgInset }
+        end
+    end
+
+    local bgColor = data.bgColor
+    if not bgColor and frame._quiBgR ~= nil then
+        bgColor = { frame._quiBgR, frame._quiBgG, frame._quiBgB, frame._quiBgA }
+    end
+    local borderColor = data.borderColor
+    if not borderColor and frame._quiBorderR ~= nil then
+        borderColor = { frame._quiBorderR, frame._quiBorderG, frame._quiBorderB, frame._quiBorderA }
+    end
+
+    if frame.SetBackdrop and frame.SetBackdropColor and frame.SetBackdropBorderColor then
+        ApplySafeBackdrop(frame, backdropInfo, borderColor, bgColor)
+    else
+        local bgFile = data.withBackground and (data.bgFile or DEFAULT_BACKDROP_TEXTURE) or false
+        local edgeFile = edgeSize > 0 and (data.edgeFile or DEFAULT_BACKDROP_TEXTURE) or false
+        SkinBase.ApplyTextureBackdrop(frame, bgFile, edgeFile, edgeSize, borderColor, bgColor, bgInset)
+    end
+end
+
+function SkinBase.ApplyPixelBackdrop(frame, borderPixels, withBackground, withInsets, borderColor, bgColor, bgFile, edgeFile, insetPixels)
+    if not frame then return end
+    local data = pixelBackdropData[frame]
+    if not data then
+        data = {}
+        pixelBackdropData[frame] = data
+    end
+
+    data.borderPixels = borderPixels or 1
+    data.withBackground = withBackground and true or false
+    data.withInsets = withInsets and true or false
+    data.borderColor = borderColor
+    data.bgColor = bgColor
+    data.bgFile = bgFile
+    data.edgeFile = edgeFile
+    data.insetPixels = insetPixels
+
+    RefreshPixelBackdrop(frame)
+    if UIKit and UIKit.RegisterScaleRefresh and not data.registered then
+        UIKit.RegisterScaleRefresh(frame, "skinningPixelBackdrop", RefreshPixelBackdrop)
+        data.registered = true
+    end
+end
+
 ---------------------------------------------------------------------------
 -- CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 -- Creates (or updates) a pixel-perfect QUI backdrop on the given frame.
@@ -200,7 +405,6 @@ function SkinBase.CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end
 
     local backdrop = frameBackdrops[frame]
-    local px = SkinBase.GetPixelSize(backdrop, 1)
     -- Store backup color fields so third-party frame cleanup recognizes this
     -- as a QUI-owned frame and skips it during orphan/NineSlice suppression.
     backdrop._quiBgR = bgr or 0.05
@@ -211,7 +415,7 @@ function SkinBase.CreateBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     backdrop._quiBorderG = sg or 0
     backdrop._quiBorderB = sb or 0
     backdrop._quiBorderA = sa or 1
-    SkinBase.ApplyTextureBackdrop(backdrop, DEFAULT_BACKDROP_TEXTURE, DEFAULT_BACKDROP_TEXTURE, px, {
+    SkinBase.ApplyPixelBackdrop(backdrop, 1, true, true, {
         backdrop._quiBorderR, backdrop._quiBorderG, backdrop._quiBorderB, backdrop._quiBorderA,
     }, {
         backdrop._quiBgR, backdrop._quiBgG, backdrop._quiBgB, backdrop._quiBgA,
@@ -226,7 +430,6 @@ end
 ---------------------------------------------------------------------------
 function SkinBase.ApplyFullBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not frame then return end
-    local px = SkinBase.GetPixelSize(frame, 1)
     -- Store backup color fields so third-party frame cleanup recognizes this
     -- as a QUI-owned frame and skips it during orphan/NineSlice suppression.
     frame._quiBgR = bgr or 0.05
@@ -237,12 +440,7 @@ function SkinBase.ApplyFullBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     frame._quiBorderG = sg or 0
     frame._quiBorderB = sb or 0
     frame._quiBorderA = sa or 1
-    ApplySafeBackdrop(frame, {
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-        insets = { left = px, right = px, top = px, bottom = px },
-    }, {
+    SkinBase.ApplyPixelBackdrop(frame, 1, true, true, {
         frame._quiBorderR, frame._quiBorderG, frame._quiBorderB, frame._quiBorderA,
     }, {
         frame._quiBgR, frame._quiBgG, frame._quiBgB, frame._quiBgA,
@@ -491,9 +689,7 @@ function SkinBase.SkinTabButton(tab)
     SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
     local bd = SkinBase.GetBackdrop(tab)
     if bd then
-        bd:ClearAllPoints()
-        bd:SetPoint("TOPLEFT", 3, -3)
-        bd:SetPoint("BOTTOMRIGHT", -3, 0)
+        SkinBase.SetPixelInsetPoints(bd, tab, 3, 3, 3, 0)
         -- Keep backdrop at the tab's own frame level so it renders behind
         -- the tab's ButtonText fontstring. (NukeTexture above already
         -- triple-strikes the Blizzard textures so we don't need to raise
@@ -664,4 +860,3 @@ function SkinBase.SkinButtonFrameTemplate(frame)
         SkinBase.SkinCloseButton(frame.CloseButton)
     end
 end
-

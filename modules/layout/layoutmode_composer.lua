@@ -44,6 +44,14 @@ local function SetPointPx(frame, point, relativeTo, relativePoint, xPixels, yPix
     end
 end
 
+local function GetPixelSize(frame)
+    if UIKit and UIKit.GetPixelSize then
+        return UIKit.GetPixelSize(frame)
+    end
+    local QUICore = ns.Addon
+    return (QUICore and QUICore.GetPixelSize and QUICore:GetPixelSize(frame)) or 1
+end
+
 local function RoundVirtual(value, frame)
     local QUICore = ns.Addon
     if QUICore and QUICore.PixelRound then
@@ -129,7 +137,7 @@ local function CreateQUIStyleCloseButton(parent, relativeTo, relativePoint, xOff
     close:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(close),
     })
     close:SetBackdropColor(0.08, 0.08, 0.08, 0.6)
     close:SetBackdropBorderColor(border[1], border[2], border[3], border[4] or 1)
@@ -1892,7 +1900,7 @@ local function BuildAuraIndicatorsSettings(content, gfdb, onChange)
         local inputBox = CreateFrame("EditBox", nil, inputRow, "BackdropTemplate")
         inputBox:SetSize(80, 20)
         inputBox:SetPoint("LEFT", 4, 0)
-        inputBox:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+        inputBox:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = GetPixelSize(inputBox) })
         inputBox:SetBackdropColor(0.06, 0.06, 0.08, 1)
         inputBox:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
         inputBox:SetFontObject("GameFontNormalSmall")
@@ -1909,7 +1917,7 @@ local function BuildAuraIndicatorsSettings(content, gfdb, onChange)
         local addManualBtn = CreateFrame("Button", nil, inputRow, "BackdropTemplate")
         addManualBtn:SetSize(40, 20)
         addManualBtn:SetPoint("RIGHT", inputRow, "RIGHT", -2, 0)
-        addManualBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+        addManualBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = GetPixelSize(addManualBtn) })
         addManualBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         addManualBtn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
         local addManualText = addManualBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -2802,7 +2810,7 @@ local function ShowPinnedSlotMenu(anchorFrame, slot, onChanged)
     menu:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(menu),
     })
     menu:SetBackdropColor(0.08, 0.08, 0.1, 0.98)
     menu:SetBackdropBorderColor(accentR * 0.5, accentG * 0.5, accentB * 0.5, 0.8)
@@ -2977,7 +2985,7 @@ local function BuildPinnedAurasSettings(content, gfdb, onChange)
         local inputBox = CreateFrame("EditBox", nil, inputRow, "BackdropTemplate")
         inputBox:SetSize(80, 20)
         inputBox:SetPoint("LEFT", 4, 0)
-        inputBox:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+        inputBox:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = GetPixelSize(inputBox) })
         inputBox:SetBackdropColor(0.06, 0.06, 0.08, 1)
         inputBox:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
         inputBox:SetFontObject("GameFontNormalSmall")
@@ -2994,7 +3002,7 @@ local function BuildPinnedAurasSettings(content, gfdb, onChange)
         local addManualBtn = CreateFrame("Button", nil, inputRow, "BackdropTemplate")
         addManualBtn:SetSize(40, 20)
         addManualBtn:SetPoint("RIGHT", inputRow, "RIGHT", -2, 0)
-        addManualBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+        addManualBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = GetPixelSize(addManualBtn) })
         addManualBtn:SetBackdropColor(0.15, 0.15, 0.15, 1)
         addManualBtn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
         local addManualText = addManualBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -3031,7 +3039,7 @@ local function BuildPinnedAurasSettings(content, gfdb, onChange)
             -- Anchor button (clickable, shows current anchor abbreviation)
             row._anchorBtn = CreateFrame("Button", nil, row, "BackdropTemplate")
             row._anchorBtn:SetSize(24, 16)
-            row._anchorBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+            row._anchorBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = GetPixelSize(row._anchorBtn) })
             row._anchorBtn:SetBackdropColor(0.1, 0.1, 0.12, 1)
             row._anchorBtn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
             row._anchorBtnText = row._anchorBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")

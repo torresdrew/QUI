@@ -14,6 +14,14 @@ local abs = math.abs
 local QUI_LayoutMode_UI = {}
 ns.QUI_LayoutMode_UI = QUI_LayoutMode_UI
 
+local function PixelSize(frame, pixels)
+    if UIKit and UIKit.GetPixelSize then
+        return (pixels or 1) * UIKit.GetPixelSize(frame)
+    end
+    local core = ns.Addon
+    return (pixels or 1) * ((core and core.GetPixelSize and core:GetPixelSize(frame)) or 1)
+end
+
 -- Accent color: cached from GUI.Colors.accent, refreshed when layout mode opens.
 local ACCENT_R, ACCENT_G, ACCENT_B = 0.376, 0.647, 0.980
 
@@ -261,6 +269,7 @@ BuildGrid = function(ui)
     local parent = ui._gridFrame
     local sw, sh = UIParent:GetWidth(), UIParent:GetHeight()
     local alpha = ui.gridMode == 1 and GRID_DIMMED_ALPHA or GRID_BRIGHT_ALPHA
+    local gridLineSize = PixelSize(parent, 1)
 
     local function GetLine()
         idx = idx + 1
@@ -277,7 +286,7 @@ BuildGrid = function(ui)
     for x = cx, sw, GRID_SPACING do
         local line = GetLine()
         line:SetColorTexture(GRID_LINE_COLOR_R, GRID_LINE_COLOR_G, GRID_LINE_COLOR_B, alpha)
-        line:SetWidth(1)
+        line:SetWidth(gridLineSize)
         line:ClearAllPoints()
         line:SetPoint("TOP", parent, "BOTTOMLEFT", x, sh)
         line:SetPoint("BOTTOM", parent, "BOTTOMLEFT", x, 0)
@@ -289,7 +298,7 @@ BuildGrid = function(ui)
             if mirrorX >= 0 then
                 line = GetLine()
                 line:SetColorTexture(GRID_LINE_COLOR_R, GRID_LINE_COLOR_G, GRID_LINE_COLOR_B, alpha)
-                line:SetWidth(1)
+                line:SetWidth(gridLineSize)
                 line:ClearAllPoints()
                 line:SetPoint("TOP", parent, "BOTTOMLEFT", mirrorX, sh)
                 line:SetPoint("BOTTOM", parent, "BOTTOMLEFT", mirrorX, 0)
@@ -303,7 +312,7 @@ BuildGrid = function(ui)
     for y = cy, sh, GRID_SPACING do
         local line = GetLine()
         line:SetColorTexture(GRID_LINE_COLOR_R, GRID_LINE_COLOR_G, GRID_LINE_COLOR_B, alpha)
-        line:SetHeight(1)
+        line:SetHeight(gridLineSize)
         line:ClearAllPoints()
         line:SetPoint("LEFT", parent, "BOTTOMLEFT", 0, y)
         line:SetPoint("RIGHT", parent, "BOTTOMLEFT", sw, y)
@@ -314,7 +323,7 @@ BuildGrid = function(ui)
             if mirrorY >= 0 then
                 line = GetLine()
                 line:SetColorTexture(GRID_LINE_COLOR_R, GRID_LINE_COLOR_G, GRID_LINE_COLOR_B, alpha)
-                line:SetHeight(1)
+                line:SetHeight(gridLineSize)
                 line:ClearAllPoints()
                 line:SetPoint("LEFT", parent, "BOTTOMLEFT", 0, mirrorY)
                 line:SetPoint("RIGHT", parent, "BOTTOMLEFT", sw, mirrorY)
@@ -802,7 +811,7 @@ function QUI_LayoutMode_UI:ApplySnap(handle)
     if snappedX and snapLineX and self._snapGuides then
         local guide = self._snapGuides[1]
         guide:ClearAllPoints()
-        guide:SetWidth(1)
+        guide:SetWidth(PixelSize(guide, 1))
         guide:SetPoint("TOP", UIParent, "BOTTOMLEFT", snapLineX, UIParent:GetHeight())
         guide:SetPoint("BOTTOM", UIParent, "BOTTOMLEFT", snapLineX, 0)
         guide:Show()
@@ -810,7 +819,7 @@ function QUI_LayoutMode_UI:ApplySnap(handle)
     if snappedY and snapLineY and self._snapGuides then
         local guide = self._snapGuides[2]
         guide:ClearAllPoints()
-        guide:SetHeight(1)
+        guide:SetHeight(PixelSize(guide, 1))
         guide:SetPoint("LEFT", UIParent, "BOTTOMLEFT", 0, snapLineY)
         guide:SetPoint("RIGHT", UIParent, "BOTTOMLEFT", UIParent:GetWidth(), snapLineY)
         guide:Show()
@@ -965,7 +974,7 @@ CreateToolbar = function(ui)
     local tabBorder = tab:CreateTexture(nil, "BORDER")
     tabBorder:SetPoint("TOPLEFT", 0, 0)
     tabBorder:SetPoint("BOTTOMLEFT", 0, 0)
-    tabBorder:SetWidth(1)
+    tabBorder:SetWidth(PixelSize(tab, 1))
     tabBorder:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.6)
 
     -- Accent glow stripe (bright inner edge)
@@ -1020,7 +1029,7 @@ CreateToolbar = function(ui)
         line:ClearAllPoints()
         line:SetPoint(p1, panel, r1)
         line:SetPoint(p2, panel, r2)
-        if isH then line:SetHeight(1) else line:SetWidth(1) end
+        if isH then line:SetHeight(PixelSize(panel, 1)) else line:SetWidth(PixelSize(panel, 1)) end
         return line
     end
     MakeLine("TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", true)
@@ -1452,7 +1461,7 @@ CreateSaveDiscardPopup = function(ui)
         line:ClearAllPoints()
         line:SetPoint(p1, popup, r1)
         line:SetPoint(p2, popup, r2)
-        if isH then line:SetHeight(1) else line:SetWidth(1) end
+        if isH then line:SetHeight(PixelSize(popup, 1)) else line:SetWidth(PixelSize(popup, 1)) end
     end
     MakePopupLine("TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", true)
     MakePopupLine("BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT", true)
@@ -1610,7 +1619,7 @@ CreateFramesDrawer = function(ui)
         line:ClearAllPoints()
         line:SetPoint(p1, drawer, r1)
         line:SetPoint(p2, drawer, r2)
-        if isH then line:SetHeight(1) else line:SetWidth(1) end
+        if isH then line:SetHeight(PixelSize(drawer, 1)) else line:SetWidth(PixelSize(drawer, 1)) end
     end
     MakeDrawerLine("TOPLEFT", "TOPLEFT", "TOPRIGHT", "TOPRIGHT", true)
     MakeDrawerLine("BOTTOMLEFT", "BOTTOMLEFT", "BOTTOMRIGHT", "BOTTOMRIGHT", true)
@@ -1911,7 +1920,7 @@ function QUI_LayoutMode_UI:_RebuildDrawer()
         local headerLine = header:CreateTexture(nil, "ARTWORK")
         headerLine:SetPoint("BOTTOMLEFT", 0, 0)
         headerLine:SetPoint("BOTTOMRIGHT", 0, 0)
-        headerLine:SetHeight(1)
+        headerLine:SetHeight(PixelSize(header, 1))
         headerLine:SetColorTexture(ACCENT_R, ACCENT_G, ACCENT_B, 0.3)
 
         header:SetScript("OnEnter", function()

@@ -5,6 +5,7 @@
 local ADDON_NAME, ns = ...
 local Helpers = ns.Helpers
 local UIKit = ns.UIKit
+local expandedPointState = Helpers.CreateStateTable()
 
 local DEFAULT_SETTINGS = {
     enabled = false,
@@ -43,6 +44,30 @@ local STARTUP_SUPPRESS_SECONDS = 5
 local DEDUP_WINDOW = 0.15
 local SENT_CAST_WINDOW = 2.0
 local FALLBACK_ICON = 136243
+
+local function RefreshExpandedPixelPoints(region)
+    local data = expandedPointState[region]
+    if not data or not data.relativeTo then return end
+    local px = (UIKit and UIKit.GetPixelSize and UIKit.GetPixelSize(region)) or 1
+    region:ClearAllPoints()
+    region:SetPoint("TOPLEFT", data.relativeTo, "TOPLEFT", -px, px)
+    region:SetPoint("BOTTOMRIGHT", data.relativeTo, "BOTTOMRIGHT", px, -px)
+end
+
+local function SetExpandedPixelPoints(region, relativeTo)
+    if not region or not relativeTo then return end
+    local data = expandedPointState[region]
+    if not data then
+        data = {}
+        expandedPointState[region] = data
+    end
+    data.relativeTo = relativeTo
+    RefreshExpandedPixelPoints(region)
+    if UIKit and UIKit.RegisterScaleRefresh and not data.registered then
+        UIKit.RegisterScaleRefresh(region, "actionTrackerIconBorderPoints", RefreshExpandedPixelPoints)
+        data.registered = true
+    end
+end
 local CONTAINER_PADDING = 4
 local ANIMATION_LERP_RATE = 18
 local COMBAT_EXIT_FADE_DURATION = 0.2
@@ -362,8 +387,7 @@ local function CreateIconFrame()
     icon:SetSize(DEFAULT_SETTINGS.iconSize, DEFAULT_SETTINGS.iconSize)
 
     icon.border = icon:CreateTexture(nil, "BACKGROUND")
-    icon.border:SetPoint("TOPLEFT", icon, "TOPLEFT", -1, 1)
-    icon.border:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 1, -1)
+    SetExpandedPixelPoints(icon.border, icon)
     icon.border:SetColorTexture(0, 0, 0, 0.85)
 
     icon.tex = icon:CreateTexture(nil, "ARTWORK")

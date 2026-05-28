@@ -174,11 +174,65 @@ local function loadTooltipSkinning()
 
     assert(loadfile("modules/skinning/system/tooltips.lua"))("QUI", ns)
     local refit = assert(ns.QUI_RefitTooltipChromeToContent, "refit function should be exported")
+    local requestRefit = assert(ns.QUI_RequestTooltipChromeRefit, "request refit function should be exported")
     local styleFrames = getUpvalue(refit, "styleFrames")
-    return refit, styleFrames
+    return refit, requestRefit, styleFrames
 end
 
-local refit, styleFrames = loadTooltipSkinning()
+local refit, requestRefit, styleFrames = loadTooltipSkinning()
+
+local function test_refit_is_request_driven()
+    local tooltip = {
+        count = 2,
+        right = 100,
+        leftLines = {
+            makeLine("Header", 90, 90, 10, 80),
+            makeLine("Late line", 90, 80, 10, 80),
+        },
+        rightLines = {
+            makeLine("", 100, 90),
+            makeLine("Late Value", 150, 80),
+        },
+    }
+
+    function tooltip:NumLines()
+        return self.count
+    end
+
+    function tooltip:GetLeftLine(index)
+        return self.leftLines[index]
+    end
+
+    function tooltip:GetRightLine(index)
+        return self.rightLines[index]
+    end
+
+    function tooltip:GetRight()
+        return self.right
+    end
+
+    function tooltip:GetOwner()
+        return nil
+    end
+
+    function tooltip:GetUnit()
+        return nil
+    end
+
+    function tooltip:IsShown()
+        return true
+    end
+
+    function tooltip:IsForbidden()
+        return false
+    end
+
+    local chrome = makeFrame("chrome")
+    styleFrames[tooltip] = chrome
+
+    refit(tooltip)
+    assert(#chrome.points == 0, "ordinary refit calls should not mutate chrome geometry without an overflow request")
+end
 
 local function test_refit_does_not_extend_to_left_line_text_width()
     local owner = makeFrame("owner")
@@ -229,6 +283,7 @@ local function test_refit_does_not_extend_to_left_line_text_width()
     local chrome = makeFrame("chrome")
     styleFrames[tooltip] = chrome
 
+    requestRefit(tooltip, 1)
     refit(tooltip)
     local topRight = assert(findPoint(chrome, "TOPRIGHT"), "chrome should have a top-right point")
     assert(topRight.x == 0,
@@ -286,6 +341,7 @@ local function test_refit_uses_wrapped_width_for_left_lines()
     local chrome = makeFrame("chrome")
     styleFrames[tooltip] = chrome
 
+    requestRefit(tooltip, 1)
     refit(tooltip)
     local topRight = assert(findPoint(chrome, "TOPRIGHT"), "chrome should have a top-right point")
     assert(topRight.x == 0,
@@ -343,11 +399,13 @@ local function test_refit_extends_right_side_double_line_width()
     local chrome = makeFrame("chrome")
     styleFrames[tooltip] = chrome
 
+    requestRefit(tooltip, 1)
     refit(tooltip)
     local topRight = assert(findPoint(chrome, "TOPRIGHT"), "chrome should have a top-right point")
     assert(topRight.x == 54, "refit should still extend to cover right-side double-line values")
 end
 
+test_refit_is_request_driven()
 test_refit_does_not_extend_to_left_line_text_width()
 test_refit_uses_wrapped_width_for_left_lines()
 test_refit_extends_right_side_double_line_width()

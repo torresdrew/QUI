@@ -562,17 +562,18 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
                 end
                 prevDebuff = iconFrame
 
+                local iconPx = QUICore:GetPixelSize(iconFrame)
                 iconFrame:SetBackdrop({
                     bgFile = "Interface\\Buttons\\WHITE8x8",
                     edgeFile = "Interface\\Buttons\\WHITE8x8",
-                    edgeSize = 1,
+                    edgeSize = iconPx,
                 })
                 iconFrame:SetBackdropBorderColor(0.8, 0, 0, 1) -- red debuff border
                 iconFrame:SetBackdropColor(0, 0, 0, 1)
 
                 local icon = iconFrame:CreateTexture(nil, "ARTWORK")
-                icon:SetPoint("TOPLEFT", 1, -1)
-                icon:SetPoint("BOTTOMRIGHT", -1, 1)
+                icon:SetPoint("TOPLEFT", iconPx, -iconPx)
+                icon:SetPoint("BOTTOMRIGHT", -iconPx, iconPx)
                 icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
                 icon:SetTexture(FAKE_DEBUFF_ICONS[((i - 1) % #FAKE_DEBUFF_ICONS) + 1])
 
@@ -622,17 +623,18 @@ local function CreateTestFrame(parent, index, totalCount, classToken, name, role
                 end
                 prevBuff = iconFrame
 
+                local iconPx = QUICore:GetPixelSize(iconFrame)
                 iconFrame:SetBackdrop({
                     bgFile = "Interface\\Buttons\\WHITE8x8",
                     edgeFile = "Interface\\Buttons\\WHITE8x8",
-                    edgeSize = 1,
+                    edgeSize = iconPx,
                 })
                 iconFrame:SetBackdropBorderColor(0, 0.6, 0, 1) -- green buff border
                 iconFrame:SetBackdropColor(0, 0, 0, 1)
 
                 local icon = iconFrame:CreateTexture(nil, "ARTWORK")
-                icon:SetPoint("TOPLEFT", 1, -1)
-                icon:SetPoint("BOTTOMRIGHT", -1, 1)
+                icon:SetPoint("TOPLEFT", iconPx, -iconPx)
+                icon:SetPoint("BOTTOMRIGHT", -iconPx, iconPx)
                 icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
                 icon:SetTexture(FAKE_BUFF_ICONS[((i - 1) % #FAKE_BUFF_ICONS) + 1])
             end

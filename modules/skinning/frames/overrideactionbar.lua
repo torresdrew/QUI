@@ -36,20 +36,13 @@ local function StyleActionButton(button, index, sr, sg, sb, sa, bgr, bgg, bgb, b
     local btnBd = SkinBase.GetFrameData(button, "backdrop")
     if not btnBd then
         btnBd = CreateFrame("Frame", nil, button, "BackdropTemplate")
-        btnBd:SetPoint("TOPLEFT", -1, 1)
-        btnBd:SetPoint("BOTTOMRIGHT", 1, -1)
+        SkinBase.SetExpandedPixelPoints(btnBd, button, 1)
         btnBd:SetFrameLevel(button:GetFrameLevel())
         btnBd:EnableMouse(false)
         SkinBase.SetFrameData(button, "backdrop", btnBd)
     end
 
-    local px = QUICore:GetPixelSize(btnBd)
-    btnBd:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-        insets = { left = px, right = px, top = px, bottom = px }
-    })
+    SkinBase.ApplyPixelBackdrop(btnBd, 1, true, true)
     btnBd:SetBackdropColor(bgr, bgg, bgb, 0.8)
     btnBd:SetBackdropBorderColor(sr, sg, sb, sa)
 
@@ -146,13 +139,7 @@ local function SkinOverrideActionBar()
         SkinBase.SetFrameData(bar, "backdrop", barBd)
     end
 
-    local barPx = QUICore:GetPixelSize(barBd)
-    barBd:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = barPx,
-        insets = { left = barPx, right = barPx, top = barPx, bottom = barPx }
-    })
+    SkinBase.ApplyPixelBackdrop(barBd, 1, true, true)
     barBd:SetBackdropColor(bgr, bgg, bgb, bga)
     barBd:SetBackdropBorderColor(sr, sg, sb, sa)
 
@@ -174,20 +161,13 @@ local function SkinOverrideActionBar()
         local leaveBd = SkinBase.GetFrameData(leaveBtn, "backdrop")
         if not leaveBd then
             leaveBd = CreateFrame("Frame", nil, leaveBtn, "BackdropTemplate")
-            leaveBd:SetPoint("TOPLEFT", -1, 1)
-            leaveBd:SetPoint("BOTTOMRIGHT", 1, -1)
+            SkinBase.SetExpandedPixelPoints(leaveBd, leaveBtn, 1)
             leaveBd:SetFrameLevel(leaveBtn:GetFrameLevel())
             leaveBd:EnableMouse(false)
             SkinBase.SetFrameData(leaveBtn, "backdrop", leaveBd)
         end
 
-        local lbPx = QUICore:GetPixelSize(leaveBd)
-        leaveBd:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = lbPx,
-            insets = { left = lbPx, right = lbPx, top = lbPx, bottom = lbPx }
-        })
+        SkinBase.ApplyPixelBackdrop(leaveBd, 1, true, true)
         leaveBd:SetBackdropColor(0.6, 0.1, 0.1, 0.9)  -- Reddish for exit
         leaveBd:SetBackdropBorderColor(sr, sg, sb, sa)
     end
@@ -208,20 +188,13 @@ local function SkinOverrideActionBar()
         local hbBd = SkinBase.GetFrameData(healthBar, "backdrop")
         if not hbBd then
             hbBd = CreateFrame("Frame", nil, healthBar, "BackdropTemplate")
-            hbBd:SetPoint("TOPLEFT", -1, 1)
-            hbBd:SetPoint("BOTTOMRIGHT", 1, -1)
+            SkinBase.SetExpandedPixelPoints(hbBd, healthBar, 1)
             hbBd:SetFrameLevel(healthBar:GetFrameLevel())
             hbBd:EnableMouse(false)
             SkinBase.SetFrameData(healthBar, "backdrop", hbBd)
         end
 
-        local hbPx = QUICore:GetPixelSize(hbBd)
-        hbBd:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = hbPx,
-            insets = { left = hbPx, right = hbPx, top = hbPx, bottom = hbPx }
-        })
+        SkinBase.ApplyPixelBackdrop(hbBd, 1, true, true)
         hbBd:SetBackdropColor(bgr, bgg, bgb, 0.8)
         hbBd:SetBackdropBorderColor(sr, sg, sb, sa)
     end
@@ -242,20 +215,13 @@ local function SkinOverrideActionBar()
         local pbBd = SkinBase.GetFrameData(powerBar, "backdrop")
         if not pbBd then
             pbBd = CreateFrame("Frame", nil, powerBar, "BackdropTemplate")
-            pbBd:SetPoint("TOPLEFT", -1, 1)
-            pbBd:SetPoint("BOTTOMRIGHT", 1, -1)
+            SkinBase.SetExpandedPixelPoints(pbBd, powerBar, 1)
             pbBd:SetFrameLevel(powerBar:GetFrameLevel())
             pbBd:EnableMouse(false)
             SkinBase.SetFrameData(powerBar, "backdrop", pbBd)
         end
 
-        local pbPx = QUICore:GetPixelSize(pbBd)
-        pbBd:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = pbPx,
-            insets = { left = pbPx, right = pbPx, top = pbPx, bottom = pbPx }
-        })
+        SkinBase.ApplyPixelBackdrop(pbBd, 1, true, true)
         pbBd:SetBackdropColor(bgr, bgg, bgb, 0.8)
         pbBd:SetBackdropBorderColor(sr, sg, sb, sa)
     end

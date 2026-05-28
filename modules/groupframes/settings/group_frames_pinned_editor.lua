@@ -50,6 +50,11 @@ local function GetGUI()
     return QUI and QUI.GUI or nil
 end
 
+local function GetPixelSize(frame)
+    local core = ns.Addon
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
 local function GetSpellName(spellId)
     if C_Spell and C_Spell.GetSpellName then
         local ok, name = pcall(C_Spell.GetSpellName, spellId)
@@ -131,7 +136,7 @@ local function GetPinnedSlotMenu()
     menu:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(menu),
     })
     menu:SetBackdropColor(0.08, 0.08, 0.1, 0.98)
     menu:SetBackdropBorderColor(accent[1] * 0.5, accent[2] * 0.5, accent[3] * 0.5, 0.8)
@@ -387,7 +392,7 @@ function PinnedAurasEditor.RenderSpellSlots(host, pinnedAurasDB, onChange)
     inputBox:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(inputBox),
     })
     inputBox:SetBackdropColor(0.06, 0.06, 0.08, 1)
     inputBox:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
@@ -410,7 +415,7 @@ function PinnedAurasEditor.RenderSpellSlots(host, pinnedAurasDB, onChange)
     addManualButton:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
+        edgeSize = GetPixelSize(addManualButton),
     })
     addManualButton:SetBackdropColor(0.15, 0.15, 0.15, 1)
     addManualButton:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
@@ -455,7 +460,7 @@ function PinnedAurasEditor.RenderSpellSlots(host, pinnedAurasDB, onChange)
         row.anchorButton:SetBackdrop({
             bgFile = "Interface\\Buttons\\WHITE8x8",
             edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 1,
+            edgeSize = GetPixelSize(row.anchorButton),
         })
         row.anchorButton:SetBackdropColor(0.1, 0.1, 0.12, 1)
         row.anchorButton:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)

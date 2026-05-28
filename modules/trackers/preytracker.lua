@@ -39,6 +39,14 @@ local SPARK_HEIGHT_MULT = 2.5
 local DEFAULT_FALLBACK_TEXTURE = "Interface\\Buttons\\WHITE8x8"
 local string_format = string.format
 
+local function GetPixelSize(frame)
+    if UIKit and UIKit.GetPixelSize then
+        return UIKit.GetPixelSize(frame)
+    end
+    local core = GetCore and GetCore()
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
 local TEXT_FORMATS = {
     stage_pct  = function(stage, pct, name) return string_format("Stage %d — %d%%", stage, pct) end,
     pct_only   = function(stage, pct, name) return string_format("%d%%", pct) end,
@@ -1285,11 +1293,12 @@ local function CreateHuntPanel()
     panel:SetFrameStrata("TOOLTIP")
 
     local _, _, _, _, bgr, bgg, bgb, bga = Helpers.GetSkinColors()
+    local panelPx = GetPixelSize(panel)
     panel:SetBackdrop({
         bgFile = DEFAULT_FALLBACK_TEXTURE,
         edgeFile = DEFAULT_FALLBACK_TEXTURE,
-        edgeSize = 1,
-        insets = { left = 1, right = 1, top = 1, bottom = 1 },
+        edgeSize = panelPx,
+        insets = { left = panelPx, right = panelPx, top = panelPx, bottom = panelPx },
     })
     panel:SetBackdropColor(bgr, bgg, bgb, 0.95)
     panel:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)

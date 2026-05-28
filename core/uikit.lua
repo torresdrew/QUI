@@ -54,6 +54,14 @@ local function Pixels(value, frame)
     return Round(value or 0)
 end
 
+function UIKit.GetPixelSize(frame)
+    return GetPixelSize(frame)
+end
+
+function UIKit.Pixels(value, frame)
+    return Pixels(value, frame)
+end
+
 local function SetRegionSizePx(region, widthPixels, heightPixels, contextFrame)
     if not region then return end
     local frame = contextFrame or region
@@ -269,6 +277,43 @@ function UIKit.RefreshScaleBoundWidgets()
             pcall(refreshFn, owner)
         end
     end
+end
+
+function UIKit.RefreshPixelBorders()
+    for frame in pairs(borderLineState) do
+        RefreshBorderLines(frame)
+    end
+    for borderFrame in pairs(backdropBorderState) do
+        ApplyBackdropBorderLayout(borderFrame)
+    end
+end
+
+local queuedScaleRefreshTicks = 0
+local scaleRefreshFrame
+
+local function RunQueuedScaleRefresh()
+    UIKit.RefreshScaleBoundWidgets()
+    UIKit.RefreshPixelBorders()
+end
+
+function UIKit.QueueScaleRefresh(ticks)
+    ticks = max(Round(ticks or 1), 1)
+    RunQueuedScaleRefresh()
+
+    if type(CreateFrame) ~= "function" then return end
+
+    queuedScaleRefreshTicks = max(queuedScaleRefreshTicks, ticks)
+    if not scaleRefreshFrame then
+        scaleRefreshFrame = CreateFrame("Frame")
+    end
+
+    scaleRefreshFrame:SetScript("OnUpdate", function(self)
+        RunQueuedScaleRefresh()
+        queuedScaleRefreshTicks = queuedScaleRefreshTicks - 1
+        if queuedScaleRefreshTicks <= 0 then
+            self:SetScript("OnUpdate", nil)
+        end
+    end)
 end
 
 local animationDriver
@@ -496,6 +541,7 @@ function UIKit.CreateBorderLines(frame)
 
     UIKit.RegisterScaleRefresh(frame, "borderLines", RefreshBorderLines)
     RefreshBorderLines(frame)
+    UIKit.QueueScaleRefresh(2)
     return borders
 end
 

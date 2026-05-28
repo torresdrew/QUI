@@ -235,6 +235,8 @@ end
 local styleFrames = Helpers.CreateStateTable()   -- tooltip → chrome frame
 local hookedTooltips = Helpers.CreateStateTable() -- tooltip → true
 local hookedNineSlices = Helpers.CreateStateTable() -- NineSlice → true
+local tooltipShowTokens = Helpers.CreateStateTable() -- tooltip → show cycle token
+local tooltipOverflowRequests = Helpers.CreateStateTable() -- tooltip → requested show token
 local pendingGameTooltipRestyle = false           -- deferred restyle for GameTooltip
 local gameTooltipRestyleFrame
 local gameTooltipRestyleOnUpdate
@@ -242,6 +244,24 @@ local gameTooltipRestyleActive = false
 local gameTooltipShowToken = 0
 local gameTooltipFontToken = 0
 local suppressNSHook = false                      -- suppress NineSlice hook during intentional re-show
+
+local function GetTooltipShowToken(tooltip)
+    if tooltip == GameTooltip then
+        return gameTooltipShowToken
+    end
+    return tooltipShowTokens[tooltip] or 0
+end
+
+local function AdvanceTooltipShowToken(tooltip)
+    if tooltip == GameTooltip then
+        gameTooltipShowToken = gameTooltipShowToken + 1
+        return gameTooltipShowToken
+    end
+
+    local token = (tooltipShowTokens[tooltip] or 0) + 1
+    tooltipShowTokens[tooltip] = token
+    return token
+end
 
 local function QueueGameTooltipRestyle()
     if pendingGameTooltipRestyle then
@@ -315,7 +335,12 @@ end
 
 local function HideStyleFrame(tooltip)
     local frame = tooltip and styleFrames[tooltip]
-    if frame then frame:Hide() end
+    if frame then
+        if frame.qBridgeBottom then
+            pcall(frame.qBridgeBottom.Hide, frame.qBridgeBottom)
+        end
+        frame:Hide()
+    end
 end
 
 local function FallbackToNineSlice(tooltip)
@@ -397,6 +422,46 @@ local function GetStyleFrame(tooltip)
     return frame
 end
 
+local function ResetChromeOverflowState(frame)
+    if not frame then return end
+    frame.qLastLineIndex = nil
+    frame.qLastLeftFS = nil
+    frame.qExtendX = nil
+    frame.qExtendY = nil
+    frame.qSizingMode = "base"
+end
+
+local function ResetChromeToBase(tooltip, frame)
+    if not tooltip or not frame then return end
+
+    ResetChromeOverflowState(frame)
+    frame.qSizingToken = GetTooltipShowToken(tooltip)
+
+    local bridge = frame.qBridgeBottom
+    if bridge then
+        pcall(bridge.ClearAllPoints, bridge)
+        pcall(bridge.Hide, bridge)
+    end
+
+    pcall(frame.ClearAllPoints, frame)
+    if frame.SetAllPoints then
+        pcall(frame.SetAllPoints, frame)
+    else
+        pcall(frame.SetPoint, frame, "TOPLEFT", tooltip, "TOPLEFT", 0, 0)
+        pcall(frame.SetPoint, frame, "TOPRIGHT", tooltip, "TOPRIGHT", 0, 0)
+        pcall(frame.SetPoint, frame, "BOTTOMLEFT", tooltip, "BOTTOMLEFT", 0, 0)
+        pcall(frame.SetPoint, frame, "BOTTOMRIGHT", tooltip, "BOTTOMRIGHT", 0, 0)
+    end
+end
+
+local function ResetTooltipChromeSizing(tooltip)
+    tooltipOverflowRequests[tooltip] = nil
+    local frame = styleFrames[tooltip]
+    if frame then
+        ResetChromeToBase(tooltip, frame)
+    end
+end
+
 -- Is this tooltip embedded inside a visible parent tooltip?
 local function IsEmbedded(tooltip)
     local ok, parent = pcall(tooltip.GetParent, tooltip)
@@ -455,6 +520,7 @@ local function ApplyTooltipChrome(tooltip)
         frame.bg:SetVertexColor(bgr, bgg, bgb, bga)
     end
     UIKit.UpdateBorderLines(frame, thickness, sr, sg, sb, sa, sa <= 0)
+    ResetChromeToBase(tooltip, frame)
     frame:Show()
 
     -- Strip CompareHeader on shopping tooltips
@@ -464,14 +530,12 @@ local function ApplyTooltipChrome(tooltip)
         if h.NineSlice then pcall(h.NineSlice.Hide, h.NineSlice) end
     end
 
-    -- Re-fit chrome to actual content extents on every show. GameTooltip is
-    -- a single Lua object reused across player/NPC/object hovers, so any
-    -- extend offsets cached from a prior show (e.g. player Target/M+ Rating
-    -- pushing the chrome 61px down) must be re-evaluated for the new content,
-    -- otherwise NPC/object tooltips display chrome much larger than needed.
-    -- For tooltips that fit inside their reported rect, this resolves to
-    -- extend = 0 and re-anchors the chrome flush with the tooltip.
-    local refit = ns.QUI_RefitTooltipChromeToContent
+    -- Normal tooltip chrome follows Blizzard's tooltip frame directly.
+    -- Post-show additions explicitly request overflow handling through
+    -- QUI_RequestTooltipChromeRefit; ordinary shows do not run geometry
+    -- inference, avoiding stale size carryover across reused GameTooltip
+    -- content.
+    local refit = tooltipOverflowRequests[tooltip] and ns.QUI_RefitTooltipChromeToContent
     if refit then
         pcall(refit, tooltip)
     end
@@ -779,7 +843,8 @@ HookTooltipOnShow = function(tooltip)
         -- (no 1-frame NineSlice flash).
         hooksecurefunc(tooltip, "Show", function(self)
             TooltipDebugCount("skin.gameTooltipShow")
-            gameTooltipShowToken = gameTooltipShowToken + 1
+            AdvanceTooltipShowToken(self)
+            ResetTooltipChromeSizing(self)
             if not IsEnabled() then
                 FallbackToNineSlice(self)
                 return
@@ -800,6 +865,8 @@ HookTooltipOnShow = function(tooltip)
 
     hooksecurefunc(tooltip, "Show", function(self)
         TooltipDebugCount("skin.tooltipShow")
+        AdvanceTooltipShowToken(self)
+        ResetTooltipChromeSizing(self)
         if not IsEnabled() then
             FallbackToNineSlice(self)
             return
@@ -1208,14 +1275,10 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
                 QueueShoppingTooltipSync()
             end
 
-            -- Re-fit chrome to the actual rendered FontString extents on every
-            -- show cycle. ApplyTooltipChrome only runs when chrome is hidden
-            -- (avoiding flicker), so the chrome's extendY/X anchors carried
-            -- over from the prior tooltip stay until something explicitly
-            -- recomputes them. Running the refit here covers every show,
-            -- including the player → NPC transition where chrome was previously
-            -- extended for Target/M+ Rating overflow.
-            local refit = ns.QUI_RefitTooltipChromeToContent
+            -- Only explicit post-show additions run overflow geometry. Normal
+            -- GameTooltip shows stay on base SetAllPoints chrome so prior
+            -- overflow cannot carry into the next hover.
+            local refit = tooltipOverflowRequests[GameTooltip] and ns.QUI_RefitTooltipChromeToContent
             if refit then
                 pcall(refit, GameTooltip)
             end
@@ -1489,50 +1552,28 @@ local function RefitChromeToContent(tooltip)
 
     TooltipDebugCount("skin.refit")
 
-    -- Owner/unit/line1 reset key — see original comments preserved below.
-    --
-    -- Same physical tooltip (GameTooltip) is reused across hovers; deferred-add
-    -- FontStrings (Item ID / Spell ID / etc.) briefly skip our IsShown filter
-    -- mid-render, so consecutive refits report different lastLeftIndex values.
-    -- Each flip re-anchors the chrome → visible Y-axis flash. Monotonic-grow
-    -- (below) keeps the largest line index seen during the cycle, resetting
-    -- only when the underlying content actually changes.
-    --
-    -- Reset key: (GetOwner, GetUnit, line1Text). Owner+Unit alone are not
-    -- enough — GetUnit returns "mouseover" / "nameplate1" / "target" etc., so
-    -- sweeping across different actual units under the same anchor would leave
-    -- the cache sticky and chrome too tall for the new (smaller) tooltip.
-    -- Line 1 is the tooltip header; it changes with actual content but stays
-    -- stable across the IsShown-flicker that monotonic-grow absorbs.
-    local okOwner, owner = pcall(tooltip.GetOwner, tooltip)
-    if not okOwner then owner = nil end
-    local okUnit, _, unit = pcall(tooltip.GetUnit, tooltip)
-    if not okUnit then unit = nil end
-    if unit and Helpers.IsSecretValue and Helpers.IsSecretValue(unit) then
-        unit = "<secret>"
+    local requestToken = tooltipOverflowRequests[tooltip]
+    if requestToken == nil then
+        TooltipDebugCount("skin.refitNoRequest")
+        return
     end
-    local line1Text
-    if tooltip.GetLeftLine then
-        local okFS, fs = pcall(tooltip.GetLeftLine, tooltip, 1)
-        if okFS and fs then
-            local okT, t = pcall(fs.GetText, fs)
-            if okT then
-                if not (Helpers.IsSecretValue and Helpers.IsSecretValue(t)) and t ~= nil then
-                    line1Text = t
-                end
-            end
-        end
+
+    local showToken = GetTooltipShowToken(tooltip)
+    if requestToken ~= showToken then
+        tooltipOverflowRequests[tooltip] = nil
+        ResetChromeToBase(tooltip, frame)
+        TooltipDebugCount("skin.refitStaleRequest")
+        return
     end
-    local resetCycle = false
-    if owner ~= frame.qOwner or unit ~= frame.qUnit or line1Text ~= frame.qLine1 then
-        frame.qOwner = owner
-        frame.qUnit = unit
-        frame.qLine1 = line1Text
-        frame.qLastLineIndex = nil
-        frame.qLastLeftFS = nil
-        frame.qExtendX = nil
-        resetCycle = true
-        TooltipDebugCount("skin.refitOwnerReset")
+
+    -- Refit state is scoped to the actual tooltip show cycle. That keeps
+    -- monotonic growth useful within one delayed-add pass without carrying
+    -- overflow from one GameTooltip hover into the next.
+    local resetCycle = frame.qSizingMode ~= "overflow" or frame.qSizingToken ~= showToken
+    if resetCycle then
+        ResetChromeOverflowState(frame)
+        frame.qSizingToken = showToken
+        TooltipDebugCount("skin.refitShowReset")
     end
 
     -- Anchor-based path (the common case: GameTooltip + ShoppingTooltip + most
@@ -1575,6 +1616,7 @@ local function RefitChromeToContent(tooltip)
         frame.qLastLeftFS = effectiveLeftFS
         frame.qLastLineIndex = effectiveLeftIdx
         frame.qExtendX = extendX
+        frame.qSizingMode = "overflow"
 
         if anchorChanged then
             local bridge = GetOrCreateChromeBottomBridge(frame)
@@ -1660,6 +1702,7 @@ local function RefitChromeToContent(tooltip)
         return
     end
     frame.qExtendY = extendY
+    frame.qSizingMode = "overflow"
     TooltipDebugCount("skin.refitFallbackApplied")
 
     pcall(frame.ClearAllPoints, frame)
@@ -1707,6 +1750,8 @@ end
 local function RequestTooltipChromeRefit(tooltip, passes)
     if not tooltip or not IsEnabled() then return end
     if tooltip.IsForbidden and tooltip:IsForbidden() then return end
+
+    tooltipOverflowRequests[tooltip] = GetTooltipShowToken(tooltip)
 
     passes = tonumber(passes) or 2
     if passes < 1 then passes = 1 end

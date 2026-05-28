@@ -253,9 +253,7 @@ local function StyleTabSystemTab(tab, frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
     local tabBackdrop = SkinBase.GetBackdrop(tab)
     if tabBackdrop then
-        tabBackdrop:ClearAllPoints()
-        tabBackdrop:SetPoint("TOPLEFT", 3, -3)
-        tabBackdrop:SetPoint("BOTTOMRIGHT", -3, 0)
+        SkinBase.SetPixelInsetPoints(tabBackdrop, tab, 3, 3, 3, 0)
     end
 
     SkinBase.SetFrameData(tab, "skinColor", { sr, sg, sb, sa })
@@ -472,9 +470,7 @@ local function StyleSpecPoolTab(tab, owner, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
     local bd = SkinBase.GetBackdrop(tab)
     if bd then
-        bd:ClearAllPoints()
-        bd:SetPoint("TOPLEFT", 3, -3)
-        bd:SetPoint("BOTTOMRIGHT", -3, 0)
+        SkinBase.SetPixelInsetPoints(bd, tab, 3, 3, 3, 0)
     end
 
     SkinBase.SetFrameData(tab, "skinColor", { sr, sg, sb, sa })

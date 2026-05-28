@@ -70,13 +70,6 @@ local function CreateOrUpdateBackground()
 
     if not customBg then
         customBg = CreateFrame("Frame", "QUI_InspectFrameBg_Skin", InspectFrame, "BackdropTemplate")
-        local px = QUICore:GetPixelSize(customBg)
-        customBg:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = px,
-            insets = { left = px, right = px, top = px, bottom = px }
-        })
         -- Inherit parent strata (MEDIUM); use FrameLevel 0 so we draw
         -- behind InspectFrame's children but not below UIParent/WorldFrame.
         -- Setting strata lower than parent causes intermittent render-order
@@ -89,6 +82,7 @@ local function CreateOrUpdateBackground()
         customBg:SetAllPoints(InspectFrame)
     end
 
+    SkinBase.ApplyPixelBackdrop(customBg, 1, true, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
     customBg:SetBackdropColor(bgr, bgg, bgb, bga)
     customBg:SetBackdropBorderColor(sr, sg, sb, sa)
 
@@ -183,9 +177,7 @@ local function StyleInspectFrameTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
         local tabBackdrop = SkinBase.GetBackdrop(tab)
         if tabBackdrop then
-            tabBackdrop:ClearAllPoints()
-            tabBackdrop:SetPoint("TOPLEFT", 3, -3)
-            tabBackdrop:SetPoint("BOTTOMRIGHT", -3, 0)
+            SkinBase.SetPixelInsetPoints(tabBackdrop, tab, 3, 3, 3, 0)
         end
 
         SkinBase.MarkStyled(tab)
@@ -292,6 +284,7 @@ local function RefreshInspectFrameColors()
 
     -- Update main background
     if customBg then
+        SkinBase.ApplyPixelBackdrop(customBg, 1, true, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
         customBg:SetBackdropColor(bgr, bgg, bgb, bga)
         customBg:SetBackdropBorderColor(sr, sg, sb, sa)
     end

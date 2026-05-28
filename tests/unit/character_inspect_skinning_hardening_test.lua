@@ -24,6 +24,22 @@ local forbiddenNumberHelper = "Helpers." .. "Sa" .. "feToNumber"
 local characterItemHelperBlock = assert(
     characterSource:match("Structured item%-data helpers.-Get durability for a slot"),
     "Character structured item helper block should exist")
+local characterEquipmentSlotBlock = assert(
+    characterSource:match("local function SkinEquipmentSlot%(slot%).-local function UpdateSlotBorder%(slot%)"),
+    "Character equipment slot skinning block should exist")
+local characterUpdateSlotBorderBlock = assert(
+    characterSource:match("local function UpdateSlotBorder%(slot%).-%-%- All equipment slot names"),
+    "Character equipment slot border update block should exist")
+local characterLayoutStart = assert(
+    characterSource:find("ApplyCharacterPaneLayout = function(force)", 1, true),
+    "Character layout entry point should exist")
+local characterLayoutDelayStart = assert(
+    characterSource:find("C_Timer.After(0.1, function()", characterLayoutStart, true),
+    "Character first-open delayed layout block should exist")
+local characterLayoutDelayEnd = assert(
+    characterSource:find("    end)", characterLayoutDelayStart, true),
+    "Character first-open delayed layout block should be closed")
+local characterLayoutDelayBlock = characterSource:sub(characterLayoutDelayStart, characterLayoutDelayEnd)
 
 assertContains(
     characterSource,
@@ -64,6 +80,46 @@ assertContains(
     characterSource,
     "CanItemUsePermanentEnchant",
     "Missing-enchant state should be based on item equipment type rather than only slot IDs")
+
+assertContains(
+    characterSource,
+    "local function GetSkinBase()",
+    "Character pane must look up SkinBase after load because skinning base loads later")
+
+assertAbsent(
+    characterSource,
+    "local SkinBase = ns.SkinBase",
+    "Character pane must not capture nil SkinBase before skinning base loads")
+
+assertContains(
+    characterEquipmentSlotBlock,
+    "SetSlotBorderPoints(borderFrame, slot)",
+    "Character equipment slot borders must route point layout through the shared pixel-point wrapper")
+
+assertContains(
+    characterEquipmentSlotBlock,
+    "ApplySlotPixelBackdrop(borderFrame",
+    "Character equipment slot borders must use the shared pixel-backdrop helper")
+
+assertAbsent(
+    characterUpdateSlotBorderBlock,
+    "quality >= 1",
+    "Character equipment slot borders must not hide poor-quality item borders")
+
+assertAbsent(
+    characterUpdateSlotBorderBlock,
+    "borderFrame:Hide()",
+    "Character equipment slot borders must remain visible with a default color when item quality is unavailable")
+
+assertContains(
+    characterSource,
+    "local function RefreshEquipmentSlotBorders()",
+    "Character equipment slot borders must have a shared refresh pass")
+
+assertContains(
+    characterLayoutDelayBlock,
+    "RefreshEquipmentSlotBorders()",
+    "Character first-open delayed layout must refresh slot borders after slot repositioning")
 
 assertAbsent(
     characterSource,

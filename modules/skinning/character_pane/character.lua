@@ -7,8 +7,13 @@ local QUI = ns.QUI or {}
 ns.QUI = QUI
 local Helpers = ns.Helpers
 local QUICore = ns.Addon
+local UIKit = ns.UIKit
 
 local GetCore = ns.Helpers.GetCore
+
+local function GetSkinBase()
+    return ns.SkinBase
+end
 
 -- COMBAT FOLLOW-UP — character panel geometry is applied immediately. Only
 -- decoration/stat refresh work that still needs a regen follow-up is queued.
@@ -243,10 +248,43 @@ local closeButtonBorders = Helpers.CreateStateTable()
 local closeButtonLabels = Helpers.CreateStateTable()
 local sidebarTabBorders = Helpers.CreateStateTable()
 local sidebarTabHooked = Helpers.CreateStateTable()
+local pixelBorderState = Helpers.CreateStateTable()
+local pixelInsetState = Helpers.CreateStateTable()
 local sidebarTabBaseWidth = nil
 local sidebarTabBaseHeight = nil
 
-local function ApplyOnePixelBorder(frame, withBackground)
+local function GetPixelSize(frame)
+    return QUICore:GetPixelSize(frame)
+end
+
+local function RefreshInsetPixelPoints(region)
+    local state = pixelInsetState[region]
+    if not state or not state.relativeTo then return end
+    local inset = (state.pixels or 1) * GetPixelSize(region)
+    region:ClearAllPoints()
+    region:SetPoint("TOPLEFT", state.relativeTo, "TOPLEFT", inset, -inset)
+    region:SetPoint("BOTTOMRIGHT", state.relativeTo, "BOTTOMRIGHT", -inset, inset)
+end
+
+local function SetInsetPixelPoints(region, relativeTo, pixels)
+    if not region or not relativeTo then return end
+    local state = pixelInsetState[region]
+    if not state then
+        state = {}
+        pixelInsetState[region] = state
+    end
+    state.relativeTo = relativeTo
+    state.pixels = pixels or 1
+    RefreshInsetPixelPoints(region)
+    if UIKit and UIKit.RegisterScaleRefresh and not state.registered then
+        UIKit.RegisterScaleRefresh(region, "characterPaneInsetPoints", RefreshInsetPixelPoints)
+        state.registered = true
+    end
+end
+
+local function RefreshOnePixelBorder(frame)
+    local state = pixelBorderState[frame]
+    if not state then return end
     if not frame or not frame.SetBackdrop then return end
     local px = QUICore:GetPixelSize(frame)
     local backdrop = {
@@ -254,12 +292,60 @@ local function ApplyOnePixelBorder(frame, withBackground)
         edgeSize = px,
     }
 
-    if withBackground then
+    if state.withBackground then
         backdrop.bgFile = "Interface\\Buttons\\WHITE8x8"
         backdrop.insets = { left = px, right = px, top = px, bottom = px }
     end
 
     frame:SetBackdrop(backdrop)
+    if state.bgColor then
+        local c = state.bgColor
+        frame:SetBackdropColor(c[1], c[2], c[3], c[4])
+    end
+    if state.borderColor then
+        local c = state.borderColor
+        frame:SetBackdropBorderColor(c[1], c[2], c[3], c[4])
+    end
+end
+
+local function ApplyOnePixelBorder(frame, withBackground, borderColor, bgColor)
+    if not frame or not frame.SetBackdrop then return end
+    local state = pixelBorderState[frame]
+    if not state then
+        state = {}
+        pixelBorderState[frame] = state
+    end
+    state.withBackground = withBackground and true or false
+    state.borderColor = borderColor
+    state.bgColor = bgColor
+    RefreshOnePixelBorder(frame)
+    if UIKit and UIKit.RegisterScaleRefresh and not state.registered then
+        UIKit.RegisterScaleRefresh(frame, "characterPanePixelBorder", RefreshOnePixelBorder)
+        state.registered = true
+    end
+end
+
+local function SetSlotBorderPoints(borderFrame, slot)
+    local skinBase = GetSkinBase()
+    if skinBase and skinBase.SetExpandedPixelPoints then
+        skinBase.SetExpandedPixelPoints(borderFrame, slot, 1)
+        return
+    end
+
+    local px = GetPixelSize(borderFrame)
+    borderFrame:ClearAllPoints()
+    borderFrame:SetPoint("TOPLEFT", slot, "TOPLEFT", -px, px)
+    borderFrame:SetPoint("BOTTOMRIGHT", slot, "BOTTOMRIGHT", px, -px)
+end
+
+local function ApplySlotPixelBackdrop(borderFrame, borderColor)
+    local skinBase = GetSkinBase()
+    if skinBase and skinBase.ApplyPixelBackdrop then
+        skinBase.ApplyPixelBackdrop(borderFrame, 1, false, false, borderColor)
+        return
+    end
+
+    ApplyOnePixelBorder(borderFrame, false, borderColor)
 end
 
 local function GetCharacterBorderColor()
@@ -296,17 +382,15 @@ local function StyleCloseButton(button)
     local border = closeButtonBorders[button]
     if not border then
         border = CreateFrame("Frame", nil, button, "BackdropTemplate")
-        border:SetPoint("TOPLEFT", button, "TOPLEFT", 2, -2)
-        border:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
+        SetInsetPixelPoints(border, button, 2)
         border:SetFrameLevel(math.max(button:GetFrameLevel() - 1, 1))
         border:EnableMouse(false)
         ApplyOnePixelBorder(border, true)
         closeButtonBorders[button] = border
     end
     border:SetFrameLevel(math.max(button:GetFrameLevel() - 1, 1))
-    ApplyOnePixelBorder(border, true)
-
     local br, bg, bb = GetCharacterBorderColor()
+    ApplyOnePixelBorder(border, true, { br, bg, bb, 1 }, { 0.08, 0.10, 0.14, 0.96 })
     border:SetBackdropColor(0.08, 0.10, 0.14, 0.96)
     border:SetBackdropBorderColor(br, bg, bb, 1)
 
@@ -439,8 +523,9 @@ local function StyleSidebarTab(tab, index, uniformWidth, uniformHeight)
         sidebarTabBorders[tab] = border
     end
     border:ClearAllPoints()
-    border:SetPoint("TOPLEFT", tab, "TOPLEFT", -1, 1)
-    border:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", 1, -1)
+    local borderPx = QUICore:GetPixelSize(border)
+    border:SetPoint("TOPLEFT", tab, "TOPLEFT", -borderPx, borderPx)
+    border:SetPoint("BOTTOMRIGHT", tab, "BOTTOMRIGHT", borderPx, -borderPx)
 
     if tab.Hider then
         tab.Hider:ClearAllPoints()
@@ -1407,6 +1492,18 @@ local titlesPopup = nil      -- Floating Titles container
 local allEquipmentSlots = {}  -- Stores all equipment slot frames for border updates
 local UpdateEquipmentSlotBorder = nil  -- Function to update slot borders (set in HideBlizzardDecorations)
 
+local function RefreshEquipmentSlotBorders()
+    if #allEquipmentSlots == 0 or not UpdateEquipmentSlotBorder then return end
+
+    for _, slot in ipairs(allEquipmentSlots) do
+        local borderFrame = slot and (frameState[slot] or EMPTY).borderFrame
+        if borderFrame then
+            SetSlotBorderPoints(borderFrame, slot)
+        end
+        UpdateEquipmentSlotBorder(slot)
+    end
+end
+
 ---------------------------------------------------------------------------
 -- Helper: Check if skinning module is handling the background
 ---------------------------------------------------------------------------
@@ -1573,12 +1670,8 @@ local function HideBlizzardDecorations()
         if not (frameState[slot] or EMPTY).borderFrame then
             local borderFrame = CreateFrame("Frame", nil, slot, "BackdropTemplate")
             borderFrame:SetFrameLevel(slot:GetFrameLevel() + 10)
-            borderFrame:SetAllPoints(slot)
-            local px = QUICore:GetPixelSize(borderFrame)
-            borderFrame:SetBackdrop({
-                edgeFile = "Interface\\Buttons\\WHITE8X8",
-                edgeSize = px,
-            })
+            SetSlotBorderPoints(borderFrame, slot)
+            ApplySlotPixelBackdrop(borderFrame)
             GetState(slot).borderFrame = borderFrame
         end
     end
@@ -1596,13 +1689,18 @@ local function HideBlizzardDecorations()
             quality = nil
         end
 
-        if quality and quality >= 1 then
-            local r, g, b = C_Item.GetItemQualityColor(quality)
-            borderFrame:SetBackdropBorderColor(r, g, b, 1)
-            borderFrame:Show()
-        else
-            borderFrame:Hide()
+        local r, g, b = GetCharacterBorderColor()
+        if quality and quality >= 0 then
+            -- C_Item.GetItemQualityColor: quality is a non-nil ItemQuality and
+            -- returns non-nil RGB values per local generated ItemDocumentation.lua.
+            r, g, b = C_Item.GetItemQualityColor(quality)
         end
+
+        ApplySlotPixelBackdrop(borderFrame, { r, g, b, 1 })
+        if borderFrame.SetBackdropBorderColor then
+            borderFrame:SetBackdropBorderColor(r, g, b, 1)
+        end
+        borderFrame:Show()
     end
 
     -- All equipment slot names
@@ -1692,16 +1790,11 @@ local function CreateCustomBackground()
 
         if not customBg then
             customBg = CreateFrame("Frame", "QUI_CharacterFrameBg_CharPane", CharacterFrame, "BackdropTemplate")
-            local px = QUICore:GetPixelSize(customBg)
-            customBg:SetBackdrop({
-                bgFile = "Interface\\Buttons\\WHITE8X8",
-                edgeFile = "Interface\\Buttons\\WHITE8X8",
-                edgeSize = px,
-            })
             customBg:SetFrameStrata("BACKGROUND")
             customBg:SetFrameLevel(0)
             customBg:EnableMouse(false)
         end
+        ApplyOnePixelBorder(customBg, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
 
         -- Extend background beyond CharacterFrame bounds (can't resize CharacterFrame directly)
         local PANEL_HEIGHT_EXTENSION = 50
@@ -1986,6 +2079,7 @@ ApplyCharacterPaneLayout = function(force)
     -- Delay repositioning to allow Blizzard to finish slot setup first
     C_Timer.After(0.1, function()
         RepositionSlots()
+        RefreshEquipmentSlotBorders()
         PositionModelScene()
         PositionStatsPanelForLayout()
     end)
@@ -2334,10 +2428,15 @@ local function CreateSectionHeader(parent, text, yOffset)
 
     -- Underline (uses headerColor)
     local line = parent:CreateTexture(nil, "ARTWORK")
-    line:SetHeight(1)
+    line:SetHeight(GetPixelSize(line))
     line:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -2)
     line:SetPoint("RIGHT", parent, "RIGHT", -5, 0)
     line:SetColorTexture(headerColor[1], headerColor[2], headerColor[3], 0.3)
+    if UIKit and UIKit.RegisterScaleRefresh then
+        UIKit.RegisterScaleRefresh(line, "characterPaneSectionUnderline", function(owner)
+            owner:SetHeight(GetPixelSize(owner))
+        end)
+    end
     table.insert(trackedUnderlines, line)
 
     local spacingAfterHeader = 4
@@ -3877,9 +3976,7 @@ local function HookCharacterFrame()
                 -- Refresh equipment slot borders (may be reset by Blizzard on reopen)
                 if #allEquipmentSlots > 0 and UpdateEquipmentSlotBorder then
                     C_Timer.After(0.05, function()
-                        for _, slot in ipairs(allEquipmentSlots) do
-                            UpdateEquipmentSlotBorder(slot)
-                        end
+                        RefreshEquipmentSlotBorders()
                     end)
                 end
                 -- Ensure stats panel shows (may not exist yet on first load due to delayed creation)
@@ -3926,7 +4023,7 @@ local function HookCharacterFrame()
         QUICore:SetPixelPerfectSize(gearBtn, 118, 20)
         QUICore:SetPixelPerfectPoint(gearBtn, "TOPRIGHT", CharacterFrame, "TOPRIGHT", 6, -6)
         local br, bg, bb = GetCharacterBorderColor()
-        ApplyOnePixelBorder(gearBtn, true)
+        ApplyOnePixelBorder(gearBtn, true, { br, bg, bb, 1 }, { 0.1, 0.1, 0.1, 0.8 })
         Helpers.SetFrameBackdropColor(gearBtn, 0.1, 0.1, 0.1, 0.8)
         Helpers.SetFrameBackdropBorderColor(gearBtn, br, bg, bb, 1)
         gearBtn:SetFrameStrata("HIGH")
@@ -3962,12 +4059,7 @@ local function HookCharacterFrame()
         settingsPanel = CreateFrame("Frame", "QUI_CharSettingsPanel", CharacterFrame, "BackdropTemplate")
         settingsPanel:SetSize(450, 600)
         settingsPanel:SetPoint("TOPLEFT", CharacterFrame, "TOPRIGHT", 53, 0)
-        local settingsPx = QUICore:GetPixelSize(settingsPanel)
-        settingsPanel:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = settingsPx,
-        })
+        ApplyOnePixelBorder(settingsPanel, true, { C.border[1], C.border[2], C.border[3], 1 }, { 0.051, 0.067, 0.09, 0.97 })
         -- Match the main QUI options panel background (#0d1117 @ 0.97 alpha)
         -- rather than the lighter character-panel bg, so settings popouts feel
         -- like the same surface as the rest of QUI's settings UI.
@@ -3983,14 +4075,12 @@ local function HookCharacterFrame()
         -- backdrop — matches QUI_Options C.bgContent so the surface reads as
         -- the same "card" the main settings panel uses.
         local panelContentBg = settingsPanel:CreateTexture(nil, "BACKGROUND", nil, 1)
-        panelContentBg:SetPoint("TOPLEFT", settingsPanel, "TOPLEFT", 1, -1)
-        panelContentBg:SetPoint("BOTTOMRIGHT", settingsPanel, "BOTTOMRIGHT", -1, 1)
+        SetInsetPixelPoints(panelContentBg, settingsPanel, 1)
         panelContentBg:SetColorTexture(1, 1, 1, 0.02)
 
         -- Horizontal accent gradient wash to match the main QUI options panel.
         local panelGlow = settingsPanel:CreateTexture(nil, "BACKGROUND", nil, 2)
-        panelGlow:SetPoint("TOPLEFT", settingsPanel, "TOPLEFT", 1, -1)
-        panelGlow:SetPoint("BOTTOMRIGHT", settingsPanel, "BOTTOMRIGHT", -1, 1)
+        SetInsetPixelPoints(panelGlow, settingsPanel, 1)
         panelGlow:SetTexture("Interface\\BUTTONS\\WHITE8x8")
         local function ApplyPanelGlow()
             local gr, gg, gb = GetCharacterAccentColor()

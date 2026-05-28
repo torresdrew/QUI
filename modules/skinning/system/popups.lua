@@ -288,9 +288,7 @@ local function SkinContextMenuFrame(frame)
             if region and region.IsObjectType and region:IsObjectType("Texture") then
                 region:SetColorTexture(bgr, bgg, bgb, 1)
                 region:SetAlpha(bga)
-                region:ClearAllPoints()
-                region:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -1)
-                region:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -1, 1)
+                SkinBase.SetInsetPixelPoints(region, frame, 1)
             end
         end
     end

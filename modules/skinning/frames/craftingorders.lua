@@ -103,9 +103,7 @@ local function StyleTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
     SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
     local tabBackdrop = SkinBase.GetBackdrop(tab)
-    tabBackdrop:ClearAllPoints()
-    tabBackdrop:SetPoint("TOPLEFT", 3, -3)
-    tabBackdrop:SetPoint("BOTTOMRIGHT", -3, 0)
+    SkinBase.SetPixelInsetPoints(tabBackdrop, tab, 3, 3, 3, 0)
 
     SkinBase.SetFrameData(tab, "skinColor", { sr, sg, sb, sa })
     SkinBase.SetFrameData(tab, "bgColor", { bgr, bgg, bgb })

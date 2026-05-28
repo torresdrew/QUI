@@ -148,8 +148,7 @@ local function CreateLootSlot(parent, index)
     slot.iconBorder = CreateFrame("Frame", nil, slot, "BackdropTemplate")
     slot.iconBorder:SetSize(ICON_BORDER_SIZE, ICON_BORDER_SIZE)
     slot.iconBorder:SetPoint("CENTER", slot.icon, "CENTER")
-    local px = QUICore:GetPixelSize(slot.iconBorder)
-    slot.iconBorder:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = px })
+    SkinBase.ApplyPixelBackdrop(slot.iconBorder, 1, false, false)
 
     -- Item name
     slot.name = slot:CreateFontString(nil, "OVERLAY")
@@ -162,7 +161,7 @@ local function CreateLootSlot(parent, index)
     -- Stack count
     slot.count = slot:CreateFontString(nil, "OVERLAY")
     slot.count:SetFont(LSM:Fetch("font", GetGeneralFont()), 10, "OUTLINE")
-    slot.count:SetPoint("BOTTOMRIGHT", slot.icon, "BOTTOMRIGHT", -2, 2)
+    SkinBase.SetPixelPoint(slot.count, "BOTTOMRIGHT", slot.icon, "BOTTOMRIGHT", -2, 2)
     slot.count:SetTextColor(1, 1, 1)
 
     -- Transmog marker (star icon for uncollected appearances)
@@ -176,7 +175,7 @@ local function CreateLootSlot(parent, index)
     -- Quest item indicator
     slot.questIcon = slot:CreateTexture(nil, "OVERLAY")
     slot.questIcon:SetSize(14, 14)
-    slot.questIcon:SetPoint("TOPLEFT", slot.icon, "TOPLEFT", -2, 2)
+    SkinBase.SetPixelPoint(slot.questIcon, "TOPLEFT", slot.icon, "TOPLEFT", -2, 2)
     slot.questIcon:SetAtlas("QuestNormal")
     slot.questIcon:Hide()
 
@@ -222,12 +221,7 @@ local function CreateLootWindow()
     frame:Hide()
 
     -- QUI backdrop
-    local px = QUICore:GetPixelSize(frame)
-    frame:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
+    SkinBase.ApplyPixelBackdrop(frame, 1, true, false)
     frame:SetBackdropColor(unpack(bgColor))
     frame:SetBackdropBorderColor(unpack(borderColor))
 
@@ -466,12 +460,7 @@ local function CreateRollFrame(index)
     frame:SetToplevel(true)
 
     -- Minimal backdrop (very subtle border)
-    local px = QUICore:GetPixelSize(frame)
-    frame:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
+    SkinBase.ApplyPixelBackdrop(frame, 1, true, false)
     frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], 0.95)
     frame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], 0.3)  -- Very subtle border
 
@@ -491,9 +480,7 @@ local function CreateRollFrame(index)
     frame.iconBorder = CreateFrame("Frame", nil, frame, "BackdropTemplate")
     frame.iconBorder:SetSize(ROLL_ICON_SIZE + 4, ROLL_ICON_SIZE + 4)
     frame.iconBorder:SetPoint("CENTER", frame.icon, "CENTER")
-    local iconPx = QUICore:GetPixelSize(frame.iconBorder)
-    local iconEdge2 = 2 * iconPx
-    frame.iconBorder:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = iconEdge2 })
+    SkinBase.ApplyPixelBackdrop(frame.iconBorder, 2, false, false)
 
     -- Item name (larger font) - aligned with icon
     frame.name = frame:CreateFontString(nil, "OVERLAY")
@@ -808,10 +795,8 @@ local function SkinLootHistoryElement(button)
             -- TAINT SAFETY: Use weak-keyed table instead of writing to Blizzard item frame
             if not itemBorders[item] then
                 local quiBorder = CreateFrame("Frame", nil, item, "BackdropTemplate")
-                quiBorder:SetPoint("TOPLEFT", icon, "TOPLEFT", -1, 1)
-                quiBorder:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 1, -1)
-                local qbPx = QUICore:GetPixelSize(quiBorder)
-                quiBorder:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = qbPx })
+                SkinBase.SetExpandedPixelPoints(quiBorder, icon, 1)
+                SkinBase.ApplyPixelBackdrop(quiBorder, 1, false, false)
                 quiBorder:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
                 itemBorders[item] = quiBorder
             end
@@ -868,12 +853,7 @@ local function SkinGroupLootHistoryFrame()
         hfBd = CreateFrame("Frame", nil, HistoryFrame, "BackdropTemplate")
         hfBd:SetAllPoints()
         hfBd:SetFrameLevel(HistoryFrame:GetFrameLevel())
-        local hfPx = QUICore:GetPixelSize(hfBd)
-        hfBd:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = hfPx,
-        })
+        SkinBase.ApplyPixelBackdrop(hfBd, 1, true, false)
         SkinBase.SetFrameData(HistoryFrame, "backdrop", hfBd)
     end
     hfBd:SetBackdropColor(unpack(bgColor))
@@ -927,12 +907,7 @@ local function SkinGroupLootHistoryFrame()
         if not rbBd then
             rbBd = CreateFrame("Frame", nil, ResizeButton, "BackdropTemplate")
             rbBd:SetAllPoints()
-            local rbPx = QUICore:GetPixelSize(rbBd)
-            rbBd:SetBackdrop({
-                bgFile = "Interface\\Buttons\\WHITE8x8",
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = rbPx,
-            })
+            SkinBase.ApplyPixelBackdrop(rbBd, 1, true, false)
             rbBd:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], 0.8)
             rbBd:SetBackdropBorderColor(unpack(borderColor))
             SkinBase.SetFrameData(ResizeButton, "backdrop", rbBd)

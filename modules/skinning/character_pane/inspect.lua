@@ -7,6 +7,7 @@ local ADDON_NAME, ns = ...
 local QUI = ns.QUI or {}
 ns.QUI = QUI
 local QUICore = ns.Addon
+local UIKit = ns.UIKit
 
 local Helpers = ns.Helpers
 local GetCore = Helpers.GetCore
@@ -18,6 +19,8 @@ local inspectPaneInitialized = false
 local inspectOverlays = {}  -- Stores overlay frames for inspect slots
 local inspectLayoutApplied = false
 local currentInspectTab = 1  -- 1=Character, 2=PvP, 3=Guild
+local pixelBorderState = Helpers.CreateStateTable()
+local pixelInsetState = Helpers.CreateStateTable()
 
 ---------------------------------------------------------------------------
 -- COMBAT DEFERRAL — InspectFrame is a managed panel; SetWidth,
@@ -79,6 +82,77 @@ local pendingInspectReadyGUID = nil
 local inspectSessionGUID = nil
 local inspectSessionUnit = nil
 local RefreshCurrentInspectGUID
+
+local function GetPixelSize(frame)
+    local core = GetCore()
+    return (core and core.GetPixelSize and core:GetPixelSize(frame)) or 1
+end
+
+local function RefreshInsetPixelPoints(region)
+    local state = pixelInsetState[region]
+    if not state or not state.relativeTo then return end
+    local inset = (state.pixels or 1) * GetPixelSize(region)
+    region:ClearAllPoints()
+    region:SetPoint("TOPLEFT", state.relativeTo, "TOPLEFT", inset, -inset)
+    region:SetPoint("BOTTOMRIGHT", state.relativeTo, "BOTTOMRIGHT", -inset, inset)
+end
+
+local function SetInsetPixelPoints(region, relativeTo, pixels)
+    if not region or not relativeTo then return end
+    local state = pixelInsetState[region]
+    if not state then
+        state = {}
+        pixelInsetState[region] = state
+    end
+    state.relativeTo = relativeTo
+    state.pixels = pixels or 1
+    RefreshInsetPixelPoints(region)
+    if UIKit and UIKit.RegisterScaleRefresh and not state.registered then
+        UIKit.RegisterScaleRefresh(region, "inspectPaneInsetPoints", RefreshInsetPixelPoints)
+        state.registered = true
+    end
+end
+
+local function RefreshOnePixelBorder(frame)
+    local state = pixelBorderState[frame]
+    if not state then return end
+    if not frame or not frame.SetBackdrop then return end
+    local px = GetPixelSize(frame)
+    local backdrop = {
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = px,
+    }
+    if state.withBackground then
+        backdrop.bgFile = "Interface\\Buttons\\WHITE8X8"
+        backdrop.insets = { left = px, right = px, top = px, bottom = px }
+    end
+    frame:SetBackdrop(backdrop)
+    if state.bgColor then
+        local c = state.bgColor
+        frame:SetBackdropColor(c[1], c[2], c[3], c[4])
+    end
+    if state.borderColor then
+        local c = state.borderColor
+        frame:SetBackdropBorderColor(c[1], c[2], c[3], c[4])
+    end
+end
+
+local function ApplyOnePixelBorder(frame, withBackground, borderColor, bgColor)
+    if not frame or not frame.SetBackdrop then return end
+    local state = pixelBorderState[frame]
+    if not state then
+        state = {}
+        pixelBorderState[frame] = state
+    end
+    state.withBackground = withBackground and true or false
+    state.borderColor = borderColor
+    state.bgColor = bgColor
+    RefreshOnePixelBorder(frame)
+    if UIKit and UIKit.RegisterScaleRefresh and not state.registered then
+        UIKit.RegisterScaleRefresh(frame, "inspectPanePixelBorder", RefreshOnePixelBorder)
+        state.registered = true
+    end
+end
 
 local function SetInspectScaleDeferred(scale)
     if not InspectFrame then return end
@@ -787,12 +861,7 @@ local function SkinInspectEquipmentSlot(slot)
         slotState.borderFrame = CreateFrame("Frame", nil, slot, "BackdropTemplate")
         slotState.borderFrame:SetFrameLevel(slot:GetFrameLevel() + 10)
         slotState.borderFrame:SetAllPoints(slot)
-        local core = GetCore()
-        local px = (core and core.GetPixelSize and core:GetPixelSize(slotState.borderFrame)) or 1
-        slotState.borderFrame:SetBackdrop({
-            edgeFile = "Interface\\Buttons\\WHITE8X8",
-            edgeSize = px,
-        })
+        ApplyOnePixelBorder(slotState.borderFrame, false)
     end
 end
 
@@ -1428,12 +1497,7 @@ local function CreateInspectSettingsButton()
     local gearBtn = CreateFrame("Button", "QUI_InspectSettingsBtn", InspectFrame, "BackdropTemplate")
     gearBtn:SetSize(70, 20)
     gearBtn:SetPoint("TOPRIGHT", InspectFrame, "TOPRIGHT", -5, -28)
-    local gearPx = (core and core.GetPixelSize and core:GetPixelSize(gearBtn)) or 1
-    gearBtn:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = gearPx,
-    })
+    ApplyOnePixelBorder(gearBtn, true, { C.border[1], C.border[2], C.border[3], 1 }, { 0.1, 0.1, 0.1, 0.8 })
     gearBtn:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
     gearBtn:SetBackdropBorderColor(C.border[1], C.border[2], C.border[3], 1)
     gearBtn:SetFrameStrata("HIGH")
@@ -1462,12 +1526,7 @@ local function CreateInspectSettingsButton()
     inspectSettingsPanel = CreateFrame("Frame", "QUI_InspectSettingsPanel", InspectFrame, "BackdropTemplate")
     inspectSettingsPanel:SetSize(450, 600)
     inspectSettingsPanel:SetPoint("TOPLEFT", InspectFrame, "TOPRIGHT", 5, 0)
-    local settingsPx = (core and core.GetPixelSize and core:GetPixelSize(inspectSettingsPanel)) or 1
-    inspectSettingsPanel:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = settingsPx,
-    })
+    ApplyOnePixelBorder(inspectSettingsPanel, true, { C.border[1], C.border[2], C.border[3], 1 }, { 0.051, 0.067, 0.09, 0.97 })
     -- Match the main QUI options panel background (#0d1117 @ 0.97 alpha)
     -- rather than the lighter inspect-panel bg, so settings popouts feel
     -- like the same surface as the rest of QUI's settings UI.
@@ -1483,14 +1542,12 @@ local function CreateInspectSettingsButton()
     -- — matches QUI_Options C.bgContent so the surface reads as the same
     -- "card" the main settings panel uses.
     local panelContentBg = inspectSettingsPanel:CreateTexture(nil, "BACKGROUND", nil, 1)
-    panelContentBg:SetPoint("TOPLEFT", inspectSettingsPanel, "TOPLEFT", 1, -1)
-    panelContentBg:SetPoint("BOTTOMRIGHT", inspectSettingsPanel, "BOTTOMRIGHT", -1, 1)
+    SetInsetPixelPoints(panelContentBg, inspectSettingsPanel, 1)
     panelContentBg:SetColorTexture(1, 1, 1, 0.02)
 
     -- Horizontal accent gradient wash to match the main QUI options panel.
     local panelGlow = inspectSettingsPanel:CreateTexture(nil, "BACKGROUND", nil, 2)
-    panelGlow:SetPoint("TOPLEFT", inspectSettingsPanel, "TOPLEFT", 1, -1)
-    panelGlow:SetPoint("BOTTOMRIGHT", inspectSettingsPanel, "BOTTOMRIGHT", -1, 1)
+    SetInsetPixelPoints(panelGlow, inspectSettingsPanel, 1)
     panelGlow:SetTexture("Interface\\BUTTONS\\WHITE8x8")
     local function ApplyPanelGlow()
         local gr, gg, gb = C.accent[1], C.accent[2], C.accent[3]

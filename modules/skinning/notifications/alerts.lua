@@ -83,12 +83,7 @@ local function CreateAlertBackdrop(frame, xOffset1, yOffset1, xOffset2, yOffset2
     backdrop:SetFrameLevel(frame:GetFrameLevel())
     backdrop:SetPoint("TOPLEFT", frame, "TOPLEFT", xOffset1 or 0, yOffset1 or 0)
     backdrop:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", xOffset2 or 0, yOffset2 or 0)
-    local px = SafeGetPixelSize(backdrop)
-    backdrop:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
+    SkinBase.ApplyPixelBackdrop(backdrop, 1, true, false)
     backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
     backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
 
@@ -126,14 +121,8 @@ local function CreateIconBorder(icon, parent, qualityColor)
 
     local border = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     border:SetFrameLevel(parent:GetFrameLevel() + 1)
-    border:SetPoint("TOPLEFT", icon, "TOPLEFT", -2, 2)
-    border:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 2, -2)
-    local px = SafeGetPixelSize(border)
-    border:SetBackdrop({
-        bgFile = nil,
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-    })
+    SkinBase.SetExpandedPixelPoints(border, icon, 2)
+    SkinBase.ApplyPixelBackdrop(border, 1, false, false)
 
     -- Use quality color if provided, otherwise use skin accent
     if qualityColor then
@@ -306,12 +295,7 @@ local function SkinLootWonAlert(frame)
         backdrop:SetFrameLevel(frame:GetFrameLevel())
         backdrop:SetPoint("TOPLEFT", iconBorder, "TOPLEFT", -4, 4)
         backdrop:SetPoint("BOTTOMRIGHT", iconBorder, "BOTTOMRIGHT", 180, -4)
-        local bdPx = SafeGetPixelSize(backdrop)
-        backdrop:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = bdPx,
-        })
+        SkinBase.ApplyPixelBackdrop(backdrop, 1, true, false)
         backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
         backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
         SkinBase.SetFrameData(frame, "backdrop", backdrop)
@@ -365,12 +349,7 @@ local function SkinLootUpgradeAlert(frame)
         backdrop:SetFrameLevel(frame:GetFrameLevel())
         backdrop:SetPoint("TOPLEFT", iconBorder, "TOPLEFT", -8, 8)
         backdrop:SetPoint("BOTTOMRIGHT", iconBorder, "BOTTOMRIGHT", 180, -8)
-        local luPx = SafeGetPixelSize(backdrop)
-        backdrop:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = luPx,
-        })
+        SkinBase.ApplyPixelBackdrop(backdrop, 1, true, false)
         backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
         backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
         SkinBase.SetFrameData(frame, "backdrop", backdrop)
@@ -400,12 +379,7 @@ local function SkinMoneyWonAlert(frame)
         backdrop:SetFrameLevel(frame:GetFrameLevel())
         backdrop:SetPoint("TOPLEFT", frame, "TOPLEFT", 5, -5)
         backdrop:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -5, 5)
-        local achPx = SafeGetPixelSize(backdrop)
-        backdrop:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = achPx,
-        })
+        SkinBase.ApplyPixelBackdrop(backdrop, 1, true, false)
         backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
         backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
         SkinBase.SetFrameData(frame, "backdrop", backdrop)
@@ -437,12 +411,7 @@ local function SkinHonorAwardedAlert(frame)
         backdrop:SetFrameLevel(frame:GetFrameLevel())
         backdrop:SetPoint("TOPLEFT", iconBorder, "TOPLEFT", -4, 4)
         backdrop:SetPoint("BOTTOMRIGHT", iconBorder, "BOTTOMRIGHT", 180, -4)
-        local haPx = SafeGetPixelSize(backdrop)
-        backdrop:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = haPx,
-        })
+        SkinBase.ApplyPixelBackdrop(backdrop, 1, true, false)
         backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
         backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
         SkinBase.SetFrameData(frame, "backdrop", backdrop)
@@ -691,12 +660,7 @@ local function SkinMiscAlert(frame)
             backdrop:SetFrameLevel(frame:GetFrameLevel())
             backdrop:SetPoint("TOPLEFT", border, "TOPLEFT", -8, 8)
             backdrop:SetPoint("BOTTOMRIGHT", border, "BOTTOMRIGHT", 180, -8)
-            local rcPx = SafeGetPixelSize(backdrop)
-            backdrop:SetBackdrop({
-                bgFile = "Interface\\Buttons\\WHITE8x8",
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = rcPx,
-            })
+            SkinBase.ApplyPixelBackdrop(backdrop, 1, true, false)
             backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
             backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
             SkinBase.SetFrameData(frame, "backdrop", backdrop)
@@ -851,12 +815,7 @@ local function SkinBonusRollFrames()
             backdrop:SetFrameLevel(moneyFrame:GetFrameLevel())
             backdrop:SetPoint("TOPLEFT", moneyIconBorder, "TOPLEFT", -4, 4)
             backdrop:SetPoint("BOTTOMRIGHT", moneyIconBorder, "BOTTOMRIGHT", 180, -4)
-            local mfPx = SafeGetPixelSize(backdrop)
-            backdrop:SetBackdrop({
-                bgFile = "Interface\\Buttons\\WHITE8x8",
-                edgeFile = "Interface\\Buttons\\WHITE8x8",
-                edgeSize = mfPx,
-            })
+            SkinBase.ApplyPixelBackdrop(backdrop, 1, true, false)
             backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
             backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
             SkinBase.SetFrameData(moneyFrame, "backdrop", backdrop)
@@ -885,12 +844,7 @@ local function SkinBonusRollFrames()
         backdrop:SetFrameLevel(lootFrame:GetFrameLevel())
         backdrop:SetPoint("TOPLEFT", border, "TOPLEFT", -4, 4)
         backdrop:SetPoint("BOTTOMRIGHT", border, "BOTTOMRIGHT", 180, -4)
-        local lfPx = SafeGetPixelSize(backdrop)
-        backdrop:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = lfPx,
-        })
+        SkinBase.ApplyPixelBackdrop(backdrop, 1, true, false)
         backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
         backdrop:SetBackdropBorderColor(sr, sg, sb, sa)
         SkinBase.SetFrameData(lootFrame, "backdrop", backdrop)
@@ -1008,12 +962,7 @@ local function CreateAlertMover()
         -- Create mover overlay
         alertMover = CreateFrame("Frame", "QUI_AlertFrameMover", alertHolder, "BackdropTemplate")
         alertMover:SetAllPoints(alertHolder)
-        local amPx = SafeGetPixelSize(alertMover)
-        alertMover:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = amPx,
-        })
+        SkinBase.ApplyPixelBackdrop(alertMover, 1, true, false)
         alertMover:SetBackdropColor(0.2, 0.8, 0.8, 0.5)
         alertMover:SetBackdropBorderColor(0.2, 0.8, 0.8, 1)
         alertMover:EnableMouse(true)
@@ -1130,12 +1079,7 @@ local function CreateEventToastMover()
         -- Create mover overlay
         toastMover = CreateFrame("Frame", "QUI_EventToastMover", toastHolder, "BackdropTemplate")
         toastMover:SetAllPoints(toastHolder)
-        local tmPx = SafeGetPixelSize(toastMover)
-        toastMover:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = tmPx,
-        })
+        SkinBase.ApplyPixelBackdrop(toastMover, 1, true, false)
         toastMover:SetBackdropColor(0.8, 0.6, 0.2, 0.5)
         toastMover:SetBackdropBorderColor(0.8, 0.6, 0.2, 1)
         toastMover:EnableMouse(true)
@@ -1230,12 +1174,7 @@ local function CreateBNetToastMover()
         -- Create mover overlay
         bnetToastMover = CreateFrame("Frame", "QUI_BNetToastMover", bnetToastHolder, "BackdropTemplate")
         bnetToastMover:SetAllPoints(bnetToastHolder)
-        local px = SafeGetPixelSize(bnetToastMover)
-        bnetToastMover:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = px,
-        })
+        SkinBase.ApplyPixelBackdrop(bnetToastMover, 1, true, false)
         bnetToastMover:SetBackdropColor(0.2, 0.6, 1.0, 0.5)
         bnetToastMover:SetBackdropBorderColor(0.2, 0.6, 1.0, 1)
         bnetToastMover:EnableMouse(true)

@@ -76,14 +76,7 @@ local function ApplyBackdrop(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga, showBord
         SkinBase.SetFrameData(frame, "backdrop", backdrop)
     end
 
-    local core = GetCore()
-    local px = (core and core.GetPixelSize) and core:GetPixelSize(backdrop) or 1
-    backdrop:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = px,
-        insets = { left = px, right = px, top = px, bottom = px }
-    })
+    SkinBase.ApplyPixelBackdrop(backdrop, 1, true, true)
     backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
 
     -- Border visibility controlled by showBorder setting (alpha 0 when hidden)
@@ -100,13 +93,7 @@ local function ApplyBarSkin(bar, sr, sg, sb, br, bg, bb, colors, isTimerBar, bar
     local barBg = colors.barBg
     local borderMult = colors.barBorder
 
-    local core = GetCore()
-    local barPx = (core and core.GetPixelSize) and core:GetPixelSize(bar.frame) or 1
-    bar.frame:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = barPx,
-    })
+    SkinBase.ApplyPixelBackdrop(bar.frame, 1, true, false)
     bar.frame:SetBackdropColor(barBg[1], barBg[2], barBg[3], barBg[4])
 
     local borderAlpha = showBorder and 1 or 0
@@ -249,13 +236,7 @@ local function ApplyMPlusTimerSkin()
         local barBg = colors.barBg
         local borderMult = colors.barBorder
         local borderAlpha = showBorder and 1 or 0
-        local core = GetCore()
-        local slkPx = core and core:GetPixelSize(MPlusTimer.frames.sleekBar) or 1
-        MPlusTimer.frames.sleekBar:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = slkPx,
-        })
+        SkinBase.ApplyPixelBackdrop(MPlusTimer.frames.sleekBar, 1, true, false)
         MPlusTimer.frames.sleekBar:SetBackdropColor(barBg[1], barBg[2], barBg[3], barBg[4])
         MPlusTimer.frames.sleekBar:SetBackdropBorderColor(sr * borderMult, sg * borderMult, sb * borderMult, borderAlpha)
     end
