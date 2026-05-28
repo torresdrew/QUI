@@ -139,13 +139,26 @@ Data._dirty = {}
 Data._allDirty = false   -- set by DAMAGE_METER_RESET; ticker treats as "everything"
 Data._inCombat = false   -- toggled by PLAYER_REGEN_*; ticker uses for cadence
 
-local function MarkDirty(sessionType, damageMeterType)
-    local bySess = Data._dirty[sessionType]
-    if not bySess then
-        bySess = {}
-        Data._dirty[sessionType] = bySess
+local HasCachedViewKey
+
+local function BuildSessionKey(sessionType, sessionID)
+    if sessionID ~= nil then
+        return "id:" .. tostring(sessionID)
     end
-    bySess[damageMeterType] = true
+    return "type:" .. tostring(sessionType)
+end
+
+local function MarkDirtyKey(selectorKey, damageMeterType)
+    local bySelector = Data._dirty[selectorKey]
+    if not bySelector then
+        bySelector = {}
+        Data._dirty[selectorKey] = bySelector
+    end
+    bySelector[damageMeterType] = true
+end
+
+local function MarkDirty(sessionType, damageMeterType)
+    MarkDirtyKey(BuildSessionKey(sessionType, nil), damageMeterType)
 end
 
 local function MarkAllDirty()
@@ -154,19 +167,14 @@ end
 
 local function MarkCurrentDirty()
     -- Enum.DamageMeterSessionType.Current = 1
-    local bySess = Data._dirty[1]
-    if not bySess then
-        bySess = {}
-        Data._dirty[1] = bySess
-    end
     -- Mark every meter type dirty. Iterating Enum.DamageMeterType picks up
     -- whatever Blizzard exposes today (verified to include integers up to at
     -- least 9 = Deaths) so we don't miss dirty marks on types beyond a
     -- hardcoded range.
     if Enum and Enum.DamageMeterType then
-        for _, v in pairs(Enum.DamageMeterType) do bySess[v] = true end
+        for _, v in pairs(Enum.DamageMeterType) do MarkDirty(1, v) end
     else
-        for t = 0, 10 do bySess[t] = true end
+        for t = 0, 10 do MarkDirty(1, t) end
     end
 end
 
@@ -199,12 +207,15 @@ Data._eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 Data._eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 Data._eventFrame:SetScript("OnEvent", function(_, event, arg1, _arg2)
     if event == "DAMAGE_METER_COMBAT_SESSION_UPDATED" then
-        -- arg1 = damageMeterType, arg2 = sessionID; we key by sessionType, not
-        -- sessionID, in Phase 1. Mark every sessionType dirty for that type;
-        -- ticker is cheap so the over-fetch is fine. Phase 4 (breakdown) will
-        -- key by sessionID to address pinned historical sessions.
         for sessionType = 0, 2 do
             MarkDirty(sessionType, arg1)
+        end
+        local sessionID = _arg2
+        if sessionID ~= nil then
+            local key = BuildSessionKey(nil, sessionID)
+            if HasCachedViewKey(key, arg1) then
+                MarkDirtyKey(key, arg1)
+            end
         end
     elseif event == "DAMAGE_METER_CURRENT_SESSION_UPDATED" then
         MarkCurrentDirty()
@@ -281,6 +292,14 @@ Data._NormalizeSources = NormalizeSources  -- for T6/T7
 Data._cache = {}        -- _cache[sessionType][damageMeterType] = view
 Data._generation = 0
 
+local function SessionKey(sessionType, sessionID)
+    if sessionID ~= nil then
+        return "id:" .. tostring(sessionID)
+    end
+    return "type:" .. tostring(sessionType)
+end
+QUI_DamageMeter.SessionKey = SessionKey
+
 local function NewView(sources, duration, maxAmount, totalAmount)
     Data._generation = Data._generation + 1
     return {
@@ -292,13 +311,24 @@ local function NewView(sources, duration, maxAmount, totalAmount)
     }
 end
 
-local function CacheView(sessionType, damageMeterType, view)
-    local bySess = Data._cache[sessionType]
-    if not bySess then
-        bySess = {}
-        Data._cache[sessionType] = bySess
+local function CacheView(sessionType, sessionID, damageMeterType, view)
+    local key = SessionKey(sessionType, sessionID)
+    local bySelector = Data._cache[key]
+    if not bySelector then
+        bySelector = {}
+        Data._cache[key] = bySelector
     end
-    bySess[damageMeterType] = view
+    bySelector[damageMeterType] = view
+end
+
+local function GetCachedView(sessionType, sessionID, damageMeterType)
+    local bySelector = Data._cache[SessionKey(sessionType, sessionID)]
+    return bySelector and bySelector[damageMeterType] or nil
+end
+
+HasCachedViewKey = function(selectorKey, damageMeterType)
+    local bySelector = Data._cache[selectorKey]
+    return bySelector and bySelector[damageMeterType] ~= nil
 end
 
 -- DerivePerSecond: recompute a row's per-second rate as totalAmount / duration
@@ -360,15 +390,26 @@ local function ResolveRateDuration(sessionType, apiDuration, combatElapsed, hist
 end
 QUI_DamageMeter.ResolveRateDuration = ResolveRateDuration
 
-local function FetchView(sessionType, damageMeterType)
-    if not (C_DamageMeter and C_DamageMeter.GetCombatSessionFromType) then
+local function FetchView(sessionType, damageMeterType, sessionID)
+    if not C_DamageMeter then
         return NewView({}, 0, 0, 0)
     end
 
     -- pcall: defends against the API itself faulting under taint, which
     -- can happen in restricted callsites. The session table fields may
     -- still be secret-tagged; downstream code handles that.
-    local ok, session = pcall(C_DamageMeter.GetCombatSessionFromType, sessionType, damageMeterType)
+    local ok, session
+    if sessionID ~= nil then
+        if not C_DamageMeter.GetCombatSessionFromID then
+            return NewView({}, 0, 0, 0)
+        end
+        ok, session = pcall(C_DamageMeter.GetCombatSessionFromID, sessionID, damageMeterType)
+    else
+        if not C_DamageMeter.GetCombatSessionFromType then
+            return NewView({}, 0, 0, 0)
+        end
+        ok, session = pcall(C_DamageMeter.GetCombatSessionFromType, sessionType, damageMeterType)
+    end
     if not ok or type(session) ~= "table" then
         return NewView({}, 0, 0, 0)
     end
@@ -380,7 +421,9 @@ local function FetchView(sessionType, damageMeterType)
     -- (Expired session type = 2 per Enum.DamageMeterSessionType.Expired),
     -- the API duration is safe.
     local duration
-    if sessionType == (Enum and Enum.DamageMeterSessionType and Enum.DamageMeterSessionType.Expired or 2) then
+    if sessionID ~= nil then
+        duration = session.durationSeconds
+    elseif sessionType == (Enum and Enum.DamageMeterSessionType and Enum.DamageMeterSessionType.Expired or 2) then
         duration = session.durationSeconds  -- historical: API value is safe
     else
         duration = GetCombatElapsed()
@@ -395,11 +438,16 @@ local function FetchView(sessionType, damageMeterType)
     -- live Current session, so we fall back to our own combat timer there.
     local IsSecret = Helpers and Helpers.IsSecretValue
     local S = Enum and Enum.DamageMeterSessionType
-    local apiDuration = C_DamageMeter.GetSessionDurationSeconds
-        and C_DamageMeter.GetSessionDurationSeconds(sessionType)
-    local rateDuration = ResolveRateDuration(
-        sessionType, apiDuration, GetCombatElapsed(), session.durationSeconds,
-        IsSecret, (S and S.Current) or 1, (S and S.Expired) or 2)
+    local rateDuration
+    if sessionID ~= nil then
+        rateDuration = session.durationSeconds
+    else
+        local apiDuration = C_DamageMeter.GetSessionDurationSeconds
+            and C_DamageMeter.GetSessionDurationSeconds(sessionType)
+        rateDuration = ResolveRateDuration(
+            sessionType, apiDuration, GetCombatElapsed(), session.durationSeconds,
+            IsSecret, (S and S.Current) or 1, (S and S.Expired) or 2)
+    end
     for _, s in ipairs(sources) do
         local rate = DerivePerSecond(s.totalAmount, rateDuration, IsSecret)
         if rate ~= nil then s.amountPerSecond = rate end
@@ -414,20 +462,24 @@ function Data:Refresh()
     -- every cached (sessionType, damageMeterType)".
     if self._allDirty then
         self._allDirty = false
-        for sessionType, byType in pairs(self._cache) do
-            for damageMeterType in pairs(byType) do
-                CacheView(sessionType, damageMeterType, FetchView(sessionType, damageMeterType))
-            end
-        end
-        if self._onChange then self:_onChange() end
+        self._cache = {}
         self._dirty = {}
+        if self._onChange then self:_onChange() end
         if Perf.enabled then Perf:Record("data", PerfNow() - _t0) end
         return
     end
     local anyChanged = false
-    for sessionType, byType in pairs(self._dirty) do
+    for selectorKey, byType in pairs(self._dirty) do
+        local sessionType, sessionID
+        local idText = selectorKey:match("^id:(.+)$")
+        if idText then
+            sessionID = tonumber(idText)
+        else
+            sessionType = tonumber(selectorKey:match("^type:(.+)$"))
+        end
         for damageMeterType in pairs(byType) do
-            CacheView(sessionType, damageMeterType, FetchView(sessionType, damageMeterType))
+            CacheView(sessionType, sessionID, damageMeterType,
+                FetchView(sessionType, damageMeterType, sessionID))
             anyChanged = true
         end
     end
@@ -436,12 +488,11 @@ function Data:Refresh()
     if Perf.enabled then Perf:Record("data", PerfNow() - _t0) end
 end
 
-function Data:GetView(sessionType, damageMeterType)
-    local bySess = self._cache[sessionType]
-    local view = bySess and bySess[damageMeterType]
+function Data:GetView(sessionType, damageMeterType, sessionID)
+    local view = GetCachedView(sessionType, sessionID, damageMeterType)
     if view then return view end
-    view = FetchView(sessionType, damageMeterType)
-    CacheView(sessionType, damageMeterType, view)
+    view = FetchView(sessionType, damageMeterType, sessionID)
+    CacheView(sessionType, sessionID, damageMeterType, view)
     return view
 end
 
