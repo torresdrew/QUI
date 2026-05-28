@@ -841,29 +841,32 @@ end
 
 -- Item cooldown resolution
 local function GetItemCooldown(itemID)
-    if not itemID or not C_Item.GetItemCooldown then return nil, nil, nil end
+    if not itemID or not C_Item.GetItemCooldown then return nil, nil, nil, nil end
     local startTime, duration = C_Item.GetItemCooldown(itemID)
     if IsSecretValue(startTime) or IsSecretValue(duration) then
         -- Secret values can no longer be forwarded via SetCooldown (12.0.5+).
         -- No DurationObject API exists for items; graceful degradation.
-        return nil, nil, nil
+        return nil, nil, nil, nil
     end
-    if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) or duration <= 0 then
-        return nil, nil, nil
+    if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) then
+        return nil, nil, nil, nil
     end
-    return startTime, duration, nil
+    if duration <= 0 then
+        return nil, nil, nil, false
+    end
+    return startTime, duration, nil, true
 end
 
 local function GetSlotCooldown(slotID)
-    if not slotID or not GetInventoryItemCooldown then return nil, nil, nil end
+    if not slotID or not GetInventoryItemCooldown then return nil, nil, nil, nil end
     local startTime, duration, enabled = GetInventoryItemCooldown("player", slotID)
     if not IsSafeNumeric(startTime) or not IsSafeNumeric(duration) then
-        return nil, nil, nil
+        return nil, nil, nil, nil
     end
     if enabled ~= 1 or duration <= 1.5 then
-        return nil, nil, nil
+        return nil, nil, nil, false
     end
-    return startTime, duration, nil
+    return startTime, duration, nil, true
 end
 
 local function ApplyResolvedCooldown(cd, startTime, duration, durObj, reverse)
@@ -2607,14 +2610,18 @@ local function UpdateIconCooldown(icon)
 
         -- Custom entry: use addon-created CD with our cooldown resolution
         local startTime, duration, durObj, apiIsActive, blizzRealCooldownActive
+        local macroResolvedType
         if entry.type == "macro" then
             local resolvedID, resolvedType, fallbackTex = ResolveMacro(entry)
+            macroResolvedType = resolvedType
             if resolvedID then
                 if resolvedType == "item" then
-                    startTime, duration, durObj = GetItemCooldown(resolvedID)
+                    startTime, duration, durObj, apiIsActive = GetItemCooldown(resolvedID)
                 else
-                    startTime, duration, durObj = GetBestSpellCooldown(resolvedID)
+                    startTime, duration, durObj, apiIsActive = GetBestSpellCooldown(resolvedID)
                 end
+            else
+                apiIsActive = false
             end
             -- Update icon texture from already-resolved macro result
             -- (eliminates a redundant second ResolveMacro call via GetEntryTexture)
@@ -2638,7 +2645,7 @@ local function UpdateIconCooldown(icon)
             local slotID = entry.id
             local itemID = GetInventoryItemID("player", slotID)
             if itemID then
-                startTime, duration, durObj = GetSlotCooldown(slotID)
+                startTime, duration, durObj, apiIsActive = GetSlotCooldown(slotID)
                 -- Update texture in case trinket was swapped
                 if icon.Icon then
                     local ok, tex = pcall(C_Item.GetItemIconByID, itemID)
@@ -2647,12 +2654,14 @@ local function UpdateIconCooldown(icon)
                         icon._lastTexture = tex
                     end
                 end
+            else
+                apiIsActive = false
             end
             -- Hide stack text for trinkets
             icon.StackText:SetText("")
             icon.StackText:Hide()
         elseif entry.type == "item" then
-            startTime, duration, durObj = GetItemCooldown(entry.id)
+            startTime, duration, durObj, apiIsActive = GetItemCooldown(entry.id)
             -- Show item count as stack text (includeUses=true for charge items)
             if C_Item and C_Item.GetItemCount then
                 local ok, count = pcall(C_Item.GetItemCount, entry.id, false, true)
@@ -2965,9 +2974,10 @@ local function UpdateIconCooldown(icon)
             icon._lastStart = 0
             icon._lastDuration = 0
         end
-        -- When API returns no data (fully charged / off CD), clear stale
-        -- values so desaturation doesn't persist from a previous recharge.
-        if not startTime and not duration then
+        -- When the API proves the cooldown is inactive, clear stale values so
+        -- desaturation doesn't persist from a previous recharge. Keep the last
+        -- readable payload when item APIs are unknown/secret in combat.
+        if apiIsActive == false and not startTime and not duration then
             icon._lastStart = 0
             icon._lastDuration = 0
         end
@@ -2982,6 +2992,7 @@ local function UpdateIconCooldown(icon)
             and not _chargeCountForwarded
             and icon._durObjHookSync
             and apiIsActive ~= false
+            and entry._blizzChild
             and (_batchTime - icon._durObjHookSync) < 10
 
 
@@ -2992,6 +3003,7 @@ local function UpdateIconCooldown(icon)
             -- aura swipe wins, then real cooldown/recharge, then GCD.
             local auraSwipeActive = icon._auraActive or entry.viewerType == "buff"
             local isItemEntry = entry.type == "item" or entry.type == "trinket" or entry.type == "slot"
+                or (entry.type == "macro" and macroResolvedType == "item")
             local spellUsable = nil
             -- Spell usability is only meaningful for actual spell entries.
             -- For item/trinket/slot entries, _runtimeSid is an item / slot ID
