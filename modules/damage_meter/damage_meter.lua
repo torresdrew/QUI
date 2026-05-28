@@ -659,8 +659,8 @@ function Data:GetEnemyAttackers(sessionType, sourceGUID, sourceCreatureID, sessi
 end
 
 -- playerName -> sorted enemy-target list, built by cross-referencing every
--- enemy source in EnemyDamageTaken. Cached per (sessionType, enemy-view
--- generation): the key changes whenever the EnemyDamageTaken view is re-fetched
+-- enemy source in EnemyDamageTaken. Cached per selector key + enemy-view
+-- generation: the key changes whenever the EnemyDamageTaken view is re-fetched
 -- (the dirty/ticker path bumps its generation), so it stays fresh without its
 -- own event hooks.
 function Data:GetPlayerTargetsMap(sessionType, sessionID)
@@ -1630,9 +1630,10 @@ function Window:_OpenConfigMenu()
         for _, entry in ipairs(sessions) do
             local sessionVal = entry.value
             root:CreateRadio(entry.label,
-                function() return self.sessionType == sessionVal end,
+                function() return self.sessionID == nil and self.sessionType == sessionVal end,
                 function()
                     self.sessionType = sessionVal
+                    self.sessionID = nil
                     windowState.sessionType = sessionVal
                     QUI_DamageMeter.WindowManager:RefreshAll()
                 end)
@@ -2127,6 +2128,7 @@ function Window.New(windowID)
         windowID        = windowID,
         damageMeterType = windowState.damageMeterType,
         sessionType     = windowState.sessionType,
+        sessionID       = nil,
         rows            = {},      -- pool, filled in T10
         _lastGeneration = 0,
     }, Window)
