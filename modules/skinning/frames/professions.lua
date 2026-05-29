@@ -7,92 +7,6 @@ local SkinBase = ns.SkinBase
 -- PROFESSIONS FRAME SKINNING
 ---------------------------------------------------------------------------
 
--- Style a button
-local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not button or SkinBase.IsStyled(button) then return end
-
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
-    SkinBase.CreateBackdrop(button, sr, sg, sb, sa, btnBgR, btnBgG, btnBgB, 1)
-
-    if button.Left then button.Left:SetAlpha(0) end
-    if button.Right then button.Right:SetAlpha(0) end
-    if button.Middle then button.Middle:SetAlpha(0) end
-    if button.Center then button.Center:SetAlpha(0) end
-
-    local highlight = button:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-    local pushed = button:GetPushedTexture()
-    if pushed then pushed:SetAlpha(0) end
-    local normal = button:GetNormalTexture()
-    if normal then normal:SetAlpha(0) end
-
-    SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
-
-    button:HookScript("OnEnter", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            local r, g, b, a = unpack(sc)
-            bd:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
-        end
-    end)
-    button:HookScript("OnLeave", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            bd:SetBackdropBorderColor(unpack(sc))
-        end
-    end)
-
-    SkinBase.MarkStyled(button)
-end
-
--- Style edit box
-local function StyleEditBox(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not editBox or SkinBase.IsStyled(editBox) then return end
-
-    SkinBase.StripTextures(editBox)
-    SkinBase.CreateBackdrop(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-
-    SkinBase.MarkStyled(editBox)
-end
-
--- Style filter dropdowns without stripping child textures; those child
--- textures include the clear-filter X on active profession filters.
-local function StyleFilterDropdown(dropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not dropdown then return end
-
-    SkinBase.CreateBackdrop(dropdown, sr, sg, sb, sa, math.min(bgr + 0.07, 1), math.min(bgg + 0.07, 1), math.min(bgb + 0.07, 1), 1)
-    local bd = SkinBase.GetBackdrop(dropdown)
-    if bd then
-        bd:SetFrameLevel(math.max(0, dropdown:GetFrameLevel() - 1))
-    end
-
-    SkinBase.SetFrameData(dropdown, "skinColor", { sr, sg, sb, sa })
-    SkinBase.SetFrameData(dropdown, "bgColor", { bgr, bgg, bgb })
-
-    if SkinBase.GetFrameData(dropdown, "filterHoverHooked") then return end
-    dropdown:HookScript("OnEnter", function(self)
-        local backdrop = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if backdrop and sc then
-            local r, g, b, a = unpack(sc)
-            backdrop:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
-        end
-    end)
-    dropdown:HookScript("OnLeave", function(self)
-        local backdrop = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if backdrop and sc then
-            backdrop:SetBackdropBorderColor(unpack(sc))
-        end
-    end)
-    SkinBase.SetFrameData(dropdown, "filterHoverHooked", true)
-end
-
-
 -- Check if skinning is enabled
 local function IsEnabled()
     local core = GetCore()
@@ -100,15 +14,11 @@ local function IsEnabled()
     return settings and settings.skinProfessions
 end
 
--- Safely iterate a ScrollBox's visible frames
-local function SafeForEachFrame(scrollBox, callback)
-    if scrollBox and scrollBox.ForEachFrame then
-        pcall(scrollBox.ForEachFrame, scrollBox, callback)
-    end
-end
 
--- Style a ScrollBox row entry
-local function StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+-- Style a ScrollBox row entry. Keeps the professions-specific divider/padding
+-- and no-content guards plus the SkillUps inset, delegating the backdrop to
+-- SkinBase.
+local function StyleScrollBoxRow(row)
     if not row or SkinBase.IsStyled(row) then return end
 
     -- Skip divider and padding spacer rows
@@ -122,12 +32,7 @@ local function StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     -- Fallback: skip frames with no visible text content (spacers)
     if not row.Label and not row.Text and not row.Icon then return end
 
-    SkinBase.StripTextures(row)
-
-    local rowBgR = math.min(bgr + 0.03, 1)
-    local rowBgG = math.min(bgg + 0.03, 1)
-    local rowBgB = math.min(bgb + 0.03, 1)
-    SkinBase.CreateBackdrop(row, sr, sg, sb, sa * 0.5, rowBgR, rowBgG, rowBgB, 0.6)
+    SkinBase.SkinScrollRow(row)
 
     -- Inset backdrop past the skill-up icon area on recipe rows
     if row.SkillUps then
@@ -138,129 +43,6 @@ local function StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             bd:SetPoint("BOTTOMRIGHT")
         end
     end
-
-    SkinBase.SetFrameData(row, "skinColor", { sr, sg, sb, sa * 0.5 })
-
-    row:HookScript("OnEnter", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            local r, g, b, a = unpack(sc)
-            bd:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
-        end
-    end)
-    row:HookScript("OnLeave", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            bd:SetBackdropBorderColor(unpack(sc))
-        end
-    end)
-
-    SkinBase.MarkStyled(row)
-end
-
--- Hook a ScrollBox to style rows as they're acquired from the pool.
-local function HookScrollBox(scrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    SkinBase.HookScrollBoxAcquired(scrollBox, function(row)
-        StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    end)
-end
-
--- Skin a list container (NineSlice + Background + ScrollBox + ScrollBar)
-local function SkinListContainer(list, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not list then return end
-    if list.NineSlice then list.NineSlice:Hide() end
-    if list.BackgroundNineSlice then list.BackgroundNineSlice:Hide() end
-    if list.Background then list.Background:SetAlpha(0) end
-    SkinBase.StripTextures(list)
-    if list.ScrollBox then
-        HookScrollBox(list.ScrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    end
-    if list.ScrollBar and list.ScrollBar.Background then
-        list.ScrollBar.Background:Hide()
-    end
-end
-
----------------------------------------------------------------------------
--- TAB HANDLING
--- ProfessionsFrame uses TabSystemTemplate (not PanelTemplates_SetTab)
----------------------------------------------------------------------------
-
-local function IsTabSelected(tab, owner)
-    if not tab then return false end
-    if tab.IsSelected and tab:IsSelected() then return true end
-
-    local tabSystem = owner and owner.TabSystem
-    if tabSystem and tabSystem.GetSelectedTab and tab.tabID then
-        return tab.tabID == tabSystem:GetSelectedTab()
-    end
-
-    return tab.SelectedTexture and tab.SelectedTexture:IsShown()
-end
-
-local function RestoreTabVisual(tab, owner)
-    local bd = SkinBase.GetBackdrop(tab)
-    local sc = SkinBase.GetFrameData(tab, "skinColor")
-    local bg = SkinBase.GetFrameData(tab, "bgColor")
-    if not bd or not sc or not bg then return end
-
-    if IsTabSelected(tab, owner) then
-        bd:SetBackdropBorderColor(sc[1], sc[2], sc[3], sc[4])
-        bd:SetBackdropColor(math.min(bg[1] + 0.10, 1), math.min(bg[2] + 0.10, 1), math.min(bg[3] + 0.10, 1), 1)
-    else
-        bd:SetBackdropBorderColor(sc[1] * 0.5, sc[2] * 0.5, sc[3] * 0.5, sc[4] * 0.6)
-        bd:SetBackdropColor(bg[1], bg[2], bg[3], 0.7)
-    end
-end
-
-local function HookTabHover(tab, owner, sr, sg, sb, sa)
-    if not tab or SkinBase.GetFrameData(tab, "tabHoverHooked") then return end
-
-    tab:HookScript("OnEnter", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor") or { sr, sg, sb, sa }
-        if bd and sc then
-            bd:SetBackdropBorderColor(math.min(sc[1] * 1.3, 1), math.min(sc[2] * 1.3, 1), math.min(sc[3] * 1.3, 1), sc[4])
-        end
-    end)
-    tab:HookScript("OnLeave", function(self)
-        RestoreTabVisual(self, owner)
-    end)
-
-    SkinBase.SetFrameData(tab, "tabHoverHooked", true)
-end
-
-local function UpdateTabSelectedState(frame)
-    if not frame or not frame.TabSystem then return end
-    local tabSystem = frame.TabSystem
-    -- TabSystemTemplate stores tabs in tabSystem.tabs
-    local tabs = tabSystem.tabs
-    if not tabs then return end
-    for _, tab in ipairs(tabs) do
-        RestoreTabVisual(tab, frame)
-    end
-end
-
--- Style a TabSystem tab button
-local function StyleTabSystemTab(tab, frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not tab or SkinBase.IsStyled(tab) then return end
-
-    SkinBase.StripTextures(tab)
-    local highlight = tab:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-
-    SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
-    local tabBackdrop = SkinBase.GetBackdrop(tab)
-    if tabBackdrop then
-        SkinBase.SetPixelInsetPoints(tabBackdrop, tab, 3, 3, 3, 0)
-    end
-
-    SkinBase.SetFrameData(tab, "skinColor", { sr, sg, sb, sa })
-    SkinBase.SetFrameData(tab, "bgColor", { bgr, bgg, bgb })
-    HookTabHover(tab, frame, sr, sg, sb, sa)
-
-    SkinBase.MarkStyled(tab)
 end
 
 ---------------------------------------------------------------------------
@@ -277,34 +59,18 @@ end
 -- SKIN TABS
 ---------------------------------------------------------------------------
 
-local function SkinTabs(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function SkinTabs(frame)
     if not frame or not frame.TabSystem then return end
-
-    local tabSystem = frame.TabSystem
-    local tabs = tabSystem.tabs
+    local tabs = frame.TabSystem.tabs
     if not tabs then return end
-
-    for _, tab in ipairs(tabs) do
-        StyleTabSystemTab(tab, frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        HookTabHover(tab, frame, sr, sg, sb, sa)
-    end
-
-    -- Hook tab selection to update visuals
-    if not SkinBase.GetFrameData(tabSystem, "hooked") then
-        hooksecurefunc(tabSystem, "SetTab", function()
-            C_Timer.After(0, function() UpdateTabSelectedState(frame) end)
-        end)
-        SkinBase.SetFrameData(tabSystem, "hooked", true)
-    end
-
-    UpdateTabSelectedState(frame)
+    SkinBase.SkinTabGroup(tabs, frame, { hover = true })
 end
 
 ---------------------------------------------------------------------------
 -- SKIN RECIPE LIST (shared between CraftingPage and OrdersPage)
 ---------------------------------------------------------------------------
 
-local function SkinRecipeList(recipeList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function SkinRecipeList(recipeList)
     if not recipeList then return end
 
     -- Hide decorations
@@ -314,17 +80,18 @@ local function SkinRecipeList(recipeList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
     -- Search box
     if recipeList.SearchBox then
-        StyleEditBox(recipeList.SearchBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinEditBox(recipeList.SearchBox)
     end
 
-    -- Filter dropdown (don't strip textures — preserves clear-filter X button)
+    -- Filter dropdown (don't strip textures — preserves clear-filter X button;
+    -- backdrop sits below child controls)
     if recipeList.FilterDropdown then
-        StyleFilterDropdown(recipeList.FilterDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinDropdown(recipeList.FilterDropdown, { noStrip = true, belowChildren = true })
     end
 
     -- ScrollBox
     if recipeList.ScrollBox then
-        HookScrollBox(recipeList.ScrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.HookScrollBoxAcquired(recipeList.ScrollBox, StyleScrollBoxRow)
     end
     if recipeList.ScrollBar and recipeList.ScrollBar.Background then
         recipeList.ScrollBar.Background:Hide()
@@ -335,6 +102,8 @@ end
 -- SKIN CRAFTING PAGE
 ---------------------------------------------------------------------------
 
+-- Full color tuple kept: the raw CreateBackdrop panel styling below uses
+-- per-panel alpha/boost tweaks the shared widget helpers don't express.
 local function SkinCraftingPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not frame then return end
 
@@ -342,7 +111,7 @@ local function SkinCraftingPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not craftingPage then return end
 
     -- Recipe list (left panel)
-    SkinRecipeList(craftingPage.RecipeList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinRecipeList(craftingPage.RecipeList)
 
     -- Schematic form (right panel)
     local schematicForm = craftingPage.SchematicForm
@@ -365,18 +134,18 @@ local function SkinCraftingPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
     -- Minimized search box
     if craftingPage.MinimizedSearchBox then
-        StyleEditBox(craftingPage.MinimizedSearchBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinEditBox(craftingPage.MinimizedSearchBox)
     end
 
     -- Buttons
     if craftingPage.CreateButton then
-        StyleButton(craftingPage.CreateButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(craftingPage.CreateButton)
     end
     if craftingPage.CreateAllButton then
-        StyleButton(craftingPage.CreateAllButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(craftingPage.CreateAllButton)
     end
     if craftingPage.ViewGuildCraftersButton then
-        StyleButton(craftingPage.ViewGuildCraftersButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(craftingPage.ViewGuildCraftersButton)
     end
 end
 
@@ -384,6 +153,8 @@ end
 -- SKIN ORDERS PAGE (crafter side)
 ---------------------------------------------------------------------------
 
+-- Full color tuple kept: the raw CreateBackdrop panel styling below uses
+-- per-panel alpha/boost tweaks the shared widget helpers don't express.
 local function SkinOrdersPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if not frame then return end
 
@@ -393,24 +164,24 @@ local function SkinOrdersPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local browseFrame = ordersPage.BrowseFrame
     if browseFrame then
         -- Recipe list (left panel)
-        SkinRecipeList(browseFrame.RecipeList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinRecipeList(browseFrame.RecipeList)
 
         -- Order list (right panel)
-        SkinListContainer(browseFrame.OrderList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinListContainer(browseFrame.OrderList, StyleScrollBoxRow)
 
         -- Search / back buttons
         if browseFrame.SearchButton then
-            StyleButton(browseFrame.SearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(browseFrame.SearchButton)
         end
         if browseFrame.FavoritesSearchButton then
-            StyleButton(browseFrame.FavoritesSearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(browseFrame.FavoritesSearchButton)
         end
 
         -- Order type tab buttons
         local orderTabs = { browseFrame.PublicOrdersButton, browseFrame.GuildOrdersButton, browseFrame.NpcOrdersButton, browseFrame.PersonalOrdersButton }
         for _, tab in ipairs(orderTabs) do
             if tab then
-                StyleButton(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+                SkinBase.SkinButton(tab)
             end
         end
     end
@@ -433,22 +204,22 @@ local function SkinOrdersPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
         -- Buttons
         if orderView.CreateButton then
-            StyleButton(orderView.CreateButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(orderView.CreateButton)
         end
         if orderView.StartOrderButton then
-            StyleButton(orderView.StartOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(orderView.StartOrderButton)
         end
         if orderView.CompleteOrderButton then
-            StyleButton(orderView.CompleteOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(orderView.CompleteOrderButton)
         end
         if orderView.DeclineOrderButton then
-            StyleButton(orderView.DeclineOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(orderView.DeclineOrderButton)
         end
         if orderView.ReleaseOrderButton then
-            StyleButton(orderView.ReleaseOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(orderView.ReleaseOrderButton)
         end
         if orderView.BackButton then
-            StyleButton(orderView.BackButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(orderView.BackButton)
         end
     end
 end
@@ -459,35 +230,20 @@ end
 
 -- Style a spec pool tab (ProfessionSpecTabTemplate).
 -- `owner` is the spec page that owns the tab and drives selection state —
--- HookTabHover/RestoreTabVisual need it to compute IsTabSelected.
-local function StyleSpecPoolTab(tab, owner, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+-- SkinTab/RefreshTabSelected need it to compute IsTabSelected.
+local function StyleSpecPoolTab(tab, owner)
     if not tab or SkinBase.IsStyled(tab) then return end
-
-    SkinBase.StripTextures(tab)
-    local highlight = tab:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-
-    SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
-    local bd = SkinBase.GetBackdrop(tab)
-    if bd then
-        SkinBase.SetPixelInsetPoints(bd, tab, 3, 3, 3, 0)
-    end
-
-    SkinBase.SetFrameData(tab, "skinColor", { sr, sg, sb, sa })
-    SkinBase.SetFrameData(tab, "bgColor", { bgr, bgg, bgb })
-    HookTabHover(tab, owner, sr, sg, sb, sa)
-    RestoreTabVisual(tab, owner)
-
-    SkinBase.MarkStyled(tab)
+    SkinBase.SkinTab(tab, owner, { hover = true })
+    SkinBase.RefreshTabSelected(tab, owner)
 end
 
 -- Skin all active spec pool tabs and hook the pool for future tabs
-local function SkinSpecPoolTabs(specPage, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function SkinSpecPoolTabs(specPage)
     local pool = specPage.tabsPool
     if not pool then return end
 
     for tab in pool:EnumerateActive() do
-        StyleSpecPoolTab(tab, specPage, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        StyleSpecPoolTab(tab, specPage)
     end
 
     -- Hook pool Acquire to catch future tabs
@@ -495,7 +251,7 @@ local function SkinSpecPoolTabs(specPage, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         hooksecurefunc(pool, "Acquire", function(self)
             C_Timer.After(0, function()
                 for t in self:EnumerateActive() do
-                    StyleSpecPoolTab(t, specPage, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+                    StyleSpecPoolTab(t, specPage)
                 end
             end)
         end)
@@ -503,14 +259,14 @@ local function SkinSpecPoolTabs(specPage, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end
 end
 
-local function SkinSpecPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function SkinSpecPage(frame)
     if not frame then return end
 
     local specPage = frame.SpecPage
     if not specPage then return end
 
     -- Spec pool tabs (specialization tree tabs at top)
-    SkinSpecPoolTabs(specPage, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinSpecPoolTabs(specPage)
 
     -- Footer
     if specPage.PanelFooter then
@@ -523,22 +279,22 @@ local function SkinSpecPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
     -- Buttons
     if specPage.ApplyButton then
-        StyleButton(specPage.ApplyButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(specPage.ApplyButton)
     end
     if specPage.UnlockTabButton then
-        StyleButton(specPage.UnlockTabButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(specPage.UnlockTabButton)
     end
     if specPage.ViewTreeButton then
-        StyleButton(specPage.ViewTreeButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(specPage.ViewTreeButton)
     end
     if specPage.BackToPreviewButton then
-        StyleButton(specPage.BackToPreviewButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(specPage.BackToPreviewButton)
     end
     if specPage.ViewPreviewButton then
-        StyleButton(specPage.ViewPreviewButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(specPage.ViewPreviewButton)
     end
     if specPage.BackToFullTreeButton then
-        StyleButton(specPage.BackToFullTreeButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(specPage.BackToFullTreeButton)
     end
 
     -- Detailed view background
@@ -546,10 +302,10 @@ local function SkinSpecPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if detailedView then
         if detailedView.Background then detailedView.Background:SetAlpha(0) end
         if detailedView.SpendPointsButton then
-            StyleButton(detailedView.SpendPointsButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(detailedView.SpendPointsButton)
         end
         if detailedView.UnlockPathButton then
-            StyleButton(detailedView.UnlockPathButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(detailedView.UnlockPathButton)
         end
     end
 
@@ -577,10 +333,10 @@ local function SkinProfessions()
 
     SkinBase.SkinCloseButton(frame.CloseButton or _G.ProfessionsFrameCloseButton)
 
-    SkinTabs(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinTabs(frame)
     SkinCraftingPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     SkinOrdersPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    SkinSpecPage(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinSpecPage(frame)
 
     SkinBase.MarkSkinned(frame)
 end
@@ -589,30 +345,8 @@ end
 -- REFRESH COLORS (for live theme changes)
 ---------------------------------------------------------------------------
 
-local function UpdateButtonColors(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = button and SkinBase.GetBackdrop(button)
-    if not bd then return end
-    bd:SetBackdropColor(math.min(bgr + 0.07, 1), math.min(bgg + 0.07, 1), math.min(bgb + 0.07, 1), 1)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-    SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
-end
-
-local function UpdateEditBoxColors(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = editBox and SkinBase.GetBackdrop(editBox)
-    if not bd then return end
-    bd:SetBackdropColor(bgr, bgg, bgb, bga)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-end
-
-local function UpdateDropdownColors(dropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = dropdown and SkinBase.GetBackdrop(dropdown)
-    if not bd then return end
-    bd:SetBackdropColor(math.min(bgr + 0.07, 1), math.min(bgg + 0.07, 1), math.min(bgb + 0.07, 1), 1)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-    SkinBase.SetFrameData(dropdown, "skinColor", { sr, sg, sb, sa })
-    SkinBase.SetFrameData(dropdown, "bgColor", { bgr, bgg, bgb })
-end
-
+-- Panel backdrops use frame-specific alphas/boosts (raw CreateBackdrop, not the
+-- shared widget API) so they keep their own color refresh.
 local function UpdatePanelColors(panel, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local bd = panel and SkinBase.GetBackdrop(panel)
     if not bd then return end
@@ -620,10 +354,10 @@ local function UpdatePanelColors(panel, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     bd:SetBackdropBorderColor(sr, sg, sb, sa * 0.3)
 end
 
-local function UpdateRecipeListColors(recipeList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function UpdateRecipeListColors(recipeList)
     if not recipeList then return end
-    UpdateEditBoxColors(recipeList.SearchBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    UpdateDropdownColors(recipeList.FilterDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinBase.RefreshWidget(recipeList.SearchBox)
+    SkinBase.RefreshWidget(recipeList.FilterDropdown)
 end
 
 local function RefreshProfessionsColors()
@@ -641,23 +375,14 @@ local function RefreshProfessionsColors()
 
     -- Tabs
     if frame.TabSystem and frame.TabSystem.tabs then
-        for _, tab in ipairs(frame.TabSystem.tabs) do
-            local bd = SkinBase.GetBackdrop(tab)
-            if bd then
-                bd:SetBackdropColor(bgr, bgg, bgb, 0.9)
-                bd:SetBackdropBorderColor(sr, sg, sb, sa)
-                SkinBase.SetFrameData(tab, "skinColor", { sr, sg, sb, sa })
-                SkinBase.SetFrameData(tab, "bgColor", { bgr, bgg, bgb })
-            end
-        end
-        UpdateTabSelectedState(frame)
+        SkinBase.RefreshTabGroup(frame.TabSystem.tabs, frame)
     end
 
     -- Crafting page
     local craftingPage = frame.CraftingPage
     if craftingPage then
-        UpdateRecipeListColors(craftingPage.RecipeList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateEditBoxColors(craftingPage.MinimizedSearchBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        UpdateRecipeListColors(craftingPage.RecipeList)
+        SkinBase.RefreshWidget(craftingPage.MinimizedSearchBox)
         UpdatePanelColors(craftingPage.SchematicForm, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         if craftingPage.SchematicForm and craftingPage.SchematicForm.Details then
             local detBd = SkinBase.GetBackdrop(craftingPage.SchematicForm.Details)
@@ -666,59 +391,52 @@ local function RefreshProfessionsColors()
                 detBd:SetBackdropBorderColor(sr, sg, sb, sa * 0.3)
             end
         end
-        UpdateButtonColors(craftingPage.CreateButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(craftingPage.CreateAllButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(craftingPage.ViewGuildCraftersButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.RefreshWidget(craftingPage.CreateButton)
+        SkinBase.RefreshWidget(craftingPage.CreateAllButton)
+        SkinBase.RefreshWidget(craftingPage.ViewGuildCraftersButton)
     end
 
     -- Orders page
     local ordersPage = frame.OrdersPage
     if ordersPage and ordersPage.BrowseFrame then
         local bf = ordersPage.BrowseFrame
-        UpdateRecipeListColors(bf.RecipeList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(bf.SearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(bf.FavoritesSearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        UpdateRecipeListColors(bf.RecipeList)
+        SkinBase.RefreshWidget(bf.SearchButton)
+        SkinBase.RefreshWidget(bf.FavoritesSearchButton)
         local orderTabs = { bf.PublicOrdersButton, bf.GuildOrdersButton, bf.NpcOrdersButton, bf.PersonalOrdersButton }
         for _, tab in ipairs(orderTabs) do
-            UpdateButtonColors(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(tab)
         end
         if ordersPage.OrderView then
             UpdatePanelColors(ordersPage.OrderView.OrderDetails, sr, sg, sb, sa, bgr, bgg, bgb, bga)
             UpdatePanelColors(ordersPage.OrderView.OrderInfo, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(ordersPage.OrderView.CreateButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(ordersPage.OrderView.StartOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(ordersPage.OrderView.CompleteOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(ordersPage.OrderView.DeclineOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(ordersPage.OrderView.ReleaseOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(ordersPage.OrderView.BackButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(ordersPage.OrderView.CreateButton)
+            SkinBase.RefreshWidget(ordersPage.OrderView.StartOrderButton)
+            SkinBase.RefreshWidget(ordersPage.OrderView.CompleteOrderButton)
+            SkinBase.RefreshWidget(ordersPage.OrderView.DeclineOrderButton)
+            SkinBase.RefreshWidget(ordersPage.OrderView.ReleaseOrderButton)
+            SkinBase.RefreshWidget(ordersPage.OrderView.BackButton)
         end
     end
 
     -- Spec page
     local specPage = frame.SpecPage
     if specPage then
-        -- Spec pool tabs
+        -- Spec pool tabs (pooled — gather active tabs and refresh as a group)
         if specPage.tabsPool then
-            for tab in specPage.tabsPool:EnumerateActive() do
-                local bd = SkinBase.GetBackdrop(tab)
-                if bd then
-                    bd:SetBackdropColor(bgr, bgg, bgb, 0.9)
-                    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-                    SkinBase.SetFrameData(tab, "skinColor", { sr, sg, sb, sa })
-                    SkinBase.SetFrameData(tab, "bgColor", { bgr, bgg, bgb })
-                    RestoreTabVisual(tab, specPage)
-                end
-            end
+            local poolTabs = {}
+            for tab in specPage.tabsPool:EnumerateActive() do poolTabs[#poolTabs + 1] = tab end
+            SkinBase.RefreshTabGroup(poolTabs, specPage)
         end
-        UpdateButtonColors(specPage.ApplyButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(specPage.UnlockTabButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(specPage.ViewTreeButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(specPage.BackToPreviewButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(specPage.ViewPreviewButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(specPage.BackToFullTreeButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.RefreshWidget(specPage.ApplyButton)
+        SkinBase.RefreshWidget(specPage.UnlockTabButton)
+        SkinBase.RefreshWidget(specPage.ViewTreeButton)
+        SkinBase.RefreshWidget(specPage.BackToPreviewButton)
+        SkinBase.RefreshWidget(specPage.ViewPreviewButton)
+        SkinBase.RefreshWidget(specPage.BackToFullTreeButton)
         if specPage.DetailedView then
-            UpdateButtonColors(specPage.DetailedView.SpendPointsButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(specPage.DetailedView.UnlockPathButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(specPage.DetailedView.SpendPointsButton)
+            SkinBase.RefreshWidget(specPage.DetailedView.UnlockPathButton)
         end
     end
 end

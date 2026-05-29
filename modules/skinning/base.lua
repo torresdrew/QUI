@@ -21,6 +21,12 @@ local pixelPointData = Helpers.CreateStateTable()
 local pixelBackdropData = Helpers.CreateStateTable()
 local DEFAULT_BACKDROP_TEXTURE = "Interface\\Buttons\\WHITE8x8"
 
+-- Shared color deltas for widget skinning (single source of truth — replaces
+-- the magic numbers previously copy-pasted across frame skin files).
+local BG_BOOST_BUTTON = 0.07
+local BG_BOOST_ROW = 0.03
+local HOVER_BRIGHTEN = 1.3
+
 ---------------------------------------------------------------------------
 -- GetPixelSize(frame, default)
 -- Returns the pixel-perfect edge size for the given frame.
@@ -642,13 +648,22 @@ end
 --                                    for later RefreshTabSelected calls.
 -- RefreshTabSelected(tab, owner)  — set the backdrop to selected vs
 --                                    unselected colors based on tab state.
--- SkinTabGroup(tabs, owner)       — skin every tab in the list + hook each
---                                    OnClick to refresh the whole group's
---                                    selected/unselected coloring.
+-- SkinTab(tab, owner, opts)       — skin one tab; opts.hover wires a
+--                                    brighten-on-enter + selected-state
+--                                    restore-on-leave (used for pooled tabs).
+-- SkinTabGroup(tabs, owner, opts) — skin every tab + hook each OnClick to
+--                                    refresh the group; also registers the
+--                                    owner for programmatic-switch refresh
+--                                    (PanelTemplates_SetTab / TabSystem:SetTab).
+--                                    opts.hover applies SkinTab hover to all.
+-- RefreshTabGroup(tabs, owner)    — theme refresh: re-store colors then
+--                                    re-apply selected/unselected visuals.
 --
--- For owner detection: tab.IsSelected (TabSystem) is checked first, then
--- PanelTemplates_GetSelectedTab(owner) compared with tab:GetID(). Owner
--- can be nil if only the IsSelected path applies.
+-- For owner detection (IsTabSelected): tab.IsSelected is checked first, then
+-- owner.TabSystem:GetSelectedTab() vs tab.tabID, then
+-- PanelTemplates_GetSelectedTab(owner) vs tab:GetID(), then a
+-- tab.SelectedTexture:IsShown() fallback. Owner can be nil if only the
+-- IsSelected path applies.
 ---------------------------------------------------------------------------
 -- Belt-and-suspenders texture nuke: SetAlpha(0) + Hide() + SetTexture("").
 -- Used on Blizzard tab textures because PanelTemplates_SelectTab/DeselectTab
@@ -709,9 +724,18 @@ end
 
 local function IsTabSelected(tab, owner)
     if tab.IsSelected and tab:IsSelected() then return true end
-    if owner and PanelTemplates_GetSelectedTab and tab.GetID then
-        local selected = PanelTemplates_GetSelectedTab(owner)
-        if selected and tab:GetID() == selected then return true end
+    if owner then
+        local tabSystem = owner.TabSystem
+        if tabSystem and tabSystem.GetSelectedTab and tab.tabID then
+            if tab.tabID == tabSystem:GetSelectedTab() then return true end
+        end
+        if PanelTemplates_GetSelectedTab and tab.GetID then
+            local selected = PanelTemplates_GetSelectedTab(owner)
+            if selected and tab:GetID() == selected then return true end
+        end
+    end
+    if tab.SelectedTexture and tab.SelectedTexture.IsShown and tab.SelectedTexture:IsShown() then
+        return true
     end
     return false
 end
@@ -729,14 +753,68 @@ function SkinBase.RefreshTabSelected(tab, owner)
         bd:SetBackdropBorderColor(sc[1] * 0.5, sc[2] * 0.5, sc[3] * 0.5, sc[4] * 0.6)
         bd:SetBackdropColor(bg[1], bg[2], bg[3], 0.7)
     end
-    -- Text color intentionally left to Blizzard's font-object swap (see SkinTabButton).
 end
 
-function SkinBase.SkinTabGroup(tabs, owner)
+-- Tab hover: brighten border on enter, restore selected-state coloring on
+-- leave. The enter half mirrors the widget HoverEnter (defined later in the
+-- file), but tabs need a selected-state-aware leave (RefreshTabSelected) rather
+-- than the plain border reset, so this pair lives here as its own small unit.
+local function TabHoverEnter(self)
+    local bd = SkinBase.GetBackdrop(self)
+    local sc = SkinBase.GetFrameData(self, "skinColor")
+    if bd and sc then
+        bd:SetBackdropBorderColor(
+            math.min(sc[1] * HOVER_BRIGHTEN, 1),
+            math.min(sc[2] * HOVER_BRIGHTEN, 1),
+            math.min(sc[3] * HOVER_BRIGHTEN, 1),
+            sc[4])
+    end
+end
+
+-- Programmatic tab-switch dispatch: one global PanelTemplates_SetTab hook plus
+-- a per-TabSystem SetTab hook, both dispatching to the owner's refresh closure.
+local ownerTabRefreshers = Helpers.CreateStateTable()
+local panelSetTabHooked = false
+local function RegisterOwnerTabRefresh(owner, refreshAll)
+    ownerTabRefreshers[owner] = refreshAll
+    if not panelSetTabHooked and PanelTemplates_SetTab then
+        hooksecurefunc("PanelTemplates_SetTab", function(frame)
+            local fn = ownerTabRefreshers[frame]
+            if fn then C_Timer.After(0, fn) end
+        end)
+        panelSetTabHooked = true
+    end
+    local tabSystem = owner.TabSystem
+    if tabSystem and tabSystem.SetTab and not SkinBase.GetFrameData(tabSystem, "qTabSysHooked") then
+        hooksecurefunc(tabSystem, "SetTab", function()
+            C_Timer.After(0, function()
+                local fn = ownerTabRefreshers[owner]
+                if fn then fn() end
+            end)
+        end)
+        SkinBase.SetFrameData(tabSystem, "qTabSysHooked", true)
+    end
+end
+
+-- SkinTab(tab, owner, opts) — skin one tab; opts.hover wires brighten-on-enter
+-- with selected-state restore on leave. Use directly for pooled tabs.
+function SkinBase.SkinTab(tab, owner, opts)
+    if not tab then return end
+    opts = opts or {}
+    SkinBase.SkinTabButton(tab)
+    if opts.hover and not SkinBase.GetFrameData(tab, "qTabHoverHooked") then
+        tab:HookScript("OnEnter", TabHoverEnter)
+        tab:HookScript("OnLeave", function(self) SkinBase.RefreshTabSelected(self, owner) end)
+        SkinBase.SetFrameData(tab, "qTabHoverHooked", true)
+    end
+end
+
+function SkinBase.SkinTabGroup(tabs, owner, opts)
     if not tabs or #tabs == 0 then return end
+    opts = opts or {}
 
     for _, tab in ipairs(tabs) do
-        SkinBase.SkinTabButton(tab)
+        SkinBase.SkinTab(tab, owner, opts)
     end
 
     local function refreshAll()
@@ -752,7 +830,25 @@ function SkinBase.SkinTabGroup(tabs, owner)
         end
     end
 
+    if owner then
+        RegisterOwnerTabRefresh(owner, refreshAll)
+    end
+
     refreshAll()
+end
+
+-- RefreshTabGroup(tabs, owner) — theme refresh: re-store colors from
+-- GetSkinColors() then re-apply selected/unselected visuals.
+function SkinBase.RefreshTabGroup(tabs, owner)
+    if not tabs then return end
+    local sr, sg, sb, sa, bgr, bgg, bgb = SkinBase.GetSkinColors()
+    for _, tab in ipairs(tabs) do
+        SkinBase.SetFrameData(tab, "skinColor", { sr, sg, sb, sa })
+        SkinBase.SetFrameData(tab, "bgColor", { bgr, bgg, bgb })
+    end
+    for _, tab in ipairs(tabs) do
+        SkinBase.RefreshTabSelected(tab, owner)
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -829,6 +925,218 @@ function SkinBase.OnAddOnLoaded(addonName, callback, delay)
             fire()
         end
     end)
+end
+
+---------------------------------------------------------------------------
+-- Generic widget hover (accent-brighten border on enter, restore on leave).
+-- Reads colors from SkinBase weak state so live theme changes propagate.
+---------------------------------------------------------------------------
+local function HoverEnter(self)
+    local bd = SkinBase.GetBackdrop(self)
+    local sc = SkinBase.GetFrameData(self, "skinColor")
+    if bd and sc then
+        bd:SetBackdropBorderColor(
+            math.min(sc[1] * HOVER_BRIGHTEN, 1),
+            math.min(sc[2] * HOVER_BRIGHTEN, 1),
+            math.min(sc[3] * HOVER_BRIGHTEN, 1),
+            sc[4])
+    end
+end
+
+local function HoverLeave(self)
+    local bd = SkinBase.GetBackdrop(self)
+    local sc = SkinBase.GetFrameData(self, "skinColor")
+    if bd and sc then
+        bd:SetBackdropBorderColor(sc[1], sc[2], sc[3], sc[4])
+    end
+end
+
+local function AttachHover(frame)
+    if SkinBase.GetFrameData(frame, "qHoverHooked") then return end
+    frame:HookScript("OnEnter", HoverEnter)
+    frame:HookScript("OnLeave", HoverLeave)
+    SkinBase.SetFrameData(frame, "qHoverHooked", true)
+end
+
+---------------------------------------------------------------------------
+-- SkinButton(button, opts)
+--   opts.strip   : StripTextures instead of hiding named Left/Right/Middle/
+--                  Center (use for WowStyle1-style buttons).
+--   opts.bgBoost : background lighten amount (default BG_BOOST_BUTTON).
+--   opts.hover   : attach hover hooks (default true).
+---------------------------------------------------------------------------
+function SkinBase.SkinButton(button, opts)
+    if not button or SkinBase.IsStyled(button) then return end
+    opts = opts or {}
+    local sr, sg, sb, sa, bgr, bgg, bgb = SkinBase.GetSkinColors()
+    local boost = opts.bgBoost or BG_BOOST_BUTTON
+
+    if opts.strip then
+        SkinBase.StripTextures(button)
+    else
+        if button.Left then button.Left:SetAlpha(0) end
+        if button.Right then button.Right:SetAlpha(0) end
+        if button.Middle then button.Middle:SetAlpha(0) end
+        if button.Center then button.Center:SetAlpha(0) end
+    end
+    local highlight = button.GetHighlightTexture and button:GetHighlightTexture()
+    if highlight then highlight:SetAlpha(0) end
+    local pushed = button.GetPushedTexture and button:GetPushedTexture()
+    if pushed then pushed:SetAlpha(0) end
+    local normal = button.GetNormalTexture and button:GetNormalTexture()
+    if normal then normal:SetAlpha(0) end
+
+    SkinBase.CreateBackdrop(button, sr, sg, sb, sa,
+        math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), 1)
+    SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
+    SkinBase.SetFrameData(button, "skinKind", "button")
+    SkinBase.SetFrameData(button, "bgBoost", boost)
+    if opts.hover ~= false then AttachHover(button) end
+    SkinBase.MarkStyled(button)
+end
+
+---------------------------------------------------------------------------
+-- SkinEditBox(editBox) — strip Blizzard textures + QUI backdrop (no boost).
+---------------------------------------------------------------------------
+function SkinBase.SkinEditBox(editBox)
+    if not editBox or SkinBase.IsStyled(editBox) then return end
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    SkinBase.StripTextures(editBox)
+    SkinBase.CreateBackdrop(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinBase.SetFrameData(editBox, "skinColor", { sr, sg, sb, sa })
+    SkinBase.SetFrameData(editBox, "skinKind", "editbox")
+    SkinBase.MarkStyled(editBox)
+end
+
+---------------------------------------------------------------------------
+-- SkinScrollRow(row, opts)
+--   opts.bgBoost        : default BG_BOOST_ROW
+--   opts.borderAlphaMult: default 0.5
+--   opts.bgAlpha        : default 0.6
+--   opts.hover          : default true
+---------------------------------------------------------------------------
+function SkinBase.SkinScrollRow(row, opts)
+    if not row or SkinBase.IsStyled(row) then return end
+    opts = opts or {}
+    local sr, sg, sb, sa, bgr, bgg, bgb = SkinBase.GetSkinColors()
+    local boost = opts.bgBoost or BG_BOOST_ROW
+    local borderAlphaMult = opts.borderAlphaMult or 0.5
+    local bgAlpha = opts.bgAlpha or 0.6
+
+    SkinBase.StripTextures(row)
+    SkinBase.CreateBackdrop(row, sr, sg, sb, sa * borderAlphaMult,
+        math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), bgAlpha)
+    SkinBase.SetFrameData(row, "skinColor", { sr, sg, sb, sa * borderAlphaMult })
+    SkinBase.SetFrameData(row, "skinKind", "row")
+    SkinBase.SetFrameData(row, "bgBoost", boost)
+    SkinBase.SetFrameData(row, "bgAlpha", bgAlpha)
+    SkinBase.SetFrameData(row, "borderAlphaMult", borderAlphaMult)
+    if opts.hover ~= false then AttachHover(row) end
+    SkinBase.MarkStyled(row)
+end
+
+---------------------------------------------------------------------------
+-- SkinDropdown(dropdown, opts)
+--   opts.keepArrow     : hide NineSlice/NormalTexture/HighlightTexture but
+--                        leave dropdown.Arrow visible.
+--   opts.noStrip       : do NOT strip textures (preserves child controls such
+--                        as a clear-filter "X").
+--   opts.bgBoost       : default BG_BOOST_BUTTON.
+--   opts.insetY        : inset the backdrop vertically by N px.
+--   opts.belowChildren : backdrop frame level = max(0, dropdown level - 1).
+--   opts.hover         : default true.
+---------------------------------------------------------------------------
+function SkinBase.SkinDropdown(dropdown, opts)
+    if not dropdown or SkinBase.IsStyled(dropdown) then return end
+    opts = opts or {}
+    local sr, sg, sb, sa, bgr, bgg, bgb = SkinBase.GetSkinColors()
+    local boost = opts.bgBoost or BG_BOOST_BUTTON
+
+    if opts.noStrip then
+        -- preserve all child textures
+    elseif opts.keepArrow then
+        if dropdown.NineSlice then dropdown.NineSlice:SetAlpha(0) end
+        if dropdown.NormalTexture then dropdown.NormalTexture:SetAlpha(0) end
+        if dropdown.HighlightTexture then dropdown.HighlightTexture:SetAlpha(0) end
+    else
+        SkinBase.StripTextures(dropdown)
+    end
+
+    SkinBase.CreateBackdrop(dropdown, sr, sg, sb, sa,
+        math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), 1)
+    local bd = SkinBase.GetBackdrop(dropdown)
+    if bd then
+        if opts.insetY then
+            bd:ClearAllPoints()
+            bd:SetPoint("TOPLEFT", 0, -opts.insetY)
+            bd:SetPoint("BOTTOMRIGHT", 0, opts.insetY)
+        end
+        if opts.belowChildren then
+            bd:SetFrameLevel(math.max(0, dropdown:GetFrameLevel() - 1))
+        end
+    end
+    SkinBase.SetFrameData(dropdown, "skinColor", { sr, sg, sb, sa })
+    SkinBase.SetFrameData(dropdown, "bgColor", { bgr, bgg, bgb })
+    SkinBase.SetFrameData(dropdown, "skinKind", "dropdown")
+    SkinBase.SetFrameData(dropdown, "bgBoost", boost)
+    if opts.hover ~= false then AttachHover(dropdown) end
+    SkinBase.MarkStyled(dropdown)
+end
+
+---------------------------------------------------------------------------
+-- SkinListContainer(list, rowStyler)
+-- Hide NineSlice/Background, strip textures, hide the scrollbar background,
+-- and style pooled rows via HookScrollBoxAcquired.
+---------------------------------------------------------------------------
+function SkinBase.SkinListContainer(list, rowStyler)
+    if not list or SkinBase.IsStyled(list) then return end
+    if list.NineSlice then list.NineSlice:Hide() end
+    if list.BackgroundNineSlice then list.BackgroundNineSlice:Hide() end
+    if list.Background and list.Background.SetAlpha then list.Background:SetAlpha(0) end
+    SkinBase.StripTextures(list)
+    if list.ScrollBox and rowStyler then
+        SkinBase.HookScrollBoxAcquired(list.ScrollBox, rowStyler)
+    end
+    if list.ScrollBar and list.ScrollBar.Background then
+        list.ScrollBar.Background:Hide()
+    end
+    SkinBase.MarkStyled(list)
+end
+
+---------------------------------------------------------------------------
+-- RefreshWidget(frame) — re-derive colors from GetSkinColors() by skinKind,
+-- re-apply to the QUI backdrop, and refresh stored "skinColor" so a later
+-- hover uses the new colors. Handles button/dropdown/editbox/row. Tabs are
+-- refreshed via RefreshTabGroup (they need owner context).
+---------------------------------------------------------------------------
+function SkinBase.RefreshWidget(frame)
+    if not frame then return end
+    local bd = SkinBase.GetBackdrop(frame)
+    if not bd then return end
+    local kind = SkinBase.GetFrameData(frame, "skinKind")
+    if not kind then return end
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+
+    if kind == "button" or kind == "dropdown" then
+        local boost = SkinBase.GetFrameData(frame, "bgBoost") or BG_BOOST_BUTTON
+        bd:SetBackdropColor(math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), 1)
+        bd:SetBackdropBorderColor(sr, sg, sb, sa)
+        SkinBase.SetFrameData(frame, "skinColor", { sr, sg, sb, sa })
+        if kind == "dropdown" then
+            SkinBase.SetFrameData(frame, "bgColor", { bgr, bgg, bgb })
+        end
+    elseif kind == "editbox" then
+        bd:SetBackdropColor(bgr, bgg, bgb, bga)
+        bd:SetBackdropBorderColor(sr, sg, sb, sa)
+        SkinBase.SetFrameData(frame, "skinColor", { sr, sg, sb, sa })
+    elseif kind == "row" then
+        local boost = SkinBase.GetFrameData(frame, "bgBoost") or BG_BOOST_ROW
+        local bgAlpha = SkinBase.GetFrameData(frame, "bgAlpha") or 0.6
+        local mult = SkinBase.GetFrameData(frame, "borderAlphaMult") or 0.5
+        bd:SetBackdropColor(math.min(bgr + boost, 1), math.min(bgg + boost, 1), math.min(bgb + boost, 1), bgAlpha)
+        bd:SetBackdropBorderColor(sr, sg, sb, sa * mult)
+        SkinBase.SetFrameData(frame, "skinColor", { sr, sg, sb, sa * mult })
+    end
 end
 
 ---------------------------------------------------------------------------

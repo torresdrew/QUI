@@ -16,92 +16,49 @@ local function assertAbsent(text, needle, reason)
     assert(not text:find(needle, 1, true), reason)
 end
 
+local base = readFile("modules/skinning/base.lua")
 local professions = readFile("modules/skinning/frames/professions.lua")
 local auctionHouse = readFile("modules/skinning/frames/auctionhouse.lua")
 local craftingOrders = readFile("modules/skinning/frames/craftingorders.lua")
+local instanceFrames = readFile("modules/skinning/frames/instanceframes.lua")
 
-assertContains(
-    professions,
-    "local function StyleFilterDropdown",
-    "Professions must use a dedicated filter dropdown styler so clear-filter child controls are preserved")
+-- SkinBase exposes the shared widget API
+for _, fn in ipairs({
+    "function SkinBase.SkinButton", "function SkinBase.SkinEditBox",
+    "function SkinBase.SkinDropdown", "function SkinBase.SkinScrollRow",
+    "function SkinBase.SkinListContainer", "function SkinBase.RefreshWidget",
+    "function SkinBase.SkinTab", "function SkinBase.SkinTabGroup",
+    "function SkinBase.RefreshTabGroup",
+}) do
+    assertContains(base, fn, "base.lua must define " .. fn)
+end
 
-local filterHelperBody = professions:match("local function StyleFilterDropdown%b()%s*(.-)\nlocal function IsEnabled")
-assert(filterHelperBody, "StyleFilterDropdown body should be present before IsEnabled")
+-- belowChildren backdrop ordering now lives in SkinBase.SkinDropdown
+assertContains(base, "bd:SetFrameLevel(math.max(0, dropdown:GetFrameLevel() - 1))",
+    "SkinDropdown must support backdrop-below-children ordering for clear-filter controls")
 
-assertAbsent(
-    filterHelperBody,
-    "SkinBase.StripTextures",
-    "Filter dropdown styling must not strip child textures used by the clear-filter X")
+-- All four files adopt the shared helpers and no longer hand-roll stylers
+for _, file in ipairs({ auctionHouse, craftingOrders, professions, instanceFrames }) do
+    assertContains(file, "SkinBase.SkinButton", "migrated file must use SkinBase.SkinButton")
+    assertAbsent(file, "local function StyleButton", "migrated file must not hand-roll StyleButton")
+end
 
-assertContains(
-    filterHelperBody,
-    "bd:SetFrameLevel(math.max(0, dropdown:GetFrameLevel() - 1))",
-    "Filter dropdown backdrop should sit behind dropdown child controls")
+-- Professions preserves its three guarded behaviors via SkinBase options
+assertContains(professions, "SkinBase.SkinDropdown(recipeList.FilterDropdown, { noStrip = true, belowChildren = true }",
+    "Professions filter dropdown must use noStrip + belowChildren to preserve the clear-filter X")
+assertContains(professions, "SkinBase.SkinTabGroup(tabs, frame, { hover = true })",
+    "Professions main tabs must keep selected-state-aware hover")
+assertContains(professions, "SkinBase.SkinTab(tab, owner, { hover = true })",
+    "Professions spec pool tabs must keep hover via the shared single-tab helper")
+assertAbsent(professions, "local function StyleFilterDropdown",
+    "Professions must no longer hand-roll the filter dropdown styler")
+assertAbsent(professions, "local function StyleTabSystemTab",
+    "Professions must no longer hand-roll the TabSystem tab styler")
 
-assertContains(
-    filterHelperBody,
-    'SkinBase.SetFrameData(dropdown, "skinColor"',
-    "Filter dropdown hover colors must be stored in SkinBase weak state")
-
-assertContains(
-    professions,
-    "local function RestoreTabVisual",
-    "Professions tabs should restore selected/inactive visuals through one local helper")
-
-assertContains(
-    professions,
-    "local function HookTabHover",
-    "Professions tabs should share hover handling for main and specialization tabs")
-
-assertContains(
-    professions,
-    "HookTabHover(tab, frame, sr, sg, sb, sa)",
-    "Main Professions tabs must get consistent hover restoration")
-
-assertContains(
-    professions,
-    "HookTabHover(tab, owner, sr, sg, sb, sa)",
-    "Professions specialization tabs must get consistent hover restoration")
-
-assertContains(
-    professions,
-    "RestoreTabVisual(tab, owner)",
-    "Professions specialization tabs must apply selected/inactive visuals after styling and refresh")
-
-local updateDropdownBody = professions:match("local function UpdateDropdownColors%b()%s*(.-)%s*end%s*local function UpdatePanelColors")
-assert(updateDropdownBody, "UpdateDropdownColors body should be present")
-
-assertContains(
-    updateDropdownBody,
-    'SkinBase.SetFrameData(dropdown, "skinColor"',
-    "Dropdown refresh must update stored hover border colors")
-
-assertContains(
-    updateDropdownBody,
-    'SkinBase.SetFrameData(dropdown, "bgColor"',
-    "Dropdown refresh must update stored hover background colors")
-
-local refreshMainTabsBody = professions:match("%-%- Tabs%s*if frame%.TabSystem and frame%.TabSystem%.tabs then%s*(.-)%s*UpdateTabSelectedState%(frame%)")
-assert(refreshMainTabsBody, "RefreshProfessionsColors main tab refresh body should be present")
-
-assertContains(
-    refreshMainTabsBody,
-    'SkinBase.SetFrameData(tab, "skinColor"',
-    "Main tab theme refresh must update stored hover border colors")
-
-assertContains(
-    refreshMainTabsBody,
-    'SkinBase.SetFrameData(tab, "bgColor"',
-    "Main tab theme refresh must update stored selected-state background colors")
-
-assertContains(
-    auctionHouse,
-    "StyleDropdownButton(searchBar.FilterButton",
-    "Auction House filter button skinning should remain explicit")
-
-assertContains(
-    craftingOrders,
-    "StyleDropdownButton(searchBar.FilterDropdown",
-    "Crafting Orders filter dropdown skinning should remain explicit")
+-- Instance frames keep the arrow-preserving, inset dropdown treatment
+assertContains(instanceFrames, "SkinBase.SkinDropdown(",
+    "Instance frame dropdowns must use SkinBase.SkinDropdown")
+assertContains(instanceFrames, "keepArrow = true",
+    "Instance frame dropdowns must keep the dropdown arrow visible")
 
 print("OK: skinning_frame_consistency_test")

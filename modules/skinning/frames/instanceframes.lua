@@ -7,129 +7,6 @@ local SkinBase = ns.SkinBase
 -- INSTANCE FRAMES SKINNING (PVE, Dungeons & Raids, PVP, M+ Dungeons)
 ---------------------------------------------------------------------------
 
--- Style a button
-local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not button or SkinBase.IsStyled(button) then return end
-
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
-    SkinBase.CreateBackdrop(button, sr, sg, sb, sa, btnBgR, btnBgG, btnBgB, 1)
-
-    -- Hide default textures
-    if button.Left then button.Left:SetAlpha(0) end
-    if button.Right then button.Right:SetAlpha(0) end
-    if button.Middle then button.Middle:SetAlpha(0) end
-    if button.Center then button.Center:SetAlpha(0) end
-
-    local highlight = button:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-    local pushed = button:GetPushedTexture()
-    if pushed then pushed:SetAlpha(0) end
-    local normal = button:GetNormalTexture()
-    if normal then normal:SetAlpha(0) end
-
-    -- Store colors for hover
-    SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
-
-    button:HookScript("OnEnter", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            local r, g, b, a = unpack(sc)
-            bd:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
-        end
-    end)
-    button:HookScript("OnLeave", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            bd:SetBackdropBorderColor(unpack(sc))
-        end
-    end)
-
-    SkinBase.MarkStyled(button)
-end
-
--- Style dropdown (WowStyle1DropdownTemplate)
-local function StyleDropdown(dropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga, width)
-    if not dropdown or SkinBase.IsStyled(dropdown) then return end
-
-    -- Set width if provided
-    if width then
-        dropdown:SetWidth(width)
-    end
-
-    -- Strip textures (but keep Arrow visible)
-    if dropdown.NineSlice then dropdown.NineSlice:SetAlpha(0) end
-    if dropdown.NormalTexture then dropdown.NormalTexture:SetAlpha(0) end
-    if dropdown.HighlightTexture then dropdown.HighlightTexture:SetAlpha(0) end
-
-    -- Create backdrop
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
-    SkinBase.CreateBackdrop(dropdown, sr, sg, sb, sa, btnBgR, btnBgG, btnBgB, 1)
-    local ddBackdrop = SkinBase.GetBackdrop(dropdown)
-    ddBackdrop:ClearAllPoints()
-    ddBackdrop:SetPoint("TOPLEFT", 0, -2)
-    ddBackdrop:SetPoint("BOTTOMRIGHT", 0, 2)
-
-    -- Store colors for hover
-    SkinBase.SetFrameData(dropdown, "skinColor", { sr, sg, sb, sa })
-
-    dropdown:HookScript("OnEnter", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            local r, g, b, a = unpack(sc)
-            bd:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
-        end
-    end)
-    dropdown:HookScript("OnLeave", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            bd:SetBackdropBorderColor(unpack(sc))
-        end
-    end)
-
-    SkinBase.MarkStyled(dropdown)
-end
-
--- Style tab button
-local function StyleTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not tab or SkinBase.IsStyled(tab) then return end
-
-    -- Hide default textures (inactive state)
-    if tab.Left then tab.Left:SetAlpha(0) end
-    if tab.Middle then tab.Middle:SetAlpha(0) end
-    if tab.Right then tab.Right:SetAlpha(0) end
-    if tab.LeftDisabled then tab.LeftDisabled:SetAlpha(0) end
-    if tab.MiddleDisabled then tab.MiddleDisabled:SetAlpha(0) end
-    if tab.RightDisabled then tab.RightDisabled:SetAlpha(0) end
-
-    -- Hide active/selected state textures (the yellow border)
-    if tab.LeftActive then tab.LeftActive:SetAlpha(0) end
-    if tab.MiddleActive then tab.MiddleActive:SetAlpha(0) end
-    if tab.RightActive then tab.RightActive:SetAlpha(0) end
-
-    -- Hide highlight textures
-    if tab.LeftHighlight then tab.LeftHighlight:SetAlpha(0) end
-    if tab.MiddleHighlight then tab.MiddleHighlight:SetAlpha(0) end
-    if tab.RightHighlight then tab.RightHighlight:SetAlpha(0) end
-
-    local highlight = tab:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-
-    -- Create backdrop
-    SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
-    local tabBackdrop = SkinBase.GetBackdrop(tab)
-    SkinBase.SetPixelInsetPoints(tabBackdrop, tab, 3, 3, 3, 0)
-
-    SkinBase.MarkStyled(tab)
-end
-
 -- Hide all Blizzard decorations on PVEFrame (following character.lua/inspect.lua patterns)
 local function HidePVEDecorations()
     local PVEFrame = _G.PVEFrame
@@ -268,13 +145,14 @@ local function SkinPVEFrame()
     -- Style close button
     SkinBase.SkinCloseButton(PVEFrame.CloseButton or _G.PVEFrameCloseButton)
 
-    -- Style tabs
+    -- Style tabs (SkinTabGroup adds selected-state highlighting, matching the
+    -- other skinned frames — the active PVE tab is now indicated).
+    local pveTabs = {}
     for i = 1, 4 do
         local tab = _G["PVEFrameTab" .. i]
-        if tab then
-            StyleTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        end
+        if tab then pveTabs[#pveTabs + 1] = tab end
     end
+    SkinBase.SkinTabGroup(pveTabs, PVEFrame)
 
     -- Reposition tabs: left justify and tighten spacing
     -- Blizzard default: Tab1 at x=19, Tab2-3 at -16px overlap, Tab4 at +3px gap
@@ -409,8 +287,6 @@ local function SkinLFDFrame()
     local LFDQueueFrame = _G.LFDQueueFrame
     if not LFDQueueFrame or SkinBase.IsSkinned(LFDQueueFrame) then return end
 
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
-
     -- Hide Blizzard decorations
     HideLFDDecorations()
 
@@ -441,13 +317,14 @@ local function SkinLFDFrame()
 
     -- Style find group button
     if _G.LFDQueueFrameFindGroupButton then
-        StyleButton(_G.LFDQueueFrameFindGroupButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(_G.LFDQueueFrameFindGroupButton)
     end
 
     -- Style type dropdown
     local typeDropdown = LFDQueueFrame.TypeDropdown or _G.LFDQueueFrameTypeDropdown
     if typeDropdown then
-        StyleDropdown(typeDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga, 200)
+        typeDropdown:SetWidth(200)
+        SkinBase.SkinDropdown(typeDropdown, { keepArrow = true, insetY = 2 })
     end
 
     SkinBase.MarkSkinned(LFDQueueFrame)
@@ -457,8 +334,6 @@ end
 local function SkinRaidFinderFrame()
     local RaidFinderQueueFrame = _G.RaidFinderQueueFrame
     if not RaidFinderQueueFrame or SkinBase.IsSkinned(RaidFinderQueueFrame) then return end
-
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
 
     -- Hide Blizzard decorations
     HideRaidFinderDecorations()
@@ -488,13 +363,14 @@ local function SkinRaidFinderFrame()
 
     -- Style find raid button
     if _G.RaidFinderFrameFindRaidButton then
-        StyleButton(_G.RaidFinderFrameFindRaidButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(_G.RaidFinderFrameFindRaidButton)
     end
 
     -- Style selection dropdown
     local selectionDropdown = RaidFinderQueueFrame.SelectionDropdown
     if selectionDropdown then
-        StyleDropdown(selectionDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga, 200)
+        selectionDropdown:SetWidth(200)
+        SkinBase.SkinDropdown(selectionDropdown, { keepArrow = true, insetY = 2 })
     end
 
     SkinBase.MarkSkinned(RaidFinderQueueFrame)
@@ -571,17 +447,17 @@ local function SkinLFGListFrame()
     if LFGListFrame.CategorySelection then
         local cs = LFGListFrame.CategorySelection
         if cs.StartGroupButton then
-            StyleButton(cs.StartGroupButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(cs.StartGroupButton)
         end
         if cs.FindGroupButton then
-            StyleButton(cs.FindGroupButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(cs.FindGroupButton)
         end
         -- Style category buttons
         if cs.CategoryButtons then
             for _, catButton in pairs(cs.CategoryButtons) do
                 if catButton and not SkinBase.IsStyled(catButton) then
                     SkinBase.StripTextures(catButton)
-                    StyleButton(catButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+                    SkinBase.SkinButton(catButton)
                 end
             end
         end
@@ -591,22 +467,22 @@ local function SkinLFGListFrame()
     if LFGListFrame.SearchPanel then
         local sp = LFGListFrame.SearchPanel
         if sp.BackButton then
-            StyleButton(sp.BackButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(sp.BackButton)
         end
         if sp.SignUpButton then
-            StyleButton(sp.SignUpButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(sp.SignUpButton)
         end
         if sp.RefreshButton then
-            StyleButton(sp.RefreshButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(sp.RefreshButton)
         end
-        -- Style search box
+        -- Style search box (uses raw CreateBackdrop — keep colors)
         if sp.SearchBox then
             SkinBase.StripTextures(sp.SearchBox)
             SkinBase.CreateBackdrop(sp.SearchBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         end
         -- Style filter button
         if sp.FilterButton then
-            StyleButton(sp.FilterButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(sp.FilterButton)
         end
     end
 
@@ -614,13 +490,13 @@ local function SkinLFGListFrame()
     if LFGListFrame.ApplicationViewer then
         local av = LFGListFrame.ApplicationViewer
         if av.RefreshButton then
-            StyleButton(av.RefreshButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(av.RefreshButton)
         end
         if av.RemoveEntryButton then
-            StyleButton(av.RemoveEntryButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(av.RemoveEntryButton)
         end
         if av.EditButton then
-            StyleButton(av.EditButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(av.EditButton)
         end
     end
 
@@ -628,10 +504,10 @@ local function SkinLFGListFrame()
     if LFGListFrame.EntryCreation then
         local ec = LFGListFrame.EntryCreation
         if ec.ListGroupButton then
-            StyleButton(ec.ListGroupButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(ec.ListGroupButton)
         end
         if ec.CancelButton then
-            StyleButton(ec.CancelButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(ec.CancelButton)
         end
     end
 
@@ -1063,13 +939,14 @@ local function SkinPVPFrame()
     if HonorFrame then
         -- Queue button
         if _G.HonorFrameQueueButton then
-            StyleButton(_G.HonorFrameQueueButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(_G.HonorFrameQueueButton)
         end
 
         -- Type dropdown
         local typeDropdown = HonorFrame.TypeDropdown or _G.HonorFrameTypeDropdown
         if typeDropdown then
-            StyleDropdown(typeDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga, 230)
+            typeDropdown:SetWidth(230)
+            SkinBase.SkinDropdown(typeDropdown, { keepArrow = true, insetY = 2 })
         end
 
         -- Role icons (handles both 11.x and 12.x API)
@@ -1111,7 +988,7 @@ local function SkinPVPFrame()
     if ConquestFrame then
         -- Join button
         if _G.ConquestJoinButton then
-            StyleButton(_G.ConquestJoinButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(_G.ConquestJoinButton)
         end
 
         -- Role icons (handles both 11.x and 12.x API)
@@ -1160,12 +1037,13 @@ local function SkinPVPFrame()
 
         -- Queue button
         if TrainingGroundsFrame.QueueButton then
-            StyleButton(TrainingGroundsFrame.QueueButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(TrainingGroundsFrame.QueueButton)
         end
 
         -- Type dropdown
         if TrainingGroundsFrame.TypeDropdown then
-            StyleDropdown(TrainingGroundsFrame.TypeDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga, 230)
+            TrainingGroundsFrame.TypeDropdown:SetWidth(230)
+            SkinBase.SkinDropdown(TrainingGroundsFrame.TypeDropdown, { keepArrow = true, insetY = 2 })
         end
 
         -- Role icons
@@ -1207,26 +1085,6 @@ local function SkinInstanceFrames()
     SkinLFGListFrame()
     SkinChallengesFrame()
     SkinPVPFrame()
-end
-
--- Helper to update a styled button's colors
-local function UpdateButtonColors(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = button and SkinBase.GetBackdrop(button)
-    if not bd then return end
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
-    bd:SetBackdropColor(btnBgR, btnBgG, btnBgB, 1)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-    SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
-end
-
--- Helper to update a tab's colors
-local function UpdateTabColors(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = tab and SkinBase.GetBackdrop(tab)
-    if not bd then return end
-    bd:SetBackdropColor(bgr, bgg, bgb, 0.9)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
 end
 
 -- Helper to update GroupFinder button colors
@@ -1290,18 +1148,6 @@ local function UpdateAffixIconColors(affix, sr, sg, sb, sa)
     bd:SetBackdropBorderColor(sr, sg, sb, sa)
 end
 
--- Helper to update dropdown colors
-local function UpdateDropdownColors(dropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = dropdown and SkinBase.GetBackdrop(dropdown)
-    if not bd then return end
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
-    bd:SetBackdropColor(btnBgR, btnBgG, btnBgB, 1)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-    SkinBase.SetFrameData(dropdown, "skinColor", { sr, sg, sb, sa })
-end
-
 -- Refresh colors
 local function RefreshInstanceFramesColors()
     local PVEFrame = _G.PVEFrame
@@ -1317,9 +1163,12 @@ local function RefreshInstanceFramesColors()
     end
 
     -- Update PVE tabs
+    local pveTabs = {}
     for i = 1, 4 do
-        UpdateTabColors(_G["PVEFrameTab" .. i], sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        local tab = _G["PVEFrameTab" .. i]
+        if tab then pveTabs[#pveTabs + 1] = tab end
     end
+    SkinBase.RefreshTabGroup(pveTabs, PVEFrame)
 
     -- Update GroupFinder buttons
     local GroupFinderFrame = _G.GroupFinderFrame
@@ -1330,21 +1179,21 @@ local function RefreshInstanceFramesColors()
     end
 
     -- Update LFD buttons and dropdown
-    UpdateButtonColors(_G.LFDQueueFrameFindGroupButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinBase.RefreshWidget(_G.LFDQueueFrameFindGroupButton)
     local LFDQueueFrame = _G.LFDQueueFrame
     if LFDQueueFrame then
         local typeDropdown = LFDQueueFrame.TypeDropdown or _G.LFDQueueFrameTypeDropdown
         if typeDropdown then
-            UpdateDropdownColors(typeDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(typeDropdown)
         end
     end
 
     -- Update Raid Finder buttons and dropdown
     local RaidFinderQueueFrame = _G.RaidFinderQueueFrame
     if RaidFinderQueueFrame and SkinBase.IsSkinned(RaidFinderQueueFrame) then
-        UpdateButtonColors(_G.RaidFinderFrameFindRaidButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.RefreshWidget(_G.RaidFinderFrameFindRaidButton)
         if RaidFinderQueueFrame.SelectionDropdown then
-            UpdateDropdownColors(RaidFinderQueueFrame.SelectionDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(RaidFinderQueueFrame.SelectionDropdown)
         end
     end
 
@@ -1352,19 +1201,19 @@ local function RefreshInstanceFramesColors()
     local LFGListFrame = _G.LFGListFrame
     if LFGListFrame and SkinBase.IsSkinned(LFGListFrame) then
         if LFGListFrame.CategorySelection then
-            UpdateButtonColors(LFGListFrame.CategorySelection.StartGroupButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(LFGListFrame.CategorySelection.FindGroupButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(LFGListFrame.CategorySelection.StartGroupButton)
+            SkinBase.RefreshWidget(LFGListFrame.CategorySelection.FindGroupButton)
             if LFGListFrame.CategorySelection.CategoryButtons then
                 for _, catButton in pairs(LFGListFrame.CategorySelection.CategoryButtons) do
-                    UpdateButtonColors(catButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+                    SkinBase.RefreshWidget(catButton)
                 end
             end
         end
         if LFGListFrame.SearchPanel then
-            UpdateButtonColors(LFGListFrame.SearchPanel.BackButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(LFGListFrame.SearchPanel.SignUpButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(LFGListFrame.SearchPanel.RefreshButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(LFGListFrame.SearchPanel.FilterButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(LFGListFrame.SearchPanel.BackButton)
+            SkinBase.RefreshWidget(LFGListFrame.SearchPanel.SignUpButton)
+            SkinBase.RefreshWidget(LFGListFrame.SearchPanel.RefreshButton)
+            SkinBase.RefreshWidget(LFGListFrame.SearchPanel.FilterButton)
             if LFGListFrame.SearchPanel.SearchBox then
                 local sbBd = SkinBase.GetBackdrop(LFGListFrame.SearchPanel.SearchBox)
                 if sbBd then
@@ -1374,13 +1223,13 @@ local function RefreshInstanceFramesColors()
             end
         end
         if LFGListFrame.ApplicationViewer then
-            UpdateButtonColors(LFGListFrame.ApplicationViewer.RefreshButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(LFGListFrame.ApplicationViewer.RemoveEntryButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(LFGListFrame.ApplicationViewer.EditButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(LFGListFrame.ApplicationViewer.RefreshButton)
+            SkinBase.RefreshWidget(LFGListFrame.ApplicationViewer.RemoveEntryButton)
+            SkinBase.RefreshWidget(LFGListFrame.ApplicationViewer.EditButton)
         end
         if LFGListFrame.EntryCreation then
-            UpdateButtonColors(LFGListFrame.EntryCreation.ListGroupButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(LFGListFrame.EntryCreation.CancelButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(LFGListFrame.EntryCreation.ListGroupButton)
+            SkinBase.RefreshWidget(LFGListFrame.EntryCreation.CancelButton)
         end
     end
 
@@ -1422,11 +1271,11 @@ local function RefreshInstanceFramesColors()
         -- Honor frame
         local HonorFrame = _G.HonorFrame
         if HonorFrame then
-            UpdateButtonColors(_G.HonorFrameQueueButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(_G.HonorFrameQueueButton)
             -- Type dropdown
             local typeDropdown = HonorFrame.TypeDropdown or _G.HonorFrameTypeDropdown
             if typeDropdown then
-                UpdateDropdownColors(typeDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+                SkinBase.RefreshWidget(typeDropdown)
             end
             -- Bonus frame buttons
             if HonorFrame.BonusFrame then
@@ -1447,7 +1296,7 @@ local function RefreshInstanceFramesColors()
         -- Conquest frame
         local ConquestFrame = _G.ConquestFrame
         if ConquestFrame then
-            UpdateButtonColors(_G.ConquestJoinButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(_G.ConquestJoinButton)
             -- Activity buttons
             local conquestButtons = { "RatedSoloShuffle", "RatedBGBlitz", "Arena2v2", "Arena3v3", "RatedBG" }
             for _, btnName in ipairs(conquestButtons) do
@@ -1464,9 +1313,9 @@ local function RefreshInstanceFramesColors()
         -- Training Grounds frame (12.x only)
         local TrainingGroundsFrame = _G.TrainingGroundsFrame
         if TrainingGroundsFrame and SkinBase.IsSkinned(TrainingGroundsFrame) then
-            UpdateButtonColors(TrainingGroundsFrame.QueueButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(TrainingGroundsFrame.QueueButton)
             if TrainingGroundsFrame.TypeDropdown then
-                UpdateDropdownColors(TrainingGroundsFrame.TypeDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+                SkinBase.RefreshWidget(TrainingGroundsFrame.TypeDropdown)
             end
             if TrainingGroundsFrame.ConquestBar then
                 UpdateConquestBarColors(TrainingGroundsFrame.ConquestBar, sr, sg, sb, sa, bgr, bgg, bgb, bga)

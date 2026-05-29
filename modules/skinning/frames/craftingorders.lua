@@ -7,120 +7,6 @@ local SkinBase = ns.SkinBase
 -- CRAFTING ORDERS (WORK ORDERS) SKINNING
 ---------------------------------------------------------------------------
 
--- Style a button (same pattern as auctionhouse)
-local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not button or SkinBase.IsStyled(button) then return end
-
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
-    SkinBase.CreateBackdrop(button, sr, sg, sb, sa, btnBgR, btnBgG, btnBgB, 1)
-
-    if button.Left then button.Left:SetAlpha(0) end
-    if button.Right then button.Right:SetAlpha(0) end
-    if button.Middle then button.Middle:SetAlpha(0) end
-    if button.Center then button.Center:SetAlpha(0) end
-
-    local highlight = button:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-    local pushed = button:GetPushedTexture()
-    if pushed then pushed:SetAlpha(0) end
-    local normal = button:GetNormalTexture()
-    if normal then normal:SetAlpha(0) end
-
-    SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
-
-    button:HookScript("OnEnter", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            local r, g, b, a = unpack(sc)
-            bd:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
-        end
-    end)
-    button:HookScript("OnLeave", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            bd:SetBackdropBorderColor(unpack(sc))
-        end
-    end)
-
-    SkinBase.MarkStyled(button)
-end
-
--- Style a WowStyle1 dropdown button (different texture structure than standard buttons)
-local function StyleDropdownButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not button or SkinBase.IsStyled(button) then return end
-
-    SkinBase.StripTextures(button)
-
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
-    SkinBase.CreateBackdrop(button, sr, sg, sb, sa, btnBgR, btnBgG, btnBgB, 1)
-
-    SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
-
-    button:HookScript("OnEnter", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            local r, g, b, a = unpack(sc)
-            bd:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
-        end
-    end)
-    button:HookScript("OnLeave", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            bd:SetBackdropBorderColor(unpack(sc))
-        end
-    end)
-
-    SkinBase.MarkStyled(button)
-end
-
--- Style tab button
-local function StyleTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not tab or SkinBase.IsStyled(tab) then return end
-
-    if tab.Left then tab.Left:SetAlpha(0) end
-    if tab.Middle then tab.Middle:SetAlpha(0) end
-    if tab.Right then tab.Right:SetAlpha(0) end
-    if tab.LeftDisabled then tab.LeftDisabled:SetAlpha(0) end
-    if tab.MiddleDisabled then tab.MiddleDisabled:SetAlpha(0) end
-    if tab.RightDisabled then tab.RightDisabled:SetAlpha(0) end
-    if tab.LeftActive then tab.LeftActive:SetAlpha(0) end
-    if tab.MiddleActive then tab.MiddleActive:SetAlpha(0) end
-    if tab.RightActive then tab.RightActive:SetAlpha(0) end
-    if tab.LeftHighlight then tab.LeftHighlight:SetAlpha(0) end
-    if tab.MiddleHighlight then tab.MiddleHighlight:SetAlpha(0) end
-    if tab.RightHighlight then tab.RightHighlight:SetAlpha(0) end
-
-    local highlight = tab:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-
-    SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
-    local tabBackdrop = SkinBase.GetBackdrop(tab)
-    SkinBase.SetPixelInsetPoints(tabBackdrop, tab, 3, 3, 3, 0)
-
-    SkinBase.SetFrameData(tab, "skinColor", { sr, sg, sb, sa })
-    SkinBase.SetFrameData(tab, "bgColor", { bgr, bgg, bgb })
-
-    SkinBase.MarkStyled(tab)
-end
-
--- Style edit box
-local function StyleEditBox(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not editBox or SkinBase.IsStyled(editBox) then return end
-
-    SkinBase.StripTextures(editBox)
-    SkinBase.CreateBackdrop(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-
-    SkinBase.MarkStyled(editBox)
-end
-
 -- Check if skinning is enabled
 local function IsEnabled()
     local core = GetCore()
@@ -135,57 +21,9 @@ local function SafeForEachFrame(scrollBox, callback)
     end
 end
 
--- Style a ScrollBox row entry
-local function StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not row or SkinBase.IsStyled(row) then return end
-
-    SkinBase.StripTextures(row)
-
-    local rowBgR = math.min(bgr + 0.03, 1)
-    local rowBgG = math.min(bgg + 0.03, 1)
-    local rowBgB = math.min(bgb + 0.03, 1)
-    SkinBase.CreateBackdrop(row, sr, sg, sb, sa * 0.5, rowBgR, rowBgG, rowBgB, 0.6)
-
-    SkinBase.SetFrameData(row, "skinColor", { sr, sg, sb, sa * 0.5 })
-
-    row:HookScript("OnEnter", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            local r, g, b, a = unpack(sc)
-            bd:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
-        end
-    end)
-    row:HookScript("OnLeave", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            bd:SetBackdropBorderColor(unpack(sc))
-        end
-    end)
-
-    SkinBase.MarkStyled(row)
-end
-
--- Hook a ScrollBox to style rows as they're acquired from the pool.
-local function HookScrollBox(scrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    SkinBase.HookScrollBoxAcquired(scrollBox, function(row)
-        StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    end)
-end
-
--- Skin a list container (NineSlice + Background + ScrollBox + ScrollBar)
-local function SkinListContainer(list, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not list then return end
-    if list.NineSlice then list.NineSlice:Hide() end
-    if list.Background then list.Background:SetAlpha(0) end
-    SkinBase.StripTextures(list)
-    if list.ScrollBox then
-        HookScrollBox(list.ScrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    end
-    if list.ScrollBar and list.ScrollBar.Background then
-        list.ScrollBar.Background:Hide()
-    end
+-- Style each pooled ScrollBox row as it's acquired (shared by all lists).
+local function skinRow(row)
+    SkinBase.SkinScrollRow(row)
 end
 
 -- Update a category button's backdrop to reflect selected state
@@ -240,32 +78,6 @@ local function StyleCategoryButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 end
 
 ---------------------------------------------------------------------------
--- TAB HANDLING
----------------------------------------------------------------------------
-
-local selectedTab = 1
-
-local function UpdateTabSelectedState(frame)
-    if not frame then return end
-    local tabs = { frame.BrowseTab, frame.OrdersTab }
-    for i, tab in ipairs(tabs) do
-        local bd = SkinBase.GetBackdrop(tab)
-        local sc = SkinBase.GetFrameData(tab, "skinColor")
-        local bg = SkinBase.GetFrameData(tab, "bgColor")
-        if bd and sc and bg then
-            local isSelected = (selectedTab == i)
-            if isSelected then
-                bd:SetBackdropBorderColor(sc[1], sc[2], sc[3], sc[4])
-                bd:SetBackdropColor(math.min(bg[1] + 0.10, 1), math.min(bg[2] + 0.10, 1), math.min(bg[3] + 0.10, 1), 1)
-            else
-                bd:SetBackdropBorderColor(sc[1] * 0.5, sc[2] * 0.5, sc[3] * 0.5, sc[4] * 0.6)
-                bd:SetBackdropColor(bg[1], bg[2], bg[3], 0.7)
-            end
-        end
-    end
-end
-
----------------------------------------------------------------------------
 -- HIDE DECORATIONS
 ---------------------------------------------------------------------------
 
@@ -287,14 +99,10 @@ end
 -- SKIN TABS
 ---------------------------------------------------------------------------
 
-local function SkinTabs(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function SkinTabs(frame)
     if not frame then return end
-
     local tabs = { frame.BrowseTab, frame.OrdersTab }
-    for _, tab in ipairs(tabs) do
-        StyleTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    end
-
+    SkinBase.SkinTabGroup(tabs, frame)
     -- Reposition tabs
     if tabs[1] then
         tabs[1]:ClearAllPoints()
@@ -304,24 +112,6 @@ local function SkinTabs(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         tabs[2]:ClearAllPoints()
         tabs[2]:SetPoint("TOPLEFT", tabs[1], "TOPRIGHT", -5, 0)
     end
-
-    -- Hook tab clicks to track selection
-    if frame.BrowseTab and not SkinBase.GetFrameData(frame.BrowseTab, "clickHooked") then
-        frame.BrowseTab:HookScript("OnClick", function()
-            selectedTab = 1
-            C_Timer.After(0, function() UpdateTabSelectedState(frame) end)
-        end)
-        SkinBase.SetFrameData(frame.BrowseTab, "clickHooked", true)
-    end
-    if frame.OrdersTab and not SkinBase.GetFrameData(frame.OrdersTab, "clickHooked") then
-        frame.OrdersTab:HookScript("OnClick", function()
-            selectedTab = 2
-            C_Timer.After(0, function() UpdateTabSelectedState(frame) end)
-        end)
-        SkinBase.SetFrameData(frame.OrdersTab, "clickHooked", true)
-    end
-
-    UpdateTabSelectedState(frame)
 end
 
 ---------------------------------------------------------------------------
@@ -338,17 +128,17 @@ local function SkinBrowseOrders(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local searchBar = browseOrders.SearchBar
     if searchBar then
         if searchBar.SearchBox then
-            StyleEditBox(searchBar.SearchBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinEditBox(searchBar.SearchBox)
         end
         if searchBar.SearchButton then
-            StyleButton(searchBar.SearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(searchBar.SearchButton)
         end
         if searchBar.FavoritesSearchButton then
-            StyleButton(searchBar.FavoritesSearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(searchBar.FavoritesSearchButton)
         end
         -- Filter dropdown (WowStyle1 dropdown — standard button textures don't apply)
         if searchBar.FilterDropdown then
-            StyleDropdownButton(searchBar.FilterDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(searchBar.FilterDropdown, { strip = true })
         end
     end
 
@@ -372,25 +162,25 @@ local function SkinBrowseOrders(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     end
 
     -- Recipe list
-    SkinListContainer(browseOrders.RecipeList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinBase.SkinListContainer(browseOrders.RecipeList, skinRow)
 end
 
 ---------------------------------------------------------------------------
 -- SKIN MY ORDERS PAGE
 ---------------------------------------------------------------------------
 
-local function SkinMyOrders(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function SkinMyOrders(frame)
     if not frame then return end
 
     local myOrders = frame.MyOrdersPage
     if not myOrders then return end
 
     -- Order list
-    SkinListContainer(myOrders.OrderList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinBase.SkinListContainer(myOrders.OrderList, skinRow)
 
     -- Refresh button
     if myOrders.RefreshButton then
-        StyleButton(myOrders.RefreshButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(myOrders.RefreshButton)
     end
 end
 
@@ -420,24 +210,23 @@ local function SkinForm(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
     -- Back button
     if form.BackButton then
-        StyleButton(form.BackButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(form.BackButton)
     end
 
-    -- List order button
+    -- Payment container
     if form.PaymentContainer then
         local pc = form.PaymentContainer
         if pc.ListOrderButton then
-            StyleButton(pc.ListOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(pc.ListOrderButton)
         end
         if pc.CancelOrderButton then
-            StyleButton(pc.CancelOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(pc.CancelOrderButton)
         end
         -- Duration dropdown
         if pc.DurationDropdown then
-            SkinBase.StripTextures(pc.DurationDropdown)
-            SkinBase.CreateBackdrop(pc.DurationDropdown, sr, sg, sb, sa, math.min(bgr + 0.07, 1), math.min(bgg + 0.07, 1), math.min(bgb + 0.07, 1), 1)
+            SkinBase.SkinDropdown(pc.DurationDropdown)
         end
-        -- Note edit box border
+        -- Note edit box border (non-standard alphas — NOT migrated to SkinEditBox)
         if pc.NoteEditBox and pc.NoteEditBox.Border then
             pc.NoteEditBox.Border:SetAlpha(0)
             SkinBase.CreateBackdrop(pc.NoteEditBox, sr, sg, sb, sa * 0.5, bgr, bgg, bgb, 0.8)
@@ -446,17 +235,15 @@ local function SkinForm(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
     -- Dropdowns on the form
     if form.MinimumQuality and form.MinimumQuality.Dropdown then
-        SkinBase.StripTextures(form.MinimumQuality.Dropdown)
-        SkinBase.CreateBackdrop(form.MinimumQuality.Dropdown, sr, sg, sb, sa, math.min(bgr + 0.07, 1), math.min(bgg + 0.07, 1), math.min(bgb + 0.07, 1), 1)
+        SkinBase.SkinDropdown(form.MinimumQuality.Dropdown)
     end
     if form.OrderRecipientDropdown then
-        SkinBase.StripTextures(form.OrderRecipientDropdown)
-        SkinBase.CreateBackdrop(form.OrderRecipientDropdown, sr, sg, sb, sa, math.min(bgr + 0.07, 1), math.min(bgg + 0.07, 1), math.min(bgb + 0.07, 1), 1)
+        SkinBase.SkinDropdown(form.OrderRecipientDropdown)
     end
 
     -- Recipient target edit box
     if form.OrderRecipientTarget then
-        StyleEditBox(form.OrderRecipientTarget, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinEditBox(form.OrderRecipientTarget)
     end
 
     -- Current listings side panel
@@ -467,10 +254,10 @@ local function SkinForm(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         SkinBase.CreateBackdrop(listings, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
         if listings.OrderList then
-            SkinListContainer(listings.OrderList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinListContainer(listings.OrderList, skinRow)
         end
         if listings.CloseButton then
-            StyleButton(listings.CloseButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(listings.CloseButton)
         end
     end
 end
@@ -492,42 +279,17 @@ local function SkinCraftingOrders()
 
     SkinBase.SkinCloseButton(frame.CloseButton or _G.ProfessionsCustomerOrdersFrameCloseButton)
 
-    SkinTabs(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinTabs(frame)
     SkinBrowseOrders(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    SkinMyOrders(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinMyOrders(frame)
     SkinForm(frame, sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
     SkinBase.MarkSkinned(frame)
 end
 
 ---------------------------------------------------------------------------
--- REFRESH COLORS (for live theme changes)
+-- PANEL COLOR REFRESH (frame-specific, not part of shared widget API)
 ---------------------------------------------------------------------------
-
-local function UpdateButtonColors(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = button and SkinBase.GetBackdrop(button)
-    if not bd then return end
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
-    bd:SetBackdropColor(btnBgR, btnBgG, btnBgB, 1)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-    SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
-end
-
-local function UpdateEditBoxColors(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = editBox and SkinBase.GetBackdrop(editBox)
-    if not bd then return end
-    bd:SetBackdropColor(bgr, bgg, bgb, bga)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-end
-
-local function UpdateDropdownColors(dropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = dropdown and SkinBase.GetBackdrop(dropdown)
-    if not bd then return end
-    bd:SetBackdropColor(math.min(bgr + 0.07, 1), math.min(bgg + 0.07, 1), math.min(bgb + 0.07, 1), 1)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-end
 
 local function UpdatePanelColors(panel, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     local bd = panel and SkinBase.GetBackdrop(panel)
@@ -535,6 +297,10 @@ local function UpdatePanelColors(panel, sr, sg, sb, sa, bgr, bgg, bgb, bga)
     bd:SetBackdropColor(math.min(bgr + 0.02, 1), math.min(bgg + 0.02, 1), math.min(bgb + 0.02, 1), 0.5)
     bd:SetBackdropBorderColor(sr, sg, sb, sa * 0.3)
 end
+
+---------------------------------------------------------------------------
+-- REFRESH COLORS (for live theme changes)
+---------------------------------------------------------------------------
 
 local function RefreshCraftingOrdersColors()
     local frame = _G.ProfessionsCustomerOrdersFrame
@@ -550,50 +316,42 @@ local function RefreshCraftingOrdersColors()
     end
 
     -- Tabs
-    local tabs = { frame.BrowseTab, frame.OrdersTab }
-    for _, tab in ipairs(tabs) do
-        local bd = tab and SkinBase.GetBackdrop(tab)
-        if bd then
-            bd:SetBackdropColor(bgr, bgg, bgb, 0.9)
-            bd:SetBackdropBorderColor(sr, sg, sb, sa)
-        end
-    end
-    UpdateTabSelectedState(frame)
+    SkinBase.RefreshTabGroup({ frame.BrowseTab, frame.OrdersTab }, frame)
 
     -- Browse page
     local browseOrders = frame.BrowseOrders
     if browseOrders then
         local searchBar = browseOrders.SearchBar
         if searchBar then
-            UpdateEditBoxColors(searchBar.SearchBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(searchBar.SearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(searchBar.FavoritesSearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(searchBar.FilterDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(searchBar.SearchBox)
+            SkinBase.RefreshWidget(searchBar.SearchButton)
+            SkinBase.RefreshWidget(searchBar.FavoritesSearchButton)
+            SkinBase.RefreshWidget(searchBar.FilterDropdown)
         end
     end
 
     -- My orders page
     local myOrders = frame.MyOrdersPage
     if myOrders then
-        UpdateButtonColors(myOrders.RefreshButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.RefreshWidget(myOrders.RefreshButton)
     end
 
     -- Form
     local form = frame.Form
     if form then
-        UpdateButtonColors(form.BackButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.RefreshWidget(form.BackButton)
         UpdatePanelColors(form.LeftPanelBackground, sr, sg, sb, sa, bgr, bgg, bgb, bga)
         UpdatePanelColors(form.RightPanelBackground, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateDropdownColors(form.OrderRecipientDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateEditBoxColors(form.OrderRecipientTarget, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.RefreshWidget(form.OrderRecipientDropdown)
+        SkinBase.RefreshWidget(form.OrderRecipientTarget)
         if form.MinimumQuality and form.MinimumQuality.Dropdown then
-            UpdateDropdownColors(form.MinimumQuality.Dropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(form.MinimumQuality.Dropdown)
         end
         if form.PaymentContainer then
             local pc = form.PaymentContainer
-            UpdateButtonColors(pc.ListOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateButtonColors(pc.CancelOrderButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateDropdownColors(pc.DurationDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(pc.ListOrderButton)
+            SkinBase.RefreshWidget(pc.CancelOrderButton)
+            SkinBase.RefreshWidget(pc.DurationDropdown)
             local noteBd = pc.NoteEditBox and SkinBase.GetBackdrop(pc.NoteEditBox)
             if noteBd then
                 noteBd:SetBackdropColor(bgr, bgg, bgb, 0.8)
@@ -607,7 +365,7 @@ local function RefreshCraftingOrdersColors()
                 listingsBd:SetBackdropColor(bgr, bgg, bgb, bga)
                 listingsBd:SetBackdropBorderColor(sr, sg, sb, sa)
             end
-            UpdateButtonColors(form.CurrentListings.CloseButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(form.CurrentListings.CloseButton)
         end
     end
 end

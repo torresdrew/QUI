@@ -7,149 +7,6 @@ local SkinBase = ns.SkinBase
 -- AUCTION HOUSE SKINNING
 ---------------------------------------------------------------------------
 
--- Style a button (same pattern as instanceframes)
-local function StyleButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not button or SkinBase.IsStyled(button) then return end
-
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
-    SkinBase.CreateBackdrop(button, sr, sg, sb, sa, btnBgR, btnBgG, btnBgB, 1)
-
-    -- Hide default textures
-    if button.Left then button.Left:SetAlpha(0) end
-    if button.Right then button.Right:SetAlpha(0) end
-    if button.Middle then button.Middle:SetAlpha(0) end
-    if button.Center then button.Center:SetAlpha(0) end
-
-    local highlight = button:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-    local pushed = button:GetPushedTexture()
-    if pushed then pushed:SetAlpha(0) end
-    local normal = button:GetNormalTexture()
-    if normal then normal:SetAlpha(0) end
-
-    -- Store colors for hover
-    SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
-
-    button:HookScript("OnEnter", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            local r, g, b, a = unpack(sc)
-            bd:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
-        end
-    end)
-    button:HookScript("OnLeave", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            bd:SetBackdropBorderColor(unpack(sc))
-        end
-    end)
-
-    SkinBase.MarkStyled(button)
-end
-
--- Style a WowStyle1 dropdown button (different texture structure than standard buttons)
-local function StyleDropdownButton(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not button or SkinBase.IsStyled(button) then return end
-
-    SkinBase.StripTextures(button)
-
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
-    SkinBase.CreateBackdrop(button, sr, sg, sb, sa, btnBgR, btnBgG, btnBgB, 1)
-
-    SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
-
-    button:HookScript("OnEnter", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            local r, g, b, a = unpack(sc)
-            bd:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
-        end
-    end)
-    button:HookScript("OnLeave", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            bd:SetBackdropBorderColor(unpack(sc))
-        end
-    end)
-
-    SkinBase.MarkStyled(button)
-end
-
--- Style tab button
-local function StyleTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not tab or SkinBase.IsStyled(tab) then return end
-
-    -- Hide default textures
-    if tab.Left then tab.Left:SetAlpha(0) end
-    if tab.Middle then tab.Middle:SetAlpha(0) end
-    if tab.Right then tab.Right:SetAlpha(0) end
-    if tab.LeftDisabled then tab.LeftDisabled:SetAlpha(0) end
-    if tab.MiddleDisabled then tab.MiddleDisabled:SetAlpha(0) end
-    if tab.RightDisabled then tab.RightDisabled:SetAlpha(0) end
-    if tab.LeftActive then tab.LeftActive:SetAlpha(0) end
-    if tab.MiddleActive then tab.MiddleActive:SetAlpha(0) end
-    if tab.RightActive then tab.RightActive:SetAlpha(0) end
-    if tab.LeftHighlight then tab.LeftHighlight:SetAlpha(0) end
-    if tab.MiddleHighlight then tab.MiddleHighlight:SetAlpha(0) end
-    if tab.RightHighlight then tab.RightHighlight:SetAlpha(0) end
-
-    local highlight = tab:GetHighlightTexture()
-    if highlight then highlight:SetAlpha(0) end
-
-    -- Create backdrop
-    SkinBase.CreateBackdrop(tab, sr, sg, sb, sa, bgr, bgg, bgb, 0.9)
-    local tabBackdrop = SkinBase.GetBackdrop(tab)
-    SkinBase.SetPixelInsetPoints(tabBackdrop, tab, 3, 3, 3, 0)
-
-    -- Store colors for selected-state updates
-    SkinBase.SetFrameData(tab, "skinColor", { sr, sg, sb, sa })
-    SkinBase.SetFrameData(tab, "bgColor", { bgr, bgg, bgb })
-
-    SkinBase.MarkStyled(tab)
-end
-
--- Update bottom tab backdrops to reflect selected state
-local function UpdateTabSelectedState()
-    local AuctionHouseFrame = _G.AuctionHouseFrame
-    if not AuctionHouseFrame or not AuctionHouseFrame.Tabs then return end
-    local selectedTab = AuctionHouseFrame.selectedTab or (PanelTemplates_GetSelectedTab and PanelTemplates_GetSelectedTab(AuctionHouseFrame))
-    for i, tab in ipairs(AuctionHouseFrame.Tabs) do
-        local bd = SkinBase.GetBackdrop(tab)
-        local sc = SkinBase.GetFrameData(tab, "skinColor")
-        local bg = SkinBase.GetFrameData(tab, "bgColor")
-        if bd and sc and bg then
-            local isSelected = (selectedTab == i)
-            if isSelected then
-                -- Selected: full border + brighter background
-                bd:SetBackdropBorderColor(sc[1], sc[2], sc[3], sc[4])
-                bd:SetBackdropColor(math.min(bg[1] + 0.10, 1), math.min(bg[2] + 0.10, 1), math.min(bg[3] + 0.10, 1), 1)
-            else
-                -- Inactive: dimmed border + normal background
-                bd:SetBackdropBorderColor(sc[1] * 0.5, sc[2] * 0.5, sc[3] * 0.5, sc[4] * 0.6)
-                bd:SetBackdropColor(bg[1], bg[2], bg[3], 0.7)
-            end
-        end
-    end
-end
-
--- Style edit box
-local function StyleEditBox(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not editBox or SkinBase.IsStyled(editBox) then return end
-
-    SkinBase.StripTextures(editBox)
-    SkinBase.CreateBackdrop(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-
-    SkinBase.MarkStyled(editBox)
-end
-
 -- Check if skinning is enabled
 local function IsEnabled()
     local core = GetCore()
@@ -179,14 +36,11 @@ local function HideAuctionHouseDecorations()
 end
 
 -- Skin bottom tabs (Buy, Sell, Auctions)
-local function SkinAuctionHouseTabs(sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function SkinAuctionHouseTabs()
     local AuctionHouseFrame = _G.AuctionHouseFrame
     if not AuctionHouseFrame or not AuctionHouseFrame.Tabs then return end
 
-    -- AH tabs are in AuctionHouseFrame.Tabs (BuyTab, SellTab, AuctionsTab)
-    for _, tab in ipairs(AuctionHouseFrame.Tabs) do
-        StyleTab(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    end
+    SkinBase.SkinTabGroup(AuctionHouseFrame.Tabs, AuctionHouseFrame)
 
     -- Reposition tabs: left justify and tighten spacing
     local tabs = AuctionHouseFrame.Tabs
@@ -200,20 +54,10 @@ local function SkinAuctionHouseTabs(sr, sg, sb, sa, bgr, bgg, bgb, bga)
             tabs[i]:SetPoint("TOPLEFT", tabs[i - 1], "TOPRIGHT", -5, 0)
         end
     end
-
-    -- Hook tab selection to update selected state visuals
-    hooksecurefunc("PanelTemplates_SetTab", function(frame)
-        if frame == AuctionHouseFrame then
-            C_Timer.After(0, UpdateTabSelectedState)
-        end
-    end)
-
-    -- Apply initial selected state
-    UpdateTabSelectedState()
 end
 
 -- Skin search bar elements
-local function SkinSearchBar(sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function SkinSearchBar()
     local AuctionHouseFrame = _G.AuctionHouseFrame
     if not AuctionHouseFrame then return end
 
@@ -222,59 +66,24 @@ local function SkinSearchBar(sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if searchBar then
         -- Search input box
         if searchBar.SearchBox then
-            StyleEditBox(searchBar.SearchBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinEditBox(searchBar.SearchBox)
         end
         -- Filter button (WowStyle1 dropdown — standard button textures don't apply)
         if searchBar.FilterButton then
-            StyleDropdownButton(searchBar.FilterButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(searchBar.FilterButton, { strip = true })
         end
         -- Search button
         if searchBar.SearchButton then
-            StyleButton(searchBar.SearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(searchBar.SearchButton)
         end
         -- Favorites search button (star) — raise frame level so it isn't
         -- obscured by the SearchBox EditBox, which captures mouse across its
         -- full rect and can swallow clicks on the overlapping star.
         if searchBar.FavoritesSearchButton then
-            StyleButton(searchBar.FavoritesSearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(searchBar.FavoritesSearchButton)
             searchBar.FavoritesSearchButton:SetFrameLevel(searchBar.FavoritesSearchButton:GetFrameLevel() + 5)
         end
     end
-end
-
--- Style a ScrollBox row entry (used for browse results and auctions lists)
-local function StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    if not row or SkinBase.IsStyled(row) then return end
-
-    -- Hide default textures
-    SkinBase.StripTextures(row)
-
-    -- Create a subtle backdrop for the row
-    local rowBgR = math.min(bgr + 0.03, 1)
-    local rowBgG = math.min(bgg + 0.03, 1)
-    local rowBgB = math.min(bgb + 0.03, 1)
-    SkinBase.CreateBackdrop(row, sr, sg, sb, sa * 0.5, rowBgR, rowBgG, rowBgB, 0.6)
-
-    -- Store colors for hover
-    SkinBase.SetFrameData(row, "skinColor", { sr, sg, sb, sa * 0.5 })
-
-    row:HookScript("OnEnter", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            local r, g, b, a = unpack(sc)
-            bd:SetBackdropBorderColor(math.min(r * 1.3, 1), math.min(g * 1.3, 1), math.min(b * 1.3, 1), a)
-        end
-    end)
-    row:HookScript("OnLeave", function(self)
-        local bd = SkinBase.GetBackdrop(self)
-        local sc = SkinBase.GetFrameData(self, "skinColor")
-        if bd and sc then
-            bd:SetBackdropBorderColor(unpack(sc))
-        end
-    end)
-
-    SkinBase.MarkStyled(row)
 end
 
 -- Safely iterate a ScrollBox's visible frames (nil-safe for uninitialized ScrollBoxes)
@@ -284,15 +93,13 @@ local function SafeForEachFrame(scrollBox, callback)
     end
 end
 
--- Hook a ScrollBox to style rows as they're acquired from the pool.
-local function HookScrollBox(scrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    SkinBase.HookScrollBoxAcquired(scrollBox, function(row)
-        StyleScrollBoxRow(row, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    end)
+-- Style each pooled ScrollBox row as it's acquired (shared by all lists).
+local function skinRow(row)
+    SkinBase.SkinScrollRow(row)
 end
 
 -- Skin browse panel (item list / commodities list)
-local function SkinBrowsePanel(sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function SkinBrowsePanel()
     local AuctionHouseFrame = _G.AuctionHouseFrame
     if not AuctionHouseFrame then return end
 
@@ -303,15 +110,7 @@ local function SkinBrowsePanel(sr, sg, sb, sa, bgr, bgg, bgb, bga)
         SkinBase.StripTextures(browseResults)
         -- Item list ScrollBox
         if browseResults.ItemList then
-            if browseResults.ItemList.NineSlice then browseResults.ItemList.NineSlice:Hide() end
-            SkinBase.StripTextures(browseResults.ItemList)
-            if browseResults.ItemList.ScrollBox then
-                HookScrollBox(browseResults.ItemList.ScrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            end
-            -- Hide scroll bar background
-            if browseResults.ItemList.ScrollBar and browseResults.ItemList.ScrollBar.Background then
-                browseResults.ItemList.ScrollBar.Background:Hide()
-            end
+            SkinBase.SkinListContainer(browseResults.ItemList, skinRow)
         end
     end
 
@@ -320,23 +119,16 @@ local function SkinBrowsePanel(sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if commoditiesBuy then
         SkinBase.StripTextures(commoditiesBuy)
         if commoditiesBuy.ItemList then
-            if commoditiesBuy.ItemList.NineSlice then commoditiesBuy.ItemList.NineSlice:Hide() end
-            SkinBase.StripTextures(commoditiesBuy.ItemList)
-            if commoditiesBuy.ItemList.ScrollBox then
-                HookScrollBox(commoditiesBuy.ItemList.ScrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            end
-            if commoditiesBuy.ItemList.ScrollBar and commoditiesBuy.ItemList.ScrollBar.Background then
-                commoditiesBuy.ItemList.ScrollBar.Background:Hide()
-            end
+            SkinBase.SkinListContainer(commoditiesBuy.ItemList, skinRow)
         end
         -- Buy button
         if commoditiesBuy.BuyDisplay then
             if commoditiesBuy.BuyDisplay.BuyButton then
-                StyleButton(commoditiesBuy.BuyDisplay.BuyButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+                SkinBase.SkinButton(commoditiesBuy.BuyDisplay.BuyButton)
             end
             -- Quantity input
             if commoditiesBuy.BuyDisplay.QuantityInput and commoditiesBuy.BuyDisplay.QuantityInput.InputBox then
-                StyleEditBox(commoditiesBuy.BuyDisplay.QuantityInput.InputBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+                SkinBase.SkinEditBox(commoditiesBuy.BuyDisplay.QuantityInput.InputBox)
             end
         end
     end
@@ -346,31 +138,24 @@ local function SkinBrowsePanel(sr, sg, sb, sa, bgr, bgg, bgb, bga)
     if itemBuy then
         SkinBase.StripTextures(itemBuy)
         if itemBuy.ItemList then
-            if itemBuy.ItemList.NineSlice then itemBuy.ItemList.NineSlice:Hide() end
-            SkinBase.StripTextures(itemBuy.ItemList)
-            if itemBuy.ItemList.ScrollBox then
-                HookScrollBox(itemBuy.ItemList.ScrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            end
-            if itemBuy.ItemList.ScrollBar and itemBuy.ItemList.ScrollBar.Background then
-                itemBuy.ItemList.ScrollBar.Background:Hide()
-            end
+            SkinBase.SkinListContainer(itemBuy.ItemList, skinRow)
         end
         -- Buyout / Bid buttons
         if itemBuy.BuyoutFrame then
             if itemBuy.BuyoutFrame.BuyoutButton then
-                StyleButton(itemBuy.BuyoutFrame.BuyoutButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+                SkinBase.SkinButton(itemBuy.BuyoutFrame.BuyoutButton)
             end
         end
         if itemBuy.BidFrame then
             if itemBuy.BidFrame.BidButton then
-                StyleButton(itemBuy.BidFrame.BidButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+                SkinBase.SkinButton(itemBuy.BidFrame.BidButton)
             end
         end
     end
 end
 
 -- Skin sell panel
-local function SkinSellPanel(sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function SkinSellPanel()
     local AuctionHouseFrame = _G.AuctionHouseFrame
     if not AuctionHouseFrame then return end
 
@@ -381,22 +166,21 @@ local function SkinSellPanel(sr, sg, sb, sa, bgr, bgg, bgb, bga)
         -- Price input
         if commoditiesSell.PriceInput and commoditiesSell.PriceInput.MoneyInputFrame then
             local moneyInput = commoditiesSell.PriceInput.MoneyInputFrame
-            if moneyInput.GoldBox then StyleEditBox(moneyInput.GoldBox, sr, sg, sb, sa, bgr, bgg, bgb, bga) end
-            if moneyInput.SilverBox then StyleEditBox(moneyInput.SilverBox, sr, sg, sb, sa, bgr, bgg, bgb, bga) end
-            if moneyInput.CopperBox then StyleEditBox(moneyInput.CopperBox, sr, sg, sb, sa, bgr, bgg, bgb, bga) end
+            if moneyInput.GoldBox then SkinBase.SkinEditBox(moneyInput.GoldBox) end
+            if moneyInput.SilverBox then SkinBase.SkinEditBox(moneyInput.SilverBox) end
+            if moneyInput.CopperBox then SkinBase.SkinEditBox(moneyInput.CopperBox) end
         end
         -- Quantity input
         if commoditiesSell.QuantityInput and commoditiesSell.QuantityInput.InputBox then
-            StyleEditBox(commoditiesSell.QuantityInput.InputBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinEditBox(commoditiesSell.QuantityInput.InputBox)
         end
         -- Duration dropdown
         if commoditiesSell.DurationDropdown then
-            SkinBase.StripTextures(commoditiesSell.DurationDropdown)
-            SkinBase.CreateBackdrop(commoditiesSell.DurationDropdown, sr, sg, sb, sa, math.min(bgr + 0.07, 1), math.min(bgg + 0.07, 1), math.min(bgb + 0.07, 1), 1)
+            SkinBase.SkinDropdown(commoditiesSell.DurationDropdown)
         end
         -- Post button
         if commoditiesSell.PostButton then
-            StyleButton(commoditiesSell.PostButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(commoditiesSell.PostButton)
         end
     end
 
@@ -407,35 +191,34 @@ local function SkinSellPanel(sr, sg, sb, sa, bgr, bgg, bgb, bga)
         -- Price input
         if itemSell.PriceInput and itemSell.PriceInput.MoneyInputFrame then
             local moneyInput = itemSell.PriceInput.MoneyInputFrame
-            if moneyInput.GoldBox then StyleEditBox(moneyInput.GoldBox, sr, sg, sb, sa, bgr, bgg, bgb, bga) end
-            if moneyInput.SilverBox then StyleEditBox(moneyInput.SilverBox, sr, sg, sb, sa, bgr, bgg, bgb, bga) end
-            if moneyInput.CopperBox then StyleEditBox(moneyInput.CopperBox, sr, sg, sb, sa, bgr, bgg, bgb, bga) end
+            if moneyInput.GoldBox then SkinBase.SkinEditBox(moneyInput.GoldBox) end
+            if moneyInput.SilverBox then SkinBase.SkinEditBox(moneyInput.SilverBox) end
+            if moneyInput.CopperBox then SkinBase.SkinEditBox(moneyInput.CopperBox) end
         end
         -- Quantity input
         if itemSell.QuantityInput and itemSell.QuantityInput.InputBox then
-            StyleEditBox(itemSell.QuantityInput.InputBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinEditBox(itemSell.QuantityInput.InputBox)
         end
         -- Duration dropdown
         if itemSell.DurationDropdown then
-            SkinBase.StripTextures(itemSell.DurationDropdown)
-            SkinBase.CreateBackdrop(itemSell.DurationDropdown, sr, sg, sb, sa, math.min(bgr + 0.07, 1), math.min(bgg + 0.07, 1), math.min(bgb + 0.07, 1), 1)
+            SkinBase.SkinDropdown(itemSell.DurationDropdown)
         end
         -- Post button
         if itemSell.PostButton then
-            StyleButton(itemSell.PostButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.SkinButton(itemSell.PostButton)
         end
         -- Secondary price input (bid vs buyout)
         if itemSell.SecondaryPriceInput and itemSell.SecondaryPriceInput.MoneyInputFrame then
             local moneyInput = itemSell.SecondaryPriceInput.MoneyInputFrame
-            if moneyInput.GoldBox then StyleEditBox(moneyInput.GoldBox, sr, sg, sb, sa, bgr, bgg, bgb, bga) end
-            if moneyInput.SilverBox then StyleEditBox(moneyInput.SilverBox, sr, sg, sb, sa, bgr, bgg, bgb, bga) end
-            if moneyInput.CopperBox then StyleEditBox(moneyInput.CopperBox, sr, sg, sb, sa, bgr, bgg, bgb, bga) end
+            if moneyInput.GoldBox then SkinBase.SkinEditBox(moneyInput.GoldBox) end
+            if moneyInput.SilverBox then SkinBase.SkinEditBox(moneyInput.SilverBox) end
+            if moneyInput.CopperBox then SkinBase.SkinEditBox(moneyInput.CopperBox) end
         end
     end
 end
 
 -- Skin auctions panel (summary and all-auctions lists)
-local function SkinAuctionsPanel(sr, sg, sb, sa, bgr, bgg, bgb, bga)
+local function SkinAuctionsPanel()
     local AuctionHouseFrame = _G.AuctionHouseFrame
     if not AuctionHouseFrame then return end
 
@@ -446,48 +229,27 @@ local function SkinAuctionsPanel(sr, sg, sb, sa, bgr, bgg, bgb, bga)
 
     -- Summary list
     if auctionsFrame.SummaryList then
-        if auctionsFrame.SummaryList.NineSlice then auctionsFrame.SummaryList.NineSlice:Hide() end
-        SkinBase.StripTextures(auctionsFrame.SummaryList)
-        if auctionsFrame.SummaryList.ScrollBox then
-            HookScrollBox(auctionsFrame.SummaryList.ScrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        end
-        if auctionsFrame.SummaryList.ScrollBar and auctionsFrame.SummaryList.ScrollBar.Background then
-            auctionsFrame.SummaryList.ScrollBar.Background:Hide()
-        end
+        SkinBase.SkinListContainer(auctionsFrame.SummaryList, skinRow)
     end
 
     -- All auctions list
     if auctionsFrame.AllAuctionsList then
-        if auctionsFrame.AllAuctionsList.NineSlice then auctionsFrame.AllAuctionsList.NineSlice:Hide() end
-        SkinBase.StripTextures(auctionsFrame.AllAuctionsList)
-        if auctionsFrame.AllAuctionsList.ScrollBox then
-            HookScrollBox(auctionsFrame.AllAuctionsList.ScrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        end
-        if auctionsFrame.AllAuctionsList.ScrollBar and auctionsFrame.AllAuctionsList.ScrollBar.Background then
-            auctionsFrame.AllAuctionsList.ScrollBar.Background:Hide()
-        end
+        SkinBase.SkinListContainer(auctionsFrame.AllAuctionsList, skinRow)
     end
 
     -- Commodities auctions list
     if auctionsFrame.CommoditiesList then
-        if auctionsFrame.CommoditiesList.NineSlice then auctionsFrame.CommoditiesList.NineSlice:Hide() end
-        SkinBase.StripTextures(auctionsFrame.CommoditiesList)
-        if auctionsFrame.CommoditiesList.ScrollBox then
-            HookScrollBox(auctionsFrame.CommoditiesList.ScrollBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        end
-        if auctionsFrame.CommoditiesList.ScrollBar and auctionsFrame.CommoditiesList.ScrollBar.Background then
-            auctionsFrame.CommoditiesList.ScrollBar.Background:Hide()
-        end
+        SkinBase.SkinListContainer(auctionsFrame.CommoditiesList, skinRow)
     end
 
     -- Cancel auctions button
     if auctionsFrame.CancelAuctionButton then
-        StyleButton(auctionsFrame.CancelAuctionButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(auctionsFrame.CancelAuctionButton)
     end
 
     -- Bid frame button (if present)
     if auctionsFrame.BidFrame and auctionsFrame.BidFrame.BidButton then
-        StyleButton(auctionsFrame.BidFrame.BidButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.SkinButton(auctionsFrame.BidFrame.BidButton)
     end
 end
 
@@ -617,14 +379,14 @@ local function SkinAuctionHouse()
     SkinBase.SkinCloseButton(AuctionHouseFrame.CloseButton or _G.AuctionHouseFrameCloseButton)
 
     -- Style tabs
-    SkinAuctionHouseTabs(sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    SkinAuctionHouseTabs()
 
     -- Skin sub-panels (pcall each so one failure doesn't block the rest)
     pcall(SkinCategoriesList, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    pcall(SkinSearchBar, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    pcall(SkinBrowsePanel, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    pcall(SkinSellPanel, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    pcall(SkinAuctionsPanel, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+    pcall(SkinSearchBar)
+    pcall(SkinBrowsePanel)
+    pcall(SkinSellPanel)
+    pcall(SkinAuctionsPanel)
 
     SkinBase.MarkSkinned(AuctionHouseFrame)
 end
@@ -632,42 +394,6 @@ end
 ---------------------------------------------------------------------------
 -- REFRESH COLORS (for live theme changes)
 ---------------------------------------------------------------------------
-
--- Helper to update a styled button's colors
-local function UpdateButtonColors(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = button and SkinBase.GetBackdrop(button)
-    if not bd then return end
-    local btnBgR = math.min(bgr + 0.07, 1)
-    local btnBgG = math.min(bgg + 0.07, 1)
-    local btnBgB = math.min(bgb + 0.07, 1)
-    bd:SetBackdropColor(btnBgR, btnBgG, btnBgB, 1)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-    SkinBase.SetFrameData(button, "skinColor", { sr, sg, sb, sa })
-end
-
--- Helper to update a tab's colors
-local function UpdateTabColors(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = tab and SkinBase.GetBackdrop(tab)
-    if not bd then return end
-    bd:SetBackdropColor(bgr, bgg, bgb, 0.9)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-end
-
--- Helper to update an edit box's colors
-local function UpdateEditBoxColors(editBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = editBox and SkinBase.GetBackdrop(editBox)
-    if not bd then return end
-    bd:SetBackdropColor(bgr, bgg, bgb, bga)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-end
-
--- Helper to update a dropdown's colors
-local function UpdateDropdownColors(dropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    local bd = dropdown and SkinBase.GetBackdrop(dropdown)
-    if not bd then return end
-    bd:SetBackdropColor(math.min(bgr + 0.07, 1), math.min(bgg + 0.07, 1), math.min(bgb + 0.07, 1), 1)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-end
 
 local function RefreshAuctionHouseColors()
     local AuctionHouseFrame = _G.AuctionHouseFrame
@@ -684,27 +410,24 @@ local function RefreshAuctionHouseColors()
 
     -- Tabs
     if AuctionHouseFrame.Tabs then
-        for _, tab in ipairs(AuctionHouseFrame.Tabs) do
-            UpdateTabColors(tab, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        end
-        UpdateTabSelectedState()
+        SkinBase.RefreshTabGroup(AuctionHouseFrame.Tabs, AuctionHouseFrame)
     end
 
     -- Search bar
     local searchBar = AuctionHouseFrame.SearchBar
     if searchBar then
-        UpdateEditBoxColors(searchBar.SearchBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(searchBar.FilterButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(searchBar.SearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateButtonColors(searchBar.FavoritesSearchButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.RefreshWidget(searchBar.SearchBox)
+        SkinBase.RefreshWidget(searchBar.FilterButton)
+        SkinBase.RefreshWidget(searchBar.SearchButton)
+        SkinBase.RefreshWidget(searchBar.FavoritesSearchButton)
     end
 
     -- Commodities buy
     local commoditiesBuy = AuctionHouseFrame.CommoditiesBuyFrame
     if commoditiesBuy and commoditiesBuy.BuyDisplay then
-        UpdateButtonColors(commoditiesBuy.BuyDisplay.BuyButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.RefreshWidget(commoditiesBuy.BuyDisplay.BuyButton)
         if commoditiesBuy.BuyDisplay.QuantityInput and commoditiesBuy.BuyDisplay.QuantityInput.InputBox then
-            UpdateEditBoxColors(commoditiesBuy.BuyDisplay.QuantityInput.InputBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(commoditiesBuy.BuyDisplay.QuantityInput.InputBox)
         end
     end
 
@@ -712,57 +435,57 @@ local function RefreshAuctionHouseColors()
     local itemBuy = AuctionHouseFrame.ItemBuyFrame
     if itemBuy then
         if itemBuy.BuyoutFrame and itemBuy.BuyoutFrame.BuyoutButton then
-            UpdateButtonColors(itemBuy.BuyoutFrame.BuyoutButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(itemBuy.BuyoutFrame.BuyoutButton)
         end
         if itemBuy.BidFrame and itemBuy.BidFrame.BidButton then
-            UpdateButtonColors(itemBuy.BidFrame.BidButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(itemBuy.BidFrame.BidButton)
         end
     end
 
     -- Commodities sell
     local commoditiesSell = AuctionHouseFrame.CommoditiesSellFrame
     if commoditiesSell then
-        UpdateButtonColors(commoditiesSell.PostButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateDropdownColors(commoditiesSell.DurationDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.RefreshWidget(commoditiesSell.PostButton)
+        SkinBase.RefreshWidget(commoditiesSell.DurationDropdown)
         if commoditiesSell.PriceInput and commoditiesSell.PriceInput.MoneyInputFrame then
             local mi = commoditiesSell.PriceInput.MoneyInputFrame
-            UpdateEditBoxColors(mi.GoldBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateEditBoxColors(mi.SilverBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateEditBoxColors(mi.CopperBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(mi.GoldBox)
+            SkinBase.RefreshWidget(mi.SilverBox)
+            SkinBase.RefreshWidget(mi.CopperBox)
         end
         if commoditiesSell.QuantityInput and commoditiesSell.QuantityInput.InputBox then
-            UpdateEditBoxColors(commoditiesSell.QuantityInput.InputBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(commoditiesSell.QuantityInput.InputBox)
         end
     end
 
     -- Item sell
     local itemSell = AuctionHouseFrame.ItemSellFrame
     if itemSell then
-        UpdateButtonColors(itemSell.PostButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-        UpdateDropdownColors(itemSell.DurationDropdown, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.RefreshWidget(itemSell.PostButton)
+        SkinBase.RefreshWidget(itemSell.DurationDropdown)
         if itemSell.PriceInput and itemSell.PriceInput.MoneyInputFrame then
             local mi = itemSell.PriceInput.MoneyInputFrame
-            UpdateEditBoxColors(mi.GoldBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateEditBoxColors(mi.SilverBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateEditBoxColors(mi.CopperBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(mi.GoldBox)
+            SkinBase.RefreshWidget(mi.SilverBox)
+            SkinBase.RefreshWidget(mi.CopperBox)
         end
         if itemSell.SecondaryPriceInput and itemSell.SecondaryPriceInput.MoneyInputFrame then
             local mi = itemSell.SecondaryPriceInput.MoneyInputFrame
-            UpdateEditBoxColors(mi.GoldBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateEditBoxColors(mi.SilverBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-            UpdateEditBoxColors(mi.CopperBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(mi.GoldBox)
+            SkinBase.RefreshWidget(mi.SilverBox)
+            SkinBase.RefreshWidget(mi.CopperBox)
         end
         if itemSell.QuantityInput and itemSell.QuantityInput.InputBox then
-            UpdateEditBoxColors(itemSell.QuantityInput.InputBox, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(itemSell.QuantityInput.InputBox)
         end
     end
 
     -- Auctions panel
     local auctionsFrame = AuctionHouseFrame.AuctionsFrame
     if auctionsFrame then
-        UpdateButtonColors(auctionsFrame.CancelAuctionButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+        SkinBase.RefreshWidget(auctionsFrame.CancelAuctionButton)
         if auctionsFrame.BidFrame and auctionsFrame.BidFrame.BidButton then
-            UpdateButtonColors(auctionsFrame.BidFrame.BidButton, sr, sg, sb, sa, bgr, bgg, bgb, bga)
+            SkinBase.RefreshWidget(auctionsFrame.BidFrame.BidButton)
         end
     end
 end
