@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha68 - 2026-05-29
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha67 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **Cooldowns stay accurate after starting a Mythic+ key, raid encounter, or rated PvP match.** The cooldown manager now re-syncs automatically when the pull begins, instead of needing a `/reload` to keep tracking.
+- **Starting a Mythic+ key while already in combat no longer leaves cooldowns missing or stuck.** Recovery is deferred until you drop combat rather than being skipped, so the display catches up on its own.
+- **Cooldowns hidden during a loading screen now reappear once the game settles,** instead of staying shelved until your next talent change or a `/reload`.
+
+
+
 ## v3.6.0-alpha67 - 2026-05-29
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha66 profiles carry over unchanged.
