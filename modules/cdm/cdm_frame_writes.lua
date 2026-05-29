@@ -732,12 +732,10 @@ UpdatePandemicGlow = function(icon)
         return
     end
 
-    local spellOvr = GetSpellGlowOverride(icon)
-    if spellOvr and spellOvr.glowEnabled == false then
-        if frame then frame:SetAlpha(0) end
-        return
-    end
-
+    -- Pandemic glow is intentionally decoupled from the per-spell overlay/proc
+    -- glow override: a spell's glowEnabled == false toggle suppresses only its
+    -- overlay/proc glow, not its pandemic (aura-expiry) glow. They are distinct
+    -- visual signals, so do not gate the pandemic glow on the overlay override.
     if not icon._auraActive or not icon._lastAuraDurObj then
         if frame then frame:SetAlpha(0) end
         return
