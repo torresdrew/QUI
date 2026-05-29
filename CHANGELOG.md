@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha67 - 2026-05-29
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha66 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Changed
+- **Auction house & crafting-orders text now uses the QUI font.** Tabs, buttons, and search boxes in these windows match the font used across the rest of the skinned UI.
+
+### Fixed
+- **Opening or switching settings tabs no longer freezes the game.** The options window now reuses already-built pages and skips redundant rebuild work, so moving between settings stays smooth even on large pages.
+- **Skin-color changes now apply everywhere instantly.** Adjusting your skin color recolors the character pane (including its close button and sidebar tabs), tooltips, and status-tracking bars live, without a `/reload`.
+- **Cooldown-manager preview no longer goes blank** after closing and reopening the options window, or tabbing away and back.
+- **Auction house & crafting-orders filter buttons display correctly.** The clear/reset (X) button now shows and layers above the filter dropdown as expected.
+- **Category lists keep their QUI styling** in the auction house and crafting-orders windows after you select a category or scroll, instead of flashing back to default textures.
+
+
+
 ## v3.6.0-alpha66 - 2026-05-29
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha65 profiles carry over unchanged.
