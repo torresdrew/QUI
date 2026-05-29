@@ -138,6 +138,7 @@ QUI_DamageMeter.Data = Data
 Data._dirty = {}
 Data._allDirty = false   -- set by DAMAGE_METER_RESET; ticker treats as "everything"
 Data._inCombat = false   -- toggled by PLAYER_REGEN_*; ticker uses for cadence
+Data._clearRuntimeSessions = false
 
 local HasCachedViewKey
 
@@ -213,6 +214,7 @@ Data._eventFrame:SetScript("OnEvent", function(_, event, arg1, _arg2)
     elseif event == "DAMAGE_METER_CURRENT_SESSION_UPDATED" then
         MarkCurrentDirty()
     elseif event == "DAMAGE_METER_RESET" then
+        Data._clearRuntimeSessions = true
         MarkAllDirty()
     elseif event == "PLAYER_REGEN_DISABLED" then
         Data._inCombat = true
@@ -1608,7 +1610,11 @@ function Window:_OpenConfigMenu()
 
     local owner = self.header or self.frame
     local function SelectSession(sessionType, sessionID)
-        self.sessionType = sessionID ~= nil and nil or sessionType
+        if sessionID ~= nil then
+            self.sessionType = nil
+        else
+            self.sessionType = sessionType
+        end
         self.sessionID = sessionID
         if sessionID == nil and sessionType ~= nil then
             windowState.sessionType = sessionType
@@ -1675,6 +1681,9 @@ function Window:_OpenConfigMenu()
         root:CreateButton("Reset Data", function()
             if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then
                 C_DamageMeter.ResetAllCombatSessions()
+                if QUI_DamageMeter.WindowManager.ClearRuntimeSessionIDs then
+                    QUI_DamageMeter.WindowManager:ClearRuntimeSessionIDs()
+                end
                 QUI_DamageMeter.WindowManager:RefreshAll()
             end
         end)
@@ -2801,6 +2810,23 @@ function WindowManager:DespawnAll()
     end
 end
 
+function WindowManager:ClearRuntimeSessionIDs()
+    local s = GetSettings()
+    self:Enumerate(function(_windowID, w)
+        if w then
+            w.sessionID = nil
+            if w.sessionType == nil then
+                local windowState = s and s.windows and s.windows[w.windowID]
+                w.sessionType = (windowState and windowState.sessionType) or 1
+            end
+            w._lastGeneration = -1
+            if w._breakdown and w._breakdown.Close then
+                w._breakdown:Close()
+            end
+        end
+    end)
+end
+
 -- Phase 3: hard cap matches spec's "5 windows" budget. Settings UI's
 -- "+ Add Window" button is disabled when at cap.
 local MAX_WINDOWS = 5
@@ -2910,8 +2936,11 @@ end
 -- it references WindowManager, which is defined later. Lua captures WindowManager
 -- as an upvalue at call time, so the late definition is fine.
 Data._onChange = function(self)
-    -- Fan out to every live window. Phase 3 will scope this per-(sessionType,
-    -- damageMeterType) so a refresh only touches windows that care.
+    local clearRuntimeSessions = self._clearRuntimeSessions
+    self._clearRuntimeSessions = false
+    if clearRuntimeSessions and WindowManager.ClearRuntimeSessionIDs then
+        WindowManager:ClearRuntimeSessionIDs()
+    end
     WindowManager:Enumerate(function(_id, w)
         if w.Refresh then w:Refresh() end
     end)

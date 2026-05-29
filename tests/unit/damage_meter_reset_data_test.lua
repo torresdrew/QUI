@@ -26,5 +26,9 @@ assert(menu:find("C_DamageMeter%.ResetAllCombatSessions"),
     "Reset Data must call C_DamageMeter.ResetAllCombatSessions")
 assert(menu:find("if C_DamageMeter and C_DamageMeter%.ResetAllCombatSessions"),
     "the reset call must be guarded by an existence check")
+assert(src:find("function WindowManager:ClearRuntimeSessionIDs", 1, true),
+    "WindowManager must expose ClearRuntimeSessionIDs")
+assert(menu:find("ClearRuntimeSessionIDs", 1, true),
+    "Reset Data must clear runtime previous-session selections")
 
 print("OK: damage_meter_reset_data_test")
