@@ -131,21 +131,28 @@ QUI_DamageMeter.SortByDescSafe = SortByDescSafe
 local Data = {}
 QUI_DamageMeter.Data = Data
 
--- Dirty flags: Data._dirty[sessionType][damageMeterType] = true means the
--- cached view for that (session, type) is stale and the next ticker pass
+-- Dirty flags: Data._dirty[selectorKey][damageMeterType] = true means the
+-- cached view for that selector/type is stale and the next ticker pass
 -- should re-fetch via C_DamageMeter (T6). Event handlers only set flags;
 -- they never call C_DamageMeter inline.
 Data._dirty = {}
 Data._allDirty = false   -- set by DAMAGE_METER_RESET; ticker treats as "everything"
 Data._inCombat = false   -- toggled by PLAYER_REGEN_*; ticker uses for cadence
+Data._clearRuntimeSessions = false
+
+local HasCachedViewKey
+
+local function MarkDirtyKey(selectorKey, damageMeterType)
+    local bySelector = Data._dirty[selectorKey]
+    if not bySelector then
+        bySelector = {}
+        Data._dirty[selectorKey] = bySelector
+    end
+    bySelector[damageMeterType] = true
+end
 
 local function MarkDirty(sessionType, damageMeterType)
-    local bySess = Data._dirty[sessionType]
-    if not bySess then
-        bySess = {}
-        Data._dirty[sessionType] = bySess
-    end
-    bySess[damageMeterType] = true
+    MarkDirtyKey(QUI_DamageMeter.SessionKey(sessionType, nil), damageMeterType)
 end
 
 local function MarkAllDirty()
@@ -154,19 +161,14 @@ end
 
 local function MarkCurrentDirty()
     -- Enum.DamageMeterSessionType.Current = 1
-    local bySess = Data._dirty[1]
-    if not bySess then
-        bySess = {}
-        Data._dirty[1] = bySess
-    end
     -- Mark every meter type dirty. Iterating Enum.DamageMeterType picks up
     -- whatever Blizzard exposes today (verified to include integers up to at
     -- least 9 = Deaths) so we don't miss dirty marks on types beyond a
     -- hardcoded range.
     if Enum and Enum.DamageMeterType then
-        for _, v in pairs(Enum.DamageMeterType) do bySess[v] = true end
+        for _, v in pairs(Enum.DamageMeterType) do MarkDirty(1, v) end
     else
-        for t = 0, 10 do bySess[t] = true end
+        for t = 0, 10 do MarkDirty(1, t) end
     end
 end
 
@@ -199,16 +201,20 @@ Data._eventFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
 Data._eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 Data._eventFrame:SetScript("OnEvent", function(_, event, arg1, _arg2)
     if event == "DAMAGE_METER_COMBAT_SESSION_UPDATED" then
-        -- arg1 = damageMeterType, arg2 = sessionID; we key by sessionType, not
-        -- sessionID, in Phase 1. Mark every sessionType dirty for that type;
-        -- ticker is cheap so the over-fetch is fine. Phase 4 (breakdown) will
-        -- key by sessionID to address pinned historical sessions.
         for sessionType = 0, 2 do
             MarkDirty(sessionType, arg1)
+        end
+        local sessionID = _arg2
+        if sessionID ~= nil then
+            local key = QUI_DamageMeter.SessionKey(nil, sessionID)
+            if HasCachedViewKey(key, arg1) then
+                MarkDirtyKey(key, arg1)
+            end
         end
     elseif event == "DAMAGE_METER_CURRENT_SESSION_UPDATED" then
         MarkCurrentDirty()
     elseif event == "DAMAGE_METER_RESET" then
+        Data._clearRuntimeSessions = true
         MarkAllDirty()
     elseif event == "PLAYER_REGEN_DISABLED" then
         Data._inCombat = true
@@ -278,8 +284,16 @@ local function NormalizeSources(rawSources)
 end
 Data._NormalizeSources = NormalizeSources  -- for T6/T7
 
-Data._cache = {}        -- _cache[sessionType][damageMeterType] = view
+Data._cache = {}        -- _cache[selectorKey][damageMeterType] = view
 Data._generation = 0
+
+local function SessionKey(sessionType, sessionID)
+    if sessionID ~= nil then
+        return "id:" .. tostring(sessionID)
+    end
+    return "type:" .. tostring(sessionType)
+end
+QUI_DamageMeter.SessionKey = SessionKey
 
 local function NewView(sources, duration, maxAmount, totalAmount)
     Data._generation = Data._generation + 1
@@ -292,13 +306,24 @@ local function NewView(sources, duration, maxAmount, totalAmount)
     }
 end
 
-local function CacheView(sessionType, damageMeterType, view)
-    local bySess = Data._cache[sessionType]
-    if not bySess then
-        bySess = {}
-        Data._cache[sessionType] = bySess
+local function CacheView(sessionType, sessionID, damageMeterType, view)
+    local key = SessionKey(sessionType, sessionID)
+    local bySelector = Data._cache[key]
+    if not bySelector then
+        bySelector = {}
+        Data._cache[key] = bySelector
     end
-    bySess[damageMeterType] = view
+    bySelector[damageMeterType] = view
+end
+
+local function GetCachedView(sessionType, sessionID, damageMeterType)
+    local bySelector = Data._cache[SessionKey(sessionType, sessionID)]
+    return bySelector and bySelector[damageMeterType] or nil
+end
+
+HasCachedViewKey = function(selectorKey, damageMeterType)
+    local bySelector = Data._cache[selectorKey]
+    return bySelector and bySelector[damageMeterType] ~= nil
 end
 
 -- DerivePerSecond: recompute a row's per-second rate as totalAmount / duration
@@ -360,15 +385,26 @@ local function ResolveRateDuration(sessionType, apiDuration, combatElapsed, hist
 end
 QUI_DamageMeter.ResolveRateDuration = ResolveRateDuration
 
-local function FetchView(sessionType, damageMeterType)
-    if not (C_DamageMeter and C_DamageMeter.GetCombatSessionFromType) then
+local function FetchView(sessionType, damageMeterType, sessionID)
+    if not C_DamageMeter then
         return NewView({}, 0, 0, 0)
     end
 
     -- pcall: defends against the API itself faulting under taint, which
     -- can happen in restricted callsites. The session table fields may
     -- still be secret-tagged; downstream code handles that.
-    local ok, session = pcall(C_DamageMeter.GetCombatSessionFromType, sessionType, damageMeterType)
+    local ok, session
+    if sessionID ~= nil then
+        if not C_DamageMeter.GetCombatSessionFromID then
+            return NewView({}, 0, 0, 0)
+        end
+        ok, session = pcall(C_DamageMeter.GetCombatSessionFromID, sessionID, damageMeterType)
+    else
+        if not C_DamageMeter.GetCombatSessionFromType then
+            return NewView({}, 0, 0, 0)
+        end
+        ok, session = pcall(C_DamageMeter.GetCombatSessionFromType, sessionType, damageMeterType)
+    end
     if not ok or type(session) ~= "table" then
         return NewView({}, 0, 0, 0)
     end
@@ -380,7 +416,9 @@ local function FetchView(sessionType, damageMeterType)
     -- (Expired session type = 2 per Enum.DamageMeterSessionType.Expired),
     -- the API duration is safe.
     local duration
-    if sessionType == (Enum and Enum.DamageMeterSessionType and Enum.DamageMeterSessionType.Expired or 2) then
+    if sessionID ~= nil then
+        duration = session.durationSeconds
+    elseif sessionType == (Enum and Enum.DamageMeterSessionType and Enum.DamageMeterSessionType.Expired or 2) then
         duration = session.durationSeconds  -- historical: API value is safe
     else
         duration = GetCombatElapsed()
@@ -395,11 +433,16 @@ local function FetchView(sessionType, damageMeterType)
     -- live Current session, so we fall back to our own combat timer there.
     local IsSecret = Helpers and Helpers.IsSecretValue
     local S = Enum and Enum.DamageMeterSessionType
-    local apiDuration = C_DamageMeter.GetSessionDurationSeconds
-        and C_DamageMeter.GetSessionDurationSeconds(sessionType)
-    local rateDuration = ResolveRateDuration(
-        sessionType, apiDuration, GetCombatElapsed(), session.durationSeconds,
-        IsSecret, (S and S.Current) or 1, (S and S.Expired) or 2)
+    local rateDuration
+    if sessionID ~= nil then
+        rateDuration = session.durationSeconds
+    else
+        local apiDuration = C_DamageMeter.GetSessionDurationSeconds
+            and C_DamageMeter.GetSessionDurationSeconds(sessionType)
+        rateDuration = ResolveRateDuration(
+            sessionType, apiDuration, GetCombatElapsed(), session.durationSeconds,
+            IsSecret, (S and S.Current) or 1, (S and S.Expired) or 2)
+    end
     for _, s in ipairs(sources) do
         local rate = DerivePerSecond(s.totalAmount, rateDuration, IsSecret)
         if rate ~= nil then s.amountPerSecond = rate end
@@ -410,24 +453,27 @@ end
 
 function Data:Refresh()
     local _t0 = Perf.enabled and PerfNow() or 0
-    -- Walk dirty flags; refetch each. _allDirty short-circuits to "refetch
-    -- every cached (sessionType, damageMeterType)".
+    -- Walk dirty flags; refetch each. _allDirty drops selector caches so
+    -- windows lazily rebuild against their current runtime selector.
     if self._allDirty then
         self._allDirty = false
-        for sessionType, byType in pairs(self._cache) do
-            for damageMeterType in pairs(byType) do
-                CacheView(sessionType, damageMeterType, FetchView(sessionType, damageMeterType))
-            end
-        end
+        self:ClearCachedViews()
         if self._onChange then self:_onChange() end
-        self._dirty = {}
         if Perf.enabled then Perf:Record("data", PerfNow() - _t0) end
         return
     end
     local anyChanged = false
-    for sessionType, byType in pairs(self._dirty) do
+    for selectorKey, byType in pairs(self._dirty) do
+        local sessionType, sessionID
+        local idText = selectorKey:match("^id:(.+)$")
+        if idText then
+            sessionID = tonumber(idText)
+        else
+            sessionType = tonumber(selectorKey:match("^type:(.+)$"))
+        end
         for damageMeterType in pairs(byType) do
-            CacheView(sessionType, damageMeterType, FetchView(sessionType, damageMeterType))
+            CacheView(sessionType, sessionID, damageMeterType,
+                FetchView(sessionType, damageMeterType, sessionID))
             anyChanged = true
         end
     end
@@ -436,13 +482,17 @@ function Data:Refresh()
     if Perf.enabled then Perf:Record("data", PerfNow() - _t0) end
 end
 
-function Data:GetView(sessionType, damageMeterType)
-    local bySess = self._cache[sessionType]
-    local view = bySess and bySess[damageMeterType]
+function Data:GetView(sessionType, damageMeterType, sessionID)
+    local view = GetCachedView(sessionType, sessionID, damageMeterType)
     if view then return view end
-    view = FetchView(sessionType, damageMeterType)
-    CacheView(sessionType, damageMeterType, view)
+    view = FetchView(sessionType, damageMeterType, sessionID)
+    CacheView(sessionType, sessionID, damageMeterType, view)
     return view
+end
+
+function Data:ClearCachedViews()
+    self._cache = {}
+    self._dirty = {}
 end
 
 -- ===== Breakdown (Phase 4) =====
@@ -489,12 +539,24 @@ Data._NormalizeSpells = NormalizeSpells
 
 -- Returns a one-tick view of a source's spell breakdown. Caller is responsible
 -- for re-calling on the next tick to get live updates while the popup is open.
-function Data:GetBreakdownView(sessionType, damageMeterType, sourceGUID, sourceCreatureID)
-    if not (C_DamageMeter and C_DamageMeter.GetCombatSessionSourceFromType) then
+function Data:GetBreakdownView(sessionType, damageMeterType, sourceGUID, sourceCreatureID, sessionID)
+    if not C_DamageMeter then
         return { spells = {}, maxAmount = 0, totalAmount = 0 }
     end
-    local ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
-        sessionType, damageMeterType, sourceGUID, sourceCreatureID)
+    local ok, src
+    if sessionID ~= nil then
+        if not C_DamageMeter.GetCombatSessionSourceFromID then
+            return { spells = {}, maxAmount = 0, totalAmount = 0 }
+        end
+        ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromID,
+            sessionID, damageMeterType, sourceGUID, sourceCreatureID)
+    else
+        if not C_DamageMeter.GetCombatSessionSourceFromType then
+            return { spells = {}, maxAmount = 0, totalAmount = 0 }
+        end
+        ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
+            sessionType, damageMeterType, sourceGUID, sourceCreatureID)
+    end
     if not ok or type(src) ~= "table" then
         return { spells = {}, maxAmount = 0, totalAmount = 0 }
     end
@@ -571,10 +633,18 @@ Data._PivotPlayerTargets = PivotPlayerTargets
 -- Raw combatSpells for a source — no C_Spell name/icon resolution (target
 -- aggregation only needs combatSpellDetails + totalAmount). pcall-guarded like
 -- GetBreakdownView.
-local function FetchSourceSpells(sessionType, meterType, sourceGUID, sourceCreatureID)
-    if not (C_DamageMeter and C_DamageMeter.GetCombatSessionSourceFromType) then return {} end
-    local ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
-        sessionType, meterType, sourceGUID, sourceCreatureID)
+local function FetchSourceSpells(sessionType, meterType, sourceGUID, sourceCreatureID, sessionID)
+    if not C_DamageMeter then return {} end
+    local ok, src
+    if sessionID ~= nil then
+        if not C_DamageMeter.GetCombatSessionSourceFromID then return {} end
+        ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromID,
+            sessionID, meterType, sourceGUID, sourceCreatureID)
+    else
+        if not C_DamageMeter.GetCombatSessionSourceFromType then return {} end
+        ok, src = pcall(C_DamageMeter.GetCombatSessionSourceFromType,
+            sessionType, meterType, sourceGUID, sourceCreatureID)
+    end
     if not ok or type(src) ~= "table" then return {} end
     return src.combatSpells or {}
 end
@@ -586,24 +656,24 @@ end
 
 -- Players who damaged a single enemy source (window meter type =
 -- EnemyDamageTaken, user clicks an enemy row).
-function Data:GetEnemyAttackers(sessionType, sourceGUID, sourceCreatureID)
+function Data:GetEnemyAttackers(sessionType, sourceGUID, sourceCreatureID, sessionID)
     local eType = EnemyDamageTakenType()
     if not eType then return {} end
     local IsSecret = Helpers and Helpers.IsSecretValue
     return AggregateSpellsByUnit(
-        FetchSourceSpells(sessionType, eType, sourceGUID, sourceCreatureID), IsSecret)
+        FetchSourceSpells(sessionType, eType, sourceGUID, sourceCreatureID, sessionID), IsSecret)
 end
 
 -- playerName -> sorted enemy-target list, built by cross-referencing every
--- enemy source in EnemyDamageTaken. Cached per (sessionType, enemy-view
--- generation): the key changes whenever the EnemyDamageTaken view is re-fetched
+-- enemy source in EnemyDamageTaken. Cached per selector key + enemy-view
+-- generation: the key changes whenever the EnemyDamageTaken view is re-fetched
 -- (the dirty/ticker path bumps its generation), so it stays fresh without its
 -- own event hooks.
-function Data:GetPlayerTargetsMap(sessionType)
+function Data:GetPlayerTargetsMap(sessionType, sessionID)
     local eType = EnemyDamageTakenType()
     if not eType then return {} end
-    local enemyView = self:GetView(sessionType, eType)
-    local genKey = tostring(sessionType) .. ":" .. tostring(enemyView.generation or 0)
+    local enemyView = self:GetView(sessionType, eType, sessionID)
+    local genKey = SessionKey(sessionType, sessionID) .. ":" .. tostring(enemyView.generation or 0)
     if self._targetsCacheKey == genKey and self._targetsCache then
         return self._targetsCache
     end
@@ -613,7 +683,7 @@ function Data:GetPlayerTargetsMap(sessionType)
         perEnemy[#perEnemy + 1] = {
             enemyName = enemy.name,
             players   = AggregateSpellsByUnit(
-                FetchSourceSpells(sessionType, eType, enemy.sourceGUID, enemy.sourceCreatureID),
+                FetchSourceSpells(sessionType, eType, enemy.sourceGUID, enemy.sourceCreatureID, sessionID),
                 IsSecret),
         }
     end
@@ -623,11 +693,11 @@ function Data:GetPlayerTargetsMap(sessionType)
     return map
 end
 
-function Data:GetPlayerTargets(sessionType, playerName)
+function Data:GetPlayerTargets(sessionType, playerName, sessionID)
     if playerName == nil then return {} end
     local IsSecret = Helpers and Helpers.IsSecretValue
     if IsSecret and IsSecret(playerName) then return {} end
-    return self:GetPlayerTargetsMap(sessionType)[playerName] or {}
+    return self:GetPlayerTargetsMap(sessionType, sessionID)[playerName] or {}
 end
 
 -- ==== Combined healing (Healing Done + Absorbs) ====
@@ -637,15 +707,15 @@ end
 -- HealingDone / HPS views and their breakdown popups use the merged data
 -- below. Toggle off for pure C_DamageMeter HealingDone.
 
-function Data:GetCombinedHealingView(sessionType)
+function Data:GetCombinedHealingView(sessionType, sessionID)
     local T = Enum and Enum.DamageMeterType
     local hType = T and T.HealingDone
     local aType = T and T.Absorbs
     if not (hType and aType) then
-        return self:GetView(sessionType, hType or 2)
+        return self:GetView(sessionType, hType or 2, sessionID)
     end
-    local hView = self:GetView(sessionType, hType)
-    local aView = self:GetView(sessionType, aType)
+    local hView = self:GetView(sessionType, hType, sessionID)
+    local aView = self:GetView(sessionType, aType, sessionID)
     if not (aView and aView.sources and #aView.sources > 0) then
         return hView
     end
@@ -711,15 +781,15 @@ function Data:GetCombinedHealingView(sessionType)
     }
 end
 
-function Data:GetCombinedHealingBreakdown(sessionType, sourceGUID, sourceCreatureID)
+function Data:GetCombinedHealingBreakdown(sessionType, sourceGUID, sourceCreatureID, sessionID)
     local T = Enum and Enum.DamageMeterType
     local hType = T and T.HealingDone
     local aType = T and T.Absorbs
     if not (hType and aType) then
-        return self:GetBreakdownView(sessionType, hType or 2, sourceGUID, sourceCreatureID)
+        return self:GetBreakdownView(sessionType, hType or 2, sourceGUID, sourceCreatureID, sessionID)
     end
-    local hView = self:GetBreakdownView(sessionType, hType, sourceGUID, sourceCreatureID)
-    local aView = self:GetBreakdownView(sessionType, aType, sourceGUID, sourceCreatureID)
+    local hView = self:GetBreakdownView(sessionType, hType, sourceGUID, sourceCreatureID, sessionID)
+    local aView = self:GetBreakdownView(sessionType, aType, sourceGUID, sourceCreatureID, sessionID)
     if not (aView and aView.spells and #aView.spells > 0) then
         return hView
     end
@@ -1400,8 +1470,9 @@ end
 
 function Window:_ApplyHeader()
     if not self.frame or not self.TypeLabel then return end
+    local sessionLabel = self.sessionID ~= nil and "Previous" or LabelForSession(self.sessionType)
     self.TypeLabel:SetText(LabelForType(self.damageMeterType)
-        .. " | " .. LabelForSession(self.sessionType))
+        .. " | " .. sessionLabel)
 end
 
 -- Window border color resolves like headerText: an explicit colors.border
@@ -1542,6 +1613,23 @@ function Window:_OpenConfigMenu()
     if not windowState then return end
 
     local owner = self.header or self.frame
+    local function SelectSession(sessionType, sessionID)
+        if sessionID ~= nil then
+            self.sessionType = nil
+        else
+            self.sessionType = sessionType
+        end
+        self.sessionID = sessionID
+        if sessionID == nil and sessionType ~= nil then
+            windowState.sessionType = sessionType
+        end
+        self._lastGeneration = -1
+        if self._breakdown and self._breakdown.Close then
+            self._breakdown:Close()
+        end
+        QUI_DamageMeter.WindowManager:RefreshAll()
+    end
+
     MenuUtil.CreateContextMenu(owner, function(_, root)
         root:CreateTitle("Meter Type")
         for _, t in ipairs(METER_TYPES) do
@@ -1556,22 +1644,37 @@ function Window:_OpenConfigMenu()
         end
         root:CreateDivider()
         root:CreateTitle("Session")
-        -- Enum.DamageMeterSessionType: 0 = Overall, 1 = Current, 2 = Expired (history only).
-        -- Phase 2 exposes Current + Overall. Expired sessions surface only via the
-        -- Phase 4 breakdown popup, not the live window.
-        local sessions = {
-            { value = 1, label = "Current" },
-            { value = 0, label = "Overall" },
-        }
-        for _, entry in ipairs(sessions) do
-            local sessionVal = entry.value
-            root:CreateRadio(entry.label,
-                function() return self.sessionType == sessionVal end,
-                function()
-                    self.sessionType = sessionVal
-                    windowState.sessionType = sessionVal
-                    QUI_DamageMeter.WindowManager:RefreshAll()
-                end)
+        local S = Enum and Enum.DamageMeterSessionType
+        local currentSession = (S and S.Current) or 1
+        local overallSession = (S and S.Overall) or 0
+
+        root:CreateRadio("Current",
+            function() return self.sessionID == nil and self.sessionType == currentSession end,
+            function() SelectSession(currentSession, nil) end)
+
+        root:CreateRadio("Overall",
+            function() return self.sessionID == nil and self.sessionType == overallSession end,
+            function() SelectSession(overallSession, nil) end)
+
+        local previousMenu = root:CreateButton("Previous")
+        local sessions
+        if C_DamageMeter and C_DamageMeter.GetAvailableCombatSessions then
+            local ok, availableSessions = pcall(C_DamageMeter.GetAvailableCombatSessions)
+            if ok and type(availableSessions) == "table" then
+                sessions = availableSessions
+            end
+        end
+
+        if not sessions or #sessions == 0 then
+            local none = previousMenu:CreateButton("No previous sessions", function() end)
+            none:SetEnabled(false)
+        else
+            for _, availableSession in ipairs(sessions) do
+                local sessionID = availableSession.sessionID
+                previousMenu:CreateRadio(availableSession.name,
+                    function() return self.sessionID == sessionID end,
+                    function() SelectSession(nil, sessionID) end)
+            end
         end
         root:CreateDivider()
         root:CreateTitle("Data")
@@ -1582,6 +1685,10 @@ function Window:_OpenConfigMenu()
         root:CreateButton("Reset Data", function()
             if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then
                 C_DamageMeter.ResetAllCombatSessions()
+                Data:ClearCachedViews()
+                if QUI_DamageMeter.WindowManager.ClearRuntimeSessionIDs then
+                    QUI_DamageMeter.WindowManager:ClearRuntimeSessionIDs()
+                end
                 QUI_DamageMeter.WindowManager:RefreshAll()
             end
         end)
@@ -1717,21 +1824,19 @@ function Window:Refresh()
     local s_combo = GetSettings()
     if IsHealingType(self.damageMeterType)
         and s_combo and s_combo.combineAbsorbsIntoHealing then
-        view = Data:GetCombinedHealingView(self.sessionType)
+        view = Data:GetCombinedHealingView(self.sessionType, self.sessionID)
     else
-        view = Data:GetView(self.sessionType, self.damageMeterType)
+        view = Data:GetView(self.sessionType, self.damageMeterType, self.sessionID)
     end
     if view.generation == self._lastGeneration then return end
     self._lastGeneration = view.generation
 
-    -- Session timer text. FormatDuration provides M:SS formatting.
-    -- Duration is now GetCombatElapsed() for live sessions (always a plain
-    -- number, never secret) and API durationSeconds only for Expired/historical
-    -- sessions (also safe). FormatDuration still guards the secret path as
-    -- defense-in-depth for any edge case where a historical session returns
-    -- a secret-tagged duration.
+    -- Session timer text. Secret durations must go straight through
+    -- FormatDuration so its C_StringUtil path can handle them.
     local d = view.duration
-    if d and d > 0 then
+    if Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(d) then
+        self.SessionTimer:SetText(FormatDuration(d))
+    elseif d and d > 0 then
         self.SessionTimer:SetText("[" .. FormatDuration(d) .. "]")
     else
         self.SessionTimer:SetText("")
@@ -2068,6 +2173,7 @@ function Window.New(windowID)
         rows            = {},      -- pool, filled in T10
         _lastGeneration = 0,
     }, Window)
+    self.sessionID = nil
 
     -- Top-level frame; parented to UIParent so each window is independently
     -- positionable and Layout Mode-discoverable. Position is set here as a
@@ -2534,10 +2640,11 @@ function Breakdown:_ResolveTargets(meterType)
     local T = Enum and Enum.DamageMeterType
     if not (T and self.source) then return nil, nil end
     local st = self.parentWindow.sessionType
+    local sid = self.parentWindow.sessionID
     if meterType == T.EnemyDamageTaken then
-        return Data:GetEnemyAttackers(st, self.source.sourceGUID, self.source.sourceCreatureID), "Attacked By"
+        return Data:GetEnemyAttackers(st, self.source.sourceGUID, self.source.sourceCreatureID, sid), "Attacked By"
     elseif meterType == T.DamageDone or meterType == T.Dps then
-        return Data:GetPlayerTargets(st, self.source.name), "Targets"
+        return Data:GetPlayerTargets(st, self.source.name, sid), "Targets"
     end
     return nil, nil
 end
@@ -2546,6 +2653,7 @@ function Breakdown:Refresh()
     if not self.source or not self.frame:IsShown() then return end
     local _t0 = Perf.enabled and PerfNow() or 0
     local sessionType   = self.parentWindow.sessionType
+    local sessionID = self.parentWindow.sessionID
     local damageMeterType = self.parentWindow.damageMeterType
     -- Healing breakdown optionally merges absorbs (settings.combineAbsorbsIntoHealing).
     local view
@@ -2553,10 +2661,10 @@ function Breakdown:Refresh()
     if IsHealingType(damageMeterType)
         and s_combo and s_combo.combineAbsorbsIntoHealing then
         view = Data:GetCombinedHealingBreakdown(sessionType,
-            self.source.sourceGUID, self.source.sourceCreatureID)
+            self.source.sourceGUID, self.source.sourceCreatureID, sessionID)
     else
         view = Data:GetBreakdownView(sessionType, damageMeterType,
-            self.source.sourceGUID, self.source.sourceCreatureID)
+            self.source.sourceGUID, self.source.sourceCreatureID, sessionID)
     end
 
     -- Title: "Damage Done by <Name>"
@@ -2707,6 +2815,23 @@ function WindowManager:DespawnAll()
     end
 end
 
+function WindowManager:ClearRuntimeSessionIDs()
+    local s = GetSettings()
+    self:Enumerate(function(_windowID, w)
+        if w then
+            w.sessionID = nil
+            if w.sessionType == nil then
+                local windowState = s and s.windows and s.windows[w.windowID]
+                w.sessionType = (windowState and windowState.sessionType) or 1
+            end
+            w._lastGeneration = -1
+            if w._breakdown and w._breakdown.Close then
+                w._breakdown:Close()
+            end
+        end
+    end)
+end
+
 -- Phase 3: hard cap matches spec's "5 windows" budget. Settings UI's
 -- "+ Add Window" button is disabled when at cap.
 local MAX_WINDOWS = 5
@@ -2816,8 +2941,11 @@ end
 -- it references WindowManager, which is defined later. Lua captures WindowManager
 -- as an upvalue at call time, so the late definition is fine.
 Data._onChange = function(self)
-    -- Fan out to every live window. Phase 3 will scope this per-(sessionType,
-    -- damageMeterType) so a refresh only touches windows that care.
+    local clearRuntimeSessions = self._clearRuntimeSessions
+    self._clearRuntimeSessions = false
+    if clearRuntimeSessions and WindowManager.ClearRuntimeSessionIDs then
+        WindowManager:ClearRuntimeSessionIDs()
+    end
     WindowManager:Enumerate(function(_id, w)
         if w.Refresh then w:Refresh() end
     end)

@@ -23,7 +23,7 @@ A single window appears at screen center on first login. It shows:
 - One row per source, sorted descending by damage
 - Class-colored bars, spec icon on the left, "*rank*. *name*" + value on the right
 - Session timer in the header (`[M:SS]` while in combat)
-- A gear (config) button in the header to switch type / session
+- Header right-click options to switch type / session
 
 The window updates every 0.5s in combat / 2s idle. Both rates are user-tunable.
 
@@ -31,12 +31,12 @@ The window is positionable via QUI's Layout Mode (the same handle system used by
 
 ## In-window controls
 
-Click the **gear button** in the header to open a context menu:
+Right-click the header to open a context menu:
 
 - **Meter Type** radios (11 total, grouped by metric family): Damage Done, DPS, Healing Done, HPS, Absorbs, Damage Taken, Avoidable Damage Taken, Enemy Damage Taken, Interrupts, Dispels, Deaths. Per-second views (DPS, HPS) rank BY per-second rather than total — a late-joining damage dealer can rank low by Damage Done but high by DPS, which is the question those views answer. Both views always show both numbers: the primary metric large, the secondary in parens (e.g. `2.4M (180K)` for Damage Done, `180K (2.4M)` for DPS).
-- **Session** radios: Current, Overall
+- **Session** — choose `Current`, `Overall`, or `Previous`. `Previous` opens a submenu of Blizzard-tracked combat sessions by name; selecting one changes only the live window state and is cleared by reload or reset.
 
-Selections persist across reloads.
+Meter Type and `Current` / `Overall` choices persist across reloads.
 
 Click any **row** to open a per-source spell breakdown popup, listing every spell that source used in the current view. The popup follows the row by default (mirrors to the opposite side when it would clip off-screen), updates live on the same ticker as the parent window, and dismisses on any outside click.
 
