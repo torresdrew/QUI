@@ -457,8 +457,7 @@ function Data:Refresh()
     -- windows lazily rebuild against their current runtime selector.
     if self._allDirty then
         self._allDirty = false
-        self._cache = {}
-        self._dirty = {}
+        self:ClearCachedViews()
         if self._onChange then self:_onChange() end
         if Perf.enabled then Perf:Record("data", PerfNow() - _t0) end
         return
@@ -489,6 +488,11 @@ function Data:GetView(sessionType, damageMeterType, sessionID)
     view = FetchView(sessionType, damageMeterType, sessionID)
     CacheView(sessionType, sessionID, damageMeterType, view)
     return view
+end
+
+function Data:ClearCachedViews()
+    self._cache = {}
+    self._dirty = {}
 end
 
 -- ===== Breakdown (Phase 4) =====
@@ -1681,6 +1685,7 @@ function Window:_OpenConfigMenu()
         root:CreateButton("Reset Data", function()
             if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then
                 C_DamageMeter.ResetAllCombatSessions()
+                Data:ClearCachedViews()
                 if QUI_DamageMeter.WindowManager.ClearRuntimeSessionIDs then
                     QUI_DamageMeter.WindowManager:ClearRuntimeSessionIDs()
                 end
