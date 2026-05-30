@@ -33,6 +33,9 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
     end
 
     local function MakeLayout(content)
+        if U._layoutModePositionOnly then
+            return U.MakeSuppressedProviderLayout(content)
+        end
         local Opts = ns.QUI_Options
         local y = -10
         local L = {}

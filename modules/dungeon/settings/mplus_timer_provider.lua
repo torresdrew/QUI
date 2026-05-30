@@ -46,6 +46,9 @@ do
         end
 
         local function MakeLayout(content)
+            if U._layoutModePositionOnly then
+                return U.MakeSuppressedProviderLayout(content)
+            end
             local y = -10
             local L = {}
             local sections = {}

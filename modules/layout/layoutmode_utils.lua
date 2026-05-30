@@ -324,6 +324,67 @@ function Utils.CreateCollapsible(parent, title, contentHeight, buildFunc, sectio
 end
 
 ---------------------------------------------------------------------------
+-- SUPPRESSED PROVIDER LAYOUT (Layout Mode position-only)
+---------------------------------------------------------------------------
+
+-- Layout Mode renders a mover's shared-provider body in position-only mode so
+-- right-click shows ONLY the Position controls + the "Open ... settings" link.
+-- CreateCollapsible already self-suppresses when Utils._layoutModePositionOnly
+-- is set, but the V3 body primitives (CreateAccentDotLabel +
+-- CreateSettingsCardGroup, driven by each provider's local MakeLayout) do not,
+-- so those bodies would render every section. Each provider's MakeLayout returns
+-- THIS inert layout instead when the flag is on: it mirrors the MakeLayout
+-- contract (headerAt / sectionAt / closeSection / placeCustom / sections /
+-- relayoutSections) so the build body runs unchanged, but the section builders
+-- are no-ops, custom blocks are hidden, and the appended Position collapsible +
+-- settings link are the only things laid out. Any widgets the body still creates
+-- against sectionAt().frame land on a hidden throwaway frame that ClearContent's
+-- child sweep reclaims on the next drawer rebuild.
+function Utils.MakeSuppressedProviderLayout(content)
+    local sections = {}
+    local noop = function() end
+
+    -- Hidden host for widgets the provider body creates against sectionAt().frame.
+    -- Parented to content so ClearContent releases it (and its descendants).
+    local trash = CreateFrame("Frame", nil, content)
+    trash:Hide()
+    trash:SetSize(1, 1)
+
+    local stubSection = {
+        frame = trash,
+        AddRow = noop,
+        Finalize = noop,
+        GetRowCount = function() return 0 end,
+    }
+
+    local L = {
+        sections = sections,
+        headerAt = noop,
+        sectionAt = function() return stubSection end,
+        closeSection = noop,
+        -- Custom blocks are created by the body before placeCustom is called;
+        -- hide them so they do not float at the default anchor.
+        placeCustom = function(frame)
+            if frame and frame.Hide then frame:Hide() end
+        end,
+    }
+
+    function L.relayoutSections()
+        local PAD = Utils.PADDING or 0
+        local cy = -10
+        for _, s in ipairs(sections) do
+            s:ClearAllPoints()
+            s:SetPoint("TOPLEFT", content, "TOPLEFT", PAD, cy)
+            s:SetPoint("RIGHT", content, "RIGHT", -PAD, 0)
+            cy = cy - (s:GetHeight() or 0) - 4
+        end
+        content:SetHeight(math.abs(cy) + 16)
+    end
+
+    return L
+end
+
+---------------------------------------------------------------------------
 -- BUILD POSITION COLLAPSIBLE
 ---------------------------------------------------------------------------
 
