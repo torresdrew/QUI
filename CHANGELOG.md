@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha70 - 2026-05-30
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha69 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **Chat no longer errors when a creature speaks near you during combat.** Player names in say, yell, and channel chat are still shown in class colors, but the coloring is now applied to each line as it is printed rather than by changing Blizzard's chat color settings — which on current game versions could break chat with a Lua error the first time a hostile creature spoke in combat.
+
+### Changed
+- **More skinned UI text now uses the QUI font** for a more consistent look across skinned Blizzard frames; text colors are unchanged.
+
+
+
 ## v3.6.0-alpha69 - 2026-05-29
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha68 profiles carry over unchanged.
