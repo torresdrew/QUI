@@ -277,12 +277,12 @@ local function RefreshBarAppearance(bar)
 
     if backdrop then
         UpdateBackdropLayout(backdrop)
-        backdrop:SetBackdropColor(bgr, bgg, bgb, bga)
+        Helpers.SetFrameBackdropColor(backdrop, bgr, bgg, bgb, bga)
         local borderA = sa
         if g and g.statusTrackingBarsShowBorder == false then
             borderA = 0
         end
-        backdrop:SetBackdropBorderColor(sr, sg, sb, borderA)
+        Helpers.SetFrameBackdropBorderColor(backdrop, sr, sg, sb, borderA)
     end
 
     SyncBarTextLockedAndVisibility(bar)
