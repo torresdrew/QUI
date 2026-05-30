@@ -332,15 +332,20 @@ local function GetChatSurfaceColors(settings)
         alpha = (legacyBg and legacyBg[4]) or 0.25
     end
 
-    -- Source bg RGB from the skin theme with optional per-module override,
-    -- falling back to GetSkinBgColor() when the override API is unavailable.
-    -- Guarded multi-assign: never use `local r,g,b = X and fn()` — Lua
-    -- truncates the multi-return to 1 when the first operand is truthy.
-    local bgR, bgG, bgB = 0, 0, 0
-    if Helpers and Helpers.GetSkinBgColorWithOverride then
-        bgR, bgG, bgB = Helpers.GetSkinBgColorWithOverride(settings, "chat")
-    elseif Helpers and Helpers.GetSkinBgColor then
-        bgR, bgG, bgB = Helpers.GetSkinBgColor()
+    -- An explicit per-chat background color (picker writes glass.bgColor; factory
+    -- default is black {0,0,0}) overrides the skin; otherwise track the skin theme.
+    local legacyBg = glass and glass.bgColor
+    local userSet = type(legacyBg) == "table" and (legacyBg[1] ~= 0 or legacyBg[2] ~= 0 or legacyBg[3] ~= 0)
+    local bgR, bgG, bgB
+    if userSet then
+        bgR, bgG, bgB = legacyBg[1], legacyBg[2], legacyBg[3]
+    else
+        bgR, bgG, bgB = 0, 0, 0
+        if Helpers and Helpers.GetSkinBgColorWithOverride then
+            bgR, bgG, bgB = Helpers.GetSkinBgColorWithOverride(settings, "chat")
+        elseif Helpers and Helpers.GetSkinBgColor then
+            bgR, bgG, bgB = Helpers.GetSkinBgColor()
+        end
     end
 
     -- Source border from the skin theme; preserve the 0.55 alpha used for the

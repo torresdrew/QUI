@@ -497,4 +497,34 @@ do
         "unitframes.lua: semantic GetUnitClassColor helper must not be removed")
 end
 
+-- ===========================================================================
+-- chat/chat.lua — regression: user glass.bgColor override must be honoured
+-- ===========================================================================
+-- Phase 3 skinning consolidation changed GetChatSurfaceColors to source bg RGB
+-- from GetSkinBgColorWithOverride(settings,"chat") only — silently dropping any
+-- user colour set via the Background Color picker (which wrote glass.bgColor).
+-- The minimal fix: GetChatSurfaceColors reads glass.bgColor and, when it is a
+-- non-black value (i.e. the user explicitly picked a color), uses it directly
+-- for the RGB; otherwise it falls through to GetSkinBgColorWithOverride so the
+-- skin theme default still applies.  No schema migration, no new defaults keys.
+-- This block verifies:
+--   (a) chat.lua reads glass.bgColor and implements the userSet guard
+--   (b) chat.lua still references GetSkinBgColorWithOverride (skin-default path)
+do
+    local chatSrc = readFile("modules/chat/chat.lua")
+
+    -- (a) The inline fix: glass.bgColor is read and a userSet guard decides
+    --     whether to use it or fall back to the skin.
+    assertContains(chatSrc, "glass.bgColor",
+        "chat.lua: GetChatSurfaceColors must read glass.bgColor for the user-override path")
+    assertContains(chatSrc, "userSet",
+        "chat.lua: GetChatSurfaceColors must use a userSet guard to detect a non-black glass.bgColor")
+
+    -- (b) Skin-default path must still be present (consolidation win preserved).
+    assertContains(chatSrc, "GetSkinBgColorWithOverride",
+        "chat.lua: GetSkinBgColorWithOverride must still be the skin-default bg RGB source")
+    assertContains(chatSrc, "GetSkinBgColor",
+        "chat.lua: GetSkinBgColor fallback must still be present for older Helpers API")
+end
+
 print("OK: addon_chrome_consistency_test")
