@@ -727,6 +727,14 @@ function CDMBars.ConfigureBar(bar, settings, overrideWidth)
             borderFrame._right:SetPoint("BOTTOMRIGHT", borderFrame, "BOTTOMRIGHT", 0, 0)
             borderFrame._right:SetWidth(borderSizePx)
 
+            -- Themed skin border color (was hardcoded black at creation; now follows the
+            -- user's skin border color and the global hideSkinBorders toggle, like unit frames)
+            local sbR, sbG, sbB, sbA = Helpers.GetSkinBorderColor()
+            borderFrame._top:SetColorTexture(sbR, sbG, sbB, sbA)
+            borderFrame._bottom:SetColorTexture(sbR, sbG, sbB, sbA)
+            borderFrame._left:SetColorTexture(sbR, sbG, sbB, sbA)
+            borderFrame._right:SetColorTexture(sbR, sbG, sbB, sbA)
+
             borderFrame:Show()
         else
             borderFrame:Hide()

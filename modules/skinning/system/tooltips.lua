@@ -66,10 +66,8 @@ end
 
 local function GetPlayerClassColor()
     local _, classToken = UnitClass("player")
-    if classToken and RAID_CLASS_COLORS and RAID_CLASS_COLORS[classToken] then
-        local c = RAID_CLASS_COLORS[classToken]
-        return c.r, c.g, c.b, 1
-    end
+    local c = Helpers.GetClassColorTable(classToken)
+    if c then return c.r, c.g, c.b, 1 end
     return 0.376, 0.647, 0.980, 1
 end
 

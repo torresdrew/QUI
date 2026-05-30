@@ -1401,12 +1401,11 @@ end
 local function GetClassColor(className)
     if not className then return nil end
     -- First check if it's already a token (e.g., "WARRIOR")
-    if RAID_CLASS_COLORS[className] then
-        return RAID_CLASS_COLORS[className]
-    end
+    local direct = Helpers.GetClassColorTable(className)
+    if direct then return direct end
     -- Otherwise try localized lookup (e.g., "Warrior" -> "WARRIOR")
     local classToken = unlocalizedClasses[className]
-    return classToken and RAID_CLASS_COLORS[classToken]
+    return classToken and Helpers.GetClassColorTable(classToken)
 end
 
 -- Client priority: higher = better (games beat App/Mobile)

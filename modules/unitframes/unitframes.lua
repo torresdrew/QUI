@@ -479,37 +479,9 @@ end
 -- Returns the unit's actual class color for player characters,
 -- or hostility-based color for NPCs.
 ---------------------------------------------------------------------------
-local function GetUnitClassColor(unit)
-    unit = unit or "player"
-    if not UnitExists(unit) then
-        return 0.5, 0.5, 0.5, 1
-    end
-
-    -- Player characters: use their actual class color
-    if UnitIsPlayer(unit) then
-        local _, class = UnitClass(unit)
-        if type(class) == "string" then
-            local color = RAID_CLASS_COLORS[class]
-            if color then
-                return color.r, color.g, color.b, 1
-            end
-        end
-    end
-
-    -- NPCs: use hostility-based colors
-    local reaction = Helpers.SafeToNumber(UnitReaction(unit, "player"), nil)
-    if reaction then
-        if reaction >= 5 then
-            return 0.2, 0.8, 0.2, 1  -- Friendly (green)
-        elseif reaction == 4 then
-            return 1, 1, 0.2, 1      -- Neutral (yellow)
-        else
-            return 0.8, 0.2, 0.2, 1  -- Hostile (red)
-        end
-    end
-
-    return 0.5, 0.5, 0.5, 1
-end
+-- Unit class/reaction color now lives in core Helpers (single source of truth,
+-- also consumed by the castbar submodule via the injected helper table).
+local GetUnitClassColor = Helpers.GetUnitClassColor
 
 ---------------------------------------------------------------------------
 -- HELPER: Get anchor point and justification for text
@@ -1794,9 +1766,9 @@ local function CreateBossFrame(unit, frameKey, bossIndex)
     })
     Helpers.SetFrameBackdropColor(frame, bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
     if borderSize > 0 then
-        local skinBorderR, skinBorderG, skinBorderB = 0, 0, 0
-        if Helpers and Helpers.GetSkinBorderColor then skinBorderR, skinBorderG, skinBorderB = Helpers.GetSkinBorderColor() end
-        Helpers.SetFrameBackdropBorderColor(frame, skinBorderR, skinBorderG, skinBorderB, 1)
+        local skinBorderR, skinBorderG, skinBorderB, skinBorderA = 0, 0, 0, 1
+        if Helpers and Helpers.GetSkinBorderColor then skinBorderR, skinBorderG, skinBorderB, skinBorderA = Helpers.GetSkinBorderColor() end
+        Helpers.SetFrameBackdropBorderColor(frame, skinBorderR, skinBorderG, skinBorderB, skinBorderA)
     end
 
     -- Health bar
@@ -2515,9 +2487,9 @@ local function CreateUnitFrame(unit, unitKey)
     })
     Helpers.SetFrameBackdropColor(frame, bgColor[1], bgColor[2], bgColor[3], bgColor[4] or 1)
     if borderSize > 0 then
-        local skinBorderR, skinBorderG, skinBorderB = 0, 0, 0
-        if Helpers and Helpers.GetSkinBorderColor then skinBorderR, skinBorderG, skinBorderB = Helpers.GetSkinBorderColor() end
-        Helpers.SetFrameBackdropBorderColor(frame, skinBorderR, skinBorderG, skinBorderB, 1)
+        local skinBorderR, skinBorderG, skinBorderB, skinBorderA = 0, 0, 0, 1
+        if Helpers and Helpers.GetSkinBorderColor then skinBorderR, skinBorderG, skinBorderB, skinBorderA = Helpers.GetSkinBorderColor() end
+        Helpers.SetFrameBackdropBorderColor(frame, skinBorderR, skinBorderG, skinBorderB, skinBorderA)
     end
 
     -- Health bar (pixel-perfect insets)
@@ -3464,9 +3436,9 @@ function QUI_UF:RefreshFrame(unitKey)
                 })
                 Helpers.SetFrameBackdropColor(frame, bgColor[1], bgColor[2], bgColor[3], bgAlpha)
                 if borderSize > 0 then
-                    local skinBorderR, skinBorderG, skinBorderB = 0, 0, 0
-                    if Helpers and Helpers.GetSkinBorderColor then skinBorderR, skinBorderG, skinBorderB = Helpers.GetSkinBorderColor() end
-                    Helpers.SetFrameBackdropBorderColor(frame, skinBorderR, skinBorderG, skinBorderB, 1)
+                    local skinBorderR, skinBorderG, skinBorderB, skinBorderA = 0, 0, 0, 1
+                    if Helpers and Helpers.GetSkinBorderColor then skinBorderR, skinBorderG, skinBorderB, skinBorderA = Helpers.GetSkinBorderColor() end
+                    Helpers.SetFrameBackdropBorderColor(frame, skinBorderR, skinBorderG, skinBorderB, skinBorderA)
                 end
 
                 -- Apply opacity to bars only (not text)
@@ -3761,9 +3733,9 @@ function QUI_UF:RefreshFrame(unitKey)
     })
     Helpers.SetFrameBackdropColor(frame, bgColor[1], bgColor[2], bgColor[3], bgAlpha)
     if borderSize > 0 then
-        local skinBorderR, skinBorderG, skinBorderB = 0, 0, 0
-        if Helpers and Helpers.GetSkinBorderColor then skinBorderR, skinBorderG, skinBorderB = Helpers.GetSkinBorderColor() end
-        Helpers.SetFrameBackdropBorderColor(frame, skinBorderR, skinBorderG, skinBorderB, 1)
+        local skinBorderR, skinBorderG, skinBorderB, skinBorderA = 0, 0, 0, 1
+        if Helpers and Helpers.GetSkinBorderColor then skinBorderR, skinBorderG, skinBorderB, skinBorderA = Helpers.GetSkinBorderColor() end
+        Helpers.SetFrameBackdropBorderColor(frame, skinBorderR, skinBorderG, skinBorderB, skinBorderA)
     end
 
     -- Apply opacity to bars only (not text)

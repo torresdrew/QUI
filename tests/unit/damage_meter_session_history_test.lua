@@ -31,8 +31,10 @@ assert(src:find("GetAvailableCombatSessions", 1, true),
     "menu must use C_DamageMeter.GetAvailableCombatSessions")
 assert(src:find('root:CreateButton("Previous"', 1, true),
     "Session menu must expose a Previous submenu")
-assert(src:find("previousMenu:CreateRadio", 1, true),
-    "Previous submenu must create selectable session rows")
+assert(src:find("previousMenu:CreateButton(availableSession.name", 1, true),
+    "Previous submenu must create plain session rows without Blizzard radio glyphs")
+assert(not src:find("previousMenu:CreateRadio", 1, true),
+    "Previous submenu must not use radio rows because the left glyph looks like a session-name prefix")
 assert(src:find("availableSession.name", 1, true),
     "Previous submenu rows must use Blizzard's session name field")
 assert(src:find("self.sessionID = nil", 1, true),

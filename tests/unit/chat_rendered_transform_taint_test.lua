@@ -84,7 +84,7 @@ function geterrorhandler()
 end
 
 local function newChatFrame()
-    local frame = { messages = {} }
+    local frame = { messages = {}, transformCalls = 0 }
 
     function frame:GetNumMessages()
         return #self.messages
@@ -101,6 +101,7 @@ local function newChatFrame()
     end
 
     function frame:TransformMessages(predicate, transform)
+        self.transformCalls = self.transformCalls + 1
         for i = 1, #self.messages do
             local message = self.messages[i]
             if predicate(unpack(message)) then
@@ -205,6 +206,7 @@ assert(
 assert(transformed:find(" %[pipeline%]$"), "rendered transform should run the pipeline")
 
 C_ChatInfo._locked = true
+local transformCallsBeforeLockdownMessage = chatFrame.transformCalls
 chatFrame:AddMessage(
     "locked https://example.com",
     1, 1, 1,
@@ -213,6 +215,10 @@ chatFrame:AddMessage(
     { [2] = "RaidLead-Realm", [11] = 102 }
 )
 assert(chatFrame.messages[2][1] == "locked https://example.com", "chat lockdown should skip rendered transforms")
+assert(
+    chatFrame.transformCalls == transformCallsBeforeLockdownMessage,
+    "chat lockdown should skip TransformMessages entirely for secret chat events"
+)
 C_ChatInfo._locked = false
 
 chatFrame:AddMessage(

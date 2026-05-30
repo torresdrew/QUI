@@ -310,7 +310,13 @@ BuildNativeDamageMeterTab = function(tabContent)
 
     if not db.damageMeter then db.damageMeter = {} end
     if not db.damageMeter.native then
-        db.damageMeter.native = { visibility = "always", refreshRateCombat = 0.5, refreshRateIdle = 2.0 }
+        db.damageMeter.native = {
+            visibility = "always",
+            refreshRateCombat = 0.5,
+            refreshRateIdle = 2.0,
+            autoResetOnChallengeStart = true,
+            autoSwapChallengeSessions = false,
+        }
     end
     if not db.damageMeter.native.appearance then
         db.damageMeter.native.appearance = { global = { barHeight = 18 } }
@@ -328,6 +334,8 @@ BuildNativeDamageMeterTab = function(tabContent)
 
     local L = MakeLayout(tabContent)
     local native = db.damageMeter.native
+    if native.autoResetOnChallengeStart == nil then native.autoResetOnChallengeStart = true end
+    if native.autoSwapChallengeSessions == nil then native.autoSwapChallengeSessions = false end
     local app = native.appearance.global
 
     -- Per-window mode banner: pair override-aware cells full-width so the
@@ -404,6 +412,12 @@ BuildNativeDamageMeterTab = function(tabContent)
     local shortNameW = GUI:CreateFormCheckbox(sBeh.frame, nil, "shortenNames", native, ApplyNative,
         { description = "When ON (default), hide realm names: show \"Name\" instead of \"Name-Realm\" for cross-realm players on rows, tooltips, and the breakdown popup." })
     sBeh.AddRow(row(sBeh.frame, "Include Absorbs in Healing", absorbW), row(sBeh.frame, "Hide Realm Names", shortNameW))
+
+    local autoResetW = GUI:CreateFormCheckbox(sBeh.frame, nil, "autoResetOnChallengeStart", native, ApplyNative,
+        { description = "When ON (default), clear all damage-meter sessions when a Mythic+ key starts so Overall begins at zero for that run." })
+    local autoSwapW = GUI:CreateFormCheckbox(sBeh.frame, nil, "autoSwapChallengeSessions", native, ApplyNative,
+        { description = "When ON, windows showing Overall switch to Current when a key starts, then Current switches back to Overall when the key completes." })
+    sBeh.AddRow(row(sBeh.frame, "Auto Reset on Key Start", autoResetW), row(sBeh.frame, "Auto Swap Current/Overall", autoSwapW))
 
     -- Override-aware fields: Number Format, Icon Style
     local numberFormatOptions = {

@@ -49,6 +49,10 @@ local function HasSecretValue(...)
     return Helpers and Helpers.HasSecretValue and Helpers.HasSecretValue(...)
 end
 
+local function IsChatMessagingLockedDown()
+    return I.IsChatMessagingLockedDown and I.IsChatMessagingLockedDown()
+end
+
 local function EventMatchesChannel(event, channel)
     local events = SOUND_CHANNEL_EVENTS[channel]
     if not events then return false end
@@ -71,6 +75,10 @@ local function PlayConfiguredMessageSound(entry)
 end
 
 local function PlayNewMessageSound(event, ...)
+    if IsChatMessagingLockedDown() then
+        return
+    end
+
     if HasSecretValue(...) then
         return
     end

@@ -1570,6 +1570,21 @@ function SkinBase.GetBackdrop(frame)
 end
 
 ---------------------------------------------------------------------------
+-- RefreshFrameBackdropColors(frame)
+-- Re-apply the current skin colors to a previously-skinned frame's QUI
+-- backdrop. Single source of truth for the per-frame skin refreshers
+-- (social/journals/interaction and any future frame skins).
+---------------------------------------------------------------------------
+function SkinBase.RefreshFrameBackdropColors(frame)
+    if not frame then return end
+    local bd = SkinBase.GetBackdrop(frame)
+    if not bd then return end
+    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
+    bd:SetBackdropColor(bgr, bgg, bgb, bga)
+    bd:SetBackdropBorderColor(sr, sg, sb, sa)
+end
+
+---------------------------------------------------------------------------
 -- Skinning state tracking (shared across all skinning modules)
 -- Replaces frame.quiSkinned / frame.quiStyled / frame.quiBackdrop writes
 -- which taint Blizzard frames in Midnight's taint model.

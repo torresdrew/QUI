@@ -53,6 +53,8 @@ Click any **row** to open a per-source spell breakdown popup, listing every spel
 | Refresh Rate (Idle) | Seconds between refreshes outside combat (0.5–5.0). |
 | Show Hover Tooltip | Toggles the per-row tooltip on hover. |
 | Show Pinned Self | When the local player isn't in the visible top-N, show them at the bottom anyway. |
+| Auto Reset on Key Start | Clears all stored meter sessions when a Mythic+ key starts, so Overall begins at zero for that run. |
+| Auto Swap Current/Overall | Optional: windows showing Overall switch to Current when a key starts, then Current switches back to Overall when the key completes. |
 | Number Format | *Minimal* (1K / 2M) / *Compact* (1.5K / 2.4M) / *Complete* (1,500 / 2,400,000). |
 | Icon Style | *Spec icon* / *Class icon* / *None*. |
 | Breakdown Popup Position | *Next to row* / *Center of screen*. |

@@ -215,9 +215,7 @@ end
 
 local function GetClassColor()
     local _, class = UnitClass("player")
-    -- Support custom class color addons, fallback to standard
-    local color = CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[class] or RAID_CLASS_COLORS[class]
-    return color
+    return Helpers.GetClassColorTable(class)
 end
 
 local function SafeExecute(func)

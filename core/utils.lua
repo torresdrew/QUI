@@ -1087,12 +1087,23 @@ Helpers.CHROME = {
     },
 }
 
+--- CUSTOM_CLASS_COLORS-aware class color TABLE lookup. Returns the color table
+--- (with .r/.g/.b and Blizzard's .colorStr) or nil. Single source of the
+--- custom-vs-Blizzard precedence shared by the class-color helpers and callers
+--- that need the raw table (e.g. chat colorStr).
+--- @param classToken string|nil The uppercase class token from UnitClass
+--- @return table|nil
+function Helpers.GetClassColorTable(classToken)
+    if not classToken then return nil end
+    return (CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[classToken])
+        or RAID_CLASS_COLORS[classToken]
+end
+
 --- Get class color for a class token (e.g., "WARRIOR", "MAGE")
 --- @param classToken string The uppercase class token from UnitClass
 --- @return number, number, number r, g, b values (0-1)
 function Helpers.GetClassColor(classToken)
-    if not classToken then return 1, 1, 1 end
-    local classColor = RAID_CLASS_COLORS[classToken]
+    local classColor = Helpers.GetClassColorTable(classToken)
     if classColor then
         return classColor.r, classColor.g, classColor.b
     end
@@ -1104,6 +1115,43 @@ end
 function Helpers.GetPlayerClassColor()
     local _, classToken = UnitClass("player")
     return Helpers.GetClassColor(classToken)
+end
+
+--- Get a unit's color: class color for players, hostility/reaction color for
+--- NPCs, grey fallback otherwise. Distinct from GetClassColor/GetPlayerClassColor
+--- (which take/assume the player) — this resolves any unit token and returns alpha.
+--- @param unit string|nil Unit token (defaults to "player")
+--- @return number, number, number, number r, g, b, a values (0-1)
+function Helpers.GetUnitClassColor(unit)
+    unit = unit or "player"
+    if not UnitExists(unit) then
+        return 0.5, 0.5, 0.5, 1
+    end
+
+    -- Player characters: use their actual class color
+    if UnitIsPlayer(unit) then
+        local _, class = UnitClass(unit)
+        if type(class) == "string" then
+            local color = Helpers.GetClassColorTable(class)
+            if color then
+                return color.r, color.g, color.b, 1
+            end
+        end
+    end
+
+    -- NPCs: use hostility-based colors
+    local reaction = Helpers.SafeToNumber(UnitReaction(unit, "player"), nil)
+    if reaction then
+        if reaction >= 5 then
+            return 0.2, 0.8, 0.2, 1  -- Friendly (green)
+        elseif reaction == 4 then
+            return 1, 1, 0.2, 1      -- Neutral (yellow)
+        else
+            return 0.8, 0.2, 0.2, 1  -- Hostile (red)
+        end
+    end
+
+    return 0.5, 0.5, 0.5, 1
 end
 
 --- Get item quality color
@@ -1305,7 +1353,7 @@ function Helpers.CreateSkinColorGetter(prefix, settingsPath)
         local profile = Helpers.GetProfile()
         local settings = profile and profile[settingsPath]
         local sr, sg, sb, sa = Helpers.GetSkinBorderColor(settings, prefix)
-        local bgr, bgg, bgb, bga = Helpers.GetSkinBgColor()
+        local bgr, bgg, bgb, bga = Helpers.GetSkinBgColorWithOverride(settings, prefix)
         return sr, sg, sb, sa, bgr, bgg, bgb, bga
     end
 end

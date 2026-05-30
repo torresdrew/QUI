@@ -1131,7 +1131,7 @@ local function CreateSlotOverlay(slotFrame, slotInfo, unit)
     local customEnchantColor = IsInspectUnit(overlayUnit) and settings.inspectEnchantTextColor or settings.enchantTextColor
     if useClassColor then
         local _, class = UnitClass(overlayUnit)
-        local classColor = RAID_CLASS_COLORS[class]
+        local classColor = Helpers.GetClassColorTable(class)
         if classColor then
             enchantColor = {classColor.r, classColor.g, classColor.b}
         else
@@ -1357,7 +1357,7 @@ local function UpdateSlotOverlay(overlay, unit)
         noEnchantColor = noEnchantColor or {0.5, 0.5, 0.5}
         if useClassColor then
             local _, class = UnitClass(unit)
-            local classColor = RAID_CLASS_COLORS[class]
+            local classColor = Helpers.GetClassColorTable(class)
             if classColor then
                 enchantColor = {classColor.r, classColor.g, classColor.b}
             else
@@ -2169,7 +2169,7 @@ local function RefreshCharacterPanelFonts()
     local headerColor
     if settings.headerClassColor then
         local _, class = UnitClass("player")
-        local classColor = RAID_CLASS_COLORS[class]
+        local classColor = Helpers.GetClassColorTable(class)
         if classColor then
             headerColor = {classColor.r, classColor.g, classColor.b}
         else
@@ -2227,7 +2227,7 @@ local function RefreshCharacterPanelFonts()
     local enchantColor
     if settings.enchantClassColor then
         local _, class = UnitClass("player")
-        local classColor = RAID_CLASS_COLORS[class]
+        local classColor = Helpers.GetClassColorTable(class)
         if classColor then
             enchantColor = {classColor.r, classColor.g, classColor.b}
         else
@@ -2372,7 +2372,7 @@ local function CreateSectionHeader(parent, text, yOffset)
     local headerColor
     if settings.headerClassColor then
         local _, class = UnitClass("player")
-        local classColor = RAID_CLASS_COLORS[class]
+        local classColor = Helpers.GetClassColorTable(class)
         if classColor then
             headerColor = {classColor.r, classColor.g, classColor.b}
         else
@@ -3360,7 +3360,7 @@ local function UpdateILvlDisplay()
     end
 
     -- Get class color
-    local classColor = RAID_CLASS_COLORS[classNameLocal]
+    local classColor = Helpers.GetClassColorTable(classNameLocal)
     local r, g, b = 1, 1, 1  -- Default white
     if classColor then
         r, g, b = classColor.r, classColor.g, classColor.b

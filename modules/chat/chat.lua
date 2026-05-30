@@ -775,6 +775,7 @@ local function HookRenderedMessageFrame(frame)
     MarkExistingRenderedLines(frame)
 
     hooksecurefunc(frame, "AddMessage", function(chatFrame)
+        if I.IsChatMessagingLockedDown and I.IsChatMessagingLockedDown() then return end
         if not chatFrame or not chatFrame.TransformMessages then return end
         chatFrame:TransformMessages(
             function(...) return ShouldTransformRenderedMessage(chatFrame, ...) end,

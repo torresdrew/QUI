@@ -1403,7 +1403,7 @@ end
 ---------------------------------------------------------------------------
 local function GetClassColor()
     local _, class = UnitClass("player")
-    local classColor = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+    local classColor = Helpers.GetClassColorTable(class)
     if classColor then
         return classColor.r, classColor.g, classColor.b, 0.8
     end

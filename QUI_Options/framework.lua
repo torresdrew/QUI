@@ -197,7 +197,7 @@ GUI.ThemePresets = GUI.ThemePresets or {
 --- @return number r, number g, number b
 function GUI:ResolveThemePreset(presetName)
     -- Static presets
-    for _, preset in ipairs(self.ThemePresets) do
+    for _, preset in ipairs(self.ThemePresets or {}) do
         if preset.name == presetName then
             return preset.color[1], preset.color[2], preset.color[3]
         end
@@ -205,7 +205,7 @@ function GUI:ResolveThemePreset(presetName)
     -- Dynamic presets
     if presetName == "Class Colored" then
         local _, class = UnitClass("player")
-        local color = RAID_CLASS_COLORS[class]
+        local color = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
         if color then return color.r, color.g, color.b end
         return 0.376, 0.647, 0.980
     end

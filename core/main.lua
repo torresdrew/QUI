@@ -1055,7 +1055,8 @@ function QUI:GetSkinColor()
     -- Legacy fallback
     if db.general and db.general.skinUseClassColor then
         local _, class = UnitClass("player")
-        local color = RAID_CLASS_COLORS[class]
+        -- CUSTOM_CLASS_COLORS-aware via the shared helper (resolved at runtime)
+        local color = ns.Helpers and ns.Helpers.GetClassColorTable(class)
         if color then
             return color.r, color.g, color.b, 1
         end

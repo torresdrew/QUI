@@ -245,6 +245,13 @@ local defaults = {
                 -- popup title. Realm-less names (NPCs, same-realm players) are
                 -- unaffected.
                 shortenNames = true,
+                -- Reset all stored damage-meter sessions when a Mythic+ key
+                -- starts so Overall can represent that run from zero.
+                autoResetOnChallengeStart = true,
+                -- Optional lifecycle helper: windows on Overall swap to Current
+                -- when a key starts, then Current swaps back to Overall when
+                -- the key completes.
+                autoSwapChallengeSessions = false,
                 appearance = {
                     global = {
                         barHeight        = 18,
