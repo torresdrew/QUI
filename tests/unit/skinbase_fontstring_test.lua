@@ -138,4 +138,25 @@ SkinBase.RefreshWidget(plainBtn)
 assert(plainBtn:GetFontString().font == nil,
     "RefreshWidget must not apply a font to a widget that wasn't font-skinned")
 
+-- Garbage size from GetFont: WoW's FontString:GetFont() returns a non-positive
+-- height for a fontstring whose font never successfully applied (e.g. a header
+-- created without a font template, then SetFont'd with a not-yet-loaded font at
+-- ADDON_LOADED). SkinFontString must NOT feed that back into SetFont, which errors
+-- with "Invalid fontHeight: ..., height must be > 0" — it must fall back to a sane
+-- size. Mirrors the `size > 0` invariant in core/font_system.lua.
+local fsBad = NewFontString(-1628.289795)
+SkinBase.SkinFontString(fsBad, { fontOnly = true })
+assert(type(fsBad.size) == "number" and fsBad.size > 0,
+    "SkinFontString must never apply a non-positive font size from GetFont")
+assert(fsBad.size == 12,
+    "SkinFontString must fall back to the default size when GetFont reports a non-positive size")
+assert(fsBad.font == generalFont,
+    "SkinFontString must still apply the global font face despite a bad current size")
+
+-- Zero is equally invalid and must trigger the same fallback
+local fsZero = NewFontString(0)
+SkinBase.SkinFontString(fsZero, { fontOnly = true })
+assert(fsZero.size == 12,
+    "SkinFontString must fall back to the default size when GetFont reports a zero size")
+
 print("OK: skinbase_fontstring_test")

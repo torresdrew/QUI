@@ -312,7 +312,11 @@ function SkinBase.ApplyTextureBackdrop(frame, bgFile, edgeFile, edgeSize, border
         frame:SetBackdropBorderColor(frame._quiBorderR or 1, frame._quiBorderG or 1, frame._quiBorderB or 1, frame._quiBorderA)
     end
 
-    frame:Show()
+    -- Do NOT show the frame here. Building the backdrop must not change the
+    -- frame's visibility — that is the caller's concern. This runs on every
+    -- scale refresh (RefreshPixelBackdrop), so forcing :Show() here re-revealed
+    -- intentionally-hidden frames (the loot window, the alert/toast/bnet movers)
+    -- at login when the scale-refresh pass fires.
     return true
 end
 
@@ -985,8 +989,16 @@ function SkinBase.SkinFontString(fontString, opts)
 
     local size = opts.size
     if not size and fontString.GetFont then
+        -- GetFont() can report a non-positive/garbage height for a fontstring
+        -- whose font never successfully applied (e.g. a label SetFont'd with a
+        -- not-yet-loaded font at ADDON_LOADED). Feeding that back into SetFont
+        -- errors ("Invalid fontHeight: ..., height must be > 0"), so only adopt
+        -- the current size when it's actually valid. Same `size > 0` invariant
+        -- as core/font_system.lua.
         local _, curSize = fontString:GetFont()
-        size = curSize
+        if type(curSize) == "number" and curSize > 0 then
+            size = curSize
+        end
     end
     size = size or 12
 

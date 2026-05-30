@@ -94,6 +94,10 @@ local function NewFrame(parent)
         self.shown = true
     end
 
+    function frame:Hide()
+        self.shown = false
+    end
+
     createdFrames[#createdFrames + 1] = frame
     return frame
 end
@@ -186,5 +190,20 @@ assert(native._quiBorderR == 0.61 and native._quiBorderA == 1,
     "scale refresh must preserve stored native pixel backdrop border colors (#3 unified path)")
 assert(native.backdropInfo == nil,
     "unified path must not call frame:SetBackdrop on a native frame (#3)")
+
+-- Visibility must be the caller's concern, never a side effect of building the
+-- backdrop. ApplyTextureBackdrop used to end with frame:Show(), so the scale
+-- refresh that fires at login re-showed intentionally-hidden frames (the loot
+-- window, the alert/toast/bnet movers). Applying a backdrop — and rebuilding it
+-- on a scale refresh — must leave a hidden frame hidden.
+local hidden = NewFrame()
+hidden:Hide()
+assert(hidden.shown == false, "precondition: frame starts hidden")
+SkinBase.ApplyPixelBackdrop(hidden, 1, true, false)
+assert(hidden.shown == false,
+    "ApplyPixelBackdrop must not show a hidden frame")
+registeredRefresh(hidden)
+assert(hidden.shown == false,
+    "scale-refresh rebuild must not re-show a hidden frame")
 
 print("OK: skinning_manual_pixel_backdrop_test")
