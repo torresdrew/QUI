@@ -920,8 +920,16 @@ function CDMBars:BuildBarsFromOwned(container, spellList)
 
     -- No rebuild needed — refresh active state per bar via the resolver path.
     if not needsRebuild then
-        for _, bar in ipairs(barPool) do
+        for i, bar in ipairs(barPool) do
+            local entry = spellList[i]
             if bar._isOwnedBar and bar._spellID then
+                if entry then
+                    bar._spellEntry = entry
+                    bar._instanceKey = entry._instanceKey
+                    bar._isTotemInstance = entry._isTotemInstance and true or false
+                    bar._totemSlot = entry._totemSlot
+                    bar._spellID = entry.overrideSpellID or entry.spellID or entry.id
+                end
                 self:UpdateOwnedBarAura(bar)
             end
         end

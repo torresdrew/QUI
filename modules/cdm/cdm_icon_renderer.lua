@@ -9215,6 +9215,21 @@ local function AppendEntrySignature(parts, prefix, entry, idx)
     AppendSignaturePart(parts, entry.id)
     AppendSignaturePart(parts, entry.spellID)
     AppendSignaturePart(parts, entry.overrideSpellID)
+    AppendSignaturePart(parts, "linked")
+    local linkedSpellIDs = entry.linkedSpellIDs
+    if type(linkedSpellIDs) == "table" then
+        AppendSignaturePart(parts, #linkedSpellIDs)
+        for linkedIdx, linkedID in ipairs(linkedSpellIDs) do
+            AppendSignaturePart(parts, linkedIdx)
+            if issecretvalue and issecretvalue(linkedID) then
+                AppendSignaturePart(parts, "secret")
+            else
+                AppendSignaturePart(parts, linkedID)
+            end
+        end
+    else
+        AppendSignaturePart(parts, "none")
+    end
     AppendSignaturePart(parts, entry.isAura and 1 or 0)
     AppendSignaturePart(parts, entry.enabled == false and 0 or 1)
     AppendSignaturePart(parts, entry.position)
@@ -9255,6 +9270,53 @@ local function BuildIconListSignature(viewerType, container, spellData)
             entryList = cDB.entries
         end
         AppendEntryListSignature(parts, "containerEntries", entryList)
+        if type(entryList) == "table" then
+            local spellDataAPI = ns.CDMSpellData
+            local AuraRuntime = ns.CDMAuraRuntime
+            for idx, entry in ipairs(entryList) do
+                AppendSignaturePart(parts, "AppendCustomRuntimeEntrySignature")
+                AppendSignaturePart(parts, idx)
+                if type(entry) ~= "table" then
+                    AppendSignaturePart(parts, "nil")
+                else
+                    local resolvedKind = entry.kind
+                    if not (resolvedKind == "aura" or resolvedKind == "cooldown") then
+                        resolvedKind = spellDataAPI and spellDataAPI.ResolveEntryKind
+                            and spellDataAPI.ResolveEntryKind(entry, viewerType)
+                            or ""
+                    end
+                    AppendSignaturePart(parts, resolvedKind)
+
+                    local mappedID, remapped
+                    if AuraRuntime and AuraRuntime.ResolveAbilityAuraSpellID then
+                        mappedID, remapped = AuraRuntime.ResolveAbilityAuraSpellID(entry.id)
+                    end
+                    if issecretvalue and issecretvalue(mappedID) then
+                        AppendSignaturePart(parts, "secret")
+                    else
+                        AppendSignaturePart(parts, mappedID)
+                    end
+                    AppendSignaturePart(parts, remapped and 1 or 0)
+
+                    local auraIDs = spellDataAPI and spellDataAPI.GetAuraIDsForSpell
+                        and spellDataAPI:GetAuraIDsForSpell(entry.id)
+                    AppendSignaturePart(parts, "runtimeAuraIDs")
+                    if type(auraIDs) == "table" then
+                        AppendSignaturePart(parts, #auraIDs)
+                        for auraIdx, auraID in ipairs(auraIDs) do
+                            AppendSignaturePart(parts, auraIdx)
+                            if issecretvalue and issecretvalue(auraID) then
+                                AppendSignaturePart(parts, "secret")
+                            else
+                                AppendSignaturePart(parts, auraID)
+                            end
+                        end
+                    else
+                        AppendSignaturePart(parts, "none")
+                    end
+                end
+            end
+        end
         -- IsCustomBarEntryUsableOnCurrentClass verdicts can flip across
         -- a respec (talent-gated spells appear/disappear from the
         -- spellbook). Class doesn't change in-session, but specID does;

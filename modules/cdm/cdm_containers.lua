@@ -484,6 +484,8 @@ local CreateFrame = CreateFrame
 local InCombatLockdown = InCombatLockdown
 local C_Timer = C_Timer
 local hooksecurefunc = hooksecurefunc
+local issecretvalue = issecretvalue
+local tostring = tostring
 local table_insert = table.insert
 local string_format = string.format
 
@@ -2039,6 +2041,22 @@ local hooksecurefunc = hooksecurefunc
 
 local function IsCDMRuntimeEnabled()
     return not Shared or Shared.IsRuntimeEnabled()
+end
+
+local function BuildLinkedSpellIDsFingerprint(linkedSpellIDs)
+    if type(linkedSpellIDs) ~= "table" then
+        return ""
+    end
+
+    local parts = {}
+    for i, linkedID in ipairs(linkedSpellIDs) do
+        if issecretvalue and issecretvalue(linkedID) then
+            parts[i] = "secret"
+        else
+            parts[i] = tostring(linkedID or 0)
+        end
+    end
+    return table.concat(parts, ";")
 end
 
 local FALLBACK_BUILTIN_COOLDOWN_CONTAINER_KEYS = { "essential", "utility" }
@@ -4200,6 +4218,7 @@ local function LayoutContainer(trackerKey)
             parts[i] = table.concat({
                 tostring(entry.spellID or 0),
                 tostring(entry.id or 0),
+                BuildLinkedSpellIDsFingerprint(entry.linkedSpellIDs),
                 tostring(entry._isTotemInstance and 1 or 0),
                 tostring(entry._totemSlot or 0),
                 tostring(entry._instanceKey or ""),
