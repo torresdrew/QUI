@@ -3456,14 +3456,19 @@ end
 -- should rescue incorrectly-dormanted spells without risking re-dormanting more.
 
 -- The per-character Blizzard CDM catalog (_spellToCooldownID + family
--- membership maps) is populated. Class-aware aura cleanup gates on this so it
--- never shelves auras before the catalog has been walked — which would
--- false-positive every aura as "foreign" during early load.
-local function CDMCatalogReady()
+-- membership maps) is populated. Class-aware aura cleanup gates on the aura
+-- family specifically so cooldown-only early snapshots cannot false-positive
+-- every aura as "foreign" during early load.
+local function CDMCatalogReady(family)
     if not next(_spellToCooldownID) then
         if RebuildSpellToCooldownID then
             RebuildSpellToCooldownID()
         end
+    end
+    if family == "aura" or family == "auraBar" then
+        return next(_spellInCDMAuras) ~= nil
+    elseif family == "cooldown" then
+        return next(_spellInCDMCooldowns) ~= nil
     end
     return next(_spellToCooldownID) ~= nil
 end
@@ -3577,7 +3582,7 @@ function CDMSpellData:CheckDormantSpells(containerKey, restoreOnly)
     -- to avoid stranding legitimate auras during early load.
     if IsBuiltinAuraContainerKey(containerKey)
         and next(db.dormantSpells) then
-        local catalogReady = CDMCatalogReady()
+        local catalogReady = CDMCatalogReady("aura")
         for sid, savedData in pairs(db.dormantSpells) do
             local pickerKnown
             if type(savedData) == "table" then
@@ -3621,12 +3626,15 @@ function CDMSpellData:CheckDormantSpells(containerKey, restoreOnly)
     -- foreign auras are removed, and only once the catalog has been walked.
     if not restoreOnly then
         local toRemove = {}  -- indices to remove (descending order)
-        local catalogReady = CDMCatalogReady()
+        local auraCatalogReady
         for i, entry in ipairs(ownedSpells) do
             if entry and entry.id and entry.type == "spell" then
                 local shouldShelve
                 if IsAuraEntry(entry, containerKey) then
-                    shouldShelve = catalogReady
+                    if auraCatalogReady == nil then
+                        auraCatalogReady = CDMCatalogReady("aura")
+                    end
+                    shouldShelve = auraCatalogReady
                         and not self:IsSpellInCDMCategory(entry.id, "aura")
                 else
                     shouldShelve = not IsSpellKnownByPlayer(entry.id)
