@@ -546,6 +546,15 @@ if ns.Registry then
         group = "data",
         importCategories = { "minimapDatatexts" },
     })
+    -- Companion skinning registration: the tracker's bg/border/title track the
+    -- global skin, but the "data" group above isn't refreshed on a skin-color
+    -- change (which fires only RefreshAll("skinning")). Re-skin on that too.
+    ns.Registry:Register("keyTrackerSkin", {
+        refresh = _G.QUI_RefreshKeyTracker,
+        priority = 55,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
 end
 
 ---------------------------------------------------------------------------

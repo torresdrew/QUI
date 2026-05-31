@@ -210,7 +210,7 @@ M._FrameRegistryData = {
 			label = "Talents & Spells",
 			group = "character",
 			names = { "PlayerSpellsFrame" },
-			handlesRelative = { "TalentsFrame", "TalentsFrame.ButtonsParent", "SpecFrame" },
+			handlesRelative = { "TalentsFrame", "SpecFrame" },
 			addon = "Blizzard_PlayerSpells",
 			defaultEnabled = true,
 		},

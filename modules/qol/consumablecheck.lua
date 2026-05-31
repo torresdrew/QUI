@@ -1906,6 +1906,15 @@ if ns.Registry then
         group = "qol",
         importCategories = { "qol" },
     })
+    -- Companion skinning registration: the picker frame bg/border track the
+    -- global skin, but the "qol" group isn't refreshed on a skin-color change
+    -- (which fires only RefreshAll("skinning")). Re-skin on that too.
+    ns.Registry:Register("consumablesSkin", {
+        refresh = _G.QUI_RefreshConsumables,
+        priority = 30,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
 end
 
 if ns.__test then

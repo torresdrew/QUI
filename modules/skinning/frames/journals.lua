@@ -25,14 +25,7 @@ local function IsSettingEnabled(key)
     return settings and settings[key]
 end
 
-local function RefreshBackdropColors(frame)
-    if not frame then return end
-    local bd = SkinBase.GetBackdrop(frame)
-    if not bd then return end
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
-    bd:SetBackdropColor(bgr, bgg, bgb, bga)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-end
+local RefreshBackdropColors = SkinBase.RefreshFrameBackdropColors
 
 ---------------------------------------------------------------------------
 -- PlayerSpellsFrame (SpellBook + Talents)
@@ -79,7 +72,7 @@ local function SkinEncounterJournal()
     local frame = _G.EncounterJournal
     if not frame or SkinBase.IsSkinned(frame) then return end
     SkinBase.SkinButtonFrameTemplate(frame)
-    SkinBase.SkinFrameText(frame, { recurse = true })
+    SkinBase.SkinFrameText(frame)
     SkinBase.MarkSkinned(frame)
 end
 

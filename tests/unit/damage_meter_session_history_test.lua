@@ -31,12 +31,34 @@ assert(src:find("GetAvailableCombatSessions", 1, true),
     "menu must use C_DamageMeter.GetAvailableCombatSessions")
 assert(src:find('root:CreateButton("Previous"', 1, true),
     "Session menu must expose a Previous submenu")
-assert(src:find("previousMenu:CreateRadio", 1, true),
-    "Previous submenu must create selectable session rows")
+assert(src:find('root:CreateRadio("Current"', 1, true),
+    "Current session row should keep the normal radio selector")
+assert(src:find('root:CreateRadio("Overall"', 1, true),
+    "Overall session row should keep the normal radio selector")
+assert(not src:find("previousMenu:CreateButton(availableSession.name", 1, true),
+    "Previous submenu must not pass raw session names directly to menu text")
+assert(src:find("previousMenu:CreateButton(BuildPreviousSessionLabel", 1, true),
+    "Previous submenu rows must use sanitized session labels")
+assert(not src:find("previousMenu:CreateRadio", 1, true),
+    "Previous submenu must not use radio rows because the left glyph looks like a session-name prefix")
 assert(src:find("availableSession.name", 1, true),
     "Previous submenu rows must use Blizzard's session name field")
 assert(src:find("self.sessionID = nil", 1, true),
     "Window runtime state must initialize sessionID to nil")
+
+local fmtStart = src:find("local function FormatDuration", 1, true)
+assert(fmtStart, "could not locate FormatDuration helper")
+local labelAssign = src:find("QUI_DamageMeter.BuildPreviousSessionLabel", fmtStart, true)
+assert(labelAssign, "could not locate previous-session label helper")
+local labelChunk = src:sub(fmtStart, labelAssign - 1):match("^(.-)\n%s*$")
+local BuildPreviousSessionLabel = assert(loadstring(labelChunk .. "\nreturn BuildPreviousSessionLabel"))()
+
+assert(BuildPreviousSessionLabel({ sessionID = 7, name = "(!) Ara-Kara", durationSeconds = 125 }) == "Ara-Kara [2:05]",
+    "previous-session labels must strip the literal alert prefix and append duration")
+assert(BuildPreviousSessionLabel({ sessionID = 3, name = "(!)", durationSeconds = 0 }) == "Combat 3",
+    "empty labels after prefix stripping must fall back to Combat <sessionID>")
+assert(BuildPreviousSessionLabel({ sessionID = 4, name = "", durationSeconds = 65 }) == "Combat 4 [1:05]",
+    "blank labels must fall back to Combat <sessionID> and keep duration")
 
 local defaults = readAll("core/defaults.lua")
 local nativeStart = defaults:find("native = {", 1, true)

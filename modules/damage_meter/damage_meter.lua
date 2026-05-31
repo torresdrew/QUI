@@ -194,6 +194,17 @@ local function GetCombatElapsed()
 end
 Data.GetCombatElapsed = GetCombatElapsed
 
+function Data:ResetCombatClock()
+    if self._inCombat then
+        self._combatStartTime = GetTime()
+        self._combatEndTime   = nil
+    else
+        self._combatStartTime = nil
+        self._combatEndTime   = nil
+    end
+    self._combatFrozen = 0
+end
+
 Data._eventFrame = CreateFrame("Frame")
 Data._eventFrame:RegisterEvent("DAMAGE_METER_COMBAT_SESSION_UPDATED")
 Data._eventFrame:RegisterEvent("DAMAGE_METER_CURRENT_SESSION_UPDATED")
@@ -216,6 +227,7 @@ Data._eventFrame:SetScript("OnEvent", function(_, event, arg1, _arg2)
         MarkCurrentDirty()
     elseif event == "DAMAGE_METER_RESET" then
         Data._clearRuntimeSessions = true
+        Data:ResetCombatClock()
         MarkAllDirty()
     elseif event == "PLAYER_REGEN_DISABLED" then
         Data._inCombat = true
@@ -871,6 +883,25 @@ local function FormatDuration(seconds)
     return string.format("%d:%02d", m, r)
 end
 
+local function BuildPreviousSessionLabel(availableSession)
+    availableSession = availableSession or {}
+    local name = availableSession.name
+    if type(name) == "string" then
+        name = name:gsub("^%s*%(!%)%s*", "")
+    end
+    if not name or name == "" then
+        local sessionID = availableSession.sessionID
+        name = sessionID and ("Combat " .. tostring(sessionID)) or "Combat"
+    end
+
+    local durationText = FormatDuration(availableSession.durationSeconds)
+    if durationText ~= "" then
+        return name .. " [" .. durationText .. "]"
+    end
+    return name
+end
+QUI_DamageMeter.BuildPreviousSessionLabel = BuildPreviousSessionLabel
+
 -- FormatNumber(amount, format) → string per format style.
 --   "minimal"  → "1K"    / "2M"        (no fractional digit)
 --   "compact"  → "1.5K"  / "2.4M"      (one fractional digit; default)
@@ -1265,7 +1296,7 @@ function Window:_AttachRowVisuals(row)
         -- Header colored by class
         local cr, cg, cb = 1, 1, 1
         if src.classFilename and RAID_CLASS_COLORS and RAID_CLASS_COLORS[src.classFilename] then
-            local cc = RAID_CLASS_COLORS[src.classFilename]
+            local cc = Helpers.GetClassColorTable(src.classFilename)
             cr, cg, cb = cc.r, cc.g, cc.b
         end
         GameTooltip:AddLine(ShortenName(src.name) or "?", cr, cg, cb)
@@ -1450,7 +1481,7 @@ function Window:_SetRowSource(row, source, maxAmount)
     -- Bar color: priority is useClassColor → barColorAccent → custom barColor.
     local alpha = ResolveAppearance(windowID, "barFillAlpha") or 1
     if ResolveAppearance(windowID, "useClassColor") and source.classFilename and RAID_CLASS_COLORS then
-        local c = RAID_CLASS_COLORS[source.classFilename]
+        local c = Helpers.GetClassColorTable(source.classFilename)
         if c then
             row.Bar:SetStatusBarColor(c.r, c.g, c.b, alpha)
         else
@@ -1685,8 +1716,7 @@ function Window:_OpenConfigMenu()
         else
             for _, availableSession in ipairs(sessions) do
                 local sessionID = availableSession.sessionID
-                previousMenu:CreateRadio(availableSession.name,
-                    function() return self.sessionID == sessionID end,
+                previousMenu:CreateButton(BuildPreviousSessionLabel(availableSession),
                     function() SelectSession(nil, sessionID) end)
             end
         end
@@ -1699,6 +1729,7 @@ function Window:_OpenConfigMenu()
         root:CreateButton("Reset Data", function()
             if C_DamageMeter and C_DamageMeter.ResetAllCombatSessions then
                 C_DamageMeter.ResetAllCombatSessions()
+                Data:ResetCombatClock()
                 Data:ClearCachedViews()
                 if QUI_DamageMeter.WindowManager.ClearRuntimeSessionIDs then
                     QUI_DamageMeter.WindowManager:ClearRuntimeSessionIDs()
@@ -2656,7 +2687,7 @@ function Breakdown:_SetTargetRow(row, target, maxAmount)
     -- Bar color: class color for known players, else parent accent / custom.
     local alpha = ResolveAppearance(self.parentWindowID, "barFillAlpha") or 1
     if target.classFilename and RAID_CLASS_COLORS and RAID_CLASS_COLORS[target.classFilename] then
-        local c = RAID_CLASS_COLORS[target.classFilename]
+        local c = Helpers.GetClassColorTable(target.classFilename)
         row.Bar:SetStatusBarColor(c.r, c.g, c.b, alpha)
     elseif ResolveAppearance(self.parentWindowID, "barColorAccent") then
         local ar, ag, ab = GetAccentColor()
@@ -2970,6 +3001,77 @@ function WindowManager:RefreshAll()
     end
 end
 
+local function ResetAllDamageMeterSessions()
+    if not (C_DamageMeter and C_DamageMeter.ResetAllCombatSessions) then return false end
+    C_DamageMeter.ResetAllCombatSessions()
+    Data:ResetCombatClock()
+    Data:ClearCachedViews()
+    if WindowManager.ClearRuntimeSessionIDs then
+        WindowManager:ClearRuntimeSessionIDs()
+    end
+    WindowManager:RefreshAll()
+    return true
+end
+
+function WindowManager:ApplyChallengeModeStart()
+    local s = GetSettings()
+    if not s then return end
+
+    if s.autoResetOnChallengeStart ~= false then
+        ResetAllDamageMeterSessions()
+    end
+
+    if not s.autoSwapChallengeSessions then return end
+    local S = Enum and Enum.DamageMeterSessionType
+    local currentSession = (S and S.Current) or 1
+    local overallSession = (S and S.Overall) or 0
+
+    self:Enumerate(function(_windowID, w)
+        if w and w.sessionID == nil and w.sessionType == overallSession then
+            local windowState = s.windows and s.windows[w.windowID]
+            w.sessionType = currentSession
+            if windowState then windowState.sessionType = currentSession end
+            w._lastGeneration = -1
+            if w._breakdown and w._breakdown.Close then
+                w._breakdown:Close()
+            end
+        end
+    end)
+    self:RefreshAll()
+end
+
+function WindowManager:ApplyChallengeModeCompleted()
+    local s = GetSettings()
+    if not (s and s.autoSwapChallengeSessions) then return end
+    local S = Enum and Enum.DamageMeterSessionType
+    local currentSession = (S and S.Current) or 1
+    local overallSession = (S and S.Overall) or 0
+
+    self:Enumerate(function(_windowID, w)
+        if w and w.sessionID == nil and w.sessionType == currentSession then
+            local windowState = s.windows and s.windows[w.windowID]
+            w.sessionType = overallSession
+            if windowState then windowState.sessionType = overallSession end
+            w._lastGeneration = -1
+            if w._breakdown and w._breakdown.Close then
+                w._breakdown:Close()
+            end
+        end
+    end)
+    self:RefreshAll()
+end
+
+local challengeModeFrame = CreateFrame("Frame")
+challengeModeFrame:RegisterEvent("CHALLENGE_MODE_START")
+challengeModeFrame:RegisterEvent("CHALLENGE_MODE_COMPLETED")
+challengeModeFrame:SetScript("OnEvent", function(_, event)
+    if event == "CHALLENGE_MODE_START" then
+        WindowManager:ApplyChallengeModeStart()
+    elseif event == "CHALLENGE_MODE_COMPLETED" then
+        WindowManager:ApplyChallengeModeCompleted()
+    end
+end)
+
 -- T12: Data._onChange fan-out to every live window
 -- Note: Data:_onChange is declared here (not in the Data section above) because
 -- it references WindowManager, which is defined later. Lua captures WindowManager
@@ -3091,4 +3193,22 @@ _G.SlashCmdList["QUI_DM_PERF"] = function(msg)
         print("|cff30D1FF[QUI]|r Damage meter perf summary:")
         for _, line in ipairs(Perf:Summary()) do print(line) end
     end
+end
+
+-- Companion skinning registration: damage-meter window backgrounds fall back to
+-- the global skin bg (GetSkinBgColor) when no per-window color is set, but the
+-- module isn't otherwise refreshed on a skin-color change (which fires only
+-- RefreshAll("skinning")). WindowManager:RefreshAll clears each window's
+-- generation cache and re-applies appearance from current settings.
+if ns.Registry then
+    ns.Registry:Register("damageMeterSkin", {
+        refresh = function()
+            if WindowManager and WindowManager.RefreshAll then
+                WindowManager:RefreshAll()
+            end
+        end,
+        priority = 50,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
 end

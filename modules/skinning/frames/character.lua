@@ -87,6 +87,25 @@ local function ApplyPixelBackdrop(frame, borderPixels, withBackground, withInset
     end
 end
 
+-- Update the persisted colors for a frame skinned via the local ApplyPixelBackdrop
+-- so a later scale refresh re-applies the CURRENT colors instead of reverting to
+-- the colors captured when the backdrop was first created. Live-recolor paths
+-- (theme changes) MUST use this rather than a bare SetBackdrop*Color: the next
+-- scale refresh runs RefreshPixelBackdrop, which rebuilds from `state` and would
+-- otherwise restore the stale creation-time color.
+local function SetPixelBackdropColors(frame, borderColor, bgColor)
+    if not frame then return end
+    local state = pixelBackdropState[frame]
+    if borderColor and frame.SetBackdropBorderColor then
+        if state then state.borderColor = borderColor end
+        frame:SetBackdropBorderColor(borderColor[1], borderColor[2], borderColor[3], borderColor[4])
+    end
+    if bgColor and frame.SetBackdropColor then
+        if state then state.bgColor = bgColor end
+        frame:SetBackdropColor(bgColor[1], bgColor[2], bgColor[3], bgColor[4])
+    end
+end
+
 local function SetExpandedPixelPoints(frame, relativeTo, pixels)
     local offset = (pixels or 1) * QUICore:GetPixelSize(frame)
     frame:ClearAllPoints()
@@ -293,13 +312,20 @@ local function UpdateCharacterFrameTabSelectedState()
         if bd and sc and bg then
             local tabID = tab.GetID and tab:GetID()
             local isSelected = selectedTab == i or selectedTab == tabID
+            local borderColor, bgColor
             if isSelected then
-                bd:SetBackdropBorderColor(sc[1], sc[2], sc[3], sc[4])
-                bd:SetBackdropColor(math.min(bg[1] + 0.10, 1), math.min(bg[2] + 0.10, 1), math.min(bg[3] + 0.10, 1), 1)
+                borderColor = { sc[1], sc[2], sc[3], sc[4] }
+                bgColor = { math.min(bg[1] + 0.10, 1), math.min(bg[2] + 0.10, 1), math.min(bg[3] + 0.10, 1), 1 }
             else
-                bd:SetBackdropBorderColor(sc[1] * 0.5, sc[2] * 0.5, sc[3] * 0.5, sc[4] * 0.6)
-                bd:SetBackdropColor(bg[1], bg[2], bg[3], 0.7)
+                borderColor = { sc[1] * 0.5, sc[2] * 0.5, sc[3] * 0.5, sc[4] * 0.6 }
+                bgColor = { bg[1], bg[2], bg[3], 0.7 }
             end
+            -- Persist the selection-state colors into SkinBase's backdrop data
+            -- (via ApplyPixelBackdrop with the same geometry CreateBackdrop used)
+            -- so a scale refresh re-applies the selection tint instead of
+            -- reverting to the base color. A bare SetBackdrop*Color updates only
+            -- the live color, which RefreshPixelBackdrop discards on rebuild.
+            SkinBase.ApplyPixelBackdrop(bd, 1, true, true, borderColor, bgColor)
         end
     end
 end
@@ -624,7 +650,7 @@ local function RefreshCharacterFrameColors()
             local ReputationBar = child.Content and child.Content.ReputationBar
             local repBd = ReputationBar and SkinBase.GetFrameData(ReputationBar, "backdrop")
             if repBd then
-                repBd:SetBackdropBorderColor(sr, sg, sb, 1)
+                SetPixelBackdropColors(repBd, { sr, sg, sb, 1 })
             end
         end)
     end
@@ -638,7 +664,7 @@ local function RefreshCharacterFrameColors()
             end
             local CurrencyIcon = child.Content and child.Content.CurrencyIcon
             if CurrencyIcon and iconBorders[CurrencyIcon] then
-                iconBorders[CurrencyIcon]:SetBackdropBorderColor(sr, sg, sb, 1)
+                SetPixelBackdropColors(iconBorders[CurrencyIcon], { sr, sg, sb, 1 })
             end
         end)
     end
@@ -751,8 +777,7 @@ local function SkinEquipmentManager()
         ApplyPixelBackdrop(popup, 1, true, false, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
         skinnedEntries[popup] = true
     end
-    popup:SetBackdropColor(bgr, bgg, bgb, bga)
-    popup:SetBackdropBorderColor(sr, sg, sb, sa)
+    SetPixelBackdropColors(popup, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
 
     -- Skin title
     if popup.title then
@@ -789,8 +814,7 @@ RefreshEquipmentManagerColors = function()
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = GetSkinColors()
 
     -- Update popup
-    popup:SetBackdropColor(bgr, bgg, bgb, bga)
-    popup:SetBackdropBorderColor(sr, sg, sb, sa)
+    SetPixelBackdropColors(popup, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
     if popup.title then
         popup.title:SetTextColor(sr, sg, sb, 1)
     end
@@ -801,7 +825,7 @@ RefreshEquipmentManagerColors = function()
         pane.ScrollBox:ForEachFrame(function(entry)
             if not skinnedEntries[entry] then return end
             if entry.icon and iconBorders[entry.icon] then
-                iconBorders[entry.icon]:SetBackdropBorderColor(sr, sg, sb, 1)
+                SetPixelBackdropColors(iconBorders[entry.icon], { sr, sg, sb, 1 })
             end
             if entry.SelectedBar then
                 entry.SelectedBar:SetColorTexture(sr, sg, sb, 0.3)
@@ -817,10 +841,10 @@ RefreshEquipmentManagerColors = function()
 
     -- Update buttons
     if PaperDollFrameEquipSet and skinnedEntries[PaperDollFrameEquipSet] then
-        PaperDollFrameEquipSet:SetBackdropBorderColor(sr, sg, sb, 0.5)
+        SetPixelBackdropColors(PaperDollFrameEquipSet, { sr, sg, sb, 0.5 })
     end
     if PaperDollFrameSaveSet and skinnedEntries[PaperDollFrameSaveSet] then
-        PaperDollFrameSaveSet:SetBackdropBorderColor(sr, sg, sb, 0.5)
+        SetPixelBackdropColors(PaperDollFrameSaveSet, { sr, sg, sb, 0.5 })
     end
 end
 
@@ -884,8 +908,7 @@ local function SkinTitleManagerPane()
     -- Skin popup backdrop (if popup exists)
     if popup and not skinnedEntries[popup] then
         ApplyPixelBackdrop(popup, 1, true, true, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
-        popup:SetBackdropColor(bgr, bgg, bgb, bga)
-        popup:SetBackdropBorderColor(sr, sg, sb, sa)
+        SetPixelBackdropColors(popup, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
 
         -- Style title text
         if popup.title then
@@ -922,8 +945,7 @@ RefreshTitlePaneColors = function()
     -- Update popup
     local popup = _G.QUI_TitlesPopup
     if popup and skinnedEntries[popup] then
-        popup:SetBackdropColor(bgr, bgg, bgb, bga)
-        popup:SetBackdropBorderColor(sr, sg, sb, sa)
+        SetPixelBackdropColors(popup, { sr, sg, sb, sa }, { bgr, bgg, bgb, bga })
         if popup.title then
             popup.title:SetTextColor(sr, sg, sb, 1)
         end

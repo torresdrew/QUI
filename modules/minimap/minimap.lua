@@ -215,9 +215,7 @@ end
 
 local function GetClassColor()
     local _, class = UnitClass("player")
-    -- Support custom class color addons, fallback to standard
-    local color = CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[class] or RAID_CLASS_COLORS[class]
-    return color
+    return Helpers.GetClassColorTable(class)
 end
 
 local function SafeExecute(func)
@@ -4214,6 +4212,15 @@ if ns.Registry then
         priority = 55,
         group = "ui",
         importCategories = { "minimapDatatexts" },
+    })
+    -- Companion skinning registration: the datatext panel bg and button-drawer
+    -- chrome track the global skin, but the "ui" group isn't refreshed on a
+    -- skin-color change (which fires only RefreshAll("skinning")). Re-skin too.
+    ns.Registry:Register("minimapSkin", {
+        refresh = _G.QUI_RefreshMinimap,
+        priority = 55,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
     })
 end
 

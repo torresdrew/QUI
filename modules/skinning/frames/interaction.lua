@@ -28,14 +28,7 @@ end
 -- Generic refresh: re-apply current skin colors to a previously-skinned
 -- frame's QUI backdrop. Used by all four refreshers below.
 ---------------------------------------------------------------------------
-local function RefreshBackdropColors(frame)
-    if not frame then return end
-    local bd = SkinBase.GetBackdrop(frame)
-    if not bd then return end
-    local sr, sg, sb, sa, bgr, bgg, bgb, bga = SkinBase.GetSkinColors()
-    bd:SetBackdropColor(bgr, bgg, bgb, bga)
-    bd:SetBackdropBorderColor(sr, sg, sb, sa)
-end
+local RefreshBackdropColors = SkinBase.RefreshFrameBackdropColors
 
 -- Collect tabs by global-name pattern: prefix .. "Tab" .. 1..count.
 -- Common pattern for legacy PanelTabButtonTemplate frames.

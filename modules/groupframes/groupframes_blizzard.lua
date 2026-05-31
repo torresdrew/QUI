@@ -2,7 +2,8 @@
     QUI Group Frames - Blizzard Frame Hider
     Hides default Blizzard party/raid frames when QUI group frames are enabled.
     Uses hooksecurefunc to catch Blizzard re-showing frames (reactive, not polling).
-    Alpha=0, selection highlight suppression, event stripping.
+    Hidden-parent banishment, alpha/mouse fallback, selection highlight
+    suppression, event stripping.
 
     COMBAT RELOAD SAFETY: Initial hide runs at ADDON_LOADED where
     InCombatLockdown() returns false even during a combat /reload.
@@ -33,6 +34,9 @@ ns.QUI_GroupFrameBlizzard = QUI_GFB
 local hiddenFrames = {}
 local strippedFrames = {}
 local hookedFrames = {}  -- frames with Show hooks installed
+local mouseStates = Helpers.CreateStateTable()
+local banishStates = Helpers.CreateStateTable()
+local hiddenParent
 
 ---------------------------------------------------------------------------
 -- Should we be hiding?
@@ -45,48 +49,135 @@ end
 ---------------------------------------------------------------------------
 -- HELPERS: Safe alpha hide
 ---------------------------------------------------------------------------
+local function EnsureHiddenParent()
+    if not hiddenParent then
+        hiddenParent = CreateFrame("Frame", "QUI_GroupFramesHiddenParent", UIParent)
+        if hiddenParent.SetAllPoints then
+            pcall(hiddenParent.SetAllPoints, hiddenParent, UIParent)
+        end
+        hiddenParent:Hide()
+    end
+    return hiddenParent
+end
+
+local function CaptureMouseState(frame)
+    local state = mouseStates[frame]
+    if state then return state end
+
+    state = {}
+    local ok, value
+    if frame.IsMouseEnabled then
+        ok, value = pcall(frame.IsMouseEnabled, frame)
+        if ok then state.mouseEnabled = value and true or false end
+    end
+    if frame.IsMouseClickEnabled then
+        ok, value = pcall(frame.IsMouseClickEnabled, frame)
+        if ok then state.mouseClickEnabled = value and true or false end
+    end
+    if frame.IsMouseMotionEnabled then
+        ok, value = pcall(frame.IsMouseMotionEnabled, frame)
+        if ok then state.mouseMotionEnabled = value and true or false end
+    end
+    if frame.IsMouseWheelEnabled then
+        ok, value = pcall(frame.IsMouseWheelEnabled, frame)
+        if ok then state.mouseWheelEnabled = value and true or false end
+    end
+
+    mouseStates[frame] = state
+    return state
+end
+
+local function SuppressFrameMouse(frame)
+    if not frame or InCombatLockdown() then return end
+
+    CaptureMouseState(frame)
+
+    if frame.EnableMouse then
+        pcall(frame.EnableMouse, frame, false)
+    end
+    if frame.SetMouseClickEnabled then
+        pcall(frame.SetMouseClickEnabled, frame, false)
+    end
+    if frame.SetMouseMotionEnabled then
+        pcall(frame.SetMouseMotionEnabled, frame, false)
+    end
+    if frame.EnableMouseWheel then
+        pcall(frame.EnableMouseWheel, frame, false)
+    end
+end
+
+local function RestoreFrameMouse(frame)
+    if not frame or InCombatLockdown() then return false end
+
+    local state = mouseStates[frame]
+    if not state then return true end
+
+    if state.mouseEnabled ~= nil and frame.EnableMouse then
+        pcall(frame.EnableMouse, frame, state.mouseEnabled)
+    end
+    if state.mouseClickEnabled ~= nil and frame.SetMouseClickEnabled then
+        pcall(frame.SetMouseClickEnabled, frame, state.mouseClickEnabled)
+    end
+    if state.mouseMotionEnabled ~= nil and frame.SetMouseMotionEnabled then
+        pcall(frame.SetMouseMotionEnabled, frame, state.mouseMotionEnabled)
+    end
+    if state.mouseWheelEnabled ~= nil and frame.EnableMouseWheel then
+        pcall(frame.EnableMouseWheel, frame, state.mouseWheelEnabled)
+    end
+
+    mouseStates[frame] = nil
+    return true
+end
+
+local function CaptureBanishState(frame)
+    local state = banishStates[frame]
+    if not state then
+        state = {}
+        banishStates[frame] = state
+    end
+    if state.banished then return state end
+
+    local originalParent = UIParent
+    if frame.GetParent then
+        local ok, parent = pcall(frame.GetParent, frame)
+        if ok and parent then
+            originalParent = parent
+        end
+    end
+    state.originalParent = originalParent
+    return state
+end
+
+local function BanishFrame(frame)
+    if not frame then return false end
+
+    if InCombatLockdown() then
+        if frame.SetAlpha then
+            pcall(frame.SetAlpha, frame, 0)
+        end
+        hiddenFrames[frame] = true
+        QUI_GFB.pendingHide = true
+        return false
+    end
+
+    local state = CaptureBanishState(frame)
+    local reparented = false
+    if frame.SetParent then
+        reparented = pcall(frame.SetParent, frame, EnsureHiddenParent())
+    end
+    if frame.SetAlpha then
+        pcall(frame.SetAlpha, frame, 0)
+    end
+    SuppressFrameMouse(frame)
+
+    hiddenFrames[frame] = true
+    state.banished = reparented
+    return reparented
+end
+
 local function SafeHideFrame(frame)
     if not frame then return end
-    pcall(frame.SetAlpha, frame, 0)
-    hiddenFrames[frame] = true
-end
-
-local function SafeScaleContainer(frame, hide)
-    if not frame then return end
-    if InCombatLockdown() then
-        if hide then SafeHideFrame(frame) end
-        return
-    end
-    pcall(function()
-        if hide then
-            frame:SetAlpha(0)
-            frame:SetScale(0.001)
-        else
-            frame:SetAlpha(1)
-            frame:SetScale(1)
-        end
-    end)
-    if hide then hiddenFrames[frame] = true end
-end
-
----------------------------------------------------------------------------
--- HELPERS: Combat-aware hide/show (Hide() is protected, SetAlpha is not)
----------------------------------------------------------------------------
-local function ForceHideShow(frame, hide)
-    if not frame then return end
-    pcall(function()
-        if InCombatLockdown() then
-            frame:SetAlpha(hide and 0 or 1)
-        else
-            if hide then
-                frame:Hide()
-            else
-                frame:SetAlpha(1)
-                frame:Show()
-            end
-        end
-    end)
-    if hide then hiddenFrames[frame] = true end
+    BanishFrame(frame)
 end
 
 ---------------------------------------------------------------------------
@@ -137,6 +228,17 @@ end
 local function RestoreFrame(frame)
     if not frame then return end
     if InCombatLockdown() then return false end
+
+    local state = banishStates[frame]
+    if state and state.originalParent and frame.SetParent then
+        pcall(frame.SetParent, frame, state.originalParent)
+    end
+    if state then
+        state.banished = false
+        banishStates[frame] = nil
+    end
+
+    RestoreFrameMouse(frame)
     pcall(frame.SetAlpha, frame, 1)
     hiddenFrames[frame] = nil
     return true
@@ -149,7 +251,7 @@ local function InstallShowHook(frame)
     if not frame or hookedFrames[frame] then return end
     hooksecurefunc(frame, "Show", function(self)
         if not ShouldHide() then return end
-        ForceHideShow(self, true)
+        SafeHideFrame(self)
     end)
     hookedFrames[frame] = true
 end
@@ -274,8 +376,8 @@ end
 -- HIDE: Blizzard raid frames
 ---------------------------------------------------------------------------
 local function HideBlizzardRaidFrames()
-    -- CompactRaidFrameContainer — scale trick makes it effectively invisible
-    SafeScaleContainer(CompactRaidFrameContainer, true)
+    -- CompactRaidFrameContainer — hidden-parent banish removes it from hit testing
+    SafeHideFrame(CompactRaidFrameContainer)
     if CompactRaidFrameContainer then
         InstallShowHook(CompactRaidFrameContainer)
     end
@@ -351,9 +453,6 @@ function QUI_GFB:RestoreBlizzardFrames()
         RestoreUnitFrameEvents(frame)
     end
     wipe(strippedFrames)
-
-    -- Restore scaled containers
-    SafeScaleContainer(CompactRaidFrameContainer, false)
 
     -- Note: hooks remain installed but ShouldHide() will return false,
     -- so they become no-ops until re-enabled.

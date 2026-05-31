@@ -153,9 +153,7 @@ end
 
 local function GetPlayerClassColor()
     local _, class = UnitClass("player")
-    local cc = class
-        and (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)
-        and (CUSTOM_CLASS_COLORS or RAID_CLASS_COLORS)[class]
+    local cc = ns.Helpers and ns.Helpers.GetClassColorTable(class)
     if cc then return cc.r, cc.g, cc.b, 1 end
     return 1, 0.7, 0, 1
 end

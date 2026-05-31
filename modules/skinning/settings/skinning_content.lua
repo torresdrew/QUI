@@ -219,10 +219,8 @@ local function BuildThemeColorsTab(tabContent)
     if general.addonAccentColor == nil then general.addonAccentColor = {0.376, 0.647, 0.980, 1} end
     if general.skinBgColor == nil then general.skinBgColor = {0.05, 0.05, 0.05, 0.95} end
     if general.hideSkinBorders == nil then general.hideSkinBorders = false end
-    if general.skinBorderUseClassColor == nil then general.skinBorderUseClassColor = false end
-    if general.skinBorderColor == nil then
-        local accent = general.addonAccentColor or {0.376, 0.647, 0.980, 1}
-        general.skinBorderColor = { accent[1], accent[2], accent[3], accent[4] or 1 }
+    if general.skinBorderColorSource == nil then
+        general.skinBorderColorSource = general.skinBorderUseClassColor and "class" or "theme"
     end
 
     if not chat.glass then chat.glass = {} end
@@ -241,10 +239,10 @@ local function BuildThemeColorsTab(tabContent)
     if tooltip.showBorder == nil then tooltip.showBorder = true end
     if tooltip.borderThickness == nil then tooltip.borderThickness = 1 end
     if tooltip.borderColor == nil then tooltip.borderColor = {0.376, 0.647, 0.980, 1} end
-    if tooltip.borderUseClassColor == nil then tooltip.borderUseClassColor = true end
-    if tooltip.borderUseAccentColor == nil then tooltip.borderUseAccentColor = false end
-    if tooltip.borderUseClassColor and tooltip.borderUseAccentColor then
-        tooltip.borderUseAccentColor = false
+    if tooltip.borderColorSource == nil then
+        tooltip.borderColorSource = tooltip.borderUseClassColor and "class"
+            or (tooltip.borderUseAccentColor and "theme")
+            or "theme"
     end
 
     local L = MakeLayout(tabContent)
@@ -291,12 +289,25 @@ local function BuildThemeColorsTab(tabContent)
         row(sGS.frame, "Hide Borders", gsHideBordersW)
     )
 
-    local gsClassBorderW = GUI:CreateFormCheckbox(sGS.frame, nil, "skinBorderUseClassColor", general, RefreshSkinSurfaces,
-        { description = "Color global skin borders with your class color instead of the custom color below." })
-    local gsBorderColorW = GUI:CreateFormColorPicker(sGS.frame, nil, "skinBorderColor", general, RefreshSkinSurfaces, { noAlpha = true },
-        { description = "Custom global skin border color used when class color is off." })
+    local BORDER_SOURCE_OPTIONS = {
+        { value = "theme",  text = "Theme" },
+        { value = "class",  text = "Class" },
+        { value = "custom", text = "Custom" },
+    }
+    local gsBorderColorW
+    local gsBorderSourceW = GUI:CreateFormDropdown(sGS.frame, nil, BORDER_SOURCE_OPTIONS, "skinBorderColorSource", general, function(value)
+        if gsBorderColorW and gsBorderColorW.SetEnabled then
+            gsBorderColorW:SetEnabled(value == "custom")
+        end
+        RefreshSkinSurfaces()
+    end, { description = "Where global skin borders get their color: Theme (follows your theme accent), Class (your class color), or Custom (the color picker)." })
+    gsBorderColorW = GUI:CreateFormColorPicker(sGS.frame, nil, "skinBorderColor", general, RefreshSkinSurfaces, { noAlpha = true },
+        { description = "Custom global skin border color, used when Border Color Source is set to Custom." })
+    if gsBorderColorW and gsBorderColorW.SetEnabled then
+        gsBorderColorW:SetEnabled((general.skinBorderColorSource or "theme") == "custom")
+    end
     sGS.AddRow(
-        row(sGS.frame, "Use Class Color for Borders", gsClassBorderW),
+        row(sGS.frame, "Border Color Source", gsBorderSourceW),
         row(sGS.frame, "Border Color", gsBorderColorW)
     )
     L.closeSection(sGS)
@@ -355,44 +366,30 @@ local function BuildThemeColorsTab(tabContent)
 
     local tsBorderThickW = GUI:CreateFormSlider(sTS.frame, nil, 1, 10, 1, "borderThickness", tooltip, RefreshTooltipSkin,
         { description = "Thickness of the tooltip border in pixels." })
-    local tsBorderColorW = GUI:CreateFormColorPicker(sTS.frame, nil, "borderColor", tooltip, RefreshTooltipSkin, nil,
-        { description = "Color of the tooltip border. Overridden by Class Color or Accent Color below if either is enabled." })
+    local TOOLTIP_BORDER_SOURCE_OPTIONS = {
+        { value = "theme",  text = "Theme" },
+        { value = "class",  text = "Class" },
+        { value = "custom", text = "Custom" },
+    }
+    local tsBorderColorW
+    local tsBorderSourceW = GUI:CreateFormDropdown(sTS.frame, nil, TOOLTIP_BORDER_SOURCE_OPTIONS, "borderColorSource", tooltip, function(value)
+        if tsBorderColorW and tsBorderColorW.SetEnabled then
+            tsBorderColorW:SetEnabled(value == "custom")
+        end
+        RefreshTooltipSkin()
+    end, { description = "Where the tooltip border gets its color: Theme (your theme accent), Class (the unit's class color), or Custom (the color picker)." })
+    tsBorderColorW = GUI:CreateFormColorPicker(sTS.frame, nil, "borderColor", tooltip, RefreshTooltipSkin, nil,
+        { description = "Custom tooltip border color, used when Border Color Source is set to Custom." })
+    if tsBorderColorW and tsBorderColorW.SetEnabled then
+        tsBorderColorW:SetEnabled((tooltip.borderColorSource or "theme") == "custom")
+    end
     sTS.AddRow(
         row(sTS.frame, "Border Thickness", tsBorderThickW),
+        row(sTS.frame, "Border Color Source", tsBorderSourceW)
+    )
+    sTS.AddRow(
         row(sTS.frame, "Border Color", tsBorderColorW)
     )
-
-    local accentColorBorderCheck
-    local classColorBorderCheck = GUI:CreateFormCheckbox(sTS.frame, nil, "borderUseClassColor", tooltip, function(val)
-        if val then
-            tooltip.borderUseAccentColor = false
-            if accentColorBorderCheck and accentColorBorderCheck.SetValue then accentColorBorderCheck:SetValue(false) end
-        end
-        if tsBorderColorW and tsBorderColorW.SetEnabled then
-            tsBorderColorW:SetEnabled(not val and not tooltip.borderUseAccentColor)
-        end
-        RefreshTooltipSkin()
-    end, { description = "Color the tooltip border by the inspected unit's class (falls back to your class for non-unit tooltips)." })
-
-    accentColorBorderCheck = GUI:CreateFormCheckbox(sTS.frame, nil, "borderUseAccentColor", tooltip, function(val)
-        if val then
-            tooltip.borderUseClassColor = false
-            if classColorBorderCheck and classColorBorderCheck.SetValue then classColorBorderCheck:SetValue(false) end
-        end
-        if tsBorderColorW and tsBorderColorW.SetEnabled then
-            tsBorderColorW:SetEnabled(not val and not tooltip.borderUseClassColor)
-        end
-        RefreshTooltipSkin()
-    end, { description = "Color the tooltip border using the UI accent color." })
-
-    sTS.AddRow(
-        row(sTS.frame, "Use Class Color for Border", classColorBorderCheck),
-        row(sTS.frame, "Use Accent Color for Border", accentColorBorderCheck)
-    )
-
-    if tsBorderColorW and tsBorderColorW.SetEnabled then
-        tsBorderColorW:SetEnabled(not tooltip.borderUseClassColor and not tooltip.borderUseAccentColor)
-    end
     L.closeSection(sTS)
 
     L.finish()
@@ -414,10 +411,8 @@ local function BuildSkinningTab(tabContent)
     if general.skinUseClassColor == nil then general.skinUseClassColor = true end
     if general.addonAccentColor == nil then general.addonAccentColor = {0.376, 0.647, 0.980, 1} end
     if general.hideSkinBorders == nil then general.hideSkinBorders = false end
-    if general.skinBorderUseClassColor == nil then general.skinBorderUseClassColor = false end
-    if general.skinBorderColor == nil then
-        local accent = general.addonAccentColor or {0.376, 0.647, 0.980, 1}
-        general.skinBorderColor = { accent[1], accent[2], accent[3], accent[4] or 1 }
+    if general.skinBorderColorSource == nil then
+        general.skinBorderColorSource = general.skinBorderUseClassColor and "class" or "theme"
     end
     if general.skinKeystoneFrame == nil then general.skinKeystoneFrame = true end
 

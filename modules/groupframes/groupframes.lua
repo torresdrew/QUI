@@ -5874,4 +5874,13 @@ if ns.Registry then
         group = "frames",
         importCategories = { "groupFrames" },
     })
+    -- Companion skinning registration: the frame border tracks the global skin
+    -- border (no per-frame override), but the "frames" group isn't refreshed on a
+    -- skin-color change (which fires only RefreshAll("skinning")). Re-skin too.
+    ns.Registry:Register("groupframesSkin", {
+        refresh = _G.QUI_RefreshGroupFrames,
+        priority = 20,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
 end

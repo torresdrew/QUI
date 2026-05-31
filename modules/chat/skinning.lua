@@ -1245,6 +1245,26 @@ Skinning.SkinAll              = SkinAllChatFrames
 ns.QUI.Chat.SkinFrame = SkinChatFrame
 ns.QUI.Chat.SkinAll   = SkinAllChatFrames
 
+-- Re-apply the chat surface skin on a skin/accent/border color change. Those
+-- controls fire Registry:RefreshAll("skinning"), which only refreshes
+-- group == "skinning" modules -- and the chat module is group "chat", so the
+-- glass bg/border and tab colors (which track the skin via GetChatSurfaceColors)
+-- would otherwise stay stale until a chat refresh or /reload. Mirrors the
+-- skinning portion of chat.lua's RefreshAll (SkinAll + StyleAllTabs).
+if ns.Registry then
+    ns.Registry:Register("chatSurfaceSkin", {
+        refresh = function()
+            local settings = I.GetSettings()
+            if not (I.IsChatEnabled and I.IsChatEnabled(settings)) then return end
+            SkinAllChatFrames()
+            StyleAllTabs()
+        end,
+        priority = 50,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+end
+
 InstallScrollChromeHooks()
 InstallCombatLogHooks()
 

@@ -727,6 +727,14 @@ function CDMBars.ConfigureBar(bar, settings, overrideWidth)
             borderFrame._right:SetPoint("BOTTOMRIGHT", borderFrame, "BOTTOMRIGHT", 0, 0)
             borderFrame._right:SetWidth(borderSizePx)
 
+            -- Themed skin border color (was hardcoded black at creation; now follows the
+            -- user's skin border color and the global hideSkinBorders toggle, like unit frames)
+            local sbR, sbG, sbB, sbA = Helpers.GetSkinBorderColor()
+            borderFrame._top:SetColorTexture(sbR, sbG, sbB, sbA)
+            borderFrame._bottom:SetColorTexture(sbR, sbG, sbB, sbA)
+            borderFrame._left:SetColorTexture(sbR, sbG, sbB, sbA)
+            borderFrame._right:SetColorTexture(sbR, sbG, sbB, sbA)
+
             borderFrame:Show()
         else
             borderFrame:Hide()
@@ -1888,4 +1896,37 @@ function ns.CDMBars._BindDebugImports()
     if d then
         DebugBarLabel = d.Bar or DebugBarLabel
     end
+end
+
+-- The CDM bar BORDER tracks the global skin (GetSkinBorderColor), applied in
+-- ConfigureBar -- but ConfigureBar is skipped by a config fingerprint when only
+-- the skin color changed, and the cooldowns-group refresh isn't reached by a
+-- skin-color change (which fires only RefreshAll("skinning")). Re-apply the
+-- border texture colors to the live bars on a skin-color change.
+function CDMBars:RefreshSkinColors()
+    local H = ns.Helpers
+    if not (H and H.GetSkinBorderColor) then return end
+    local r, g, b, a = H.GetSkinBorderColor()
+    for _, bar in ipairs(self:GetActiveBars() or {}) do
+        local bc = bar and bar.BorderContainer
+        if bc and bc._top and bc._top.SetColorTexture then
+            bc._top:SetColorTexture(r, g, b, a)
+            bc._bottom:SetColorTexture(r, g, b, a)
+            bc._left:SetColorTexture(r, g, b, a)
+            bc._right:SetColorTexture(r, g, b, a)
+        end
+    end
+end
+
+if ns.Registry then
+    ns.Registry:Register("cdmBarsSkin", {
+        refresh = function()
+            if ns.CDMBars and ns.CDMBars.RefreshSkinColors then
+                ns.CDMBars:RefreshSkinColors()
+            end
+        end,
+        priority = 50,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
 end

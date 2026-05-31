@@ -980,42 +980,25 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
 
         local bdrThickW = GUI:CreateFormSlider(s1.frame, nil, 1, 10, 1, "borderThickness", tooltip, RefreshTooltipSkin,
             { description = "Thickness of the tooltip border in pixels." })
-        local borderColorPicker = GUI:CreateFormColorPicker(s1.frame, nil, "borderColor", tooltip, RefreshTooltipSkin, nil,
-            { description = "Color of the tooltip border. Overridden by Class Color or Accent Color below if either is enabled." })
-        s1.AddRow(row(s1.frame, "Border Thickness", bdrThickW), row(s1.frame, "Border Color", borderColorPicker))
-
-        if tooltip.borderUseClassColor and tooltip.borderUseAccentColor then
-            tooltip.borderUseAccentColor = false
-        end
-
-        -- Cross-widget enable/disable: class-color + accent-color are mutually
-        -- exclusive, and whichever is on disables the border color swatch.
-        local accentColorBorderCheck
-        local classColorBorderCheck = GUI:CreateFormCheckbox(s1.frame, nil, "borderUseClassColor", tooltip, function(val)
-            if val then
-                tooltip.borderUseAccentColor = false
-                if accentColorBorderCheck and accentColorBorderCheck.SetChecked then accentColorBorderCheck:SetChecked(false) end
-            end
+        local TOOLTIP_BORDER_SOURCE_OPTIONS = {
+            { value = "theme",  text = "Theme" },
+            { value = "class",  text = "Class" },
+            { value = "custom", text = "Custom" },
+        }
+        local borderColorPicker
+        local borderSourceDrop = GUI:CreateFormDropdown(s1.frame, nil, TOOLTIP_BORDER_SOURCE_OPTIONS, "borderColorSource", tooltip, function(value)
             if borderColorPicker and borderColorPicker.SetEnabled then
-                borderColorPicker:SetEnabled(not val and not tooltip.borderUseAccentColor)
+                borderColorPicker:SetEnabled(value == "custom")
             end
             RefreshTooltipSkin()
-        end, { description = "Color the tooltip border by the inspected unit's class (falls back to your class for non-unit tooltips)." })
-        accentColorBorderCheck = GUI:CreateFormCheckbox(s1.frame, nil, "borderUseAccentColor", tooltip, function(val)
-            if val then
-                tooltip.borderUseClassColor = false
-                if classColorBorderCheck and classColorBorderCheck.SetChecked then classColorBorderCheck:SetChecked(false) end
-            end
-            if borderColorPicker and borderColorPicker.SetEnabled then
-                borderColorPicker:SetEnabled(not val and not tooltip.borderUseClassColor)
-            end
-            RefreshTooltipSkin()
-        end, { description = "Color the tooltip border using the UI accent color." })
-        s1.AddRow(row(s1.frame, "Use Class Color for Border", classColorBorderCheck), row(s1.frame, "Use Accent Color for Border", accentColorBorderCheck))
-
+        end, { description = "Where the tooltip border gets its color: Theme (your theme accent), Class (the unit's class color), or Custom (the color picker)." })
+        borderColorPicker = GUI:CreateFormColorPicker(s1.frame, nil, "borderColor", tooltip, RefreshTooltipSkin, nil,
+            { description = "Custom tooltip border color, used when Border Color Source is set to Custom." })
         if borderColorPicker and borderColorPicker.SetEnabled then
-            borderColorPicker:SetEnabled(not tooltip.borderUseClassColor and not tooltip.borderUseAccentColor)
+            borderColorPicker:SetEnabled((tooltip.borderColorSource or "theme") == "custom")
         end
+        s1.AddRow(row(s1.frame, "Border Thickness", bdrThickW))
+        s1.AddRow(row(s1.frame, "Border Color Source", borderSourceDrop), row(s1.frame, "Border Color", borderColorPicker))
 
         local hideHealthW = GUI:CreateFormCheckbox(s1.frame, nil, "hideHealthBar", tooltip, RefreshTooltips,
             { description = "Hide the health bar shown on player, NPC, and enemy tooltips." })

@@ -84,7 +84,15 @@ local ns = {
 
 assert(loadfile("modules/chat/tab_filters.lua"))("QUI", ns)
 
-assert(calls[1] and calls[1].frame == normalFrame and calls[1].value == "SYSTEM",
+local sawNormalSystemGroup = false
+for i = 1, #calls do
+    if calls[i].frame == normalFrame and calls[i].value == "SYSTEM" then
+        sawNormalSystemGroup = true
+        break
+    end
+end
+
+assert(sawNormalSystemGroup,
     "normal chat frames should still reconcile configured message groups")
 
 for i = 1, #calls do

@@ -1302,7 +1302,7 @@ local function UpdateInspectILvlDisplay()
     end
 
     -- Get class color
-    local classColor = RAID_CLASS_COLORS[classToken]
+    local classColor = Helpers.GetClassColorTable(classToken)
     local r, g, b = 1, 1, 1
     if classColor then
         r, g, b = classColor.r, classColor.g, classColor.b

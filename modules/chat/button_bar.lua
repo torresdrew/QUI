@@ -137,30 +137,37 @@ local BUILTIN_ORDER = {
 local function applySkin(button)
     local sr, sg, sb, sa, bgr, bgg, bgb, bga = Helpers.GetSkinColors()
     ns.SkinBase.ApplyFullBackdrop(button, sr, sg, sb, sa, bgr, bgg, bgb, bga)
-    -- ApplyFullBackdrop stores the canonical base colors on the frame as
-    -- _quiBgR/G/B/A and _quiBorderR/G/B/A; the hover hooks read from those
-    -- so a live theme refresh propagates without re-registering the hooks.
+    -- Cache the canonical base colors in dedicated _quiBase* fields. The hover
+    -- hooks must NOT read from _quiBg*/_quiBorder*: ApplyFullBackdrop's manual
+    -- backdrop installs ManualSetBackdropColor as SetBackdropColor, which WRITES
+    -- those fields on every call -- so the OnEnter brighten would overwrite them
+    -- and OnLeave would "restore" to the brightened value (the highlight would
+    -- stick and compound on each hover). These _quiBase* fields are only written
+    -- here, by a real (re)skin, so a live theme refresh (re-running applySkin)
+    -- still propagates the new colors to the hover state.
+    button._quiBaseBgR, button._quiBaseBgG, button._quiBaseBgB, button._quiBaseBgA = bgr, bgg, bgb, bga
+    button._quiBaseBorderR, button._quiBaseBorderG, button._quiBaseBorderB, button._quiBaseBorderA = sr, sg, sb, sa
 
     if button._quiHoverHooked then return end
     button._quiHoverHooked = true
 
     button:HookScript("OnEnter", function(self)
-        if not self._quiBgR then return end
+        if not self._quiBaseBgR then return end
         self:SetBackdropColor(
-            math.min(self._quiBgR + 0.30, 1),
-            math.min(self._quiBgG + 0.30, 1),
-            math.min(self._quiBgB + 0.30, 1),
-            self._quiBgA)
+            math.min(self._quiBaseBgR + 0.30, 1),
+            math.min(self._quiBaseBgG + 0.30, 1),
+            math.min(self._quiBaseBgB + 0.30, 1),
+            self._quiBaseBgA)
         self:SetBackdropBorderColor(
-            math.min(self._quiBorderR * 1.6, 1),
-            math.min(self._quiBorderG * 1.6, 1),
-            math.min(self._quiBorderB * 1.6, 1),
-            self._quiBorderA)
+            math.min(self._quiBaseBorderR * 1.6, 1),
+            math.min(self._quiBaseBorderG * 1.6, 1),
+            math.min(self._quiBaseBorderB * 1.6, 1),
+            self._quiBaseBorderA)
     end)
     button:HookScript("OnLeave", function(self)
-        if not self._quiBgR then return end
-        self:SetBackdropColor(self._quiBgR, self._quiBgG, self._quiBgB, self._quiBgA)
-        self:SetBackdropBorderColor(self._quiBorderR, self._quiBorderG, self._quiBorderB, self._quiBorderA)
+        if not self._quiBaseBgR then return end
+        self:SetBackdropColor(self._quiBaseBgR, self._quiBaseBgG, self._quiBaseBgB, self._quiBaseBgA)
+        self:SetBackdropBorderColor(self._quiBaseBorderR, self._quiBaseBorderG, self._quiBaseBorderB, self._quiBaseBorderA)
     end)
 end
 
@@ -172,6 +179,23 @@ end
 -- pin the bar in memory.
 local bars = setmetatable({}, { __mode = "k" })
 local visibilityHookedFrames = setmetatable({}, { __mode = "k" })
+
+-- Re-apply the skin to every live button. Registered with the Registry
+-- "skinning" group (below) so a skin/accent/border color change updates the
+-- buttons immediately. The chat _afterRefresh chain only fires on chat settings
+-- changes, not on a global skin-color change, so without this a recolor would
+-- not reach the buttons until the next chat refresh or a /reload.
+local function reskinAll()
+    for _, bar in pairs(bars) do
+        if bar.GetChildren then
+            for _, child in ipairs({ bar:GetChildren() }) do
+                if child._quiHoverHooked then
+                    applySkin(child)
+                end
+            end
+        end
+    end
+end
 
 -- ---------------------------------------------------------------------------
 -- Bar creation / layout
@@ -564,3 +588,17 @@ end
 -- hook list so it runs after every chat refresh (settings change, profile
 -- switch, profile import, etc.).
 table.insert(ns.QUI.Chat._afterRefresh, ApplyEnabled)
+
+-- Register a re-skin with the "skinning" refresh group so a skin/accent/border
+-- color change (which fires Registry:RefreshAll("skinning")) re-applies the
+-- current colors to the live buttons. The chat _afterRefresh chain above only
+-- runs on chat settings changes, so without this the buttons keep their old
+-- color until the next chat refresh or a /reload.
+if ns.Registry then
+    ns.Registry:Register("chatButtonBarSkin", {
+        refresh = reskinAll,
+        priority = 50,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
+end

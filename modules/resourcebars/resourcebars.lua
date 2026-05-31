@@ -2126,8 +2126,9 @@ function QUICore:GetPowerBar()
     bar.StatusBar:SetStatusBarTexture(tex)
     bar.StatusBar:SetFrameLevel(bar:GetFrameLevel())
 
-    -- BORDER (pixel-perfect)
-    UIKit.CreateBackdropBorder(bar, cfg.borderSize or 1, 0, 0, 0, 1)
+    -- BORDER (pixel-perfect) — themed skin border color
+    local sbR, sbG, sbB, sbA = Helpers.GetSkinBorderColor()
+    UIKit.CreateBackdropBorder(bar, cfg.borderSize or 1, sbR, sbG, sbB, sbA)
 
     -- TEXT FRAME (same strata, +2 levels to render above bar content but stay within element's layer band)
     bar.TextFrame = CreateFrame("Frame", nil, bar)
@@ -2362,7 +2363,8 @@ function QUICore:UpdatePowerBar()
         local borderSizePixels = cfg.borderSize or 1
         if bar._cachedBorderSize ~= borderSizePixels then
             if UIKit and UIKit.CreateBackdropBorder then
-                bar.Border = UIKit.CreateBackdropBorder(bar, borderSizePixels, 0, 0, 0, 1)
+                local sbR, sbG, sbB, sbA = Helpers.GetSkinBorderColor()
+                bar.Border = UIKit.CreateBackdropBorder(bar, borderSizePixels, sbR, sbG, sbB, sbA)
                 if bar.Border then
                     bar.Border:SetShown(borderSizePixels > 0)
                 end
@@ -3012,8 +3014,9 @@ function QUICore:GetSecondaryPowerBar()
     bar.StatusBar:SetStatusBarTexture(tex)
     bar.StatusBar:SetFrameLevel(bar:GetFrameLevel())
 
-    -- BORDER (pixel-perfect)
-    UIKit.CreateBackdropBorder(bar, cfg.borderSize or 1, 0, 0, 0, 1)
+    -- BORDER (pixel-perfect) — themed skin border color
+    local sbR, sbG, sbB, sbA = Helpers.GetSkinBorderColor()
+    UIKit.CreateBackdropBorder(bar, cfg.borderSize or 1, sbR, sbG, sbB, sbA)
 
     -- TEXT FRAME (same strata, +2 levels to render above bar content but stay within element's layer band)
     bar.TextFrame = CreateFrame("Frame", nil, bar)
@@ -4218,7 +4221,8 @@ function QUICore:UpdateSecondaryPowerBar()
         local secBorderSizePixels = cfg.borderSize or 1
         if bar._cachedBorderSize ~= secBorderSizePixels then
             if UIKit and UIKit.CreateBackdropBorder then
-                bar.Border = UIKit.CreateBackdropBorder(bar, secBorderSizePixels, 0, 0, 0, 1)
+                local sbR, sbG, sbB, sbA = Helpers.GetSkinBorderColor()
+                bar.Border = UIKit.CreateBackdropBorder(bar, secBorderSizePixels, sbR, sbG, sbB, sbA)
                 if bar.Border then
                     bar.Border:SetShown(secBorderSizePixels > 0)
                 end
@@ -4770,4 +4774,38 @@ _G.QUI_RefreshResourceBarPreview = function()
     if ns.QUI_ResourceBarsPreview and ns.QUI_ResourceBarsPreview.Refresh then
         ns.QUI_ResourceBarsPreview.Refresh()
     end
+end
+
+-- The power-bar BORDER tracks the global skin (GetSkinBorderColor), but the
+-- border is only re-created when its pixel SIZE changes (the bar._cachedBorderSize
+-- guard), so a skin-color-only change is skipped; the module also has no
+-- own-group refresh. Re-apply the border color on a skin-color change
+-- (RefreshAll("skinning")) by recoloring the live UIKit borders directly via
+-- SetBackdropBorderColor (reuses the border frame, no re-create — combat-safe;
+-- the border is addon-owned, not a Blizzard frame).
+local function RecolorPowerBarBorder(bar, r, g, b, a)
+    local border = bar and bar.Border
+    if border and border.SetBackdropBorderColor then
+        border:SetBackdropBorderColor(r, g, b, a)
+    end
+end
+
+function QUICore:RefreshPowerBarSkinColors()
+    if not (Helpers and Helpers.GetSkinBorderColor) then return end
+    local r, g, b, a = Helpers.GetSkinBorderColor()
+    RecolorPowerBarBorder(self.powerBar, r, g, b, a)
+    RecolorPowerBarBorder(self.secondaryPowerBar, r, g, b, a)
+end
+
+if ns.Registry then
+    ns.Registry:Register("resourceBarsSkin", {
+        refresh = function()
+            if QUICore.RefreshPowerBarSkinColors then
+                QUICore:RefreshPowerBarSkinColors()
+            end
+        end,
+        priority = 50,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
 end

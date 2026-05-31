@@ -109,6 +109,60 @@ assert(seededSet[12345], "learned spell missing from initial snapshot seed")
 assert(seededSet[67890], "unlearned CDM spell missing from initial snapshot seed")
 assert(not seededSet[13579], "seed/reset should not import spells the user is not tracking in Blizzard CDM")
 
+_G.C_CooldownViewer = {
+    IsCooldownViewerAvailable = function()
+        return true, ""
+    end,
+    GetCooldownViewerCategorySet = function()
+        return { 901 }
+    end,
+    GetCooldownViewerCooldownInfo = function(cooldownID)
+        if cooldownID == 901 then
+            return {
+                spellID = 90101,
+                overrideSpellID = nil,
+                overrideTooltipSpellID = nil,
+                linkedSpellIDs = {},
+                isKnown = true,
+            }
+        end
+        return nil
+    end,
+}
+
+_G.CooldownViewerSettings = {
+    GetDataProvider = function()
+        return {
+            GetOrderedCooldownIDsForCategory = function()
+                error("provider layout is not hydrated yet")
+            end,
+        }
+    end,
+}
+
+seeded, seedReady = catalog.SeedFromBlizzard("buff")
+assert(seedReady == false, "seed should wait when the tracked provider exists but is not hydrated")
+assert(#seeded == 0, "seed should not fall back to raw defaults while the tracked provider is unavailable")
+
+_G.CooldownViewerSettings = {
+    GetDataProvider = function()
+        return {
+            GetOrderedCooldownIDsForCategory = function(_, category, allowUnlearned)
+                assert(category == 2, "unexpected tracked buff category")
+                assert(allowUnlearned == true, "seed should preserve tracked unlearned aura rows")
+                return { 902 }
+            end,
+        }
+    end,
+}
+_G.C_CooldownViewer.GetCooldownViewerCooldownInfo = function()
+    return nil
+end
+
+seeded, seedReady = catalog.SeedFromBlizzard("buff")
+assert(seedReady == false, "seed should wait when tracked cooldown info has not loaded yet")
+assert(#seeded == 0, "seed should not persist a partial tracked category with missing cooldown info")
+
 local cooldownMap = {}
 local cooldownDirectMap = {}
 catalog.MapCooldownInfoIDs(cooldownMap, cooldownDirectMap, {

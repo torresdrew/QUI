@@ -1,9 +1,10 @@
 ---------------------------------------------------------------------------
 -- QUI Chat Module — Sounds
--- Per-channel new-message sound alerts (LSM-aware), with self-message
--- skip and combat-safe GUID/name comparison guarded by Helpers.IsSecretValue.
+-- Per-channel new-message sound alerts (LSM-aware), driven from rendered
+-- ChatFrame:AddMessage hooks so addon code does not participate in the
+-- protected chat-event dispatch path.
 --
--- Extracted from chat.lua during Phase 0 refactor. No behavior change.
+-- Extracted from chat.lua during Phase 0 refactor.
 ---------------------------------------------------------------------------
 
 local ADDON_NAME, ns = ...
@@ -38,15 +39,18 @@ local SOUND_CHANNEL_EVENTS = {
     },
 }
 
-local soundEventFrame = nil
-local registeredSoundEvents = {}
+local hookedFrames = setmetatable({}, { __mode = "k" })
+local newWindowHooksInstalled = false
+local recentLineKeys = {}
+local recentLineOrder = {}
+local RECENT_LINE_LIMIT = 128
 
 local function IsSecret(value)
     return Helpers and Helpers.IsSecretValue and Helpers.IsSecretValue(value)
 end
 
-local function HasSecretValue(...)
-    return Helpers and Helpers.HasSecretValue and Helpers.HasSecretValue(...)
+local function IsChatMessagingLockedDown()
+    return I.IsChatMessagingLockedDown and I.IsChatMessagingLockedDown()
 end
 
 local function EventMatchesChannel(event, channel)
@@ -70,8 +74,53 @@ local function PlayConfiguredMessageSound(entry)
     end
 end
 
-local function PlayNewMessageSound(event, ...)
-    if HasSecretValue(...) then
+local function GetRenderedLineKey(event, eventArgs)
+    if IsSecret(event) or type(event) ~= "string" or event == "" then return nil end
+    if type(eventArgs) ~= "table" then return nil end
+
+    -- ChatInfoDocumentation marks payload arg 11, lineID, as NeverSecret for
+    -- chat-message events including CHAT_MSG_CHANNEL.
+    local lineID = eventArgs[11]
+    local lineIDType = type(lineID)
+    if lineIDType ~= "number" and lineIDType ~= "string" then return nil end
+    return event .. ":" .. tostring(lineID)
+end
+
+local function IsDuplicateRenderedLine(event, eventArgs)
+    local key = GetRenderedLineKey(event, eventArgs)
+    if not key then return false end
+    if recentLineKeys[key] then return true end
+
+    recentLineKeys[key] = true
+    recentLineOrder[#recentLineOrder + 1] = key
+    if #recentLineOrder > RECENT_LINE_LIMIT then
+        local oldKey = table.remove(recentLineOrder, 1)
+        if oldKey then
+            recentLineKeys[oldKey] = nil
+        end
+    end
+    return false
+end
+
+local function FindConfiguredSoundEntry(event, entries)
+    for _, entry in ipairs(entries) do
+        local channel = entry.channel or "guild_officer"
+        if channel ~= "all" and EventMatchesChannel(event, channel) then
+            return entry
+        end
+    end
+
+    for _, entry in ipairs(entries) do
+        local channel = entry.channel or "guild_officer"
+        if channel == "all" and EventMatchesChannel(event, channel) then
+            return entry
+        end
+    end
+    return nil
+end
+
+local function PlayNewMessageSound(event, eventArgs)
+    if IsChatMessagingLockedDown() then
         return
     end
 
@@ -84,110 +133,55 @@ local function PlayNewMessageSound(event, ...)
     local entries = settings.newMessageSound.entries
     if not entries or #entries == 0 then return end
 
-    -- Skip messages from self (never play when we are the sender).
-    -- In restricted contexts (raids/M+) whisper payloads and UnitName/UnitGUID
-    -- can return secret values; comparing or string-indexing those taints the
-    -- chat event dispatch and makes Blizzard's ChatHistory_GetAccessID fail on
-    -- its forbidden `accessIDs` table. Bail out of the self-check rather than
-    -- taint — worst case we play one duplicate sound on our own message.
-    local guid = select(12, ...)
-    local myGUID = UnitGUID("player")
-    if IsSecret(myGUID) then
-        myGUID = nil
-    end
-    if guid ~= nil and myGUID ~= nil and guid == myGUID then
-        return
-    end
+    local entry = FindConfiguredSoundEntry(event, entries)
+    if not entry then return end
+    if IsDuplicateRenderedLine(event, eventArgs) then return end
 
-    local author = select(2, ...)
-    local playerName = UnitName("player")
-    if IsSecret(playerName) then
-        playerName = nil
-    end
-    if author ~= nil and playerName ~= nil
-        and type(author) == "string"
-        and type(playerName) == "string" then
-        local ok, hasRealm = pcall(string.find, author, "-", 1, true)
-        if ok then
-            if hasRealm then
-                local playerRealm = GetNormalizedRealmName and GetNormalizedRealmName()
-                if IsSecret(playerRealm) then
-                    playerRealm = nil
-                end
-                if playerRealm ~= nil and author == (playerName .. "-" .. playerRealm) then
-                    return
-                end
-            elseif author == playerName then
-                return
-            end
-        end
-    end
+    PlayConfiguredMessageSound(entry)
+end
 
-    -- Prefer exact channel entries first; only fall back to "all".
-    for _, entry in ipairs(entries) do
-        local channel = entry.channel or "guild_officer"
-        if channel ~= "all" and EventMatchesChannel(event, channel) then
-            PlayConfiguredMessageSound(entry)
-            return
-        end
-    end
+local function HookSoundFrame(frame)
+    if not frame or hookedFrames[frame] then return end
+    if not frame.AddMessage then return end
+    if not hooksecurefunc then return end
 
-    for _, entry in ipairs(entries) do
-        local channel = entry.channel or "guild_officer"
-        if channel == "all" and EventMatchesChannel(event, channel) then
-            PlayConfiguredMessageSound(entry)
-            return
-        end
+    hookedFrames[frame] = true
+    hooksecurefunc(frame, "AddMessage", function(_, _, _, _, _, _, _, _, event, eventArgs)
+        PlayNewMessageSound(event, eventArgs)
+    end)
+end
+
+local function HookAllSoundFrames()
+    local nWindows = _G.NUM_CHAT_WINDOWS or 10
+    for i = 1, nWindows do
+        HookSoundFrame(_G["ChatFrame" .. i])
+    end
+end
+
+local function ScheduleHookAllSoundFrames()
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0.1, HookAllSoundFrames)
+    else
+        HookAllSoundFrames()
+    end
+end
+
+local function InstallSoundHooks()
+    HookAllSoundFrames()
+
+    if newWindowHooksInstalled or not hooksecurefunc then return end
+    newWindowHooksInstalled = true
+
+    if _G.FCF_OpenNewWindow then
+        hooksecurefunc("FCF_OpenNewWindow", ScheduleHookAllSoundFrames)
+    end
+    if _G.FCF_OpenTemporaryWindow then
+        hooksecurefunc("FCF_OpenTemporaryWindow", ScheduleHookAllSoundFrames)
     end
 end
 
 local function SetupNewMessageSound()
-    local settings = I.GetSettings()
-    if not (I.IsChatEnabled and I.IsChatEnabled(settings))
-        or not settings.newMessageSound or not settings.newMessageSound.enabled then
-        if soundEventFrame then
-            for event in pairs(registeredSoundEvents) do
-                soundEventFrame:UnregisterEvent(event)
-                registeredSoundEvents[event] = nil
-            end
-        end
-        return
-    end
-
-    local allEvents = {}
-    local entries = settings.newMessageSound.entries
-    if entries then
-        for _, entry in ipairs(entries) do
-            local channel = entry.channel or "guild_officer"
-            local events = SOUND_CHANNEL_EVENTS[channel]
-            if events then
-                for _, e in ipairs(events) do
-                    allEvents[e] = true
-                end
-            end
-        end
-    end
-
-    if not soundEventFrame then
-        soundEventFrame = CreateFrame("Frame")
-        soundEventFrame:SetScript("OnEvent", function(self, event, ...)
-            PlayNewMessageSound(event, ...)
-        end)
-    end
-
-    for event in pairs(registeredSoundEvents) do
-        if not allEvents[event] then
-            soundEventFrame:UnregisterEvent(event)
-            registeredSoundEvents[event] = nil
-        end
-    end
-
-    for event in pairs(allEvents) do
-        if not registeredSoundEvents[event] then
-            soundEventFrame:RegisterEvent(event)
-            registeredSoundEvents[event] = true
-        end
-    end
+    InstallSoundHooks()
 end
 
 Sounds.Setup = SetupNewMessageSound

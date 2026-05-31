@@ -346,4 +346,13 @@ if ns.Registry then
         group = "qol",
         importCategories = { "qol" },
     })
+    -- Companion skinning registration: the warning frame bg tracks the global
+    -- skin, but the "qol" group isn't refreshed on a skin-color change (which
+    -- fires only RefreshAll("skinning")). Re-skin on that too.
+    ns.Registry:Register("petWarningSkin", {
+        refresh = _G.QUI_RefreshPetWarning,
+        priority = 30,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
 end

@@ -850,8 +850,21 @@ local function HasCooldownViewerAPI()
         and api.GetCooldownViewerCooldownInfo
 end
 
+local function IsCooldownViewerReady()
+    local api = GetCooldownViewerAPI()
+    if not api then return false end
+    if not api.IsCooldownViewerAvailable then
+        return true
+    end
+
+    local ok, isAvailable = pcall(api.IsCooldownViewerAvailable)
+    if not ok then return false end
+    if issecretvalue and issecretvalue(isAvailable) then return false end
+    return isAvailable == true
+end
+
 function CDMCatalog.GetCategorySet(category, allowUnlearned)
-    if not HasCooldownViewerAPI() then return nil end
+    if not HasCooldownViewerAPI() or not IsCooldownViewerReady() then return nil end
     local api = GetCooldownViewerAPI()
     local ok, ids = pcall(api.GetCooldownViewerCategorySet, category, allowUnlearned and true or false)
     if ok and type(ids) == "table" then
@@ -861,6 +874,10 @@ function CDMCatalog.GetCategorySet(category, allowUnlearned)
 end
 
 function CDMCatalog.GetTrackedCategorySet(category, allowUnlearned)
+    if not IsCooldownViewerReady() then
+        return nil, false
+    end
+
     local settings = _G.CooldownViewerSettings
     if settings and settings.GetDataProvider then
         local okProvider, provider = pcall(settings.GetDataProvider, settings)
@@ -876,6 +893,7 @@ function CDMCatalog.GetTrackedCategorySet(category, allowUnlearned)
                 return ids, true
             end
         end
+        return nil, false
     end
 
     local ids = CDMCatalog.GetCategorySet(category, allowUnlearned)
@@ -883,7 +901,7 @@ function CDMCatalog.GetTrackedCategorySet(category, allowUnlearned)
 end
 
 function CDMCatalog.GetCooldownInfo(cooldownID)
-    if not HasCooldownViewerAPI() or not cooldownID then return nil end
+    if not HasCooldownViewerAPI() or not IsCooldownViewerReady() or not cooldownID then return nil end
     local api = GetCooldownViewerAPI()
     local ok, info = pcall(api.GetCooldownViewerCooldownInfo, cooldownID)
     if ok then
@@ -935,13 +953,21 @@ function CDMCatalog.SeedFromBlizzard(containerKind)
     local entries = {}
     local seen = {}
     local isAuraCategory = category == 2 or category == 3
+    local missingInfo = false
     for _, cdID in ipairs(cooldownIDs) do
         local info = CDMCatalog.GetCooldownInfo(cdID)
-        local sid = SelectPreferredSpellID(info, isAuraCategory)
-        if sid and not seen[sid] then
-            seen[sid] = true
-            entries[#entries + 1] = { type = "spell", id = sid }
+        if not info then
+            missingInfo = true
+        else
+            local sid = SelectPreferredSpellID(info, isAuraCategory)
+            if sid and not seen[sid] then
+                seen[sid] = true
+                entries[#entries + 1] = { type = "spell", id = sid }
+            end
         end
+    end
+    if missingInfo then
+        return {}, false
     end
     return entries, ready == true
 end

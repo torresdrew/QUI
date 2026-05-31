@@ -115,7 +115,8 @@ function GUI:ResolveThemePreset(presetName)
 
     if presetName == "Class Colored" then
         local _, class = UnitClass("player")
-        local color = RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
+        -- CUSTOM_CLASS_COLORS-aware via the shared helper (resolved at runtime)
+        local color = ns.Helpers and ns.Helpers.GetClassColorTable(class)
         if color then return color.r, color.g, color.b end
         return 0.376, 0.647, 0.980
     end

@@ -66,10 +66,8 @@ end
 
 local function GetPlayerClassColor()
     local _, classToken = UnitClass("player")
-    if classToken and RAID_CLASS_COLORS and RAID_CLASS_COLORS[classToken] then
-        local c = RAID_CLASS_COLORS[classToken]
-        return c.r, c.g, c.b, 1
-    end
+    local c = Helpers.GetClassColorTable(classToken)
+    if c then return c.r, c.g, c.b, 1 end
     return 0.376, 0.647, 0.980, 1
 end
 
@@ -86,14 +84,20 @@ local function GetEffectiveColors()
         end
         if settings.bgOpacity then bga = settings.bgOpacity end
 
-        if settings.borderUseClassColor then
+        -- Source enum: "theme" (accent), "class", or "custom". Legacy read maps
+        -- the old class/accent toggles; accent == theme in QUI.
+        local borderSource = settings.borderColorSource
+            or (settings.borderUseClassColor and "class")
+            or (settings.borderUseAccentColor and "theme")
+            or "theme"
+        if borderSource == "class" then
             sr, sg, sb, sa = GetPlayerClassColor()
-        elseif settings.borderUseAccentColor then
+        elseif borderSource == "theme" then
             local QUI = _G.QUI
             if QUI and QUI.GetAddonAccentColor then
                 sr, sg, sb, sa = QUI:GetAddonAccentColor()
             end
-        elseif settings.borderColor then
+        elseif borderSource == "custom" and settings.borderColor then
             sr = settings.borderColor[1] or sr
             sg = settings.borderColor[2] or sg
             sb = settings.borderColor[3] or sb

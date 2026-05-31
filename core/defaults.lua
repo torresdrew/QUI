@@ -85,6 +85,7 @@ local defaults = {
             skinCharacterFrame = true,  -- Skin Character Frame (Character, Reputation, Currency tabs)
             skinInspectFrame = true,  -- Skin Inspect Frame to match Character Frame
             skinUseClassColor = true,  -- Use class color for skin accents
+            skinBorderColorSource = "theme",  -- Border color: "theme" | "class" | "custom"
             -- QoL Automation
             sellJunk = true,
             autoRepair = "personal",      -- "off", "personal", "guild"
@@ -245,6 +246,13 @@ local defaults = {
                 -- popup title. Realm-less names (NPCs, same-realm players) are
                 -- unaffected.
                 shortenNames = true,
+                -- Reset all stored damage-meter sessions when a Mythic+ key
+                -- starts so Overall can represent that run from zero.
+                autoResetOnChallengeStart = true,
+                -- Optional lifecycle helper: windows on Overall swap to Current
+                -- when a key starts, then Current swaps back to Overall when
+                -- the key completes.
+                autoSwapChallengeSessions = false,
                 appearance = {
                     global = {
                         barHeight        = 18,
@@ -1459,9 +1467,8 @@ local defaults = {
             bgOpacity = 0.75,                  -- Background opacity (0-1)
             showBorder = true,                 -- Toggle border visibility
             borderThickness = 1,               -- Border thickness (1-10)
-            borderColor = {0.376, 0.647, 0.980, 1}, -- Border color (default = sky blue accent)
-            borderUseClassColor = true,        -- Use player class color for border
-            borderUseAccentColor = false,      -- Use addon accent color for border
+            borderColor = {0.376, 0.647, 0.980, 1}, -- Custom border color (used when borderColorSource == "custom")
+            borderColorSource = "theme",       -- Border color: "theme" | "class" | "custom"
             showSpellIDs = true,               -- Show spell ID and icon ID on buff/debuff tooltips
             showPlayerItemLevel = true,        -- Show inspected player item level on player tooltips
             colorPlayerItemLevel = true,       -- Color tooltip player item level by configured ilvl brackets

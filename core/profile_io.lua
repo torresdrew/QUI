@@ -478,6 +478,7 @@ local PROFILE_THEME_GENERAL_KEYS = {
 local PROFILE_QOL_GENERAL_KEYS = {
     "uiScale",
     "allowReloadInCombat",
+    "showOptionTooltips",
     "autoInsertKey",
     "consumableMacros",
     "consumablePersistent",
@@ -533,6 +534,7 @@ local PROFILE_QOL_GENERAL_KEYS = {
     "keyTrackerOffsetX",
     "keyTrackerOffsetY",
     "keyTrackerWidth",
+    "actionTracker",
 }
 
 local PROFILE_SKINNING_GENERAL_KEYS = {
@@ -548,6 +550,7 @@ local PROFILE_SKINNING_GENERAL_KEYS = {
     "gameMenuDim",
     "skinPowerBarAlt",
     "skinStatusTrackingBars",
+    "skinDamageMeter",
     "statusTrackingBarsBarColorMode",
     "statusTrackingBarsBarColor",
     "statusTrackingBarsBarHeight",
@@ -587,6 +590,9 @@ local PROFILE_SKINNING_GENERAL_KEYS = {
     "skinRollFrames",
     "skinRollSpacing",
     "skinUseClassColor",
+    "skinBorderColorSource",
+    "skinBorderColor",
+    "hideSkinBorders",
 }
 
 local PROFILE_LAYOUT_PATHS = {
@@ -1292,6 +1298,16 @@ local PROFILE_IMPORT_CATEGORIES = {
             "totemBar",
             "preyTracker",
         },
+    },
+    {
+        id = "damageMeter",
+        label = "Damage Meter",
+        description = "Native damage meter windows, appearance, and behavior settings.",
+        recommended = true,
+        -- Copies the whole `damageMeter` table; only `damageMeter.native.*` is
+        -- persisted config (captured combat sessions are runtime-only and live
+        -- off-profile), so this matches full-export behavior exactly.
+        topLevelKeys = { "damageMeter" },
     },
     {
         id = "chat",

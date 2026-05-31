@@ -634,21 +634,17 @@ ProviderPanels:RegisterAfterLoad(function(ctx)
         --
         -- Standard chat groups exposed below mirror Blizzard's chat-options
         -- grouping (matches the keys ChatFrame_AddMessageGroup expects).
-        local CHAT_GROUPS = {
+        local TabFilters = ns.QUI and ns.QUI.Chat and ns.QUI.Chat.TabFilters
+        local CHAT_GROUPS = (TabFilters and TabFilters.GetStandardGroups and TabFilters.GetStandardGroups()) or {
             "SAY", "EMOTE", "YELL",
-            "GUILD", "OFFICER",
+            "GUILD", "OFFICER", "GUILD_ACHIEVEMENT", "ACHIEVEMENT",
+            "WHISPER", "WHISPER_INFORM", "BN_WHISPER", "BN_WHISPER_INFORM",
+            "AFK", "DND",
             "PARTY", "PARTY_LEADER",
             "RAID", "RAID_LEADER", "RAID_WARNING",
             "INSTANCE_CHAT", "INSTANCE_CHAT_LEADER",
-            "BG_HORDE", "BG_ALLIANCE",
-            "SYSTEM",
-            "LOOT", "MONEY", "CURRENCY",
-            "WHISPER", "WHISPER_INFORM",
-            "BN_WHISPER", "BN_WHISPER_INFORM",
-            "AFK", "DND", "IGNORED",
-            "COMBAT_XP_GAIN", "COMBAT_HONOR_GAIN", "COMBAT_FACTION_CHANGE",
-            "ACHIEVEMENT", "GUILD_ACHIEVEMENT",
-            "CHANNEL",
+            "SYSTEM", "ERRORS", "IGNORED", "CHANNEL", "TARGETICONS",
+            "BN_INLINE_TOAST_ALERT", "PING",
         }
 
         if not chat.tabs then chat.tabs = {} end

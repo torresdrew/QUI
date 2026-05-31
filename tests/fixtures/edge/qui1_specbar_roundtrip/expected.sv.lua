@@ -62,7 +62,7 @@ return {
     profiles = {
       Default = {
         _defaultsVersion = 3,
-        _schemaVersion = 38,
+        _schemaVersion = 39,
         _shippedDefaults = {
           abilityTimeline = {
             bigIcon = {
@@ -1182,6 +1182,8 @@ return {
                 },
                 perWindow = {}
               },
+              autoResetOnChallengeStart = true,
+              autoSwapChallengeSessions = false,
               breakdownAnchor = "row",
               combineAbsorbsIntoHealing = true,
               enabled = true,
@@ -2423,6 +2425,7 @@ return {
               [3] = 0.0080000000000000002,
               [4] = 1
             },
+            skinBorderColorSource = "theme",
             skinCharacterFrame = true,
             skinContextMenus = true,
             skinCraftingOrders = true,
@@ -6075,9 +6078,8 @@ return {
               [3] = 0.97999999999999998,
               [4] = 1
             },
+            borderColorSource = "theme",
             borderThickness = 1,
-            borderUseAccentColor = false,
-            borderUseClassColor = true,
             classColorName = true,
             colorPlayerItemLevel = true,
             combatKey = "NONE",

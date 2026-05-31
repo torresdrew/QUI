@@ -465,4 +465,13 @@ if ns.Registry then
         group = "trackers",
         importCategories = { "trackersTimers" },
     })
+    -- Companion skinning registration: the timer backdrop tracks the global skin
+    -- bg, but the "trackers" group isn't refreshed on a skin-color change (which
+    -- fires only RefreshAll("skinning")). Re-skin on that too.
+    ns.Registry:Register("combatTimerSkin", {
+        refresh = _G.QUI_RefreshCombatTimer,
+        priority = 40,
+        group = "skinning",
+        importCategories = { "skinning", "theme" },
+    })
 end

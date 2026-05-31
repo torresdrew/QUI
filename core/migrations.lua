@@ -214,11 +214,17 @@ if _G.QUI then _G.QUI.Migrations = Migrations end
 --        without scrolling; everything below the fold is reachable via
 --        mouse-wheel scroll. This migration drops the dead key from every
 --        saved window entry so it doesn't sit in savedvars forever.)
+-- v39 = MigrateBorderColorSource
+--       (3.6.0+: replaces skinBorderUseClassColor + frozen skinBorderColor and the
+--        tooltip borderUseClassColor/borderUseAccentColor toggles with an explicit
+--        skinBorderColorSource / borderColorSource enum: "theme" | "class" |
+--        "custom". Auto-heals accent-snapshot freeze-bug colors back to "theme"
+--        via a preset-RGB fingerprint; preserves genuine custom colors.)
 --
 -- When adding a new migration: bump CURRENT_SCHEMA_VERSION, add it to the
 -- linear gate chain in RunOnProfile, and document the version above.
 ---------------------------------------------------------------------------
-local CURRENT_SCHEMA_VERSION = 38
+local CURRENT_SCHEMA_VERSION = 39
 
 ---------------------------------------------------------------------------
 -- Shared helpers
@@ -1229,6 +1235,73 @@ local function ColorsEqual(a, b)
     end
 
     return true
+end
+
+-- v39: Border color SOURCE enum. Replaces the implicit two-toggle model
+-- (skinBorderUseClassColor + frozen skinBorderColor; tooltip's
+-- borderUseClassColor/borderUseAccentColor) with an explicit
+-- "theme" | "class" | "custom" source. The old Skinning options page froze
+-- skinBorderColor to a snapshot of the accent the first time it was opened,
+-- which permanently shadowed the theme. This migration auto-heals those
+-- snapshots back to "theme" via a preset-RGB fingerprint.
+--
+-- BORDER_PRESET_RGBS is a FROZEN copy of GUI.ThemePresets as of v39. Migrations
+-- must be self-contained and version-stable; they cannot read GUI.ThemePresets
+-- (which may change in future releases).
+local BORDER_PRESET_RGBS = {
+    { 0.376, 0.647, 0.980, 1 }, { 0.204, 0.827, 0.600, 1 }, { 0.780, 0.192, 0.192, 1 },
+    { 0.267, 0.467, 0.800, 1 }, { 0.580, 0.490, 0.890, 1 }, { 0.961, 0.620, 0.043, 1 },
+    { 0.914, 0.349, 0.518, 1 }, { 0.196, 0.804, 0.494, 1 },
+}
+
+-- A stored border color is a freeze snapshot (-> "theme") if it is nil, equals the
+-- profile's current accent, or exactly equals any built-in theme-preset RGB. Only
+-- a color matching none of those is treated as a genuine custom pick.
+local function IsBorderFreezeSnapshot(color, accent)
+    if type(color) ~= "table" then return true end
+    if type(accent) == "table" and ColorsEqual(color, accent) then return true end
+    for _, preset in ipairs(BORDER_PRESET_RGBS) do
+        if ColorsEqual(color, preset) then return true end
+    end
+    return false
+end
+
+local function MigrateBorderColorSource(profile)
+    if type(profile) ~= "table" then return end
+    local general = profile.general
+    if type(general) == "table" and general.skinBorderColorSource == nil then
+        local accent = general.addonAccentColor
+        local source
+        if general.skinBorderUseClassColor == true then
+            source = "class"
+        elseif type(general.skinBorderColor) == "table"
+            and not IsBorderFreezeSnapshot(general.skinBorderColor, accent) then
+            source = "custom"
+        else
+            source = "theme"
+        end
+        general.skinBorderColorSource = source
+        general.skinBorderUseClassColor = nil
+    end
+
+    local tooltip = profile.tooltip
+    if type(tooltip) == "table" and tooltip.borderColorSource == nil then
+        local accent = general and general.addonAccentColor
+        local source
+        if tooltip.borderUseClassColor == true then
+            source = "class"
+        elseif tooltip.borderUseAccentColor == true then
+            source = "theme"
+        elseif type(tooltip.borderColor) == "table"
+            and not IsBorderFreezeSnapshot(tooltip.borderColor, accent) then
+            source = "custom"
+        else
+            source = "theme"
+        end
+        tooltip.borderColorSource = source
+        tooltip.borderUseClassColor = nil
+        tooltip.borderUseAccentColor = nil
+    end
 end
 
 local DEFAULT_SKY_BLUE_ACCENT = { 0.376, 0.647, 0.980, 1 }
@@ -3913,6 +3986,9 @@ function Migrations.RunOnProfile(profile)
     -- v38: Damage meter rows are now scrollable; the hard cap setting was
     -- removed. Drop the legacy key from saved window entries.
     if stored < 38 then DropDamageMeterMaxVisibleRows(profile) end
+
+    -- v39: Replace the two-toggle border color model with an explicit enum.
+    if stored < 39 then MigrateBorderColorSource(profile) end
 
     if type(profile.frameAnchoring) == "table" and profile.frameAnchoring.debuffFrame then
         local d = profile.frameAnchoring.debuffFrame
