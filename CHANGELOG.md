@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha77 - 2026-05-31
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha76 profiles carry over unchanged.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Fixed
+- **Cooldown icons and bars now pick up linked-buff info that loads after login.** Right after a cold login the game can finish loading a spell's linked aura details a moment later; affected cooldown icons and tracked bars now refresh themselves when that happens instead of showing stale tracking until your next `/reload`.
+- **Pixel borders redraw reliably after a UI scale change.** If one bordered frame's edges had gone stale, the scale-change refresh could stop early and leave other frames' borders un-redrawn; the refresh now skips and rebuilds the bad frame so every border updates.
+
 ## v3.6.0-alpha76 - 2026-05-31
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha75 profiles carry over unchanged.
