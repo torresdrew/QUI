@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 
 
+## v3.6.0-alpha73 - 2026-05-31
+
+> ⚠️ **Still alpha — back up your `WTF` folder before installing.** **Schema migration to v39** — the separate border-color checkboxes are replaced by a single border-color *source* (Theme / Class / Custom) for both the global skin border and tooltip borders. Existing alpha72 profiles upgrade automatically: a genuinely custom border color is kept on **Custom**, while borders that were only tracking your accent or theme preset are restored to **Theme**. The old toggle keys are removed.
+>
+> **Reminder: QUI ships as three folders — `QUI/`, `QUI_Options/`, and `QUI_Debug/`.** All three must live next to each other in `Interface/AddOns/`. The release zip already contains all three.
+
+### Added
+- **Border color source picker.** The skin and tooltip border-color options now use a single **Source** dropdown — **Theme**, **Class**, or **Custom** — in place of the old "use class color" / "use accent color" checkboxes. The color picker is enabled only when the source is **Custom**.
+- **Damage meter Mythic+ handling.** The damage meter can now reset its stored sessions automatically when a Mythic+ key starts (on by default), with an optional swap between your Current and Overall data at key start and completion.
+- **More message types in the System chat tab.** SYSTEM tabs now also collect whispers, achievements, system/error/target-marker messages, toasts, and pings; existing tabs pick these up once, automatically. Battle.net broadcast toasts and pings are now shown with QUI's chat decoration too.
+
+### Changed
+- **Consistent class colors across the UI.** Class coloring in the damage meter, minimap, cooldown manager, character & inspect panes, tooltips, unit frames, and theme presets now flows through one shared helper that respects any custom class-color overrides you've set.
+- **Cleaner damage meter previous-session menu.** Past sessions are listed as plain menu buttons with tidied-up labels — no leftover alert prefix, a sensible fallback name when a fight is unnamed, and the fight duration shown as `[m:ss]`.
+- **Resource bar and cooldown-manager bar borders follow your skin border color** instead of always being black, and unit-frame borders now carry their border transparency.
+
+### Fixed
+- **Skin, accent, and border color changes apply instantly to far more of the UI.** Many modules previously only picked up a global color change after a `/reload`; the cooldown manager bars, damage meter, Mythic+ keystones, group frames, minimap, combat timer, consumable check, pet warning, resource bars, unit frames, and chat (buttons and the glass background/border/tabs) now all update live.
+- **Chat buttons no longer get stuck brightened.** Hovering a chat button and moving away now restores its proper color instead of leaving — and compounding — the highlight.
+- **Character pane keeps its themed colors.** Backdrop colors and the selected-tab tint on the character and inspect frames now survive a UI scale change instead of reverting to defaults.
+- **Your custom chat background color is preserved** after the skinning rework, while default chat surfaces continue to track the skin.
+- **Group/raid frames** now use a more robust hide method (a hidden parent with mouse state restored) in place of the previous scale trick.
+- **Cooldown manager** waits until its data is fully available before showing, so it no longer seeds defaults from a half-loaded cooldown list.
+- **Selective profile export now includes recently-added settings** — option tooltips, the action tracker, damage-meter skinning, and the new damage-meter category — so a "select all" export no longer silently drops them.
+- **Chat reliability in combat.** QUI no longer participates in the game's protected chat-message path and skips its chat text/sound tweaks while chat is locked down, avoiding rare combat-time errors.
+
+
+
 ## v3.6.0-alpha72 - 2026-05-30
 
 > ⚠️ **Still alpha — back up your `WTF` folder before installing.** No schema migrations; existing alpha71 profiles carry over unchanged.
