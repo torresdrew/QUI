@@ -4796,7 +4796,6 @@ end
 
 -- _editModeActive and _disabledMouseFrames are forward-declared above
 -- LayoutContainer (they are referenced inside it).
-_G.QUI_IsCDMEditModeHidden = function() return false end  -- backward compat
 _G.QUI_IsCDMEditModeActive = function() return _editModeActive end
 
 -- Disable mouse on a container and all its icon pool children so clicks
